@@ -7,12 +7,12 @@ Each port is tracked by its own issue.
 
 | Plugin | What it does | Status |
 | --- | --- | --- |
-| `skills` | Lists the skills a thread's agent can use, renders each `SKILL.md`, and invokes it. | Not started |
-| `github-board` | Your GitHub issues, pull requests and discussions on one sidebar board. | Not started |
-| `launchd-jobs` | Schedules shell commands on your Mac through launchd. | Not started |
-| `herald` | Speaks one sentence when an agent needs you, and lists what is waiting. | Not started |
-| `model-pricing` | What every model costs, across five providers, in one table. | Not started |
-| `firstmate` | Talk to one first mate; it runs a crew of agents in their own worktrees. | Not started |
+| `skills` | Lists the skills a thread's agent can use, renders each `SKILL.md`, and invokes it. | [Not started (#1)](https://github.com/gpambrozio/bb-plugins/issues/1) |
+| `github-board` | Your GitHub issues, pull requests and discussions on one sidebar board. | [Not started (#2)](https://github.com/gpambrozio/bb-plugins/issues/2) |
+| `launchd-jobs` | Schedules shell commands on your Mac through launchd. | [Not started (#3)](https://github.com/gpambrozio/bb-plugins/issues/3) |
+| `herald` | Speaks one sentence when an agent needs you, and lists what is waiting. | [Not started (#4)](https://github.com/gpambrozio/bb-plugins/issues/4) |
+| `model-pricing` | What every model costs, across five providers, in one table. | [Not started (#5)](https://github.com/gpambrozio/bb-plugins/issues/5) |
+| `firstmate` | Talk to one first mate; it runs a crew of agents in their own worktrees. | [Not started (#6)](https://github.com/gpambrozio/bb-plugins/issues/6) |
 
 ## Install
 
