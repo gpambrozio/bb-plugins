@@ -23,7 +23,7 @@ import { open, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 
 import { WATCHES_DIR } from "../shared/types";
-import { createInHome, makeDirInHome, readInHome, writeInHome } from "./files";
+import { createInHome, makeDirInHome, plainFolderInHome, readInHome, writeInHome } from "./files";
 import { parseSchedule, type Schedule } from "./watch-schedule";
 import { TEMPLATES, fill, readTemplate, type TemplatePath } from "./templates";
 
@@ -110,16 +110,16 @@ async function readWatch(directory: string, name: string): Promise<WatchFile> {
   return { name, path, scheduleText, schedule, invalid: null };
 }
 
-/** Every watch in `<home>/watches/`, by name; none when the folder is missing. */
+/**
+ * Every watch in `<home>/watches/`, by name; none when the folder is missing. The folder must be a plain
+ * folder in the home (`plainFolderInHome`): one that is a link is refused, so nothing it leads to is
+ * listed or run. A watch that is itself a link is not a file here and is skipped.
+ */
 export async function listWatches(home: string): Promise<WatchFile[]> {
+  if ((await plainFolderInHome(home, WATCHES_DIR)) === null) return [];
+  // Named from the home as given, so a watch's path is the one the card's link opens.
   const directory = join(home, WATCHES_DIR);
-  let entries;
-  try {
-    entries = await readdir(directory, { withFileTypes: true });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
-    throw error;
-  }
+  const entries = await readdir(directory, { withFileTypes: true });
   const names = entries
     .filter((entry) => entry.isFile() && !entry.name.startsWith(".") && !entry.name.toLowerCase().endsWith(".md"))
     .map((entry) => entry.name)

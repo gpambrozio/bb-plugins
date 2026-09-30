@@ -3,11 +3,11 @@
  * one line naming the watches, and a chip to the whole message, saved as a file in the home's
  * `.firstmate/watch-notes/` — the newest `KEPT_NOTES` of them.
  */
-import { lstat, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { lstat, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { WATCH_NOTES_FOLDER, WATCH_NOTE_FILE, type WatchNote } from "../shared/types";
-import { makeDirInHome } from "./files";
+import { plainFolderInHome } from "./files";
 import type { QueuedNote } from "./watches";
 
 export const KEPT_NOTES = 50;
@@ -33,9 +33,8 @@ export function watchNoteLine(notes: readonly Pick<QueuedNote, "name" | "kind">[
  * never write or delete anywhere else.
  */
 async function notesFolder(home: string): Promise<string> {
-  const directory = await makeDirInHome(home, WATCH_NOTES_FOLDER);
-  const [real, root] = await Promise.all([realpath(directory), realpath(home)]);
-  if (real !== join(root, WATCH_NOTES_FOLDER)) throw new Error(`${WATCH_NOTES_FOLDER} is not a plain folder in the home.`);
+  const directory = await plainFolderInHome(home, WATCH_NOTES_FOLDER, true);
+  if (directory === null) throw new Error(`${WATCH_NOTES_FOLDER} could not be made.`);
   return directory;
 }
 

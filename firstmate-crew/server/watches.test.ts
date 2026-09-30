@@ -286,6 +286,52 @@ describe("WatchRunner", () => {
     expect(await readdir(outside)).toEqual([]);
   });
 
+  it("runs nothing from a watches folder that is a link out of the home", async () => {
+    const paths = await setup();
+    const outside = await tempDir();
+    await writeFile(join(outside, "evil"), "#!/bin/sh\n# schedule: * * * * *\necho pwned\n", "utf8");
+    await chmod(join(outside, "evil"), 0o755);
+    await rm(join(paths.home, "watches"), { recursive: true, force: true });
+    await symlink(outside, join(paths.home, "watches"));
+    const { instance, runs, log } = runner(paths, { evil: () => ok("pwned\n") });
+
+    await expect(instance.tick(MINUTE)).rejects.toThrow("watches is not a plain folder in the home.");
+    expect(runs).toEqual([]);
+    expect(log.errors.join("\n")).toMatch(/Could not write the built-in watches/);
+    expect(await readdir(outside)).toEqual(["evil"]);
+  });
+
+  it("saves in the order saves are asked for, so a late first save cannot overwrite a newer one", async () => {
+    const paths = await setup();
+    await script(paths.home, "a", "true");
+    await script(paths.home, "b", "true");
+    const written: string[] = [];
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let saves = 0;
+    const { instance, mate } = runner(
+      paths,
+      { a: () => ok("from a"), b: () => ok("from b") },
+      {
+        writeState: async (_root, _path, text) => {
+          // The first save's write is held back until the second has been asked for.
+          if (saves++ === 0) await gate;
+          written.push(text);
+        },
+      },
+    );
+    mate.state = "busy";
+    const ticking = instance.tick(MINUTE);
+    await new Promise((wait) => setTimeout(wait, 50));
+    release();
+    await ticking;
+
+    const last = JSON.parse(written[written.length - 1] ?? "{}") as { queue: { text: string }[] };
+    expect(last.queue.map((note) => note.text).sort()).toEqual(["from a", "from b"]);
+  });
+
   it("stops only once a delivery under way has saved, so a runner after it keeps what it queues", async () => {
     const paths = await setup();
     await script(paths.home, "first", "true", "0 * * * *");

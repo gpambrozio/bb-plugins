@@ -60,10 +60,13 @@ Do not break these; each was paid for.
   `captain.md` and `opening.md` are the captain's and never overwritten.
 - **File access is confined to the home**, including through symlinks. Every read, write and delete the
   plugin makes there goes through `server/files.ts` (`resolveInHome` and the `*InHome` helpers): preparing
-  the home, the charter, the built-in watches, `watches.json` and `watch-state/`, and the notes, whose
-  folder must also be a plain folder at its place. A link that leads out is refused, never followed.
-  Writes are a staged rename (which replaces a link rather than writing through it), creations are
-  exclusive, and edits of files the first mate also writes add a content check.
+  the home, the charter, the built-in watches, `watches.json` and `watch-state/`, and the notes. A folder
+  the plugin lists, runs or prunes by name — `watches/` and `.firstmate/watch-notes/` — must also be a
+  plain folder at its place (`plainFolderInHome`), so a link cannot send it to any other folder. A link
+  that leads out is refused, never followed. Writes are a staged rename (which replaces a link rather
+  than writing through it) queued per path as written, before it is resolved; creations are exclusive;
+  edits of files the first mate also writes add a content check. The runner's saves go in the order
+  they are asked for, each taking its snapshot when its turn comes.
 - **One watch runner at a time, drained before the next.** `WatchRunner.stop()` resolves only once its
   ticks, runs, deliveries and saves have settled, and `server.ts` changes runners through `syncRunner`,
   one change at a time, so a delivery still sending cannot overwrite what a new runner saved.

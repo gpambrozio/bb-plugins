@@ -94,11 +94,21 @@ export async function readInHome(home: string, path: string): Promise<string | n
   }
 }
 
+/**
+ * The key writes to one file queue on: its path as written, taken before anything is resolved, so two
+ * writes land in the order they were asked for rather than the order their paths resolved in.
+ */
+function lockKey(home: string, path: string): string {
+  return resolve(home, cleanRelative(path));
+}
+
 /** Writes the file whatever it holds now; `mode`, when given, is set before it lands. */
 export async function writeInHome(home: string, path: string, content: string, mode?: number): Promise<void> {
-  const { absolute, relative: rel } = await resolveInHome(home, path);
-  if (rel === "") throw new Error("The home itself is not a file.");
-  await serialized(absolute, () => stageAndReplace(absolute, content, () => undefined, {}, mode));
+  await serialized(lockKey(home, path), async () => {
+    const { absolute, relative: rel } = await resolveInHome(home, path);
+    if (rel === "") throw new Error("The home itself is not a file.");
+    await stageAndReplace(absolute, content, () => undefined, {}, mode);
+  });
 }
 
 /** Writes the file only when nothing is there; says whether it did. */
@@ -118,6 +128,28 @@ export async function createInHome(home: string, path: string, content: string):
 export async function removeInHome(home: string, path: string): Promise<void> {
   const { absolute } = await resolveInHome(home, path);
   await rm(absolute, { force: true });
+}
+
+/**
+ * The folder at `path` when it is a plain folder at its place in the home — no symlink anywhere on the
+ * way, not even to another folder inside the home — or null when there is none. With `create`, it is
+ * made first. Anything the plugin lists, runs or prunes by name lives in such a folder, so a link can
+ * never send it to another one.
+ */
+export async function plainFolderInHome(home: string, path: string, create = false): Promise<string | null> {
+  const rel = cleanRelative(path);
+  if (create) await makeDirInHome(home, rel);
+  const absolute = join(await realpath(home), rel);
+  let real: string;
+  try {
+    real = await realpath(absolute);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+  if (real !== absolute) throw new Error(`${rel} is not a plain folder in the home.`);
+  if (!(await stat(real)).isDirectory()) throw new Error(`${rel} is not a folder.`);
+  return absolute;
 }
 
 /** Creates the directory and its parents, then checks the result is still inside the home. */
@@ -179,10 +211,10 @@ export async function replaceTextIfUnchanged(
   content: string,
   hooks: WriteHooks = {},
 ): Promise<void> {
-  const { absolute, relative: rel } = await resolveInHome(home, path);
-  if (rel === "") throw new Error("The home itself is not a file.");
-  await serialized(absolute, () =>
-    stageAndReplace(
+  await serialized(lockKey(home, path), async () => {
+    const { absolute, relative: rel } = await resolveInHome(home, path);
+    if (rel === "") throw new Error("The home itself is not a file.");
+    await stageAndReplace(
       absolute,
       content,
       async (current) => {
@@ -191,8 +223,8 @@ export async function replaceTextIfUnchanged(
         if ((await readFile(absolute, "utf8")) !== expected) throw new FileChangedError(`"${rel}" changed since it was read.`);
       },
       hooks,
-    ),
-  );
+    );
+  });
 }
 
 type Current = Stats | null;

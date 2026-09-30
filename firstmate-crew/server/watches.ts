@@ -112,6 +112,8 @@ export interface WatchRunnerOptions {
   now?: () => Date;
   run?: typeof runWatchScript;
   readState?: typeof readState;
+  /** Writes the state file's text; confined to `root` (`writeInHome`) unless a test stands in. */
+  writeState?: (root: string, path: string, text: string) => Promise<void>;
   timeoutMs?: number;
   env?: NodeJS.ProcessEnv;
 }
@@ -215,6 +217,8 @@ export class WatchRunner {
   private readonly inFlight = new Set<Promise<unknown>>();
   private readonly aborter = new AbortController();
   private flushing: Promise<void> = Promise.resolve();
+  /** The last save asked for; each waits for the one before it. */
+  private saving: Promise<void> = Promise.resolve();
   private timer: NodeJS.Timeout | undefined;
   private readonly now: () => Date;
   private readonly run: typeof runWatchScript;
@@ -447,14 +451,22 @@ export class WatchRunner {
     return this.loading;
   }
 
+  /**
+   * Saves the state, in the order saves are asked for: each waits for the one before it and only then
+   * takes its snapshot, so a later save always writes the newer state and an earlier one that finishes
+   * late cannot overwrite it.
+   */
   private persist(): Promise<void> {
-    const state = this.state;
-    if (state === null) return Promise.resolve();
-    const path = this.options.stateFile;
-    // A staged rename, one at a time per file, confined to the root.
-    return writeInHome(this.options.root, relative(this.options.root, path), `${JSON.stringify(state, null, 2)}\n`).catch((error: unknown) => {
+    const { root, stateFile: path } = this.options;
+    const write = this.options.writeState ?? ((at: string, file: string, text: string) => writeInHome(at, relative(at, file), text));
+    const save = this.saving.then(async () => {
+      if (this.state === null) return;
+      await write(root, path, `${JSON.stringify(this.state, null, 2)}\n`);
+    });
+    this.saving = save.catch((error: unknown) => {
       this.options.log.error(`Could not save ${path}: ${errorText(error)}`);
     });
+    return this.saving;
   }
 }
 

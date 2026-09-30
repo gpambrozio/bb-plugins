@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -43,6 +43,20 @@ describe("scheduleLine", () => {
 });
 
 describe("listWatches", () => {
+  it("refuses a watches folder that is a link, out of the home or within it", async () => {
+    const home = await tempHome();
+    const outside = await tempHome();
+    await rm(join(home, "watches"), { recursive: true });
+    await symlink(outside, join(home, "watches"));
+    await expect(listWatches(home)).rejects.toThrow("watches is not a plain folder in the home.");
+
+    const other = await tempHome();
+    await mkdir(join(other, "data"), { recursive: true });
+    await rm(join(other, "watches"), { recursive: true });
+    await symlink(join(other, "data"), join(other, "watches"));
+    await expect(listWatches(other)).rejects.toThrow("watches is not a plain folder in the home.");
+  });
+
   it("lists every script by name, with why any of them cannot run", async () => {
     const home = await tempHome();
     await script(home, "good", "#!/bin/sh\n# schedule: */5 * * * *\n");
