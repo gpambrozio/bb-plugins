@@ -406,6 +406,7 @@ describe("loadFleet", () => {
     const fleet = await loadFleet(deps);
     expect(fleet.watches).toEqual([watch]);
     expect(fleet.suggestions).toEqual([{ label: "Go", prompt: "do the thing" }]);
-    expect(fleet.charter).toMatchObject({ edited: false, outdated: false });
+    // Only what the board acts on crosses the wire, never the ~30 KB charter text.
+    expect(fleet.charter).toEqual({ edited: false, outdated: false });
   });
 });

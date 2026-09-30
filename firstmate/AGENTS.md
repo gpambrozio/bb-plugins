@@ -14,7 +14,7 @@ against bb 0.44.0 and `@get-bb/plugin-sdk` 0.5.29.
 
 | File | What it owns |
 | --- | --- |
-| `server.ts` | Wiring only: settings, the RPCs, `bb firstmate`, the watch service, the thread events that publish `fleet`. Every decision lives in `server/`. |
+| `server.ts` | Wiring only: settings, the RPCs, `bb firstmate`, the watch service, the thread events that publish `fleet` (created, active, idle, failed, archived, and a pending interaction). Every decision lives in `server/`. |
 | `shared/contract.ts`, `shared/types.ts` | The RPC contract (zod), the card and fleet shapes, the crew metadata keys, `STATE_DIR`. |
 | `server/mate.ts` | Launch, adopt, release, restart, `askMate`; the `mate` lock; the stored id. |
 | `server/crew.ts` | Steer, interrupt, end, relaunch, board note. |
@@ -28,6 +28,7 @@ against bb 0.44.0 and `@get-bb/plugin-sdk` 0.5.29.
 | `server/files.ts` | Confinement to the home (through symlinks) and `replaceTextIfUnchanged`. |
 | `server/watch-schedule.ts`, `watch-files.ts`, `watch-run.ts`, `watches.ts`, `watch-delivery.ts` | Crontab parsing, which files are watches, one script run, the runner and its queue, and when the queue reaches the first mate. |
 | `server/serialize.ts` | One-at-a-time per key. |
+| `server/log.ts` | The `Log` every server module logs through, wired to `bb.log` in `server.ts`. |
 | `server/templates.ts`, `templates.generated.ts` | Reading the templates; the generated module. See below. |
 | `server/testing/` | `createFakeSdk` and the other fakes. |
 | `templates/` | **Everything the plugin writes into the home**, laid out as it lands there, plus `messages/` (what the plugin says to the first mate) and `parts/` (pieces inside other files). The first mate's behaviour is `templates/data/charter.md`. |
@@ -45,8 +46,9 @@ Do not break these; each was paid for.
   output goes with `"queue-if-active"`, so a turn that started meanwhile holds it.
 - **One message to the first mate in flight at a time** from the app (the board's buttons, suggestions and
   the command palette share `app/send-gate.ts`), so a double press sends once.
-- **Restart is refused unless the first mate is idle** (button and server), and clears context on the
-  same thread, so crew stay its children and two first mates cannot exist.
+- **Restart is refused while the first mate is mid-turn** — it goes only when the first mate is idle or
+  errored (button and server) — and clears context on the same thread, so crew stay its children and two
+  first mates cannot exist.
 - **Launch and adopt run under the `mate` lock**, and a launch that fails after the project exists stores
   no id.
 - **Only a thread whose workspace is the home can be adopted** (compared by real path, on the bb server's
@@ -147,8 +149,6 @@ charter tells the first mate to always pass `--title`.
   (say, Parked). Telling "this turn wrote nothing" apart needs the timeline.
 - **Changing the crew settings does not re-render the first mate's `AGENTS.md`** until the next launch,
   restart or plugin reload. Settings changes do not reload a plugin.
-- **`fleet.load` returns the whole plugin charter template** (about 30 KB) on every poll, for a field only
-  Compare uses.
 - **The board UI has not yet been looked at** wide and narrow, light and dark. The live run had no display;
   everything behind it was driven over RPC.
 - **A stored first-mate id that no longer resolves** ("first mate gone") and a captain-edited outdated

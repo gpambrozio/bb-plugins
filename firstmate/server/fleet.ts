@@ -204,7 +204,13 @@ export async function summarizeCrew(threads: ThreadsPort, thread: ThreadInfo, lo
 }
 
 /** The state the board shows for a charter it could not read: nothing the captain needs to act on. */
-const UNTOUCHED_CHARTER: CharterState = { template: "", edited: false, outdated: false };
+const UNTOUCHED_CHARTER: CharterState = { edited: false, outdated: false };
+
+/** What the board is sent of the charter: whether it is edited and outdated, not its text. */
+async function charterState(home: string): Promise<CharterState> {
+  const { edited, outdated } = await readCharterState(home);
+  return { edited, outdated };
+}
 
 export type FleetDeps = MateDeps & {
   reports: ReportCache;
@@ -226,7 +232,7 @@ export async function loadFleet(deps: FleetDeps): Promise<Fleet> {
     orFallback(deps.log, "whether the home is ready", false, () => isHomeReady(home), home),
     orFallback(deps.log, "the backlog", [], () => readBacklog(home), home),
     orFallback(deps.log, "the suggestions", [], () => readSuggestions(home), home),
-    orFallback(deps.log, "the charter", UNTOUCHED_CHARTER, () => readCharterState(home), home),
+    orFallback(deps.log, "the charter", UNTOUCHED_CHARTER, () => charterState(home), home),
     orFallback(deps.log, "the watches", [], () => deps.watches(), home),
   ]);
 

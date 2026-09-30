@@ -101,6 +101,7 @@ export interface WatchRunnerOptions {
   log: Log;
   now?: () => Date;
   run?: typeof runWatchScript;
+  readState?: typeof readState;
   timeoutMs?: number;
   env?: NodeJS.ProcessEnv;
 }
@@ -393,12 +394,20 @@ export class WatchRunner {
     });
   }
 
+  /** The state, read once; a read that fails is not kept, so the next call tries the file again. */
   private load(): Promise<RunnerState> {
     if (this.state !== null) return Promise.resolve(this.state);
-    this.loading ??= readState(this.options.stateFile, this.options.log).then((state) => {
-      this.state = state;
-      return state;
-    });
+    const read = this.options.readState ?? readState;
+    this.loading ??= read(this.options.stateFile, this.options.log).then(
+      (state) => {
+        this.state = state;
+        return state;
+      },
+      (error: unknown) => {
+        this.loading = null;
+        throw error;
+      },
+    );
     return this.loading;
   }
 
@@ -444,7 +453,14 @@ function asString(value: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
 
-/** The saved state, leniently: anything it cannot read starts afresh rather than stopping the watches. */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * The saved state, leniently: a file it cannot read starts afresh, and an entry that is not what the
+ * runner wrote is dropped with a warning, rather than stopping the watches.
+ */
 export async function readState(path: string, log: Log): Promise<RunnerState> {
   let raw: unknown;
   try {
@@ -455,10 +471,14 @@ export async function readState(path: string, log: Log): Promise<RunnerState> {
     }
     return { watches: {}, queue: [], dropped: 0 };
   }
-  const object = (raw ?? {}) as { watches?: unknown; queue?: unknown; dropped?: unknown };
+  const object = isRecord(raw) ? raw : {};
   const watches: Record<string, WatchRecord> = {};
-  if (typeof object.watches === "object" && object.watches !== null) {
-    for (const [name, value] of Object.entries(object.watches as Record<string, Record<string, unknown>>)) {
+  if (isRecord(object.watches)) {
+    for (const [name, value] of Object.entries(object.watches)) {
+      if (!isRecord(value)) {
+        log.warn(`${path}: the record of watch "${name}" is not an object, so it was dropped.`);
+        continue;
+      }
       const result = asString(value.lastResult);
       watches[name] = {
         lastRunAt: asString(value.lastRunAt),
@@ -470,17 +490,26 @@ export async function readState(path: string, log: Log): Promise<RunnerState> {
       };
     }
   }
+  let malformed = 0;
   const queue: QueuedNote[] = Array.isArray(object.queue)
-    ? (object.queue as Array<Record<string, unknown>>).flatMap((entry) => {
+    ? object.queue.flatMap((entry: unknown) => {
+        if (!isRecord(entry)) {
+          malformed += 1;
+          return [];
+        }
         const name = asString(entry.name);
         const ran = asString(entry.ran);
         const text = asString(entry.text);
         const kind = entry.kind === "failed" ? "failed" : entry.kind === "output" ? "output" : null;
-        if (name === null || ran === null || text === null || kind === null) return [];
+        if (name === null || ran === null || text === null || kind === null) {
+          malformed += 1;
+          return [];
+        }
         const reason = asString(entry.reason);
         return [{ name, ran, kind, text, ...(reason === null ? {} : { reason }) }];
       })
     : [];
+  if (malformed > 0) log.warn(`${path}: ${malformed} malformed queue ${malformed === 1 ? "entry was" : "entries were"} dropped.`);
   const dropped = typeof object.dropped === "number" && object.dropped > 0 ? Math.floor(object.dropped) : 0;
   return { watches, queue, dropped };
 }

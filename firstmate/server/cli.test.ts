@@ -206,6 +206,20 @@ describe("bb firstmate crew spawn", () => {
     });
   });
 
+  describe("--prompt-file without a working directory", () => {
+    it("refuses a relative path when bb gives no working directory, and still reads an absolute one", async () => {
+      const { cli, threads, dir } = await setup();
+      const relative = await cli.run(SPAWN, { threadId: "thr_mate" });
+      expect(relative.exitCode).not.toBe(0);
+      expect(relative.stderr).toContain("--prompt-file must be an absolute path when bb gives no working directory.");
+      expect(threads.spawned).toEqual([]);
+
+      const absolute = await cli.run(["crew", "spawn", "--task", "t", "--project", "prj_app", "--prompt-file", join(dir, "brief.md")], { threadId: "thr_mate" });
+      expect(absolute.exitCode).toBe(0);
+      expect(threads.spawned).toHaveLength(1);
+    });
+  });
+
   describe("validation", () => {
     it.each([
       ["--task", ["crew", "spawn", "--project", "prj_app", "--prompt-file", "brief.md"]],

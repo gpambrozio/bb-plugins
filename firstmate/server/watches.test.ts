@@ -11,6 +11,7 @@ import {
   MAX_QUEUED,
   WatchRunner,
   clip,
+  readState,
   fitWatchNote,
   quoted,
   watchNote,
@@ -406,6 +407,56 @@ describe("WatchRunner", () => {
     await instance.tick(MINUTE);
     expect(runs).toEqual([]);
     expect(await instance.summaries()).toEqual([]);
+  });
+});
+
+describe("readState", () => {
+  it("drops malformed watch and queue entries with a warning, and keeps the rest", async () => {
+    const paths = await setup();
+    await mkdir(join(paths.root, "data"), { recursive: true });
+    const good = { lastRunAt: "2026-09-25T10:05:00Z", lastResult: "silent", lastOutput: null, lastOutputAt: null, lastError: null, failing: false };
+    const note = { name: "b", ran: "2026-09-25T10:05:00Z", kind: "output", text: "news" };
+    await writeFile(paths.stateFile, JSON.stringify({ watches: { x: null, y: "no", b: good }, queue: [null, 5, "s", note] }), "utf8");
+    const log = fakeLog();
+
+    const state = await readState(paths.stateFile, log);
+    expect(Object.keys(state.watches)).toEqual(["b"]);
+    expect(state.watches.b).toMatchObject({ lastResult: "silent" });
+    expect(state.queue).toEqual([note]);
+    expect(log.warnings).toEqual([
+      expect.stringMatching(/"x".*dropped/),
+      expect.stringMatching(/"y".*dropped/),
+      expect.stringMatching(/3 malformed queue entries.*dropped/),
+    ]);
+  });
+
+  it("starts afresh from a file whose top level is not an object", async () => {
+    const paths = await setup();
+    await mkdir(join(paths.root, "data"), { recursive: true });
+    await writeFile(paths.stateFile, "[1, 2]", "utf8");
+    expect(await readState(paths.stateFile, fakeLog())).toEqual({ watches: {}, queue: [], dropped: 0 });
+  });
+});
+
+describe("WatchRunner loading its state", () => {
+  it("tries the state file again after a load that failed, rather than keeping the failure", async () => {
+    const paths = await setup();
+    await script(paths.home, "a", "true");
+    let attempts = 0;
+    const { instance } = runner(
+      paths,
+      {},
+      {
+        readState: async () => {
+          attempts += 1;
+          if (attempts === 1) throw new Error("disk hiccup");
+          return { watches: {}, queue: [], dropped: 0 };
+        },
+      },
+    );
+    await expect(instance.summaries()).rejects.toThrow("disk hiccup");
+    expect(await instance.summaries()).toEqual([expect.objectContaining({ name: "a", lastResult: "never" })]);
+    expect(attempts).toBe(2);
   });
 });
 

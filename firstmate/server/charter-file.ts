@@ -32,6 +32,9 @@ export const NEW_CHARTER_FILE = TEMPLATES.charterNew;
 /** Where in the note the fingerprint is, and its shape. */
 const MARK = /firstmate-charter ([0-9a-f]{16})/;
 
+/** The copy's state, with what `AGENTS.md` is rendered from: the captain's copy, or the plugin's charter. */
+export type CharterFileState = CharterState & { template: string };
+
 /** The plugin's two charter templates, as written: the copy's, and the comparison's. */
 export interface PluginCharter {
   /** `templates/data/charter.md`: the note, with `{{fingerprint}}`, then the charter. */
@@ -65,7 +68,7 @@ function noteOf(plugin: PluginCharter, base: string): string {
 }
 
 /** What a copy means, given the plugin's current charter; `rewrite` when the copy should become it. */
-export function assessCharter(copy: string | null, pluginCharter: string): CharterState & { rewrite: boolean } {
+export function assessCharter(copy: string | null, pluginCharter: string): CharterFileState & { rewrite: boolean } {
   const text = copy === null ? "" : withoutNotes(copy);
   const plugin = withoutNotes(pluginCharter);
   if (text === "") return { template: plugin, edited: false, outdated: false, rewrite: true };
@@ -89,7 +92,7 @@ async function readOptional(path: string): Promise<string | null> {
 }
 
 /** The copy's state, touching nothing: what the board reads on every poll. */
-export async function readCharterState(home: string, plugin?: PluginCharter): Promise<CharterState> {
+export async function readCharterState(home: string, plugin?: PluginCharter): Promise<CharterFileState> {
   const templates = plugin ?? (await pluginTemplates());
   const { rewrite: _rewrite, ...state } = assessCharter(await readOptional(join(home, CHARTER_FILE)), templates.charter);
   return state;
@@ -100,7 +103,7 @@ export async function readCharterState(home: string, plugin?: PluginCharter): Pr
  * and out of date, and `charter.new.md` beside an edited one that is out of date — and says what
  * `AGENTS.md` should be rendered from. The caller has created `data/`.
  */
-export async function syncCharter(home: string, plugin?: PluginCharter): Promise<CharterState> {
+export async function syncCharter(home: string, plugin?: PluginCharter): Promise<CharterFileState> {
   const templates = plugin ?? (await pluginTemplates());
   const path = join(home, CHARTER_FILE);
   const { rewrite, ...state } = assessCharter(await readOptional(path), templates.charter);

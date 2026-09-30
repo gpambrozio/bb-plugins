@@ -71,16 +71,31 @@ function Elsewhere({ fleet, threadId, onChanged }: { fleet: Fleet; threadId: str
   );
 }
 
-export function Panel({ threadId }: { threadId: string }) {
-  const { fleet, error, reload } = useFleet();
-
-  if (fleet === null) {
-    return <p className="text-sm text-muted-foreground">{error ?? "Loading…"}</p>;
-  }
+/** What the tab shows for this thread, from a fleet already loaded. */
+function PanelBody({ fleet, threadId, reload }: { fleet: Fleet; threadId: string; reload: () => void }) {
   if (fleet.mate !== null && fleet.mate.threadId === threadId) {
     return <Board fleet={fleet} mateThreadId={threadId} onChanged={reload} />;
   }
   const card = fleet.cards.find((candidate) => candidate.crew?.threadId === threadId);
   if (card !== undefined) return <CrewPanel card={card} threadId={threadId} onChanged={reload} />;
   return <Elsewhere fleet={fleet} threadId={threadId} onChanged={reload} />;
+}
+
+export function Panel({ threadId }: { threadId: string }) {
+  const { fleet, error, reload } = useFleet();
+
+  if (fleet === null) {
+    return <p className="text-sm text-muted-foreground">{error ?? "Loading…"}</p>;
+  }
+  return (
+    <div className="flex flex-col gap-3">
+      {/* The last refresh failed: the board below is the last one that loaded, and the next poll tries again. */}
+      {error === null ? null : (
+        <p role="status" className="text-xs text-destructive">
+          Could not refresh the board: {error}. Showing what was last loaded.
+        </p>
+      )}
+      <PanelBody fleet={fleet} threadId={threadId} reload={reload} />
+    </div>
+  );
 }

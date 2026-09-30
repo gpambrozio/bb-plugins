@@ -174,6 +174,9 @@ export default async function plugin(bb: BbPluginApi) {
   bb.events.on("thread.created", ({ thread }) => publishOnFleetThread("thread.created", thread));
   bb.events.on("thread.active", ({ thread }) => publishOnFleetThread("thread.active", thread));
   bb.events.on("thread.failed", ({ thread }) => publishOnFleetThread("thread.failed", thread));
+  bb.events.on("thread.archived", ({ thread }) => publishOnFleetThread("thread.archived", thread));
+  // A crewmate waiting on a permission or a question moves to Blocked now, not at the next poll.
+  bb.events.on("interaction.pending", ({ thread }) => publishOnFleetThread("interaction.pending", thread));
   bb.events.on("thread.idle", ({ thread, lastAssistantText }) =>
     listen("thread.idle", async () => {
       const role = await roleOf(thread);

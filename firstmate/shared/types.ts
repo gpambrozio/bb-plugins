@@ -163,10 +163,11 @@ export const WatchSummarySchema = z.object({
 });
 export type WatchSummary = z.infer<typeof WatchSummarySchema>;
 
-/** The state of the captain's copy of the charter, `data/charter.md`, against the plugin's own. */
+/**
+ * The state of the captain's copy of the charter, `data/charter.md`, against the plugin's own: only what
+ * the board acts on, never the charter's text.
+ */
 export const CharterStateSchema = z.object({
-  /** What `AGENTS.md` is rendered from: the captain's copy, or the plugin's charter. */
-  template: z.string(),
   /** The captain has edited their copy. */
   edited: z.boolean(),
   /** The captain has edited their copy, and the plugin's charter has changed since it started from it. */

@@ -1,12 +1,15 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { PluginThreadEventPayloads } from "@get-bb/plugin-sdk";
 import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { afterEach, describe, expect, it } from "vitest";
 
 import plugin, { rpcContract } from "./server";
 import { prepareHome } from "./server/home";
 import type { Fleet, WatchSummary } from "./shared/types";
+
+type PendingInteraction = PluginThreadEventPayloads["interaction.pending"]["interaction"];
 
 const tempDirs: string[] = [];
 const hosts: { harness: { dispose(): Promise<void> } }[] = [];
@@ -66,6 +69,21 @@ describe("server wiring", () => {
     const { errors } = await harness.emitThreadEvent("thread.idle", { thread: makeThreadResponse({ id: "thr_mate" }), lastAssistantText: null });
     expect(errors).toEqual([]);
     expect(fleetSignals(harness)).toBe(3);
+  });
+
+  it("publishes the fleet when a crewmate starts waiting on an interaction or is archived", async () => {
+    const { harness } = await load({ mateId: "thr_mate" });
+    const child = makeThreadResponse({ id: "thr_child", parentThreadId: "thr_mate" });
+    const other = makeThreadResponse({ id: "thr_other", parentThreadId: "thr_else" });
+    const interaction = { id: "int_1", threadId: "thr_child", status: "pending" } as unknown as PendingInteraction;
+    await harness.emitThreadEvent("interaction.pending", { thread: other, interaction });
+    await harness.emitThreadEvent("thread.archived", { thread: other });
+    expect(fleetSignals(harness)).toBe(0);
+
+    const pending = await harness.emitThreadEvent("interaction.pending", { thread: child, interaction });
+    const archived = await harness.emitThreadEvent("thread.archived", { thread: child });
+    expect([...pending.errors, ...archived.errors]).toEqual([]);
+    expect(fleetSignals(harness)).toBe(2);
   });
 
   it("publishes nothing while no first mate is stored", async () => {

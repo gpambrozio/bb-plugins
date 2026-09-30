@@ -8,7 +8,7 @@
  * what is left here are the refusals that need bb (who is calling, which project, what file).
  */
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 
 import { PluginCliError, cliCommand, defineCli, type PluginCliRegistration } from "@get-bb/plugin-sdk";
 
@@ -50,8 +50,16 @@ function titleOf(explicit: string | undefined, task: string, brief: string): str
   return line === "" ? task : `${task}: ${line}`;
 }
 
+/**
+ * The brief, read from `promptFile` relative to the caller's working directory. With no working
+ * directory from bb, a relative path would resolve against the bb server's own, so only an absolute one
+ * is taken.
+ */
 async function readBrief(promptFile: string, cwd: string | undefined): Promise<string> {
-  const path = resolve(cwd ?? process.cwd(), promptFile);
+  if (cwd === undefined && !isAbsolute(promptFile)) {
+    throw new PluginCliError("--prompt-file must be an absolute path when bb gives no working directory.", { code: "prompt_file_relative" });
+  }
+  const path = cwd === undefined ? promptFile : resolve(cwd, promptFile);
   let brief: string;
   try {
     brief = await readFile(path, "utf8");
