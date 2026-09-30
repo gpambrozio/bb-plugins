@@ -3,9 +3,10 @@
  * something on it, or have the first mate relaunch it.
  *
  * Every action first checks the thread is a child of the stored first mate, so the board cannot be
- * pointed at an arbitrary thread. None of them tears anything down: ending a crewmate archives its
- * thread and leaves its environment exactly as it is, and relaunching is the first mate's job, because
- * it owns the brief and the backlog.
+ * pointed at an arbitrary thread. Ending a crewmate archives its thread, and bb retires its worktree
+ * after its grace period, so only committed work can be restored: that is why End asks first unless the
+ * task is in the backlog's Done. Relaunching is the first mate's job, because it owns the brief and the
+ * backlog.
  *
  * Steering goes straight to the crewmate, as if typed into its own thread. The first mate hears when
  * that turn ends, because bb notifies a parent of its child's turns however they were started.

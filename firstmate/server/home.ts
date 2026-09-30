@@ -15,24 +15,24 @@
  *     <home>/watches/            scripts the plugin runs on a schedule (watch-files.ts, watches.ts)
  *     <home>/projects/           clones for projects with no local checkout
  *     <home>/.firstmate/         the plugin's own state; the first mate never needs it
- *     <home>/icon.svg            the icon Paseo's sidebar shows for the home
+ *     <home>/icon.svg            the plugin's ship icon, kept from the Paseo plugin
  *
  * Every file starts as its namesake in the plugin's `templates/` folder, which
  * is laid out the same way (`templates.ts`). Everything but the charter is
  * written only when missing, so a relaunch never loses a record the first
  * mate has been keeping.
  *
- * The icon is Lucide's ship — the plugin's own sidebar icon, ISC-licensed — in
- * white on a blue rounded square. It is a file, not something the plugin sets:
- * Paseo looks for an icon in every project's folder on its own (`favicon.svg`,
- * `icon.svg`, `icon.png` and more, square and 32 KB at most; an SVG counts as
- * square) and shows it unless the captain uploaded one in the project's
- * settings.
+ * The icon is Lucide's ship — the plugin's own icon, ISC-licensed — in white on
+ * a blue rounded square. Paseo showed an icon it found in a project's folder;
+ * bb 0.44 documents no such lookup, so here it is only a file in the home, left
+ * for any tool that does look for one.
  *
- * There is no `CLAUDE.md`. Claude Code and Codex both read `AGENTS.md` from
- * the working directory, and a `CLAUDE.md` importing it risks the charter
- * twice over in every turn's context; the launch prompt asks a harness that
- * reads neither to open the file itself.
+ * The charter is the home's `AGENTS.md`, which bb itself does not inject (bb
+ * reads only `<workspace>/.bb/AGENTS.md`). Codex reads a repo-root `AGENTS.md`,
+ * and Claude Code 2.1.277 and later does too when no `CLAUDE.md` takes
+ * precedence. There is no `CLAUDE.md`: importing `AGENTS.md` from one risks the
+ * charter twice over in every turn's context. The opening prompt asks a harness
+ * that has not loaded the file to read it in full.
  */
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";

@@ -1,5 +1,5 @@
 /**
- * The first mate's home as files, for the panel's file view.
+ * The first mate's home as files, for the few the plugin itself reads and edits (the suggestions).
  *
  * Every path is relative to the home and is checked twice: lexically (no
  * absolute paths, nothing that normalizes above the home) and on disk, by
@@ -8,15 +8,12 @@
  * clone under `projects/` — happens to contain from opening the rest of the
  * disk.
  *
- * Writes carry the modification time the editor opened the file at, because
- * the first mate writes these same files; a save over a newer version is
- * refused unless forced, checked both before the new content is staged and
- * again just before it replaces the file. Each write goes to a temporary file
- * that is then renamed, so a crash never leaves half a file for the first mate
- * to read; it takes the replaced file's mode first, so an executable stays
- * executable.
- * Writes to one path run one at a time, so two saves opened at the same
- * version cannot both pass the check.
+ * The first mate writes these same files, so a replacement is refused unless the file still reads
+ * exactly as it did (`replaceTextIfUnchanged`), checked both before the new content is staged and
+ * again just before it replaces the file. Each write goes to a temporary file that is then renamed,
+ * so a crash never leaves half a file for the first mate to read; it takes the replaced file's mode
+ * first. Writes to one path run one at a time, so two replacements of the same version cannot both
+ * pass the check.
  */
 import { randomUUID } from "node:crypto";
 import type { Stats } from "node:fs";
@@ -119,20 +116,6 @@ export interface WriteHooks {
   afterStaging?: () => Promise<void>;
 }
 
-export async function writeTextFile(
-  home: string,
-  input: { path: string; content: string; expectedModifiedMs: number | null; force: boolean },
-  hooks: WriteHooks = {},
-): Promise<{ path: string; size: number; modifiedMs: number }> {
-  const { absolute, relative: rel } = await resolveInHome(home, input.path);
-  if (rel === "") throw new Error("The home itself is not a file.");
-  return serialized(absolute, async () => {
-    await stageAndReplace(absolute, input.content, (current) => checkVersion(rel, current, input), hooks);
-    const saved = await stat(absolute);
-    return { path: rel, size: saved.size, modifiedMs: Math.floor(saved.mtimeMs) };
-  });
-}
-
 /**
  * Replaces a text file only if it still reads exactly `expected`, compared by content rather than by
  * modification time, which cannot tell two writes within one millisecond apart. Throws
@@ -172,21 +155,6 @@ async function statIfPresent(absolute: string): Promise<Current> {
   }
 }
 
-function checkVersion(rel: string, current: Current, input: { expectedModifiedMs: number | null; force: boolean }): void {
-  if (current !== null && !current.isFile()) throw new Error(`"${rel}" is not a file.`);
-  if (input.force) return;
-  if (input.expectedModifiedMs === null && current !== null) {
-    throw new FileChangedError(`"${rel}" already exists. Open it to edit it.`);
-  }
-  if (input.expectedModifiedMs !== null && (current === null || Math.floor(current.mtimeMs) !== input.expectedModifiedMs)) {
-    throw new FileChangedError(
-      current === null
-        ? `"${rel}" was deleted since you opened it — the first mate may have removed it. Overwrite to write your version back.`
-        : `"${rel}" changed since you opened it — the first mate may have written it. Reload to see that version, or overwrite it with yours.`,
-    );
-  }
-}
-
 /**
  * Writes `content` to a temporary file beside `absolute` and renames it into place, running `check`
  * on the destination twice: before anything is written, and again once the temporary file is ready,
@@ -217,15 +185,4 @@ async function stageAndReplace(
     await rm(temporary, { force: true });
     throw error;
   }
-}
-
-/** The home, which a launch creates; before that there is nothing to show, and saying so beats ENOENT. */
-export async function requireHome(home: string): Promise<string> {
-  try {
-    const info = await stat(home);
-    if (info.isDirectory()) return home;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-  }
-  throw new Error("The first mate's home does not exist yet. Launch the first mate, and it is created.");
 }
