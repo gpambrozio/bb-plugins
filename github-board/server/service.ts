@@ -25,6 +25,7 @@ import {
   loadColumns,
   resolveViewerLogin,
   settleBranches,
+  settleLabels,
   toggleLabel,
   updateBranch,
   type GitHubApi,
@@ -75,6 +76,8 @@ export function createBoardService(deps: BoardServiceDeps) {
   let cachedToken: Stamped<string> | null = null;
   /** When each pull request's branch was last updated from here; see `settleBranches`. */
   const recentBranchUpdates = new Map<string, number>();
+  /** The labels each item was last given from here; see `settleLabels`. */
+  const recentLabels = new Map<string, { labels: string[]; at: number }>();
 
   /**
    * `@me` is never sent to a search: the login setting when there is one,
@@ -153,11 +156,9 @@ export function createBoardService(deps: BoardServiceDeps) {
 
       // Settled after every request has returned, so an update that landed
       // while they ran wins over what they saw.
-      const columns = settleBranches(
-        await loadColumns(deps.api, login, limit),
-        recentBranchUpdates,
-        deps.now(),
-      );
+      const loaded = await loadColumns(deps.api, login, limit);
+      const now = deps.now();
+      const columns = settleLabels(settleBranches(loaded, recentBranchUpdates, now), recentLabels, now);
       const fetchedAt = new Date(deps.now()).toISOString();
 
       // A column that failed is not worth remembering: caching it would keep
@@ -220,6 +221,7 @@ export function createBoardService(deps: BoardServiceDeps) {
       add: boolean;
     }): Promise<{ labels: string[] }> {
       const labels = await toggleLabel(deps.api, itemId, labelId, add);
+      recentLabels.set(itemId, { labels, at: deps.now() });
       patchCachedItem(itemId, { labels });
       return { labels };
     },

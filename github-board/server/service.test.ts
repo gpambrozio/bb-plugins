@@ -164,3 +164,37 @@ describe("projectsForCard", () => {
     expect(unmatched).toEqual({ project: null, candidates: [] });
   });
 });
+
+describe("a label edit during a refresh", () => {
+  it("survives a refresh whose search predates it", async () => {
+    let release: () => void = () => {};
+    let hold = false;
+    const { service } = setup({
+      route: (request) => {
+        if (request.query.includes("... on PullRequest {") && request.query.includes("search(")) {
+          const answer = {
+            mine: { nodes: [{ ...pullRequest("P1"), labels: { nodes: [{ name: "old" }] } }] },
+            owned: { nodes: [] },
+            assigned: { nodes: [] },
+          };
+          return hold ? new Promise((resolve) => (release = () => resolve(answer))) : answer;
+        }
+        if (request.query.includes("addLabelsToLabelable")) {
+          return { addLabelsToLabelable: { labelable: { labels: { nodes: [{ name: "old" }, { name: "new" }] } } } };
+        }
+        return undefined;
+      },
+    });
+    hold = true;
+    const loading = service.loadBoard({ limit: 30, force: true });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await service.toggleLabel({ itemId: "P1", labelId: "L", add: true });
+    release();
+    const board = await loading;
+    const labelsOf = (b: Awaited<typeof loading>) =>
+      b.columns.find((column) => column.id === "open-prs")?.items[0]?.labels;
+    expect(labelsOf(board)).toEqual(["old", "new"]);
+    hold = false;
+    expect(labelsOf(await service.loadBoard({ limit: 30, force: false }))).toEqual(["old", "new"]);
+  });
+});

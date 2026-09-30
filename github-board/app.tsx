@@ -6,16 +6,18 @@ import { definePluginApp, useBbNavigate, type BbNavigate } from "@get-bb/plugin-
 
 import { BoardPanel, PANEL_PATH, PROMPTS_SUBPATH } from "./app/board-panel";
 import { PromptSettingsEditor } from "./app/prompt-settings";
+import { BoardPatchListener } from "./app/state";
 
 /**
  * A palette command gets no navigation of its own, so this app-wide overlay,
- * mounted once per window, hands the host's navigator to the commands.
+ * mounted once per window, hands the host's navigator to the commands. It also
+ * keeps the remembered board current while no board is on screen.
  */
 let navigator: BbNavigate | null = null;
 
-function NavigatorBridge() {
+function AppBridge() {
   navigator = useBbNavigate();
-  return null;
+  return <BoardPatchListener />;
 }
 
 export default definePluginApp((app) => {
@@ -34,7 +36,7 @@ export default definePluginApp((app) => {
     component: PromptSettingsEditor,
   });
 
-  app.slots.experimental_appOverlay({ id: "navigator", component: NavigatorBridge });
+  app.slots.experimental_appOverlay({ id: "bridge", component: AppBridge });
 
   app.commands.register({
     id: "open-board",

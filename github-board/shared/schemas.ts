@@ -33,6 +33,8 @@ export type DisplayPrefs = z.output<typeof DisplayPrefsSchema>;
  * the composer reconciles a model or level that no longer exists.
  */
 export const LaunchDefaultsSchema = z.object({
+  /** The project the selections were made in; `environment` is seeded only there. */
+  projectId: z.string().optional(),
   providerId: z.string(),
   model: z.string(),
   reasoningLevel: z.string(),
@@ -42,6 +44,18 @@ export const LaunchDefaultsSchema = z.object({
 });
 
 export type LaunchDefaults = z.output<typeof LaunchDefaultsSchema>;
+
+/**
+ * The saved selections a card's dialog is seeded with. An environment names
+ * things of one project — a branch, a thread's environment to reuse — so it is
+ * kept only for the project it was chosen in; the model and the rest carry
+ * over anywhere.
+ */
+export function launchSeedsFor(launch: LaunchDefaults, projectId: string | null): LaunchDefaults {
+  if (launch.environment === undefined || launch.projectId === projectId) return launch;
+  const { environment: _environment, ...rest } = launch;
+  return rest;
+}
 
 /** The card a thread is started on; stored in the thread's plugin metadata. */
 export const SentCardSchema = BoardItemSchema.pick({

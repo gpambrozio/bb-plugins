@@ -17,6 +17,7 @@ import {
   PROMPTS_CHANGED,
   type DisplayPrefs,
   type ItemPatch,
+  launchSeedsFor,
   type LaunchDefaults,
 } from "./shared/schemas";
 import { workspaceTitle } from "./shared/launch";
@@ -87,8 +88,11 @@ export default async function plugin(bb: BbPluginApi) {
   }
   if (ghProblem !== null) bb.status.needsConfiguration(ghProblem);
 
+  // Only a missing `gh` stops calls. A failed sign-in check is not latched:
+  // a check run before the network was up must not keep the board failing
+  // until a reload, and a really signed-out `gh` reports that on every call.
   function requireGh(): GhRunner {
-    if (gh === null || ghProblem !== null) throw new Error(ghProblem ?? `GitHub CLI is unavailable. ${GH_HINT}`);
+    if (gh === null) throw new Error(ghProblem ?? `GitHub CLI is unavailable. ${GH_HINT}`);
     return gh;
   }
 
@@ -125,6 +129,8 @@ export default async function plugin(bb: BbPluginApi) {
     bb.realtime.publish(ITEM_PATCHED, patch);
   }
 
+  let displayWrites: Promise<unknown> = Promise.resolve();
+
   async function displayPrefs(): Promise<DisplayPrefs> {
     return { ...DEFAULT_DISPLAY, ...((await bb.storage.kv.get<DisplayPrefs>(DISPLAY_KEY)) ?? {}) };
   }
@@ -153,11 +159,17 @@ export default async function plugin(bb: BbPluginApi) {
       return result;
     },
     getDisplayPrefs: () => displayPrefs(),
-    setDisplayPrefs: async (patch) => {
-      const next = { ...(await displayPrefs()), ...patch };
-      await bb.storage.kv.set(DISPLAY_KEY, next);
-      bb.realtime.publish(DISPLAY_PREFS_CHANGED, next);
-      return next;
+    setDisplayPrefs: (patch) => {
+      // One write at a time: two read-modify-writes in flight together, a
+      // filter toggle and a width commit say, would drop one of them.
+      const write = displayWrites.then(async () => {
+        const next = { ...(await displayPrefs()), ...patch };
+        await bb.storage.kv.set(DISPLAY_KEY, next);
+        bb.realtime.publish(DISPLAY_PREFS_CHANGED, next);
+        return next;
+      });
+      displayWrites = write.catch(() => undefined);
+      return write;
     },
     getPrompts: () => prompts(),
     savePrompts: async (value) => {
@@ -175,7 +187,7 @@ export default async function plugin(bb: BbPluginApi) {
       return {
         project: project === null ? null : choice(project),
         candidates: candidates.map(choice),
-        launch: launch ?? null,
+        launch: launch === undefined ? null : launchSeedsFor(launch, project?.id ?? null),
       };
     },
     send: async ({ card, request }) => {
@@ -190,6 +202,7 @@ export default async function plugin(bb: BbPluginApi) {
       // Saved only once the thread exists, so a selection bb refused is not
       // what the next card opens on.
       const launch: LaunchDefaults = {
+        projectId: request.projectId,
         providerId: request.providerId,
         model: request.model,
         reasoningLevel: request.reasoningLevel,

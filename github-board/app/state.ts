@@ -4,8 +4,8 @@
  *
  * The board is also kept at module scope. bb unmounts the page whenever the
  * user opens a thread, and coming back should repaint at once rather than
- * wait on three searches; the server's own cache covers the case where the
- * module did not survive either.
+ * wait on three searches; a non-forced load then runs underneath, answered
+ * from the server's cache while that is fresh.
  */
 import { useCallback, useEffect, useState } from "react";
 import { useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
@@ -31,11 +31,7 @@ export function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** A board younger than this is repainted without asking the server again. */
-const STALE_AFTER_MS = 5 * 60_000;
-
 let cachedBoard: Board | null = null;
-let cachedAt = 0;
 /** The mounted board's setter, so an edit's answer reaches whichever board is on screen now. */
 let setMountedBoard: ((update: (current: Board | null) => Board | null) => void) | null = null;
 
@@ -64,7 +60,6 @@ export function useBoard() {
       rpc.call("loadBoard", { limit: 30, force }).then(
         (next) => {
           cachedBoard = next;
-          cachedAt = Date.now();
           setBoard(next);
           setError(null);
           setLoading(false);
@@ -79,17 +74,28 @@ export function useBoard() {
   );
 
   useEffect(() => {
-    // The stale board stays on screen while the refresh runs underneath it.
-    if (cachedBoard !== null && Date.now() - cachedAt < STALE_AFTER_MS) return;
+    // The remembered board paints at once and this runs underneath it. It is
+    // not forced, so within the server's cache window it costs no GitHub
+    // requests — and it catches anything this window missed while away,
+    // including edits made while the realtime connection was down.
     refresh(false);
   }, [refresh]);
 
+  return { board, loading, error, refresh };
+}
+
+/**
+ * Applies every `item-patched` signal to the remembered board, mounted or not.
+ * Rendered once per window by the app overlay, so a label changed in another
+ * window while this one shows a thread is already on the board when it comes
+ * back.
+ */
+export function BoardPatchListener() {
   useRealtime(ITEM_PATCHED, (payload) => {
     const parsed = ItemPatchSchema.safeParse(payload);
     if (parsed.success) patchBoardItem(parsed.data.itemId, parsed.data.patch);
   });
-
-  return { board, loading, error, refresh };
+  return null;
 }
 
 const DEFAULT_DISPLAY: DisplayPrefs = { hiddenRepositories: [], detailWidthFraction: null };

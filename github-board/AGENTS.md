@@ -17,7 +17,8 @@ plugin here shares.
 | `server/gh.ts` | `gh api graphql` as that `GitHubApi`: finding `gh`, argument spelling, failures, `gh auth token`. |
 | `server/image.ts` | The image fetch: redirects by hand, the token only to `github.com`, a timeout and a size cap. |
 | `server/projects.ts` | Which bb projects a repository belongs to, and which one a card opens on. |
-| `shared/contract.ts` | The RPC contract, the realtime channels, and the stored shapes (display prefs, launch defaults). |
+| `shared/contract.ts` | The RPC contract. The app imports it as a type only. |
+| `shared/schemas.ts` | The realtime channels and the stored shapes (display prefs, launch defaults), for both halves. |
 | `shared/board.ts` | The zod shapes of a board, a card, its details and comments. |
 | `shared/settings.ts` | The default prompts, `normalizePrompts`, `templateFor` and `renderTemplate`. |
 | `shared/image-host.ts` | Which image URLs the server fetches, and which get the token; used by both halves. |
@@ -40,8 +41,10 @@ plugin here shares.
 checkout, so no particular machine is needed. `findGh` tries `gh` on the PATH and then the two
 Homebrew locations by path, because the server falls back to the PATH it was started with when the
 login-shell lookup fails. A missing or signed-out `gh` calls `bb.status.needsConfiguration`, which
-lasts until the next load — so the user reloads after fixing it, and the README says so. Every call
-is killed after 30 seconds.
+lasts until the next load — so the user reloads after fixing it, and the README says so. Only a
+missing `gh` stops calls; a failed sign-in check is not latched, because a check run before the
+network was up must not keep the board failing until a reload. Every call is killed after 30
+seconds.
 
 The only other subprocess is `git -C <path> remote -v`, for project matching, and it runs only on
 project checkouts on the server's own machine (`primaryHostId`).
@@ -89,8 +92,14 @@ when you add a query.
   (`normalizePrompts`, on the server); an override stores only what it overrides; an unknown
   placeholder is left standing.
 - **Edits patch every cache.** A label toggle or a branch update patches the server's cached board,
-  and the server publishes `item-patched`, which every open board — and the app's module-scope copy —
-  applies. That is also how an answer reaches a board remounted since the press.
+  and the server publishes `item-patched`. The listener is in the app overlay (`AppBridge`), mounted
+  once per window, so the module-scope board takes the patch even while no board is on screen; the
+  mounted board takes it through `setMountedBoard`, which is also how an answer reaches a board
+  remounted since the press. Mounting the board always runs a non-forced load underneath the
+  remembered one, which the server answers from cache while that is fresh.
+- **An edit outlives a refresh already in flight.** Label edits (`settleLabels`) and branch updates
+  (`settleBranches`) are recorded with their time and applied to a board after its last `await`, for
+  two minutes, so a refresh whose searches ran before the edit cannot cache what it replaced.
 - **The board draws** (`visibleColumns`): the filter first, then issues claimed by a pull request
   (drafts too) fold into it, then empty columns come off unless they errored — and if that leaves
   nothing, every column comes back.
@@ -141,9 +150,15 @@ composer's environment picker replaces.
 | `bb.settings` (host-rendered form) | `login` |
 | `bb.storage.kv` `display` | `hiddenRepositories`, `detailWidthFraction` — toggled and dragged on the board, not form fields |
 | `bb.storage.kv` `prompts` | The templates; edited by `app/prompt-settings.tsx`, normalised on save |
-| `bb.storage.kv` `launch` | The last send's composer selections |
+| `bb.storage.kv` `launch` | The last send's composer selections, with its `projectId`; `launchSeedsFor` seeds the environment only into that project, because it names a branch or a reusable environment of that project |
 
-Each write publishes on its realtime channel (`shared/contract.ts`) so every window follows.
+Each write publishes on its realtime channel (`shared/schemas.ts`) so every window follows. Display
+writes are serialised, so a filter toggle and a width commit cannot drop each other.
+
+`shared/contract.ts` imports `defineRpcContract` from the SDK root, which only the server bundle can
+resolve, so the app imports it as a type only; what the app needs at run time is in
+`shared/schemas.ts`. `app/imports.test.ts` enforces it — the failure otherwise shows only in a git
+install's production build.
 
 ## Layout notes
 

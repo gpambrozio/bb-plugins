@@ -32,7 +32,11 @@ function clampWidth(width: number, bodyWidth: number): number {
   return Math.min(Math.max(width, DETAIL_MIN_WIDTH), max);
 }
 
-const renderImage = (image: { url: string; alt: string }) => <RemoteImage url={image.url} alt={image.alt} />;
+// Keyed by URL, so an image replaced in a refreshed body starts over — and an
+// external image approved for one host is never loaded for another.
+const renderImage = (image: { url: string; alt: string }) => (
+  <RemoteImage key={image.url} url={image.url} alt={image.alt} />
+);
 
 function Comments({ id, force }: { id: string; force: number }) {
   const rpc = useBoardRpc();
@@ -126,7 +130,7 @@ export function DetailPanel({
   // per move would be a write per pixel. A share saved elsewhere is adopted,
   // but never mid-drag, which would yank the edge from under the pointer.
   const [dragWidth, setDragWidth] = useState<number | null>(null);
-  const drag = useRef<{ startX: number; startWidth: number } | null>(null);
+  const drag = useRef<{ startX: number; startWidth: number; width: number } | null>(null);
   const width = clampWidth(dragWidth ?? bodyWidth * (widthFraction ?? DEFAULT_FRACTION), bodyWidth);
 
   const onResizeStart = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -134,18 +138,22 @@ export function DetailPanel({
     // Captured, so a pointer that outruns the handle across the board, or
     // leaves the window, still moves the edge and still reports the release.
     event.currentTarget.setPointerCapture(event.pointerId);
-    drag.current = { startX: event.clientX, startWidth: width };
+    drag.current = { startX: event.clientX, startWidth: width, width };
     setDragWidth(width);
   };
   const onResizeMove = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (drag.current === null) return;
     // Anchored right, so a drag left grows it.
-    setDragWidth(clampWidth(drag.current.startWidth - (event.clientX - drag.current.startX), bodyWidth));
+    const next = clampWidth(drag.current.startWidth - (event.clientX - drag.current.startX), bodyWidth);
+    drag.current.width = next;
+    setDragWidth(next);
   };
   const onResizeEnd = () => {
     if (drag.current === null) return;
+    // The ref, not state: the last move may not have rendered yet.
+    const final = drag.current.width;
     drag.current = null;
-    if (dragWidth !== null && bodyWidth > 0) onWidthCommitted(Math.min(1, dragWidth / bodyWidth));
+    if (bodyWidth > 0) onWidthCommitted(Math.min(1, final / bodyWidth));
     setDragWidth(null);
   };
 
@@ -157,7 +165,8 @@ export function DetailPanel({
       className={cn(
         "flex h-full flex-col bg-background",
         compact ? "w-full" : "absolute top-0 right-0 bottom-0 border-l border-border shadow-lg",
-        dragWidth === null && !compact && "animate-in slide-in-from-right duration-200",
+        // Always present, so it plays once on mount and a resize never replays it.
+        !compact && "animate-in slide-in-from-right duration-200",
       )}
       style={compact ? undefined : { width }}
       aria-label={`${kindLabel(column)} ${item.repository}#${item.number}`}

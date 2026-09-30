@@ -792,6 +792,30 @@ export function settleBranches(
   return columns.map((column) => ({ ...column, items: column.items.map(settled) }));
 }
 
+/** How long a label edit is taken at its word over a search that may predate it. */
+export const LABEL_EDIT_SETTLE_MS = 2 * 60_000;
+
+/**
+ * Applies recent label edits to a board whose searches may have run before
+ * them — a refresh in flight when a label is toggled would otherwise cache the
+ * labels the edit replaced. `recentLabels` maps an item's node id to the labels
+ * GitHub answered and when; entries past the window are deleted as they are met.
+ */
+export function settleLabels(
+  columns: readonly BoardColumn[],
+  recentLabels: Map<string, { labels: string[]; at: number }>,
+  now: number,
+): BoardColumn[] {
+  const settled = (item: BoardItem): BoardItem => {
+    const edit = recentLabels.get(item.id);
+    if (edit === undefined) return item;
+    if (now - edit.at < LABEL_EDIT_SETTLE_MS) return { ...item, labels: edit.labels };
+    recentLabels.delete(item.id);
+    return item;
+  };
+  return columns.map((column) => ({ ...column, items: column.items.map(settled) }));
+}
+
 /**
  * First 100 by name, which is every label on all but a deliberately elaborate
  * repository. Paging past that would mean a cursor loop for a menu nobody can
