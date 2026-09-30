@@ -80,6 +80,8 @@ export const NewThreadRequestSchema = z.looseObject({
   input: z.array(z.json()),
 });
 
+export type NewThreadRequestInput = z.input<typeof NewThreadRequestSchema>;
+
 const ProjectChoiceSchema = z.object({ id: z.string(), name: z.string() });
 
 export const rpcContract = defineRpcContract({
