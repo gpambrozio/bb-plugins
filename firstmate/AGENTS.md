@@ -49,6 +49,9 @@ Do not break these; each was paid for.
   same thread, so crew stay its children and two first mates cannot exist.
 - **Launch and adopt run under the `mate` lock**, and a launch that fails after the project exists stores
   no id.
+- **Only a thread whose workspace is the home can be adopted** (compared by real path, on the bb server's
+  machine). The charter is the home's `AGENTS.md`, and the board opens home files through the first
+  mate's environment, so a first mate working elsewhere would see neither.
 - **Only the first mate spawns crew.** `crew spawn` refuses any other calling thread.
 - **Templates are data.** The charter follows the plugin until the captain edits it, detected by
   fingerprint; then a changed plugin charter goes beside it as `data/charter.new.md` with a board notice.

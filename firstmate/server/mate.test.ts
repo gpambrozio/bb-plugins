@@ -1,4 +1,4 @@
-import { mkdtemp, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -246,7 +246,8 @@ describe("adoptMate", () => {
 
   it("adopt prepares the home and stores the thread's id", async () => {
     const { home, threads, store, deps } = await setup();
-    const thread = threads.add({ status: "idle" });
+    const thread = threads.add({ status: "idle", environmentId: "env_home" });
+    threads.setWorkspace("env_home", home);
 
     const adopted = await adoptMate(deps, thread.id);
 
@@ -254,6 +255,43 @@ describe("adoptMate", () => {
     expect(await store.mateThreadId()).toBe(thread.id);
     expect(await exists(join(home, STATE_DIR))).toBe(true);
     expect(threads.spawned).toEqual([]);
+  });
+});
+
+describe("adoptMate and the home", () => {
+  it("refuses a thread working somewhere other than the home, naming the home, and prepares nothing", async () => {
+    const { home, threads, store, deps } = await setup();
+    const thread = threads.add({ status: "idle", environmentId: "env_web" });
+    threads.setWorkspace("env_web", "/checkouts/web");
+
+    await expect(adoptMate(deps, thread.id)).rejects.toThrow(
+      `Only a thread working in the first mate's home (${home}) can be adopted.`,
+    );
+    expect(await store.mateThreadId()).toBeNull();
+    expect(await exists(home)).toBe(false);
+  });
+
+  it("refuses a thread with no environment, or one on another machine", async () => {
+    const { home, threads, store, deps } = await setup();
+    const bare = threads.add({ status: "idle", environmentId: null });
+    // No workspace recorded for env_remote: the port answers null, as for another machine.
+    const remote = threads.add({ status: "idle", environmentId: "env_remote" });
+
+    await expect(adoptMate(deps, bare.id)).rejects.toThrow(`(${home})`);
+    await expect(adoptMate(deps, remote.id)).rejects.toThrow(`(${home})`);
+    expect(await store.mateThreadId()).toBeNull();
+  });
+
+  it("adopts a thread whose workspace reaches the home through a symlink", async () => {
+    const { home, threads, store, deps } = await setup();
+    await mkdir(home, { recursive: true });
+    const link = `${home}-link`;
+    await symlink(home, link);
+    const thread = threads.add({ status: "idle", environmentId: "env_link" });
+    threads.setWorkspace("env_link", link);
+
+    await adoptMate(deps, thread.id);
+    expect(await store.mateThreadId()).toBe(thread.id);
   });
 });
 

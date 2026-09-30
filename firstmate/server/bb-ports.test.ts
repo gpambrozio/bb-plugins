@@ -54,3 +54,25 @@ describe("bbThreads.spawn", () => {
     expect(spawnedEnvironment(harness)).toEqual({ type: "reuse", environmentId: "env_1" });
   });
 });
+
+describe("bbThreads.workspacePath", () => {
+  function sdkWithEnvironment(environment: { hostId: string; path: string | null }) {
+    return createFakeSdk({
+      pluginId: "firstmate",
+      overrides: {
+        system: { config: () => ({ primaryHostId: SERVER_HOST }) },
+        environments: { get: ({ environmentId }) => ({ id: environmentId, ...environment }) },
+      },
+    });
+  }
+
+  it("is the environment's directory when it is on the bb server's machine", async () => {
+    const { sdk } = sdkWithEnvironment({ hostId: SERVER_HOST, path: "/home/fm" });
+    expect(await bbThreads(sdk).workspacePath("env_1")).toBe("/home/fm");
+  });
+
+  it("is null for an environment on another machine", async () => {
+    const { sdk } = sdkWithEnvironment({ hostId: "host_other", path: "/home/fm" });
+    expect(await bbThreads(sdk).workspacePath("env_1")).toBeNull();
+  });
+});

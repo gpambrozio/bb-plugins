@@ -58,6 +58,10 @@ function Elsewhere({ fleet, threadId, onChanged }: { fleet: Fleet; threadId: str
       {fleet.mateMissing ? (
         <p className="text-xs text-muted-foreground">The recorded first mate's thread is gone (archived or deleted).</p>
       ) : null}
+      <p className="text-xs text-muted-foreground">
+        Launch one from FirstMate's settings. A thread can be adopted only if it works in the first mate's home,{" "}
+        <span className="font-mono break-all">{fleet.home}</span>, where its charter is.
+      </p>
       <div>
         <Button size="sm" disabled={busy} onClick={adopt}>
           Adopt this thread

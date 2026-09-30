@@ -40,8 +40,9 @@ instead. Nothing is published yet. To hack on it, run
 ## Getting started
 
 1. Open bb's settings, find **FirstMate**, pick the first mate's provider and model, and press **Launch**.
-   If you already started a thread for the job, open its **FirstMate** tab and press **Adopt this
-   thread** instead.
+   If you already started a thread in the first mate's home (the **Home directory** setting), open its
+   **FirstMate** tab and press **Adopt this thread** instead. Only a thread working in the home can be
+   adopted, because the charter the first mate follows is the home's `AGENTS.md`.
 2. The first mate is now pinned in the sidebar, in a project called **FirstMate** (its home). Open it and
    tell it about a project: "the web app is in bb as `web` and ships through pull requests". It keeps a
    registry, so you say this once.
@@ -83,8 +84,8 @@ Press **FirstMate** on the first mate's thread. Each card is a worker, a backlog
 
 The sections are stacked and foldable, empty ones are hidden, and the folds are remembered. On a
 worker's own thread the FirstMate tab shows just its card, with a note box that tells the first mate
-something about that worker without touching the worker; on any other thread it offers to adopt it, or a
-way to the first mate.
+something about that worker without touching the worker; on any other thread it offers to adopt it (when
+it works in the home), or a way to the first mate.
 
 Above the sections, the board shows a notice when FirstMate's own charter has moved on since you edited
 yours, and below them the watches.

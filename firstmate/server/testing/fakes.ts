@@ -26,6 +26,7 @@ export class FakeThreads implements ThreadsPort {
   private readonly metadataById = new Map<string, Record<string, unknown>>();
   private readonly texts = new Map<string, string>();
   private readonly pending = new Map<string, number>();
+  private readonly workspaces = new Map<string, string>();
   private readonly failures = new Map<ThreadMethod, Error>();
   private nextId = 1;
   private clock = 1_000;
@@ -54,6 +55,11 @@ export class FakeThreads implements ThreadsPort {
   setText(id: string, text: string | null): void {
     if (text === null) this.texts.delete(id);
     else this.texts.set(id, text);
+  }
+
+  /** Where an environment works; one never set answers null, as one on another machine does. */
+  setWorkspace(environmentId: string, path: string): void {
+    this.workspaces.set(environmentId, path);
   }
 
   setPendingInteractions(id: string, count: number): void {
@@ -120,6 +126,13 @@ export class FakeThreads implements ThreadsPort {
     await tick();
     this.throwIfFailing("lastText");
     return this.texts.get(id) ?? null;
+  }
+
+  async workspacePath(environmentId: string): Promise<string | null> {
+    this.record("workspacePath", environmentId);
+    await tick();
+    this.throwIfFailing("workspacePath");
+    return this.workspaces.get(environmentId) ?? null;
   }
 
   async spawn(args: SpawnArgs): Promise<ThreadInfo> {

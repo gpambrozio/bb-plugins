@@ -21,7 +21,7 @@
 import { randomUUID } from "node:crypto";
 import type { Stats } from "node:fs";
 import { chmod, mkdir, open, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, normalize, relative, sep } from "node:path";
+import { dirname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
 
 import { serialized } from "./serialize";
 
@@ -39,6 +39,15 @@ export function cleanRelative(path: string): string {
   const normalized = normalize(trimmed).split(sep).join("/").replace(/\/+$/, "");
   if (normalized === ".." || normalized.startsWith("../")) throw new Error(`"${path}" is outside the home.`);
   return normalized === "." ? "" : normalized;
+}
+
+/** The directory as the filesystem names it, through symlinks; a path that does not exist is compared as written. */
+export async function canonicalPath(path: string): Promise<string> {
+  try {
+    return await realpath(path);
+  } catch {
+    return resolve(path);
+  }
 }
 
 function isInside(root: string, candidate: string): boolean {

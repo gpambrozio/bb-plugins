@@ -4,7 +4,7 @@ The first mate is an ordinary pinned thread in bb's own chat, so you read its to
 
 What you can do:
 
-- Launch a first mate from the plugin's settings with the model you choose, or adopt a thread you already have.
+- Launch a first mate from the plugin's settings with the model you choose, or adopt a thread you already started in its home.
 - Ask for work in plain words. Each task becomes a worker in its own worktree, under the first mate.
 - Steer a worker with a word, interrupt its turn, relaunch it in the same worktree, or end it, all from its card. Ending a worker whose task is not done asks first.
 - Press Bearings for where everything stands, or Ahoy for what happened since you last spoke and each open decision in turn. Both are also in the command palette.

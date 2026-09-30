@@ -52,6 +52,8 @@ export interface ThreadsPort {
   pendingInteractions(id: string): Promise<number>;
   /** The thread's latest assistant text, or null when it has none. */
   lastText(id: string): Promise<string | null>;
+  /** The directory the environment works in, when it is on the bb server's machine; null otherwise. */
+  workspacePath(environmentId: string): Promise<string | null>;
   spawn(args: SpawnArgs): Promise<ThreadInfo>;
   send(id: string, text: string, mode: SendMode): Promise<"sent" | "queued">;
   stop(id: string): Promise<void>;

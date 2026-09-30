@@ -4,11 +4,9 @@
  *
  * Call it from handlers and services, not the plugin factory body — `bb.sdk` is for use once loaded.
  */
-import { realpath } from "node:fs/promises";
-import { resolve } from "node:path";
-
 import type { PluginBbSdk } from "@get-bb/plugin-sdk";
 
+import { canonicalPath } from "./files";
 import type { ProjectsPort, SendMode, SpawnEnvironment, ThreadInfo, ThreadsPort } from "./ports";
 
 type SpawnRequest = Parameters<PluginBbSdk["threads"]["spawn"]>[0];
@@ -145,6 +143,10 @@ export function bbThreads(sdk: PluginBbSdk): ThreadsPort {
     async lastText(id) {
       return (await sdk.threads.output({ threadId: id })).output;
     },
+    async workspacePath(environmentId) {
+      const [serverHost, environment] = await Promise.all([serverHostId(sdk), sdk.environments.get({ environmentId })]);
+      return environment.hostId === serverHost ? environment.path : null;
+    },
     async spawn(args) {
       const row = await sdk.threads.spawn({
         projectId: args.projectId,
@@ -178,23 +180,14 @@ export function bbThreads(sdk: PluginBbSdk): ThreadsPort {
   };
 }
 
-/** The directory as the filesystem names it, through symlinks; a path that does not exist is compared as written. */
-async function canonical(path: string): Promise<string> {
-  try {
-    return await realpath(path);
-  } catch {
-    return resolve(path);
-  }
-}
-
 export function bbProjects(sdk: PluginBbSdk): ProjectsPort {
   return {
     async findByPath(path) {
-      const [hostId, target, projects] = await Promise.all([serverHostId(sdk), canonical(path), sdk.projects.list()]);
+      const [hostId, target, projects] = await Promise.all([serverHostId(sdk), canonicalPath(path), sdk.projects.list()]);
       for (const project of projects) {
         for (const source of project.sources) {
           if (hostId !== null && source.hostId !== hostId) continue;
-          if ((await canonical(source.path)) === target) return { id: project.id };
+          if ((await canonicalPath(source.path)) === target) return { id: project.id };
         }
       }
       return null;

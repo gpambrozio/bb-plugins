@@ -12,14 +12,14 @@ The first release: FirstMate for bb, ported from the Paseo plugin of the same na
 ### Added
 
 - **One first mate, and a crew it runs.** Launch a first mate from FirstMate's settings, or adopt a
-  thread you already have. It appears pinned in the sidebar, and you talk to it in bb's own chat. Give it
-  a task and it sends a worker to do it, each in its own worktree of your project, shown under the first
-  mate in the sidebar. It brings back finished branches and pull requests, findings, and the decisions
+  thread you already started in its home folder. It appears pinned in the sidebar, and you talk to it in
+  bb's own chat. Give it a task and it sends a worker to do it, each in its own worktree of your project,
+  shown under the first mate in the sidebar. It brings back finished branches and pull requests, findings, and the decisions
   that are yours, and never merges without your word unless you have said a project may.
 - **A board of the crew** on the first mate's FirstMate tab: Queued, Working, Blocked, Parked, Done,
   Failed and Idle, with each worker's last word, a link to its pull request, and any decision it is
   waiting on you for. Sections fold and stay folded. On a worker's own thread the tab shows that worker's
-  card, and on any other thread it offers to adopt the thread as the first mate.
+  card, and on a thread working in the home it offers to adopt the thread as the first mate.
 - **Steer, Interrupt, Relaunch and End on each card**, and, on a worker's own thread, a note box that
   tells the first mate something about it. Ending a worker whose task is not done asks first, because
   its worktree is removed after a grace period.

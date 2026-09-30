@@ -12,6 +12,7 @@
 import { mkdir } from "node:fs/promises";
 
 import { CREW_METADATA } from "../shared/types";
+import { canonicalPath } from "./files";
 import { prepareHome, readOpening } from "./home";
 import type { ProjectsPort, SpawnArgs, ThreadInfo, ThreadsPort } from "./ports";
 import { serialized } from "./serialize";
@@ -119,10 +120,22 @@ export function launchMate(
   });
 }
 
+/** Whether the thread's workspace is the home, compared through symlinks, on the bb server's machine. */
+async function worksInHome(deps: MateDeps, thread: ThreadInfo, home: string): Promise<boolean> {
+  if (thread.environmentId === null) return false;
+  const workspace = await deps.threads.workspacePath(thread.environmentId);
+  if (workspace === null) return false;
+  const [a, b] = await Promise.all([canonicalPath(workspace), canonicalPath(home)]);
+  return a === b;
+}
+
 /**
- * Makes an existing thread the first mate. The charter is written into the home either way, so a
- * thread already working there picks it up on its next session; one working elsewhere never sees it.
- * Adopting the thread that already is the first mate is allowed and changes nothing but the home.
+ * Makes an existing thread the first mate. Only a thread whose workspace is the home can be adopted:
+ * the charter is the home's `AGENTS.md`, and the board opens the home's files through the first mate's
+ * workspace, so a thread working anywhere else would never see the charter and the board would open
+ * the wrong files. The home is prepared (the charter written) once the thread passes, and the thread
+ * picks it up on its next session. Adopting the thread that already is the first mate is allowed and
+ * changes nothing but the home.
  */
 export function adoptMate(deps: MateDeps, threadId: string): Promise<ThreadInfo> {
   return serialized(MATE_LOCK, async () => {
@@ -131,7 +144,12 @@ export function adoptMate(deps: MateDeps, threadId: string): Promise<ThreadInfo>
     if (current !== null && current.id !== threadId) throw aboard(current);
     const thread = await deps.threads.get(threadId);
     if (thread === null) throw new Error(`There is no thread ${threadId} to adopt: it does not exist or is archived.`);
-    await readyHome(await deps.settings());
+    const settings = await deps.settings();
+    const home = homePath(settings.homeDirectory);
+    if (!(await worksInHome(deps, thread, home))) {
+      throw new Error(`Only a thread working in the first mate's home (${home}) can be adopted.`);
+    }
+    await readyHome(settings);
     await deps.store.setMateThreadId(thread.id);
     return thread;
   });
