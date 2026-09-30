@@ -23,6 +23,7 @@ export const rpcContract = defineRpcContract({
   "mate.adopt": { input: ThreadRef, output: Done },
   "mate.release": { input: Empty, output: Done },
   "mate.restart": { input: Empty, output: Done },
+  "mate.compact": { input: Empty, output: Done },
   "mate.command": { input: z.object({ command: z.enum(["bearings", "ahoy"]), args: z.string() }), output: Done },
   "mate.ask": { input: z.object({ text: z.string().min(1) }), output: Done },
   "crew.steer": { input: ThreadRef.extend({ text: z.string().min(1) }), output: Done },

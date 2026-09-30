@@ -187,6 +187,20 @@ export function restartMate(deps: MateDeps): Promise<void> {
   });
 }
 
+/**
+ * Has bb compact the first mate's conversation — the structured `/compact` turn its composer sends — to
+ * free context. Refused mid-turn, like restart: a compaction must be a turn of its own, and a send would
+ * bury it inside the running one. bb itself accepts an idle or errored thread.
+ */
+export function compactMate(deps: MateDeps): Promise<void> {
+  return serialized(MATE_LOCK, async () => {
+    const mate = await resolveMate(deps);
+    if (mate === null) throw new Error("No first mate aboard.");
+    if (mate.status !== "idle" && mate.status !== "error") throw new Error("Compact refused: the first mate is mid-turn.");
+    await deps.threads.compact(mate.id);
+  });
+}
+
 export type MateCommand = "bearings" | "ahoy";
 
 /** The template for each request, with nothing after it and with something. */

@@ -59,6 +59,8 @@ export interface ThreadsPort {
   stop(id: string): Promise<void>;
   archive(id: string): Promise<void>;
   clearContext(id: string): Promise<void>;
+  /** Asks bb for the same structured `/compact` turn its composer sends. */
+  compact(id: string): Promise<void>;
   pin(id: string): Promise<void>;
 }
 

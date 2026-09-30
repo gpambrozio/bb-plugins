@@ -1,6 +1,7 @@
 /**
  * The crew board, shown on the first mate's thread: a notice when the plugin's charter has moved on, the
- * Bearings and Ahoy buttons, the first mate's suggestions, the seven columns in their fixed order — each a
+ * Bearings and Ahoy buttons beside the first mate's own controls (Compact, Restart, settings), the first
+ * mate's suggestions, the seven columns in their fixed order — each a
  * collapsible section with its count, empty ones left out — and the home's watches.
  */
 import { useRpc } from "@get-bb/plugin-sdk/app";
@@ -15,6 +16,7 @@ import { COLUMN_IDS, type ColumnId, type Fleet } from "../shared/types";
 import { Card } from "./card";
 import { COLUMN_TITLES } from "./format";
 import { readFolds, toggleFold } from "./folds";
+import { MateActions } from "./mate-actions";
 import { reportError } from "./notify";
 import { Suggestions } from "./suggestions";
 import { useMateSender } from "./use-mate-sender";
@@ -71,13 +73,14 @@ export function Board({ fleet, mateThreadId, onChanged }: { fleet: Fleet; mateTh
         </div>
       ) : null}
 
-      <div className="flex gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <Button size="sm" variant="outline" disabled={mate.sending} onClick={() => mate.command("bearings")}>
           Bearings
         </Button>
         <Button size="sm" variant="outline" disabled={mate.sending} onClick={() => mate.command("ahoy")}>
           Ahoy
         </Button>
+        {fleet.mate !== null ? <MateActions status={fleet.mate.status} sending={mate.sending} onChanged={onChanged} /> : null}
       </div>
 
       <Suggestions suggestions={fleet.suggestions} mateThreadId={mateThreadId} onChanged={onChanged} />

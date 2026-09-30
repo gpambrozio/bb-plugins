@@ -17,7 +17,7 @@ import { firstmateCli } from "./server/cli";
 import { endCrew, interruptCrew, noteCrew, relaunchCrew, steerCrew } from "./server/crew";
 import { loadFleet, ReportCache } from "./server/fleet";
 import { isHomeReady, prepareHome, removeSuggestion } from "./server/home";
-import { adoptMate, askMate, commandText, launchMate, releaseMate, resolveMate, restartMate, type MateDeps } from "./server/mate";
+import { adoptMate, askMate, commandText, compactMate, launchMate, releaseMate, resolveMate, restartMate, type MateDeps } from "./server/mate";
 import type { ProjectsPort, ThreadsPort } from "./server/ports";
 import { serialized } from "./server/serialize";
 import { homeConfig, homePath, SETTINGS } from "./server/settings";
@@ -216,6 +216,10 @@ export default async function plugin(bb: BbPluginApi) {
     },
     "mate.restart": async () => {
       await restartMate(deps);
+      return null;
+    },
+    "mate.compact": async () => {
+      await compactMate(deps);
       return null;
     },
     "mate.command": async ({ command, args }) => {

@@ -174,6 +174,9 @@ export function bbThreads(sdk: PluginBbSdk): ThreadsPort {
     async clearContext(id) {
       await sdk.threads.clearContext({ threadId: id });
     },
+    async compact(id) {
+      await sdk.threads.compact({ threadId: id });
+    },
     async pin(id) {
       await sdk.threads.pin({ threadId: id });
     },

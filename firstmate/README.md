@@ -65,10 +65,11 @@ instead. Nothing is published yet. To hack on it, run
   as a button above the columns. Pressing one sends that request to the first mate as if you had typed
   it; it joins a turn under way, or starts one, and never interrupts. The trash takes a suggestion off
   the list without sending it.
-- **Restart** (in the settings) starts the first mate afresh on the same thread, after asking you: the
-  old conversation stays readable above bb's "context cleared" line, its records carry over, and the
-  workers keep going and stay its crew. It waits until the first mate is between turns. To free room
-  without restarting, use bb's own `/compact`.
+- **Compact** and **Restart** sit beside Bearings and Ahoy at the top of the board, with a gear that
+  opens FirstMate's settings. Compact has bb summarise the first mate's conversation to free room, as
+  bb's own `/compact` does. Restart starts the first mate afresh on the same thread, after asking you:
+  the old conversation stays readable above bb's "context cleared" line, its records carry over, and the
+  workers keep going and stay its crew. Both wait until the first mate is between turns.
 
 ## The board
 
@@ -130,7 +131,8 @@ how to write one; the first mate adds none without your approval.
   first mate chooses; a model is used only with a provider.
 - **Board refresh**: how often the open board reloads, in seconds. Default 10.
 
-The settings also hold the first mate's status, **Launch**, **Restart** and **Release**. Release lets go
+The board's gear opens this page. The settings also hold the first mate's status, **Launch**, **Restart**
+and **Release**. Release lets go
 of the thread, leaving it and its crew as they are.
 
 ## Limitations

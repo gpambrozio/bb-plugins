@@ -11,6 +11,7 @@ import {
   adoptMate,
   askMate,
   commandText,
+  compactMate,
   launchMate,
   releaseMate,
   requireMate,
@@ -207,6 +208,39 @@ describe("restartMate", () => {
       const expected = `${await readOpening(home)}\n\n${await message(TEMPLATES.restartNote)}`;
       expect(threads.sent).toEqual([{ id: mate.id, text: expected, mode: "auto" }]);
       expect(await store.mateThreadId()).toBe(mate.id);
+    });
+  }
+});
+
+describe("compactMate", () => {
+  for (const status of ["active", "starting", "pending", "stopping"] as const) {
+    it(`compact refuses mid-turn (${status})`, async () => {
+      const { threads, store, deps } = await setup();
+      const mate = threads.add({ status });
+      await store.setMateThreadId(mate.id);
+
+      await expect(compactMate(deps)).rejects.toThrow("Compact refused: the first mate is mid-turn.");
+      expect(threads.callsTo("compact")).toEqual([]);
+    });
+  }
+
+  it("compact refuses when no first mate is aboard", async () => {
+    const { threads, deps } = await setup();
+
+    await expect(compactMate(deps)).rejects.toThrow("No first mate aboard.");
+    expect(threads.calls).toEqual([]);
+  });
+
+  for (const status of ["idle", "error"] as const) {
+    it(`compact asks bb to compact the first mate's thread and sends nothing (${status})`, async () => {
+      const { threads, store, deps } = await setup();
+      const mate = threads.add({ status });
+      await store.setMateThreadId(mate.id);
+
+      await compactMate(deps);
+
+      expect(threads.callsTo("compact")).toEqual([[mate.id]]);
+      expect(threads.sent).toEqual([]);
     });
   }
 });

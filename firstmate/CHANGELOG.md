@@ -28,8 +28,9 @@ The first release: FirstMate for bb, ported from the Paseo plugin of the same na
   to the first mate.
 - **Suggested next steps**, one press away. The first mate offers what you will probably want next as
   buttons; pressing one sends it as if you had typed it, and the trash removes it.
-- **Restart** keeps the first mate's thread, its records and its running workers, and starts its
-  conversation afresh.
+- **Compact and Restart on the board.** Compact frees room in the first mate's conversation; Restart
+  keeps the first mate's thread, its records and its running workers, and starts its conversation afresh.
+  A gear beside them opens FirstMate's settings.
 - **Watches**: small scripts that run on a schedule while bb is running and tell the first mate when
   they have something to say. A pull request watch is built in and reports merges, closes, reviews,
   comments and checks turning red or green within about five minutes, when `gh` is logged in. A card lists

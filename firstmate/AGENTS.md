@@ -16,7 +16,7 @@ against bb 0.44.0 and `@get-bb/plugin-sdk` 0.5.29.
 | --- | --- |
 | `server.ts` | Wiring only: settings, the RPCs, `bb firstmate`, the watch service, the thread events that publish `fleet` (created, active, idle, failed, archived, and a pending interaction). Every decision lives in `server/`. |
 | `shared/contract.ts`, `shared/types.ts` | The RPC contract (zod), the card and fleet shapes, the crew metadata keys, `STATE_DIR`. |
-| `server/mate.ts` | Launch, adopt, release, restart, `askMate`; the `mate` lock; the stored id. |
+| `server/mate.ts` | Launch, adopt, release, restart, compact, `askMate`; the `mate` lock; the stored id. |
 | `server/crew.ts` | Steer, interrupt, end, relaunch, board note. |
 | `server/fleet.ts` | The first mate's children joined to backlog items on `task`; the seven columns; `ReportCache`. |
 | `server/cli.ts` | `bb firstmate crew spawn` and `bb firstmate tell`. |
@@ -46,9 +46,9 @@ Do not break these; each was paid for.
   output goes with `"queue-if-active"`, so a turn that started meanwhile holds it.
 - **One message to the first mate in flight at a time** from the app (the board's buttons, suggestions and
   the command palette share `app/send-gate.ts`), so a double press sends once.
-- **Restart is refused while the first mate is mid-turn** — it goes only when the first mate is idle or
-  errored (button and server) — and clears context on the same thread, so crew stay its children and two
-  first mates cannot exist.
+- **Restart and Compact are refused while the first mate is mid-turn** — they go only when the first mate
+  is idle or errored (buttons and server). Restart clears context on the same thread, so crew stay its
+  children and two first mates cannot exist.
 - **Launch and adopt run under the `mate` lock**, and a launch that fails after the project exists stores
   no id.
 - **Only a thread whose workspace is the home can be adopted** (compared by real path, on the bb server's
@@ -104,6 +104,11 @@ Do not break these; each was paid for.
   Files view was dropped because its workspace is the home, which bb's file panel already opens.
 - **End archives.** Immediate when the task is in the backlog's Done; otherwise a confirmation, because
   bb removes the worktree after its grace period and only committed work can be restored.
+- **The board's gear opens `/settings/plugins/firstmate` by pushing that route.** The panel SDK hands
+  `openSettings()` only to sidebar-footer actions; bb 0.44's app routes plugin settings there and uses
+  react-router browser history, so `app/open-plugin-settings.ts` pushes the route with the router's
+  `{ usr, key, idx }` state and dispatches `popstate`. It is an internal route: if a bb upgrade moves it,
+  the gear lands on a not-found page, and this is the place to fix.
 - **Relaunch is a message to the first mate**, which spawns the replacement with `--environment` set to
   the old worker's environment. The old thread stays stopped, not archived, so the shared worktree lives.
 
@@ -120,7 +125,7 @@ Dropped from the Paseo plugin, on purpose:
 - On the client: the chat, transcript, Watch view, permission and question cards, context meter,
   attachments, drafts, keyboard handling, launch picker, Files view, column reordering and the drag split,
   and their pure helpers (`transcript-rows`, `activity-rows`, `questions`, `keys`, `open-file`,
-  `file-links`, `markdown-parse`). Compact is bb's own `/compact`.
+  `file-links`, `markdown-parse`). Compact asks bb for its own `/compact` turn (`threads.compact`).
 
 ## What the first checks found
 

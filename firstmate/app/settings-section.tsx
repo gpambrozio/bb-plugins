@@ -14,6 +14,7 @@ import { Button } from "../components/ui/button";
 import type { rpcContract } from "../server";
 import { ConfirmDialog } from "./confirm-dialog";
 import { STATUS_WORDS } from "./format";
+import { RESTART_CONFIRMATION, isBetweenTurns } from "./mate-actions";
 import { reportError } from "./notify";
 import { useDefaultPick } from "./use-default-pick";
 import { useFleet } from "./use-fleet";
@@ -88,7 +89,7 @@ export function SettingsSection() {
         </div>
       ) : (
         <div className="flex flex-wrap gap-2">
-          <Button variant="outline" disabled={busy || (mate.status !== "idle" && mate.status !== "error")} onClick={() => setAsking("restart")}>
+          <Button variant="outline" disabled={busy || !isBetweenTurns(mate.status)} onClick={() => setAsking("restart")}>
             Restart
           </Button>
           <Button variant="outline" disabled={busy} onClick={() => setAsking("release")}>
@@ -100,10 +101,10 @@ export function SettingsSection() {
       <ConfirmDialog
         open={asking === "restart"}
         onOpenChange={(open) => !open && setAsking(null)}
-        title="Restart the first mate?"
-        description="A new first mate starts from scratch, with the same model and settings. This conversation ends but stays readable. Its records carry over and workers already running keep running."
-        confirmLabel="Restart"
-        onConfirm={() => run(() => rpc.call("mate.restart", {}), "The first mate is starting afresh.")}
+        title={RESTART_CONFIRMATION.title}
+        description={RESTART_CONFIRMATION.description}
+        confirmLabel={RESTART_CONFIRMATION.confirmLabel}
+        onConfirm={() => run(() => rpc.call("mate.restart", {}), RESTART_CONFIRMATION.success)}
       />
       <ConfirmDialog
         open={asking === "release"}

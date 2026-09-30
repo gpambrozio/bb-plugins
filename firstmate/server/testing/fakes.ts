@@ -183,6 +183,13 @@ export class FakeThreads implements ThreadsPort {
     this.require(id);
   }
 
+  async compact(id: string): Promise<void> {
+    this.record("compact", id);
+    await tick();
+    this.throwIfFailing("compact");
+    this.require(id);
+  }
+
   async pin(id: string): Promise<void> {
     this.record("pin", id);
     await tick();
