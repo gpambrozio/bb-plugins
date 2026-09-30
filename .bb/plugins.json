@@ -2,5 +2,5 @@
   "$schema": "https://getbb.app/schemas/plugins.schema.json",
   "schemaVersion": 1,
   "name": "gpambrozio-bb-plugins",
-  "plugins": [{ "name": "firstmate", "source": "./firstmate" }]
+  "plugins": [{ "name": "firstmate-crew", "source": "./firstmate-crew" }]
 }

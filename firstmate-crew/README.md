@@ -29,14 +29,22 @@ nothing else.
 
 ## Install
 
+From the BB Community marketplace, once it is listed there: find **FirstMate Crew** under Plugins in bb,
+or run
+
 ```bash
-bb plugin install path:/Users/ci/repositories/bb-plugins --plugin firstmate
+bb plugin install firstmate-crew@bb-community
 ```
 
-Add `--yes` to skip the confirmation prompt, which a script needs. From a clone elsewhere, use its path
-instead. Nothing is published yet. To hack on it, run
-`npm install --include=dev` in `firstmate/`, then `bb plugin install path:$PWD --yes` from there, and
-`bb plugin dev` to rebuild on save. See [`AGENTS.md`](AGENTS.md).
+Straight from this repository, tracking compatible releases:
+
+```bash
+bb plugin install 'git:github.com/gpambrozio/bb-plugins@^0.1.0' --plugin firstmate-crew --tag-prefix firstmate-crew/
+```
+
+Add `--yes` to skip the confirmation prompt, which a script needs. To hack on it, clone the repository,
+run `npm install --include=dev` in `firstmate-crew/`, then `bb plugin install path:$PWD --yes` from
+there, and `bb plugin dev` to rebuild on save. See [`AGENTS.md`](AGENTS.md).
 
 ## Getting started
 
@@ -56,7 +64,7 @@ instead. Nothing is published yet. To hack on it, run
 
 ## Talking to the first mate
 
-- Type in the first mate's chat, or send from anywhere: `bb firstmate tell "…"` reaches it from a shell.
+- Type in the first mate's chat, or send from anywhere: `bb firstmate-crew tell "…"` reaches it from a shell.
 - **Bearings** is where everything stands in four sections: what needs your call, what landed, what is
   under way, what is next. **Ahoy** is what happened since you last spoke, then each open decision, one at
   a time, with a recommendation. Both are buttons on the board and entries in the command palette
@@ -142,7 +150,7 @@ of the thread, leaving it and its crew as they are.
   first mate's workers can be on any machine bb reaches, but a home on another machine is not supported.
 - **End removes a worker's worktree after bb's grace period**; only committed work can be restored.
 - There is no `/fm` slash command; bb has no composer command API. Use the command palette or
-  `bb firstmate tell`.
+  `bb firstmate-crew tell`.
 - Changing the crew settings changes what the charter says only on the next launch, restart or plugin
   reload.
 - The Files view and the chat of the Paseo plugin are bb's own here.

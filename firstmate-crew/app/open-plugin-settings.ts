@@ -8,7 +8,7 @@
  * push lands on bb's not-found page rather than failing, and the caller's fallback toast says where the
  * page is.
  */
-export const PLUGIN_SETTINGS_PATH = "/settings/plugins/firstmate";
+export const PLUGIN_SETTINGS_PATH = "/settings/plugins/firstmate-crew";
 
 /** The slice of `window` this needs, so it can be tested without a DOM. */
 export interface HistoryWindow {

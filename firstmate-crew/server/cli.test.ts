@@ -43,7 +43,7 @@ async function setup(overrides: Partial<FirstmateSettings> = {}) {
 
 const SPAWN = ["crew", "spawn", "--task", "fix-login", "--project", "prj_app", "--prompt-file", "brief.md"];
 
-describe("bb firstmate crew spawn", () => {
+describe("bb firstmate-crew crew spawn", () => {
   it("crew spawn from the first mate spawns a worktree child with crew metadata and prints its id", async () => {
     const { cli, threads, dir } = await setup();
 
@@ -251,7 +251,7 @@ describe("bb firstmate crew spawn", () => {
   });
 });
 
-describe("bb firstmate tell", () => {
+describe("bb firstmate-crew tell", () => {
   it("tell sends one auto message to the first mate", async () => {
     const { cli, threads } = await setup();
     const result = await cli.run(["tell", "ship", "the", "release", "today"], {});
@@ -279,7 +279,7 @@ describe("bb firstmate tell", () => {
 describe("help", () => {
   it("declares its commands and answers --help itself", async () => {
     const { cli } = await setup();
-    expect(cli.name).toBe("firstmate");
+    expect(cli.name).toBe("firstmate-crew");
     expect(cli.commands?.map((command) => command.name)).toEqual(["crew-spawn", "tell"]);
     const help = await cli.run(["crew", "spawn", "--help"], {});
     expect(help.exitCode).toBe(0);

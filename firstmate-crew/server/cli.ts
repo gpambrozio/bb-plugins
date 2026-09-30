@@ -1,5 +1,5 @@
 /**
- * `bb firstmate` — how the first mate dispatches a crewmate (`crew spawn`) and how anyone reaches the
+ * `bb firstmate-crew` — how the first mate dispatches a crewmate (`crew spawn`) and how anyone reaches the
  * first mate (`tell`).
  *
  * The plugin never dispatches crew itself: the first mate does, from its own thread, through this
@@ -112,7 +112,7 @@ function crewPick(
 
 export function firstmateCli(deps: MateDeps): PluginCliRegistration {
   return defineCli({
-    name: "firstmate",
+    name: "firstmate-crew",
     summary: "Dispatch crew and talk to the first mate",
     commands: {
       "crew spawn": cliCommand({

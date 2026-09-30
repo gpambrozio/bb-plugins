@@ -28,8 +28,8 @@ describe("openPluginSettings", () => {
 
     expect(openPluginSettings(win)).toBe(true);
 
-    expect(PLUGIN_SETTINGS_PATH).toBe("/settings/plugins/firstmate");
-    expect(pushed.map((entry) => entry.url)).toEqual(["/settings/plugins/firstmate"]);
+    expect(PLUGIN_SETTINGS_PATH).toBe("/settings/plugins/firstmate-crew");
+    expect(pushed.map((entry) => entry.url)).toEqual(["/settings/plugins/firstmate-crew"]);
     expect(events).toEqual(["popstate"]);
   });
 
@@ -51,7 +51,7 @@ describe("openPluginSettings", () => {
 
   it("does nothing and reports success when the settings page is already open", () => {
     const { win, events, pushed } = fakeWindow();
-    win.location.pathname = "/settings/plugins/firstmate";
+    win.location.pathname = "/settings/plugins/firstmate-crew";
 
     expect(openPluginSettings(win)).toBe(true);
     expect(pushed).toEqual([]);

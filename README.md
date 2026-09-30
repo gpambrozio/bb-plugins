@@ -12,17 +12,20 @@ Each port is tracked by its own issue.
 | `launchd-jobs` | Schedules shell commands on your Mac through launchd. | [Not started (#3)](https://github.com/gpambrozio/bb-plugins/issues/3) |
 | `herald` | Speaks one sentence when an agent needs you, and lists what is waiting. | [Not started (#4)](https://github.com/gpambrozio/bb-plugins/issues/4) |
 | `model-pricing` | What every model costs, across five providers, in one table. | [Not started (#5)](https://github.com/gpambrozio/bb-plugins/issues/5) |
-| `firstmate` | Talk to one first mate; it runs a crew of agents in their own worktrees. | [Ported — 0.1.0, local install (#6)](https://github.com/gpambrozio/bb-plugins/issues/6) |
+| [`firstmate-crew`](firstmate-crew) | Talk to one first mate; it runs a crew of agents in their own worktrees. | [Ported — 0.1.0 (#6)](https://github.com/gpambrozio/bb-plugins/issues/6) |
 
 ## Install
 
-Nothing is published yet. From a clone:
+Each plugin releases from its own tags, `<id>/vX.Y.Z`. Install one and follow its compatible releases:
 
 ```bash
-bb plugin install path:/path/to/bb-plugins --plugin <id>
+bb plugin install 'git:github.com/gpambrozio/bb-plugins@^0.1.0' --plugin firstmate-crew --tag-prefix firstmate-crew/
 ```
 
-See [`AGENTS.md`](AGENTS.md) for how the plugins are built.
+Plugins listed in the BB Community marketplace also install from bb's Plugins page, or with
+`bb plugin install <id>@bb-community`. Each plugin's README has its details.
+
+See [`AGENTS.md`](AGENTS.md) for how the plugins are built and released.
 
 ## License
 

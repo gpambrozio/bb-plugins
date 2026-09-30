@@ -1,7 +1,17 @@
 {
-  "name": "@gpambrozio/bb-plugin-firstmate",
+  "name": "@gpambrozio/bb-plugin-firstmate-crew",
   "version": "0.1.0",
   "license": "MIT",
+  "author": "gpambrozio (https://github.com/gpambrozio)",
+  "homepage": "https://github.com/gpambrozio/bb-plugins/tree/main/firstmate-crew#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gpambrozio/bb-plugins.git",
+    "directory": "firstmate-crew"
+  },
+  "bugs": {
+    "url": "https://github.com/gpambrozio/bb-plugins/issues"
+  },
   "type": "module",
   "engines": {
     "bb": ">=0.44",
@@ -29,7 +39,7 @@
     "!**/*.test.ts"
   ],
   "bb": {
-    "name": "FirstMate",
+    "name": "FirstMate Crew",
     "description": "Talk to one first mate agent that runs a crew of bb threads, each in its own worktree, with a live board of the crew.",
     "branding": {
       "icon": "Ship"

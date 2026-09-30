@@ -1,5 +1,5 @@
 /**
- * FirstMate's server: the RPCs the panels call, `bb firstmate`, the watch runner, and the thread
+ * FirstMate's server: the RPCs the panels call, `bb firstmate-crew`, the watch runner, and the thread
  * events that keep the board live.
  *
  * Every decision lives in `server/`; this file only wires it to bb. The ports over `bb.sdk` are built

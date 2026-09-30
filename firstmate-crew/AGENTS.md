@@ -14,12 +14,12 @@ against bb 0.44.0 and `@get-bb/plugin-sdk` 0.5.29.
 
 | File | What it owns |
 | --- | --- |
-| `server.ts` | Wiring only: settings, the RPCs, `bb firstmate`, the watch service, the thread events that publish `fleet` (created, active, idle, failed, archived, and a pending interaction). Every decision lives in `server/`. |
+| `server.ts` | Wiring only: settings, the RPCs, `bb firstmate-crew`, the watch service, the thread events that publish `fleet` (created, active, idle, failed, archived, and a pending interaction). Every decision lives in `server/`. |
 | `shared/contract.ts`, `shared/types.ts` | The RPC contract (zod), the card and fleet shapes, the crew metadata keys, `STATE_DIR`. |
 | `server/mate.ts` | Launch, adopt, release, restart, compact, `askMate`; the `mate` lock; the stored id. |
 | `server/crew.ts` | Steer, interrupt, end, relaunch, board note. |
 | `server/fleet.ts` | The first mate's children joined to backlog items on `task`; the seven columns; `ReportCache`. |
-| `server/cli.ts` | `bb firstmate crew spawn` and `bb firstmate tell`. |
+| `server/cli.ts` | `bb firstmate-crew crew spawn` and `bb firstmate-crew tell`. |
 | `server/bb-ports.ts`, `server/ports.ts` | The narrow `ThreadsPort` and `ProjectsPort` over `bb.sdk`, so everything else is tested against fakes. Where the machine rule below lives. |
 | `server/store.ts` | `bb.storage.kv`: the first mate's thread id and the switched-off watches. Nothing else. |
 | `server/settings.ts` | `bb.settings.define`: home directory, crew provider/model/reasoning, board refresh. |
@@ -68,7 +68,7 @@ Do not break these; each was paid for.
 - **Nothing throws into the server's event loop.** Services and listeners catch and log per tick;
   everything is released in `bb.onDispose`.
 - **Server code logs only through the injected `Log` (`server/log.ts`), wired to `bb.log`**, never
-  `console`, whose output does not reach `bb plugin logs firstmate`.
+  `console`, whose output does not reach `bb plugin logs firstmate-crew`.
 - Colour only through semantic Tailwind classes.
 
 ## Decisions to keep
@@ -104,7 +104,7 @@ Do not break these; each was paid for.
   Files view was dropped because its workspace is the home, which bb's file panel already opens.
 - **End archives.** Immediate when the task is in the backlog's Done; otherwise a confirmation, because
   bb removes the worktree after its grace period and only committed work can be restored.
-- **The board's gear opens `/settings/plugins/firstmate` by pushing that route.** The panel SDK hands
+- **The board's gear opens `/settings/plugins/firstmate-crew` by pushing that route.** The panel SDK hands
   `openSettings()` only to sidebar-footer actions; bb 0.44's app routes plugin settings there and uses
   react-router browser history, so `app/open-plugin-settings.ts` pushes the route with the router's
   `{ usr, key, idx }` state and dispatches `popstate`. It is an internal route: if a bb upgrade moves it,
@@ -136,7 +136,7 @@ Run against bb 0.44.0 before the design was settled:
   That is why the steer relay is not ported. Every crew turn wakes the first mate, whoever started it.
 - **There is no composer slash-command API.** `app.composer.customize` takes only `actions`, `banners`,
   `plusMenu` and `richText`, and the slash typeahead is host-owned (skills only). So there is no `/fm`;
-  the CLI (`bb firstmate tell`) and the command palette (FirstMate: open, bearings, ahoy) cover it.
+  the CLI (`bb firstmate-crew tell`) and the command palette (FirstMate: open, bearings, ahoy) cover it.
 
 - **A crewmate blocked on a permission wakes the first mate.** bb sends the parent a system message
   (`systemMessageKind: "child-needs-attention"`): `@thread:<child> needs help. Blocked on file-change
@@ -162,15 +162,15 @@ charter tells the first mate to always pass `--title`.
 ## Working here
 
 ```bash
-cd firstmate
+cd firstmate-crew
 npm install --include=dev --cache "$TMPDIR/npm-cache"
 npm run gen:templates            # after any change under templates/
 npx vitest run
 npx tsc --noEmit
 bb plugin build
-bb plugin reload firstmate       # read the exit code; a failed reload keeps the old instance
+bb plugin reload firstmate-crew       # read the exit code; a failed reload keeps the old instance
 ```
 
-Test against the running bb from a scratch home (`bb plugin config firstmate set homeDirectory <path>`),
-never `~/FirstMate`, and reset the setting afterwards. `bb plugin rpc call firstmate <method>` reaches
+Test against the running bb from a scratch home (`bb plugin config firstmate-crew set homeDirectory <path>`),
+never `~/FirstMate`, and reset the setting afterwards. `bb plugin rpc call firstmate-crew <method>` reaches
 every RPC (`list` shows only discoverable ones). Never restart the bb server.

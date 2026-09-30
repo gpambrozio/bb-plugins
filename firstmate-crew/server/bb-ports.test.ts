@@ -11,7 +11,7 @@ function source(hostId: string, isDefault: boolean) {
 
 function fakeSdk(sources: ReturnType<typeof source>[] = []) {
   return createFakeSdk({
-    pluginId: "firstmate",
+    pluginId: "firstmate-crew",
     overrides: {
       system: { config: () => ({ primaryHostId: SERVER_HOST }) },
       projects: { get: ({ projectId }) => ({ id: projectId, name: "web", sources }) },
@@ -58,7 +58,7 @@ describe("bbThreads.spawn", () => {
 describe("bbThreads.workspacePath", () => {
   function sdkWithEnvironment(environment: { hostId: string; path: string | null }) {
     return createFakeSdk({
-      pluginId: "firstmate",
+      pluginId: "firstmate-crew",
       overrides: {
         system: { config: () => ({ primaryHostId: SERVER_HOST }) },
         environments: { get: ({ environmentId }) => ({ id: environmentId, ...environment }) },

@@ -42,10 +42,10 @@ describe("renderCharter", () => {
     }
   });
 
-  it("names bb firstmate crew spawn, bb thread tell, bb thread show, bb thread output and bb thread list --parent-thread", async () => {
+  it("names bb firstmate-crew crew spawn, bb thread tell, bb thread show, bb thread output and bb thread list --parent-thread", async () => {
     const [charter] = await renderAll();
     for (const command of [
-      "bb firstmate crew spawn",
+      "bb firstmate-crew crew spawn",
       "bb thread tell",
       "bb thread show",
       "bb thread output",

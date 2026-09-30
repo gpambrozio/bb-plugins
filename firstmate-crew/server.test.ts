@@ -26,7 +26,7 @@ async function tempDir(): Promise<string> {
 
 async function load(options: { mateId?: string } = {}) {
   const home = await tempDir();
-  const host = createFakePluginHost({ pluginId: "firstmate", settings: { homeDirectory: home } });
+  const host = createFakePluginHost({ pluginId: "firstmate-crew", settings: { homeDirectory: home } });
   hosts.push(host);
   if (options.mateId !== undefined) await host.bb.storage.kv.set("mateThreadId", options.mateId);
   await plugin(host.bb);
@@ -42,7 +42,7 @@ describe("server wiring", () => {
     const { harness } = await load();
     expect([...harness.registrations.rpcMethods].sort()).toEqual(Object.keys(rpcContract).sort());
     expect(harness.registrations.rpcMethods).toHaveLength(17);
-    expect(harness.registrations.cli?.name).toBe("firstmate");
+    expect(harness.registrations.cli?.name).toBe("firstmate-crew");
     expect(harness.registrations.services.map((service) => service.name)).toEqual(["watches"]);
   });
 

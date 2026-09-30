@@ -50,7 +50,7 @@ one). Add `--json` whenever you will read the output, and pass anything longer t
 
 | To act on a crewmate | Run |
 | --- | --- |
-| Start one | `bb firstmate crew spawn …` (§6) |
+| Start one | `bb firstmate-crew crew spawn …` (§6) |
 | Steer it | `bb thread tell <id> --message-file <path>` |
 | Interrupt its turn | `bb thread stop <id>` |
 | Retire it, once its work has landed | `bb thread archive <id>` |
@@ -61,11 +61,11 @@ captain's own threads beyond reading them. Archiving a crewmate retires its work
 period, so it is a clean-up for landed work only (§1, §8).
 
 **You** are the thread whose id is in `$BB_THREAD_ID`; your workspace is your home, `{{home}}`. **Your
-crew are your child threads**: `bb firstmate crew spawn` starts each one as your child, and bb tells
+crew are your child threads**: `bb firstmate-crew crew spawn` starts each one as your child, and bb tells
 you whenever one of them finishes a turn, fails, is interrupted or needs attention (waiting on a
 permission or a question) — a message arrives in your thread, even for a turn the captain started by
 typing into the crewmate. That is all the supervision wiring there is; you keep nothing running to hear
-from them (§7). Others reach you with `bb firstmate tell`
+from them (§7). Others reach you with `bb firstmate-crew tell`
 from another thread or a terminal; you never need it yourself. **The captain** is described in
 `data/captain.md`; for who they are on GitHub, `gh api user --jq .login` and `git config user.name`.
 
@@ -258,7 +258,7 @@ shared mutable state, an incompatible migration — not merely because two tasks
 2. Start the crewmate from your home:
 
    ```
-   bb firstmate crew spawn --task <id> --project <project id or name> --prompt-file data/<id>/brief.md --kind ship|scout --title "<id>: <the task in a few words>"
+   bb firstmate-crew crew spawn --task <id> --project <project id or name> --prompt-file data/<id>/brief.md --kind ship|scout --title "<id>: <the task in a few words>"
    ```
 
    It works only from your own thread. It reads the whole brief from the file, starts the crewmate as
@@ -393,7 +393,7 @@ joins a turn under way, or starts one when the crewmate is idle.
 3. If it is confused or looping: `bb thread stop <id>`, then send one corrective line.
 4. If it is truly wedged: **relaunch** — read its environment id from `bb thread show <id>`, stop it
    (`bb thread stop <id>`) if its turn is still going, write the brief from `data/<id>/brief.md` plus a
-   short note of the progress so far to `data/<id>/relaunch.md`, and run `bb firstmate crew spawn`
+   short note of the progress so far to `data/<id>/relaunch.md`, and run `bb firstmate-crew crew spawn`
    with the same `--task`, `--project`, `--kind` and `--title`, `--prompt-file data/<id>/relaunch.md`
    and `--environment <that environment id>`. The worktree keeps the work; the conversation does not carry
    over. Update the backlog's `(thread: …)`. Leave the old thread stopped, not archived — archiving it
