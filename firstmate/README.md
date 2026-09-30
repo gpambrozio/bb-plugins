@@ -16,8 +16,9 @@ Done, Failed and Idle, each worker's last word on what it is doing, and a link t
 This is a bb port of the Paseo `firstmate` plugin in
 [`gpambrozio/paseo-plugins`](https://github.com/gpambrozio/paseo-plugins), itself a take on
 [firstmate](https://github.com/kunchenguid/firstmate) by Kun Chen. bb already supervises child threads
-(it tells the first mate when a worker finishes, fails or is interrupted) and already has a chat, so the
-plugin is the charter, the board, the dispatch command and the watch runner, and nothing else.
+(it tells the first mate when a worker finishes, fails, is interrupted or needs attention) and already
+has a chat, so the plugin is the charter, the board, the dispatch command and the watch runner, and
+nothing else.
 
 ## What you need
 
@@ -138,7 +139,6 @@ of the thread, leaving it and its crew as they are.
 - **Watches run only while bb does, on the machine running the bb server**, and so does the home. The
   first mate's workers can be on any machine bb reaches, but a home on another machine is not supported.
 - **End removes a worker's worktree after bb's grace period**; only committed work can be restored.
-- A worker waiting on a permission or question shows as Blocked but does not wake the first mate.
 - There is no `/fm` slash command; bb has no composer command API. Use the command palette or
   `bb firstmate tell`.
 - Changing the crew settings changes what the charter says only on the next launch, restart or plugin

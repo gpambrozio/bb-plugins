@@ -17,4 +17,4 @@ Watches are small scripts in the home that run on a schedule while bb is running
 
 You need bb 0.44 or newer and a capable model for the first mate, such as Claude Sonnet or better. Workers use whatever provider and model you set in the settings, or the first mate chooses.
 
-Good to know: the home and the watches live on the machine running the bb server, and watches run only while bb does. Ending a worker removes its worktree after bb's grace period, so only committed work can be restored. A worker waiting on a permission or question shows as Blocked but does not wake the first mate. There is no slash command in the composer, because bb offers plugins none.
+Good to know: the home and the watches live on the machine running the bb server, and watches run only while bb does. Ending a worker removes its worktree after bb's grace period, so only committed work can be restored. A worker waiting on a permission or question shows as Blocked, and bb tells the first mate it needs attention. There is no slash command in the composer, because bb offers plugins none.

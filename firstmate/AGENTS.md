@@ -111,7 +111,8 @@ Dropped from the Paseo plugin, on purpose:
 
 - `daemon-session.ts`, `cli.ts`, `send.ts`, `crew-seen.ts`, `home-name.ts`, `uploads.ts`,
   `shared/attachments.ts`, `data-dir.ts`, `host-imports.test.ts`, `sdk-types.ts`, `host-types.ts`.
-- The heartbeat: bb notifies a parent when a child's turn completes, fails or is interrupted.
+- The heartbeat: bb notifies a parent when a child's turn completes, fails or is interrupted, and when
+  the child needs attention (blocked on a permission or a question).
 - Finding crew by label, the steer relay and its timing rules, clearing attention by raw frame,
   `activeTurnBehavior`, draft persistence on `globalThis`, home and project renaming through the CLI.
 - On the client: the chat, transcript, Watch view, permission and question cards, context meter,
@@ -130,15 +131,17 @@ Run against bb 0.44.0 before the design was settled:
   `plusMenu` and `richText`, and the slash typeahead is host-owned (skills only). So there is no `/fm`;
   the CLI (`bb firstmate tell`) and the command palette (FirstMate: open, bearings, ahoy) cover it.
 
+- **A crewmate blocked on a permission wakes the first mate.** bb sends the parent a system message
+  (`systemMessageKind: "child-needs-attention"`): `@thread:<child> needs help. Blocked on file-change
+  approval: …`, and the live run's first mate approved it from there. Questions go through the same
+  pending-interaction path but were not staged live.
+
 The live run added two: a spawn needs a `hostId` (fixed, see the machine rule), and a crew spawn without
 `--title` gets the brief's first line, which is the same "You are a crewmate" line for every brief, so the
 charter tells the first mate to always pass `--title`.
 
 ## Known gaps
 
-- **A crewmate waiting on a permission or question does not wake the first mate.** bb's parent
-  notification covers a completed, failed or interrupted turn. The board shows the card as Blocked, and
-  the first mate sees it on its next look (Bearings), not at once.
 - **An interrupted turn keeps the previous status line.** `threads.output` returns the last assistant text
   of an earlier turn, so a worker interrupted before writing anything stays where its old line put it
   (say, Parked). Telling "this turn wrote nothing" apart needs the timeline.
