@@ -67,9 +67,10 @@ bb plugin new <id>          # scaffolds ./bb-plugin-<id>; rename the folder to <
 ```
 
 Then set the package name to `@gpambrozio/bb-plugin-<id>`. **The plugin id is the package name's
-last segment minus `bb-plugin-`**, so the scope costs nothing and the id stays the Paseo one. None of
-the six ids collides with a bb built-in today; `bb plugin list` shows the built-ins, and an install
-over a reserved id is refused.
+last segment minus `bb-plugin-`**, so the scope costs nothing, and the id is the Paseo one unless it is
+taken. Check both places before you scaffold: `bb plugin list` shows the built-ins (an install over a
+reserved id is refused), and `entries/<id>.json` in `get-bb/marketplace` shows the Community ids (see
+*Submitting to the BB Community marketplace*). The FirstMate port is `firstmate-crew` for that reason.
 
 The scaffold ships a todo-list example (`server.ts`, `app.tsx`, `skills/example-todos/`). Delete the
 example before writing anything. If the plugin has no UI, remove `bb.app` from the manifest and the
@@ -107,12 +108,13 @@ leading `#` title, no raw HTML, images or tables). The community marketplace req
 npm install --include=dev
 npx tsc --noEmit                 # typecheck
 bb plugin build                  # dist/ bundles; talks to no server
-bb plugin install path:$PWD      # once, into the running bb
+bb plugin install path:$PWD --yes  # once, into the running bb; --yes when nothing can answer the prompt
 bb plugin dev                    # watch, rebuild, reload (plugin must be installed)
 bb plugin reload <id>            # by hand
 bb plugin logs <id> -f
 bb plugin list                   # status, services, schedules, handler timings
-bb plugin rpc list <id>          # and `inspect`, `call <id> <method> --input-file`
+bb plugin rpc list <id>          # and `inspect`, `call <id> <method> --input-file`; list and inspect show
+                                 # only methods registered with `experimental_discoverable`, `call` reaches all
 bb plugin types                  # repin the SDK to the running bb; --check in CI
 ```
 
@@ -169,6 +171,18 @@ not a subprocess's. The surface a port uses most:
 
 Use `bb.sdk` from handlers and services, not the factory body.
 
+Three things a port only learns by running it:
+
+- **The server cannot find its own folder.** `bb plugin build` compiles the entry into bb's cache, so
+  nothing at run time names the plugin's directory, and a `templates/` or `data/` folder beside
+  `server.ts` is unreachable. Ship such data through a generated module (a script writes the files
+  into a checked-in `.ts` file, a test fails when the two differ), as `firstmate-crew` does.
+- **`bb.storage.kv` is 256 KB per value.** A queue or a log that can outgrow that belongs in a file
+  beside the data it describes, or in `bb.storage.database()`.
+- **A thread spawn into a host workspace needs a `hostId`.** The SDK type marks it optional, bb 0.44
+  answers `hostId is required unless workspace.type is personal`. Take the server's own machine from
+  `bb.sdk.system.config().primaryHostId`, or the host of the project's checkout.
+
 **Settings are writable from the server** (`experimental_set`), unlike Paseo, where only the
 client could write a settings document. That erases the Paseo split between "settings document"
 and "the daemon's own file"; decide per value whether the user edits it in the host-rendered form
@@ -215,6 +229,8 @@ Plain web React with the DOM lib — `document` and `window` are fine. Paseo con
 | `theme.colors` tokens | Tailwind semantic classes (`bg-background`, `text-muted-foreground`, `border-border`, `bg-card`, `text-destructive`) |
 | host UI kit | shadcn components vendored into `components/ui/` (`npx shadcn add @bb/<name>`), plus host `Markdown`, `ThreadChat`, `ThreadTitle`, `UrlLink` |
 
+`app.slots.settingsSection` requires an `id` (letters, digits, `-`, `_`), unlike the Paseo settings screen.
+
 Colour comes from the semantic classes, never a literal — check light and dark. The app also has a
 compact viewport (`isCompactViewport` on some slots); check a narrow window too. A throwing slot
 collapses to a "plugin crashed" chip instead of taking the app down, so a blank area is a crash to
@@ -234,25 +250,70 @@ look for in the console, not a layout bug.
 
 ## Distribution and releases
 
-Nothing is published yet, and no CI exists. Until that changes, install from a path:
+Each plugin releases on its own, from per-plugin tags on `main`: `<id>/vX.Y.Z`, the way
+`paseo-plugins` already does it. Never cut a bare `vX.Y.Z` tag, and never move a tag — bb refuses a
+tag that now names a different commit. To release:
+
+1. Bump `version` in the plugin's `package.json` and add a `CHANGELOG.md` section, on a branch, and
+   merge it.
+2. From `main`: `git tag -a <id>/vX.Y.Z -m "Release <id> vX.Y.Z"`, then `git push origin <id>/vX.Y.Z`.
+3. Check it: `git ls-remote --tags https://github.com/gpambrozio/bb-plugins.git`.
+
+Installs track a semver range over those tags:
 
 ```bash
-bb plugin install path:/Users/ci/repositories/bb-plugins --plugin <id>
+bb plugin install 'git:github.com/gpambrozio/bb-plugins@^X.Y.Z' --plugin <id> --tag-prefix <id>/
+bb plugin install <id>@bb-community        # once the plugin is in the Community marketplace
 ```
 
-The shape to grow into, from `bb guide plugins`:
-
-- **Git install of one plugin:** `bb plugin install git:github.com/gpambrozio/bb-plugins@main
-  --plugin <id>` (or `--subdirectory <id>`). This repository is private, so that needs git
-  credentials on the installing machine.
-- **Per-plugin tags** work the way `paseo-plugins` already does them — `<id>/vX.Y.Z` — and
-  `--tag-prefix <id>/` resolves a semver range over them. Never cut a bare `vX.Y.Z` tag. A tag that
-  moves to a different commit is refused by bb.
+- **A git install builds from source with production dependencies only**
+  (`npm install --omit=dev --ignore-scripts`, then `bb plugin build`). Before a release, prove it from
+  a clean clone: `git clone … && cd <id> && npm install --omit=dev --ignore-scripts && bb plugin
+  build`. A bundled import that is only a devDependency fails here and nowhere else.
 - **npm installs need a prebuilt `dist/`.** The scaffold's `.gitignore` excludes `dist/` and has no
   `files`, so `npm pack` ships no bundle and the install is refused. Add `files` and build before
-  publishing; check with `npm pack --dry-run`.
+  publishing; check with `npm pack --dry-run`. Git tags are the release channel here; npm is optional.
 - Each plugin keeps its own `version` and `CHANGELOG.md`, as in `paseo-plugins`. The changelog is
   written for non-technical readers: what a user can observe, no RPC or file names.
+- Give each plugin's `package.json` `repository` (with `directory`), `homepage`, `bugs` and `author`,
+  as `firstmate-crew` does. The author is the GitHub account, not a personal name or an email.
+
+## Submitting to the BB Community marketplace
+
+The Community marketplace is [`get-bb/marketplace`](https://github.com/get-bb/marketplace): one JSON
+entry per plugin, pointing at this repository's tags. Use bb's `submit-a-plugin` skill for the
+workflow, and read the marketplace's `README.md`, `schema/marketplace-v2.schema.json` and
+`marketplace.base.json` fresh every time — that contract changes independently of bb.
+
+- **Choose the id before the first release, and check it is free.** The id is the package name's last
+  segment minus `bb-plugin-`; the entry file must be `entries/<id>.json`. Look for that file in the
+  marketplace and for a bb built-in (`bb plugin list`). `firstmate` was taken by another author's
+  port, so ours is `firstmate-crew`. Renaming later touches the folder, the package name,
+  `.bb/plugins.json`, the tag prefix, the plugin's `bb <id>` CLI (which charters and skills may name),
+  anything that hardcodes `/settings/plugins/<id>`, and every user's settings, which are keyed by id.
+- **The source must be public, and the tag must exist,** before the marketplace PR: its `npm run check`
+  runs `git ls-remote` for a `<tagPrefix>vX.Y.Z` tag matching the range. The entry's source is
+  `{ "git": { "url": "https://github.com/gpambrozio/bb-plugins.git", "subdir": "<id>", "tagPrefix":
+  "<id>/", "range": "^X.Y.Z" } }`.
+- **`PLUGIN_OVERVIEW.md` is copied to `overview/<id>.md`.** At most 4000 characters, no leading `#`
+  title, `##` section headings, only `https` links; no raw HTML, images, tables, footnotes or task
+  lists. Keep it saying the same thing as `bb.description` and the entry's description, at length.
+- **Screenshots are expected:** one to six of the real plugin surface, PNG, JPEG or WebP, at least 1200
+  pixels wide, at most 2 MiB, in `screenshots/<id>/`. Capture at 2× in a wide enough window; show real
+  content with no home paths, tokens, email addresses or unrelated thread text. Lead with the surface a
+  user meets first.
+- **The description is a store listing.** The first sentence is the hook — the outcome, under about
+  140 characters, starting with a verb, not with the plugin's name — and each later sentence one
+  capability. Name every cost: an external service, an account, a separate install, a limited OS. No
+  "powerful", "seamless", "easy" and the like.
+- **The rest of the entry:** `category` is one id from `marketplace.base.json`; `icon` is a bb host icon
+  name (ours use the manifest's) or a file vendored as `icons/<id>-<first 8 of sha256>.<ext>`, 256 KB
+  at most; up to ten lowercase `tags`, not repeating the name or category; `author.github` is the
+  account that opens the marketplace PR.
+- **Validate in a clean marketplace clone** before the PR: `npm ci --ignore-scripts && npm run build &&
+  npm run check`. Commit only `entries/<id>.json`, the icon, `screenshots/<id>/` and `overview/<id>.md`.
+- A compatible release inside the entry's range needs no new marketplace PR. A change of source, name,
+  branding, description, overview, category, screenshots or range does.
 
 ## Plugin docs
 
