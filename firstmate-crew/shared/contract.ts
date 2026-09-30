@@ -8,7 +8,7 @@
 import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
-import { FleetSchema, SuggestionSchema, WatchSummarySchema } from "./types";
+import { FleetSchema, SuggestionSchema, WatchNoteSchema, WatchSummarySchema } from "./types";
 
 const Empty = z.object({});
 const Done = z.null();
@@ -37,5 +37,6 @@ export const rpcContract = defineRpcContract({
   "suggestion.remove": { input: SuggestionSchema, output: z.array(SuggestionSchema) },
   "charter.compare": { input: Empty, output: z.object({ path: z.string() }) },
   "charter.acknowledge": { input: Empty, output: Done },
+  "watch.note": { input: z.object({ file: z.string().min(1) }), output: WatchNoteSchema },
   "watch.toggle": { input: z.object({ name: z.string().min(1), enabled: z.boolean() }), output: z.array(WatchSummarySchema) },
 });

@@ -126,6 +126,9 @@ export const WATCHES_DIR = "watches";
 /** The plugin's own folder in the home, for what the plugin keeps there rather than the first mate. */
 export const STATE_DIR = ".firstmate";
 
+/** Where the whole watch messages are kept, relative to the home: the first mate's workspace. */
+export const WATCH_NOTES_FOLDER = `${STATE_DIR}/watch-notes`;
+
 /**
  * What a watch's last run came to: `silent` printed nothing; `queued` printed something that waits for
  * the first mate to be idle; `delivered` printed something the first mate has been sent; `dropped`
@@ -162,6 +165,27 @@ export const WatchSummarySchema = z.object({
   outdated: z.boolean(),
 });
 export type WatchSummary = z.infer<typeof WatchSummarySchema>;
+
+/** A watch message as the chat's expanded note shows it: each run's own words, without the plugin's tags. */
+export const WatchNoteSchema = z.object({
+  /** How many older runs were dropped before this message went. */
+  dropped: z.number(),
+  runs: z.array(
+    z.object({
+      name: z.string(),
+      /** When it ran, as an ISO time in UTC. */
+      ran: z.string(),
+      /** What went wrong, for a failed run; null when it printed normally. */
+      failed: z.string().nullable(),
+      /** What it printed, or for a failure the end of its stderr. */
+      text: z.string(),
+    }),
+  ),
+});
+export type WatchNote = z.infer<typeof WatchNoteSchema>;
+
+/** A saved watch note's file name in `.firstmate/watch-notes/`: its time in UTC, a counter when two land in one second. */
+export const WATCH_NOTE_FILE = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z(?:-\d+)?\.md$/;
 
 /**
  * The state of the captain's copy of the charter, `data/charter.md`, against the plugin's own: only what

@@ -10,7 +10,7 @@ import { join } from "node:path";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import { rpcContract } from "./shared/contract";
-import { STATE_DIR } from "./shared/types";
+import { STATE_DIR, WATCH_NOTES_FOLDER } from "./shared/types";
 import { bbProjects, bbThreads } from "./server/bb-ports";
 import { acknowledgeCharter, NEW_CHARTER_FILE, writeNewCharter } from "./server/charter-file";
 import { firstmateCli } from "./server/cli";
@@ -23,6 +23,7 @@ import { serialized } from "./server/serialize";
 import { homeConfig, homePath, SETTINGS } from "./server/settings";
 import { createStore } from "./server/store";
 import { createDeliver } from "./server/watch-delivery";
+import { readWatchNote } from "./server/watch-notes";
 import { WatchRunner } from "./server/watches";
 
 export { rpcContract } from "./shared/contract";
@@ -264,6 +265,7 @@ export default async function plugin(bb: BbPluginApi) {
       await acknowledgeCharter(await currentHome());
       return null;
     },
+    "watch.note": async ({ file }) => readWatchNote(join(await currentHome(), WATCH_NOTES_FOLDER), file),
     "watch.toggle": async ({ name, enabled }) => {
       // Read and written as one step, so two quick toggles cannot undo each other.
       await serialized("watches-toggle", async () => {

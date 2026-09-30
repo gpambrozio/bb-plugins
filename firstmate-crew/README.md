@@ -127,9 +127,9 @@ The plugin never overwrites `captain.md`, `opening.md`, or the records once writ
 
 A watch is an executable in the home's `watches/` folder with a `# schedule: <crontab>` line near the top.
 The plugin runs each on its schedule, in the server's local time, and whatever it prints reaches the first
-mate as one note once the first mate is between turns. In chat the note is one line naming the watches,
-with a **full note** chip that opens the whole message; the home keeps the last 50 in
-`.firstmate/watch-notes/`. Printing nothing costs nothing. `pr-watch` comes
+mate as one note once the first mate is between turns. In chat the note is one line naming the watches;
+its **full note** chip expands the whole message in place, each run under its watch's name and time, with
+the plugin's tags left out. The home keeps the last 50 in `.firstmate/watch-notes/`. Printing nothing costs nothing. `pr-watch` comes
 built in: every five minutes it checks the pull requests on the backlog and tells the first mate when one
 is merged or closed, gets a review or comment, or has its checks go red or green. The Watches card lists
 each watch with its last run, and switches any of them off or on. `watches/README.md` in the home explains

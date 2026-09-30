@@ -34,7 +34,7 @@ The first release: FirstMate for bb, ported from the Paseo plugin of the same na
 - **Watches**: small scripts that run on a schedule while bb is running and tell the first mate when
   they have something to say. A pull request watch is built in and reports merges, closes, reviews,
   comments and checks turning red or green within about five minutes, when `gh` is logged in. In chat a
-  watch's message is one line naming the watch, with a chip that opens the whole message. A card lists
+  watch's message is one line naming the watch, with a chip that expands the whole message in place. A card lists
   the watches and switches them off or on.
 - **The first mate's home**, `~/FirstMate` unless you choose another place: its charter, your standing
   orders, its backlog and its records, all plain files you can read and change. When FirstMate's charter

@@ -12,14 +12,12 @@
  */
 import { join } from "node:path";
 
-import { STATE_DIR } from "../shared/types";
+import { WATCH_NOTES_FOLDER } from "../shared/types";
 import { errorText, type Log } from "./log";
 import type { ThreadsPort } from "./ports";
 import type { Store } from "./store";
 import { saveWatchNote, watchNoteLine } from "./watch-notes";
 import type { DeliveryOutcome, OutgoingNote } from "./watches";
-
-const NOTES_FOLDER = `${STATE_DIR}/watch-notes`;
 
 export interface DeliveryDeps {
   threads: ThreadsPort;
@@ -39,7 +37,7 @@ export function createDeliver(deps: DeliveryDeps): (note: OutgoingNote) => Promi
     if (mate === null || mate.status !== "idle") return "wait";
     let file: string;
     try {
-      file = await saveWatchNote(join(deps.home, NOTES_FOLDER), note.text, now());
+      file = await saveWatchNote(join(deps.home, WATCH_NOTES_FOLDER), note.text, now());
     } catch (error) {
       deps.log.warn(`Could not save the watch note, so it goes to the first mate in full: ${errorText(error)}`);
       await deps.threads.send(mate.id, note.text, "queue-if-active");
@@ -49,7 +47,7 @@ export function createDeliver(deps: DeliveryDeps): (note: OutgoingNote) => Promi
       mate.id,
       {
         shown: watchNoteLine(note.notes, note.dropped),
-        file: { path: `${NOTES_FOLDER}/${file}`, label: "full note" },
+        file: { path: `${WATCH_NOTES_FOLDER}/${file}`, label: "full note" },
         hidden: note.text,
       },
       "queue-if-active",

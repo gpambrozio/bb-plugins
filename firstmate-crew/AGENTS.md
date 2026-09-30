@@ -32,7 +32,7 @@ against bb 0.44.0 and `@get-bb/plugin-sdk` 0.5.29.
 | `server/templates.ts`, `templates.generated.ts` | Reading the templates; the generated module. See below. |
 | `server/testing/` | `createFakeSdk` and the other fakes. |
 | `templates/` | **Everything the plugin writes into the home**, laid out as it lands there, plus `messages/` (what the plugin says to the first mate) and `parts/` (pieces inside other files). The first mate's behaviour is `templates/data/charter.md`. |
-| `app.tsx`, `app/` | The `threadPanelAction` "FirstMate" (`panel.tsx` branches on the thread), the board and cards, the settings section, the command palette entries. |
+| `app.tsx`, `app/` | The `threadPanelAction` "FirstMate" (`panel.tsx` branches on the thread), the board and cards, the settings section, the command palette entries, and the overlay that expands watch notes in chat. |
 | `components/ui/`, `lib/`, `hooks/` | Vendored shadcn components and helpers. |
 | `scripts/gen-templates.mjs` | Writes `server/templates.generated.ts` from `templates/`. |
 
@@ -104,6 +104,11 @@ Do not break these; each was paid for.
   `<home>/.firstmate/watch-notes/`, and the whole message with `visibility: "agent-only"`. The first
   mate's workspace is the home, so the mention's workspace-relative path opens there. A note that cannot
   be saved goes whole, as a plain message, with a warning in the log.
+- **The chip expands in place through an app overlay** (`app/watch-note-expander.tsx`). It catches clicks
+  on chips whose `data-prompt-mention-resource` names a note, stops bb opening the file, and portals the
+  note — read back into runs by the `watch.note` RPC — after the chip's block. That attribute is bb's
+  markup, not the SDK's contract: if it changes, the chip falls back to opening the file, and the first
+  mate is unaffected. Check it after a bb upgrade.
 - **The board is a thread tab, not a nav panel.** The first mate is a normal thread in bb's own chat; the
   Files view was dropped because its workspace is the home, which bb's file panel already opens.
 - **End archives.** Immediate when the task is in the backlog's Done; otherwise a confirmation, because

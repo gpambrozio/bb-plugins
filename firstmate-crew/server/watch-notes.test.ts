@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { KEPT_NOTES, saveWatchNote, watchNoteLine } from "./watch-notes";
+import { KEPT_NOTES, parseWatchNote, readWatchNote, saveWatchNote, watchNoteLine } from "./watch-notes";
+import { watchNote, type QueuedNote } from "./watches";
 
 describe("watchNoteLine", () => {
   it("names the one watch", () => {
@@ -85,5 +86,67 @@ describe("saveWatchNote", () => {
     expect(files).toContain("README.txt");
     expect(files).not.toContain("2026-09-29T10-00-00Z.md");
     expect(files).toContain("2026-09-30T06-40-12Z.md");
+  });
+});
+
+describe("parseWatchNote", () => {
+  const ran = "2026-09-30T06:40:00Z";
+
+  it("reads back each run of a composed message, without the tags and with the escaping undone", async () => {
+    const notes: QueuedNote[] = [
+      { name: "pr-watch", ran, kind: "output", text: "Checks turned green\n- <b>one</b> & two" },
+      { name: "disk-check", ran, kind: "failed", reason: 'it exited with code 2', text: "df: \"/Volumes/x\": no such file" },
+    ];
+    expect(parseWatchNote(await watchNote(notes, 3))).toEqual({
+      dropped: 3,
+      runs: [
+        { name: "pr-watch", ran, failed: null, text: "Checks turned green\n- <b>one</b> & two" },
+        { name: "disk-check", ran, failed: "it exited with code 2", text: 'df: "/Volumes/x": no such file' },
+      ],
+    });
+  });
+
+  it("reads a failure that wrote nothing to stderr", async () => {
+    const text = await watchNote([{ name: "quiet", ran, kind: "failed", reason: "it was killed by a signal", text: "" }], 0);
+    expect(parseWatchNote(text).runs).toEqual([
+      { name: "quiet", ran, failed: "it was killed by a signal", text: "(nothing on stderr)" },
+    ]);
+  });
+
+  it("is empty for text that is not a watch message", () => {
+    expect(parseWatchNote("just some words")).toEqual({ dropped: 0, runs: [] });
+  });
+});
+
+describe("readWatchNote", () => {
+  let notes: string;
+
+  beforeEach(async () => {
+    notes = await mkdtemp(join(tmpdir(), "fm-read-"));
+  });
+
+  afterEach(async () => {
+    await rm(notes, { recursive: true, force: true });
+  });
+
+  it("reads a saved note by its file name", async () => {
+    const name = await saveWatchNote(
+      notes,
+      await watchNote([{ name: "pr-watch", ran: "2026-09-30T06:40:00Z", kind: "output", text: "hi" }], 0),
+      new Date("2026-09-30T06:40:12Z"),
+    );
+    await expect(readWatchNote(notes, name)).resolves.toMatchObject({ runs: [{ name: "pr-watch", text: "hi" }] });
+  });
+
+  it("refuses anything but a note's file name", async () => {
+    for (const name of ["../watches.json", "/etc/passwd", "2026-09-30T06-40-12Z.md/../../x", "notes.md"]) {
+      await expect(readWatchNote(notes, name)).rejects.toThrow(`Not a watch note: ${name}`);
+    }
+  });
+
+  it("says so when the note is gone", async () => {
+    await expect(readWatchNote(notes, "2026-09-30T06-40-12Z.md")).rejects.toThrow(
+      "That watch note is no longer kept; the home keeps the newest 50.",
+    );
   });
 });
