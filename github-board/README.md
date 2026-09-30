@@ -8,7 +8,9 @@ whatever is open on repositories you own, and what is assigned to you anywhere.
 
 - An issue that an open pull request closes folds into that pull request's card, as an `Issue #12` pill.
 - Open pull requests show their CI checks (`✓ 9 ✕ 1 ● 2`). A branch behind its base shows **Out of
-  date**, or **Conflicts**, with an **Update branch** button wherever GitHub itself offers one.
+  date**, or **Conflicts**. An out-of-date branch without conflicts gets an **Update branch** button
+  wherever you can push to the repository — even where the repository has "Always suggest updating
+  pull request branches" off and GitHub's own page shows none.
 - Press a card for the detail panel: the body, state, dates, assignees and branches, the comments on
   request, and **Open on GitHub**. Images from GitHub load, private ones included; an image from any
   other host waits until you press **Load image**, since loading it tells that host you read the item.

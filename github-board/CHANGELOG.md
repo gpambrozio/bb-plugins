@@ -16,8 +16,10 @@ The first release: GitHub Board for bb, ported from the Paseo plugin of the same
   the columns become tabs, each with its count.
 - **One card per piece of work.** An issue that a pull request closes shows on the pull request's card
   instead of on its own.
-- **Checks and branch status on pull requests**, with an Update branch button wherever GitHub offers
-  one. It looks again before updating, so a branch with conflicts is not touched.
+- **Checks and branch status on pull requests**, with an Update branch button wherever you can push to
+  the repository — including repositories that have "Always suggest updating pull request branches"
+  off, where GitHub's own page, and the Paseo board, offered none. It looks again before updating, so
+  a branch with conflicts is not touched, and a failed update says why on the card.
 - **A detail panel** for each card, with its description, comments and images. Private images load;
   images from outside GitHub wait until you ask. The panel can be widened or narrowed by dragging its
   edge, and keeps that width.

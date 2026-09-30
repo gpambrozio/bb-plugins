@@ -517,21 +517,34 @@ export function branchStatusQuery(count: number): string {
   const selections = indexes
     .map(
       (index) =>
-        `  pr${index}: node(id: $id${index}) { ... on PullRequest { mergeable viewerCanUpdateBranch baseRef { compare(headRef: $head${index}) { behindBy } } } }`,
+        `  pr${index}: node(id: $id${index}) { ... on PullRequest { mergeable viewerCanUpdateBranch repository { viewerPermission } baseRef { compare(headRef: $head${index}) { behindBy } } } }`,
     )
     .join("\n");
   return `query(${variables}) {\n${selections}\n}`;
 }
 
+/** Permissions that can push to the base repository, and so can merge its base into a head there. */
+const WRITE_PERMISSIONS = new Set(["WRITE", "MAINTAIN", "ADMIN"]);
+
 /**
  * One alias's answer, or null when GitHub had no comparison to give — a base
  * branch deleted from under an open pull request leaves `baseRef` null.
  *
- * `canUpdate` is GitHub's own flag narrowed twice. By conflicts, because the
- * flag does not account for them: getpaseo/paseo#3339 answered
- * `viewerCanUpdateBranch: true` with `mergeable: CONFLICTING`, and the update
- * GitHub offered there fails. And by `behindBy > 0`, which the flag already
- * implies, so that the button can never appear without the pill.
+ * `canUpdate` is: behind, no known conflicts, and either GitHub's own
+ * `viewerCanUpdateBranch` or write access to the base repository.
+ *
+ * - Write access, because `viewerCanUpdateBranch` is also false wherever the
+ *   repository has "Always suggest updating pull request branches" off — the
+ *   default for a new repository — and the update still works there: checked
+ *   on 2026-09-30 against a throwaway pull request on
+ *   gpambrozio/SquarelineToEsphome (setting off, `viewerCanUpdateBranch`
+ *   false, one behind), where `updatePullRequestBranch` merged the base in.
+ *   Paseo's board, and GitHub's own page, show no button there; this one does.
+ *   Without write access the button stays hidden.
+ * - Not conflicts, because neither signal accounts for them:
+ *   getpaseo/paseo#3339 answered `viewerCanUpdateBranch: true` with
+ *   `mergeable: CONFLICTING`, and the update GitHub offered there fails.
+ * - `behindBy > 0`, so the button can never appear without the pill.
  *
  * `mergeable` is `UNKNOWN` until GitHub has computed it, which asking starts;
  * that reads as no conflicts, and the look in `updateBranch` is what stops a
@@ -542,6 +555,7 @@ export function toBranchStatus(node: unknown): BranchStatus | null {
     | {
         mergeable?: unknown;
         viewerCanUpdateBranch?: unknown;
+        repository?: { viewerPermission?: unknown } | null;
         baseRef?: { compare?: { behindBy?: unknown } | null } | null;
       }
     | null
@@ -551,7 +565,11 @@ export function toBranchStatus(node: unknown): BranchStatus | null {
   const conflicts = record?.mergeable === "CONFLICTING";
   return {
     behindBy,
-    canUpdate: behindBy > 0 && !conflicts && record?.viewerCanUpdateBranch === true,
+    canUpdate:
+      behindBy > 0 &&
+      !conflicts &&
+      (record?.viewerCanUpdateBranch === true ||
+        WRITE_PERMISSIONS.has(String(record?.repository?.viewerPermission))),
     conflicts,
   };
 }

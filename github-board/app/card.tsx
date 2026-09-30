@@ -1,8 +1,8 @@
 /**
  * One card. A press opens the detail panel; right-click opens the label menu.
  *
- * On a wide layout **Send to chat** — and **Update branch**, where GitHub offers
- * it — sit in the card's bottom-right corner and appear on hover or keyboard
+ * On a wide layout **Send to chat** — and **Update branch**, where the viewer can
+ * use it — sit in the card's bottom-right corner and appear on hover or keyboard
  * focus, over the footer, so revealing them never reflows the card. They take
  * clicks only while the card is hovered or focused: on a touch screen nothing
  * hovers, and a tap on that corner must open the card rather than push a
@@ -31,6 +31,7 @@ export function Card({
   viewerLogin,
   selected,
   updating,
+  updateError,
   compact,
   actions,
 }: {
@@ -39,6 +40,8 @@ export function Card({
   viewerLogin: string;
   selected: boolean;
   updating: boolean;
+  /** Why the last update failed, shown under the footer until the next try. */
+  updateError: string | null;
   compact: boolean;
   actions: CardActions;
 }) {
@@ -113,6 +116,11 @@ export function Card({
           <ItemPills item={item} />
           {item.detail !== null ? <span className="text-[11px] text-muted-foreground">{item.detail}</span> : null}
         </div>
+        {updateError !== null ? (
+          <p role="alert" className="mt-1.5 text-xs text-destructive">
+            {updateError}
+          </p>
+        ) : null}
 
         {compact ? (
           <div className="mt-2 flex justify-end gap-2 border-t border-border pt-2">

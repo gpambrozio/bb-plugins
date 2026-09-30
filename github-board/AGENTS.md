@@ -75,8 +75,14 @@ when you add a query.
   search would blank both pull request columns. Either failure costs only its pills and goes to the
   plugin log. Checks are asked for open pull requests only; branch status for drafts too.
 - **Branch status compares the base ref against the head's SHA**, not its name, so fork pull
-  requests resolve. `canUpdate` is `viewerCanUpdateBranch`, narrowed by conflicts and by
-  `behindBy > 0`. `updateBranch` looks again before merging and sends nothing if the look says no; a
+  requests resolve. `canUpdate` is behind, no known conflicts, and either `viewerCanUpdateBranch`
+  or write access (`WRITE`/`MAINTAIN`/`ADMIN`) to the base repository. **This departs from Paseo on
+  purpose** (owner's decision on PR #8): `viewerCanUpdateBranch` is false wherever a repository has
+  "Always suggest updating pull request branches" off — the default — and Paseo, like GitHub's own
+  page, showed the Out of date pill with no button there. The update works anyway for a writer:
+  tested 2026-09-30 on a throwaway pull request on gpambrozio/SquarelineToEsphome with the setting
+  off and `viewerCanUpdateBranch` false, where `updatePullRequestBranch` merged the base in. A
+  failed update shows GitHub's answer on the card and in the panel until the next try. `updateBranch` looks again before merging and sends nothing if the look says no; a
   success is taken at its word for `BRANCH_UPDATE_SETTLE_MS`, through `settleBranches`, which runs
   after the board's last `await` and before it is cached. The update is a merge with no
   `expectedHeadOid`.

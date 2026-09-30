@@ -361,6 +361,31 @@ describe("updateBranch", () => {
     expect(api.requests.at(-1)).toEqual({ query: UPDATE_BRANCH_MUTATION, variables: { id: "P1" } });
   });
 
+  it("merges for a writer where the repository does not suggest updating", async () => {
+    const api = fakeApi(
+      lookThen({
+        mergeable: "MERGEABLE",
+        viewerCanUpdateBranch: false,
+        repository: { viewerPermission: "WRITE" },
+        baseRef: { compare: { behindBy: 1 } },
+      }),
+    );
+    expect(await updateBranch(api, "P1")).toEqual({ updated: true, branch: UPDATED_BRANCH });
+  });
+
+  it("sends nothing for a reader, however far behind", async () => {
+    const api = fakeApi(
+      lookThen({
+        mergeable: "MERGEABLE",
+        viewerCanUpdateBranch: false,
+        repository: { viewerPermission: "READ" },
+        baseRef: { compare: { behindBy: 5 } },
+      }),
+    );
+    expect((await updateBranch(api, "P1")).updated).toBe(false);
+    expect(api.requests.some((request) => request.query === UPDATE_BRANCH_MUTATION)).toBe(false);
+  });
+
   it("lets the mutation answer for itself when the look fails", async () => {
     const api = fakeApi((request) => {
       if (request.query.includes("headRefOid")) throw new Error("timeout");

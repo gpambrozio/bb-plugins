@@ -17,6 +17,7 @@ describe("branchStatusQuery", () => {
       expect(query).toContain(`pr${index}: node(id: $id${index})`);
       expect(query).toContain(`compare(headRef: $head${index})`);
       expect(query).toContain("mergeable");
+      expect(query).toContain("repository { viewerPermission }");
     }
     expect(query).not.toContain("pr3");
   });
@@ -43,15 +44,47 @@ describe("toBranchStatus", () => {
     expect(toBranchStatus(node)).toEqual({ behindBy: 25, canUpdate: true, conflicts: false });
   });
 
-  it("keeps the count but offers no update where GitHub would not", () => {
+  it("offers the update to a writer where the repository does not suggest it", () => {
     // gpambrozio/SquarelineToEsphome#23: clean and behind, but the repository
-    // does not suggest updating branches, so GitHub answers false.
+    // has "Always suggest updating pull request branches" off, so GitHub
+    // answers false. The update works anyway for someone who can push there
+    // (tested on 2026-09-30 with a throwaway pull request on that repository).
+    const node = {
+      mergeable: "MERGEABLE",
+      viewerCanUpdateBranch: false,
+      repository: { viewerPermission: "ADMIN" },
+      baseRef: { compare: { behindBy: 2 } },
+    };
+    expect(toBranchStatus(node)).toEqual({ behindBy: 2, canUpdate: true, conflicts: false });
+    for (const permission of ["WRITE", "MAINTAIN"]) {
+      expect(toBranchStatus({ ...node, repository: { viewerPermission: permission } })?.canUpdate).toBe(true);
+    }
+  });
+
+  it("keeps the count but offers no update without write access", () => {
     const node = {
       mergeable: "MERGEABLE",
       viewerCanUpdateBranch: false,
       baseRef: { compare: { behindBy: 2 } },
     };
-    expect(toBranchStatus(node)).toEqual({ behindBy: 2, canUpdate: false, conflicts: false });
+    for (const permission of ["READ", "TRIAGE", null]) {
+      expect(toBranchStatus({ ...node, repository: { viewerPermission: permission } })).toEqual({
+        behindBy: 2,
+        canUpdate: false,
+        conflicts: false,
+      });
+    }
+    expect(toBranchStatus({ ...node, repository: null })?.canUpdate).toBe(false);
+  });
+
+  it("offers no update to a writer on a branch with conflicts", () => {
+    const node = {
+      mergeable: "CONFLICTING",
+      viewerCanUpdateBranch: false,
+      repository: { viewerPermission: "ADMIN" },
+      baseRef: { compare: { behindBy: 4 } },
+    };
+    expect(toBranchStatus(node)).toEqual({ behindBy: 4, canUpdate: false, conflicts: true });
   });
 
   it("never offers an update on a branch that is not behind", () => {

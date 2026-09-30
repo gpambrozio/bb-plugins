@@ -124,7 +124,7 @@ export function behindSentence(branch: BranchStatus): string {
 export function notUpdatedReason(branch: BranchStatus): string {
   if (branch.conflicts) return "This branch has conflicts to resolve first.";
   if (branch.behindBy === 0) return "This branch is already up to date.";
-  return "GitHub no longer offers to update this branch.";
+  return "This account cannot update this branch.";
 }
 
 export function kindLabel(column: ColumnId): string {

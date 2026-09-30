@@ -85,6 +85,7 @@ function ColumnBody({
   viewerLogin,
   selectedId,
   updating,
+  updateErrors,
   compact,
   actions,
 }: {
@@ -92,6 +93,7 @@ function ColumnBody({
   viewerLogin: string;
   selectedId: string | null;
   updating: ReadonlySet<string>;
+  updateErrors: ReadonlyMap<string, string>;
   compact: boolean;
   actions: CardActions;
 }) {
@@ -111,6 +113,7 @@ function ColumnBody({
           viewerLogin={viewerLogin}
           selected={item.id === selectedId}
           updating={updating.has(item.id)}
+          updateError={updateErrors.get(item.id) ?? null}
           compact={compact}
           actions={actions}
         />
@@ -134,6 +137,10 @@ function Board() {
   // On the board, not a card, so the card and the panel show the same
   // "Updating…" and a second press from either is ignored.
   const [updating, setUpdating] = useState<ReadonlySet<string>>(new Set());
+  // Why the last update of a card failed, shown on the card and in the panel
+  // until the next attempt — the button can be offered where GitHub's own
+  // page does not, so a refusal must say what GitHub answered.
+  const [updateErrors, setUpdateErrors] = useState<ReadonlyMap<string, string>>(new Map());
   const [tab, setTab] = useState<ColumnId | null>(selectedColumn);
 
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -159,6 +166,12 @@ function Board() {
     onUpdateBranch: (item) => {
       if (updating.has(item.id)) return;
       setUpdating((current) => new Set(current).add(item.id));
+      setUpdateErrors((current) => {
+        if (!current.has(item.id)) return current;
+        const next = new Map(current);
+        next.delete(item.id);
+        return next;
+      });
       rpc
         .call("updateBranch", { id: item.id })
         .then(
@@ -167,7 +180,8 @@ function Board() {
             if (result.updated) toast.success(`Updating ${item.repository}#${item.number} from its base branch`);
             else toast.info(notUpdatedReason(result.branch));
           },
-          (cause: unknown) => toast.error(`Could not update the branch: ${errorText(cause)}`),
+          (cause: unknown) =>
+            setUpdateErrors((current) => new Map(current).set(item.id, `Update failed: ${errorText(cause)}`)),
         )
         .finally(() =>
           setUpdating((current) => {
@@ -254,6 +268,7 @@ function Board() {
                   viewerLogin={board.login}
                   selectedId={detailId}
                   updating={updating}
+                  updateErrors={updateErrors}
                   compact
                   actions={actions}
                 />
@@ -274,6 +289,7 @@ function Board() {
                     viewerLogin={board.login}
                     selectedId={detailId}
                     updating={updating}
+                    updateErrors={updateErrors}
                     compact={false}
                     actions={actions}
                   />
@@ -292,6 +308,7 @@ function Board() {
             bodyWidth={bodyWidth}
             widthFraction={prefs?.detailWidthFraction ?? null}
             updating={updating.has(detail.item.id)}
+            updateError={updateErrors.get(detail.item.id) ?? null}
             onWidthCommitted={(fraction) => updatePrefs({ detailWidthFraction: fraction })}
             onClose={() => setDetailId(null)}
             onSend={() => setSendTarget({ item: detail.item, column: detail.column })}

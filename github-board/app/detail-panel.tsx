@@ -87,6 +87,7 @@ export function DetailPanel({
   bodyWidth,
   widthFraction,
   updating,
+  updateError,
   onWidthCommitted,
   onClose,
   onSend,
@@ -99,6 +100,7 @@ export function DetailPanel({
   bodyWidth: number;
   widthFraction: number | null;
   updating: boolean;
+  updateError: string | null;
   onWidthCommitted(fraction: number): void;
   onClose(): void;
   onSend(): void;
@@ -248,6 +250,11 @@ export function DetailPanel({
           ) : null}
         </div>
 
+        {updateError !== null ? (
+          <p role="alert" className="text-sm text-destructive">
+            {updateError}
+          </p>
+        ) : null}
         {error !== null ? <p className="text-sm text-destructive">{error}</p> : null}
         {details === null && error === null ? (
           <div className="space-y-2">
