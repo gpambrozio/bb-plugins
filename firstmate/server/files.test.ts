@@ -44,6 +44,15 @@ describe("readTextFile", () => {
     await writeFile(join(dir, "image.png"), Buffer.from([0x89, 0x50, 0x00, 0x47]));
     expect(await readTextFile(dir, "image.png")).toMatchObject({ content: null, binary: true });
   });
+
+  it("refuses a symlink that leads outside the home", async () => {
+    const dir = await home();
+    const outside = await mkdtemp(join(tmpdir(), "firstmate-outside-"));
+    tempDirs.push(outside);
+    await writeFile(join(outside, "secret.txt"), "no");
+    await symlink(outside, join(dir, "escape"));
+    await expect(readTextFile(dir, "escape/secret.txt")).rejects.toThrow(/outside the home/);
+  });
 });
 
 describe("writeTextFile", () => {
