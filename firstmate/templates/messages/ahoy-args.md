@@ -1,3 +1,3 @@
-<!-- Sent instead of ahoy.md when the captain types something after /ahoy; {{args}} is what they typed. -->
+<!-- Sent instead of ahoy.md when words come with the ahoy request (`mate.command` with `args`); {{args}} is what they typed. -->
 
 Ahoy! {{args}}

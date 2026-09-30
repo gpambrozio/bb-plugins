@@ -40,7 +40,7 @@ one). Add `--json` whenever you will read the output, and pass anything longer t
 | To find out | Run |
 | --- | --- |
 | The captain's projects, with their ids, names and checkouts | `bb project list --json` |
-| Your crew — every thread you started (`--archived` for the archived ones) | `bb thread list --parent-thread $BB_THREAD_ID --json` |
+| Your crew — every thread you started, archived ones included (each has an `archivedAt` in the JSON) | `bb thread list --parent-thread $BB_THREAD_ID --json` |
 | One thread in detail: its status, its environment id and branch, its pull request | `bb thread show <id>` (`--work-status` adds its git state) |
 | What a thread said at the end of its last turn | `bb thread output <id>` |
 | Everything a thread has been doing | `bb thread log <id>` |
@@ -390,8 +390,8 @@ joins a turn under way, or starts one when the crewmate is idle.
 4. If it is truly wedged: **relaunch** — read its environment id from `bb thread show <id>`, stop it
    (`bb thread stop <id>`) if its turn is still going, write the brief from `data/<id>/brief.md` plus a
    short note of the progress so far to `data/<id>/relaunch.md`, and run `bb firstmate crew spawn`
-   with the same `--task`, `--project` and `--kind`, `--prompt-file data/<id>/relaunch.md` and
-   `--environment <that environment id>`. The worktree keeps the work; the conversation does not carry
+   with the same `--task`, `--project`, `--kind` and `--title`, `--prompt-file data/<id>/relaunch.md`
+   and `--environment <that environment id>`. The worktree keeps the work; the conversation does not carry
    over. Update the backlog's `(thread: …)`. Leave the old thread stopped, not archived — archiving it
    could retire the worktree the new crewmate is working in; it is archived with the new one once the
    work has landed (§8).

@@ -107,12 +107,13 @@ leading `#` title, no raw HTML, images or tables). The community marketplace req
 npm install --include=dev
 npx tsc --noEmit                 # typecheck
 bb plugin build                  # dist/ bundles; talks to no server
-bb plugin install path:$PWD      # once, into the running bb
+bb plugin install path:$PWD --yes  # once, into the running bb; --yes when nothing can answer the prompt
 bb plugin dev                    # watch, rebuild, reload (plugin must be installed)
 bb plugin reload <id>            # by hand
 bb plugin logs <id> -f
 bb plugin list                   # status, services, schedules, handler timings
-bb plugin rpc list <id>          # and `inspect`, `call <id> <method> --input-file`
+bb plugin rpc list <id>          # and `inspect`, `call <id> <method> --input-file`; list and inspect show
+                                 # only methods registered with `experimental_discoverable`, `call` reaches all
 bb plugin types                  # repin the SDK to the running bb; --check in CI
 ```
 
@@ -169,6 +170,18 @@ not a subprocess's. The surface a port uses most:
 
 Use `bb.sdk` from handlers and services, not the factory body.
 
+Three things a port only learns by running it:
+
+- **The server cannot find its own folder.** `bb plugin build` compiles the entry into bb's cache, so
+  nothing at run time names the plugin's directory, and a `templates/` or `data/` folder beside
+  `server.ts` is unreachable. Ship such data through a generated module (a script writes the files
+  into a checked-in `.ts` file, a test fails when the two differ), as `firstmate` does.
+- **`bb.storage.kv` is 256 KB per value.** A queue or a log that can outgrow that belongs in a file
+  beside the data it describes, or in `bb.storage.database()`.
+- **A thread spawn into a host workspace needs a `hostId`.** The SDK type marks it optional, bb 0.44
+  answers `hostId is required unless workspace.type is personal`. Take the server's own machine from
+  `bb.sdk.system.config().primaryHostId`, or the host of the project's checkout.
+
 **Settings are writable from the server** (`experimental_set`), unlike Paseo, where only the
 client could write a settings document. That erases the Paseo split between "settings document"
 and "the daemon's own file"; decide per value whether the user edits it in the host-rendered form
@@ -214,6 +227,8 @@ Plain web React with the DOM lib — `document` and `window` are fine. Paseo con
 | `navigation.openAgent`, `openExternalUrl` | `useBbNavigate()` — `toThread`, `toProject`, `toPluginPanel`, `openThreadPanel`, `openUrl` |
 | `theme.colors` tokens | Tailwind semantic classes (`bg-background`, `text-muted-foreground`, `border-border`, `bg-card`, `text-destructive`) |
 | host UI kit | shadcn components vendored into `components/ui/` (`npx shadcn add @bb/<name>`), plus host `Markdown`, `ThreadChat`, `ThreadTitle`, `UrlLink` |
+
+`app.slots.settingsSection` requires an `id` (letters, digits, `-`, `_`), unlike the Paseo settings screen.
 
 Colour comes from the semantic classes, never a literal — check light and dark. The app also has a
 compact viewport (`isCompactViewport` on some slots); check a narrow window too. A throwing slot

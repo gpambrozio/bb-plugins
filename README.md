@@ -12,7 +12,7 @@ Each port is tracked by its own issue.
 | `launchd-jobs` | Schedules shell commands on your Mac through launchd. | [Not started (#3)](https://github.com/gpambrozio/bb-plugins/issues/3) |
 | `herald` | Speaks one sentence when an agent needs you, and lists what is waiting. | [Not started (#4)](https://github.com/gpambrozio/bb-plugins/issues/4) |
 | `model-pricing` | What every model costs, across five providers, in one table. | [Not started (#5)](https://github.com/gpambrozio/bb-plugins/issues/5) |
-| `firstmate` | Talk to one first mate; it runs a crew of agents in their own worktrees. | [Not started (#6)](https://github.com/gpambrozio/bb-plugins/issues/6) |
+| `firstmate` | Talk to one first mate; it runs a crew of agents in their own worktrees. | [Ported — 0.1.0, local install (#6)](https://github.com/gpambrozio/bb-plugins/issues/6) |
 
 ## Install
 

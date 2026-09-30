@@ -98,8 +98,8 @@ RPC contract (`defineRpcContract`, zod): `fleet.load`, `mate.launch`, `mate.adop
 - **`settingsSection`** — first mate status; `experimental_ProviderModelPicker` + **Launch**; **Release**;
   **Restart** (with confirmation).
 - **`app.commands.register`** — FirstMate: open, bearings, ahoy.
-- `/fm` as a composer slash command if `app.composer.customize` supports one; otherwise the CLI and ⌘K
-  cover it. Verified in the plan.
+- No `/fm` composer slash command: `app.composer.customize` has no slash registration (see *Open
+  items*). The CLI and the command palette cover it.
 
 Styling uses semantic Tailwind classes only; checked wide and narrow, light and dark.
 
@@ -149,8 +149,7 @@ Not the plugin's; bb's composer has `/compact`.
 ### Card actions
 
 - **Steer** — `threads.send` to the worker (steer mode). Its finished turn notifies the first mate
-  natively. The Paseo steer relay is not ported unless the plan's first check shows a captain-started
-  turn does *not* notify the parent; then `steer-relay*.md` and a `thread.idle` relay come back.
+  natively, so the Paseo steer relay is not ported.
 - **Interrupt** — `threads.stop`.
 - **Relaunch** — `messages/relaunch.md` to the first mate with the captain's note and the worker's
   environment; the first mate spawns a fresh worker there.
@@ -227,7 +226,7 @@ code adds a suggestion.
 - Watch output reaches the first mate only between turns, capped at 32k characters, tag-like `<`
   escaped.
 
-Dropped as moot: finding crew by label, the steer-relay timing rules (pending the check above),
+Dropped as moot: finding crew by label, the steer-relay timing rules,
 crew-seen, clearing attention by raw frame, `activeTurnBehavior`, uploads, draft persistence on
 `globalThis`, home and project renaming via CLI.
 
@@ -275,7 +274,7 @@ Checked first in the plan (2026-09-29, bb 0.44.0, SDK 0.5.29):
 2. **A composer slash command for `/fm`: no.** `app.composer.customize` takes only `actions`, `banners`,
    `plusMenu` (rows in the composer's `+` menu) and `richText` (read-only paint and draft observation);
    there is no command or slash registration, and the slash typeahead is host-owned (skills only). Task 12
-   does not register `/fm`; the CLI and `app.commands.register` (⌘K palette) cover it.
+   does not register `/fm`; the CLI and `app.commands.register` (bb's plugin command palette) cover it.
 
 ## Done when
 
