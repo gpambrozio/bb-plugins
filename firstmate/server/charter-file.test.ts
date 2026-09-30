@@ -135,14 +135,15 @@ describe("prepareHome and the charter", () => {
     const home = await tempHome();
     await prepareHome(home, homeConfig);
     const agents = await read(home, "AGENTS.md");
-    expect(agents).toMatch(/^<!-- Written by the Paseo FirstMate plugin from data\/charter\.md/);
+    expect(agents).toMatch(/^<!-- Written by the FirstMate plugin for bb from data\/charter\.md/);
     expect(agents).toContain(`Your home is \`${home}\``);
     expect(agents).not.toContain("firstmate-charter");
     expect(fingerprint(await read(home, CHARTER_FILE))).toBe(fingerprint(await readTemplate(TEMPLATES.charter)));
     // Pinned so a charter change is deliberate: every untouched home follows it, and every edited one is
-    // offered it as charter.new.md. e0b749cb695c5df6 was the charter as it moved into templates/;
-    // 8b6df21d082df6e6 was Paseo's, before {{crewModeRule}} became {{crewReasoningRule}}.
-    expect(fingerprint(await readTemplate(TEMPLATES.charter))).toBe("09fd534b24db4e75");
+    // offered it as charter.new.md. 79b5a4bc6315ef40 is the charter rewritten for bb; 09fd534b24db4e75
+    // was Paseo's text with only its placeholders renamed, e0b749cb695c5df6 the charter as it moved into
+    // templates/, and 8b6df21d082df6e6 Paseo's before {{crewModeRule}} became {{crewReasoningRule}}.
+    expect(fingerprint(await readTemplate(TEMPLATES.charter))).toBe("79b5a4bc6315ef40");
 
     await editCopy(home, "# My first mate\n\n<!-- a note to myself -->\nYour home is {{home}}; keep it tidy.");
     await prepareHome(home, homeConfig);

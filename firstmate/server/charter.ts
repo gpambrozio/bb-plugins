@@ -3,24 +3,23 @@
  *
  * The charter is the port of FirstMate's operating contract — the part of that
  * distro that is behaviour rather than plumbing. Everything it did with tmux
- * panes, treehouse worktrees, a bash watcher and status files is done with
- * Paseo's own tools, which every Paseo agent already has: `create_workspace`
- * makes the worktree, `create_agent` starts the crewmate in it, Paseo's finish
- * notification is the wake-up, and the crewmate's last line is its status.
+ * panes, treehouse worktrees, a bash watcher and status files is done with bb's
+ * own pieces: `bb firstmate crew spawn` (`cli.ts`) starts a crewmate as a child
+ * thread of the first mate in a new worktree, bb's message to a parent when a
+ * child's turn ends is the wake-up, and the crewmate's last line is its status.
  *
  * Its words are `templates/data/charter.md`, and the home keeps a copy the
  * captain can edit, `data/charter.md` (`charter-file.ts`). This renders
  * `AGENTS.md` from that copy — into `templates/AGENTS.md`, which heads it with
- * a note — whenever the plugin starts and whenever the first mate is launched,
- * so a change reaches the home on the next reload and the first mate at its
- * next session, or at once when it is asked to re-read the file.
+ * a note — whenever the plugin loads and whenever the first mate is launched,
+ * adopted or restarted, so a change reaches the home on the next reload and the
+ * first mate at its next session, or at once when it is asked to re-read the file.
  *
- * `{{name}}` placeholders are filled here; the labels come from
- * `shared/types.ts` so the board and the charter can never disagree on them,
- * and the crew's model and reasoning effort are sentences from `templates/parts/`, one
- * for a setting left open and one for a setting chosen.
+ * `{{name}}` placeholders are filled here: the home, and the crew's model and
+ * reasoning level as sentences from `templates/parts/`, one for a setting left
+ * open and one for a setting chosen. `crew spawn` applies those settings itself;
+ * the sentences only tell the first mate when to pass its own.
  */
-import { CREW_METADATA } from "../shared/types";
 import { TEMPLATES, fill, readTemplate, withoutNotes, type TemplatePath } from "./templates";
 
 export interface CharterValues {
@@ -28,7 +27,7 @@ export interface CharterValues {
   home: string;
   /** `provider/model` for crewmates, or empty to leave it to the first mate. */
   crewProvider: string;
-  /** Reasoning effort for crewmates, or empty to leave it to the first mate. */
+  /** Reasoning level for crewmates, or empty to leave it to the first mate. */
   crewReasoning: string;
 }
 
@@ -58,11 +57,6 @@ export async function renderCharter(values: CharterValues, charter?: string): Pr
   ]);
   const body = fill(template, {
     home: values.home,
-    roleLabel: CREW_METADATA.role,
-    crewRole: CREW_METADATA.crewRole,
-    taskLabel: CREW_METADATA.task,
-    kindLabel: CREW_METADATA.kind,
-    projectLabel: CREW_METADATA.project,
     crewProviderRule,
     crewReasoningRule,
   });

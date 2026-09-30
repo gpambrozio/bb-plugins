@@ -2,15 +2,15 @@
  * The vocabulary the board, the server and the first mate's charter share: the metadata a crewmate
  * thread is created with, the words it ends a turn with, and the shapes of the board's data.
  *
- * The plugin never dispatches a crewmate itself. The first mate does, with bb's own tools; the plugin
+ * The plugin never dispatches a crewmate itself. The first mate does, with `bb firstmate crew spawn`; the plugin
  * sets up its home, starts it, carries the captain's words to it, and draws what it and its crew are doing.
  */
 import { z } from "zod";
 
 /**
- * The keys a crewmate thread is created with, inside the plugin's own metadata namespace. The charter
- * tells the first mate to set them, and the board finds the crew by them, so both read this one object
- * rather than spelling the keys twice.
+ * The keys a crewmate thread is created with, inside the plugin's own metadata namespace.
+ * `bb firstmate crew spawn` sets them and the board reads them, so both use this one object rather than
+ * spelling the keys twice.
  */
 export const CREW_METADATA = {
   role: "role",

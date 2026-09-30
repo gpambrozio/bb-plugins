@@ -174,7 +174,7 @@ async function main() {
     try {
       pull = JSON.parse(await gh(["pr", "view", url, "--json", FIELDS]));
     } catch (error) {
-      if (error.code === "ENOENT") throw new Error("gh is not installed, or not on the PATH Paseo runs with");
+      if (error.code === "ENOENT") throw new Error("gh is not installed, or not on the PATH the bb server runs with");
       errors.push(`${url}: ${error.message}`);
       const failures = (before?.failures || 0) + 1;
       const tell = failures >= FAILURES_BEFORE_REPORT && !before?.failureReported;

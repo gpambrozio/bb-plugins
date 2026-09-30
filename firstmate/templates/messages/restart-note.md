@@ -1,3 +1,3 @@
-<!-- Sent to a restarted first mate after data/opening.md: it has the records but not the conversation, and crewmates its predecessor started will not wake it. -->
+<!-- Sent to a restarted first mate after data/opening.md: its conversation was cleared, so it has the records but not what was said. The thread is the same, so its crew stay its children. -->
 
-This is a fresh start: another first mate held the helm before you, and its conversation is gone; what it knew is in your records. Crewmates your predecessor started will not wake you when they finish, so while any are in flight keep a heartbeat as section 7 says.
+This is a fresh start: your conversation was cleared, and what you knew before is in your records. Your crew are still your child threads and still report to you — bb tells you when each finishes a turn, fails or is interrupted — so take the helm as section 3 says and carry on.

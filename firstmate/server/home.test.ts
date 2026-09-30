@@ -3,8 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { CREW_METADATA, STATE_DIR } from "../shared/types";
-import { renderCharter } from "./charter";
+import { STATE_DIR } from "../shared/types";
 import { isHomeReady, parseProjects, prepareHome, readBacklog, readOpening, type HomeConfig } from "./home";
 import { TEMPLATES, readTemplate, withoutNotes } from "./templates";
 
@@ -82,32 +81,6 @@ describe("readOpening", () => {
     await prepareHome(home, homeConfig({}));
     await writeFile(join(home, "data", "opening.md"), "<!-- nothing to say -->\n\n", "utf8");
     expect(await readOpening(home)).toBe(await defaultOpening());
-  });
-});
-
-describe("renderCharter", () => {
-  it("fills every placeholder and names the labels the board reads", async () => {
-    for (const crewProvider of ["", "claude/sonnet"]) {
-      const charter = await renderCharter({ home: "/h", crewProvider, crewReasoning: crewProvider === "" ? "" : "high" });
-      expect(charter).not.toMatch(/\{\{[a-zA-Z]+\}\}/);
-      for (const key of [CREW_METADATA.role, CREW_METADATA.task, CREW_METADATA.kind, CREW_METADATA.project]) {
-        expect(charter).toContain(key);
-      }
-      expect(charter).toContain(`"${CREW_METADATA.role}": "${CREW_METADATA.crewRole}"`);
-      // It is told where the captain's world lives, and how to look the crew up past list_agents' window.
-      expect(charter).toContain("paseo project ls --json");
-      expect(charter).toContain(`paseo ls -g --label ${CREW_METADATA.role}=${CREW_METADATA.crewRole} --json`);
-    }
-  });
-});
-
-describe("renderCharter crew reasoning", () => {
-  it("names the chosen reasoning, or leaves it open", async () => {
-    const chosen = await renderCharter({ home: "/h", crewProvider: "", crewReasoning: "high" });
-    expect(chosen).toContain("high");
-    expect(chosen).not.toContain("{{");
-    const open = await renderCharter({ home: "/h", crewProvider: "", crewReasoning: "  " });
-    expect(open).toContain((await readTemplate(TEMPLATES.crewReasoningOpen)).replace(/<!--[\s\S]*?-->/g, "").trim());
   });
 });
 

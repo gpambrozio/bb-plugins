@@ -72,11 +72,7 @@ export async function endCrew(
   return { ended: true, needsConfirmation: false };
 }
 
-/**
- * What the first mate is asked when the captain presses Relaunch (`templates/messages/relaunch.md`).
- * `worker` and `agentId` are the names that template still uses for the task (or the quoted title) and
- * the thread id.
- */
+/** What the first mate is asked when the captain presses Relaunch (`templates/messages/relaunch.md`). */
 export async function relaunchCrew(deps: MateDeps, threadId: string, note: string): Promise<void> {
   const thread = await requireCrew(deps, threadId);
   const task = metadataText(await deps.threads.metadata(threadId), CREW_METADATA.task);
@@ -86,9 +82,7 @@ export async function relaunchCrew(deps: MateDeps, threadId: string, note: strin
     await message(TEMPLATES.relaunch, {
       title,
       task: task ?? "",
-      worker: task ?? `"${title === "" ? threadId : title}"`,
       threadId,
-      agentId: threadId,
       environmentId: thread.environmentId ?? "",
       note: note.trim(),
     }),

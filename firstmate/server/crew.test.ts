@@ -9,7 +9,7 @@ import { ReportCache, type FleetDeps } from "./fleet";
 import type { FirstmateSettings } from "./settings";
 import { fakeProjects, fakeThreads, memoryStore } from "./testing/fakes";
 
-// Task 11 writes the wording of these two; the tests pin the values they are filled from.
+// The wording is the templates' (charter.test.ts reads it); these tests pin the values they are filled from.
 vi.mock("./templates", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./templates")>();
   return {
@@ -109,14 +109,12 @@ describe("crew actions", () => {
     await relaunchCrew(deps, "thr_w", " tests pass now ");
     expect(threads.sent).toHaveLength(1);
     expect(threads.sent[0]).toMatchObject({ id: "thr_mate", mode: "auto" });
-    expect(valuesOf(threads.sent[0]?.text, "messages/relaunch.md")).toMatchObject({
+    expect(valuesOf(threads.sent[0]?.text, "messages/relaunch.md")).toEqual({
       title: "Fix login",
       task: "fix-login",
       threadId: "thr_w",
       environmentId: "env_w",
       note: "tests pass now",
-      worker: "fix-login",
-      agentId: "thr_w",
     });
   });
 
@@ -124,7 +122,7 @@ describe("crew actions", () => {
     const { deps, threads, mate } = await setup();
     threads.add({ id: "thr_bare", title: "Bare", parentThreadId: mate.id });
     await relaunchCrew(deps, "thr_bare", "go");
-    expect(valuesOf(threads.sent[0]?.text, "messages/relaunch.md")).toMatchObject({ task: "", worker: '"Bare"', environmentId: "" });
+    expect(valuesOf(threads.sent[0]?.text, "messages/relaunch.md")).toEqual({ title: "Bare", task: "", threadId: "thr_bare", environmentId: "", note: "go" });
   });
 
   it("note sends one auto message to the first mate carrying the thread id and the note", async () => {
