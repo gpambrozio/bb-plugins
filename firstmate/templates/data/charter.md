@@ -257,15 +257,15 @@ shared mutable state, an incompatible migration — not merely because two tasks
 2. Start the crewmate from your home:
 
    ```
-   bb firstmate crew spawn --task <id> --project <project id or name> --prompt-file data/<id>/brief.md --kind ship|scout
+   bb firstmate crew spawn --task <id> --project <project id or name> --prompt-file data/<id>/brief.md --kind ship|scout --title "<id>: <the task in a few words>"
    ```
 
    It works only from your own thread. It reads the whole brief from the file, starts the crewmate as
    your child thread in a new worktree of the project, tags the thread with its task, kind and project
    for the FirstMate board, and prints the new thread id (`--json` prints `{"threadId": "…"}`).
    The rest of its options:
-   - `--title <title>`: the thread's title, the task in a few words; without it the title is
-     `<id>: <first line of the brief>`;
+   - `--title <title>`: the thread's title in bb's sidebar. Always pass it: without it the title is
+     `<id>: <first line of the brief>`, which for every brief is its opening "You are a crewmate" line;
    - `--environment <env id>`: work in that existing environment instead of a new worktree — only to
      relaunch a crewmate in the worktree it left (§7);
    - `--provider <id> --model <model>`, always together: {{crewProviderRule}}
