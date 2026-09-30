@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -70,6 +70,7 @@ function runner(
       outgoing.push(note);
       return "sent";
     },
+    root: paths.root,
     stateFile: paths.stateFile,
     scriptStateRoot: paths.scriptStateRoot,
     run: async (path: string, options: RunOptions) => {
@@ -258,6 +259,7 @@ describe("WatchRunner", () => {
         return ["pr-watch"];
       },
       deliver: async () => "sent",
+      root: paths.root,
       stateFile: paths.stateFile,
       scriptStateRoot: paths.scriptStateRoot,
       log: fakeLog(),
@@ -270,6 +272,61 @@ describe("WatchRunner", () => {
     await instance.tick(MINUTE);
     expect(runs).toEqual([]);
     expect(signal).toBeUndefined();
+  });
+
+  it("keeps no state and runs nothing through a state folder that is a link out of its root", async () => {
+    const paths = await setup();
+    const outside = await tempDir();
+    await symlink(outside, join(paths.root, "data"));
+    await script(paths.home, "chatty", "echo hi");
+    const { instance, runs } = runner(paths, { chatty: () => ok("PR merged\n") });
+
+    await expect(instance.tick(MINUTE)).rejects.toThrow(/leads outside the home/);
+    expect(runs).toEqual([]);
+    expect(await readdir(outside)).toEqual([]);
+  });
+
+  it("stops only once a delivery under way has saved, so a runner after it keeps what it queues", async () => {
+    const paths = await setup();
+    await script(paths.home, "first", "true", "0 * * * *");
+    await script(paths.home, "second", "true", "1 * * * *");
+    let finishSend: (outcome: DeliveryOutcome) => void = () => undefined;
+    let sendStarted: () => void = () => undefined;
+    const started = new Promise<void>((resolve) => {
+      sendStarted = resolve;
+    });
+    const old = runner(
+      paths,
+      { first: () => ok("old news") },
+      {
+        deliver: () => {
+          sendStarted();
+          return new Promise<DeliveryOutcome>((resolve) => {
+            finishSend = resolve;
+          });
+        },
+      },
+    ).instance;
+    const ticking = old.tick(new Date(2026, 8, 25, 10, 0));
+    await started;
+
+    let stopped = false;
+    const stopping = old.stop().then(() => {
+      stopped = true;
+    });
+    await new Promise((wait) => setTimeout(wait, 20));
+    expect(stopped).toBe(false);
+    finishSend("sent");
+    await stopping;
+    await ticking;
+
+    // The replacement starts from what the old one saved, and nothing it saves is overwritten.
+    const replacement = runner(paths, { second: () => ok("new news") });
+    replacement.mate.state = "busy";
+    await replacement.instance.tick(new Date(2026, 8, 25, 10, 1));
+    const state = await readState(paths.root, paths.stateFile, fakeLog());
+    expect(state.queue.map((note) => note.text)).toEqual(["new news"]);
+    expect(state.watches.first?.lastResult).toBe("delivered");
   });
 
   it("keeps a catch-up message within 32,000 characters, dropping the oldest whole blocks and counting them", async () => {
@@ -424,7 +481,7 @@ describe("readState", () => {
     await writeFile(paths.stateFile, JSON.stringify({ watches: { x: null, y: "no", b: good }, queue: [null, 5, "s", note] }), "utf8");
     const log = fakeLog();
 
-    const state = await readState(paths.stateFile, log);
+    const state = await readState(paths.root, paths.stateFile, log);
     expect(Object.keys(state.watches)).toEqual(["b"]);
     expect(state.watches.b).toMatchObject({ lastResult: "silent" });
     expect(state.queue).toEqual([note]);
@@ -439,7 +496,7 @@ describe("readState", () => {
     const paths = await setup();
     await mkdir(join(paths.root, "data"), { recursive: true });
     await writeFile(paths.stateFile, "[1, 2]", "utf8");
-    expect(await readState(paths.stateFile, fakeLog())).toEqual({ watches: {}, queue: [], dropped: 0 });
+    expect(await readState(paths.root, paths.stateFile, fakeLog())).toEqual({ watches: {}, queue: [], dropped: 0 });
   });
 });
 

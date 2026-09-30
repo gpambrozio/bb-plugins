@@ -137,7 +137,8 @@ how to write one; the first mate adds none without your approval.
 
 ## Settings
 
-- **Home directory**: where the first mate's records live. Default `~/FirstMate`.
+- **Home directory**: where the first mate's records live. Default `~/FirstMate`. With a first mate aboard,
+  the board and the watches stay with its own home; a new setting applies to the next launch or adoption.
 - **Crew provider**, **crew model** and **crew reasoning**: what workers are started with. Left empty, the
   first mate chooses; a model is used only with a provider.
 - **Board refresh**: how often the open board reloads, in seconds. Default 10.

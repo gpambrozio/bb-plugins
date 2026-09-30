@@ -10,8 +10,6 @@
  * The first mate reads the whole note; the captain sees one line and a chip to the note, saved in the
  * home (`watch-notes.ts`). A note that cannot be saved goes whole, as it did before, rather than not at all.
  */
-import { join } from "node:path";
-
 import { WATCH_NOTES_FOLDER } from "../shared/types";
 import { errorText, type Log } from "./log";
 import type { ThreadsPort } from "./ports";
@@ -37,7 +35,7 @@ export function createDeliver(deps: DeliveryDeps): (note: OutgoingNote) => Promi
     if (mate === null || mate.status !== "idle") return "wait";
     let file: string;
     try {
-      file = await saveWatchNote(join(deps.home, WATCH_NOTES_FOLDER), note.text, now());
+      file = await saveWatchNote(deps.home, note.text, now());
     } catch (error) {
       deps.log.warn(`Could not save the watch note, so it goes to the first mate in full: ${errorText(error)}`);
       await deps.threads.send(mate.id, note.text, "queue-if-active");

@@ -10,14 +10,25 @@ import { join } from "node:path";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import { rpcContract } from "./shared/contract";
-import { STATE_DIR, WATCH_NOTES_FOLDER } from "./shared/types";
+import { STATE_DIR } from "./shared/types";
 import { bbProjects, bbThreads } from "./server/bb-ports";
 import { acknowledgeCharter, NEW_CHARTER_FILE, writeNewCharter } from "./server/charter-file";
 import { firstmateCli } from "./server/cli";
 import { endCrew, interruptCrew, noteCrew, relaunchCrew, steerCrew } from "./server/crew";
 import { loadFleet, ReportCache } from "./server/fleet";
 import { isHomeReady, prepareHome, removeSuggestion } from "./server/home";
-import { adoptMate, askMate, commandText, compactMate, launchMate, releaseMate, resolveMate, restartMate, type MateDeps } from "./server/mate";
+import {
+  activeHome,
+  adoptMate,
+  askMate,
+  commandText,
+  compactMate,
+  launchMate,
+  releaseMate,
+  resolveMate,
+  restartMate,
+  type MateDeps,
+} from "./server/mate";
 import type { ProjectsPort, ThreadsPort } from "./server/ports";
 import { serialized } from "./server/serialize";
 import { homeConfig, homePath, SETTINGS } from "./server/settings";
@@ -63,7 +74,8 @@ export default async function plugin(bb: BbPluginApi) {
   let reports: ReportCache | null = null;
   const reportCache = () => (reports ??= new ReportCache(deps.threads));
 
-  const currentHome = async () => homePath((await settings.get()).homeDirectory);
+  /** The first mate's own home while one is aboard, else the setting's (`activeHome`). */
+  const currentHome = () => activeHome(deps);
 
   function publishFleet(): void {
     bb.realtime.publish(FLEET_CHANNEL, { at: Date.now() });
@@ -72,12 +84,16 @@ export default async function plugin(bb: BbPluginApi) {
   // --- Watches -------------------------------------------------------------------------------------
 
   let runner: WatchRunner | null = null;
-  /** True while the watch service runs, so a settings change rebuilds the runner only then. */
+  /** The home `runner` works in, so a sync that finds the same home leaves it running. */
+  let runnerHome: string | null = null;
+  /** True while the watch service runs, so a change of home rebuilds the runner only then. */
   let watching = false;
+  /** Runner changes, one at a time: a new runner starts only once the one before it has stopped. */
+  let runnerChange: Promise<void> = Promise.resolve();
 
   /**
-   * A runner for the home the setting names. It runs nothing until a launch has prepared that home
-   * (`isHomeReady`), so a launch after load needs no rebuild. An unusable setting gives no runner.
+   * A runner for the home: the first mate's own, or the setting's with none aboard (`activeHome`). It
+   * runs nothing until a launch has prepared that home (`isHomeReady`). An unusable setting gives no runner.
    */
   function buildRunner(homeDirectory: string): WatchRunner | null {
     let home: string;
@@ -99,21 +115,40 @@ export default async function plugin(bb: BbPluginApi) {
         home,
         log: bb.log,
       }),
+      root: home,
       stateFile: join(home, STATE_DIR, "watches.json"),
       scriptStateRoot: join(home, STATE_DIR, "watch-state"),
       log: bb.log,
     });
   }
 
-  function stopRunner(): void {
-    runner?.stop();
-    runner = null;
-  }
-
-  function startRunner(homeDirectory: string): void {
-    stopRunner();
-    runner = buildRunner(homeDirectory);
-    runner?.start();
+  /**
+   * Brings the runner in step with the home — after a launch, adoption or release, a change of the home
+   * setting, and when the service starts or stops. The old runner is stopped and drained before a new
+   * one reads the state file, so a delivery it had under way cannot overwrite what the new one saves.
+   */
+  function syncRunner(): Promise<void> {
+    const change = runnerChange.then(async () => {
+      let home: string | null = null;
+      if (watching) {
+        try {
+          home = await activeHome(deps);
+        } catch (error) {
+          bb.log.warn(`Watches are off: ${reason(error)}`);
+        }
+      }
+      if (home !== null && home === runnerHome && runner !== null) return;
+      const previous = runner;
+      runner = null;
+      runnerHome = null;
+      await previous?.stop();
+      if (home === null) return;
+      runner = buildRunner(home);
+      runnerHome = runner === null ? null : home;
+      runner?.start();
+    });
+    runnerChange = change.catch((error: unknown) => bb.log.error(`The watch runner could not be changed: ${reason(error)}`));
+    return runnerChange;
   }
 
   /**
@@ -124,10 +159,9 @@ export default async function plugin(bb: BbPluginApi) {
   async function refreshHome(): Promise<void> {
     try {
       if ((await resolveMate(deps)) === null) return;
-      const current = await settings.get();
-      const home = homePath(current.homeDirectory);
+      const home = await activeHome(deps);
       if (!(await isHomeReady(home))) return;
-      await prepareHome(home, homeConfig(current));
+      await prepareHome(home, homeConfig(await settings.get()));
     } catch (error) {
       bb.log.error(`The home could not be brought up to date on load: ${reason(error)}`);
     }
@@ -137,21 +171,21 @@ export default async function plugin(bb: BbPluginApi) {
     async start(signal) {
       await refreshHome();
       if (signal.aborted) return;
-      const current = await settings.get();
       watching = true;
-      startRunner(current.homeDirectory);
+      await syncRunner();
       try {
         await untilAborted(signal);
       } finally {
         watching = false;
-        stopRunner();
+        await syncRunner();
       }
     },
   });
 
   settings.onChange((next, prev) => {
     if (next.homeDirectory === prev.homeDirectory) return;
-    if (watching) startRunner(next.homeDirectory);
+    // With a first mate aboard the runner stays in its home; with none it follows the setting.
+    if (watching) void syncRunner();
     publishFleet();
   });
 
@@ -210,16 +244,19 @@ export default async function plugin(bb: BbPluginApi) {
       }),
     "mate.launch": async (pick) => {
       const mate = await launchMate(deps, pick);
+      void syncRunner();
       publishFleet();
       return { threadId: mate.id };
     },
     "mate.adopt": async ({ threadId }) => {
       await adoptMate(deps, threadId);
+      void syncRunner();
       publishFleet();
       return null;
     },
     "mate.release": async () => {
       await releaseMate(deps);
+      void syncRunner();
       publishFleet();
       return null;
     },
@@ -265,7 +302,7 @@ export default async function plugin(bb: BbPluginApi) {
       await acknowledgeCharter(await currentHome());
       return null;
     },
-    "watch.note": async ({ file }) => readWatchNote(join(await currentHome(), WATCH_NOTES_FOLDER), file),
+    "watch.note": async ({ file }) => readWatchNote(await currentHome(), file),
     "watch.toggle": async ({ name, enabled }) => {
       // Read and written as one step, so two quick toggles cannot undo each other.
       await serialized("watches-toggle", async () => {
@@ -280,8 +317,9 @@ export default async function plugin(bb: BbPluginApi) {
 
   bb.cli.register(firstmateCli(deps));
 
-  bb.onDispose(() => {
+  // Waits for the runner to drain, so a reload's new instance cannot read the state file mid-save.
+  bb.onDispose(async () => {
     watching = false;
-    stopRunner();
+    await syncRunner();
   });
 }

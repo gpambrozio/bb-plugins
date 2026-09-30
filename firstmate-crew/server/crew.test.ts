@@ -40,11 +40,11 @@ async function setup(backlog = "") {
     watches: async () => [],
     log: fakeLog(),
   };
-  const mate = threads.add({ id: "thr_mate", title: "First mate" });
+  const mate = threads.add({ id: "thr_mate", title: "First mate", environmentId: "env_mate" });
   await store.setMateThreadId(mate.id);
   const worker = threads.add({ id: "thr_w", title: "Fix login", parentThreadId: mate.id, environmentId: "env_w" });
   threads.setMetadata(worker.id, { [CREW_METADATA.task]: "fix-login" });
-  return { deps, threads, store, mate, worker };
+  return { deps, threads, store, mate, worker, home, settings };
 }
 
 /** The values a mocked `message` was filled with, from the text it returned. */
@@ -95,6 +95,20 @@ describe("crew actions", () => {
     it("keeps asking when a live item shares its id with an older Done one", async () => {
       const { deps, threads } = await setup("## In flight\n- [ ] fix-login - Again\n## Done\n- [x] fix-login - Before (merged 2026-09-01)\n");
       expect((await endCrew(deps, "thr_w", false)).needsConfirmation).toBe(true);
+      expect(threads.callsTo("archive")).toEqual([]);
+    });
+
+    it("reads the first mate's own home, not one the setting names since its launch", async () => {
+      const { deps, threads, mate, home, settings } = await setup(inFlight);
+      threads.setWorkspace("env_mate", home);
+      // The setting now names another home, whose older Done item shares the task's id.
+      const other = await mkdtemp(join(tmpdir(), "firstmate-other-"));
+      tempDirs.push(other);
+      await mkdir(join(other, "data"), { recursive: true });
+      await writeFile(join(other, "data", "backlog.md"), "## Done\n- [x] fix-login - Before (merged 2026-09-01)\n", "utf8");
+      settings.homeDirectory = other;
+
+      expect(await endCrew(deps, "thr_w", false)).toEqual({ ended: false, needsConfirmation: true });
       expect(threads.callsTo("archive")).toEqual([]);
     });
 

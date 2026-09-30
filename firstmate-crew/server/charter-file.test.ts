@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -117,6 +117,53 @@ describe("syncCharter", () => {
     expect(copy).toContain(`firstmate-charter ${fingerprint(V1.charter)}`);
     expect(copy).toContain("# Written from scratch");
     expect(await readCharterState(home, V1)).toMatchObject({ edited: true, outdated: false });
+  });
+
+  it("keeps an edit saved while the acknowledgement was writing, and acknowledges it", async () => {
+    const home = await tempHome();
+    await syncCharter(home, V1);
+    await editCopy(home, "Speak like a pirate.");
+    await syncCharter(home, V2);
+
+    let edits = 0;
+    await acknowledgeCharter(home, V2, {
+      afterStaging: async () => {
+        if (edits++ === 0) await editCopy(home, "Speak like a pirate. And sing.");
+      },
+    });
+    const copy = await read(home, CHARTER_FILE);
+    expect(copy).toContain("Speak like a pirate. And sing.");
+    expect(copy).toContain(`firstmate-charter ${fingerprint(V2.charter)}`);
+    expect(await exists(join(home, NEW_CHARTER_FILE))).toBe(false);
+  });
+
+  it("gives up with a sentence when the charter keeps changing, and leaves the last edit", async () => {
+    const home = await tempHome();
+    await syncCharter(home, V1);
+    await editCopy(home, "Mine.");
+    await syncCharter(home, V2);
+
+    let edits = 0;
+    await expect(
+      acknowledgeCharter(home, V2, {
+        afterStaging: () => editCopy(home, `Mine, edit ${++edits}.`),
+      }),
+    ).rejects.toThrow("data/charter.md kept changing while it was being marked up to date. Try again.");
+    expect(await read(home, CHARTER_FILE)).toContain(`Mine, edit ${edits}.`);
+    expect(await exists(join(home, NEW_CHARTER_FILE))).toBe(true);
+  });
+
+  it("refuses a charter copy that is a link out of the home", async () => {
+    const home = await tempHome();
+    const outside = await tempHome();
+    const victim = join(outside, "notes.md");
+    await writeFile(victim, "not the plugin's", "utf8");
+    await mkdir(join(home, "data"), { recursive: true });
+    await symlink(victim, join(home, CHARTER_FILE));
+
+    await expect(syncCharter(home, V1)).rejects.toThrow(/leads outside the home/);
+    await expect(acknowledgeCharter(home, V1)).rejects.toThrow(/leads outside the home/);
+    expect(await readFile(victim, "utf8")).toBe("not the plugin's");
   });
 
   it("writes the comparison on request only when there is something to compare", async () => {

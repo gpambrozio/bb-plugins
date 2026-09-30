@@ -29,13 +29,11 @@
  * `stateFile`, so a plugin reload neither loses an output a
  * watch has already moved past nor forgets that a failure was reported.
  */
-import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { join, relative } from "node:path";
 
 import type { WatchResult, WatchSummary } from "../shared/types";
+import { makeDirInHome, readInHome, writeInHome } from "./files";
 import { errorText, type Log } from "./log";
-import { serialized } from "./serialize";
 import { TEMPLATES, message } from "./templates";
 import { BUILT_IN_WATCHES, builtInStates, listWatches, seedWatches, type WatchFile } from "./watch-files";
 import { runWatchScript, type RunResult } from "./watch-run";
@@ -100,6 +98,11 @@ export interface WatchRunnerOptions {
   disabled: () => Promise<readonly string[]>;
   /** Sends the note, or says to wait: while the first mate is mid-turn, or while there is none. */
   deliver: (note: OutgoingNote) => Promise<DeliveryOutcome>;
+  /**
+   * Where every file the runner keeps must stay, through symlinks: the home. A state file or a script's
+   * state directory whose path leads out of it is refused (`files.ts`).
+   */
+  root: string;
   /** The runner's own file, `watches.json`. */
   stateFile: string;
   /** Where each script's `FIRSTMATE_WATCH_STATE` directory goes. */
@@ -208,6 +211,8 @@ export class WatchRunner {
   private state: RunnerState | null = null;
   private loading: Promise<RunnerState> | null = null;
   private readonly running = new Set<string>();
+  /** Ticks, runs and deliveries under way, so `stop` can wait for them to finish. */
+  private readonly inFlight = new Set<Promise<unknown>>();
   private readonly aborter = new AbortController();
   private flushing: Promise<void> = Promise.resolve();
   private timer: NodeJS.Timeout | undefined;
@@ -222,7 +227,7 @@ export class WatchRunner {
   }
 
   /** Ticks on every minute's boundary until the returned function — or `stop` — is called. */
-  start(): () => void {
+  start(): () => Promise<void> {
     const next = () => {
       const target = (Math.floor(Date.now() / MINUTE_MS) + 1) * MINUTE_MS;
       this.timer = setTimeout(() => {
@@ -237,14 +242,34 @@ export class WatchRunner {
     return () => this.stop();
   }
 
-  /** No more ticks; running scripts are stopped, and nothing is started after this, even by a tick under way. */
-  stop(): void {
+  /**
+   * No more ticks; running scripts are stopped, and nothing is started after this, even by a tick under
+   * way. Resolves once every tick, run, delivery and save already under way has finished: a delivery
+   * that was sending completes and saves what it sent, so a runner started after this one reads it
+   * rather than having its own state overwritten by it.
+   */
+  async stop(): Promise<void> {
     clearTimeout(this.timer);
     this.aborter.abort();
+    while (this.inFlight.size > 0) await Promise.allSettled([...this.inFlight]);
+  }
+
+  /** Keeps `work` in `inFlight` until it settles. */
+  private track<T>(work: Promise<T>): Promise<T> {
+    this.inFlight.add(work);
+    work.then(
+      () => this.inFlight.delete(work),
+      () => this.inFlight.delete(work),
+    );
+    return work;
   }
 
   /** Runs every watch due in the minute `at` falls in, then tries to deliver what is queued. */
-  async tick(at: Date = this.now()): Promise<void> {
+  tick(at: Date = this.now()): Promise<void> {
+    return this.track(this.tickNow(at));
+  }
+
+  private async tickNow(at: Date): Promise<void> {
     const home = await this.options.home();
     if (home === null) return;
     await seedWatches(home).catch((error: unknown) => {
@@ -262,12 +287,16 @@ export class WatchRunner {
   }
 
   /** Runs one watch now and records what came of it. Refused while that watch is already running. */
-  async runOne(home: string, watch: WatchFile, at: Date = this.now()): Promise<void> {
+  runOne(home: string, watch: WatchFile, at: Date = this.now()): Promise<void> {
+    return this.track(this.runNow(home, watch, at));
+  }
+
+  private async runNow(home: string, watch: WatchFile, at: Date): Promise<void> {
     if (this.running.has(watch.name) || this.aborter.signal.aborted) return;
     this.running.add(watch.name);
     try {
       const stateDirectory = join(this.options.scriptStateRoot, watch.name);
-      await mkdir(stateDirectory, { recursive: true });
+      await makeDirInHome(this.options.root, relative(this.options.root, stateDirectory));
       const result = await this.run(watch.path, {
         cwd: home,
         env: {
@@ -339,7 +368,7 @@ export class WatchRunner {
   flush(): Promise<void> {
     const run = this.flushing.then(() => this.flushOnce());
     this.flushing = run.catch(() => undefined);
-    return run;
+    return this.track(run);
   }
 
   private async flushOnce(): Promise<void> {
@@ -405,7 +434,7 @@ export class WatchRunner {
   private load(): Promise<RunnerState> {
     if (this.state !== null) return Promise.resolve(this.state);
     const read = this.options.readState ?? readState;
-    this.loading ??= read(this.options.stateFile, this.options.log).then(
+    this.loading ??= read(this.options.root, this.options.stateFile, this.options.log).then(
       (state) => {
         this.state = state;
         return state;
@@ -422,12 +451,8 @@ export class WatchRunner {
     const state = this.state;
     if (state === null) return Promise.resolve();
     const path = this.options.stateFile;
-    return serialized(path, async () => {
-      await mkdir(dirname(path), { recursive: true });
-      const temporary = `${path}.${randomUUID()}.tmp`;
-      await writeFile(temporary, `${JSON.stringify(state, null, 2)}\n`, "utf8");
-      await rename(temporary, path);
-    }).catch((error: unknown) => {
+    // A staged rename, one at a time per file, confined to the root.
+    return writeInHome(this.options.root, relative(this.options.root, path), `${JSON.stringify(state, null, 2)}\n`).catch((error: unknown) => {
       this.options.log.error(`Could not save ${path}: ${errorText(error)}`);
     });
   }
@@ -468,14 +493,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * The saved state, leniently: a file it cannot read starts afresh, and an entry that is not what the
  * runner wrote is dropped with a warning, rather than stopping the watches.
  */
-export async function readState(path: string, log: Log): Promise<RunnerState> {
+export async function readState(root: string, path: string, log: Log): Promise<RunnerState> {
   let raw: unknown;
   try {
-    raw = JSON.parse(await readFile(path, "utf8"));
+    const text = await readInHome(root, relative(root, path));
+    if (text === null) return { watches: {}, queue: [], dropped: 0 };
+    raw = JSON.parse(text);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-      log.warn(`${path} could not be read, starting afresh: ${errorText(error)}`);
-    }
+    log.warn(`${path} could not be read, starting afresh: ${errorText(error)}`);
     return { watches: {}, queue: [], dropped: 0 };
   }
   const object = isRecord(raw) ? raw : {};

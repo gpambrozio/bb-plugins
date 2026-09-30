@@ -34,14 +34,23 @@
  * charter twice over in every turn's context. The opening prompt asks a harness
  * that has not loaded the file to read it in full.
  */
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import { join } from "node:path";
 
 import { STATE_DIR, type BacklogItem, type Project, type Suggestion } from "../shared/types";
 import { parseBacklog } from "./backlog";
 import { renderCharter } from "./charter";
 import { syncCharter } from "./charter-file";
-import { FileChangedError, readTextFile, replaceTextIfUnchanged, type WriteHooks } from "./files";
+import {
+  FileChangedError,
+  createInHome,
+  makeDirInHome,
+  readInHome,
+  readTextFile,
+  replaceTextIfUnchanged,
+  writeInHome,
+  type WriteHooks,
+} from "./files";
 import { parseSuggestions, withoutSuggestion } from "./suggestions";
 import { TEMPLATES, readTemplate, withoutNotes, type TemplatePath } from "./templates";
 import { seedWatches } from "./watch-files";
@@ -75,30 +84,23 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
-async function writeIfMissing(path: string, content: string): Promise<void> {
-  try {
-    await writeFile(path, content, { encoding: "utf8", flag: "wx" });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-  }
-}
-
 /**
  * Creates whatever of the home is missing, brings `data/charter.md` in step with the plugin's charter
  * (`charter-file.ts`) and the built-in watches with theirs (`watch-files.ts`), and renders `AGENTS.md`
- * from the charter with the current config.
+ * from the charter with the current config. Every path is confined to the home (`files.ts`): a symlink
+ * the first mate left that leads out of it is refused, never written through.
  */
 export async function prepareHome(home: string, config: HomeConfig): Promise<void> {
-  await mkdir(join(home, "data"), { recursive: true });
-  await mkdir(join(home, "projects"), { recursive: true });
-  await mkdir(join(home, STATE_DIR), { recursive: true });
+  await makeDirInHome(home, "data");
+  await makeDirInHome(home, "projects");
+  await makeDirInHome(home, STATE_DIR);
   const charter = await syncCharter(home);
-  await writeFile(
-    join(home, TEMPLATES.agents),
+  await writeInHome(
+    home,
+    TEMPLATES.agents,
     await renderCharter({ home, crewProvider: config.crewProvider, crewReasoning: config.crewReasoning }, charter.template),
-    "utf8",
   );
-  for (const record of RECORDS) await writeIfMissing(join(home, record), await readTemplate(record));
+  for (const record of RECORDS) await createInHome(home, record, await readTemplate(record));
   await seedWatches(home);
 }
 
@@ -107,32 +109,23 @@ export function isHomeReady(home: string): Promise<boolean> {
   return exists(join(home, TEMPLATES.agents));
 }
 
-async function readOptional(path: string): Promise<string | null> {
-  try {
-    return await readFile(path, "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-    throw error;
-  }
-}
-
 /**
  * A new first mate's first message: `data/opening.md` without its HTML comments, which are notes to the
  * captain. A missing or empty file gives the template's wording, so a first mate is never started with
  * nothing to act on.
  */
 export async function readOpening(home: string): Promise<string> {
-  const text = withoutNotes((await readOptional(join(home, TEMPLATES.opening))) ?? "");
+  const text = withoutNotes((await readInHome(home, TEMPLATES.opening)) ?? "");
   return text === "" ? withoutNotes(await readTemplate(TEMPLATES.opening)) : text;
 }
 
 export async function readBacklog(home: string): Promise<BacklogItem[]> {
-  const markdown = await readOptional(join(home, "data", "backlog.md"));
+  const markdown = await readInHome(home, TEMPLATES.backlog);
   return markdown === null ? [] : parseBacklog(markdown);
 }
 
 export async function readSuggestions(home: string): Promise<Suggestion[]> {
-  const markdown = await readOptional(join(home, TEMPLATES.suggestions));
+  const markdown = await readInHome(home, TEMPLATES.suggestions);
   return markdown === null ? [] : parseSuggestions(markdown);
 }
 
@@ -204,6 +197,6 @@ export function parseProjects(markdown: string): Project[] {
 }
 
 export async function readProjects(home: string): Promise<Project[]> {
-  const markdown = await readOptional(join(home, "data", "projects.md"));
+  const markdown = await readInHome(home, TEMPLATES.projects);
   return markdown === null ? [] : parseProjects(markdown);
 }

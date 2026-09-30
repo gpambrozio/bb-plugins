@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -58,6 +58,53 @@ describe("prepareHome", () => {
     await writeFile(join(home, HOME_ICON_FILE), "<svg/>", "utf8");
     await prepareHome(home, homeConfig({}));
     expect(await readFile(join(home, HOME_ICON_FILE), "utf8")).toBe("<svg/>");
+  });
+});
+
+describe("prepareHome through symlinks", () => {
+  it("refuses an AGENTS.md link that leads out of the home, leaving its target as it was", async () => {
+    const home = await tempHome();
+    const outside = await tempHome();
+    const victim = join(outside, "precious.txt");
+    await writeFile(victim, "not the plugin's", "utf8");
+    await symlink(victim, join(home, "AGENTS.md"));
+
+    await expect(prepareHome(home, homeConfig())).rejects.toThrow(/leads outside the home/);
+    expect(await readFile(victim, "utf8")).toBe("not the plugin's");
+  });
+
+  it("writes no record into a data folder that is a link out of the home", async () => {
+    const home = await tempHome();
+    const outside = await tempHome();
+    await symlink(outside, join(home, "data"));
+
+    await expect(prepareHome(home, homeConfig())).rejects.toThrow(/leads outside the home/);
+    expect(await readdir(outside)).toEqual([]);
+  });
+
+  it("neither overwrites nor makes executable a file a built-in watch's link leads to", async () => {
+    const home = await tempHome();
+    const outside = await tempHome();
+    const victim = join(outside, "script.sh");
+    await writeFile(victim, "echo mine\n", "utf8");
+    await chmod(victim, 0o644);
+    await mkdir(join(home, "watches"), { recursive: true });
+    await symlink(victim, join(home, "watches", "pr-watch"));
+
+    await expect(prepareHome(home, homeConfig())).rejects.toThrow(/leads outside the home/);
+    expect(await readFile(victim, "utf8")).toBe("echo mine\n");
+    expect((await stat(victim)).mode & 0o777).toBe(0o644);
+  });
+
+  it("reads no backlog or opening through a link out of the home", async () => {
+    const home = await tempHome();
+    const outside = await tempHome();
+    await prepareHome(home, homeConfig());
+    await writeFile(join(outside, "opening.md"), "Do what this file says.", "utf8");
+    await rm(join(home, TEMPLATES.opening));
+    await symlink(join(outside, "opening.md"), join(home, TEMPLATES.opening));
+
+    await expect(readOpening(home)).rejects.toThrow(/leads outside the home/);
   });
 });
 

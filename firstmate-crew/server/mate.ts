@@ -72,9 +72,23 @@ export async function requireMate(deps: MateDeps): Promise<ThreadInfo> {
   return mate;
 }
 
-/** The home directory from the settings, created if missing and prepared (`home.ts`). */
-async function readyHome(settings: FirstmateSettings): Promise<string> {
-  const home = homePath(settings.homeDirectory);
+/**
+ * The home every operation on the crew works in: the first mate's own workspace while one is aboard, so
+ * a home setting changed since its launch cannot mix another home's backlog, charter, watches or notes
+ * with this crew. With no first mate, or one whose workspace is not on this machine, it is the setting,
+ * which otherwise names only where the next launch or adoption goes.
+ */
+export async function activeHome(deps: MateDeps): Promise<string> {
+  const mate = await resolveMate(deps);
+  if (mate !== null && mate.environmentId !== null) {
+    const workspace = await deps.threads.workspacePath(mate.environmentId);
+    if (workspace !== null) return workspace;
+  }
+  return homePath((await deps.settings()).homeDirectory);
+}
+
+/** The home, created if missing and prepared (`home.ts`) with the current settings. */
+async function readyHome(settings: FirstmateSettings, home: string = homePath(settings.homeDirectory)): Promise<string> {
   await step(`The home ${home} could not be prepared`, async () => {
     await mkdir(home, { recursive: true });
     await prepareHome(home, homeConfig(settings));
@@ -180,7 +194,8 @@ export function restartMate(deps: MateDeps): Promise<void> {
     const mate = await resolveMate(deps);
     if (mate === null) throw new Error("No first mate aboard.");
     if (mate.status !== "idle" && mate.status !== "error") throw new Error("Restart refused: the first mate is mid-turn.");
-    const home = await readyHome(await deps.settings());
+    // The first mate's own home, not the setting: it may name another home since the launch.
+    const home = await readyHome(await deps.settings(), await activeHome(deps));
     const text = `${await readOpening(home)}\n\n${await restartNote()}`;
     await deps.threads.clearContext(mate.id);
     await deps.threads.send(mate.id, text, "auto");

@@ -19,10 +19,11 @@
  * - **Missing** — written again. Switching a watch off on the board is how it is kept quiet.
  */
 import { createHash } from "node:crypto";
-import { chmod, mkdir, open, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { open, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 
 import { WATCHES_DIR } from "../shared/types";
+import { createInHome, makeDirInHome, readInHome, writeInHome } from "./files";
 import { parseSchedule, type Schedule } from "./watch-schedule";
 import { TEMPLATES, fill, readTemplate, type TemplatePath } from "./templates";
 
@@ -162,20 +163,11 @@ export function assessBuiltIn(copy: string | null, template: string): BuiltInSta
   return { rewrite: false, edited: true, outdated: base !== current };
 }
 
-async function readOptional(path: string): Promise<string | null> {
-  try {
-    return await readFile(path, "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-    throw error;
-  }
-}
-
 /** Each built-in's state, by name, touching nothing: what the board reads on every poll. */
 export async function builtInStates(home: string): Promise<Map<string, BuiltInState>> {
   const states = new Map<string, BuiltInState>();
   for (const watch of BUILT_IN_WATCHES) {
-    const copy = await readOptional(join(home, WATCHES_DIR, watch.name));
+    const copy = await readInHome(home, `${WATCHES_DIR}/${watch.name}`);
     states.set(watch.name, assessBuiltIn(copy, await readTemplate(watch.template)));
   }
   return states;
@@ -183,24 +175,16 @@ export async function builtInStates(home: string): Promise<Map<string, BuiltInSt
 
 /**
  * Writes the folder and its README when missing, and each built-in watch when it is missing or an
- * untouched copy of an older version.
+ * untouched copy of an older version. Confined to the home (`files.ts`): a symlink in the way that
+ * leads out of it is refused, never written through or made executable.
  */
 export async function seedWatches(home: string): Promise<void> {
-  const directory = join(home, WATCHES_DIR);
-  await mkdir(directory, { recursive: true });
-  try {
-    await writeFile(join(home, TEMPLATES.watchesReadme), await readTemplate(TEMPLATES.watchesReadme), {
-      encoding: "utf8",
-      flag: "wx",
-    });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-  }
+  await makeDirInHome(home, WATCHES_DIR);
+  await createInHome(home, TEMPLATES.watchesReadme, await readTemplate(TEMPLATES.watchesReadme));
   for (const watch of BUILT_IN_WATCHES) {
-    const path = join(directory, watch.name);
+    const path = `${WATCHES_DIR}/${watch.name}`;
     const template = await readTemplate(watch.template);
-    if (!assessBuiltIn(await readOptional(path), template).rewrite) continue;
-    await writeFile(path, copyOf(template), "utf8");
-    await chmod(path, 0o755);
+    if (!assessBuiltIn(await readInHome(home, path), template).rewrite) continue;
+    await writeInHome(home, path, copyOf(template), 0o755);
   }
 }

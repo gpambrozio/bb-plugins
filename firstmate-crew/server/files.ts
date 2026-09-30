@@ -77,6 +77,57 @@ export async function resolveInHome(home: string, path: string): Promise<{ absol
   return { absolute, relative: rel };
 }
 
+/**
+ * The plugin's own reads and writes in the home, confined like the rest: each resolves its path with
+ * `resolveInHome` first, so a symlink anywhere on the way that leads out of the home is refused rather
+ * than followed. A write is a staged rename, which replaces a symlink at the destination instead of
+ * writing through it; a creation is exclusive, which never follows one. As with `stageAndReplace`, a
+ * link swapped in between the check and the use is not caught.
+ */
+export async function readInHome(home: string, path: string): Promise<string | null> {
+  const { absolute } = await resolveInHome(home, path);
+  try {
+    return await readFile(absolute, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+/** Writes the file whatever it holds now; `mode`, when given, is set before it lands. */
+export async function writeInHome(home: string, path: string, content: string, mode?: number): Promise<void> {
+  const { absolute, relative: rel } = await resolveInHome(home, path);
+  if (rel === "") throw new Error("The home itself is not a file.");
+  await serialized(absolute, () => stageAndReplace(absolute, content, () => undefined, {}, mode));
+}
+
+/** Writes the file only when nothing is there; says whether it did. */
+export async function createInHome(home: string, path: string, content: string): Promise<boolean> {
+  const { absolute } = await resolveInHome(home, path);
+  await mkdir(dirname(absolute), { recursive: true });
+  try {
+    await writeFile(absolute, content, { encoding: "utf8", flag: "wx" });
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
+    throw error;
+  }
+}
+
+/** Removes the file, or the symlink standing where it would be; nothing there is not an error. */
+export async function removeInHome(home: string, path: string): Promise<void> {
+  const { absolute } = await resolveInHome(home, path);
+  await rm(absolute, { force: true });
+}
+
+/** Creates the directory and its parents, then checks the result is still inside the home. */
+export async function makeDirInHome(home: string, path: string): Promise<string> {
+  const { absolute } = await resolveInHome(home, path);
+  await mkdir(absolute, { recursive: true });
+  await resolveInHome(home, path);
+  return absolute;
+}
+
 /** A NUL byte in the first few kilobytes is the usual sign of a file that is not text. */
 async function looksBinary(absolute: string): Promise<boolean> {
   const handle = await open(absolute, "r");
@@ -167,6 +218,7 @@ async function stageAndReplace(
   content: string,
   check: (current: Current) => void | Promise<void>,
   hooks: WriteHooks,
+  mode?: number,
 ): Promise<void> {
   const current = await statIfPresent(absolute);
   await check(current);
@@ -177,7 +229,8 @@ async function stageAndReplace(
     await writeFile(temporary, content, "utf8");
     // The temporary file has the default mode; the one it replaces keeps its own, so a watch script
     // saved here stays executable. A new file keeps the default.
-    if (current !== null) await chmod(temporary, current.mode & 0o7777);
+    if (mode !== undefined) await chmod(temporary, mode);
+    else if (current !== null) await chmod(temporary, current.mode & 0o7777);
     await hooks.afterStaging?.();
     await check(await statIfPresent(absolute));
     await rename(temporary, absolute);

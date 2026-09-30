@@ -21,9 +21,8 @@ import { readCharterState } from "./charter-file";
 import { parseCrewReport, reportUrl } from "./crew-report";
 import { isHomeReady, readBacklog, readSuggestions } from "./home";
 import { errorText, type Log } from "./log";
-import { resolveMate, type MateDeps } from "./mate";
+import { activeHome, resolveMate, type MateDeps } from "./mate";
 import type { ThreadInfo, ThreadsPort } from "./ports";
-import { homePath } from "./settings";
 
 interface CachedReport {
   updatedAt: number;
@@ -225,7 +224,7 @@ export type FleetDeps = MateDeps & {
  * and shown as empty, so the rest of the board still loads.
  */
 export async function loadFleet(deps: FleetDeps): Promise<Fleet> {
-  const home = homePath((await deps.settings()).homeDirectory);
+  const home = await activeHome(deps);
   const [storedMateId, mate, homeReady, backlog, suggestions, charter, watches] = await Promise.all([
     deps.store.mateThreadId(),
     resolveMate(deps),

@@ -14,9 +14,8 @@
 import { CREW_METADATA, type BacklogItem } from "../shared/types";
 import { metadataText } from "./fleet";
 import { readBacklog } from "./home";
-import { askMate, resolveMate, type MateDeps } from "./mate";
+import { activeHome, askMate, resolveMate, type MateDeps } from "./mate";
 import type { ThreadInfo } from "./ports";
-import { homePath } from "./settings";
 import { TEMPLATES, message } from "./templates";
 
 /** The thread, once it is known to be a live child of the first mate. */
@@ -65,7 +64,7 @@ export async function endCrew(
   await requireCrew(deps, threadId);
   const [metadata, backlog] = await Promise.all([
     deps.threads.metadata(threadId),
-    deps.settings().then((settings) => readBacklog(homePath(settings.homeDirectory))),
+    activeHome(deps).then(readBacklog),
   ]);
   const item = joinedItem(backlog, threadId, metadataText(metadata, CREW_METADATA.task));
   if (item?.section !== "done" && !confirmed) return { ended: false, needsConfirmation: true };

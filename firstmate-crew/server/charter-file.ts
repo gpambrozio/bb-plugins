@@ -20,10 +20,8 @@
  * the fingerprint is of the words alone.
  */
 import { createHash } from "node:crypto";
-import { readFile, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
-
 import type { CharterState } from "../shared/types";
+import { FileChangedError, readInHome, removeInHome, replaceTextIfUnchanged, writeInHome, type WriteHooks } from "./files";
 import { TEMPLATES, fill, readTemplate, withoutNotes } from "./templates";
 
 export const CHARTER_FILE = TEMPLATES.charter;
@@ -82,19 +80,10 @@ export function assessCharter(copy: string | null, pluginCharter: string): Chart
   return { template: text, edited: true, outdated: base !== current, rewrite: false };
 }
 
-async function readOptional(path: string): Promise<string | null> {
-  try {
-    return await readFile(path, "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-    throw error;
-  }
-}
-
 /** The copy's state, touching nothing: what the board reads on every poll. */
 export async function readCharterState(home: string, plugin?: PluginCharter): Promise<CharterFileState> {
   const templates = plugin ?? (await pluginTemplates());
-  const { rewrite: _rewrite, ...state } = assessCharter(await readOptional(join(home, CHARTER_FILE)), templates.charter);
+  const { rewrite: _rewrite, ...state } = assessCharter(await readInHome(home, CHARTER_FILE), templates.charter);
   return state;
 }
 
@@ -105,11 +94,10 @@ export async function readCharterState(home: string, plugin?: PluginCharter): Pr
  */
 export async function syncCharter(home: string, plugin?: PluginCharter): Promise<CharterFileState> {
   const templates = plugin ?? (await pluginTemplates());
-  const path = join(home, CHARTER_FILE);
-  const { rewrite, ...state } = assessCharter(await readOptional(path), templates.charter);
-  if (rewrite) await writeFile(path, copyOf(templates), "utf8");
-  if (state.outdated) await writeFile(join(home, NEW_CHARTER_FILE), newCopyOf(templates), "utf8");
-  else await rm(join(home, NEW_CHARTER_FILE), { force: true });
+  const { rewrite, ...state } = assessCharter(await readInHome(home, CHARTER_FILE), templates.charter);
+  if (rewrite) await writeInHome(home, CHARTER_FILE, copyOf(templates));
+  if (state.outdated) await writeInHome(home, NEW_CHARTER_FILE, newCopyOf(templates));
+  else await removeInHome(home, NEW_CHARTER_FILE);
   return state;
 }
 
@@ -117,25 +105,40 @@ export async function syncCharter(home: string, plugin?: PluginCharter): Promise
 export async function writeNewCharter(home: string, plugin?: PluginCharter): Promise<boolean> {
   const templates = plugin ?? (await pluginTemplates());
   const state = await readCharterState(home, templates);
-  if (state.outdated) await writeFile(join(home, NEW_CHARTER_FILE), newCopyOf(templates), "utf8");
+  if (state.outdated) await writeInHome(home, NEW_CHARTER_FILE, newCopyOf(templates));
   return state.outdated;
 }
+
+/** How many times an acknowledgement starts over when the charter is saved under it. */
+export const ACKNOWLEDGE_ATTEMPTS = 3;
 
 /**
  * The captain has taken what they want from the plugin's new charter: the copy is now based on it.
  * Moves the fingerprint on — restoring the note if it was deleted — keeps every word the captain wrote,
  * and removes `charter.new.md`.
+ *
+ * The copy is replaced only if it still reads as it did (`replaceTextIfUnchanged`), so an edit saved
+ * while this ran is not overwritten: the acknowledgement starts over from it.
  */
-export async function acknowledgeCharter(home: string, plugin?: PluginCharter): Promise<void> {
+export async function acknowledgeCharter(home: string, plugin?: PluginCharter, hooks: WriteHooks = {}): Promise<void> {
   const templates = plugin ?? (await pluginTemplates());
-  const path = join(home, CHARTER_FILE);
-  const copy = await readOptional(path);
   const current = fingerprint(templates.charter);
-  if (copy !== null && withoutNotes(copy) !== "") {
+  for (let attempt = 1; ; attempt++) {
+    const copy = await readInHome(home, CHARTER_FILE);
+    if (copy === null || withoutNotes(copy) === "") break;
     const next = MARK.test(copy)
       ? copy.replace(MARK, `firstmate-charter ${current}`)
       : `${noteOf(templates, current)}\n\n${copy.trimStart()}`;
-    if (next !== copy) await writeFile(path, next, "utf8");
+    if (next === copy) break;
+    try {
+      await replaceTextIfUnchanged(home, CHARTER_FILE, copy, next, hooks);
+      break;
+    } catch (error) {
+      if (!(error instanceof FileChangedError)) throw error;
+      if (attempt >= ACKNOWLEDGE_ATTEMPTS) {
+        throw new Error("data/charter.md kept changing while it was being marked up to date. Try again.");
+      }
+    }
   }
-  await rm(join(home, NEW_CHARTER_FILE), { force: true });
+  await removeInHome(home, NEW_CHARTER_FILE);
 }

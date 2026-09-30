@@ -58,8 +58,15 @@ Do not break these; each was paid for.
 - **Templates are data.** The charter follows the plugin until the captain edits it, detected by
   fingerprint; then a changed plugin charter goes beside it as `data/charter.new.md` with a board notice.
   `captain.md` and `opening.md` are the captain's and never overwritten.
-- **File access is confined to the home**, including through symlinks. Writes are a staged rename plus a
-  content check.
+- **File access is confined to the home**, including through symlinks. Every read, write and delete the
+  plugin makes there goes through `server/files.ts` (`resolveInHome` and the `*InHome` helpers): preparing
+  the home, the charter, the built-in watches, `watches.json` and `watch-state/`, and the notes, whose
+  folder must also be a plain folder at its place. A link that leads out is refused, never followed.
+  Writes are a staged rename (which replaces a link rather than writing through it), creations are
+  exclusive, and edits of files the first mate also writes add a content check.
+- **One watch runner at a time, drained before the next.** `WatchRunner.stop()` resolves only once its
+  ticks, runs, deliveries and saves have settled, and `server.ts` changes runners through `syncRunner`,
+  one change at a time, so a delivery still sending cannot overwrite what a new runner saved.
 - **Suggestions are removed by label and prompt**, not position. Nothing in code adds one.
 - **Watch output reaches the first mate only between turns**, at most 32,000 characters in one message,
   `<` of anything tag-shaped escaped. Failures are queued once until the watch succeeds.
@@ -109,6 +116,11 @@ Do not break these; each was paid for.
   note — read back into runs by the `watch.note` RPC — after the chip's block. That attribute is bb's
   markup, not the SDK's contract: if it changes, the chip falls back to opening the file, and the first
   mate is unaffected. Check it after a bb upgrade.
+- **While a first mate is aboard, its own workspace is the home** (`activeHome` in `server/mate.ts`). The
+  board, End's check, suggestions, the charter, restart, the watches and the notes all use it; the home
+  setting names only where the next launch or adoption goes. So changing the setting mid-voyage cannot
+  mix another home's backlog, charter or watches with this crew. With no first mate, the setting is
+  the home.
 - **The board is a thread tab, not a nav panel.** The first mate is a normal thread in bb's own chat; the
   Files view was dropped because its workspace is the home, which bb's file panel already opens.
 - **End archives.** Immediate when the task is in the backlog's Done; otherwise a confirmation, because
@@ -132,7 +144,7 @@ Dropped from the Paseo plugin, on purpose:
 - Finding crew by label, the steer relay and its timing rules, clearing attention by raw frame,
   `activeTurnBehavior`, draft persistence on `globalThis`, home and project renaming through the CLI.
 - On the client: the chat, transcript, Watch view, permission and question cards, context meter,
-  attachments, drafts, keyboard handling, launch picker, Files view, column reordering and the drag split,
+  attachments, drafts, keyboard handling, launch picker, Files view and the drag split,
   and their pure helpers (`transcript-rows`, `activity-rows`, `questions`, `keys`, `open-file`,
   `file-links`, `markdown-parse`). Compact asks bb for its own `/compact` turn (`threads.compact`).
 
