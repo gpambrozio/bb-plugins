@@ -18,7 +18,7 @@ The first release: FirstMate for bb, ported from the Paseo plugin of the same na
   that are yours, and never merges without your word unless you have said a project may.
 - **A board of the crew** on the first mate's FirstMate tab: Queued, Working, Blocked, Parked, Done,
   Failed and Idle, with each worker's last word, a link to its pull request, and any decision it is
-  waiting on you for. Sections fold and stay folded. On a worker's own thread the tab shows that worker's
+  waiting on you for. Sections fold and stay folded, and arrows move them into the order you want. On a worker's own thread the tab shows that worker's
   card, and on a thread working in the home it offers to adopt the thread as the first mate.
 - **Steer, Interrupt, Relaunch and End on each card**, and, on a worker's own thread, a note box that
   tells the first mate something about it. Ending a worker whose task is not done asks first, because

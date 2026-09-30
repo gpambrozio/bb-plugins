@@ -1,8 +1,8 @@
 /**
  * The crew board, shown on the first mate's thread: a notice when the plugin's charter has moved on, the
  * Bearings and Ahoy buttons beside the first mate's own controls (Compact, Restart, settings), the first
- * mate's suggestions, the seven columns in their fixed order — each a
- * collapsible section with its count, empty ones left out — and the home's watches.
+ * mate's suggestions, the seven columns in the captain's order — each a collapsible section with its
+ * count and arrows that move it past its shown neighbour, empty ones left out — and the home's watches.
  */
 import { useRpc } from "@get-bb/plugin-sdk/app";
 import { useState } from "react";
@@ -12,8 +12,9 @@ import { Button } from "../components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../components/ui/collapsible";
 import { Icon } from "../components/ui/icon";
 import type { rpcContract } from "../server";
-import { COLUMN_IDS, type ColumnId, type Fleet } from "../shared/types";
+import type { ColumnId, Fleet } from "../shared/types";
 import { Card } from "./card";
+import { moveColumn, readColumnOrder } from "./column-order";
 import { COLUMN_TITLES } from "./format";
 import { readFolds, toggleFold } from "./folds";
 import { MateActions } from "./mate-actions";
@@ -28,6 +29,7 @@ export function Board({ fleet, mateThreadId, onChanged }: { fleet: Fleet; mateTh
   const mate = useMateSender();
   const openHomeFile = useOpenHomeFile(mateThreadId);
   const [folds, setFolds] = useState<Set<ColumnId>>(() => readFolds(window.localStorage));
+  const [order, setOrder] = useState<ColumnId[]>(() => readColumnOrder(window.localStorage));
   const [busy, setBusy] = useState(false);
 
   function run(action: () => Promise<unknown>, success?: string): void {
@@ -48,6 +50,12 @@ export function Board({ fleet, mateThreadId, onChanged }: { fleet: Fleet; mateTh
       .then(({ path }) => openHomeFile(path))
       .catch(reportError)
       .finally(() => setBusy(false));
+  }
+
+  const shownColumns = order.filter((id) => fleet.cards.some((card) => card.column === id));
+
+  function move(column: ColumnId, direction: "up" | "down"): void {
+    setOrder(moveColumn(window.localStorage, column, direction, new Set(shownColumns)));
   }
 
   return (
@@ -85,16 +93,38 @@ export function Board({ fleet, mateThreadId, onChanged }: { fleet: Fleet; mateTh
 
       <Suggestions suggestions={fleet.suggestions} mateThreadId={mateThreadId} onChanged={onChanged} />
 
-      {COLUMN_IDS.map((id) => {
+      {shownColumns.map((id, index) => {
         const cards = fleet.cards.filter((card) => card.column === id);
-        if (cards.length === 0) return null;
         const open = !folds.has(id);
+        const title = COLUMN_TITLES[id];
         return (
           <Collapsible key={id} open={open} onOpenChange={() => setFolds(toggleFold(window.localStorage, id))} className="flex flex-col gap-2">
-            <CollapsibleTrigger className="flex cursor-pointer items-center gap-1 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              <Icon name={open ? "ChevronDown" : "ChevronRight"} className="size-4" />
-              {COLUMN_TITLES[id]} ({cards.length})
-            </CollapsibleTrigger>
+            <div className="flex items-center gap-1">
+              <CollapsibleTrigger className="flex flex-1 cursor-pointer items-center gap-1 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                <Icon name={open ? "ChevronDown" : "ChevronRight"} className="size-4" />
+                {title} ({cards.length})
+              </CollapsibleTrigger>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-6 px-1 text-muted-foreground"
+                aria-label={`Move ${title} up`}
+                disabled={index === 0}
+                onClick={() => move(id, "up")}
+              >
+                <Icon name="ArrowUp" fallback="ChevronUp" />
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-6 px-1 text-muted-foreground"
+                aria-label={`Move ${title} down`}
+                disabled={index === shownColumns.length - 1}
+                onClick={() => move(id, "down")}
+              >
+                <Icon name="ArrowDown" fallback="ChevronDown" />
+              </Button>
+            </div>
             <CollapsibleContent className="flex flex-col gap-2">
               {cards.map((card) => (
                 <Card key={card.key} card={card} onChanged={onChanged} />

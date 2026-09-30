@@ -92,10 +92,11 @@ Press **FirstMate** on the first mate's thread. Each card is a worker, a backlog
   its grace period, and only committed work can be restored.
 - **Open thread** goes to the worker's own thread.
 
-The sections are stacked and foldable, empty ones are hidden, and the folds are remembered. On a
-worker's own thread the FirstMate tab shows just its card, with a note box that tells the first mate
-something about that worker without touching the worker; on any other thread it offers to adopt it (when
-it works in the home), or a way to the first mate.
+The sections are stacked and foldable, empty ones are hidden, and the arrows on each section's header
+move it up or down; this browser remembers the folds and the order. On a worker's own thread the
+FirstMate tab shows just its card, with a note box that tells the first mate something about that worker
+without touching the worker; on any other thread it offers to adopt it (when it works in the home), or a
+way to the first mate.
 
 Above the sections, the board shows a notice when FirstMate's own charter has moved on since you edited
 yours, and below them the watches.
