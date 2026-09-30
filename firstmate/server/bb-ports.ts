@@ -60,14 +60,50 @@ function isNotFound(error: unknown): boolean {
   return error instanceof Error && "status" in error && error.status === 404;
 }
 
-function environmentOf(environment: SpawnEnvironment): SpawnRequest["environment"] {
+/**
+ * The host id of the bb server's own machine, where the home lives. `system.config()` reports it as
+ * `primaryHostId` — the host whose id bb keeps in its data directory.
+ */
+async function serverHostId(sdk: PluginBbSdk): Promise<string | null> {
+  return (await sdk.system.config()).primaryHostId;
+}
+
+function requireHost(hostId: string | null | undefined, what: string): string {
+  if (hostId === null || hostId === undefined) throw new Error(`bb reports no machine for ${what}, so the thread cannot be started.`);
+  return hostId;
+}
+
+/**
+ * The machine a new worktree of the project goes on: the project's checkout on the bb server's machine
+ * when it has one (as `bb thread spawn` does from the server's shell), else its default checkout's.
+ */
+async function worktreeHostId(sdk: PluginBbSdk, projectId: string): Promise<string> {
+  const [serverHost, project] = await Promise.all([serverHostId(sdk), sdk.projects.get({ projectId })]);
+  const onServer = project.sources.find((source) => source.hostId === serverHost);
+  const chosen = onServer ?? project.sources.find((source) => source.isDefault) ?? project.sources[0];
+  return requireHost(chosen?.hostId, `project ${projectId}'s checkout`);
+}
+
+/**
+ * bb requires a host environment to name its machine (`hostId`) even though the type marks it
+ * optional: without one, the spawn fails with "hostId is required unless workspace.type is personal".
+ */
+async function environmentOf(sdk: PluginBbSdk, projectId: string, environment: SpawnEnvironment): Promise<SpawnRequest["environment"]> {
   switch (environment.kind) {
     case "worktree":
-      return { type: "host", workspace: { type: "managed-worktree", baseBranch: { kind: "default" } } };
+      return {
+        type: "host",
+        hostId: await worktreeHostId(sdk, projectId),
+        workspace: { type: "managed-worktree", baseBranch: { kind: "default" } },
+      };
     case "reuse":
       return { type: "reuse", environmentId: environment.environmentId };
     case "path":
-      return { type: "host", workspace: { type: "unmanaged", path: environment.path } };
+      return {
+        type: "host",
+        hostId: requireHost(await serverHostId(sdk), "the bb server"),
+        workspace: { type: "unmanaged", path: environment.path },
+      };
   }
 }
 
@@ -115,7 +151,7 @@ export function bbThreads(sdk: PluginBbSdk): ThreadsPort {
         title: args.title,
         prompt: args.prompt,
         parentThreadId: args.parentThreadId,
-        environment: environmentOf(args.environment),
+        environment: await environmentOf(sdk, args.projectId, args.environment),
         providerId: optional(args.providerId),
         model: optional(args.model),
         reasoningLevel: reasoningOf(args.reasoningLevel),
@@ -149,14 +185,6 @@ async function canonical(path: string): Promise<string> {
   } catch {
     return resolve(path);
   }
-}
-
-/**
- * The host id of the bb server's own machine, where the home lives. `system.config()` reports it as
- * `primaryHostId` — the host whose id bb keeps in its data directory.
- */
-async function serverHostId(sdk: PluginBbSdk): Promise<string | null> {
-  return (await sdk.system.config()).primaryHostId;
 }
 
 export function bbProjects(sdk: PluginBbSdk): ProjectsPort {
