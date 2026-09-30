@@ -1,0 +1,200 @@
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+
+import {
+  FileChangedError,
+  cleanRelative,
+  readTextFile,
+  replaceTextIfUnchanged,
+  writeTextFile,
+} from "./files";
+
+const tempDirs: string[] = [];
+afterEach(async () => {
+  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+});
+
+async function home(): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), "firstmate-files-"));
+  tempDirs.push(dir);
+  await mkdir(join(dir, "data", "fix-login"), { recursive: true });
+  await writeFile(join(dir, "AGENTS.md"), "# First mate\n");
+  await writeFile(join(dir, "data", "backlog.md"), "## In flight\n");
+  await writeFile(join(dir, "data", "fix-login", "brief.md"), "brief");
+  return dir;
+}
+
+describe("cleanRelative", () => {
+  it("normalizes paths inside the home and refuses the rest", () => {
+    expect(cleanRelative("")).toBe("");
+    expect(cleanRelative("./data//backlog.md")).toBe("data/backlog.md");
+    expect(cleanRelative("data/fix-login/../backlog.md")).toBe("data/backlog.md");
+    expect(() => cleanRelative("../outside")).toThrow(/outside the home/);
+    expect(() => cleanRelative("data/../../x")).toThrow(/outside the home/);
+    expect(() => cleanRelative("/etc/passwd")).toThrow(/not a path inside/);
+  });
+});
+
+describe("readTextFile", () => {
+  it("reads text and flags a binary file instead of sending it", async () => {
+    const dir = await home();
+    expect(await readTextFile(dir, "data/backlog.md")).toMatchObject({ content: "## In flight\n", binary: false });
+    await writeFile(join(dir, "image.png"), Buffer.from([0x89, 0x50, 0x00, 0x47]));
+    expect(await readTextFile(dir, "image.png")).toMatchObject({ content: null, binary: true });
+  });
+});
+
+describe("writeTextFile", () => {
+  it("saves over the version it opened, and refuses one that changed since unless forced", async () => {
+    const dir = await home();
+    const opened = await readTextFile(dir, "data/backlog.md");
+    const saved = await writeTextFile(dir, {
+      path: "data/backlog.md",
+      content: "mine",
+      expectedModifiedMs: opened.modifiedMs,
+      force: false,
+    });
+    expect(await readFile(join(dir, "data", "backlog.md"), "utf8")).toBe("mine");
+
+    // The first mate writes the file after the editor opened it.
+    await writeFile(join(dir, "data", "backlog.md"), "theirs");
+    const later = new Date(saved.modifiedMs + 5000);
+    await utimes(join(dir, "data", "backlog.md"), later, later);
+    await expect(
+      writeTextFile(dir, { path: "data/backlog.md", content: "mine again", expectedModifiedMs: saved.modifiedMs, force: false }),
+    ).rejects.toThrow(/changed since you opened it/);
+    expect(await readFile(join(dir, "data", "backlog.md"), "utf8")).toBe("theirs");
+
+    await writeTextFile(dir, { path: "data/backlog.md", content: "mine again", expectedModifiedMs: saved.modifiedMs, force: true });
+    expect(await readFile(join(dir, "data", "backlog.md"), "utf8")).toBe("mine again");
+  });
+
+  it("refuses a save the first mate beats while it is being staged, and leaves no temporary file", async () => {
+    const dir = await home();
+    const path = join(dir, "data", "backlog.md");
+    const opened = await readTextFile(dir, "data/backlog.md");
+    const save = writeTextFile(
+      dir,
+      { path: "data/backlog.md", content: "mine", expectedModifiedMs: opened.modifiedMs, force: false },
+      {
+        afterStaging: async () => {
+          await writeFile(path, "theirs");
+          const later = new Date(opened.modifiedMs + 5000);
+          await utimes(path, later, later);
+        },
+      },
+    );
+    await expect(save).rejects.toBeInstanceOf(FileChangedError);
+    await expect(save).rejects.toThrow(/changed since you opened it/);
+    expect(await readFile(path, "utf8")).toBe("theirs");
+    expect((await readdir(join(dir, "data"))).sort()).toEqual(["backlog.md", "fix-login"]);
+  });
+
+  it("refuses creating a file the first mate creates while it is being staged", async () => {
+    const dir = await home();
+    const path = join(dir, "notes.md");
+    const save = writeTextFile(
+      dir,
+      { path: "notes.md", content: "mine", expectedModifiedMs: null, force: false },
+      { afterStaging: () => writeFile(path, "theirs") },
+    );
+    await expect(save).rejects.toThrow(/already exists/);
+    expect(await readFile(path, "utf8")).toBe("theirs");
+  });
+
+  it("lets only one of two saves opened at the same version replace the file", async () => {
+    const dir = await home();
+    // Opened well before the saves, so each save's new mtime differs from it.
+    const earlier = new Date(Date.now() - 60_000);
+    await utimes(join(dir, "data", "backlog.md"), earlier, earlier);
+    const opened = await readTextFile(dir, "data/backlog.md");
+    const contents = ["first", "second"];
+    const results = await Promise.allSettled(
+      contents.map((content) =>
+        writeTextFile(dir, { path: "data/backlog.md", content, expectedModifiedMs: opened.modifiedMs, force: false }),
+      ),
+    );
+    // Either may reach the queue first; exactly one wins, and the file is the winner's.
+    const winners = contents.filter((_, index) => results[index]?.status === "fulfilled");
+    expect(winners).toHaveLength(1);
+    expect(await readFile(join(dir, "data", "backlog.md"), "utf8")).toBe(winners[0]);
+    expect((await readdir(join(dir, "data"))).sort()).toEqual(["backlog.md", "fix-login"]);
+  });
+
+  it("keeps a saved file's mode, so a watch script edited in the panel stays executable", async () => {
+    const dir = await home();
+    await mkdir(join(dir, "watches"));
+    const script = join(dir, "watches", "demo");
+    await writeFile(script, "#!/bin/sh\n# schedule: * * * * *\necho one\n");
+    await chmod(script, 0o755);
+    await chmod(join(dir, "data", "backlog.md"), 0o640);
+
+    const opened = await readTextFile(dir, "watches/demo");
+    await writeTextFile(dir, {
+      path: "watches/demo",
+      content: "#!/bin/sh\n# schedule: * * * * *\necho two\n",
+      expectedModifiedMs: opened.modifiedMs,
+      force: false,
+    });
+    expect(await readFile(script, "utf8")).toContain("echo two");
+    expect((await stat(script)).mode & 0o777).toBe(0o755);
+
+    const backlog = await readTextFile(dir, "data/backlog.md");
+    await writeTextFile(dir, { path: "data/backlog.md", content: "x", expectedModifiedMs: backlog.modifiedMs, force: false });
+    expect((await stat(join(dir, "data", "backlog.md"))).mode & 0o777).toBe(0o640);
+
+    // A new file gets the default, which is never executable.
+    await writeTextFile(dir, { path: "watches/new", content: "#!/bin/sh\n", expectedModifiedMs: null, force: false });
+    expect((await stat(join(dir, "watches", "new"))).mode & 0o111).toBe(0);
+  });
+
+  it("creates a new file, folders and all, but never over an existing one", async () => {
+    const dir = await home();
+    await writeTextFile(dir, { path: "notes/today.md", content: "hi", expectedModifiedMs: null, force: false });
+    expect(await readFile(join(dir, "notes", "today.md"), "utf8")).toBe("hi");
+    await expect(
+      writeTextFile(dir, { path: "AGENTS.md", content: "x", expectedModifiedMs: null, force: false }),
+    ).rejects.toThrow(/already exists/);
+    await expect(
+      writeTextFile(dir, { path: "../escape.md", content: "x", expectedModifiedMs: null, force: false }),
+    ).rejects.toThrow(/outside the home/);
+  });
+});
+
+describe("replaceTextIfUnchanged", () => {
+  it("replaces a file that still reads as expected", async () => {
+    const dir = await home();
+    await replaceTextIfUnchanged(dir, "data/backlog.md", "## In flight\n", "mine");
+    expect(await readFile(join(dir, "data", "backlog.md"), "utf8")).toBe("mine");
+  });
+
+  it("refuses other contents even with the same modification time", async () => {
+    const dir = await home();
+    const path = join(dir, "data", "backlog.md");
+    const { mtime } = await stat(path);
+    await writeFile(path, "theirs\n");
+    await utimes(path, mtime, mtime);
+    await expect(replaceTextIfUnchanged(dir, "data/backlog.md", "## In flight\n", "mine")).rejects.toBeInstanceOf(
+      FileChangedError,
+    );
+    expect(await readFile(path, "utf8")).toBe("theirs\n");
+  });
+
+  it("refuses when the file is rewritten or deleted while the replacement is staged", async () => {
+    const dir = await home();
+    const path = join(dir, "data", "backlog.md");
+    await expect(
+      replaceTextIfUnchanged(dir, "data/backlog.md", "## In flight\n", "mine", {
+        afterStaging: () => writeFile(path, "theirs\n"),
+      }),
+    ).rejects.toBeInstanceOf(FileChangedError);
+    expect(await readFile(path, "utf8")).toBe("theirs\n");
+
+    await expect(
+      replaceTextIfUnchanged(dir, "data/backlog.md", "theirs\n", "mine", { afterStaging: () => rm(path) }),
+    ).rejects.toBeInstanceOf(FileChangedError);
+    expect((await readdir(join(dir, "data"))).sort()).toEqual(["fix-login"]);
+  });
+});
