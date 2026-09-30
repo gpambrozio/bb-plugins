@@ -1,6 +1,6 @@
 /**
  * The watch runner: runs the scripts in the home's `watches/` folder on their schedules while the
- * daemon is up, and sends the first mate whatever they print.
+ * plugin is loaded in bb, and sends the first mate whatever they print.
  *
  * bb's automations always start an agent run, and most runs of a watch should cost nothing, so the
  * plugin keeps its own clock: a timer on each minute's boundary that runs every enabled, valid watch
@@ -34,6 +34,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import type { WatchResult, WatchSummary } from "../shared/types";
+import { errorText, type Log } from "./log";
 import { serialized } from "./serialize";
 import { TEMPLATES, message } from "./templates";
 import { BUILT_IN_WATCHES, builtInStates, listWatches, seedWatches, type WatchFile } from "./watch-files";
@@ -96,6 +97,8 @@ export interface WatchRunnerOptions {
   stateFile: string;
   /** Where each script's `FIRSTMATE_WATCH_STATE` directory goes. */
   scriptStateRoot: string;
+  /** Where a failed tick, save or delivery is logged: bb's plugin log. */
+  log: Log;
   now?: () => Date;
   run?: typeof runWatchScript;
   timeoutMs?: number;
@@ -110,10 +113,6 @@ const BLANK: WatchRecord = {
   lastError: null,
   failing: false,
 };
-
-function describe(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 /** An instant as the note writes it: UTC to the second. */
 function stamp(at: Date): string {
@@ -222,7 +221,7 @@ export class WatchRunner {
         if (this.aborter.signal.aborted) return;
         // A timer can fire a hair early; a late one (the Mac asleep) checks the minute it woke in.
         const at = new Date(Math.max(Date.now(), target));
-        void this.tick(at).catch((error: unknown) => console.error("[firstmate] a watch tick failed:", error));
+        void this.tick(at).catch((error: unknown) => this.options.log.error(`A watch tick failed: ${errorText(error)}`));
         next();
       }, target - Date.now() + 50);
     };
@@ -241,7 +240,7 @@ export class WatchRunner {
     const home = await this.options.home();
     if (home === null) return;
     await seedWatches(home).catch((error: unknown) => {
-      console.error("[firstmate] could not write the built-in watches:", error);
+      this.options.log.error(`Could not write the built-in watches into ${home}: ${errorText(error)}`);
     });
     const [watches, disabled] = await Promise.all([listWatches(home), this.options.disabled()]);
     const off = new Set(disabled);
@@ -346,7 +345,7 @@ export class WatchRunner {
     try {
       outcome = await this.options.deliver(note.text);
     } catch (error) {
-      console.error("[firstmate] could not send the watches' output to the first mate:", error);
+      this.options.log.error(`Could not send the watches' output to the first mate: ${errorText(error)}`);
       return;
     }
     if (outcome !== "sent") return;
@@ -396,7 +395,7 @@ export class WatchRunner {
 
   private load(): Promise<RunnerState> {
     if (this.state !== null) return Promise.resolve(this.state);
-    this.loading ??= readState(this.options.stateFile).then((state) => {
+    this.loading ??= readState(this.options.stateFile, this.options.log).then((state) => {
       this.state = state;
       return state;
     });
@@ -413,7 +412,7 @@ export class WatchRunner {
       await writeFile(temporary, `${JSON.stringify(state, null, 2)}\n`, "utf8");
       await rename(temporary, path);
     }).catch((error: unknown) => {
-      console.error(`[firstmate] could not save ${path}:`, error);
+      this.options.log.error(`Could not save ${path}: ${errorText(error)}`);
     });
   }
 }
@@ -446,13 +445,13 @@ function asString(value: unknown): string | null {
 }
 
 /** The saved state, leniently: anything it cannot read starts afresh rather than stopping the watches. */
-export async function readState(path: string): Promise<RunnerState> {
+export async function readState(path: string, log: Log): Promise<RunnerState> {
   let raw: unknown;
   try {
     raw = JSON.parse(await readFile(path, "utf8"));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-      console.error(`[firstmate] ${path} could not be read, starting afresh: ${describe(error)}`);
+      log.warn(`${path} could not be read, starting afresh: ${errorText(error)}`);
     }
     return { watches: {}, queue: [], dropped: 0 };
   }

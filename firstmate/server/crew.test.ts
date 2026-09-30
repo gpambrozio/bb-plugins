@@ -7,7 +7,7 @@ import { CREW_METADATA } from "../shared/types";
 import { endCrew, interruptCrew, noteCrew, relaunchCrew, steerCrew } from "./crew";
 import { ReportCache, type FleetDeps } from "./fleet";
 import type { FirstmateSettings } from "./settings";
-import { fakeProjects, fakeThreads, memoryStore } from "./testing/fakes";
+import { fakeLog, fakeProjects, fakeThreads, memoryStore } from "./testing/fakes";
 
 // The wording is the templates' (charter.test.ts reads it); these tests pin the values they are filled from.
 vi.mock("./templates", async (importOriginal) => {
@@ -38,6 +38,7 @@ async function setup(backlog = "") {
     settings: async () => settings,
     reports: new ReportCache(threads),
     watches: async () => [],
+    log: fakeLog(),
   };
   const mate = threads.add({ id: "thr_mate", title: "First mate" });
   await store.setMateThreadId(mate.id);

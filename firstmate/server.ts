@@ -92,6 +92,7 @@ export default async function plugin(bb: BbPluginApi) {
       deliver: createDeliver(deps),
       stateFile: join(home, STATE_DIR, "watches.json"),
       scriptStateRoot: join(home, STATE_DIR, "watch-state"),
+      log: bb.log,
     });
   }
 
@@ -189,7 +190,12 @@ export default async function plugin(bb: BbPluginApi) {
 
   bb.rpc.register(rpcContract, {
     "fleet.load": () =>
-      loadFleet({ ...deps, reports: reportCache(), watches: () => (runner === null ? Promise.resolve([]) : runner.summaries()) }),
+      loadFleet({
+        ...deps,
+        reports: reportCache(),
+        watches: () => (runner === null ? Promise.resolve([]) : runner.summaries()),
+        log: bb.log,
+      }),
     "mate.launch": async (pick) => {
       const mate = await launchMate(deps, pick);
       publishFleet();

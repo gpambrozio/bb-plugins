@@ -7,7 +7,7 @@ import { CREW_METADATA, type BacklogItem, type CrewSummary, type ThreadStatus, t
 import { parseBacklog } from "./backlog";
 import { ReportCache, backlogColumn, buildCards, crewColumn, loadFleet, type FleetDeps } from "./fleet";
 import type { FirstmateSettings } from "./settings";
-import { fakeProjects, fakeThreads, memoryStore } from "./testing/fakes";
+import { fakeLog, fakeProjects, fakeThreads, memoryStore } from "./testing/fakes";
 
 function crew(overrides: Partial<CrewSummary> = {}): CrewSummary {
   return {
@@ -223,6 +223,7 @@ describe("loadFleet", () => {
       crewReasoning: "default",
       refreshSeconds: 10,
     };
+    const log = fakeLog();
     const deps: FleetDeps = {
       threads,
       projects: fakeProjects(),
@@ -230,8 +231,9 @@ describe("loadFleet", () => {
       settings: async () => settings,
       reports: new ReportCache(threads),
       watches: async () => watches,
+      log,
     };
-    return { home, threads, store, deps };
+    return { home, threads, store, deps, log };
   }
 
   it("with no stored first mate, draws the backlog alone", async () => {
@@ -287,17 +289,16 @@ describe("loadFleet", () => {
   });
 
   it("shows a card without a status line when reading it fails, and says why", async () => {
-    const { deps, store, threads } = await setup();
+    const { deps, store, threads, log } = await setup();
     const mate = threads.add({ id: "thr_mate" });
     await store.setMateThreadId(mate.id);
     threads.add({ id: "thr_a", parentThreadId: mate.id });
     threads.failNext("lastText", new Error("timeline unavailable"));
-    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     const fleet = await loadFleet(deps);
     expect(fleet.cards).toHaveLength(1);
     expect(fleet.cards[0]).toMatchObject({ column: "idle", report: null });
-    expect(error).toHaveBeenCalledWith(expect.stringContaining("thr_a"), expect.any(Error));
+    expect(log.errors).toEqual([expect.stringMatching(/status line of thr_a.*timeline unavailable/)]);
   });
 
   it("with backlog.md and suggestions.md missing, draws an empty board without throwing", async () => {
@@ -311,64 +312,64 @@ describe("loadFleet", () => {
   });
 
   it("loads the board from the crew alone when the backlog cannot be read, and says why", async () => {
-    const { deps, store, threads, home } = await setup();
+    const { deps, store, threads, home, log } = await setup();
     // A directory where the file should be: readFile fails with EISDIR, not ENOENT.
     await mkdir(join(home, "data", "backlog.md"));
     const mate = threads.add({ id: "thr_mate" });
     await store.setMateThreadId(mate.id);
     threads.add({ id: "thr_a", parentThreadId: mate.id });
-    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     const fleet = await loadFleet(deps);
     expect(fleet.cards.map((card) => card.key)).toEqual(["crew:thr_a"]);
-    expect(error).toHaveBeenCalledTimes(1);
-    expect(error).toHaveBeenCalledWith(expect.stringContaining("backlog"), expect.stringContaining(home), expect.any(Error));
+    expect(log.errors).toHaveLength(1);
+    expect(log.errors[0]).toMatch(/backlog/);
+    expect(log.errors[0]).toContain(home);
+    expect(log.errors[0]).toMatch(/EISDIR/);
   });
 
   it("falls back to nothing for a suggestions file that cannot be read, and logs it", async () => {
-    const { deps, home } = await setup({ "data/backlog.md": "## Queued\n- [ ] next - Next\n" });
+    const { deps, home, log } = await setup({ "data/backlog.md": "## Queued\n- [ ] next - Next\n" });
     await mkdir(join(home, "data", "suggestions.md"));
-    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     const fleet = await loadFleet(deps);
     expect(fleet.suggestions).toEqual([]);
     expect(fleet.cards).toHaveLength(1);
-    expect(error).toHaveBeenCalledWith(expect.stringContaining("suggestions"), expect.stringContaining(home), expect.any(Error));
+    expect(log.errors).toEqual([expect.stringMatching(/suggestions/)]);
+    expect(log.errors[0]).toContain(home);
   });
 
   it("falls back to an untouched charter when the charter cannot be read, and logs it", async () => {
-    const { deps, home } = await setup();
+    const { deps, home, log } = await setup();
     await mkdir(join(home, "data", "charter.md"));
-    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     const fleet = await loadFleet(deps);
     expect(fleet.charter).toMatchObject({ edited: false, outdated: false });
-    expect(error).toHaveBeenCalledWith(expect.stringContaining("charter"), expect.stringContaining(home), expect.any(Error));
+    expect(log.errors).toEqual([expect.stringMatching(/charter/)]);
+    expect(log.errors[0]).toContain(home);
   });
 
   it("shows no watches when reading them fails, and logs it", async () => {
-    const { deps, home } = await setup({ "data/backlog.md": "## Queued\n- [ ] next - Next\n" });
-    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { deps, home, log } = await setup({ "data/backlog.md": "## Queued\n- [ ] next - Next\n" });
     const fleet = await loadFleet({ ...deps, watches: async () => Promise.reject(new Error("watch state corrupt")) });
     expect(fleet.watches).toEqual([]);
     expect(fleet.cards).toHaveLength(1);
-    expect(error).toHaveBeenCalledWith(expect.stringContaining("watches"), expect.stringContaining(home), expect.any(Error));
+    expect(log.errors).toEqual([expect.stringMatching(/watches.*watch state corrupt/)]);
+    expect(log.errors[0]).toContain(home);
   });
 
   it("keeps a child on the board when reading its metadata or pending interactions fails", async () => {
-    const { deps, store, threads } = await setup();
+    const { deps, store, threads, log } = await setup();
     const mate = threads.add({ id: "thr_mate" });
     await store.setMateThreadId(mate.id);
     threads.add({ id: "thr_a", title: "A", parentThreadId: mate.id });
     threads.add({ id: "thr_b", title: "B", parentThreadId: mate.id });
     threads.setMetadata("thr_a", { [CREW_METADATA.task]: "a-task" });
     threads.failNext("metadata", new Error("metadata unavailable"));
-    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     const fleet = await loadFleet(deps);
     expect(fleet.cards).toHaveLength(2);
     expect(fleet.cards.every((card) => card.crew !== null)).toBe(true);
-    expect(error).toHaveBeenCalledWith(expect.stringContaining("thr_"), expect.any(Error));
+    expect(log.errors).toEqual([expect.stringMatching(/metadata of thr_.*metadata unavailable/)]);
 
     threads.failNext("pendingInteractions", new Error("interactions unavailable"));
     const again = await loadFleet(deps);

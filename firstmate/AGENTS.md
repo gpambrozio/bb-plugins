@@ -62,6 +62,8 @@ Do not break these; each was paid for.
   columns follow from those, not from the plugin's guesses.
 - **Nothing throws into the server's event loop.** Services and listeners catch and log per tick;
   everything is released in `bb.onDispose`.
+- **Server code logs only through the injected `Log` (`server/log.ts`), wired to `bb.log`**, never
+  `console`, whose output does not reach `bb plugin logs firstmate`.
 - Colour only through semantic Tailwind classes.
 
 ## Decisions to keep
@@ -139,8 +141,6 @@ charter tells the first mate to always pass `--title`.
   (say, Parked). Telling "this turn wrote nothing" apart needs the timeline.
 - **Changing the crew settings does not re-render the first mate's `AGENTS.md`** until the next launch,
   restart or plugin reload. Settings changes do not reload a plugin.
-- **Board read failures are logged with `console.error`**, not `bb.log`, so they do not appear in
-  `bb plugin logs firstmate`. A failed metadata or interactions read on the board is silent to the user.
 - **`fleet.load` returns the whole plugin charter template** (about 30 KB) on every poll, for a field only
   Compare uses.
 - **The board UI has not yet been looked at** wide and narrow, light and dark. The live run had no display;

@@ -20,6 +20,7 @@ import {
 import { readCharterState } from "./charter-file";
 import { parseCrewReport, reportUrl } from "./crew-report";
 import { isHomeReady, readBacklog, readSuggestions } from "./home";
+import { errorText, type Log } from "./log";
 import { resolveMate, type MateDeps } from "./mate";
 import type { ThreadInfo, ThreadsPort } from "./ports";
 import { homePath } from "./settings";
@@ -165,12 +166,15 @@ export function metadataText(metadata: Record<string, unknown>, key: string): st
   return typeof value === "string" && value.trim() !== "" ? value.trim() : null;
 }
 
-/** Runs one read the board can do without: a failure is logged with what it was and comes back as `fallback`. */
-async function orFallback<T>(what: string, fallback: T, read: () => Promise<T>, ...context: string[]): Promise<T> {
+/**
+ * Runs one read the board can do without: a failure is logged with what it was (and where, when
+ * `where` is given) and comes back as `fallback`.
+ */
+async function orFallback<T>(log: Log, what: string, fallback: T, read: () => Promise<T>, where?: string): Promise<T> {
   try {
     return await read();
   } catch (error) {
-    console.error(`[firstmate] could not read ${what}:`, ...context, error);
+    log.error(`Could not read ${what}${where === undefined ? "" : ` in ${where}`}: ${errorText(error)}`);
     return fallback;
   }
 }
@@ -180,10 +184,10 @@ async function orFallback<T>(what: string, fallback: T, read: () => Promise<T>, 
  * interactions cannot be read is still a card, with no metadata or nothing pending, and the failure is
  * logged: one bad child must not blank the board.
  */
-export async function summarizeCrew(threads: ThreadsPort, thread: ThreadInfo): Promise<CrewSummary> {
+export async function summarizeCrew(threads: ThreadsPort, thread: ThreadInfo, log: Log): Promise<CrewSummary> {
   const [metadata, pendingInteractions] = await Promise.all([
-    orFallback(`the metadata of ${thread.id}`, {} as Record<string, unknown>, () => threads.metadata(thread.id)),
-    orFallback(`the pending interactions of ${thread.id}`, 0, () => threads.pendingInteractions(thread.id)),
+    orFallback(log, `the metadata of ${thread.id}`, {} as Record<string, unknown>, () => threads.metadata(thread.id)),
+    orFallback(log, `the pending interactions of ${thread.id}`, 0, () => threads.pendingInteractions(thread.id)),
   ]);
   return {
     threadId: thread.id,
@@ -205,6 +209,8 @@ const UNTOUCHED_CHARTER: CharterState = { template: "", edited: false, outdated:
 export type FleetDeps = MateDeps & {
   reports: ReportCache;
   watches: () => Promise<WatchSummary[]>;
+  /** Where the reads the board does without are logged: bb's plugin log. */
+  log: Log;
 };
 
 /**
@@ -217,20 +223,20 @@ export async function loadFleet(deps: FleetDeps): Promise<Fleet> {
   const [storedMateId, mate, homeReady, backlog, suggestions, charter, watches] = await Promise.all([
     deps.store.mateThreadId(),
     resolveMate(deps),
-    orFallback("whether the home is ready", false, () => isHomeReady(home), home),
-    orFallback("the backlog", [], () => readBacklog(home), home),
-    orFallback("the suggestions", [], () => readSuggestions(home), home),
-    orFallback("the charter", UNTOUCHED_CHARTER, () => readCharterState(home), home),
-    orFallback("the watches", [], () => deps.watches(), home),
+    orFallback(deps.log, "whether the home is ready", false, () => isHomeReady(home), home),
+    orFallback(deps.log, "the backlog", [], () => readBacklog(home), home),
+    orFallback(deps.log, "the suggestions", [], () => readSuggestions(home), home),
+    orFallback(deps.log, "the charter", UNTOUCHED_CHARTER, () => readCharterState(home), home),
+    orFallback(deps.log, "the watches", [], () => deps.watches(), home),
   ]);
 
   const children = mate === null ? [] : await deps.threads.children(mate.id);
   deps.reports.retain(new Set(children.map((child) => child.id)));
   const crew = await Promise.all(
     children.map(async (child) => {
-      const summary = await summarizeCrew(deps.threads, child);
+      const summary = await summarizeCrew(deps.threads, child, deps.log);
       const report = await deps.reports.report(summary).catch((error: unknown) => {
-        console.error(`[firstmate] could not read the status line of ${child.id}:`, error);
+        deps.log.error(`Could not read the status line of ${child.id}: ${errorText(error)}`);
         return null;
       });
       return { summary, report };

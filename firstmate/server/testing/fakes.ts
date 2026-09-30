@@ -6,6 +6,7 @@ import { resolve } from "node:path";
 
 import type { PluginKvStorage } from "@get-bb/plugin-sdk";
 
+import type { Log } from "../log";
 import type { ProjectsPort, SendMode, SpawnArgs, ThreadInfo, ThreadsPort } from "../ports";
 import { createStore, type Store } from "../store";
 
@@ -265,4 +266,25 @@ export function memoryKv(): PluginKvStorage & { entries: Map<string, string> } {
 /** The real store over an in-memory kv. */
 export function memoryStore(): Store {
   return createStore(memoryKv());
+}
+
+/** A `Log` that keeps every message, so a test can assert what was logged and with what context. */
+export interface FakeLog extends Log {
+  readonly warnings: string[];
+  readonly errors: string[];
+}
+
+export function fakeLog(): FakeLog {
+  const warnings: string[] = [];
+  const errors: string[] = [];
+  return {
+    warnings,
+    errors,
+    warn(message) {
+      warnings.push(message);
+    },
+    error(message) {
+      errors.push(message);
+    },
+  };
 }

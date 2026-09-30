@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { fakeLog } from "./testing/fakes";
 import { runWatchScript, type RunOptions, type RunResult } from "./watch-run";
 import {
   MAX_MESSAGE_CHARS,
@@ -57,6 +58,7 @@ function runner(
   const runs: Array<{ name: string; env: NodeJS.ProcessEnv }> = [];
   const mate = { state: "idle" as "idle" | "busy" | "absent" };
   const disabled = ["pr-watch"];
+  const log = fakeLog();
   const instance = new WatchRunner({
     home: async () => paths.home,
     disabled: async () => disabled,
@@ -75,9 +77,10 @@ function runner(
       return answer();
     },
     env: { PATH: process.env.PATH },
+    log,
     ...overrides,
   });
-  return { instance, sent, runs, mate, disabled };
+  return { instance, sent, runs, mate, disabled, log };
 }
 
 const MINUTE = new Date(2026, 8, 25, 10, 5);
@@ -254,6 +257,7 @@ describe("WatchRunner", () => {
       deliver: async () => "sent",
       stateFile: paths.stateFile,
       scriptStateRoot: paths.scriptStateRoot,
+      log: fakeLog(),
       run: async (path, options) => {
         runs.push(path);
         signal = options.signal;
@@ -371,6 +375,29 @@ describe("WatchRunner", () => {
     expect(second.sent[0]?.match(/failed=/g)).toHaveLength(1);
     await second.instance.tick(new Date(2026, 8, 25, 10, 7));
     expect(second.sent).toHaveLength(1);
+  });
+
+  it("logs a delivery that fails, with why, and keeps the output queued", async () => {
+    const paths = await setup();
+    await script(paths.home, "a", "true");
+    const { instance, log } = runner(
+      paths,
+      { a: () => ok("news") },
+      { deliver: async () => Promise.reject(new Error("bb is unreachable")) },
+    );
+    await instance.tick(MINUTE);
+    expect(log.errors).toEqual([expect.stringMatching(/Could not send the watches' output to the first mate: bb is unreachable/)]);
+    expect(JSON.parse(await readFile(paths.stateFile, "utf8")).queue).toHaveLength(1);
+  });
+
+  it("logs a state file it cannot read, naming it, and starts afresh", async () => {
+    const paths = await setup();
+    await mkdir(join(paths.root, "data"), { recursive: true });
+    await writeFile(paths.stateFile, "{ not json", "utf8");
+    await script(paths.home, "a", "true");
+    const { instance, log } = runner(paths, {});
+    expect(await instance.summaries()).toEqual([expect.objectContaining({ name: "a", lastResult: "never" })]);
+    expect(log.warnings).toEqual([expect.stringContaining(paths.stateFile)]);
   });
 
   it("leaves a home no launch has prepared alone", async () => {
