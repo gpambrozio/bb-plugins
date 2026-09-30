@@ -10,15 +10,15 @@ import { promisify } from "node:util";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import type { PromptSettings } from "./shared/board";
+import { rpcContract } from "./shared/contract";
 import {
   DISPLAY_PREFS_CHANGED,
   ITEM_PATCHED,
   PROMPTS_CHANGED,
-  rpcContract,
   type DisplayPrefs,
   type ItemPatch,
   type LaunchDefaults,
-} from "./shared/contract";
+} from "./shared/schemas";
 import { workspaceTitle } from "./shared/launch";
 import { remoteIdsOf } from "./shared/remotes";
 import { DEFAULT_PROMPTS, normalizePrompts } from "./shared/settings";

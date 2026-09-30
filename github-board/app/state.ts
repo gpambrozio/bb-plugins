@@ -11,6 +11,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
 
 import type { Board, BoardItem, PromptSettings } from "../shared/board";
+import type { RpcContract } from "../shared/contract";
 import {
   DISPLAY_PREFS_CHANGED,
   DisplayPrefsSchema,
@@ -18,8 +19,7 @@ import {
   ItemPatchSchema,
   PROMPTS_CHANGED,
   type DisplayPrefs,
-  type RpcContract,
-} from "../shared/contract";
+} from "../shared/schemas";
 import { PromptSettingsSchema } from "../shared/board";
 import { patchBoard } from "./board-logic";
 

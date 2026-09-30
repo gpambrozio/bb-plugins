@@ -20,7 +20,7 @@ import {
 import { toast } from "sonner";
 
 import type { BoardItem, ColumnId } from "../shared/board";
-import type { LaunchDefaults, NewThreadRequestInput } from "../shared/contract";
+import type { LaunchDefaults, NewThreadRequestInput } from "../shared/schemas";
 import { renderTemplate, templateFor } from "../shared/settings";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { errorText, useBoardRpc, usePrompts } from "./state";
