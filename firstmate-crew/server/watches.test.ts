@@ -15,7 +15,7 @@ import {
   fitWatchNote,
   quoted,
   watchNote,
-  type QueuedNote, type DeliveryOutcome, type WatchRunnerOptions } from "./watches";
+  type QueuedNote, type DeliveryOutcome, type OutgoingNote, type WatchRunnerOptions } from "./watches";
 
 const tempDirs: string[] = [];
 afterEach(async () => {
@@ -56,6 +56,7 @@ function runner(
   overrides: Partial<WatchRunnerOptions> = {},
 ) {
   const sent: string[] = [];
+  const outgoing: OutgoingNote[] = [];
   const runs: Array<{ name: string; env: NodeJS.ProcessEnv }> = [];
   const mate = { state: "idle" as "idle" | "busy" | "absent" };
   const disabled = ["pr-watch"];
@@ -63,9 +64,10 @@ function runner(
   const instance = new WatchRunner({
     home: async () => paths.home,
     disabled: async () => disabled,
-    deliver: async (text: string): Promise<DeliveryOutcome> => {
+    deliver: async (note: OutgoingNote): Promise<DeliveryOutcome> => {
       if (mate.state !== "idle") return "wait";
-      sent.push(text);
+      sent.push(note.text);
+      outgoing.push(note);
       return "sent";
     },
     stateFile: paths.stateFile,
@@ -81,7 +83,7 @@ function runner(
     log,
     ...overrides,
   });
-  return { instance, sent, runs, mate, disabled, log };
+  return { instance, sent, outgoing, runs, mate, disabled, log };
 }
 
 const MINUTE = new Date(2026, 8, 25, 10, 5);
@@ -279,7 +281,7 @@ describe("WatchRunner", () => {
     await script(paths.home, "fourth", "true", "3 * * * *");
     // Twelve thousand each: the newest two fit, a third would not.
     const out = (letter: string) => () => ok(letter.repeat(12000));
-    const { instance, sent, mate } = runner(paths, { first: out("a"), second: out("b"), third: out("c"), fourth: out("d") });
+    const { instance, sent, outgoing, mate } = runner(paths, { first: out("a"), second: out("b"), third: out("c"), fourth: out("d") });
     mate.state = "busy";
     for (let minute = 0; minute < 4; minute += 1) await instance.tick(new Date(2026, 8, 25, 10, minute));
 
@@ -294,6 +296,9 @@ describe("WatchRunner", () => {
     expect(note).not.toContain("bbb");
     expect(note).toContain(`${"c".repeat(12000)}\n</firstmate-watch>`);
     expect(note).toContain(`${"d".repeat(12000)}\n</firstmate-watch>`);
+    // What the captain's line is drawn from: the notes that went, and the count the tag carries.
+    expect(outgoing[0]?.notes.map((queued) => queued.name)).toEqual(["third", "fourth"]);
+    expect(outgoing[0]?.dropped).toBe(2);
 
     const results = Object.fromEntries((await instance.summaries()).map((watch) => [watch.name, watch.lastResult]));
     expect(results).toMatchObject({ first: "dropped", second: "dropped", third: "delivered", fourth: "delivered" });

@@ -26,7 +26,7 @@ against bb 0.44.0 and `@get-bb/plugin-sdk` 0.5.29.
 | `server/home.ts`, `charter.ts`, `charter-file.ts` | Preparing the home; rendering `AGENTS.md`; the charter following the plugin until edited. |
 | `server/backlog.ts`, `suggestions.ts`, `crew-report.ts` | Parsing `data/backlog.md`, `data/suggestions.md`, and a worker's closing status line. |
 | `server/files.ts` | Confinement to the home (through symlinks) and `replaceTextIfUnchanged`. |
-| `server/watch-schedule.ts`, `watch-files.ts`, `watch-run.ts`, `watches.ts`, `watch-delivery.ts` | Crontab parsing, which files are watches, one script run, the runner and its queue, and when the queue reaches the first mate. |
+| `server/watch-schedule.ts`, `watch-files.ts`, `watch-run.ts`, `watches.ts`, `watch-delivery.ts`, `watch-notes.ts` | Crontab parsing, which files are watches, one script run, the runner and its queue, when the queue reaches the first mate, and the line the captain sees with the saved note behind it. |
 | `server/serialize.ts` | One-at-a-time per key. |
 | `server/log.ts` | The `Log` every server module logs through, wired to `bb.log` in `server.ts`. |
 | `server/templates.ts`, `templates.generated.ts` | Reading the templates; the generated module. See below. |
@@ -98,8 +98,12 @@ Do not break these; each was paid for.
   the home it describes. Only `disabledWatches` (a short list of names) is in kv.
 - **Watches are plugin-owned, not bb automations.** bb's automations run a stored snapshot and do not
   deliver a run's output to a thread.
-- **Watch notes show in full in chat.** bb's directives render only in assistant messages, so the
-  Paseo trick of folding a note to one line has no equivalent.
+- **A watch note is a line for the captain and the whole message for the agent.** bb's directives render
+  only in assistant messages and a plugin cannot restyle a user message, so the note is sent as two text
+  inputs: a visible line ending in a path mention (the "full note" chip) to the message saved in
+  `<home>/.firstmate/watch-notes/`, and the whole message with `visibility: "agent-only"`. The first
+  mate's workspace is the home, so the mention's workspace-relative path opens there. A note that cannot
+  be saved goes whole, as a plain message, with a warning in the log.
 - **The board is a thread tab, not a nav panel.** The first mate is a normal thread in bb's own chat; the
   Files view was dropped because its workspace is the home, which bb's file panel already opens.
 - **End archives.** Immediate when the task is in the backlog's Done; otherwise a confirmation, because

@@ -86,13 +86,20 @@ interface RunnerState {
 /** Whether the note reached the first mate, or has to wait for it — busy, or not there. */
 export type DeliveryOutcome = "sent" | "wait";
 
+/** One message for the first mate: its whole text, the notes it carries, and how many older ones its tag counts as dropped. */
+export interface OutgoingNote {
+  text: string;
+  notes: readonly QueuedNote[];
+  dropped: number;
+}
+
 export interface WatchRunnerOptions {
   /** The first mate's home, or null while no launch has prepared one. */
   home: () => Promise<string | null>;
   /** Names the captain has switched off. */
   disabled: () => Promise<readonly string[]>;
   /** Sends the note, or says to wait: while the first mate is mid-turn, or while there is none. */
-  deliver: (text: string) => Promise<DeliveryOutcome>;
+  deliver: (note: OutgoingNote) => Promise<DeliveryOutcome>;
   /** The runner's own file, `watches.json`. */
   stateFile: string;
   /** Where each script's `FIRSTMATE_WATCH_STATE` directory goes. */
@@ -344,7 +351,7 @@ export class WatchRunner {
     const note = await fitWatchNote(batch, dropped);
     let outcome: DeliveryOutcome;
     try {
-      outcome = await this.options.deliver(note.text);
+      outcome = await this.options.deliver({ text: note.text, notes: note.sent, dropped: dropped + note.cut.length });
     } catch (error) {
       this.options.log.error(`Could not send the watches' output to the first mate: ${errorText(error)}`);
       return;

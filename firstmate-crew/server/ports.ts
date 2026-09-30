@@ -27,6 +27,16 @@ export type SendMode = "auto" | "steer" | "queue-if-active";
 /** Where a spawned thread works: a new worktree of its project, another thread's environment, or a plain directory. */
 export type SpawnEnvironment = { kind: "worktree" } | { kind: "reuse"; environmentId: string } | { kind: "path"; path: string };
 
+/**
+ * A message the captain sees as one line, `shown`, ending in a chip that opens `file` — a path inside the
+ * thread's workspace — while the agent reads `hidden` as well.
+ */
+export interface ShortenedMessage {
+  shown: string;
+  file: { path: string; label: string };
+  hidden: string;
+}
+
 export interface SpawnArgs {
   projectId: string;
   title: string;
@@ -56,6 +66,7 @@ export interface ThreadsPort {
   workspacePath(environmentId: string): Promise<string | null>;
   spawn(args: SpawnArgs): Promise<ThreadInfo>;
   send(id: string, text: string, mode: SendMode): Promise<"sent" | "queued">;
+  sendShortened(id: string, message: ShortenedMessage, mode: SendMode): Promise<"sent" | "queued">;
   stop(id: string): Promise<void>;
   archive(id: string): Promise<void>;
   clearContext(id: string): Promise<void>;

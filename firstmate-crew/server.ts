@@ -89,7 +89,15 @@ export default async function plugin(bb: BbPluginApi) {
     return new WatchRunner({
       home: async () => ((await isHomeReady(home)) ? home : null),
       disabled: () => store.disabledWatches(),
-      deliver: createDeliver(deps),
+      deliver: createDeliver({
+        // A getter, as in `deps`: bb.sdk is reached at delivery, never while the runner is built.
+        get threads() {
+          return deps.threads;
+        },
+        store,
+        home,
+        log: bb.log,
+      }),
       stateFile: join(home, STATE_DIR, "watches.json"),
       scriptStateRoot: join(home, STATE_DIR, "watch-state"),
       log: bb.log,

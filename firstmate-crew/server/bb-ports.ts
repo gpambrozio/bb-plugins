@@ -165,6 +165,35 @@ export function bbThreads(sdk: PluginBbSdk): ThreadsPort {
       const result = await sdk.threads.send({ threadId: id, mode, input: [{ type: "text", text, mentions: [] }] });
       return result.delivery;
     },
+    async sendShortened(id, message, mode: SendMode) {
+      // The chip is a path mention over the path's own text, the way bb's composer writes one.
+      const shown = `${message.shown} · ${message.file.path}`;
+      const result = await sdk.threads.send({
+        threadId: id,
+        mode,
+        input: [
+          {
+            type: "text",
+            text: shown,
+            mentions: [
+              {
+                start: shown.length - message.file.path.length,
+                end: shown.length,
+                resource: {
+                  kind: "path",
+                  source: "workspace",
+                  entryKind: "file",
+                  path: message.file.path,
+                  label: message.file.label,
+                },
+              },
+            ],
+          },
+          { type: "text", text: message.hidden, mentions: [], visibility: "agent-only" },
+        ],
+      });
+      return result.delivery;
+    },
     async stop(id) {
       await sdk.threads.stop({ threadId: id });
     },

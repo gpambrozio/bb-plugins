@@ -127,7 +127,9 @@ The plugin never overwrites `captain.md`, `opening.md`, or the records once writ
 
 A watch is an executable in the home's `watches/` folder with a `# schedule: <crontab>` line near the top.
 The plugin runs each on its schedule, in the server's local time, and whatever it prints reaches the first
-mate as one note once the first mate is between turns. Printing nothing costs nothing. `pr-watch` comes
+mate as one note once the first mate is between turns. In chat the note is one line naming the watches,
+with a **full note** chip that opens the whole message; the home keeps the last 50 in
+`.firstmate/watch-notes/`. Printing nothing costs nothing. `pr-watch` comes
 built in: every five minutes it checks the pull requests on the backlog and tells the first mate when one
 is merged or closed, gets a review or comment, or has its checks go red or green. The Watches card lists
 each watch with its last run, and switches any of them off or on. `watches/README.md` in the home explains
@@ -146,7 +148,6 @@ of the thread, leaving it and its crew as they are.
 
 ## Limitations
 
-- **Watch notes show in full in chat**, where Paseo folded them to a line.
 - **Watches run only while bb does, on the machine running the bb server**, and so does the home. The
   first mate's workers can be on any machine bb reaches, but a home on another machine is not supported.
 - **End removes a worker's worktree after bb's grace period**; only committed work can be restored.

@@ -7,7 +7,7 @@ import { resolve } from "node:path";
 import type { PluginKvStorage } from "@get-bb/plugin-sdk";
 
 import type { Log } from "../log";
-import type { ProjectsPort, SendMode, SpawnArgs, ThreadInfo, ThreadsPort } from "../ports";
+import type { ProjectsPort, SendMode, ShortenedMessage, SpawnArgs, ThreadInfo, ThreadsPort } from "../ports";
 import { createStore, type Store } from "../store";
 
 type ThreadMethod = keyof ThreadsPort;
@@ -157,6 +157,15 @@ export class FakeThreads implements ThreadsPort {
     this.throwIfFailing("send");
     const thread = this.require(id);
     this.sent.push({ id, text, mode });
+    return mode === "queue-if-active" && thread.status !== "idle" ? "queued" : "sent";
+  }
+
+  async sendShortened(id: string, message: ShortenedMessage, mode: SendMode): Promise<"sent" | "queued"> {
+    this.record("sendShortened", id, message, mode);
+    await tick();
+    this.throwIfFailing("sendShortened");
+    const thread = this.require(id);
+    this.sent.push({ id, text: message.hidden, mode });
     return mode === "queue-if-active" && thread.status !== "idle" ? "queued" : "sent";
   }
 
