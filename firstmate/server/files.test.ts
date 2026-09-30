@@ -10,6 +10,7 @@ import {
   replaceTextIfUnchanged,
   writeTextFile,
 } from "./files";
+import { listWatches } from "./watch-files";
 
 const tempDirs: string[] = [];
 afterEach(async () => {
@@ -149,6 +150,7 @@ describe("writeTextFile", () => {
     });
     expect(await readFile(script, "utf8")).toContain("echo two");
     expect((await stat(script)).mode & 0o777).toBe(0o755);
+    expect((await listWatches(dir))[0]).toMatchObject({ name: "demo", invalid: null });
 
     const backlog = await readTextFile(dir, "data/backlog.md");
     await writeTextFile(dir, { path: "data/backlog.md", content: "x", expectedModifiedMs: backlog.modifiedMs, force: false });

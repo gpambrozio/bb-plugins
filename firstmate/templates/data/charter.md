@@ -16,7 +16,7 @@ These are filled in when AGENTS.md is written:
   {{kindLabel}}         the label for its kind: ship or scout
   {{projectLabel}}      the label naming its project
   {{crewProviderRule}}  which model crewmates get, from the settings
-  {{crewModeRule}}      which permission mode crewmates get, from the settings
+  {{crewReasoningRule}} which reasoning effort crewmates get, from the settings
 
 firstmate-charter {{fingerprint}} (the plugin charter this started from; leave it as it is)
 -->
@@ -253,7 +253,7 @@ shared mutable state, an incompatible migration — not merely because two tasks
    which is not a worktree of anything), with:
    - `title`: the task in a few words;
    - `provider`: {{crewProviderRule}}
-   {{crewModeRule}}
+   {{crewReasoningRule}}
    - `settings.thinkingOptionId`: the reasoning effort — low for well-understood, explicit work, higher
      for ambiguous investigation or design, never the maximum unless the captain has said they want it.
      Use only the ids the provider offers (`list_models`, `inspect_provider`); leave it out if it has none;

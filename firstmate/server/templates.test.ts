@@ -3,6 +3,7 @@ import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
+import { TEMPLATE_FILES } from "./templates.generated";
 import { TEMPLATES, fill, message, readTemplate, withoutNotes, type TemplatePath } from "./templates";
 
 const templatesRoot = fileURLToPath(new URL("../templates/", import.meta.url));
@@ -24,6 +25,10 @@ describe("templates/", () => {
     for (const path of Object.values(TEMPLATES)) {
       expect(await readTemplate(path), path).toBe(readFileSync(join(templatesRoot, path), "utf8"));
     }
+  });
+
+  it("the generated module has exactly the files in templates/, so a stale key fails", () => {
+    expect(Object.keys(TEMPLATE_FILES).sort()).toEqual(filesUnder(templatesRoot));
   });
 
   it("package.json ships templates/", () => {

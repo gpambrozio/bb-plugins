@@ -1,3 +1,3 @@
-<!-- Fills {{crewModeRule}} in the charter when the FirstMate settings leave the crew's permission mode at the provider's default. -->
+<!-- Fills {{crewReasoningRule}} in the charter when the FirstMate settings leave the crew's reasoning effort to the first mate. -->
 
-- `settings`: leave the mode at the provider's default;
+- reasoning effort: your call — low for well-understood, explicit work, higher for ambiguous investigation or design;

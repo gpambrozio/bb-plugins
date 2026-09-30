@@ -1,5 +1,9 @@
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { REMOVE_ATTEMPTS, readSuggestions, removeSuggestion } from "./home";
 import { MAX_SUGGESTIONS, parseSuggestions, withoutSuggestion } from "./suggestions";
 import { TEMPLATES, readTemplate } from "./templates";
 
@@ -43,6 +47,22 @@ describe("parseSuggestions", () => {
   it("finds none in an empty file or a new home's", async () => {
     expect(parseSuggestions("")).toEqual([]);
     expect(parseSuggestions(await readTemplate(TEMPLATES.suggestions))).toEqual([]);
+  });
+});
+
+describe("readSuggestions", () => {
+  it("reads the home's file, and a missing one is no suggestions", async () => {
+    const home = await mkdtemp(join(tmpdir(), "firstmate-suggestions-"));
+    try {
+      expect(await readSuggestions(home)).toEqual([]);
+      await mkdir(join(home, "data"));
+      await writeFile(join(home, TEMPLATES.suggestions), "- Land web#42 :: Merge https://github.com/you/web/pull/42\n");
+      expect(await readSuggestions(home)).toEqual([
+        { label: "Land web#42", prompt: "Merge https://github.com/you/web/pull/42" },
+      ]);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
   });
 });
 
@@ -142,5 +162,91 @@ describe("withoutSuggestion", () => {
     expect(once).toBe(`- A :: a\n${line}\n`);
     expect(parseSuggestions(once ?? "")).toEqual([{ label: "A", prompt: "a" }, land]);
     expect(withoutSuggestion(once ?? "", land)).toBe("- A :: a\n");
+  });
+});
+
+describe("removeSuggestion", () => {
+  it("rewrites the home's file without the line and answers with what is left", async () => {
+    const home = await mkdtemp(join(tmpdir(), "firstmate-suggestions-"));
+    try {
+      const target = { label: "Land", prompt: "Merge it" };
+      expect(await removeSuggestion(home, target)).toEqual([]);
+      await mkdir(join(home, "data"));
+      const path = join(home, TEMPLATES.suggestions);
+      await writeFile(path, "# Suggestions\n\n- Land :: Merge it\n- Scout :: Look around\n");
+      expect(await removeSuggestion(home, target)).toEqual([{ label: "Scout", prompt: "Look around" }]);
+      expect(await readFile(path, "utf8")).toBe("# Suggestions\n\n- Scout :: Look around\n");
+
+      // Gone already — the first mate rewrote the list — leaves the file alone.
+      expect(await removeSuggestion(home, target)).toEqual([{ label: "Scout", prompt: "Look around" }]);
+      expect(await readFile(path, "utf8")).toBe("# Suggestions\n\n- Scout :: Look around\n");
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("removeSuggestion when the first mate writes too", () => {
+  const land = "- Land :: Merge it\n";
+  const scout = "- Scout :: Look around\n";
+
+  async function withHome(run: (home: string, path: string) => Promise<void>): Promise<void> {
+    const home = await mkdtemp(join(tmpdir(), "firstmate-suggestions-"));
+    try {
+      await mkdir(join(home, "data"));
+      await run(home, join(home, TEMPLATES.suggestions));
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  }
+
+  it("starts over from the first mate's rewrite and keeps what it added", async () => {
+    await withHome(async (home, path) => {
+      await writeFile(path, land + scout);
+      let rewrites = 0;
+      const left = await removeSuggestion(
+        home,
+        { label: "Land", prompt: "Merge it" },
+        {
+          afterStaging: async () => {
+            if (rewrites++ === 0) await writeFile(path, `${land}- Scout :: Look closer\n- Ship :: Release it\n`);
+          },
+        },
+      );
+      expect(await readFile(path, "utf8")).toBe("- Scout :: Look closer\n- Ship :: Release it\n");
+      expect(left).toEqual([
+        { label: "Scout", prompt: "Look closer" },
+        { label: "Ship", prompt: "Release it" },
+      ]);
+    });
+  });
+
+  it("gives up after a bounded number of rewrites, leaving the first mate's last one", async () => {
+    await withHome(async (home, path) => {
+      await writeFile(path, land + scout);
+      let rewrites = 0;
+      await expect(
+        removeSuggestion(
+          home,
+          { label: "Land", prompt: "Merge it" },
+          { afterStaging: () => writeFile(path, `${land}- Rewrite :: ${++rewrites}\n`) },
+        ),
+      ).rejects.toThrow(/kept rewriting/);
+      expect(rewrites).toBe(REMOVE_ATTEMPTS);
+      expect(await readFile(path, "utf8")).toBe(`${land}- Rewrite :: ${REMOVE_ATTEMPTS}\n`);
+    });
+  });
+
+  it("writes nothing when the rewrite already dropped the suggestion", async () => {
+    await withHome(async (home, path) => {
+      await writeFile(path, land + scout);
+      const left = await removeSuggestion(
+        home,
+        { label: "Land", prompt: "Merge it" },
+        { afterStaging: () => writeFile(path, scout) },
+      );
+      expect(left).toEqual([{ label: "Scout", prompt: "Look around" }]);
+      expect(await readFile(path, "utf8")).toBe(scout);
+    });
   });
 });
