@@ -65,7 +65,9 @@ Do not break these; each was paid for.
   plain folder at its place (`plainFolderInHome`), so a link cannot send it to any other folder. A link
   that leads out is refused, never followed. Writes are a staged rename (which replaces a link rather
   than writing through it) queued per path as written, before it is resolved; creations are exclusive;
-  edits of files the first mate also writes add a content check. The runner's saves go in the order
+  edits of files the first mate or the captain also write add a content check. The automatic updates
+  of `data/charter.md` and the built-in watches go through `updateInHome`: a copy that changes between
+  being assessed and replaced is read and assessed again, so an edit saved meanwhile is kept. The runner's saves go in the order
   they are asked for, each taking its snapshot when its turn comes.
 - **One watch runner at a time, drained before the next.** `WatchRunner.stop()` resolves only once its
   ticks, runs, deliveries and saves have settled, and `server.ts` changes runners through `syncRunner`,

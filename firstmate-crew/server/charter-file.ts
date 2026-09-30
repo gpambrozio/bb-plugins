@@ -21,7 +21,7 @@
  */
 import { createHash } from "node:crypto";
 import type { CharterState } from "../shared/types";
-import { FileChangedError, readInHome, removeInHome, replaceTextIfUnchanged, writeInHome, type WriteHooks } from "./files";
+import { FileChangedError, readInHome, removeInHome, replaceTextIfUnchanged, updateInHome, writeInHome, type WriteHooks } from "./files";
 import { TEMPLATES, fill, readTemplate, withoutNotes } from "./templates";
 
 export const CHARTER_FILE = TEMPLATES.charter;
@@ -92,10 +92,16 @@ export async function readCharterState(home: string, plugin?: PluginCharter): Pr
  * and out of date, and `charter.new.md` beside an edited one that is out of date — and says what
  * `AGENTS.md` should be rendered from. The caller has created `data/`.
  */
-export async function syncCharter(home: string, plugin?: PluginCharter): Promise<CharterFileState> {
+export async function syncCharter(home: string, plugin?: PluginCharter, hooks: WriteHooks = {}): Promise<CharterFileState> {
   const templates = plugin ?? (await pluginTemplates());
-  const { rewrite, ...state } = assessCharter(await readInHome(home, CHARTER_FILE), templates.charter);
-  if (rewrite) await writeInHome(home, CHARTER_FILE, copyOf(templates));
+  // Replaced only while it still reads as assessed: an edit saved meanwhile is assessed again, and kept.
+  const decided = await updateInHome(
+    home,
+    CHARTER_FILE,
+    (copy) => (assessCharter(copy, templates.charter).rewrite ? copyOf(templates) : null),
+    { hooks },
+  );
+  const { rewrite: _rewrite, ...state } = assessCharter(decided, templates.charter);
   if (state.outdated) await writeInHome(home, NEW_CHARTER_FILE, newCopyOf(templates));
   else await removeInHome(home, NEW_CHARTER_FILE);
   return state;

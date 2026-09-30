@@ -112,11 +112,12 @@ export async function writeInHome(home: string, path: string, content: string, m
 }
 
 /** Writes the file only when nothing is there; says whether it did. */
-export async function createInHome(home: string, path: string, content: string): Promise<boolean> {
+export async function createInHome(home: string, path: string, content: string, mode?: number): Promise<boolean> {
   const { absolute } = await resolveInHome(home, path);
   await mkdir(dirname(absolute), { recursive: true });
   try {
-    await writeFile(absolute, content, { encoding: "utf8", flag: "wx" });
+    await writeFile(absolute, content, { encoding: "utf8", flag: "wx", ...(mode === undefined ? {} : { mode }) });
+    if (mode !== undefined) await chmod(absolute, mode);
     return true;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
@@ -197,6 +198,45 @@ export class FileChangedError extends Error {
 /** For tests: runs once the temporary file is written, before the destination is checked again. */
 export interface WriteHooks {
   afterStaging?: () => Promise<void>;
+  /** For `updateInHome`: runs once a missing file is decided on, before it is created. */
+  beforeCreate?: () => Promise<void>;
+}
+
+/** How many times `updateInHome` starts over when the file changes under it. */
+export const UPDATE_ATTEMPTS = 3;
+
+/**
+ * Brings a file the captain may also edit up to date without losing an edit: `decide` is given what the
+ * file holds (null when it is missing) and answers what it should hold, or null to leave it. A missing
+ * file is created exclusively; an existing one is replaced only if it still reads exactly as `decide`
+ * saw it (`replaceTextIfUnchanged`). When either finds the file changed, it is read again and `decide`
+ * asked again, so an edit saved meanwhile is judged as an edit rather than overwritten. Answers what
+ * the file was last decided from.
+ */
+export async function updateInHome(
+  home: string,
+  path: string,
+  decide: (current: string | null) => string | null,
+  options: { mode?: number; hooks?: WriteHooks } = {},
+): Promise<string | null> {
+  const hooks = options.hooks ?? {};
+  for (let attempt = 1; ; attempt++) {
+    const current = await readInHome(home, path);
+    const next = decide(current);
+    if (next === null || next === current) return current;
+    try {
+      if (current === null) {
+        await hooks.beforeCreate?.();
+        if (!(await createInHome(home, path, next, options.mode))) throw new FileChangedError(`"${path}" was created since it was read.`);
+      } else {
+        await replaceTextIfUnchanged(home, path, current, next, hooks, options.mode);
+      }
+      return next;
+    } catch (error) {
+      if (!(error instanceof FileChangedError)) throw error;
+      if (attempt >= UPDATE_ATTEMPTS) throw new Error(`${path} kept changing while it was being brought up to date. Try again.`);
+    }
+  }
 }
 
 /**
@@ -210,6 +250,7 @@ export async function replaceTextIfUnchanged(
   expected: string,
   content: string,
   hooks: WriteHooks = {},
+  mode?: number,
 ): Promise<void> {
   await serialized(lockKey(home, path), async () => {
     const { absolute, relative: rel } = await resolveInHome(home, path);
@@ -223,6 +264,7 @@ export async function replaceTextIfUnchanged(
         if ((await readFile(absolute, "utf8")) !== expected) throw new FileChangedError(`"${rel}" changed since it was read.`);
       },
       hooks,
+      mode,
     );
   });
 }

@@ -23,7 +23,7 @@ import { open, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 
 import { WATCHES_DIR } from "../shared/types";
-import { createInHome, makeDirInHome, plainFolderInHome, readInHome, writeInHome } from "./files";
+import { createInHome, makeDirInHome, plainFolderInHome, readInHome, updateInHome, type WriteHooks } from "./files";
 import { parseSchedule, type Schedule } from "./watch-schedule";
 import { TEMPLATES, fill, readTemplate, type TemplatePath } from "./templates";
 
@@ -178,13 +178,17 @@ export async function builtInStates(home: string): Promise<Map<string, BuiltInSt
  * untouched copy of an older version. Confined to the home (`files.ts`): a symlink in the way that
  * leads out of it is refused, never written through or made executable.
  */
-export async function seedWatches(home: string): Promise<void> {
+export async function seedWatches(home: string, hooks: WriteHooks = {}): Promise<void> {
   await makeDirInHome(home, WATCHES_DIR);
   await createInHome(home, TEMPLATES.watchesReadme, await readTemplate(TEMPLATES.watchesReadme));
   for (const watch of BUILT_IN_WATCHES) {
-    const path = `${WATCHES_DIR}/${watch.name}`;
     const template = await readTemplate(watch.template);
-    if (!assessBuiltIn(await readInHome(home, path), template).rewrite) continue;
-    await writeInHome(home, path, copyOf(template), 0o755);
+    // Replaced only while it still reads as assessed: an edit saved meanwhile is assessed again, and kept.
+    await updateInHome(
+      home,
+      `${WATCHES_DIR}/${watch.name}`,
+      (copy) => (assessBuiltIn(copy, template).rewrite ? copyOf(template) : null),
+      { mode: 0o755, hooks },
+    );
   }
 }

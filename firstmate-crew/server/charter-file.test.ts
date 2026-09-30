@@ -166,6 +166,34 @@ describe("syncCharter", () => {
     expect(await readFile(victim, "utf8")).toBe("not the plugin's");
   });
 
+  it("keeps an edit the captain saves while an untouched copy is being updated", async () => {
+    const home = await tempHome();
+    await syncCharter(home, V1);
+
+    let edits = 0;
+    const state = await syncCharter(home, V2, {
+      afterStaging: async () => {
+        if (edits++ === 0) await editCopy(home, "Speak like a pirate.");
+      },
+    });
+    expect(state).toMatchObject({ edited: true, outdated: true });
+    const copy = await read(home, CHARTER_FILE);
+    expect(copy).toContain("Speak like a pirate.");
+    expect(copy).toContain(`firstmate-charter ${fingerprint(V1.charter)}`);
+    expect(await read(home, NEW_CHARTER_FILE)).toContain("Version two.");
+  });
+
+  it("keeps a charter the captain writes while a missing one is being created", async () => {
+    const home = await tempHome();
+    await mkdir(join(home, "data"), { recursive: true });
+
+    const state = await syncCharter(home, V1, {
+      beforeCreate: () => writeFile(join(home, CHARTER_FILE), "# My own charter\n", "utf8"),
+    });
+    expect(await read(home, CHARTER_FILE)).toBe("# My own charter\n");
+    expect(state).toMatchObject({ edited: true });
+  });
+
   it("writes the comparison on request only when there is something to compare", async () => {
     const home = await tempHome();
     await syncCharter(home, V1);

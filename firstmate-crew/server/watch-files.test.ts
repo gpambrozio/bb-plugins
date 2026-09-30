@@ -7,6 +7,7 @@ import { STATE_DIR, WATCHES_DIR } from "../shared/types";
 import { TEMPLATES, readTemplate } from "./templates";
 import {
   assessBuiltIn,
+  BUILT_IN_WATCHES,
   builtInStates,
   listWatches,
   scheduleLine,
@@ -151,5 +152,33 @@ describe("built-in watches", () => {
     await rm(path);
     await seedWatches(home);
     expect(await readFile(path, "utf8")).toBe(seeded);
+  });
+
+  it("keep an edit the captain saves while an untouched older copy is being updated", async () => {
+    const home = await tempHome();
+    const path = join(home, "watches", "pr-watch");
+    const template = await readTemplate(BUILT_IN_WATCHES[0]?.template ?? TEMPLATES.watchesReadme);
+    const older = copy(template.replace("const CONCURRENCY = 4;", "const CONCURRENCY = 3;"));
+    await writeFile(path, older, "utf8");
+    await chmod(path, 0o755);
+    const edited = `${older}\n// the captain's own line\n`;
+
+    let edits = 0;
+    await seedWatches(home, {
+      afterStaging: async () => {
+        if (edits++ === 0) await writeFile(path, edited, "utf8");
+      },
+    });
+    expect(await readFile(path, "utf8")).toBe(edited);
+    expect((await builtInStates(home)).get("pr-watch")).toMatchObject({ edited: true, outdated: true });
+  });
+
+  it("keep a watch the captain writes while a missing one is being created", async () => {
+    const home = await tempHome();
+    const path = join(home, "watches", "pr-watch");
+    const mine = "#!/bin/sh\n# schedule: 0 * * * *\necho mine\n";
+
+    await seedWatches(home, { beforeCreate: () => writeFile(path, mine, "utf8") });
+    expect(await readFile(path, "utf8")).toBe(mine);
   });
 });
