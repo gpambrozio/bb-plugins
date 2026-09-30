@@ -40,7 +40,7 @@
   ],
   "bb": {
     "name": "FirstMate Crew",
-    "description": "Talk to one first mate agent that runs a crew of bb threads, each in its own worktree, with a live board of the crew.",
+    "description": "Hand one agent your to-do list and it runs a crew of worker threads, each in its own git worktree, until the work lands.",
     "branding": {
       "icon": "Ship"
     },
