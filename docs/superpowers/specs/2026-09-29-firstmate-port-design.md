@@ -191,15 +191,19 @@ code adds a suggestion.
 - **Delivery:** when the queue is non-empty and the first mate is idle (on its `thread.idle` event or a
   tick), send **one** message — `watch-*.md` blocks, oldest first, newest always kept, at most 32,000
   characters, `<firstmate-watch-dropped count="N"/>` leading when some were dropped — with
-  `mode: "queue"`, so a turn that started meanwhile holds it rather than being steered into.
-- Queue, last-run state and `disabledWatches` live in `bb.storage.kv`, toggled under `serialize`.
+  `mode: "queue-if-active"`, so a turn that started meanwhile holds it rather than being steered into.
+- `disabledWatches` lives in `bb.storage.kv`, toggled under `serialize`. The runner's queue and last-run
+  state stay a file, `<home>/.firstmate/watches.json`, with each script's state directory under
+  `<home>/.firstmate/watch-state/<name>/`: the queue can reach 20 × 16,000 characters, past kv's 256 KB
+  per value, and the state belongs with the home it describes.
 - Watch notes show in full in bb's chat (Paseo folded them to a line; bb's directives render only in
   assistant messages).
 
 ## Charter and templates
 
-- `templates/` is data, not code, shipped in the package (`files`), and read at runtime — or inlined at
-  build time if bb gives the server no way to find its own folder (verified first in the plan).
+- `templates/` is data, not code: the files are the source of truth, laid out as they land in the home.
+  bb compiles `server.ts` into its own cache and names no plugin folder, so `npm run gen:templates`
+  writes them into a checked-in `server/templates.generated.ts`, and a test fails when the two differ.
 - `templates/data/charter.md` is **rewritten** for bb: §0 says it lives in bb and names the vocabulary —
   `bb project list`, `bb thread list --parent-thread $BB_THREAD_ID`, `bb firstmate crew spawn`,
   `bb thread tell|show|output|stop`. The heartbeat is removed. The hard rules stay: never write to a
@@ -214,7 +218,7 @@ code adds a suggestion.
 ## Invariants carried over
 
 - The first mate is found by its stored id, never by metadata or title.
-- Sends never interrupt: `auto`/steer for the captain's words, `queue` for watch output.
+- Sends never interrupt: `auto`/`steer` for the captain's words, `queue-if-active` for watch output.
 - Restart is refused mid-turn and cannot produce two first mates.
 - Templates are data; the charter follows the plugin until edited, detected by fingerprint.
 - File access is confined to the home, including through symlinks.
@@ -249,14 +253,20 @@ crew-seen, clearing attention by raw frame, `activeTurnBehavior`, uploads, draft
   Queued → Working → Idle with `done: ready in branch fm/…`; look at the tab wide and narrow, light and
   dark.
 
-## Open items, first in the plan
+## Open items
 
-1. How the server reads `templates/` at runtime (the entry is compiled into a bb cache; the SDK names no
-   plugin root). Fallback: inline at build time.
-2. Whether a non-git home works as a bb project checkout for the first mate's thread.
-3. Whether a captain-started turn on a child notifies its parent.
-4. Whether `app.composer.customize` can add `/fm`.
-5. How the CLI handler learns the calling thread's id.
+Resolved while planning:
+
+- Templates: generated module (see *Charter and templates*).
+- The first mate's workspace: `environment: { type: "host", workspace: { type: "unmanaged", path: home } }`,
+  so the home need not be a git repository.
+- The CLI handler gets the calling thread from `PluginCliContext.threadId`.
+- Status lines: `thread.idle` carries `lastAssistantText`; `threads.output` covers a cold start.
+
+Checked first in the plan:
+
+1. Whether a captain-started turn on a child notifies its parent.
+2. Whether `app.composer.customize` can add `/fm`; if not, the CLI and ⌘K cover it.
 
 ## Done when
 
