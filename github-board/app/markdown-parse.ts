@@ -10,10 +10,10 @@
  * (`app/html.ts`), because a bot's body — Dependabot's, most of all — is
  * written in it.
  *
- * bb's own `Markdown` component is not used for bodies on purpose: it would
- * request every image in a body itself, and an image from outside GitHub must
- * wait for a tap (`app/image-gate.ts`), while one on GitHub must come through
- * the server with the token. Here every image is either a block the panel
+ * bb's own `Markdown` component is not used for bodies on purpose: it takes
+ * only `content` and `className`, so it gives no say over how images load — and
+ * an image from outside GitHub must wait for a tap (`app/image-gate.ts`), while
+ * one on GitHub must come through the server with the token. Here every image is either a block the panel
  * renders through that gate or a link.
  *
  * Single newlines break lines, the way GitHub renders an issue body.

@@ -171,7 +171,7 @@ not a subprocess's. The surface a port uses most:
 
 Use `bb.sdk` from handlers and services, not the factory body.
 
-Three things a port only learns by running it:
+What a port only learns by running it:
 
 - **The server cannot find its own folder.** `bb plugin build` compiles the entry into bb's cache, so
   nothing at run time names the plugin's directory, and a `templates/` or `data/` folder beside
@@ -182,6 +182,14 @@ Three things a port only learns by running it:
 - **A thread spawn into a host workspace needs a `hostId`.** The SDK type marks it optional, bb 0.44
   answers `hostId is required unless workspace.type is personal`. Take the server's own machine from
   `bb.sdk.system.config().primaryHostId`, or the host of the project's checkout.
+- **A project knows its `origin`.** `bb.sdk.projects.list()` carries `gitRemoteUrl` (any spelling:
+  scp, https, with or without `.git`; null when there is none), so matching a repository to a project
+  needs no `git` call. The same repository is often a separate project per machine, so expect several.
+- **`bb.status.needsConfiguration(message)` lasts until the next load.** Fixing the cause does not
+  clear it; tell the user to `bb plugin reload <id>`.
+- **The server's PATH may lack Homebrew.** The server takes the login shell's PATH, but keeps the one
+  it was started with when that lookup fails; try `/opt/homebrew/bin` and `/usr/local/bin` by path
+  for a tool such as `gh`, as bb's built-in GitHub plugin does.
 
 **Settings are writable from the server** (`experimental_set`), unlike Paseo, where only the
 client could write a settings document. That erases the Paseo split between "settings document"
@@ -220,16 +228,24 @@ Plain web React with the DOM lib — `document` and `window` are fine. Paseo con
 | `addSurface` + `addSidebarItem` | `app.slots.navPanel` (own sidebar entry and route `/plugins/<id>/<path>/*`) |
 | `addWorkspacePanel` (agent context) | `app.slots.threadPanelAction` (gets `threadId`) |
 | `addSettingsScreen` | host-rendered form from `bb.settings.define`, plus `app.slots.settingsSection` for anything custom |
-| `addCommandCenterItem` | `app.commands.register` |
+| `addCommandCenterItem` | `app.commands.register` — its `run` gets no navigation; hand it `useBbNavigate()` from an `app.slots.experimental_appOverlay` component that renders nothing (`github-board/app.tsx`) |
 | slash commands, composer pills | `app.composer.customize`, `app.slots.pendingInteraction` |
-| `addTimelineRenderer` | `app.slots.experimental_timelineRenderer` (kind `<pluginId>/<name>`), or `messageDirective` |
+| `addTimelineRenderer` | `app.slots.experimental_timelineRenderer` (kind `<pluginId>/<name>`), or `messageDirective` — but only for rows a provider bridge or `bb.ui.requestInput` writes. **A plugin cannot append a row to a thread's timeline** (no `timeline.append`); put the context in the prompt and `pluginMetadata` instead |
 | `useRpc(contract)` | `useRpc<typeof rpcContract>().call(method, input)`, the contract imported *as a type* from `./server` |
 | `usePaseo()` | `useSdk()` — prefer it over a plugin RPC for anything that only reads or changes bb state |
-| `navigation.openAgent`, `openExternalUrl` | `useBbNavigate()` — `toThread`, `toProject`, `toPluginPanel`, `openThreadPanel`, `openUrl` |
-| `theme.colors` tokens | Tailwind semantic classes (`bg-background`, `text-muted-foreground`, `border-border`, `bg-card`, `text-destructive`) |
+| `navigation.openAgent`, `openExternalUrl` | `useBbNavigate()` — `toThread`, `toProject`, `toPluginPanel`, `openThreadPanel`, `openUrl` (follows the user's in-app/external browser preference; there is no "open a browser tab here") |
+| `theme.colors` tokens | Tailwind semantic classes (`bg-background`, `text-muted-foreground`, `border-border`, `bg-card`, `text-destructive`, `border-warning`/`text-warning-text`, `text-success`, `bg-state-hover`) |
 | host UI kit | shadcn components vendored into `components/ui/` (`npx shadcn add @bb/<name>`), plus host `Markdown`, `ThreadChat`, `ThreadTitle`, `UrlLink` |
 
 `app.slots.settingsSection` requires an `id` (letters, digits, `-`, `_`), unlike the Paseo settings screen.
+
+A hand-built new-thread dialog becomes `experimental_NewThreadComposer`: it resolves a request and the
+plugin spawns it. Mount it only once its `default*` seeds are known — changing one re-seeds every
+selection — and give it a `draftKey` per subject, since `initialPrompt` seeds only an empty draft.
+
+Host `Markdown` takes only `content` and `className`, so it gives no say over how a body's images
+load. Where they need gating (tracking pixels, private attachments), render the body yourself, as
+`github-board` does.
 
 Colour comes from the semantic classes, never a literal — check light and dark. The app also has a
 compact viewport (`isCompactViewport` on some slots); check a narrow window too. A throwing slot
