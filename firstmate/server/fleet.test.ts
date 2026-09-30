@@ -310,6 +310,82 @@ describe("loadFleet", () => {
     expect(await loadFleet(deps)).toMatchObject({ cards: [], suggestions: [] });
   });
 
+  it("loads the board from the crew alone when the backlog cannot be read, and says why", async () => {
+    const { deps, store, threads, home } = await setup();
+    // A directory where the file should be: readFile fails with EISDIR, not ENOENT.
+    await mkdir(join(home, "data", "backlog.md"));
+    const mate = threads.add({ id: "thr_mate" });
+    await store.setMateThreadId(mate.id);
+    threads.add({ id: "thr_a", parentThreadId: mate.id });
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const fleet = await loadFleet(deps);
+    expect(fleet.cards.map((card) => card.key)).toEqual(["crew:thr_a"]);
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("backlog"), expect.stringContaining(home), expect.any(Error));
+  });
+
+  it("falls back to nothing for a suggestions file that cannot be read, and logs it", async () => {
+    const { deps, home } = await setup({ "data/backlog.md": "## Queued\n- [ ] next - Next\n" });
+    await mkdir(join(home, "data", "suggestions.md"));
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const fleet = await loadFleet(deps);
+    expect(fleet.suggestions).toEqual([]);
+    expect(fleet.cards).toHaveLength(1);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("suggestions"), expect.stringContaining(home), expect.any(Error));
+  });
+
+  it("falls back to an untouched charter when the charter cannot be read, and logs it", async () => {
+    const { deps, home } = await setup();
+    await mkdir(join(home, "data", "charter.md"));
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const fleet = await loadFleet(deps);
+    expect(fleet.charter).toMatchObject({ edited: false, outdated: false });
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("charter"), expect.stringContaining(home), expect.any(Error));
+  });
+
+  it("shows no watches when reading them fails, and logs it", async () => {
+    const { deps, home } = await setup({ "data/backlog.md": "## Queued\n- [ ] next - Next\n" });
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const fleet = await loadFleet({ ...deps, watches: async () => Promise.reject(new Error("watch state corrupt")) });
+    expect(fleet.watches).toEqual([]);
+    expect(fleet.cards).toHaveLength(1);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("watches"), expect.stringContaining(home), expect.any(Error));
+  });
+
+  it("keeps a child on the board when reading its metadata or pending interactions fails", async () => {
+    const { deps, store, threads } = await setup();
+    const mate = threads.add({ id: "thr_mate" });
+    await store.setMateThreadId(mate.id);
+    threads.add({ id: "thr_a", title: "A", parentThreadId: mate.id });
+    threads.add({ id: "thr_b", title: "B", parentThreadId: mate.id });
+    threads.setMetadata("thr_a", { [CREW_METADATA.task]: "a-task" });
+    threads.failNext("metadata", new Error("metadata unavailable"));
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const fleet = await loadFleet(deps);
+    expect(fleet.cards).toHaveLength(2);
+    expect(fleet.cards.every((card) => card.crew !== null)).toBe(true);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("thr_"), expect.any(Error));
+
+    threads.failNext("pendingInteractions", new Error("interactions unavailable"));
+    const again = await loadFleet(deps);
+    expect(again.cards).toHaveLength(2);
+    expect(again.cards.every((card) => card.crew?.pendingInteractions === 0)).toBe(true);
+  });
+
+  it("does not throw on a half-written backlog.md or suggestions.md", async () => {
+    const half = await setup({ "data/backlog.md": "## In fli", "data/suggestions.md": "- [ " });
+    expect(await loadFleet(half.deps)).toMatchObject({ cards: [] });
+
+    const partial = await setup({ "data/backlog.md": "## In flight\n- [ ] ok - Fine\n- [ ", "data/suggestions.md": "- Good :: prompt\n- [ " });
+    const fleet = await loadFleet(partial.deps);
+    expect(fleet.cards.map((card) => card.taskId)).toEqual(["ok"]);
+    expect(fleet.suggestions).toEqual([{ label: "Good", prompt: "prompt" }]);
+  });
+
   it("carries the suggestions, the watches and the charter state", async () => {
     const watch: WatchSummary = {
       name: "pr-watch",

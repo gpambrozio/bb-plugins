@@ -9,6 +9,7 @@
 import {
   CREW_METADATA,
   type BacklogItem,
+  type CharterState,
   type ColumnId,
   type CrewReport,
   type CrewSummary,
@@ -164,9 +165,26 @@ export function metadataText(metadata: Record<string, unknown>, key: string): st
   return typeof value === "string" && value.trim() !== "" ? value.trim() : null;
 }
 
-/** What the board needs of one of the first mate's child threads. */
+/** Runs one read the board can do without: a failure is logged with what it was and comes back as `fallback`. */
+async function orFallback<T>(what: string, fallback: T, read: () => Promise<T>, ...context: string[]): Promise<T> {
+  try {
+    return await read();
+  } catch (error) {
+    console.error(`[firstmate] could not read ${what}:`, ...context, error);
+    return fallback;
+  }
+}
+
+/**
+ * What the board needs of one of the first mate's child threads. A thread whose metadata or pending
+ * interactions cannot be read is still a card, with no metadata or nothing pending, and the failure is
+ * logged: one bad child must not blank the board.
+ */
 export async function summarizeCrew(threads: ThreadsPort, thread: ThreadInfo): Promise<CrewSummary> {
-  const [metadata, pendingInteractions] = await Promise.all([threads.metadata(thread.id), threads.pendingInteractions(thread.id)]);
+  const [metadata, pendingInteractions] = await Promise.all([
+    orFallback(`the metadata of ${thread.id}`, {} as Record<string, unknown>, () => threads.metadata(thread.id)),
+    orFallback(`the pending interactions of ${thread.id}`, 0, () => threads.pendingInteractions(thread.id)),
+  ]);
   return {
     threadId: thread.id,
     title: thread.title,
@@ -181,22 +199,29 @@ export async function summarizeCrew(threads: ThreadsPort, thread: ThreadInfo): P
   };
 }
 
+/** The state the board shows for a charter it could not read: nothing the captain needs to act on. */
+const UNTOUCHED_CHARTER: CharterState = { template: "", edited: false, outdated: false };
+
 export type FleetDeps = MateDeps & {
   reports: ReportCache;
   watches: () => Promise<WatchSummary[]>;
 };
 
-/** The whole board. A first mate that is gone leaves the backlog on the board with no crew joined to it. */
+/**
+ * The whole board. A first mate that is gone leaves the backlog on the board with no crew joined to it.
+ * The home's files and the watches are read one by one: one that cannot be read is logged with the home
+ * and shown as empty, so the rest of the board still loads.
+ */
 export async function loadFleet(deps: FleetDeps): Promise<Fleet> {
   const home = homePath((await deps.settings()).homeDirectory);
   const [storedMateId, mate, homeReady, backlog, suggestions, charter, watches] = await Promise.all([
     deps.store.mateThreadId(),
     resolveMate(deps),
-    isHomeReady(home),
-    readBacklog(home),
-    readSuggestions(home),
-    readCharterState(home),
-    deps.watches(),
+    orFallback("whether the home is ready", false, () => isHomeReady(home), home),
+    orFallback("the backlog", [], () => readBacklog(home), home),
+    orFallback("the suggestions", [], () => readSuggestions(home), home),
+    orFallback("the charter", UNTOUCHED_CHARTER, () => readCharterState(home), home),
+    orFallback("the watches", [], () => deps.watches(), home),
   ]);
 
   const children = mate === null ? [] : await deps.threads.children(mate.id);
