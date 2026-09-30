@@ -177,5 +177,8 @@ export function bbProjects(sdk: PluginBbSdk): ProjectsPort {
       const project = await sdk.projects.create({ name, source: { type: "local_path", hostId, path } });
       return { id: project.id };
     },
+    async list() {
+      return (await sdk.projects.list()).map((project) => ({ id: project.id, name: project.name }));
+    },
   };
 }

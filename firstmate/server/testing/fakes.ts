@@ -230,6 +230,11 @@ export class FakeProjects implements ProjectsPort {
     this.created.push(project);
     return { id: project.id };
   }
+
+  async list(): Promise<{ id: string; name: string }[]> {
+    await tick();
+    return this.projects.map(({ id, name }) => ({ id, name }));
+  }
 }
 
 export function fakeProjects(existing: { id: string; path: string; name?: string }[] = []): FakeProjects {

@@ -65,4 +65,6 @@ export interface ProjectsPort {
   findByPath(path: string): Promise<{ id: string } | null>;
   /** Registers the directory as a new project on the bb server's machine. */
   create(name: string, path: string): Promise<{ id: string }>;
+  /** Every project's id and name, for resolving what the captain or the first mate typed. */
+  list(): Promise<{ id: string; name: string }[]>;
 }
