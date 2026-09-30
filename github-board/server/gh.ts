@@ -51,22 +51,59 @@ export function describeGhFailure(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** `signal` kills the subprocess when it fires, for a caller with a deadline. */
-export async function runGh(args: readonly string[], signal?: AbortSignal): Promise<string> {
-  try {
-    const { stdout } = await execFileAsync("gh", [...args], {
-      maxBuffer: MAX_OUTPUT_BYTES,
-      ...(signal === undefined ? {} : { signal }),
-    });
-    return stdout;
-  } catch (error) {
-    throw new Error(describeGhFailure(error));
+/** No single `gh` call the board makes should take longer; a hung one is killed. */
+const GH_TIMEOUT_MS = 30_000;
+
+export type GhRunner = (args: readonly string[], signal?: AbortSignal) => Promise<string>;
+
+/**
+ * Runs the `gh` at `file`. `signal` kills the subprocess when it fires, for a
+ * caller with a deadline of its own; every call is killed after 30 seconds
+ * regardless.
+ */
+export function ghRunner(file: string): GhRunner {
+  return async (args, signal) => {
+    try {
+      const { stdout } = await execFileAsync(file, [...args], {
+        maxBuffer: MAX_OUTPUT_BYTES,
+        timeout: GH_TIMEOUT_MS,
+        ...(signal === undefined ? {} : { signal }),
+      });
+      return stdout;
+    } catch (error) {
+      throw new Error(describeGhFailure(error));
+    }
+  };
+}
+
+/**
+ * Where `gh` is usually found. The bb server normally inherits the login
+ * shell's PATH, but when that lookup fails it runs with whatever PATH it was
+ * started with, which on macOS leaves Homebrew out — so the two Homebrew
+ * locations are tried by path as well.
+ */
+export const GH_CANDIDATES = ["gh", "/opt/homebrew/bin/gh", "/usr/local/bin/gh"] as const;
+
+/** The first candidate that answers `--version`, or null when none does. */
+export async function findGh(
+  candidates: readonly string[] = GH_CANDIDATES,
+  probe: (file: string) => Promise<unknown> = (file) =>
+    execFileAsync(file, ["--version"], { timeout: 5_000 }),
+): Promise<string | null> {
+  for (const candidate of candidates) {
+    try {
+      await probe(candidate);
+      return candidate;
+    } catch {
+      // Not there, or not runnable; try the next one.
+    }
   }
+  return null;
 }
 
 /** One GraphQL request through `run`, answering its `data`. */
 export async function ghGraphql(
-  run: (args: readonly string[]) => Promise<string>,
+  run: GhRunner,
   query: string,
   variables?: GraphQLVariables,
 ): Promise<unknown> {
@@ -75,10 +112,7 @@ export async function ghGraphql(
 }
 
 /** `gh auth token`, for the one request that needs the token itself: an image on github.com. */
-export async function ghToken(
-  run: (args: readonly string[], signal?: AbortSignal) => Promise<string>,
-  signal: AbortSignal,
-): Promise<string> {
+export async function ghToken(run: GhRunner, signal: AbortSignal): Promise<string> {
   const token = (await run(["auth", "token"], signal)).trim();
   if (token === "") throw new Error("GitHub CLI has no token for this account.");
   return token;

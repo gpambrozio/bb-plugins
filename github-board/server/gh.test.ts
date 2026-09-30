@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { describeGhFailure, ghGraphql, ghGraphqlArgs, ghToken } from "./gh";
+import { describeGhFailure, findGh, ghGraphql, ghGraphqlArgs, ghToken } from "./gh";
 
 describe("ghGraphqlArgs", () => {
   it("sends strings raw, integers typed and lists as repeated fields", () => {
@@ -47,5 +47,15 @@ describe("describeGhFailure", () => {
     expect(describeGhFailure({ stderr: "GraphQL: Could not resolve to a node\n" })).toBe(
       "GraphQL: Could not resolve to a node",
     );
+  });
+});
+
+describe("findGh", () => {
+  it("answers the first candidate that runs, and null when none does", async () => {
+    const probe = async (file: string) => {
+      if (file !== "/opt/homebrew/bin/gh") throw new Error("ENOENT");
+    };
+    expect(await findGh(["gh", "/opt/homebrew/bin/gh", "/usr/local/bin/gh"], probe)).toBe("/opt/homebrew/bin/gh");
+    expect(await findGh(["gh"], probe)).toBeNull();
   });
 });
