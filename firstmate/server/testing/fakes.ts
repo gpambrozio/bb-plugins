@@ -25,7 +25,7 @@ export class FakeThreads implements ThreadsPort {
   private readonly metadataById = new Map<string, Record<string, unknown>>();
   private readonly texts = new Map<string, string>();
   private readonly pending = new Map<string, number>();
-  private spawnError: Error | null = null;
+  private readonly failures = new Map<ThreadMethod, Error>();
   private nextId = 1;
   private clock = 1_000;
 
@@ -68,9 +68,14 @@ export class FakeThreads implements ThreadsPort {
     this.update(id, { archivedAt: this.clock++ });
   }
 
+  /** The next call to `method` rejects with this error; the one after works again. */
+  failNext(method: ThreadMethod, error: Error): void {
+    this.failures.set(method, error);
+  }
+
   /** The next spawn rejects with this error. */
   failSpawn(error: Error): void {
-    this.spawnError = error;
+    this.failNext("spawn", error);
   }
 
   /** The arguments of every call to one method, in order. */
@@ -81,6 +86,7 @@ export class FakeThreads implements ThreadsPort {
   async get(id: string): Promise<ThreadInfo | null> {
     this.record("get", id);
     await tick();
+    this.throwIfFailing("get");
     const thread = this.threads.get(id);
     return thread === undefined || thread.archivedAt !== null ? null : { ...thread };
   }
@@ -88,6 +94,7 @@ export class FakeThreads implements ThreadsPort {
   async children(parentId: string): Promise<ThreadInfo[]> {
     this.record("children", parentId);
     await tick();
+    this.throwIfFailing("children");
     return [...this.threads.values()]
       .filter((thread) => thread.parentThreadId === parentId && thread.archivedAt === null)
       .map((thread) => ({ ...thread }));
@@ -96,29 +103,28 @@ export class FakeThreads implements ThreadsPort {
   async metadata(id: string): Promise<Record<string, unknown>> {
     this.record("metadata", id);
     await tick();
+    this.throwIfFailing("metadata");
     return { ...(this.metadataById.get(id) ?? {}) };
   }
 
   async pendingInteractions(id: string): Promise<number> {
     this.record("pendingInteractions", id);
     await tick();
+    this.throwIfFailing("pendingInteractions");
     return this.pending.get(id) ?? 0;
   }
 
   async lastText(id: string): Promise<string | null> {
     this.record("lastText", id);
     await tick();
+    this.throwIfFailing("lastText");
     return this.texts.get(id) ?? null;
   }
 
   async spawn(args: SpawnArgs): Promise<ThreadInfo> {
     this.record("spawn", args);
     await tick();
-    const error = this.spawnError;
-    if (error !== null) {
-      this.spawnError = null;
-      throw error;
-    }
+    this.throwIfFailing("spawn");
     this.spawned.push(args);
     const thread = this.add({
       title: args.title,
@@ -134,14 +140,16 @@ export class FakeThreads implements ThreadsPort {
   async send(id: string, text: string, mode: SendMode): Promise<"sent" | "queued"> {
     this.record("send", id, text, mode);
     await tick();
-    this.sent.push({ id, text, mode });
+    this.throwIfFailing("send");
     const thread = this.require(id);
+    this.sent.push({ id, text, mode });
     return mode === "queue-if-active" && thread.status !== "idle" ? "queued" : "sent";
   }
 
   async stop(id: string): Promise<void> {
     this.record("stop", id);
     await tick();
+    this.throwIfFailing("stop");
     this.require(id);
     this.update(id, { status: "idle" });
   }
@@ -149,6 +157,7 @@ export class FakeThreads implements ThreadsPort {
   async archive(id: string): Promise<void> {
     this.record("archive", id);
     await tick();
+    this.throwIfFailing("archive");
     this.require(id);
     this.update(id, { archivedAt: this.clock++ });
   }
@@ -156,17 +165,26 @@ export class FakeThreads implements ThreadsPort {
   async clearContext(id: string): Promise<void> {
     this.record("clearContext", id);
     await tick();
+    this.throwIfFailing("clearContext");
     this.require(id);
   }
 
   async pin(id: string): Promise<void> {
     this.record("pin", id);
     await tick();
+    this.throwIfFailing("pin");
     this.require(id);
   }
 
   private record(method: ThreadMethod, ...args: unknown[]): void {
     this.calls.push({ method, args });
+  }
+
+  private throwIfFailing(method: ThreadMethod): void {
+    const error = this.failures.get(method);
+    if (error === undefined) return;
+    this.failures.delete(method);
+    throw error;
   }
 
   private require(id: string): ThreadInfo {
