@@ -263,10 +263,19 @@ Resolved while planning:
 - The CLI handler gets the calling thread from `PluginCliContext.threadId`.
 - Status lines: `thread.idle` carries `lastAssistantText`; `threads.output` covers a cold start.
 
-Checked first in the plan:
+Checked first in the plan (2026-09-29, bb 0.44.0, SDK 0.5.29):
 
-1. Whether a captain-started turn on a child notifies its parent.
-2. Whether `app.composer.customize` can add `/fm`; if not, the CLI and ⌘K cover it.
+1. **A captain-started turn on a child does notify its parent: yes.** Experiment: a hidden parent thread
+   and a child spawned with `--parent-thread`; a tell to the child with no thread origin (the child's
+   turn request recorded `initiator: "user"`, `senderThreadId: null`) made the parent receive a new turn
+   `[bb system]\n\n@thread:<child> completed:\n\n<child's last text>` (turn request
+   `systemMessageKind: "child-completed"`, `initiator: "system"`). It fires after every child turn,
+   whoever started it, so the Paseo steer relay is not ported: Task 8 skips `CaptainSteers`, `relayText`
+   and the `steer-relay*.md` templates.
+2. **A composer slash command for `/fm`: no.** `app.composer.customize` takes only `actions`, `banners`,
+   `plusMenu` (rows in the composer's `+` menu) and `richText` (read-only paint and draft observation);
+   there is no command or slash registration, and the slash typeahead is host-owned (skills only). Task 12
+   does not register `/fm`; the CLI and `app.commands.register` (⌘K palette) cover it.
 
 ## Done when
 
