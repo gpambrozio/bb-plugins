@@ -263,6 +263,12 @@ look for in the console, not a layout bug.
 - **`@get-bb/plugin-sdk` is an exact devDependency** (`bb plugin types` keeps it at the running bb's
   version), unless server or host code imports an SDK *subpath* — then it is a real dependency.
 - Import only public `@get-bb/plugin-sdk` entry points, never `@bb/*`.
+- **The app must not import the SDK root at run time**, directly or through a shared module. bb
+  provides `@get-bb/plugin-sdk` (e.g. `defineRpcContract`) to the server bundle and shims only
+  `@get-bb/plugin-sdk/app` in the app bundle, so an app → `shared/contract.ts` value import builds
+  from a dev install and fails the production-only build a git install runs. Keep what the app needs
+  at run time (channel names, schemas) in a module that does not import the SDK, and import the
+  contract as a type.
 
 ## Distribution and releases
 
