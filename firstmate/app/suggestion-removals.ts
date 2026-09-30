@@ -4,7 +4,7 @@
  * lands. Two identical suggestions are one key, so both wait while either is being removed — a second
  * press on the twin could otherwise take out one line more than the captain meant. Pure.
  *
- * The gate the lists use is in module scope, like the send gate (`./mate-send`): a phone switching tabs,
+ * The gate the lists use is in module scope, like the send gate (`./send-gate`): a phone switching tabs,
  * or a wide layout switching the board for Files, unmounts the list while a request can still be out,
  * and the list that mounts next has to find that suggestion still shut.
  */

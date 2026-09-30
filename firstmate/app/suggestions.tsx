@@ -12,6 +12,7 @@ import type { rpcContract } from "../server";
 import type { Suggestion } from "../shared/types";
 import { reportError } from "./notify";
 import { suggestionRemovals } from "./suggestion-removals";
+import { useMateSender } from "./use-mate-sender";
 
 export function Suggestions({
   suggestions,
@@ -24,16 +25,15 @@ export function Suggestions({
 }) {
   const rpc = useRpc<typeof rpcContract>();
   const navigate = useBbNavigate();
+  const mate = useMateSender();
   // Removals outlive this list: a tab switch can unmount it while a request is out. See ./suggestion-removals.
   useSyncExternalStore(suggestionRemovals.subscribe, suggestionRemovals.version);
 
   if (suggestions.length === 0) return null;
 
   function pick(suggestion: Suggestion): void {
-    rpc
-      .call("mate.ask", { text: suggestion.prompt })
-      .then(() => navigate.toThread(mateThreadId))
-      .catch(reportError);
+    // Refused while another message is on its way, so a double press sends the prompt once.
+    mate.ask(suggestion.prompt, () => navigate.toThread(mateThreadId));
   }
 
   function remove(suggestion: Suggestion): void {
@@ -58,7 +58,7 @@ export function Suggestions({
           >
             <button
               type="button"
-              disabled={busy}
+              disabled={busy || mate.sending}
               onClick={() => pick(suggestion)}
               aria-label={`${suggestion.label}: send "${suggestion.prompt}" to the first mate`}
               className="flex min-w-0 flex-1 cursor-pointer flex-col gap-0.5 px-3 py-2 text-left hover:bg-state-hover disabled:cursor-not-allowed"

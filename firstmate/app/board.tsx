@@ -17,11 +17,13 @@ import { COLUMN_TITLES } from "./format";
 import { readFolds, toggleFold } from "./folds";
 import { reportError } from "./notify";
 import { Suggestions } from "./suggestions";
+import { useMateSender } from "./use-mate-sender";
 import { useOpenHomeFile } from "./use-open-home-file";
 import { Watches } from "./watches";
 
 export function Board({ fleet, mateThreadId, onChanged }: { fleet: Fleet; mateThreadId: string; onChanged: () => void }) {
   const rpc = useRpc<typeof rpcContract>();
+  const mate = useMateSender();
   const openHomeFile = useOpenHomeFile(mateThreadId);
   const [folds, setFolds] = useState<Set<ColumnId>>(() => readFolds(window.localStorage));
   const [busy, setBusy] = useState(false);
@@ -35,10 +37,6 @@ export function Board({ fleet, mateThreadId, onChanged }: { fleet: Fleet; mateTh
       })
       .catch(reportError)
       .finally(() => setBusy(false));
-  }
-
-  function command(name: "bearings" | "ahoy"): void {
-    run(() => rpc.call("mate.command", { command: name, args: "" }), "Sent to the first mate.");
   }
 
   function compare(): void {
@@ -74,10 +72,10 @@ export function Board({ fleet, mateThreadId, onChanged }: { fleet: Fleet; mateTh
       ) : null}
 
       <div className="flex gap-2">
-        <Button size="sm" variant="outline" disabled={busy} onClick={() => command("bearings")}>
+        <Button size="sm" variant="outline" disabled={mate.sending} onClick={() => mate.command("bearings")}>
           Bearings
         </Button>
-        <Button size="sm" variant="outline" disabled={busy} onClick={() => command("ahoy")}>
+        <Button size="sm" variant="outline" disabled={mate.sending} onClick={() => mate.command("ahoy")}>
           Ahoy
         </Button>
       </div>
