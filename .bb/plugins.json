@@ -7,6 +7,7 @@
     { "name": "firstmate-crew", "source": "./firstmate-crew" },
     { "name": "herald", "source": "./herald" },
     { "name": "launchd-jobs", "source": "./launchd-jobs" },
-    { "name": "model-pricing", "source": "./model-pricing" }
+    { "name": "model-pricing", "source": "./model-pricing" },
+    { "name": "skills", "source": "./skills" }
   ]
 }
