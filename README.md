@@ -8,7 +8,7 @@ Each port is tracked by its own issue.
 | Plugin | What it does | Status |
 | --- | --- | --- |
 | `skills` | Lists the skills a thread's agent can use, renders each `SKILL.md`, and invokes it. | [Not started (#1)](https://github.com/gpambrozio/bb-plugins/issues/1) |
-| `github-board` | Your GitHub issues, pull requests and discussions on one sidebar board. | [Not started (#2)](https://github.com/gpambrozio/bb-plugins/issues/2) |
+| [`github-board`](github-board) | Your GitHub issues, pull requests and discussions on one sidebar board. | [Ported — 0.1.0 (#2)](https://github.com/gpambrozio/bb-plugins/issues/2) |
 | `launchd-jobs` | Schedules shell commands on your Mac through launchd. | [Not started (#3)](https://github.com/gpambrozio/bb-plugins/issues/3) |
 | `herald` | Speaks one sentence when an agent needs you, and lists what is waiting. | [Not started (#4)](https://github.com/gpambrozio/bb-plugins/issues/4) |
 | `model-pricing` | What every model costs, across five providers, in one table. | [Not started (#5)](https://github.com/gpambrozio/bb-plugins/issues/5) |
