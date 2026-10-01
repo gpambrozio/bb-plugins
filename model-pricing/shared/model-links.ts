@@ -16,7 +16,7 @@
  *   for ids whose page may have moved. Verifying at press time would mean a
  *   request per row and is not worth it.
  * - **Nothing here fetches.** It is pure string work, so `model-links.test.ts`
- *   covers every rule offline and the client can call it while rendering.
+ *   covers every rule offline and the app can call it while rendering.
  */
 import type { PriceRow } from "./pricing";
 

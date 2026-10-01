@@ -1,7 +1,7 @@
 /**
  * The five providers this plugin prices, and which upstream each one is read
  * from. Plain values, so both halves import it: the server maps requested
- * provider ids to the sources it has to fetch, the client draws the labels and
+ * provider ids to the sources it has to fetch, the app draws the labels and
  * the legend.
  *
  * Only two upstreams exist, because only two publish prices without a key:

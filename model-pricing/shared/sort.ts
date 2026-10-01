@@ -1,10 +1,6 @@
 /**
- * How the table is ordered.
- *
- * This lives in `shared/` rather than beside the table it serves for one
- * reason: it is the only non-trivial logic on the client side, and a module
- * that imports React Native cannot be unit-tested here. Nothing about ordering
- * needs a renderer, so it does not have to be in one.
+ * How the table is ordered. Pure, so `sort.test.ts` covers it without a
+ * renderer.
  */
 import type { PriceRow } from "./pricing";
 import { providerLabel } from "./providers";

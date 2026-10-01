@@ -2,9 +2,7 @@
  * Every number the table prints, and the relative-cost ranking behind its last
  * column. Pure and dependency-free, so `shared/format.test.ts` covers the lot
  * without a server, a fetch or a renderer.
- *
- * It lives in `shared/` rather than `client/` only because that is where tests
- * can reach it; nothing on the server calls it.
+ * Only the app calls it.
  */
 import type { PriceRow } from "./pricing";
 
