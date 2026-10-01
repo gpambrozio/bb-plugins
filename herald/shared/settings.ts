@@ -138,17 +138,9 @@ export const SETTINGS = {
     type: "select",
     label: "Tool that writes the sentence",
     description:
-      "claude (Claude Code), codex (OpenAI Codex) or gemini (Gemini CLI), each installed and logged in on the Mac running bb; or custom, to run the command below.",
+      "claude (Claude Code), codex (OpenAI Codex) or gemini (Gemini CLI), each installed and logged in on the Mac running bb; or custom, to run the command you write under Custom command further down this page.",
     options: [...SENTENCE_TOOLS],
     default: "claude",
-  },
-  sentenceCommand: {
-    type: "string",
-    label: "Custom command",
-    description:
-      "Used when the tool is custom. The prompt arrives on standard input and the reply is read from standard output. Choosing custom while this is blank fills it in with the command of the tool selected before, to start from. No shell runs it: quote as in a shell, but ~ and $VARIABLES are not expanded; the bb server's environment is passed through.",
-    experimental_multiline: true,
-    default: "",
   },
   sentencePrompt: {
     type: "string",
@@ -187,27 +179,28 @@ function toolOf(values: SettingsValues): SentenceTool {
 
 /**
  * Null unless the switch is on and there is a command to run: a preset tool
- * always has one, custom only once something is written.
+ * always has one, custom only once `customCommand` (from the stored
+ * configuration, not the form) holds something.
  */
-export function sentenceSettingsOf(values: SettingsValues): SentenceSettings | null {
+export function sentenceSettingsOf(values: SettingsValues, customCommand: string): SentenceSettings | null {
   if (values?.writeWithModel !== true) return null;
   const tool = toolOf(values);
-  const command = (tool === "custom" ? text(values.sentenceCommand, "") : TOOL_COMMANDS[tool]).trim();
+  const command = (tool === "custom" ? customCommand : TOOL_COMMANDS[tool]).trim();
   if (command === "") return null;
   const prompt = text(values.sentencePrompt, DEFAULT_SENTENCE_PROMPT);
   return { command, prompt: prompt.trim() === "" ? DEFAULT_SENTENCE_PROMPT : prompt };
 }
 
 /**
- * What to write into the custom command when the tool *becomes* custom while
- * the command is blank: the command of the tool selected before, so the user
- * edits a working line rather than an empty one. Null when there is nothing
- * to seed — including a command the user cleared while already on custom,
- * which is theirs to leave blank.
+ * What to write into the stored custom command when the tool *becomes* custom
+ * while that command is blank: the command of the tool selected before, so the
+ * user edits a working line rather than an empty one. Null when there is
+ * nothing to seed — including a command the user cleared while already on
+ * custom, which is theirs to leave blank.
  */
-export function customCommandSeed(prev: SettingsValues, next: SettingsValues): string | null {
+export function customCommandSeed(prev: SettingsValues, next: SettingsValues, currentCommand: string): string | null {
   const before = toolOf(prev);
-  if (before === "custom" || toolOf(next) !== "custom" || text(next?.sentenceCommand, "").trim() !== "") return null;
+  if (before === "custom" || toolOf(next) !== "custom" || currentCommand.trim() !== "") return null;
   return TOOL_COMMANDS[before];
 }
 

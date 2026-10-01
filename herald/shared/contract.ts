@@ -10,7 +10,6 @@ import {
   MAX_SPEECH_CHARS,
   SpeechVoiceSchema,
   StoredConfigSchema,
-  VoicesConfigSchema,
 } from "./herald";
 
 export const rpcContract = defineRpcContract({
@@ -23,8 +22,9 @@ export const rpcContract = defineRpcContract({
     input: z.object({}),
     output: StoredConfigSchema,
   },
+  /** Any part of the stored configuration; the rest is kept. */
   "config.set": {
-    input: z.object({ voices: VoicesConfigSchema }),
+    input: StoredConfigSchema.partial(),
     output: StoredConfigSchema,
   },
   /**

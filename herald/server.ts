@@ -11,7 +11,7 @@ import { randomUUID } from "node:crypto";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import { rpcContract } from "./shared/contract";
-import { DEFAULT_STORED_CONFIG, ENTRIES_CHANNEL, StoredConfigSchema, VoicesConfigSchema, type StoredConfig } from "./shared/herald";
+import { CONFIG_CHANNEL, DEFAULT_STORED_CONFIG, ENTRIES_CHANNEL, StoredConfigSchema, VoicesConfigSchema, type StoredConfig } from "./shared/herald";
 import { customCommandSeed, sentenceSettingsOf, SETTINGS } from "./shared/settings";
 import { bbEvents, bbLiveness } from "./server/bb-ports";
 import { createHooks, type HeraldConfig } from "./server/hooks";
@@ -54,13 +54,19 @@ export default async function plugin(bb: BbPluginApi) {
   });
 
   // When the tool becomes "custom" with nothing written yet, the command of
-  // the tool selected before is written in, so the user edits a working line.
+  // the tool selected before is written in, so the user edits a working line;
+  // the open settings page is told to read it.
   settings.onChange((next, prev) => {
-    const seed = customCommandSeed(prev, next);
-    if (seed === null) return;
-    settings.experimental_set({ sentenceCommand: seed }).catch((error: unknown) => {
-      bb.log.warn(`Could not fill in the custom command: ${error instanceof Error ? error.message : String(error)}`);
-    });
+    storedConfig()
+      .then(async (current) => {
+        const seed = customCommandSeed(prev, next, current.sentenceCommand);
+        if (seed === null) return;
+        await bb.storage.kv.set(CONFIG_KEY, { ...current, sentenceCommand: seed });
+        publishOn(CONFIG_CHANNEL);
+      })
+      .catch((error: unknown) => {
+        bb.log.warn(`Could not fill in the custom command: ${error instanceof Error ? error.message : String(error)}`);
+      });
   });
 
   const writer = new SentenceWriter(bb.log);
@@ -70,24 +76,31 @@ export default async function plugin(bb: BbPluginApi) {
   const eventsPort = () => (events ??= bbEvents(bb.sdk, bb.log));
   const livenessOf = () => (liveness ??= new Liveness(bbLiveness(bb.sdk), bb.log));
 
-  function publish(): void {
+  function publishOn(channel: string): void {
     try {
-      bb.realtime.publish(ENTRIES_CHANNEL, { at: Date.now() });
+      bb.realtime.publish(channel, { at: Date.now() });
     } catch (error) {
       // After an unload the handle is stale; the clients re-read on reconnect anyway.
-      bb.log.warn(`Could not tell the app the entries changed: ${error instanceof Error ? error.message : String(error)}`);
+      bb.log.warn(`Could not tell the app that ${channel} changed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
-  /** The voices, falling back to the defaults when unreadable. */
+  function publish(): void {
+    publishOn(ENTRIES_CHANNEL);
+  }
+
+  /** The stored configuration, each part falling back to its default when unreadable. */
   async function storedConfig(): Promise<StoredConfig> {
     const raw = await bb.storage.kv.get<Partial<StoredConfig>>(CONFIG_KEY);
     const voices = VoicesConfigSchema.safeParse(raw?.voices);
-    return { voices: voices.success ? voices.data : { ...DEFAULT_STORED_CONFIG.voices } };
+    return {
+      voices: voices.success ? voices.data : { ...DEFAULT_STORED_CONFIG.voices },
+      sentenceCommand: typeof raw?.sentenceCommand === "string" ? raw.sentenceCommand : DEFAULT_STORED_CONFIG.sentenceCommand,
+    };
   }
 
   async function readConfig(): Promise<HeraldConfig> {
-    const values = await settings.get();
+    const [values, stored] = await Promise.all([settings.get(), storedConfig()]);
     return {
       announce: {
         question: values.announceQuestions,
@@ -97,7 +110,7 @@ export default async function plugin(bb: BbPluginApi) {
         error: values.announceErrors,
       },
       announceSubagents: values.announceSubagents,
-      sentence: sentenceSettingsOf(values),
+      sentence: sentenceSettingsOf(values, stored.sentenceCommand),
     };
   }
 
@@ -126,9 +139,9 @@ export default async function plugin(bb: BbPluginApi) {
     list: async () => ({ entries: await livenessOf().visible(store) }),
     "config.get": () => storedConfig(),
     "config.set": async (next) => {
-      const parsed = StoredConfigSchema.parse(next);
-      await bb.storage.kv.set(CONFIG_KEY, parsed);
-      return parsed;
+      const merged = StoredConfigSchema.parse({ ...(await storedConfig()), ...next });
+      await bb.storage.kv.set(CONFIG_KEY, merged);
+      return merged;
     },
     log: ({ level, message }) => {
       bb.log[level](`app: ${message}`);

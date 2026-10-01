@@ -8,8 +8,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import plugin from "./server";
 import type { AttentionEntry } from "./shared/herald";
-import { ENTRIES_CHANNEL } from "./shared/herald";
-import { SETTINGS, TOOL_COMMANDS } from "./shared/settings";
+import { CONFIG_CHANNEL, ENTRIES_CHANNEL } from "./shared/herald";
+import { TOOL_COMMANDS } from "./shared/settings";
 
 /** A "tool" that answers with whether the prompt carried the request: real process, no model. */
 const ECHO_TOOL = `"${process.execPath}" -e "let s='';process.stdin.on('data',c=>s+=c).on('end',()=>process.stdout.write(s.includes('Fix the login bug')?'Login fix is done; nothing is left for you.':'No request seen.'))"`;
@@ -113,9 +113,9 @@ describe("herald server", () => {
 
   it("keeps the voices it is given, and falls back to defaults", async () => {
     const { harness } = await load();
-    expect(await harness.callRpc("config.get", {})).toEqual({ voices: { say: "", web: "" } });
+    expect(await harness.callRpc("config.get", {})).toEqual({ voices: { say: "", web: "" }, sentenceCommand: "" });
     await harness.callRpc("config.set", { voices: { say: "Zoe (Premium)", web: "" } });
-    expect(await harness.callRpc("config.get", {})).toEqual({ voices: { say: "Zoe (Premium)", web: "" } });
+    expect(await harness.callRpc("config.get", {})).toEqual({ voices: { say: "Zoe (Premium)", web: "" }, sentenceCommand: "" });
   });
 
   it("removes the entry when the thread starts a new turn", async () => {
@@ -137,7 +137,8 @@ describe("herald server", () => {
   });
 
   it("has the configured tool write the sentence, listing the plain one while it does", async () => {
-    const { harness } = await load({ writeWithModel: true, sentenceTool: "custom", sentenceCommand: ECHO_TOOL });
+    const { harness } = await load({ writeWithModel: true, sentenceTool: "custom" });
+    await harness.callRpc("config.set", { sentenceCommand: ECHO_TOOL });
     await harness.emitThreadEvent("thread.idle", { thread: USER_THREAD, lastAssistantText: "I fixed auth.ts." });
     await settle();
     const [pending] = entriesOf(await harness.callRpc("list", {}));
@@ -151,7 +152,8 @@ describe("herald server", () => {
   });
 
   it("settles a sentence still being written when it loads again", async () => {
-    const host = await load({ writeWithModel: true, sentenceTool: "custom", sentenceCommand: SLOW_TOOL });
+    const host = await load({ writeWithModel: true, sentenceTool: "custom" });
+    await host.harness.callRpc("config.set", { sentenceCommand: SLOW_TOOL });
     await host.harness.emitThreadEvent("thread.idle", { thread: USER_THREAD, lastAssistantText: "Done." });
     await settle();
     expect(entriesOf(await host.harness.callRpc("list", {}))[0]?.summary.status).toBe("pending");
@@ -161,12 +163,18 @@ describe("herald server", () => {
     expect(entry?.summary).toEqual({ status: "ready", text: "Login fix finished. Done." });
   });
 
-  it("starts the custom command from the tool selected before", async () => {
-    const host = await load({ sentenceTool: "codex" });
-    await host.harness.setSettings({ sentenceTool: "custom" });
+  it("starts the custom command from the tool selected before, and tells the settings page", async () => {
+    const { harness } = await load({ sentenceTool: "codex" });
+    await harness.setSettings({ sentenceTool: "custom" });
     await settle();
-    let stored: Promise<{ sentenceCommand: string }> | null = null;
-    track(await host.harness.lifecycle.reload((bb) => void (stored = bb.settings.define(SETTINGS).get())));
-    expect((await stored!).sentenceCommand).toBe(TOOL_COMMANDS.codex);
+    expect(await harness.callRpc("config.get", {})).toMatchObject({ sentenceCommand: TOOL_COMMANDS.codex });
+    expect(harness.realtimeSignals.filter((signal) => signal.channel === CONFIG_CHANNEL)).toHaveLength(1);
+  });
+
+  it("keeps the voices when the custom command is saved, and the other way round", async () => {
+    const { harness } = await load();
+    await harness.callRpc("config.set", { voices: { say: "Zoe (Premium)", web: "" } });
+    await harness.callRpc("config.set", { sentenceCommand: "my-llm" });
+    expect(await harness.callRpc("config.get", {})).toEqual({ voices: { say: "Zoe (Premium)", web: "" }, sentenceCommand: "my-llm" });
   });
 });

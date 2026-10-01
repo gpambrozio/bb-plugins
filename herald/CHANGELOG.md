@@ -14,8 +14,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   from the event, your request and the agent's reply, so you hear what was done rather than the start of
   the reply. The tool runs with no tools or read-only, in an empty folder, and the plain sentence is spoken
   instead whenever it fails or takes longer than 20 seconds.
-- **Settings** for the tool, a custom command (filled in from the tool you had selected when you choose
-  *custom*), and the prompt the tool is given, with placeholders you can move around.
+- **Settings** for the tool and the prompt the tool is given, with placeholders you can move around;
+  and, only while the tool is *custom*, a Custom command section further down the page, filled in from
+  the tool you had selected.
 - The Herald page and the banner above the composer say **Writing the sentence…** while the tool runs.
 
 ## 0.1.0

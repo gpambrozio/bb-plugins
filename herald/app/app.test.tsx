@@ -10,7 +10,7 @@ import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { RpcContract } from "../shared/contract";
-import { DEFAULT_STORED_CONFIG, ENTRIES_CHANNEL, type AttentionEntry } from "../shared/herald";
+import { CONFIG_CHANNEL, DEFAULT_STORED_CONFIG, ENTRIES_CHANNEL, type AttentionEntry } from "../shared/herald";
 import { HeraldBanner } from "./banner";
 import { HeraldBridge } from "./bridge";
 import { HeraldPanel } from "./panel";
@@ -196,5 +196,25 @@ describe("Herald's app", () => {
     await screen.findByText("Zoe (Premium)");
     expect(screen.queryByLabelText("Summary prompt")).toBeNull();
     expect(screen.queryByText(/model/i)).toBeNull();
+    expect(screen.queryByLabelText("Custom command")).toBeNull();
+  });
+
+  it("shows the custom command only when that is the tool, saves it, and picks up the seeded one", async () => {
+    const calls = { list: 0 };
+    let stored = { ...DEFAULT_STORED_CONFIG, sentenceCommand: "" };
+    const backend = {
+      ...rpc(() => [], calls),
+      "config.get": () => stored,
+      "config.set": (input: { sentenceCommand?: string }) => (stored = { ...stored, ...input }),
+    };
+    const slot = renderSlot<object, RpcContract>({ component: HeraldSettingsSection }, {}, { rpc: backend, settings: { sentenceTool: "custom" } });
+    await screen.findByText("Zoe (Premium)");
+    const field = (await screen.findByLabelText("Custom command")) as HTMLTextAreaElement;
+    fireEvent.change(field, { target: { value: "my-llm --fast" } });
+    fireEvent.click(screen.getByText("Save command"));
+    await waitFor(() => expect(stored.sentenceCommand).toBe("my-llm --fast"));
+    stored = { ...stored, sentenceCommand: "claude -p" };
+    await slot.emitRealtime(CONFIG_CHANNEL, { at: 1 });
+    await waitFor(() => expect((screen.getByLabelText("Custom command") as HTMLTextAreaElement).value).toBe("claude -p"));
   });
 });

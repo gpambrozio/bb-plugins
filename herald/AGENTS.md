@@ -34,7 +34,7 @@ what still holds and says what bb changed. The repo root `AGENTS.md` covers what
 | `app/speech.ts` | Every browser audio global, and which bb client this is. |
 | `app/rows.ts` | What the page lists: bb's unread and waiting-for-input joined with Herald's entries. |
 | `app/panel.tsx`, `app/banner.tsx` | The Herald page (and its sidebar count), and the sentence above a waiting thread's composer. |
-| `app/settings-section.tsx`, `app/voice-picker.tsx` | The voice lists and *Test voice*. |
+| `app/settings-section.tsx`, `app/voice-picker.tsx` | The voice lists and *Test voice*, and the custom command (shown only while the form's tool is custom). |
 
 ## Where things run
 
@@ -97,14 +97,20 @@ no shell. What that buys, and what must stay true:
   children, then the store freezes — so a killed tool cannot write, and storage keeps the entry pending.
   The next load calls `store.settlePending()` after `load()` and again after the post-drain `reconcile()`,
   promoting every pending fallback to `ready`. There is nothing to find and put away.
-- **The custom command is seeded, not defaulted.** The host form cannot derive one field from another, so
-  `settings.onChange` writes the previously selected tool's command into a blank *Custom command*
-  (`customCommandSeed`, with `experimental_set`) — only on the change *into* custom. A command the user
-  clears while already on custom stays blank (and means the plain sentence); the first version re-filled
-  it with the Claude command, which fought the user. The seed makes the field non-blank, so the `onChange`
-  it fires in turn seeds nothing. A preset's command is never read from that field, so a plugin release
-  can improve the presets without touching what users wrote. The command runs with the bb server's
-  environment and no shell: no `~` or `$VAR` expansion, which the field's description says.
+- **The custom command lives in stored config, not the host form.** The host form cannot show a field
+  only for one choice of another, and a *Custom command* field sitting under a *claude* select confused
+  the owner. So `sentenceCommand` is part of `StoredConfig` (kv, beside the voices, read and written
+  through `config.get` / `config.set`), and `app/settings-section.tsx` shows it — with its own Save
+  button — only while `useSettings().values.sentenceTool === "custom"`. It sits below the form, after
+  the prompt, because that is where plugin sections render.
+- **The custom command is seeded, not defaulted.** `settings.onChange` writes the previously selected
+  tool's command into a blank stored command (`customCommandSeed`) — only on the change *into* custom —
+  and publishes `CONFIG_CHANNEL`, which the settings section listens on to re-read it, so the field
+  fills in without a reload. A command the user clears while already on custom stays blank (and means
+  the plain sentence); the first version re-filled it with the Claude command, which fought the user.
+  A preset's command is never read from the stored one, so a plugin release can improve the presets
+  without touching what users wrote. The command runs with the bb server's environment and no shell:
+  no `~` or `$VAR` expansion, which the section says.
 - **The announcer waits.** A `pending` entry is not counted as spoken when first listed — not even in the
   seeding list a window reads when it opens — so the list that brings it `ready` speaks it, once
   (`app/announcer.ts`). The card and the composer banner say *Writing the sentence…* meanwhile, and the
@@ -309,5 +315,6 @@ cover, check by hand after `bb plugin reload herald`:
    nothing is spoken.
 5. Switch *Write each sentence with a model* on with the Claude tool and let a thread finish: the row and
    the banner say "Writing the sentence…" for a few seconds, then the model's sentence replaces it and is
-   spoken once. Then pick the tool *custom*: the custom command fills in with the Claude command. Set it
-   to a command that does not exist: the plain sentence is spoken and the log says why.
+   spoken once. Then pick the tool *custom*: a *Custom command* section appears further down the page,
+   filled in with the Claude command. Save a command that does not exist: the plain sentence is spoken
+   and the log says why. Pick *claude* again: the section goes.

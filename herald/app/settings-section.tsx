@@ -1,15 +1,16 @@
 /**
  * Herald's section under the host-rendered settings form: what the form cannot
- * hold — the voices, which run to hundreds.
+ * hold — the voices, which run to hundreds, and the custom command, which only
+ * applies when the form's tool is "custom" and the form cannot hide a field.
  */
-import { useRpc } from "@get-bb/plugin-sdk/app";
-import { useEffect, useState, type ReactNode } from "react";
+import { useRealtime, useRpc, useSettings } from "@get-bb/plugin-sdk/app";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 
 import type { RpcContract } from "../shared/contract";
-import type { StoredConfig } from "../shared/herald";
+import { CONFIG_CHANNEL, type StoredConfig } from "../shared/herald";
 import { getAnnouncer } from "./announcer";
 import { canPlaySpeech, listBrowserVoices, onVoicesChanged, type Voice } from "./speech";
 import { VoicePicker } from "./voice-picker";
@@ -35,29 +36,67 @@ function Heading({ title, children }: { title: string; children?: ReactNode }) {
   );
 }
 
+/** The custom command: a text area and a Save button, shown only while the form's tool is "custom". */
+function CustomCommand({ stored, onSave }: { stored: string; onSave: (command: string) => void }) {
+  const [draft, setDraft] = useState(stored);
+  // What the server holds wins over an unsaved draft when it changes underneath — the seeded command arriving.
+  useEffect(() => setDraft(stored), [stored]);
+  return (
+    <section className="space-y-3">
+      <Heading title="Custom command">
+        Runs on the Mac running bb with the prompt on standard input; the last paragraph of its standard output becomes the sentence.
+        No shell runs it: quote as in a shell, but ~ and $VARIABLES are not expanded, and it sees the bb server&apos;s environment.
+        Blank means the plain sentence.
+      </Heading>
+      <textarea
+        aria-label="Custom command"
+        className="flex min-h-24 w-full rounded-md border border-input bg-transparent px-3 py-2 font-mono text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        value={draft}
+        spellCheck={false}
+        onChange={(event) => setDraft(event.target.value)}
+      />
+      <Button size="sm" variant="outline" disabled={draft === stored} onClick={() => onSave(draft)}>
+        Save command
+      </Button>
+    </section>
+  );
+}
+
 export function HeraldSettingsSection() {
   const rpc = useRpc<RpcContract>();
+  const { values } = useSettings();
   const [config, setConfig] = useState<StoredConfig | null>(null);
   const [sayVoices, setSayVoices] = useState<{ available: boolean; voices: Voice[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const browserVoices = useBrowserVoices();
 
-  useEffect(() => {
+  const readConfig = useCallback(() => {
     rpc.call("config.get", {}).then(setConfig, (cause: unknown) => setError(errorText(cause)));
+  }, [rpc]);
+
+  useEffect(() => {
+    readConfig();
     rpc.call("speech.voices", {}).then(setSayVoices, (cause: unknown) => {
       setSayVoices({ available: false, voices: [] });
       console.warn("[herald] could not list the server's voices", cause);
     });
-  }, [rpc]);
+  }, [rpc, readConfig]);
+  // The server seeds the custom command when the tool becomes "custom", and says so here.
+  useRealtime(CONFIG_CHANNEL, readConfig);
+
+  function save(next: Partial<StoredConfig>): void {
+    rpc.call("config.set", next).then(setConfig, (cause: unknown) => toast.error(`Could not save: ${errorText(cause)}`));
+  }
 
   function saveVoices(voices: StoredConfig["voices"]): void {
-    rpc.call("config.set", { voices }).then(setConfig, (cause: unknown) => toast.error(`Could not save: ${errorText(cause)}`));
+    save({ voices });
   }
 
   if (config === null) return <p className="text-sm text-muted-foreground">{error ?? "Loading…"}</p>;
 
   return (
     <div className="flex flex-col gap-6">
+      {values?.sentenceTool === "custom" ? <CustomCommand stored={config.sentenceCommand} onSave={(sentenceCommand) => save({ sentenceCommand })} /> : null}
       {canPlaySpeech() ? (
         <section className="space-y-3">
           <Heading title="Voices">

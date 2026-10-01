@@ -12,21 +12,23 @@ function values(overrides: Record<string, string | number | boolean> = {}): Reco
 
 describe("sentenceSettingsOf", () => {
   it("is off by default, so the plain sentence is used and no command runs", () => {
-    expect(sentenceSettingsOf(values())).toBeNull();
-    expect(sentenceSettingsOf(undefined)).toBeNull();
+    expect(sentenceSettingsOf(values(), "")).toBeNull();
+    expect(sentenceSettingsOf(undefined, "my-llm")).toBeNull();
   });
 
   it("uses the selected tool's own command once switched on", () => {
-    const sentence = sentenceSettingsOf(values({ writeWithModel: true, sentenceTool: "codex" }));
+    const sentence = sentenceSettingsOf(values({ writeWithModel: true, sentenceTool: "codex" }), "ignored --when-preset");
     expect(sentence?.command).toBe(TOOL_COMMANDS.codex);
     expect(sentence?.prompt).toBe(SETTINGS.sentencePrompt.default);
   });
 
   it("uses the custom command when that is the tool, and nothing when it is blank", () => {
-    expect(sentenceSettingsOf(values({ writeWithModel: true, sentenceTool: "custom", sentenceCommand: " my-llm --fast " }))?.command).toBe(
-      "my-llm --fast",
-    );
-    expect(sentenceSettingsOf(values({ writeWithModel: true, sentenceTool: "custom", sentenceCommand: "  " }))).toBeNull();
+    expect(sentenceSettingsOf(values({ writeWithModel: true, sentenceTool: "custom" }), " my-llm --fast ")?.command).toBe("my-llm --fast");
+    expect(sentenceSettingsOf(values({ writeWithModel: true, sentenceTool: "custom" }), "  ")).toBeNull();
+  });
+
+  it("keeps the custom command out of the host form, which cannot hide a field", () => {
+    expect("sentenceCommand" in SETTINGS).toBe(false);
   });
 
   it("has a command for every tool but custom", () => {
@@ -39,17 +41,15 @@ describe("sentenceSettingsOf", () => {
 
 describe("customCommandSeed", () => {
   it("fills a blank custom command with the command of the tool selected before", () => {
-    expect(customCommandSeed(values({ sentenceTool: "codex" }), values({ sentenceTool: "custom", sentenceCommand: "" }))).toBe(
-      TOOL_COMMANDS.codex,
-    );
+    expect(customCommandSeed(values({ sentenceTool: "codex" }), values({ sentenceTool: "custom" }), "")).toBe(TOOL_COMMANDS.codex);
   });
 
   it("leaves a command the user cleared while already on custom alone", () => {
-    expect(customCommandSeed(values({ sentenceTool: "custom", sentenceCommand: "mine" }), values({ sentenceTool: "custom", sentenceCommand: "" }))).toBeNull();
+    expect(customCommandSeed(values({ sentenceTool: "custom" }), values({ sentenceTool: "custom" }), "")).toBeNull();
   });
 
   it("leaves a custom command the user wrote alone, and does nothing for a preset tool", () => {
-    expect(customCommandSeed(values({ sentenceTool: "claude" }), values({ sentenceTool: "custom", sentenceCommand: "mine" }))).toBeNull();
-    expect(customCommandSeed(values({ sentenceTool: "custom" }), values({ sentenceTool: "claude", sentenceCommand: "" }))).toBeNull();
+    expect(customCommandSeed(values({ sentenceTool: "claude" }), values({ sentenceTool: "custom" }), "mine")).toBeNull();
+    expect(customCommandSeed(values({ sentenceTool: "custom" }), values({ sentenceTool: "claude" }), "")).toBeNull();
   });
 });

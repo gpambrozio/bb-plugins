@@ -81,6 +81,12 @@ function clipSpeech(text: string): string {
  */
 export const ENTRIES_CHANNEL = "entries";
 
+/**
+ * Published when the stored configuration changes on the server — the custom
+ * command seeded after a settings change — so an open settings page re-reads it.
+ */
+export const CONFIG_CHANNEL = "config";
+
 // ---------------------------------------------------------------------------
 // Speech rendered on the server
 
@@ -117,11 +123,18 @@ export type VoicesConfig = z.infer<typeof VoicesConfigSchema>;
 
 export const DEFAULT_VOICES: VoicesConfig = { say: "", web: "" };
 
+/**
+ * The command that writes the sentence when the tool is `custom`. Kept here
+ * rather than in the host form because the form cannot show a field only for
+ * one choice of another; Herald's settings section shows it when it applies.
+ */
 export const StoredConfigSchema = z.object({
   voices: VoicesConfigSchema,
+  sentenceCommand: z.string(),
 });
 export type StoredConfig = z.infer<typeof StoredConfigSchema>;
 
 export const DEFAULT_STORED_CONFIG: StoredConfig = {
   voices: { ...DEFAULT_VOICES },
+  sentenceCommand: "",
 };
