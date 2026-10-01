@@ -22,6 +22,7 @@ import {
 } from "../shared/schemas";
 import { PromptSettingsSchema } from "../shared/board";
 import { patchBoard } from "./board-logic";
+import { Versions } from "./versions";
 
 export function useBoardRpc() {
   return useRpc<RpcContract>();
@@ -153,47 +154,76 @@ export function BoardPatchListener() {
 
 const DEFAULT_DISPLAY: DisplayPrefs = { hiddenRepositories: [], detailWidthFraction: null };
 
+/**
+ * A value written by fetches, saves, local changes and pushed signals, with
+ * every answer gated by `Versions` — see `app/versions.ts` for the rule.
+ */
+function useVersionedValue<T>() {
+  const versions = useRef(new Versions());
+  const latest = useRef<T | null>(null);
+  const [value, setValue] = useState<T | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const begin = useCallback(() => versions.current.begin(), []);
+  /** Adopts `next` from `ticket` if nothing later has been adopted; answers whether it was. */
+  const adopt = useCallback((ticket: number, next: T) => {
+    if (!versions.current.adopt(ticket)) return false;
+    latest.current = next;
+    setValue(next);
+    setError(null);
+    return true;
+  }, []);
+  /** Shows a failure from `ticket` if nothing has started since it did; answers whether it was. */
+  const fail = useCallback((ticket: number, message: string) => {
+    if (!versions.current.mayFail(ticket)) return false;
+    setError(message);
+    return true;
+  }, []);
+  const push = useCallback((next: T) => adopt(begin(), next), [adopt, begin]);
+
+  return { value, error, latest, begin, adopt, fail, push };
+}
+
 export function useDisplayPrefs() {
   const rpc = useBoardRpc();
   const reconnects = useReconnects();
-  const [prefs, setPrefs] = useState<DisplayPrefs | null>(null);
-  // Bumped by every newer source of truth — a local change, a pushed one — so
-  // a fetch that started before it cannot put the older value back.
-  const version = useRef(0);
+  const { value: prefs, latest, begin, adopt, fail, push } = useVersionedValue<DisplayPrefs>();
 
   useEffect(() => {
     let live = true;
-    const started = version.current;
+    const ticket = begin();
     rpc.call("getDisplayPrefs", {}).then(
       (value) => {
-        if (live && version.current === started) setPrefs(value);
+        if (live) adopt(ticket, value);
       },
       () => {
-        if (live) setPrefs((current) => current ?? DEFAULT_DISPLAY);
+        // With nothing to show yet, the board is drawn with the defaults.
+        if (live && fail(ticket, "") && latest.current === null) adopt(ticket, DEFAULT_DISPLAY);
       },
     );
     return () => {
       live = false;
     };
-  }, [rpc, reconnects]);
+  }, [rpc, reconnects, begin, adopt, fail, latest]);
 
   useRealtime(DISPLAY_PREFS_CHANGED, (payload) => {
     const parsed = DisplayPrefsSchema.safeParse(payload);
-    if (!parsed.success) return;
-    version.current += 1;
-    setPrefs(parsed.data);
+    if (parsed.success) push(parsed.data);
   });
 
-  /** Applied on screen at once; the server's answer, and every other window, follow. */
+  /**
+   * Applied on screen at once, as the newest state; the server's own answer is
+   * not adopted — every window, this one included, hears the stored value as a
+   * pushed signal.
+   */
   const update = useCallback(
     (patch: Partial<DisplayPrefs>) => {
-      version.current += 1;
-      setPrefs((current) => ({ ...(current ?? DEFAULT_DISPLAY), ...patch }));
+      push({ ...(latest.current ?? DEFAULT_DISPLAY), ...patch });
       rpc.call("setDisplayPrefs", patch).catch(() => {
-        // The next load shows what was actually stored.
+        // The next fetch shows what was actually stored.
       });
     },
-    [rpc],
+    [rpc, push, latest],
   );
 
   return { prefs, update };
@@ -202,49 +232,45 @@ export function useDisplayPrefs() {
 export function usePrompts() {
   const rpc = useBoardRpc();
   const reconnects = useReconnects();
-  const [prompts, setPrompts] = useState<PromptSettings | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  // As in `useDisplayPrefs`: a save or a pushed change outranks a fetch that
-  // started before it.
-  const version = useRef(0);
+  const { value: prompts, error, latest, begin, adopt, fail, push } = useVersionedValue<PromptSettings>();
 
   useEffect(() => {
     let live = true;
-    const started = version.current;
+    const ticket = begin();
     // The editor adopts what this answers only while it holds no unsaved
     // edit, so a refetch after a reconnect never overwrites one.
     rpc.call("getPrompts", {}).then(
       (value) => {
-        if (live && version.current === started) {
-          setPrompts(value);
-          setError(null);
-        }
+        if (live) adopt(ticket, value);
       },
       (cause: unknown) => {
-        if (live) setError(errorText(cause));
+        if (live) fail(ticket, errorText(cause));
       },
     );
     return () => {
       live = false;
     };
-  }, [rpc, reconnects]);
+  }, [rpc, reconnects, begin, adopt, fail]);
 
   useRealtime(PROMPTS_CHANGED, (payload) => {
     const parsed = PromptSettingsSchema.safeParse(payload);
-    if (!parsed.success) return;
-    version.current += 1;
-    setPrompts(parsed.data);
+    if (parsed.success) push(parsed.data);
   });
 
+  /**
+   * Saves and answers the templates as they stand once the save has landed:
+   * what was stored, or a newer change pushed while the save was in flight,
+   * which the stored answer must not overwrite. A failed save throws for the
+   * editor to report and changes nothing here.
+   */
   const save = useCallback(
-    async (value: PromptSettings) => {
-      version.current += 1;
+    async (value: PromptSettings): Promise<PromptSettings> => {
+      const ticket = begin();
       const stored = await rpc.call("savePrompts", value);
-      version.current += 1;
-      setPrompts(stored);
-      return stored;
+      adopt(ticket, stored);
+      return latest.current ?? stored;
     },
-    [rpc],
+    [rpc, begin, adopt, latest],
   );
 
   return { prompts, error, save };

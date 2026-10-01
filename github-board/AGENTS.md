@@ -114,8 +114,12 @@ when you add a query.
   edit. `app/state.test.tsx` drives this through the SDK's app harness (jsdom).
 - **An older answer never overwrites a newer state.** Only the newest board load may write the board
   or the module cache (`latestLoad`), and edits adopted while it ran are re-applied to its answer
-  (`recentPatches`). Display prefs and templates keep a version that a local change, a save or a
-  pushed signal bumps; a fetch that started before the bump is dropped. The one-off loads (detail,
+  (`recentPatches`). Display prefs and templates follow one rule for every response path —
+  fetch success, fetch failure, save, local change, pushed signal (`app/versions.ts`): each takes a
+  ticket when it starts; a value is adopted only if nothing later-started has been adopted, and a
+  failure is shown only if nothing has started since. A save answers the templates as they stand
+  after it landed, which the editor adopts — another window's newer push beats a delayed save.
+  `app/state-versions.test.tsx` covers each completion order. The one-off loads (detail,
   comments, images, labels, send options) are effects whose cleanup discards a superseded answer.
 - **Labels are read a full page at a time** (`LABEL_PAGE`, 100) on cards, in label mutations and in
   the repository's label list, so the menu's checkmarks match what the item carries. An item that

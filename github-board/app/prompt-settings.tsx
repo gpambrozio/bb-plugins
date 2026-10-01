@@ -124,9 +124,11 @@ export function PromptSettingsEditor() {
     if (draft === null) return;
     setSaving(true);
     try {
-      const stored = await save(draft);
-      adopted.current = JSON.stringify(stored);
-      setDraft(stored);
+      // The templates as they stand once the save landed: what was stored, or
+      // a newer change another window pushed meanwhile, which must win.
+      const current = await save(draft);
+      adopted.current = JSON.stringify(current);
+      setDraft(current);
       toast.success("Prompt templates saved");
     } catch (cause) {
       toast.error(`Could not save: ${errorText(cause)}`);
