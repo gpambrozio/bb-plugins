@@ -26,6 +26,9 @@ export const MAX_IN_FLIGHT = 2;
 /** Longer than this is not one spoken sentence. */
 export const MAX_SENTENCE_CHARS = 400;
 
+/** A tool that streams a file instead of answering is stopped here, not at the timeout. */
+export const MAX_OUTPUT_BYTES = 256 * 1024;
+
 /** Where the tools live when the bb server's PATH has none of them (see AGENTS.md: the server may lack Homebrew). */
 const EXTRA_PATH = ["/opt/homebrew/bin", "/usr/local/bin", join(homedir(), ".local", "bin")];
 
@@ -42,15 +45,20 @@ export interface RunResult {
   stderr: string;
 }
 
-/** `command[0]` with `command.slice(1)` as its arguments, no shell, `input` on stdin. */
+/**
+ * `command[0]` with `command.slice(1)` as its arguments, no shell, `input` on
+ * stdin. The tool leads its own process group, so a kill — at the timeout,
+ * on abort, on too much output — takes the helpers it started with it.
+ */
 export function runCommand(command: readonly string[], input: string, options: RunOptions): Promise<RunResult> {
   const [file, ...args] = command;
   if (file === undefined) return Promise.reject(new Error("The command is empty."));
   if (options.signal?.aborted) return Promise.reject(new Error("The run was aborted before it started."));
   return new Promise((resolve, reject) => {
-    const child = spawn(file, args, { cwd: options.cwd, env: options.env, stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn(file, args, { cwd: options.cwd, env: options.env, stdio: ["pipe", "pipe", "pipe"], detached: true });
     let stdout = "";
     let stderr = "";
+    let bytes = 0;
     let settled = false;
     const finish = (outcome: () => void) => {
       if (settled) return;
@@ -60,20 +68,35 @@ export function runCommand(command: readonly string[], input: string, options: R
       outcome();
     };
     const fail = (message: string) => {
-      child.kill("SIGKILL");
+      killGroup(child.pid, () => child.kill("SIGKILL"));
       finish(() => reject(new Error(message)));
     };
     const onAbort = () => fail("The run was aborted.");
     const timer = setTimeout(() => fail(`${file} did not finish within ${options.timeoutMs / 1000} seconds`), options.timeoutMs);
     options.signal?.addEventListener("abort", onAbort, { once: true });
-    child.stdout.setEncoding("utf8").on("data", (chunk: string) => (stdout += chunk));
-    child.stderr.setEncoding("utf8").on("data", (chunk: string) => (stderr += chunk));
+    const collect = (chunk: string, append: (text: string) => void) => {
+      bytes += chunk.length;
+      if (bytes > MAX_OUTPUT_BYTES) fail(`${file} produced too much output (over ${MAX_OUTPUT_BYTES / 1024} KB)`);
+      else append(chunk);
+    };
+    child.stdout.setEncoding("utf8").on("data", (chunk: string) => collect(chunk, (text) => (stdout += text)));
+    child.stderr.setEncoding("utf8").on("data", (chunk: string) => collect(chunk, (text) => (stderr += text)));
     child.on("error", (error) => finish(() => reject(new Error(`${file}: ${error.message}`))));
     child.on("close", (code) => finish(() => resolve({ code, stdout, stderr })));
     // A tool that never reads stdin closes it; that is not an error here.
     child.stdin.on("error", () => {});
     child.stdin.end(input, "utf8");
   });
+}
+
+/** SIGKILL to the whole group when the child has one, else to the child alone. */
+function killGroup(pid: number | undefined, fallback: () => void): void {
+  if (pid === undefined) return;
+  try {
+    process.kill(-pid, "SIGKILL");
+  } catch {
+    fallback();
+  }
 }
 
 /**
@@ -97,7 +120,6 @@ export function cleanSentence(raw: string): string {
 export class SentenceWriter {
   private readonly controller = new AbortController();
   private inFlight = 0;
-  private folder: Promise<string> | null = null;
   private disposed = false;
 
   constructor(private readonly log: Log) {}
@@ -106,13 +128,20 @@ export class SentenceWriter {
    * Runs `command` with `prompt` on stdin and returns the cleaned sentence.
    * Rejects when the writer is busy or disposed, the tool is missing, fails,
    * answers nothing, or outlives `WRITE_TIMEOUT_MS`.
+   *
+   * Each run gets an empty folder of its own under the temp directory, made
+   * for it and removed after it, so a tool that reads its working directory
+   * — project instructions, hooks, a repository — finds nothing. (One folder
+   * for the life of the plugin was tried first; macOS purges unused temp
+   * entries after a few days, and a bb server runs for weeks.)
    */
   async write(command: readonly string[], prompt: string): Promise<string> {
     if (this.disposed) throw new Error("The sentence writer is closed.");
     if (this.inFlight >= MAX_IN_FLIGHT) throw new Error(`The sentence writer is busy (${MAX_IN_FLIGHT} already running).`);
     this.inFlight += 1;
+    let cwd: string | null = null;
     try {
-      const cwd = await this.workingFolder();
+      cwd = await mkdtemp(join(tmpdir(), "herald-writer-"));
       const result = await runCommand(command, prompt, {
         cwd,
         env: { ...process.env, PATH: withExtraPath(process.env.PATH) },
@@ -125,30 +154,19 @@ export class SentenceWriter {
       return cleanSentence(result.stdout);
     } finally {
       this.inFlight -= 1;
+      if (cwd !== null) {
+        await rm(cwd, { recursive: true, force: true }).catch((error: unknown) => {
+          this.log.warn(`Could not remove the sentence writer's folder: ${error instanceof Error ? error.message : String(error)}`);
+        });
+      }
     }
   }
 
-  /** Kills every running tool and removes the working folder. */
-  async dispose(): Promise<void> {
+  /** Kills every running tool; nothing is accepted from here on. */
+  dispose(): Promise<void> {
     this.disposed = true;
     this.controller.abort();
-    const folder = this.folder;
-    this.folder = null;
-    if (folder === null) return;
-    try {
-      await rm(await folder, { recursive: true, force: true });
-    } catch (error) {
-      this.log.warn(`Could not remove the sentence writer's folder: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-
-  /**
-   * An empty folder of Herald's own, so a tool that reads its working
-   * directory — project instructions, hooks, a repository — finds nothing.
-   */
-  private workingFolder(): Promise<string> {
-    this.folder ??= mkdtemp(join(tmpdir(), "herald-writer-"));
-    return this.folder;
+    return Promise.resolve();
   }
 }
 

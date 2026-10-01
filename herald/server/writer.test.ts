@@ -1,5 +1,7 @@
-import { access, readdir } from "node:fs/promises";
-import { afterEach, describe, expect, it } from "vitest";
+import { access, readdir, readFile, unlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { cleanSentence, runCommand, SentenceWriter, WRITE_TIMEOUT_MS } from "./writer";
 import { recordingLog } from "./testing/fixtures";
@@ -59,15 +61,55 @@ describe("SentenceWriter", () => {
     return created;
   }
 
-  it("runs the command in an empty folder of its own, with the usual tool paths, and removes it on dispose", async () => {
+  it("runs the command in a folder of its own under the temp directory, with the usual tool paths", async () => {
     const w = writer();
-    const cwd = await w.write(node(`process.stdout.write(process.cwd())`), "p");
+    const cwd = await w.write(node(`require("fs").writeFileSync("seen","");process.stdout.write(process.cwd())`), "p");
     expect(cwd).not.toBe(process.cwd());
-    expect(await readdir(cwd)).toEqual([]);
+    expect(cwd).toContain("herald-writer-");
     const onPath = node(`process.stdout.write(process.env.PATH.split(":").includes("/opt/homebrew/bin") ? "yes" : "no")`);
     expect(await w.write(onPath, "p")).toBe("yes");
-    await w.dispose();
     await expect(access(cwd)).rejects.toThrow();
+  });
+
+  it("gives every run a fresh empty folder and removes it afterwards", async () => {
+    const w = writer();
+    const script = node(`process.stdout.write(process.cwd())`);
+    const first = await w.write(script, "p");
+    const second = await w.write(script, "p");
+    expect(first).not.toBe(second);
+    await expect(access(first)).rejects.toThrow();
+    await expect(access(second)).rejects.toThrow();
+  });
+
+  it("kills the tool's own children when it times out", async () => {
+    const w = writer();
+    const marker = join(tmpdir(), `herald-grandchild-${process.pid}-${Date.now()}`);
+    // A tool that starts a child of its own and then hangs; the child's pid goes to a file.
+    const script = node(
+      `const {spawn}=require("child_process");const c=spawn(process.execPath,["-e","setTimeout(()=>{},60000)"],{stdio:"ignore"});require("fs").writeFileSync(process.env.MARKER,String(c.pid));setTimeout(()=>{},60000)`,
+    );
+    await expect(
+      runCommand(script, "", { cwd: process.cwd(), env: { ...process.env, MARKER: marker }, timeoutMs: 1_500 }),
+    ).rejects.toThrow(/did not finish/);
+    const grandchild = Number(await readFile(marker, "utf8"));
+    await unlink(marker);
+    await vi.waitFor(() => expect(() => process.kill(grandchild, 0)).toThrow(/ESRCH/));
+    await w.dispose();
+  });
+
+  it("stops a tool that floods its output instead of answering", async () => {
+    const flood = node(`setInterval(()=>process.stdout.write("x".repeat(65536)),1)`);
+    await expect(runCommand(flood, "", { cwd: process.cwd(), env: process.env, timeoutMs: 10_000 })).rejects.toThrow(/too much output/);
+  });
+
+  it("survives a tool that closes its stdin before reading the prompt", async () => {
+    const ignoresInput = node(`process.stdin.destroy();setTimeout(()=>process.stdout.write("fine"),50)`);
+    expect(await writer().write(ignoresInput, "x".repeat(200_000))).toBe("fine");
+  });
+
+  it("falls back on a tool that prints progress and then fails", async () => {
+    const failing = node(`process.stdout.write("Thinking...");process.stderr.write("boom");process.exit(2)`);
+    await expect(writer().write(failing, "p")).rejects.toThrow(/exited with 2: boom/);
   });
 
   it("returns the cleaned reply", async () => {

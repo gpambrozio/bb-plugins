@@ -44,10 +44,8 @@ describe("customCommandSeed", () => {
     );
   });
 
-  it("starts from the first tool when custom was already selected", () => {
-    expect(customCommandSeed(values({ sentenceTool: "custom" }), values({ sentenceTool: "custom", sentenceCommand: "" }))).toBe(
-      TOOL_COMMANDS.claude,
-    );
+  it("leaves a command the user cleared while already on custom alone", () => {
+    expect(customCommandSeed(values({ sentenceTool: "custom", sentenceCommand: "mine" }), values({ sentenceTool: "custom", sentenceCommand: "" }))).toBeNull();
   });
 
   it("leaves a custom command the user wrote alone, and does nothing for a preset tool", () => {

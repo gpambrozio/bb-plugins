@@ -69,12 +69,21 @@ no shell. What that buys, and what must stay true:
   it the CLI reported *Not logged in* on the machine this was built on. Every preset was checked by hand
   against its CLI's `--help`; only the Claude one has been run end to end here (Codex could not run inside
   the build sandbox, Gemini is not installed).
-- **An empty working folder.** The tool runs in a folder of Herald's own under the temp directory
-  (`mkdtemp`), so no project instructions, hooks or repository are in reach; it is removed on dispose.
+- **An empty working folder per run.** Each run gets its own `mkdtemp` folder under the temp directory,
+  removed in a `finally`, so no project instructions, hooks or repository are in reach. One folder for
+  the life of the plugin was the first version: macOS purges unused temp entries after a few days and a
+  bb server runs for weeks, after which every spawn failed with an ENOENT that named the *tool*.
+- **A kill takes the tool's helpers with it.** The child is spawned `detached`, leading its own process
+  group, and a kill — timeout, abort, too much output — is `process.kill(-pid)`; `codex` and `claude`
+  start children of their own, and a tool stuck mid-call is exactly the one that times out.
 - **Fail closed, never queue, never wait long.** At most `MAX_IN_FLIGHT` (2) tools run at once; a third
-  request gets the plain sentence at once. A run is killed after `WRITE_TIMEOUT_MS` (20 s). A missing
-  tool, a non-zero exit, an empty reply or an unreadable command all mean the plain sentence, with the
-  reason in `bb plugin logs herald`. A Claude run measured about 10 s end to end.
+  request gets the plain sentence at once. A run is killed after `WRITE_TIMEOUT_MS` (20 s), or once it
+  has written `MAX_OUTPUT_BYTES` (256 KB) without finishing. A missing tool, a non-zero exit, an empty
+  reply or an unreadable command all mean the plain sentence, with the reason in `bb plugin logs herald`.
+  A Claude run measured about 10 s end to end.
+- **The prompt is bounded.** The agent's output is cut at `PROMPT_OUTPUT_MAX` and the headline, detail
+  and request at `PROMPT_PART_MAX` before they go into the template — a permission's command and a
+  pasted-in request can both run to kilobytes.
 - **The reply is data.** `cleanSentence` keeps the last paragraph of stdout as one line, strips markdown
   and wrapping quotes, and cuts at `MAX_SENTENCE_CHARS`; it then goes through the same `speakable` and
   `MAX_SPEECH_CHARS` limits as every sentence. The prompt tells the model that the data lines are not
@@ -90,11 +99,19 @@ no shell. What that buys, and what must stay true:
   promoting every pending fallback to `ready`. There is nothing to find and put away.
 - **The custom command is seeded, not defaulted.** The host form cannot derive one field from another, so
   `settings.onChange` writes the previously selected tool's command into a blank *Custom command*
-  (`customCommandSeed`, with `experimental_set`). A preset's command is never read from that field, so a
-  plugin release can improve the presets without touching what users wrote.
-- **The announcer waits.** A `pending` entry is not counted as spoken when first listed; the list that
-  brings it `ready` speaks it, once (`app/announcer.ts`). The card and the composer banner say *Writing the
-  sentence…* meanwhile, and the card's *Read again* is disabled.
+  (`customCommandSeed`, with `experimental_set`) — only on the change *into* custom. A command the user
+  clears while already on custom stays blank (and means the plain sentence); the first version re-filled
+  it with the Claude command, which fought the user. The seed makes the field non-blank, so the `onChange`
+  it fires in turn seeds nothing. A preset's command is never read from that field, so a plugin release
+  can improve the presets without touching what users wrote. The command runs with the bb server's
+  environment and no shell: no `~` or `$VAR` expansion, which the field's description says.
+- **The announcer waits.** A `pending` entry is not counted as spoken when first listed — not even in the
+  seeding list a window reads when it opens — so the list that brings it `ready` speaks it, once
+  (`app/announcer.ts`). The card and the composer banner say *Writing the sentence…* meanwhile, and the
+  card's *Read again* is disabled.
+- **"Read-only" is weaker than "no tools".** Only the Claude preset runs with no tools. Codex's read-only
+  sandbox also cuts the network; Gemini's plan mode keeps its read and web tools, so an instruction
+  smuggled through the agent's output has a read-and-send path there. The README says so.
 
 ## The events are announcements
 

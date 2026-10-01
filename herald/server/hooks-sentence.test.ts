@@ -112,6 +112,20 @@ describe("hooks with a model-written sentence", () => {
     expect(store.get("t1")?.summary).toEqual({ status: "ready", text: "Login fix wants to know which database to use." });
   });
 
+  it("keeps a long request and a long detail from swamping the prompt", async () => {
+    const w = heldWriter();
+    const longEvents: EventsPort = {
+      ...events,
+      async context() {
+        return { projectName: "Shop", folder: "repo", lastRequest: "r".repeat(20_000) };
+      },
+    };
+    const store = new AttentionStore(null, recordingLog());
+    const hooks = createHooks({ store, readConfig: async () => CONFIG, events: longEvents, publish: vi.fn(), log: recordingLog(), writeSentence: w.write });
+    await hooks.idle(thread(), "o".repeat(20_000));
+    expect(w.calls[0]?.prompt.length).toBeLessThan(6_000);
+  });
+
   it("never runs the tool for an entry that is not announced", async () => {
     const w = heldWriter();
     const { hooks, store } = setup(w.write, { ...CONFIG, announce: { ...CONFIG.announce, finished: false } });

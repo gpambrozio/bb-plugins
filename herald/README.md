@@ -74,7 +74,12 @@ bb, with the prompt on its standard input. The tool must be installed and logged
 - **gemini** — Gemini CLI, in its read-only plan mode.
 - **custom** — a command of your own. Choosing it fills the *Custom command* field with the command of
   the tool you had selected, to start from. The prompt arrives on standard input; the last paragraph of
-  the standard output becomes the sentence.
+  the standard output becomes the sentence. No shell runs the command: quote as you would in one, but
+  `~` and `$VARIABLES` are not expanded, and it sees the bb server's environment.
+
+Only the Claude preset runs with no tools at all. Codex's read-only sandbox also cuts the network;
+Gemini's plan mode keeps its read and web tools, so an instruction hidden in an agent's reply could in
+principle have it read a file and send it somewhere. Pick claude if that matters to you.
 
 The *Sentence prompt* is yours to edit; it has placeholders for the thread, project, folder, event,
 headline, detail, the request and the agent's output.

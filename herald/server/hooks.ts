@@ -52,6 +52,12 @@ const EVENT_PHRASES: Record<AttentionReason, string> = {
 
 /** The agent's output is the longest thing in the prompt; this keeps a long turn from swamping the rest. */
 const PROMPT_OUTPUT_MAX = 3000;
+/** A pasted-in request or a kilobyte-long command is cut too; the prompt is about the event, not a transcript. */
+const PROMPT_PART_MAX = 1000;
+
+function cut(text: string | null, max: number): string | null {
+  return text !== null && text.length > max ? `${text.slice(0, max)}…` : text;
+}
 
 /** A second `thread.idle` for the same turn inside this window is a repeat, not a new turn. */
 export const TURN_REPEAT_WINDOW_MS = 15_000;
@@ -206,10 +212,10 @@ export function createHooks(deps: HookDeps): Hooks {
         project: base.projectName,
         folder: base.folder,
         event: EVENT_PHRASES[base.reason],
-        headline: base.headline,
-        detail: base.detail,
-        request: recording.lastUser,
-        output: recording.output === null ? null : recording.output.slice(0, PROMPT_OUTPUT_MAX),
+        headline: cut(base.headline, PROMPT_PART_MAX),
+        detail: cut(base.detail, PROMPT_PART_MAX),
+        request: cut(recording.lastUser, PROMPT_PART_MAX),
+        output: cut(recording.output, PROMPT_OUTPUT_MAX),
       });
       return await deps.writeSentence(command, prompt);
     } catch (error) {

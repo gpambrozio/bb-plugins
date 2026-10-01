@@ -71,7 +71,9 @@ export class Announcer {
     const present = new Set(entries.map((entry) => entry.eventId));
     this.current = present;
     if (!this.seeded) {
-      for (const id of present) this.spoken.add(id);
+      // What was waiting when the window opened is not news — except a
+      // sentence still being written, which is news the moment it lands.
+      for (const entry of entries) if (entry.summary.status !== "pending") this.spoken.add(entry.eventId);
       this.seeded = true;
       return;
     }

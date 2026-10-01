@@ -137,6 +137,14 @@ describe("Announcer", () => {
     expect(order.filter((step) => step.startsWith("render:"))).toEqual(["render:Written."]);
   });
 
+  it("speaks a sentence that was still being written when the window opened, once it is ready", async () => {
+    const { announcer, order } = setup();
+    announcer.onEntries([entry("a"), entry("b", { summary: { status: "pending", fallback: "Plain." } })]);
+    announcer.onEntries([entry("a"), entry("b", { summary: { status: "ready", text: "Written." } })]);
+    await settle();
+    expect(order.filter((step) => step.startsWith("render:"))).toEqual(["render:Written."]);
+  });
+
   it("never speaks a switched-off entry", async () => {
     const { announcer, deps } = setup();
     announcer.onEntries([]);

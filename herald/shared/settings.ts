@@ -146,7 +146,7 @@ export const SETTINGS = {
     type: "string",
     label: "Custom command",
     description:
-      "Used when the tool is custom. The prompt arrives on standard input and the reply is read from standard output. Choosing custom while this is blank fills it in with the command of the tool selected before, to start from.",
+      "Used when the tool is custom. The prompt arrives on standard input and the reply is read from standard output. Choosing custom while this is blank fills it in with the command of the tool selected before, to start from. No shell runs it: quote as in a shell, but ~ and $VARIABLES are not expanded; the bb server's environment is passed through.",
     experimental_multiline: true,
     default: "",
   },
@@ -199,15 +199,16 @@ export function sentenceSettingsOf(values: SettingsValues): SentenceSettings | n
 }
 
 /**
- * What to write into the custom command when the tool becomes custom and
- * the command is blank: the command of the tool selected before, so the
- * user edits a working line rather than an empty one. Null when there is
- * nothing to seed.
+ * What to write into the custom command when the tool *becomes* custom while
+ * the command is blank: the command of the tool selected before, so the user
+ * edits a working line rather than an empty one. Null when there is nothing
+ * to seed — including a command the user cleared while already on custom,
+ * which is theirs to leave blank.
  */
 export function customCommandSeed(prev: SettingsValues, next: SettingsValues): string | null {
-  if (toolOf(next) !== "custom" || text(next?.sentenceCommand, "").trim() !== "") return null;
   const before = toolOf(prev);
-  return TOOL_COMMANDS[before === "custom" ? FIRST_TOOL : before];
+  if (before === "custom" || toolOf(next) !== "custom" || text(next?.sentenceCommand, "").trim() !== "") return null;
+  return TOOL_COMMANDS[before];
 }
 
 /** Where this copy of the app runs, which decides the switch that applies to it. */
