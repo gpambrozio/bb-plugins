@@ -26,6 +26,11 @@ The first release: Scheduled Jobs for bb, ported from the Paseo plugin `launchd-
 - **The sidebar says how many jobs are failing**, beside the Scheduled jobs row. Opening a job clears
   it from the count until it fails again.
 - **Every Mac connected to bb**: with more than one, a picker chooses whose jobs the page shows.
+- **Only your jobs are touched.** A file under the jobs' name that is a link, or that names some other
+  job inside, is left alone, and a job whose files are in a folder this plugin does not know is shown
+  but its files are never changed.
+- **A job bb could not finish saving says so.** If bb quits while you save a job, the job may be left
+  not loaded; the page shows it as Not loaded, and Enable, or saving it again, loads it.
 
 ### Changed from the Paseo plugin
 

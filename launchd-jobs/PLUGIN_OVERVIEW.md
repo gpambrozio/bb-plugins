@@ -1,12 +1,11 @@
-Scheduled shell commands on your Mac, run by launchd, so they keep running while bb is closed. One
-sidebar page shows what each job did and lets you change it.
+Every job is a LaunchAgent plist in `~/Library/LaunchAgents` that launchd itself owns: it fires on
+schedule with bb closed, runs a missed fire once when the Mac wakes, and stays disabled across reboots
+once you disable it. One sidebar page is where you make, read and change those jobs.
 
 ## What you get
 
 - Jobs on a five-field cron expression or a fixed interval, with the schedule shown in words as you
   type it.
-- Each job is a LaunchAgent in `~/Library/LaunchAgents`, a plist you can read. launchd runs it while bb
-  is closed, catches up once after the Mac sleeps, and keeps a disabled job disabled across reboots.
 - The status launchd reports, the last twenty runs with duration and exit code, and the tail of the log.
 - Follow a log live while a job runs.
 - Run now, Enable, Disable, Edit and Delete, each doing the launchd part for you.

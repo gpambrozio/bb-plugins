@@ -1,0 +1,133 @@
+/**
+ * Herald's server: thread events become "needs you" entries, each with one
+ * plain sentence, and the app speaks it.
+ *
+ * Every decision lives in `server/`; this file only wires it to bb. The ports
+ * over `bb.sdk` are built on first use, from a handler — never in the factory
+ * body. Herald starts no threads of its own. See AGENTS.md.
+ */
+import { randomUUID } from "node:crypto";
+
+import type { BbPluginApi } from "@get-bb/plugin-sdk";
+
+import { rpcContract } from "./shared/contract";
+import { DEFAULT_STORED_CONFIG, ENTRIES_CHANNEL, StoredConfigSchema, VoicesConfigSchema, type StoredConfig } from "./shared/herald";
+import { SETTINGS } from "./shared/settings";
+import { bbEvents, bbLiveness } from "./server/bb-ports";
+import { createHooks, type HeraldConfig } from "./server/hooks";
+import { kvBackend } from "./server/kv-backend";
+import { Liveness } from "./server/liveness";
+import type { EventsPort } from "./server/ports";
+import { announceDrained, onOtherDrained } from "./server/reload-signal";
+import { listSayVoices, renderWithSay, sayAvailable } from "./server/say";
+import { AttentionStore } from "./server/store";
+
+export { rpcContract } from "./shared/contract";
+export type { RpcContract } from "./shared/contract";
+
+const CONFIG_KEY = "config";
+
+export default async function plugin(bb: BbPluginApi) {
+  const settings = bb.settings.define(SETTINGS);
+  const store = new AttentionStore(kvBackend(bb.storage.kv), bb.log);
+  // Read before any handler is registered. The store merges anyway, so an
+  // event that ever arrived mid-read would not be lost under an older entry.
+  await store.load().catch((error: unknown) => {
+    bb.log.error(`Could not load saved entries: ${error instanceof Error ? error.message : String(error)}`);
+  });
+  // The instance a reload replaces may still be writing; read again once it says it is done.
+  const instance = randomUUID();
+  const stopListening = onOtherDrained(bb.pluginId, instance, () => {
+    store
+      .reconcile()
+      .then(() => publish())
+      .catch((error: unknown) => {
+        bb.log.error(`Could not re-read saved entries after a reload: ${error instanceof Error ? error.message : String(error)}`);
+      });
+  });
+
+  let events: EventsPort | null = null;
+  let liveness: Liveness | null = null;
+  const eventsPort = () => (events ??= bbEvents(bb.sdk, bb.log));
+  const livenessOf = () => (liveness ??= new Liveness(bbLiveness(bb.sdk), bb.log));
+
+  function publish(): void {
+    try {
+      bb.realtime.publish(ENTRIES_CHANNEL, { at: Date.now() });
+    } catch (error) {
+      // After an unload the handle is stale; the clients re-read on reconnect anyway.
+      bb.log.warn(`Could not tell the app the entries changed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  /** The voices, falling back to the defaults when unreadable. */
+  async function storedConfig(): Promise<StoredConfig> {
+    const raw = await bb.storage.kv.get<Partial<StoredConfig>>(CONFIG_KEY);
+    const voices = VoicesConfigSchema.safeParse(raw?.voices);
+    return { voices: voices.success ? voices.data : { ...DEFAULT_STORED_CONFIG.voices } };
+  }
+
+  async function readConfig(): Promise<HeraldConfig> {
+    const values = await settings.get();
+    return {
+      announce: {
+        question: values.announceQuestions,
+        plan: values.announcePlans,
+        permission: values.announcePermissions,
+        finished: values.announceFinished,
+        error: values.announceErrors,
+      },
+      announceSubagents: values.announceSubagents,
+    };
+  }
+
+  const hooks = createHooks({
+    store,
+    readConfig,
+    // A getter, so bb.sdk is reached when an event needs it, not here.
+    events: {
+      context: (thread, options) => eventsPort().context(thread, options),
+      interruptedRecently: (threadId, withinMs) => eventsPort().interruptedRecently(threadId, withinMs),
+    },
+    publish,
+    log: bb.log,
+  });
+
+  bb.events.on("thread.active", ({ thread }) => hooks.active(thread));
+  bb.events.on("thread.idle", ({ thread, lastAssistantText }) => hooks.idle(thread, lastAssistantText));
+  bb.events.on("thread.failed", ({ thread, error }) => hooks.failed(thread, error));
+  bb.events.on("interaction.pending", ({ thread, interaction }) => hooks.interactionPending(thread, interaction));
+  bb.events.on("thread.archived", ({ thread }) => hooks.gone(thread));
+  bb.events.on("thread.deleted", ({ thread }) => hooks.gone(thread));
+
+  bb.rpc.register(rpcContract, {
+    list: async () => ({ entries: await livenessOf().visible(store) }),
+    "config.get": () => storedConfig(),
+    "config.set": async (next) => {
+      const parsed = StoredConfigSchema.parse(next);
+      await bb.storage.kv.set(CONFIG_KEY, parsed);
+      return parsed;
+    },
+    log: ({ level, message }) => {
+      bb.log[level](`app: ${message}`);
+      return null;
+    },
+    // The server's Mac renders speech with `say`; the app plays the bytes. Not
+    // a Mac, or no `say`: the app hears that and uses the browser's voice.
+    "speech.voices": async () => {
+      const available = await sayAvailable();
+      return { available, voices: available ? await listSayVoices() : [] };
+    },
+    "speech.render": async ({ text, voice, rate }) => {
+      if (!(await sayAvailable())) throw new Error("bb does not run on a Mac here, so `say` is not available.");
+      return renderWithSay(text, { voice, rate });
+    },
+  });
+
+  bb.onDispose(async () => {
+    stopListening();
+    hooks.dispose();
+    await store.shutdown();
+    announceDrained(bb.pluginId, instance);
+  });
+}
