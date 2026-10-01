@@ -179,15 +179,17 @@ function useVersionedValue<T>() {
     setError(message);
     return true;
   }, []);
+  /** Whether a failure from `ticket` is still the newest word, without showing anything. */
+  const mayFail = useCallback((ticket: number) => versions.current.mayFail(ticket), []);
   const push = useCallback((next: T) => adopt(begin(), next), [adopt, begin]);
 
-  return { value, error, latest, begin, adopt, fail, push };
+  return { value, error, latest, begin, adopt, fail, mayFail, push };
 }
 
 export function useDisplayPrefs() {
   const rpc = useBoardRpc();
   const reconnects = useReconnects();
-  const { value: prefs, latest, begin, adopt, fail, push } = useVersionedValue<DisplayPrefs>();
+  const { value: prefs, latest, begin, adopt, mayFail, push } = useVersionedValue<DisplayPrefs>();
 
   useEffect(() => {
     let live = true;
@@ -198,13 +200,13 @@ export function useDisplayPrefs() {
       },
       () => {
         // With nothing to show yet, the board is drawn with the defaults.
-        if (live && fail(ticket, "") && latest.current === null) adopt(ticket, DEFAULT_DISPLAY);
+        if (live && mayFail(ticket) && latest.current === null) adopt(ticket, DEFAULT_DISPLAY);
       },
     );
     return () => {
       live = false;
     };
-  }, [rpc, reconnects, begin, adopt, fail, latest]);
+  }, [rpc, reconnects, begin, adopt, mayFail, latest]);
 
   useRealtime(DISPLAY_PREFS_CHANGED, (payload) => {
     const parsed = DisplayPrefsSchema.safeParse(payload);

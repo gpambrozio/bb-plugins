@@ -118,7 +118,9 @@ when you add a query.
   fetch success, fetch failure, save, local change, pushed signal (`app/versions.ts`): each takes a
   ticket when it starts; a value is adopted only if nothing later-started has been adopted, and a
   failure is shown only if nothing has started since. A save answers the templates as they stand
-  after it landed, which the editor adopts — another window's newer push beats a delayed save.
+  after it landed, which the editor adopts — another window's newer push beats a delayed save —
+  unless the user typed while the save was in flight: those edits stay, unsaved against the new
+  baseline.
   `app/state-versions.test.tsx` covers each completion order. The one-off loads (detail,
   comments, images, labels, send options) are effects whose cleanup discards a superseded answer.
 - **Labels are read a full page at a time** (`LABEL_PAGE`, 100) on cards, in label mutations and in

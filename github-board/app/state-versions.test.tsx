@@ -207,3 +207,49 @@ describe("display prefs", () => {
     expect(state()).toEqual(["pushed"]);
   });
 });
+
+describe("the template editor while a save is in flight", () => {
+  it("keeps what was typed during the save, still unsaved", async () => {
+    const saved = deferred<PromptSettings>();
+    const view = renderSlot(
+      { component: PromptSettingsEditor },
+      {},
+      {
+        rpc: { getPrompts: () => templates("Initial"), savePrompts: () => saved.promise },
+        sdk: { projects: { list: async () => [] } },
+      },
+    );
+    const issuesField = () => view.getAllByRole("textbox")[0] as HTMLTextAreaElement;
+    const saveButton = () => view.getByRole("button", { name: /^Sav/ }) as HTMLButtonElement;
+    await waitFor(() => expect(issuesField().value).toBe("Initial"));
+    fireEvent.change(issuesField(), { target: { value: "A" } });
+    fireEvent.click(saveButton());
+    fireEvent.change(issuesField(), { target: { value: "B" } });
+    saved.resolve(templates("A"));
+    await settle();
+    expect(issuesField().value).toBe("B");
+    // A is stored; B differs from it, so Save is offered again.
+    expect(saveButton().disabled).toBe(false);
+  });
+
+  it("takes the stored result when nothing was typed during the save", async () => {
+    const saved = deferred<PromptSettings>();
+    const view = renderSlot(
+      { component: PromptSettingsEditor },
+      {},
+      {
+        rpc: { getPrompts: () => templates("Initial"), savePrompts: () => saved.promise },
+        sdk: { projects: { list: async () => [] } },
+      },
+    );
+    const issuesField = () => view.getAllByRole("textbox")[0] as HTMLTextAreaElement;
+    await waitFor(() => expect(issuesField().value).toBe("Initial"));
+    fireEvent.change(issuesField(), { target: { value: "  A  " } });
+    fireEvent.click(view.getByRole("button", { name: "Save" }));
+    // The server normalises; the editor shows what it stored.
+    saved.resolve(templates("A"));
+    await settle();
+    expect(issuesField().value).toBe("A");
+    expect((view.getByRole("button", { name: "Save" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+});

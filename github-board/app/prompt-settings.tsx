@@ -92,6 +92,10 @@ export function PromptSettingsEditor() {
   // an edit in progress.
   const adopted = useRef<string | null>(null);
   const dirty = draft !== null && JSON.stringify(draft) !== adopted.current;
+  // The draft as of the latest render, for a save to see edits made while it
+  // was in flight; every edit replaces the object, so identity tells them apart.
+  const latestDraft = useRef(draft);
+  latestDraft.current = draft;
 
   useEffect(() => {
     if (prompts === null) return;
@@ -122,13 +126,16 @@ export function PromptSettingsEditor() {
 
   async function onSave() {
     if (draft === null) return;
+    const sent = draft;
     setSaving(true);
     try {
       // The templates as they stand once the save landed: what was stored, or
       // a newer change another window pushed meanwhile, which must win.
-      const current = await save(draft);
+      const current = await save(sent);
       adopted.current = JSON.stringify(current);
-      setDraft(current);
+      // Edits typed while the save was in flight are kept, still unsaved
+      // against the new baseline; only an untouched draft takes the result.
+      if (latestDraft.current === sent) setDraft(current);
       toast.success("Prompt templates saved");
     } catch (cause) {
       toast.error(`Could not save: ${errorText(cause)}`);
