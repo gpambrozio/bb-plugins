@@ -16,7 +16,7 @@ export const DEFAULT_PROMPTS: PromptSet = {
   issues: "Read issue {url}, investigate and give me ways to address it.",
   "draft-prs": "Read draft pull request {url} and help me finish it.",
   "open-prs": "Review pull request {url} and tell me what needs attention.",
-  discussions: "Read discussion {url} and summarise what is being decided.",
+  discussions: "Read discussion {url} and summarize what is being decided.",
 };
 
 /** Every placeholder a template may use, shown to the user in the settings view. */

@@ -2,6 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import { DEFAULT_PROMPTS, normalizePrompts, renderTemplate, templateFor } from "./settings";
 
+describe("DEFAULT_PROMPTS", () => {
+  it("spells the discussion prompt the US way", () => {
+    expect(DEFAULT_PROMPTS.discussions).toBe("Read discussion {url} and summarize what is being decided.");
+  });
+});
+
 describe("normalizePrompts", () => {
   it("turns a blank type template back into its default", () => {
     const normalized = normalizePrompts({
