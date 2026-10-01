@@ -4,11 +4,16 @@
  * a running bb.
  */
 import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import plugin from "./server";
 import type { AttentionEntry } from "./shared/herald";
 import { ENTRIES_CHANNEL } from "./shared/herald";
+import { SETTINGS, TOOL_COMMANDS } from "./shared/settings";
+
+/** A "tool" that answers with whether the prompt carried the request: real process, no model. */
+const ECHO_TOOL = `"${process.execPath}" -e "let s='';process.stdin.on('data',c=>s+=c).on('end',()=>process.stdout.write(s.includes('Fix the login bug')?'Login fix is done; nothing is left for you.':'No request seen.'))"`;
+const SLOW_TOOL = `"${process.execPath}" -e "setTimeout(()=>{},60000)"`;
 
 const USER_THREAD = makeThreadResponse({
   id: "thr_user",
@@ -129,5 +134,39 @@ describe("herald server", () => {
     const reloaded = track(await host.harness.lifecycle.reload(plugin));
     await settle();
     expect(entriesOf(await reloaded.harness.callRpc("list", {})).map((entry) => entry.threadId)).toEqual(["thr_user"]);
+  });
+
+  it("has the configured tool write the sentence, listing the plain one while it does", async () => {
+    const { harness } = await load({ writeWithModel: true, sentenceTool: "custom", sentenceCommand: ECHO_TOOL });
+    await harness.emitThreadEvent("thread.idle", { thread: USER_THREAD, lastAssistantText: "I fixed auth.ts." });
+    await settle();
+    const [pending] = entriesOf(await harness.callRpc("list", {}));
+    expect(pending?.summary).toEqual({ status: "pending", fallback: "Login fix finished. I fixed auth.ts." });
+    await vi.waitFor(async () => {
+      const [entry] = entriesOf(await harness.callRpc("list", {}));
+      expect(entry?.summary).toEqual({ status: "ready", text: "Login fix is done; nothing is left for you." });
+    });
+    expect(harness.realtimeSignals.filter((signal) => signal.channel === ENTRIES_CHANNEL)).toHaveLength(2);
+    expect(harness.sdk.callsTo("threads.spawn")).toEqual([]);
+  });
+
+  it("settles a sentence still being written when it loads again", async () => {
+    const host = await load({ writeWithModel: true, sentenceTool: "custom", sentenceCommand: SLOW_TOOL });
+    await host.harness.emitThreadEvent("thread.idle", { thread: USER_THREAD, lastAssistantText: "Done." });
+    await settle();
+    expect(entriesOf(await host.harness.callRpc("list", {}))[0]?.summary.status).toBe("pending");
+    const reloaded = track(await host.harness.lifecycle.reload(plugin));
+    await settle();
+    const [entry] = entriesOf(await reloaded.harness.callRpc("list", {}));
+    expect(entry?.summary).toEqual({ status: "ready", text: "Login fix finished. Done." });
+  });
+
+  it("starts the custom command from the tool selected before", async () => {
+    const host = await load({ sentenceTool: "codex" });
+    await host.harness.setSettings({ sentenceTool: "custom" });
+    await settle();
+    let stored: Promise<{ sentenceCommand: string }> | null = null;
+    track(await host.harness.lifecycle.reload((bb) => void (stored = bb.settings.define(SETTINGS).get())));
+    expect((await stored!).sentenceCommand).toBe(TOOL_COMMANDS.codex);
   });
 });

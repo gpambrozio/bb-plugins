@@ -113,6 +113,7 @@ export async function readAgain(sentence: string): Promise<void> {
 function Sentence({ entry }: { entry: AttentionEntry | null }): ReactNode {
   if (entry === null) return <p className="text-sm text-muted-foreground">No sentence from Herald for this one.</p>;
   if (entry.summary.status === "ready") return <p className="text-sm italic text-foreground">{entry.summary.text}</p>;
+  if (entry.summary.status === "pending") return <p className="text-sm italic text-muted-foreground">Writing the sentence…</p>;
   return (
     <p className="text-xs text-muted-foreground">
       Not announced: this kind of event is switched off, or the thread that started this one speaks for it.

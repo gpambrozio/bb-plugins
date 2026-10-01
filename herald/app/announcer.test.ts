@@ -122,6 +122,21 @@ describe("Announcer", () => {
     ]);
   });
 
+  it("waits for a sentence still being written, then speaks it once", async () => {
+    const { announcer, deps, order } = setup();
+    announcer.onEntries([]);
+    const pending = entry("b", { summary: { status: "pending", fallback: "Plain." } });
+    announcer.onEntries([pending]);
+    announcer.onEntries([pending]);
+    await settle();
+    expect(deps.render).not.toHaveBeenCalled();
+    const ready = entry("b", { summary: { status: "ready", text: "Written." } });
+    announcer.onEntries([ready]);
+    announcer.onEntries([ready]);
+    await settle();
+    expect(order.filter((step) => step.startsWith("render:"))).toEqual(["render:Written."]);
+  });
+
   it("never speaks a switched-off entry", async () => {
     const { announcer, deps } = setup();
     announcer.onEntries([]);

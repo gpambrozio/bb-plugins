@@ -43,7 +43,7 @@ What it adds:
 ## Install
 
 ```bash
-bb plugin install 'git:github.com/gpambrozio/bb-plugins@^0.1.0' --plugin herald --tag-prefix herald/
+bb plugin install 'git:github.com/gpambrozio/bb-plugins@^0.2.0' --plugin herald --tag-prefix herald/
 ```
 
 The page is **Herald** in the sidebar.
@@ -59,11 +59,35 @@ On the plugin's settings page (Settings → Plugins → Herald):
 - **Threads started by another thread** — off by default. A child thread reports to the thread that
   started it, and you hear the parent's announcement rather than two. It is still listed.
 - **Voices** — the Mac voice and the browser voice, and *Test voice*.
+- **Write each sentence with a model** — off by default. On, a command-line tool on the Mac running bb
+  writes each sentence from the event, the request and the agent's reply, so you hear "Login fix is
+  done; nothing is left for you" rather than the start of the reply. See below.
+
+## Model-written sentences
+
+With the switch on, each announcement runs the tool you pick once, as a plain process on the Mac running
+bb, with the prompt on its standard input. The tool must be installed and logged in there. The presets:
+
+- **claude** — Claude Code, with no tools, no settings-file hooks and no MCP servers, one turn of the
+  Haiku model at low effort.
+- **codex** — OpenAI Codex, read-only, nothing saved to disk.
+- **gemini** — Gemini CLI, in its read-only plan mode.
+- **custom** — a command of your own. Choosing it fills the *Custom command* field with the command of
+  the tool you had selected, to start from. The prompt arrives on standard input; the last paragraph of
+  the standard output becomes the sentence.
+
+The *Sentence prompt* is yours to edit; it has placeholders for the thread, project, folder, event,
+headline, detail, the request and the agent's output.
+
+While the tool runs, the row and the banner say *Writing the sentence…*; the plain sentence is spoken
+instead if the tool fails, is missing, or takes longer than 20 seconds. The prompt includes the agent's
+own reply, which can carry instructions: that is why the presets run with no tools or read-only, and why
+the switch is off by default. A Claude run takes about ten seconds end to end.
 
 ## Limitations
 
 - bb has no way for a plugin to add a row to a thread's conversation, so the sentence is a banner above
   the composer rather than a card in the transcript, and it goes once the thread moves on.
-- The sentence is built from the event, not written by a model, so it says what is asked or the start
-  of what was done rather than summing a long reply up. Model-written sentences, as the Paseo plugin
-  had, are tracked in [issue #11](https://github.com/gpambrozio/bb-plugins/issues/11).
+- The model that writes a sentence is a command-line tool, not one of bb's own providers: bb 0.44 lets a
+  plugin register an AI service for its thread titles but not call one. The plain sentence is built from
+  the event alone.

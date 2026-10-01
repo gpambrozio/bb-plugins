@@ -19,6 +19,8 @@ what still holds and says what bb changed. The repo root `AGENTS.md` covers what
 | `server/liveness.ts` | Asks bb about each entry's thread before the list goes out: read, answered, gone, working again. |
 | `server/timeline.ts` | Pure text: what an interaction asks, the user's last prompt, the spoken sentence. |
 | `server/say.ts` | `say` on the bb server's Mac, driven for its voices: text in on stdin, a WAV out, bytes back. |
+| `server/writer.ts` | The optional sentence-writing tool, run as a child process: prompt in on stdin, one line out; the timeout, the cap, the empty folder. |
+| `server/command-line.ts` | The user's command split into words without a shell, and the prompt template filled in. |
 | `server/ports.ts`, `server/bb-ports.ts` | The seams the logic is tested through, and their implementations over `bb.sdk`. |
 | `shared/herald.ts` | The entry shape and the stored voices. No SDK import. |
 | `shared/settings.ts` | The host-rendered form, and the speech gate (`blockedMessage`) both halves agree on. |
@@ -37,19 +39,62 @@ what still holds and says what bb changed. The repo root `AGENTS.md` covers what
 ## Where things run
 
 Everything server-side runs in `server.ts`, inside the bb server's process — **no `bb.host` entry.** The
-only machine-specific thing Herald does is render speech with `say`, and that needs *a* Mac, not a
-particular one: the audio goes back to the app as bytes and plays on the device the user is looking at.
-When bb's server is not a Mac, `speech.render` refuses and the app falls back to the browser voice.
+two machine-specific things Herald does need *a* machine, not a particular one: `say` renders speech on
+the server's Mac and the audio goes back to the app as bytes, played on the device the user is looking
+at; and the optional sentence-writing tool runs as a child of the bb server, where the user installed
+and logged into it. When bb's server is not a Mac, `speech.render` refuses and the app falls back to the
+browser voice.
 
 ## Herald starts no threads
 
 Herald announces the plain sentence `fallbackSpeech` builds from the event, and **no code path spawns a
-thread**; nothing runs at load beyond reading its own storage. Paseo's Herald could have a hidden helper
-agent write each sentence. That is left to
-[issue #11](https://github.com/gpambrozio/bb-plugins/issues/11): bb cannot make a helper tool-free, and
-keeping helpers bounded across a reload needs more than this plugin had. The last code with helpers is
-on the `fm/herald-model-sentences` branch. Do not bring any of it back piecemeal — a feature that spawns
-threads must meet that issue's guarantees as a whole.
+thread** — `server.test.ts` checks `threads.spawn` is never called, with the model switch on too.
+Paseo's Herald had a hidden helper agent write each sentence, and bb cannot make such a helper tool-free
+(its least privileged mode reads and edits files, `threads.spawn` takes no tool list), nor keep helpers
+bounded across a reload without machinery the feature is not worth. bb's own thread titles do not use a
+thread either: they go through an internal AI-services registry that bb 0.44 lets plugins register into
+but not call. The whole story is in
+[issue #11](https://github.com/gpambrozio/bb-plugins/issues/11).
+
+## The model-written sentence is a child process
+
+With *Write each sentence with a model* on, each announced event runs the chosen tool **once, as a plain
+child process of the bb server** (`server/writer.ts`): the filled prompt on stdin, the sentence on stdout,
+no shell. What that buys, and what must stay true:
+
+- **Tool-free where the tool allows it.** The Claude Code preset runs `claude -p --tools "" --max-turns 1
+  --no-session-persistence --setting-sources "" --strict-mcp-config`, which is a model turn with no tools,
+  no settings-file hooks and no MCP servers. Codex and Gemini have no "no tools" switch; their presets run
+  read-only (`--sandbox read-only`, `--approval-mode plan`). `--bare` is **not** in the Claude preset: with
+  it the CLI reported *Not logged in* on the machine this was built on. Every preset was checked by hand
+  against its CLI's `--help`; only the Claude one has been run end to end here (Codex could not run inside
+  the build sandbox, Gemini is not installed).
+- **An empty working folder.** The tool runs in a folder of Herald's own under the temp directory
+  (`mkdtemp`), so no project instructions, hooks or repository are in reach; it is removed on dispose.
+- **Fail closed, never queue, never wait long.** At most `MAX_IN_FLIGHT` (2) tools run at once; a third
+  request gets the plain sentence at once. A run is killed after `WRITE_TIMEOUT_MS` (20 s). A missing
+  tool, a non-zero exit, an empty reply or an unreadable command all mean the plain sentence, with the
+  reason in `bb plugin logs herald`. A Claude run measured about 10 s end to end.
+- **The reply is data.** `cleanSentence` keeps the last paragraph of stdout as one line, strips markdown
+  and wrapping quotes, and cuts at `MAX_SENTENCE_CHARS`; it then goes through the same `speakable` and
+  `MAX_SPEECH_CHARS` limits as every sentence. The prompt tells the model that the data lines are not
+  instructions, which a one-sentence Haiku turn honoured when tried; the real protection is that the tool
+  has nothing to act with.
+- **No sentence lands on a newer event.** The entry is stored at once as `pending` with the plain sentence
+  as `fallback`, and `settleSentence` replaces it only while the entry is still that event and still
+  pending; a thread that moved on, or an entry a newer event replaced, drops the late sentence. After
+  `hooks.dispose()` nothing lands at all.
+- **A reload settles, it does not resume.** On unload the hooks close first, then the writer kills its
+  children, then the store freezes — so a killed tool cannot write, and storage keeps the entry pending.
+  The next load calls `store.settlePending()` after `load()` and again after the post-drain `reconcile()`,
+  promoting every pending fallback to `ready`. There is nothing to find and put away.
+- **The custom command is seeded, not defaulted.** The host form cannot derive one field from another, so
+  `settings.onChange` writes the previously selected tool's command into a blank *Custom command*
+  (`customCommandSeed`, with `experimental_set`). A preset's command is never read from that field, so a
+  plugin release can improve the presets without touching what users wrote.
+- **The announcer waits.** A `pending` entry is not counted as spoken when first listed; the list that
+  brings it `ready` speaks it, once (`app/announcer.ts`). The card and the composer banner say *Writing the
+  sentence…* meanwhile, and the card's *Read again* is disabled.
 
 ## The events are announcements
 
@@ -245,3 +290,7 @@ cover, check by hand after `bb plugin reload herald`:
 3. In a browser tab, nothing is spoken until **Test voice** has been pressed once.
 4. Switch a kind off in Settings → Plugins → Herald and trigger it: the row says "Not announced" and
    nothing is spoken.
+5. Switch *Write each sentence with a model* on with the Claude tool and let a thread finish: the row and
+   the banner say "Writing the sentence…" for a few seconds, then the model's sentence replaces it and is
+   spoken once. Then pick the tool *custom*: the custom command fills in with the Claude command. Set it
+   to a command that does not exist: the plain sentence is spoken and the log says why.

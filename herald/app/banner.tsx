@@ -35,7 +35,11 @@ export function HeraldBanner() {
       <Icon name={HERALD_ICONS.megaphone} className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
       <div className="min-w-0 flex-1">
         <p className="text-xs font-semibold text-muted-foreground">Herald · {LABELS[entry.reason]}</p>
-        {sentence === null ? null : <p className="italic">{sentence}</p>}
+        {sentence !== null ? (
+          <p className="italic">{sentence}</p>
+        ) : entry.summary.status === "pending" ? (
+          <p className="italic text-muted-foreground">Writing the sentence…</p>
+        ) : null}
       </div>
       {sentence !== null && canPlaySpeech() ? (
         <TipButton variant="ghost" size="icon" className="size-7 shrink-0" label="Read again" onClick={() => void readAgain(sentence)}>

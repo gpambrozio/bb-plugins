@@ -14,15 +14,19 @@
  *    something the user is waiting on; bb keeps it out of their attention too.
  */
 import type { AttentionEntry, AttentionReason } from "../shared/herald";
+import type { SentenceSettings } from "../shared/settings";
+import { fillTemplate, splitCommandLine } from "./command-line";
 import type { EventsPort, Interaction, Log, ThreadDto } from "./ports";
 import type { AttentionStore } from "./store";
-import { describeInteraction, fallbackSpeech, firstWords, preview } from "./timeline";
+import { describeInteraction, displayName, fallbackSpeech, firstWords, preview } from "./timeline";
 
 /** What the handlers act on, read fresh for every event so a settings change applies at once. */
 export interface HeraldConfig {
   announce: Record<AttentionReason, boolean>;
   /** Whether a thread another thread started is announced as well as its parent. */
   announceSubagents: boolean;
+  /** The tool that writes each sentence, or null for the plain one. */
+  sentence: SentenceSettings | null;
 }
 
 export interface HookDeps {
@@ -31,9 +35,23 @@ export interface HookDeps {
   events: EventsPort;
   /** Tells open clients the entries changed. */
   publish: () => void;
+  /** Runs the tool with the prompt on stdin and resolves to its sentence; rejects on any failure. */
+  writeSentence: (command: string[], prompt: string) => Promise<string>;
   log: Log;
   now?: () => Date;
 }
+
+/** How the prompt names each kind of event. */
+const EVENT_PHRASES: Record<AttentionReason, string> = {
+  question: "asks the developer a question",
+  plan: "waits for the developer to approve its plan",
+  permission: "asks for permission",
+  finished: "finished its turn",
+  error: "stopped with an error",
+};
+
+/** The agent's output is the longest thing in the prompt; this keeps a long turn from swamping the rest. */
+const PROMPT_OUTPUT_MAX = 3000;
 
 /** A second `thread.idle` for the same turn inside this window is a repeat, not a new turn. */
 export const TURN_REPEAT_WINDOW_MS = 15_000;
@@ -139,6 +157,8 @@ export function createHooks(deps: HookDeps): Hooks {
     projectName: string | null;
     folder: string | null;
     lastUser: string | null;
+    /** The whole of what the agent last said, for the prompt; the entry keeps only its start. */
+    output: string | null;
   }
 
   function record(recording: Recording): void {
@@ -157,12 +177,57 @@ export function createHooks(deps: HookDeps): Hooks {
       headline: recording.headline,
       detail: recording.detail,
     };
+    const fallback = fallbackSpeech(base);
     // Switched off, or a subagent its parent speaks for: listed in the panel,
     // with its sentence, never spoken.
-    const summary: AttentionEntry["summary"] = isAnnounced(thread, reason, config)
-      ? { status: "ready", text: fallbackSpeech(base) }
-      : { status: "off", fallback: fallbackSpeech(base) };
-    deps.store.upsert({ ...base, summary });
+    if (!isAnnounced(thread, reason, config)) {
+      deps.store.upsert({ ...base, summary: { status: "off", fallback } });
+      deps.publish();
+      return;
+    }
+    if (config.sentence === null) {
+      deps.store.upsert({ ...base, summary: { status: "ready", text: fallback } });
+      deps.publish();
+      return;
+    }
+    // Listed at once with the plain sentence as its stand-in; the tool's
+    // reply replaces it, or the stand-in is promoted when the tool fails.
+    deps.store.upsert({ ...base, summary: { status: "pending", fallback } });
+    deps.publish();
+    void writeSentence(config.sentence, base, recording).then((text) => settleSentence(base.threadId, base.eventId, text ?? fallback));
+  }
+
+  /** The tool's sentence, or null — with the reason logged — when it gave none. Never rejects. */
+  async function writeSentence(sentence: SentenceSettings, base: Omit<AttentionEntry, "summary">, recording: Recording): Promise<string | null> {
+    try {
+      const command = splitCommandLine(sentence.command);
+      const prompt = fillTemplate(sentence.prompt, {
+        thread: displayName(base),
+        project: base.projectName,
+        folder: base.folder,
+        event: EVENT_PHRASES[base.reason],
+        headline: base.headline,
+        detail: base.detail,
+        request: recording.lastUser,
+        output: recording.output === null ? null : recording.output.slice(0, PROMPT_OUTPUT_MAX),
+      });
+      return await deps.writeSentence(command, prompt);
+    } catch (error) {
+      deps.log.warn(`The sentence for ${base.threadId} falls back to the plain one: ${reasonOf(error)}`);
+      return null;
+    }
+  }
+
+  /**
+   * Lands a sentence on the entry it was written for — only while that entry
+   * is still the one waiting. The thread may have moved on, or a newer event
+   * may have replaced it; a sentence about an earlier event is stale news.
+   */
+  function settleSentence(threadId: string, eventId: string, text: string): void {
+    if (disposed) return;
+    const current = deps.store.get(threadId);
+    if (current === null || current.eventId !== eventId || current.summary.status !== "pending") return;
+    deps.store.upsert({ ...current, summary: { status: "ready", text } });
     deps.publish();
   }
 
@@ -210,6 +275,7 @@ export function createHooks(deps: HookDeps): Hooks {
           projectName: context.projectName,
           folder: context.folder,
           lastUser: context.lastRequest,
+          output,
         });
       });
     },
@@ -237,6 +303,7 @@ export function createHooks(deps: HookDeps): Hooks {
           projectName: context.projectName,
           folder: context.folder,
           lastUser: context.lastRequest,
+          output: null,
         });
       });
     },
@@ -263,6 +330,7 @@ export function createHooks(deps: HookDeps): Hooks {
           projectName: context.projectName,
           folder: context.folder,
           lastUser: null,
+          output: null,
         });
       });
     },

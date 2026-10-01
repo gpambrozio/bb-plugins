@@ -5,6 +5,19 @@ Notable changes to `herald`. The other plugins in this repository version separa
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.2.0
+
+### Added
+
+- **Write each sentence with a model**, off by default. Switched on, a command-line tool on the Mac
+  running bb — Claude Code, OpenAI Codex, Gemini CLI, or a command of your own — writes each sentence
+  from the event, your request and the agent's reply, so you hear what was done rather than the start of
+  the reply. The tool runs with no tools or read-only, in an empty folder, and the plain sentence is spoken
+  instead whenever it fails or takes longer than 20 seconds.
+- **Settings** for the tool, a custom command (filled in from the tool you had selected when you choose
+  *custom*), and the prompt the tool is given, with placeholders you can move around.
+- The Herald page and the banner above the composer say **Writing the sentence…** while the tool runs.
+
 ## 0.1.0
 
 The first release: Herald for bb, ported from the Paseo plugin of the same name (0.5.1).
@@ -27,7 +40,8 @@ The first release: Herald for bb, ported from the Paseo plugin of the same name 
 ### Changed from the Paseo plugin
 
 - The sentence is always the plain one built from the event. Having a model write it, as the Paseo
-  plugin could, is not part of this release.
+  plugin could, is not part of this release (it arrived in 0.2.0, as a command-line tool rather than a
+  helper agent).
 - The sentence sits above the composer instead of in the conversation; bb has no way for a plugin to add
   a row there.
 - The mobile app can speak, while it is open on screen and once *Test voice* has been pressed. It is off

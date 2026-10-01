@@ -142,6 +142,23 @@ export class AttentionStore {
     return current;
   }
 
+  /**
+   * Every sentence still marked as being written becomes its plain fallback.
+   * For a load: the tool that was writing it belonged to the instance before,
+   * and nothing is coming. Returns whether anything changed.
+   */
+  settlePending(): boolean {
+    let changed = false;
+    for (const [threadId, entry] of this.entries) {
+      if (entry.summary.status !== "pending") continue;
+      this.touched.add(threadId);
+      this.entries.set(threadId, { ...entry, summary: { status: "ready", text: entry.summary.fallback } });
+      changed = true;
+    }
+    if (changed) this.persist();
+    return changed;
+  }
+
   removeIf(threadId: string, predicate: (entry: AttentionEntry) => boolean): boolean {
     const current = this.entries.get(threadId);
     if (current === undefined) {

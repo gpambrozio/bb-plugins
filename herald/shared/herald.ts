@@ -19,12 +19,14 @@ export type AttentionReason = (typeof ATTENTION_REASONS)[number];
 export const AttentionReasonSchema = z.enum(ATTENTION_REASONS);
 
 /**
- * The entry's sentence. `ready` is announced; `off` is listed but never spoken
- * — the event kind is switched off, or the thread is a subagent its parent
- * speaks for.
+ * The entry's sentence. `ready` is announced; `pending` is being written by a
+ * model and becomes `ready` with its sentence, or with the plain `fallback`
+ * when that fails; `off` is listed but never spoken — the event kind is
+ * switched off, or the thread is a subagent its parent speaks for.
  */
 export const SummaryStateSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("ready"), text: z.string() }),
+  z.object({ status: z.literal("pending"), fallback: z.string() }),
   z.object({ status: z.literal("off"), fallback: z.string() }),
 ]);
 export type SummaryState = z.infer<typeof SummaryStateSchema>;

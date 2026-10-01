@@ -75,8 +75,10 @@ export class Announcer {
       this.seeded = true;
       return;
     }
+    // A sentence still being written is left for the list that brings it
+    // ready: counted as spoken only then, and spoken once.
     const fresh = entries
-      .filter((entry) => !this.spoken.has(entry.eventId))
+      .filter((entry) => !this.spoken.has(entry.eventId) && entry.summary.status !== "pending")
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     for (const entry of fresh) {
       this.spoken.add(entry.eventId);

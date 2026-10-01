@@ -12,7 +12,7 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import { rpcContract } from "./shared/contract";
 import { DEFAULT_STORED_CONFIG, ENTRIES_CHANNEL, StoredConfigSchema, VoicesConfigSchema, type StoredConfig } from "./shared/herald";
-import { SETTINGS } from "./shared/settings";
+import { customCommandSeed, sentenceSettingsOf, SETTINGS } from "./shared/settings";
 import { bbEvents, bbLiveness } from "./server/bb-ports";
 import { createHooks, type HeraldConfig } from "./server/hooks";
 import { kvBackend } from "./server/kv-backend";
@@ -21,6 +21,7 @@ import type { EventsPort } from "./server/ports";
 import { announceDrained, onOtherDrained } from "./server/reload-signal";
 import { listSayVoices, renderWithSay, sayAvailable } from "./server/say";
 import { AttentionStore } from "./server/store";
+import { SentenceWriter } from "./server/writer";
 
 export { rpcContract } from "./shared/contract";
 export type { RpcContract } from "./shared/contract";
@@ -35,16 +36,34 @@ export default async function plugin(bb: BbPluginApi) {
   await store.load().catch((error: unknown) => {
     bb.log.error(`Could not load saved entries: ${error instanceof Error ? error.message : String(error)}`);
   });
+  // A sentence the instance before this one was still writing is not coming:
+  // its tool died with it. The plain sentence stands.
+  store.settlePending();
   // The instance a reload replaces may still be writing; read again once it says it is done.
   const instance = randomUUID();
   const stopListening = onOtherDrained(bb.pluginId, instance, () => {
     store
       .reconcile()
-      .then(() => publish())
+      .then(() => {
+        store.settlePending();
+        publish();
+      })
       .catch((error: unknown) => {
         bb.log.error(`Could not re-read saved entries after a reload: ${error instanceof Error ? error.message : String(error)}`);
       });
   });
+
+  // When the tool becomes "custom" with nothing written yet, the command of
+  // the tool selected before is written in, so the user edits a working line.
+  settings.onChange((next, prev) => {
+    const seed = customCommandSeed(prev, next);
+    if (seed === null) return;
+    settings.experimental_set({ sentenceCommand: seed }).catch((error: unknown) => {
+      bb.log.warn(`Could not fill in the custom command: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  });
+
+  const writer = new SentenceWriter(bb.log);
 
   let events: EventsPort | null = null;
   let liveness: Liveness | null = null;
@@ -78,6 +97,7 @@ export default async function plugin(bb: BbPluginApi) {
         error: values.announceErrors,
       },
       announceSubagents: values.announceSubagents,
+      sentence: sentenceSettingsOf(values),
     };
   }
 
@@ -90,6 +110,8 @@ export default async function plugin(bb: BbPluginApi) {
       interruptedRecently: (threadId, withinMs) => eventsPort().interruptedRecently(threadId, withinMs),
     },
     publish,
+    // The tool runs here, on the bb server's machine; see AGENTS.md.
+    writeSentence: (command, prompt) => writer.write(command, prompt),
     log: bb.log,
   });
 
@@ -126,7 +148,10 @@ export default async function plugin(bb: BbPluginApi) {
 
   bb.onDispose(async () => {
     stopListening();
+    // Hooks first, so a tool killed next cannot land a sentence; the store
+    // then freezes with the entry still pending, for the next load to settle.
     hooks.dispose();
+    await writer.dispose();
     await store.shutdown();
     announceDrained(bb.pluginId, instance);
   });

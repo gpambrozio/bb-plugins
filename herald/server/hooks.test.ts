@@ -8,6 +8,7 @@ import { commandApproval, question, recordingLog, thread } from "./testing/fixtu
 const CONFIG: HeraldConfig = {
   announce: { question: true, plan: true, permission: true, finished: true, error: true },
   announceSubagents: false,
+  sentence: null,
 };
 
 interface FakeEvents extends EventsPort {
@@ -42,6 +43,7 @@ function setup(overrides: Partial<HookDeps> = {}, config: HeraldConfig = CONFIG)
     readConfig: async () => config,
     events,
     publish,
+    writeSentence: () => Promise.reject(new Error("no tool in these tests")),
     log,
     now: () => new Date(clock),
     ...overrides,

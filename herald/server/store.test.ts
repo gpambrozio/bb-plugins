@@ -327,3 +327,21 @@ describe("AttentionStore", () => {
     expect(log.lines.filter((line) => line.startsWith("error:"))).toHaveLength(1);
   });
 });
+
+describe("settlePending", () => {
+  it("turns every sentence still being written into its plain fallback, and says whether anything changed", async () => {
+    const backend = new FakeBackend();
+    const store = new AttentionStore(backend, recordingLog());
+    store.upsert(entry({ threadId: "t1", summary: { status: "pending", fallback: "Login fix finished." } }));
+    store.upsert(entry({ threadId: "t2", summary: { status: "ready", text: "Done." } }));
+    expect(store.settlePending()).toBe(true);
+    expect(store.get("t1")?.summary).toEqual({ status: "ready", text: "Login fix finished." });
+    expect(store.get("t2")?.summary).toEqual({ status: "ready", text: "Done." });
+    expect(store.settlePending()).toBe(false);
+    await store.flush();
+    expect((backend.saved as AttentionEntry[]).find((saved) => saved.threadId === "t1")?.summary).toEqual({
+      status: "ready",
+      text: "Login fix finished.",
+    });
+  });
+});

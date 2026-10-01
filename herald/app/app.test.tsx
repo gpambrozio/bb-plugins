@@ -174,6 +174,22 @@ describe("Herald's app", () => {
     expect((screen.getByLabelText("Read again") as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it("says the sentence is being written, on the card and above the composer, until it lands", async () => {
+    let current = [entry({ eventId: "t1:idle:20", summary: { status: "pending", fallback: "Login fix finished." } })];
+    const calls = { list: 0 };
+    const options = { rpc: rpc(() => current, calls), sidebarThreads: { status: "ready" as const, threads: [sidebarThread] } };
+    const bridge = renderSlot<object, RpcContract>({ component: HeraldBridge }, {}, options);
+    renderSlot<object, RpcContract>({ component: HeraldPanel }, {}, options);
+    renderSlot({ component: HeraldBanner }, {}, { ...options, composer: { scope: { kind: "thread", threadId: "t1" } } });
+    expect(await screen.findAllByText("Writing the sentence…")).toHaveLength(2);
+    // The card's button waits, disabled; the banner shows none until there is a sentence.
+    expect(screen.getAllByLabelText("Read again").map((button) => (button as HTMLButtonElement).disabled)).toEqual([true]);
+    current = [entry({ eventId: "t1:idle:20", summary: { status: "ready", text: "Login fix is done." } })];
+    await bridge.emitRealtime(ENTRIES_CHANNEL, { at: 4 });
+    expect(await screen.findAllByText("Login fix is done.")).toHaveLength(2);
+    expect(screen.queryByText("Writing the sentence…")).toBeNull();
+  });
+
   it("renders the settings section with the voices and nothing about a model", async () => {
     const calls = { list: 0 };
     renderSlot<object, RpcContract>({ component: HeraldSettingsSection }, {}, { rpc: rpc(() => [], calls) });
