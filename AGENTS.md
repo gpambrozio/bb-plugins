@@ -131,7 +131,8 @@ bb plugin types                  # repin the SDK to the running bb; --check in C
   devDependency and a `"build": "bb plugin build"` script.
 - **A failed reload keeps the previous instance running** and `bb plugin reload` exits 1 — the
   opposite of Paseo. Read the exit code and the logs; "it still works" does not mean the new code
-  loaded.
+  loaded. The new instance loads *before* the old one is disposed (the SDK's fake host does the same),
+  so a storage write the old one had queued may not have landed when the new one reads.
 - **Settings changes do not reload the plugin.** Subscribe with `onChange`.
 - `bb plugin remove` deletes the plugin's settings, secrets and schedules. To move a local plugin,
   install the new path instead.
@@ -160,7 +161,7 @@ not a subprocess's. The surface a port uses most:
 | Push to the app | `bb.realtime.publish(channel, payload)` — broadcast, not persisted; the app re-fetches on reconnect |
 | Long-running work | `bb.background.service(name, { start(signal) })` — sleeps must wake on abort or reload reports "degraded" |
 | Cron | `bb.background.schedule(name, "m h dom mon dow", fn)` — server-local time, only while loaded |
-| React to threads | `bb.events.on("thread.idle" \| "thread.failed" \| "interaction.pending" \| …, handler)` — observe only |
+| React to threads | `bb.events.on("thread.idle" \| "thread.failed" \| "interaction.pending" \| …, handler)` — observe only. There is no event for an interaction being *answered*: read `threads.interactions.get`, or `hasPendingInteraction` from `experimental_useSidebarThreads` in the app |
 | Gate a send | `bb.experimental_hooks.on("message.dispatch", …)` — fails closed, 10 s limit |
 | Settings | `bb.settings.define({...})` → `get()`, `experimental_set()`, `onChange()`; the host renders the form; `secret: true` never reaches the app |
 | Storage | `bb.storage.kv` (JSON, 256 KB per value) or `bb.storage.database()` (own SQLite) with append-only `bb.storage.migrate` |
@@ -197,8 +198,12 @@ and "the daemon's own file"; decide per value whether the user edits it in the h
 (settings) or the plugin owns it (storage).
 
 **Hidden threads replace helper agents.** `bb.sdk.threads.spawn({ visibility: "hidden", … })`
-keeps a background worker out of the sidebar. The plugin must `stop` it in a `finally` and archive
-it when done.
+keeps a background worker out of the sidebar and out of bb's unread attention. The plugin must `stop`
+it in a `finally` and archive it when done. Hidden is not silent: bb delivers a hidden thread's events
+to every plugin's `bb.events` handlers, the spawning plugin's included. Recognise your own by
+`thread.originPluginId === bb.pluginId`, which bb stamps on every thread spawned with `pluginMetadata`.
+Do not make a helper a child of the thread it works for: a child notifies its parent when it finishes,
+which puts a message in that thread (`herald`).
 
 ### Host entry — `bb.host`
 
@@ -221,7 +226,12 @@ export default definePluginApp((app) => {
 });
 ```
 
-Plain web React with the DOM lib — `document` and `window` are fine. Paseo contribution → bb slot:
+Plain web React with the DOM lib — `document` and `window` are fine, on every client: the desktop app is
+Electron and the mobile app is a native shell around the same web app in a WebView. Where behaviour must
+differ (audio needs a tap first in a browser tab and in the mobile app), bb's own plugins tell them apart
+by `window.bbDesktop` (desktop) and a `window.bb.native` bridge (mobile) — internals, not SDK. Work that
+must run while no page is open, such as `herald`'s announcer, belongs in `app.slots.experimental_appOverlay`,
+mounted once per window. Paseo contribution → bb slot:
 
 | Paseo | bb |
 | --- | --- |

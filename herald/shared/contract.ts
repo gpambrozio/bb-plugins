@@ -1,0 +1,56 @@
+/**
+ * The RPC contract between the app and the server. The server registers it;
+ * the app imports its type only — see `shared/herald.ts` for why.
+ */
+import { defineRpcContract } from "@get-bb/plugin-sdk";
+import { z } from "zod";
+
+import {
+  AttentionEntrySchema,
+  MAX_SPEECH_CHARS,
+  SpeechVoiceSchema,
+  StoredConfigSchema,
+  SummarizerConfigSchema,
+  VoicesConfigSchema,
+} from "./herald";
+
+export const rpcContract = defineRpcContract({
+  /** Every thread waiting on the user that Herald knows why for; see `server/liveness.ts`. */
+  list: {
+    input: z.object({}),
+    output: z.object({ entries: z.array(AttentionEntrySchema) }),
+  },
+  "config.get": {
+    input: z.object({}),
+    output: StoredConfigSchema,
+  },
+  /** Either half may be left out; what is given replaces that half whole. */
+  "config.set": {
+    input: z.object({
+      summarizer: SummarizerConfigSchema.optional(),
+      voices: VoicesConfigSchema.optional(),
+    }),
+    output: StoredConfigSchema,
+  },
+  /**
+   * The bb server Mac's `say` voices, and whether `say` is there at all. The
+   * app cannot run a command, but the server can, and its voices are better
+   * than a browser's; so the server renders the sentence and the app plays it.
+   */
+  "speech.voices": {
+    input: z.object({}),
+    output: z.object({ available: z.boolean(), voices: z.array(SpeechVoiceSchema) }),
+  },
+  "speech.render": {
+    input: z.object({
+      text: z.string().min(1).max(MAX_SPEECH_CHARS),
+      /** A `say` voice name, or empty for the Mac's default. */
+      voice: z.string().default(""),
+      /** A multiplier on the voice's natural pace. */
+      rate: z.number().min(0.5).max(2).default(1),
+    }),
+    output: z.object({ mimeType: z.string(), base64: z.string() }),
+  },
+});
+
+export type RpcContract = typeof rpcContract;
