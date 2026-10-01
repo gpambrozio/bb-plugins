@@ -11,7 +11,7 @@ import { randomUUID } from "node:crypto";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import { rpcContract } from "./shared/contract";
-import { CONFIG_CHANNEL, DEFAULT_STORED_CONFIG, ENTRIES_CHANNEL, StoredConfigSchema, VoicesConfigSchema, type StoredConfig } from "./shared/herald";
+import { DEFAULT_STORED_CONFIG, ENTRIES_CHANNEL, SentenceToolSchema, StoredConfigSchema, VoicesConfigSchema, type StoredConfig } from "./shared/herald";
 import { customCommandSeed, sentenceSettingsOf, SETTINGS } from "./shared/settings";
 import { bbEvents, bbLiveness } from "./server/bb-ports";
 import { createHooks, type HeraldConfig } from "./server/hooks";
@@ -53,22 +53,6 @@ export default async function plugin(bb: BbPluginApi) {
       });
   });
 
-  // When the tool becomes "custom" with nothing written yet, the command of
-  // the tool selected before is written in, so the user edits a working line;
-  // the open settings page is told to read it.
-  settings.onChange((next, prev) => {
-    storedConfig()
-      .then(async (current) => {
-        const seed = customCommandSeed(prev, next, current.sentenceCommand);
-        if (seed === null) return;
-        await bb.storage.kv.set(CONFIG_KEY, { ...current, sentenceCommand: seed });
-        publishOn(CONFIG_CHANNEL);
-      })
-      .catch((error: unknown) => {
-        bb.log.warn(`Could not fill in the custom command: ${error instanceof Error ? error.message : String(error)}`);
-      });
-  });
-
   const writer = new SentenceWriter(bb.log);
 
   let events: EventsPort | null = null;
@@ -76,26 +60,26 @@ export default async function plugin(bb: BbPluginApi) {
   const eventsPort = () => (events ??= bbEvents(bb.sdk, bb.log));
   const livenessOf = () => (liveness ??= new Liveness(bbLiveness(bb.sdk), bb.log));
 
-  function publishOn(channel: string): void {
+  function publish(): void {
     try {
-      bb.realtime.publish(channel, { at: Date.now() });
+      bb.realtime.publish(ENTRIES_CHANNEL, { at: Date.now() });
     } catch (error) {
       // After an unload the handle is stale; the clients re-read on reconnect anyway.
-      bb.log.warn(`Could not tell the app that ${channel} changed: ${error instanceof Error ? error.message : String(error)}`);
+      bb.log.warn(`Could not tell the app the entries changed: ${error instanceof Error ? error.message : String(error)}`);
     }
-  }
-
-  function publish(): void {
-    publishOn(ENTRIES_CHANNEL);
   }
 
   /** The stored configuration, each part falling back to its default when unreadable. */
   async function storedConfig(): Promise<StoredConfig> {
     const raw = await bb.storage.kv.get<Partial<StoredConfig>>(CONFIG_KEY);
     const voices = VoicesConfigSchema.safeParse(raw?.voices);
+    const tool = SentenceToolSchema.safeParse(raw?.sentenceTool);
+    const text = (value: unknown, fallback: string) => (typeof value === "string" ? value : fallback);
     return {
       voices: voices.success ? voices.data : { ...DEFAULT_STORED_CONFIG.voices },
-      sentenceCommand: typeof raw?.sentenceCommand === "string" ? raw.sentenceCommand : DEFAULT_STORED_CONFIG.sentenceCommand,
+      sentenceTool: tool.success ? tool.data : DEFAULT_STORED_CONFIG.sentenceTool,
+      sentenceCommand: text(raw?.sentenceCommand, DEFAULT_STORED_CONFIG.sentenceCommand),
+      sentencePrompt: text(raw?.sentencePrompt, DEFAULT_STORED_CONFIG.sentencePrompt),
     };
   }
 
@@ -110,7 +94,7 @@ export default async function plugin(bb: BbPluginApi) {
         error: values.announceErrors,
       },
       announceSubagents: values.announceSubagents,
-      sentence: sentenceSettingsOf(values, stored.sentenceCommand),
+      sentence: sentenceSettingsOf(values.writeWithModel, stored),
     };
   }
 
@@ -138,10 +122,16 @@ export default async function plugin(bb: BbPluginApi) {
   bb.rpc.register(rpcContract, {
     list: async () => ({ entries: await livenessOf().visible(store) }),
     "config.get": () => storedConfig(),
+    // Any part of the stored configuration; the rest is kept. When the tool
+    // becomes "custom" with nothing written yet, the command of the tool
+    // selected before is filled in, so the user edits a working line.
     "config.set": async (next) => {
-      const merged = StoredConfigSchema.parse({ ...(await storedConfig()), ...next });
-      await bb.storage.kv.set(CONFIG_KEY, merged);
-      return merged;
+      const current = await storedConfig();
+      const merged = StoredConfigSchema.parse({ ...current, ...next });
+      const seed = customCommandSeed(current, merged);
+      const saved = seed === null ? merged : { ...merged, sentenceCommand: seed };
+      await bb.storage.kv.set(CONFIG_KEY, saved);
+      return saved;
     },
     log: ({ level, message }) => {
       bb.log[level](`app: ${message}`);

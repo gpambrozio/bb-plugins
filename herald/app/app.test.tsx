@@ -10,7 +10,7 @@ import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { RpcContract } from "../shared/contract";
-import { CONFIG_CHANNEL, DEFAULT_STORED_CONFIG, ENTRIES_CHANNEL, type AttentionEntry } from "../shared/herald";
+import { DEFAULT_STORED_CONFIG, ENTRIES_CHANNEL, TOOL_COMMANDS, type AttentionEntry, type StoredConfig } from "../shared/herald";
 import { HeraldBanner } from "./banner";
 import { HeraldBridge } from "./bridge";
 import { HeraldPanel } from "./panel";
@@ -190,31 +190,43 @@ describe("Herald's app", () => {
     expect(screen.queryByText("Writing the sentence…")).toBeNull();
   });
 
-  it("renders the settings section with the voices and nothing about a model", async () => {
+  it("renders the settings section with the model controls together, and the voices", async () => {
     const calls = { list: 0 };
     renderSlot<object, RpcContract>({ component: HeraldSettingsSection }, {}, { rpc: rpc(() => [], calls) });
     await screen.findByText("Zoe (Premium)");
-    expect(screen.queryByLabelText("Summary prompt")).toBeNull();
-    expect(screen.queryByText(/model/i)).toBeNull();
+    expect((screen.getByLabelText("Tool that writes the sentence") as HTMLSelectElement).value).toBe("claude");
     expect(screen.queryByLabelText("Custom command")).toBeNull();
+    expect((screen.getByLabelText("Sentence prompt") as HTMLTextAreaElement).value).toBe(DEFAULT_STORED_CONFIG.sentencePrompt);
   });
 
-  it("shows the custom command only when that is the tool, saves it, and picks up the seeded one", async () => {
+  it("shows the custom command only while that is the tool, seeded by the server, and saves it and the prompt", async () => {
     const calls = { list: 0 };
-    let stored = { ...DEFAULT_STORED_CONFIG, sentenceCommand: "" };
+    let stored: StoredConfig = { ...DEFAULT_STORED_CONFIG };
     const backend = {
       ...rpc(() => [], calls),
       "config.get": () => stored,
-      "config.set": (input: { sentenceCommand?: string }) => (stored = { ...stored, ...input }),
+      "config.set": (input: Partial<StoredConfig>) => {
+        // The server seeds a blank custom command from the tool before.
+        const seeded = input.sentenceTool === "custom" && stored.sentenceTool !== "custom" && stored.sentenceCommand === "" ? TOOL_COMMANDS[stored.sentenceTool as "claude"] : undefined;
+        stored = { ...stored, ...input, ...(seeded === undefined ? {} : { sentenceCommand: seeded }) };
+        return stored;
+      },
     };
-    const slot = renderSlot<object, RpcContract>({ component: HeraldSettingsSection }, {}, { rpc: backend, settings: { sentenceTool: "custom" } });
-    await screen.findByText("Zoe (Premium)");
+    renderSlot<object, RpcContract>({ component: HeraldSettingsSection }, {}, { rpc: backend });
+    const select = (await screen.findByLabelText("Tool that writes the sentence")) as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: "custom" } });
     const field = (await screen.findByLabelText("Custom command")) as HTMLTextAreaElement;
+    await waitFor(() => expect(field.value).toBe(TOOL_COMMANDS.claude));
     fireEvent.change(field, { target: { value: "my-llm --fast" } });
     fireEvent.click(screen.getByText("Save command"));
     await waitFor(() => expect(stored.sentenceCommand).toBe("my-llm --fast"));
-    stored = { ...stored, sentenceCommand: "claude -p" };
-    await slot.emitRealtime(CONFIG_CHANNEL, { at: 1 });
-    await waitFor(() => expect((screen.getByLabelText("Custom command") as HTMLTextAreaElement).value).toBe("claude -p"));
+    const prompt = screen.getByLabelText("Sentence prompt") as HTMLTextAreaElement;
+    fireEvent.change(prompt, { target: { value: "Say: {{headline}}" } });
+    fireEvent.click(screen.getByText("Save prompt"));
+    await waitFor(() => expect(stored.sentencePrompt).toBe("Say: {{headline}}"));
+    fireEvent.click(screen.getByText("Reset to the default prompt"));
+    await waitFor(() => expect(stored.sentencePrompt).toBe(DEFAULT_STORED_CONFIG.sentencePrompt));
+    fireEvent.change(select, { target: { value: "claude" } });
+    await waitFor(() => expect(screen.queryByLabelText("Custom command")).toBeNull());
   });
 });

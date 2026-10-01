@@ -8,8 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import plugin from "./server";
 import type { AttentionEntry } from "./shared/herald";
-import { CONFIG_CHANNEL, ENTRIES_CHANNEL } from "./shared/herald";
-import { TOOL_COMMANDS } from "./shared/settings";
+import { DEFAULT_STORED_CONFIG, ENTRIES_CHANNEL, TOOL_COMMANDS } from "./shared/herald";
 
 /** A "tool" that answers with whether the prompt carried the request: real process, no model. */
 const ECHO_TOOL = `"${process.execPath}" -e "let s='';process.stdin.on('data',c=>s+=c).on('end',()=>process.stdout.write(s.includes('Fix the login bug')?'Login fix is done; nothing is left for you.':'No request seen.'))"`;
@@ -113,9 +112,9 @@ describe("herald server", () => {
 
   it("keeps the voices it is given, and falls back to defaults", async () => {
     const { harness } = await load();
-    expect(await harness.callRpc("config.get", {})).toEqual({ voices: { say: "", web: "" }, sentenceCommand: "" });
+    expect(await harness.callRpc("config.get", {})).toEqual(DEFAULT_STORED_CONFIG);
     await harness.callRpc("config.set", { voices: { say: "Zoe (Premium)", web: "" } });
-    expect(await harness.callRpc("config.get", {})).toEqual({ voices: { say: "Zoe (Premium)", web: "" }, sentenceCommand: "" });
+    expect(await harness.callRpc("config.get", {})).toEqual({ ...DEFAULT_STORED_CONFIG, voices: { say: "Zoe (Premium)", web: "" } });
   });
 
   it("removes the entry when the thread starts a new turn", async () => {
@@ -137,8 +136,8 @@ describe("herald server", () => {
   });
 
   it("has the configured tool write the sentence, listing the plain one while it does", async () => {
-    const { harness } = await load({ writeWithModel: true, sentenceTool: "custom" });
-    await harness.callRpc("config.set", { sentenceCommand: ECHO_TOOL });
+    const { harness } = await load({ writeWithModel: true });
+    await harness.callRpc("config.set", { sentenceTool: "custom", sentenceCommand: ECHO_TOOL });
     await harness.emitThreadEvent("thread.idle", { thread: USER_THREAD, lastAssistantText: "I fixed auth.ts." });
     await settle();
     const [pending] = entriesOf(await harness.callRpc("list", {}));
@@ -152,8 +151,8 @@ describe("herald server", () => {
   });
 
   it("settles a sentence still being written when it loads again", async () => {
-    const host = await load({ writeWithModel: true, sentenceTool: "custom" });
-    await host.harness.callRpc("config.set", { sentenceCommand: SLOW_TOOL });
+    const host = await load({ writeWithModel: true });
+    await host.harness.callRpc("config.set", { sentenceTool: "custom", sentenceCommand: SLOW_TOOL });
     await host.harness.emitThreadEvent("thread.idle", { thread: USER_THREAD, lastAssistantText: "Done." });
     await settle();
     expect(entriesOf(await host.harness.callRpc("list", {}))[0]?.summary.status).toBe("pending");
@@ -163,18 +162,22 @@ describe("herald server", () => {
     expect(entry?.summary).toEqual({ status: "ready", text: "Login fix finished. Done." });
   });
 
-  it("starts the custom command from the tool selected before, and tells the settings page", async () => {
-    const { harness } = await load({ sentenceTool: "codex" });
-    await harness.setSettings({ sentenceTool: "custom" });
-    await settle();
-    expect(await harness.callRpc("config.get", {})).toMatchObject({ sentenceCommand: TOOL_COMMANDS.codex });
-    expect(harness.realtimeSignals.filter((signal) => signal.channel === CONFIG_CHANNEL)).toHaveLength(1);
+  it("starts the custom command from the tool selected before, in the answer to the save itself", async () => {
+    const { harness } = await load();
+    await harness.callRpc("config.set", { sentenceTool: "codex" });
+    expect(await harness.callRpc("config.set", { sentenceTool: "custom" })).toMatchObject({ sentenceTool: "custom", sentenceCommand: TOOL_COMMANDS.codex });
+    // Cleared while on custom: stays blank.
+    expect(await harness.callRpc("config.set", { sentenceCommand: "" })).toMatchObject({ sentenceCommand: "" });
   });
 
-  it("keeps the voices when the custom command is saved, and the other way round", async () => {
+  it("keeps the voices when the model settings are saved, and the other way round", async () => {
     const { harness } = await load();
     await harness.callRpc("config.set", { voices: { say: "Zoe (Premium)", web: "" } });
-    await harness.callRpc("config.set", { sentenceCommand: "my-llm" });
-    expect(await harness.callRpc("config.get", {})).toEqual({ voices: { say: "Zoe (Premium)", web: "" }, sentenceCommand: "my-llm" });
+    await harness.callRpc("config.set", { sentencePrompt: "Say: {{headline}}" });
+    expect(await harness.callRpc("config.get", {})).toEqual({
+      ...DEFAULT_STORED_CONFIG,
+      voices: { say: "Zoe (Premium)", web: "" },
+      sentencePrompt: "Say: {{headline}}",
+    });
   });
 });

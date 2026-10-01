@@ -61,29 +61,32 @@ On the plugin's settings page (Settings → Plugins → Herald):
 - **Voices** — the Mac voice and the browser voice, and *Test voice*.
 - **Write each sentence with a model** — off by default. On, a command-line tool on the Mac running bb
   writes each sentence from the event, the request and the agent's reply, so you hear "Login fix is
-  done; nothing is left for you" rather than the start of the reply. See below.
+  done; nothing is left for you" rather than the start of the reply. Which tool, and the prompt, are
+  under **Model-written sentences** further down the same page. See below.
 
 ## Model-written sentences
 
 With the switch on, each announcement runs the tool you pick once, as a plain process on the Mac running
-bb, with the prompt on its standard input. The tool must be installed and logged in there. The presets:
+bb, with the prompt on its standard input. The tool must be installed and logged in there. The tool, the
+custom command and the prompt sit together in the *Model-written sentences* section of Herald's settings
+page, below bb's own form. The presets:
 
 - **claude** — Claude Code, with no tools, no settings-file hooks and no MCP servers, one turn of the
   Haiku model at low effort.
 - **codex** — OpenAI Codex, read-only, nothing saved to disk.
 - **gemini** — Gemini CLI, in its read-only plan mode.
-- **custom** — a command of your own, written under *Custom command* further down the same settings
-  page; that section appears only while custom is the tool. Choosing custom fills it in with the
-  command of the tool you had selected, to start from. The prompt arrives on standard input; the last
-  paragraph of the standard output becomes the sentence. No shell runs the command: quote as you would
-  in one, but `~` and `$VARIABLES` are not expanded, and it sees the bb server's environment.
+- **custom** — a command of your own. A *Custom command* field appears under the tool only while custom
+  is selected, filled in with the command of the tool you had selected, to start from. The prompt
+  arrives on standard input; the last paragraph of the standard output becomes the sentence. No shell
+  runs the command: quote as you would in one, but `~` and `$VARIABLES` are not expanded, and it sees
+  the bb server's environment.
 
 Only the Claude preset runs with no tools at all. Codex's read-only sandbox also cuts the network;
 Gemini's plan mode keeps its read and web tools, so an instruction hidden in an agent's reply could in
 principle have it read a file and send it somewhere. Pick claude if that matters to you.
 
-The *Sentence prompt* is yours to edit; it has placeholders for the thread, project, folder, event,
-headline, detail, the request and the agent's output.
+The *Sentence prompt* is yours to edit, with a button to get the default back; it has placeholders for
+the thread, project, folder, event, headline, detail, the request and the agent's output.
 
 While the tool runs, the row and the banner say *Writing the sentence…*; the plain sentence is spoken
 instead if the tool fails, is missing, or takes longer than 20 seconds. The prompt includes the agent's

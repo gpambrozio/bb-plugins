@@ -32,8 +32,8 @@ export default definePluginApp((app) => {
 
   app.slots.settingsSection({
     id: "summaries",
-    title: "Summaries and voices",
-    description: "The model and prompt that write each sentence, and the voices that say it.",
+    title: "Model-written sentences and voices",
+    description: "Which tool writes each sentence and what it is asked, when the switch above is on; and the voices that say it.",
     component: HeraldSettingsSection,
   });
 });
