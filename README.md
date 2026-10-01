@@ -11,7 +11,7 @@ Each port is tracked by its own issue.
 | [`github-board`](github-board) | Your GitHub issues, pull requests and discussions on one sidebar board. | [Ported — 0.1.0 (#2)](https://github.com/gpambrozio/bb-plugins/issues/2) |
 | [`launchd-jobs`](launchd-jobs) | Schedules shell commands on your Mac through launchd. | [Ported — 0.1.0 (#3)](https://github.com/gpambrozio/bb-plugins/issues/3) |
 | [`herald`](herald) | Speaks one sentence when an agent needs you, and lists what is waiting. | [Ported — 0.1.0 (#4)](https://github.com/gpambrozio/bb-plugins/issues/4) |
-| `model-pricing` | What every model costs, across five providers, in one table. | [Not started (#5)](https://github.com/gpambrozio/bb-plugins/issues/5) |
+| [`model-pricing`](model-pricing) | What every model costs, across five providers, in one table. | [Ported — 0.1.0 (#5)](https://github.com/gpambrozio/bb-plugins/issues/5) |
 | [`firstmate-crew`](firstmate-crew) | Talk to one first mate; it runs a crew of agents in their own worktrees. | [Ported — 0.1.0 (#6)](https://github.com/gpambrozio/bb-plugins/issues/6) |
 
 ## Install
