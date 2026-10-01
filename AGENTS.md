@@ -95,8 +95,12 @@ There is no separate manifest file. The `bb` key carries it:
 - Optional: `app` (frontend entry), `host` (a Node entry run by enrolled host daemons — see below),
   `skills` (default `skills/`; every directory with a `SKILL.md` becomes a skill imported into agent
   threads), `themes`.
-- `icon` is a Lucide-style name. An unknown name falls back to a default icon rather than failing
-  the load, so a typo is silent — look at it.
+- `icon` is a name from bb's own icon set, which is Hugeicons-backed and much smaller than Lucide
+  (`TimeSchedule`, `ArrowReloadHorizontal`, `Spinner`, `Github`, `Play`, `Trash2`…). Many Lucide
+  names (`CalendarClock`, `RefreshCw`, `Loader2`) are not in it. The list is in
+  `packages/shared-ui/src/components/ui/icon.tsx` and `icon-registry.ts` in `get-bb/bb`. An unknown
+  name falls back to a default icon rather than failing the load, here and in `experimental_Icon`, so
+  a typo is silent — check the name against that list.
 - Declare only what the plugin implements.
 
 `PLUGIN_OVERVIEW.md` beside `package.json` is the long store listing (under 4000 characters, no
@@ -114,7 +118,8 @@ bb plugin reload <id>            # by hand
 bb plugin logs <id> -f
 bb plugin list                   # status, services, schedules, handler timings
 bb plugin rpc list <id>          # and `inspect`, `call <id> <method> --input-file`; list and inspect show
-                                 # only methods registered with `experimental_discoverable`, `call` reaches all
+                                 # only methods registered with `experimental_discoverable`, `call` reaches all;
+                                 # without --input-file `call` sends null, so pass a file holding `{}`
 bb plugin types                  # repin the SDK to the running bb; --check in CI
 ```
 
@@ -204,12 +209,23 @@ it when done.
 
 `server.ts` runs on the machine running the bb server. Anything that must touch *a specific
 machine* — `launchctl`, `say`, a checkout on an enrolled host — belongs in a `bb.host` entry
-(`experimental_defineHostEntry` from `@get-bb/plugin-sdk/host`), called from the server with
+(`experimental_defineHostEntry`), called from the server with
 `bb.hosts.experimental_client({ contract }).call(method, input, { hostId })`. It is bundled as a
-self-contained Node 22 ESM file and delivered to the host daemon. Importing an SDK subpath such as
-`/host` needs the SDK as a real `dependency`. When everything runs on one Mac, skipping `bb.host`
-works, but it is the wrong machine the day a remote host is enrolled — say which one you chose in the
-plugin's `AGENTS.md`.
+self-contained Node 22 ESM file and delivered to the host daemon. Import `experimental_defineHostEntry`
+and `defineRpcContract` from the SDK **root**: the host builder stubs those, so the SDK stays an exact
+devDependency. Importing an SDK subpath such as `/host` needs the SDK as a real `dependency`. When
+everything runs on one Mac, skipping `bb.host` works, but it is the wrong machine the day a remote host
+is enrolled — say which one you chose in the plugin's `AGENTS.md`. `launchd-jobs` is the worked example.
+
+- `context.experimental_paths.dataDir` is `<daemon data dir>/plugins/<id>/host-data/` —
+  `~/.bb/plugins/<id>/host-data/` on the server's Mac. It survives reloads; the host manager deletes
+  only the worker's `tempDir`. It is the place for files a host process outside bb must find by path,
+  such as a script launchd runs.
+- A native watch (`context.experimental_watch`) and `context.experimental_emitSignal` keep working
+  after the call that set them up has returned; the server receives the signal through
+  `experimental_onSignal`. An active watch keeps the worker alive, so give it an expiry.
+- The worker stops after five idle minutes. A server-side poll more frequent than that keeps it running
+  for good; say so where you add one.
 
 ### App — `app.tsx`
 
@@ -225,7 +241,7 @@ Plain web React with the DOM lib — `document` and `window` are fine. Paseo con
 
 | Paseo | bb |
 | --- | --- |
-| `addSurface` + `addSidebarItem` | `app.slots.navPanel` (own sidebar entry and route `/plugins/<id>/<path>/*`) |
+| `addSurface` + `addSidebarItem` | `app.slots.navPanel` (own sidebar entry and route `/plugins/<id>/<path>/*`); a live count beside the row is its `experimental_sidebarAccessory` component, not a re-registration |
 | `addWorkspacePanel` (agent context) | `app.slots.threadPanelAction` (gets `threadId`) |
 | `addSettingsScreen` | host-rendered form from `bb.settings.define`, plus `app.slots.settingsSection` for anything custom |
 | `addCommandCenterItem` | `app.commands.register` — its `run` gets no navigation; hand it `useBbNavigate()` from an `app.slots.experimental_appOverlay` component that renders nothing (`github-board/app.tsx`) |

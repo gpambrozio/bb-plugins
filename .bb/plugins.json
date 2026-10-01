@@ -4,6 +4,7 @@
   "name": "gpambrozio-bb-plugins",
   "plugins": [
     { "name": "github-board", "source": "./github-board" },
-    { "name": "firstmate-crew", "source": "./firstmate-crew" }
+    { "name": "firstmate-crew", "source": "./firstmate-crew" },
+    { "name": "launchd-jobs", "source": "./launchd-jobs" }
   ]
 }
