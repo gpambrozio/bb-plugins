@@ -1,17 +1,27 @@
 /**
- * The one thing two instances of this plugin tell each other. A reload starts
- * the new instance before it disposes of the old one, so the new one reads
- * storage while the old one may still be writing its last entries. When the
- * old one has flushed, it says so here, and the new one reads storage again.
+ * What two instances of this plugin tell each other. A reload starts the new
+ * instance before it disposes of the old one, so:
+ *
+ * - the new one reads storage while the old one may still be writing its last
+ *   entries. When the old one has flushed and closed its storage, it says so
+ *   here, and the new one reads storage again;
+ * - the old one may still own summary helpers when its unload deadline passes.
+ *   It hands each one over here, and the new one stops and deletes it.
  *
  * Both instances run in the bb server's one process, so the channel is an
  * `EventTarget` on `globalThis`, keyed by plugin id. Should bb ever run them
  * apart, the signal simply never arrives and nothing is worse than before.
  */
 const DRAINED = "drained";
+const HANDED_OVER = "helper-handed-over";
 
 interface DrainedDetail {
   instance: string;
+}
+
+interface HandedOverDetail {
+  instance: string;
+  helperId: string;
 }
 
 function channel(pluginId: string): EventTarget {
@@ -21,7 +31,23 @@ function channel(pluginId: string): EventTarget {
   return holder[key];
 }
 
-/** Says this instance has flushed everything it will ever write. */
+/** Gives a summary helper this instance can no longer put away to whichever instance is live. */
+export function handOverHelper(pluginId: string, instance: string, helperId: string): void {
+  channel(pluginId).dispatchEvent(new CustomEvent<HandedOverDetail>(HANDED_OVER, { detail: { instance, helperId } }));
+}
+
+/** Calls `listener` with each helper another instance hands over; returns the unsubscribe. */
+export function onHelperHandedOver(pluginId: string, instance: string, listener: (helperId: string) => void): () => void {
+  const target = channel(pluginId);
+  const handler = (event: Event) => {
+    const detail = (event as CustomEvent<HandedOverDetail>).detail;
+    if (detail !== undefined && detail.instance !== instance) listener(detail.helperId);
+  };
+  target.addEventListener(HANDED_OVER, handler);
+  return () => target.removeEventListener(HANDED_OVER, handler);
+}
+
+/** Says this instance has flushed and closed its storage: it will write nothing more. */
 export function announceDrained(pluginId: string, instance: string): void {
   channel(pluginId).dispatchEvent(new CustomEvent<DrainedDetail>(DRAINED, { detail: { instance } }));
 }

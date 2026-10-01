@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_SUMMARY_PROMPT } from "../shared/herald";
 import { HelperOutcomes, type HelperOutcome } from "./helpers";
 import type { HelperPort, HelperSpawn } from "./ports";
-import { HELPER_TITLE, buildPrompt, parseSummaryText, renderPrompt, summarize, type SummarizerDeps, type SummaryRequest } from "./summarize";
+import { HELPER_TITLE, MAX_SUMMARY_CHARS, buildPrompt, parseSummaryText, renderPrompt, summarize, type SummarizerDeps, type SummaryRequest } from "./summarize";
 import { recordingLog } from "./testing/fixtures";
 
 const request: SummaryRequest = {
@@ -93,6 +93,7 @@ describe("parseSummaryText", () => {
     expect(parseSummaryText('Here you go:\n{"speech": "Done.", "note": "x"}')).toBe("Done.");
     expect(parseSummaryText("```\nJust prose in a fence.\n```")).toBe("Just prose in a fence.");
     expect(parseSummaryText("Login fix finished the work. Nothing is left.")).toBe("Login fix finished the work.");
+    expect(parseSummaryText(JSON.stringify({ speech: "word ".repeat(1000) })).length).toBeLessThanOrEqual(MAX_SUMMARY_CHARS);
     expect(() => parseSummaryText("   ")).toThrow("returned nothing");
     expect(() => parseSummaryText(null)).toThrow("returned nothing");
   });
@@ -123,6 +124,9 @@ function fakeHelpers(options: { failStop?: boolean; failDelete?: boolean } = {})
     async delete(id) {
       calls.push(`delete:${id}`);
       if (options.failDelete === true) throw new Error("refused");
+    },
+    async listLeftovers() {
+      return [];
     },
   };
 }

@@ -52,6 +52,8 @@ export interface HookDeps {
   now?: () => Date;
   /** How many helpers may be writing at once; more threads than this wait their turn. */
   maxConcurrent?: number;
+  /** How long `drain` waits; `DRAIN_TIMEOUT_MS` unless a test says otherwise. */
+  drainTimeoutMs?: number;
 }
 
 /** A second `thread.idle` for the same turn inside this window is a repeat, not a new turn. */
@@ -90,9 +92,10 @@ export interface Hooks {
   gone(thread: ThreadDto): void;
   /**
    * Stops taking events, drops the queue, and resolves once every running
-   * summary has put its helper away (or `DRAIN_TIMEOUT_MS` has passed).
+   * summary has put its helper away — true — or `DRAIN_TIMEOUT_MS` has
+   * passed with some still running — false.
    */
-  drain(): Promise<void>;
+  drain(): Promise<boolean>;
 }
 
 export function createHooks(deps: HookDeps): Hooks {
@@ -439,14 +442,15 @@ export function createHooks(deps: HookDeps): Hooks {
       disposed = true;
       queue.length = 0;
       let timer: ReturnType<typeof setTimeout> | undefined;
-      const timeout = new Promise<void>((resolve) => {
+      const timeout = new Promise<boolean>((resolve) => {
         timer = setTimeout(() => {
           deps.log.warn(`${inFlight.size} summaries were still putting their helpers away at unload.`);
-          resolve();
-        }, DRAIN_TIMEOUT_MS);
+          resolve(false);
+        }, deps.drainTimeoutMs ?? DRAIN_TIMEOUT_MS);
       });
-      await Promise.race([Promise.allSettled([...inFlight]).then(() => undefined), timeout]);
+      const drained = await Promise.race([Promise.allSettled([...inFlight]).then(() => true), timeout]);
       clearTimeout(timer);
+      return drained;
     },
   };
 }

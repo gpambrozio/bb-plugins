@@ -466,6 +466,17 @@ describe("createHooks", () => {
     expect(store.get("t1")?.eventId).toBe("t1:interaction:newer");
   });
 
+  it("says the start of a huge command, and keeps all of it on the card", async () => {
+    const { hooks, store } = setup({}, { ...CONFIG, modelSummaries: false });
+    const command = `echo ${"x".repeat(3000)}`;
+    await hooks.interactionPending(thread(), commandApproval(command));
+    const entry = store.get("t1");
+    expect(entry?.detail).toBe(command);
+    const spoken = entry?.summary.status === "ready" ? entry.summary.text : "";
+    expect(spoken.startsWith("Login fix is asking for permission. Wants to run a command Command: echo xxx")).toBe(true);
+    expect(spoken.length).toBeLessThan(500);
+  });
+
   it("announces the plain sentence without a helper when model summaries are off", async () => {
     const { hooks, store, summarize } = setup({}, { ...CONFIG, modelSummaries: false });
     await hooks.interactionPending(thread(), question());

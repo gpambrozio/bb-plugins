@@ -144,14 +144,23 @@ export function displayName(source: { projectName: string | null; threadTitle: s
 }
 
 /**
+ * How much of a name, a headline or a detail the plain sentence says. A
+ * permission can carry a command kilobytes long; the card keeps all of it,
+ * the voice says the start.
+ */
+export const SPOKEN_NAME_MAX = 80;
+export const SPOKEN_PART_MAX = 160;
+
+/**
  * What is said when no model wrote a summary: the event kind stated plainly,
- * with the headline and whatever detail there is. Deliberately dull — it has
- * to be right without having read anything.
+ * with the start of the headline and of whatever detail there is. Deliberately
+ * dull — it has to be right without having read anything — and short, since it
+ * is spoken (under 500 characters whatever the event carried).
  */
 export function fallbackSpeech(source: SpeechSource): string {
-  const name = displayName(source) ?? "A thread";
-  const headline = plainText(source.headline);
-  const detail = source.detail === null ? "" : plainText(source.detail);
+  const name = preview(displayName(source) ?? "A thread", SPOKEN_NAME_MAX);
+  const headline = preview(source.headline, SPOKEN_PART_MAX);
+  const detail = source.detail === null ? "" : preview(source.detail, SPOKEN_PART_MAX);
   switch (source.reason) {
     case "question":
       return `${name} has a question: ${headline}${detail === "" ? "" : ` Options: ${detail}.`}`;

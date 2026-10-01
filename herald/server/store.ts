@@ -47,6 +47,9 @@ export class AttentionStore {
    */
   private readonly deferredRemovals = new Map<string, Array<(entry: AttentionEntry) => boolean>>();
 
+  /** Set once the plugin unloads: storage is the replacement's from then on. */
+  private closed = false;
+
   /** `backend === null` keeps everything in memory. */
   constructor(
     private readonly backend: StoreBackend | null,
@@ -64,8 +67,12 @@ export class AttentionStore {
   }
 
   async load(): Promise<void> {
-    if (this.backend === null) return;
-    const run = this.read(this.backend);
+    const backend = this.backend;
+    if (backend === null) return;
+    // After any write already under way: a read in the middle of one mixes
+    // the two, and the kv backend's bookkeeping then deletes rows the read
+    // just found. Writes queued from here on wait for the read instead.
+    const run = this.writes.then(() => this.read(backend));
     // Never rejects, so a failed read cannot wedge the write chain behind it.
     this.loading = run.catch(() => {});
     try {
@@ -77,13 +84,11 @@ export class AttentionStore {
 
   private async read(backend: StoreBackend): Promise<void> {
     const stored = await backend.read();
-    let dropped = false;
     const seen = new Set<string>();
     for (const item of stored) {
       const parsed = AttentionEntrySchema.safeParse(item);
       if (!parsed.success) {
         this.log.warn(`Dropping an unreadable saved entry: ${parsed.error.message}`);
-        dropped = true;
         continue;
       }
       const entry = parsed.data;
@@ -92,7 +97,6 @@ export class AttentionStore {
       if (this.touched.has(entry.threadId)) continue;
       const held = this.deferredRemovals.get(entry.threadId);
       if (held !== undefined && held.some((matches) => matches(entry))) {
-        dropped = true;
         continue;
       }
       this.entries.set(
@@ -114,11 +118,11 @@ export class AttentionStore {
     for (const threadId of [...this.entries.keys()]) {
       if (!seen.has(threadId) && !this.touched.has(threadId)) {
         this.entries.delete(threadId);
-        dropped = true;
       }
     }
-    // Nothing else is going to write the dropped rows out of storage.
-    if (dropped) this.persist();
+    // Mirror the merged map — rows dropped above, rows this instance changed
+    // while the other one was writing. Unchanged rows cost nothing.
+    this.persist();
     this.touched.clear();
     this.deferredRemovals.clear();
   }
@@ -179,6 +183,15 @@ export class AttentionStore {
     return true;
   }
 
+  /**
+   * Stops writing to storage; on unload, after `flush`. A summary still
+   * settling after that changes only this instance's memory, never what the
+   * replacement has read.
+   */
+  close(): void {
+    this.closed = true;
+  }
+
   /** Resolves once every write issued so far has landed; for tests and unload. */
   flush(): Promise<void> {
     return this.writes;
@@ -191,7 +204,7 @@ export class AttentionStore {
    */
   private persist(): void {
     const backend = this.backend;
-    if (backend === null) return;
+    if (backend === null || this.closed) return;
     const loaded = this.loading ?? Promise.resolve();
     this.writes = this.writes
       .then(() => loaded)

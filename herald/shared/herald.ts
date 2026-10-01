@@ -62,17 +62,24 @@ export const AttentionEntrySchema = z.object({
 });
 export type AttentionEntry = z.infer<typeof AttentionEntrySchema>;
 
-/** What is said for an entry, or null when there is nothing to say yet or ever. */
+/**
+ * What is said for an entry, or null when there is nothing to say yet or ever.
+ * Never longer than the server will render, whatever an older entry stored.
+ */
 export function speechText(entry: AttentionEntry): string | null {
   switch (entry.summary.status) {
     case "ready":
-      return entry.summary.text;
+      return clipSpeech(entry.summary.text);
     case "failed":
-      return entry.summary.fallback;
+      return clipSpeech(entry.summary.fallback);
     case "pending":
     case "off":
       return null;
   }
+}
+
+function clipSpeech(text: string): string {
+  return text.length <= MAX_SPEECH_CHARS ? text : `${text.slice(0, MAX_SPEECH_CHARS - 1).trimEnd()}…`;
 }
 
 // ---------------------------------------------------------------------------

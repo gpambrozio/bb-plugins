@@ -132,7 +132,7 @@ export function bbLiveness(sdk: PluginBbSdk): LivenessPort {
  * from a repository, so it needs no checkout, and the personal workspace
  * needs no machine but the server's own.
  */
-export function bbHelpers(sdk: PluginBbSdk): HelperPort {
+export function bbHelpers(sdk: PluginBbSdk, pluginId: string): HelperPort {
   let personalProjectId: string | null = null;
 
   async function personalProject(): Promise<string> {
@@ -175,6 +175,14 @@ export function bbHelpers(sdk: PluginBbSdk): HelperPort {
     },
     async delete(threadId) {
       await sdk.threads.delete({ threadId, childThreadsConfirmed: true });
+    },
+    async listLeftovers(createdBefore) {
+      // Everything this plugin spawns is a helper, and only helpers are hidden.
+      const threads = await sdk.threads.list({ originPluginId: pluginId, includeHidden: true, archived: false });
+      return threads
+        .filter((thread) => thread.visibility === "hidden" && thread.archivedAt === null && thread.deletedAt === null)
+        .filter((thread) => thread.createdAt < createdBefore)
+        .map((thread) => thread.id);
     },
   };
 }

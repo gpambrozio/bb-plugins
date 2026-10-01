@@ -5,9 +5,10 @@
  * Nothing here talks to a running bb.
  */
 import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import plugin from "./server";
+import { DRAIN_TIMEOUT_MS } from "./server/hooks";
 import type { AttentionEntry } from "./shared/herald";
 import { DEFAULT_SUMMARIZER, ENTRIES_CHANNEL } from "./shared/herald";
 
@@ -191,6 +192,44 @@ describe("herald server", () => {
     expect(harness.sdk.callsTo("threads.spawn")).toEqual([]);
     const [entry] = entriesOf(await harness.callRpc("list", {}));
     expect(entry?.summary).toEqual({ status: "ready", text: "Login fix finished. I fixed auth.ts.", model: "plain" });
+  });
+
+  it("has the new instance put away a helper whose spawn answers only after the unload deadline", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      let spawned: () => void = () => {};
+      const host = await load({}, () => new Promise<void>((resolve) => (spawned = resolve)));
+      await host.harness.emitThreadEvent("thread.idle", { thread: USER_THREAD, lastAssistantText: "Done." });
+      await vi.advanceTimersByTimeAsync(0);
+      const reloading = host.harness.lifecycle.reload(plugin);
+      // The spawn hangs past the drain deadline; unload gives up waiting and returns.
+      await vi.advanceTimersByTimeAsync(DRAIN_TIMEOUT_MS + 100);
+      const replacement = await reloading;
+      expect(host.harness.sdk.callsTo("threads.stop")).toEqual([]);
+      // Then the spawn answers, through the old instance, whose SDK is stale by now:
+      // the replacement puts the helper away with its own.
+      spawned();
+      for (let i = 0; i < 10; i += 1) await vi.advanceTimersByTimeAsync(0);
+      expect(host.harness.sdk.callsTo("threads.stop")).toEqual([]);
+      expect(replacement.harness.sdk.callsTo("threads.stop")).toEqual([[{ threadId: "thr_helper" }]]);
+      expect(replacement.harness.sdk.callsTo("threads.delete")).toEqual([[{ threadId: "thr_helper", childThreadsConfirmed: true }]]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("puts away leftover helpers from before it started, and none of its own", async () => {
+    const host = await load();
+    host.harness.sdk.stub("threads.list", async () => [
+      makeThreadResponse({ id: "thr_old", originPluginId: "herald", visibility: "hidden", createdAt: 1 }),
+      makeThreadResponse({ id: "thr_fresh", originPluginId: "herald", visibility: "hidden", createdAt: Date.now() + 60_000 }),
+    ]);
+    const service = host.harness.runService("leftover-helpers");
+    await settle();
+    expect(host.harness.sdk.callsTo("threads.stop")).toEqual([[{ threadId: "thr_old" }]]);
+    expect(host.harness.sdk.callsTo("threads.delete")).toEqual([[{ threadId: "thr_old", childThreadsConfirmed: true }]]);
+    service.controller.abort();
+    await service.done;
   });
 
   it("stops a helper whose spawn answers after a reload began, before the reload finishes", async () => {

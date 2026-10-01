@@ -63,6 +63,8 @@ export interface HelperPort {
   stop(threadId: string): Promise<void>;
   archive(threadId: string): Promise<void>;
   delete(threadId: string): Promise<void>;
+  /** Hidden helper threads of this plugin created before `createdBefore` and not archived. */
+  listLeftovers(createdBefore: number): Promise<string[]>;
 }
 
 export interface Log {

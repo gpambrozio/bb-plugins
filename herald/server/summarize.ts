@@ -23,13 +23,15 @@
 import { DEFAULT_SUMMARY_PROMPT, type AttentionReason, type PromptPlaceholder } from "../shared/herald";
 import type { HelperOutcome } from "./helpers";
 import type { HelperPort, Log } from "./ports";
-import { displayName, firstWords, plainText } from "./timeline";
+import { displayName, firstWords, preview } from "./timeline";
 
 export const HELPER_TITLE = "Herald summary";
 
 /** Enough of a final message for a summary; the rest is never what the user needs to hear. */
 const MAX_OUTPUT_CHARS = 6000;
 const MAX_USER_CHARS = 600;
+/** A model asked for 35 words can still answer with a page; the voice says the start. */
+export const MAX_SUMMARY_CHARS = 400;
 
 export interface SummaryRequest {
   thread: {
@@ -185,7 +187,7 @@ export function parseSummaryText(lastMessage: string | null): string {
   for (const candidate of candidates) {
     try {
       const sentence = sentenceIn(JSON.parse(candidate));
-      if (sentence !== null) return plainText(sentence);
+      if (sentence !== null) return preview(sentence, MAX_SUMMARY_CHARS);
     } catch {
       // Not JSON; try the next candidate.
     }

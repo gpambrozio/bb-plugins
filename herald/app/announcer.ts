@@ -47,13 +47,23 @@ function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/**
- * How long a window that lost an announcement's claim waits before looking
- * again: long enough for the winner to have been refused and given it back.
- */
+/** How often a window that lost an announcement's claim looks again. */
 export const CLAIM_RETRY_MS = 2_500;
 
+/**
+ * How long it keeps looking: the whole of the winner's attempt. That attempt
+ * can take the server's `say` render (up to 30 s) and then a refused browser
+ * voice (its guard timer, 8 s or more) before the winner gives the claim back.
+ */
+export const CLAIM_RETRY_WINDOW_MS = 60_000;
+
 type Outcome = "spoke" | "refused" | "skipped";
+
+/** An announcement's try: when it was first made, and whether this is a later look. */
+interface Attempt {
+  since: number;
+  again: boolean;
+}
 
 export class Announcer {
   private readonly spoken = new Set<string>();
@@ -84,7 +94,7 @@ export class Announcer {
       // A failed summary still has its fallback sentence: a failure is never silence.
       const text = speechText(entry);
       if (text === null) continue;
-      void this.deliver(text, entry.eventId, true).catch((error: unknown) =>
+      void this.deliver(text, entry.eventId, { since: Date.now(), again: false }).catch((error: unknown) =>
         this.deps.report("warn", `Could not speak an announcement: ${describe(error)}`, error),
       );
     }
@@ -109,7 +119,7 @@ export class Announcer {
     this.deps.audio.primeSpeech();
     const blocked = options.force === true ? null : this.blocked();
     if (blocked !== null) return blocked;
-    const outcome = await this.deliver(text, null, false);
+    const outcome = await this.deliver(text, null, null);
     return outcome === "refused" ? "This device would not play the sound. Press Test voice, then try again." : null;
   }
 
@@ -126,13 +136,15 @@ export class Announcer {
 
   /**
    * `eventId` is set for an announcement, which is gated and claimed; null for
-   * a press. `retry` lets an announcement whose claim another window holds
-   * look once more, in case that window's playback was refused.
+   * a press. `attempt.since` is when an announcement was first tried: while
+   * another window holds its claim, this one looks again until
+   * `CLAIM_RETRY_WINDOW_MS` after that, in case that window's playback is
+   * refused and it gives the claim back.
    */
-  private deliver(text: string, eventId: string | null, retry: boolean): Promise<Outcome> {
+  private deliver(text: string, eventId: string | null, attempt: Attempt | null): Promise<Outcome> {
     const next = this.chain.then(
-      () => this.deliverNow(text, eventId, retry),
-      () => this.deliverNow(text, eventId, retry),
+      () => this.deliverNow(text, eventId, attempt),
+      () => this.deliverNow(text, eventId, attempt),
     );
     this.chain = next.then(
       () => {},
@@ -141,7 +153,7 @@ export class Announcer {
     return next;
   }
 
-  private async deliverNow(text: string, eventId: string | null, retry: boolean): Promise<Outcome> {
+  private async deliverNow(text: string, eventId: string | null, attempt: Attempt | null): Promise<Outcome> {
     // Checked here rather than only at the call: this runs once per queued
     // delivery, and a reload can stop the announcer while one waits.
     if (this.stopped) return "skipped";
@@ -151,20 +163,25 @@ export class Announcer {
       if (!this.current.has(eventId)) return "skipped";
       // Gated when it is said, not when it arrived: a switch flipped while it
       // waited in the queue still counts.
+      const retrying = attempt?.again === true;
       const blocked = this.blocked();
       if (blocked !== null) {
-        this.deps.report("info", `Not speaking "${text}" here: ${blocked}`);
+        if (!retrying) this.deps.report("info", `Not speaking "${text}" here: ${blocked}`);
         return "skipped";
       }
       // A window that cannot make a sound unprompted must not take the
       // sentence from one that can.
       if (this.deps.platform() !== "desktop" && !this.deps.audio.isAudioUnlocked()) {
-        this.deps.report("info", `Not speaking "${text}" here: this ${this.deps.platform() === "mobile" ? "app" : "tab"} has not been tapped yet.`);
+        if (!retrying) {
+          this.deps.report("info", `Not speaking "${text}" here: this ${this.deps.platform() === "mobile" ? "app" : "tab"} has not been tapped yet.`);
+        }
         return "skipped";
       }
       claim = await this.deps.claim(eventId);
       if (claim === null) {
-        if (retry) setTimeout(() => void this.deliver(text, eventId, false), CLAIM_RETRY_MS);
+        if (attempt !== null && Date.now() + CLAIM_RETRY_MS - attempt.since <= CLAIM_RETRY_WINDOW_MS) {
+          setTimeout(() => void this.deliver(text, eventId, { since: attempt.since, again: true }), CLAIM_RETRY_MS);
+        }
         return "skipped";
       }
     }

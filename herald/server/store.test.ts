@@ -205,11 +205,49 @@ describe("AttentionStore", () => {
     expect([...rows.keys()].sort()).toEqual(["entry:t1", "entry:t2", "entry:t3"]);
   });
 
+  it("does not let its own write in flight delete a row a reconcile just found", async () => {
+    const rows = new Map<string, unknown>();
+    let gate: Promise<void> | null = null;
+    let open: () => void = () => {};
+    const kv: PluginKvStorage = {
+      get: async <T,>(key: string) => rows.get(key) as T | undefined,
+      set: async (key, value) => {
+        await gate;
+        rows.set(key, structuredClone(value));
+      },
+      delete: async (key) => {
+        await gate;
+        rows.delete(key);
+      },
+      list: async (prefix = "") => [...rows.keys()].filter((key) => key.startsWith(prefix)),
+    };
+    rows.set("entry:t1", entry({ threadId: "t1" }));
+    const replacement = new AttentionStore(kvBackend(kv), recordingLog());
+    await replacement.load();
+    // The old instance writes t2 straight to storage after the replacement loaded.
+    rows.set("entry:t2", entry({ threadId: "t2" }));
+
+    // The replacement's own write is under way, held, when the reconcile starts.
+    gate = new Promise<void>((resolve) => (open = resolve));
+    replacement.upsert(entry({ threadId: "t3" }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const reconciling = replacement.reconcile();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    open();
+    gate = null;
+    await reconciling;
+    await replacement.flush();
+
+    expect(replacement.list().map((item) => item.threadId).sort()).toEqual(["t1", "t2", "t3"]);
+    expect([...rows.keys()].sort()).toEqual(["entry:t1", "entry:t2", "entry:t3"]);
+  });
+
   it("drops on reconcile an entry the replaced instance removed after this one loaded", async () => {
     const backend = new FakeBackend();
     backend.saved = [entry({ threadId: "t1" }), entry({ threadId: "t2" })];
     const replacement = new AttentionStore(backend, recordingLog());
     await replacement.load();
+    await replacement.flush();
     backend.saved = [entry({ threadId: "t2" })];
     await replacement.reconcile();
     expect(replacement.list().map((item) => item.threadId)).toEqual(["t2"]);
