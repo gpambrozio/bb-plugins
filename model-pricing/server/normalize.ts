@@ -165,6 +165,14 @@ function openRouterRow(raw: unknown): PriceRow | null {
   const outputCost = asNumericString(pricing?.["completion"]);
   if (inputCost === null || outputCost === null) return null;
 
+  // A per-token price near the float limit overflows to Infinity once scaled
+  // to a million, and one non-finite number fails the RPC's output validation
+  // for the whole answer — the other source's rows included. Such a row is
+  // malformed, so it is skipped like any other.
+  const inputPerMillion = perMillion(inputCost);
+  const outputPerMillion = perMillion(outputCost);
+  if (!Number.isFinite(inputPerMillion) || !Number.isFinite(outputPerMillion)) return null;
+
   const supported = model["supported_parameters"];
   // An absent list is unknown, not "supports nothing" — so every flag stays
   // null and the row draws four em dashes rather than four confident Nos.
@@ -177,8 +185,8 @@ function openRouterRow(raw: unknown): PriceRow | null {
     name: asString(model["name"]) ?? modelId,
     contextTokens: asCount(model["context_length"]),
     outputTokens: asCount(asRecord(model["top_provider"])?.["max_completion_tokens"]),
-    inputCost: perMillion(inputCost),
-    outputCost: perMillion(outputCost),
+    inputCost: inputPerMillion,
+    outputCost: outputPerMillion,
     reasoning: flag(PARAMETERS.reasoning),
     toolCall: flag(PARAMETERS.toolCall),
     structuredOutput: flag(PARAMETERS.structuredOutput),

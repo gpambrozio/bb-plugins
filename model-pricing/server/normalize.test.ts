@@ -182,6 +182,20 @@ describe("normalizeOpenRouter", () => {
     expect(fable?.providerId).toBe("openrouter");
   });
 
+  it("skips a model whose price overflows once scaled to a million tokens", () => {
+    // 1e308 is a finite per-token number; times a million it is Infinity.
+    const rows = normalizeOpenRouter({
+      data: [
+        { id: "broken/input", pricing: { prompt: "1e308", completion: "0.000001" } },
+        { id: "broken/output", pricing: { prompt: "0.000001", completion: "1e308" } },
+        { id: "fine/model", pricing: { prompt: "0.000001", completion: "0.000002" } },
+      ],
+    });
+
+    expect(rows.map((entry) => entry.modelId)).toEqual(["fine/model"]);
+    expect(rows.every((entry) => Number.isFinite(entry.inputCost) && Number.isFinite(entry.outputCost))).toBe(true);
+  });
+
   it("reads the four capability columns out of supported_parameters", () => {
     const rows = normalizeOpenRouter(openRouterDocument());
     const fable = rows.find((entry) => entry.modelId === "anthropic/claude-fable-5.1");

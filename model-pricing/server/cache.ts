@@ -48,6 +48,8 @@ export class PricingCache {
    * refreshed twice in a row lands in the order it was fetched.
    */
   private writes: Promise<void> = Promise.resolve();
+  /** Set on dispose: the store's handle is about to go stale, so nothing more is written. */
+  private closed = false;
 
   constructor(
     private readonly store: CacheStore | null,
@@ -88,6 +90,7 @@ export class PricingCache {
    * refresh retries.
    */
   write(source: SourceId, entry: CacheEntry): void {
+    if (this.closed) return;
     this.entries.set(source, entry);
     this.loaded.add(source);
 
@@ -102,22 +105,20 @@ export class PricingCache {
     });
   }
 
+  /** Resolves once every write queued so far has landed or been reported. */
+  flush(): Promise<void> {
+    return this.writes;
+  }
+
   /**
-   * Awaited on dispose, so a reload does not drop a write.
-   *
-   * Drains rather than returning the chain as it stands: a `load` still
-   * resolving while the plugin is torn down can queue a write *after* the
-   * dispose handler has awaited, and returning `this.writes` once would not
-   * cover it.
+   * Called on dispose. A fetch that answers after this belongs to a disposed
+   * instance whose store handle is stale, so its write is skipped rather than
+   * attempted — the next instance refetches. Writes already queued still run;
+   * `flush` waits for them.
    */
-  async flush(): Promise<void> {
-    let pending = this.writes;
-    // Each await lets anything queued during the previous one settle too.
-    for (;;) {
-      await pending;
-      if (this.writes === pending) return;
-      pending = this.writes;
-    }
+  close(): Promise<void> {
+    this.closed = true;
+    return this.flush();
   }
 }
 

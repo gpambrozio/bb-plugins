@@ -67,9 +67,11 @@ degraded-but-valid answer cannot pin the table empty behind 304s.
 
 OpenRouter has no ETag and does not need one.
 
-The cache outlives a reload. The new instance loads before the old one is disposed, so a write the old
-one still had queued can land after the new one has read; the cost is one refetch, and `onDispose`
-drains the queue so the write is not lost.
+The cache outlives a reload. The new instance loads before the old one is disposed, and once disposed
+the old instance's `bb` handle is stale — a write through it fails. So `onDispose` aborts every fetch
+still in flight (`FetchDeps.signal`) and closes the cache: writes already queued land, and an answer
+that arrives after that is not written. The new instance refetches what it does not find
+(`server.test.ts` reloads the fake host with a fetch in flight).
 
 ## A source that fails must not blank the table
 
@@ -83,14 +85,18 @@ rows**, never by throwing:
 
 The handler keeps one fetch per source in flight at a time, because four of the five providers share
 the models.dev document. **A `refresh: true` deliberately bypasses that dedupe** — the user pressed
-Refresh because they doubt what is on screen.
+Refresh because they doubt what is on screen. The two fetches can then answer in either order, so
+**only the latest fetch started for a source may write its cache** (`generations`); an older answer
+landing last would otherwise roll the cache back and be served as fresh for twelve hours.
 
 ## Absent is not false
 
 Every capability on a `PriceRow` is `boolean | null`, and `null` means *the upstream did not say*.
 Both render as an em dash. The tool-call filter drops `toolCall === false` and **keeps `null`**. The one
 thing a row may not lack is a price — a row with no price cannot be ranked, so `normalize.ts` drops it.
-A malformed *model* is skipped; only a malformed *document* throws.
+A malformed *model* is skipped; only a malformed *document* throws. That includes an OpenRouter price
+that overflows to `Infinity` once scaled to a million tokens: one non-finite number fails the RPC's
+output validation for the whole answer, the other source's rows included.
 
 ## Nobody publishes a link either
 
@@ -148,8 +154,10 @@ answer, the sort, the search and the hidden set live in `session` in `app/pricin
 return visit paints at once, keeps the user's place, and refetches only past `STALE_AFTER_MS`. None of
 it is persisted; it dies with the window.
 
-`latestRequest` drops an answer that lands after a newer request, and `requestedKey` keeps a failed
-fetch (or its own `busy` re-render) from starting another. Both effects key on primitives pulled out
+`latestRequest` drops an answer that lands after a newer request. It is also bumped whenever the
+provider set changes — including the warm and all-off branches, which start no request — and on
+unmount, so an answer for a set no longer on screen never reaches the table or the session.
+`requestedKey` keeps a failed fetch (or its own `busy` re-render) from starting another. Both effects key on primitives pulled out
 of the settings, never on the values object.
 
 ## Ten columns do not fit a phone

@@ -138,15 +138,16 @@ describe("PricingCache on kv", () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("storage is closed"));
   });
 
-  it("drains a write queued while a flush is already waiting", async () => {
+  it("lands the writes queued before close, and skips every write after it", async () => {
     const store = memoryStore();
     const cache = new PricingCache(store);
-    cache.write("models-dev", entry({ rows: [row({ modelId: "first" })] }));
-    const flushed = cache.flush();
-    cache.write("models-dev", entry({ rows: [row({ modelId: "late" })] }));
-    await flushed;
+    cache.write("models-dev", entry({ rows: [row({ modelId: "before" })] }));
+    await cache.close();
+    cache.write("models-dev", entry({ rows: [row({ modelId: "after" })] }));
+    await cache.flush();
 
-    expect((store.values.get(cacheKey("models-dev")) as CacheEntry).rows[0]?.modelId).toBe("late");
+    expect(store.set).toHaveBeenCalledTimes(1);
+    expect((store.values.get(cacheKey("models-dev")) as CacheEntry).rows[0]?.modelId).toBe("before");
   });
 });
 

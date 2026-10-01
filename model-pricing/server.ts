@@ -20,12 +20,17 @@ export default async function plugin(bb: BbPluginApi) {
 
   const warn = (message: string) => bb.log.warn(message);
   const cache = new PricingCache(bb.storage.kv, warn);
-  const load = createPricingHandler(cache, DEFAULT_DEPS, warn);
+  const disposed = new AbortController();
+  const load = createPricingHandler(cache, { ...DEFAULT_DEPS, signal: disposed.signal }, warn);
 
   bb.rpc.register(rpcContract, { load });
 
-  // A reload loads the new instance before this one is disposed, so a write
-  // still queued here can land after the new one has read the cache. That only
-  // costs the new instance one refetch; draining keeps the write from being lost.
-  bb.onDispose(() => cache.flush());
+  // A reload loads the new instance before this one is disposed. Fetches still
+  // in flight here are aborted, and any answer that lands anyway is not
+  // written: after dispose this instance's storage handle is stale. The new
+  // instance refetches what it does not find.
+  bb.onDispose(() => {
+    disposed.abort();
+    return cache.close();
+  });
 }

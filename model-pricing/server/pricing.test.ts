@@ -5,9 +5,10 @@
  */
 import { describe, expect, it, vi } from "vitest";
 
-import { PricingCache, TTL_MS } from "./cache";
+import { PricingCache, TTL_MS, type CacheStore } from "./cache";
 import { createPricingHandler } from "./pricing";
 import type { FetchDeps } from "./sources";
+import { LoadOutputSchema } from "../shared/pricing";
 
 const MODELS_DEV = "https://models.dev/api.json";
 const OPENROUTER = "https://openrouter.ai/api/v1/models";
@@ -273,5 +274,73 @@ describe("createPricingHandler", () => {
     ]);
 
     expect(deps.calls.length).toBeGreaterThan(1);
+  });
+
+  it("does not let an older answer that lands last roll back a refresh's cache", async () => {
+    // models.dev answers the first request with price 1 / v1 and the refresh
+    // with price 2 / v2, but the first answer arrives after the second.
+    const priced = (price: number, etag: string) =>
+      json({ anthropic: { models: { opus: { id: "opus", tool_call: true, cost: { input: price, output: price } } } } }, { etag });
+    let releaseFirst: (response: Response) => void = () => {};
+    const first = new Promise<Response>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const deps = recordingFetch(() => (deps.calls.length === 1 ? first : priced(2, '"v2"')));
+    const load = createPricingHandler(new PricingCache(null), deps);
+
+    const slow = load({ providers: ["anthropic"], refresh: false });
+    const refreshed = await load({ providers: ["anthropic"], refresh: true });
+    expect(refreshed.rows[0]?.inputCost).toBe(2);
+
+    releaseFirst(priced(1, '"v1"'));
+    // The caller that asked first still gets its own answer…
+    expect((await slow).rows[0]?.inputCost).toBe(1);
+    // …but the cache keeps the refresh's, which is served as fresh from here.
+    const next = await load({ providers: ["anthropic"], refresh: false });
+    expect(next.sources[0]?.cached).toBe(true);
+    expect(next.rows[0]?.inputCost).toBe(2);
+    expect(deps.calls).toHaveLength(2);
+  });
+
+  it("answers within the RPC's output contract when one OpenRouter price overflows", async () => {
+    const body = {
+      data: [
+        { id: "broken/model", name: "Broken", pricing: { prompt: "1e308", completion: "0.000001" } },
+        ...OPENROUTER_BODY.data,
+      ],
+    };
+    const deps = recordingFetch((url) => (url === MODELS_DEV ? json(MODELS_DEV_BODY) : json(body)));
+    const load = createPricingHandler(new PricingCache(null), deps);
+
+    const result = LoadOutputSchema.parse(await load({ providers: ["anthropic", "openrouter"], refresh: false }));
+
+    expect(result.rows.map((row) => row.modelId).sort()).toEqual(["claude-opus-5", "z-ai/glm-5.3"]);
+  });
+
+  it("aborts a fetch in flight when its signal aborts, and stores nothing from a closed cache", async () => {
+    const controller = new AbortController();
+    let seen: AbortSignal | undefined;
+    const store = { get: vi.fn(async () => undefined), set: vi.fn(async () => {}) } satisfies CacheStore;
+    const cache = new PricingCache(store);
+    const deps: FetchDeps = {
+      signal: controller.signal,
+      fetch: (_input, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          seen = init?.signal ?? undefined;
+          seen?.addEventListener("abort", () => reject(new Error("aborted")));
+        }),
+    };
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const load = createPricingHandler(cache, deps);
+
+    const pending = load({ providers: ["openrouter"], refresh: false });
+    await vi.waitFor(() => expect(seen).toBeDefined());
+    controller.abort();
+    await cache.close();
+
+    const result = await pending;
+    expect(seen?.aborted).toBe(true);
+    expect(result.sources[0]?.error).toMatch(/aborted/);
+    expect(store.set).not.toHaveBeenCalled();
   });
 });

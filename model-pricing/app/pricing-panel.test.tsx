@@ -5,7 +5,7 @@
  * "plugin crashed" chip in bb, so a render here is the cheapest check that it
  * does not throw.
  */
-import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -176,6 +176,73 @@ describe("PricingPanel", () => {
     expect(screen.getByText("Claude Opus 5")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Model, sorted ascending" })).toBeTruthy();
     await waitFor(() => expect(first.rpcCalls.length + second.rpcCalls.length).toBe(1));
+  });
+
+  it("drops an answer for a provider set the user has already switched away from", async () => {
+    const PricingPanel = await freshPanel();
+    // Mutated between renders: `useSettings()` hands back this object.
+    const settings: Record<string, boolean> = { openai: false, fireworks: false, ollama: false, openrouter: false };
+    let answerOpenAi: () => void = () => {};
+    const slot = renderSlot<object, RpcContract>(
+      { component: PricingPanel },
+      {},
+      {
+        settings,
+        rpc: {
+          load: ({ providers }) => {
+            if (providers.includes("anthropic")) return { rows: [ROWS[0]!], sources: [ok("models-dev")] };
+            return new Promise((resolve) => {
+              answerOpenAi = () => resolve({ rows: [ROWS[1]!], sources: [ok("models-dev")] });
+            });
+          },
+        },
+      },
+    );
+    await screen.findByText("Claude Opus 5");
+
+    // Anthropic off, OpenAI on: a request goes out and hangs.
+    Object.assign(settings, { anthropic: false, openai: true });
+    slot.lifecycle.rerender(<PricingPanel />);
+    await waitFor(() => expect(slot.rpcCalls).toHaveLength(2));
+
+    // Back to Anthropic before OpenAI answers: its rows are still warm, so no request.
+    Object.assign(settings, { anthropic: true, openai: false });
+    slot.lifecycle.rerender(<PricingPanel />);
+    await act(async () => {
+      answerOpenAi();
+    });
+
+    expect(screen.getByText("Claude Opus 5")).toBeTruthy();
+    expect(screen.queryByText("Nothing matches.")).toBeNull();
+    expect(slot.rpcCalls).toHaveLength(2);
+  });
+
+  it("does not let an answer that lands after unmount become the next visit's table", async () => {
+    const PricingPanel = await freshPanel();
+    let answerLate: () => void = () => {};
+    let calls = 0;
+    const options = {
+      rpc: {
+        load: () => {
+          calls += 1;
+          if (calls > 1) return { rows: [ROWS[0]!], sources: [ok("models-dev")] };
+          return new Promise<{ rows: PriceRow[]; sources: SourceStatus[] }>((resolve) => {
+            answerLate = () => resolve({ rows: [ROWS[1]!], sources: [ok("models-dev")] });
+          });
+        },
+      },
+    };
+    const first = renderSlot<object, RpcContract>({ component: PricingPanel }, {}, options);
+    await waitFor(() => expect(first.rpcCalls).toHaveLength(1));
+    first.lifecycle.unmount();
+    await act(async () => {
+      answerLate();
+    });
+
+    renderSlot<object, RpcContract>({ component: PricingPanel }, {}, options);
+    await screen.findByText("Claude Opus 5");
+    expect(screen.queryByText("GPT-6")).toBeNull();
+    expect(calls).toBe(2);
   });
 });
 

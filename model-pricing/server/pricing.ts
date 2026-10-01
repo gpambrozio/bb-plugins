@@ -36,6 +36,13 @@ export function createPricingHandler(
    * quickly would download it several times over.
    */
   const inFlight = new Map<SourceId, Promise<SourceLoad>>();
+  /**
+   * The latest fetch started per source. A refresh runs beside a fetch already
+   * in flight, and the two can answer in either order; only the latest may
+   * write the cache, or an older answer landing last would roll it back and be
+   * served as fresh for the whole TTL.
+   */
+  const generations = new Map<SourceId, number>();
 
   function load(source: SourceId, refresh: boolean): Promise<SourceLoad> {
     const running = inFlight.get(source);
@@ -43,7 +50,10 @@ export function createPricingHandler(
     // pressed Refresh precisely because they doubt what is on screen.
     if (running !== undefined && !refresh) return running;
 
-    const started = loadSource(cache, deps, warn, source, refresh).finally(() => {
+    const generation = (generations.get(source) ?? 0) + 1;
+    generations.set(source, generation);
+    const isLatest = () => generations.get(source) === generation;
+    const started = loadSource(cache, deps, warn, source, refresh, isLatest).finally(() => {
       if (inFlight.get(source) === started) inFlight.delete(source);
     });
     inFlight.set(source, started);
@@ -68,6 +78,7 @@ async function loadSource(
   warn: Warn,
   source: SourceId,
   refresh: boolean,
+  isLatest: () => boolean,
 ): Promise<SourceLoad> {
   const cached = await cache.read(source);
   if (cached !== null && !refresh && isFresh(cached)) {
@@ -88,7 +99,7 @@ async function loadSource(
     // break out of it — every later call would send `If-None-Match`, be told
     // nothing changed, and keep the empty table. Dropping the ETag costs one
     // full download on the next call and makes the state recoverable.
-    cache.write(source, { rows: [...rows], fetchedAt, etag: rows.length === 0 ? null : result.etag });
+    if (isLatest()) cache.write(source, { rows: [...rows], fetchedAt, etag: rows.length === 0 ? null : result.etag });
     return { rows, status: status(source, fetchedAt, result.rows === null, null) };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

@@ -180,13 +180,29 @@ export function PricingPanel() {
    */
   const requestedKey = useRef<string | null>(null);
 
+  // An answer that lands after the panel has gone must not write the session
+  // the next mount paints from: by then it may be for providers since
+  // switched off. Forgetting the requested set lets a remount of this same
+  // instance ask again.
+  useEffect(
+    () => () => {
+      latestRequest.current += 1;
+      requestedKey.current = null;
+    },
+    [],
+  );
+
   useEffect(() => {
-    if (!settingsReady) return;
+    if (!settingsReady || requestedKey.current === providerKey) return;
+    requestedKey.current = providerKey;
+    // The provider set changed, so an answer still in flight is for a set no
+    // longer on screen. Dropping it here covers every branch below, including
+    // the two that start no request of their own.
+    latestRequest.current += 1;
+    setBusy(false);
     if (providerKey === "") {
       // Nothing to ask the server for. Clear rather than leave another
       // provider's rows on screen under an empty legend.
-      if (requestedKey.current === "") return;
-      requestedKey.current = "";
       session.rows = [];
       session.providerKey = "";
       setRows([]);
@@ -197,11 +213,7 @@ export function PricingPanel() {
     // only worth the round trips once it has aged out.
     const warm =
       session.rows !== null && session.providerKey === providerKey && Date.now() - session.fetchedAt < STALE_AFTER_MS;
-    if (warm || requestedKey.current === providerKey) {
-      requestedKey.current = providerKey;
-      return;
-    }
-    requestedKey.current = providerKey;
+    if (warm) return;
     void refresh(enabledIds, false);
   }, [settingsReady, providerKey, enabledIds, refresh]);
 

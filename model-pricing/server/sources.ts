@@ -12,6 +12,8 @@ import type { SourceId } from "../shared/providers";
 
 export interface FetchDeps {
   fetch: typeof globalThis.fetch;
+  /** Aborts every request in flight; the plugin aborts it on dispose. */
+  signal?: AbortSignal;
 }
 
 export const DEFAULT_DEPS: FetchDeps = {
@@ -85,9 +87,10 @@ interface Answer {
  */
 async function request(deps: FetchDeps, url: string, headers: Record<string, string>, label: string): Promise<Answer> {
   const controller = new AbortController();
-  const timer = setTimeout(() => {
-    controller.abort();
-  }, TIMEOUT_MS);
+  const abort = () => controller.abort();
+  const timer = setTimeout(abort, TIMEOUT_MS);
+  if (deps.signal?.aborted === true) abort();
+  deps.signal?.addEventListener("abort", abort, { once: true });
 
   try {
     let response: Response;
@@ -110,5 +113,6 @@ async function request(deps: FetchDeps, url: string, headers: Record<string, str
     }
   } finally {
     clearTimeout(timer);
+    deps.signal?.removeEventListener("abort", abort);
   }
 }
