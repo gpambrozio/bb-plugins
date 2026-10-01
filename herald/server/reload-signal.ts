@@ -22,6 +22,10 @@ interface DrainedDetail {
 interface HandedOverDetail {
   instance: string;
   helperId: string;
+  /** Set by the instance that takes the helper. */
+  taken: boolean;
+  /** Called by that instance once the helper is stopped and put away. */
+  done: () => void;
 }
 
 function channel(pluginId: string): EventTarget {
@@ -31,17 +35,34 @@ function channel(pluginId: string): EventTarget {
   return holder[key];
 }
 
-/** Gives a summary helper this instance can no longer put away to whichever instance is live. */
-export function handOverHelper(pluginId: string, instance: string, helperId: string): void {
-  channel(pluginId).dispatchEvent(new CustomEvent<HandedOverDetail>(HANDED_OVER, { detail: { instance, helperId } }));
+/**
+ * Gives a summary helper this instance can no longer put away to whichever
+ * instance is live. Resolves once that instance has put it away — at once when
+ * no instance took it, and the next load's sweep will.
+ */
+export function handOverHelper(pluginId: string, instance: string, helperId: string): Promise<void> {
+  return new Promise((resolve) => {
+    const detail: HandedOverDetail = { instance, helperId, taken: false, done: () => resolve() };
+    channel(pluginId).dispatchEvent(new CustomEvent<HandedOverDetail>(HANDED_OVER, { detail }));
+    if (!detail.taken) resolve();
+  });
 }
 
-/** Calls `listener` with each helper another instance hands over; returns the unsubscribe. */
-export function onHelperHandedOver(pluginId: string, instance: string, listener: (helperId: string) => void): () => void {
+/**
+ * Calls `listener` with each helper another instance hands over; the listener
+ * calls `done` once it has put the helper away. Returns the unsubscribe.
+ */
+export function onHelperHandedOver(
+  pluginId: string,
+  instance: string,
+  listener: (helperId: string, done: () => void) => void,
+): () => void {
   const target = channel(pluginId);
   const handler = (event: Event) => {
     const detail = (event as CustomEvent<HandedOverDetail>).detail;
-    if (detail !== undefined && detail.instance !== instance) listener(detail.helperId);
+    if (detail === undefined || detail.instance === instance || detail.taken) return;
+    detail.taken = true;
+    listener(detail.helperId, detail.done);
   };
   target.addEventListener(HANDED_OVER, handler);
   return () => target.removeEventListener(HANDED_OVER, handler);

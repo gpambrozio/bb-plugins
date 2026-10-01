@@ -4,6 +4,7 @@ import { DEFAULT_SUMMARIZER } from "../shared/herald";
 import { HelperOutcomes } from "./helpers";
 import { createHooks, INTERRUPT_GRACE_MS, TURN_REPEAT_WINDOW_MS, type HeraldConfig, type HookDeps } from "./hooks";
 import type { EventsPort } from "./ports";
+import { createSlots } from "./slots";
 import { AttentionStore } from "./store";
 import type { Summary, SummaryRequest } from "./summarize";
 import { commandApproval, question, recordingLog, settle, thread } from "./testing/fixtures";
@@ -417,6 +418,54 @@ describe("createHooks", () => {
     // And nothing new is recorded after it.
     await hooks.idle(thread({ id: "t3" }), "Done.");
     expect(summarize).toHaveBeenCalledTimes(1);
+  });
+
+  it("counts the helpers an unloaded instance handed over against the replacement's two", async () => {
+    const slots = createSlots(2);
+    let alive = 0;
+    let peak = 0;
+    const retirements: Array<() => void> = [];
+    /** A helper starts with its summary and lives until its retirement is let go. */
+    const helper = {
+      summarize: vi.fn(async (): Promise<Summary> => {
+        alive += 1;
+        peak = Math.max(peak, alive);
+        return { text: "S.", model: "m" };
+      }),
+      finished: () =>
+        new Promise<void>((resolve) =>
+          retirements.push(() => {
+            alive -= 1;
+            resolve();
+          }),
+        ),
+    };
+    // The old instance: two helpers slow to put away — handed over at unload,
+    // and still being stopped by the replacement.
+    const old = setup({ slots, drainTimeoutMs: 10, ...helper });
+    await old.hooks.idle(thread({ id: "t1" }), "Done.");
+    await old.hooks.idle(thread({ id: "t2" }), "Done.");
+    await settle();
+    expect(await old.hooks.drain()).toBe(false);
+    expect(alive).toBe(2);
+
+    // The replacement, sharing the slots, hears two more turn ends.
+    const replacement = setup({ slots, ...helper });
+    await replacement.hooks.idle(thread({ id: "t3" }), "Done.");
+    await replacement.hooks.idle(thread({ id: "t4" }), "Done.");
+    await settle();
+    expect(alive).toBe(2);
+    expect(peak).toBe(2);
+
+    // Each helper put away lets exactly one new one start.
+    retirements.shift()?.();
+    await settle();
+    expect(alive).toBe(2);
+    retirements.shift()?.();
+    await settle();
+    expect(alive).toBe(2);
+    expect(peak).toBe(2);
+    expect(helper.summarize).toHaveBeenCalledTimes(4);
   });
 
   it("keeps a slot until the helper has been put away, even once the sentence is out", async () => {

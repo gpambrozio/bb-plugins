@@ -18,7 +18,7 @@ import type { RpcContract } from "../shared/contract";
 import { ENTRIES_CHANNEL } from "../shared/herald";
 import { speechSettingsOf, type SpeechSettings } from "../shared/settings";
 import { Announcer, setAnnouncer } from "./announcer";
-import { claimAnnouncement } from "./claims";
+import { claimAnnouncement, onClaimReleased } from "./claims";
 import { setEntries, setEntriesError } from "./entries";
 import * as speech from "./speech";
 
@@ -54,7 +54,9 @@ export function HeraldBridge() {
     });
     announcer.current = next;
     setAnnouncer(next);
+    const stopHearing = onClaimReleased(`${pluginId}:said:`, (eventId) => next.claimReleased(eventId));
     return () => {
+      stopHearing();
       next.stop();
       setAnnouncer(null);
       announcer.current = null;

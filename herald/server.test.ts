@@ -5,10 +5,11 @@
  * Nothing here talks to a running bb.
  */
 import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import plugin from "./server";
 import { DRAIN_TIMEOUT_MS } from "./server/hooks";
+import { resetSharedSlotsForTests } from "./server/slots";
 import type { AttentionEntry } from "./shared/herald";
 import { DEFAULT_SUMMARIZER, ENTRIES_CHANNEL } from "./shared/herald";
 
@@ -58,6 +59,15 @@ async function load(settings: Record<string, string | number | boolean> = {}, sp
     },
   });
   await plugin(host.bb);
+  live.push(host);
+  return host;
+}
+
+/** Every host a test made: instances of one plugin share in-process channels, so each test disposes its own. */
+const live: Array<{ harness: { lifecycle: { dispose(): Promise<void> } } }> = [];
+
+function track<T extends { harness: { lifecycle: { dispose(): Promise<void> } } }>(host: T): T {
+  live.push(host);
   return host;
 }
 
@@ -66,6 +76,12 @@ function entriesOf(result: unknown): AttentionEntry[] {
 }
 
 describe("herald server", () => {
+  beforeEach(() => resetSharedSlotsForTests("herald"));
+  afterEach(async () => {
+    vi.useRealTimers();
+    await Promise.all(live.splice(0).map((host) => host.harness.lifecycle.dispose().catch(() => {})));
+  });
+
   it("summarises a finished turn through a hidden helper and tells the app", async () => {
     const { harness } = await load();
 
@@ -180,7 +196,7 @@ describe("herald server", () => {
     // No wait for the write to land: the replacement loads first, and reads
     // storage again once the old instance says it has drained.
     await host.harness.emitThreadEvent("thread.idle", { thread: USER_THREAD, lastAssistantText: "Done." });
-    const reloaded = await host.harness.lifecycle.reload(plugin);
+    const reloaded = track(await host.harness.lifecycle.reload(plugin));
     await settle();
     expect(entriesOf(await reloaded.harness.callRpc("list", {})).map((entry) => entry.threadId)).toEqual(["thr_user"]);
   });
@@ -201,7 +217,7 @@ describe("herald server", () => {
       const host = await load({}, () => new Promise<void>((resolve) => (spawned = resolve)));
       await host.harness.emitThreadEvent("thread.idle", { thread: USER_THREAD, lastAssistantText: "Done." });
       await vi.advanceTimersByTimeAsync(0);
-      const reloading = host.harness.lifecycle.reload(plugin);
+      const reloading = host.harness.lifecycle.reload(plugin).then(track);
       // The spawn hangs past the drain deadline; unload gives up waiting and returns.
       await vi.advanceTimersByTimeAsync(DRAIN_TIMEOUT_MS + 100);
       const replacement = await reloading;
@@ -238,7 +254,10 @@ describe("herald server", () => {
     await host.harness.emitThreadEvent("thread.idle", { thread: USER_THREAD, lastAssistantText: "Done." });
     await settle();
     let reloaded = false;
-    const reloading = host.harness.lifecycle.reload(plugin).then(() => (reloaded = true));
+    const reloading = host.harness.lifecycle.reload(plugin).then((replacement) => {
+      track(replacement);
+      reloaded = true;
+    });
     await settle();
     // The old instance cannot finish unloading while its helper is unaccounted for.
     expect(reloaded).toBe(false);

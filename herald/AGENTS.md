@@ -18,6 +18,7 @@ what still holds and says what bb changed. The repo root `AGENTS.md` covers what
 | `server/helpers.ts` | `HelperOutcomes`: how each helper's turn ended, as its own events report it. |
 | `server/reload-signal.ts` | What an old instance tells its replacement: storage flushed (read it again), and helpers handed over. |
 | `server/helper-ownership.ts` | The helpers this instance owns; after unload, handing them to the live instance. |
+| `server/slots.ts` | The two helper slots, shared by every instance of the plugin. |
 | `server/store.ts` | One entry per thread, mirrored to storage; `load()` merges. |
 | `server/kv-backend.ts` | The store's rows in `bb.storage.kv`, one per thread. |
 | `server/liveness.ts` | Asks bb about each entry's thread before the list goes out: read, answered, gone, working again. |
@@ -75,8 +76,10 @@ bb's events cannot block anything, and a handler runs inside the bb server. A su
 turn, so `server/hooks.ts` never awaits one: the handler writes a `pending` entry and returns, and the
 summary lands later through `AttentionStore.updateSummary`. That update is keyed by `eventId` and refused
 when the thread has moved on to a newer event, which is what keeps a slow helper from overwriting a
-fresher entry. `schedule` caps how many helpers run at once (two); a burst queues. **A slot is held until
-the helper is put away**, not until its sentence is out: `summarize` returns `{ result, finished }`, the
+fresher entry. `schedule` caps how many helpers are alive at once (two); a burst queues. The slots are
+**shared by every instance of the plugin** (`sharedSlots`, on `globalThis` like the reload channel), so a
+reload cannot start a fresh pair of helpers beside a pair the old instance is still putting away. **A slot
+is held until the helper is put away**, not until its sentence is out: `summarize` returns `{ result, finished }`, the
 sentence is settled from `result`, and the task awaits `finished` (stopped, then deleted or archived)
 before the next helper starts — otherwise slow-to-stop helpers pile up past the cap. Detached work
 catches its own rejections — an unhandled one would land in the bb server.
@@ -126,13 +129,16 @@ summary has put its helper away. The SDK handles are still valid until unload re
 The drain waits at most `DRAIN_TIMEOUT_MS`, since a spawn or a stop can hang. Past that,
 `HelperOwnership.release()` hands every helper this instance still owns — and any whose spawn answers
 later — to the live instance over `server/reload-signal.ts`; calls the old instance would make to bb go
-the same way. The live instance stops and deletes them with its own SDK (`retireLeftover`). A handover
+the same way. The live instance stops and deletes them with its own SDK (`retireLeftover`) and then says
+so; until it does, the old instance's summary — and the shared slot it holds — stays open. A handover
+nobody takes resolves at once, and the next load's sweep puts that helper away (taking a slot for it). A handover
 nobody receives (the plugin was disabled rather than reloaded) and a process that stopped mid-summary
 leave helpers behind, so each load sweeps them (the `leftover-helpers` service): hidden threads of this
 plugin, not archived, **created before this instance started** — so a helper of its own is never touched.
 
-Storage is flushed and then **closed** (`store.close()`) before the old instance signals its replacement
-to read it again: a summary still settling after the deadline changes only the old instance's memory.
+Storage is **closed, then flushed** (`store.shutdown()`) before the old instance signals its replacement
+to read it again. Closing freezes the map: writes already queued mirror it as it stood, and nothing
+requested afterwards — a summary settling mid-flush or past the deadline — reaches storage.
 
 The helper spawns with `permissionMode: "accept-edits"`, bb's least privileged mode — which is not
 tool-free (see *Summaries need a model that can use tools*); a helper that asks for anything is stopped. A hidden thread burns a real concurrency slot, so with bb's concurrency
@@ -282,9 +288,11 @@ event, held only for the check. Three rules keep a window that cannot play from 
 - a window claims only if it may play unprompted — the desktop app, or a page already unlocked;
 - a window whose playback is refused (the `<audio>` rejects and the voice is not heard) releases its
   claim;
-- a window that lost the claim looks again every `CLAIM_RETRY_MS` for `CLAIM_RETRY_WINDOW_MS` (60 s) —
-  the winner's whole attempt: a `say` render can take 30 s and a refused browser voice 8 s or more before
-  the claim comes back. Each look checks again that the announcement is still current and not blocked.
+- a window that lost the claim keeps the announcement and **hears the release**: removing the claim's
+  `localStorage` key fires `storage` in every other window of the origin (`onClaimReleased`), and the
+  window tries again then — however long the refused attempt took. It checks again that the
+  announcement is still current and not blocked, and forgets it once the announcement is withdrawn.
+  (Timed retries were tried first; a slow render plus a refused voice outlasted any fixed window.)
 
 The first build elected one window with a lock held for its lifetime instead; a window or a replaced
 plugin generation that never released it would have kept every other window quiet. Different devices

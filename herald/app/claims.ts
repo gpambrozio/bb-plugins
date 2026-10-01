@@ -6,8 +6,9 @@
  * plugin generation the host replaced, can never keep the others quiet.
  *
  * A claim is recoverable: a window whose playback was refused releases it, and
- * a window that lost the claim looks once more a moment later (see
- * `Announcer`). The announcer also claims only when this window can make a
+ * every window that lost the claim hears of the release (`onClaimReleased`,
+ * the `storage` event the removal fires in every other window of the origin)
+ * and tries again — however long the refused attempt took. The announcer also claims only when this window can make a
  * sound unprompted, so an untapped tab does not take a sentence it cannot say.
  *
  * Where storage is unavailable (a private window that refuses it), every
@@ -45,6 +46,21 @@ function prune(environment: ClaimEnvironment, prefix: string): void {
     if (!Number.isFinite(at) || environment.now() - at > CLAIM_TTL_MS) stale.push(key);
   }
   for (const key of stale) storage.removeItem(key);
+}
+
+/**
+ * Calls `listener` with the event id whenever another window gives a claim
+ * back. A browser fires `storage` in every other window of the origin when a
+ * key is removed, never in the window that removed it.
+ */
+export function onClaimReleased(prefix: string, listener: (eventId: string) => void): () => void {
+  if (typeof window === "undefined") return () => {};
+  const handler = (event: StorageEvent) => {
+    if (event.key === null || !event.key.startsWith(prefix) || event.newValue !== null) return;
+    listener(event.key.slice(prefix.length));
+  };
+  window.addEventListener("storage", handler);
+  return () => window.removeEventListener("storage", handler);
 }
 
 export interface Claim {

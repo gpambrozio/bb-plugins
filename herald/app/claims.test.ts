@@ -1,6 +1,7 @@
+// @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
 
-import { CLAIM_TTL_MS, claimAnnouncement } from "./claims";
+import { CLAIM_TTL_MS, claimAnnouncement, onClaimReleased } from "./claims";
 
 class MemoryStorage {
   private readonly items = new Map<string, string>();
@@ -68,5 +69,19 @@ describe("claimAnnouncement", () => {
   it("speaks everywhere when there is no storage", async () => {
     expect(await claimAnnouncement("p:", "e1", { storage: null, locks: null, now: () => 0 })).not.toBeNull();
     expect(await claimAnnouncement("p:", "e1", { storage: null, locks: null, now: () => 0 })).not.toBeNull();
+  });
+
+  it("hears another window give a claim back, and nothing else", () => {
+    const heard: string[] = [];
+    const stop = onClaimReleased("herald:said:", (eventId) => heard.push(eventId));
+    const fire = (key: string | null, newValue: string | null) =>
+      window.dispatchEvent(new StorageEvent("storage", { key, newValue }));
+    fire("herald:said:e1", null);
+    fire("herald:said:e2", "1790000000000");
+    fire("other:e3", null);
+    fire(null, null);
+    stop();
+    fire("herald:said:e4", null);
+    expect(heard).toEqual(["e1"]);
   });
 });

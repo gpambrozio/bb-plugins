@@ -47,28 +47,17 @@ function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** How often a window that lost an announcement's claim looks again. */
-export const CLAIM_RETRY_MS = 2_500;
-
-/**
- * How long it keeps looking: the whole of the winner's attempt. That attempt
- * can take the server's `say` render (up to 30 s) and then a refused browser
- * voice (its guard timer, 8 s or more) before the winner gives the claim back.
- */
-export const CLAIM_RETRY_WINDOW_MS = 60_000;
-
 type Outcome = "spoke" | "refused" | "skipped";
-
-/** An announcement's try: when it was first made, and whether this is a later look. */
-interface Attempt {
-  since: number;
-  again: boolean;
-}
 
 export class Announcer {
   private readonly spoken = new Set<string>();
   /** The event ids in the latest list; an announcement no longer in it was withdrawn. */
   private current = new Set<string>();
+  /**
+   * Announcements another window claimed, by event id, kept until that window
+   * gives the claim back (`claimReleased`) or the announcement is withdrawn.
+   */
+  private readonly lost = new Map<string, string>();
   private seeded = false;
   private stopped = false;
   private warnedSay = false;
@@ -94,12 +83,13 @@ export class Announcer {
       // A failed summary still has its fallback sentence: a failure is never silence.
       const text = speechText(entry);
       if (text === null) continue;
-      void this.deliver(text, entry.eventId, { since: Date.now(), again: false }).catch((error: unknown) =>
+      void this.deliver(text, entry.eventId, false).catch((error: unknown) =>
         this.deps.report("warn", `Could not speak an announcement: ${describe(error)}`, error),
       );
     }
     // Forget ids that are gone; an event id never comes back.
     for (const id of [...this.spoken]) if (!present.has(id)) this.spoken.delete(id);
+    for (const id of [...this.lost.keys()]) if (!present.has(id)) this.lost.delete(id);
   }
 
   /**
@@ -119,8 +109,22 @@ export class Announcer {
     this.deps.audio.primeSpeech();
     const blocked = options.force === true ? null : this.blocked();
     if (blocked !== null) return blocked;
-    const outcome = await this.deliver(text, null, null);
+    const outcome = await this.deliver(text, null, false);
     return outcome === "refused" ? "This device would not play the sound. Press Test voice, then try again." : null;
+  }
+
+  /**
+   * Another window gave back its claim on `eventId` — its playback was
+   * refused. If this window lost that announcement, it tries again now, with
+   * the same checks as the first time: still current, not muted or off.
+   */
+  claimReleased(eventId: string): void {
+    const text = this.lost.get(eventId);
+    if (text === undefined) return;
+    this.lost.delete(eventId);
+    void this.deliver(text, eventId, true).catch((error: unknown) =>
+      this.deps.report("warn", `Could not speak an announcement: ${describe(error)}`, error),
+    );
   }
 
   /** A reload starts a new announcer at once, so this one must fall silent or the two talk over each other. */
@@ -136,15 +140,12 @@ export class Announcer {
 
   /**
    * `eventId` is set for an announcement, which is gated and claimed; null for
-   * a press. `attempt.since` is when an announcement was first tried: while
-   * another window holds its claim, this one looks again until
-   * `CLAIM_RETRY_WINDOW_MS` after that, in case that window's playback is
-   * refused and it gives the claim back.
+   * a press. `retrying` is set when another window gave the claim back.
    */
-  private deliver(text: string, eventId: string | null, attempt: Attempt | null): Promise<Outcome> {
+  private deliver(text: string, eventId: string | null, retrying: boolean): Promise<Outcome> {
     const next = this.chain.then(
-      () => this.deliverNow(text, eventId, attempt),
-      () => this.deliverNow(text, eventId, attempt),
+      () => this.deliverNow(text, eventId, retrying),
+      () => this.deliverNow(text, eventId, retrying),
     );
     this.chain = next.then(
       () => {},
@@ -153,7 +154,7 @@ export class Announcer {
     return next;
   }
 
-  private async deliverNow(text: string, eventId: string | null, attempt: Attempt | null): Promise<Outcome> {
+  private async deliverNow(text: string, eventId: string | null, retrying: boolean): Promise<Outcome> {
     // Checked here rather than only at the call: this runs once per queued
     // delivery, and a reload can stop the announcer while one waits.
     if (this.stopped) return "skipped";
@@ -163,7 +164,6 @@ export class Announcer {
       if (!this.current.has(eventId)) return "skipped";
       // Gated when it is said, not when it arrived: a switch flipped while it
       // waited in the queue still counts.
-      const retrying = attempt?.again === true;
       const blocked = this.blocked();
       if (blocked !== null) {
         if (!retrying) this.deps.report("info", `Not speaking "${text}" here: ${blocked}`);
@@ -179,9 +179,8 @@ export class Announcer {
       }
       claim = await this.deps.claim(eventId);
       if (claim === null) {
-        if (attempt !== null && Date.now() + CLAIM_RETRY_MS - attempt.since <= CLAIM_RETRY_WINDOW_MS) {
-          setTimeout(() => void this.deliver(text, eventId, { since: attempt.since, again: true }), CLAIM_RETRY_MS);
-        }
+        // Another window is saying it. Kept until it says so, or gives it back.
+        this.lost.set(eventId, text);
         return "skipped";
       }
     }

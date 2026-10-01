@@ -47,8 +47,12 @@ export class AttentionStore {
    */
   private readonly deferredRemovals = new Map<string, Array<(entry: AttentionEntry) => boolean>>();
 
-  /** Set once the plugin unloads: storage is the replacement's from then on. */
-  private closed = false;
+  /**
+   * The map as it stood when the plugin unloaded: writes still queued then
+   * mirror this, and nothing newer ever reaches storage, which is the
+   * replacement's from then on. Null while open.
+   */
+  private frozen: AttentionEntry[] | null = null;
 
   /** `backend === null` keeps everything in memory. */
   constructor(
@@ -184,12 +188,15 @@ export class AttentionStore {
   }
 
   /**
-   * Stops writing to storage; on unload, after `flush`. A summary still
-   * settling after that changes only this instance's memory, never what the
-   * replacement has read.
+   * On unload: refuses every write from now on, then waits for the ones
+   * already queued to land. Closed first, flushed second — the other way
+   * round, a summary settling during the flush queues a write that lands
+   * after it, and after the replacement was told to read storage. From here
+   * on a change touches only this instance's memory.
    */
-  close(): void {
-    this.closed = true;
+  shutdown(): Promise<void> {
+    this.frozen ??= [...this.entries.values()];
+    return this.writes;
   }
 
   /** Resolves once every write issued so far has landed; for tests and unload. */
@@ -204,7 +211,7 @@ export class AttentionStore {
    */
   private persist(): void {
     const backend = this.backend;
-    if (backend === null || this.closed) return;
+    if (backend === null || this.frozen !== null) return;
     const loaded = this.loading ?? Promise.resolve();
     this.writes = this.writes
       .then(() => loaded)
@@ -212,7 +219,7 @@ export class AttentionStore {
       // mirrors the merged map rather than the map as it stood when it was
       // queued. Storage mirrors the map, it is not a log, so writing the latest
       // state is always the right thing.
-      .then(() => backend.write([...this.entries.values()]))
+      .then(() => backend.write(this.frozen ?? [...this.entries.values()]))
       .catch((error: unknown) => {
         this.log.error(`Could not save Herald's entries: ${error instanceof Error ? error.message : String(error)}`);
       });

@@ -242,6 +242,42 @@ describe("AttentionStore", () => {
     expect([...rows.keys()].sort()).toEqual(["entry:t1", "entry:t2", "entry:t3"]);
   });
 
+  it("refuses a write requested during its unload flush, so nothing lands after it", async () => {
+    const rows = new Map<string, unknown>();
+    let gate: Promise<void> | null = null;
+    let open: () => void = () => {};
+    let sets = 0;
+    const kv: PluginKvStorage = {
+      get: async <T,>(key: string) => rows.get(key) as T | undefined,
+      set: async (key, value) => {
+        await gate;
+        sets += 1;
+        rows.set(key, structuredClone(value));
+      },
+      delete: async (key) => {
+        await gate;
+        rows.delete(key);
+      },
+      list: async (prefix = "") => [...rows.keys()].filter((key) => key.startsWith(prefix)),
+    };
+    const store = new AttentionStore(kvBackend(kv), recordingLog());
+    await store.load();
+    // A write is under way when unload starts.
+    gate = new Promise<void>((resolve) => (open = resolve));
+    store.upsert(entry({ threadId: "t1" }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const shutting = store.shutdown();
+    // A summary settles in the middle of the flush.
+    store.upsert(entry({ threadId: "t2" }));
+    open();
+    gate = null;
+    await shutting;
+    const landed = sets;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(sets).toBe(landed);
+    expect([...rows.keys()]).toEqual(["entry:t1"]);
+  });
+
   it("drops on reconcile an entry the replaced instance removed after this one loaded", async () => {
     const backend = new FakeBackend();
     backend.saved = [entry({ threadId: "t1" }), entry({ threadId: "t2" })];

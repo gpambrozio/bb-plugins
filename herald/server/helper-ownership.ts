@@ -7,7 +7,9 @@
  * instance's `bb.sdk` is about to go stale, so `release()` hands every helper
  * it still owns — and any whose spawn answers later — to the instance that
  * replaces it, which stops and deletes them with a live SDK. Calls that would
- * reach bb after release go the same way instead. Nothing is abandoned:
+ * reach bb after release go the same way instead, and wait until that instance
+ * is done — so the summary that owned the helper, and the slot it holds
+ * (`slots.ts`), last until the helper is really put away. Nothing is abandoned:
  * whatever no instance receives (the plugin was disabled, not reloaded) is
  * caught by the next load's sweep of leftover helpers.
  */
@@ -15,12 +17,12 @@ import type { HelperPort, HelperSpawn } from "./ports";
 
 export class HelperOwnership implements HelperPort {
   private readonly owned = new Set<string>();
-  private readonly handedOver = new Set<string>();
+  private readonly handedOver = new Map<string, Promise<void>>();
   private released = false;
 
   constructor(
     private readonly port: () => HelperPort,
-    private readonly handOver: (helperId: string) => void,
+    private readonly handOver: (helperId: string) => Promise<void>,
   ) {}
 
   /** Whether this instance spawned the helper and has not put it away. */
@@ -31,7 +33,7 @@ export class HelperOwnership implements HelperPort {
   async spawn(args: HelperSpawn): Promise<string> {
     const helperId = await this.port().spawn(args);
     this.owned.add(helperId);
-    if (this.released) this.give(helperId);
+    if (this.released) void this.give(helperId);
     return helperId;
   }
 
@@ -59,13 +61,17 @@ export class HelperOwnership implements HelperPort {
   /** On unload, once draining is over: hands over every helper still owned, and every later one. */
   release(): void {
     this.released = true;
-    for (const helperId of this.owned) this.give(helperId);
+    for (const helperId of [...this.owned]) void this.give(helperId);
   }
 
-  private give(helperId: string): void {
-    if (this.handedOver.has(helperId)) return;
-    this.handedOver.add(helperId);
-    this.owned.delete(helperId);
-    this.handOver(helperId);
+  /** Hands the helper over once, and resolves when the taking instance has put it away. */
+  private give(helperId: string): Promise<void> {
+    let given = this.handedOver.get(helperId);
+    if (given === undefined) {
+      this.owned.delete(helperId);
+      given = this.handOver(helperId);
+      this.handedOver.set(helperId, given);
+    }
+    return given;
   }
 }

@@ -29,6 +29,7 @@ import type { EventsPort, HelperPort } from "./server/ports";
 import { HelperOwnership } from "./server/helper-ownership";
 import { announceDrained, handOverHelper, onHelperHandedOver, onOtherDrained } from "./server/reload-signal";
 import { listSayVoices, renderWithSay, sayAvailable } from "./server/say";
+import { sharedSlots } from "./server/slots";
 import { AttentionStore } from "./server/store";
 import { summarize } from "./server/summarize";
 
@@ -65,6 +66,8 @@ export default async function plugin(bb: BbPluginApi) {
 
   const outcomes = new HelperOutcomes();
   const startedAt = Date.now();
+  /** Two helpers alive at once, counted across this instance and any it replaced. */
+  const slots = sharedSlots(bb.pluginId, 2);
   /** The helpers this instance is responsible for; see `server/helper-ownership.ts`. */
   const ownership = new HelperOwnership(helperPort, (helperId) => handOverHelper(bb.pluginId, instance, helperId));
 
@@ -83,7 +86,11 @@ export default async function plugin(bb: BbPluginApi) {
       bb.log.warn(`Could not put away leftover summary helper ${helperId}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
-  const stopTakingHelpers = onHelperHandedOver(bb.pluginId, instance, (helperId) => void retireLeftover(helperId));
+  // A handed-over helper still holds the old instance's slot; it is released
+  // when `done` tells the old instance this one has put the helper away.
+  const stopTakingHelpers = onHelperHandedOver(bb.pluginId, instance, (helperId, done) => {
+    void retireLeftover(helperId).finally(done);
+  });
 
   function publish(): void {
     try {
@@ -148,6 +155,7 @@ export default async function plugin(bb: BbPluginApi) {
       interruptedRecently: (threadId, withinMs) => eventsPort().interruptedRecently(threadId, withinMs),
     },
     outcomes,
+    slots,
     publish,
     log: bb.log,
   });
@@ -192,7 +200,14 @@ export default async function plugin(bb: BbPluginApi) {
         const leftovers = await ownership.listLeftovers(startedAt);
         for (const helperId of leftovers) {
           if (signal.aborted) return;
-          if (!ownership.owns(helperId)) await retireLeftover(helperId);
+          if (ownership.owns(helperId)) continue;
+          // A leftover may still be running a turn: it takes a slot until it is put away.
+          const release = await slots.acquire();
+          try {
+            await retireLeftover(helperId);
+          } finally {
+            release();
+          }
         }
         if (leftovers.length > 0) bb.log.info(`Put away ${leftovers.length} leftover summary helpers.`);
       } catch (error) {
@@ -214,8 +229,7 @@ export default async function plugin(bb: BbPluginApi) {
     // handed to the live instance, never left to this one's stale SDK.
     ownership.release();
     if (!drained) bb.log.warn("Handed the summary helpers still running at unload to the next instance.");
-    await store.flush();
-    store.close();
+    await store.shutdown();
     announceDrained(bb.pluginId, instance);
   });
 }

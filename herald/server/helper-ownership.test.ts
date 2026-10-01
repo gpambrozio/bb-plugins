@@ -32,8 +32,11 @@ describe("HelperOwnership", () => {
     );
     // The replacement takes what is handed over, with its own (live) port.
     const live = recordingPort(liveCalls);
-    const stop = onHelperHandedOver(pluginId, "new", (helperId) => {
-      void live.stop(helperId).then(() => live.delete(helperId));
+    const stop = onHelperHandedOver(pluginId, "new", (helperId, done) => {
+      void live
+        .stop(helperId)
+        .then(() => live.delete(helperId))
+        .then(done);
     });
 
     const spawning = old.spawn({ title: "t", prompt: "p", providerId: "x", model: "m", reasoningLevel: "low", metadata: {} });
@@ -57,7 +60,9 @@ describe("HelperOwnership", () => {
     let n = 0;
     const ownership = new HelperOwnership(
       () => recordingPort(calls, async () => `h${(n += 1)}`),
-      (helperId) => handed.push(helperId),
+      async (helperId) => {
+        handed.push(helperId);
+      },
     );
     const args = { title: "t", prompt: "p", providerId: "x", model: "m", reasoningLevel: "low", metadata: {} };
     await ownership.spawn(args);
@@ -69,6 +74,34 @@ describe("HelperOwnership", () => {
     await ownership.stop("h2");
     expect(handed).toEqual(["h2"]);
     expect(calls).toEqual(["delete:h1"]);
+  });
+
+  it("waits for the taking instance to put a helper away before its clean-up returns", async () => {
+    const pluginId = `test-${Math.random()}`;
+    let finish: () => void = () => {};
+    const stop = onHelperHandedOver(pluginId, "new", (_helperId, done) => {
+      finish = done;
+    });
+    const old = new HelperOwnership(
+      () => recordingPort([]),
+      (helperId) => handOverHelper(pluginId, "old", helperId),
+    );
+    await old.spawn({ title: "t", prompt: "p", providerId: "x", model: "m", reasoningLevel: "low", metadata: {} });
+    old.release();
+    let returned = false;
+    const cleanup = old.stop("h1").then(() => (returned = true));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // The summary — and the slot it holds — lasts until the helper is really gone.
+    expect(returned).toBe(false);
+    finish();
+    await cleanup;
+    expect(returned).toBe(true);
+    stop();
+  });
+
+  it("does not wait when no instance takes the helper", async () => {
+    const pluginId = `test-${Math.random()}`;
+    await expect(handOverHelper(pluginId, "old", "h1")).resolves.toBeUndefined();
   });
 
   it("ignores its own handovers on the channel", () => {

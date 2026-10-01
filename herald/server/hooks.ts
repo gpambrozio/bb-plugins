@@ -19,6 +19,7 @@
 import type { AttentionEntry, AttentionReason, SummarizerConfig } from "../shared/herald";
 import type { HelperOutcomes } from "./helpers";
 import type { EventsPort, Interaction, Log, ThreadDto } from "./ports";
+import { createSlots, type Slots } from "./slots";
 import type { AttentionStore } from "./store";
 import type { Summary, SummaryRequest, SummaryRun } from "./summarize";
 import { describeInteraction, fallbackSpeech, firstWords, preview } from "./timeline";
@@ -50,7 +51,12 @@ export interface HookDeps {
   publish: () => void;
   log: Log;
   now?: () => Date;
-  /** How many helpers may be writing at once; more threads than this wait their turn. */
+  /**
+   * The helper slots. In the plugin they are shared by every instance
+   * (`sharedSlots`); left out, this instance gets its own `maxConcurrent`.
+   */
+  slots?: Slots;
+  /** How many helpers may be alive at once when no `slots` are given. */
   maxConcurrent?: number;
   /** How long `drain` waits; `DRAIN_TIMEOUT_MS` unless a test says otherwise. */
   drainTimeoutMs?: number;
@@ -100,7 +106,7 @@ export interface Hooks {
 
 export function createHooks(deps: HookDeps): Hooks {
   const now = deps.now ?? (() => new Date());
-  const maxConcurrent = deps.maxConcurrent ?? 2;
+  const slots = deps.slots ?? createSlots(deps.maxConcurrent ?? 2);
 
   /**
    * Every recording handler awaits — the config, the thread's names — and the
@@ -119,8 +125,7 @@ export function createHooks(deps: HookDeps): Hooks {
    */
   const latestEvent = new Map<string, number>();
   let eventCounter = 0;
-  let running = 0;
-  const queue: Array<() => void> = [];
+
   /** Every scheduled summary task still running, for `drain`. */
   const inFlight = new Set<Promise<void>>();
   let disposed = false;
@@ -198,23 +203,28 @@ export function createHooks(deps: HookDeps): Hooks {
     return generationOf(threadId) !== generation ? true : movedOnInBb;
   }
 
-  /** Runs `task` when a slot is free; the order threads finished in is kept. */
+  /**
+   * Runs `task` when a helper slot is free; the order threads finished in is
+   * kept. The slot is held until the task is over — its helper put away, by
+   * this instance or the one it was handed to — and a task whose turn comes
+   * after unload gives its slot straight back.
+   */
   function schedule(task: () => Promise<void>): void {
-    const start = () => {
-      running += 1;
+    void slots.acquire().then((release) => {
+      if (disposed) {
+        release();
+        return;
+      }
       // Detached work inside the bb server's process: a rejection must end
       // in the log, never as an unhandled rejection.
       const work = task()
         .catch((error: unknown) => deps.log.error(`A summary task failed: ${reasonOf(error)}`))
         .finally(() => {
           inFlight.delete(work);
-          running -= 1;
-          if (!disposed) queue.shift()?.();
+          release();
         });
       inFlight.add(work);
-    };
-    if (running < maxConcurrent) start();
-    else queue.push(start);
+    });
   }
 
   interface Recording {
@@ -440,7 +450,6 @@ export function createHooks(deps: HookDeps): Hooks {
 
     async drain() {
       disposed = true;
-      queue.length = 0;
       let timer: ReturnType<typeof setTimeout> | undefined;
       const timeout = new Promise<boolean>((resolve) => {
         timer = setTimeout(() => {

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AttentionEntry } from "../shared/herald";
 import type { SpeechPlatform, SpeechSettings } from "../shared/settings";
-import { Announcer, CLAIM_RETRY_MS, CLAIM_RETRY_WINDOW_MS, setMutedHere, type AnnouncerDeps } from "./announcer";
+import { Announcer, setMutedHere, type AnnouncerDeps } from "./announcer";
 
 function entry(id: string, overrides: Partial<AttentionEntry> = {}): AttentionEntry {
   return {
@@ -234,59 +234,58 @@ describe("Announcer", () => {
     expect(tapped.deps.render).toHaveBeenCalledTimes(1);
   });
 
-  it("gives the sentence back when its playback is refused, and another window says it", async () => {
-    vi.useFakeTimers();
+  it("gives the sentence back when its playback is refused, and another window then says it", async () => {
     const claimed = new Set<string>();
     const hold: Array<() => void> = [];
     const refusing = setup({ claimed, refused: true, hold });
     const working = setup({ claimed });
     for (const window of [refusing, working]) window.announcer.onEntries([]);
     refusing.announcer.onEntries([entry("a")]);
-    await vi.advanceTimersByTimeAsync(0);
+    await settle();
     // While the first window is still trying, the second loses the claim.
     working.announcer.onEntries([entry("a")]);
-    await vi.advanceTimersByTimeAsync(0);
+    await settle();
     expect(working.deps.render).not.toHaveBeenCalled();
     hold.shift()?.();
-    await vi.advanceTimersByTimeAsync(0);
+    await settle();
     expect(refusing.deps.report).toHaveBeenCalledWith("warn", 'Could not play "Sentence a." here; another window may say it.');
-    await vi.advanceTimersByTimeAsync(CLAIM_RETRY_MS);
+    expect(claimed.has("a")).toBe(false);
+    // The release reaches the other window (the storage event, in the app).
+    working.announcer.claimReleased("a");
+    await settle();
     expect(working.audio.playAudio).toHaveBeenCalledTimes(1);
     expect(working.deps.report).toHaveBeenCalledWith("info", 'Spoke (desktop): "Sentence a."');
   });
 
-  it("still says it when the winner gives the claim back only after a slow, refused attempt", async () => {
+  it("still says it when the claim comes back long after, however long the refused attempt took", async () => {
     vi.useFakeTimers();
-    const claimed = new Set<string>();
-    const hold: Array<() => void> = [];
-    const refusing = setup({ claimed, refused: true, hold });
+    const claimed = new Set<string>(["a"]);
     const working = setup({ claimed });
-    for (const window of [refusing, working]) window.announcer.onEntries([]);
-    refusing.announcer.onEntries([entry("a")]);
-    await vi.advanceTimersByTimeAsync(0);
+    working.announcer.onEntries([]);
     working.announcer.onEntries([entry("a")]);
-    // A slow render and a refused voice: the claim comes back ten seconds later.
-    await vi.advanceTimersByTimeAsync(10_000);
-    expect(working.audio.playAudio).not.toHaveBeenCalled();
-    hold.shift()?.();
-    await vi.advanceTimersByTimeAsync(CLAIM_RETRY_MS);
+    await vi.advanceTimersByTimeAsync(0);
+    // A 30 s render and a refused 400-character utterance: a minute and a half.
+    await vi.advanceTimersByTimeAsync(90_000);
+    working.announcer.onEntries([entry("a")]);
+    claimed.delete("a");
+    working.announcer.claimReleased("a");
+    await vi.advanceTimersByTimeAsync(0);
     expect(working.audio.playAudio).toHaveBeenCalledTimes(1);
   });
 
-  it("stops looking when the announcement is withdrawn, and after the retry window", async () => {
-    vi.useFakeTimers();
-    const claimed = new Set<string>(["a", "b"]);
-    const { announcer, deps } = setup({ claimed });
+  it("does not say a released announcement that was withdrawn meanwhile, or one it never lost", async () => {
+    const claimed = new Set<string>(["a"]);
+    const { announcer, audio } = setup({ claimed });
     announcer.onEntries([]);
-    announcer.onEntries([entry("a"), entry("b", { createdAt: "2026-09-15T10:01:00.000Z" })]);
-    await vi.advanceTimersByTimeAsync(CLAIM_RETRY_MS * 2);
-    const tries = (eventId: string) => vi.mocked(deps.claim).mock.calls.filter(([id]) => id === eventId).length;
-    expect(tries("a")).toBe(3);
-    // "a" is withdrawn; "b" keeps being tried until the window closes.
-    announcer.onEntries([entry("b", { createdAt: "2026-09-15T10:01:00.000Z" })]);
-    await vi.advanceTimersByTimeAsync(CLAIM_RETRY_WINDOW_MS * 2);
-    expect(tries("a")).toBe(3);
-    expect(tries("b")).toBe(Math.floor(CLAIM_RETRY_WINDOW_MS / CLAIM_RETRY_MS) + 1);
+    announcer.onEntries([entry("a")]);
+    await settle();
+    // The thread moved on before the other window gave the claim back.
+    announcer.onEntries([]);
+    claimed.clear();
+    announcer.claimReleased("a");
+    announcer.claimReleased("never-seen");
+    await settle();
+    expect(audio.playAudio).not.toHaveBeenCalled();
   });
 
   it("drops a queued announcement that was withdrawn before its turn came", async () => {
