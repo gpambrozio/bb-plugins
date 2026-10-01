@@ -137,7 +137,8 @@ export function bbHelpers(sdk: PluginBbSdk): HelperPort {
 
   async function personalProject(): Promise<string> {
     if (personalProjectId !== null) return personalProjectId;
-    const personal = (await sdk.projects.list()).find((project) => project.kind === "personal");
+    // Left out of the list unless asked for; every bb has one (`proj_personal`).
+    const personal = (await sdk.projects.list({ includePersonal: true })).find((project) => project.kind === "personal");
     if (personal === undefined) throw new Error("bb reports no personal project to run the summary helper in.");
     personalProjectId = personal.id;
     return personal.id;

@@ -130,6 +130,10 @@ export default async function plugin(bb: BbPluginApi) {
       await bb.storage.kv.set(CONFIG_KEY, next);
       return next;
     },
+    log: ({ level, message }) => {
+      bb.log[level](`app: ${message}`);
+      return null;
+    },
     // The server's Mac renders speech with `say`; the app plays the bytes. Not
     // a Mac, or no `say`: the app hears that and uses the browser's voice.
     "speech.voices": async () => {

@@ -1,22 +1,25 @@
 /**
  * The Herald page: every thread waiting on the user, each with the sentence
- * Herald wrote for it. A tap opens the thread; the speaker beside the title
- * says the sentence again.
+ * Herald wrote for it. A tap opens the thread; *Read again* on a card says
+ * its sentence again. The list keeps itself current — the overlay re-reads it
+ * on every nudge from the server and on reconnect — so there is no Refresh.
  */
-import { experimental_useSidebarThreads, useBbNavigate } from "@get-bb/plugin-sdk/app";
+import { experimental_useSidebarThreads, experimental_usePluginId, useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { useEffect, useMemo, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode } from "react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
 
-import type { AttentionEntry } from "../shared/herald";
+import { speechText, type AttentionEntry } from "../shared/herald";
 import { getAnnouncer, isMutedHere, onMuteChange, setMutedHere } from "./announcer";
-import { refreshEntries, useEntries } from "./entries";
+import { useEntries } from "./entries";
+import { HERALD_ICONS } from "./icons";
+import { openPluginSettings } from "./open-settings";
 import { joinRows, type Row, type RowReason } from "./rows";
 import { canPlaySpeech, speechPlatform } from "./speech";
+import { TipButton } from "./tip-button";
 
 export const PANEL_PATH = "waiting";
 
@@ -50,19 +53,19 @@ interface ReasonLook {
 function lookOf(reason: RowReason): ReasonLook {
   switch (reason) {
     case "question":
-      return { icon: "MessageCircle", label: "Question", className: "text-foreground" };
+      return { icon: "MessageQuestion", label: "Question", className: "text-foreground" };
     case "plan":
-      return { icon: "ClipboardList", label: "Plan to approve", className: "text-foreground" };
+      return { icon: "ListTodo", label: "Plan to approve", className: "text-foreground" };
     case "permission":
-      return { icon: "Shield", label: "Permission", className: "text-warning-text" };
+      return { icon: "Lock", label: "Permission", className: "text-warning-text" };
     case "input":
-      return { icon: "MessageCircle", label: "Waiting for input", className: "text-foreground" };
+      return { icon: "MessageQuestion", label: "Waiting for input", className: "text-foreground" };
     case "finished":
       return { icon: "Check", label: "Finished", className: "text-success" };
     case "error":
       return { icon: "X", label: "Error", className: "text-destructive" };
     case "attention":
-      return { icon: "Megaphone", label: "Needs you", className: "text-foreground" };
+      return { icon: HERALD_ICONS.megaphone, label: "Needs you", className: "text-foreground" };
   }
 }
 
@@ -91,15 +94,16 @@ function useMutedHere(): boolean {
   return useSyncExternalStore(onMuteChange, isMutedHere);
 }
 
-/** Says an entry, or a plain line for a thread Herald has no entry for, and shows why a press stayed quiet. */
-export async function speakRow(entry: AttentionEntry | null, title: string): Promise<void> {
+/**
+ * Says a sentence again, for *Read again* and the banner's play button. An
+ * explicit press speaks here even when announcements are off or this device
+ * is muted, as *Test voice* does; see `Announcer.speakText`.
+ */
+export async function readAgain(sentence: string): Promise<void> {
   const announcer = getAnnouncer();
   if (announcer === null) return;
   try {
-    const blocked =
-      entry === null
-        ? await announcer.speakText(`${title} is waiting for you.`)
-        : await announcer.speakEntry(entry, `${title}: ${entry.headline}`);
+    const blocked = await announcer.speakText(sentence, { force: true });
     if (blocked !== null) toast.info(blocked);
   } catch (error) {
     toast.error(errorText(error));
@@ -112,7 +116,7 @@ function Summary({ entry }: { entry: AttentionEntry | null }): ReactNode {
     case "pending":
       return (
         <p className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Icon name="Loader2" className="size-3.5 animate-spin" aria-hidden />
+          <Icon name="Spinner" className="size-3.5 animate-spin" aria-hidden />
           Writing the summary…
         </p>
       );
@@ -137,7 +141,9 @@ function Summary({ entry }: { entry: AttentionEntry | null }): ReactNode {
 function RowCard({ row, now, onOpen }: { row: Row; now: number; onOpen: (threadId: string) => void }) {
   const look = lookOf(row.reason);
   const entry = row.entry;
-  const speakable = canPlaySpeech() && (entry === null || entry.summary.status === "ready" || entry.summary.status === "failed");
+  // The sentence that would be announced: none while it is being written,
+  // none for a kind that is switched off or a thread Herald has no entry for.
+  const sentence = entry === null ? null : speechText(entry);
   const open = () => onOpen(row.threadId);
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.target !== event.currentTarget) return;
@@ -161,21 +167,23 @@ function RowCard({ row, now, onOpen }: { row: Row; now: number; onOpen: (threadI
           {look.label}
         </span>
         <span className="min-w-0 truncate text-sm font-semibold">{row.title}</span>
-        {speakable ? (
-          <Button
+        <span className="ml-auto shrink-0 text-xs text-muted-foreground">{relativeTime(row.at, now)}</span>
+        {canPlaySpeech() ? (
+          <TipButton
             variant="ghost"
             size="icon"
             className="size-7 shrink-0"
-            aria-label={`Speak the summary for ${row.title}`}
+            label="Read again"
+            disabled={sentence === null}
             onClick={(event) => {
               event.stopPropagation();
-              void speakRow(entry, row.title);
+              if (sentence !== null) void readAgain(sentence);
             }}
+            onKeyDown={(event) => event.stopPropagation()}
           >
-            <Icon name="Volume2" />
-          </Button>
+            <Icon name={HERALD_ICONS.volume} />
+          </TipButton>
         ) : null}
-        <span className="ml-auto shrink-0 text-xs text-muted-foreground">{relativeTime(row.at, now)}</span>
       </div>
       {entry?.lastRequest ? <p className="truncate text-xs text-muted-foreground">{entry.lastRequest}</p> : null}
       {entry === null ? null : (
@@ -204,6 +212,7 @@ function hintFor(): string | null {
 export function HeraldPanel() {
   const { rows, error } = useRows();
   const navigate = useBbNavigate();
+  const pluginId = experimental_usePluginId();
   const muted = useMutedHere();
   const now = useNow();
   const [testing, setTesting] = useState(false);
@@ -223,34 +232,38 @@ export function HeraldPanel() {
     }
   }
 
+  function onSettings() {
+    if (!openPluginSettings(window, pluginId)) toast.info("Herald's settings are in Settings → Plugins → Herald.");
+  }
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex items-center gap-2 border-b border-border px-3 py-2">
-        <Icon name="Megaphone" className="size-4" aria-hidden />
+        <Icon name={HERALD_ICONS.megaphone} className="size-4" aria-hidden />
         <h1 className="text-sm font-semibold">Herald</h1>
         {rows !== null && rows.length > 0 ? <Badge variant="secondary">{rows.length}</Badge> : null}
         <div className="flex-1" />
         {playable ? (
           <>
-            <Button
+            <TipButton
               variant="ghost"
               size="sm"
               aria-pressed={muted}
-              aria-label={muted ? "Unmute on this device" : "Mute on this device"}
+              label={muted ? "Unmute on this device" : "Mute on this device"}
               onClick={() => setMutedHere(!muted)}
             >
-              <Icon name={muted ? "VolumeX" : "Volume2"} />
+              <Icon name={muted ? HERALD_ICONS.volumeOff : HERALD_ICONS.volume} />
               <span className="hidden sm:inline">{muted ? "Muted here" : "Mute here"}</span>
-            </Button>
-            <Button variant="ghost" size="sm" aria-label="Test voice" disabled={testing} onClick={() => void onTest()}>
+            </TipButton>
+            <TipButton variant="ghost" size="sm" label="Test voice" disabled={testing} onClick={() => void onTest()}>
               <Icon name="Play" />
               <span className="hidden sm:inline">Test voice</span>
-            </Button>
+            </TipButton>
           </>
         ) : null}
-        <Button variant="ghost" size="icon" className="size-8" aria-label="Refresh" onClick={refreshEntries}>
-          <Icon name="RefreshCw" />
-        </Button>
+        <TipButton variant="ghost" size="icon" className="size-8" label="Herald settings" onClick={onSettings}>
+          <Icon name="Settings" />
+        </TipButton>
       </div>
       {hint === null ? null : <p className="px-3 pt-2 text-xs text-muted-foreground">{hint}</p>}
       {error === null ? null : (
@@ -265,7 +278,7 @@ export function HeraldPanel() {
               <p className="text-sm font-semibold">Nothing needs you right now</p>
               <p className="text-sm text-muted-foreground">
                 When an agent asks a question, waits for an approval, finishes or fails, it shows up here with a one-sentence
-                summary. Herald's settings are in Settings → Plugins → Herald.
+                summary.
               </p>
             </div>
           ) : (

@@ -183,6 +183,9 @@ What a port only learns by running it:
 - **A thread spawn into a host workspace needs a `hostId`.** The SDK type marks it optional, bb 0.44
   answers `hostId is required unless workspace.type is personal`. Take the server's own machine from
   `bb.sdk.system.config().primaryHostId`, or the host of the project's checkout.
+- **`bb.sdk.projects.list()` leaves out the personal project** unless called with
+  `{ includePersonal: true }`. Every bb has one (`proj_personal`); it is where a thread that needs no
+  checkout can run (`workspace: { type: "personal" }`).
 - **A project knows its `origin`.** `bb.sdk.projects.list()` carries `gitRemoteUrl` (any spelling:
   scp, https, with or without `.git`; null when there is none), so matching a repository to a project
   needs no `git` call. The same repository is often a separate project per machine, so expect several.
@@ -256,6 +259,14 @@ selection — and give it a `draftKey` per subject, since `initialPrompt` seeds 
 Host `Markdown` takes only `content` and `className`, so it gives no say over how a body's images
 load. Where they need gating (tracking pixels, private attachments), render the body yourself, as
 `github-board` does.
+
+**Icon names are bb's own set, not Lucide's.** `experimental_Icon` (and every `icon` field) knows about
+170 names — `Settings`, `Play`, `Spinner`, `Lock`, `ListTodo`, `MessageQuestion`, `Github`… but no
+`Volume2`, `RefreshCw`, `Megaphone`, `Shield` or `Loader2` — and draws its generic bolt for anything else,
+silently. A missing glyph is an SVG declared in `bb.branding.experimental_icons` and named
+`"<pluginId>/<name>"`. `herald/app/testing/bb-icon-names.ts` holds bb 0.44's list and
+`herald/app/icons.test.ts` the check. bb's vendored `Button` takes no `title`; a tooltip is bb's
+`Tooltip` (`npx shadcn add @bb/tooltip`).
 
 Colour comes from the semantic classes, never a literal — check light and dark. The app also has a
 compact viewport (`isCompactViewport` on some slots); check a narrow window too. A throwing slot

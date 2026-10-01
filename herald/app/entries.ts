@@ -16,7 +16,6 @@ export interface EntriesState {
 
 let state: EntriesState = { entries: null, error: null };
 const listeners = new Set<() => void>();
-let refresher: (() => void) | null = null;
 
 function emit(): void {
   for (const listener of listeners) listener();
@@ -30,15 +29,6 @@ export function setEntries(entries: AttentionEntry[]): void {
 export function setEntriesError(error: string): void {
   state = { ...state, error };
   emit();
-}
-
-/** The overlay hands over how to read the list again, for the panel's Refresh button. */
-export function setRefresher(next: (() => void) | null): void {
-  refresher = next;
-}
-
-export function refreshEntries(): void {
-  refresher?.();
 }
 
 function subscribe(listener: () => void): () => void {

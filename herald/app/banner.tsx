@@ -6,12 +6,13 @@
  */
 import { useComposerView } from "@get-bb/plugin-sdk/app";
 
-import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 
 import { speechText } from "../shared/herald";
-import { speakRow, useRows } from "./panel";
+import { HERALD_ICONS } from "./icons";
+import { readAgain, useRows } from "./panel";
 import { canPlaySpeech } from "./speech";
+import { TipButton } from "./tip-button";
 
 const LABELS = {
   question: "Question",
@@ -31,7 +32,7 @@ export function HeraldBanner() {
   const sentence = speechText(entry);
   return (
     <div className="flex items-start gap-2 px-3 py-2 text-sm">
-      <Icon name="Megaphone" className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
+      <Icon name={HERALD_ICONS.megaphone} className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
       <div className="min-w-0 flex-1">
         <p className="text-xs font-semibold text-muted-foreground">Herald · {LABELS[entry.reason]}</p>
         {sentence === null ? (
@@ -41,15 +42,9 @@ export function HeraldBanner() {
         )}
       </div>
       {sentence !== null && canPlaySpeech() ? (
-        <Button
-          variant="ghost"
-          size="icon"
-          className="size-7 shrink-0"
-          aria-label="Speak Herald's summary"
-          onClick={() => void speakRow(entry, row.title)}
-        >
-          <Icon name="Play" />
-        </Button>
+        <TipButton variant="ghost" size="icon" className="size-7 shrink-0" label="Read again" onClick={() => void readAgain(sentence)}>
+          <Icon name={HERALD_ICONS.volume} />
+        </TipButton>
       ) : null}
     </div>
   );

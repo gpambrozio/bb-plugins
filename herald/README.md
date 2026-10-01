@@ -8,10 +8,13 @@ fails, Herald has a short helper agent write one spoken sentence about it — wh
 choices, or what was done and whether anything is left — and the bb app speaks it.
 
 - A **Herald** page in the sidebar lists every thread waiting on you, each with that sentence and how
-  long ago it happened; the sidebar entry shows how many. Tap a row to open the thread, or the speaker
-  beside its title to hear the sentence again.
-- The sentence also sits above the waiting thread's composer, with a play button, until you answer.
-- *Mute here* silences the device you are on until the app reloads; *Test voice* says a sample sentence.
+  long ago it happened; the sidebar entry shows how many. The list keeps itself up to date. Tap a row to
+  open the thread, or **Read again** on it to hear the sentence again.
+- The sentence also sits above the waiting thread's composer, with a Read again button, until you answer.
+- *Mute here* silences announcements on the device you are on until the app reloads; *Test voice* says a
+  sample sentence; the gear opens Herald's settings. Read again and Test voice speak even when muted —
+  you pressed them.
+- Herald speaks whatever page you are on, with the Herald page open or not.
 
 ## What Herald adds to bb's push notifications
 

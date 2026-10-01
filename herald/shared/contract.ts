@@ -33,6 +33,15 @@ export const rpcContract = defineRpcContract({
     output: StoredConfigSchema,
   },
   /**
+   * A line from the app for `bb plugin logs herald`: the announcer says here
+   * what it spoke and why it stayed quiet, since the app's console is out of
+   * reach on most clients.
+   */
+  log: {
+    input: z.object({ level: z.enum(["info", "warn"]), message: z.string().max(2000) }),
+    output: z.null(),
+  },
+  /**
    * The bb server Mac's `say` voices, and whether `say` is there at all. The
    * app cannot run a command, but the server can, and its voices are better
    * than a browser's; so the server renders the sentence and the app plays it.

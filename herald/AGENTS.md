@@ -25,7 +25,11 @@ what still holds and says what bb changed. The repo root `AGENTS.md` covers what
 | `shared/settings.ts` | The host-rendered form, and the speech gate (`blockedMessage`) both halves agree on. |
 | `shared/contract.ts` | The RPC contract. The app imports it as a type only. |
 | `app/bridge.tsx` | The app-wide overlay: reads the list on every nudge and reconnect, and runs the announcer. |
-| `app/announcer.ts` | Speaks each new sentence once per window; the mute on this device. |
+| `app/announcer.ts` | Speaks each new sentence; the mute on this device; reports what it did to the server log. |
+| `app/claims.ts` | Which window of the app says an announcement: a claim per event id. |
+| `app/icons.ts`, `icons/` | The icon names Herald draws, and the three SVGs it declares because bb has none. |
+| `app/open-settings.ts` | The page's Settings button: bb's own route for a plugin's settings. |
+| `app/tip-button.tsx` | An icon button with bb's tooltip. |
 | `app/speech.ts` | Every browser audio global, and which bb client this is. |
 | `app/rows.ts` | What the page lists: bb's unread and waiting-for-input joined with Herald's entries. |
 | `app/panel.tsx`, `app/banner.tsx` | The Herald page (and its sidebar count), and the sentence above a waiting thread's composer. |
@@ -39,7 +43,10 @@ particular one: the audio goes back to the app as bytes and plays on the device 
 When bb's server is not a Mac, `speech.render` refuses and the app falls back to the browser voice.
 
 Summary helpers run in bb's **personal project and workspace** on the server's machine
-(`system.config().primaryHostId`), because a summary reads nothing from a repository.
+(`system.config().primaryHostId`), because a summary reads nothing from a repository. Every bb has the
+personal project (`proj_personal`), but `projects.list()` **leaves it out unless called with
+`{ includePersonal: true }`** — the first build missed that, and every summary failed with "no personal
+project" (pinned by `server.test.ts`).
 
 ## The events are announcements, and the summary does not wait
 
@@ -198,19 +205,40 @@ before its first `await`.** It starts a silent clip on the element every later p
 unlocks the element, not the page — and an inaudible utterance. Take it out and browser announcements
 never start.
 
-**The switches mean what they say, and a blocked press says so.** `blockedMessage()` is the single gate —
-*Mute here*, the master switch, then the platform switch — and returns the reason. An announcement that
-is blocked is dropped silently; a pressed speaker hands the reason to a toast. *Test voice* passes
-`{ force: true }`: it is how the voice is checked while announcements are off, and the press that
-unlocks audio. Every play control is hidden where `canPlaySpeech()` is false.
+**The switches mean what they say.** `blockedMessage()` is the single gate — *Mute here*, the master
+switch, then the platform switch — and returns the reason. An announcement is gated when it is about to
+be said, not when it arrived, and a blocked one is logged and dropped. **An explicit press is forced
+through**: *Test voice* and *Read again* (on each card and on the composer banner) pass `{ force: true }`
+and speak even with announcements off or this device muted — the owner's choice, and it is also the
+press that unlocks audio. Every play control is hidden where `canPlaySpeech()` is false.
 
-**One window speaks.** Windows of one app share an origin, so a Web Lock (`<pluginId>:announcer`) elects
-the one whose announcer speaks on its own; every window keeps count of what was said, so a window that
-takes the lead later does not repeat it. Different devices each speak, by their own switches.
+**A failed summary is still spoken**: its entry carries the fallback sentence, and `speechText` returns it,
+as Paseo did. A failure is never silence.
+
+**One window speaks each announcement.** Windows of one app share an origin, so each announcement is
+claimed by event id (`app/claims.ts`): a `localStorage` marker checked under a Web Lock named for the
+event, held only for the check. The first build elected one window with a lock held for its lifetime
+instead; a window or a replaced plugin generation that never released it would have kept every other
+window quiet. Different devices each speak, by their own switches.
+
+**The announcer reports to the server.** What it spoke, and why it stayed quiet, goes through the `log`
+RPC into `bb plugin logs herald` (prefixed `app:`), because the app's console is out of reach on the
+desktop and mobile apps. Read that first when the user hears nothing.
 
 The first list a window reads only seeds what has been said: what was waiting when the window opened is
 not news. After that the list is re-read on every realtime nudge (`entries`), on every reconnect, and once
-a minute as a backstop.
+a minute as a backstop — so the page has no Refresh button. Its header has *Mute here*, *Test voice* and a
+Settings button that goes where bb's own `openSettings()` goes (`/settings/plugins/<pluginId>`); the
+panel SDK has no call for it, so `app/open-settings.ts` pushes that route as `firstmate-crew` does.
+
+## Icons
+
+bb's icon names are its own set (about 170, listed in `app/testing/bb-icon-names.ts`), not Lucide's: there
+is no `Volume2`, `RefreshCw`, `Megaphone`, `Shield` or `Loader2`, and a name bb does not know renders as its
+generic bolt with no error — the first build shipped three such buttons. The megaphone and the two speakers
+are Lucide SVGs (ISC, `icons/LICENSE`) declared in `bb.branding.experimental_icons` and drawn as
+`herald/<name>`; the branding icon is the megaphone file. `app/icons.test.ts` checks every name Herald uses
+against bb's list and the manifest. Refresh the list from bb's app bundle (`ICON_NAMES`) when the SDK moves.
 
 ## The sentence in the thread
 

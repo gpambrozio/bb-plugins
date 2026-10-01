@@ -31,6 +31,7 @@
     "components/",
     "lib/",
     "hooks/",
+    "icons/",
     "dist/",
     "PLUGIN_OVERVIEW.md",
     "CHANGELOG.md",
@@ -41,7 +42,12 @@
     "name": "Herald",
     "description": "Hear one spoken sentence when an agent needs you, written by a short helper agent, and see every waiting thread in one list.",
     "branding": {
-      "icon": "Megaphone"
+      "icon": "./icons/megaphone.svg",
+      "experimental_icons": {
+        "megaphone": "./icons/megaphone.svg",
+        "volume": "./icons/volume.svg",
+        "volume-off": "./icons/volume-off.svg"
+      }
     },
     "server": "./server.ts",
     "app": "./app.tsx"

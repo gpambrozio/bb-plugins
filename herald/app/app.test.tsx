@@ -5,9 +5,9 @@
  * comes back. A throwing slot shows as a "plugin crashed" chip in bb, so a
  * render here is the cheapest check that none of them throw.
  */
-import { cleanup, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { RpcContract } from "../shared/contract";
 import { DEFAULT_STORED_CONFIG, ENTRIES_CHANNEL, type AttentionEntry } from "../shared/herald";
@@ -16,7 +16,20 @@ import { HeraldBridge } from "./bridge";
 import { HeraldPanel } from "./panel";
 import { HeraldSettingsSection } from "./settings-section";
 
-afterEach(() => cleanup());
+beforeEach(() => {
+  // jsdom has the elements but implements no playback; the announcer needs
+  // play() to answer, and the tests watch what it asks the server to render.
+  vi.spyOn(HTMLMediaElement.prototype, "play").mockImplementation(() => Promise.resolve());
+  vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+});
+
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+  // The cross-window claims live in localStorage.
+  localStorage.clear();
+  delete (window as { bbDesktop?: unknown }).bbDesktop;
+});
 
 function entry(overrides: Partial<AttentionEntry> = {}): AttentionEntry {
   return {
@@ -62,6 +75,7 @@ function rpc(entries: () => AttentionEntry[], calls: { list: number }) {
     "config.set": () => DEFAULT_STORED_CONFIG,
     "speech.voices": () => ({ available: true, voices: [{ name: "Zoe (Premium)", lang: "en_US" }] }),
     "speech.render": () => ({ mimeType: "audio/wav", base64: "" }),
+    log: () => null,
   };
 }
 
@@ -105,6 +119,59 @@ describe("Herald's app", () => {
     cleanup();
     renderSlot({ component: HeraldBanner }, {}, { ...options, composer: { scope: { kind: "thread", threadId: "other" } } });
     expect(screen.queryByText(/Herald ·/)).toBeNull();
+  });
+
+  it("speaks a new sentence from the overlay alone, with no Herald page open", async () => {
+    // The desktop app, showing some other page: only the overlay is mounted.
+    (window as { bbDesktop?: unknown }).bbDesktop = {};
+    let current: AttentionEntry[] = [];
+    const calls = { list: 0 };
+    const bridge = renderSlot<object, RpcContract>({ component: HeraldBridge }, {}, { rpc: rpc(() => current, calls), pluginId: "herald" });
+    await waitFor(() => expect(calls.list).toBe(1));
+    current = [entry({ eventId: "t1:idle:9", summary: { status: "failed", error: "x", fallback: "Login fix finished." } })];
+    await bridge.emitRealtime(ENTRIES_CHANNEL, { at: 2 });
+    await waitFor(() =>
+      expect(bridge.inspection.rpcCalls).toContainEqual({
+        method: "speech.render",
+        input: { text: "Login fix finished.", voice: "", rate: 1 },
+      }),
+    );
+  });
+
+  it("has Settings instead of Refresh, and opens Herald's settings page", async () => {
+    const calls = { list: 0 };
+    const push = vi.spyOn(window.history, "pushState");
+    renderSlot<object, RpcContract>(
+      { component: HeraldPanel },
+      {},
+      { rpc: rpc(() => [], calls), pluginId: "herald", sidebarThreads: { status: "ready", threads: [] } },
+    );
+    expect(screen.queryByLabelText("Refresh")).toBeNull();
+    fireEvent.click(screen.getByLabelText("Herald settings"));
+    expect(push).toHaveBeenCalledWith(expect.anything(), "", "/settings/plugins/herald");
+  });
+
+  it("reads a card's sentence again on request, even when muted here, and not while it is being written", async () => {
+    let current = [entry({ eventId: "t1:idle:10" })];
+    const calls = { list: 0 };
+    const options = { rpc: rpc(() => current, calls), sidebarThreads: { status: "ready" as const, threads: [sidebarThread] } };
+    const bridge = renderSlot<object, RpcContract>({ component: HeraldBridge }, {}, options);
+    renderSlot<object, RpcContract>({ component: HeraldPanel }, {}, options);
+    await screen.findByText("Login fix is done.");
+    fireEvent.click(screen.getByLabelText("Mute on this device"));
+    fireEvent.click(screen.getByLabelText("Read again"));
+    await waitFor(() =>
+      expect(bridge.inspection.rpcCalls).toContainEqual({
+        method: "speech.render",
+        input: { text: "Login fix is done.", voice: "", rate: 1 },
+      }),
+    );
+    fireEvent.click(screen.getByLabelText("Unmute on this device"));
+
+    current = [entry({ eventId: "t1:idle:11", summary: { status: "pending" } })];
+    await bridge.emitRealtime(ENTRIES_CHANNEL, { at: 3 });
+    await screen.findByText("Writing the summary…");
+    expect((screen.getByLabelText("Read again") as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("renders the settings section with the prompt and the voices", async () => {

@@ -31,7 +31,12 @@ async function load(settings: Record<string, string | number | boolean> = {}) {
     sdk: {
       system: { config: async () => ({ primaryHostId: "host_main" }) as never },
       projects: {
-        list: async () => [{ id: "prj_personal", kind: "personal", name: "Personal" }] as never,
+        // As bb does: the personal project is left out unless asked for.
+        list: async (args?: { includePersonal?: boolean }) =>
+          [
+            { id: "prj_shop", kind: "standard", name: "Shop" },
+            ...(args?.includePersonal === true ? [{ id: "prj_personal", kind: "personal", name: "Personal" }] : []),
+          ] as never,
         get: async () => ({ id: "prj_shop", name: "Shop" }) as never,
       },
       environments: { get: async () => ({ id: "env_1", path: "/Users/me/shop" }) as never },

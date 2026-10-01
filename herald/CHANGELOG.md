@@ -15,10 +15,13 @@ The first release: Herald for bb, ported from the Paseo plugin of the same name 
   finished turn, or an error — written by a short helper agent and spoken by the bb app, in the voice of
   the Mac running bb or in the browser's own voice.
 - **A Herald page** listing every thread waiting on you, with the reason, the sentence and how long ago
-  it happened, and a count beside its sidebar entry. Tap a row to open the thread, or its speaker to hear
-  the sentence again.
-- **The sentence above a waiting thread's composer**, with a play button, until you answer.
-- **Mute here** and **Test voice** on the page.
+  it happened, and a count beside its sidebar entry. It keeps itself up to date. Tap a row to open the
+  thread.
+- **The sentence above a waiting thread's composer**, with a Read again button, until you answer.
+- **Mute here**, **Test voice** and a **settings** button on the page, and **Read again** on every card.
+  Read again and Test voice speak even when this device is muted.
+- **Speaks from any page**, whether or not the Herald page is open, and in one window at a time.
+- **A failed summary is still announced**, in a plain sentence, so a failure never means silence.
 - **Settings** for where to speak, the voice, the speech rate, which events are announced, threads
   started by another thread, keeping the helpers, and how long a summary may take; and a section for
   the summary model, the prompt, and the voices.

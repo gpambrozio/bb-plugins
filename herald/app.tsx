@@ -8,6 +8,7 @@ import { definePluginApp } from "@get-bb/plugin-sdk/app";
 
 import { HeraldBanner } from "./app/banner";
 import { HeraldBridge } from "./app/bridge";
+import { HERALD_ICONS } from "./app/icons";
 import { HeraldPanel, PANEL_PATH, WaitingCount } from "./app/panel";
 import { HeraldSettingsSection } from "./app/settings-section";
 
@@ -15,7 +16,7 @@ export default definePluginApp((app) => {
   app.slots.navPanel({
     id: "waiting",
     title: "Herald",
-    icon: "Megaphone",
+    icon: HERALD_ICONS.megaphone,
     path: PANEL_PATH,
     component: HeraldPanel,
     experimental_sidebarAccessory: WaitingCount,
