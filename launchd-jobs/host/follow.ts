@@ -25,6 +25,7 @@ export interface FollowContext {
 }
 
 interface Follow {
+  logPath: string;
   subscription: Subscription | null;
   timer: ReturnType<typeof setTimeout>;
 }
@@ -49,14 +50,20 @@ export function createLogFollows(warn: (message: string) => void) {
   return {
     /** Starts following `logPath` for job `id`, or extends the follow already running. */
     async follow(id: string, logPath: string, context: FollowContext): Promise<number> {
-      const existing = follows.get(id);
+      let existing = follows.get(id);
+      // An edit can move a job's files; a renewal for the new path starts over.
+      if (existing !== undefined && existing.logPath !== logPath) {
+        end(id, existing);
+        existing = undefined;
+      }
       if (existing !== undefined) {
-        clearTimeout(existing.timer);
-        existing.timer = expireLater(id, () => existing);
+        const renewed = existing;
+        clearTimeout(renewed.timer);
+        renewed.timer = expireLater(id, () => renewed);
         return FOLLOW_TTL_MS;
       }
       const file = basename(logPath);
-      const entry: Follow = { subscription: null, timer: expireLater(id, () => entry) };
+      const entry: Follow = { logPath, subscription: null, timer: expireLater(id, () => entry) };
       follows.set(id, entry);
       let subscription: Subscription;
       try {

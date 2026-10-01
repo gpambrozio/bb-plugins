@@ -6,6 +6,7 @@ import { createHealthMonitor, type HealthDeps } from "./health";
 
 function setup(options: {
   primary?: string | null;
+  /** Host id to name; a name ending in " (asleep)" is enrolled but not connected. */
   connected?: Record<string, string>;
   watched?: string[];
   answers?: Record<string, { jobCount: number; failing: FailingJob[] } | Error>;
@@ -16,7 +17,13 @@ function setup(options: {
   const asked: string[] = [];
   const deps: HealthDeps = {
     primaryHostId: async () => (options.primary === undefined ? "mini" : options.primary),
-    connectedHosts: async () => new Map(Object.entries(options.connected ?? { mini: "Mini" })),
+    knownHosts: async () =>
+      new Map(
+        Object.entries(options.connected ?? { mini: "Mini" }).map(([id, name]) => [
+          id,
+          { name: name.replace(" (asleep)", ""), connected: !name.endsWith(" (asleep)") },
+        ]),
+      ),
     hostHealth: async (hostId) => {
       asked.push(hostId);
       const answer = answers[hostId];
@@ -88,13 +95,53 @@ describe("the failing count", () => {
     await monitor.refresh();
     expect(deps.warn).toHaveBeenCalledTimes(1);
 
-    deps.connectedHosts = async () => new Map([["mini", "Mini"]]);
+    deps.knownHosts = async () =>
+      new Map([
+        ["mini", { name: "Mini", connected: true }],
+        ["laptop", { name: "Laptop", connected: false }],
+      ]);
     expect((await monitor.refresh()).failing).toHaveLength(1);
   });
 
-  it("shares one check between callers that ask at once", async () => {
-    const { monitor, asked } = setup({});
-    await Promise.all([monitor.refresh(), monitor.refresh()]);
-    expect(asked).toEqual(["mini"]);
+  it("forgets a Mac removed from bb, with its failures", async () => {
+    const { monitor, deps, saved } = setup({
+      connected: { mini: "Mini", laptop: "Laptop" },
+      watched: ["laptop"],
+      answers: { laptop: { jobCount: 1, failing: [{ id: "sync", name: "Sync" }] } },
+    });
+    expect((await monitor.refresh()).failing).toHaveLength(1);
+
+    deps.knownHosts = async () => new Map([["mini", { name: "Mini", connected: true }]]);
+
+    expect((await monitor.refresh()).failing).toEqual([]);
+    expect(saved.at(-1)).toEqual([]);
+  });
+
+  it("checks again after a check that was under way when a change asked for a recount", async () => {
+    const { monitor, asked, answers, deps } = setup({ answers: { mini: { jobCount: 1, failing: [{ id: "a", name: "A" }] } } });
+    const gates: (() => void)[] = [];
+    const answer = deps.hostHealth;
+    deps.hostHealth = async (hostId) => {
+      const result = await answer(hostId);
+      await new Promise<void>((resolve) => gates.push(resolve));
+      return result;
+    };
+    const until = async (count: number) => {
+      while (gates.length < count) await new Promise((resolve) => setTimeout(resolve, 0));
+    };
+
+    const first = monitor.refresh();
+    await until(1);
+    // The poll has read the failure; now the user acknowledges it.
+    answers.mini = { jobCount: 1, failing: [] };
+    const second = monitor.refresh();
+    const third = monitor.refresh();
+    gates[0]?.();
+    expect((await first).failing).toHaveLength(1);
+    await until(2);
+    gates[1]?.();
+    expect((await second).failing).toEqual([]);
+    expect(await third).toBe(await second);
+    expect(asked).toEqual(["mini", "mini"]);
   });
 });

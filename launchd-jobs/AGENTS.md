@@ -19,7 +19,7 @@ specific to `launchd-jobs`.
 | `shared/cron.ts` | cron ⇄ `StartCalendarInterval`, and the sentences. In the app and host bundles. |
 | `shared/jobs.ts`, `shared/channels.ts` | Zod shapes and realtime channels; no SDK import, so the app may use them at run time. |
 | `shared/contract.ts`, `shared/host-contract.ts` | The app ⇄ server and server ⇄ host contracts. The app imports them as types only. |
-| `app/jobs-panel.tsx` | The page: Mac picker, list, and the detail or form pane. |
+| `app/jobs-panel.tsx` | The page: Mac picker, list, and the detail or form pane. An answer that arrives after the user switched Macs is dropped, and a pane never outlives the Mac it was opened on: the same slug on another Mac is another job. |
 | `app/job-detail.tsx`, `app/job-form.tsx`, `app/log.ts` | The detail pane, the form, and the log with Follow. |
 | `app/health.tsx` | The failing count as the app sees it, and the sidebar row's accessory. |
 | `host/fake-launchd.ts` | Test support: an in-memory launchd behind the same `RunCommand`. |
@@ -76,7 +76,8 @@ keep the log markers and the history line identical to the Paseo runner's.
   directory (its earlier history stays behind).
 - **Deleting an adopted job** removes its plist and its own log and history files from the Paseo
   directory, as deleting did in Paseo. Nothing else there is touched; its stale `jobs.json` entry is
-  harmless.
+  harmless. Outside this plugin's own directory, history is deleted only for a managed plist: a
+  hand-written plist can name any directory, and deleting it removes only the plist.
 - The Paseo plugin's own migration out of its older `plugins/launchd-jobs/` directory
   (`data-dir.ts`, `moveLegacyFiles`, the forwarder) is not ported. A plist still pointing there simply
   shows that directory's files; the Paseo plugin finishes its own move.
@@ -88,7 +89,8 @@ Modern `launchctl` (`bootstrap`/`bootout`/`kickstart`/`enable`/`disable`) agains
 supplies the uid.
 
 - **Update is bootout, rewrite, bootstrap.** launchd does not reread a changed plist, and
-  bootstrapping a loaded label fails. `bootoutIfLoaded` swallows only the two "not loaded" spellings
+  bootstrapping a loaded label fails. The login PATH is probed (up to two `zsh` runs) *before* the
+  bootout, so the job is out of launchd only for the rewrite. `bootoutIfLoaded` swallows only the two "not loaded" spellings
   (`No such process`, `Could not find service`); anything else is thrown. A disabled job is not
   bootstrapped after an update.
 - **Enable is `enable` *then* bootstrap**; bootstrapping a disabled label is refused. Disable is
@@ -145,7 +147,9 @@ as `log-changed` over realtime; the app reads only what was appended (`log` with
   calls `unfollow` when it stops or unmounts. A window that vanishes leaves nothing behind for long.
   An active watch keeps the host worker alive, which is what an expiry protects.
 - Realtime is broadcast and not persisted, so the app also polls for appended bytes every 5 s while
-  following.
+  following. That poll also covers the one shared-watch gap: a follow is per job, not per window, so
+  one window's Stop ends the watch for another window following the same job until its next renewal.
+- A renewal naming a different log path (an edit moved the job's files) restarts the watch there.
 - The watch on an adopted job's directory only observes. The host creates `logs/` only inside its own
   directory.
 
@@ -161,7 +165,10 @@ when it changes; the app reads it on mount and after a reconnect.
   page's status column is where that shows.
 - The server's own Mac is always asked. Another Mac is asked only once a listing there found a job
   (kv `watched-hosts`), and drops out when it has none, so a laptop nobody looked at is not woken
-  every minute. A Mac that is asleep keeps what it last reported.
+  every minute. A Mac that is asleep keeps what it last reported; a Mac removed from bb is forgotten
+  with its failures, since nobody could open it to clear them.
+- A recount asked for while a check is running (after an acknowledge or a delete) waits for it and
+  runs once more, because the running check may have read the files before the change.
 - The poll keeps the server Mac's host worker alive (60 s is inside the 5-minute idle stop).
 - **Acknowledgement is per run.** Opening a failing job's detail acknowledges its latest run; the
   next failure alerts again. A job whose latest run succeeded loses its entry. Entries for jobs that

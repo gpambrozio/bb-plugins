@@ -115,7 +115,8 @@ export function useJobLog(hostId: string, job: Job, onError: (message: string) =
         .finally(() => {
           const again = reading.current.again;
           reading.current = { busy: false, again: false };
-          if (again && mine === generation.current) readMore(mine);
+          // Asked for meanwhile — possibly by a newer follow, whose read this one held up.
+          if (again) readMore(generation.current);
         });
     },
     [rpc, hostId, job.id],

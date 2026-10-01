@@ -98,6 +98,38 @@ describe("the Scheduled jobs page", () => {
     await waitFor(() => expect(view.rpcCalls.some((call) => call.method === "unfollow")).toBe(true));
   });
 
+  it("drops a save that answers after the user switched Macs, and never acts on the other Mac's job of the same name", async () => {
+    window.localStorage.clear();
+    let finishSave: (job: Job) => void = () => {};
+    const other: Job = { ...adopted, name: "Same slug elsewhere", adopted: false, recentRuns: [adopted.recentRuns[0]!] };
+    const view = renderSlot<PluginNavPanelProps, RpcContract>({ component: JobsPanel }, { subPath: "" }, {
+      rpc: stubs({
+        hosts: () => ({ primaryHostId: "mini", hosts: [{ id: "mini", name: "Mini" }, { id: "laptop", name: "Laptop" }] }),
+        list: ({ hostId }) => ({ supported: true, jobs: [hostId === "mini" ? adopted : other], launchAgentsDir: "/agents" }),
+        log: () => chunk("", 0),
+        acknowledge: () => ({}),
+        update: () => new Promise<Job>((resolve) => (finishSave = resolve)),
+        health: () => ({ failing: [], checkedAt: 1 }),
+      }),
+    });
+
+    // The page remembers the pane across mounts, so the job may already be open.
+    fireEvent.click((await screen.findAllByText("Nightly report"))[0]!);
+    fireEvent.click(await screen.findByText("Edit"));
+    fireEvent.click(await screen.findByText("Save changes"));
+    await waitFor(() => expect(view.rpcCalls.some((call) => call.method === "update")).toBe(true));
+
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "laptop" } });
+    await screen.findByText("Same slug elsewhere");
+    finishSave({ ...adopted, name: "Nightly report (edited)" });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(screen.queryByText("Nightly report (edited)")).toBeNull();
+    expect(screen.getByText("Select a job, or create one.")).toBeTruthy();
+    const onLaptop = view.rpcCalls.filter((call) => (call.input as { hostId?: string }).hostId === "laptop").map((call) => call.method);
+    expect(onLaptop).toEqual(expect.not.arrayContaining(["acknowledge", "log"]));
+  });
+
   it("shows the failing count beside the sidebar row, and updates it when the server publishes", async () => {
     const view = renderSlot<object, RpcContract>({ component: FailingAccessory }, {}, {
       rpc: stubs({ health: () => ({ failing: [], checkedAt: 1 }) }),

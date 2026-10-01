@@ -13,8 +13,8 @@ import type { FailingJob } from "../shared/jobs";
  */
 export interface HealthDeps {
   primaryHostId(): Promise<string | null>;
-  /** Connected hosts by id, for names and to skip the ones that cannot answer. */
-  connectedHosts(): Promise<Map<string, string>>;
+  /** Every enrolled host by id, with its name and whether it can answer now. */
+  knownHosts(): Promise<Map<string, { name: string; connected: boolean }>>;
   hostHealth(hostId: string): Promise<{ supported: boolean; jobCount: number; failing: FailingJob[] }>;
   loadWatched(): Promise<string[]>;
   saveWatched(hostIds: string[]): Promise<void>;
@@ -37,6 +37,8 @@ export function createHealthMonitor(deps: HealthDeps) {
   let current: Health = { failing: [], checkedAt: null };
   let watched: Set<string> | null = null;
   let running: Promise<Health> | null = null;
+  /** One more check, asked for while `running` was under way; see `refresh`. */
+  let queued: Promise<Health> | null = null;
   /** Only warn when a host's failure changes, or a sleeping laptop logs every minute. */
   const lastWarning = new Map<string, string>();
 
@@ -55,16 +57,23 @@ export function createHealthMonitor(deps: HealthDeps) {
   }
 
   async function check(): Promise<Health> {
-    const [primary, connected, set] = await Promise.all([deps.primaryHostId(), deps.connectedHosts(), watchedHosts()]);
-    const targets = [...new Set([...(primary === null ? [] : [primary]), ...set])].sort();
+    const [primary, known, set] = await Promise.all([deps.primaryHostId(), deps.knownHosts(), watchedHosts()]);
+    // A Mac removed from bb is forgotten, failures and all: nobody can open it to clear them.
+    const gone = [...set].filter((hostId) => !known.has(hostId));
+    if (gone.length > 0) {
+      for (const hostId of gone) set.delete(hostId);
+      await deps.saveWatched([...set].sort());
+    }
+    const targets = [...new Set([...(primary === null ? [] : [primary]), ...set])].filter((hostId) => known.has(hostId)).sort();
     const failing: FailingEntry[] = [];
     for (const hostId of targets) {
-      const hostName = connected.get(hostId);
-      // A Mac that is asleep or gone keeps whatever it last reported.
-      if (hostName === undefined) {
+      const host = known.get(hostId);
+      // A Mac that is asleep keeps whatever it last reported.
+      if (host === undefined || !host.connected) {
         failing.push(...current.failing.filter((entry) => entry.hostId === hostId));
         continue;
       }
+      const hostName = host.name;
       try {
         const health = await deps.hostHealth(hostId);
         lastWarning.delete(hostId);
@@ -85,17 +94,33 @@ export function createHealthMonitor(deps: HealthDeps) {
     return current;
   }
 
+  /**
+   * Takes a new count. A caller arriving while a check is under way gets the
+   * one after it, since the running check may have read the files before
+   * whatever the caller just changed (an acknowledgement, a delete); callers
+   * arriving together share that one.
+   */
+  function refresh(): Promise<Health> {
+    if (running === null) {
+      running = check().finally(() => {
+        running = null;
+      });
+      return running;
+    }
+    if (queued === null) {
+      queued = running
+        .catch(() => undefined)
+        .then(() => {
+          queued = null;
+          return refresh();
+        });
+    }
+    return queued;
+  }
+
   return {
     noteJobCount,
     current: (): Health => current,
-    /** Takes a new count; concurrent callers share the one in flight. */
-    refresh(): Promise<Health> {
-      if (running === null) {
-        running = check().finally(() => {
-          running = null;
-        });
-      }
-      return running;
-    },
+    refresh,
   };
 }

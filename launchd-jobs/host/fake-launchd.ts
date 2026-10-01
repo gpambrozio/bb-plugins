@@ -47,7 +47,10 @@ export function createFakeLaunchd() {
       const { stdout } = await exec("plutil", [...args], { encoding: "utf8" });
       return { stdout };
     }
-    if (file === "/bin/zsh") return { stdout: `some startup banner\n${FAKE_LOGIN_PATH}\n` };
+    if (file === "/bin/zsh") {
+      calls.push(["path-probe"]);
+      return { stdout: `some startup banner\n${FAKE_LOGIN_PATH}\n` };
+    }
     if (file !== "launchctl") throw new Error(`unexpected command ${file}`);
     calls.push([...args]);
     const [verb, target = "", extra = ""] = args;

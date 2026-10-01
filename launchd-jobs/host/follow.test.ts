@@ -64,6 +64,19 @@ describe("following a log", () => {
     expect(follows.following()).toEqual([]);
   });
 
+  it("starts over on the new directory when a renewal names another log path", async () => {
+    const follows = createLogFollows(() => {});
+    const { context, watches } = fakeContext();
+
+    await follows.follow("backup", "/old/logs/backup.log", context);
+    await follows.follow("backup", "/new/logs/backup.log", context);
+
+    expect(watches.map((watch) => [watch.options.rootPath, watch.disposed])).toEqual([
+      ["/old/logs", true],
+      ["/new/logs", false],
+    ]);
+  });
+
   it("stops at once on unfollow and on dispose", async () => {
     const follows = createLogFollows(() => {});
     const { context, watches } = fakeContext();

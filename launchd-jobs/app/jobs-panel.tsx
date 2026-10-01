@@ -35,7 +35,8 @@ type Pane = { kind: "empty" } | { kind: "view"; id: string } | { kind: "edit"; i
  * comes back.
  */
 const cachedJobs = new Map<string, Job[]>();
-let cachedPane: Pane = { kind: "empty" };
+/** The open pane, and the Mac it belongs to: a job id means nothing on another Mac. */
+let cachedPane: { hostId: string | null; pane: Pane } = { hostId: null, pane: { kind: "empty" } };
 let cachedHosts: { primaryHostId: string | null; hosts: HostChoice[] } | null = null;
 
 function storedHost(): string | null {
@@ -135,23 +136,43 @@ export function JobsPanel(_props: PluginNavPanelProps) {
   const [launchAgentsDir, setLaunchAgentsDir] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [pane, setPaneState] = useState<Pane>(cachedPane);
+  const [pane, setPaneState] = useState<Pane>(
+    // Before the hosts answer, `hostId` is null; the effect below closes the
+    // pane if the Mac then turns out to be another one.
+    hostId === null || cachedPane.hostId === hostId ? cachedPane.pane : { kind: "empty" },
+  );
+  /** The Mac on screen now, for answers that arrive after the user switched. */
+  const currentHost = useRef(hostId);
+  currentHost.current = hostId;
   const setPane = useCallback((next: Pane) => {
-    cachedPane = next;
+    cachedPane = { hostId: currentHost.current, pane: next };
     setPaneState(next);
   }, []);
 
-  const setHostJobs = useCallback(
-    (update: (current: Job[]) => Job[]) => {
-      if (hostId === null) return;
-      setJobs((current) => {
-        const next = update(current ?? []);
-        cachedJobs.set(hostId, next);
-        return next;
-      });
-    },
-    [hostId],
-  );
+  // A switch to another Mac — by the picker, or because the chosen one went
+  // away — closes the pane: the open job id belongs to the Mac it came from.
+  const paneHost = useRef(cachedPane.hostId);
+  useEffect(() => {
+    if (hostId === null) return;
+    if (paneHost.current !== null && paneHost.current !== hostId) setPane({ kind: "empty" });
+    paneHost.current = hostId;
+    cachedPane = { hostId, pane: cachedPane.pane };
+  }, [hostId, setPane]);
+
+  /**
+   * Applies a change to `forHost`'s list, unless the user has switched Macs
+   * since the call that produced it began; that answer is for a list no
+   * longer on screen, and the next refresh of that Mac shows it anyway.
+   */
+  const setHostJobs = useCallback((forHost: string, update: (current: Job[]) => Job[]) => {
+    if (currentHost.current !== forHost) return false;
+    setJobs((current) => {
+      const next = update(current ?? []);
+      cachedJobs.set(forHost, next);
+      return next;
+    });
+    return true;
+  }, []);
 
   /** Bumped per host switch, so a list that answers for the previous Mac is dropped. */
   const listGeneration = useRef(0);
@@ -194,12 +215,17 @@ export function JobsPanel(_props: PluginNavPanelProps) {
   }, [refresh, reconnects]);
 
   const replaceJob = useCallback(
-    (job: Job) => setHostJobs((current) => [...current.filter((entry) => entry.id !== job.id), job].sort((a, b) => a.id.localeCompare(b.id))),
+    (forHost: string, job: Job) =>
+      setHostJobs(forHost, (current) => [...current.filter((entry) => entry.id !== job.id), job].sort((a, b) => a.id.localeCompare(b.id))),
     [setHostJobs],
   );
 
   const selectedId = pane.kind === "view" || pane.kind === "edit" ? pane.id : null;
-  const selected = selectedId === null ? null : ((jobs ?? []).find((job) => job.id === selectedId) ?? null);
+  // Nothing is selected in the render where the Mac has just changed and the
+  // pane has not closed yet: the id is the other Mac's, and opening it here
+  // would acknowledge, or act on, a job of the same name on this one.
+  const selected =
+    selectedId === null || paneHost.current !== hostId ? null : ((jobs ?? []).find((job) => job.id === selectedId) ?? null);
 
   // A job deleted elsewhere, or a switch to another Mac, must not strand the pane.
   useEffect(() => {
@@ -294,9 +320,8 @@ export function JobsPanel(_props: PluginNavPanelProps) {
         compact={compact}
         onCancel={() => setPane({ kind: "empty" })}
         onSaved={(job) => {
-          replaceJob(job);
-          setPane({ kind: "view", id: job.id });
           toast.success(`Created "${job.name}" and loaded it into launchd.`);
+          if (replaceJob(hostId, job)) setPane({ kind: "view", id: job.id });
         }}
       />
     );
@@ -309,9 +334,8 @@ export function JobsPanel(_props: PluginNavPanelProps) {
         compact={compact}
         onCancel={() => setPane({ kind: "view", id: selected.id })}
         onSaved={(job) => {
-          replaceJob(job);
-          setPane({ kind: "view", id: job.id });
           toast.success(`Saved "${job.name}" and reloaded it in launchd.`);
+          if (replaceJob(hostId, job)) setPane({ kind: "view", id: job.id });
         }}
       />
     );
@@ -324,11 +348,10 @@ export function JobsPanel(_props: PluginNavPanelProps) {
         compact={compact}
         onBack={() => setPane({ kind: "empty" })}
         onEdit={() => setPane({ kind: "edit", id: selected.id })}
-        onChanged={replaceJob}
+        onChanged={(job) => replaceJob(hostId, job)}
         onDeleted={() => {
-          setHostJobs((current) => current.filter((entry) => entry.id !== selected.id));
-          setPane({ kind: "empty" });
           toast.success(`Deleted "${selected.name}".`);
+          if (setHostJobs(hostId, (current) => current.filter((entry) => entry.id !== selected.id))) setPane({ kind: "empty" });
         }}
       />
     );

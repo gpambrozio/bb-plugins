@@ -35,18 +35,21 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
 export default async function plugin(bb: BbPluginApi) {
   const host = bb.hosts.experimental_client({ contract: hostContract, experimental_signals: hostSignals });
 
-  async function connectedHosts(): Promise<Map<string, string>> {
+  async function knownHosts(): Promise<Map<string, { name: string; connected: boolean }>> {
     const hosts = await bb.sdk.hosts.list();
     return new Map(
       hosts
-        .filter((entry) => entry.status === "connected" && entry.lifecycle.phase === "active")
-        .map((entry) => [entry.id, entry.name]),
+        .filter((entry) => entry.lifecycle.phase !== "destroyed" && entry.lifecycle.phase !== "removing")
+        .map((entry) => [
+          entry.id,
+          { name: entry.name, connected: entry.status === "connected" && entry.lifecycle.phase === "active" },
+        ]),
     );
   }
 
   const health = createHealthMonitor({
     primaryHostId: async () => (await bb.sdk.system.config()).primaryHostId,
-    connectedHosts,
+    knownHosts,
     hostHealth: (hostId) => host.call("health", {}, { hostId }),
     loadWatched: async () => (await bb.storage.kv.get<string[]>(WATCHED_HOSTS_KEY)) ?? [],
     saveWatched: (hostIds) => bb.storage.kv.set(WATCHED_HOSTS_KEY, hostIds),
@@ -69,10 +72,13 @@ export default async function plugin(bb: BbPluginApi) {
 
   bb.rpc.register(rpcContract, {
     hosts: async () => {
-      const [config, connected] = await Promise.all([bb.sdk.system.config(), connectedHosts()]);
+      const [config, known] = await Promise.all([bb.sdk.system.config(), knownHosts()]);
       return {
         primaryHostId: config.primaryHostId,
-        hosts: [...connected].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name)),
+        hosts: [...known]
+          .filter(([, host]) => host.connected)
+          .map(([id, host]) => ({ id, name: host.name }))
+          .sort((a, b) => a.name.localeCompare(b.name)),
       };
     },
     list: async ({ hostId }) => {

@@ -205,8 +205,12 @@ describe.skipIf(!onMac)("adopting the Paseo plugin's jobs", () => {
     expect(plist.StandardErrorPath).toBe(join(paseoDir, "logs", "nightly-report.log"));
     expect(job).toMatchObject({ name: "Nightly report v2", adopted: true, managed: true, recentRuns: [{ exitCode: 1 }, { exitCode: 0 }] });
     expect(JSON.parse(await readFile(join(ownDir, "jobs.json"), "utf8"))).toEqual({ names: { "nightly-report": "Nightly report v2" } });
-    // Update is bootout, rewrite, bootstrap.
-    expect(launchd.calls.filter(([verb]) => verb === "bootout" || verb === "bootstrap").map(([verb]) => verb)).toEqual(["bootout", "bootstrap"]);
+    // Update is bootout, rewrite, bootstrap — with the PATH probed first, so the job is not out of launchd for it.
+    expect(launchd.calls.filter(([verb]) => ["bootout", "bootstrap", "path-probe"].includes(verb!)).map(([verb]) => verb)).toEqual([
+      "path-probe",
+      "bootout",
+      "bootstrap",
+    ]);
   });
 
   it("moves an edited job into its own directory only when the Paseo runner is gone", async () => {
@@ -340,6 +344,20 @@ describe.skipIf(!onMac)("the ownership boundary", () => {
       await expect(jobs.log({ id })).rejects.toThrow(/No job/);
     }
     expect(launchd.calls.filter(([verb]) => verb !== "print-disabled")).toEqual([]);
+  });
+
+  it("deletes a hand-written plist without touching files in the directory it names", async () => {
+    const elsewhere = join(root, "elsewhere");
+    await put(join(elsewhere, "logs", "by-hand.log"), "keep me\n");
+    await put(
+      plistPath("by-hand"),
+      `<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict><key>Label</key><string>${LABEL_PREFIX}by-hand</string><key>ProgramArguments</key><array><string>/bin/echo</string></array><key>EnvironmentVariables</key><dict><key>${DIR_VARIABLE}</key><string>${elsewhere}</string></dict></dict></plist>\n`,
+    );
+
+    await jobs.delete({ id: "by-hand" });
+
+    expect((await jobs.list()).jobs).toEqual([]);
+    expect(await readFile(join(elsewhere, "logs", "by-hand.log"), "utf8")).toBe("keep me\n");
   });
 
   it("lists an unreadable plist under the prefix with its problem instead of failing the list", async () => {

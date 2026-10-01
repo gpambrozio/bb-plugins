@@ -746,8 +746,8 @@ export function createJobs(deps: JobsDeps) {
     return ownDir;
   }
 
-  async function writeJob(slug: string, spec: JobSpec, dataDir: string): Promise<void> {
-    const path = await loginShellPath();
+  /** `path` is the login PATH, probed before any bootout so the job is not out of launchd for it. */
+  async function writeJob(slug: string, spec: JobSpec, dataDir: string, path: string): Promise<void> {
     const names = await readStringMap(namesPath, "names", warn);
     names[slug] = spec.name;
     await writeOwn(namesPath, "names", names);
@@ -802,7 +802,8 @@ export function createJobs(deps: JobsDeps) {
       assertSupported();
       const spec = normaliseSpec(input);
       const slug = await uniqueSlug(spec.name);
-      await writeJob(slug, spec, await directoryForSave(null));
+      const [dataDir, path] = await Promise.all([directoryForSave(null), loginShellPath()]);
+      await writeJob(slug, spec, dataDir, path);
       // The file stays if launchd refuses it: the list shows it unloaded with
       // the error in hand, and Enable retries once the cause is fixed.
       await bootstrap(slug);
@@ -815,10 +816,13 @@ export function createJobs(deps: JobsDeps) {
       const spec = normaliseSpec(input.spec);
       const label = labelFor(input.id);
       const [disabled, current] = await Promise.all([readDisabled(), readPlistOrProblem(input.id)]);
-      const dataDir = await directoryForSave(current.plist === null ? null : dataDirOf(current.plist, ownDir));
+      const [dataDir, path] = await Promise.all([
+        directoryForSave(current.plist === null ? null : dataDirOf(current.plist, ownDir)),
+        loginShellPath(),
+      ]);
       // launchd does not reread a changed plist; the job has to leave and return.
       await bootoutIfLoaded(label);
-      await writeJob(input.id, spec, dataDir);
+      await writeJob(input.id, spec, dataDir, path);
       if (!disabled.has(label)) await bootstrap(input.id);
       return loadJob(input.id);
     },
@@ -827,7 +831,12 @@ export function createJobs(deps: JobsDeps) {
       assertSupported();
       await assertKnown(input.id);
       const label = labelFor(input.id);
-      const dir = await dataDirFor(input.id);
+      const { plist } = await readPlistOrProblem(input.id);
+      const dir = dataDirOf(plist, ownDir);
+      // A job's log and history go with it — in another plugin's directory too,
+      // as deleting did in Paseo, but only when the plist really is that
+      // directory's runner shape. A hand-written plist could name any directory.
+      const ownsHistory = dir === ownDir || (plist !== null && commandOf(plist, dir).managed);
       await bootoutIfLoaded(label);
       // A `disable` outlives the plist: launchd keeps it per label in its own
       // override store, so without this a later job with the same slug would be
@@ -838,7 +847,8 @@ export function createJobs(deps: JobsDeps) {
         warn(`could not clear the disabled flag for ${label}: ${errorMessage(error)}`);
       }
       const log = logPath(dir, input.id);
-      for (const path of [plistPath(input.id), log, `${log}.1`, runsPath(dir, input.id)]) {
+      const history = ownsHistory ? [log, `${log}.1`, runsPath(dir, input.id)] : [];
+      for (const path of [plistPath(input.id), ...history]) {
         try {
           await unlink(path);
         } catch (error) {
