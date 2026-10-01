@@ -10,7 +10,6 @@ import {
   MAX_SPEECH_CHARS,
   SpeechVoiceSchema,
   StoredConfigSchema,
-  SummarizerConfigSchema,
   VoicesConfigSchema,
 } from "./herald";
 
@@ -24,12 +23,8 @@ export const rpcContract = defineRpcContract({
     input: z.object({}),
     output: StoredConfigSchema,
   },
-  /** Either half may be left out; what is given replaces that half whole. */
   "config.set": {
-    input: z.object({
-      summarizer: SummarizerConfigSchema.optional(),
-      voices: VoicesConfigSchema.optional(),
-    }),
+    input: z.object({ voices: VoicesConfigSchema }),
     output: StoredConfigSchema,
   },
   /**

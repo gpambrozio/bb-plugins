@@ -76,11 +76,10 @@ export class Announcer {
       return;
     }
     const fresh = entries
-      .filter((entry) => !this.spoken.has(entry.eventId) && entry.summary.status !== "pending")
+      .filter((entry) => !this.spoken.has(entry.eventId))
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     for (const entry of fresh) {
       this.spoken.add(entry.eventId);
-      // A failed summary still has its fallback sentence: a failure is never silence.
       const text = speechText(entry);
       if (text === null) continue;
       void this.deliver(text, entry.eventId, false).catch((error: unknown) =>

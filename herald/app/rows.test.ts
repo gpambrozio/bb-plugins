@@ -19,7 +19,7 @@ function entry(threadId: string, overrides: Partial<AttentionEntry> = {}): Atten
     createdAt: new Date(NOW - 60_000).toISOString(),
     headline: "Finished",
     detail: null,
-    summary: { status: "ready", text: "Done.", model: "m" },
+    summary: { status: "ready", text: "Done." },
     ...overrides,
   };
 }
@@ -61,11 +61,10 @@ describe("joinRows", () => {
     expect(joinRows([question], [thread("t1", { status: "active", hasPendingInteraction: false })], NOW)).toEqual([]);
   });
 
-  it("drops an entry once its thread has been read, unless it is fresh or still being written", () => {
+  it("drops an entry once its thread has been read, unless it is fresh", () => {
     const read = thread("t1", { isUnread: false });
     expect(joinRows([entry("t1")], [read], NOW)).toEqual([]);
     expect(joinRows([entry("t1", { createdAt: new Date(NOW - FRESH_ENTRY_MS + 1000).toISOString() })], [read], NOW)).toHaveLength(1);
-    expect(joinRows([entry("t1", { summary: { status: "pending" } })], [read], NOW)).toHaveLength(1);
   });
 
   it("hides a finish whose thread is working again, and a flagged thread that is", () => {

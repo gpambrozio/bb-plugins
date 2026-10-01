@@ -22,7 +22,7 @@ function entry(overrides: Partial<AttentionEntry> = {}): AttentionEntry {
     createdAt: new Date(T0).toISOString(),
     headline: "Finished",
     detail: null,
-    summary: { status: "ready", text: "Done.", model: "m" },
+    summary: { status: "ready", text: "Done." },
     ...overrides,
   };
 }
@@ -80,14 +80,6 @@ describe("Liveness.visible", () => {
     now.value = T0 + SEEN_GRACE_MS + LIVENESS_TTL_MS;
     expect(await liveness.visible(store)).toHaveLength(0);
     expect(store.get("t1")).toBeNull();
-  });
-
-  it("never judges an entry whose summary is still being written", async () => {
-    const now = { value: T0 + 10 * 60_000 };
-    const { port, store, liveness } = setup(now);
-    store.upsert(entry({ summary: { status: "pending" } }));
-    port.facts_.set("t1", open({ lastReadAt: T0 + 60_000 }));
-    expect(await liveness.visible(store)).toHaveLength(1);
   });
 
   it("keeps a question while it is pending, read or not, and removes it once answered", async () => {

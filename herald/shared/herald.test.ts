@@ -17,7 +17,7 @@ describe("speechText", () => {
       createdAt: "2026-09-15T10:00:00.000Z",
       headline: "Run it",
       detail: null,
-      summary: { status: "failed", error: "x", fallback: "y".repeat(5000) },
+      summary: { status: "ready", text: "y".repeat(5000) },
     };
     expect(speechText(entry)?.length).toBeLessThanOrEqual(MAX_SPEECH_CHARS);
   });

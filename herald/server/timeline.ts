@@ -1,7 +1,7 @@
 /**
  * Turns what the events hand us — a pending interaction, the end of a turn, a
- * thread's prompt history — into the plain text an entry carries and a summary
- * is written from. Nothing here touches the network or a model, which is what
+ * thread's prompt history — into the plain text an entry carries and the
+ * sentence that is spoken. Nothing here touches the network, which is what
  * makes it the part with tests.
  */
 import type { AttentionReason } from "../shared/herald";
@@ -152,7 +152,7 @@ export const SPOKEN_NAME_MAX = 80;
 export const SPOKEN_PART_MAX = 160;
 
 /**
- * What is said when no model wrote a summary: the event kind stated plainly,
+ * The sentence Herald speaks: the event kind stated plainly,
  * with the start of the headline and of whatever detail there is. Deliberately
  * dull — it has to be right without having read anything — and short, since it
  * is spoken (under 500 characters whatever the event carried).

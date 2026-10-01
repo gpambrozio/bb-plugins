@@ -20,10 +20,6 @@ export interface ThreadContext {
 
 export interface EventsPort {
   context(thread: ThreadDto, options: { withRequest: boolean }): Promise<ThreadContext>;
-  /** Whether a turn is in flight right now. Uncached: it decides whether a fresh summary is still worth saying. */
-  isRunning(threadId: string): Promise<boolean>;
-  /** Whether an interaction is still waiting on the user; answering one fires no event. */
-  interactionPending(threadId: string, interactionId: string): Promise<boolean>;
   /**
    * Whether one of the thread's interactions was interrupted within `withinMs`
    * — the user stopped the turn while it waited on them — which is why a
@@ -45,26 +41,6 @@ export interface LivenessPort {
   facts(threadId: string): Promise<ThreadFacts>;
   /** Whether the interaction an entry answers to is still waiting on the user. */
   interactionPending(threadId: string, interactionId: string): Promise<boolean>;
-}
-
-export interface HelperSpawn {
-  title: string;
-  prompt: string;
-  providerId: string;
-  model: string;
-  reasoningLevel: string;
-  /** Kept on the helper as this plugin's metadata, for anyone reading it later. */
-  metadata: Record<string, string>;
-}
-
-export interface HelperPort {
-  /** Starts a hidden helper thread and resolves to its id. */
-  spawn(args: HelperSpawn): Promise<string>;
-  stop(threadId: string): Promise<void>;
-  archive(threadId: string): Promise<void>;
-  delete(threadId: string): Promise<void>;
-  /** Every hidden helper thread of this plugin that is not archived or deleted. */
-  listLeftovers(): Promise<string[]>;
 }
 
 export interface Log {

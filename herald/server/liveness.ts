@@ -12,7 +12,7 @@
  *   had time to record that attention — removed, the user has been there;
  * - a **finish** on a thread that is working again is hidden but kept: a
  *   provider can report a turn as finished and carry on, and the hooks take
- *   the entry back for good when its summary lands;
+ *   the entry back for good when the next turn starts;
  * - **gone** (archived, deleted, missing) — removed, because it never comes back.
  *
  * Answers are cached for a short while so a burst of list calls does not turn
@@ -99,8 +99,6 @@ export class Liveness {
     if (entry.requestId !== null) {
       return (await this.interactionPending(entry.threadId, entry.requestId)) ? "live" : "answered";
     }
-    // Never judged while its summary is still being written.
-    if (entry.summary.status === "pending") return "live";
     if (isUnread(cached)) return "live";
     if (this.now() < judgeableFrom) return "live";
 

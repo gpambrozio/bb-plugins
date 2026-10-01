@@ -18,7 +18,7 @@ function entry(id: string, overrides: Partial<AttentionEntry> = {}): AttentionEn
     createdAt: "2026-09-15T10:00:00.000Z",
     headline: "Finished",
     detail: null,
-    summary: { status: "ready", text: `Sentence ${id}.`, model: "m" },
+    summary: { status: "ready", text: `Sentence ${id}.` },
     ...overrides,
   };
 }
@@ -122,24 +122,15 @@ describe("Announcer", () => {
     ]);
   });
 
-  it("waits for a pending summary and never speaks a switched-off one", async () => {
+  it("never speaks a switched-off entry", async () => {
     const { announcer, deps } = setup();
     announcer.onEntries([]);
-    announcer.onEntries([entry("a", { summary: { status: "pending" } })]);
     announcer.onEntries([entry("b", { summary: { status: "off", fallback: "x" } })]);
     await settle();
     expect(deps.render).not.toHaveBeenCalled();
     announcer.onEntries([entry("a"), entry("b", { summary: { status: "off", fallback: "x" } })]);
     await settle();
     expect(deps.render).toHaveBeenCalledTimes(1);
-  });
-
-  it("speaks a failed summary's fallback", async () => {
-    const { announcer, deps } = setup();
-    announcer.onEntries([]);
-    announcer.onEntries([entry("a", { summary: { status: "failed", error: "x", fallback: "Shop finished." } })]);
-    await settle();
-    expect(deps.render).toHaveBeenCalledWith("Shop finished.", "Zoe", 1);
   });
 
   it("speaks an announcement in one window of the app, not in every one", async () => {

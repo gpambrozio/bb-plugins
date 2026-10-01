@@ -1,6 +1,6 @@
 /**
  * The settings bb renders as a form (`bb.settings.define(SETTINGS)`), and how
- * each half reads them: the server for what to summarise, the app — through
+ * each half reads them: the server for what to announce, the app — through
  * `useSettings()` — for how and where to speak. Settings changes do not reload
  * the plugin; both halves read the current values when they act.
  *
@@ -20,7 +20,7 @@ export const SETTINGS = {
   speakOnDesktop: {
     type: "boolean",
     label: "Speak in the desktop app",
-    description: "The bb desktop app speaks as soon as a summary is ready.",
+    description: "The bb desktop app speaks as soon as an agent needs you.",
     default: true,
   },
   speakInBrowser: {
@@ -54,7 +54,7 @@ export const SETTINGS = {
   announceQuestions: {
     type: "boolean",
     label: "Announce questions",
-    description: "An agent asks you something. Switched off, the thread is still listed in the panel, without a summary and without being spoken.",
+    description: "An agent asks you something. Switched off, the thread is still listed in the panel, without being spoken.",
     default: true,
   },
   announcePlans: {
@@ -88,37 +88,9 @@ export const SETTINGS = {
       "Off: a child thread reports to the thread that started it, and you hear the parent's announcement instead of two. It is still listed in the panel. On: both are announced.",
     default: false,
   },
-  modelSummaries: {
-    type: "boolean",
-    label: "Write each sentence with a model",
-    description:
-      "Off: Herald says a plain sentence built from the event — the question and its choices, the command, or the start of the agent's last message. On: a short hidden helper thread writes it with the model in Herald's settings section. bb cannot stop that helper from using tools: in bb's most restricted mode Claude Code still reads files and edits files in bb's personal workspace without asking, and the helper is shown your agents' output, which could steer it. Turn this on only if you accept that.",
-    default: false,
-  },
-  deleteHelpers: {
-    type: "boolean",
-    label: "Delete each summary helper when it is done",
-    description:
-      "Every summary is written by a short hidden thread. Off keeps each one archived instead, to read what the helper was asked when a summary comes out wrong.",
-    default: true,
-  },
-  summaryTimeoutSeconds: {
-    type: "number",
-    label: "Summary time limit (seconds)",
-    description: "How long one summary may take before Herald gives up on it and says a plain sentence instead. Between 10 and 600.",
-    default: 90,
-  },
 } satisfies Record<string, PluginSettingDescriptor>;
 
 export type HeraldSettings = PluginSettingsValues<typeof SETTINGS>;
-
-export const MIN_TIMEOUT_SECONDS = 10;
-export const MAX_TIMEOUT_SECONDS = 600;
-
-export function timeoutMsOf(seconds: number): number {
-  const bounded = Number.isFinite(seconds) ? Math.min(MAX_TIMEOUT_SECONDS, Math.max(MIN_TIMEOUT_SECONDS, seconds)) : SETTINGS.summaryTimeoutSeconds.default;
-  return Math.round(bounded * 1000);
-}
 
 /** Where this copy of the app runs, which decides the switch that applies to it. */
 export type SpeechPlatform = "desktop" | "browser" | "mobile";

@@ -41,7 +41,7 @@ describe("icon names", () => {
   const used = [...new Set([...Object.values(HERALD_ICONS), ...sources.flatMap((file) => literalNames(readFileSync(join(root, file), "utf8")))])];
 
   it("finds the names it checks", () => {
-    expect(used).toEqual(expect.arrayContaining(["Play", "Settings", "Spinner", HERALD_ICONS.volume]));
+    expect(used).toEqual(expect.arrayContaining(["Play", "Settings", "MessageQuestion", HERALD_ICONS.volume]));
   });
 
   it.each(used)("%s is a bb built-in or one of Herald's declared icons", (name) => {

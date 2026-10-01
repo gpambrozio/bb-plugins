@@ -110,32 +110,14 @@ export async function readAgain(sentence: string): Promise<void> {
   }
 }
 
-function Summary({ entry }: { entry: AttentionEntry | null }): ReactNode {
-  if (entry === null) return <p className="text-sm text-muted-foreground">No summary from Herald for this one.</p>;
-  switch (entry.summary.status) {
-    case "pending":
-      return (
-        <p className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Icon name="Spinner" className="size-3.5 animate-spin" aria-hidden />
-          Writing the summary…
-        </p>
-      );
-    case "ready":
-      return <p className="text-sm italic text-foreground">{entry.summary.text}</p>;
-    case "failed":
-      return (
-        <div className="space-y-0.5">
-          <p className="text-sm italic text-muted-foreground">{entry.summary.fallback}</p>
-          <p className="text-xs text-muted-foreground">Summary failed: {entry.summary.error}</p>
-        </div>
-      );
-    case "off":
-      return (
-        <p className="text-xs text-muted-foreground">
-          Not announced: this kind of event is switched off, or the thread that started this one speaks for it.
-        </p>
-      );
-  }
+function Sentence({ entry }: { entry: AttentionEntry | null }): ReactNode {
+  if (entry === null) return <p className="text-sm text-muted-foreground">No sentence from Herald for this one.</p>;
+  if (entry.summary.status === "ready") return <p className="text-sm italic text-foreground">{entry.summary.text}</p>;
+  return (
+    <p className="text-xs text-muted-foreground">
+      Not announced: this kind of event is switched off, or the thread that started this one speaks for it.
+    </p>
+  );
 }
 
 function RowCard({ row, now, onOpen }: { row: Row; now: number; onOpen: (threadId: string) => void }) {
@@ -192,7 +174,7 @@ function RowCard({ row, now, onOpen }: { row: Row; now: number; onOpen: (threadI
           {entry.detail === null ? null : <p className="line-clamp-4 text-xs text-muted-foreground">{entry.detail}</p>}
         </div>
       )}
-      <Summary entry={entry} />
+      <Sentence entry={entry} />
     </div>
   );
 }

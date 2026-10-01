@@ -1,9 +1,8 @@
 # AGENTS.md
 
 A bb plugin that tells the user, out loud, when one of their agent threads needs them: one sentence
-about the event — a plain one built from the event, or, when the user opts in, one a short hidden helper
-thread writes — and the app speaks it. A **Herald** page lists every
-waiting thread with its sentence. It is a port of
+built from the event, and the app speaks it. A **Herald** page lists every waiting thread with its
+sentence. It is a port of
 [`paseo-plugins/herald`](https://github.com/gpambrozio/paseo-plugins/tree/main/herald) 0.5.1. That
 plugin's `AGENTS.md` is the long record of why each behaviour is the way it is; this file carries over
 what still holds and says what bb changed. The repo root `AGENTS.md` covers what every plugin here shares.
@@ -13,18 +12,15 @@ what still holds and says what bb changed. The repo root `AGENTS.md` covers what
 | File | What it owns |
 | --- | --- |
 | `server.ts` | Wiring: settings, the store, the event listeners, the RPCs, and unload. |
-| `server/hooks.ts` | Events → entries: helper routing, the turn-end dedupe, the two-slot summary queue, "outran", who is announced. |
-| `server/summarize.ts` | One helper per summary: the prompt template, reading its reply, stopping and deleting it. |
-| `server/helpers.ts` | `HelperOutcomes`: how each helper's turn ended, as its own events report it. |
+| `server/hooks.ts` | Events → entries: the turn-end dedupe, event ordering, who is announced, the sentence. |
 | `server/reload-signal.ts` | What an old instance tells its replacement: storage closed and flushed, read it again. |
-| `server/leftovers.ts` | Putting away every leftover helper before this instance spawns one, giving way to abort. |
 | `server/store.ts` | One entry per thread, mirrored to storage; `load()` merges. |
 | `server/kv-backend.ts` | The store's rows in `bb.storage.kv`, one per thread. |
 | `server/liveness.ts` | Asks bb about each entry's thread before the list goes out: read, answered, gone, working again. |
-| `server/timeline.ts` | Pure text: what an interaction asks, the user's last prompt, the no-model fallback sentence. |
+| `server/timeline.ts` | Pure text: what an interaction asks, the user's last prompt, the spoken sentence. |
 | `server/say.ts` | `say` on the bb server's Mac, driven for its voices: text in on stdin, a WAV out, bytes back. |
 | `server/ports.ts`, `server/bb-ports.ts` | The seams the logic is tested through, and their implementations over `bb.sdk`. |
-| `shared/herald.ts` | The entry shape, the stored summariser and voices, the prompt vocabulary. No SDK import. |
+| `shared/herald.ts` | The entry shape and the stored voices. No SDK import. |
 | `shared/settings.ts` | The host-rendered form, and the speech gate (`blockedMessage`) both halves agree on. |
 | `shared/contract.ts` | The RPC contract. The app imports it as a type only. |
 | `app/bridge.tsx` | The app-wide overlay: reads the list on every nudge and reconnect, and runs the announcer. |
@@ -36,7 +32,7 @@ what still holds and says what bb changed. The repo root `AGENTS.md` covers what
 | `app/speech.ts` | Every browser audio global, and which bb client this is. |
 | `app/rows.ts` | What the page lists: bb's unread and waiting-for-input joined with Herald's entries. |
 | `app/panel.tsx`, `app/banner.tsx` | The Herald page (and its sidebar count), and the sentence above a waiting thread's composer. |
-| `app/settings-section.tsx`, `app/voice-picker.tsx` | The model picker, the prompt editor, and the voice lists. |
+| `app/settings-section.tsx`, `app/voice-picker.tsx` | The voice lists and *Test voice*. |
 
 ## Where things run
 
@@ -45,43 +41,22 @@ only machine-specific thing Herald does is render speech with `say`, and that ne
 particular one: the audio goes back to the app as bytes and plays on the device the user is looking at.
 When bb's server is not a Mac, `speech.render` refuses and the app falls back to the browser voice.
 
-Summary helpers run in bb's **personal project and workspace** on the server's machine
-(`system.config().primaryHostId`), because a summary reads nothing from a repository. Every bb has the
-personal project (`proj_personal`), but `projects.list()` **leaves it out unless called with
-`{ includePersonal: true }`** — the first build missed that, and every summary failed with "no personal
-project" (pinned by `server.test.ts`).
+## Herald starts no threads
 
-## Summaries need a model that can use tools — so they are opt-in
+Herald announces the plain sentence `fallbackSpeech` builds from the event, and **no code path spawns a
+thread**; nothing runs at load beyond reading its own storage. Paseo's Herald could have a hidden helper
+agent write each sentence. That is left to
+[issue #11](https://github.com/gpambrozio/bb-plugins/issues/11): bb cannot make a helper tool-free, and
+keeping helpers bounded across a reload needs more than this plugin had. The last code with helpers is
+on the `fm/herald-model-sentences` branch. Do not bring any of it back piecemeal — a feature that spawns
+threads must meet that issue's guarantees as a whole.
 
-The helper's prompt contains the agent's own output, which can carry instructions. Paseo's own
-`AGENTS.md` assumed the prompt's "do not run tools" was enough; it is not, and bb gives a plugin no way
-to make a helper tool-free (checked in bb 0.44 and SDK 0.5.29):
+## The events are announcements
 
-- `permissionMode` is `accept-edits | auto | full`, and `accept-edits` is bb's least privileged mode. The
-  Claude Code bridge maps it to Claude Code's `acceptEdits`, which reads files and edits files in the
-  workspace (bb's personal workspace for a helper) without asking.
-- `threads.spawn` takes no tool list; the only plugin hook is `message.dispatch`; `bb.agents.configure`
-  selects only this plugin's own tools and skills.
-- bb's AI services (`experimental_aiServices`) are services a plugin *provides* to bb, for bb's own
-  prompts (thread titles, commit messages); a plugin cannot call one with its prompt.
-
-So *Write each sentence with a model* (`modelSummaries`) is **off by default**, and off, Herald announces
-the plain `fallbackSpeech` sentence and spawns nothing. On, the setting's description states the risk. A
-helper that does ask for anything is still stopped (`interaction.pending` → "tried to use a tool").
-
-## The events are announcements, and the summary does not wait
-
-bb's events cannot block anything, and a handler runs inside the bb server. A summary is a full agent
-turn, so `server/hooks.ts` never awaits one: the handler writes a `pending` entry and returns, and the
-summary lands later through `AttentionStore.updateSummary`. That update is keyed by `eventId` and refused
-when the thread has moved on to a newer event, which is what keeps a slow helper from overwriting a
-fresher entry. `schedule` caps how many helpers this instance has alive at once (two); a burst queues.
-Across a reload the cap holds because no new instance spawns while an old helper is left (see *Unload
-lets go; load cleans up first*). **A slot is held until the helper is put away**, not until its sentence
-is out: `summarize` returns `{ result, finished }`, the
-sentence is settled from `result`, and the task awaits `finished` (stopped, then deleted or archived)
-before the next helper starts — otherwise slow-to-stop helpers pile up past the cap. Detached work
-catches its own rejections — an unhandled one would land in the bb server.
+bb's events cannot block anything, and a handler runs inside the bb server. Each handler looks up the
+thread's names, records the entry with its sentence, publishes, and returns; a failure is logged through
+`guarded`, never thrown into the bb server. The thread can move on while a handler awaits its lookups;
+each handler takes the thread's generation first and records nothing if a new turn started meanwhile.
 
 **Each recording takes a sequence number before its first await** (`beginEvent`) and drops out unless it
 is still the newest for its thread (`isLatest`). Two events can share a turn — two questions — and so a
@@ -99,84 +74,10 @@ landed on top of the newer.
 
 There is no "canceled" reason any more: bb has no event for a turn the user stopped.
 
-## The helper is hidden, and still fires our events
-
-`threads.spawn({ visibility: "hidden", pluginMetadata })` keeps the helper out of the sidebar and out of
-bb's unread attention. **It does not keep it out of `bb.events`**: bb's `emitThreadEvent` delivers every
-thread's events to every plugin, with no visibility filter (checked in bb 0.44's server). bb stamps
-`originPluginId` on every thread a plugin spawns with `pluginMetadata`, so `isHelper` is
-`thread.originPluginId === bb.pluginId` — no title, no id set, nothing lost on a reload. Herald spawns
-nothing but helpers.
-
-A helper's events go to `HelperOutcomes`, which is what `summarize` waits on: `thread.idle` brings its
-reply, `thread.failed` its error, `interaction.pending` means it tried a tool. An outcome that arrives
-before anyone waits is held for two minutes. An idle with no text before the helper was ever seen
-running is ignored, since a thread settling in is not a reply.
-
-**The helper is not a child of the thread it describes.** Paseo made it a delegated child so it showed
-in the agent's subagent track; in bb a child notifies its parent when it finishes, which would put a
-message in the user's own thread.
-
-`summarize` stops the helper in a `finally` — which releases its runtime and interrupts a turn still
-running after a timeout — then deletes it, or archives it when *Delete each summary helper* is off.
-
-**Unload lets go; load cleans up first.** This is deliberately simple — an earlier version handed
-helpers between instances and shared slots across them, and every piece of that machinery grew its own
-race.
-
-- *Unload:* `bb.onDispose` aborts the leftover clean-up, calls `HelperOutcomes.cancelAll` — which fails
-  every wait *and every wait that starts later* (a spawn that answers after unload began) — and awaits
-  `hooks.drain()`: no new events are recorded, the queue is dropped, and running summaries stop and put
-  away their helpers with this instance's still-valid SDK. It waits at most `DRAIN_TIMEOUT_MS`, since a
-  spawn or a stop can hang, and then lets go: whatever is left is the next instance's.
-- *Load:* before this instance spawns any helper of its own, it puts away **every** hidden, unarchived
-  herald thread — all of them leftovers, since it has spawned none yet (`server/leftovers.ts`; every
-  spawn awaits it). The `leftover-helpers` service starts it as soon as bb is ready; the first spawn starts
-  it if the service has not. So when the first new helper starts, no old one is alive, and the two-helper
-  cap holds by construction. A disable followed by an enable, a process that stopped mid-summary and an
-  unload whose stop hung all end the same way.
-- *Abort:* the clean-up checks its signal before every step and gives way at once from any wait — a hung
-  stop included — so bb can stop the service on time. A run the service's abort cut short is run again by
-  the next spawn; one cut short by unload ends with the instance.
-
-The remaining gap, accepted: a spawn the old instance sent that answers only after the new instance's
-clean-up has finished leaves one helper alive beside the new ones until it ends its turn or the next load
-puts it away.
-
-Storage is **closed, then flushed** (`store.shutdown()`) before the old instance signals its replacement
-to read it again. Closing freezes the map: writes already queued mirror it as it stood, and nothing
-requested afterwards — a summary settling mid-flush or past the deadline — reaches storage.
-
-The helper spawns with `permissionMode: "accept-edits"`, bb's least privileged mode — which is not
-tool-free (see *Summaries need a model that can use tools*); a helper that asks for anything is stopped. A hidden thread burns a real concurrency slot, so with bb's concurrency
-limit full a helper can wait past the summary time limit and the fallback sentence is used.
-
-Dropped from Paseo: the `paseo` CLI delete, the startup sweep and its label, `HELPER_TITLE` as an
-identity (it is only the helper's title now), and the capped helper-id set.
-
-## The prompt is a template the user owns
-
-Unchanged from Paseo except for the vocabulary: `{{thread}}`, `{{project}}`, `{{folder}}`, `{{event}}`,
-`{{headline}}`, `{{detail}}`, `{{request}}`, `{{output}}` (`PROMPT_PLACEHOLDERS`). `renderPrompt` keeps two
-rules the settings section states in the same words: **a line whose placeholder is empty for this event
-is dropped whole**, and **an unknown `{{name}}` is left exactly as typed**. Blank is not empty —
-`buildPrompt` reads a blank template as the default, and the editor saves blank when the draft matches
-the default, so a user who never customised it follows the default as it changes.
-
-**The model's reply is a request, not a guarantee.** Claude has returned the object inside a
-```` ```json ```` fence and under a key of its own choosing. `parseSummaryText` strips fences, finds the
-object anywhere, takes `speech` or else the first string, and only then falls back to the first 45 words
-of prose. bb's spawn has no `outputSchema`, so the default prompt's closing line is the only ask; keep it
-and keep the parser defensive. The editor warns when the word `speech` leaves the prompt.
-
-The summariser (provider, model, reasoning, prompt) and the voices live in `bb.storage.kv` under
-`config`, edited in the settings section — the model picker, a multi-line editor and two lists of
-hundreds of voices do not fit the host form. Everything else is in the host-rendered form.
-
 ## Threads another thread started are their parent's to announce
 
 `isAnnounced` treats a thread with a `parentThreadId` like a switched-off kind unless *Announce threads
-started by another thread* is on: listed, with the fallback, no helper, nothing spoken. bb notifies a
+started by another thread* is on: listed, with its sentence, nothing spoken. bb notifies a
 parent when its child completes, fails or is interrupted, so the parent's turn — and its sentence —
 covers it. bb's own push-notifications plugin skips a child's finished turn for the same reason.
 
@@ -193,24 +94,18 @@ covers it. bb's own push-notifications plugin skips a child's finished turn for 
   `GET /threads/:id/output` does); Herald uses it as it comes, trimmed, with nothing added between the
   pieces. Paseo's `latestOutputText`, which joined Paseo timeline chunks, is gone with the timeline.
 
-## A completion that was not one, and an answer nobody heard
-
-The check is made *after* the summary comes back (`outran`). The generation applies to every event.
-Then one question for bb, depending on the event:
-
-- a **finish**: is a turn in flight again (`isRunning`, uncached)? A provider can report a turn as
-  finished and carry on. Never ask this about a question or an approval — a thread waiting on one is
-  mid-turn, and asking would suppress every one of them.
-- an **interaction**: is it still pending (`interactions.get`)?
-
-If the thread has moved on, the entry is removed and nothing is said.
-
 ## Answering an interaction fires nothing
 
-bb has no event for a resolved interaction, and the thread stays `active` across it. Three things cover
-that: `outran` asks before a question's summary is spoken; `Liveness` asks before the list goes out and
-removes an answered entry; and the app hides an interaction entry the moment bb's sidebar state says the
-thread no longer waits for input (`hasPendingInteraction`, live through `experimental_useSidebarThreads`).
+bb has no event for a resolved interaction, and the thread stays `active` across it. Two things cover
+that: `Liveness` asks before the list goes out and removes an answered entry; and the app hides an
+interaction entry the moment bb's sidebar state says the thread no longer waits for input
+(`hasPendingInteraction`, live through `experimental_useSidebarThreads`). The announcer checks that an
+announcement is still in the latest list before it speaks.
+
+A finish is not always one: a provider can report a turn as finished and carry on. `Liveness` hides a
+finish whose thread is running again, on a reading at most `RUNNING_TTL_MS` old, and so does the app's
+join. Never apply that to a question or an approval — a thread waiting on one is mid-turn, and the rule
+would hide every one of them.
 
 ## What the store means
 
@@ -220,17 +115,20 @@ decides who is waiting — its unread rule, `latestAttentionAt > lastReadAt`, an
 interactions; Herald explains why. `Liveness` (cached 30 s) removes an entry whose thread is **gone**,
 whose interaction was **answered**, or which was **seen** — read since its attention, and at least
 `SEEN_GRACE_MS` old so a thread the user is watching as it finishes still reaches the panel. A finish
-on a thread that is working again is hidden but kept. A pending summary is never judged.
+on a thread that is working again is hidden but kept.
 
-Hidden threads from other plugins are ignored entirely: bb keeps them out of the user's attention too.
+Hidden threads are ignored entirely — another plugin's background workers: bb keeps them out of the
+user's attention too.
 
 **`load()` merges, it does not overwrite.** `server.ts` awaits it before registering any listener, but
 the merge stays: a live upsert or removal during a read wins (`touched`), a conditional removal that
 arrives before its entry was read is held and applied as it merges (`deferredRemovals`), and a write
-queued during the read waits and mirrors the merged map. A summary still `pending` at load is marked
-`failed` with the fallback.
+queued during the read waits and mirrors the merged map. A saved entry this version cannot read is
+dropped, with a warning.
 
-**A reload reconciles.** bb starts the new instance *before* it disposes of the old one, so the new one
+**A reload reconciles.** Storage is **closed, then flushed** (`store.shutdown()`) before the old instance
+signals its replacement to read it again; closing freezes the map, so nothing requested afterwards
+reaches storage. bb starts the new instance *before* it disposes of the old one, so the new one
 reads storage while the old one may still be writing. When the old one has drained and flushed, it says
 so (`server/reload-signal.ts`: an `EventTarget` on `globalThis`, keyed by plugin id — both instances run
 in the bb server's one process), and the new one calls `store.reconcile()`: storage wins for every
@@ -280,13 +178,10 @@ through**: *Test voice* and *Read again* (on each card and on the composer banne
 and speak even with announcements off or this device muted — the owner's choice, and it is also the
 press that unlocks audio. Every play control is hidden where `canPlaySpeech()` is false.
 
-**A failed summary is still spoken**: its entry carries the fallback sentence, and `speechText` returns it,
-as Paseo did. A failure is never silence.
-
 **What is spoken is short.** The plain sentence says the start of a name (`SPOKEN_NAME_MAX`), a headline
 and a detail (`SPOKEN_PART_MAX`) — a permission can carry a command kilobytes long, which the card keeps
-whole; a model's sentence is cut at `MAX_SUMMARY_CHARS`; and `speechText` never returns more than
-`MAX_SPEECH_CHARS`, the server's render limit, whatever an older entry stored.
+whole; and `speechText` never returns more than `MAX_SPEECH_CHARS`, the server's render limit, whatever
+an older entry stored.
 
 **One window speaks each announcement.** Windows of one app share an origin, so each announcement is
 claimed by event id (`app/claims.ts`): a `localStorage` marker checked under a Web Lock named for the
@@ -339,17 +234,14 @@ answer — for as long as the thread waits on them, with a play button. A switch
 
 ## Checking it
 
-`npm test` covers everything without a running bb: the text, the store, the summariser and the hooks
-against fakes, the server end to end against the SDK's fake host (event → hidden helper → sentence →
-realtime → list), the announcer with fake audio, and the app's slots rendered with the SDK's app harness.
-What it cannot cover, check by hand after `bb plugin reload herald` — **with model summaries on, each of
-these runs a real model turn**:
+`npm test` covers everything without a running bb: the text, the store, the hooks against fakes, the
+server end to end against the SDK's fake host (event → entry → realtime → list, and no thread spawned),
+the announcer with fake audio, and the app's slots rendered with the SDK's app harness. What it cannot
+cover, check by hand after `bb plugin reload herald`:
 
-1. Let a thread finish a turn. The page shows it with the plain sentence at once (or, with model
-   summaries on, "Writing the summary…" and then the sentence), and the desktop app speaks it.
-   `bb plugin logs herald` shows any summary or render failure, and the `app:` lines say what was spoken.
+1. Let a thread finish a turn. The page shows it with its sentence at once, and the desktop app speaks
+   it. The `app:` lines in `bb plugin logs herald` say what was spoken, or why not.
 2. Ask a thread something that makes it ask you a question; answer it; the row and the banner go at once.
 3. In a browser tab, nothing is spoken until **Test voice** has been pressed once.
-4. Switch a kind off in Settings → Plugins → Herald and trigger it: the row says "Not announced" and no
-   helper is spawned (`bb thread list --include-hidden` shows none).
-5. Edit the summary prompt — "Answer in French" is enough — and trigger an event.
+4. Switch a kind off in Settings → Plugins → Herald and trigger it: the row says "Not announced" and
+   nothing is spoken.

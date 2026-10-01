@@ -20,7 +20,7 @@ function entry(overrides: Partial<AttentionEntry> = {}): AttentionEntry {
     createdAt: "2026-09-15T10:00:00.000Z",
     headline: "Which DB?",
     detail: "A / B",
-    summary: { status: "pending" },
+    summary: { status: "ready", text: "Login fix has a question: Which DB? Options: A / B." },
     ...overrides,
   };
 }
@@ -74,16 +74,6 @@ describe("AttentionStore", () => {
       "t1:t1:idle:1",
       "t2:t1:interaction:i1",
     ]);
-  });
-
-  it("applies a summary only to the event it was written for", () => {
-    const store = new AttentionStore(null, recordingLog());
-    store.upsert(entry());
-    expect(store.updateSummary("t1", "other", { status: "ready", text: "x", model: "m" })).toBe(false);
-    expect(store.get("t1")?.summary.status).toBe("pending");
-    expect(store.updateSummary("t1", "t1:interaction:i1", { status: "ready", text: "x", model: "m" })).toBe(true);
-    expect(store.get("t1")?.summary).toEqual({ status: "ready", text: "x", model: "m" });
-    expect(store.updateSummary("missing", "e", { status: "pending" })).toBe(false);
   });
 
   it("removes on request and by predicate", () => {
@@ -185,7 +175,7 @@ describe("AttentionStore", () => {
 
     // The old instance records t2, but its write is slow to land.
     gate = new Promise<void>((resolve) => (open = resolve));
-    old.upsert(entry({ threadId: "t2", summary: { status: "ready", text: "Old.", model: "m" } }));
+    old.upsert(entry({ threadId: "t2", summary: { status: "ready", text: "Old." } }));
 
     // A reload: the replacement loads before the old instance has flushed.
     const replacement = new AttentionStore(kvBackend(kv), recordingLog());
@@ -201,7 +191,7 @@ describe("AttentionStore", () => {
     await replacement.flush();
 
     expect(replacement.list().map((item) => item.threadId).sort()).toEqual(["t1", "t2", "t3"]);
-    expect(replacement.get("t2")?.summary).toEqual({ status: "ready", text: "Old.", model: "m" });
+    expect(replacement.get("t2")?.summary).toEqual({ status: "ready", text: "Old." });
     expect([...rows.keys()].sort()).toEqual(["entry:t1", "entry:t2", "entry:t3"]);
   });
 
@@ -289,23 +279,19 @@ describe("AttentionStore", () => {
     expect(replacement.list().map((item) => item.threadId)).toEqual(["t2"]);
   });
 
-  it("survives a reload, marking an unfinished summary as failed", async () => {
+  it("survives a reload", async () => {
     const backend = new FakeBackend();
     const first = new AttentionStore(backend, recordingLog());
     await first.load(); // nothing saved yet is fine
     first.upsert(entry({ threadId: "t1" }));
-    first.upsert(entry({ threadId: "t2", summary: { status: "ready", text: "Done.", model: "m" } }));
+    first.upsert(entry({ threadId: "t2", summary: { status: "off", fallback: "Done." } }));
     await first.flush();
     expect(backend.saved).toHaveLength(2);
 
     const second = new AttentionStore(backend, recordingLog());
     await second.load();
-    expect(second.get("t1")?.summary).toEqual({
-      status: "failed",
-      error: "The plugin restarted before the summary was written.",
-      fallback: "Login fix has a question: Which DB? Options: A / B.",
-    });
-    expect(second.get("t2")?.summary).toEqual({ status: "ready", text: "Done.", model: "m" });
+    expect(second.get("t1")).toEqual(entry({ threadId: "t1" }));
+    expect(second.get("t2")?.summary).toEqual({ status: "off", fallback: "Done." });
   });
 
   it("drops an unreadable saved entry, says so, and writes it out of storage", async () => {

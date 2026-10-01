@@ -39,7 +39,7 @@ function entry(threadId: string, headline = "Finished"): AttentionEntry {
     createdAt: "2026-09-15T10:00:00.000Z",
     headline,
     detail: null,
-    summary: { status: "pending" },
+    summary: { status: "ready", text: headline },
   };
 }
 

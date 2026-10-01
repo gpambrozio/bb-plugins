@@ -62,7 +62,6 @@ function isCurrentEntry(entry: AttentionEntry, thread: ThreadState, now: number)
   if (thread.isArchived) return false;
   if (entry.requestId !== null) return thread.hasPendingInteraction;
   if (entry.reason === "finished" && isWorking(thread)) return false;
-  if (entry.summary.status === "pending") return true;
   if (isFlagged(thread)) return true;
   return now - Date.parse(entry.createdAt) < FRESH_ENTRY_MS;
 }

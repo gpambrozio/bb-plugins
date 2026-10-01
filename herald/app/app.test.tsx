@@ -45,7 +45,7 @@ function entry(overrides: Partial<AttentionEntry> = {}): AttentionEntry {
     createdAt: new Date().toISOString(),
     headline: "Finished",
     detail: "I fixed auth.ts.",
-    summary: { status: "ready", text: "Login fix is done.", model: "m" },
+    summary: { status: "ready", text: "Login fix is done." },
     ...overrides,
   };
 }
@@ -100,9 +100,9 @@ describe("Herald's app", () => {
     await screen.findByText("Login fix is done.");
     expect(screen.getByText("Fix the login bug")).toBeTruthy();
 
-    current = [entry({ eventId: "t1:idle:2", summary: { status: "pending" } })];
+    current = [entry({ eventId: "t1:idle:2", summary: { status: "ready", text: "Login fix is done again." } })];
     await bridge.emitRealtime(ENTRIES_CHANNEL, { at: 1 });
-    await screen.findByText("Writing the summary…");
+    await screen.findByText("Login fix is done again.");
 
     const before = calls.list;
     await bridge.setRealtimeConnectionState("reconnecting");
@@ -128,7 +128,7 @@ describe("Herald's app", () => {
     const calls = { list: 0 };
     const bridge = renderSlot<object, RpcContract>({ component: HeraldBridge }, {}, { rpc: rpc(() => current, calls), pluginId: "herald" });
     await waitFor(() => expect(calls.list).toBe(1));
-    current = [entry({ eventId: "t1:idle:9", summary: { status: "failed", error: "x", fallback: "Login fix finished." } })];
+    current = [entry({ eventId: "t1:idle:9", summary: { status: "ready", text: "Login fix finished." } })];
     await bridge.emitRealtime(ENTRIES_CHANNEL, { at: 2 });
     await waitFor(() =>
       expect(bridge.inspection.rpcCalls).toContainEqual({
@@ -151,7 +151,7 @@ describe("Herald's app", () => {
     expect(push).toHaveBeenCalledWith(expect.anything(), "", "/settings/plugins/herald");
   });
 
-  it("reads a card's sentence again on request, even when muted here, and not while it is being written", async () => {
+  it("reads a card's sentence again on request, even when muted here, and not when there is none", async () => {
     let current = [entry({ eventId: "t1:idle:10" })];
     const calls = { list: 0 };
     const options = { rpc: rpc(() => current, calls), sidebarThreads: { status: "ready" as const, threads: [sidebarThread] } };
@@ -168,16 +168,17 @@ describe("Herald's app", () => {
     );
     fireEvent.click(screen.getByLabelText("Unmute on this device"));
 
-    current = [entry({ eventId: "t1:idle:11", summary: { status: "pending" } })];
+    current = [entry({ eventId: "t1:idle:11", summary: { status: "off", fallback: "Login fix finished." } })];
     await bridge.emitRealtime(ENTRIES_CHANNEL, { at: 3 });
-    await screen.findByText("Writing the summary…");
+    await screen.findByText(/Not announced/);
     expect((screen.getByLabelText("Read again") as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("renders the settings section with the prompt and the voices", async () => {
+  it("renders the settings section with the voices and nothing about a model", async () => {
     const calls = { list: 0 };
     renderSlot<object, RpcContract>({ component: HeraldSettingsSection }, {}, { rpc: rpc(() => [], calls) });
-    await screen.findByLabelText("Summary prompt");
     await screen.findByText("Zoe (Premium)");
+    expect(screen.queryByLabelText("Summary prompt")).toBeNull();
+    expect(screen.queryByText(/model/i)).toBeNull();
   });
 });

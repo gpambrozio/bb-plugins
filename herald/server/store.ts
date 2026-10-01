@@ -9,13 +9,12 @@
  * `Liveness` when the thread turns out to be gone, read, or answered. There is
  * no age limit: a thread that asked a question a week ago is still waiting.
  *
- * Mirrored to the plugin's storage so a reload does not lose the summaries
- * already written; a summary still pending at load time is marked failed,
- * because the helper that was writing it died with the old instance.
+ * Mirrored to the plugin's storage so a reload does not lose what is waiting.
+ * An entry storage holds in a shape this version no longer reads is dropped,
+ * with a warning.
  */
-import { AttentionEntrySchema, type AttentionEntry, type SummaryState } from "../shared/herald";
+import { AttentionEntrySchema, type AttentionEntry } from "../shared/herald";
 import type { Log } from "./ports";
-import { fallbackSpeech } from "./timeline";
 
 /** Where the entries are kept between loads. The map is the truth; this mirrors it. */
 export interface StoreBackend {
@@ -103,19 +102,7 @@ export class AttentionStore {
       if (held !== undefined && held.some((matches) => matches(entry))) {
         continue;
       }
-      this.entries.set(
-        entry.threadId,
-        entry.summary.status === "pending"
-          ? {
-              ...entry,
-              summary: {
-                status: "failed",
-                error: "The plugin restarted before the summary was written.",
-                fallback: fallbackSpeech(entry),
-              },
-            }
-          : entry,
-      );
+      this.entries.set(entry.threadId, entry);
     }
     // An entry held from an earlier read that storage no longer has was
     // removed since by the instance that wrote it.
@@ -143,19 +130,6 @@ export class AttentionStore {
     this.touched.add(entry.threadId);
     this.entries.set(entry.threadId, entry);
     this.persist();
-  }
-
-  /**
-   * Applies a summary only if the thread is still waiting on the same event.
-   * A helper that finishes after the user has already moved on — or after a
-   * newer event replaced this one — must not overwrite what is there now.
-   */
-  updateSummary(threadId: string, eventId: string, summary: SummaryState): boolean {
-    const current = this.entries.get(threadId);
-    if (current === undefined || current.eventId !== eventId) return false;
-    this.entries.set(threadId, { ...current, summary });
-    this.persist();
-    return true;
   }
 
   remove(threadId: string): AttentionEntry | null {

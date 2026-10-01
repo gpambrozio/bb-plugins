@@ -14,8 +14,6 @@ The first release: Herald for bb, ported from the Paseo plugin of the same name 
 - **A spoken sentence when an agent needs you** — a question, a plan or a permission to approve, a
   finished turn, or an error — spoken by the bb app, in the voice of the Mac running bb or in the
   browser's own voice.
-- **Model-written sentences, off by default.** Switched on, a short helper agent writes each sentence.
-  It is off because bb cannot stop that helper from using tools.
 - **A Herald page** listing every thread waiting on you, with the reason, the sentence and how long ago
   it happened, and a count beside its sidebar entry. It keeps itself up to date. Tap a row to open the
   thread.
@@ -23,21 +21,17 @@ The first release: Herald for bb, ported from the Paseo plugin of the same name 
 - **Mute here**, **Test voice** and a **settings** button on the page, and **Read again** on every card.
   Read again and Test voice speak even when this device is muted.
 - **Speaks from any page**, whether or not the Herald page is open, and in one window at a time.
-- **A failed summary is still announced**, in a plain sentence, so a failure never means silence.
-- **Settings** for where to speak, the voice, the speech rate, which events are announced, threads
-  started by another thread, keeping the helpers, and how long a summary may take; and a section for
-  the summary model, the prompt, and the voices.
+- **Settings** for where to speak, the voice, the speech rate, which events are announced, and threads
+  started by another thread; and a section for the voices.
 
 ### Changed from the Paseo plugin
 
-- The summary helpers are hidden threads: they never appear in the sidebar, and they are deleted without
-  any separate command-line tool.
+- The sentence is always the plain one built from the event. Having a model write it, as the Paseo
+  plugin could, is not part of this release.
 - The sentence sits above the composer instead of in the conversation; bb has no way for a plugin to add
   a row there.
 - The mobile app can speak, while it is open on screen and once *Test voice* has been pressed. It is off
   by default. Phones no longer vibrate.
 - Only one window of the app speaks, so two open windows no longer say everything twice.
-- A question you answer while its summary is still being written is not announced.
+- A question you answer before it is announced is not announced.
 - Interrupted turns are no longer announced as their own kind of event.
-- The prompt's placeholders are named after bb's threads and projects: `{{thread}}` and `{{project}}`
-  replace `{{agent}}` and `{{workspace}}`.

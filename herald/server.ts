@@ -1,36 +1,26 @@
 /**
- * Herald's server: thread events become "needs you" entries, a hidden helper
- * thread writes one sentence for each, and the app speaks it.
+ * Herald's server: thread events become "needs you" entries, each with one
+ * plain sentence, and the app speaks it.
  *
  * Every decision lives in `server/`; this file only wires it to bb. The ports
  * over `bb.sdk` are built on first use, from a handler — never in the factory
- * body. See AGENTS.md.
+ * body. Herald starts no threads of its own. See AGENTS.md.
  */
 import { randomUUID } from "node:crypto";
 
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import { rpcContract } from "./shared/contract";
-import {
-  DEFAULT_STORED_CONFIG,
-  ENTRIES_CHANNEL,
-  StoredConfigSchema,
-  SummarizerConfigSchema,
-  VoicesConfigSchema,
-  type StoredConfig,
-} from "./shared/herald";
-import { SETTINGS, timeoutMsOf } from "./shared/settings";
-import { bbEvents, bbHelpers, bbLiveness } from "./server/bb-ports";
-import { HelperOutcomes } from "./server/helpers";
+import { DEFAULT_STORED_CONFIG, ENTRIES_CHANNEL, StoredConfigSchema, VoicesConfigSchema, type StoredConfig } from "./shared/herald";
+import { SETTINGS } from "./shared/settings";
+import { bbEvents, bbLiveness } from "./server/bb-ports";
 import { createHooks, type HeraldConfig } from "./server/hooks";
 import { kvBackend } from "./server/kv-backend";
 import { Liveness } from "./server/liveness";
-import type { EventsPort, HelperPort } from "./server/ports";
-import { putAwayLeftovers, unlessAborted } from "./server/leftovers";
+import type { EventsPort } from "./server/ports";
 import { announceDrained, onOtherDrained } from "./server/reload-signal";
 import { listSayVoices, renderWithSay, sayAvailable } from "./server/say";
 import { AttentionStore } from "./server/store";
-import { summarize } from "./server/summarize";
 
 export { rpcContract } from "./shared/contract";
 export type { RpcContract } from "./shared/contract";
@@ -57,50 +47,9 @@ export default async function plugin(bb: BbPluginApi) {
   });
 
   let events: EventsPort | null = null;
-  let helpers: HelperPort | null = null;
   let liveness: Liveness | null = null;
   const eventsPort = () => (events ??= bbEvents(bb.sdk, bb.log));
-  const helperPort = () => (helpers ??= bbHelpers(bb.sdk, bb.pluginId));
   const livenessOf = () => (liveness ??= new Liveness(bbLiveness(bb.sdk), bb.log));
-
-  const outcomes = new HelperOutcomes();
-  /** Aborted on unload: the leftover clean-up and any spawn still waiting on it give way. */
-  const unloading = new AbortController();
-
-  /**
-   * Every leftover helper put away, once per instance, before this instance
-   * spawns one of its own — see `server/leftovers.ts`. Started by the service
-   * or by the first spawn, whichever comes first; a run the service's abort cut
-   * short is run again by the next spawn, so no leftover is skipped.
-   */
-  let leftovers: Promise<void> | null = null;
-  function leftoversPutAway(signal: AbortSignal = unloading.signal): Promise<void> {
-    if (leftovers === null) {
-      const run = AbortSignal.any([signal, unloading.signal]);
-      leftovers = putAwayLeftovers(
-        { helpers: helperPort(), deleteHelpers: async () => (await settings.get()).deleteHelpers, log: bb.log },
-        run,
-      ).then(() => {
-        if (run.aborted) leftovers = null;
-      });
-    }
-    return leftovers;
-  }
-
-  /** The helper port summaries use: a spawn waits until the leftovers are gone. */
-  const helpersAfterLeftovers: HelperPort = {
-    async spawn(args) {
-      await leftoversPutAway();
-      // The run it waited on was the service's, cut short by its abort: run it again.
-      if (leftovers === null) await leftoversPutAway();
-      if (unloading.signal.aborted) throw new Error("Herald unloaded before the summary helper started.");
-      return helperPort().spawn(args);
-    },
-    stop: (helperId) => helperPort().stop(helperId),
-    archive: (helperId) => helperPort().archive(helperId),
-    delete: (helperId) => helperPort().delete(helperId),
-    listLeftovers: () => helperPort().listLeftovers(),
-  };
 
   function publish(): void {
     try {
@@ -111,19 +60,15 @@ export default async function plugin(bb: BbPluginApi) {
     }
   }
 
-  /** The summariser and voices, each half falling back to its default when unreadable. */
+  /** The voices, falling back to the defaults when unreadable. */
   async function storedConfig(): Promise<StoredConfig> {
     const raw = await bb.storage.kv.get<Partial<StoredConfig>>(CONFIG_KEY);
-    const summarizer = SummarizerConfigSchema.safeParse(raw?.summarizer);
     const voices = VoicesConfigSchema.safeParse(raw?.voices);
-    return {
-      summarizer: summarizer.success ? summarizer.data : { ...DEFAULT_STORED_CONFIG.summarizer },
-      voices: voices.success ? voices.data : { ...DEFAULT_STORED_CONFIG.voices },
-    };
+    return { voices: voices.success ? voices.data : { ...DEFAULT_STORED_CONFIG.voices } };
   }
 
   async function readConfig(): Promise<HeraldConfig> {
-    const [values, stored] = await Promise.all([settings.get(), storedConfig()]);
+    const values = await settings.get();
     return {
       announce: {
         question: values.announceQuestions,
@@ -133,38 +78,17 @@ export default async function plugin(bb: BbPluginApi) {
         error: values.announceErrors,
       },
       announceSubagents: values.announceSubagents,
-      modelSummaries: values.modelSummaries,
-      deleteHelpers: values.deleteHelpers,
-      timeoutMs: timeoutMsOf(values.summaryTimeoutSeconds),
-      summarizer: stored.summarizer,
     };
   }
 
   const hooks = createHooks({
-    pluginId: bb.pluginId,
     store,
     readConfig,
-    summarize: (request, config) =>
-      summarize(request, {
-        helpers: helpersAfterLeftovers,
-        waitForOutcome: (helperId, timeoutMs) => outcomes.wait(helperId, timeoutMs),
-        forgetHelper: (helperId) => outcomes.forget(helperId),
-        providerId: config.summarizer.providerId,
-        model: config.summarizer.model,
-        reasoningLevel: config.summarizer.reasoningLevel,
-        timeoutMs: config.timeoutMs,
-        prompt: config.summarizer.prompt,
-        deleteHelper: config.deleteHelpers,
-        log: bb.log,
-      }),
     // A getter, so bb.sdk is reached when an event needs it, not here.
     events: {
       context: (thread, options) => eventsPort().context(thread, options),
-      isRunning: (threadId) => eventsPort().isRunning(threadId),
-      interactionPending: (threadId, interactionId) => eventsPort().interactionPending(threadId, interactionId),
       interruptedRecently: (threadId, withinMs) => eventsPort().interruptedRecently(threadId, withinMs),
     },
-    outcomes,
     publish,
     log: bb.log,
   });
@@ -179,10 +103,10 @@ export default async function plugin(bb: BbPluginApi) {
   bb.rpc.register(rpcContract, {
     list: async () => ({ entries: await livenessOf().visible(store) }),
     "config.get": () => storedConfig(),
-    "config.set": async (patch) => {
-      const next = StoredConfigSchema.parse({ ...(await storedConfig()), ...patch });
-      await bb.storage.kv.set(CONFIG_KEY, next);
-      return next;
+    "config.set": async (next) => {
+      const parsed = StoredConfigSchema.parse(next);
+      await bb.storage.kv.set(CONFIG_KEY, parsed);
+      return parsed;
     },
     log: ({ level, message }) => {
       bb.log[level](`app: ${message}`);
@@ -200,24 +124,9 @@ export default async function plugin(bb: BbPluginApi) {
     },
   });
 
-  // Puts the leftovers away as soon as bb is ready rather than at the first
-  // summary. Gives way to its abort signal at once, whatever is still out.
-  bb.background.service("leftover-helpers", {
-    async start(signal) {
-      await unlessAborted(leftoversPutAway(signal), signal);
-      if (!signal.aborted) await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
-    },
-  });
-
   bb.onDispose(async () => {
     stopListening();
-    unloading.abort();
-    // Every running summary's wait fails now — and so does one whose spawn has
-    // not answered yet — so its `finally` stops and puts its helper away while
-    // bb still answers. Past the deadline this instance lets go: whatever it
-    // could not put away, the next instance's leftover clean-up will.
-    outcomes.cancelAll("Herald was reloaded before the summary was written.");
-    if (!(await hooks.drain())) bb.log.warn("Unloaded with summary helpers still being put away; the next load puts them away.");
+    hooks.dispose();
     await store.shutdown();
     announceDrained(bb.pluginId, instance);
   });
