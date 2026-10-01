@@ -137,6 +137,12 @@ export function JobDetail({
           shape.
         </p>
       ) : null}
+      {!job.loaded && !job.disabled && job.problem === null ? (
+        <p className="text-sm text-destructive">
+          launchd does not have this job loaded, so it will not run on its schedule — as happens when bb quits in the middle
+          of changing a job. Enable loads it again, as does saving it.
+        </p>
+      ) : null}
       {job.readOnlyData ? (
         <p className="text-sm text-muted-foreground">
           Its log and history are in <span className="break-all font-mono text-xs">{job.dataDir}</span>, a folder this plugin

@@ -131,6 +131,24 @@ describe("the Scheduled jobs page", () => {
     expect(onLaptop).toEqual(expect.not.arrayContaining(["acknowledge", "log"]));
   });
 
+  it("shows a job launchd has not loaded as such, with Enable to load it", async () => {
+    window.localStorage.clear();
+    const unloaded: Job = { ...adopted, id: "left", name: "Left unloaded", loaded: false, recentRuns: [] };
+    renderSlot<PluginNavPanelProps, RpcContract>({ component: JobsPanel }, { subPath: "" }, {
+      rpc: stubs({
+        hosts: () => ({ primaryHostId: "mini", hosts: [{ id: "mini", name: "Mini" }] }),
+        list: () => ({ supported: true, jobs: [unloaded], launchAgentsDir: "/agents" }),
+        log: () => chunk("", 0),
+        health: () => ({ failing: [], checkedAt: 1 }),
+      }),
+    });
+
+    fireEvent.click(await screen.findByText("Left unloaded"));
+    expect(screen.getAllByText("Not loaded").length).toBeGreaterThan(0);
+    expect(await screen.findByText(/does not have this job loaded/)).toBeTruthy();
+    expect(screen.getByText("Enable")).toBeTruthy();
+  });
+
   it("shows the failing count beside the sidebar row, and updates it when the server publishes", async () => {
     const view = renderSlot<object, RpcContract>({ component: FailingAccessory }, {}, {
       rpc: stubs({ health: () => ({ failing: [], checkedAt: 1 }) }),

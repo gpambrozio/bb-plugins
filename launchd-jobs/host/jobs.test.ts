@@ -590,8 +590,8 @@ describe.skipIf(!onMac)("cancelled changes", () => {
     expect((await jobs.list()).jobs.map((job) => job.id)).toEqual(["held"]);
   });
 
-  /** Starts `change`, waits until it reaches the held `step`, cancels it, then releases the step. */
-  async function cancelAt<T>(step: string, change: (signal: AbortSignal) => Promise<T>): Promise<PromiseSettledResult<T>> {
+  /** Starts `change`, waits until it reaches the held `step`, cancels its call, then releases the step. */
+  async function cancelAt(step: string, change: (signal: AbortSignal) => Promise<unknown>): Promise<PromiseSettledResult<unknown>> {
     const release = launchd.hold(step);
     const cancel = new AbortController();
     const before = launchd.calls.length;
@@ -600,74 +600,69 @@ describe.skipIf(!onMac)("cancelled changes", () => {
     for (let tries = 0; tries < 200 && !reached(); tries += 1) await new Promise((resolve) => setTimeout(resolve, 5));
     expect(reached()).toBe(true);
     cancel.abort();
-    await new Promise((resolve) => setTimeout(resolve, 10));
     release();
     return settled;
   }
 
-  it("changes nothing when cancelled while still looking", async () => {
+  const held = `${LABEL_PREFIX}held`;
+  it.each([
+    ["an update", "bootout", (signal: AbortSignal) => jobs.update({ id: "held", spec: { ...spec, command: "echo new" } }, signal), () => launchd.loaded.has(held)],
+    ["a disable", "bootout", (signal: AbortSignal) => jobs.setEnabled({ id: "held", enabled: false }, signal), () => launchd.disabled.has(held) && !launchd.loaded.has(held)],
+    ["a delete", "bootout", (signal: AbortSignal) => jobs.delete({ id: "held" }, signal), () => !launchd.loaded.has(held)],
+  ] as const)("runs %s to the end once it has started, even if its call is cancelled", async (_name, step, change, done) => {
     await jobs.create(spec);
-    const before = await readFile(plistPath("held"), "utf8");
-
-    const update = await cancelAt("path-probe", (signal) => jobs.update({ id: "held", spec: { ...spec, command: "echo new" } }, signal));
-    expect(update.status).toBe("rejected");
-    const run = await cancelAt("print", (signal) => jobs.run({ id: "held" }, signal));
-    expect(run.status).toBe("rejected");
-    const create = await cancelAt("path-probe", (signal) => jobs.create({ ...spec, name: "Never made" }, signal));
-    expect(create.status).toBe("rejected");
-
-    expect(await readFile(plistPath("held"), "utf8")).toBe(before);
-    expect(launchd.loaded.has(`${LABEL_PREFIX}held`)).toBe(true);
-    expect((await jobs.list()).jobs.map((job) => job.id)).toEqual(["held"]);
-    expect(launchd.calls.filter(([verb]) => ["bootout", "bootstrap", "kickstart"].includes(verb!)).length).toBe(1);
-  });
-
-  it.each(["bootout", "bootstrap"])("finishes an update cancelled at %s, loaded with its new command", async (step) => {
-    await jobs.create(spec);
-    const outcome = await cancelAt(step, (signal) => jobs.update({ id: "held", spec: { ...spec, command: "echo new" } }, signal));
-
+    const outcome = await cancelAt(step, change);
     expect(outcome.status).toBe("fulfilled");
-    expect(launchd.loaded.has(`${LABEL_PREFIX}held`)).toBe(true);
-    expect((await readPlistJson(plistPath("held"))).ProgramArguments).toContain("echo new");
+    expect(done()).toBe(true);
   });
+});
 
-  it.each(["enable", "bootout", "bootstrap"])("finishes an enable cancelled at %s, enabled and loaded", async (step) => {
+describe.skipIf(!onMac)("a job an interrupted change left not loaded", () => {
+  const spec = { name: "Left", command: "true", cwd: null, schedule: { type: "interval" as const, seconds: 60 } };
+  const label = `${LABEL_PREFIX}left`;
+
+  /** bb quit after the bootout and rewrite of an update, before its bootstrap. */
+  async function interrupted(): Promise<void> {
     await jobs.create(spec);
-    await jobs.setEnabled({ id: "held", enabled: false });
-    const outcome = await cancelAt(step, (signal) => jobs.setEnabled({ id: "held", enabled: true }, signal));
+    launchd.loaded.delete(label);
+  }
 
-    expect(outcome.status).toBe("fulfilled");
-    expect(launchd.disabled.has(`${LABEL_PREFIX}held`)).toBe(false);
-    expect(launchd.loaded.has(`${LABEL_PREFIX}held`)).toBe(true);
+  it("lists as not loaded (and not disabled), so the page shows it as such", async () => {
+    await interrupted();
+    expect((await jobs.list()).jobs[0]).toMatchObject({ loaded: false, disabled: false, running: false });
   });
 
-  it.each(["bootout", "disable"])("finishes a disable cancelled at %s, disabled and unloaded", async (step) => {
+  it("is loaded again by Enable", async () => {
+    await interrupted();
+    expect(await jobs.setEnabled({ id: "left", enabled: true })).toMatchObject({ loaded: true, disabled: false });
+  });
+
+  it("is loaded again by saving it", async () => {
+    await interrupted();
+    expect(await jobs.update({ id: "left", spec: { ...spec, command: "echo again" } })).toMatchObject({ loaded: true, command: "echo again" });
+  });
+});
+
+describe.skipIf(!onMac)("the shared runner", () => {
+  const spec = { name: "Runner user", command: "true", cwd: null, schedule: { type: "interval" as const, seconds: 60 } };
+
+  it("is not rewritten by a change that gives up before changing anything", async () => {
     await jobs.create(spec);
-    const outcome = await cancelAt(step, (signal) => jobs.setEnabled({ id: "held", enabled: false }, signal));
+    await writeFile(join(ownDir, "runner.sh"), "#!/bin/zsh\n# an older runner\n", "utf8");
+    launchd.failing.add("print-disabled");
 
-    expect(outcome.status).toBe("fulfilled");
-    expect(launchd.disabled.has(`${LABEL_PREFIX}held`)).toBe(true);
-    expect(launchd.loaded.has(`${LABEL_PREFIX}held`)).toBe(false);
+    await expect(jobs.update({ id: "runner-user", spec: { ...spec, command: "echo new" } })).rejects.toThrow(/print-disabled/);
+    // Anything the failed update started beside its reads has had time to land.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(await readFile(join(ownDir, "runner.sh"), "utf8")).toBe("#!/bin/zsh\n# an older runner\n");
   });
 
-  it.each(["bootout", "enable"])("finishes a delete cancelled at %s, leaving nothing behind", async (step) => {
-    await jobs.create(spec);
-    await jobs.setEnabled({ id: "held", enabled: false });
-    const outcome = await cancelAt(step, (signal) => jobs.delete({ id: "held" }, signal));
-
-    expect(outcome.status).toBe("fulfilled");
-    expect((await jobs.list()).jobs).toEqual([]);
-    expect(launchd.disabled.size).toBe(0);
-  });
-
-  it("finishes a create cancelled at bootstrap, and a run cancelled at kickstart", async () => {
-    const created = await cancelAt("bootstrap", (signal) => jobs.create(spec, signal));
-    expect(created.status).toBe("fulfilled");
-    expect(launchd.loaded.has(`${LABEL_PREFIX}held`)).toBe(true);
-
-    const ran = await cancelAt("kickstart", (signal) => jobs.run({ id: "held" }, signal));
-    expect(ran.status).toBe("fulfilled");
-    expect(launchd.loaded.get(`${LABEL_PREFIX}held`)?.runs).toBe(1);
+  it("is not written by a change cancelled while it waited", async () => {
+    const cancel = new AbortController();
+    cancel.abort();
+    await expect(jobs.create(spec, cancel.signal)).rejects.toThrow(/cancelled before it started/);
+    await expect(stat(join(ownDir, "runner.sh"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 });
 

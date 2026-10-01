@@ -14,7 +14,7 @@ specific to `launchd-jobs`.
 | `host.ts` | The host entry: binds `shared/host-contract.ts` to `host/jobs.ts` and `host/follow.ts`. |
 | `host/jobs.ts` | Every `launchctl` and `plutil` call, the plist writer, the runner, logs, history, names, acknowledgements. |
 | `host/follow.ts` | Follow mode: a native watch on a job's log directory, with an expiry. |
-| `host/run-command.ts` | Every external command, in its own process group: bounded by a timeout and a cancellation signal, with SIGKILL escalation. |
+| `host/run-command.ts` | Every external command: `execFile` with a timeout, SIGKILL and a capped output buffer. |
 | `server.ts` | Forwards each app call to the chosen Mac's host entry; relays log changes; runs the health poll. |
 | `server/health.ts` | The failing count: which Macs are asked, and when it is published. |
 | `shared/cron.ts` | cron ⇄ `StartCalendarInterval`, and the sentences. In the app and host bundles. |
@@ -72,25 +72,25 @@ interleave with another change. Reads (`list`, `log`, `health`) do not wait. The
 written atomically, so a reader never sees half a file. This is per host worker; the Paseo plugin,
 running elsewhere, is guarded only by the exclusive link above.
 
-The lock's hold is bounded, and a cancelled change never leaves a job half-way. Each handler passes
-its call's `context.signal`:
+**A manager, not a launcher.** launchd runs the jobs; nothing here runs one, so bb quitting, a
+reload or a cancelled call never touches a running job. The plugin's own commands (`launchctl`,
+`plutil`, the PATH probe) are short, and none is cancelled once started:
 
-- **Cancelled while queued**: skipped, nothing done.
-- **Cancelled while still looking** (reading the plist, `print-disabled`, the PATH probe): its
-  command is stopped and it gives up, having changed nothing. The signal reaches commands through an
-  `AsyncLocalStorage`, so reads running beside it are unaffected.
-- **Cancelled after its first change** to launchd or a plist: it runs to the end, ignoring the
-  signal. Each change calls `commit()` just before that first step (before the bootout of an update,
-  delete or disable, the `enable` of an enable, the plist of a create, the `kickstart` of a run).
-  There is no rollback: an update booted out and rewritten but not bootstrapped would be a job that
-  silently stopped running. The tests cancel at every step of every transition.
+- **Cancelled while queued** (the RPC timed out, the worker is stopping): skipped, nothing done.
+- **Once started**, a change runs to the end. Its call's signal is not passed on.
+- **Every command** runs through `createRunCommand` (`host/run-command.ts`): `execFile` with a
+  timeout, `killSignal: "SIGKILL"` and a capped `maxBuffer`. A SIGKILLed command cannot exit 0, so a
+  timed-out one never counts as a success; `execFile` closes the pipes as it kills, so a helper left
+  holding them does not keep the lock. Nothing kills process groups or descendants.
+- **The shared runner script** is written only once a change is past its reads (`ensureRunner` after
+  `directoryForSave`), so a change that gives up never replaces it.
 
-Every command still has its own bound. They run through `createRunCommand` (`host/run-command.ts`)
-in a process group of their own: on timeout or abort the whole group gets SIGTERM, then SIGKILL after
-`KILL_GRACE_MS`, and after another grace the promise rejects and the output pipes are destroyed — so a
-helper a login shell started dies with it, and nothing holds a pipe after the lock is let go. A
-command that was stopped is a failure even if it exits 0. `execFile`'s own `timeout` only sends
-SIGTERM to the immediate child.
+**bb quitting in the middle of a change** can leave a job half-way — most likely an update booted
+out and rewritten but not yet bootstrapped. There is deliberately no recovery machinery: no
+persisted intent, no drain on dispose. The job then lists as **Not loaded** (launchd's own status,
+read on every list), the detail pane says so in plain words, and both **Enable** and saving the job
+again load it (`bootoutIfLoaded` tolerates "not loaded", then `bootstrap`). The tests cover that
+path.
 
 ## Adopting the Paseo plugin's jobs
 

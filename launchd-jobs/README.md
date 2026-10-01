@@ -71,6 +71,8 @@ matches, launchd only when *both* do. The preview says "(both must match)".
   times collapse into one run.
 - **Mac off, or you logged out**: the run is missed. LaunchAgents belong to your login session.
 - **Job disabled**: launchd remembers that across reboots until you enable it again.
+- **bb quits while you are saving a job**: the job may be left **Not loaded**, and the page says so.
+  Press **Enable**, or save it again, to load it. A job that is already running is never affected.
 
 ## Runs and logs
 

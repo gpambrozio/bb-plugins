@@ -40,10 +40,7 @@ export function createFakeLaunchd() {
   const refuseEnable = new Set<string>();
   /** How many of the next `plutil` runs fail, as a transient converter failure would. */
   let plutilFailures = 0;
-  /**
-   * `launchctl` verbs, or `path-probe`, held until released: the call waits,
-   * and rejects as a killed command does if its signal aborts meanwhile.
-   */
+  /** `launchctl` verbs, or `path-probe`, held until released: the call waits. */
   const held = new Map<string, Promise<void>>();
   function hold(verb: string): () => void {
     let release: () => void = () => {};
@@ -59,17 +56,10 @@ export function createFakeLaunchd() {
     return target.slice(`${domain}/`.length);
   }
 
-  /** Waits while `key` is held; rejects, as a stopped command does, if `signal` aborts meanwhile. */
-  async function gate(key: string, signal: AbortSignal | undefined, what: string): Promise<void> {
-    const held_ = held.get(key);
-    if (held_ === undefined) return;
-    await new Promise<void>((resolve, reject) => {
-      void held_.then(resolve);
-      signal?.addEventListener("abort", () => reject(failure(`${what} was cancelled`, 1)), { once: true });
-    });
-  }
+  /** `launchctl` verbs that fail outright, as a launchd that cannot answer would. */
+  const failing = new Set<string>();
 
-  const run: RunCommand = async (file, args, options) => {
+  const run: RunCommand = async (file, args) => {
     if (file === "plutil" && plutilFailures > 0) {
       plutilFailures -= 1;
       throw failure("plutil: Resource temporarily unavailable", 1);
@@ -79,15 +69,14 @@ export function createFakeLaunchd() {
       return { stdout };
     }
     if (file === "/bin/zsh") {
-      if (options?.signal?.aborted) throw failure("zsh was cancelled before it started", 1);
       calls.push(["path-probe"]);
-      await gate("path-probe", options?.signal, "zsh");
+      await held.get("path-probe");
       return { stdout: `some startup banner\n${FAKE_LOGIN_PATH}\n` };
     }
     if (file !== "launchctl") throw new Error(`unexpected command ${file}`);
-    if (options?.signal?.aborted) throw failure(`launchctl ${args.join(" ")} was cancelled before it started`, 1);
     calls.push([...args]);
-    await gate(args[0] ?? "", options?.signal, `launchctl ${args.join(" ")}`);
+    await held.get(args[0] ?? "");
+    if (failing.has(args[0] ?? "")) throw failure(`launchctl ${args[0]}: Input/output error`, 5);
     const [verb, target = "", extra = ""] = args;
     switch (verb) {
       case "print": {
@@ -147,6 +136,7 @@ export function createFakeLaunchd() {
     refuseBootstrap,
     refuseEnable,
     hold,
+    failing,
     failNextPlutil(times = 1) {
       plutilFailures = times;
     },

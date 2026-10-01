@@ -1,4 +1,3 @@
-import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import { chmod, link, mkdir, open, readdir, readFile, realpath, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -66,7 +65,7 @@ export interface CommandFailure extends Error {
 export type RunCommand = (
   file: string,
   args: readonly string[],
-  options?: { timeoutMs?: number; env?: NodeJS.ProcessEnv; signal?: AbortSignal },
+  options?: { timeoutMs?: number; env?: NodeJS.ProcessEnv },
 ) => Promise<{ stdout: string }>;
 
 export interface JobsDeps {
@@ -523,36 +522,8 @@ async function readStringMap(path: string, key: string, warn: (message: string) 
 export type DataHome = "plugin" | "paseo" | "elsewhere";
 
 export function createJobs(deps: JobsDeps) {
-  const { ownDir, launchAgentsDir, warn } = deps;
+  const { ownDir, launchAgentsDir, run, warn } = deps;
 
-  /**
-   * The change being made now: its call's cancellation signal, and whether it
-   * has `commit`ted. Until then the signal reaches every command it runs, so
-   * a cancelled call stops while it is still only looking. From its first
-   * step that changes launchd or a plist on, the signal is no longer passed:
-   * the transition runs to the end, each command bounded by its own timeout,
-   * because a job left half-way — booted out with a new plist, say — is worse
-   * than a change that finished after its caller gave up. Reads run outside
-   * this and are not affected.
-   */
-  const change = new AsyncLocalStorage<{ signal: AbortSignal | undefined; committed: boolean }>();
-  const run: RunCommand = (file, args, options) => {
-    const current = change.getStore();
-    const signal = current === undefined || current.committed ? undefined : current.signal;
-    return deps.run(file, args, { ...options, signal: options?.signal ?? signal });
-  };
-
-  /**
-   * Marks the point of no return of the change being made: called just before
-   * its first step that changes launchd or a plist. A call cancelled by then
-   * stops here, having changed nothing.
-   */
-  function commit(): void {
-    const current = change.getStore();
-    if (current === undefined) return;
-    if (current.signal?.aborted) throw new Error("The change was cancelled before it changed anything.");
-    current.committed = true;
-  }
 
   function domain(): string {
     if (deps.uid === undefined) throw new Error("Cannot determine the user id for the launchd gui domain");
@@ -597,16 +568,15 @@ export function createJobs(deps: JobsDeps) {
    * do not wait.
    *
    * A change whose call was cancelled while it waited (`signal`: the RPC timed
-   * out, the worker is stopping) is skipped, not run late; one cancelled while
-   * it is still reading has its command stopped; one cancelled after it began
-   * changing things finishes (see `commit`). Every command has its own
-   * timeout, so the lock is always let go.
+   * out, the worker is stopping) is skipped, not run late. Once a change has
+   * started it runs to the end; every command it runs has its own timeout, so
+   * the lock is always let go.
    */
   let tail: Promise<unknown> = Promise.resolve();
   function exclusive<T>(signal: AbortSignal | undefined, work: () => Promise<T>): Promise<T> {
     const start = (): Promise<T> => {
       if (signal?.aborted) return Promise.reject(new Error("The change was cancelled before it started; nothing was done."));
-      return change.run({ signal, committed: false }, work);
+      return work();
     };
     const result = tail.then(start, start);
     tail = result.catch(() => undefined);
@@ -920,11 +890,11 @@ export function createJobs(deps: JobsDeps) {
    * its plist names — its history continues there, so nothing it ran before
    * drops out of view — as long as that directory still has a runner.
    * Everything else, including a job whose plist names some other directory,
-   * is this plugin's own.
+   * is this plugin's own. Writes nothing: the caller prepares this plugin's
+   * runner (`ensureRunner`) once the change is under way.
    */
   async function directoryForSave(current: string | null): Promise<string> {
     if (current !== null && (await homeOf(current)) === "paseo" && (await exists(join(current, RUNNER_NAME)))) return current;
-    await ensureRunner();
     return ownDir;
   }
 
@@ -1004,9 +974,8 @@ export function createJobs(deps: JobsDeps) {
       assertSupported();
       const spec = normaliseSpec(input);
       return exclusive(signal, async () => {
-        // Refreshing this plugin's own runner changes no job; it may happen before the commit.
         const [dataDir, path] = await Promise.all([directoryForSave(null), loginShellPath()]);
-        commit();
+        if (dataDir === ownDir) await ensureRunner();
         const slug = await reservePlist(spec.name, spec, dataDir, path);
         await recordName(slug, spec.name);
         // The file stays if launchd refuses it: the list shows it unloaded with
@@ -1027,8 +996,9 @@ export function createJobs(deps: JobsDeps) {
           directoryForSave(current.plist === null ? null : dataDirOf(current.plist, ownDir)),
           loginShellPath(),
         ]);
+        // The shared runner is written only now, once nothing left can make the update give up first.
+        if (dataDir === ownDir) await ensureRunner();
         // launchd does not reread a changed plist; the job has to leave and return.
-        commit();
         await bootoutIfLoaded(label);
         await recordName(input.id, spec.name);
         await replacePlist(input.id, spec, dataDir, path);
@@ -1054,7 +1024,6 @@ export function createJobs(deps: JobsDeps) {
           if (await insideOwnSubdirectory(dir, file)) history.push(file);
           else warn(`left ${file} alone: its folder is a link out of ${dir}`);
         }
-        commit();
         await bootoutIfLoaded(label);
         // A `disable` outlives the plist: launchd keeps it per label in its own
         // override store, so without this a later job with the same slug would be
@@ -1095,7 +1064,6 @@ export function createJobs(deps: JobsDeps) {
         const label = labelFor(input.id);
         const status = await readStatus(label);
         if (!status.loaded) throw new Error("The job is not loaded; enable it first");
-        commit();
         await launchctl(["kickstart", `${domain()}/${label}`]);
         return {};
       });
@@ -1106,7 +1074,6 @@ export function createJobs(deps: JobsDeps) {
       return exclusive(signal, async () => {
         await assertOwned(input.id);
         const label = labelFor(input.id);
-        commit();
         if (input.enabled) {
           // `enable` first: bootstrapping a disabled label is refused.
           await launchctl(["enable", `${domain()}/${label}`]);
@@ -1179,7 +1146,6 @@ export function createJobs(deps: JobsDeps) {
     }
     if (last === undefined || last.exitCode === 0) delete next[input.id];
     else next[input.id] = last.startedAt;
-    commit();
     await writeOwn(acksPath, "acknowledged", next);
     return {};
   }
