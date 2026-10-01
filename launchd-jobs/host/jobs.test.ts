@@ -590,19 +590,84 @@ describe.skipIf(!onMac)("cancelled changes", () => {
     expect((await jobs.list()).jobs.map((job) => job.id)).toEqual(["held"]);
   });
 
-  it("stops the running command of a cancelled change, and lets the next change through", async () => {
+  /** Starts `change`, waits until it reaches the held `step`, cancels it, then releases the step. */
+  async function cancelAt<T>(step: string, change: (signal: AbortSignal) => Promise<T>): Promise<PromiseSettledResult<T>> {
+    const release = launchd.hold(step);
+    const cancel = new AbortController();
+    const before = launchd.calls.length;
+    const settled = Promise.allSettled([change(cancel.signal)]).then(([outcome]) => outcome!);
+    const reached = () => launchd.calls.slice(before).some(([verb]) => verb === step);
+    for (let tries = 0; tries < 200 && !reached(); tries += 1) await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(reached()).toBe(true);
+    cancel.abort();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    release();
+    return settled;
+  }
+
+  it("changes nothing when cancelled while still looking", async () => {
+    await jobs.create(spec);
+    const before = await readFile(plistPath("held"), "utf8");
+
+    const update = await cancelAt("path-probe", (signal) => jobs.update({ id: "held", spec: { ...spec, command: "echo new" } }, signal));
+    expect(update.status).toBe("rejected");
+    const run = await cancelAt("print", (signal) => jobs.run({ id: "held" }, signal));
+    expect(run.status).toBe("rejected");
+    const create = await cancelAt("path-probe", (signal) => jobs.create({ ...spec, name: "Never made" }, signal));
+    expect(create.status).toBe("rejected");
+
+    expect(await readFile(plistPath("held"), "utf8")).toBe(before);
+    expect(launchd.loaded.has(`${LABEL_PREFIX}held`)).toBe(true);
+    expect((await jobs.list()).jobs.map((job) => job.id)).toEqual(["held"]);
+    expect(launchd.calls.filter(([verb]) => ["bootout", "bootstrap", "kickstart"].includes(verb!)).length).toBe(1);
+  });
+
+  it.each(["bootout", "bootstrap"])("finishes an update cancelled at %s, loaded with its new command", async (step) => {
+    await jobs.create(spec);
+    const outcome = await cancelAt(step, (signal) => jobs.update({ id: "held", spec: { ...spec, command: "echo new" } }, signal));
+
+    expect(outcome.status).toBe("fulfilled");
+    expect(launchd.loaded.has(`${LABEL_PREFIX}held`)).toBe(true);
+    expect((await readPlistJson(plistPath("held"))).ProgramArguments).toContain("echo new");
+  });
+
+  it.each(["enable", "bootout", "bootstrap"])("finishes an enable cancelled at %s, enabled and loaded", async (step) => {
     await jobs.create(spec);
     await jobs.setEnabled({ id: "held", enabled: false });
-    launchd.hold("bootstrap");
-    const cancel = new AbortController();
-    const running = jobs.setEnabled({ id: "held", enabled: true }, cancel.signal);
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    const outcome = await cancelAt(step, (signal) => jobs.setEnabled({ id: "held", enabled: true }, signal));
 
-    cancel.abort();
+    expect(outcome.status).toBe("fulfilled");
+    expect(launchd.disabled.has(`${LABEL_PREFIX}held`)).toBe(false);
+    expect(launchd.loaded.has(`${LABEL_PREFIX}held`)).toBe(true);
+  });
 
-    await expect(running).rejects.toThrow(/cancelled/);
-    // The lock is free: a change made now runs at once.
-    await jobs.acknowledge({ id: "held" });
+  it.each(["bootout", "disable"])("finishes a disable cancelled at %s, disabled and unloaded", async (step) => {
+    await jobs.create(spec);
+    const outcome = await cancelAt(step, (signal) => jobs.setEnabled({ id: "held", enabled: false }, signal));
+
+    expect(outcome.status).toBe("fulfilled");
+    expect(launchd.disabled.has(`${LABEL_PREFIX}held`)).toBe(true);
+    expect(launchd.loaded.has(`${LABEL_PREFIX}held`)).toBe(false);
+  });
+
+  it.each(["bootout", "enable"])("finishes a delete cancelled at %s, leaving nothing behind", async (step) => {
+    await jobs.create(spec);
+    await jobs.setEnabled({ id: "held", enabled: false });
+    const outcome = await cancelAt(step, (signal) => jobs.delete({ id: "held" }, signal));
+
+    expect(outcome.status).toBe("fulfilled");
+    expect((await jobs.list()).jobs).toEqual([]);
+    expect(launchd.disabled.size).toBe(0);
+  });
+
+  it("finishes a create cancelled at bootstrap, and a run cancelled at kickstart", async () => {
+    const created = await cancelAt("bootstrap", (signal) => jobs.create(spec, signal));
+    expect(created.status).toBe("fulfilled");
+    expect(launchd.loaded.has(`${LABEL_PREFIX}held`)).toBe(true);
+
+    const ran = await cancelAt("kickstart", (signal) => jobs.run({ id: "held" }, signal));
+    expect(ran.status).toBe("fulfilled");
+    expect(launchd.loaded.get(`${LABEL_PREFIX}held`)?.runs).toBe(1);
   });
 });
 
