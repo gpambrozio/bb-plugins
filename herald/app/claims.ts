@@ -5,11 +5,14 @@
  * speaks. Nothing is held between announcements, so a window that closed, or a
  * plugin generation the host replaced, can never keep the others quiet.
  *
- * A claim is recoverable: a window whose playback was refused releases it, and
- * every window that lost the claim hears of the release (`onClaimReleased`,
- * the `storage` event the removal fires in every other window of the origin)
- * and tries again — however long the refused attempt took. The announcer also claims only when this window can make a
- * sound unprompted, so an untapped tab does not take a sentence it cannot say.
+ * A claim is recoverable: a window whose playback was refused releases it and
+ * says so on one notification key, and every window that lost the claim hears
+ * that (`onClaimReleased`, the `storage` event a write fires in every other
+ * window of the origin) and tries again — however long the refused attempt
+ * took. Only that explicit release notifies: a claim key removed for any other
+ * reason — the day-old pruning — is silent, or a window would say an old
+ * announcement again. The announcer also claims only when this window can make
+ * a sound unprompted, so an untapped tab does not take a sentence it cannot say.
  *
  * Where storage is unavailable (a private window that refuses it), every
  * window speaks: two voices beat none.
@@ -35,13 +38,18 @@ function browserEnvironment(): ClaimEnvironment {
   return { storage, locks, now: Date.now };
 }
 
+/** The one key a refused window writes to say it gave a claim back; never a claim itself. */
+export function releaseKey(prefix: string): string {
+  return `${prefix}#released`;
+}
+
 function prune(environment: ClaimEnvironment, prefix: string): void {
   const { storage } = environment;
   if (storage === null) return;
   const stale: string[] = [];
   for (let index = 0; index < storage.length; index += 1) {
     const key = storage.key(index);
-    if (key === null || !key.startsWith(prefix)) continue;
+    if (key === null || !key.startsWith(prefix) || key === releaseKey(prefix)) continue;
     const at = Number(storage.getItem(key));
     if (!Number.isFinite(at) || environment.now() - at > CLAIM_TTL_MS) stale.push(key);
   }
@@ -50,14 +58,16 @@ function prune(environment: ClaimEnvironment, prefix: string): void {
 
 /**
  * Calls `listener` with the event id whenever another window gives a claim
- * back. A browser fires `storage` in every other window of the origin when a
- * key is removed, never in the window that removed it.
+ * back after its playback was refused. A browser fires `storage` in every
+ * other window of the origin when a key is written, never in the window that
+ * wrote it. Claim keys coming and going — pruning included — say nothing.
  */
 export function onClaimReleased(prefix: string, listener: (eventId: string) => void): () => void {
   if (typeof window === "undefined") return () => {};
   const handler = (event: StorageEvent) => {
-    if (event.key === null || !event.key.startsWith(prefix) || event.newValue !== null) return;
-    listener(event.key.slice(prefix.length));
+    if (event.key !== releaseKey(prefix) || event.newValue === null) return;
+    const eventId = (JSON.parse(event.newValue) as { eventId?: unknown }).eventId;
+    if (typeof eventId === "string") listener(eventId);
   };
   window.addEventListener("storage", handler);
   return () => window.removeEventListener("storage", handler);
@@ -92,7 +102,10 @@ export async function claimAnnouncement(
   return {
     release: () =>
       underLock(() => {
-        if (storage.getItem(key) === token) storage.removeItem(key);
+        if (storage.getItem(key) !== token) return;
+        storage.removeItem(key);
+        // The value changes every time, or a second release would fire nothing.
+        storage.setItem(releaseKey(prefix), JSON.stringify({ eventId, at: environment.now(), token: Math.random() }));
       }),
   };
 }

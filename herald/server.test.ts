@@ -5,11 +5,10 @@
  * Nothing here talks to a running bb.
  */
 import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import plugin from "./server";
 import { DRAIN_TIMEOUT_MS } from "./server/hooks";
-import { resetSharedSlotsForTests } from "./server/slots";
 import type { AttentionEntry } from "./shared/herald";
 import { DEFAULT_SUMMARIZER, ENTRIES_CHANNEL } from "./shared/herald";
 
@@ -26,8 +25,18 @@ async function settle(): Promise<void> {
   for (let i = 0; i < 10; i += 1) await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+interface LoadOptions {
+  /** Runs inside every spawn, before it answers. */
+  spawn?: () => Promise<unknown>;
+  /** Runs inside every stop, before it answers. */
+  stop?: (threadId: string) => Promise<unknown>;
+  /** The hidden herald threads bb lists, by id. */
+  leftovers?: () => string[];
+}
+
 /** Model summaries on unless a test says otherwise: most of these follow the helper. */
-async function load(settings: Record<string, string | number | boolean> = {}, spawn?: () => Promise<unknown>) {
+async function load(settings: Record<string, string | number | boolean> = {}, options: LoadOptions = {}) {
+  const { spawn, stop, leftovers } = options;
   const host = createFakePluginHost({
     pluginId: "herald",
     settings: { modelSummaries: true, ...settings },
@@ -48,7 +57,12 @@ async function load(settings: Record<string, string | number | boolean> = {}, sp
           await spawn?.();
           return makeThreadResponse({ id: "thr_helper", originPluginId: "herald", visibility: "hidden" });
         },
-        stop: async () => ({ ok: true as const }),
+        stop: async ({ threadId }: { threadId: string }) => {
+          await stop?.(threadId);
+          return { ok: true as const };
+        },
+        list: async () =>
+          (leftovers?.() ?? []).map((id) => makeThreadResponse({ id, originPluginId: "herald", visibility: "hidden" })) as never,
         delete: async () => ({ ok: true as const }),
         archive: async () => ({ threads: [] }) as never,
         get: async ({ threadId }: { threadId: string }) => (threadId === USER_THREAD.id ? USER_THREAD : makeThreadResponse({ id: threadId })),
@@ -76,7 +90,6 @@ function entriesOf(result: unknown): AttentionEntry[] {
 }
 
 describe("herald server", () => {
-  beforeEach(() => resetSharedSlotsForTests("herald"));
   afterEach(async () => {
     vi.useRealTimers();
     await Promise.all(live.splice(0).map((host) => host.harness.lifecycle.dispose().catch(() => {})));
@@ -210,47 +223,112 @@ describe("herald server", () => {
     expect(entry?.summary).toEqual({ status: "ready", text: "Login fix finished. I fixed auth.ts.", model: "plain" });
   });
 
-  it("has the new instance put away a helper whose spawn answers only after the unload deadline", async () => {
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    try {
-      let spawned: () => void = () => {};
-      const host = await load({}, () => new Promise<void>((resolve) => (spawned = resolve)));
-      await host.harness.emitThreadEvent("thread.idle", { thread: USER_THREAD, lastAssistantText: "Done." });
-      await vi.advanceTimersByTimeAsync(0);
-      const reloading = host.harness.lifecycle.reload(plugin).then(track);
-      // The spawn hangs past the drain deadline; unload gives up waiting and returns.
-      await vi.advanceTimersByTimeAsync(DRAIN_TIMEOUT_MS + 100);
-      const replacement = await reloading;
-      expect(host.harness.sdk.callsTo("threads.stop")).toEqual([]);
-      // Then the spawn answers, through the old instance, whose SDK is stale by now:
-      // the replacement puts the helper away with its own.
-      spawned();
-      for (let i = 0; i < 10; i += 1) await vi.advanceTimersByTimeAsync(0);
-      expect(host.harness.sdk.callsTo("threads.stop")).toEqual([]);
-      expect(replacement.harness.sdk.callsTo("threads.stop")).toEqual([[{ threadId: "thr_helper" }]]);
-      expect(replacement.harness.sdk.callsTo("threads.delete")).toEqual([[{ threadId: "thr_helper", childThreadsConfirmed: true }]]);
-    } finally {
-      vi.useRealTimers();
-    }
+  it("puts away every leftover helper before it starts one of its own (re-enabled with two still running)", async () => {
+    const left = ["thr_left1", "thr_left2"];
+    const { harness } = await load({}, { leftovers: () => [...left] });
+    await harness.emitThreadEvent("thread.idle", { thread: USER_THREAD, lastAssistantText: "Done." });
+    await settle();
+    const order = harness.sdk.calls.map((call) => call.path).filter((path) => /^threads\.(stop|delete|spawn)$/.test(path));
+    expect(order).toEqual(["threads.stop", "threads.delete", "threads.stop", "threads.delete", "threads.spawn"]);
+    expect(harness.sdk.callsTo("threads.delete")).toEqual([
+      [{ threadId: "thr_left1", childThreadsConfirmed: true }],
+      [{ threadId: "thr_left2", childThreadsConfirmed: true }],
+    ]);
   });
 
-  it("puts away leftover helpers from before it started, and none of its own", async () => {
-    const host = await load();
-    host.harness.sdk.stub("threads.list", async () => [
-      makeThreadResponse({ id: "thr_old", originPluginId: "herald", visibility: "hidden", createdAt: 1 }),
-      makeThreadResponse({ id: "thr_fresh", originPluginId: "herald", visibility: "hidden", createdAt: Date.now() + 60_000 }),
-    ]);
-    const service = host.harness.runService("leftover-helpers");
+  it("lets go of a helper whose stop hangs at unload, and the next instance puts it away before spawning", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    let stopHangs = true;
+    const alive = new Set<string>();
+    const host = await load(
+      {},
+      {
+        spawn: async () => alive.add("thr_helper"),
+        // The old instance's stop never answers; later ones do.
+        stop: (threadId) => (stopHangs ? new Promise(() => {}) : Promise.resolve(alive.delete(threadId))),
+        leftovers: () => [...alive],
+      },
+    );
+    await host.harness.emitThreadEvent("thread.idle", { thread: USER_THREAD, lastAssistantText: "Done." });
+    for (let i = 0; i < 10; i += 1) await vi.advanceTimersByTimeAsync(0);
+    const helper = makeThreadResponse({ id: "thr_helper", originPluginId: "herald", visibility: "hidden" });
+    await host.harness.emitThreadEvent("thread.active", { thread: helper });
+    await host.harness.emitThreadEvent("thread.idle", { thread: helper, lastAssistantText: '{"speech":"Done."}' });
+    for (let i = 0; i < 10; i += 1) await vi.advanceTimersByTimeAsync(0);
+    expect(alive.has("thr_helper")).toBe(true);
+
+    // Reload: the old instance waits out its drain deadline, then lets go.
+    const reloading = host.harness.lifecycle.reload(plugin).then(track);
+    await vi.advanceTimersByTimeAsync(DRAIN_TIMEOUT_MS + 100);
+    const replacement = await reloading;
+    stopHangs = false;
+
+    // The next helper the replacement wants waits until the old one is gone.
+    await replacement.harness.emitThreadEvent("thread.idle", { thread: { ...USER_THREAD, updatedAt: 2 }, lastAssistantText: "Again." });
+    for (let i = 0; i < 10; i += 1) await vi.advanceTimersByTimeAsync(0);
+    const order = replacement.harness.sdk.calls.map((call) => call.path).filter((path) => /^threads\.(stop|delete|spawn)$/.test(path));
+    expect(order.slice(0, 3)).toEqual(["threads.stop", "threads.delete", "threads.spawn"]);
+    expect(replacement.harness.sdk.callsTo("threads.stop")[0]).toEqual([{ threadId: "thr_helper" }]);
+  });
+
+  it("gives up the leftover clean-up the moment its service is aborted", async () => {
+    let stops = 0;
+    const { harness } = await load(
+      {},
+      {
+        leftovers: () => ["thr_left1", "thr_left2"],
+        stop: () => {
+          stops += 1;
+          return new Promise(() => {});
+        },
+      },
+    );
+    const service = harness.runService("leftover-helpers");
     await settle();
-    expect(host.harness.sdk.callsTo("threads.stop")).toEqual([[{ threadId: "thr_old" }]]);
-    expect(host.harness.sdk.callsTo("threads.delete")).toEqual([[{ threadId: "thr_old", childThreadsConfirmed: true }]]);
+    expect(stops).toBe(1);
+    service.controller.abort();
+    // Returns at once, though the first stop never answers, and starts nothing more.
+    await service.done;
+    await settle();
+    expect(stops).toBe(1);
+    expect(harness.sdk.callsTo("threads.delete")).toEqual([]);
+  });
+
+  it("puts the leftovers away at the first spawn when an aborted service left them", async () => {
+    let first = true;
+    const { harness } = await load(
+      {},
+      {
+        leftovers: () => ["thr_left1"],
+        stop: () => {
+          if (!first) return Promise.resolve();
+          first = false;
+          return new Promise(() => {});
+        },
+      },
+    );
+    const service = harness.runService("leftover-helpers");
+    await settle();
     service.controller.abort();
     await service.done;
+    await harness.emitThreadEvent("thread.idle", { thread: USER_THREAD, lastAssistantText: "Done." });
+    await settle();
+    const order = harness.sdk.calls.map((call) => call.path).filter((path) => /^threads\.(stop|delete|spawn)$/.test(path));
+    expect(order).toEqual(["threads.stop", "threads.stop", "threads.delete", "threads.spawn"]);
+  });
+
+  it("does nothing when its service is aborted before it starts", async () => {
+    const { harness } = await load({}, { leftovers: () => ["thr_left1"] });
+    const service = harness.runService("leftover-helpers");
+    service.controller.abort();
+    await service.done;
+    await settle();
+    expect(harness.sdk.callsTo("threads.stop")).toEqual([]);
   });
 
   it("stops a helper whose spawn answers after a reload began, before the reload finishes", async () => {
     let spawned: () => void = () => {};
-    const host = await load({}, () => new Promise<void>((resolve) => (spawned = resolve)));
+    const host = await load({}, { spawn: () => new Promise<void>((resolve) => (spawned = resolve)) });
     await host.harness.emitThreadEvent("thread.idle", { thread: USER_THREAD, lastAssistantText: "Done." });
     await settle();
     let reloaded = false;

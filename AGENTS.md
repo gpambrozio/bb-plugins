@@ -211,7 +211,9 @@ which puts a message in that thread (`herald`). **A helper thread cannot be made
 privileged `permissionMode` is `accept-edits` (Claude Code reads and edits files in the workspace without
 asking), `threads.spawn` takes no tool list, and the only plugin hook is `message.dispatch`. A helper fed
 untrusted text is a decision to record, not a default (`herald` makes it opt-in). On unload, stop and put
-away running helpers before `onDispose` returns — after it, `bb.sdk` is stale.
+away running helpers before `onDispose` returns — after it, `bb.sdk` is stale — within a deadline, then
+let go; and on load, put away every leftover helper before spawning one (`herald/server/leftovers.ts`).
+Passing helpers between instances is not worth its races.
 
 ### Host entry — `bb.host`
 

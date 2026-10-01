@@ -19,7 +19,6 @@
 import type { AttentionEntry, AttentionReason, SummarizerConfig } from "../shared/herald";
 import type { HelperOutcomes } from "./helpers";
 import type { EventsPort, Interaction, Log, ThreadDto } from "./ports";
-import { createSlots, type Slots } from "./slots";
 import type { AttentionStore } from "./store";
 import type { Summary, SummaryRequest, SummaryRun } from "./summarize";
 import { describeInteraction, fallbackSpeech, firstWords, preview } from "./timeline";
@@ -51,12 +50,7 @@ export interface HookDeps {
   publish: () => void;
   log: Log;
   now?: () => Date;
-  /**
-   * The helper slots. In the plugin they are shared by every instance
-   * (`sharedSlots`); left out, this instance gets its own `maxConcurrent`.
-   */
-  slots?: Slots;
-  /** How many helpers may be alive at once when no `slots` are given. */
+  /** How many helpers may be alive at once; more threads than this wait their turn. */
   maxConcurrent?: number;
   /** How long `drain` waits; `DRAIN_TIMEOUT_MS` unless a test says otherwise. */
   drainTimeoutMs?: number;
@@ -106,7 +100,9 @@ export interface Hooks {
 
 export function createHooks(deps: HookDeps): Hooks {
   const now = deps.now ?? (() => new Date());
-  const slots = deps.slots ?? createSlots(deps.maxConcurrent ?? 2);
+  const maxConcurrent = deps.maxConcurrent ?? 2;
+  let running = 0;
+  const queue: Array<() => void> = [];
 
   /**
    * Every recording handler awaits — the config, the thread's names — and the
@@ -205,26 +201,25 @@ export function createHooks(deps: HookDeps): Hooks {
 
   /**
    * Runs `task` when a helper slot is free; the order threads finished in is
-   * kept. The slot is held until the task is over — its helper put away, by
-   * this instance or the one it was handed to — and a task whose turn comes
-   * after unload gives its slot straight back.
+   * kept. The slot is held until the task is over — its helper put away — and
+   * nothing queued starts after unload.
    */
   function schedule(task: () => Promise<void>): void {
-    void slots.acquire().then((release) => {
-      if (disposed) {
-        release();
-        return;
-      }
+    const start = () => {
+      running += 1;
       // Detached work inside the bb server's process: a rejection must end
       // in the log, never as an unhandled rejection.
       const work = task()
         .catch((error: unknown) => deps.log.error(`A summary task failed: ${reasonOf(error)}`))
         .finally(() => {
           inFlight.delete(work);
-          release();
+          running -= 1;
+          if (!disposed) queue.shift()?.();
         });
       inFlight.add(work);
-    });
+    };
+    if (running < maxConcurrent) start();
+    else queue.push(start);
   }
 
   interface Recording {
@@ -450,6 +445,7 @@ export function createHooks(deps: HookDeps): Hooks {
 
     async drain() {
       disposed = true;
+      queue.length = 0;
       let timer: ReturnType<typeof setTimeout> | undefined;
       const timeout = new Promise<boolean>((resolve) => {
         timer = setTimeout(() => {

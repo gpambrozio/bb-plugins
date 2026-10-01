@@ -26,10 +26,9 @@ import { createHooks, type HeraldConfig } from "./server/hooks";
 import { kvBackend } from "./server/kv-backend";
 import { Liveness } from "./server/liveness";
 import type { EventsPort, HelperPort } from "./server/ports";
-import { HelperOwnership } from "./server/helper-ownership";
-import { announceDrained, handOverHelper, onHelperHandedOver, onOtherDrained } from "./server/reload-signal";
+import { putAwayLeftovers, unlessAborted } from "./server/leftovers";
+import { announceDrained, onOtherDrained } from "./server/reload-signal";
 import { listSayVoices, renderWithSay, sayAvailable } from "./server/say";
-import { sharedSlots } from "./server/slots";
 import { AttentionStore } from "./server/store";
 import { summarize } from "./server/summarize";
 
@@ -65,32 +64,43 @@ export default async function plugin(bb: BbPluginApi) {
   const livenessOf = () => (liveness ??= new Liveness(bbLiveness(bb.sdk), bb.log));
 
   const outcomes = new HelperOutcomes();
-  const startedAt = Date.now();
-  /** Two helpers alive at once, counted across this instance and any it replaced. */
-  const slots = sharedSlots(bb.pluginId, 2);
-  /** The helpers this instance is responsible for; see `server/helper-ownership.ts`. */
-  const ownership = new HelperOwnership(helperPort, (helperId) => handOverHelper(bb.pluginId, instance, helperId));
+  /** Aborted on unload: the leftover clean-up and any spawn still waiting on it give way. */
+  const unloading = new AbortController();
 
-  /** Puts away a helper no running summary is waiting on: one handed over, or one left behind. */
-  async function retireLeftover(helperId: string): Promise<void> {
-    const port = helperPort();
-    try {
-      await port.stop(helperId);
-    } catch (error) {
-      bb.log.warn(`Could not stop leftover summary helper ${helperId}: ${error instanceof Error ? error.message : String(error)}`);
+  /**
+   * Every leftover helper put away, once per instance, before this instance
+   * spawns one of its own — see `server/leftovers.ts`. Started by the service
+   * or by the first spawn, whichever comes first; a run the service's abort cut
+   * short is run again by the next spawn, so no leftover is skipped.
+   */
+  let leftovers: Promise<void> | null = null;
+  function leftoversPutAway(signal: AbortSignal = unloading.signal): Promise<void> {
+    if (leftovers === null) {
+      const run = AbortSignal.any([signal, unloading.signal]);
+      leftovers = putAwayLeftovers(
+        { helpers: helperPort(), deleteHelpers: async () => (await settings.get()).deleteHelpers, log: bb.log },
+        run,
+      ).then(() => {
+        if (run.aborted) leftovers = null;
+      });
     }
-    try {
-      if ((await settings.get()).deleteHelpers) await port.delete(helperId);
-      else await port.archive(helperId);
-    } catch (error) {
-      bb.log.warn(`Could not put away leftover summary helper ${helperId}: ${error instanceof Error ? error.message : String(error)}`);
-    }
+    return leftovers;
   }
-  // A handed-over helper still holds the old instance's slot; it is released
-  // when `done` tells the old instance this one has put the helper away.
-  const stopTakingHelpers = onHelperHandedOver(bb.pluginId, instance, (helperId, done) => {
-    void retireLeftover(helperId).finally(done);
-  });
+
+  /** The helper port summaries use: a spawn waits until the leftovers are gone. */
+  const helpersAfterLeftovers: HelperPort = {
+    async spawn(args) {
+      await leftoversPutAway();
+      // The run it waited on was the service's, cut short by its abort: run it again.
+      if (leftovers === null) await leftoversPutAway();
+      if (unloading.signal.aborted) throw new Error("Herald unloaded before the summary helper started.");
+      return helperPort().spawn(args);
+    },
+    stop: (helperId) => helperPort().stop(helperId),
+    archive: (helperId) => helperPort().archive(helperId),
+    delete: (helperId) => helperPort().delete(helperId),
+    listLeftovers: () => helperPort().listLeftovers(),
+  };
 
   function publish(): void {
     try {
@@ -136,7 +146,7 @@ export default async function plugin(bb: BbPluginApi) {
     readConfig,
     summarize: (request, config) =>
       summarize(request, {
-        helpers: ownership,
+        helpers: helpersAfterLeftovers,
         waitForOutcome: (helperId, timeoutMs) => outcomes.wait(helperId, timeoutMs),
         forgetHelper: (helperId) => outcomes.forget(helperId),
         providerId: config.summarizer.providerId,
@@ -155,7 +165,6 @@ export default async function plugin(bb: BbPluginApi) {
       interruptedRecently: (threadId, withinMs) => eventsPort().interruptedRecently(threadId, withinMs),
     },
     outcomes,
-    slots,
     publish,
     log: bb.log,
   });
@@ -191,44 +200,24 @@ export default async function plugin(bb: BbPluginApi) {
     },
   });
 
-  // Helpers no instance put away — a process that stopped mid-summary, a
-  // handover nobody was there to take (the plugin was disabled). Only ones
-  // created before this instance started, so none of its own is touched.
+  // Puts the leftovers away as soon as bb is ready rather than at the first
+  // summary. Gives way to its abort signal at once, whatever is still out.
   bb.background.service("leftover-helpers", {
     async start(signal) {
-      try {
-        const leftovers = await ownership.listLeftovers(startedAt);
-        for (const helperId of leftovers) {
-          if (signal.aborted) return;
-          if (ownership.owns(helperId)) continue;
-          // A leftover may still be running a turn: it takes a slot until it is put away.
-          const release = await slots.acquire();
-          try {
-            await retireLeftover(helperId);
-          } finally {
-            release();
-          }
-        }
-        if (leftovers.length > 0) bb.log.info(`Put away ${leftovers.length} leftover summary helpers.`);
-      } catch (error) {
-        bb.log.warn(`Could not look for leftover summary helpers: ${error instanceof Error ? error.message : String(error)}`);
-      }
+      await unlessAborted(leftoversPutAway(signal), signal);
       if (!signal.aborted) await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
     },
   });
 
   bb.onDispose(async () => {
     stopListening();
-    stopTakingHelpers();
+    unloading.abort();
     // Every running summary's wait fails now — and so does one whose spawn has
     // not answered yet — so its `finally` stops and puts its helper away while
-    // bb still answers.
+    // bb still answers. Past the deadline this instance lets go: whatever it
+    // could not put away, the next instance's leftover clean-up will.
     outcomes.cancelAll("Herald was reloaded before the summary was written.");
-    const drained = await hooks.drain();
-    // Whatever is still out past the deadline — a hung spawn or stop — is
-    // handed to the live instance, never left to this one's stale SDK.
-    ownership.release();
-    if (!drained) bb.log.warn("Handed the summary helpers still running at unload to the next instance.");
+    if (!(await hooks.drain())) bb.log.warn("Unloaded with summary helpers still being put away; the next load puts them away.");
     await store.shutdown();
     announceDrained(bb.pluginId, instance);
   });

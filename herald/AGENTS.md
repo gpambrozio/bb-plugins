@@ -16,9 +16,8 @@ what still holds and says what bb changed. The repo root `AGENTS.md` covers what
 | `server/hooks.ts` | Events → entries: helper routing, the turn-end dedupe, the two-slot summary queue, "outran", who is announced. |
 | `server/summarize.ts` | One helper per summary: the prompt template, reading its reply, stopping and deleting it. |
 | `server/helpers.ts` | `HelperOutcomes`: how each helper's turn ended, as its own events report it. |
-| `server/reload-signal.ts` | What an old instance tells its replacement: storage flushed (read it again), and helpers handed over. |
-| `server/helper-ownership.ts` | The helpers this instance owns; after unload, handing them to the live instance. |
-| `server/slots.ts` | The two helper slots, shared by every instance of the plugin. |
+| `server/reload-signal.ts` | What an old instance tells its replacement: storage closed and flushed, read it again. |
+| `server/leftovers.ts` | Putting away every leftover helper before this instance spawns one, giving way to abort. |
 | `server/store.ts` | One entry per thread, mirrored to storage; `load()` merges. |
 | `server/kv-backend.ts` | The store's rows in `bb.storage.kv`, one per thread. |
 | `server/liveness.ts` | Asks bb about each entry's thread before the list goes out: read, answered, gone, working again. |
@@ -76,10 +75,10 @@ bb's events cannot block anything, and a handler runs inside the bb server. A su
 turn, so `server/hooks.ts` never awaits one: the handler writes a `pending` entry and returns, and the
 summary lands later through `AttentionStore.updateSummary`. That update is keyed by `eventId` and refused
 when the thread has moved on to a newer event, which is what keeps a slow helper from overwriting a
-fresher entry. `schedule` caps how many helpers are alive at once (two); a burst queues. The slots are
-**shared by every instance of the plugin** (`sharedSlots`, on `globalThis` like the reload channel), so a
-reload cannot start a fresh pair of helpers beside a pair the old instance is still putting away. **A slot
-is held until the helper is put away**, not until its sentence is out: `summarize` returns `{ result, finished }`, the
+fresher entry. `schedule` caps how many helpers this instance has alive at once (two); a burst queues.
+Across a reload the cap holds because no new instance spawns while an old helper is left (see *Unload
+lets go; load cleans up first*). **A slot is held until the helper is put away**, not until its sentence
+is out: `summarize` returns `{ result, finished }`, the
 sentence is settled from `result`, and the task awaits `finished` (stopped, then deleted or archived)
 before the next helper starts — otherwise slow-to-stop helpers pile up past the cap. Detached work
 catches its own rejections — an unhandled one would land in the bb server.
@@ -121,20 +120,28 @@ message in the user's own thread.
 `summarize` stops the helper in a `finally` — which releases its runtime and interrupts a turn still
 running after a timeout — then deletes it, or archives it when *Delete each summary helper* is off.
 
-**Unload drains, and never abandons a helper.** `bb.onDispose` calls `HelperOutcomes.cancelAll`, which
-fails every wait *and every wait that starts later* (a spawn that answers after unload began), then awaits
-`hooks.drain()`: no new events are recorded, the queue is dropped, and it resolves once every running
-summary has put its helper away. The SDK handles are still valid until unload returns, and stale after.
+**Unload lets go; load cleans up first.** This is deliberately simple — an earlier version handed
+helpers between instances and shared slots across them, and every piece of that machinery grew its own
+race.
 
-The drain waits at most `DRAIN_TIMEOUT_MS`, since a spawn or a stop can hang. Past that,
-`HelperOwnership.release()` hands every helper this instance still owns — and any whose spawn answers
-later — to the live instance over `server/reload-signal.ts`; calls the old instance would make to bb go
-the same way. The live instance stops and deletes them with its own SDK (`retireLeftover`) and then says
-so; until it does, the old instance's summary — and the shared slot it holds — stays open. A handover
-nobody takes resolves at once, and the next load's sweep puts that helper away (taking a slot for it). A handover
-nobody receives (the plugin was disabled rather than reloaded) and a process that stopped mid-summary
-leave helpers behind, so each load sweeps them (the `leftover-helpers` service): hidden threads of this
-plugin, not archived, **created before this instance started** — so a helper of its own is never touched.
+- *Unload:* `bb.onDispose` aborts the leftover clean-up, calls `HelperOutcomes.cancelAll` — which fails
+  every wait *and every wait that starts later* (a spawn that answers after unload began) — and awaits
+  `hooks.drain()`: no new events are recorded, the queue is dropped, and running summaries stop and put
+  away their helpers with this instance's still-valid SDK. It waits at most `DRAIN_TIMEOUT_MS`, since a
+  spawn or a stop can hang, and then lets go: whatever is left is the next instance's.
+- *Load:* before this instance spawns any helper of its own, it puts away **every** hidden, unarchived
+  herald thread — all of them leftovers, since it has spawned none yet (`server/leftovers.ts`; every
+  spawn awaits it). The `leftover-helpers` service starts it as soon as bb is ready; the first spawn starts
+  it if the service has not. So when the first new helper starts, no old one is alive, and the two-helper
+  cap holds by construction. A disable followed by an enable, a process that stopped mid-summary and an
+  unload whose stop hung all end the same way.
+- *Abort:* the clean-up checks its signal before every step and gives way at once from any wait — a hung
+  stop included — so bb can stop the service on time. A run the service's abort cut short is run again by
+  the next spawn; one cut short by unload ends with the instance.
+
+The remaining gap, accepted: a spawn the old instance sent that answers only after the new instance's
+clean-up has finished leaves one helper alive beside the new ones until it ends its turn or the next load
+puts it away.
 
 Storage is **closed, then flushed** (`store.shutdown()`) before the old instance signals its replacement
 to read it again. Closing freezes the map: writes already queued mirror it as it stood, and nothing
@@ -288,9 +295,12 @@ event, held only for the check. Three rules keep a window that cannot play from 
 - a window claims only if it may play unprompted — the desktop app, or a page already unlocked;
 - a window whose playback is refused (the `<audio>` rejects and the voice is not heard) releases its
   claim;
-- a window that lost the claim keeps the announcement and **hears the release**: removing the claim's
-  `localStorage` key fires `storage` in every other window of the origin (`onClaimReleased`), and the
-  window tries again then — however long the refused attempt took. It checks again that the
+- a window that lost the claim keeps the announcement and **hears the release**: the refused window
+  writes the event id to one notification key (`releaseKey`), which fires `storage` in every other window
+  of the origin (`onClaimReleased`), and the window tries again then — however long the refused attempt
+  took. **Only that write notifies.** A claim key removed for any other reason — the day-old pruning —
+  is silent; when every removal counted, a window that had lost an announcement said it again the next
+  day. It checks again that the
   announcement is still current and not blocked, and forgets it once the announcement is withdrawn.
   (Timed retries were tried first; a slow render plus a refused voice outlasted any fixed window.)
 

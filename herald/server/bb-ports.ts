@@ -176,12 +176,11 @@ export function bbHelpers(sdk: PluginBbSdk, pluginId: string): HelperPort {
     async delete(threadId) {
       await sdk.threads.delete({ threadId, childThreadsConfirmed: true });
     },
-    async listLeftovers(createdBefore) {
+    async listLeftovers() {
       // Everything this plugin spawns is a helper, and only helpers are hidden.
       const threads = await sdk.threads.list({ originPluginId: pluginId, includeHidden: true, archived: false });
       return threads
         .filter((thread) => thread.visibility === "hidden" && thread.archivedAt === null && thread.deletedAt === null)
-        .filter((thread) => thread.createdAt < createdBefore)
         .map((thread) => thread.id);
     },
   };

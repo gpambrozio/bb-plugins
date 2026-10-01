@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
 
-import { CLAIM_TTL_MS, claimAnnouncement, onClaimReleased } from "./claims";
+import { CLAIM_TTL_MS, claimAnnouncement, onClaimReleased, releaseKey } from "./claims";
 
 class MemoryStorage {
   private readonly items = new Map<string, string>();
@@ -71,17 +71,54 @@ describe("claimAnnouncement", () => {
     expect(await claimAnnouncement("p:", "e1", { storage: null, locks: null, now: () => 0 })).not.toBeNull();
   });
 
-  it("hears another window give a claim back, and nothing else", () => {
+  it("hears only an explicit release, never a claim key removed by pruning", () => {
     const heard: string[] = [];
     const stop = onClaimReleased("herald:said:", (eventId) => heard.push(eventId));
     const fire = (key: string | null, newValue: string | null) =>
       window.dispatchEvent(new StorageEvent("storage", { key, newValue }));
-    fire("herald:said:e1", null);
-    fire("herald:said:e2", "1790000000000");
-    fire("other:e3", null);
+    fire("herald:said:#released", JSON.stringify({ eventId: "e1", at: 1 }));
+    // A day-old claim pruned by another window's new announcement: silent.
+    fire("herald:said:e2", null);
+    fire("other:#released", JSON.stringify({ eventId: "e3", at: 1 }));
     fire(null, null);
     stop();
-    fire("herald:said:e4", null);
+    fire("herald:said:#released", JSON.stringify({ eventId: "e4", at: 2 }));
     expect(heard).toEqual(["e1"]);
+  });
+
+  it("says a release on the notification key, and prunes a day-old claim without a word", async () => {
+    const storage = new MemoryStorage();
+    const writes: string[] = [];
+    const recording = {
+      ...storage,
+      get length() {
+        return storage.length;
+      },
+      key: (index: number) => storage.key(index),
+      getItem: (key: string) => storage.getItem(key),
+      removeItem: (key: string) => storage.removeItem(key),
+      setItem: (key: string, value: string) => {
+        writes.push(key);
+        storage.setItem(key, value);
+      },
+    };
+    let now = 0;
+    const environment = { storage: recording, locks: null, now: () => now };
+    // Another window spoke e1 successfully: its claim stays until pruned.
+    await claimAnnouncement("herald:said:", "e1", environment);
+    now = CLAIM_TTL_MS + 1;
+    await claimAnnouncement("herald:said:", "e2", environment);
+    expect(storage.getItem("herald:said:e1")).toBeNull();
+    expect(writes).not.toContain(releaseKey("herald:said:"));
+
+    // A refused window gives e2 back: that is said, once per release.
+    const claim = await claimAnnouncement("herald:said:", "e3", environment);
+    await claim?.release();
+    expect(writes.filter((key) => key === releaseKey("herald:said:"))).toHaveLength(1);
+    expect(JSON.parse(storage.getItem(releaseKey("herald:said:")) ?? "{}").eventId).toBe("e3");
+    // And the notification key is never pruned as a claim.
+    now += CLAIM_TTL_MS * 2;
+    await claimAnnouncement("herald:said:", "e4", environment);
+    expect(storage.getItem(releaseKey("herald:said:"))).not.toBeNull();
   });
 });
