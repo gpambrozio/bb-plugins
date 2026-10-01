@@ -131,7 +131,9 @@ bb plugin types                  # repin the SDK to the running bb; --check in C
   devDependency and a `"build": "bb plugin build"` script.
 - **A failed reload keeps the previous instance running** and `bb plugin reload` exits 1 — the
   opposite of Paseo. Read the exit code and the logs; "it still works" does not mean the new code
-  loaded.
+  loaded. The new instance loads *before* the old one is disposed (the SDK's fake host does the same),
+  so a storage write the old one had queued may not have landed when the new one reads. `herald`
+  re-reads storage when the old instance signals it has drained (`herald/server/reload-signal.ts`).
 - **Settings changes do not reload the plugin.** Subscribe with `onChange`.
 - `bb plugin remove` deletes the plugin's settings, secrets and schedules. To move a local plugin,
   install the new path instead.
@@ -160,7 +162,7 @@ not a subprocess's. The surface a port uses most:
 | Push to the app | `bb.realtime.publish(channel, payload)` — broadcast, not persisted; the app re-fetches on reconnect |
 | Long-running work | `bb.background.service(name, { start(signal) })` — sleeps must wake on abort or reload reports "degraded" |
 | Cron | `bb.background.schedule(name, "m h dom mon dow", fn)` — server-local time, only while loaded |
-| React to threads | `bb.events.on("thread.idle" \| "thread.failed" \| "interaction.pending" \| …, handler)` — observe only |
+| React to threads | `bb.events.on("thread.idle" \| "thread.failed" \| "interaction.pending" \| …, handler)` — observe only. There is no event for an interaction being *answered*: read `threads.interactions.get`, or `hasPendingInteraction` from `experimental_useSidebarThreads` in the app |
 | Gate a send | `bb.experimental_hooks.on("message.dispatch", …)` — fails closed, 10 s limit |
 | Settings | `bb.settings.define({...})` → `get()`, `experimental_set()`, `onChange()`; the host renders the form; `secret: true` never reaches the app |
 | Storage | `bb.storage.kv` (JSON, 256 KB per value) or `bb.storage.database()` (own SQLite) with append-only `bb.storage.migrate` |
@@ -182,6 +184,9 @@ What a port only learns by running it:
 - **A thread spawn into a host workspace needs a `hostId`.** The SDK type marks it optional, bb 0.44
   answers `hostId is required unless workspace.type is personal`. Take the server's own machine from
   `bb.sdk.system.config().primaryHostId`, or the host of the project's checkout.
+- **`bb.sdk.projects.list()` leaves out the personal project** unless called with
+  `{ includePersonal: true }`. Every bb has one (`proj_personal`); it is where a thread that needs no
+  checkout can run (`workspace: { type: "personal" }`).
 - **A project knows its `origin`.** `bb.sdk.projects.list()` carries `gitRemoteUrl` (any spelling:
   scp, https, with or without `.git`; null when there is none), so matching a repository to a project
   needs no `git` call. The same repository is often a separate project per machine, so expect several.
@@ -197,8 +202,19 @@ and "the daemon's own file"; decide per value whether the user edits it in the h
 (settings) or the plugin owns it (storage).
 
 **Hidden threads replace helper agents.** `bb.sdk.threads.spawn({ visibility: "hidden", … })`
-keeps a background worker out of the sidebar. The plugin must `stop` it in a `finally` and archive
-it when done.
+keeps a background worker out of the sidebar and out of bb's unread attention. The plugin must `stop`
+it in a `finally` and archive it when done. Hidden is not silent: bb delivers a hidden thread's events
+to every plugin's `bb.events` handlers, the spawning plugin's included. Recognise your own by
+`thread.originPluginId === bb.pluginId`, which bb stamps on every thread spawned with `pluginMetadata`.
+Do not make a helper a child of the thread it works for: a child notifies its parent when it finishes,
+which puts a message in that thread. **A helper thread cannot be made tool-free**: bb's least
+privileged `permissionMode` is `accept-edits` (Claude Code reads and edits files in the workspace without
+asking), `threads.spawn` takes no tool list, and the only plugin hook is `message.dispatch`. A helper fed
+untrusted text is a decision to record, not a default. **Bounding helpers across a reload is the hard
+part**: the new instance loads before the old one is disposed, so a spawn the old one sent can answer
+after the new one has checked for leftovers, and a clean-up that fails or is aborted must keep spawning
+shut. `herald` dropped its helpers over this; issue #11 lists what a plugin that spawns them must
+guarantee.
 
 ### Host entry — `bb.host`
 
@@ -221,7 +237,12 @@ export default definePluginApp((app) => {
 });
 ```
 
-Plain web React with the DOM lib — `document` and `window` are fine. Paseo contribution → bb slot:
+Plain web React with the DOM lib — `document` and `window` are fine, on every client: the desktop app is
+Electron and the mobile app is a native shell around the same web app in a WebView. Where behaviour must
+differ (audio needs a tap first in a browser tab and in the mobile app), bb's own plugins tell them apart
+by `window.bbDesktop` (desktop) and a `window.bb.native` bridge (mobile) — internals, not SDK. Work that
+must run while no page is open, such as `herald`'s announcer, belongs in `app.slots.experimental_appOverlay`,
+mounted once per window. Paseo contribution → bb slot:
 
 | Paseo | bb |
 | --- | --- |
@@ -246,6 +267,14 @@ selection — and give it a `draftKey` per subject, since `initialPrompt` seeds 
 Host `Markdown` takes only `content` and `className`, so it gives no say over how a body's images
 load. Where they need gating (tracking pixels, private attachments), render the body yourself, as
 `github-board` does.
+
+**Icon names are bb's own set, not Lucide's.** `experimental_Icon` (and every `icon` field) knows about
+170 names — `Settings`, `Play`, `Spinner`, `Lock`, `ListTodo`, `MessageQuestion`, `Github`… but no
+`Volume2`, `RefreshCw`, `Megaphone`, `Shield` or `Loader2` — and draws its generic bolt for anything else,
+silently. A missing glyph is an SVG declared in `bb.branding.experimental_icons` and named
+`"<pluginId>/<name>"`. `herald/app/testing/bb-icon-names.ts` holds bb 0.44's list and
+`herald/app/icons.test.ts` the check. bb's vendored `Button` takes no `title`; a tooltip is bb's
+`Tooltip` (`npx shadcn add @bb/tooltip`).
 
 Colour comes from the semantic classes, never a literal — check light and dark. The app also has a
 compact viewport (`isCompactViewport` on some slots); check a narrow window too. A throwing slot
