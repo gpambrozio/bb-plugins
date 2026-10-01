@@ -58,6 +58,19 @@ describe.skipIf(!onUnix)("createRunCommand", () => {
     if (helper > 0) started.push(helper);
   });
 
+  it("fails a command whose timeout passed, even when it exited 0 and a helper still held its output", async () => {
+    scratch = await mkdtemp(join(tmpdir(), "run-command-"));
+    const pidFile = join(scratch, "helper.pid");
+    // The parent prints part of its answer and exits 0; a helper it started holds stdout to finish it later.
+    const script = '(sleep 0.5; echo finished) & echo $! > "$1"; printf partial';
+    const running = run("/bin/sh", ["-c", script, "sh", pidFile], { timeoutMs: 200 });
+
+    await expect(running).rejects.toThrow(/timed out/);
+
+    const helper = Number((await readFile(pidFile, "utf8")).trim());
+    if (helper > 0) started.push(helper);
+  });
+
   it("caps the output it keeps, failing the command that exceeds it", async () => {
     const small = createRunCommand({ maxBuffer: 1024 });
     const failure = await small("/bin/sh", ["-c", "yes"]).then(
