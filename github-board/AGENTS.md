@@ -112,6 +112,11 @@ when you add a query.
   prefs and the templates refetch whenever the connection comes back (`useReconnects` in
   `app/state.ts`); the template editor still adopts a fetched value only while it holds no unsaved
   edit. `app/state.test.tsx` drives this through the SDK's app harness (jsdom).
+- **An older answer never overwrites a newer state.** Only the newest board load may write the board
+  or the module cache (`latestLoad`), and edits adopted while it ran are re-applied to its answer
+  (`recentPatches`). Display prefs and templates keep a version that a local change, a save or a
+  pushed signal bumps; a fetch that started before the bump is dropped. The one-off loads (detail,
+  comments, images, labels, send options) are effects whose cleanup discards a superseded answer.
 - **Labels are read a full page at a time** (`LABEL_PAGE`, 100) on cards, in label mutations and in
   the repository's label list, so the menu's checkmarks match what the item carries. An item that
   comes back with a full page may have more; the menu then offers no toggles and says to edit on

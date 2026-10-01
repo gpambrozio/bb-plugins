@@ -5,13 +5,16 @@
  * the templates never hears about it. These hooks refetch when the connection
  * comes back.
  */
-import { waitFor } from "@testing-library/react";
+import { cleanup, waitFor } from "@testing-library/react";
 import { renderSlot } from "@get-bb/plugin-sdk/testing/app";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import type { Board } from "../shared/board";
 import { DEFAULT_PROMPTS } from "../shared/settings";
-import { useBoard, useDisplayPrefs, usePrompts } from "./state";
+import { DISPLAY_PREFS_CHANGED, ITEM_PATCHED, PROMPTS_CHANGED } from "../shared/schemas";
+import { BoardPatchListener, useBoard, useDisplayPrefs, usePrompts } from "./state";
+
+afterEach(() => cleanup());
 
 function Probe() {
   const { board } = useBoard();
@@ -100,5 +103,92 @@ describe("after a reconnect", () => {
     expect(calls.filter((method) => method === "loadBoard")).toHaveLength(2);
     expect(calls.filter((method) => method === "getDisplayPrefs")).toHaveLength(2);
     expect(calls.filter((method) => method === "getPrompts")).toHaveLength(2);
+  });
+});
+
+function deferred<T>() {
+  let resolve: (value: T) => void = () => {};
+  const promise = new Promise<T>((done) => (resolve = done));
+  return { promise, resolve };
+}
+
+describe("answers that arrive out of order", () => {
+  const prefs = (hidden: string[]) => ({ hiddenRepositories: hidden, detailWidthFraction: null });
+  const prompts = (issues: string) => ({ byType: { ...DEFAULT_PROMPTS, issues }, byProject: {} });
+
+  it("drops a board load that a reconnect's newer load overtook", async () => {
+    const first = deferred<Board>();
+    let calls = 0;
+    const view = renderSlot(
+      { component: Probe },
+      {},
+      {
+        rpc: {
+          loadBoard: () => {
+            calls += 1;
+            return calls === 1 ? first.promise : boardWith(["fresh"]);
+          },
+          getDisplayPrefs: () => prefs([]),
+          getPrompts: () => prompts(DEFAULT_PROMPTS.issues),
+        },
+      },
+    );
+    const labels = () => JSON.parse(view.getByTestId("state").textContent ?? "{}").labels;
+    await view.behavior.setRealtimeConnectionState("reconnecting");
+    await view.behavior.setRealtimeConnectionState("connected");
+    await waitFor(() => expect(labels()).toEqual(["fresh"]));
+    first.resolve(boardWith(["stale"]));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(labels()).toEqual(["fresh"]);
+    view.unmount();
+  });
+
+  it("keeps an edit that arrived while the load was running", async () => {
+    const load = deferred<Board>();
+    const view = renderSlot(
+      { component: Probe },
+      {},
+      {
+        rpc: {
+          loadBoard: () => load.promise,
+          getDisplayPrefs: () => prefs([]),
+          getPrompts: () => prompts(DEFAULT_PROMPTS.issues),
+        },
+      },
+    );
+    const labels = () => JSON.parse(view.getByTestId("state").textContent ?? "{}").labels;
+    // The overlay's listener is what adopts the signal app-wide.
+    const listener = renderSlot({ component: BoardPatchListener }, {}, {});
+    await listener.behavior.emitRealtime(ITEM_PATCHED, { itemId: "I1", patch: { labels: ["patched"] } });
+    load.resolve(boardWith(["before the edit"]));
+    // Let the load's answer land before looking, or this sees the patch alone.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(labels()).toEqual(["patched"]);
+    listener.unmount();
+    view.unmount();
+  });
+
+  it("keeps pushed display prefs and templates over a fetch that started before them", async () => {
+    const prefsFetch = deferred<ReturnType<typeof prefs>>();
+    const promptsFetch = deferred<ReturnType<typeof prompts>>();
+    const view = renderSlot(
+      { component: Probe },
+      {},
+      {
+        rpc: {
+          loadBoard: () => boardWith(["x"]),
+          getDisplayPrefs: () => prefsFetch.promise,
+          getPrompts: () => promptsFetch.promise,
+        },
+      },
+    );
+    const state = () => JSON.parse(view.getByTestId("state").textContent ?? "{}");
+    await view.behavior.emitRealtime(DISPLAY_PREFS_CHANGED, prefs(["pushed"]));
+    await view.behavior.emitRealtime(PROMPTS_CHANGED, prompts("Pushed {url}"));
+    prefsFetch.resolve(prefs([]));
+    promptsFetch.resolve(prompts(DEFAULT_PROMPTS.issues));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(state()).toMatchObject({ hidden: ["pushed"], issues: "Pushed {url}" });
+    view.unmount();
   });
 });
