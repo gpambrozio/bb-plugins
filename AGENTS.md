@@ -132,7 +132,8 @@ bb plugin types                  # repin the SDK to the running bb; --check in C
 - **A failed reload keeps the previous instance running** and `bb plugin reload` exits 1 — the
   opposite of Paseo. Read the exit code and the logs; "it still works" does not mean the new code
   loaded. The new instance loads *before* the old one is disposed (the SDK's fake host does the same),
-  so a storage write the old one had queued may not have landed when the new one reads.
+  so a storage write the old one had queued may not have landed when the new one reads. `herald`
+  re-reads storage when the old instance signals it has drained (`herald/server/reload-signal.ts`).
 - **Settings changes do not reload the plugin.** Subscribe with `onChange`.
 - `bb plugin remove` deletes the plugin's settings, secrets and schedules. To move a local plugin,
   install the new path instead.
@@ -206,7 +207,11 @@ it in a `finally` and archive it when done. Hidden is not silent: bb delivers a 
 to every plugin's `bb.events` handlers, the spawning plugin's included. Recognise your own by
 `thread.originPluginId === bb.pluginId`, which bb stamps on every thread spawned with `pluginMetadata`.
 Do not make a helper a child of the thread it works for: a child notifies its parent when it finishes,
-which puts a message in that thread (`herald`).
+which puts a message in that thread (`herald`). **A helper thread cannot be made tool-free**: bb's least
+privileged `permissionMode` is `accept-edits` (Claude Code reads and edits files in the workspace without
+asking), `threads.spawn` takes no tool list, and the only plugin hook is `message.dispatch`. A helper fed
+untrusted text is a decision to record, not a default (`herald` makes it opt-in). On unload, stop and put
+away running helpers before `onDispose` returns — after it, `bb.sdk` is stale.
 
 ### Host entry — `bb.host`
 

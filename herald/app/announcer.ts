@@ -11,13 +11,17 @@
  */
 import { speechText, type AttentionEntry, type VoicesConfig } from "../shared/herald";
 import { blockedMessage, type SpeechPlatform, type SpeechSettings } from "../shared/settings";
+import type { Claim } from "./claims";
 
 export interface AnnouncerAudio {
   canPlayAudio(): boolean;
   canSpeak(): boolean;
   primeSpeech(): void;
+  /** Whether this page has been heard, or primed by a press, so it may play on its own. */
+  isAudioUnlocked(): boolean;
   playAudio(dataUrl: string): Promise<void>;
-  speak(text: string, options: { voice: string; rate: number }): Promise<void>;
+  /** True when the utterance was heard, false when the browser refused it. */
+  speak(text: string, options: { voice: string; rate: number }): Promise<boolean>;
   stopAudio(): void;
   stopSpeaking(): void;
 }
@@ -33,7 +37,7 @@ export interface AnnouncerDeps {
    * Whether this window is the one to say an announcement. Two windows of one
    * app would otherwise say everything twice; see `app/claims.ts`.
    */
-  claim(eventId: string): Promise<boolean>;
+  claim(eventId: string): Promise<Claim | null>;
   audio: AnnouncerAudio;
   /** What was said, and why something was not, for `bb plugin logs herald`. */
   report(level: "info" | "warn", message: string, error?: unknown): void;
@@ -43,8 +47,18 @@ function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/**
+ * How long a window that lost an announcement's claim waits before looking
+ * again: long enough for the winner to have been refused and given it back.
+ */
+export const CLAIM_RETRY_MS = 2_500;
+
+type Outcome = "spoke" | "refused" | "skipped";
+
 export class Announcer {
   private readonly spoken = new Set<string>();
+  /** The event ids in the latest list; an announcement no longer in it was withdrawn. */
+  private current = new Set<string>();
   private seeded = false;
   private stopped = false;
   private warnedSay = false;
@@ -56,6 +70,7 @@ export class Announcer {
   /** Speaks what is new in `entries`, oldest first. */
   onEntries(entries: readonly AttentionEntry[]): void {
     const present = new Set(entries.map((entry) => entry.eventId));
+    this.current = present;
     if (!this.seeded) {
       for (const id of present) this.spoken.add(id);
       this.seeded = true;
@@ -69,7 +84,7 @@ export class Announcer {
       // A failed summary still has its fallback sentence: a failure is never silence.
       const text = speechText(entry);
       if (text === null) continue;
-      void this.deliver(text, entry.eventId).catch((error: unknown) =>
+      void this.deliver(text, entry.eventId, true).catch((error: unknown) =>
         this.deps.report("warn", `Could not speak an announcement: ${describe(error)}`, error),
       );
     }
@@ -94,8 +109,8 @@ export class Announcer {
     this.deps.audio.primeSpeech();
     const blocked = options.force === true ? null : this.blocked();
     if (blocked !== null) return blocked;
-    await this.deliver(text, null);
-    return null;
+    const outcome = await this.deliver(text, null, false);
+    return outcome === "refused" ? "This device would not play the sound. Press Test voice, then try again." : null;
   }
 
   /** A reload starts a new announcer at once, so this one must fall silent or the two talk over each other. */
@@ -109,14 +124,59 @@ export class Announcer {
     return blockedMessage(this.deps.settings(), this.deps.platform(), isMutedHere());
   }
 
-  /** `eventId` is set for an announcement, which is gated and claimed; null for a press. */
-  private deliver(text: string, eventId: string | null): Promise<void> {
+  /**
+   * `eventId` is set for an announcement, which is gated and claimed; null for
+   * a press. `retry` lets an announcement whose claim another window holds
+   * look once more, in case that window's playback was refused.
+   */
+  private deliver(text: string, eventId: string | null, retry: boolean): Promise<Outcome> {
     const next = this.chain.then(
-      () => this.deliverNow(text, eventId),
-      () => this.deliverNow(text, eventId),
+      () => this.deliverNow(text, eventId, retry),
+      () => this.deliverNow(text, eventId, retry),
     );
-    this.chain = next.catch(() => {});
+    this.chain = next.then(
+      () => {},
+      () => {},
+    );
     return next;
+  }
+
+  private async deliverNow(text: string, eventId: string | null, retry: boolean): Promise<Outcome> {
+    // Checked here rather than only at the call: this runs once per queued
+    // delivery, and a reload can stop the announcer while one waits.
+    if (this.stopped) return "skipped";
+    let claim: Claim | null = null;
+    if (eventId !== null) {
+      // Withdrawn while it waited — the thread moved on, or was answered.
+      if (!this.current.has(eventId)) return "skipped";
+      // Gated when it is said, not when it arrived: a switch flipped while it
+      // waited in the queue still counts.
+      const blocked = this.blocked();
+      if (blocked !== null) {
+        this.deps.report("info", `Not speaking "${text}" here: ${blocked}`);
+        return "skipped";
+      }
+      // A window that cannot make a sound unprompted must not take the
+      // sentence from one that can.
+      if (this.deps.platform() !== "desktop" && !this.deps.audio.isAudioUnlocked()) {
+        this.deps.report("info", `Not speaking "${text}" here: this ${this.deps.platform() === "mobile" ? "app" : "tab"} has not been tapped yet.`);
+        return "skipped";
+      }
+      claim = await this.deps.claim(eventId);
+      if (claim === null) {
+        if (retry) setTimeout(() => void this.deliver(text, eventId, false), CLAIM_RETRY_MS);
+        return "skipped";
+      }
+    }
+    const outcome = await this.play(text);
+    if (eventId !== null) {
+      if (outcome === "spoke") this.deps.report("info", `Spoke (${this.deps.platform()}): "${text}"`);
+      else {
+        await claim?.release();
+        this.deps.report("warn", `Could not play "${text}" here; another window may say it.`);
+      }
+    }
+    return outcome;
   }
 
   /**
@@ -124,20 +184,7 @@ export class Announcer {
    * otherwise. A failed render or a refused playback falls through to the
    * browser voice rather than to silence, and is reported once.
    */
-  private async deliverNow(text: string, eventId: string | null): Promise<void> {
-    // Checked here rather than only at the call: this runs once per queued
-    // delivery, and a reload can stop the announcer while one waits.
-    if (this.stopped) return;
-    if (eventId !== null) {
-      // Gated when it is said, not when it arrived: a switch flipped while it
-      // waited in the queue still counts.
-      const blocked = this.blocked();
-      if (blocked !== null) {
-        this.deps.report("info", `Not speaking "${text}" here: ${blocked}`);
-        return;
-      }
-      if (!(await this.deps.claim(eventId))) return;
-    }
+  private async play(text: string): Promise<Outcome> {
     const { audio } = this.deps;
     const settings = this.deps.settings();
     const voices = await this.deps.voices().catch((error: unknown) => {
@@ -147,10 +194,9 @@ export class Announcer {
     if (settings.engine === "say" && audio.canPlayAudio()) {
       try {
         const rendered = await this.deps.render(text, voices.say, settings.rate);
-        if (this.stopped) return;
+        if (this.stopped) return "skipped";
         await audio.playAudio(`data:${rendered.mimeType};base64,${rendered.base64}`);
-        if (eventId !== null) this.deps.report("info", `Spoke (${this.deps.platform()}, say): "${text}"`);
-        return;
+        return "spoke";
       } catch (error) {
         if (!this.warnedSay) {
           this.warnedSay = true;
@@ -158,13 +204,9 @@ export class Announcer {
         }
       }
     }
-    if (this.stopped) return;
-    if (!audio.canSpeak()) {
-      this.deps.report("warn", `Nothing on this device can speak "${text}".`);
-      return;
-    }
-    await audio.speak(text, { voice: voices.web, rate: settings.rate });
-    if (eventId !== null) this.deps.report("info", `Spoke (${this.deps.platform()}, browser voice): "${text}"`);
+    if (this.stopped) return "skipped";
+    if (!audio.canSpeak()) return "refused";
+    return (await audio.speak(text, { voice: voices.web, rate: settings.rate })) ? "spoke" : "refused";
   }
 }
 

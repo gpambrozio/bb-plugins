@@ -6,6 +6,8 @@
  * over `bb.sdk` are built on first use, from a handler — never in the factory
  * body. See AGENTS.md.
  */
+import { randomUUID } from "node:crypto";
+
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import { rpcContract } from "./shared/contract";
@@ -24,6 +26,7 @@ import { createHooks, type HeraldConfig } from "./server/hooks";
 import { kvBackend } from "./server/kv-backend";
 import { Liveness } from "./server/liveness";
 import type { EventsPort, HelperPort } from "./server/ports";
+import { announceDrained, onOtherDrained } from "./server/reload-signal";
 import { listSayVoices, renderWithSay, sayAvailable } from "./server/say";
 import { AttentionStore } from "./server/store";
 import { summarize } from "./server/summarize";
@@ -41,6 +44,16 @@ export default async function plugin(bb: BbPluginApi) {
   await store.load().catch((error: unknown) => {
     bb.log.error(`Could not load saved entries: ${error instanceof Error ? error.message : String(error)}`);
   });
+  // The instance a reload replaces may still be writing; read again once it says it is done.
+  const instance = randomUUID();
+  const stopListening = onOtherDrained(bb.pluginId, instance, () => {
+    store
+      .reconcile()
+      .then(() => publish())
+      .catch((error: unknown) => {
+        bb.log.error(`Could not re-read saved entries after a reload: ${error instanceof Error ? error.message : String(error)}`);
+      });
+  });
 
   let events: EventsPort | null = null;
   let helpers: HelperPort | null = null;
@@ -50,6 +63,15 @@ export default async function plugin(bb: BbPluginApi) {
   const livenessOf = () => (liveness ??= new Liveness(bbLiveness(bb.sdk), bb.log));
 
   const outcomes = new HelperOutcomes();
+
+  function publish(): void {
+    try {
+      bb.realtime.publish(ENTRIES_CHANNEL, { at: Date.now() });
+    } catch (error) {
+      // After an unload the handle is stale; the clients re-read on reconnect anyway.
+      bb.log.warn(`Could not tell the app the entries changed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
 
   /** The summariser and voices, each half falling back to its default when unreadable. */
   async function storedConfig(): Promise<StoredConfig> {
@@ -73,6 +95,7 @@ export default async function plugin(bb: BbPluginApi) {
         error: values.announceErrors,
       },
       announceSubagents: values.announceSubagents,
+      modelSummaries: values.modelSummaries,
       deleteHelpers: values.deleteHelpers,
       timeoutMs: timeoutMsOf(values.summaryTimeoutSeconds),
       summarizer: stored.summarizer,
@@ -104,14 +127,7 @@ export default async function plugin(bb: BbPluginApi) {
       interruptedRecently: (threadId, withinMs) => eventsPort().interruptedRecently(threadId, withinMs),
     },
     outcomes,
-    publish: () => {
-      try {
-        bb.realtime.publish(ENTRIES_CHANNEL, { at: Date.now() });
-      } catch (error) {
-        // After an unload the handle is stale; the clients re-read on reconnect anyway.
-        bb.log.warn(`Could not tell the app the entries changed: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    },
+    publish,
     log: bb.log,
   });
 
@@ -147,10 +163,13 @@ export default async function plugin(bb: BbPluginApi) {
   });
 
   bb.onDispose(async () => {
-    hooks.dispose();
-    // Each running summary's `finally` stops and puts away its helper now,
-    // while bb still answers, rather than at its timeout.
+    stopListening();
+    // Every running summary's wait fails now — and so does one whose spawn has
+    // not answered yet — so its `finally` stops and puts its helper away while
+    // bb still answers. Unload returns only once they have.
     outcomes.cancelAll("Herald was reloaded before the summary was written.");
+    await hooks.drain();
     await store.flush();
+    announceDrained(bb.pluginId, instance);
   });
 }

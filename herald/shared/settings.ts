@@ -88,6 +88,13 @@ export const SETTINGS = {
       "Off: a child thread reports to the thread that started it, and you hear the parent's announcement instead of two. It is still listed in the panel. On: both are announced.",
     default: false,
   },
+  modelSummaries: {
+    type: "boolean",
+    label: "Write each sentence with a model",
+    description:
+      "Off: Herald says a plain sentence built from the event — the question and its choices, the command, or the start of the agent's last message. On: a short hidden helper thread writes it with the model in Herald's settings section. bb cannot stop that helper from using tools: in bb's most restricted mode Claude Code still reads files and edits files in bb's personal workspace without asking, and the helper is shown your agents' output, which could steer it. Turn this on only if you accept that.",
+    default: false,
+  },
   deleteHelpers: {
     type: "boolean",
     label: "Delete each summary helper when it is done",

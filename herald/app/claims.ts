@@ -5,6 +5,11 @@
  * speaks. Nothing is held between announcements, so a window that closed, or a
  * plugin generation the host replaced, can never keep the others quiet.
  *
+ * A claim is recoverable: a window whose playback was refused releases it, and
+ * a window that lost the claim looks once more a moment later (see
+ * `Announcer`). The announcer also claims only when this window can make a
+ * sound unprompted, so an untapped tab does not take a sentence it cannot say.
+ *
  * Where storage is unavailable (a private window that refuses it), every
  * window speaks: two voices beat none.
  */
@@ -42,21 +47,36 @@ function prune(environment: ClaimEnvironment, prefix: string): void {
   for (const key of stale) storage.removeItem(key);
 }
 
-/** True when this window is the first to claim `eventId`, and so should say it. */
+export interface Claim {
+  /** Gives the announcement back, for another window to say. */
+  release(): Promise<void>;
+}
+
+const NO_STORAGE_CLAIM: Claim = { release: async () => {} };
+
+/** A claim when this window is the first to claim `eventId`, and so should say it; null when another window has. */
 export async function claimAnnouncement(
   prefix: string,
   eventId: string,
   environment: ClaimEnvironment = browserEnvironment(),
-): Promise<boolean> {
+): Promise<Claim | null> {
   const { storage, locks } = environment;
-  if (storage === null) return true;
+  if (storage === null) return NO_STORAGE_CLAIM;
   const key = `${prefix}${eventId}`;
-  const check = (): boolean => {
+  const token = `${environment.now()}`;
+  const underLock = <T>(work: () => T): Promise<T> =>
+    locks === null ? Promise.resolve(work()) : (locks.request(key, () => work()) as Promise<T>);
+  const won = await underLock(() => {
     if (storage.getItem(key) !== null) return false;
-    storage.setItem(key, String(environment.now()));
+    storage.setItem(key, token);
     prune(environment, prefix);
     return true;
+  });
+  if (!won) return null;
+  return {
+    release: () =>
+      underLock(() => {
+        if (storage.getItem(key) === token) storage.removeItem(key);
+      }),
   };
-  if (locks === null) return check();
-  return locks.request(key, () => check());
 }

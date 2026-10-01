@@ -12,6 +12,13 @@
  *
  * Whatever happens, the helper is stopped, which releases its agent runtime,
  * and then deleted — or archived, when the user keeps helpers to read later.
+ * The sentence is available as soon as the helper answers (`result`), but the
+ * run is not over until the helper is put away (`finished`): the caller holds
+ * its concurrency slot until then, so stopping helpers never pile up.
+ *
+ * bb cannot make a helper tool-free — see "Summaries need a model that can use
+ * tools" in AGENTS.md — so this runs only when the user has switched model
+ * summaries on.
  */
 import { DEFAULT_SUMMARY_PROMPT, type AttentionReason, type PromptPlaceholder } from "../shared/herald";
 import type { HelperOutcome } from "./helpers";
@@ -60,6 +67,13 @@ export interface SummarizerDeps {
 export interface Summary {
   text: string;
   model: string;
+}
+
+export interface SummaryRun {
+  /** The sentence, or why there is none. */
+  result: Promise<Summary>;
+  /** Settles once the helper is stopped and deleted or archived. Never rejects. */
+  finished: Promise<void>;
 }
 
 /** Everything the helper wrote in code fences, with the fences and language tags removed. */
@@ -184,10 +198,9 @@ function reasonOf(error: unknown): string {
 }
 
 /**
- * The helper's last rites, fire-and-forget: nothing the caller wants is still
- * coming from it, and the sentence should not wait on two more round trips.
- * Stopped first, whatever its state — that is what releases its runtime and
- * interrupts a turn still running after a timeout — then deleted or archived.
+ * The helper's last rites: stopped first, whatever its state — that is what
+ * releases its runtime and interrupts a turn still running after a timeout —
+ * then deleted or archived. Failures are logged, never thrown.
  */
 async function retire(helperId: string, deps: SummarizerDeps): Promise<void> {
   try {
@@ -205,28 +218,39 @@ async function retire(helperId: string, deps: SummarizerDeps): Promise<void> {
   }
 }
 
-export async function summarize(request: SummaryRequest, deps: SummarizerDeps): Promise<Summary> {
-  const helperId = await deps.helpers.spawn({
-    title: HELPER_TITLE,
-    prompt: buildPrompt(request, deps.prompt),
-    providerId: deps.providerId,
-    model: deps.model,
-    reasoningLevel: deps.reasoningLevel,
-    metadata: { role: "summarizer", threadId: request.thread.id, eventId: request.eventId },
-  });
-  try {
-    const outcome = await deps.waitForOutcome(helperId, deps.timeoutMs);
-    switch (outcome.kind) {
-      case "interaction":
-        // The prompt forbids tools; stopping the helper in `retire` interrupts
-        // whatever it was asking for.
-        throw new Error("The summary helper tried to use a tool.");
-      case "failed":
-        throw new Error(outcome.error?.trim() || "The summary helper's turn failed.");
-      case "idle":
-        return { text: parseSummaryText(outcome.text), model: `${deps.providerId}/${deps.model}` };
-    }
-  } finally {
-    void retire(helperId, deps);
+function sentenceFrom(outcome: HelperOutcome, deps: SummarizerDeps): Summary {
+  switch (outcome.kind) {
+    case "interaction":
+      // Asking anything — a tool approval included — is not allowed; stopping
+      // the helper in `retire` interrupts whatever it was asking for.
+      throw new Error("The summary helper tried to use a tool.");
+    case "failed":
+      throw new Error(outcome.error?.trim() || "The summary helper's turn failed.");
+    case "idle":
+      return { text: parseSummaryText(outcome.text), model: `${deps.providerId}/${deps.model}` };
   }
+}
+
+export function summarize(request: SummaryRequest, deps: SummarizerDeps): SummaryRun {
+  let retirement: Promise<void> = Promise.resolve();
+  const result = (async () => {
+    const helperId = await deps.helpers.spawn({
+      title: HELPER_TITLE,
+      prompt: buildPrompt(request, deps.prompt),
+      providerId: deps.providerId,
+      model: deps.model,
+      reasoningLevel: deps.reasoningLevel,
+      metadata: { role: "summarizer", threadId: request.thread.id, eventId: request.eventId },
+    });
+    try {
+      return sentenceFrom(await deps.waitForOutcome(helperId, deps.timeoutMs), deps);
+    } finally {
+      retirement = retire(helperId, deps);
+    }
+  })();
+  const finished = result.then(
+    () => retirement,
+    () => retirement,
+  );
+  return { result, finished };
 }

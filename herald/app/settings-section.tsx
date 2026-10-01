@@ -156,8 +156,8 @@ export function HeraldSettingsSection() {
     <div className="flex flex-col gap-6">
       <section className="space-y-2">
         <Heading title="Summary model">
-          Each summary is one short turn of this model, through your own provider account, in a hidden thread that is stopped
-          and deleted once its sentence is written.
+          Used only when Write each sentence with a model is on, above. Each summary is then one short turn of this model,
+          through your own provider account, in a hidden thread that is stopped and deleted once its sentence is written.
         </Heading>
         <ProviderModelPicker
           value={pick}

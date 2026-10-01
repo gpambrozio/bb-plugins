@@ -1,7 +1,8 @@
 # AGENTS.md
 
-A bb plugin that tells the user, out loud, when one of their agent threads needs them: a short hidden
-helper thread writes one sentence about the event, and the app speaks it. A **Herald** page lists every
+A bb plugin that tells the user, out loud, when one of their agent threads needs them: one sentence
+about the event — a plain one built from the event, or, when the user opts in, one a short hidden helper
+thread writes — and the app speaks it. A **Herald** page lists every
 waiting thread with its sentence. It is a port of
 [`paseo-plugins/herald`](https://github.com/gpambrozio/paseo-plugins/tree/main/herald) 0.5.1. That
 plugin's `AGENTS.md` is the long record of why each behaviour is the way it is; this file carries over
@@ -15,6 +16,7 @@ what still holds and says what bb changed. The repo root `AGENTS.md` covers what
 | `server/hooks.ts` | Events → entries: helper routing, the turn-end dedupe, the two-slot summary queue, "outran", who is announced. |
 | `server/summarize.ts` | One helper per summary: the prompt template, reading its reply, stopping and deleting it. |
 | `server/helpers.ts` | `HelperOutcomes`: how each helper's turn ended, as its own events report it. |
+| `server/reload-signal.ts` | The old instance telling its replacement that it has flushed, so the new one reads storage again. |
 | `server/store.ts` | One entry per thread, mirrored to storage; `load()` merges. |
 | `server/kv-backend.ts` | The store's rows in `bb.storage.kv`, one per thread. |
 | `server/liveness.ts` | Asks bb about each entry's thread before the list goes out: read, answered, gone, working again. |
@@ -48,14 +50,40 @@ personal project (`proj_personal`), but `projects.list()` **leaves it out unless
 `{ includePersonal: true }`** — the first build missed that, and every summary failed with "no personal
 project" (pinned by `server.test.ts`).
 
+## Summaries need a model that can use tools — so they are opt-in
+
+The helper's prompt contains the agent's own output, which can carry instructions. Paseo's own
+`AGENTS.md` assumed the prompt's "do not run tools" was enough; it is not, and bb gives a plugin no way
+to make a helper tool-free (checked in bb 0.44 and SDK 0.5.29):
+
+- `permissionMode` is `accept-edits | auto | full`, and `accept-edits` is bb's least privileged mode. The
+  Claude Code bridge maps it to Claude Code's `acceptEdits`, which reads files and edits files in the
+  workspace (bb's personal workspace for a helper) without asking.
+- `threads.spawn` takes no tool list; the only plugin hook is `message.dispatch`; `bb.agents.configure`
+  selects only this plugin's own tools and skills.
+- bb's AI services (`experimental_aiServices`) are services a plugin *provides* to bb, for bb's own
+  prompts (thread titles, commit messages); a plugin cannot call one with its prompt.
+
+So *Write each sentence with a model* (`modelSummaries`) is **off by default**, and off, Herald announces
+the plain `fallbackSpeech` sentence and spawns nothing. On, the setting's description states the risk. A
+helper that does ask for anything is still stopped (`interaction.pending` → "tried to use a tool").
+
 ## The events are announcements, and the summary does not wait
 
 bb's events cannot block anything, and a handler runs inside the bb server. A summary is a full agent
 turn, so `server/hooks.ts` never awaits one: the handler writes a `pending` entry and returns, and the
 summary lands later through `AttentionStore.updateSummary`. That update is keyed by `eventId` and refused
 when the thread has moved on to a newer event, which is what keeps a slow helper from overwriting a
-fresher entry. `schedule` caps how many helpers run at once (two); a burst queues. Detached work catches
-its own rejections — an unhandled one would land in the bb server.
+fresher entry. `schedule` caps how many helpers run at once (two); a burst queues. **A slot is held until
+the helper is put away**, not until its sentence is out: `summarize` returns `{ result, finished }`, the
+sentence is settled from `result`, and the task awaits `finished` (stopped, then deleted or archived)
+before the next helper starts — otherwise slow-to-stop helpers pile up past the cap. Detached work
+catches its own rejections — an unhandled one would land in the bb server.
+
+**Each recording takes a sequence number before its first await** (`beginEvent`) and drops out unless it
+is still the newest for its thread (`isLatest`). Two events can share a turn — two questions — and so a
+generation, and their lookups (config, names) can answer in either order; without it the older one
+landed on top of the newer.
 
 | Paseo hook | bb event |
 | --- | --- |
@@ -88,11 +116,14 @@ message in the user's own thread.
 
 `summarize` stops the helper in a `finally` — which releases its runtime and interrupts a turn still
 running after a timeout — then deletes it, or archives it when *Delete each summary helper* is off.
-Both are fire-and-forget, so the sentence does not wait on them. On unload, `HelperOutcomes.cancelAll`
-fails every wait at once, so each running summary puts its helper away while bb still answers.
 
-The helper spawns with `permissionMode: "accept-edits"`: everything but a file edit asks first, and a
-helper that asks is stopped. A hidden thread burns a real concurrency slot, so with bb's concurrency
+**Unload drains.** `bb.onDispose` calls `HelperOutcomes.cancelAll`, which fails every wait *and every
+wait that starts later* (a spawn that answers after unload began), then awaits `hooks.drain()`: no new
+events are recorded, the queue is dropped, and unload returns once every running summary has put its
+helper away (or `DRAIN_TIMEOUT_MS`). The SDK handles are still valid then; after unload they are not.
+
+The helper spawns with `permissionMode: "accept-edits"`, bb's least privileged mode — which is not
+tool-free (see *Summaries need a model that can use tools*); a helper that asks for anything is stopped. A hidden thread burns a real concurrency slot, so with bb's concurrency
 limit full a helper can wait past the summary time limit and the fallback sentence is used.
 
 Dropped from Paseo: the `paseo` CLI delete, the startup sweep and its label, `HELPER_TITLE` as an
@@ -172,8 +203,13 @@ Hidden threads from other plugins are ignored entirely: bb keeps them out of the
 the merge stays: a live upsert or removal during a read wins (`touched`), a conditional removal that
 arrives before its entry was read is held and applied as it merges (`deferredRemovals`), and a write
 queued during the read waits and mirrors the merged map. A summary still `pending` at load is marked
-`failed` with the fallback. A reload starts the new instance *before* it disposes of the old one, so the
-new one reads what has landed by then.
+`failed` with the fallback.
+
+**A reload reconciles.** bb starts the new instance *before* it disposes of the old one, so the new one
+reads storage while the old one may still be writing. When the old one has drained and flushed, it says
+so (`server/reload-signal.ts`: an `EventTarget` on `globalThis`, keyed by plugin id — both instances run
+in the bb server's one process), and the new one calls `store.reconcile()`: storage wins for every
+thread this instance has not itself changed since it last read, including removals.
 
 Rows are one kv value per thread (`entry:<threadId>`) rather than one array, because a value is capped
 at 256 KB; a write touches only rows that changed.
@@ -187,8 +223,9 @@ which is a native shell around the same web app in a WebView. So both engines ex
   sentence on stdin (16 kHz mono) and returns the WAV as base64; the app plays it through one reused
   `<audio>` element. A render that fails or a playback that is refused falls through to the browser voice,
   reported once.
-- **`web`:** the Web Speech API with this device's voices. `speak()` also resolves on a guard timer,
-  because a browser that refused it fires no event.
+- **`web`:** the Web Speech API with this device's voices. `speak()` resolves `true` when the utterance
+  was heard and `false` when it was refused — a guard timer resolves it too, because a browser that
+  refused it fires no event, and then it counts as heard only if it had started.
 
 `speechPlatform()` tells the clients apart the way bb's push-notifications plugin does: `window.bbDesktop`
 is the desktop shell, a `window.bb.native` bridge is the mobile app, anything else a browser tab. These
@@ -203,7 +240,9 @@ are bb internals, not SDK; if a later bb renames them, every client reads as a b
 **A browser grants audio to the task its gesture ran in, so every press handler calls `primeSpeech()`
 before its first `await`.** It starts a silent clip on the element every later playback reuses — WebKit
 unlocks the element, not the page — and an inaudible utterance. Take it out and browser announcements
-never start.
+never start. **Whether the page is unlocked is tracked explicitly** (`isAudioUnlocked`: a playback or an
+utterance was heard, or a prime played), never read off the element's `src` — a refused automatic
+playback sets that too, and must not stop the next press from priming.
 
 **The switches mean what they say.** `blockedMessage()` is the single gate — *Mute here*, the master
 switch, then the platform switch — and returns the reason. An announcement is gated when it is about to
@@ -217,9 +256,20 @@ as Paseo did. A failure is never silence.
 
 **One window speaks each announcement.** Windows of one app share an origin, so each announcement is
 claimed by event id (`app/claims.ts`): a `localStorage` marker checked under a Web Lock named for the
-event, held only for the check. The first build elected one window with a lock held for its lifetime
-instead; a window or a replaced plugin generation that never released it would have kept every other
-window quiet. Different devices each speak, by their own switches.
+event, held only for the check. Three rules keep a window that cannot play from silencing one that can:
+
+- a window claims only if it may play unprompted — the desktop app, or a page already unlocked;
+- a window whose playback is refused (the `<audio>` rejects and the voice is not heard) releases its
+  claim;
+- a window that lost the claim looks once more after `CLAIM_RETRY_MS`.
+
+The first build elected one window with a lock held for its lifetime instead; a window or a replaced
+plugin generation that never released it would have kept every other window quiet. Different devices
+each speak, by their own switches.
+
+**An announcement withdrawn while it waited is not said.** Deliveries queue; when one's turn comes, its
+event id must still be in the latest list (the thread may have resumed, or been answered). *Read again*
+and *Test voice* are exempt.
 
 **The announcer reports to the server.** What it spoke, and why it stayed quiet, goes through the `log`
 RPC into `bb plugin logs herald` (prefixed `app:`), because the app's console is out of reach on the
@@ -251,11 +301,12 @@ answer — for as long as the thread waits on them, with a play button. A switch
 `npm test` covers everything without a running bb: the text, the store, the summariser and the hooks
 against fakes, the server end to end against the SDK's fake host (event → hidden helper → sentence →
 realtime → list), the announcer with fake audio, and the app's slots rendered with the SDK's app harness.
-What it cannot cover, check by hand after `bb plugin reload herald` — **each of these runs a real model
-turn**:
+What it cannot cover, check by hand after `bb plugin reload herald` — **with model summaries on, each of
+these runs a real model turn**:
 
-1. Let a thread finish a turn. Within seconds the page shows it with "Writing the summary…", then the
-   sentence, and the desktop app speaks it. `bb plugin logs herald` shows any summary or render failure.
+1. Let a thread finish a turn. The page shows it with the plain sentence at once (or, with model
+   summaries on, "Writing the summary…" and then the sentence), and the desktop app speaks it.
+   `bb plugin logs herald` shows any summary or render failure, and the `app:` lines say what was spoken.
 2. Ask a thread something that makes it ask you a question; answer it; the row and the banner go at once.
 3. In a browser tab, nothing is spoken until **Test voice** has been pressed once.
 4. Switch a kind off in Settings → Plugins → Herald and trigger it: the row says "Not announced" and no

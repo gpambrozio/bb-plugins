@@ -27,9 +27,9 @@ export class AttentionStore {
   private readonly entries = new Map<string, AttentionEntry>();
   private writes: Promise<void> = Promise.resolve();
   /**
-   * Threads changed since this store was made. `load` may run while the plugin
-   * is already answering events, and whatever arrived live is newer than
-   * anything stored. Cleared once `load` is done.
+   * Threads changed since storage was last read. A read may run while the
+   * plugin is already answering events, and whatever arrived live is newer
+   * than anything stored. Cleared once each read is done.
    */
   private readonly touched = new Set<string>();
   /**
@@ -53,6 +53,16 @@ export class AttentionStore {
     private readonly log: Log,
   ) {}
 
+  /**
+   * Brings the map in line with storage again, for when another instance of
+   * the plugin wrote to it after this one loaded — the instance a reload
+   * replaced, flushing its last writes. Same rules as `load`: whatever this
+   * instance changed itself since it last read storage stays as it is.
+   */
+  reconcile(): Promise<void> {
+    return this.load();
+  }
+
   async load(): Promise<void> {
     if (this.backend === null) return;
     const run = this.read(this.backend);
@@ -68,6 +78,7 @@ export class AttentionStore {
   private async read(backend: StoreBackend): Promise<void> {
     const stored = await backend.read();
     let dropped = false;
+    const seen = new Set<string>();
     for (const item of stored) {
       const parsed = AttentionEntrySchema.safeParse(item);
       if (!parsed.success) {
@@ -76,7 +87,8 @@ export class AttentionStore {
         continue;
       }
       const entry = parsed.data;
-      // Never undo a live upsert or removal that landed during the read.
+      seen.add(entry.threadId);
+      // Never undo a live upsert or removal that landed since the last read.
       if (this.touched.has(entry.threadId)) continue;
       const held = this.deferredRemovals.get(entry.threadId);
       if (held !== undefined && held.some((matches) => matches(entry))) {
@@ -96,6 +108,14 @@ export class AttentionStore {
             }
           : entry,
       );
+    }
+    // An entry held from an earlier read that storage no longer has was
+    // removed since by the instance that wrote it.
+    for (const threadId of [...this.entries.keys()]) {
+      if (!seen.has(threadId) && !this.touched.has(threadId)) {
+        this.entries.delete(threadId);
+        dropped = true;
+      }
     }
     // Nothing else is going to write the dropped rows out of storage.
     if (dropped) this.persist();

@@ -4,8 +4,9 @@ Tells you, out loud, when one of your agent threads needs you. Ported from
 [`paseo-plugins/herald`](https://github.com/gpambrozio/paseo-plugins/tree/main/herald).
 
 When an agent asks a question, waits for a plan or a permission to be approved, finishes its turn, or
-fails, Herald has a short helper agent write one spoken sentence about it — what is being asked and the
-choices, or what was done and whether anything is left — and the bb app speaks it.
+fails, Herald says one sentence about it — what is being asked and the choices, the command, or the start
+of what was done — and the bb app speaks it. If you switch it on, a short helper agent writes that
+sentence instead, to say what was done and whether anything is left (see *Model-written sentences*).
 
 - A **Herald** page in the sidebar lists every thread waiting on you, each with that sentence and how
   long ago it happened; the sidebar entry shows how many. The list keeps itself up to date. Tap a row to
@@ -31,10 +32,7 @@ What it adds:
 ## What you need
 
 - bb 0.44 or later.
-- An agent provider account for the summaries. Each event is one short turn of the model you pick —
-  Claude Haiku 4.5 through Claude Code by default — in a hidden thread that is stopped and deleted once
-  its sentence is written, so it never shows in your sidebar. The model sees the question and its
-  choices, or the agent's final message and your last message to it.
+- Nothing else for the plain sentence. For model-written sentences, an agent provider account (see below).
 - For the default voice, **bb running on a Mac**: its `say` voices render each sentence and the app plays
   the audio, so you hear the Mac's voices on every device. Otherwise each device's own browser voice is
   used.
@@ -42,6 +40,17 @@ What it adds:
   The **mobile app** speaks only while it is open on screen, after one press of *Test voice*, and only
   with *Speak in the mobile app* on (it is off by default); a locked phone hears nothing, and bb's push
   notifications reach it instead.
+
+## Model-written sentences
+
+Off by default. Switch on *Write each sentence with a model* and each announced event becomes one short
+turn of the model you pick — Claude Haiku 4.5 through Claude Code by default — in a hidden thread that
+is stopped and deleted once its sentence is written. The model sees the question and its choices, or the
+agent's final message and your last message to it.
+
+**Why it is off:** bb gives a plugin no way to stop that helper from using tools. In bb's most restricted
+mode, Claude Code still reads files and edits files in bb's personal workspace without asking, and the
+helper is shown your agents' output, which could steer it. Turn it on only if you accept that.
 
 ## Install
 

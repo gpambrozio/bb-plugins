@@ -12,8 +12,10 @@ The first release: Herald for bb, ported from the Paseo plugin of the same name 
 ### Added
 
 - **A spoken sentence when an agent needs you** — a question, a plan or a permission to approve, a
-  finished turn, or an error — written by a short helper agent and spoken by the bb app, in the voice of
-  the Mac running bb or in the browser's own voice.
+  finished turn, or an error — spoken by the bb app, in the voice of the Mac running bb or in the
+  browser's own voice.
+- **Model-written sentences, off by default.** Switched on, a short helper agent writes each sentence.
+  It is off because bb cannot stop that helper from using tools.
 - **A Herald page** listing every thread waiting on you, with the reason, the sentence and how long ago
   it happened, and a count beside its sidebar entry. It keeps itself up to date. Tap a row to open the
   thread.

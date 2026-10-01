@@ -28,9 +28,17 @@ describe("claimAnnouncement", () => {
   it("lets the first window claim an event and no other", async () => {
     const storage = new MemoryStorage();
     const environment = { storage, locks: null, now: () => 1000 };
-    expect(await claimAnnouncement("herald:said:", "e1", environment)).toBe(true);
-    expect(await claimAnnouncement("herald:said:", "e1", environment)).toBe(false);
-    expect(await claimAnnouncement("herald:said:", "e2", environment)).toBe(true);
+    expect(await claimAnnouncement("herald:said:", "e1", environment)).not.toBeNull();
+    expect(await claimAnnouncement("herald:said:", "e1", environment)).toBeNull();
+    expect(await claimAnnouncement("herald:said:", "e2", environment)).not.toBeNull();
+  });
+
+  it("gives a released claim back, for another window to take", async () => {
+    const storage = new MemoryStorage();
+    const environment = { storage, locks: null, now: () => 1000 };
+    const claim = await claimAnnouncement("herald:said:", "e1", environment);
+    await claim?.release();
+    expect(await claimAnnouncement("herald:said:", "e1", environment)).not.toBeNull();
   });
 
   it("checks under a lock named for the event, held only for the check", async () => {
@@ -42,7 +50,7 @@ describe("claimAnnouncement", () => {
         return callback();
       }) as unknown as LockManager["request"],
     };
-    expect(await claimAnnouncement("herald:said:", "e1", { storage, locks, now: () => 0 })).toBe(true);
+    expect(await claimAnnouncement("herald:said:", "e1", { storage, locks, now: () => 0 })).not.toBeNull();
     expect(names).toEqual(["herald:said:e1"]);
   });
 
@@ -58,7 +66,7 @@ describe("claimAnnouncement", () => {
   });
 
   it("speaks everywhere when there is no storage", async () => {
-    expect(await claimAnnouncement("p:", "e1", { storage: null, locks: null, now: () => 0 })).toBe(true);
-    expect(await claimAnnouncement("p:", "e1", { storage: null, locks: null, now: () => 0 })).toBe(true);
+    expect(await claimAnnouncement("p:", "e1", { storage: null, locks: null, now: () => 0 })).not.toBeNull();
+    expect(await claimAnnouncement("p:", "e1", { storage: null, locks: null, now: () => 0 })).not.toBeNull();
   });
 });

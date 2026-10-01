@@ -24,10 +24,11 @@ async function settle(): Promise<void> {
   for (let i = 0; i < 10; i += 1) await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-async function load(settings: Record<string, string | number | boolean> = {}) {
+/** Model summaries on unless a test says otherwise: most of these follow the helper. */
+async function load(settings: Record<string, string | number | boolean> = {}, spawn?: () => Promise<unknown>) {
   const host = createFakePluginHost({
     pluginId: "herald",
-    settings,
+    settings: { modelSummaries: true, ...settings },
     sdk: {
       system: { config: async () => ({ primaryHostId: "host_main" }) as never },
       projects: {
@@ -41,7 +42,10 @@ async function load(settings: Record<string, string | number | boolean> = {}) {
       },
       environments: { get: async () => ({ id: "env_1", path: "/Users/me/shop" }) as never },
       threads: {
-        spawn: async () => makeThreadResponse({ id: "thr_helper", originPluginId: "herald", visibility: "hidden" }),
+        spawn: async () => {
+          await spawn?.();
+          return makeThreadResponse({ id: "thr_helper", originPluginId: "herald", visibility: "hidden" });
+        },
         stop: async () => ({ ok: true as const }),
         delete: async () => ({ ok: true as const }),
         archive: async () => ({ threads: [] }) as never,
@@ -170,13 +174,38 @@ describe("herald server", () => {
     expect(entriesOf(await harness.callRpc("list", {}))).toEqual([]);
   });
 
-  it("keeps its entries across a reload", async () => {
+  it("keeps its entries across a reload, even one written while the reload ran", async () => {
     const host = await load({ announceFinished: false });
+    // No wait for the write to land: the replacement loads first, and reads
+    // storage again once the old instance says it has drained.
     await host.harness.emitThreadEvent("thread.idle", { thread: USER_THREAD, lastAssistantText: "Done." });
-    // A reload starts the new instance before it disposes of the old one, so
-    // the new one reads what has landed by then.
-    await settle();
     const reloaded = await host.harness.lifecycle.reload(plugin);
+    await settle();
     expect(entriesOf(await reloaded.harness.callRpc("list", {})).map((entry) => entry.threadId)).toEqual(["thr_user"]);
+  });
+
+  it("says the plain sentence and spawns no helper unless model summaries are switched on", async () => {
+    const { harness } = await load({ modelSummaries: false });
+    await harness.emitThreadEvent("thread.idle", { thread: USER_THREAD, lastAssistantText: "I fixed auth.ts." });
+    await settle();
+    expect(harness.sdk.callsTo("threads.spawn")).toEqual([]);
+    const [entry] = entriesOf(await harness.callRpc("list", {}));
+    expect(entry?.summary).toEqual({ status: "ready", text: "Login fix finished. I fixed auth.ts.", model: "plain" });
+  });
+
+  it("stops a helper whose spawn answers after a reload began, before the reload finishes", async () => {
+    let spawned: () => void = () => {};
+    const host = await load({}, () => new Promise<void>((resolve) => (spawned = resolve)));
+    await host.harness.emitThreadEvent("thread.idle", { thread: USER_THREAD, lastAssistantText: "Done." });
+    await settle();
+    let reloaded = false;
+    const reloading = host.harness.lifecycle.reload(plugin).then(() => (reloaded = true));
+    await settle();
+    // The old instance cannot finish unloading while its helper is unaccounted for.
+    expect(reloaded).toBe(false);
+    spawned();
+    await reloading;
+    expect(host.harness.sdk.callsTo("threads.stop")).toEqual([[{ threadId: "thr_helper" }]]);
+    expect(host.harness.sdk.callsTo("threads.delete")).toEqual([[{ threadId: "thr_helper", childThreadsConfirmed: true }]]);
   });
 });

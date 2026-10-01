@@ -20,7 +20,7 @@ import type { AttentionEntry, AttentionReason, SummarizerConfig } from "../share
 import type { HelperOutcomes } from "./helpers";
 import type { EventsPort, Interaction, Log, ThreadDto } from "./ports";
 import type { AttentionStore } from "./store";
-import type { Summary, SummaryRequest } from "./summarize";
+import type { Summary, SummaryRequest, SummaryRun } from "./summarize";
 import { describeInteraction, fallbackSpeech, firstWords, preview } from "./timeline";
 
 /** What the handlers act on, read fresh for every event so a settings change applies at once. */
@@ -28,6 +28,11 @@ export interface HeraldConfig {
   announce: Record<AttentionReason, boolean>;
   /** Whether a thread another thread started is announced as well as its parent. */
   announceSubagents: boolean;
+  /**
+   * Whether a helper thread writes the sentence. Off, the plain fallback
+   * sentence is announced: bb cannot keep a helper from using tools.
+   */
+  modelSummaries: boolean;
   deleteHelpers: boolean;
   timeoutMs: number;
   summarizer: SummarizerConfig;
@@ -38,7 +43,7 @@ export interface HookDeps {
   pluginId: string;
   store: AttentionStore;
   readConfig: () => Promise<HeraldConfig>;
-  summarize: (request: SummaryRequest, config: HeraldConfig) => Promise<Summary>;
+  summarize: (request: SummaryRequest, config: HeraldConfig) => SummaryRun;
   events: EventsPort;
   outcomes: HelperOutcomes;
   /** Tells open clients the entries changed. */
@@ -51,6 +56,9 @@ export interface HookDeps {
 
 /** A second `thread.idle` for the same turn inside this window is a repeat, not a new turn. */
 export const TURN_REPEAT_WINDOW_MS = 15_000;
+
+/** How long unload waits for running summaries to put their helpers away. */
+export const DRAIN_TIMEOUT_MS = 15_000;
 
 /**
  * A turn that fails this soon after the user interrupted it while it waited on
@@ -80,8 +88,11 @@ export interface Hooks {
   interactionPending(thread: ThreadDto, interaction: Interaction): Promise<void>;
   /** Archived or deleted: gone for good. */
   gone(thread: ThreadDto): void;
-  /** Drops the queue; summaries already running finish on their own. */
-  dispose(): void;
+  /**
+   * Stops taking events, drops the queue, and resolves once every running
+   * summary has put its helper away (or `DRAIN_TIMEOUT_MS` has passed).
+   */
+  drain(): Promise<void>;
 }
 
 export function createHooks(deps: HookDeps): Hooks {
@@ -98,8 +109,29 @@ export function createHooks(deps: HookDeps): Hooks {
   const generations = new Map<string, number>();
   /** The last turn end seen per thread, with the generation it belonged to. */
   const recentIdles = new Map<string, { at: number; generation: number }>();
+  /**
+   * The newest recording started per thread. Two events can share a turn —
+   * two questions, say — and so a generation; their lookups can finish in
+   * either order, and the older one must not land on top of the newer.
+   */
+  const latestEvent = new Map<string, number>();
+  let eventCounter = 0;
   let running = 0;
   const queue: Array<() => void> = [];
+  /** Every scheduled summary task still running, for `drain`. */
+  const inFlight = new Set<Promise<void>>();
+  let disposed = false;
+
+  /** Marks the start of a recording; `isLatest` later says whether a newer one began since. */
+  function beginEvent(threadId: string): number {
+    eventCounter += 1;
+    latestEvent.set(threadId, eventCounter);
+    return eventCounter;
+  }
+
+  function isLatest(threadId: string, event: number): boolean {
+    return !disposed && latestEvent.get(threadId) === event;
+  }
 
   function isHelper(thread: ThreadDto): boolean {
     return thread.originPluginId === deps.pluginId;
@@ -169,12 +201,14 @@ export function createHooks(deps: HookDeps): Hooks {
       running += 1;
       // Detached work inside the bb server's process: a rejection must end
       // in the log, never as an unhandled rejection.
-      void task()
+      const work = task()
         .catch((error: unknown) => deps.log.error(`A summary task failed: ${reasonOf(error)}`))
         .finally(() => {
+          inFlight.delete(work);
           running -= 1;
-          queue.shift()?.();
+          if (!disposed) queue.shift()?.();
         });
+      inFlight.add(work);
     };
     if (running < maxConcurrent) start();
     else queue.push(start);
@@ -218,6 +252,12 @@ export function createHooks(deps: HookDeps): Hooks {
       deps.publish();
       return;
     }
+    if (!config.modelSummaries) {
+      // No helper: the plain sentence is the announcement.
+      deps.store.upsert({ ...base, summary: { status: "ready", text: fallbackSpeech(base), model: "plain" } });
+      deps.publish();
+      return;
+    }
     deps.store.upsert({ ...base, summary: { status: "pending" } });
     deps.publish();
     schedule(async () => {
@@ -226,8 +266,9 @@ export function createHooks(deps: HookDeps): Hooks {
       const generation = generationOf(thread.id);
       let summary: Summary | null = null;
       let failure: string | null = null;
+      let run: SummaryRun | null = null;
       try {
-        summary = await deps.summarize(
+        run = deps.summarize(
           {
             thread: { id: thread.id, title: base.threadTitle, projectName: base.projectName, folder: base.folder },
             eventId,
@@ -239,6 +280,7 @@ export function createHooks(deps: HookDeps): Hooks {
           },
           config,
         );
+        summary = await run.result;
       } catch (error) {
         failure = reasonOf(error);
         deps.log.error(`The summary for thread ${thread.id} failed: ${failure}`);
@@ -250,14 +292,16 @@ export function createHooks(deps: HookDeps): Hooks {
       const check = reason === "finished" ? "running" : recording.requestId === null ? null : { interactionId: recording.requestId };
       if (await outran(thread.id, generation, check)) {
         if (deps.store.removeIf(thread.id, (entry) => entry.eventId === eventId)) deps.publish();
-        return;
+      } else {
+        const settled: AttentionEntry["summary"] =
+          summary !== null
+            ? { status: "ready", ...summary }
+            : { status: "failed", error: failure ?? "The summary helper returned nothing.", fallback: fallbackSpeech(base) };
+        if (deps.store.updateSummary(thread.id, eventId, settled)) deps.publish();
       }
-
-      const settled: AttentionEntry["summary"] =
-        summary !== null
-          ? { status: "ready", ...summary }
-          : { status: "failed", error: failure ?? "The summary helper returned nothing.", fallback: fallbackSpeech(base) };
-      if (deps.store.updateSummary(thread.id, eventId, settled)) deps.publish();
+      // The sentence is out; the slot is held until the helper is put away,
+      // so stopping helpers never add up past the cap.
+      await run?.finished;
     });
   }
 
@@ -295,12 +339,13 @@ export function createHooks(deps: HookDeps): Hooks {
         // a silent end does not stand in for the turn end that follows it.
         if (output === "") return;
         if (isRepeatIdle(thread.id)) return;
+        const event = beginEvent(thread.id);
         const generation = generationOf(thread.id);
         const [config, context] = await Promise.all([
           deps.readConfig(),
           deps.events.context(thread, { withRequest: true }),
         ]);
-        if (generationOf(thread.id) !== generation) return;
+        if (generationOf(thread.id) !== generation || !isLatest(thread.id, event)) return;
         record({
           thread,
           reason: "finished",
@@ -324,6 +369,7 @@ export function createHooks(deps: HookDeps): Hooks {
       }
       if (thread.visibility === "hidden") return Promise.resolve();
       return guarded("thread.failed", async () => {
+        const event = beginEvent(thread.id);
         const generation = generationOf(thread.id);
         const [config, context, interrupted] = await Promise.all([
           deps.readConfig(),
@@ -331,7 +377,7 @@ export function createHooks(deps: HookDeps): Hooks {
           deps.events.interruptedRecently(thread.id, INTERRUPT_GRACE_MS),
         ]);
         if (interrupted) return;
-        if (generationOf(thread.id) !== generation) return;
+        if (generationOf(thread.id) !== generation || !isLatest(thread.id, event)) return;
         record({
           thread,
           reason: "error",
@@ -356,12 +402,13 @@ export function createHooks(deps: HookDeps): Hooks {
       if (thread.visibility === "hidden" || interaction.status !== "pending") return Promise.resolve();
       return guarded("interaction.pending", async () => {
         const described = describeInteraction(interaction);
+        const event = beginEvent(thread.id);
         const generation = generationOf(thread.id);
         const [config, context] = await Promise.all([
           deps.readConfig(),
           deps.events.context(thread, { withRequest: false }),
         ]);
-        if (generationOf(thread.id) !== generation) return;
+        if (generationOf(thread.id) !== generation || !isLatest(thread.id, event)) return;
         record({
           thread,
           reason: described.reason,
@@ -388,8 +435,18 @@ export function createHooks(deps: HookDeps): Hooks {
       removeEntry(thread.id);
     },
 
-    dispose() {
+    async drain() {
+      disposed = true;
       queue.length = 0;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timeout = new Promise<void>((resolve) => {
+        timer = setTimeout(() => {
+          deps.log.warn(`${inFlight.size} summaries were still putting their helpers away at unload.`);
+          resolve();
+        }, DRAIN_TIMEOUT_MS);
+      });
+      await Promise.race([Promise.allSettled([...inFlight]).then(() => undefined), timeout]);
+      clearTimeout(timer);
     },
   };
 }

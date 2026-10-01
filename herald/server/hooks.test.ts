@@ -11,6 +11,8 @@ import { commandApproval, question, recordingLog, settle, thread } from "./testi
 const CONFIG: HeraldConfig = {
   announce: { question: true, plan: true, permission: true, finished: true, error: true },
   announceSubagents: false,
+  // The helper path is what most of these tests exercise; the plain path has its own.
+  modelSummaries: true,
   deleteHelpers: true,
   timeoutMs: 90_000,
   summarizer: DEFAULT_SUMMARIZER,
@@ -49,7 +51,14 @@ function fakeEvents(): FakeEvents {
   return events;
 }
 
-function setup(overrides: Partial<HookDeps> & { summarize?: SummarizeMock } = {}, config: HeraldConfig = CONFIG) {
+/**
+ * Most tests only care about the sentence; `finished` follows it unless a test
+ * holds it to stand for a helper that is slow to stop.
+ */
+function setup(
+  overrides: Omit<Partial<HookDeps>, "summarize"> & { summarize?: SummarizeMock; finished?: () => Promise<void> } = {},
+  config: HeraldConfig = CONFIG,
+) {
   let clock = Date.parse("2026-09-15T10:00:00.000Z");
   const store = new AttentionStore(null, recordingLog());
   const events = fakeEvents();
@@ -69,7 +78,14 @@ function setup(overrides: Partial<HookDeps> & { summarize?: SummarizeMock } = {}
     log,
     now: () => new Date(clock),
     ...overrides,
-    summarize,
+    summarize: (request, cfg) => {
+      const result = summarize(request, cfg);
+      const settled = result.then(
+        () => {},
+        () => {},
+      );
+      return { result, finished: overrides.finished === undefined ? settled : settled.then(overrides.finished) };
+    },
   });
   return {
     hooks,
@@ -380,18 +396,85 @@ describe("createHooks", () => {
     expect(summarize).toHaveBeenCalledTimes(1);
   });
 
-  it("drops the queue on dispose", async () => {
+  it("drops the queue on drain, and waits for the running summary to put its helper away", async () => {
     const releases: Array<(summary: Summary) => void> = [];
+    let stopped: () => void = () => {};
     const { hooks, summarize } = setup({
       maxConcurrent: 1,
       summarize: vi.fn(() => new Promise<Summary>((resolve) => releases.push(resolve))),
+      finished: () => new Promise<void>((resolve) => (stopped = resolve)),
     });
     await hooks.idle(thread({ id: "t1" }), "Done.");
     await hooks.idle(thread({ id: "t2" }), "Done.");
-    hooks.dispose();
+    let drained = false;
+    const draining = hooks.drain().then(() => (drained = true));
     releases[0]?.({ text: "S.", model: "m" });
     await settle();
+    expect(drained).toBe(false);
+    stopped();
+    await draining;
     expect(summarize).toHaveBeenCalledTimes(1);
+    // And nothing new is recorded after it.
+    await hooks.idle(thread({ id: "t3" }), "Done.");
+    expect(summarize).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a slot until the helper has been put away, even once the sentence is out", async () => {
+    const stops: Array<() => void> = [];
+    let live = 0;
+    let peak = 0;
+    const { hooks, store } = setup({
+      summarize: vi.fn(async () => {
+        live += 1;
+        peak = Math.max(peak, live);
+        return { text: "S.", model: "m" };
+      }),
+      // Each helper takes its time to stop, as a timed-out one does.
+      finished: () =>
+        new Promise<void>((resolve) =>
+          stops.push(() => {
+            live -= 1;
+            resolve();
+          }),
+        ),
+    });
+    for (const id of ["t1", "t2", "t3"]) await hooks.idle(thread({ id }), "Done.");
+    await settle();
+    // Two sentences are out, but the third helper must not start before one of them has stopped.
+    expect(store.get("t1")?.summary.status).toBe("ready");
+    expect(store.get("t3")?.summary.status).toBe("pending");
+    expect(peak).toBe(2);
+    stops.shift()?.();
+    await settle();
+    expect(store.get("t3")?.summary.status).toBe("ready");
+    expect(peak).toBe(2);
+  });
+
+  it("does not let an older event's slow lookup land over a newer one in the same turn", async () => {
+    const { hooks, store, events } = setup({}, { ...CONFIG, modelSummaries: false });
+    const lookups: Array<() => void> = [];
+    const original = events.context.bind(events);
+    events.context = (thread, options) =>
+      new Promise((resolve) => lookups.push(() => void original(thread, options).then(resolve)));
+    const older = hooks.interactionPending(thread(), question({ id: "older" }));
+    const newer = hooks.interactionPending(thread(), question({ id: "newer" }));
+    // The newer question's lookup answers first, the older one's last.
+    lookups[1]?.();
+    await newer;
+    lookups[0]?.();
+    await older;
+    expect(store.get("t1")?.eventId).toBe("t1:interaction:newer");
+  });
+
+  it("announces the plain sentence without a helper when model summaries are off", async () => {
+    const { hooks, store, summarize } = setup({}, { ...CONFIG, modelSummaries: false });
+    await hooks.interactionPending(thread(), question());
+    expect(store.get("t1")?.summary).toEqual({
+      status: "ready",
+      text: "Login fix has a question: Which DB? Options: Postgres / SQLite.",
+      model: "plain",
+    });
+    expect(summarize).not.toHaveBeenCalled();
   });
 
   it("logs a handler that fails instead of rejecting into the bb server", async () => {

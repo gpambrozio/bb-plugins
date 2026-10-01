@@ -74,32 +74,37 @@ export interface SpeakOptions {
 const inFlight = new Set<SpeechSynthesisUtterance>();
 
 /**
- * Resolves when the utterance ends. It also resolves after a generous guard
- * time, because a browser that dropped the call for lack of a tap fires
- * nothing at all, and a queue waiting on that event would never move.
- * Rejects only when there is no speech synthesis here.
+ * Resolves when the utterance ends: true when it was heard, false when the
+ * browser refused it. A browser that dropped the call for lack of a tap fires
+ * nothing at all, so a guard timer resolves it too — true only if the
+ * utterance had started. Rejects only when there is no speech synthesis here.
  */
-export function speak(text: string, options: SpeakOptions): Promise<void> {
+export function speak(text: string, options: SpeakOptions): Promise<boolean> {
   if (!canSpeak()) return Promise.reject(new Error("Speech synthesis is not available here."));
   const synth = window.speechSynthesis;
-  return new Promise<void>((resolve) => {
+  return new Promise<boolean>((resolve) => {
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.rate = options.rate;
     if (options.voice !== "") {
       const match = synth.getVoices().find((voice) => voice.name === options.voice);
       if (match !== undefined) utterance.voice = match;
     }
+    let started = false;
     let settled = false;
-    const finish = () => {
+    const finish = (heard: boolean) => {
       if (settled) return;
       settled = true;
       inFlight.delete(utterance);
-      resolve();
+      if (heard) unlocked = true;
+      resolve(heard);
     };
-    utterance.onend = finish;
-    utterance.onerror = finish;
+    utterance.onstart = () => {
+      started = true;
+    };
+    utterance.onend = () => finish(true);
+    utterance.onerror = () => finish(false);
     inFlight.add(utterance);
-    setTimeout(finish, Math.max(8_000, text.length * 150));
+    setTimeout(() => finish(started), Math.max(8_000, text.length * 150));
     synth.speak(utterance);
   });
 }
@@ -117,6 +122,18 @@ let player: HTMLAudioElement | null = null;
 
 /** Settles the playback in progress, so `stopAudio` need not strand its caller. */
 let settlePlayer: (() => void) | null = null;
+
+/**
+ * Whether this page may play sound on its own: set once a playback or an
+ * utterance has actually been heard, or a press has primed the element. Not
+ * inferred from the element's `src` — a refused automatic playback sets that
+ * too, and must not stop the next press from priming.
+ */
+let unlocked = false;
+
+export function isAudioUnlocked(): boolean {
+  return unlocked;
+}
 
 function audioPlayer(): HTMLAudioElement | null {
   if (!canPlayAudio()) return null;
@@ -139,9 +156,15 @@ const SILENT_WAV = "data:audio/wav;base64,UklGRiwAAABXQVZFZm10IBAAAAABAAEAQB8AAE
  */
 export function primeSpeech(): void {
   const element = audioPlayer();
-  if (element !== null && element.src === "") {
+  if (element !== null && !unlocked) {
     element.src = SILENT_WAV;
-    void element.play().catch(() => {});
+    const played = element.play() as Promise<void> | undefined;
+    void played?.then(
+      () => {
+        unlocked = true;
+      },
+      () => {},
+    );
   }
   if (canSpeak() && !window.speechSynthesis.speaking) {
     const silent = new SpeechSynthesisUtterance(" ");
@@ -160,21 +183,31 @@ export function playAudio(dataUrl: string): Promise<void> {
   if (element === null) return Promise.reject(new Error("Audio playback is not available here."));
   return new Promise<void>((resolve, reject) => {
     let settled = false;
-    const finish = (error: unknown) => {
+    /** `heard` is false for a playback cut short by `stopAudio`, which proves nothing about unlocking. */
+    const finish = (error: unknown, heard = true) => {
       if (settled) return;
       settled = true;
-      if (settlePlayer === settle) settlePlayer = null;
+      if (settlePlayer === stop) settlePlayer = null;
       element.onended = null;
       element.onerror = null;
-      if (error === null) resolve();
-      else reject(error instanceof Error ? error : new Error("The browser could not play the audio."));
+      if (error === null) {
+        if (heard) unlocked = true;
+        resolve();
+      } else {
+        reject(error instanceof Error ? error : new Error("The browser could not play the audio."));
+      }
     };
-    const settle = () => finish(null);
-    settlePlayer = settle;
-    element.onended = settle;
+    const stop = () => finish(null, false);
+    settlePlayer = stop;
+    element.onended = () => finish(null);
     element.onerror = (event) => finish(event);
     element.src = dataUrl;
-    element.play().catch((error: unknown) => finish(error));
+    element.play().then(
+      () => {
+        unlocked = true;
+      },
+      (error: unknown) => finish(error),
+    );
   });
 }
 
@@ -185,4 +218,11 @@ export function stopAudio(): void {
   const settle = settlePlayer;
   settlePlayer = null;
   settle?.();
+}
+
+/** For tests: forget that this page was unlocked. */
+export function resetAudioForTests(): void {
+  unlocked = false;
+  player = null;
+  settlePlayer = null;
 }

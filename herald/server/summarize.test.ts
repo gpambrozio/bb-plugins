@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { DEFAULT_SUMMARY_PROMPT } from "../shared/herald";
-import type { HelperOutcome } from "./helpers";
+import { HelperOutcomes, type HelperOutcome } from "./helpers";
 import type { HelperPort, HelperSpawn } from "./ports";
 import { HELPER_TITLE, buildPrompt, parseSummaryText, renderPrompt, summarize, type SummarizerDeps, type SummaryRequest } from "./summarize";
 import { recordingLog } from "./testing/fixtures";
@@ -149,7 +149,7 @@ describe("summarize", () => {
   it("spawns a titled helper with the rendered prompt and returns its sentence", async () => {
     const helpers = fakeHelpers();
     const options = deps(helpers, { kind: "idle", text: '{"speech":"Login fix is done."}' }, { prompt: "Summarise {{thread}}." });
-    const summary = await summarize(request, options);
+    const summary = await summarize(request, options).result;
     expect(summary).toEqual({ text: "Login fix is done.", model: "claude-code/claude-haiku-4-5-20251001" });
     expect(helpers.spawned).toEqual([
       {
@@ -164,10 +164,42 @@ describe("summarize", () => {
     expect(options.waitForOutcome).toHaveBeenCalledWith("h1", 1000);
   });
 
+  it("finishes only once the helper is stopped and deleted, though the sentence comes first", async () => {
+    let stopped: () => void = () => {};
+    const helpers = fakeHelpers();
+    helpers.stop = async (id) => {
+      helpers.calls.push(`stop:${id}`);
+      await new Promise<void>((resolve) => (stopped = resolve));
+    };
+    const run = summarize(request, deps(helpers, { kind: "idle", text: '{"speech":"Done."}' }));
+    await expect(run.result).resolves.toMatchObject({ text: "Done." });
+    let finished = false;
+    void run.finished.then(() => (finished = true));
+    await vi.waitFor(() => expect(helpers.calls).toEqual(["stop:h1"]));
+    expect(finished).toBe(false);
+    stopped();
+    await run.finished;
+    expect(helpers.calls).toEqual(["stop:h1", "delete:h1"]);
+  });
+
+  it("stops a helper whose spawn answered only after unload", async () => {
+    let spawned: (id: string) => void = () => {};
+    const helpers = fakeHelpers();
+    helpers.spawn = () => new Promise<string>((resolve) => (spawned = resolve));
+    const outcomes = new HelperOutcomes();
+    const run = summarize(request, deps(helpers, new Error("unused"), { waitForOutcome: (id, ms) => outcomes.wait(id, ms) }));
+    // Unload while the spawn is still in flight, then the spawn answers.
+    outcomes.cancelAll("Herald was reloaded");
+    spawned("h1");
+    await expect(run.result).rejects.toThrow("Herald was reloaded");
+    await run.finished;
+    expect(helpers.calls).toEqual(["stop:h1", "delete:h1"]);
+  });
+
   it("stops the helper and then deletes it, whatever happened", async () => {
     const helpers = fakeHelpers();
     const options = deps(helpers, { kind: "idle", text: '{"speech":"Done."}' });
-    await summarize(request, options);
+    await summarize(request, options).result;
     // Fire-and-forget: the sentence does not wait on the clean-up.
     await vi.waitFor(() => expect(helpers.calls).toEqual(["stop:h1", "delete:h1"]));
     expect(options.forgetHelper).toHaveBeenCalledWith("h1");
@@ -175,30 +207,30 @@ describe("summarize", () => {
 
   it("archives instead when the user keeps helpers", async () => {
     const helpers = fakeHelpers();
-    await summarize(request, deps(helpers, { kind: "idle", text: "Done." }, { deleteHelper: false }));
+    await summarize(request, deps(helpers, { kind: "idle", text: "Done." }, { deleteHelper: false })).result;
     await vi.waitFor(() => expect(helpers.calls).toEqual(["stop:h1", "archive:h1"]));
   });
 
   it("fails a helper that asked for a tool, and still stops and deletes it", async () => {
     const helpers = fakeHelpers();
-    await expect(summarize(request, deps(helpers, { kind: "interaction" }))).rejects.toThrow("tried to use a tool");
+    await expect(summarize(request, deps(helpers, { kind: "interaction" })).result).rejects.toThrow("tried to use a tool");
     await vi.waitFor(() => expect(helpers.calls).toEqual(["stop:h1", "delete:h1"]));
   });
 
   it("reports a failed or timed-out helper and still puts it away", async () => {
     const failed = fakeHelpers();
-    await expect(summarize(request, deps(failed, { kind: "failed", error: "rate limited" }))).rejects.toThrow("rate limited");
+    await expect(summarize(request, deps(failed, { kind: "failed", error: "rate limited" })).result).rejects.toThrow("rate limited");
     await vi.waitFor(() => expect(failed.calls).toEqual(["stop:h1", "delete:h1"]));
 
     const slow = fakeHelpers();
-    await expect(summarize(request, deps(slow, new Error("did not finish within 1 seconds")))).rejects.toThrow("did not finish");
+    await expect(summarize(request, deps(slow, new Error("did not finish within 1 seconds"))).result).rejects.toThrow("did not finish");
     await vi.waitFor(() => expect(slow.calls).toEqual(["stop:h1", "delete:h1"]));
   });
 
   it("logs a clean-up that fails rather than throwing it", async () => {
     const helpers = fakeHelpers({ failStop: true, failDelete: true });
     const options = deps(helpers, { kind: "idle", text: "Done." });
-    await expect(summarize(request, options)).resolves.toMatchObject({ text: "Done." });
+    await expect(summarize(request, options).result).resolves.toMatchObject({ text: "Done." });
     const log = options.log as ReturnType<typeof recordingLog>;
     await vi.waitFor(() =>
       expect(log.lines).toEqual([

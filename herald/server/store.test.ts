@@ -1,6 +1,8 @@
+import type { PluginKvStorage } from "@get-bb/plugin-sdk";
 import { describe, expect, it } from "vitest";
 
 import type { AttentionEntry } from "../shared/herald";
+import { kvBackend } from "./kv-backend";
 import { AttentionStore, type StoreBackend } from "./store";
 import { recordingLog } from "./testing/fixtures";
 
@@ -51,9 +53,10 @@ class FakeBackend implements StoreBackend {
   }
 
   async write(entries: readonly AttentionEntry[]): Promise<void> {
+    const snapshot = structuredClone([...entries]);
     await new Promise((resolve) => setTimeout(resolve, 0));
     this.writes += 1;
-    this.saved = structuredClone([...entries]);
+    this.saved = snapshot;
   }
 
   threadIds(): string[] {
@@ -157,6 +160,59 @@ describe("AttentionStore", () => {
     // And it is gone from storage, so the next load does not restore it.
     await store.flush();
     expect(backend.threadIds()).toEqual(["t2"]);
+  });
+
+  it("picks up what the replaced instance wrote after this one loaded, keeping its own live changes", async () => {
+    // The real backend — one kv row per thread — over a kv whose writes can be held.
+    const rows = new Map<string, unknown>();
+    let gate: Promise<void> | null = null;
+    let open: () => void = () => {};
+    const kv: PluginKvStorage = {
+      get: async <T,>(key: string) => rows.get(key) as T | undefined,
+      set: async (key, value) => {
+        await gate;
+        rows.set(key, structuredClone(value));
+      },
+      delete: async (key) => {
+        await gate;
+        rows.delete(key);
+      },
+      list: async (prefix = "") => [...rows.keys()].filter((key) => key.startsWith(prefix)),
+    };
+    const old = new AttentionStore(kvBackend(kv), recordingLog());
+    old.upsert(entry({ threadId: "t1" }));
+    await old.flush();
+
+    // The old instance records t2, but its write is slow to land.
+    gate = new Promise<void>((resolve) => (open = resolve));
+    old.upsert(entry({ threadId: "t2", summary: { status: "ready", text: "Old.", model: "m" } }));
+
+    // A reload: the replacement loads before the old instance has flushed.
+    const replacement = new AttentionStore(kvBackend(kv), recordingLog());
+    await replacement.load();
+    expect(replacement.get("t2")).toBeNull();
+    replacement.upsert(entry({ threadId: "t3" }));
+
+    open();
+    gate = null;
+    await old.flush();
+    // The old instance says it has drained; the replacement reads again.
+    await replacement.reconcile();
+    await replacement.flush();
+
+    expect(replacement.list().map((item) => item.threadId).sort()).toEqual(["t1", "t2", "t3"]);
+    expect(replacement.get("t2")?.summary).toEqual({ status: "ready", text: "Old.", model: "m" });
+    expect([...rows.keys()].sort()).toEqual(["entry:t1", "entry:t2", "entry:t3"]);
+  });
+
+  it("drops on reconcile an entry the replaced instance removed after this one loaded", async () => {
+    const backend = new FakeBackend();
+    backend.saved = [entry({ threadId: "t1" }), entry({ threadId: "t2" })];
+    const replacement = new AttentionStore(backend, recordingLog());
+    await replacement.load();
+    backend.saved = [entry({ threadId: "t2" })];
+    await replacement.reconcile();
+    expect(replacement.list().map((item) => item.threadId)).toEqual(["t2"]);
   });
 
   it("survives a reload, marking an unfinished summary as failed", async () => {

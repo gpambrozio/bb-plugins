@@ -25,6 +25,8 @@ export class HelperOutcomes {
   private readonly early = new Map<string, { outcome: HelperOutcome; at: number }>();
   /** Helpers seen running. An idle before that is a thread settling in, not a reply. */
   private readonly running = new Set<string>();
+  /** Set on unload; a wait that starts afterwards — a spawn that resolved late — fails at once. */
+  private cancelled: string | null = null;
 
   constructor(private readonly now: () => number = Date.now) {}
 
@@ -47,6 +49,7 @@ export class HelperOutcomes {
 
   /** Resolves with the helper's outcome; rejects once `timeoutMs` has passed without one. */
   wait(threadId: string, timeoutMs: number): Promise<HelperOutcome> {
+    if (this.cancelled !== null) return Promise.reject(new Error(this.cancelled));
     const held = this.early.get(threadId);
     if (held !== undefined) {
       this.early.delete(threadId);
@@ -71,10 +74,12 @@ export class HelperOutcomes {
   }
 
   /**
-   * Fails every wait at once — on unload, so each summary's `finally` stops
-   * and puts away its helper while bb still answers, instead of at its timeout.
+   * Fails every wait at once, and every wait that starts later — on unload, so
+   * each summary's `finally` stops and puts away its helper while bb still
+   * answers, instead of at its timeout.
    */
   cancelAll(reason: string): void {
+    this.cancelled = reason;
     const waiting = [...this.waiters.values()];
     this.waiters.clear();
     for (const waiter of waiting) waiter.reject(new Error(reason));
