@@ -28,7 +28,14 @@ function pullRequest(id: string) {
   };
 }
 
-function setup(options: { route?: (request: Request) => unknown; login?: string } = {}) {
+function setup(
+  options: {
+    route?: (request: Request) => unknown;
+    login?: string;
+    /** Awaited by project matching, so a test can hold a load there. */
+    projectGate?: () => Promise<void>;
+  } = {},
+) {
   const requests: Request[] = [];
   let clock = 1_000_000;
   const api: GitHubApi = {
@@ -46,9 +53,12 @@ function setup(options: { route?: (request: Request) => unknown; login?: string 
     api,
     token: async () => "token",
     configuredLogin: async () => options.login ?? "",
-    projectIndex: async () => ({
+    projectIndex: async () => {
+      await options.projectGate?.();
+      return {
       byRepositoryId: new Map([["github.com/o/r", [{ id: "proj", name: "r", hostIds: ["local"] }]]]),
-    }),
+      };
+    },
     localHostId: async () => "local",
     now: () => clock,
   };
@@ -196,5 +206,60 @@ describe("a label edit during a refresh", () => {
     expect(labelsOf(board)).toEqual(["old", "new"]);
     hold = false;
     expect(labelsOf(await service.loadBoard({ limit: 30, force: false }))).toEqual(["old", "new"]);
+  });
+});
+
+describe("an edit while a load waits on project matching", () => {
+  function gatedSetup() {
+    let gate: Promise<void> | null = null;
+    let open: () => void = () => {};
+    const harness = setup({
+      projectGate: () => gate ?? Promise.resolve(),
+      route: (request) => {
+        if (request.query.includes("... on PullRequest {") && request.query.includes("search(")) {
+          return {
+            mine: { nodes: [{ ...pullRequest("P1"), labels: { nodes: [{ name: "old" }] } }] },
+            owned: { nodes: [] },
+            assigned: { nodes: [] },
+          };
+        }
+        if (request.query.includes("addLabelsToLabelable")) {
+          return { addLabelsToLabelable: { labelable: { labels: { nodes: [{ name: "old" }, { name: "new" }] } } } };
+        }
+        return undefined;
+      },
+    });
+    const hold = () => {
+      gate = new Promise((resolve) => (open = resolve));
+    };
+    const release = () => {
+      gate = null;
+      open();
+    };
+    return { ...harness, hold, release };
+  }
+  const labelsOf = (board: { columns: { id: string; items: { labels: string[] }[] }[] }) =>
+    board.columns.find((column) => column.id === "open-prs")?.items[0]?.labels;
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  it("keeps the edit on a forced load", async () => {
+    const { service, hold, release } = gatedSetup();
+    hold();
+    const loading = service.loadBoard({ limit: 30, force: true });
+    await tick();
+    await service.toggleLabel({ itemId: "P1", labelId: "L", add: true });
+    release();
+    expect(labelsOf(await loading)).toEqual(["old", "new"]);
+  });
+
+  it("keeps the edit on a cache hit", async () => {
+    const { service, hold, release } = gatedSetup();
+    await service.loadBoard({ limit: 30, force: false });
+    hold();
+    const loading = service.loadBoard({ limit: 30, force: false });
+    await tick();
+    await service.toggleLabel({ itemId: "P1", labelId: "L", add: true });
+    release();
+    expect(labelsOf(await loading)).toEqual(["old", "new"]);
   });
 });

@@ -10,6 +10,15 @@ export const COLUMN_IDS = ["issues", "draft-prs", "open-prs", "discussions"] as 
 export type ColumnId = (typeof COLUMN_IDS)[number];
 
 /**
+ * How many labels are read per item, and per repository for the label menu —
+ * the same page, so the menu's toggles agree with what an item carries. An
+ * item that comes back with a full page may hold more than were read, and the
+ * menu will not toggle on it: an unread label would show unchecked, and
+ * pressing it would add a label the item already has.
+ */
+export const LABEL_PAGE = 100;
+
+/**
  * An issue a pull request closes, as GitHub's `closingIssuesReferences` reports
  * it. The id is the same node id `the issue search` returns, so the board can
  * match a linked issue to its card by identity rather than by number.

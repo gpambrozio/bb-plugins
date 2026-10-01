@@ -163,6 +163,8 @@ describe("loadColumns", () => {
     const api = fakeApi(happyRoute());
     await loadColumns(api, "octocat", 30);
     const issues = api.requests.find(isIssueSearch);
+    expect(issues?.query).toContain("labels(first: 100)");
+    expect(api.requests.find(isPullSearch)?.query).toContain("labels(first: 100)");
     expect(issues?.variables).toMatchObject({
       mine: expect.stringContaining("author:octocat"),
       owned: expect.stringContaining("user:octocat"),
@@ -411,6 +413,14 @@ describe("the other requests", () => {
     expect(await toggleLabel(api, "I1", "L1", false)).toEqual(["keep"]);
     expect(api.requests[0]?.query).toContain("removeLabelsFromLabelable");
     expect(api.requests[0]?.variables).toEqual({ item: "I1", label: "L1" });
+  });
+
+  it("reads an item's labels a full page at a time, 21 and more", async () => {
+    const many = Array.from({ length: 21 }, (_, index) => ({ name: `label-${index}` }));
+    const api = fakeApi(() => ({ addLabelsToLabelable: { labelable: { labels: { nodes: many } } } }));
+    expect(await toggleLabel(api, "I1", "L1", true)).toHaveLength(21);
+    expect(api.requests[0]?.query).toContain("labels(first: 100)");
+    expect(api.requests[0]?.query).not.toContain("labels(first: 20)");
   });
 
   it("derives an item's state rather than copying it", async () => {

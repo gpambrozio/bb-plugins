@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { Board, BoardItem } from "../shared/board";
-import { linkedIssueLabel, patchBoard, repositoriesOf, staleBranch, visibleColumns } from "./board-logic";
+import { labelsComplete, linkedIssueLabel, patchBoard, repositoriesOf, staleBranch, visibleColumns } from "./board-logic";
 
 function item(id: string, repository: string, extra: Partial<BoardItem> = {}): BoardItem {
   return {
@@ -81,5 +81,12 @@ describe("the rest", () => {
     expect(staleBranch({ behindBy: 0, canUpdate: false, conflicts: false })).toBeNull();
     expect(staleBranch({ behindBy: 0, canUpdate: false, conflicts: true })).not.toBeNull();
     expect(staleBranch(null)).toBeNull();
+  });
+});
+
+describe("labelsComplete", () => {
+  it("trusts a list shorter than a page and not a full one", () => {
+    expect(labelsComplete({ labels: Array.from({ length: 21 }, (_, i) => `l${i}`) })).toBe(true);
+    expect(labelsComplete({ labels: Array.from({ length: 100 }, (_, i) => `l${i}`) })).toBe(false);
   });
 });

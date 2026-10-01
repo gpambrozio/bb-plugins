@@ -7,8 +7,8 @@
  * wait on three searches; a non-forced load then runs underneath, answered
  * from the server's cache while that is fresh.
  */
-import { useCallback, useEffect, useState } from "react";
-import { useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useRealtime, useRealtimeConnectionState, useRpc } from "@get-bb/plugin-sdk/app";
 
 import type { Board, BoardItem, PromptSettings } from "../shared/board";
 import type { RpcContract } from "../shared/contract";
@@ -27,6 +27,23 @@ export function useBoardRpc() {
   return useRpc<RpcContract>();
 }
 
+/**
+ * Counts the times the realtime connection has come back. Signals are
+ * broadcast and not persisted, so a window that was disconnected missed
+ * whatever was published meanwhile; each hook below refetches its state when
+ * this changes.
+ */
+export function useReconnects(): number {
+  const state = useRealtimeConnectionState();
+  const previous = useRef(state);
+  const [count, setCount] = useState(0);
+  useEffect(() => {
+    if (previous.current !== "connected" && state === "connected") setCount((value) => value + 1);
+    previous.current = state;
+  }, [state]);
+  return count;
+}
+
 export function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -43,6 +60,7 @@ export function patchBoardItem(itemId: string, patch: Partial<BoardItem>): void 
 
 export function useBoard() {
   const rpc = useBoardRpc();
+  const reconnects = useReconnects();
   const [board, setBoard] = useState<Board | null>(cachedBoard);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -79,7 +97,7 @@ export function useBoard() {
     // requests — and it catches anything this window missed while away,
     // including edits made while the realtime connection was down.
     refresh(false);
-  }, [refresh]);
+  }, [refresh, reconnects]);
 
   return { board, loading, error, refresh };
 }
@@ -102,6 +120,7 @@ const DEFAULT_DISPLAY: DisplayPrefs = { hiddenRepositories: [], detailWidthFract
 
 export function useDisplayPrefs() {
   const rpc = useBoardRpc();
+  const reconnects = useReconnects();
   const [prefs, setPrefs] = useState<DisplayPrefs | null>(null);
 
   useEffect(() => {
@@ -111,13 +130,13 @@ export function useDisplayPrefs() {
         if (live) setPrefs(value);
       },
       () => {
-        if (live) setPrefs(DEFAULT_DISPLAY);
+        if (live) setPrefs((current) => current ?? DEFAULT_DISPLAY);
       },
     );
     return () => {
       live = false;
     };
-  }, [rpc]);
+  }, [rpc, reconnects]);
 
   useRealtime(DISPLAY_PREFS_CHANGED, (payload) => {
     const parsed = DisplayPrefsSchema.safeParse(payload);
@@ -140,14 +159,20 @@ export function useDisplayPrefs() {
 
 export function usePrompts() {
   const rpc = useBoardRpc();
+  const reconnects = useReconnects();
   const [prompts, setPrompts] = useState<PromptSettings | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let live = true;
+    // The editor adopts what this answers only while it holds no unsaved
+    // edit, so a refetch after a reconnect never overwrites one.
     rpc.call("getPrompts", {}).then(
       (value) => {
-        if (live) setPrompts(value);
+        if (live) {
+          setPrompts(value);
+          setError(null);
+        }
       },
       (cause: unknown) => {
         if (live) setError(errorText(cause));
@@ -156,7 +181,7 @@ export function usePrompts() {
     return () => {
       live = false;
     };
-  }, [rpc]);
+  }, [rpc, reconnects]);
 
   useRealtime(PROMPTS_CHANGED, (payload) => {
     const parsed = PromptSettingsSchema.safeParse(payload);

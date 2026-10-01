@@ -104,8 +104,18 @@ when you add a query.
   remounted since the press. Mounting the board always runs a non-forced load underneath the
   remembered one, which the server answers from cache while that is fresh.
 - **An edit outlives a refresh already in flight.** Label edits (`settleLabels`) and branch updates
-  (`settleBranches`) are recorded with their time and applied to a board after its last `await`, for
-  two minutes, so a refresh whose searches ran before the edit cannot cache what it replaced.
+  (`settleBranches`) are recorded with their time and applied to a board after its **last** `await` —
+  project matching included — for two minutes, so a refresh whose searches ran before the edit cannot
+  cache or return what it replaced. A cache hit re-reads the cache after that await, because an edit
+  may have patched it meanwhile.
+- **A reconnect refetches.** Realtime signals are broadcast, not persisted, so the board, the display
+  prefs and the templates refetch whenever the connection comes back (`useReconnects` in
+  `app/state.ts`); the template editor still adopts a fetched value only while it holds no unsaved
+  edit. `app/state.test.tsx` drives this through the SDK's app harness (jsdom).
+- **Labels are read a full page at a time** (`LABEL_PAGE`, 100) on cards, in label mutations and in
+  the repository's label list, so the menu's checkmarks match what the item carries. An item that
+  comes back with a full page may have more; the menu then offers no toggles and says to edit on
+  GitHub, because an unread label would show unchecked and pressing it would add it again.
 - **The board draws** (`visibleColumns`): the filter first, then issues claimed by a pull request
   (drafts too) fold into it, then empty columns come off unless they errored — and if that leaves
   nothing, every column comes back.
@@ -114,7 +124,8 @@ when you add a query.
 
 bb's `Markdown` component is **not** used for bodies, on purpose: it takes only `content` and
 `className`, so it gives no say over how a body's images load. Paseo's parser and HTML rewriter are ported instead (`app/markdown-parse.ts`,
-`app/html.ts`, both pure) and `app/markdown.tsx` draws them, so every image in a body is either an
+`app/html.ts`, both pure; numeric entities past U+10FFFF, surrogates and `&#0;` decode to U+FFFD, as
+HTML does, where Paseo's `String.fromCodePoint` threw and blanked the panel) and `app/markdown.tsx` draws them, so every image in a body is either an
 image block drawn by `RemoteImage` or a link. `RemoteImage` goes through `app/image-gate.ts`: a
 GitHub-hosted image comes through the server (`loadImage`) at once; any other host waits for **Load
 image**, because loading it tells that host the reader's address; an unreadable URL never loads. Links

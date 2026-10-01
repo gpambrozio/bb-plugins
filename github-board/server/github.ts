@@ -17,6 +17,7 @@ import type {
   LinkedIssue,
   RepositoryLabel,
 } from "../shared/board";
+import { LABEL_PAGE } from "../shared/board";
 
 /** A GraphQL variable as the board uses them: strings, integers and lists of ids. */
 export type GraphQLVariable = string | number | readonly string[];
@@ -192,7 +193,7 @@ const ISSUE_SELECTION = `... on Issue {
   updatedAt
   author { login }
   comments { totalCount }
-  labels(first: 20) { nodes { name } }
+  labels(first: ${LABEL_PAGE}) { nodes { name } }
   repository { nameWithOwner isArchived }
 }`;
 
@@ -244,7 +245,7 @@ const PULL_REQUEST_SELECTION = `... on PullRequest {
   headRefOid
   author { login }
   comments { totalCount }
-  labels(first: 20) { nodes { name } }
+  labels(first: ${LABEL_PAGE}) { nodes { name } }
   repository { nameWithOwner isArchived }
   closingIssuesReferences(first: 20) {
     nodes { id number repository { nameWithOwner } }
@@ -835,13 +836,13 @@ export function settleLabels(
 }
 
 /**
- * First 100 by name, which is every label on all but a deliberately elaborate
+ * The first `LABEL_PAGE` by name, which is every label on all but a deliberately elaborate
  * repository. Paging past that would mean a cursor loop for a menu nobody can
  * read anyway; a label past the hundredth is edited on GitHub.
  */
 const LABELS_QUERY = `query($owner: String!, $name: String!) {
   repository(owner: $owner, name: $name) {
-    labels(first: 100, orderBy: { field: NAME, direction: ASC }) {
+    labels(first: ${LABEL_PAGE}, orderBy: { field: NAME, direction: ASC }) {
       nodes { id name color description }
     }
   }
@@ -887,8 +888,8 @@ export async function fetchRepositoryLabels(
  * board offers this on.
  */
 const LABELABLE_SELECTION = `labelable {
-      ... on Issue { labels(first: 20) { nodes { name } } }
-      ... on PullRequest { labels(first: 20) { nodes { name } } }
+      ... on Issue { labels(first: ${LABEL_PAGE}) { nodes { name } } }
+      ... on PullRequest { labels(first: ${LABEL_PAGE}) { nodes { name } } }
     }`;
 
 const ADD_LABEL_MUTATION = `mutation($item: ID!, $label: ID!) {

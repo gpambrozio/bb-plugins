@@ -19,7 +19,7 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { labelColor } from "./board-logic";
+import { labelColor, labelsComplete } from "./board-logic";
 import { errorText, patchBoardItem, useBoardRpc } from "./state";
 
 /** Label sets change far more slowly than the work they are put on. */
@@ -73,13 +73,18 @@ function LabelMenuContent({ item }: { item: BoardItem }) {
       <ContextMenuLabel className="truncate">Labels · {item.repository}</ContextMenuLabel>
       <ContextMenuSeparator />
       {error !== null ? <p className="px-2 py-1.5 text-xs text-destructive">{error}</p> : null}
+      {!labelsComplete(item) ? (
+        <p className="px-2 py-1.5 text-xs text-muted-foreground">
+          This item has more labels than the board reads. Edit them on GitHub.
+        </p>
+      ) : null}
       {labels === null && error === null ? (
         <p className="px-2 py-1.5 text-xs text-muted-foreground">Loading labels…</p>
       ) : null}
       {labels !== null && labels.length === 0 ? (
         <p className="px-2 py-1.5 text-xs text-muted-foreground">This repository has no labels.</p>
       ) : null}
-      {labels?.map((label) => {
+      {(labelsComplete(item) ? labels : null)?.map((label) => {
         const checked = item.labels.includes(label.name);
         const color = labelColor(label.color);
         return (

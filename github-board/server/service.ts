@@ -149,16 +149,26 @@ export function createBoardService(deps: BoardServiceDeps) {
     async loadBoard({ limit, force }: { limit: number; force: boolean }): Promise<Board> {
       const login = await resolveLogin();
       const key = `${login}\u0000${limit}`;
+      // Recent edits are applied after the *last* await — project matching
+      // included — so an edit that lands while this load runs wins over what
+      // the load saw, whichever path it takes.
+      const settle = (columns: readonly BoardColumn[]) => {
+        const now = deps.now();
+        return settleLabels(settleBranches(columns, recentBranchUpdates, now), recentLabels, now);
+      };
+
       if (!force && fresh(cachedBoard) && cachedBoard.key === key) {
-        const { columns, fetchedAt } = cachedBoard.value;
-        return { login, columns, fetchedAt, repositoryProjects: await repositoryProjects(columns) };
+        const projects = await repositoryProjects(cachedBoard.value.columns);
+        // The cache as it is now: an edit may have patched it during the await.
+        const current = cachedBoard !== null && cachedBoard.key === key ? cachedBoard.value : null;
+        if (current !== null) {
+          return { login, columns: settle(current.columns), fetchedAt: current.fetchedAt, repositoryProjects: projects };
+        }
       }
 
-      // Settled after every request has returned, so an update that landed
-      // while they ran wins over what they saw.
       const loaded = await loadColumns(deps.api, login, limit);
-      const now = deps.now();
-      const columns = settleLabels(settleBranches(loaded, recentBranchUpdates, now), recentLabels, now);
+      const projects = await repositoryProjects(loaded);
+      const columns = settle(loaded);
       const fetchedAt = new Date(deps.now()).toISOString();
 
       // A column that failed is not worth remembering: caching it would keep
@@ -166,7 +176,7 @@ export function createBoardService(deps: BoardServiceDeps) {
       if (columns.every((column) => column.error === null)) {
         cachedBoard = { key, value: { columns, fetchedAt }, storedAt: deps.now() };
       }
-      return { login, columns, fetchedAt, repositoryProjects: await repositoryProjects(columns) };
+      return { login, columns, fetchedAt, repositoryProjects: projects };
     },
 
     async loadItem({ id, force }: { id: string; force: boolean }): Promise<ItemDetails> {

@@ -2,6 +2,7 @@
  * What the board draws from a loaded board, decided without React so it can be
  * tested: which columns show, which cards they hold, and the words on pills.
  */
+import { LABEL_PAGE } from "../shared/board";
 import type {
   Board,
   BoardColumn,
@@ -158,4 +159,13 @@ export function absoluteDate(iso: string): string {
 /** A label colour is six hex digits from GitHub; anything else is not painted. */
 export function labelColor(color: string | undefined): string | null {
   return color !== undefined && /^[0-9a-f]{6}$/i.test(color) ? `#${color}` : null;
+}
+
+/**
+ * Whether every label on an item was read. A full page may have left some
+ * out, and the label menu does not toggle then: an unread label would show
+ * unchecked, and pressing it would add what the item already has.
+ */
+export function labelsComplete(item: Pick<BoardItem, "labels">): boolean {
+  return item.labels.length < LABEL_PAGE;
 }
