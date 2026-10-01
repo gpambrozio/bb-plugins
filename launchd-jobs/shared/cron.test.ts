@@ -92,6 +92,26 @@ describe("calendar entries", () => {
     expect(fromCalendarEntries([])).toBeNull();
   });
 
+  it("does not let a duplicated entry stand in for a missing one", () => {
+    // 09:00 Mon twice, 17:00 Mon, 17:00 Fri: four entries, but 09:00 Fri is not among them.
+    expect(
+      fromCalendarEntries([
+        { minute: 0, hour: 9, weekday: 1 },
+        { minute: 0, hour: 9, weekday: 1 },
+        { minute: 0, hour: 17, weekday: 1 },
+        { minute: 0, hour: 17, weekday: 5 },
+      ]),
+    ).toBeNull();
+    // Duplicates of a complete product still read as it.
+    expect(fromCalendarEntries([{ minute: 0, hour: 9 }, { minute: 0, hour: 9 }])).toEqual({
+      minute: [0],
+      hour: [9],
+      day: null,
+      month: null,
+      weekday: null,
+    });
+  });
+
   it("reads a hand-written plist's Sunday", () => {
     expect(fromCalendarEntries([{ minute: 0, hour: 8, weekday: 7 }])).toEqual({
       minute: [0],

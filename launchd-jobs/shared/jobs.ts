@@ -83,8 +83,14 @@ export const JobSchema = z.object({
    * plugin's for a job adopted from it.
    */
   dataDir: z.string(),
-  /** The job's files live in a directory this plugin does not own (see `dataDir`). */
+  /** `dataDir` is one of the Paseo plugin's: the job was adopted, and its files are kept there. */
   adopted: z.boolean(),
+  /**
+   * `dataDir` is neither this plugin's nor the Paseo plugin's — a hand-written
+   * plist named it. Its files are shown and never changed; saving the job moves
+   * it to this plugin's own directory.
+   */
+  readOnlyData: z.boolean(),
   /** launchd knows the label. False after a bootout, or for a plist never loaded. */
   loaded: z.boolean(),
   /** `launchctl disable` was applied; it survives reboots until enabled again. */

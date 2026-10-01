@@ -36,6 +36,8 @@ export function createFakeLaunchd() {
   const calls: string[][] = [];
   /** Labels whose next bootstrap fails, as a broken plist would. */
   const refuseBootstrap = new Set<string>();
+  /** Labels whose `enable` fails, as a launchd that cannot write its override database would. */
+  const refuseEnable = new Set<string>();
   const domain = `gui/${FAKE_UID}`;
 
   function labelOf(target: string): string {
@@ -87,6 +89,7 @@ export function createFakeLaunchd() {
         if (!loaded.delete(labelOf(target))) throw failure("Boot-out failed: 3: No such process", 3);
         return { stdout: "" };
       case "enable":
+        if (refuseEnable.has(labelOf(target))) throw failure("Could not enable service: 1: Operation not permitted", 1);
         disabled.delete(labelOf(target));
         return { stdout: "" };
       case "disable":
@@ -103,5 +106,5 @@ export function createFakeLaunchd() {
     }
   };
 
-  return { run, loaded, disabled, calls, refuseBootstrap };
+  return { run, loaded, disabled, calls, refuseBootstrap, refuseEnable };
 }

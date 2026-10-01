@@ -41,6 +41,7 @@ const adopted: Job = {
   managed: true,
   dataDir: "/paseo/plugin-data/launchd-jobs",
   adopted: true,
+  readOnlyData: false,
   loaded: true,
   disabled: false,
   running: false,

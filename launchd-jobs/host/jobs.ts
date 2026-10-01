@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { chmod, mkdir, open, readdir, readFile, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
+import { chmod, link, mkdir, open, readdir, readFile, realpath, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 import {
   describeCron,
@@ -13,7 +13,7 @@ import {
   toCalendarEntries,
   type CalendarEntry,
 } from "../shared/cron";
-import type { FailingJob, Job, JobList, JobSpec, LogChunk, RunRecord, Schedule } from "../shared/jobs";
+import { JobSchema, type FailingJob, type Job, type JobList, type JobSpec, type LogChunk, type RunRecord, type Schedule } from "../shared/jobs";
 
 /**
  * The host half: every `launchctl` and `plutil` call, the plist files, the
@@ -71,6 +71,12 @@ export type RunCommand = (
 export interface JobsDeps {
   /** This plugin's own data directory on this Mac: the runner, logs and history of jobs made here. */
   ownDir: string;
+  /**
+   * The Paseo plugin's data directories on this Mac. A job whose plist names
+   * one of these is adopted: its history is shown, kept on edit and deleted
+   * with it. A plist naming any other directory is read from, never written to.
+   */
+  paseoDirs: readonly string[];
   launchAgentsDir: string;
   platform: NodeJS.Platform;
   /** The user whose `gui/<uid>` launchd domain the jobs live in. */
@@ -150,6 +156,18 @@ export const RUNNER_SCRIPT = [
   "",
 ].join("\n");
 
+/** Writes a file whole: to a temporary name beside it, then renamed over it. */
+async function writeAtomically(path: string, content: string): Promise<void> {
+  const temporary = join(dirname(path), `.launchd-jobs-${randomUUID()}.tmp`);
+  try {
+    await writeFile(temporary, content, "utf8");
+    await rename(temporary, path);
+  } catch (error) {
+    await rm(temporary, { force: true });
+    throw error;
+  }
+}
+
 /**
  * Writes a script launchd may start at any moment: to a temporary file beside
  * it, made executable, then renamed over it, so a fire sees the old script or
@@ -180,6 +198,15 @@ export interface PlistFile {
   StartInterval?: unknown;
 }
 
+/** What launchd accepts per calendar key; anything else in a plist is that row's problem, not the list's. */
+const PLIST_RANGES: Record<keyof CalendarEntry, [number, number]> = {
+  minute: [0, 59],
+  hour: [0, 23],
+  day: [1, 31],
+  month: [1, 12],
+  weekday: [0, 7],
+};
+
 const PLIST_KEYS: Record<string, keyof CalendarEntry> = {
   Minute: "minute",
   Hour: "hour",
@@ -199,6 +226,8 @@ function calendarEntriesOf(value: unknown): CalendarEntry[] | null {
       const raw = dict[key];
       if (raw === undefined) continue;
       if (typeof raw !== "number" || !Number.isInteger(raw)) return null;
+      const [min, max] = PLIST_RANGES[field];
+      if (raw < min || raw > max) throw new Error(`The schedule has ${key} ${raw}, outside ${min}–${max}`);
       entry[field] = raw;
     }
     entries.push(entry);
@@ -206,6 +235,7 @@ function calendarEntriesOf(value: unknown): CalendarEntry[] | null {
   return entries;
 }
 
+/** Throws when the plist's calendar holds a value launchd cannot use. */
 export function scheduleOf(plist: PlistFile): Schedule {
   if (typeof plist.StartInterval === "number" && plist.StartInterval > 0) {
     const seconds = Math.round(plist.StartInterval);
@@ -488,6 +518,9 @@ async function readStringMap(path: string, key: string, warn: (message: string) 
   return {};
 }
 
+/** Where a job's files live, as far as this plugin is concerned. */
+export type DataHome = "plugin" | "paseo" | "elsewhere";
+
 export function createJobs(deps: JobsDeps) {
   const { ownDir, launchAgentsDir, run, warn } = deps;
 
@@ -527,6 +560,55 @@ export function createJobs(deps: JobsDeps) {
     if (deps.platform !== "darwin") throw new Error("launchd jobs are only available on macOS");
   }
 
+  /**
+   * Every change on this Mac runs one at a time: a slug is chosen and its
+   * plist written, a name or acknowledgement file read and rewritten, a job
+   * booted out and back in, without another change landing in between. Reads
+   * do not wait.
+   */
+  let tail: Promise<unknown> = Promise.resolve();
+  function exclusive<T>(work: () => Promise<T>): Promise<T> {
+    const result = tail.then(work, work);
+    tail = result.catch(() => undefined);
+    return result;
+  }
+
+  // -- Where a job's files are, and whether this plugin may touch them ----------
+
+  /** The real path of `path`, or the path itself, resolved, when it does not exist yet. */
+  async function canonical(path: string): Promise<string> {
+    try {
+      return await realpath(path);
+    } catch (error) {
+      if (isMissing(error)) return resolve(path);
+      throw error;
+    }
+  }
+
+  /**
+   * Whether a data directory is this plugin's own, one of the Paseo plugin's,
+   * or anywhere else — compared by real path, so a symlink to a trusted
+   * directory is that directory and a look-alike path is not.
+   */
+  async function homeOf(dir: string): Promise<DataHome> {
+    const real = await canonical(dir);
+    if (real === (await canonical(ownDir))) return "plugin";
+    for (const paseo of deps.paseoDirs) {
+      if (real === (await canonical(paseo))) return "paseo";
+    }
+    return "elsewhere";
+  }
+
+  /**
+   * Whether `file` — `<dir>/logs/…` or `<dir>/runs/…` — really is inside `dir`:
+   * a `logs` or `runs` that is a symlink out of it is not, and nothing there
+   * is deleted.
+   */
+  async function insideOwnSubdirectory(dir: string, file: string): Promise<boolean> {
+    const parent = dirname(file);
+    return (await canonical(parent)) === join(await canonical(dir), parent.slice(dir.length + 1));
+  }
+
   // -- The plugin's own files ------------------------------------------------
 
   async function ensureRunner(): Promise<void> {
@@ -545,7 +627,7 @@ export function createJobs(deps: JobsDeps) {
 
   async function writeOwn(path: string, key: string, map: Record<string, string>): Promise<void> {
     await mkdir(ownDir, { recursive: true });
-    await writeFile(path, `${JSON.stringify({ [key]: map }, null, 2)}\n`, "utf8");
+    await writeAtomically(path, `${JSON.stringify({ [key]: map }, null, 2)}\n`);
   }
 
   /**
@@ -594,12 +676,29 @@ export function createJobs(deps: JobsDeps) {
     return parsed;
   }
 
-  async function readPlistOrProblem(slug: string): Promise<{ plist: PlistFile | null; problem: string | null }> {
+  interface PlistRead {
+    plist: PlistFile | null;
+    problem: string | null;
+    /** The plist names another job's label: it is shown, and nothing that would load or change it is done. */
+    foreignLabel: boolean;
+  }
+
+  async function readPlistOrProblem(slug: string): Promise<PlistRead> {
+    let plist: PlistFile;
     try {
-      return { plist: await readPlist(plistPath(slug)), problem: null };
+      plist = await readPlist(plistPath(slug));
     } catch (error) {
-      return { plist: null, problem: `Could not read the plist: ${failureText(error)}` };
+      return { plist: null, problem: `Could not read the plist: ${failureText(error)}`, foreignLabel: false };
     }
+    if (plist.Label !== labelFor(slug)) {
+      const named = typeof plist.Label === "string" ? `"${plist.Label}"` : "no label";
+      return {
+        plist,
+        problem: `The plist names ${named}, not ${labelFor(slug)}, so the plugin will not load, change or delete it.`,
+        foreignLabel: true,
+      };
+    }
+    return { plist, problem: null, foreignLabel: false };
   }
 
   /** `launchctl print` for one label, or null when it is not loaded. */
@@ -622,17 +721,21 @@ export function createJobs(deps: JobsDeps) {
     return disabledLabelsOf(await launchctl(["print-disabled", domain()]));
   }
 
+  /**
+   * The slugs of the regular files under the prefix. A symlink is not one:
+   * writing through it would change whatever file it points at.
+   */
   async function listSlugs(): Promise<string[]> {
-    let names: string[];
+    let entries;
     try {
-      names = await readdir(launchAgentsDir);
+      entries = await readdir(launchAgentsDir, { withFileTypes: true });
     } catch (error) {
       if (isMissing(error)) return [];
       throw error;
     }
-    return names
-      .filter((name) => name.startsWith(LABEL_PREFIX) && name.endsWith(".plist"))
-      .map((name) => name.slice(LABEL_PREFIX.length, -".plist".length))
+    return entries
+      .filter((entry) => entry.isFile() && entry.name.startsWith(LABEL_PREFIX) && entry.name.endsWith(".plist"))
+      .map((entry) => entry.name.slice(LABEL_PREFIX.length, -".plist".length))
       .filter((slug) => slug !== "")
       .sort();
   }
@@ -646,15 +749,23 @@ export function createJobs(deps: JobsDeps) {
     if (!(await listSlugs()).includes(slug)) throw new Error(`No job "${slug}" under ${launchAgentsDir}`);
   }
 
+  /** `assertKnown`, and a plist that does not name some other label. Answers the read. */
+  async function assertOwned(slug: string): Promise<PlistRead> {
+    await assertKnown(slug);
+    const read = await readPlistOrProblem(slug);
+    if (read.foreignLabel) throw new Error(read.problem ?? `The plist for "${slug}" names another label`);
+    return read;
+  }
+
   async function readJob(
     slug: string,
-    read: { plist: PlistFile | null; problem: string | null },
+    read: PlistRead,
     disabled: ReadonlySet<string>,
     nameOf: (slug: string, dir: string) => string,
   ): Promise<Job> {
     const label = labelFor(slug);
     const dir = dataDirOf(read.plist, ownDir);
-    const [status, recentRuns] = await Promise.all([readStatus(label), readRuns(runsPath(dir, slug))]);
+    const [status, recentRuns, home] = await Promise.all([readStatus(label), readRuns(runsPath(dir, slug)), homeOf(dir)]);
     const base = {
       id: slug,
       label,
@@ -662,36 +773,57 @@ export function createJobs(deps: JobsDeps) {
       plistPath: plistPath(slug),
       logPath: logPath(dir, slug),
       dataDir: dir,
-      adopted: dir !== ownDir,
+      adopted: home === "paseo",
+      readOnlyData: home === "elsewhere",
       disabled: disabled.has(label),
       ...status,
       recentRuns,
     };
-    if (read.plist === null) {
-      return {
-        ...base,
-        command: "",
-        cwd: null,
-        schedule: { type: "none", description: "Unknown" },
-        managed: false,
-        problem: read.problem,
-      };
+    const unknown = { command: "", cwd: null, schedule: { type: "none" as const, description: "Unknown" }, managed: false };
+    if (read.plist === null) return { ...base, ...unknown, problem: read.problem };
+    let schedule: Schedule;
+    try {
+      schedule = scheduleOf(read.plist);
+    } catch (error) {
+      return { ...base, ...unknown, problem: errorMessage(error) };
     }
     const { command, managed } = commandOf(read.plist, dir);
     return {
       ...base,
       command,
       cwd: typeof read.plist.WorkingDirectory === "string" ? read.plist.WorkingDirectory : null,
-      schedule: scheduleOf(read.plist),
-      managed,
-      problem: null,
+      schedule,
+      managed: managed && !read.foreignLabel,
+      problem: read.problem,
     };
+  }
+
+  /**
+   * One row of the list, which never takes the list down with it: a plist
+   * whose contents do not make a valid row becomes a row naming the problem.
+   */
+  async function safeReadJob(
+    slug: string,
+    read: PlistRead,
+    disabled: ReadonlySet<string>,
+    nameOf: (slug: string, dir: string) => string,
+  ): Promise<Job> {
+    let problem: string;
+    try {
+      const job = await readJob(slug, read, disabled, nameOf);
+      const checked = JobSchema.safeParse(job);
+      if (checked.success) return job;
+      problem = `The plist holds something the plugin cannot show: ${checked.error.issues[0]?.message ?? "invalid"}`;
+    } catch (error) {
+      problem = `Could not read the job: ${errorMessage(error)}`;
+    }
+    return readJob(slug, { plist: null, problem, foreignLabel: read.foreignLabel }, disabled, nameOf);
   }
 
   async function loadJob(slug: string): Promise<Job> {
     const read = await readPlistOrProblem(slug);
     const [disabled, nameOf] = await Promise.all([readDisabled(), readNames([dataDirOf(read.plist, ownDir)])]);
-    return readJob(slug, read, disabled, nameOf);
+    return safeReadJob(slug, read, disabled, nameOf);
   }
 
   /** Where a job's files are, from its plist; this plugin's own directory when it names none. */
@@ -735,24 +867,54 @@ export function createJobs(deps: JobsDeps) {
   }
 
   /**
-   * Where a saved job's files go. A job keeps the data directory its plist
-   * already names — an adopted job keeps writing its history beside the Paseo
-   * plugin's, so nothing it ran before drops out of view — as long as that
-   * directory still has a runner. Everything else is this plugin's own.
+   * Where a saved job's files go. An adopted job keeps the Paseo directory
+   * its plist names — its history continues there, so nothing it ran before
+   * drops out of view — as long as that directory still has a runner.
+   * Everything else, including a job whose plist names some other directory,
+   * is this plugin's own.
    */
   async function directoryForSave(current: string | null): Promise<string> {
-    if (current !== null && current !== ownDir && (await exists(join(current, RUNNER_NAME)))) return current;
+    if (current !== null && (await homeOf(current)) === "paseo" && (await exists(join(current, RUNNER_NAME)))) return current;
     await ensureRunner();
     return ownDir;
   }
 
-  /** `path` is the login PATH, probed before any bootout so the job is not out of launchd for it. */
-  async function writeJob(slug: string, spec: JobSpec, dataDir: string, path: string): Promise<void> {
+  async function recordName(slug: string, name: string): Promise<void> {
     const names = await readStringMap(namesPath, "names", warn);
-    names[slug] = spec.name;
+    names[slug] = name;
     await writeOwn(namesPath, "names", names);
+  }
+
+  /** Replaces an existing job's plist whole. `path` is the login PATH, probed before any bootout. */
+  async function replacePlist(slug: string, spec: JobSpec, dataDir: string, path: string): Promise<void> {
+    await writeAtomically(plistPath(slug), plistXml({ label: labelFor(slug), slug, spec, dataDir, path }));
+    plistCache.delete(plistPath(slug));
+  }
+
+  /**
+   * Writes a new job's plist under the first free slug for `name`. The file is
+   * linked into place, which fails rather than replaces when the name was
+   * taken meanwhile — by the Paseo plugin, say — and then the next slug is tried.
+   */
+  async function reservePlist(name: string, spec: JobSpec, dataDir: string, path: string): Promise<string> {
     await mkdir(launchAgentsDir, { recursive: true });
-    await writeFile(plistPath(slug), plistXml({ label: labelFor(slug), slug, spec, dataDir, path }), "utf8");
+    const taken = new Set(await listSlugs());
+    const base = slugify(name);
+    for (let n = 1; ; n += 1) {
+      const slug = n === 1 ? base : `${base}-${n}`;
+      if (taken.has(slug)) continue;
+      const temporary = join(launchAgentsDir, `.launchd-jobs-${randomUUID()}.tmp`);
+      try {
+        await writeFile(temporary, plistXml({ label: labelFor(slug), slug, spec, dataDir, path }), "utf8");
+        await link(temporary, plistPath(slug));
+        return slug;
+      } catch (error) {
+        if ((error as { code?: string }).code !== "EEXIST") throw error;
+        taken.add(slug);
+      } finally {
+        await rm(temporary, { force: true });
+      }
+    }
   }
 
   /** Ignores "not loaded"; anything else is a real failure. */
@@ -770,22 +932,13 @@ export function createJobs(deps: JobsDeps) {
     await launchctl(["bootstrap", domain(), plistPath(slug)]);
   }
 
-  async function uniqueSlug(name: string): Promise<string> {
-    const taken = new Set(await listSlugs());
-    const base = slugify(name);
-    if (!taken.has(base)) return base;
-    for (let n = 2; ; n += 1) {
-      const candidate = `${base}-${n}`;
-      if (!taken.has(candidate)) return candidate;
-    }
-  }
-
   // -- Handlers --------------------------------------------------------------
 
   return {
     labelFor,
     logPath,
     dataDirFor,
+    homeOf,
     assertKnown,
 
     async list(): Promise<JobList> {
@@ -794,105 +947,122 @@ export function createJobs(deps: JobsDeps) {
       const reads = await Promise.all(slugs.map((slug) => readPlistOrProblem(slug)));
       const dirs = reads.map((read) => dataDirOf(read.plist, ownDir));
       const [disabled, nameOf] = await Promise.all([readDisabled(), readNames(dirs)]);
-      const jobs = await Promise.all(slugs.map((slug, index) => readJob(slug, reads[index]!, disabled, nameOf)));
+      const jobs = await Promise.all(slugs.map((slug, index) => safeReadJob(slug, reads[index]!, disabled, nameOf)));
       return { supported: true, jobs, launchAgentsDir };
     },
 
     async create(input: JobSpec): Promise<Job> {
       assertSupported();
       const spec = normaliseSpec(input);
-      const slug = await uniqueSlug(spec.name);
-      const [dataDir, path] = await Promise.all([directoryForSave(null), loginShellPath()]);
-      await writeJob(slug, spec, dataDir, path);
-      // The file stays if launchd refuses it: the list shows it unloaded with
-      // the error in hand, and Enable retries once the cause is fixed.
-      await bootstrap(slug);
-      return loadJob(slug);
+      return exclusive(async () => {
+        const [dataDir, path] = await Promise.all([directoryForSave(null), loginShellPath()]);
+        const slug = await reservePlist(spec.name, spec, dataDir, path);
+        await recordName(slug, spec.name);
+        // The file stays if launchd refuses it: the list shows it unloaded with
+        // the error in hand, and Enable retries once the cause is fixed.
+        await bootstrap(slug);
+        return loadJob(slug);
+      });
     },
 
     async update(input: { id: string; spec: JobSpec }): Promise<Job> {
       assertSupported();
-      await assertKnown(input.id);
       const spec = normaliseSpec(input.spec);
-      const label = labelFor(input.id);
-      const [disabled, current] = await Promise.all([readDisabled(), readPlistOrProblem(input.id)]);
-      const [dataDir, path] = await Promise.all([
-        directoryForSave(current.plist === null ? null : dataDirOf(current.plist, ownDir)),
-        loginShellPath(),
-      ]);
-      // launchd does not reread a changed plist; the job has to leave and return.
-      await bootoutIfLoaded(label);
-      await writeJob(input.id, spec, dataDir, path);
-      if (!disabled.has(label)) await bootstrap(input.id);
-      return loadJob(input.id);
+      return exclusive(async () => {
+        const current = await assertOwned(input.id);
+        const label = labelFor(input.id);
+        const [disabled, dataDir, path] = await Promise.all([
+          readDisabled(),
+          directoryForSave(current.plist === null ? null : dataDirOf(current.plist, ownDir)),
+          loginShellPath(),
+        ]);
+        // launchd does not reread a changed plist; the job has to leave and return.
+        await bootoutIfLoaded(label);
+        await recordName(input.id, spec.name);
+        await replacePlist(input.id, spec, dataDir, path);
+        if (!disabled.has(label)) await bootstrap(input.id);
+        return loadJob(input.id);
+      });
     },
 
     async delete(input: { id: string }): Promise<Record<string, never>> {
       assertSupported();
-      await assertKnown(input.id);
-      const label = labelFor(input.id);
-      const { plist } = await readPlistOrProblem(input.id);
-      const dir = dataDirOf(plist, ownDir);
-      // A job's log and history go with it — in another plugin's directory too,
-      // as deleting did in Paseo, but only when the plist really is that
-      // directory's runner shape. A hand-written plist could name any directory.
-      const ownsHistory = dir === ownDir || (plist !== null && commandOf(plist, dir).managed);
-      await bootoutIfLoaded(label);
-      // A `disable` outlives the plist: launchd keeps it per label in its own
-      // override store, so without this a later job with the same slug would be
-      // born disabled.
-      try {
-        await launchctl(["enable", `${domain()}/${label}`]);
-      } catch (error) {
-        warn(`could not clear the disabled flag for ${label}: ${errorMessage(error)}`);
-      }
-      const log = logPath(dir, input.id);
-      const history = ownsHistory ? [log, `${log}.1`, runsPath(dir, input.id)] : [];
-      for (const path of [plistPath(input.id), ...history]) {
-        try {
-          await unlink(path);
-        } catch (error) {
-          if (!isMissing(error)) throw error;
+      return exclusive(async () => {
+        const { plist } = await assertOwned(input.id);
+        const label = labelFor(input.id);
+        const dir = dataDirOf(plist, ownDir);
+        // A job's log and history go with it — in the Paseo plugin's directory
+        // too, as deleting did in Paseo — but only in a directory this plugin
+        // trusts; anywhere else a plist names is left as it is.
+        const home = await homeOf(dir);
+        const log = logPath(dir, input.id);
+        const candidates = home === "elsewhere" ? [] : [log, `${log}.1`, runsPath(dir, input.id)];
+        const history: string[] = [];
+        for (const file of candidates) {
+          if (await insideOwnSubdirectory(dir, file)) history.push(file);
+          else warn(`left ${file} alone: its folder is a link out of ${dir}`);
         }
-      }
-      plistCache.delete(plistPath(input.id));
-      const names = await readStringMap(namesPath, "names", warn);
-      if (input.id in names) {
-        delete names[input.id];
-        await writeOwn(namesPath, "names", names);
-      }
-      const acks = await readStringMap(acksPath, "acknowledged", warn);
-      if (input.id in acks) {
-        delete acks[input.id];
-        await writeOwn(acksPath, "acknowledged", acks);
-      }
-      return {};
+        await bootoutIfLoaded(label);
+        // A `disable` outlives the plist: launchd keeps it per label in its own
+        // override store, so without this a later job with the same slug would be
+        // born disabled. When it cannot be cleared, the plist stays for a retry.
+        try {
+          await launchctl(["enable", `${domain()}/${label}`]);
+        } catch (error) {
+          throw new Error(
+            `The job is unloaded but kept, because launchd would not clear its disabled flag; delete it again to retry. ${errorMessage(error)}`,
+          );
+        }
+        for (const path of [plistPath(input.id), ...history]) {
+          try {
+            await unlink(path);
+          } catch (error) {
+            if (!isMissing(error)) throw error;
+          }
+        }
+        plistCache.delete(plistPath(input.id));
+        const names = await readStringMap(namesPath, "names", warn);
+        if (input.id in names) {
+          delete names[input.id];
+          await writeOwn(namesPath, "names", names);
+        }
+        const acks = await readStringMap(acksPath, "acknowledged", warn);
+        if (input.id in acks) {
+          delete acks[input.id];
+          await writeOwn(acksPath, "acknowledged", acks);
+        }
+        return {};
+      });
     },
 
     async run(input: { id: string }): Promise<Record<string, never>> {
       assertSupported();
-      await assertKnown(input.id);
-      const label = labelFor(input.id);
-      const status = await readStatus(label);
-      if (!status.loaded) throw new Error("The job is not loaded; enable it first");
-      await launchctl(["kickstart", `${domain()}/${label}`]);
-      return {};
+      return exclusive(async () => {
+        await assertOwned(input.id);
+        const label = labelFor(input.id);
+        const status = await readStatus(label);
+        if (!status.loaded) throw new Error("The job is not loaded; enable it first");
+        await launchctl(["kickstart", `${domain()}/${label}`]);
+        return {};
+      });
     },
 
     async setEnabled(input: { id: string; enabled: boolean }): Promise<Job> {
       assertSupported();
-      await assertKnown(input.id);
-      const label = labelFor(input.id);
-      if (input.enabled) {
-        // `enable` first: bootstrapping a disabled label is refused.
-        await launchctl(["enable", `${domain()}/${label}`]);
-        await bootoutIfLoaded(label);
-        await bootstrap(input.id);
-      } else {
-        await bootoutIfLoaded(label);
-        await launchctl(["disable", `${domain()}/${label}`]);
-      }
-      return loadJob(input.id);
+      return exclusive(async () => {
+        await assertOwned(input.id);
+        const label = labelFor(input.id);
+        if (input.enabled) {
+          // `enable` first: bootstrapping a disabled label is refused.
+          await launchctl(["enable", `${domain()}/${label}`]);
+          await bootoutIfLoaded(label);
+          await bootstrap(input.id);
+        } else {
+          await bootoutIfLoaded(label);
+          await launchctl(["disable", `${domain()}/${label}`]);
+        }
+        return loadJob(input.id);
+      });
     },
 
     async log(input: { id: string; from?: number }): Promise<LogChunk> {
@@ -935,24 +1105,28 @@ export function createJobs(deps: JobsDeps) {
      */
     async acknowledge(input: { id: string }): Promise<Record<string, never>> {
       assertSupported();
-      const slugs = await listSlugs();
-      if (!slugs.includes(input.id)) throw new Error(`No job "${input.id}" under ${launchAgentsDir}`);
-      const dir = await dataDirFor(input.id);
-      const [last, acks] = await Promise.all([
-        readRuns(runsPath(dir, input.id)).then((runs) => runs[0]),
-        readStringMap(acksPath, "acknowledged", warn),
-      ]);
-      const known = new Set(slugs);
-      const next: Record<string, string> = {};
-      for (const [slug, startedAt] of Object.entries(acks)) {
-        if (known.has(slug)) next[slug] = startedAt;
-      }
-      if (last === undefined || last.exitCode === 0) delete next[input.id];
-      else next[input.id] = last.startedAt;
-      await writeOwn(acksPath, "acknowledged", next);
-      return {};
+      return exclusive(() => acknowledgeNow(input));
     },
   };
+
+  async function acknowledgeNow(input: { id: string }): Promise<Record<string, never>> {
+    const slugs = await listSlugs();
+    if (!slugs.includes(input.id)) throw new Error(`No job "${input.id}" under ${launchAgentsDir}`);
+    const dir = await dataDirFor(input.id);
+    const [last, acks] = await Promise.all([
+      readRuns(runsPath(dir, input.id)).then((runs) => runs[0]),
+      readStringMap(acksPath, "acknowledged", warn),
+    ]);
+    const known = new Set(slugs);
+    const next: Record<string, string> = {};
+    for (const [slug, startedAt] of Object.entries(acks)) {
+      if (known.has(slug)) next[slug] = startedAt;
+    }
+    if (last === undefined || last.exitCode === 0) delete next[input.id];
+    else next[input.id] = last.startedAt;
+    await writeOwn(acksPath, "acknowledged", next);
+    return {};
+  }
 }
 
 export type Jobs = ReturnType<typeof createJobs>;

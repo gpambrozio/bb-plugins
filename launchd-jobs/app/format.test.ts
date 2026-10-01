@@ -14,6 +14,7 @@ function job(patch: Partial<Job> = {}): Job {
     managed: true,
     dataDir: "/data",
     adopted: false,
+    readOnlyData: false,
     loaded: true,
     disabled: false,
     running: false,

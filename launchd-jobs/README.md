@@ -40,7 +40,9 @@ The page is **Scheduled jobs** in the sidebar; the palette has *Scheduled jobs: 
 
 Each job is one file, `~/Library/LaunchAgents/com.paseo-plugins.launchd-jobs.<name>.plist`. The plugin
 only lists, writes and removes files whose label starts with that prefix, so your other LaunchAgents are
-never touched. A plist you write by hand under the prefix shows up too.
+never touched. A plist you write by hand under the prefix shows up too. A file under the prefix that is
+a link, or that names some other job inside, is left alone: the first is not shown, the second is shown
+with what is wrong and cannot be changed from here.
 
 The command runs through `/bin/zsh -lc`, so it can be anything you would type at a prompt, with the
 PATH your interactive shell reports. launchd's own PATH is `/usr/bin:/bin:/usr/sbin:/sbin` with nothing

@@ -137,6 +137,12 @@ export function JobDetail({
           shape.
         </p>
       ) : null}
+      {job.readOnlyData ? (
+        <p className="text-sm text-muted-foreground">
+          Its log and history are in <span className="break-all font-mono text-xs">{job.dataDir}</span>, a folder this plugin
+          only reads. Deleting the job leaves them there; saving an edit moves the job to the plugin's own folder.
+        </p>
+      ) : null}
       {job.adopted ? (
         <p className="text-sm text-muted-foreground">
           Made by the Paseo plugin. Its runner, log and history stay in <span className="break-all font-mono text-xs">{job.dataDir}</span>,

@@ -1,11 +1,12 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { JobListSchema } from "../shared/jobs";
 import { createFakeLaunchd, FAKE_LOGIN_PATH, FAKE_UID } from "./fake-launchd";
 import {
   commandOf,
@@ -42,6 +43,7 @@ beforeEach(async () => {
   warnings.length = 0;
   jobs = createJobs({
     ownDir,
+    paseoDirs: [paseoDir],
     launchAgentsDir: agents,
     platform: "darwin",
     uid: FAKE_UID,
@@ -376,9 +378,178 @@ describe.skipIf(!onMac)("the ownership boundary", () => {
   });
 });
 
+describe.skipIf(!onMac)("changes that arrive together", () => {
+  const spec = (command: string) => ({ name: "Backup", command, cwd: null, schedule: { type: "interval" as const, seconds: 600 } });
+
+  it("gives two creates of the same name two jobs, each with its own command", async () => {
+    const [first, second] = await Promise.all([jobs.create(spec("first-command")), jobs.create(spec("second-command"))]);
+
+    expect(new Set([first.id, second.id])).toEqual(new Set(["backup", "backup-2"]));
+    expect((await readPlistJson(plistPath(first.id))).ProgramArguments).toContain(first.command);
+    expect((await readPlistJson(plistPath(second.id))).ProgramArguments).toContain(second.command);
+    expect([first.command, second.command].sort()).toEqual(["first-command", "second-command"]);
+    expect(JSON.parse(await readFile(join(ownDir, "jobs.json"), "utf8")).names).toEqual({ backup: "Backup", "backup-2": "Backup" });
+  });
+
+  it("takes the next slug when another writer created the plist under it meanwhile", async () => {
+    // A plist the Paseo plugin wrote between this plugin listing and writing.
+    const listed = jobs.create(spec("mine"));
+    await put(plistPath("backup"), "<plist/>");
+    expect((await listed).id).toBe("backup-2");
+    expect(await readFile(plistPath("backup"), "utf8")).toBe("<plist/>");
+  });
+
+  it("keeps both acknowledgements when two arrive at once", async () => {
+    await paseoInstall();
+    await put(join(paseoDir, "runs", "sync-notes.jsonl"), runLine("2026-01-05T03:00:00Z", 2));
+
+    await Promise.all([jobs.acknowledge({ id: "nightly-report" }), jobs.acknowledge({ id: "sync-notes" })]);
+
+    expect(JSON.parse(await readFile(join(ownDir, "acknowledged.json"), "utf8")).acknowledged).toEqual({
+      "nightly-report": "2026-01-02T02:00:00Z",
+      "sync-notes": "2026-01-05T03:00:00Z",
+    });
+  });
+});
+
+describe.skipIf(!onMac)("plists that only look like this plugin's", () => {
+  const spec = { name: "x", command: "true", cwd: null, schedule: { type: "interval" as const, seconds: 60 } };
+
+  it("ignores a prefixed symlink, and never writes through it", async () => {
+    const victim = join(root, "unrelated.plist");
+    await put(victim, "<plist>someone else's</plist>");
+    await symlink(victim, plistPath("linked"));
+
+    expect((await jobs.list()).jobs).toEqual([]);
+    await expect(jobs.update({ id: "linked", spec })).rejects.toThrow(/No job/);
+    await expect(jobs.delete({ id: "linked" })).rejects.toThrow(/No job/);
+    expect(await readFile(victim, "utf8")).toBe("<plist>someone else's</plist>");
+  });
+
+  it("shows a prefixed plist that names another label, and refuses to load, change, run or delete it", async () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict><key>Label</key><string>com.example.other</string><key>ProgramArguments</key><array><string>/usr/bin/true</string></array></dict></plist>\n`;
+    await put(plistPath("impostor"), xml);
+
+    const [job] = (await jobs.list()).jobs;
+    expect(job).toMatchObject({ id: "impostor", managed: false, problem: expect.stringContaining("com.example.other") });
+    await expect(jobs.update({ id: "impostor", spec })).rejects.toThrow(/com\.example\.other/);
+    await expect(jobs.setEnabled({ id: "impostor", enabled: true })).rejects.toThrow(/com\.example\.other/);
+    await expect(jobs.run({ id: "impostor" })).rejects.toThrow(/com\.example\.other/);
+    await expect(jobs.delete({ id: "impostor" })).rejects.toThrow(/com\.example\.other/);
+    expect(await readFile(plistPath("impostor"), "utf8")).toBe(xml);
+    expect(launchd.calls.filter(([verb]) => !["print", "print-disabled"].includes(verb!))).toEqual([]);
+  });
+});
+
+describe.skipIf(!onMac)("data directories this plugin does not trust", () => {
+  /** A plist in the full runner shape, naming a directory that is neither this plugin's nor Paseo's. */
+  async function strangerInstall(): Promise<string> {
+    const stranger = join(root, "stranger");
+    await put(join(stranger, "runner.sh"), "#!/bin/zsh\n");
+    await put(join(stranger, "logs", "lookalike.log"), "someone's log\n");
+    await put(join(stranger, "runs", "lookalike.jsonl"), runLine("2026-01-01T00:00:00Z", 0));
+    await put(
+      plistPath("lookalike"),
+      plistXml({
+        label: `${LABEL_PREFIX}lookalike`,
+        slug: "lookalike",
+        spec: { name: "Lookalike", command: "true", cwd: null, schedule: { type: "interval", seconds: 60 } },
+        dataDir: stranger,
+        path: "/usr/bin:/bin",
+      }),
+    );
+    return stranger;
+  }
+
+  it("shows the job and its history read-only", async () => {
+    const stranger = await strangerInstall();
+    const [job] = (await jobs.list()).jobs;
+    expect(job).toMatchObject({ managed: true, adopted: false, readOnlyData: true, dataDir: stranger, recentRuns: [{ exitCode: 0 }] });
+  });
+
+  it("deletes only the plist, leaving the files in that directory", async () => {
+    const stranger = await strangerInstall();
+    const before = await snapshot(stranger);
+
+    await jobs.delete({ id: "lookalike" });
+
+    expect((await jobs.list()).jobs).toEqual([]);
+    expect(await snapshot(stranger)).toEqual(before);
+  });
+
+  it("moves an edited job into the plugin's own directory, writing nothing in that one", async () => {
+    const stranger = await strangerInstall();
+    const before = await snapshot(stranger);
+
+    const job = await jobs.update({
+      id: "lookalike",
+      spec: { name: "Lookalike", command: "true", cwd: null, schedule: { type: "interval", seconds: 60 } },
+    });
+
+    expect(job).toMatchObject({ dataDir: ownDir, readOnlyData: false });
+    expect(await snapshot(stranger)).toEqual(before);
+  });
+
+  it("leaves a Paseo job's log alone when its logs folder is a link out of the Paseo directory", async () => {
+    await paseoInstall();
+    const outside = join(root, "outside-logs");
+    await put(join(outside, "nightly-report.log"), "not the job's to delete\n");
+    await rm(join(paseoDir, "logs"), { recursive: true });
+    await symlink(outside, join(paseoDir, "logs"));
+
+    await jobs.delete({ id: "nightly-report" });
+
+    expect(await readFile(join(outside, "nightly-report.log"), "utf8")).toBe("not the job's to delete\n");
+    expect(await readdir(join(paseoDir, "runs"))).toEqual(["sync-notes.jsonl"]);
+  });
+
+  it("still trusts the Paseo directory when the plist names it through a symlink", async () => {
+    await paseoInstall();
+    const alias = join(root, "paseo-alias");
+    await symlink(paseoDir, alias);
+    expect(await jobs.homeOf(alias)).toBe("paseo");
+    expect(await jobs.homeOf(join(root, "paseo", "plugin-data", "launchd-jobs-lookalike"))).toBe("elsewhere");
+  });
+});
+
+describe.skipIf(!onMac)("a plist launchd would refuse", () => {
+  it("is a row with its problem, and the rest of the list still answers", async () => {
+    await paseoInstall();
+    await put(
+      plistPath("bad-minute"),
+      `<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict><key>Label</key><string>${LABEL_PREFIX}bad-minute</string><key>ProgramArguments</key><array><string>/usr/bin/true</string></array><key>StartCalendarInterval</key><dict><key>Minute</key><integer>99</integer></dict></dict></plist>\n`,
+    );
+
+    const list = await jobs.list();
+
+    expect(() => JobListSchema.parse(list)).not.toThrow();
+    expect(list.jobs.map((job) => [job.id, job.problem === null])).toEqual([
+      ["bad-minute", false],
+      ["nightly-report", true],
+      ["sync-notes", true],
+    ]);
+    expect(list.jobs[0]?.problem).toMatch(/Minute 99/);
+  });
+});
+
+describe.skipIf(!onMac)("deleting when launchd cannot clear the disabled flag", () => {
+  it("fails and keeps the plist, so a later job of that slug is not born disabled", async () => {
+    await jobs.create({ name: "Stubborn", command: "true", cwd: null, schedule: { type: "interval", seconds: 60 } });
+    await jobs.setEnabled({ id: "stubborn", enabled: false });
+    launchd.refuseEnable.add(`${LABEL_PREFIX}stubborn`);
+
+    await expect(jobs.delete({ id: "stubborn" })).rejects.toThrow(/disabled flag/);
+
+    expect((await jobs.list()).jobs.map((job) => job.id)).toEqual(["stubborn"]);
+    launchd.refuseEnable.clear();
+    await jobs.delete({ id: "stubborn" });
+    expect(launchd.disabled.size).toBe(0);
+  });
+});
+
 describe("off macOS", () => {
   it("lists nothing and says so, and refuses every change", async () => {
-    const linux = createJobs({ ownDir, launchAgentsDir: agents, platform: "linux", uid: 1000, run: launchd.run, envPath: undefined, warn: () => {} });
+    const linux = createJobs({ ownDir, paseoDirs: [], launchAgentsDir: agents, platform: "linux", uid: 1000, run: launchd.run, envPath: undefined, warn: () => {} });
     expect(await linux.list()).toEqual({ supported: false, jobs: [], launchAgentsDir: agents });
     expect(await linux.health()).toEqual({ supported: false, jobCount: 0, failing: [] });
     await expect(linux.run({ id: "x" })).rejects.toThrow(/macOS/);

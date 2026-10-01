@@ -39,8 +39,11 @@ let ownDir = "";
 function jobsIn(dataDir: string): Jobs {
   if (jobs === null) {
     ownDir = dataDir;
+    // Where the Paseo plugin keeps its jobs' files, now and before its own move.
+    const paseoHome = process.env.PASEO_HOME ?? join(homedir(), ".paseo");
     jobs = createJobs({
       ownDir: dataDir,
+      paseoDirs: [join(paseoHome, "plugin-data", "launchd-jobs"), join(paseoHome, "plugins", "launchd-jobs")],
       launchAgentsDir: join(homedir(), "Library", "LaunchAgents"),
       platform: process.platform,
       uid: process.getuid?.(),

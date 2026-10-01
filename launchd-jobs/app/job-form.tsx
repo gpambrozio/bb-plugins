@@ -115,6 +115,11 @@ export function JobForm({
         <h2 className="min-w-0 flex-1 truncate text-lg font-semibold">{job === null ? "New job" : `Edit ${job.name}`}</h2>
       </div>
 
+      {job?.readOnlyData ? (
+        <p className="text-sm text-muted-foreground">
+          Saving moves this job to the plugin's own folder; its earlier log and history stay where they are.
+        </p>
+      ) : null}
       {job?.adopted ? (
         <p className="text-sm text-muted-foreground">Saving keeps this job's log and history where the Paseo plugin put them.</p>
       ) : null}

@@ -50,6 +50,25 @@ planned.
 else there is ever read, written or booted out. Every handler that takes an id first checks that it
 is one of those slugs (`assertKnown`), which also keeps an id from naming a path anywhere else.
 
+- **Only regular files count.** A symlink under the prefix is not listed, so nothing writes through it
+  to whatever it points at.
+- **The plist's `Label` must be the one its file name gives.** `bootstrap` loads the label *inside*
+  the file, so a prefixed file naming another label is listed with that as its problem, and every
+  change — update, enable, disable, run, delete — is refused (`assertOwned`). An unreadable plist is
+  still ours by name: it can be rewritten or deleted.
+- **Plists are replaced whole**: written to a temporary name in the same directory, then renamed over
+  the old one. A new job's plist is *linked* into place, which fails instead of replacing when that
+  slug was taken meanwhile (by the Paseo plugin, say); the next slug is tried.
+
+## One change at a time
+
+Every handler that changes something on a Mac — create, update, delete, enable/disable, run,
+acknowledge — runs inside `exclusive`, one after another. Choosing a slug and writing its plist, a
+read-modify-write of `jobs.json` or `acknowledged.json`, and a bootout/rewrite/bootstrap never
+interleave with another change. Reads (`list`, `log`, `health`) do not wait. The JSON files are also
+written atomically, so a reader never sees half a file. This is per host worker; the Paseo plugin,
+running elsewhere, is guarded only by the exclusive link above.
+
 ## Adopting the Paseo plugin's jobs
 
 Each plist names its own data directory in `EnvironmentVariables.PASEO_LAUNCHD_JOBS_DIR`, and its
@@ -69,15 +88,22 @@ keep the log markers and the history line identical to the Paseo runner's.
 - **`managed`** means the plist is the four-element runner shape whose runner is
   `<the directory the plist names>/runner.sh`. A job made by either plugin is managed here; a job made
   here shows as unmanaged in the Paseo plugin, whose check is against its own runner path.
-- **Editing an adopted job keeps its paths.** The plist is rewritten with the same runner, data
+- **Editing an adopted job keeps its paths** (only for a trusted Paseo directory). The plist is rewritten with the same runner, data
   directory and stderr path, so its history continues where it is and the Paseo plugin, if still
   installed, sees a job it still manages. This plugin never writes a runner into a directory it does
   not own. Only if that directory has lost its `runner.sh` does the job move to this plugin's own
   directory (its earlier history stays behind).
+- **Trusted directories.** This plugin writes or deletes in exactly two kinds of data directory: its
+  own, and the Paseo plugin's (`$PASEO_HOME/plugin-data/launchd-jobs/` and the older
+  `$PASEO_HOME/plugins/launchd-jobs/`, `PASEO_HOME` defaulting to `~/.paseo`). `homeOf` compares real
+  paths, so a symlink to a trusted directory is trusted and a look-alike path is not. Any other
+  directory a plist names is **read-only**: its log and history are shown (`readOnlyData`), deleting
+  the job removes only the plist, and saving an edit moves the job to this plugin's own directory.
+  `managed` (the runner shape) grants nothing; a hand-written plist can copy it.
 - **Deleting an adopted job** removes its plist and its own log and history files from the Paseo
-  directory, as deleting did in Paseo. Nothing else there is touched; its stale `jobs.json` entry is
-  harmless. Outside this plugin's own directory, history is deleted only for a managed plist: a
-  hand-written plist can name any directory, and deleting it removes only the plist.
+  directory, as deleting did in Paseo — unless that directory's `logs/` or `runs/` is a link out of
+  it, in which case those files are left alone. Nothing else there is touched; its stale `jobs.json`
+  entry is harmless.
 - The Paseo plugin's own migration out of its older `plugins/launchd-jobs/` directory
   (`data-dir.ts`, `moveLegacyFiles`, the forwarder) is not ported. A plist still pointing there simply
   shows that directory's files; the Paseo plugin finishes its own move.
@@ -97,6 +123,7 @@ supplies the uid.
   bootout then `disable`, so the job stops now and stays stopped after a reboot.
 - **Delete runs `enable` before removing the plist.** `disable` is stored per label in launchd's
   override database, not in the plist; without this a later job with the same slug is born disabled.
+  If `enable` fails, the delete fails and the plist stays (unloaded), so deleting again retries.
   The override entry itself (`"<label>" => enabled`) stays in `print-disabled`; launchctl has no way
   to remove it.
 - **A failed create leaves the plist in place.** The list shows it "Not loaded" with the error in a
@@ -131,8 +158,11 @@ hang.
 `toCalendarEntries` is the cartesian product of every restricted field. `MAX_ENTRIES` (1000) is
 enforced in `parseCron`, so the form refuses it before the host does. Weekday `7` folds to `0`.
 `describeCron` appends "(both must match)" when day and weekday are both restricted: cron ORs them,
-launchd ANDs them. `fromCalendarEntries` only accepts entries that are exactly such a product, which
-is also what a hand-written plist usually is; anything else lists as a raw calendar.
+launchd ANDs them. `fromCalendarEntries` only accepts entries that are exactly such a product — compared as
+sets, so a duplicated entry cannot stand in for a missing one — which is also what a hand-written plist
+usually is; anything else lists as a raw calendar. A calendar value launchd cannot use (`Minute 99`)
+makes that row's `problem`; every row is checked against `JobSchema` before it is answered, so one
+bad plist never fails the whole list.
 
 ## Follow
 

@@ -204,10 +204,13 @@ export function fromCalendarEntries(entries: readonly CalendarEntry[]): CronFiel
     fields[field] = [...values].sort((a, b) => a - b);
   }
   const complete = fields as CronFields;
-  if (entryCount(complete) !== entries.length) return null;
+  // Compared as sets: a duplicated entry must not make up the count for a
+  // missing one, or saving the expression would add a run nobody scheduled.
+  const actual = new Set(entries.map(entryKey));
   const expected = new Set(toCalendarEntries(complete).map(entryKey));
-  for (const entry of entries) {
-    if (!expected.has(entryKey(entry))) return null;
+  if (actual.size !== expected.size) return null;
+  for (const key of actual) {
+    if (!expected.has(key)) return null;
   }
   return complete;
 }
