@@ -14,6 +14,7 @@ specific to `launchd-jobs`.
 | `host.ts` | The host entry: binds `shared/host-contract.ts` to `host/jobs.ts` and `host/follow.ts`. |
 | `host/jobs.ts` | Every `launchctl` and `plutil` call, the plist writer, the runner, logs, history, names, acknowledgements. |
 | `host/follow.ts` | Follow mode: a native watch on a job's log directory, with an expiry. |
+| `host/run-command.ts` | Every external command: bounded by a timeout and a cancellation signal, with SIGKILL escalation. |
 | `server.ts` | Forwards each app call to the chosen Mac's host entry; relays log changes; runs the health poll. |
 | `server/health.ts` | The failing count: which Macs are asked, and when it is published. |
 | `shared/cron.ts` | cron ⇄ `StartCalendarInterval`, and the sentences. In the app and host bundles. |
@@ -54,8 +55,10 @@ is one of those slugs (`assertKnown`), which also keeps an id from naming a path
   to whatever it points at.
 - **The plist's `Label` must be the one its file name gives.** `bootstrap` loads the label *inside*
   the file, so a prefixed file naming another label is listed with that as its problem, and every
-  change — update, enable, disable, run, delete — is refused (`assertOwned`). An unreadable plist is
-  still ours by name: it can be rewritten or deleted.
+  change — update, enable, disable, run, delete — is refused (`assertOwned`). Every change that
+  loads, rewrites or runs a job needs a plist that *parsed* with the matching label: an unreadable
+  plist, even one that fails to convert only this once, can only be deleted, because deleting boots
+  out this slug's own label and removes the file without trusting what it says.
 - **Plists are replaced whole**: written to a temporary name in the same directory, then renamed over
   the old one. A new job's plist is *linked* into place, which fails instead of replacing when that
   slug was taken meanwhile (by the Paseo plugin, say); the next slug is tried.
@@ -68,6 +71,14 @@ read-modify-write of `jobs.json` or `acknowledged.json`, and a bootout/rewrite/b
 interleave with another change. Reads (`list`, `log`, `health`) do not wait. The JSON files are also
 written atomically, so a reader never sees half a file. This is per host worker; the Paseo plugin,
 running elsewhere, is guarded only by the exclusive link above.
+
+The lock's hold is bounded. Each handler passes its call's `context.signal`: a change cancelled while
+it waits (the RPC timed out, the worker is stopping) is skipped, not run late, and one cancelled
+while running has its current command stopped — the signal reaches every command through an
+`AsyncLocalStorage`, so reads running beside it are unaffected. Commands run through
+`createRunCommand` (`host/run-command.ts`): on timeout or abort the child gets SIGTERM, then SIGKILL
+after `KILL_GRACE_MS`, and after another grace the promise rejects even if a grandchild still holds
+its output open. `execFile`'s own `timeout` only sends SIGTERM, which a child may ignore forever.
 
 ## Adopting the Paseo plugin's jobs
 
@@ -159,7 +170,9 @@ hang.
 enforced in `parseCron`, so the form refuses it before the host does. Weekday `7` folds to `0`.
 `describeCron` appends "(both must match)" when day and weekday are both restricted: cron ORs them,
 launchd ANDs them. `fromCalendarEntries` only accepts entries that are exactly such a product — compared as
-sets, so a duplicated entry cannot stand in for a missing one — which is also what a hand-written plist
+sets, so a duplicated entry cannot stand in for a missing one, and the size of the implied product is
+checked against the number of distinct entries *before* the product is built, so a few entries
+spanning every field cannot make it expand into millions — which is also what a hand-written plist
 usually is; anything else lists as a raw calendar. A calendar value launchd cannot use (`Minute 99`)
 makes that row's `problem`; every row is checked against `JobSchema` before it is answered, so one
 bad plist never fails the whole list.

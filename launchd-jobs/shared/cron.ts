@@ -207,6 +207,9 @@ export function fromCalendarEntries(entries: readonly CalendarEntry[]): CronFiel
   // Compared as sets: a duplicated entry must not make up the count for a
   // missing one, or saving the expression would add a run nobody scheduled.
   const actual = new Set(entries.map(entryKey));
+  // Checked before the product is built: a few entries spanning every field
+  // would otherwise expand to millions of combinations just to be refused.
+  if (entryCount(complete) !== actual.size) return null;
   const expected = new Set(toCalendarEntries(complete).map(entryKey));
   if (actual.size !== expected.size) return null;
   for (const key of actual) {

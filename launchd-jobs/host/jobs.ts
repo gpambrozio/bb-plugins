@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import { chmod, link, mkdir, open, readdir, readFile, realpath, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -65,7 +66,7 @@ export interface CommandFailure extends Error {
 export type RunCommand = (
   file: string,
   args: readonly string[],
-  options?: { timeoutMs?: number; env?: NodeJS.ProcessEnv },
+  options?: { timeoutMs?: number; env?: NodeJS.ProcessEnv; signal?: AbortSignal },
 ) => Promise<{ stdout: string }>;
 
 export interface JobsDeps {
@@ -522,7 +523,17 @@ async function readStringMap(path: string, key: string, warn: (message: string) 
 export type DataHome = "plugin" | "paseo" | "elsewhere";
 
 export function createJobs(deps: JobsDeps) {
-  const { ownDir, launchAgentsDir, run, warn } = deps;
+  const { ownDir, launchAgentsDir, warn } = deps;
+
+  /**
+   * The cancellation signal of the change being made now, carried to every
+   * command it runs: an aborted call stops its running command (see
+   * `createRunCommand`) instead of holding the change lock. Reads run outside
+   * it and are not affected.
+   */
+  const changeSignal = new AsyncLocalStorage<AbortSignal | undefined>();
+  const run: RunCommand = (file, args, options) =>
+    deps.run(file, args, { ...options, signal: options?.signal ?? changeSignal.getStore() });
 
   function domain(): string {
     if (deps.uid === undefined) throw new Error("Cannot determine the user id for the launchd gui domain");
@@ -565,10 +576,18 @@ export function createJobs(deps: JobsDeps) {
    * plist written, a name or acknowledgement file read and rewritten, a job
    * booted out and back in, without another change landing in between. Reads
    * do not wait.
+   *
+   * A change whose call was cancelled while it waited (`signal`: the RPC timed
+   * out, the worker is stopping) is skipped, not run late; one cancelled while
+   * running has its command stopped and lets go of the lock.
    */
   let tail: Promise<unknown> = Promise.resolve();
-  function exclusive<T>(work: () => Promise<T>): Promise<T> {
-    const result = tail.then(work, work);
+  function exclusive<T>(signal: AbortSignal | undefined, work: () => Promise<T>): Promise<T> {
+    const start = (): Promise<T> => {
+      if (signal?.aborted) return Promise.reject(new Error("The change was cancelled before it started; nothing was done."));
+      return changeSignal.run(signal, work);
+    };
+    const result = tail.then(start, start);
     tail = result.catch(() => undefined);
     return result;
   }
@@ -749,11 +768,20 @@ export function createJobs(deps: JobsDeps) {
     if (!(await listSlugs()).includes(slug)) throw new Error(`No job "${slug}" under ${launchAgentsDir}`);
   }
 
-  /** `assertKnown`, and a plist that does not name some other label. Answers the read. */
-  async function assertOwned(slug: string): Promise<PlistRead> {
+  /**
+   * `assertKnown`, and a plist that parsed and names this slug's own label —
+   * what any change that loads, rewrites or runs a job needs, since launchd
+   * loads the label *inside* the file. An unreadable plist (`deletable`) may
+   * only be deleted: deleting boots out this slug's label and removes the
+   * file, neither of which depends on what the file says. Answers the read.
+   */
+  async function assertOwned(slug: string, unreadable: "refuse" | "deletable" = "refuse"): Promise<PlistRead> {
     await assertKnown(slug);
     const read = await readPlistOrProblem(slug);
     if (read.foreignLabel) throw new Error(read.problem ?? `The plist for "${slug}" names another label`);
+    if (read.plist === null && unreadable === "refuse") {
+      throw new Error(`${read.problem ?? "The plist could not be read"}. Fix or delete it; the plugin will not load or rewrite a plist it cannot read.`);
+    }
     return read;
   }
 
@@ -951,10 +979,10 @@ export function createJobs(deps: JobsDeps) {
       return { supported: true, jobs, launchAgentsDir };
     },
 
-    async create(input: JobSpec): Promise<Job> {
+    async create(input: JobSpec, signal?: AbortSignal): Promise<Job> {
       assertSupported();
       const spec = normaliseSpec(input);
-      return exclusive(async () => {
+      return exclusive(signal, async () => {
         const [dataDir, path] = await Promise.all([directoryForSave(null), loginShellPath()]);
         const slug = await reservePlist(spec.name, spec, dataDir, path);
         await recordName(slug, spec.name);
@@ -965,10 +993,10 @@ export function createJobs(deps: JobsDeps) {
       });
     },
 
-    async update(input: { id: string; spec: JobSpec }): Promise<Job> {
+    async update(input: { id: string; spec: JobSpec }, signal?: AbortSignal): Promise<Job> {
       assertSupported();
       const spec = normaliseSpec(input.spec);
-      return exclusive(async () => {
+      return exclusive(signal, async () => {
         const current = await assertOwned(input.id);
         const label = labelFor(input.id);
         const [disabled, dataDir, path] = await Promise.all([
@@ -985,10 +1013,10 @@ export function createJobs(deps: JobsDeps) {
       });
     },
 
-    async delete(input: { id: string }): Promise<Record<string, never>> {
+    async delete(input: { id: string }, signal?: AbortSignal): Promise<Record<string, never>> {
       assertSupported();
-      return exclusive(async () => {
-        const { plist } = await assertOwned(input.id);
+      return exclusive(signal, async () => {
+        const { plist } = await assertOwned(input.id, "deletable");
         const label = labelFor(input.id);
         const dir = dataDirOf(plist, ownDir);
         // A job's log and history go with it — in the Paseo plugin's directory
@@ -1035,9 +1063,9 @@ export function createJobs(deps: JobsDeps) {
       });
     },
 
-    async run(input: { id: string }): Promise<Record<string, never>> {
+    async run(input: { id: string }, signal?: AbortSignal): Promise<Record<string, never>> {
       assertSupported();
-      return exclusive(async () => {
+      return exclusive(signal, async () => {
         await assertOwned(input.id);
         const label = labelFor(input.id);
         const status = await readStatus(label);
@@ -1047,9 +1075,9 @@ export function createJobs(deps: JobsDeps) {
       });
     },
 
-    async setEnabled(input: { id: string; enabled: boolean }): Promise<Job> {
+    async setEnabled(input: { id: string; enabled: boolean }, signal?: AbortSignal): Promise<Job> {
       assertSupported();
-      return exclusive(async () => {
+      return exclusive(signal, async () => {
         await assertOwned(input.id);
         const label = labelFor(input.id);
         if (input.enabled) {
@@ -1103,9 +1131,9 @@ export function createJobs(deps: JobsDeps) {
      * gaining one, so acknowledging is never what makes a later failure
      * silent. Entries for jobs that no longer exist are dropped on the way past.
      */
-    async acknowledge(input: { id: string }): Promise<Record<string, never>> {
+    async acknowledge(input: { id: string }, signal?: AbortSignal): Promise<Record<string, never>> {
       assertSupported();
-      return exclusive(() => acknowledgeNow(input));
+      return exclusive(signal, () => acknowledgeNow(input));
     },
   };
 

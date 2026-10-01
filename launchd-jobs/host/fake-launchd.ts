@@ -38,13 +38,32 @@ export function createFakeLaunchd() {
   const refuseBootstrap = new Set<string>();
   /** Labels whose `enable` fails, as a launchd that cannot write its override database would. */
   const refuseEnable = new Set<string>();
+  /** How many of the next `plutil` runs fail, as a transient converter failure would. */
+  let plutilFailures = 0;
+  /**
+   * `launchctl` verbs held until released: the call waits, and rejects as a
+   * killed command does if its signal aborts meanwhile.
+   */
+  const held = new Map<string, Promise<void>>();
+  function hold(verb: string): () => void {
+    let release: () => void = () => {};
+    held.set(verb, new Promise<void>((resolve) => (release = resolve)));
+    return () => {
+      held.delete(verb);
+      release();
+    };
+  }
   const domain = `gui/${FAKE_UID}`;
 
   function labelOf(target: string): string {
     return target.slice(`${domain}/`.length);
   }
 
-  const run: RunCommand = async (file, args) => {
+  const run: RunCommand = async (file, args, options) => {
+    if (file === "plutil" && plutilFailures > 0) {
+      plutilFailures -= 1;
+      throw failure("plutil: Resource temporarily unavailable", 1);
+    }
     if (file === "plutil") {
       const { stdout } = await exec("plutil", [...args], { encoding: "utf8" });
       return { stdout };
@@ -54,7 +73,16 @@ export function createFakeLaunchd() {
       return { stdout: `some startup banner\n${FAKE_LOGIN_PATH}\n` };
     }
     if (file !== "launchctl") throw new Error(`unexpected command ${file}`);
+    if (options?.signal?.aborted) throw failure(`launchctl ${args.join(" ")} was cancelled before it started`, 1);
     calls.push([...args]);
+    const gate = held.get(args[0] ?? "");
+    if (gate !== undefined) {
+      const signal = options?.signal;
+      await new Promise<void>((resolve, reject) => {
+        void gate.then(resolve);
+        signal?.addEventListener("abort", () => reject(failure(`launchctl ${args.join(" ")} was cancelled`, 1)), { once: true });
+      });
+    }
     const [verb, target = "", extra = ""] = args;
     switch (verb) {
       case "print": {
@@ -106,5 +134,16 @@ export function createFakeLaunchd() {
     }
   };
 
-  return { run, loaded, disabled, calls, refuseBootstrap, refuseEnable };
+  return {
+    run,
+    loaded,
+    disabled,
+    calls,
+    refuseBootstrap,
+    refuseEnable,
+    hold,
+    failNextPlutil(times = 1) {
+      plutilFailures = times;
+    },
+  };
 }

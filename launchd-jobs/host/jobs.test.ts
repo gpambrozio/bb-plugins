@@ -547,6 +547,65 @@ describe.skipIf(!onMac)("deleting when launchd cannot clear the disabled flag", 
   });
 });
 
+describe.skipIf(!onMac)("a plist that cannot be read right now", () => {
+  const spec = { name: "x", command: "true", cwd: null, schedule: { type: "interval" as const, seconds: 60 } };
+  const foreign = `<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict><key>Label</key><string>com.example.other</string><key>ProgramArguments</key><array><string>/usr/bin/true</string></array></dict></plist>\n`;
+
+  it("is never loaded, rewritten or run, since its label is unknown; it can only be deleted", async () => {
+    await put(plistPath("flaky"), foreign);
+
+    for (const change of [
+      () => jobs.setEnabled({ id: "flaky", enabled: true }),
+      () => jobs.update({ id: "flaky", spec }),
+      () => jobs.run({ id: "flaky" }),
+    ]) {
+      launchd.failNextPlutil();
+      await expect(change()).rejects.toThrow(/could not be read|Could not read/);
+    }
+    expect(launchd.calls.filter(([verb]) => verb === "bootstrap" || verb === "enable" || verb === "kickstart")).toEqual([]);
+    expect(await readFile(plistPath("flaky"), "utf8")).toBe(foreign);
+
+    launchd.failNextPlutil();
+    await jobs.delete({ id: "flaky" });
+    expect((await jobs.list()).jobs).toEqual([]);
+    expect(launchd.calls.filter(([verb]) => verb === "bootout").map(([, target]) => target)).toEqual([`gui/${FAKE_UID}/${LABEL_PREFIX}flaky`]);
+  });
+});
+
+describe.skipIf(!onMac)("cancelled changes", () => {
+  const spec = { name: "Held", command: "true", cwd: null, schedule: { type: "interval" as const, seconds: 60 } };
+
+  it("skips a change cancelled while it waited for the lock", async () => {
+    await jobs.create(spec);
+    const release = launchd.hold("bootstrap");
+    const busy = jobs.update({ id: "held", spec: { ...spec, command: "echo busy" } });
+    const cancel = new AbortController();
+    const queued = jobs.delete({ id: "held" }, cancel.signal);
+
+    cancel.abort();
+    release();
+
+    await busy;
+    await expect(queued).rejects.toThrow(/cancelled before it started/);
+    expect((await jobs.list()).jobs.map((job) => job.id)).toEqual(["held"]);
+  });
+
+  it("stops the running command of a cancelled change, and lets the next change through", async () => {
+    await jobs.create(spec);
+    await jobs.setEnabled({ id: "held", enabled: false });
+    launchd.hold("bootstrap");
+    const cancel = new AbortController();
+    const running = jobs.setEnabled({ id: "held", enabled: true }, cancel.signal);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    cancel.abort();
+
+    await expect(running).rejects.toThrow(/cancelled/);
+    // The lock is free: a change made now runs at once.
+    await jobs.acknowledge({ id: "held" });
+  });
+});
+
 describe("off macOS", () => {
   it("lists nothing and says so, and refuses every change", async () => {
     const linux = createJobs({ ownDir, paseoDirs: [], launchAgentsDir: agents, platform: "linux", uid: 1000, run: launchd.run, envPath: undefined, warn: () => {} });

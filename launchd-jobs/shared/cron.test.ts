@@ -112,6 +112,21 @@ describe("calendar entries", () => {
     });
   });
 
+  it("refuses a non-product without expanding the product it would imply", () => {
+    // Sixty entries whose fields between them span every value: the implied
+    // product is 60 × 24 × 31 × 12 × 7 = 3,749,760 combinations.
+    const entries = Array.from({ length: 60 }, (_, index) => ({
+      minute: index,
+      hour: index % 24,
+      day: (index % 31) + 1,
+      month: (index % 12) + 1,
+      weekday: index % 7,
+    }));
+    const started = performance.now();
+    expect(fromCalendarEntries(entries)).toBeNull();
+    expect(performance.now() - started).toBeLessThan(100);
+  });
+
   it("reads a hand-written plist's Sunday", () => {
     expect(fromCalendarEntries([{ minute: 0, hour: 8, weekday: 7 }])).toEqual({
       minute: [0],

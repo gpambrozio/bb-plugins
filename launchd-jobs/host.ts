@@ -4,29 +4,18 @@
 // starts there: `launchctl` acts on that machine's launchd, and the plists,
 // runner, logs and history are that machine's files. The server entry calls it
 // with the host's id. What each method does lives in host/jobs.ts.
-import { execFile } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { promisify } from "node:util";
 
 import { experimental_defineHostEntry } from "@get-bb/plugin-sdk";
 
 import { createLogFollows } from "./host/follow";
-import { createJobs, type Jobs, type RunCommand } from "./host/jobs";
+import { createJobs, type Jobs } from "./host/jobs";
+import { createRunCommand } from "./host/run-command";
 import { hostContract, hostSignals } from "./shared/host-contract";
 
-const execFileAsync = promisify(execFile);
-
-const runCommand: RunCommand = async (file, args, options) => {
-  const { stdout } = await execFileAsync(file, [...args], {
-    encoding: "utf8",
-    maxBuffer: 4 * 1024 * 1024,
-    timeout: options?.timeoutMs ?? 30_000,
-    env: options?.env ?? process.env,
-  });
-  return { stdout };
-};
+const runCommand = createRunCommand();
 
 function warn(message: string): void {
   console.warn(`[launchd-jobs] ${message}`);
@@ -62,14 +51,14 @@ export default experimental_defineHostEntry({
   experimental_signals: hostSignals,
   handlers: {
     list: (_input, context) => jobsIn(context.experimental_paths.dataDir).list(),
-    create: (input, context) => jobsIn(context.experimental_paths.dataDir).create(input),
-    update: (input, context) => jobsIn(context.experimental_paths.dataDir).update(input),
+    create: (input, context) => jobsIn(context.experimental_paths.dataDir).create(input, context.signal),
+    update: (input, context) => jobsIn(context.experimental_paths.dataDir).update(input, context.signal),
     delete: async (input, context) => {
       follows.unfollow(input.id);
-      return jobsIn(context.experimental_paths.dataDir).delete(input);
+      return jobsIn(context.experimental_paths.dataDir).delete(input, context.signal);
     },
-    run: (input, context) => jobsIn(context.experimental_paths.dataDir).run(input),
-    setEnabled: (input, context) => jobsIn(context.experimental_paths.dataDir).setEnabled(input),
+    run: (input, context) => jobsIn(context.experimental_paths.dataDir).run(input, context.signal),
+    setEnabled: (input, context) => jobsIn(context.experimental_paths.dataDir).setEnabled(input, context.signal),
     log: (input, context) => jobsIn(context.experimental_paths.dataDir).log(input),
     follow: async (input, context) => {
       const all = jobsIn(context.experimental_paths.dataDir);
@@ -89,7 +78,7 @@ export default experimental_defineHostEntry({
       return {};
     },
     health: (_input, context) => jobsIn(context.experimental_paths.dataDir).health(),
-    acknowledge: (input, context) => jobsIn(context.experimental_paths.dataDir).acknowledge(input),
+    acknowledge: (input, context) => jobsIn(context.experimental_paths.dataDir).acknowledge(input, context.signal),
   },
   dispose: () => follows.dispose(),
 });
