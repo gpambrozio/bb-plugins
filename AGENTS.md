@@ -289,10 +289,12 @@ silently. A missing glyph is an SVG declared in `bb.branding.experimental_icons`
 `herald/app/icons.test.ts` the check. bb's vendored `Button` takes no `title`; a tooltip is bb's
 `Tooltip` (`npx shadcn add @bb/tooltip`).
 
-Colour comes from the semantic classes, never a literal — check light and dark. The app also has a
-compact viewport (`isCompactViewport` on some slots); check a narrow window too. A throwing slot
-collapses to a "plugin crashed" chip instead of taking the app down, so a blank area is a crash to
-look for in the console, not a layout bug.
+Colour comes from the semantic classes, never a literal — check light and dark. Where a literal is the
+point (`model-pricing`'s provider palette), pick it by `experimental_useCodeTheme().mode`, which follows
+bb's own light/dark choice: Tailwind's `dark:` variant compiles to `prefers-color-scheme`, the
+operating system's. The app also has a compact viewport (`isCompactViewport` on some slots); check a
+narrow window too. A throwing slot collapses to a "plugin crashed" chip instead of taking the app down,
+so a blank area is a crash to look for in the console, not a layout bug.
 
 ## Dependencies — the opposite of the Paseo repo
 

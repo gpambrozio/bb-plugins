@@ -6,6 +6,7 @@
     { "name": "github-board", "source": "./github-board" },
     { "name": "firstmate-crew", "source": "./firstmate-crew" },
     { "name": "herald", "source": "./herald" },
-    { "name": "launchd-jobs", "source": "./launchd-jobs" }
+    { "name": "launchd-jobs", "source": "./launchd-jobs" },
+    { "name": "model-pricing", "source": "./model-pricing" }
   ]
 }
