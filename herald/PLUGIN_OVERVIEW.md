@@ -1,4 +1,6 @@
-Hear when an agent needs you, in one spoken sentence, and see every thread waiting on you in one list.
+Each sentence is written for the ear: which thread it is, what kind of event, and the question, the
+command or the start of the reply, kept short. It is spoken on whatever page of bb you are on, so you
+know which thread to go back to without watching the sidebar.
 
 ## What you get
 
