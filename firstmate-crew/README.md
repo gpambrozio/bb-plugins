@@ -39,7 +39,7 @@ bb plugin install firstmate-crew@bb-community
 Straight from this repository, tracking compatible releases:
 
 ```bash
-bb plugin install 'git:github.com/gpambrozio/bb-plugins@^0.1.0' --plugin firstmate-crew --tag-prefix firstmate-crew/
+bb plugin install 'git:github.com/gpambrozio/bb-plugins@^0.2.0' --plugin firstmate-crew --tag-prefix firstmate-crew/
 ```
 
 Add `--yes` to skip the confirmation prompt, which a script needs. To hack on it, clone the repository,
@@ -64,7 +64,14 @@ there, and `bb plugin dev` to rebuild on save. See [`AGENTS.md`](AGENTS.md).
 
 ## Talking to the first mate
 
-- Type in the first mate's chat, or send from anywhere: `bb firstmate-crew tell "…"` reaches it from a shell.
+- Type in the first mate's chat, or send from anywhere: `bb firstmate-crew tell "…"` reaches it from a shell,
+  and `bb firstmate-crew tell --message-file <path>` sends a file's text as it is.
+- **`/fm` in any thread** hands a request to the first mate about that thread's work. In a thread where you
+  have been fixing a bug, type `/fm open a pull request for this and watch its checks`. The thread's agent
+  sends your words, unchanged, and replies in one line that the first mate has them; it does not do the
+  work itself. The first mate receives them under a line FirstMate adds from bb's own record of the thread,
+  `From thread <id> (<project>, <branch>):`, so it knows which thread and branch you mean. `/fm` on its own asks what to send. Only you
+  can start it: agents do not use it on their own.
 - **Bearings** is where everything stands in four sections: what needs your call, what landed, what is
   under way, what is next. **Ahoy** is what happened since you last spoke, then each open decision, one at
   a time, with a recommendation. Both are buttons on the board and entries in the command palette
@@ -152,8 +159,8 @@ of the thread, leaving it and its crew as they are.
 - **Watches run only while bb does, on the machine running the bb server**, and so does the home. The
   first mate's workers can be on any machine bb reaches, but a home on another machine is not supported.
 - **End removes a worker's worktree after bb's grace period**; only committed work can be restored.
-- There is no `/fm` slash command; bb has no composer command API. Use the command palette or
-  `bb firstmate-crew tell`.
+- `/fm` works only in threads on the machine running the bb server, because bb reads the request from a
+  file there. From a thread on another machine, use `bb firstmate-crew tell` with the words instead.
 - Changing the crew settings changes what the charter says only on the next launch, restart or plugin
   reload.
 - The Files view and the chat of the Paseo plugin are bb's own here.

@@ -215,14 +215,15 @@ describe("prepareHome and the charter", () => {
     expect(agents).not.toContain("firstmate-charter");
     expect(fingerprint(await read(home, CHARTER_FILE))).toBe(fingerprint(await readTemplate(TEMPLATES.charter)));
     // Pinned so a charter change is deliberate: every untouched home follows it, and every edited one is
-    // offered it as charter.new.md. a5a689fdd3a12e27 is the charter naming the CLI `bb firstmate-crew` after the plugin
+    // offered it as charter.new.md. a39e29155a766130 is the charter explaining the `From thread …:` line `/fm`
+    // messages open with; a5a689fdd3a12e27 had it naming the CLI `bb firstmate-crew` after the plugin
     // id changed; 83b2b65bf38bb8e0 had it saying bb also wakes the first mate
     // when a crewmate needs attention (a permission or a question); a89e672c1e7d45f9 had the relaunch
     // command carrying --title and the crew list saying archived children are included; 62c1c091a39506bd told the first
     // mate to always title its crew; 79b5a4bc6315ef40 the charter rewritten for bb; 09fd534b24db4e75 was Paseo's text
     // with only its placeholders renamed, e0b749cb695c5df6 the charter as it moved into templates/, and
     // 8b6df21d082df6e6 Paseo's before {{crewModeRule}} became {{crewReasoningRule}}.
-    expect(fingerprint(await readTemplate(TEMPLATES.charter))).toBe("a5a689fdd3a12e27");
+    expect(fingerprint(await readTemplate(TEMPLATES.charter))).toBe("a39e29155a766130");
 
     await editCopy(home, "# My first mate\n\n<!-- a note to myself -->\nYour home is {{home}}; keep it tidy.");
     await prepareHome(home, homeConfig);

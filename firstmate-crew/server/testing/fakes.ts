@@ -7,7 +7,7 @@ import { resolve } from "node:path";
 import type { PluginKvStorage } from "@get-bb/plugin-sdk";
 
 import type { Log } from "../log";
-import type { ProjectsPort, SendMode, ShortenedMessage, SpawnArgs, ThreadInfo, ThreadsPort } from "../ports";
+import type { ProjectsPort, SendMode, ShortenedMessage, SpawnArgs, ThreadInfo, ThreadOrigin, ThreadsPort } from "../ports";
 import { createStore, type Store } from "../store";
 
 type ThreadMethod = keyof ThreadsPort;
@@ -27,6 +27,7 @@ export class FakeThreads implements ThreadsPort {
   private readonly texts = new Map<string, string>();
   private readonly pending = new Map<string, number>();
   private readonly workspaces = new Map<string, string>();
+  private readonly origins = new Map<string, ThreadOrigin>();
   private readonly failures = new Map<ThreadMethod, Error>();
   private nextId = 1;
   private clock = 1_000;
@@ -60,6 +61,11 @@ export class FakeThreads implements ThreadsPort {
   /** Where an environment works; one never set answers null, as one on another machine does. */
   setWorkspace(environmentId: string, path: string): void {
     this.workspaces.set(environmentId, path);
+  }
+
+  /** A thread's project and branch. A thread never given one answers null, as a thread bb does not have would. */
+  setOrigin(id: string, origin: ThreadOrigin): void {
+    this.origins.set(id, { ...origin });
   }
 
   setPendingInteractions(id: string, count: number): void {
@@ -133,6 +139,14 @@ export class FakeThreads implements ThreadsPort {
     await tick();
     this.throwIfFailing("workspacePath");
     return this.workspaces.get(environmentId) ?? null;
+  }
+
+  async origin(id: string): Promise<ThreadOrigin | null> {
+    this.record("origin", id);
+    await tick();
+    this.throwIfFailing("origin");
+    const origin = this.origins.get(id);
+    return origin === undefined ? null : { ...origin };
   }
 
   async spawn(args: SpawnArgs): Promise<ThreadInfo> {

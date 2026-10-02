@@ -266,6 +266,86 @@ describe("bb firstmate-crew tell", () => {
     expect(threads.sent).toEqual([]);
   });
 
+  it("tell from another thread opens with bb's id for it, its project and its branch", async () => {
+    const { cli, threads } = await setup();
+    threads.setOrigin("thr_caller", { projectName: "App", branchName: "fix/login-redirect" });
+    const result = await cli.run(["tell", "run", "a", "review", "loop", "on", "my", "work"], { threadId: "thr_caller" });
+    expect(result.exitCode).toBe(0);
+    expect(threads.sent).toEqual([
+      { id: "thr_mate", text: "From thread thr_caller (App, fix/login-redirect):\n\nrun a review loop on my work", mode: "auto" },
+    ]);
+  });
+
+  it("the origin leaves out what bb cannot name", async () => {
+    const { cli, threads } = await setup();
+    threads.setOrigin("thr_no_branch", { projectName: "App", branchName: null });
+    await cli.run(["tell", "hi"], { threadId: "thr_no_branch" });
+    await cli.run(["tell", "hi"], { threadId: "thr_unknown" });
+    expect(threads.sent.map((sent) => sent.text)).toEqual(["From thread thr_no_branch (App):\n\nhi", "From thread thr_unknown:\n\nhi"]);
+  });
+
+  it("tell from the first mate's own thread or from a terminal has no origin line", async () => {
+    const { cli, threads } = await setup();
+    await cli.run(["tell", "note", "to", "self"], { threadId: "thr_mate" });
+    await cli.run(["tell", "from", "a", "terminal"], {});
+    expect(threads.sent.map((sent) => sent.text)).toEqual(["note to self", "from a terminal"]);
+    expect(threads.callsTo("origin")).toEqual([]);
+  });
+
+  it("tell sends nothing when bb fails to say where the caller is", async () => {
+    const { cli, threads } = await setup();
+    threads.failNext("origin", new Error("bb is unreachable"));
+    const result = await cli.run(["tell", "hi"], { threadId: "thr_caller" });
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toContain("bb is unreachable");
+    expect(threads.sent).toEqual([]);
+  });
+
+  describe("--message-file", () => {
+    const AWKWARD = "Check `git log` and $(whoami), then \"quote\" it — it's $HOME's\nsecond line\n";
+
+    it("sends the file whole, quotes, backticks, $(...) and new lines included, after the origin line", async () => {
+      const { cli, threads, dir } = await setup();
+      await writeFile(join(dir, "request.md"), AWKWARD, "utf8");
+      threads.setOrigin("thr_caller", { projectName: "App", branchName: "main" });
+      const result = await cli.run(["tell", "--message-file", "request.md"], { threadId: "thr_caller", cwd: dir });
+      expect(result.exitCode).toBe(0);
+      expect(threads.sent).toEqual([{ id: "thr_mate", text: `From thread thr_caller (App, main):\n\n${AWKWARD.trim()}`, mode: "auto" }]);
+    });
+
+    it("refuses words and a file together, and sends nothing", async () => {
+      const { cli, threads, dir } = await setup();
+      await writeFile(join(dir, "request.md"), "hi\n", "utf8");
+      const result = await cli.run(["tell", "--message-file", "request.md", "and", "more"], { cwd: dir });
+      expect(result.exitCode).not.toBe(0);
+      expect(result.stderr).toContain("not both");
+      expect(threads.sent).toEqual([]);
+    });
+
+    it("a missing or empty file fails with its resolved path and sends nothing", async () => {
+      const { cli, threads, dir } = await setup();
+      await writeFile(join(dir, "blank.md"), " \n\n", "utf8");
+      const missing = await cli.run(["tell", "--message-file", "nope.md"], { cwd: dir });
+      expect(missing.exitCode).not.toBe(0);
+      expect(missing.stderr).toContain(`Message file not found: ${join(dir, "nope.md")}`);
+      const empty = await cli.run(["tell", "--message-file", "blank.md"], { cwd: dir });
+      expect(empty.exitCode).not.toBe(0);
+      expect(empty.stderr).toContain(`Message file is empty: ${join(dir, "blank.md")}`);
+      expect(threads.sent).toEqual([]);
+    });
+
+    it("refuses a relative path when bb gives no working directory, and reads an absolute one", async () => {
+      const { cli, threads, dir } = await setup();
+      await writeFile(join(dir, "request.md"), "hi\n", "utf8");
+      const relative = await cli.run(["tell", "--message-file", "request.md"], {});
+      expect(relative.exitCode).not.toBe(0);
+      expect(relative.stderr).toContain("--message-file must be an absolute path when bb gives no working directory.");
+      const absolute = await cli.run(["tell", "--message-file", join(dir, "request.md")], {});
+      expect(absolute.exitCode).toBe(0);
+      expect(threads.sent.map((sent) => sent.text)).toEqual(["hi"]);
+    });
+  });
+
   it("tell with no first mate says so", async () => {
     const { cli, threads } = await setup();
     threads.archiveNow("thr_mate");
@@ -284,5 +364,8 @@ describe("help", () => {
     const help = await cli.run(["crew", "spawn", "--help"], {});
     expect(help.exitCode).toBe(0);
     expect(help.stdout).toContain("--prompt-file");
+    const tellHelp = await cli.run(["tell", "--help"], {});
+    expect(tellHelp.exitCode).toBe(0);
+    expect(tellHelp.stdout).toContain("--message-file");
   });
 });

@@ -7,6 +7,7 @@ You tell the first mate what you want done; it sends each task to a worker, a bb
 - **Control from each card.** Steer a worker with a word, interrupt its turn, relaunch it in the same worktree, or end it. Ending a worker whose task is not done asks first.
 - **Where things stand, on demand.** Bearings gives the state of everything; Ahoy gives what happened since you last spoke, then each open decision in turn. Both are buttons on the board and entries in the command palette.
 - **Next steps as buttons.** The first mate offers what you will probably want next; pressing one sends it as if you had typed it.
+- **/fm from any thread.** Type `/fm` and a request in any thread, say `/fm open a pull request for this`, and the first mate gets it word for word with that thread's id, project and branch, so it knows which work you mean.
 - **Compact and Restart on the board.** Compact frees room in the first mate's conversation. Restart starts it afresh on the same thread; its records and the workers already running carry over. A gear beside them opens the plugin's settings.
 
 ## How it works
@@ -26,4 +27,4 @@ Watches are small scripts in the home that run on a schedule while bb is running
 - The home and the watches live on the machine running the bb server, and watches run only while bb does.
 - Ending a worker removes its worktree after bb's grace period, so only committed work can be restored.
 - A worker waiting on a permission or question shows as Blocked, and bb tells the first mate it needs attention.
-- There is no slash command in the composer, because bb offers plugins none; the command palette and `bb firstmate-crew tell` reach the first mate instead.
+- `/fm` works in threads on the machine running the bb server. Elsewhere, the command palette and `bb firstmate-crew tell` reach the first mate.

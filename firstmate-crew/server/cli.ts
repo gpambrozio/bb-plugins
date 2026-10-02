@@ -13,7 +13,7 @@ import { isAbsolute, resolve } from "node:path";
 import { PluginCliError, cliCommand, defineCli, type PluginCliRegistration } from "@get-bb/plugin-sdk";
 
 import { CREW_METADATA } from "../shared/types";
-import { askMate, resolveMate, type MateDeps } from "./mate";
+import { askMate, requireMate, resolveMate, type MateDeps } from "./mate";
 import type { SpawnArgs } from "./ports";
 
 /** The longest first line of a brief that goes into a default title, in characters. */
@@ -50,25 +50,46 @@ function titleOf(explicit: string | undefined, task: string, brief: string): str
   return line === "" ? task : `${task}: ${line}`;
 }
 
+/** How one file-taking option names itself in its errors: `--prompt-file`, "Prompt file", `prompt_file`. */
+interface FileOption {
+  flag: string;
+  noun: string;
+  code: string;
+}
+
+const PROMPT_FILE: FileOption = { flag: "--prompt-file", noun: "Prompt file", code: "prompt_file" };
+const MESSAGE_FILE: FileOption = { flag: "--message-file", noun: "Message file", code: "message_file" };
+
 /**
- * The brief, read from `promptFile` relative to the caller's working directory. With no working
- * directory from bb, a relative path would resolve against the bb server's own, so only an absolute one
- * is taken.
+ * The text of `file` relative to the caller's working directory. With no working directory from bb, a
+ * relative path would resolve against the bb server's own, so only an absolute one is taken. bb reads
+ * the file on its own machine, so a caller on another enrolled machine cannot pass one.
  */
-async function readBrief(promptFile: string, cwd: string | undefined): Promise<string> {
-  if (cwd === undefined && !isAbsolute(promptFile)) {
-    throw new PluginCliError("--prompt-file must be an absolute path when bb gives no working directory.", { code: "prompt_file_relative" });
+async function readTextFile(file: string, cwd: string | undefined, option: FileOption): Promise<string> {
+  if (cwd === undefined && !isAbsolute(file)) {
+    throw new PluginCliError(`${option.flag} must be an absolute path when bb gives no working directory.`, { code: `${option.code}_relative` });
   }
-  const path = cwd === undefined ? promptFile : resolve(cwd, promptFile);
-  let brief: string;
+  const path = cwd === undefined ? file : resolve(cwd, file);
+  let text: string;
   try {
-    brief = await readFile(path, "utf8");
+    text = await readFile(path, "utf8");
   } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") throw new PluginCliError(`Prompt file not found: ${path}`, { code: "prompt_file_not_found" });
-    throw new PluginCliError(`Prompt file could not be read: ${path}: ${reason(error)}`, { code: "prompt_file_unreadable" });
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") throw new PluginCliError(`${option.noun} not found: ${path}`, { code: `${option.code}_not_found` });
+    throw new PluginCliError(`${option.noun} could not be read: ${path}: ${reason(error)}`, { code: `${option.code}_unreadable` });
   }
-  if (brief.trim() === "") throw new PluginCliError(`Prompt file is empty: ${path}`, { code: "prompt_file_empty" });
-  return brief;
+  if (text.trim() === "") throw new PluginCliError(`${option.noun} is empty: ${path}`, { code: `${option.code}_empty` });
+  return text;
+}
+
+/**
+ * The line that opens a message `tell` delivers from another thread: `From thread <id> (<project>,
+ * <branch>):`. bb names the calling thread, so the first mate learns which thread (and so which work) a
+ * request is about from bb rather than from the sender's text. What bb cannot say is left out.
+ */
+async function originHeader(deps: MateDeps, threadId: string): Promise<string> {
+  const origin = await deps.threads.origin(threadId);
+  const where = [origin?.projectName, origin?.branchName].filter((part): part is string => part !== null && part !== undefined && part !== "");
+  return where.length === 0 ? `From thread ${threadId}:` : `From thread ${threadId} (${where.join(", ")}):`;
 }
 
 /** A project by id, else by exact name. Two projects with the same name cannot be told apart by it. */
@@ -151,7 +172,7 @@ export function firstmateCli(deps: MateDeps): PluginCliRegistration {
             }
 
             const options = input.options;
-            const prompt = await readBrief(options["prompt-file"], ctx.cwd);
+            const prompt = await readTextFile(options["prompt-file"], ctx.cwd, PROMPT_FILE);
             const projectId = await resolveProject(deps, options.project);
             const settings = await deps.settings();
             const kind = options.kind?.trim() ?? "";
@@ -176,13 +197,29 @@ export function firstmateCli(deps: MateDeps): PluginCliRegistration {
       }),
       tell: cliCommand({
         summary: "Send the first mate a message, from any thread or terminal",
-        description: "The words are joined with spaces and sent as the captain's, joining the first mate's turn if it is mid-way through one.",
-        positionals: [{ name: "message", description: "What to tell the first mate", required: true, variadic: true }],
-        run: (input) =>
+        description:
+          "The words are joined with spaces, or --message-file is read whole, and sent as the captain's, joining the first mate's turn if it is mid-way through one. From another thread, bb's id for that thread, its project and its branch go first, as `From thread <id> (<project>, <branch>):`.",
+        positionals: [{ name: "message", description: "What to tell the first mate", variadic: true }],
+        options: {
+          "message-file": {
+            type: "string",
+            description: "File holding the message, read whole (relative to the current directory; it must be on the bb server's machine)",
+            placeholder: "path",
+          },
+        },
+        run: (input, ctx) =>
           guarded(async () => {
-            const text = input.positionals.message.join(" ").trim();
+            const words = input.positionals.message.join(" ").trim();
+            const file = input.options["message-file"];
+            if (file !== undefined && words !== "") {
+              throw new PluginCliError("Give the message as words or as --message-file, not both.", { code: "unexpected_argument" });
+            }
+            const text = file === undefined ? words : (await readTextFile(file, ctx.cwd, MESSAGE_FILE)).trim();
             if (text === "") throw new PluginCliError("Nothing to tell the first mate.", { code: "missing_required" });
-            await askMate(deps, text);
+            const mate = await requireMate(deps);
+            const caller = ctx.threadId;
+            const fromElsewhere = caller !== undefined && caller !== mate.id;
+            await askMate(deps, fromElsewhere ? `${await originHeader(deps, caller)}\n\n${text}` : text);
             return { exitCode: 0, stdout: "Sent to the first mate.\n" };
           }),
       }),

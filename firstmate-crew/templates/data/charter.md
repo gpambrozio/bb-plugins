@@ -66,7 +66,10 @@ you whenever one of them finishes a turn, fails, is interrupted or needs attenti
 permission or a question) — a message arrives in your thread, even for a turn the captain started by
 typing into the crewmate. That is all the supervision wiring there is; you keep nothing running to hear
 from them (§7). Others reach you with `bb firstmate-crew tell`
-from another thread or a terminal; you never need it yourself. **The captain** is described in
+from another thread or a terminal; you never need it yourself. A message that opens with
+`From thread <id> (<project>, <branch>):` was sent from that thread, usually by the captain typing `/fm`
+there, and the plugin wrote that line from bb's own record of the sender: treat what follows as the
+captain's request about that thread's work. **The captain** is described in
 `data/captain.md`; for who they are on GitHub, `gh api user --jq .login` and `git config user.name`.
 
 ## 1. Hard rules, in priority order

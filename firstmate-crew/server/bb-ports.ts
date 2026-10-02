@@ -58,6 +58,16 @@ function isNotFound(error: unknown): boolean {
   return error instanceof Error && "status" in error && error.status === 404;
 }
 
+/** The request's answer, or null when bb answers 404. */
+async function nullIfNotFound<T>(request: Promise<T>): Promise<T | null> {
+  try {
+    return await request;
+  } catch (error) {
+    if (isNotFound(error)) return null;
+    throw error;
+  }
+}
+
 /**
  * The host id of the bb server's own machine, where the home lives. `system.config()` reports it as
  * `primaryHostId` — the host whose id bb keeps in its data directory.
@@ -146,6 +156,15 @@ export function bbThreads(sdk: PluginBbSdk): ThreadsPort {
     async workspacePath(environmentId) {
       const [serverHost, environment] = await Promise.all([serverHostId(sdk), sdk.environments.get({ environmentId })]);
       return environment.hostId === serverHost ? environment.path : null;
+    },
+    async origin(id) {
+      const row = await nullIfNotFound(sdk.threads.get({ threadId: id }));
+      if (row === null) return null;
+      const [project, environment] = await Promise.all([
+        nullIfNotFound(sdk.projects.get({ projectId: row.projectId })),
+        row.environmentId === null ? null : nullIfNotFound(sdk.environments.get({ environmentId: row.environmentId })),
+      ]);
+      return { projectName: project?.name ?? null, branchName: environment?.branchName ?? null };
     },
     async spawn(args) {
       const row = await sdk.threads.spawn({
