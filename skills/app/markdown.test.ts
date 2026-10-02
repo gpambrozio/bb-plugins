@@ -70,9 +70,9 @@ describe("withoutImages", () => {
     expect(isCodeBlock(result)).toBe(false);
   });
 
-  test("shows an image as its alt text and source, as bracketed literal text", () => {
-    expect(withoutImages("See ![the diagram](https://example.com/a.png) here.")).toBe(
-      "See \\[the diagram \\(https\\:\\/\\/example\\.com\\/a\\.png\\)\\] here.",
+  test("shows an image as its alt text alone, as bracketed literal text", () => {
+    expect(withoutImages("See ![the *diagram*](https://example.com/a.png) here.")).toBe(
+      "See \\[the diagram\\] here.",
     );
   });
 
@@ -80,12 +80,24 @@ describe("withoutImages", () => {
     expect(withoutImages("a ![]() b")).toBe("a \\[\\] b");
   });
 
-  test("takes a reference image's source from its definition", () => {
-    expect(
-      withoutImages("![pixel][p]\n\n[p]: https://example.com/p.gif").startsWith(
-        "\\[pixel \\(https\\:\\/\\/example\\.com\\/p\\.gif\\)\\]",
-      ),
-    ).toBe(true);
+  test("shows a reference image as its alt text alone, not its definition's source", () => {
+    expect(withoutImages("![pixel][p]\n\n[p]: https://example.com/p.gif")).toBe(
+      "\\[pixel\\]\n\n[p]: https://example.com/p.gif",
+    );
+  });
+
+  // Review pass 4, finding 7: a reference image used to copy its definition's
+  // whole URL into every use, so 47 KB grew to 46 million characters. Every
+  // replacement now comes from the replaced span, so the output stays near the
+  // input's size, and transform plus bb's re-parse stays quick.
+  test("keeps the output near the input's size when many references share one long definition", () => {
+    const markdown = "![p]\n".repeat(511) + "\n[p]: https://example.com/" + "!".repeat(45000);
+    const started = performance.now();
+    const result = withoutImages(markdown);
+    parseBody(result);
+    expect(performance.now() - started).toBeLessThan(1500);
+    expect(result.length).toBeLessThan(markdown.length * 2);
+    expect(loaders(result)).toEqual([]);
   });
 
   test("shows raw HTML, comments included, as literal text on one line", () => {

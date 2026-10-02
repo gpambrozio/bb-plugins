@@ -16,9 +16,12 @@
  * - **One parse, one walk.** Every image, image reference and HTML node, at
  *   any depth, is replaced in the source by its position with literal text:
  *   every ASCII punctuation mark escaped and line breaks folded, so nothing in
- *   it is syntax. An image's text is wrapped in escaped brackets, so it is
- *   never empty and its ends never combine with a neighbouring `!`, `[` or `(`
- *   into new syntax.
+ *   it is syntax. An image becomes its alt text alone, wrapped in escaped
+ *   brackets, so it is never empty and its ends never combine with a
+ *   neighbouring `!`, `[` or `(` into new syntax. Its source is left out: a
+ *   reference image would copy its definition's URL into every use, and the
+ *   body could grow far past what was measured. Every replacement comes from
+ *   the replaced span itself, so the output is at most twice the input.
  * - **Any throw** shows the body as the same fenced block.
  */
 import type { Nodes } from "mdast";
@@ -88,44 +91,36 @@ export function asText(value: string): string {
   return value.replace(/\s*\n\s*/g, " ").replace(/[!-/:-@[-`{-~]/g, "\\$&");
 }
 
-function imageText(alt: string | null | undefined, url: string | undefined): string {
-  const source = url === undefined || url === "" ? "" : ` (${url})`;
-  return `\\[${asText(`${alt ?? ""}${source}`)}\\]`;
+function imageText(alt: string | null | undefined): string {
+  return `\\[${asText(alt ?? "")}\\]`;
 }
 
 type Edit = { start: number; end: number; text: string };
 
 function defuse(markdown: string, parse: (markdown: string) => Nodes): string {
-  const definitions = new Map<string, string>();
-  const images: Array<{ start: number; end: number; alt: string | null | undefined; url?: string; ref?: string }> = [];
   const edits: Edit[] = [];
 
   function walk(node: Nodes): void {
     const start = node.position?.start.offset;
     const end = node.position?.end.offset;
-    if (node.type === "definition") {
-      definitions.set(node.identifier, node.url);
-    } else if (start !== undefined && end !== undefined) {
-      if (node.type === "image") images.push({ start, end, alt: node.alt, url: node.url });
-      else if (node.type === "imageReference") images.push({ start, end, alt: node.alt, ref: node.identifier });
+    if (start !== undefined && end !== undefined) {
+      if (node.type === "image" || node.type === "imageReference") edits.push({ start, end, text: imageText(node.alt) });
       else if (node.type === "html") edits.push({ start, end, text: asText(node.value) });
     }
     if ("children" in node) for (const child of node.children) walk(child);
   }
   walk(parse(markdown));
 
-  for (const image of images) {
-    const url = image.ref === undefined ? image.url : definitions.get(image.ref);
-    edits.push({ start: image.start, end: image.end, text: imageText(image.alt, url) });
+  // Images and HTML have no children here and never overlap one another, so
+  // the output is the source between them and their replacements, in order.
+  const parts: string[] = [];
+  let position = 0;
+  for (const edit of edits.sort((a, b) => a.start - b.start)) {
+    parts.push(markdown.slice(position, edit.start), edit.text);
+    position = edit.end;
   }
-
-  // Images and HTML have no children here and never overlap one another:
-  // applied from the end, no edit moves another's offsets.
-  let source = markdown;
-  for (const edit of edits.sort((a, b) => b.start - a.start)) {
-    source = source.slice(0, edit.start) + edit.text + source.slice(edit.end);
-  }
-  return source;
+  parts.push(markdown.slice(position));
+  return parts.join("");
 }
 
 /**
