@@ -113,8 +113,10 @@ passes found ways around anything precise, so `app/markdown.ts` is deliberately 
   are over 48 KiB, and none come near the others).
 - **One parse, one walk** (mdast with GFM, as bb parses): every image, image reference and HTML node —
   comments included — is replaced, by its position, with literal text: every ASCII punctuation mark
-  escaped, line breaks folded. An image becomes `\[alt (source)\]`, never empty, so it cannot join a
-  neighbouring `!` or `[` into new syntax.
+  escaped, line breaks folded. An image becomes `\[alt\]`, never empty, so it cannot join a
+  neighbouring `!` or `[` into new syntax. Its source is left out on purpose: a reference image would
+  copy its definition's URL into every use and blow the body far past the size budget. Every
+  replacement comes from the span it replaces, so the output is at most twice the input.
 - **Any throw** shows the body as the same fenced block.
 
 Tests re-parse the output and assert no image or HTML node is left, and time the hostile payloads from
