@@ -1,0 +1,33 @@
+# Node and the `bb` CLI, for a job that builds a plugin.
+#
+# `bb plugin build` talks to no server, and the published `bb-app` package carries the same CLI the
+# desktop app does, so CI builds with exactly the bundler, shims and checks a user's bb runs when it
+# installs a plugin from git. It downloads its pinned esbuild and Tailwind on the first build, from
+# npm, into `~/.bb/plugins/toolchain-*` — a few seconds, so it is not cached.
+#
+# One version for every plugin, because the plugins move together in practice: each pins the SDK
+# with `bb plugin types`, which writes the running bb's SDK version. When that pin moves, move this
+# with it; a plugin typed against a newer SDK than this bb ships is being built by the wrong bb.
+name: Set up bb
+description: Install Node and the bb CLI that builds plugins.
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        # bb-app supports ^22.19, ^24 and ^26.
+        node-version: 24
+        package-manager-cache: false
+
+    - name: Install the bb CLI
+      shell: bash
+      env:
+        # The bb release that ships @get-bb/plugin-sdk 0.5.29, the version every plugin pins.
+        BB_VERSION: 0.44.0
+      # `--ignore-scripts`: the package's native install scripts serve the desktop app's terminals
+      # and file watching, not the plugin build, which works without them.
+      run: |
+        set -euo pipefail
+        npm install --global --ignore-scripts "bb-app@$BB_VERSION"
+        bb --version

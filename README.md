@@ -25,6 +25,19 @@ bb plugin install 'git:github.com/gpambrozio/bb-plugins@^0.1.0' --plugin firstma
 Plugins listed in the BB Community marketplace also install from bb's Plugins page, or with
 `bb plugin install <id>@bb-community`. Each plugin's README has its details.
 
+## Releases
+
+A plugin is released by merging a pull request that bumps its `version` and adds the matching
+`## X.Y.Z` section to its `CHANGELOG.md`. After the merge, the
+[Release workflow](.github/workflows/release.yml) builds and tests the plugin, tags the commit that
+introduced the version `<id>/vX.Y.Z` and publishes a GitHub release with that changelog section as
+its notes. Installs that follow a compatible range, including the Community marketplace's entries,
+pick up the new version on their next update check.
+
+Every pull request must pass [Checks](.github/workflows/checks.yml): manifests that agree with each
+other, a version bump for every changelog change, and, per plugin, a production-only build the way bb
+installs it, the typecheck and the tests.
+
 See [`AGENTS.md`](AGENTS.md) for how the plugins are built and released.
 
 ## License
