@@ -127,6 +127,6 @@ describe("SentenceWriter", () => {
   });
 
   it("has a timeout a slow tool cannot exceed", () => {
-    expect(WRITE_TIMEOUT_MS).toBe(20_000);
+    expect(WRITE_TIMEOUT_MS).toBe(45_000);
   });
 });

@@ -13,7 +13,7 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   running bb — Claude Code, OpenAI Codex, Gemini CLI, or a command of your own — writes each sentence
   from the event, your request and the agent's reply, so you hear what was done rather than the start of
   the reply. The tool runs with no tools or read-only, in an empty folder, and the plain sentence is spoken
-  instead whenever it fails or takes longer than 20 seconds.
+  instead whenever it fails or takes longer than 45 seconds.
 - **A Model-written sentences section** on Herald's settings page with the tool, the prompt it is
   given (with placeholders you can move around, and a button to get the default back) and, only while
   the tool is *custom*, the custom command, filled in from the tool you had selected.

@@ -17,8 +17,13 @@ import { delimiter, join } from "node:path";
 import type { Log } from "./ports";
 import { plainText } from "./timeline";
 
-/** A CLI start plus one short model turn; longer, and the sentence is stale news. */
-export const WRITE_TIMEOUT_MS = 20_000;
+/**
+ * A CLI start plus one short model turn is about 10 s on a quiet Mac; 20 s
+ * was the first limit, and a plugin build running on the same machine pushed
+ * two runs past it. The sentence stays above the composer once it lands, so a
+ * late one is still worth having; only one that never comes is not.
+ */
+export const WRITE_TIMEOUT_MS = 45_000;
 
 /** Two turns can end together; a third waits on nothing and gets the plain sentence. */
 export const MAX_IN_FLIGHT = 2;

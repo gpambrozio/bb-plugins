@@ -92,7 +92,7 @@ export const SETTINGS = {
     type: "boolean",
     label: "Write each sentence with a model",
     description:
-      "Off: the plain sentence built from the event. On: a command-line tool runs once per announcement on the Mac running bb and writes the sentence from a prompt that includes the agent's own output — which can carry instructions, so the tool runs with no tools or read-only. Which tool, and the prompt, are under Model-written sentences further down this page. The plain sentence is used whenever the tool fails or takes longer than 20 seconds.",
+      "Off: the plain sentence built from the event. On: a command-line tool runs once per announcement on the Mac running bb and writes the sentence from a prompt that includes the agent's own output — which can carry instructions, so the tool runs with no tools or read-only. Which tool, and the prompt, are under Model-written sentences further down this page. The plain sentence is used whenever the tool fails or takes longer than 45 seconds.",
     default: false,
   },
 } satisfies Record<string, PluginSettingDescriptor>;

@@ -93,7 +93,7 @@ The *Sentence prompt* is yours to edit, with a button to get the default back; i
 the thread, project, folder, event, headline, detail, the request and the agent's output.
 
 While the tool runs, the row and the banner say *Writing the sentence…*; the plain sentence is spoken
-instead if the tool fails, is missing, or takes longer than 20 seconds. The prompt includes the agent's
+instead if the tool fails, is missing, or takes longer than 45 seconds. The prompt includes the agent's
 own reply, which can carry instructions: that is why the presets run with no tools or read-only, and why
 the switch is off by default. A Claude run takes about ten seconds end to end.
 

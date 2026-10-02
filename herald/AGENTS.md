@@ -79,8 +79,8 @@ no shell. What that buys, and what must stay true:
   group, and a kill — timeout, abort, too much output — is `process.kill(-pid)`; `codex` and `claude`
   start children of their own, and a tool stuck mid-call is exactly the one that times out.
 - **Fail closed, never queue, never wait long.** At most `MAX_IN_FLIGHT` (2) tools run at once; a third
-  request gets the plain sentence at once. A run is killed after `WRITE_TIMEOUT_MS` (20 s), or once it
-  has written `MAX_OUTPUT_BYTES` (256 KB) without finishing. A missing tool, a non-zero exit, an empty
+  request gets the plain sentence at once. A run is killed after `WRITE_TIMEOUT_MS` (45 s; 20 s let a plugin build on the same Mac push two
+  runs over), or once it has written `MAX_OUTPUT_BYTES` (256 KB) without finishing. A missing tool, a non-zero exit, an empty
   reply or an unreadable command all mean the plain sentence, with the reason in `bb plugin logs herald`.
   A Claude run measured about 10 s end to end.
 - **The prompt is bounded.** The agent's output is cut at `PROMPT_OUTPUT_MAX` and the headline, detail
