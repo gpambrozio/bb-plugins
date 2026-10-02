@@ -39,8 +39,6 @@ export type ThreadFacts =
 
 export interface LivenessPort {
   facts(threadId: string): Promise<ThreadFacts>;
-  /** Whether the interaction an entry answers to is still waiting on the user. */
-  interactionPending(threadId: string, interactionId: string): Promise<boolean>;
 }
 
 export interface Log {

@@ -192,12 +192,10 @@ describe("createHooks", () => {
     const { hooks, store, publish } = setup();
     await hooks.interactionPending(thread(), question());
     publish.mockClear();
+    // A new turn keeps a sentence already written: it stays above the composer until the next event.
     hooks.active(thread());
-    expect(store.get("t1")).toBeNull();
-    expect(publish).toHaveBeenCalledTimes(1);
-    // Nothing to remove, so nothing to tell the clients.
-    hooks.active(thread());
-    expect(publish).toHaveBeenCalledTimes(1);
+    expect(store.get("t1")).not.toBeNull();
+    expect(publish).not.toHaveBeenCalled();
 
     await hooks.idle(thread({ id: "t2" }), "Done.");
     hooks.gone(thread({ id: "t2" }));

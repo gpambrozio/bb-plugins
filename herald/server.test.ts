@@ -117,10 +117,23 @@ describe("herald server", () => {
     expect(await harness.callRpc("config.get", {})).toEqual({ ...DEFAULT_STORED_CONFIG, voices: { say: "Zoe (Premium)", web: "" } });
   });
 
-  it("removes the entry when the thread starts a new turn", async () => {
+  it("keeps the sentence when the thread starts a new turn, and when the user has read the thread", async () => {
     const { harness } = await load({ announceFinished: false });
     await harness.emitThreadEvent("thread.idle", { thread: USER_THREAD, lastAssistantText: "Done." });
     expect(entriesOf(await harness.callRpc("list", {}))).toHaveLength(1);
+    await harness.emitThreadEvent("thread.active", { thread: USER_THREAD });
+    expect(entriesOf(await harness.callRpc("list", {}))).toHaveLength(1);
+    // USER_THREAD is read (lastReadAt 1 < latestAttentionAt 2 says unread; flip it) — still listed.
+    await harness.emitThreadEvent("thread.active", { thread: { ...USER_THREAD, lastReadAt: 10 } });
+    expect(entriesOf(await harness.callRpc("list", {}))).toHaveLength(1);
+  });
+
+  it("takes back a sentence still being written when the thread starts a new turn", async () => {
+    const { harness } = await load({ writeWithModel: true });
+    await harness.callRpc("config.set", { sentenceTool: "custom", sentenceCommand: SLOW_TOOL });
+    await harness.emitThreadEvent("thread.idle", { thread: USER_THREAD, lastAssistantText: "Done." });
+    await settle();
+    expect(entriesOf(await harness.callRpc("list", {}))[0]?.summary.status).toBe("pending");
     await harness.emitThreadEvent("thread.active", { thread: USER_THREAD });
     expect(entriesOf(await harness.callRpc("list", {}))).toEqual([]);
   });

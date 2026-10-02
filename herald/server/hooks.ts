@@ -7,9 +7,10 @@
  *    returns; a failure is logged, never thrown into the bb server.
  * 2. **Dedupe a turn's end.** A second `thread.idle` with no `thread.active`
  *    between them, inside the window, is the same turn reported twice.
- * 3. **Follow the thread, not the plugin.** An entry lives until the events
- *    show the thread moving on: a new turn, an archive, a delete. bb's unread
- *    state decides what the panel *lists*; see `server/liveness.ts`.
+ * 3. **Follow the thread, not the plugin.** An entry is the thread's last
+ *    event and lives until the next one replaces it, or the thread is archived
+ *    or deleted. A new turn takes back only a sentence still being written.
+ *    bb's unread state decides what the panel *lists*; see `app/rows.ts`.
  * 4. **Leave hidden threads alone.** Another plugin's background worker is not
  *    something the user is waiting on; bb keeps it out of their attention too.
  */
@@ -249,7 +250,12 @@ export function createHooks(deps: HookDeps): Hooks {
   return {
     active(thread) {
       movedOn(thread.id);
-      removeEntry(thread.id);
+      // The sentence is the thread's last event and stays above the composer
+      // through the next turn — unless it is still being written: the agent
+      // working again, on its own or on a new prompt, makes it stale before
+      // it is said, so it is taken back and never spoken.
+      const current = deps.store.get(thread.id);
+      if (current !== null && current.summary.status === "pending") removeEntry(thread.id);
     },
 
     idle(thread, lastAssistantText) {

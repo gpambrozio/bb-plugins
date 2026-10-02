@@ -121,6 +121,18 @@ describe("Herald's app", () => {
     expect(screen.queryByText(/Herald ·/)).toBeNull();
   });
 
+  it("keeps the sentence above the composer once the thread is read and working again", async () => {
+    const calls = { list: 0 };
+    renderSlot<object, RpcContract>({ component: HeraldBridge }, {}, { rpc: rpc(() => [entry({ eventId: "t1:idle:5" })], calls) });
+    const readAndWorking = { ...(sidebarThread as object), isUnread: false, status: "active", indicator: "none" } as never;
+    renderSlot(
+      { component: HeraldBanner },
+      {},
+      { sidebarThreads: { status: "ready" as const, threads: [readAndWorking] }, composer: { scope: { kind: "thread", threadId: "t1" } } },
+    );
+    await screen.findByText("Login fix is done.");
+  });
+
   it("speaks a new sentence from the overlay alone, with no Herald page open", async () => {
     // The desktop app, showing some other page: only the overlay is mounted.
     (window as { bbDesktop?: unknown }).bbDesktop = {};

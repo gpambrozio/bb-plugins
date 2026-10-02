@@ -19,6 +19,13 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the tool is *custom*, the custom command, filled in from the tool you had selected.
 - The Herald page and the banner above the composer say **Writing the sentence…** while the tool runs.
 
+### Changed
+
+- **The sentence stays.** A turn that ends on the thread you are looking at is spoken, and its sentence
+  stays above the composer — through your next prompt — until the next event replaces it. Before, bb
+  marking the thread read at once made it vanish unspoken. The one exception: a sentence still being
+  written when the agent starts working again is withdrawn and never spoken.
+
 ## 0.1.0
 
 The first release: Herald for bb, ported from the Paseo plugin of the same name (0.5.1).

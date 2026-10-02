@@ -84,6 +84,23 @@ describe("hooks with a model-written sentence", () => {
     expect(store.get("t1")?.summary).toEqual({ status: "ready", text: "Login fix finished. Done." });
   });
 
+  it("takes back a sentence still being written when the agent works again, and keeps one already written", async () => {
+    const w = heldWriter();
+    const { hooks, store, publish } = setup(w.write);
+    await hooks.idle(thread(), "Done.");
+    w.release("Login fix is done.");
+    await settle();
+    expect(store.get("t1")?.summary.status).toBe("ready");
+    hooks.active(thread());
+    expect(store.get("t1")?.summary).toEqual({ status: "ready", text: "Login fix is done." });
+
+    publish.mockClear();
+    await hooks.idle(thread({ id: "t2" }), "Done.");
+    hooks.active(thread({ id: "t2" }));
+    expect(store.get("t2")).toBeNull();
+    expect(publish).toHaveBeenCalledTimes(2);
+  });
+
   it("drops a sentence that arrives after the thread moved on", async () => {
     const w = heldWriter();
     const { hooks, store, publish } = setup(w.write);

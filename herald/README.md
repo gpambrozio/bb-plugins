@@ -10,7 +10,8 @@ of what was done — and the bb app speaks it.
 - A **Herald** page in the sidebar lists every thread waiting on you, each with that sentence and how
   long ago it happened; the sidebar entry shows how many. The list keeps itself up to date. Tap a row to
   open the thread, or **Read again** on it to hear the sentence again.
-- The sentence also sits above the waiting thread's composer, with a Read again button, until you answer.
+- The sentence also sits above the thread's composer, with a Read again button, and stays there — whether
+  or not you have read the thread, and through your next turn — until the next event replaces it.
 - *Mute here* silences announcements on the device you are on until the app reloads; *Test voice* says a
   sample sentence; the gear opens Herald's settings. Read again and Test voice speak even when muted —
   you pressed them.
@@ -96,7 +97,7 @@ the switch is off by default. A Claude run takes about ten seconds end to end.
 ## Limitations
 
 - bb has no way for a plugin to add a row to a thread's conversation, so the sentence is a banner above
-  the composer rather than a card in the transcript, and it goes once the thread moves on.
+  the composer rather than a card in the transcript.
 - The model that writes a sentence is a command-line tool, not one of bb's own providers: bb 0.44 lets a
   plugin register an AI service for its thread titles but not call one. The plain sentence is built from
   the event alone.

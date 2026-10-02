@@ -16,7 +16,7 @@ what still holds and says what bb changed. The repo root `AGENTS.md` covers what
 | `server/reload-signal.ts` | What an old instance tells its replacement: storage closed and flushed, read it again. |
 | `server/store.ts` | One entry per thread, mirrored to storage; `load()` merges. |
 | `server/kv-backend.ts` | The store's rows in `bb.storage.kv`, one per thread. |
-| `server/liveness.ts` | Asks bb about each entry's thread before the list goes out: read, answered, gone, working again. |
+| `server/liveness.ts` | Asks bb whether each entry's thread still exists before the list goes out; gone ones are removed. |
 | `server/timeline.ts` | Pure text: what an interaction asks, the user's last prompt, the spoken sentence. |
 | `server/say.ts` | `say` on the bb server's Mac, driven for its voices: text in on stdin, a WAV out, bytes back. |
 | `server/writer.ts` | The optional sentence-writing tool, run as a child process: prompt in on stdin, one line out; the timeout, the cap, the empty folder. |
@@ -138,7 +138,7 @@ landed on top of the newer.
 | Paseo hook | bb event |
 | --- | --- |
 | `permission_requested` | `interaction.pending` (`user_question` → question, `approval` of a `plan` → plan, every other approval → permission) |
-| `turn_started` | `thread.active` — bumps the generation and removes the entry |
+| `turn_started` | `thread.active` — bumps the generation; removes the entry only while its sentence is still being written |
 | `turn_ended` (completed) | `thread.idle`, which carries `lastAssistantText` |
 | `turn_ended` (failed) | `thread.failed`, which carries the error |
 | `archived` | `thread.archived` and `thread.deleted` |
@@ -181,13 +181,19 @@ would hide every one of them.
 
 ## What the store means
 
-One entry per thread, the most recent reason it is waiting. Removed when the events show the thread
-moving on (`thread.active`, archive, delete) and by `Liveness`. **There is no age limit, on purpose.** bb
-decides who is waiting — its unread rule, `latestAttentionAt > lastReadAt`, and its pending
-interactions; Herald explains why. `Liveness` (cached 30 s) removes an entry whose thread is **gone**,
-whose interaction was **answered**, or which was **seen** — read since its attention, and at least
-`SEEN_GRACE_MS` old so a thread the user is watching as it finishes still reaches the panel. A finish
-on a thread that is working again is hidden but kept.
+One entry per thread: **its last Herald event**, with the sentence for it. It is replaced by the next
+event and removed when the thread is archived or deleted (the events, and `Liveness`, cached 30 s, for a
+thread that vanished without one). **Nothing else removes it, on purpose**: not the user reading the
+thread, not answering the question, not the next turn. The first version followed bb's unread rule and
+dropped an entry once the thread was read or answered — which meant a turn ending on the thread the user
+was looking at was marked read at once, so its sentence vanished from the composer and was never spoken.
+Now the sentence stays above the composer and is spoken whether or not bb thinks the thread is unread.
+
+The one exception is **a sentence still being written** (`pending`): when the agent works again before
+it lands — on a new prompt, or on its own — `hooks.active` takes the entry back and nothing is spoken.
+A sentence already written stays through the new turn. bb's unread rule and its pending interactions
+still decide what the *panel* lists; that join is `app/rows.ts`, in the app, and the composer banner
+reads Herald's entries directly (`app/banner.tsx`) so the two can differ.
 
 Hidden threads are ignored entirely — another plugin's background workers: bb keeps them out of the
 user's attention too.
@@ -302,7 +308,8 @@ against bb's list and the manifest. Refresh the list from bb's app bundle (`ICON
 
 A plugin cannot add a row to a thread's timeline, so Paseo's transcript card is gone. The sentence sits
 in a **composer banner** instead (`app.composer.customize`, thread scope) — where the user is about to
-answer — for as long as the thread waits on them, with a play button. A switched-off kind gets no banner.
+answer — with a play button, and stays there, read or not and through the next turn, until the next
+event replaces it. It reads Herald's entries, not the panel's rows. A switched-off kind gets no banner.
 
 ## Checking it
 
@@ -313,11 +320,15 @@ cover, check by hand after `bb plugin reload herald`:
 
 1. Let a thread finish a turn. The page shows it with its sentence at once, and the desktop app speaks
    it. The `app:` lines in `bb plugin logs herald` say what was spoken, or why not.
-2. Ask a thread something that makes it ask you a question; answer it; the row and the banner go at once.
-3. In a browser tab, nothing is spoken until **Test voice** has been pressed once.
-4. Switch a kind off in Settings → Plugins → Herald and trigger it: the row says "Not announced" and
+2. Ask a thread something that makes it ask you a question; answer it; the row goes from the Herald page
+   at once, and the banner stays until the turn that follows ends and replaces it.
+3. With the thread open on screen, let a turn finish: bb marks it read at once, and the sentence is still
+   spoken and still sits above the composer. Send a new prompt while a sentence is being written: the
+   banner goes and nothing is spoken.
+4. In a browser tab, nothing is spoken until **Test voice** has been pressed once.
+5. Switch a kind off in Settings → Plugins → Herald and trigger it: the row says "Not announced" and
    nothing is spoken.
-5. Switch *Write each sentence with a model* on (the tool defaults to claude) and let a thread finish: the row and
+6. Switch *Write each sentence with a model* on (the tool defaults to claude) and let a thread finish: the row and
    the banner say "Writing the sentence…" for a few seconds, then the model's sentence replaces it and is
    spoken once. Then, under *Model-written sentences*, pick the tool *custom*: a *Custom command* field
    appears under the select, filled in with the Claude command. Save a command that does not exist:
