@@ -9,8 +9,8 @@
  * again each time the popover opens; the button shows `Skills` without a
  * number until the first answer, rather than a `Skills 0` that then jumps.
  */
-import { useBbNavigate, useComposerView } from "@get-bb/plugin-sdk/app";
-import { useState } from "react";
+import { useBbNavigate, useComposer, useComposerView } from "@get-bb/plugin-sdk/app";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -33,6 +33,10 @@ function SkillsButton({ threadId }: { threadId: string }) {
   const { state, reload } = useSkillList(threadId);
   const [open, setOpen] = useState(false);
   const navigate = useBbNavigate();
+  const composer = useComposer();
+  // After **Insert in chat** the composer keeps the focus it was given,
+  // rather than the popover handing it back to this button as it closes.
+  const inserted = useRef(false);
   const count = state.status === "ready" ? countEntries(state.data) : null;
 
   function handleOpenChange(next: boolean) {
@@ -66,6 +70,12 @@ function SkillsButton({ threadId }: { threadId: string }) {
         side="top"
         mobileTitle="Skills"
         className="flex max-h-[min(32rem,70vh)] w-[min(28rem,calc(100vw-2rem))] flex-col p-0"
+        onCloseAutoFocus={(event) => {
+          if (!inserted.current) return;
+          inserted.current = false;
+          event.preventDefault();
+          composer.focus();
+        }}
       >
         <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
           <span className="text-sm font-medium text-foreground">Skills</span>
@@ -75,8 +85,17 @@ function SkillsButton({ threadId }: { threadId: string }) {
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto">
           {/* The composer under this popover is already the thread's, so a
-              successful invoke only has to get out of the way of its turn. */}
-          <SkillBrowser threadId={threadId} frame="popover" list={state} onInvoked={() => setOpen(false)} />
+              successful invoke or insert only has to get out of the way. */}
+          <SkillBrowser
+            threadId={threadId}
+            frame="popover"
+            list={state}
+            onInvoked={() => setOpen(false)}
+            onInserted={() => {
+              inserted.current = true;
+              setOpen(false);
+            }}
+          />
         </div>
       </PopoverContent>
     </Popover>

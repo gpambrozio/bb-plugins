@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { invocationText, sendInvocation } from "./invoke";
+import { insertionText, invocationText, sendInvocation, withCommand, writesToThread } from "./invoke";
 
 /** A send that answers only when the test says so. */
 function deferredSend() {
@@ -120,5 +120,36 @@ describe("sendInvocation", () => {
     await done;
     expect(detail.onFailure).not.toHaveBeenCalled();
     expect(detail.onUnseenFailure).toHaveBeenCalledWith("thread is gone");
+  });
+});
+
+describe("insertionText", () => {
+  it("is the command, any trimmed arguments, and a trailing space", () => {
+    expect(insertionText("diff-check", "")).toBe("/diff-check ");
+    expect(insertionText("diff-check", "  src only ")).toBe("/diff-check src only ");
+  });
+});
+
+describe("withCommand", () => {
+  it("fills an empty or blank draft with the command", () => {
+    expect(withCommand("", "/diff-check ")).toBe("/diff-check ");
+    expect(withCommand("  \n", "/diff-check ")).toBe("/diff-check ");
+  });
+
+  it("puts the command first and keeps what was typed after it", () => {
+    expect(withCommand("  look at auth.ts\nplease", "/diff-check ")).toBe("/diff-check look at auth.ts\nplease");
+  });
+});
+
+describe("writesToThread", () => {
+  it("accepts the thread's own draft and its queued messages", () => {
+    expect(writesToThread({ kind: "thread", threadId: "thr_a" }, "thr_a")).toBe(true);
+    expect(writesToThread({ kind: "queued-message", threadId: "thr_a" }, "thr_a")).toBe(true);
+  });
+
+  it("refuses another thread, a side chat and the new-thread composer", () => {
+    expect(writesToThread({ kind: "thread", threadId: "thr_b" }, "thr_a")).toBe(false);
+    expect(writesToThread({ kind: "side-chat" }, "thr_a")).toBe(false);
+    expect(writesToThread({ kind: "new-thread" }, "thr_a")).toBe(false);
   });
 });

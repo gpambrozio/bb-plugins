@@ -22,7 +22,7 @@ specific to `skills`.
 | `shared/contract.ts`, `shared/host-contract.ts` | App ⇄ server and server ⇄ host contracts. The app imports them as types only. |
 | `app/browser.tsx` | List, search, both detail screens, invoke — drawn by the panel and the popover. |
 | `app/panel.tsx`, `app/composer-button.tsx` | The thread-panel tab, and the composer button with its count and popover. |
-| `app/use-skills.ts`, `app/invoke.ts` | The two RPC reads, and the send that reports back only to the screen that started it. |
+| `app/use-skills.ts`, `app/invoke.ts` | The two RPC reads, the send that reports back only to the screen that started it, and Insert in chat. |
 | `app/markdown.ts` | Turns a body's images into links before bb's `Markdown` draws it. |
 
 ## What bb already does, and what this adds
@@ -88,6 +88,14 @@ so it waits behind a running turn instead of steering it. Measured live on bb 0.
 Claude Code loads the skill through its Skill tool, Codex reads its `SKILL.md` and follows it — the same
 text bb's `/` menu offers. After a send the panel calls `toThread`; the popover closes over a composer
 that is already the thread's.
+
+**Insert in chat writes the draft through `useComposer()`.** It is public, not experimental
+(`useComposer`, `PluginComposerApi` in the SDK's app types): inside a thread context a component's
+writes land in that thread's draft — the composer the popover sits on, and the thread a side-panel tab
+belongs to. `updateText` puts `/name args ` first (a slash command runs only at the start of a message)
+and keeps the draft after it; then `focus()`. The button is offered only when `composer.scope` is this
+thread's (`writesToThread`). The popover stops Radix handing focus back to its trigger on close, or the
+trigger would take it from the composer.
 
 **Bodies render through bb's `Markdown`, images as links.** The host component loads images as it
 draws them and gives no say over it, and a skill someone else wrote can carry a remote image, so

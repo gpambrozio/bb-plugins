@@ -9,7 +9,7 @@ conversation.
   or Codex plugin, or bb itself.
 - Each skill's `SKILL.md`, rendered, with its path on disk and a button to copy it.
 - **Invoke**: add arguments and run the skill in the thread. A busy agent gets it after the current
-  turn.
+  turn. Or **Insert in chat** to put the command in the message box and finish it yourself.
 - A **Skills** button in the composer with a live count, opening the same list in a popover (a sheet
   on a narrow window), and a command palette entry for the tab.
 

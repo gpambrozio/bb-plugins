@@ -26,11 +26,14 @@ bb plugin install 'git:github.com/gpambrozio/bb-plugins@^0.1.0' --plugin skills 
 
 - **The Skills button** in a thread's composer shows how many entries the thread has. Press it for a
   popover (a sheet in a narrow window) listing them: search, pick one to read it, type any
-  arguments and press **Invoke**. **Open in panel** opens the full tab.
+  arguments and press **Invoke** or **Insert in chat**. **Open in panel** opens the full tab.
 - **The Skills tab** in the thread's side panel (from the panel's launcher, or *Skills: show this
   thread's skills* in the command palette) shows the same list, and each skill's path with **Copy
   path** and its whole `SKILL.md`.
 - **Invoke** sends `/name arguments` to the thread. If the agent is busy, it waits in the queue.
+- **Insert in chat** puts `/name arguments ` at the start of the thread's message box instead, without
+  sending it, and puts the cursor there — to add more before sending. Anything already typed stays,
+  after the command.
 
 Skills are grouped by where they come from, in the order the provider reads them. A name defined in
 two places is listed once, under the copy that wins. **Built-in skills** and **Built-in commands** are

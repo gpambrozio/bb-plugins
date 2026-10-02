@@ -34,3 +34,30 @@ export async function sendInvocation(options: {
   }
   if (options.isShowing()) options.onSent();
 }
+
+/**
+ * What **Insert in chat** puts in the composer: the command, any arguments,
+ * and a space to go on typing after.
+ */
+export function insertionText(name: string, args: string): string {
+  return `${invocationText(name, args)} `;
+}
+
+/**
+ * The draft with `command` in it. A slash command runs only at the start of a
+ * message, so the command goes first and whatever the user had typed follows
+ * it, unchanged.
+ */
+export function withCommand(draft: string, command: string): string {
+  const rest = draft.trimStart();
+  return rest.length === 0 ? command : `${command}${rest}`;
+}
+
+/**
+ * Whether the composer a component writes to is this thread's own — its draft,
+ * or one of its queued messages being edited. Anywhere else (a side chat, the
+ * new-thread composer) a command for this thread does not belong.
+ */
+export function writesToThread(scope: { kind: string; threadId?: string }, threadId: string): boolean {
+  return (scope.kind === "thread" || scope.kind === "queued-message") && scope.threadId === threadId;
+}

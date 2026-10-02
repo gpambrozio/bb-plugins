@@ -1,10 +1,10 @@
-import { useRpc, useSdk } from "@get-bb/plugin-sdk/app";
+import { useComposer, useRpc, useSdk } from "@get-bb/plugin-sdk/app";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import type { RpcContract } from "../server";
 import type { SkillDocument, SkillList } from "../shared/skills";
-import { invocationText, sendInvocation } from "./invoke";
+import { insertionText, invocationText, sendInvocation, withCommand, writesToThread } from "./invoke";
 
 export type Loaded<T> =
   | { status: "loading" }
@@ -100,4 +100,23 @@ export function useInvoke(threadId: string, onInvoked: () => void) {
   }
 
   return { args, setArgs, invoke, error, isSending };
+}
+
+/**
+ * **Insert in chat**: puts `/name args ` at the start of the thread's composer
+ * draft without sending it, then hands the screen back and focuses the
+ * composer. `useComposer()` writes to the thread a slot is mounted for — its
+ * composer for the popover, its draft for the side panel — so the button is
+ * offered only when that is this thread.
+ */
+export function useInsertInChat(threadId: string, onInserted: () => void) {
+  const composer = useComposer();
+  return {
+    canInsert: writesToThread(composer.scope, threadId),
+    insert(name: string, args: string) {
+      composer.updateText((draft) => withCommand(draft, insertionText(name, args)));
+      onInserted();
+      composer.focus();
+    },
+  };
 }

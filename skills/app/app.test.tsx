@@ -83,12 +83,22 @@ function sentMessages() {
   };
 }
 
-function renderPanel(options: { list?: () => SkillList; send?: ReturnType<typeof sentMessages> } = {}) {
+function renderPanel(
+  options: {
+    list?: () => SkillList;
+    send?: ReturnType<typeof sentMessages>;
+    composer?: { text?: string; scope?: { kind: "thread"; threadId: string } };
+  } = {},
+) {
   const send = options.send ?? sentMessages();
   const result = renderSlot<{ threadId: string; params: null }, RpcContract>(
     { component: SkillsPanel },
     { threadId: "thr_example", params: null },
-    { rpc: { ...rpc, list: options.list ?? rpc.list }, sdk: send.sdk },
+    {
+      rpc: { ...rpc, list: options.list ?? rpc.list },
+      sdk: send.sdk,
+      composer: { scope: { kind: "thread", threadId: "thr_example" }, ...options.composer },
+    },
   );
   return { ...result, sent: send.sent };
 }
@@ -237,6 +247,33 @@ describe("the panel", () => {
     expect(inspection.navigateCalls).toEqual([]);
   });
 
+  it("inserts the command into the thread's draft without sending, then goes to the thread", async () => {
+    const { sent, inspection } = renderPanel({ composer: { text: "look at auth.ts" } });
+    fireEvent.click(await screen.findByText("tidy-imports"));
+    fireEvent.change(await screen.findByLabelText("Arguments for /tidy-imports"), { target: { value: " src " } });
+    fireEvent.click(screen.getByRole("button", { name: "Insert in chat" }));
+
+    expect(inspection.composer.text).toBe("/tidy-imports src look at auth.ts");
+    expect(inspection.composer.focusCount).toBe(1);
+    expect(inspection.navigateCalls).toEqual([{ method: "toThread", threadId: "thr_example" }]);
+    expect(sent).toEqual([]);
+    expect(await screen.findByLabelText("Search skills")).toBeTruthy();
+  });
+
+  it("inserts a reported entry too, with a trailing space into an empty draft", async () => {
+    const { inspection } = renderPanel();
+    fireEvent.click(await screen.findByText("explain"));
+    fireEvent.click(screen.getByRole("button", { name: "Insert in chat" }));
+    expect(inspection.composer.text).toBe("/explain ");
+  });
+
+  it("offers no Insert in chat when the composer it would write to is another thread's", async () => {
+    renderPanel({ composer: { scope: { kind: "thread", threadId: "thr_other" } } });
+    fireEvent.click(await screen.findByText("deploy"));
+    expect(await screen.findByRole("button", { name: "Invoke /deploy" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Insert in chat" })).toBeNull();
+  });
+
   it("offers no Invoke for a model-invoked-only skill", async () => {
     renderPanel();
     fireEvent.click(await screen.findByText("helper-only"));
@@ -289,6 +326,25 @@ describe("the composer button", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(send.sent).toHaveLength(1);
     expect(inspection.navigateCalls).toEqual([]);
+  });
+
+  it("inserts the command into this composer, closes the popover and focuses the composer", async () => {
+    const send = sentMessages();
+    const { inspection } = renderSlot<object, RpcContract>({ component: SkillsComposerButton }, {}, {
+      rpc,
+      sdk: send.sdk,
+      composer: { scope: { kind: "thread", threadId: "thr_example" } },
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "Skills: 6" }));
+    const popover = await screen.findByRole("dialog");
+    fireEvent.click(await within(popover).findByText("deploy"));
+    fireEvent.change(await within(popover).findByLabelText("Arguments for /deploy"), { target: { value: "staging" } });
+    fireEvent.click(within(popover).getByRole("button", { name: "Insert in chat" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(inspection.composer.text).toBe("/deploy staging ");
+    expect(inspection.composer.focusCount).toBeGreaterThanOrEqual(1);
+    expect(send.sent).toEqual([]);
   });
 
   it("opens the panel from the popover", async () => {

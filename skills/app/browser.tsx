@@ -3,10 +3,10 @@
  * Skills panel shows, drawn by the panel and by the composer button's popover
  * alike, so a skill run from either is sent the same way.
  *
- * `onInvoked` is what happens after a successful send, and it is the one thing
- * the two callers do differently: the panel moves to the thread, where the turn
- * it started is, while the popover closes over a composer that is already the
- * thread's.
+ * `onInvoked` is what happens after a successful send, and `onInserted` after
+ * **Insert in chat** has put the command in the composer; they are what the two
+ * callers do differently: the panel moves to the thread, while the popover
+ * closes over a composer that is already the thread's.
  */
 import { Markdown } from "@get-bb/plugin-sdk/app";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
@@ -18,7 +18,7 @@ import { cn } from "@/lib/utils";
 
 import { type ReportedSkill, type SkillEntry, type SkillList, SOURCE_KINDS } from "../shared/skills";
 import { withoutImages } from "./markdown";
-import { type Loaded, useInvoke, useSkillDocument } from "./use-skills";
+import { type Loaded, useInsertInChat, useInvoke, useSkillDocument } from "./use-skills";
 
 type Selection = { kind: "discovered"; id: string } | { kind: "reported"; name: string };
 
@@ -84,8 +84,22 @@ function BackLink({ onBack }: { onBack: () => void }) {
   );
 }
 
-/** The arguments field, the error line and the Invoke button, shared by both detail screens. */
-function InvokeControls({ name, controls }: { name: string; controls: ReturnType<typeof useInvoke> }) {
+/**
+ * The arguments field, the error line, **Invoke** and **Insert in chat**,
+ * shared by both detail screens.
+ */
+function InvokeControls({
+  threadId,
+  name,
+  controls,
+  onInserted,
+}: {
+  threadId: string;
+  name: string;
+  controls: ReturnType<typeof useInvoke>;
+  onInserted: () => void;
+}) {
+  const chat = useInsertInChat(threadId, onInserted);
   return (
     <form
       className="my-3 flex flex-col gap-2"
@@ -104,9 +118,22 @@ function InvokeControls({ name, controls }: { name: string; controls: ReturnType
         spellCheck={false}
       />
       {controls.error ? <p className="text-sm text-destructive">{controls.error}</p> : null}
-      <Button type="submit" disabled={controls.isSending}>
-        {controls.isSending ? "Sending…" : `Invoke /${name}`}
-      </Button>
+      <div className="flex flex-wrap gap-2">
+        <Button type="submit" className="flex-1" disabled={controls.isSending}>
+          {controls.isSending ? "Sending…" : `Invoke /${name}`}
+        </Button>
+        {chat.canInsert ? (
+          <Button
+            type="button"
+            variant="outline"
+            className="flex-1"
+            disabled={controls.isSending}
+            onClick={() => chat.insert(name, controls.args)}
+          >
+            Insert in chat
+          </Button>
+        ) : null}
+      </div>
     </form>
   );
 }
@@ -127,6 +154,7 @@ function SkillDetail({
   userInvocable,
   onBack,
   onInvoked,
+  onInserted,
 }: {
   threadId: string;
   frame: SkillBrowserFrame;
@@ -134,6 +162,7 @@ function SkillDetail({
   userInvocable: boolean;
   onBack: () => void;
   onInvoked: () => void;
+  onInserted: () => void;
 }) {
   const { state } = useSkillDocument(threadId, skillId);
   const controls = useInvoke(threadId, onInvoked);
@@ -160,7 +189,7 @@ function SkillDetail({
             </div>
           ) : null}
           {userInvocable ? (
-            <InvokeControls name={state.data.name} controls={controls} />
+            <InvokeControls threadId={threadId} name={state.data.name} controls={controls} onInserted={onInserted} />
           ) : (
             <p className="my-3 text-sm text-muted-foreground">
               This skill is model-invoked only. The agent can use it, but it cannot be run as a command.
@@ -185,11 +214,13 @@ function ReportedDetail({
   entry,
   onBack,
   onInvoked,
+  onInserted,
 }: {
   threadId: string;
   entry: ReportedSkill;
   onBack: () => void;
   onInvoked: () => void;
+  onInserted: () => void;
 }) {
   const controls = useInvoke(threadId, onInvoked);
   return (
@@ -198,7 +229,7 @@ function ReportedDetail({
       <h2 className="text-base font-semibold text-foreground">{entry.name}</h2>
       {entry.argumentHint ? <p className="font-mono text-xs text-muted-foreground">{entry.argumentHint}</p> : null}
       {entry.description ? <p className="mt-2 text-sm text-muted-foreground select-text">{entry.description}</p> : null}
-      <InvokeControls name={entry.name} controls={controls} />
+      <InvokeControls threadId={threadId} name={entry.name} controls={controls} onInserted={onInserted} />
       <p className="text-sm text-muted-foreground">
         bb's provider reported this. It has no SKILL.md on disk, so there is nothing further to show.
       </p>
@@ -239,11 +270,13 @@ export function SkillBrowser({
   frame,
   list,
   onInvoked,
+  onInserted,
 }: {
   threadId: string;
   frame: SkillBrowserFrame;
   list: Loaded<SkillList>;
   onInvoked: () => void;
+  onInserted: () => void;
 }) {
   const [search, setSearch] = useState("");
   // Discovered entries are addressed by their id; reported ones have none and
@@ -268,6 +301,11 @@ export function SkillBrowser({
   function handleInvoked() {
     setSelected(null);
     onInvoked();
+  }
+
+  function handleInserted() {
+    setSelected(null);
+    onInserted();
   }
 
   const term = search.trim().toLowerCase();
@@ -298,6 +336,7 @@ export function SkillBrowser({
         userInvocable={entry?.userInvocable ?? true}
         onBack={() => setSelected(null)}
         onInvoked={handleInvoked}
+        onInserted={handleInserted}
       />
     );
   } else if (selected?.kind === "reported") {
@@ -306,7 +345,13 @@ export function SkillBrowser({
     );
     content =
       entry === undefined ? null : (
-        <ReportedDetail threadId={threadId} entry={entry} onBack={() => setSelected(null)} onInvoked={handleInvoked} />
+        <ReportedDetail
+          threadId={threadId}
+          entry={entry}
+          onBack={() => setSelected(null)}
+          onInvoked={handleInvoked}
+          onInserted={handleInserted}
+        />
       );
   }
 

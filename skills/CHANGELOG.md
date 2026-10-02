@@ -17,6 +17,8 @@ The first release: Skills for bb, ported from the Paseo plugin of the same name 
 - **Each skill's full text**, rendered, with where it lives on disk and a button to copy the path.
 - **Invoke**: type any arguments and run the skill in the thread. If the agent is busy, it waits its
   turn.
+- **Insert in chat**: put the skill's command, with any arguments, at the start of the thread's
+  message box without sending it, ready to add to and send yourself.
 - **A Skills button in the composer** with a count, opening the same list in a popover — or a sheet,
   in a narrow window — with a way to the full tab.
 - **A palette command** that opens the tab.
