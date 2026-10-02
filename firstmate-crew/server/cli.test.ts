@@ -390,7 +390,9 @@ describe("bb firstmate-crew tell", () => {
     const charter = await readTemplate(TEMPLATES.charter);
     expect(charter).toContain(`\`${RELAY_PREFIX}, from …:\``);
     expect(charter).toContain("This overrides `+yolo` and any\nstanding merge order");
-    expect(charter).toContain("`(hold: captain's word to merge)`");
+    expect(charter).toContain("Any work a relayed message starts, steers or relaunches\ncarries `(hold: captain's word to merge)`");
+    expect(charter).toContain("given it the moment the\nrelay touches it");
+    expect(charter).toContain("only the captain's answer here,\nin your own chat, covering that work as it now stands, takes it off");
   });
 
   describe("through the /fm skill's own shell recipe", () => {

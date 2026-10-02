@@ -56,8 +56,8 @@ Do not break these; each was paid for.
   machine). The charter is the home's `AGENTS.md`, and the board opens home files through the first
   mate's environment, so a first mate working elsewhere would see neither.
 - **Only the first mate spawns crew.** `crew spawn` refuses any other calling thread.
-- **A relayed message is a request, never the captain's word.** Work started from one is filed with
-  `(hold: captain's word to merge)` and keeps it until the captain answers in the first mate's chat, which
+- **A relayed message is a request, never the captain's word.** Work one starts, steers or relaunches
+  carries `(hold: captain's word to merge)` until the captain answers in the first mate's chat, which
   overrides `+yolo` and standing merge orders (the charter, §0 and §4); the existing hold field is the
   record, so it survives restarts and relaunches. Every message `tell` delivers opens with
   `Relayed by bb firstmate-crew tell, from …:` (`RELAY_PREFIX` in `server/cli.ts`, named in the charter;
