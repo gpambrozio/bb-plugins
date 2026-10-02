@@ -100,20 +100,25 @@ trigger, or the trigger would take it from the composer. On a narrow window the 
 that restores focus to the trigger as it closes and offers no hook to stop it, so the composer is
 focused again from `onMobileContentAnimationEnd`, once the drawer has finished closing.
 
-**Bodies render through bb's `Markdown`, with nothing in them that loads.** The host component loads
-images as it draws them and gives no say over it, and a skill someone else wrote can carry a remote
-image or raw HTML. `app/markdown.ts` parses the body once, the way bb's renderer does (mdast with GFM),
-walks it once, and replaces each loading node in the source by its position: an image or image
-reference becomes its alt text and source as escaped plain text (an image nested in alt text is part
-of that string, so it goes too), and raw HTML has its `<` escaped. Do not go back to matching image
-syntax with patterns (shortcut references, nested and multiline alt text and fence lengths defeated
-the regex), nor to re-parsing until nothing is left (each nesting level cost a whole parse).
+**Bodies render through bb's `Markdown`, with nothing in them that loads — conservatively.** The host
+component loads images as it draws them and gives no say over it, and a skill someone else wrote can
+carry a remote image or raw HTML; its body must also never hang or crash the surface. Three review
+passes found ways around anything precise, so `app/markdown.ts` is deliberately blunt:
 
-**A body nested or sized beyond any real skill is shown as a code block, unparsed.** The parser itself
-is quadratic in how deeply image labels nest — 4,096 levels in 16 KB take it seconds, and bb's own
-renderer is the same parser — so a linear scan sends a body with brackets nested more than 32 deep, or
-over 256 KiB, straight to a fenced code block. It shows as text, loads nothing, and parses in linear
-time.
+- **Budgets before parsing**, as raw character counts no syntax can hide from: at most 48 KiB, 512
+  `[`, 4,096 `*`/`_`, and 32 blockquote or list markers opening any one line. The parser (bb's
+  renderer's too) is quadratic in nested image labels and in mixed emphasis runs, and overflows the
+  stack on thousands of nested containers. A body past any budget is shown whole as a fenced code
+  block, unparsed. Real skills sit far below every budget (on one machine, 9 of 1,398 `SKILL.md` files
+  are over 48 KiB, and none come near the others).
+- **One parse, one walk** (mdast with GFM, as bb parses): every image, image reference and HTML node —
+  comments included — is replaced, by its position, with literal text: every ASCII punctuation mark
+  escaped, line breaks folded. An image becomes `\[alt (source)\]`, never empty, so it cannot join a
+  neighbouring `!` or `[` into new syntax.
+- **Any throw** shows the body as the same fenced block.
+
+Tests re-parse the output and assert no image or HTML node is left, and time the hostile payloads from
+the reviews. Do not loosen this into pattern matching or re-parsing loops; each was a review finding.
 
 ## Invariants
 
