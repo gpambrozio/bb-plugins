@@ -191,6 +191,14 @@ What a port only learns by running it:
   into a checked-in `.ts` file, a test fails when the two differ), as `firstmate-crew` does.
 - **`bb.storage.kv` is 256 KB per value.** A queue or a log that can outgrow that belongs in a file
   beside the data it describes, or in `bb.storage.database()`.
+- **A plugin CLI command knows its caller.** `run(input, ctx)` gets the calling thread and project
+  (`ctx.threadId`, `ctx.projectId`, from the caller's `BB_THREAD_ID` and `BB_PROJECT_ID`) and its
+  `cwd`. The thread id is only what the caller's environment says, so treat it as a claim, not an
+  identity. An option declared `stdin: true` is also accepted as `--<name>-stdin`: the caller's `bb`
+  reads it from stdin on the caller's machine, but in bb 0.44 only as exactly one non-empty line of at
+  most 16 KiB, and the multi-line `--stdin` that `bb guide plugins` describes is not in 0.44's CLI. For
+  arbitrary text, send it base64-encoded through `--<name>-stdin` and decode it with a size cap
+  (`firstmate-crew`'s `tell --message-base64`), rather than having the server read a file by path.
 - **A thread spawn into a host workspace needs a `hostId`.** The SDK type marks it optional, bb 0.44
   answers `hostId is required unless workspace.type is personal`. Take the server's own machine from
   `bb.sdk.system.config().primaryHostId`, or the host of the project's checkout.
@@ -433,6 +441,12 @@ Each plugin gets its own `AGENTS.md` (the invariants a future agent must not bre
 relevant ones from the Paseo plugin's `AGENTS.md` and delete the ones bb made moot) and `README.md`
 (what it does, how to install). Commands, settings and operating constraints that *agents in bb
 threads* need go in the plugin's own `skills/` directory, which bb imports into threads.
+
+bb copies each skill folder into threads as it is, so keep a skill's tests out of it. Its frontmatter
+keeps keys bb does not know, which makes a skill only the user can start possible: with
+`disable-model-invocation: true`, Claude Code hides it from the model and still runs it when the user
+types `/<name>` (bb hands Claude Code the typed text unchanged). `firstmate-crew/skills/fm` is the
+example.
 
 ## Git
 

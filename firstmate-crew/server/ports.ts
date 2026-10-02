@@ -17,6 +17,14 @@ export interface ThreadInfo {
   archivedAt: number | null;
 }
 
+/** Where a thread's work is, for telling the first mate which thread a request comes from. */
+export interface ThreadOrigin {
+  /** Null when bb no longer has the project. */
+  projectName: string | null;
+  /** Null when the thread has no environment, or its environment no branch. */
+  branchName: string | null;
+}
+
 /**
  * How a send meets a running turn. `auto` for the captain's words (joins the turn if the provider
  * can steer, queues otherwise), `steer` for the captain's note to a crewmate, `queue-if-active` for
@@ -64,6 +72,8 @@ export interface ThreadsPort {
   lastText(id: string): Promise<string | null>;
   /** The directory the environment works in, when it is on the bb server's machine; null otherwise. */
   workspacePath(environmentId: string): Promise<string | null>;
+  /** The thread's project and branch, archived or not; null when bb has no such thread. */
+  origin(id: string): Promise<ThreadOrigin | null>;
   spawn(args: SpawnArgs): Promise<ThreadInfo>;
   send(id: string, text: string, mode: SendMode): Promise<"sent" | "queued">;
   sendShortened(id: string, message: ShortenedMessage, mode: SendMode): Promise<"sent" | "queued">;

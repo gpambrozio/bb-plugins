@@ -71,6 +71,60 @@ async function readBrief(promptFile: string, cwd: string | undefined): Promise<s
   return brief;
 }
 
+/**
+ * The longest message `tell` takes, in UTF-8 bytes. With the newline the skill's heredoc adds, its base64
+ * still fits the one stdin line of at most 16 KiB that bb's `--message-base64-stdin` reads.
+ */
+export const MESSAGE_MAX_BYTES = 12_000;
+
+/**
+ * The message from `--message-base64`, which the `/fm` skill fills through bb's `--message-base64-stdin`:
+ * bb's CLI reads one line from stdin on the caller's machine, so the text crosses machines and no shell
+ * argument or server-side file ever holds it. Strict base64 of valid UTF-8. A heredoc always ends its text
+ * with a newline, so exactly one trailing "\n" is dropped — a request that itself ended with one keeps
+ * it — and the size limit applies after that. Everything else, a leading byte-order mark included, is
+ * returned exactly as it decodes.
+ */
+function decodeMessage(encoded: string): string {
+  const compact = encoded.trim();
+  if (compact.length > Math.ceil((MESSAGE_MAX_BYTES + 1) / 3) * 4) {
+    throw new PluginCliError(`The message is longer than ${MESSAGE_MAX_BYTES} bytes.`, { code: "message_too_long" });
+  }
+  if (compact.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(compact)) {
+    throw new PluginCliError("--message-base64 is not valid base64.", { code: "invalid_value" });
+  }
+  const decoded = Buffer.from(compact, "base64");
+  const bytes = decoded.at(-1) === 0x0a ? decoded.subarray(0, -1) : decoded;
+  if (bytes.byteLength > MESSAGE_MAX_BYTES) {
+    throw new PluginCliError(`The message is longer than ${MESSAGE_MAX_BYTES} bytes.`, { code: "message_too_long" });
+  }
+  try {
+    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+  } catch {
+    throw new PluginCliError("--message-base64 does not decode to UTF-8 text.", { code: "invalid_value" });
+  }
+}
+
+/** How every relayed message begins; the charter names it. */
+export const RELAY_PREFIX = "Relayed by bb firstmate-crew tell";
+
+/**
+ * The line every message `tell` delivers opens with, so a relayed message can never pass for the
+ * captain's own words in the first mate's chat — not even one whose text begins with a line like this.
+ * The thread is the one the caller's `bb` names (its `BB_THREAD_ID`), which the caller controls, so it is
+ * labelled as claimed. Its project and branch are bb's, and what bb cannot say is left out.
+ */
+async function relayLine(deps: MateDeps, threadId: string | undefined): Promise<string> {
+  if (threadId === undefined) return `${RELAY_PREFIX}, from no thread (a terminal or a script):`;
+  const origin = await deps.threads.origin(threadId);
+  // One line, whatever the names hold, so nothing after it can look like the start of the message.
+  const where = [origin?.projectName, origin?.branchName]
+    .map((part) => part?.replace(/\s+/g, " ").trim() ?? "")
+    .filter((part) => part !== "");
+  const thread = where.length === 0 ? `thread ${threadId}` : `thread ${threadId} (${where.join(", ")})`;
+  return `${RELAY_PREFIX}, from ${thread} as the sender claims:`;
+}
+
 /** A project by id, else by exact name. Two projects with the same name cannot be told apart by it. */
 async function resolveProject(deps: MateDeps, value: string): Promise<string> {
   const projects = await deps.projects.list();
@@ -176,13 +230,27 @@ export function firstmateCli(deps: MateDeps): PluginCliRegistration {
       }),
       tell: cliCommand({
         summary: "Send the first mate a message, from any thread or terminal",
-        description: "The words are joined with spaces and sent as the captain's, joining the first mate's turn if it is mid-way through one.",
-        positionals: [{ name: "message", description: "What to tell the first mate", required: true, variadic: true }],
-        run: (input) =>
+        description:
+          "The words are joined with spaces, or --message-base64 is decoded, and sent joining the first mate's turn if it is mid-way through one. Every message opens with a line saying it was relayed, and from which thread (as the sender claims), so the first mate never takes it for the captain's own words in its chat.",
+        positionals: [{ name: "message", description: "What to tell the first mate", variadic: true }],
+        options: {
+          "message-base64": {
+            type: "string",
+            stdin: true,
+            description: `The message as one line of base64, at most ${MESSAGE_MAX_BYTES} bytes decoded; --message-base64-stdin reads that line from stdin`,
+            placeholder: "base64",
+          },
+        },
+        run: (input, ctx) =>
           guarded(async () => {
-            const text = input.positionals.message.join(" ").trim();
-            if (text === "") throw new PluginCliError("Nothing to tell the first mate.", { code: "missing_required" });
-            await askMate(deps, text);
+            const words = input.positionals.message.join(" ");
+            const encoded = input.options["message-base64"];
+            if (encoded !== undefined && words.trim() !== "") {
+              throw new PluginCliError("Give the message as words or as --message-base64, not both.", { code: "unexpected_argument" });
+            }
+            const text = encoded === undefined ? words : decodeMessage(encoded);
+            if (text.trim() === "") throw new PluginCliError("Nothing to tell the first mate.", { code: "missing_required" });
+            await askMate(deps, `${await relayLine(deps, ctx.threadId)}\n\n${text}`);
             return { exitCode: 0, stdout: "Sent to the first mate.\n" };
           }),
       }),

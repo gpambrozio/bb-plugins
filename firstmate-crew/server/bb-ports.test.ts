@@ -76,3 +76,45 @@ describe("bbThreads.workspacePath", () => {
     expect(await bbThreads(sdk).workspacePath("env_1")).toBeNull();
   });
 });
+
+describe("bbThreads.origin", () => {
+  function notFound(): Error {
+    return Object.assign(new Error("not found"), { status: 404 });
+  }
+
+  // The getters are async, as the real SDK's requests are: a 404 arrives as a rejection, not a throw.
+  function sdkWithThread(options: { environmentId?: string | null; projectGone?: boolean; threadGone?: boolean } = {}) {
+    return createFakeSdk({
+      pluginId: "firstmate-crew",
+      overrides: {
+        threads: {
+          get: async ({ threadId }) => {
+            if (options.threadGone) throw notFound();
+            return makeThreadResponse({ id: threadId, projectId: "proj_web", environmentId: options.environmentId === undefined ? "env_1" : options.environmentId });
+          },
+        },
+        projects: {
+          get: async ({ projectId }) => {
+            if (options.projectGone) throw notFound();
+            return { id: projectId, name: "web", sources: [] };
+          },
+        },
+        environments: { get: ({ environmentId }) => ({ id: environmentId, branchName: "fix/login-redirect" }) },
+      },
+    });
+  }
+
+  it("names the thread's project and its environment's branch", async () => {
+    const { sdk } = sdkWithThread();
+    expect(await bbThreads(sdk).origin("thr_1")).toEqual({ projectName: "web", branchName: "fix/login-redirect" });
+  });
+
+  it("has no branch for a thread without an environment, and no project name for a project bb no longer has", async () => {
+    expect(await bbThreads(sdkWithThread({ environmentId: null }).sdk).origin("thr_1")).toEqual({ projectName: "web", branchName: null });
+    expect(await bbThreads(sdkWithThread({ projectGone: true }).sdk).origin("thr_1")).toEqual({ projectName: null, branchName: "fix/login-redirect" });
+  });
+
+  it("is null for a thread bb does not have", async () => {
+    expect(await bbThreads(sdkWithThread({ threadGone: true }).sdk).origin("thr_1")).toBeNull();
+  });
+});

@@ -19,7 +19,7 @@ against bb 0.44.0 and `@get-bb/plugin-sdk` 0.5.29.
 | `server/mate.ts` | Launch, adopt, release, restart, compact, `askMate`; the `mate` lock; the stored id. |
 | `server/crew.ts` | Steer, interrupt, end, relaunch, board note. |
 | `server/fleet.ts` | The first mate's children joined to backlog items on `task`; the seven columns; `ReportCache`. |
-| `server/cli.ts` | `bb firstmate-crew crew spawn` and `bb firstmate-crew tell`. |
+| `server/cli.ts` | `bb firstmate-crew crew spawn` and `bb firstmate-crew tell` (words or `--message-base64`, always under the relay line). |
 | `server/bb-ports.ts`, `server/ports.ts` | The narrow `ThreadsPort` and `ProjectsPort` over `bb.sdk`, so everything else is tested against fakes. Where the machine rule below lives. |
 | `server/store.ts` | `bb.storage.kv`: the first mate's thread id and the switched-off watches. Nothing else. |
 | `server/settings.ts` | `bb.settings.define`: home directory, crew provider/model/reasoning, board refresh. |
@@ -31,6 +31,7 @@ against bb 0.44.0 and `@get-bb/plugin-sdk` 0.5.29.
 | `server/log.ts` | The `Log` every server module logs through, wired to `bb.log` in `server.ts`. |
 | `server/templates.ts`, `templates.generated.ts` | Reading the templates; the generated module. See below. |
 | `server/testing/` | `createFakeSdk` and the other fakes. |
+| `skills/fm/` | The `/fm` skill bb puts in every thread: it pipes the user's request, base64, into `tell --message-base64-stdin`. Its test is `server/fm-skill.test.ts`, because bb copies the skill's folder into threads whole. |
 | `templates/` | **Everything the plugin writes into the home**, laid out as it lands there, plus `messages/` (what the plugin says to the first mate) and `parts/` (pieces inside other files). The first mate's behaviour is `templates/data/charter.md`. |
 | `app.tsx`, `app/` | The `threadPanelAction` "FirstMate" (`panel.tsx` branches on the thread), the board and cards, the settings section, the command palette entries, and the overlay that expands watch notes in chat. |
 | `components/ui/`, `lib/`, `hooks/` | Vendored shadcn components and helpers. |
@@ -55,6 +56,27 @@ Do not break these; each was paid for.
   machine). The charter is the home's `AGENTS.md`, and the board opens home files through the first
   mate's environment, so a first mate working elsewhere would see neither.
 - **Only the first mate spawns crew.** `crew spawn` refuses any other calling thread.
+- **A relayed message is a request, never the captain's word.** Work one starts, steers or relaunches
+  carries `(hold: captain's word to merge)` until the captain answers in the first mate's chat, which
+  overrides `+yolo` and standing merge orders (the charter, §0 and §4); the existing hold field is the
+  record, so it survives restarts and relaunches. Every message `tell` delivers opens with
+  `Relayed by bb firstmate-crew tell, from …:` (`RELAY_PREFIX` in `server/cli.ts`, named in the charter;
+  a test ties the two). The thread it names is `ctx.threadId`, which the caller's `BB_THREAD_ID` sets, so
+  the line says "as the sender claims"; project and branch are bb's for that id, on one line. Nothing
+  authenticates the person behind a relay, so the charter limits what one can do instead: the first mate
+  may start or steer work for it, but merges, anything destructive or irreversible, publishing,
+  credentials and settings need the captain in its own chat. Messages from the board and the command
+  palette are not relays and go unmarked.
+- **`tell` never reads a file.** Text arrives as words or as `--message-base64` (the skill uses bb's
+  `--message-base64-stdin`, read on the caller's machine), strict base64 of UTF-8. Exactly one trailing
+  "\n" is dropped, because the skill's heredoc always adds one; the 12,000-byte limit applies after
+  that; everything else, a leading byte-order mark included, is sent exactly as decoded. A test runs the
+  skill's own pipeline through `sh` against a stub `bb`. A server-side file read would let a sandboxed caller relay any file the server can
+  read, and would only work on the server's machine.
+- **`/fm` is the user's to start.** `tell` speaks for the captain, so the skill is hidden
+  from the model (`disable-model-invocation: true` for Claude Code, `agents/openai.yaml`
+  `allow_implicit_invocation: false` for Codex) and its description says it is user-triggered. bb keeps
+  frontmatter keys it does not know and copies the folder as it is.
 - **Templates are data.** The charter follows the plugin until the captain edits it, detected by
   fingerprint; then a changed plugin charter goes beside it as `data/charter.new.md` with a board notice.
   `captain.md` and `opening.md` are the captain's and never overwritten.
@@ -161,8 +183,8 @@ Run against bb 0.44.0 before the design was settled:
   `initiator: "user"`, and the parent still receives `[bb system] @thread:<child> completed: …` after it.
   That is why the steer relay is not ported. Every crew turn wakes the first mate, whoever started it.
 - **There is no composer slash-command API.** `app.composer.customize` takes only `actions`, `banners`,
-  `plusMenu` and `richText`, and the slash typeahead is host-owned (skills only). So there is no `/fm`;
-  the CLI (`bb firstmate-crew tell`) and the command palette (FirstMate: open, bearings, ahoy) cover it.
+  `plusMenu` and `richText`, and the slash typeahead is host-owned: it lists skills. So `/fm` is a skill
+  (`skills/fm/`), which bb imports into every thread; Claude Code receives the typed `/fm …` as is.
 
 - **A crewmate blocked on a permission wakes the first mate.** bb sends the parent a system message
   (`systemMessageKind: "child-needs-attention"`): `@thread:<child> needs help. Blocked on file-change
@@ -174,6 +196,13 @@ The live run added two: a spawn needs a `hostId` (fixed, see the machine rule), 
 charter tells the first mate to always pass `--title`.
 
 ## Known gaps
+
+- **A `/fm` request is capped at 12,000 bytes.** bb 0.44's `--<flag>-stdin` takes one line of at most
+  16 KiB; base64 of 12,000 bytes and the heredoc's new line is 16,004 characters. The multi-line `--stdin` that `bb guide plugins` describes is not in
+  0.44's CLI; it could lift the cap when it is.
+- **`/fm` has not been run in a live thread.** It was built without reloading the plugin, which the
+  running first mate depends on. That bb passes Claude Code the typed `/fm …` unchanged was read from bb
+  0.44's provider code. `agents/openai.yaml` is Codex's skill policy and is untested here.
 
 - **An interrupted turn keeps the previous status line.** `threads.output` returns the last assistant text
   of an earlier turn, so a worker interrupted before writing anything stays where its old line put it
