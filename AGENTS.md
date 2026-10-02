@@ -8,7 +8,9 @@ six Paseo plugins in [`gpambrozio/paseo-plugins`](https://github.com/gpambrozio/
 by its own issue in this repository. Plugin code is full-trust and unsandboxed: the server half runs
 **inside the bb server's own process**, and the app half runs inside the bb app.
 
-Everything below was checked against **bb 0.44.0** and **`@get-bb/plugin-sdk` 0.5.29**. When the two
+The plugins pin **`@get-bb/plugin-sdk` 0.6.15** and CI builds them with **bb 0.45.0**. This file was
+written against bb 0.44.0 and SDK 0.5.29 and re-checked against the 0.45.0 changes; a point that names
+bb 0.44 was observed there and still holds in 0.45 unless it says otherwise. When the two
 disagree with this file, the installed SDK wins — its declarations are the contract, and `bb guide
 plugins` is the prose. Fix this file when you find the drift.
 
@@ -85,7 +87,7 @@ frontend files with it.
 There is no separate manifest file. The `bb` key carries it:
 
 ```json
-"engines": { "bb": ">=0.44", "bbPluginSdk": ">=0.5.29" },
+"engines": { "bb": ">=0.45", "bbPluginSdk": ">=0.6.15" },
 "bb": {
   "name": "Herald",
   "description": "Store-card text, about 140 characters",
@@ -103,6 +105,11 @@ There is no separate manifest file. The `bb` key carries it:
   *App*). An unknown name falls back to a default icon rather than failing the load, so a typo is
   silent — check the name against `herald/app/testing/bb-icon-names.ts`.
 - Declare only what the plugin implements.
+- `engines` is the oldest bb the plugin runs on, not the SDK it is typed against. An older bb builds a
+  plugin pinned to a newer SDK and only warns ("This plugin pins @get-bb/plugin-sdk 0.6.15; this bb's
+  SDK is 0.5.29"), so a re-pin alone raises nothing. Raise `engines.bb` and `engines.bbPluginSdk` when
+  the plugin starts calling an API the older bb lacks (`skills` needs `composer.replace`, so it asks for
+  bb 0.45), and make that a minor version: installs on the older bb stop at the previous one.
 
 `PLUGIN_OVERVIEW.md` beside `package.json` is the long store listing (under 4000 characters, no
 leading `#` title, no raw HTML, images or tables). The community marketplace requires it.
@@ -124,6 +131,9 @@ bb plugin rpc list <id>          # and `inspect`, `call <id> <method> --input-fi
 bb plugin types                  # repin the SDK to the running bb; --check in CI
 ```
 
+`bb plugin types` writes the *running* bb's SDK version, so on a machine whose bb is older than CI's it
+moves the pin backwards. Re-pin with `npm install --save-exact -D @get-bb/plugin-sdk@<version>` there.
+
 - **`~/.npm` on this machine has root-owned files**, so a plain `npm install` fails. Pass
   `--cache "$TMPDIR/npm-cache"` rather than fixing permissions from an agent; for `npx shadcn add`,
   set `npm_config_cache="$TMPDIR/npm-cache"` instead.
@@ -139,6 +149,10 @@ bb plugin types                  # repin the SDK to the running bb; --check in C
   `<dataDir>/plugins/toolchain-*/`. The `bb` CLI from the npm package `bb-app` builds without a
   running bb; this repository's CI installs it globally at one pinned version
   (`.github/actions/setup-bb`) rather than as a devDependency of every plugin.
+- **Inside a bb thread, every `bb` is the live one.** bb sets `BB_CLI` in a thread's environment, and
+  any `bb` entrypoint — one installed from npm into a temp folder included — re-execs that binary. To
+  build with another version (CI's `bb-app`, say), unset it: `env -u BB_CLI ./node_modules/.bin/bb
+  plugin build`. Check with `bb --version`; the SDK warning a build prints names the version that ran.
 - **A failed reload keeps the previous instance running** and `bb plugin reload` exits 1 — the
   opposite of Paseo. Read the exit code and the logs; "it still works" does not mean the new code
   loaded. The new instance loads *before* the old one is disposed (the SDK's fake host does the same),
@@ -298,6 +312,14 @@ mounted once per window. Paseo contribution → bb slot:
 A hand-built new-thread dialog becomes `experimental_NewThreadComposer`: it resolves a request and the
 plugin spawns it. Mount it only once its `default*` seeds are known — changing one re-seeds every
 selection — and give it a `draftKey` per subject, since `initialPrompt` seeds only an empty draft.
+
+**The composer is one handle, `useComposer()`** (SDK 0.6, bb 0.45). Inside a composer slot it is that
+composer; in a thread's panels, that thread's draft. It carries `scope`, `draft` (text and mention
+pills), `replace`, `insert` (at the cursor or the end), `focus` and `submit`. `useComposerView`,
+`updateText`, `setText` and the other 0.5 names are gone from the types but still run, so a build typed
+against 0.5.29 keeps working on bb 0.45. `replace` takes text and mentions together and does not move
+mention ranges for you: shift them by what the edit added before them, as `skills/app/insert.ts`
+does. bb 0.44 has no `replace`, `insert` or `draft`.
 
 Host `Markdown` takes only `content` and `className`, so it gives no say over how a body's images
 load. Where they need gating (tracking pixels, private attachments), render the body yourself, as
