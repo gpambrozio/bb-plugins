@@ -11,11 +11,19 @@ export function chatText(name: string): string {
 /**
  * The draft with `command` in it. A slash command runs only at the start of a
  * message, so the command goes first and whatever the user had typed follows
- * it, unchanged.
+ * it, unchanged. Its mention pills move with the text they sit in: the host
+ * takes their ranges as given and does not rebase them.
  */
-export function withCommand(draft: string, command: string): string {
-  const rest = draft.trimStart();
-  return rest.length === 0 ? command : `${command}${rest}`;
+export function withCommand<Mention extends { from: number; to: number }>(
+  draft: { text: string; mentions: readonly Mention[] },
+  command: string,
+): { text: string; mentions: Mention[] } {
+  const rest = draft.text.trimStart();
+  const shift = command.length - (draft.text.length - rest.length);
+  return {
+    text: rest.length === 0 ? command : `${command}${rest}`,
+    mentions: draft.mentions.map((mention) => ({ ...mention, from: mention.from + shift, to: mention.to + shift })),
+  };
 }
 
 /**

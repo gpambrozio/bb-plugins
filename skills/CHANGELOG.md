@@ -5,6 +5,15 @@ Notable changes to `skills`. The other plugins in this repository version separa
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.2.0
+
+### Changed
+
+- **Needs bb 0.45 or later.** bb 0.45 changed how a plugin writes into the message box, and Skills now
+  uses the new way. On bb 0.44, keep Skills 0.1.0.
+- **Add to chat** still puts the skill's command at the start of the message box without sending it.
+  Files, threads and attachments already in the message box stay where they were.
+
 ## 0.1.0
 
 The first release: Skills for bb, ported from the Paseo plugin of the same name (0.4.0). Unlike the

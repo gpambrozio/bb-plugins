@@ -8,7 +8,7 @@
  */
 import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
-import type { JsonValue, PluginAppBuilder, PluginCommandRegistration } from "@get-bb/plugin-sdk/app";
+import type { ComposerMention, JsonValue, PluginAppBuilder, PluginCommandRegistration } from "@get-bb/plugin-sdk/app";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { RpcContract } from "../shared/contract";
@@ -74,7 +74,7 @@ const rpc = {
 function renderPanel(
   options: {
     list?: () => SkillList;
-    composer?: { text?: string; scope?: { kind: "thread"; threadId: string } };
+    composer?: { text?: string; mentions?: readonly ComposerMention[]; scope?: { kind: "thread"; threadId: string } };
     params?: JsonValue;
   } = {},
 ) {
@@ -182,6 +182,26 @@ describe("the panel", () => {
     expect(inspection.sdkCalls).toEqual([]);
     // Back on the list, not on the detail of a skill already added.
     expect(await screen.findByLabelText("Search skills")).toBeTruthy();
+  });
+
+  it("keeps the draft's mention pills on the text they sat on", async () => {
+    const mention: ComposerMention = {
+      kind: "path",
+      path: "src/auth.ts",
+      source: "workspace",
+      entryKind: "file",
+      label: "auth.ts",
+      from: 8,
+      to: 16,
+    };
+    const { inspection } = renderPanel({ composer: { text: "look at @auth.ts", mentions: [mention] } });
+    fireEvent.click(await screen.findByText("tidy-imports"));
+    fireEvent.click(await screen.findByRole("button", { name: "Add to chat" }));
+
+    const { text, mentions } = inspection.composer.draft;
+    expect(text).toBe("/tidy-imports look at @auth.ts");
+    expect(mentions).toEqual([{ ...mention, from: 22, to: 30 }]);
+    expect(text.slice(22, 30)).toBe("@auth.ts");
   });
 
   it("has no arguments field and no Invoke", async () => {

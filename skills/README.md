@@ -12,14 +12,14 @@ agent uses. Threads on any other provider list bb's own skills and what bb's `/`
 
 ## What you need
 
-- bb 0.44 or later.
+- bb 0.45 or later. On bb 0.44, install with `@^0.1.0` instead of `@^0.2.0`.
 - Nothing else: no account, key or network access. The plugin reads skill files on the machine the
   thread runs on, through bb's host daemon there.
 
 ## Install
 
 ```bash
-bb plugin install 'git:github.com/gpambrozio/bb-plugins@^0.1.0' --plugin skills --tag-prefix skills/
+bb plugin install 'git:github.com/gpambrozio/bb-plugins@^0.2.0' --plugin skills --tag-prefix skills/
 ```
 
 ## Use

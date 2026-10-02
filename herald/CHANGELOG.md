@@ -5,6 +5,12 @@ Notable changes to `herald`. The other plugins in this repository version separa
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.2.1
+
+### Changed
+
+- Built and tested against bb 0.45. Nothing you can see changes, and it still runs on bb 0.44.
+
 ## 0.2.0
 
 ### Added

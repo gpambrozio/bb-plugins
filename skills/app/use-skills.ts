@@ -53,16 +53,18 @@ export function useSkillDocument(threadId: string, skillId: string) {
 
 /**
  * **Add to chat**: puts `/name ` at the start of the thread's composer draft
- * without sending it, then hands the screen back and focuses the composer. `useComposer()` writes to the thread a slot is mounted for — its
- * composer for the popover, its draft for the side panel — so the button is
- * offered only when that is this thread.
+ * without sending it, then hands the screen back and focuses the composer.
+ * The draft's mentions and attachments stay as they were. `useComposer()`
+ * writes to the thread a slot is mounted for — its composer for the popover,
+ * its draft for the side panel — so the button is offered only when that is
+ * this thread.
  */
 export function useAddToChat(threadId: string, onAdded: () => void) {
   const composer = useComposer();
   return {
     canAdd: writesToThread(composer.scope, threadId),
     add(name: string) {
-      composer.updateText((draft) => withCommand(draft, chatText(name)));
+      composer.replace((draft) => withCommand(draft, chatText(name)));
       onAdded();
       composer.focus();
     },
