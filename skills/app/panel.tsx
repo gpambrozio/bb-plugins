@@ -7,16 +7,14 @@ import { useSkillList } from "./use-skills";
 export const PANEL_ACTION_ID = "skills";
 
 /**
- * The Skills tab in a thread's side panel. Invoking sends a message to the
- * thread, so the thread is where the result appears: after a send — or after
- * **Insert in chat** — the panel hands the screen to it, which on a narrow
- * window is what brings the conversation back over the panel.
+ * The Skills tab in a thread's side panel. **Add to chat** puts the command in
+ * the thread's message box, so after it the panel hands the screen to the
+ * thread — which on a narrow window is what brings the conversation, and its
+ * composer, back over the panel.
  */
 export function SkillsPanel({ threadId }: PluginThreadPanelProps) {
   const { state } = useSkillList(threadId);
   const navigate = useBbNavigate();
-  // Both hand the screen to the thread; after an insert the composer then
-  // takes focus, with the command in it.
-  const toThread = () => navigate.toThread(threadId);
-  return <SkillBrowser threadId={threadId} frame="panel" list={state} onInvoked={toThread} onInserted={toThread} />;
+  // The composer then takes focus, with the command in it.
+  return <SkillBrowser threadId={threadId} frame="panel" list={state} onAdded={() => navigate.toThread(threadId)} />;
 }

@@ -1,10 +1,9 @@
-import { useComposer, useRpc, useSdk } from "@get-bb/plugin-sdk/app";
+import { useComposer, useRpc } from "@get-bb/plugin-sdk/app";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { toast } from "sonner";
 
 import type { RpcContract } from "../server";
 import type { SkillDocument, SkillList } from "../shared/skills";
-import { insertionText, invocationText, sendInvocation, withCommand, writesToThread } from "./invoke";
+import { chatText, withCommand, writesToThread } from "./insert";
 
 export type Loaded<T> =
   | { status: "loading" }
@@ -53,69 +52,18 @@ export function useSkillDocument(threadId: string, skillId: string) {
 }
 
 /**
- * Owns the arguments field and the send. The re-entrancy guard lives here, in
- * a ref rather than state, so a double click cannot invoke the skill twice on
- * the user's thread before the button re-renders as disabled.
- *
- * The message is queued behind a running turn rather than steered into it: a
- * skill invocation is a turn of its own, not a correction to the one running.
- */
-export function useInvoke(threadId: string, onInvoked: () => void) {
-  const sdk = useSdk();
-  const [args, setArgs] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [isSending, setIsSending] = useState(false);
-  const inFlight = useRef(false);
-
-  // Whether this detail is still the one on show; a send outlives it when the
-  // user goes back or the popover closes. See `sendInvocation`.
-  const showing = useRef(false);
-  useEffect(() => {
-    showing.current = true;
-    return () => {
-      showing.current = false;
-    };
-  }, []);
-
-  async function invoke(name: string) {
-    if (inFlight.current) return;
-    inFlight.current = true;
-    setIsSending(true);
-    setError(null);
-    await sendInvocation({
-      send: (text) =>
-        sdk.threads.send({ threadId, mode: "queue-if-active", input: [{ type: "text", text, mentions: [] }] }),
-      text: invocationText(name, args),
-      isShowing: () => showing.current,
-      onSent: onInvoked,
-      onFailure(message) {
-        setError(message);
-        setIsSending(false);
-      },
-      onUnseenFailure(message) {
-        toast.error(`Could not invoke /${name}: ${message}`);
-      },
-    });
-    inFlight.current = false;
-  }
-
-  return { args, setArgs, invoke, error, isSending };
-}
-
-/**
- * **Insert in chat**: puts `/name args ` at the start of the thread's composer
- * draft without sending it, then hands the screen back and focuses the
- * composer. `useComposer()` writes to the thread a slot is mounted for — its
+ * **Add to chat**: puts `/name ` at the start of the thread's composer draft
+ * without sending it, then hands the screen back and focuses the composer. `useComposer()` writes to the thread a slot is mounted for — its
  * composer for the popover, its draft for the side panel — so the button is
  * offered only when that is this thread.
  */
-export function useInsertInChat(threadId: string, onInserted: () => void) {
+export function useAddToChat(threadId: string, onAdded: () => void) {
   const composer = useComposer();
   return {
-    canInsert: writesToThread(composer.scope, threadId),
-    insert(name: string, args: string) {
-      composer.updateText((draft) => withCommand(draft, insertionText(name, args)));
-      onInserted();
+    canAdd: writesToThread(composer.scope, threadId),
+    add(name: string) {
+      composer.updateText((draft) => withCommand(draft, chatText(name)));
+      onAdded();
       composer.focus();
     },
   };

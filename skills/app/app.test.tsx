@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 /**
  * The slots render, list a thread's skills in precedence order, read one and
- * invoke it by sending `/name args` to the thread. A throwing slot shows as a
- * "plugin crashed" chip in bb, so a render here is the cheapest check that none
- * of them throw.
+ * add its command to the thread's message box — never sending anything: no
+ * slot here is given a `useSdk()` fake, so a send would throw. A throwing slot
+ * shows as a "plugin crashed" chip in bb, so a render here is the cheapest
+ * check that none of them throw.
  */
 import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
@@ -68,39 +69,20 @@ const rpc = {
   read: ({ skillId }: { skillId: string }) => documentFor(skillId),
 };
 
-function sentMessages() {
-  const sent: unknown[] = [];
-  return {
-    sent,
-    sdk: {
-      threads: {
-        send: async (args: unknown) => {
-          sent.push(args);
-          return { delivery: "sent" } as never;
-        },
-      },
-    },
-  };
-}
-
 function renderPanel(
   options: {
     list?: () => SkillList;
-    send?: ReturnType<typeof sentMessages>;
     composer?: { text?: string; scope?: { kind: "thread"; threadId: string } };
   } = {},
 ) {
-  const send = options.send ?? sentMessages();
-  const result = renderSlot<{ threadId: string; params: null }, RpcContract>(
+  return renderSlot<{ threadId: string; params: null }, RpcContract>(
     { component: SkillsPanel },
     { threadId: "thr_example", params: null },
     {
       rpc: { ...rpc, list: options.list ?? rpc.list },
-      sdk: send.sdk,
       composer: { scope: { kind: "thread", threadId: "thr_example" }, ...options.composer },
     },
   );
-  return { ...result, sent: send.sent };
 }
 
 describe("registrations", () => {
@@ -185,109 +167,48 @@ describe("the panel", () => {
     expect(screen.getByRole("button", { name: "Copy path" })).toBeTruthy();
   });
 
-  it("invokes a skill with its arguments, queued behind a running turn, then goes to the thread", async () => {
-    const { sent, inspection } = renderPanel();
+  it("adds the command to the thread's draft without sending, then goes to the thread", async () => {
+    const { inspection } = renderPanel({ composer: { text: "look at auth.ts" } });
     fireEvent.click(await screen.findByText("tidy-imports"));
-    fireEvent.change(await screen.findByLabelText("Arguments for /tidy-imports"), { target: { value: "  src only " } });
-    fireEvent.click(screen.getByRole("button", { name: "Invoke /tidy-imports" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add to chat" }));
 
-    await waitFor(() => expect(inspection.navigateCalls).toEqual([{ method: "toThread", threadId: "thr_example" }]));
-    expect(sent).toEqual([
-      {
-        threadId: "thr_example",
-        mode: "queue-if-active",
-        input: [{ type: "text", text: "/tidy-imports src only", mentions: [] }],
-      },
-    ]);
-    // Back on the list, not on the detail of a skill already run.
-    expect(await screen.findByLabelText("Search skills")).toBeTruthy();
-  });
-
-  it("sends once however often Invoke is pressed while a send is in flight", async () => {
-    const sent: unknown[] = [];
-    let answer: () => void = () => {};
-    const slow = {
-      sent,
-      sdk: {
-        threads: {
-          send: (args: unknown) => {
-            sent.push(args);
-            return new Promise((resolve) => {
-              answer = () => resolve({ delivery: "sent" });
-            }) as never;
-          },
-        },
-      },
-    };
-    renderPanel({ send: slow });
-    fireEvent.click(await screen.findByText("deploy"));
-    const button = await screen.findByRole("button", { name: "Invoke /deploy" });
-    fireEvent.click(button);
-    fireEvent.click(button);
-    fireEvent.click(button);
-    answer();
-    await waitFor(() => expect(sent).toHaveLength(1));
-  });
-
-  it("keeps the detail open with the error when the send fails", async () => {
-    const failing = {
-      sent: [] as unknown[],
-      sdk: {
-        threads: {
-          send: async () => {
-            throw new Error("thread is archived");
-          },
-        },
-      },
-    };
-    const { inspection } = renderPanel({ send: failing });
-    fireEvent.click(await screen.findByText("deploy"));
-    fireEvent.click(await screen.findByRole("button", { name: "Invoke /deploy" }));
-    expect(await screen.findByText("thread is archived")).toBeTruthy();
-    expect(inspection.navigateCalls).toEqual([]);
-  });
-
-  it("inserts the command into the thread's draft without sending, then goes to the thread", async () => {
-    const { sent, inspection } = renderPanel({ composer: { text: "look at auth.ts" } });
-    fireEvent.click(await screen.findByText("tidy-imports"));
-    fireEvent.change(await screen.findByLabelText("Arguments for /tidy-imports"), { target: { value: " src " } });
-    fireEvent.click(screen.getByRole("button", { name: "Insert in chat" }));
-
-    expect(inspection.composer.text).toBe("/tidy-imports src look at auth.ts");
+    expect(inspection.composer.text).toBe("/tidy-imports look at auth.ts");
     expect(inspection.composer.focusCount).toBe(1);
     expect(inspection.navigateCalls).toEqual([{ method: "toThread", threadId: "thr_example" }]);
-    expect(sent).toEqual([]);
+    expect(inspection.sdkCalls).toEqual([]);
+    // Back on the list, not on the detail of a skill already added.
     expect(await screen.findByLabelText("Search skills")).toBeTruthy();
   });
 
-  it("inserts a reported entry too, with a trailing space into an empty draft", async () => {
-    const { inspection } = renderPanel();
-    fireEvent.click(await screen.findByText("explain"));
-    fireEvent.click(screen.getByRole("button", { name: "Insert in chat" }));
-    expect(inspection.composer.text).toBe("/explain ");
-  });
-
-  it("offers no Insert in chat when the composer it would write to is another thread's", async () => {
-    renderPanel({ composer: { scope: { kind: "thread", threadId: "thr_other" } } });
-    fireEvent.click(await screen.findByText("deploy"));
-    expect(await screen.findByRole("button", { name: "Invoke /deploy" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Insert in chat" })).toBeNull();
-  });
-
-  it("offers no Invoke for a model-invoked-only skill", async () => {
+  it("has no arguments field and no Invoke", async () => {
     renderPanel();
-    fireEvent.click(await screen.findByText("helper-only"));
-    expect(await screen.findByText(/model-invoked only/)).toBeTruthy();
+    fireEvent.click(await screen.findByText("deploy"));
+    await screen.findByRole("button", { name: "Add to chat" });
+    expect(screen.queryByRole("textbox", { name: /Arguments/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /Invoke/ })).toBeNull();
   });
 
-  it("invokes a reported entry without reading anything", async () => {
-    const { sent, inspection } = renderPanel();
+  it("adds a reported entry too, without reading anything, with a trailing space into an empty draft", async () => {
+    const { inspection } = renderPanel();
     fireEvent.click(await screen.findByText("explain"));
     expect(screen.getByText("[file]")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Invoke /explain" }));
-    await waitFor(() => expect(sent).toHaveLength(1));
+    fireEvent.click(screen.getByRole("button", { name: "Add to chat" }));
+    expect(inspection.composer.text).toBe("/explain ");
     expect(inspection.rpcCalls.map((call) => call.method)).toEqual(["list"]);
+  });
+
+  it("offers no Add to chat when the composer it would write to is another thread's", async () => {
+    renderPanel({ composer: { scope: { kind: "thread", threadId: "thr_other" } } });
+    fireEvent.click(await screen.findByText("deploy"));
+    await screen.findByText("Description for deploy");
+    expect(screen.queryByRole("button", { name: "Add to chat" })).toBeNull();
+  });
+
+  it("offers no Add to chat for a model-invoked-only skill", async () => {
+    renderPanel();
+    fireEvent.click(await screen.findByText("helper-only"));
+    expect(await screen.findByText(/model-invoked only/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Add to chat" })).toBeNull();
   });
 });
 
@@ -308,43 +229,24 @@ describe("the composer button", () => {
     expect(container.textContent).toBe("");
   });
 
-  it("opens the browser over the composer and closes it after an invoke", async () => {
-    const send = sentMessages();
+  it("adds the command to this composer, closes the popover and focuses the composer", async () => {
     const { inspection } = renderSlot<object, RpcContract>({ component: SkillsComposerButton }, {}, {
       rpc,
-      sdk: send.sdk,
       composer: { scope: { kind: "thread", threadId: "thr_example" } },
     });
     fireEvent.click(await screen.findByRole("button", { name: "Skills: 6" }));
     const popover = await screen.findByRole("dialog");
-    // The popover keeps to running a skill; the path stays in the panel.
     fireEvent.click(await within(popover).findByText("deploy"));
     await within(popover).findByText("Description for deploy");
+    // The popover keeps to using a skill; the path stays in the panel.
     expect(within(popover).queryByRole("button", { name: "Copy path" })).toBeNull();
-    fireEvent.click(within(popover).getByRole("button", { name: "Invoke /deploy" }));
+    fireEvent.click(within(popover).getByRole("button", { name: "Add to chat" }));
 
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(send.sent).toHaveLength(1);
-    expect(inspection.navigateCalls).toEqual([]);
-  });
-
-  it("inserts the command into this composer, closes the popover and focuses the composer", async () => {
-    const send = sentMessages();
-    const { inspection } = renderSlot<object, RpcContract>({ component: SkillsComposerButton }, {}, {
-      rpc,
-      sdk: send.sdk,
-      composer: { scope: { kind: "thread", threadId: "thr_example" } },
-    });
-    fireEvent.click(await screen.findByRole("button", { name: "Skills: 6" }));
-    const popover = await screen.findByRole("dialog");
-    fireEvent.click(await within(popover).findByText("deploy"));
-    fireEvent.change(await within(popover).findByLabelText("Arguments for /deploy"), { target: { value: "staging" } });
-    fireEvent.click(within(popover).getByRole("button", { name: "Insert in chat" }));
-
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(inspection.composer.text).toBe("/deploy staging ");
+    expect(inspection.composer.text).toBe("/deploy ");
     expect(inspection.composer.focusCount).toBeGreaterThanOrEqual(1);
-    expect(send.sent).toEqual([]);
+    expect(inspection.navigateCalls).toEqual([]);
+    expect(inspection.sdkCalls).toEqual([]);
   });
 
   it("opens the panel from the popover", async () => {

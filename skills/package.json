@@ -40,7 +40,7 @@
   ],
   "bb": {
     "name": "Skills",
-    "description": "See every skill a thread's agent can use, where each one comes from and what it says, and run one from the thread's panel or composer.",
+    "description": "See every skill a thread's agent can use, where each one comes from and what it says, and add one to the chat from the panel or composer.",
     "branding": {
       "icon": "Zap"
     },

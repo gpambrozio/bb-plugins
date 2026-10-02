@@ -1,7 +1,7 @@
 # Skills (skills)
 
 Every skill a thread's agent can use, where each one comes from, and what it says — beside the
-conversation, with a button to run one. Ported from
+conversation, with a button that puts one in the chat box. Ported from
 [`paseo-plugins/skills`](https://github.com/gpambrozio/paseo-plugins/tree/main/skills).
 
 bb's own `/` menu lists skill names. This lists them per thread and by origin — the project, the
@@ -25,20 +25,20 @@ bb plugin install 'git:github.com/gpambrozio/bb-plugins@^0.1.0' --plugin skills 
 ## Use
 
 - **The Skills button** in a thread's composer shows how many entries the thread has. Press it for a
-  popover (a sheet in a narrow window) listing them: search, pick one to read it, type any
-  arguments and press **Invoke** or **Insert in chat**. **Open in panel** opens the full tab.
+  popover (a sheet in a narrow window) listing them: search, pick one to read it, and press **Add to
+  chat**. **Open in panel** opens the full tab.
 - **The Skills tab** in the thread's side panel (from the panel's launcher, or *Skills: show this
   thread's skills* in the command palette) shows the same list, and each skill's path with **Copy
   path** and its whole `SKILL.md`.
-- **Invoke** sends `/name arguments` to the thread. If the agent is busy, it waits in the queue.
-- **Insert in chat** puts `/name arguments ` at the start of the thread's message box instead, without
-  sending it, and puts the cursor there — to add more before sending. Anything already typed stays,
-  after the command.
+- **Add to chat** puts `/name ` at the start of the thread's message box and puts the cursor after
+  it, ready for any arguments. Nothing is sent: you finish the message and send it. Anything already
+  typed stays, after the command. (The Paseo plugin invoked the skill itself; this one deliberately
+  leaves sending to you.)
 
 Skills are grouped by where they come from, in the order the provider reads them. A name defined in
 two places is listed once, under the copy that wins. **Built-in skills** and **Built-in commands** are
-what bb's `/` menu offers that no file was found for; they have a description and can be invoked, but
-have no file to show.
+what bb's `/` menu offers that no file was found for; they have a description and can be added to the
+chat, but have no file to show.
 
 ## Develop
 

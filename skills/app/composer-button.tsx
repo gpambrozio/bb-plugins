@@ -34,9 +34,9 @@ function SkillsButton({ threadId }: { threadId: string }) {
   const [open, setOpen] = useState(false);
   const navigate = useBbNavigate();
   const composer = useComposer();
-  // After **Insert in chat** the composer keeps the focus it was given,
+  // After **Add to chat** the composer keeps the focus it was given,
   // rather than the popover handing it back to this button as it closes.
-  const inserted = useRef(false);
+  const added = useRef(false);
   const count = state.status === "ready" ? countEntries(state.data) : null;
 
   function handleOpenChange(next: boolean) {
@@ -71,8 +71,8 @@ function SkillsButton({ threadId }: { threadId: string }) {
         mobileTitle="Skills"
         className="flex max-h-[min(32rem,70vh)] w-[min(28rem,calc(100vw-2rem))] flex-col p-0"
         onCloseAutoFocus={(event) => {
-          if (!inserted.current) return;
-          inserted.current = false;
+          if (!added.current) return;
+          added.current = false;
           event.preventDefault();
           composer.focus();
         }}
@@ -84,15 +84,14 @@ function SkillsButton({ threadId }: { threadId: string }) {
           </Button>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto">
-          {/* The composer under this popover is already the thread's, so a
-              successful invoke or insert only has to get out of the way. */}
+          {/* The composer under this popover is already the thread's, so after
+              Add to chat the popover only has to get out of the way. */}
           <SkillBrowser
             threadId={threadId}
             frame="popover"
             list={state}
-            onInvoked={() => setOpen(false)}
-            onInserted={() => {
-              inserted.current = true;
+            onAdded={() => {
+              added.current = true;
               setOpen(false);
             }}
           />

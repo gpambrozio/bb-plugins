@@ -1,8 +1,9 @@
 # AGENTS.md
 
 A bb plugin that lists every skill a thread's agent can use, says where each one comes from, renders
-its `SKILL.md`, and invokes it with arguments. It is the port of the Paseo plugin `skills` (0.4.0,
-Hermes included).
+its `SKILL.md`, and adds its command to the thread's message box. It is the port of the Paseo plugin
+`skills` (0.4.0, Hermes included) — except that it never invokes a skill itself (see *Add to chat, not
+invoke*).
 
 The repository root `AGENTS.md` covers what every plugin here shares. This file covers only what is
 specific to `skills`.
@@ -20,9 +21,9 @@ specific to `skills`.
 | `shared/skills.ts` | Zod shapes, `SOURCE_KINDS`, first-wins dedupe. No SDK import: the app uses it at run time. |
 | `shared/frontmatter.ts` | `SKILL.md` frontmatter. Used by the host and by the server (for bb's skills). |
 | `shared/contract.ts`, `shared/host-contract.ts` | App ⇄ server and server ⇄ host contracts. The app imports them as types only. |
-| `app/browser.tsx` | List, search, both detail screens, invoke — drawn by the panel and the popover. |
+| `app/browser.tsx` | List, search, both detail screens, Add to chat — drawn by the panel and the popover. |
 | `app/panel.tsx`, `app/composer-button.tsx` | The thread-panel tab, and the composer button with its count and popover. |
-| `app/use-skills.ts`, `app/invoke.ts` | The two RPC reads, the send that reports back only to the screen that started it, and Insert in chat. |
+| `app/use-skills.ts`, `app/insert.ts` | The two RPC reads, and Add to chat: the text, where it goes in the draft, and which composers it may write to. |
 | `app/markdown.ts` | Turns a body's images into links before bb's `Markdown` draws it. |
 
 ## What bb already does, and what this adds
@@ -41,7 +42,7 @@ both and adds:
   shows as live.
 - **Source attribution and the body for everything that has a file**, including bb's own skills and
   Codex's plugin skills, which bb finds and the Paseo resolvers never read.
-- **Invoke with arguments**, from beside the conversation or from the composer.
+- **Add to chat**, from beside the conversation or from the composer.
 
 ## Decisions
 
@@ -83,19 +84,19 @@ bb's vendored `@bb/popover`, which is a bottom sheet on a narrow window. **Open 
 `useBbNavigate().openThreadPanel({ actionId: "skills" })`; the command palette entry opens the same tab.
 Nothing patches the DOM.
 
-**Invoke sends `/name args` with `mode: "queue-if-active"`.** A skill invocation is a turn of its own,
-so it waits behind a running turn instead of steering it. Measured live on bb 0.44 with a bb skill:
-Claude Code loads the skill through its Skill tool, Codex reads its `SKILL.md` and follows it — the same
-text bb's `/` menu offers. After a send the panel calls `toThread`; the popover closes over a composer
-that is already the thread's.
+**Add to chat, not invoke — the owner's decision.** The Paseo plugin (and issue #1's mapping) sent
+`/name args` to the agent. This port has no Invoke, no arguments field and no send: its one action,
+**Add to chat**, puts `/name ` at the start of the thread's message box and focuses it, so the user
+adds arguments and sends the message themselves. Do not bring the send back without the owner asking.
 
-**Insert in chat writes the draft through `useComposer()`.** It is public, not experimental
+**Add to chat writes the draft through `useComposer()`.** It is public, not experimental
 (`useComposer`, `PluginComposerApi` in the SDK's app types): inside a thread context a component's
 writes land in that thread's draft — the composer the popover sits on, and the thread a side-panel tab
-belongs to. `updateText` puts `/name args ` first (a slash command runs only at the start of a message)
-and keeps the draft after it; then `focus()`. The button is offered only when `composer.scope` is this
-thread's (`writesToThread`). The popover stops Radix handing focus back to its trigger on close, or the
-trigger would take it from the composer.
+belongs to. `updateText` puts `/name ` first (a slash command runs only at the start of a message) and
+keeps the draft after it; then `focus()`. The button is offered only when `composer.scope` is this
+thread's (`writesToThread`). After it, the panel calls `toThread` (which brings the composer back over
+the panel on a narrow window), and the popover closes and stops Radix handing focus back to its
+trigger, or the trigger would take it from the composer.
 
 **Bodies render through bb's `Markdown`, images as links.** The host component loads images as it
 draws them and gives no say over it, and a skill someone else wrote can carry a remote image, so
@@ -127,9 +128,10 @@ draws them and gives no say over it, and a skill someone else wrote can carry a 
 
 ## Dropped from Paseo
 
-The agents observation (`client/agents.ts`) and the pill registration loop — bb mounts the composer
-action itself, per composer. `agent.commands()` detection (`supportsCommands`, `available`): bb's
-command list is typed. The popover's size caps and `detailLines` — the popover is ours and scrolls
+Invoke (`client/invoke.ts`, the send and its re-entrancy guard, the arguments field) — see *Add to
+chat, not invoke*. The agents observation (`client/agents.ts`) and the pill registration loop — bb
+mounts the composer action itself, per composer. `agent.commands()` detection (`supportsCommands`,
+`available`): bb's command list is typed. The popover's size caps and `detailLines` — the popover is ours and scrolls
 itself. `host-imports.test.ts`, `sdk-types.ts`, React Native, `copyText` (the browser's clipboard
 API works in every bb client) and react-query (each surface holds one small fetch).
 
@@ -150,4 +152,5 @@ API works in every bb client) and react-query (each surface holds one small fetc
   **shadowed copies are hidden**, though Codex shows both copies of a name.
 - **When bb and the provider both have a skill of one name**, the provider's copy is listed; which one
   the agent actually loads is not documented by either.
-- **`user-invocable: false`** is read from scanned files only; bb's rows are assumed invocable.
+- **`user-invocable: false`** is read from scanned files only (such a skill gets no Add to chat); bb's
+  rows are assumed invocable.

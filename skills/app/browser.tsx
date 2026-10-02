@@ -1,12 +1,13 @@
 /**
- * The list, the search, both detail screens and the invoke — everything the
- * Skills panel shows, drawn by the panel and by the composer button's popover
- * alike, so a skill run from either is sent the same way.
+ * The list, the search, both detail screens and **Add to chat** — everything
+ * the Skills panel shows, drawn by the panel and by the composer button's
+ * popover alike, so a skill added from either lands in the message box the
+ * same way.
  *
- * `onInvoked` is what happens after a successful send, and `onInserted` after
- * **Insert in chat** has put the command in the composer; they are what the two
- * callers do differently: the panel moves to the thread, while the popover
- * closes over a composer that is already the thread's.
+ * `onAdded` is what happens after **Add to chat** has put the command in the
+ * composer, and the one thing the two callers do differently: the panel moves
+ * to the thread, while the popover closes over a composer that is already the
+ * thread's.
  */
 import { Markdown } from "@get-bb/plugin-sdk/app";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
@@ -18,14 +19,14 @@ import { cn } from "@/lib/utils";
 
 import { type ReportedSkill, type SkillEntry, type SkillList, SOURCE_KINDS } from "../shared/skills";
 import { withoutImages } from "./markdown";
-import { type Loaded, useInsertInChat, useInvoke, useSkillDocument } from "./use-skills";
+import { type Loaded, useAddToChat, useSkillDocument } from "./use-skills";
 
 type Selection = { kind: "discovered"; id: string } | { kind: "reported"; name: string };
 
 /**
  * Where the browser is drawn. The panel is a tab the host scrolls and pads; the
  * popover is a small surface, so the path and **Copy path** stay in the panel,
- * which is for locating a skill as well as running it.
+ * which is for locating a skill as well as using it.
  */
 export type SkillBrowserFrame = "panel" | "popover";
 
@@ -85,56 +86,16 @@ function BackLink({ onBack }: { onBack: () => void }) {
 }
 
 /**
- * The arguments field, the error line, **Invoke** and **Insert in chat**,
- * shared by both detail screens.
+ * **Add to chat**, shared by both detail screens. Shown only where the composer
+ * it would write to is this thread's.
  */
-function InvokeControls({
-  threadId,
-  name,
-  controls,
-  onInserted,
-}: {
-  threadId: string;
-  name: string;
-  controls: ReturnType<typeof useInvoke>;
-  onInserted: () => void;
-}) {
-  const chat = useInsertInChat(threadId, onInserted);
+function AddToChat({ threadId, name, onAdded }: { threadId: string; name: string; onAdded: () => void }) {
+  const chat = useAddToChat(threadId, onAdded);
+  if (!chat.canAdd) return null;
   return (
-    <form
-      className="my-3 flex flex-col gap-2"
-      onSubmit={(event) => {
-        event.preventDefault();
-        void controls.invoke(name);
-      }}
-    >
-      <Input
-        value={controls.args}
-        onChange={(event) => controls.setArgs(event.target.value)}
-        placeholder="Arguments (optional)"
-        aria-label={`Arguments for /${name}`}
-        autoCorrect="off"
-        autoCapitalize="none"
-        spellCheck={false}
-      />
-      {controls.error ? <p className="text-sm text-destructive">{controls.error}</p> : null}
-      <div className="flex flex-wrap gap-2">
-        <Button type="submit" className="flex-1" disabled={controls.isSending}>
-          {controls.isSending ? "Sending…" : `Invoke /${name}`}
-        </Button>
-        {chat.canInsert ? (
-          <Button
-            type="button"
-            variant="outline"
-            className="flex-1"
-            disabled={controls.isSending}
-            onClick={() => chat.insert(name, controls.args)}
-          >
-            Insert in chat
-          </Button>
-        ) : null}
-      </div>
-    </form>
+    <Button className="my-3 w-full" onClick={() => chat.add(name)}>
+      Add to chat
+    </Button>
   );
 }
 
@@ -153,19 +114,16 @@ function SkillDetail({
   skillId,
   userInvocable,
   onBack,
-  onInvoked,
-  onInserted,
+  onAdded,
 }: {
   threadId: string;
   frame: SkillBrowserFrame;
   skillId: string;
   userInvocable: boolean;
   onBack: () => void;
-  onInvoked: () => void;
-  onInserted: () => void;
+  onAdded: () => void;
 }) {
   const { state } = useSkillDocument(threadId, skillId);
-  const controls = useInvoke(threadId, onInvoked);
 
   return (
     <div>
@@ -189,10 +147,10 @@ function SkillDetail({
             </div>
           ) : null}
           {userInvocable ? (
-            <InvokeControls threadId={threadId} name={state.data.name} controls={controls} onInserted={onInserted} />
+            <AddToChat threadId={threadId} name={state.data.name} onAdded={onAdded} />
           ) : (
             <p className="my-3 text-sm text-muted-foreground">
-              This skill is model-invoked only. The agent can use it, but it cannot be run as a command.
+              This skill is model-invoked only. The agent can use it, but it has no command to add to the chat.
             </p>
           )}
           <div className="border-t border-border pt-3">
@@ -207,29 +165,26 @@ function SkillDetail({
 /**
  * Detail for an entry bb's provider reported. There is no `SKILL.md` behind it,
  * so no path and no body — but the description shows in full rather than
- * clipped to two lines, and the thread can still be asked to run it.
+ * clipped to two lines, and its command can still be added to the chat.
  */
 function ReportedDetail({
   threadId,
   entry,
   onBack,
-  onInvoked,
-  onInserted,
+  onAdded,
 }: {
   threadId: string;
   entry: ReportedSkill;
   onBack: () => void;
-  onInvoked: () => void;
-  onInserted: () => void;
+  onAdded: () => void;
 }) {
-  const controls = useInvoke(threadId, onInvoked);
   return (
     <div>
       <BackLink onBack={onBack} />
       <h2 className="text-base font-semibold text-foreground">{entry.name}</h2>
       {entry.argumentHint ? <p className="font-mono text-xs text-muted-foreground">{entry.argumentHint}</p> : null}
       {entry.description ? <p className="mt-2 text-sm text-muted-foreground select-text">{entry.description}</p> : null}
-      <InvokeControls threadId={threadId} name={entry.name} controls={controls} onInserted={onInserted} />
+      <AddToChat threadId={threadId} name={entry.name} onAdded={onAdded} />
       <p className="text-sm text-muted-foreground">
         bb's provider reported this. It has no SKILL.md on disk, so there is nothing further to show.
       </p>
@@ -269,14 +224,12 @@ export function SkillBrowser({
   threadId,
   frame,
   list,
-  onInvoked,
-  onInserted,
+  onAdded,
 }: {
   threadId: string;
   frame: SkillBrowserFrame;
   list: Loaded<SkillList>;
-  onInvoked: () => void;
-  onInserted: () => void;
+  onAdded: () => void;
 }) {
   const [search, setSearch] = useState("");
   // Discovered entries are addressed by their id; reported ones have none and
@@ -297,15 +250,10 @@ export function SkillBrowser({
   }, [threadId]);
 
   // The selection is cleared first, so the browser is back on its list when the
-  // user returns to it rather than on the detail of a skill already run.
-  function handleInvoked() {
+  // user returns to it rather than on the detail of a skill already added.
+  function handleAdded() {
     setSelected(null);
-    onInvoked();
-  }
-
-  function handleInserted() {
-    setSelected(null);
-    onInserted();
+    onAdded();
   }
 
   const term = search.trim().toLowerCase();
@@ -335,8 +283,7 @@ export function SkillBrowser({
         skillId={selected.id}
         userInvocable={entry?.userInvocable ?? true}
         onBack={() => setSelected(null)}
-        onInvoked={handleInvoked}
-        onInserted={handleInserted}
+        onAdded={handleAdded}
       />
     );
   } else if (selected?.kind === "reported") {
@@ -349,8 +296,7 @@ export function SkillBrowser({
           threadId={threadId}
           entry={entry}
           onBack={() => setSelected(null)}
-          onInvoked={handleInvoked}
-          onInserted={handleInserted}
+          onAdded={handleAdded}
         />
       );
   }

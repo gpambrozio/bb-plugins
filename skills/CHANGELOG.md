@@ -7,7 +7,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## 0.1.0
 
-The first release: Skills for bb, ported from the Paseo plugin of the same name (0.4.0).
+The first release: Skills for bb, ported from the Paseo plugin of the same name (0.4.0). Unlike the
+Paseo plugin, it does not run a skill for you: it puts the skill's command in the message box, and
+you send it.
 
 ### Added
 
@@ -15,10 +17,8 @@ The first release: Skills for bb, ported from the Paseo plugin of the same name 
   grouped by where it comes from: the project, the repository, your personal folder, an admin folder,
   a Claude Code or Codex plugin, or bb itself.
 - **Each skill's full text**, rendered, with where it lives on disk and a button to copy the path.
-- **Invoke**: type any arguments and run the skill in the thread. If the agent is busy, it waits its
-  turn.
-- **Insert in chat**: put the skill's command, with any arguments, at the start of the thread's
-  message box without sending it, ready to add to and send yourself.
+- **Add to chat**: puts the skill's command at the start of the thread's message box, with the cursor
+  after it, ready for any arguments. Nothing is sent until you send it.
 - **A Skills button in the composer** with a count, opening the same list in a popover — or a sheet,
   in a narrow window — with a way to the full tab.
 - **A palette command** that opens the tab.
