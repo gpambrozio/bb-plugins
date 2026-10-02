@@ -29,6 +29,13 @@ export type { RpcContract } from "./shared/contract";
 
 const CONFIG_KEY = "config";
 
+/**
+ * How long after a load a pending entry left by an earlier instance is kept
+ * before it is dropped, when no reload drain says that instance is gone. A
+ * drain takes seconds; a cold start never sends one.
+ */
+const ABANDONED_AFTER_MS = 60_000;
+
 export default async function plugin(bb: BbPluginApi) {
   const settings = bb.settings.define(SETTINGS);
   const store = new AttentionStore(kvBackend(bb.storage.kv), bb.log);
@@ -37,20 +44,23 @@ export default async function plugin(bb: BbPluginApi) {
   await store.load().catch((error: unknown) => {
     bb.log.error(`Could not load saved entries: ${error instanceof Error ? error.message : String(error)}`);
   });
-  // A sentence the instance before this one was still writing is not coming:
-  // its tool died with it. The plain sentence stands — promoted now, for a
-  // server that starts fresh, and again below once a replaced instance has
-  // drained, for whatever it left pending then. Neither promotion is a claim:
-  // the drained instance's last word (a withdrawal, a sentence that landed)
-  // still wins at the read, and this instance's own runs are left alone.
-  store.settlePending();
-  // The instance a reload replaces may still be writing; read again once it says it is done.
+  // A sentence an earlier instance was still writing is not coming: its tool
+  // died with it. Such an entry is dropped, never promoted — but only once
+  // that instance has had its last word. On a reload that is its drain signal
+  // (bb loads this instance before disposing the old one, which may still
+  // withdraw or land the entry meanwhile); on a cold start no signal ever
+  // comes, so a timer stands in for it. This instance's own runs are left alone.
   const instance = randomUUID();
+  const dropAbandoned = () => {
+    if (store.dropPending(hooks.inFlightEventIds())) publish();
+  };
+  const abandonedTimer = setTimeout(dropAbandoned, ABANDONED_AFTER_MS);
   const stopListening = onOtherDrained(bb.pluginId, instance, () => {
+    clearTimeout(abandonedTimer);
     store
       .reconcile()
       .then(() => {
-        store.settlePending(hooks.inFlightEventIds());
+        dropAbandoned();
         publish();
       })
       .catch((error: unknown) => {
@@ -171,6 +181,7 @@ export default async function plugin(bb: BbPluginApi) {
 
   bb.onDispose(async () => {
     stopListening();
+    clearTimeout(abandonedTimer);
     // Hooks first, so a tool killed next cannot land a sentence; the store
     // then freezes with the entry still pending, for the next load to settle.
     hooks.dispose();

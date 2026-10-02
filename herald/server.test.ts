@@ -164,16 +164,33 @@ describe("herald server", () => {
     expect(harness.sdk.callsTo("threads.spawn")).toEqual([]);
   });
 
-  it("settles a sentence still being written when it loads again", async () => {
+  it("drops, unspoken, a sentence the instance before it was still writing — a question answered meanwhile included", async () => {
     const host = await load({ writeWithModel: true });
     await host.harness.callRpc("config.set", { sentenceTool: "custom", sentenceCommand: SLOW_TOOL });
-    await host.harness.emitThreadEvent("thread.idle", { thread: USER_THREAD, lastAssistantText: "Done." });
+    await host.harness.emitThreadEvent("interaction.pending", {
+      thread: USER_THREAD,
+      interaction: {
+        createdAt: 1,
+        id: "int_1",
+        payload: { kind: "user_question", questions: [{ id: "q", prompt: "Ship it?", allowFreeText: true, multiSelect: false }] },
+        providerId: "claude-code",
+        providerRequestId: "r",
+        providerThreadId: "p",
+        resolution: null,
+        resolvedAt: null,
+        status: "pending",
+        statusReason: null,
+        threadId: USER_THREAD.id,
+        turnId: "turn",
+      },
+    });
     await settle();
     expect(entriesOf(await host.harness.callRpc("list", {}))[0]?.summary.status).toBe("pending");
+    // The replacement never promotes what it did not write: nothing to announce, nothing to resurrect.
     const reloaded = track(await host.harness.lifecycle.reload(plugin));
     await settle();
-    const [entry] = entriesOf(await reloaded.harness.callRpc("list", {}));
-    expect(entry?.summary).toEqual({ status: "ready", text: "Login fix finished. Done." });
+    expect(entriesOf(await reloaded.harness.callRpc("list", {}))).toEqual([]);
+    expect(reloaded.harness.sdk.callsTo("threads.interactions.get")).toEqual([]);
   });
 
   it("starts the custom command from the tool selected before, in the answer to the save itself", async () => {

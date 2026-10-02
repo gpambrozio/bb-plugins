@@ -143,20 +143,20 @@ export class AttentionStore {
   }
 
   /**
-   * Every sentence still marked as being written — except the events in
-   * `except`, which this instance is writing itself — becomes its plain
-   * fallback. For a load: the tool that was writing it belonged to the
-   * instance before, and nothing is coming. Returns whether anything changed.
-   *
-   * Deliberately not a claim (`touched`): the instance before may still be
-   * writing, and may withdraw the very entry on its way out; the read that
-   * follows its drain must be able to remove or replace what was promoted.
+   * Removes every sentence still marked as being written — except the events
+   * in `except`, which this instance is writing itself. For a reload or a
+   * cold start: the tool that was writing it belonged to an instance that is
+   * gone, nothing is coming, and promoting its fallback instead was found to
+   * announce questions answered meanwhile and to resurrect entries the old
+   * instance had withdrawn. The next event on the thread speaks. Returns
+   * whether anything changed.
    */
-  settlePending(except: ReadonlySet<string> = new Set()): boolean {
+  dropPending(except: ReadonlySet<string> = new Set()): boolean {
     let changed = false;
     for (const [threadId, entry] of this.entries) {
       if (entry.summary.status !== "pending" || except.has(entry.eventId)) continue;
-      this.entries.set(threadId, { ...entry, summary: { status: "ready", text: entry.summary.fallback } });
+      this.touched.add(threadId);
+      this.entries.delete(threadId);
       changed = true;
     }
     if (changed) this.persist();

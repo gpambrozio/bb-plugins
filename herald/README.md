@@ -86,16 +86,19 @@ page, below bb's own form. The presets:
   runs the command: quote as you would in one, but `~` and `$VARIABLES` are not expanded, and it sees
   the bb server's environment.
 
-Only the Claude preset runs with no tools at all. Codex runs without your configuration and its
-read-only sandbox cuts the network for the commands it runs; Gemini's plan mode keeps its read and web
-tools, so an instruction hidden in an agent's reply could in principle have it read a file and send it
-somewhere. Pick claude if that matters to you.
+Only the Claude preset runs with no tools at all, and as one bounded call. Codex runs without your
+configuration and its read-only sandbox cuts the network for the commands it runs; Gemini's plan mode
+keeps its read and web tools, so an instruction hidden in an agent's reply could in principle have it
+read a file and send it somewhere. Neither Codex nor Gemini can be told to stop after one turn from the
+command line, so if the bb server crashed mid-run, one of those could keep working on its own for a
+while; the Claude preset cannot. Pick claude if any of that matters to you.
 
 The *Sentence prompt* is yours to edit, with a button to get the default back; it has placeholders for
 the thread, project, folder, event, headline, detail, the request and the agent's output.
 
 While the tool runs, the row and the banner say *Writing the sentence…*; the plain sentence is spoken
-instead if the tool fails, is missing, or takes longer than 45 seconds. The prompt includes the agent's
+instead if the tool fails, is missing, or takes longer than 45 seconds. A sentence still being written
+when Herald itself is reloaded is dropped rather than spoken late. The prompt includes the agent's
 own reply, which can carry instructions: that is why the presets run with no tools or read-only, and why
 the switch is off by default. A Claude run takes about ten seconds end to end.
 

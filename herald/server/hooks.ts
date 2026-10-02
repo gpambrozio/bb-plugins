@@ -252,7 +252,7 @@ export function createHooks(deps: HookDeps): Hooks {
     };
     const entry = stillWaiting();
     if (entry === null) return;
-    if (entry.requestId !== null && !(await deps.events.interactionPending(threadId, entry.requestId))) {
+    if (entry.requestId !== null && !(await stillPending(threadId, entry.requestId))) {
       // Checked again after the wait: the thread may have moved on meanwhile.
       if (stillWaiting() !== null && deps.store.remove(threadId) !== null) deps.publish();
       return;
@@ -262,6 +262,20 @@ export function createHooks(deps: HookDeps): Hooks {
     deps.store.upsert({ ...current, summary: { status: "ready", text } });
     deps.publish();
     remember(current, text);
+  }
+
+  /**
+   * Whether the interaction still waits on the user. Fails closed: when bb
+   * cannot say, the answer is no, and the entry is withdrawn rather than
+   * left pending with nothing coming to settle it.
+   */
+  async function stillPending(threadId: string, requestId: string): Promise<boolean> {
+    try {
+      return await deps.events.interactionPending(threadId, requestId);
+    } catch (error) {
+      deps.log.warn(`Could not check whether ${requestId} on ${threadId} still waits; dropping its sentence: ${reasonOf(error)}`);
+      return false;
+    }
   }
 
   /** A sentence that landed — plain, or the model's — joins the thread's history. */

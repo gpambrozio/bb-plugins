@@ -81,13 +81,17 @@ no shell. What that buys, and what must stay true:
   its own process group, and the group gets `process.kill(-pid)` at the timeout, on abort, on too much
   output, *and when the tool itself exits* — a tool that answers and leaves a helper behind would otherwise
   leak one process per announcement. `codex` and `claude` start children of their own.
-- **A crashed bb server does not kill a run in progress, and that is accepted.** The timeout lives in the
-  server; a detached tool survives the server's death. There is no supervisor for it, on purpose: every
-  preset is a single model turn (`--max-turns 1`, stdin already closed) that ends on its own in seconds
-  and exits, so what a crash leaves behind finishes by itself; only a CLI that hangs would linger, which
-  is the same exposure as any command the user runs by hand, and macOS's `timeout` is not there to wrap
-  it with. The cap of two is per server instance. A supervisor process or a durable process registry was
-  judged more machinery than this feature is worth; revisit if a preset ever runs more than one turn.
+- **A crashed bb server does not kill a run in progress.** The timeout lives in the server; a detached
+  tool survives the server's death, and there is no supervisor for it. What that means differs by preset,
+  and the README says so. **Claude** is one bounded, tool-free call (`--tools "" --max-turns 1`, stdin
+  already closed): what a crash leaves behind finishes by itself in seconds. **Codex and Gemini are not**:
+  neither `codex exec` nor `gemini` has a turn cap or a no-tools switch on the command line (Codex only
+  bounds *what* its commands may do with `--sandbox read-only`; Gemini's plan mode is read-only and its
+  tools are restricted only through policy files), so an instruction smuggled through the agent's output
+  can keep a read-only tool loop going after a crash, up to the CLI's own session limit, spending quota.
+  Whether to keep those two presets with that limitation written down or drop them is the owner's
+  decision, pending at the time of writing. A custom command is the user's responsibility. A supervisor
+  process or a durable process registry was judged more machinery than this feature is worth.
 - **Fail closed, never queue, never wait long.** At most `MAX_IN_FLIGHT` (2) tools run at once; a third
   request gets the plain sentence at once. A run is killed after `WRITE_TIMEOUT_MS` (45 s; 20 s let a plugin build on the same Mac push two
   runs over), or once it has written `MAX_OUTPUT_BYTES` (256 KB) without finishing. A missing tool, a non-zero exit, an empty
@@ -109,15 +113,19 @@ no shell. What that buys, and what must stay true:
   its sentence was being written must not be announced — the entry is withdrawn instead. (The plain
   sentence has no such window: it is listed and spoken as the event lands, as it always was.) After
   `hooks.dispose()` nothing lands at all.
-- **A reload settles, it does not resume — and settling is not a claim.** On unload the hooks close first,
-  then the writer kills its children, then the store freezes — so a killed tool cannot write, and storage
-  keeps the entry pending. The next load calls `store.settlePending()` after `load()` (a server that
-  starts fresh has no one to wait for) and again after the post-drain `reconcile()`, promoting pending
-  fallbacks to `ready`. Two rules keep that honest: promotion does **not** mark the thread `touched`, so
-  the drained instance's last word — a withdrawal on `thread.active`, a sentence that landed — still wins
-  at the reconcile read (the first version claimed, and resurrected an entry the old instance had
-  withdrawn); and the post-drain settle skips `hooks.inFlightEventIds()`, the sentences this instance is
-  itself writing, whose replies would otherwise be thrown away.
+- **A reload drops what it did not write; nothing pending is ever recovered.** On unload the hooks close
+  first, then the writer kills its children, then the store freezes — so a killed tool cannot write, and
+  storage keeps the entry pending. The replacement leaves such entries alone until the old instance's
+  drain signal, then reconciles (the old instance's last word — a withdrawal, a sentence that landed —
+  wins) and calls `store.dropPending(hooks.inFlightEventIds())`: every pending entry it is not itself
+  writing is removed, unspoken, and the thread's next event speaks. A cold start gets no drain, so a
+  60 s timer (`ABANDONED_AFTER_MS`) does the same drop; the drain clears it. Promoting the plain fallback
+  instead was tried twice and failed review both times: it announced a question answered during the
+  reload, and a promotion persisted before the drain resurrected an entry the old instance had withdrawn.
+  What is lost is small and documented: a sentence being written at the moment of a reload is not spoken.
+- **A lookup that fails drops the entry.** `settleSentence` asks bb whether a question is still pending
+  before landing its sentence; when that lookup throws, the answer is taken as no and the entry is
+  withdrawn, with a warning — never left `pending` with nothing coming (`stillPending`).
 - **Only the switch is in the host form; the tool, command and prompt are stored config.** The host
   form cannot show, hide or disable a field by the value of another (the descriptor has label,
   description, default, multiline, secret and a validation schema, nothing else, and settings are
@@ -371,6 +379,7 @@ cover, check by hand after `bb plugin reload herald`:
    nothing is spoken.
 6. Switch *Write each sentence with a model* on (the tool defaults to claude) and let a thread finish: the row and
    the banner say "Writing the sentence…" for a few seconds, then the model's sentence replaces it and is
-   spoken once. Then, under *Model-written sentences*, pick the tool *custom*: a *Custom command* field
+   spoken once. Reload the plugin while a sentence is being written: the entry goes, unspoken. Then,
+   under *Model-written sentences*, pick the tool *custom*: a *Custom command* field
    appears under the select, filled in with the Claude command. Save a command that does not exist:
    the plain sentence is spoken and the log says why. Pick *claude* again: the field goes.

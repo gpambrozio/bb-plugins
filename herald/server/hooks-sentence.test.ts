@@ -17,6 +17,9 @@ const CONFIG: HeraldConfig = {
 };
 
 let answered = false;
+/** When set, the pending lookup waits on it instead of answering. */
+let lookupGate: Promise<boolean> | null = null;
+let lookupFails = false;
 const events: EventsPort = {
   async context(_thread, { withRequest }) {
     return { projectName: "Shop", folder: "repo", lastRequest: withRequest ? "Fix the login bug" : null };
@@ -25,6 +28,8 @@ const events: EventsPort = {
     return false;
   },
   async interactionPending() {
+    if (lookupFails) throw new Error("bb is away");
+    if (lookupGate !== null) return lookupGate;
     return !answered;
   },
 };
@@ -170,6 +175,36 @@ describe("hooks with a model-written sentence", () => {
     expect(remembered).not.toHaveBeenCalled();
     expect(publish).toHaveBeenCalledTimes(2);
     answered = false;
+  });
+
+  it("drops a question, unspoken, when bb cannot say whether it is still pending", async () => {
+    lookupFails = true;
+    const w = heldWriter();
+    const { hooks, store, log, remembered } = setup(w.write);
+    await hooks.interactionPending(thread(), question());
+    w.release("Login fix wants to know which database to use.");
+    await settle();
+    lookupFails = false;
+    expect(store.get("t1")).toBeNull();
+    expect(remembered).not.toHaveBeenCalled();
+    expect(log.lines.some((line) => line.startsWith("warn:") && line.includes("bb is away"))).toBe(true);
+    expect([...hooks.inFlightEventIds()]).toEqual([]);
+  });
+
+  it("lands nothing when unloaded while it was asking bb about the question", async () => {
+    let answer: (pending: boolean) => void = () => {};
+    lookupGate = new Promise<boolean>((resolve) => (answer = resolve));
+    const w = heldWriter();
+    const { hooks, store, publish } = setup(w.write);
+    await hooks.interactionPending(thread(), question());
+    w.release("Login fix wants to know which database to use.");
+    await settle();
+    hooks.dispose();
+    answer(true);
+    await settle();
+    lookupGate = null;
+    expect(store.get("t1")?.summary.status).toBe("pending");
+    expect(publish).toHaveBeenCalledTimes(1);
   });
 
   it("names the events whose sentences it is still writing, for a reload to leave alone", async () => {
