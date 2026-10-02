@@ -24,10 +24,9 @@ describe("the /fm skill", () => {
     expect(codex).toMatch(/^policy:\n {2}allow_implicit_invocation: false$/m);
   });
 
-  it("sends through a file with tell, and asks for the request when there is none", async () => {
+  it("pipes the request as one base64 line into tell, and asks for the request when there is none", async () => {
     const { body } = await skillFile();
-    expect(body).toContain("bb firstmate-crew tell --message-file");
-    expect(body).toContain("<<'FM_REQUEST_END'");
+    expect(body).toContain("base64 <<'FM_REQUEST_END' | tr -d '\\n' | bb firstmate-crew tell --message-base64-stdin");
     expect(body).toContain("ask the user what to send");
   });
 

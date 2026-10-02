@@ -193,10 +193,12 @@ What a port only learns by running it:
   beside the data it describes, or in `bb.storage.database()`.
 - **A plugin CLI command knows its caller.** `run(input, ctx)` gets the calling thread and project
   (`ctx.threadId`, `ctx.projectId`, from the caller's `BB_THREAD_ID` and `BB_PROJECT_ID`) and its
-  `cwd`, so a command can name its caller itself instead of trusting text it was passed. Multi-line
-  input has to be a file the server reads, on the server's machine: an option declared `stdin: true`
-  (`--<name>-stdin`) takes exactly one line of at most 16 KiB in bb 0.44, and the multi-line `--stdin`
-  that `bb guide plugins` describes is not in 0.44's CLI.
+  `cwd`. The thread id is only what the caller's environment says, so treat it as a claim, not an
+  identity. An option declared `stdin: true` is also accepted as `--<name>-stdin`: the caller's `bb`
+  reads it from stdin on the caller's machine, but in bb 0.44 only as exactly one non-empty line of at
+  most 16 KiB, and the multi-line `--stdin` that `bb guide plugins` describes is not in 0.44's CLI. For
+  arbitrary text, send it base64-encoded through `--<name>-stdin` and decode it with a size cap
+  (`firstmate-crew`'s `tell --message-base64`), rather than having the server read a file by path.
 - **A thread spawn into a host workspace needs a `hostId`.** The SDK type marks it optional, bb 0.44
   answers `hostId is required unless workspace.type is personal`. Take the server's own machine from
   `bb.sdk.system.config().primaryHostId`, or the host of the project's checkout.

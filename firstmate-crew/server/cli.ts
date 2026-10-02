@@ -13,7 +13,7 @@ import { isAbsolute, resolve } from "node:path";
 import { PluginCliError, cliCommand, defineCli, type PluginCliRegistration } from "@get-bb/plugin-sdk";
 
 import { CREW_METADATA } from "../shared/types";
-import { askMate, requireMate, resolveMate, type MateDeps } from "./mate";
+import { askMate, resolveMate, type MateDeps } from "./mate";
 import type { SpawnArgs } from "./ports";
 
 /** The longest first line of a brief that goes into a default title, in characters. */
@@ -50,46 +50,73 @@ function titleOf(explicit: string | undefined, task: string, brief: string): str
   return line === "" ? task : `${task}: ${line}`;
 }
 
-/** How one file-taking option names itself in its errors: `--prompt-file`, "Prompt file", `prompt_file`. */
-interface FileOption {
-  flag: string;
-  noun: string;
-  code: string;
-}
-
-const PROMPT_FILE: FileOption = { flag: "--prompt-file", noun: "Prompt file", code: "prompt_file" };
-const MESSAGE_FILE: FileOption = { flag: "--message-file", noun: "Message file", code: "message_file" };
-
 /**
- * The text of `file` relative to the caller's working directory. With no working directory from bb, a
- * relative path would resolve against the bb server's own, so only an absolute one is taken. bb reads
- * the file on its own machine, so a caller on another enrolled machine cannot pass one.
+ * The brief, read from `promptFile` relative to the caller's working directory. With no working
+ * directory from bb, a relative path would resolve against the bb server's own, so only an absolute one
+ * is taken.
  */
-async function readTextFile(file: string, cwd: string | undefined, option: FileOption): Promise<string> {
-  if (cwd === undefined && !isAbsolute(file)) {
-    throw new PluginCliError(`${option.flag} must be an absolute path when bb gives no working directory.`, { code: `${option.code}_relative` });
+async function readBrief(promptFile: string, cwd: string | undefined): Promise<string> {
+  if (cwd === undefined && !isAbsolute(promptFile)) {
+    throw new PluginCliError("--prompt-file must be an absolute path when bb gives no working directory.", { code: "prompt_file_relative" });
   }
-  const path = cwd === undefined ? file : resolve(cwd, file);
-  let text: string;
+  const path = cwd === undefined ? promptFile : resolve(cwd, promptFile);
+  let brief: string;
   try {
-    text = await readFile(path, "utf8");
+    brief = await readFile(path, "utf8");
   } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") throw new PluginCliError(`${option.noun} not found: ${path}`, { code: `${option.code}_not_found` });
-    throw new PluginCliError(`${option.noun} could not be read: ${path}: ${reason(error)}`, { code: `${option.code}_unreadable` });
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") throw new PluginCliError(`Prompt file not found: ${path}`, { code: "prompt_file_not_found" });
+    throw new PluginCliError(`Prompt file could not be read: ${path}: ${reason(error)}`, { code: "prompt_file_unreadable" });
   }
-  if (text.trim() === "") throw new PluginCliError(`${option.noun} is empty: ${path}`, { code: `${option.code}_empty` });
-  return text;
+  if (brief.trim() === "") throw new PluginCliError(`Prompt file is empty: ${path}`, { code: "prompt_file_empty" });
+  return brief;
 }
 
+/** The longest message `tell` takes, in UTF-8 bytes: what fits bb's one stdin line of 16 KiB as base64. */
+export const MESSAGE_MAX_BYTES = 12 * 1024;
+
 /**
- * The line that opens a message `tell` delivers from another thread: `From thread <id> (<project>,
- * <branch>):`. bb names the calling thread, so the first mate learns which thread (and so which work) a
- * request is about from bb rather than from the sender's text. What bb cannot say is left out.
+ * The message from `--message-base64`, which the `/fm` skill fills through bb's `--message-base64-stdin`:
+ * bb's CLI reads one line from stdin on the caller's machine, so the text crosses machines and no shell
+ * argument or server-side file ever holds it. Strict base64, at most `MESSAGE_MAX_BYTES` once decoded,
+ * and valid UTF-8; the text is returned exactly as it decodes.
  */
-async function originHeader(deps: MateDeps, threadId: string): Promise<string> {
+function decodeMessage(encoded: string): string {
+  const compact = encoded.trim();
+  if (compact.length > Math.ceil(MESSAGE_MAX_BYTES / 3) * 4) {
+    throw new PluginCliError(`The message is longer than ${MESSAGE_MAX_BYTES} bytes.`, { code: "message_too_long" });
+  }
+  if (compact.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(compact)) {
+    throw new PluginCliError("--message-base64 is not valid base64.", { code: "invalid_value" });
+  }
+  const bytes = Buffer.from(compact, "base64");
+  if (bytes.byteLength > MESSAGE_MAX_BYTES) {
+    throw new PluginCliError(`The message is longer than ${MESSAGE_MAX_BYTES} bytes.`, { code: "message_too_long" });
+  }
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    throw new PluginCliError("--message-base64 does not decode to UTF-8 text.", { code: "invalid_value" });
+  }
+}
+
+/** How every relayed message begins; the charter names it. */
+export const RELAY_PREFIX = "Relayed by bb firstmate-crew tell";
+
+/**
+ * The line every message `tell` delivers opens with, so a relayed message can never pass for the
+ * captain's own words in the first mate's chat — not even one whose text begins with a line like this.
+ * The thread is the one the caller's `bb` names (its `BB_THREAD_ID`), which the caller controls, so it is
+ * labelled as claimed. Its project and branch are bb's, and what bb cannot say is left out.
+ */
+async function relayLine(deps: MateDeps, threadId: string | undefined): Promise<string> {
+  if (threadId === undefined) return `${RELAY_PREFIX}, from no thread (a terminal or a script):`;
   const origin = await deps.threads.origin(threadId);
-  const where = [origin?.projectName, origin?.branchName].filter((part): part is string => part !== null && part !== undefined && part !== "");
-  return where.length === 0 ? `From thread ${threadId}:` : `From thread ${threadId} (${where.join(", ")}):`;
+  // One line, whatever the names hold, so nothing after it can look like the start of the message.
+  const where = [origin?.projectName, origin?.branchName]
+    .map((part) => part?.replace(/\s+/g, " ").trim() ?? "")
+    .filter((part) => part !== "");
+  const thread = where.length === 0 ? `thread ${threadId}` : `thread ${threadId} (${where.join(", ")})`;
+  return `${RELAY_PREFIX}, from ${thread} as the sender claims:`;
 }
 
 /** A project by id, else by exact name. Two projects with the same name cannot be told apart by it. */
@@ -172,7 +199,7 @@ export function firstmateCli(deps: MateDeps): PluginCliRegistration {
             }
 
             const options = input.options;
-            const prompt = await readTextFile(options["prompt-file"], ctx.cwd, PROMPT_FILE);
+            const prompt = await readBrief(options["prompt-file"], ctx.cwd);
             const projectId = await resolveProject(deps, options.project);
             const settings = await deps.settings();
             const kind = options.kind?.trim() ?? "";
@@ -198,28 +225,26 @@ export function firstmateCli(deps: MateDeps): PluginCliRegistration {
       tell: cliCommand({
         summary: "Send the first mate a message, from any thread or terminal",
         description:
-          "The words are joined with spaces, or --message-file is read whole, and sent as the captain's, joining the first mate's turn if it is mid-way through one. From another thread, bb's id for that thread, its project and its branch go first, as `From thread <id> (<project>, <branch>):`.",
+          "The words are joined with spaces, or --message-base64 is decoded, and sent joining the first mate's turn if it is mid-way through one. Every message opens with a line saying it was relayed, and from which thread (as the sender claims), so the first mate never takes it for the captain's own words in its chat.",
         positionals: [{ name: "message", description: "What to tell the first mate", variadic: true }],
         options: {
-          "message-file": {
+          "message-base64": {
             type: "string",
-            description: "File holding the message, read whole (relative to the current directory; it must be on the bb server's machine)",
-            placeholder: "path",
+            stdin: true,
+            description: `The message as one line of base64, at most ${MESSAGE_MAX_BYTES} bytes decoded; --message-base64-stdin reads that line from stdin`,
+            placeholder: "base64",
           },
         },
         run: (input, ctx) =>
           guarded(async () => {
-            const words = input.positionals.message.join(" ").trim();
-            const file = input.options["message-file"];
-            if (file !== undefined && words !== "") {
-              throw new PluginCliError("Give the message as words or as --message-file, not both.", { code: "unexpected_argument" });
+            const words = input.positionals.message.join(" ");
+            const encoded = input.options["message-base64"];
+            if (encoded !== undefined && words.trim() !== "") {
+              throw new PluginCliError("Give the message as words or as --message-base64, not both.", { code: "unexpected_argument" });
             }
-            const text = file === undefined ? words : (await readTextFile(file, ctx.cwd, MESSAGE_FILE)).trim();
-            if (text === "") throw new PluginCliError("Nothing to tell the first mate.", { code: "missing_required" });
-            const mate = await requireMate(deps);
-            const caller = ctx.threadId;
-            const fromElsewhere = caller !== undefined && caller !== mate.id;
-            await askMate(deps, fromElsewhere ? `${await originHeader(deps, caller)}\n\n${text}` : text);
+            const text = encoded === undefined ? words : decodeMessage(encoded);
+            if (text.trim() === "") throw new PluginCliError("Nothing to tell the first mate.", { code: "missing_required" });
+            await askMate(deps, `${await relayLine(deps, ctx.threadId)}\n\n${text}`);
             return { exitCode: 0, stdout: "Sent to the first mate.\n" };
           }),
       }),

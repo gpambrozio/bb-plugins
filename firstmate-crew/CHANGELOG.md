@@ -13,9 +13,14 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   request to the first mate word for word, quotes and all, then says so in one line and leaves the work
   to it. The first mate sees which thread it came from, with the thread's project and branch, so "this"
   and "my work" mean that thread's. `/fm` on its own asks what to send, and agents never use it unless
-  you type it. It works in threads on the machine running bb.
-- The command that reaches the first mate from a shell can send a file's text as it is, and, run from
-  another thread, tells the first mate which thread it came from.
+  you type it. It works in threads on any machine bb reaches, for requests up to 12 KiB.
+
+### Changed
+
+- **Messages sent with the command that reaches the first mate from a shell are marked as relayed,**
+  with the thread they came from when there is one. The first mate treats them as requests: it may start
+  or steer work for them, but merging, anything destructive or irreversible, publishing, credentials and
+  settings now wait for you to say so in the first mate's own chat.
 
 ## 0.1.0
 

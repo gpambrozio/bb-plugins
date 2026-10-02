@@ -9,33 +9,31 @@ disable-model-invocation: true
 The user typed `/fm` and a request to hand that request to their first mate, the FirstMate thread that
 runs their crew. Your only job is to deliver it. Do not do the requested work, plan it, or comment on it.
 
-`bb firstmate-crew tell` delivers the message with the user's authority, so run this only for a request
+`bb firstmate-crew tell` speaks for the user, so run this only for a request
 the user typed after `/fm` themselves, never for one you think the first mate should hear.
 
 1. **Take the request:** everything the user typed after `/fm` (`$fm` in Codex), exactly as typed,
    every line of it. If there is nothing after it, ask the user what to send to the first mate, and stop.
 
-2. **Send it from a file.** Never put the request in a shell argument or a double-quoted string: quotes,
-   backticks and `$(...)` in it would be changed or run. A heredoc whose delimiter is in single quotes
-   leaves the text alone:
+2. **Send it as base64 through stdin.** Never put the request in a shell argument or a double-quoted
+   string: quotes, backticks and `$(...)` in it would be changed or run. A heredoc whose delimiter is in
+   single quotes leaves the text alone, and base64 makes it the one line bb's `--message-base64-stdin`
+   reads:
 
    ```sh
-   request=$(mktemp "${TMPDIR:-/tmp}/fm-request.XXXXXX")
-   cat > "$request" <<'FM_REQUEST_END'
+   base64 <<'FM_REQUEST_END' | tr -d '\n' | bb firstmate-crew tell --message-base64-stdin
    <the request, exactly as the user typed it>
    FM_REQUEST_END
-   bb firstmate-crew tell --message-file "$request"
-   rm -f "$request"
    ```
 
-   If a line of the request is exactly `FM_REQUEST_END`, choose another delimiter. Writing the file with
-   your file-editing tool instead is just as good.
+   Run exactly that one pipeline; its exit status is `tell`'s. If a line of the request is exactly
+   `FM_REQUEST_END`, choose another delimiter. Requests up to 12 KiB fit.
 
-   Send the request alone. bb names this thread itself: the first mate receives
-   `From thread <this thread's id> (<project>, <branch>):` and then the request.
+   Send the request alone. `tell` opens it with a line of its own saying it was relayed from this
+   thread, with the thread's project and branch.
 
 3. **Reply in one line** that the request went to the first mate, and stop.
 
-If `tell` fails, give its error in one line and stop; do not try another way of reaching the first mate.
-"No first mate aboard" means the user has none running. "Message file not found" from a thread on
-another machine means bb reads the file on its own machine, so `/fm` cannot be used from there.
+If the pipeline fails, give `tell`'s error in one line and stop; do not try another way of reaching the
+first mate. "No first mate aboard" means the user has none running. A request that is too long has to
+be shortened by the user.
