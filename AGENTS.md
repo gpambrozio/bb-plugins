@@ -59,6 +59,10 @@ Sources must start with `./`; unknown fields, duplicates and the repo root are r
 is an index only — identity and entry points stay in each plugin's own `package.json`. Do not create
 it with an empty `plugins` array before the first plugin exists.
 
+CI and the release workflow read their plugin list from the same file, so listing a plugin there is
+all it takes to check and release it; the consistency check fails a plugin folder that is not
+listed. See *CI and releases*.
+
 ## Starting a plugin
 
 ```bash
@@ -132,8 +136,9 @@ bb plugin types                  # repin the SDK to the running bb; --check in C
   but not `app.commands` registrations; run the definition's `setup` against a stub builder to test
   those (`skills/app/app.test.tsx`).
 - The first `bb plugin build` on a machine downloads a pinned esbuild and Tailwind into
-  `<dataDir>/plugins/toolchain-*/`. To build without a running bb (CI), add `bb-app` as a
-  devDependency and a `"build": "bb plugin build"` script.
+  `<dataDir>/plugins/toolchain-*/`. The `bb` CLI from the npm package `bb-app` builds without a
+  running bb; this repository's CI installs it globally at one pinned version
+  (`.github/actions/setup-bb`) rather than as a devDependency of every plugin.
 - **A failed reload keeps the previous instance running** and `bb plugin reload` exits 1 — the
   opposite of Paseo. Read the exit code and the logs; "it still works" does not mean the new code
   loaded. The new instance loads *before* the old one is disposed (the SDK's fake host does the same),
@@ -325,16 +330,44 @@ so a blank area is a crash to look for in the console, not a layout bug.
   at run time (channel names, schemas) in a module that does not import the SDK, and import the
   contract as a type.
 
-## Distribution and releases
+## CI and releases
 
 Each plugin releases on its own, from per-plugin tags on `main`: `<id>/vX.Y.Z`, the way
 `paseo-plugins` already does it. Never cut a bare `vX.Y.Z` tag, and never move a tag — bb refuses a
-tag that now names a different commit. To release:
+tag that now names a different commit. **Merging a version bump is the release**:
 
-1. Bump `version` in the plugin's `package.json` and add a `CHANGELOG.md` section, on a branch, and
-   merge it.
-2. From `main`: `git tag -a <id>/vX.Y.Z -m "Release <id> vX.Y.Z"`, then `git push origin <id>/vX.Y.Z`.
-3. Check it: `git ls-remote --tags https://github.com/gpambrozio/bb-plugins.git`.
+1. In the pull request, bump `version` in the plugin folder (`npm version <patch|minor|major>
+   --no-git-tag-version` keeps the lockfile in step) and add a `## X.Y.Z` section to its
+   `CHANGELOG.md`.
+2. Merge it. `.github/workflows/release.yml` sees a version with no tag, builds the plugin as a git
+   install does, typechecks and tests it, then pushes the annotated tag `<id>/vX.Y.Z` on the merge
+   commit and creates the GitHub release `<id> X.Y.Z` with that changelog section as its notes.
+3. Installs following a compatible range — the README's command and the marketplace entry — pick the
+   tag up on their next update check. Only a change of range (or of anything else in the entry) needs
+   a marketplace pull request.
+
+Do not tag by hand. A failed release is finished by re-running the workflow (or `workflow_dispatch`
+with the plugin id); it skips a tag or release that exists, and verifies and releases the commit an
+existing tag names rather than moving it.
+
+`.github/workflows/checks.yml` runs on every pull request, and branch protection requires only its
+aggregate job, **Checks passed**:
+
+- **Manifests agree** (`.github/scripts/check-plugin-consistency.mjs`): every plugin folder is in
+  `.bb/plugins.json`; the package name gives the folder's id; the version is `X.Y.Z` in
+  `package.json`, both lockfile copies and a changelog section; the lockfile's dependency blocks match;
+  the `bb` manifest's required fields and named files exist; the SDK is pinned exactly and satisfies
+  `engines.bbPluginSdk`; `typecheck` and `test` scripts exist; `PLUGIN_OVERVIEW.md` fits the
+  marketplace's 4000 characters with no `#` title.
+- **Version bumps release** (`check-changelog-bump.mjs`): a changed `CHANGELOG.md` needs a version
+  bump, and a bump must be to an untagged version no lower than the base's.
+- **One job per plugin**: production-only `npm ci` and `bb plugin build`, as a git install does, then
+  `npm ci`, `npm run typecheck` and `npm test`.
+
+The scripts are plain Node with no dependencies; their shared helpers have tests
+(`node --test ".github/scripts/*.test.mjs"`). Every plugin needs `typecheck` and `test` scripts.
+The CI's bb version lives in `.github/actions/setup-bb/action.yml`; move it when the plugins' SDK pin
+moves.
 
 Installs track a semver range over those tags:
 
@@ -344,9 +377,10 @@ bb plugin install <id>@bb-community        # once the plugin is in the Community
 ```
 
 - **A git install builds from source with production dependencies only**
-  (`npm install --omit=dev --ignore-scripts`, then `bb plugin build`). Before a release, prove it from
-  a clean clone: `git clone … && cd <id> && npm install --omit=dev --ignore-scripts && bb plugin
-  build`. A bundled import that is only a devDependency fails here and nowhere else.
+  (`npm install --omit=dev --omit=optional --ignore-scripts`, then `bb plugin build`). A bundled import
+  that is only a devDependency fails here and nowhere else. CI repeats that install and build for every
+  pull request and release; to reproduce it locally, run `npm ci --omit=dev --omit=optional
+  --ignore-scripts && bb plugin build` in a clean clone.
 - **npm installs need a prebuilt `dist/`.** The scaffold's `.gitignore` excludes `dist/` and has no
   `files`, so `npm pack` ships no bundle and the install is refused. Add `files` and build before
   publishing; check with `npm pack --dry-run`. Git tags are the release channel here; npm is optional.

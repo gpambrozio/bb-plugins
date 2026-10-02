@@ -1,0 +1,160 @@
+# What a pull request has to pass before it can be merged.
+#
+# Merging a version bump is what releases a plugin here (`release.yml` tags and releases it right
+# after), so a broken bump has to fail in the pull request that makes it, not in somebody's
+# notifications after the merge.
+#
+# Five jobs, and the last is the one branch protection names:
+#
+# - **Find plugins** reads `.bb/plugins.json`, the index bb installs from, into the matrix below.
+#   Adding a plugin means adding it there — which bb needs anyway — and editing nothing here.
+# - **Manifests agree** reads the files inside each plugin that have to be kept in step by hand,
+#   and tests the scripts that do the reading. No `npm ci` first: it needs no dependencies and
+#   should report before a slower job does.
+# - **Version bumps release** fails a pull request that edits a plugin's `CHANGELOG.md` without
+#   bumping its version, or bumps it to a version that is already tagged or lower than before.
+# - **One job per plugin** builds it exactly as a git install does, then typechecks and tests it.
+# - **Checks passed** exists only so that protection can require a single status whose name never
+#   changes. Requiring the matrix jobs directly would mean editing the branch protection rule every
+#   time a plugin is added or renamed, and a rule naming a job that no longer runs blocks every
+#   merge until somebody notices.
+#
+# This does not replace what `release.yml` runs at release time. That repeats the build, the
+# typecheck and the tests for the plugin it is releasing, deliberately: this workflow proves the
+# pull request was sound, and the release job proves the commit it is about to tag still is.
+name: Checks
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions: {}
+
+# A pull request that is pushed to twice does not need the first run's answer.
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  plugins:
+    name: Find plugins
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      plugins: ${{ steps.list.outputs.plugins }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: List the plugins in .bb/plugins.json
+        id: list
+        run: echo "plugins=$(node .github/scripts/list-plugins.mjs)" >> "$GITHUB_OUTPUT"
+
+  consistency:
+    name: Manifests agree
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Test the scripts CI and releases run
+        run: node --test ".github/scripts/*.test.mjs"
+
+      - name: Check every plugin's declarations against each other
+        run: node .github/scripts/check-plugin-consistency.mjs
+
+  changelog:
+    name: Version bumps release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      # The whole history and every tag, because the check reads the base commit's `package.json`
+      # and asks whether a new version is already tagged; a shallow clone has neither.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      # The base is empty on `workflow_dispatch`, which the script treats as nothing to compare —
+      # skipping the job instead would fail `Checks passed`.
+      - name: Check every changed changelog comes with a new version
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: node .github/scripts/check-changelog-bump.mjs "$BASE_SHA"
+
+  plugin:
+    name: ${{ matrix.plugin }}
+    needs: plugins
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      # One plugin failing says nothing about the others, and seeing every verdict at once
+      # is worth more than stopping early.
+      fail-fast: false
+      matrix:
+        plugin: ${{ fromJSON(needs.plugins.outputs.plugins) }}
+    defaults:
+      run:
+        working-directory: ${{ matrix.plugin }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: ./.github/actions/setup-bb
+
+      # First, the install a user's bb runs from a git tag: production dependencies only, no
+      # lifecycle scripts, then `bb plugin build`. A bundled import that is only a devDependency
+      # builds from a full install and fails here and nowhere else — which, without this step, is
+      # in the user's bb, after the release.
+      - name: Install as a git install does
+        run: npm ci --omit=dev --omit=optional --ignore-scripts
+
+      - name: Build as a git install does
+        run: bb plugin build
+
+      # `ci`, not `install`: it installs the locked tree and refuses to rewrite the lockfile, so a
+      # lockfile that cannot satisfy `package.json` fails here rather than being quietly fixed. It
+      # also replaces the production-only tree above.
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+  checks:
+    name: Checks passed
+    needs: [plugins, consistency, changelog, plugin]
+    # Without this the job is skipped when something it needs fails, and a skipped required check
+    # leaves the pull request waiting for an answer that will never come.
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if anything above did not succeed
+        # `cancelled` and `skipped` count as failures too: neither is evidence that the tree is good,
+        # and treating them as success is how a required check becomes decoration.
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped')
+        run: |
+          echo "::error::A check above failed, was cancelled, or was skipped."
+          exit 1
+
+      - name: Say so
+        run: echo "All checks passed." >> "$GITHUB_STEP_SUMMARY"
