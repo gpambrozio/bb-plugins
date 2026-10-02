@@ -10,29 +10,79 @@
  *
  * Plain Node, no dependencies, so every script runs before `npm ci` does.
  */
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 export const PLUGIN_INDEX = ".bb/plugins.json";
 
+const SCHEMA_URL = "https://getbb.app/schemas/plugins.schema.json";
+const NAME = /^[a-z0-9][a-z0-9-]*$/;
+
 /**
- * The plugin ids in `.bb/plugins.json`, in its order. Each id is also its folder: an entry whose
- * source is not `./<name>` is refused, because the tag prefix, the matrix job and the folder are
- * all named by the id and nothing here maps one to another.
+ * Everything wrong with a parsed `.bb/plugins.json`, by the rules of bb's own schema
+ * (`https://getbb.app/schemas/plugins.schema.json`, mirrored by hand because the scripts take no
+ * dependencies): only the known fields, `schemaVersion` 1, names of lowercase letters, digits and
+ * dashes, and unique entry names. bb refuses a git install from a repository whose index breaks any
+ * of these, so the pull request has to hear it, not the next person to install.
+ *
+ * One rule is stricter than bb's: each source is `./<name>`. The tag prefix, the matrix job and the
+ * folder are all named by the id, and nothing here maps one to another.
  */
+export function validatePluginIndex(index) {
+  if (typeof index !== "object" || index === null || Array.isArray(index)) {
+    return ["the index is not a JSON object"];
+  }
+  const problems = [];
+  for (const key of Object.keys(index)) {
+    if (!["$schema", "schemaVersion", "name", "plugins"].includes(key)) {
+      problems.push(`unknown field "${key}"`);
+    }
+  }
+  if ("$schema" in index && index.$schema !== SCHEMA_URL) {
+    problems.push(`"$schema" is ${JSON.stringify(index.$schema)}; expected "${SCHEMA_URL}"`);
+  }
+  if (index.schemaVersion !== 1) {
+    problems.push(`"schemaVersion" is ${JSON.stringify(index.schemaVersion)}; bb reads only 1`);
+  }
+  if (typeof index.name !== "string" || !NAME.test(index.name)) {
+    problems.push(`"name" is ${JSON.stringify(index.name)}; expected lowercase letters, digits and dashes`);
+  }
+  if (!Array.isArray(index.plugins) || index.plugins.length === 0) {
+    problems.push(`"plugins" must be a non-empty array`);
+    return problems;
+  }
+  const seen = new Set();
+  index.plugins.forEach((entry, i) => {
+    const where = `plugins[${i}]`;
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+      problems.push(`${where} is not an object`);
+      return;
+    }
+    for (const key of Object.keys(entry)) {
+      if (key !== "name" && key !== "source") problems.push(`${where} has unknown field "${key}"`);
+    }
+    if (typeof entry.name !== "string" || !NAME.test(entry.name)) {
+      problems.push(`${where}.name is ${JSON.stringify(entry.name)}; expected lowercase letters, digits and dashes`);
+      return;
+    }
+    if (seen.has(entry.name)) problems.push(`${where}: "${entry.name}" is listed twice`);
+    seen.add(entry.name);
+    if (entry.source !== `./${entry.name}`) {
+      problems.push(`${where}: "${entry.name}" has source ${JSON.stringify(entry.source)}; it must be "./${entry.name}"`);
+    }
+  });
+  return problems;
+}
+
+/** The plugin ids in `.bb/plugins.json`, in its order; throws when the index is invalid. */
 export function readPluginIds(root = ".") {
   const index = JSON.parse(readFileSync(join(root, PLUGIN_INDEX), "utf8"));
-  if (!Array.isArray(index.plugins) || index.plugins.length === 0) {
-    throw new Error(`${PLUGIN_INDEX} has no "plugins" array`);
+  const problems = validatePluginIndex(index);
+  if (problems.length > 0) {
+    throw new Error(`${PLUGIN_INDEX} is invalid:\n- ${problems.join("\n- ")}`);
   }
-  return index.plugins.map((entry) => {
-    if (entry.source !== `./${entry.name}`) {
-      throw new Error(
-        `${PLUGIN_INDEX}: "${entry.name}" has source "${entry.source}"; it must be "./${entry.name}"`,
-      );
-    }
-    return entry.name;
-  });
+  return index.plugins.map((entry) => entry.name);
 }
 
 /**
@@ -80,4 +130,53 @@ export function changelogSection(changelog, version) {
   let end = lines.findIndex((line, i) => i > start && line.startsWith("## "));
   if (end === -1) end = lines.length;
   return lines.slice(start, end).join("\n").trimEnd();
+}
+
+function git(root, ...args) {
+  return execFileSync("git", args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+}
+
+/** `<id>/package.json`'s version at `commit`, or `undefined` when the file is absent there. */
+function versionAt(root, commit, id) {
+  try {
+    return JSON.parse(git(root, "show", `${commit}:${id}/package.json`)).version;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The commit on `HEAD`'s first-parent history that brought `<id>/package.json` to the version it
+ * has now — the merge of the pull request that bumped it, on a squash-merged `main`. That, not the
+ * newest commit, is what a release tags: a later push that changed the plugin without bumping it is
+ * not part of this version, and a run that was cancelled, queued behind another or failed is
+ * finished by any later run tagging the same commit. Throws when there is no such commit.
+ */
+export function introducingCommit(id, root = ".") {
+  const version = versionAt(root, "HEAD", id);
+  const commits = git(root, "log", "--first-parent", "--format=%H", "HEAD", "--", `${id}/package.json`)
+    .split("\n")
+    .filter(Boolean);
+  let introducing;
+  for (const commit of commits) {
+    if (version === undefined || versionAt(root, commit, id) !== version) break;
+    introducing = commit;
+  }
+  if (introducing === undefined) throw new Error(`no commit on HEAD's history gives ${id} a version`);
+  return introducing;
+}
+
+/**
+ * Which plugins a release run has work for, and why: a version with no tag yet, or a tag with no
+ * GitHub release — a run that pushed the tag and then failed, or a tag cut by hand. Pure, so the
+ * lookups are passed in.
+ */
+export function pluginsToRelease(ids, { versionOf, tagExists, releaseExists }) {
+  const chosen = [];
+  for (const id of ids) {
+    const tag = releaseTag(id, versionOf(id));
+    if (!tagExists(tag)) chosen.push({ id, tag, reason: "no tag" });
+    else if (!releaseExists(tag)) chosen.push({ id, tag, reason: "tag without a GitHub release" });
+  }
+  return chosen;
 }

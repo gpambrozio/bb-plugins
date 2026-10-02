@@ -340,21 +340,22 @@ tag that now names a different commit. **Merging a version bump is the release**
    --no-git-tag-version` keeps the lockfile in step) and add a `## X.Y.Z` section to its
    `CHANGELOG.md`.
 2. Merge it. `.github/workflows/release.yml` sees a version with no tag, builds the plugin as a git
-   install does, typechecks and tests it, then pushes the annotated tag `<id>/vX.Y.Z` on the merge
-   commit and creates the GitHub release `<id> X.Y.Z` with that changelog section as its notes.
+   install does, typechecks and tests it, then pushes the annotated tag `<id>/vX.Y.Z` on the commit
+   that introduced the version (the bump's merge) and creates the GitHub release `<id> X.Y.Z` with
+   that changelog section as its notes.
 3. Installs following a compatible range — the README's command and the marketplace entry — pick the
    tag up on their next update check. Only a change of range (or of anything else in the entry) needs
    a marketplace pull request.
 
-Do not tag by hand. A failed release is finished by re-running the workflow (or `workflow_dispatch`
-with the plugin id); it skips a tag or release that exists, and verifies and releases the commit an
-existing tag names rather than moving it.
+Do not tag by hand. Every run releases whatever version has no tag or no GitHub release, so a failed
+or cancelled release is finished by the next push, by "Re-run all jobs", or by `workflow_dispatch` with
+the plugin id. A run never moves a tag: it verifies and releases the commit an existing tag names.
 
 `.github/workflows/checks.yml` runs on every pull request, and branch protection requires only its
 aggregate job, **Checks passed**:
 
-- **Manifests agree** (`.github/scripts/check-plugin-consistency.mjs`): every plugin folder is in
-  `.bb/plugins.json`; the package name gives the folder's id; the version is `X.Y.Z` in
+- **Manifests agree** (`.github/scripts/check-plugin-consistency.mjs`): `.bb/plugins.json` follows
+  bb's collection schema with unique names, and lists every plugin folder; the package name gives the folder's id; the version is `X.Y.Z` in
   `package.json`, both lockfile copies and a changelog section; the lockfile's dependency blocks match;
   the `bb` manifest's required fields and named files exist; the SDK is pinned exactly and satisfies
   `engines.bbPluginSdk`; `typecheck` and `test` scripts exist; `PLUGIN_OVERVIEW.md` fits the

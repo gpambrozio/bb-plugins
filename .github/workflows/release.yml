@@ -9,21 +9,23 @@
 # Two ways in, one path out:
 #
 # - **A version bump merged to `main`** is the normal one. Every push to `main` looks for a plugin
-#   whose `package.json` version has no tag yet, and releases each one it finds. Nothing to run by
-#   hand and nothing to remember: a bump that merged and was then forgotten used to leave the
-#   marketplace a version behind the repository with nothing saying so.
+#   whose `package.json` version has no tag yet, or a tag but no GitHub release, and releases each
+#   one it finds. Nothing to run by hand and nothing to remember: a bump that merged and was then
+#   forgotten used to leave the marketplace a version behind the repository with nothing saying so.
 # - **`workflow_dispatch`** takes a plugin by id and releases the version its `package.json`
-#   declares. That is how a failed run is finished, and how a version tagged by hand gets its
-#   GitHub release.
+#   declares, for when no push is coming to finish a failed run.
 #
-# Safe to run twice, by construction. **A tag that exists is never moved, re-pointed or deleted** —
-# bb refuses a tag that now names a different commit, and every install pinned to it would see the
-# code under it change. When the tag exists, the job verifies and releases the commit *it* names,
-# not the one this run started from, and creates only what is missing.
+# Safe to run twice, by construction. **A new tag goes on the commit that introduced the version**
+# (`release-commit.mjs`), not on whatever commit this run started from, so a run that was cancelled,
+# queued behind another or failed is finished correctly by any later one: a push that changed the
+# plugin without bumping it is never folded into a release. **A tag that exists is never moved,
+# re-pointed or deleted** — bb refuses a tag that now names a different commit, and every install
+# pinned to it would see the code under it change. When the tag exists, the job verifies and
+# releases the commit *it* names, and creates only what is missing.
 #
 # The order is the safe one: verify, then tag, then release. A build or test failure leaves no tag,
 # so nothing installs a commit that failed; a failure between the tag and the release leaves a tag
-# without notes, which `workflow_dispatch` (or "Re-run failed jobs") finishes.
+# without a release, which the plan of any later run — or "Re-run all jobs" — picks up.
 name: Release
 
 on:
@@ -40,7 +42,10 @@ on:
 permissions: {}
 
 # Two pushes landing together would otherwise both see the same missing tag. Never
-# `cancel-in-progress`: the thing being cancelled could be a half-finished release.
+# `cancel-in-progress`: the thing being cancelled could be a half-finished release. A third push
+# still replaces a run waiting in the queue; that run's work is not lost, because the next one
+# releases whatever is untagged or unreleased, on the commits that introduced it. One case is lost: a
+# version bumped again before any run reached it is never tagged — the newer version is released.
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
@@ -56,11 +61,11 @@ jobs:
     steps:
       # Tags are the whole input, so the full history is needed rather than the single commit a
       # default checkout brings.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
           package-manager-cache: false
@@ -70,6 +75,9 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           CHOICE: ${{ inputs.plugin }}
+          # To ask GitHub which tags already have a release.
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           if [ "$EVENT" = workflow_dispatch ]; then
@@ -84,7 +92,7 @@ jobs:
               exit 1
             fi
           else
-            plugins="$(node .github/scripts/list-plugins.mjs --untagged)"
+            plugins="$(node .github/scripts/list-plugins.mjs --unreleased)"
           fi
           echo "plugins=$plugins" >> "$GITHUB_OUTPUT"
           echo "Releasing: $plugins" >> "$GITHUB_STEP_SUMMARY"
@@ -104,14 +112,14 @@ jobs:
       matrix:
         plugin: ${{ fromJSON(needs.plan.outputs.plugins) }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
       - uses: ./.github/actions/setup-bb
 
-      # Everything below runs in a worktree of the commit being released: this run's commit for a
-      # new tag, or the commit an existing tag already names. The scripts still come from this
+      # Everything below runs in a worktree of the commit being released: the commit that introduced
+      # the version for a new tag, or the commit an existing tag already names. The scripts still come from this
       # run's checkout, so an old tag released by hand is read by today's rules.
       - name: Find the commit to release
         id: resolve
@@ -126,8 +134,9 @@ jobs:
             tagged=true
             echo "$tag already names $commit; releasing that commit and leaving the tag where it is."
           else
-            commit="$GITHUB_SHA"
+            commit="$(node .github/scripts/release-commit.mjs "$PLUGIN")"
             tagged=false
+            echo "$PLUGIN $version was introduced by $commit; tagging that commit."
           fi
           worktree="$RUNNER_TEMP/release"
           git worktree add --detach "$worktree" "$commit"

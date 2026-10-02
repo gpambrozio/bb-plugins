@@ -12,8 +12,9 @@
  *
  * What is checked, per plugin listed in `.bb/plugins.json`:
  *
- * - **The index itself.** Every top-level folder with a `package.json` is listed, so a new plugin
- *   cannot be forgotten by CI and the release workflow, which both read the list from there.
+ * - **The index itself**, by the rules of bb's collection schema plus unique names (see
+ *   `validatePluginIndex`), and every top-level folder with a `package.json` is listed in it, so a
+ *   new plugin cannot be forgotten by CI and the release workflow, which both read the list there.
  * - **Identity.** bb takes the plugin id from the package name's last segment minus `bb-plugin-`,
  *   and the tag prefix, the folder and the marketplace entry are all named by that id.
  * - **The version**, as `X.Y.Z` (the only tag shape the marketplace matches), in `package.json` and
@@ -41,7 +42,7 @@ import {
   changelogSection,
   compareVersions,
   parseVersion,
-  readPluginIds,
+  validatePluginIndex,
 } from "./plugins.mjs";
 
 /** The blocks npm mirrors from `package.json` into the lockfile's root package entry. */
@@ -203,8 +204,12 @@ function report(file, title, problem) {
   console.log(`::error file=${file},title=${title}::${problem}`);
 }
 
-const ids = readPluginIds();
-for (const name of unlistedPlugins(ids)) {
+const index = JSON.parse(readFileSync(PLUGIN_INDEX, "utf8"));
+const indexProblems = validatePluginIndex(index);
+for (const problem of indexProblems) report(PLUGIN_INDEX, PLUGIN_INDEX, problem);
+// An invalid index has no trustworthy list of plugins to go on checking.
+const ids = indexProblems.length === 0 ? index.plugins.map((entry) => entry.name) : [];
+for (const name of indexProblems.length === 0 ? unlistedPlugins(ids) : []) {
   report(PLUGIN_INDEX, name, `${name}/ has a package.json but is not in ${PLUGIN_INDEX}, so CI and releases skip it`);
 }
 for (const id of ids) {
