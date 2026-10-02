@@ -6,7 +6,7 @@
 import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import plugin from "./server";
+import plugin, { ABANDONED_AFTER_MS } from "./server";
 import { announceDrained } from "./server/reload-signal";
 import type { AttentionEntry } from "./shared/herald";
 import { DEFAULT_STORED_CONFIG, ENTRIES_CHANNEL, TOOL_COMMANDS } from "./shared/herald";
@@ -224,6 +224,36 @@ describe("herald server", () => {
     await harness.emitThreadEvent("thread.deleted", { thread: USER_THREAD });
     await settle();
     expect(await harness.callRpc("history.list", { threadId: "thr_user" })).toEqual({ items: [] });
+  });
+
+  it("still drops what the instance before left when the read after its drain fails once", async () => {
+    const host = await load({ writeWithModel: true });
+    await host.harness.callRpc("config.set", { sentenceTool: "custom", sentenceCommand: SLOW_TOOL });
+    await host.harness.emitThreadEvent("thread.idle", { thread: USER_THREAD, lastAssistantText: "Done." });
+    await settle();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      // The replacement's second read of storage — the one after the drain — fails.
+      const reloaded = track(
+        await host.harness.lifecycle.reload((bb) => {
+          const kv = bb.storage.kv;
+          const list = kv.list.bind(kv);
+          let reads = 0;
+          kv.list = async (prefix?: string) => {
+            reads += 1;
+            if (reads === 2) throw new Error("kv away");
+            return list(prefix);
+          };
+          return plugin(bb);
+        }),
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      expect(entriesOf(await reloaded.harness.callRpc("list", {}))[0]?.summary.status).toBe("pending");
+      await vi.advanceTimersByTimeAsync(ABANDONED_AFTER_MS);
+      expect(entriesOf(await reloaded.harness.callRpc("list", {}))).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("keeps both of two saves made at once", async () => {

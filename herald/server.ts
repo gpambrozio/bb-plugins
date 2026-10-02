@@ -34,7 +34,7 @@ const CONFIG_KEY = "config";
  * before it is dropped, when no reload drain says that instance is gone. A
  * drain takes seconds; a cold start never sends one.
  */
-const ABANDONED_AFTER_MS = 60_000;
+export const ABANDONED_AFTER_MS = 60_000;
 
 export default async function plugin(bb: BbPluginApi) {
   const settings = bb.settings.define(SETTINGS);
@@ -56,10 +56,12 @@ export default async function plugin(bb: BbPluginApi) {
   };
   const abandonedTimer = setTimeout(dropAbandoned, ABANDONED_AFTER_MS);
   const stopListening = onOtherDrained(bb.pluginId, instance, () => {
-    clearTimeout(abandonedTimer);
     store
       .reconcile()
       .then(() => {
+        // Only a read that succeeded stands in for the timer; a failed one
+        // leaves it to drop what the old instance left, a minute on.
+        clearTimeout(abandonedTimer);
         dropAbandoned();
         publish();
       })

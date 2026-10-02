@@ -119,7 +119,9 @@ no shell. What that buys, and what must stay true:
   drain signal, then reconciles (the old instance's last word — a withdrawal, a sentence that landed —
   wins) and calls `store.dropPending(hooks.inFlightEventIds())`: every pending entry it is not itself
   writing is removed, unspoken, and the thread's next event speaks. A cold start gets no drain, so a
-  60 s timer (`ABANDONED_AFTER_MS`) does the same drop; the drain clears it. Promoting the plain fallback
+  60 s timer (`ABANDONED_AFTER_MS`) does the same drop; only a post-drain read that *succeeded* clears
+  it, so one failed read after the drain still ends in the drop a minute on rather than an entry stuck
+  on "Writing the sentence…". Promoting the plain fallback
   instead was tried twice and failed review both times: it announced a question answered during the
   reload, and a promotion persisted before the drain resurrected an entry the old instance had withdrawn.
   What is lost is small and documented: a sentence being written at the moment of a reload is not spoken.
