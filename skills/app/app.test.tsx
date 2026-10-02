@@ -8,7 +8,7 @@
  */
 import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
-import type { PluginAppBuilder, PluginCommandRegistration } from "@get-bb/plugin-sdk/app";
+import type { JsonValue, PluginAppBuilder, PluginCommandRegistration } from "@get-bb/plugin-sdk/app";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { RpcContract } from "../shared/contract";
@@ -75,11 +75,12 @@ function renderPanel(
   options: {
     list?: () => SkillList;
     composer?: { text?: string; scope?: { kind: "thread"; threadId: string } };
+    params?: JsonValue;
   } = {},
 ) {
-  return renderSlot<{ threadId: string; params: null }, RpcContract>(
+  return renderSlot<{ threadId: string; params: JsonValue }, RpcContract>(
     { component: SkillsPanel },
-    { threadId: "thr_example", params: null },
+    { threadId: "thr_example", params: options.params ?? null },
     {
       rpc: { ...rpc, list: options.list ?? rpc.list },
       composer: { scope: { kind: "thread", threadId: "thr_example" }, ...options.composer },
@@ -293,5 +294,79 @@ describe("the composer button", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Skills: 6" }));
     fireEvent.click(await screen.findByRole("button", { name: "Open in panel" }));
     expect(inspection.navigateCalls).toEqual([{ method: "openThreadPanel", options: { actionId: "skills" } }]);
+  });
+
+  it("opens the panel on the skill the popover is showing", async () => {
+    const { inspection } = renderSlot<object, RpcContract>({ component: SkillsComposerButton }, {}, {
+      rpc,
+      composer: { scope: { kind: "thread", threadId: "thr_example" } },
+      openThreadPanel: () => true,
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "Skills: 6" }));
+    fireEvent.click(await screen.findByText("deploy"));
+    await screen.findByText("Description for deploy");
+    fireEvent.click(screen.getByRole("button", { name: "Open in panel" }));
+    expect(inspection.navigateCalls).toEqual([
+      {
+        method: "openThreadPanel",
+        options: {
+          actionId: "skills",
+          title: "Skills: deploy",
+          params: { skill: { kind: "discovered", id: "personal:/skills:deploy" } },
+        },
+      },
+    ]);
+  });
+
+  it("opens the panel on a reported entry the popover is showing", async () => {
+    const { inspection } = renderSlot<object, RpcContract>({ component: SkillsComposerButton }, {}, {
+      rpc,
+      composer: { scope: { kind: "thread", threadId: "thr_example" } },
+      openThreadPanel: () => true,
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "Skills: 6" }));
+    fireEvent.click(await screen.findByText("explain"));
+    fireEvent.click(await screen.findByRole("button", { name: "Open in panel" }));
+    expect(inspection.navigateCalls).toEqual([
+      {
+        method: "openThreadPanel",
+        options: { actionId: "skills", title: "Skills: explain", params: { skill: { kind: "reported", name: "explain" } } },
+      },
+    ]);
+  });
+
+  it("opens the panel on the list again once the popover is back on its list", async () => {
+    const { inspection } = renderSlot<object, RpcContract>({ component: SkillsComposerButton }, {}, {
+      rpc,
+      composer: { scope: { kind: "thread", threadId: "thr_example" } },
+      openThreadPanel: () => true,
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "Skills: 6" }));
+    fireEvent.click(await screen.findByText("deploy"));
+    fireEvent.click(await screen.findByRole("button", { name: "← All skills" }));
+    await screen.findByLabelText("Search skills");
+    fireEvent.click(screen.getByRole("button", { name: "Open in panel" }));
+    expect(inspection.navigateCalls).toEqual([{ method: "openThreadPanel", options: { actionId: "skills" } }]);
+  });
+});
+
+describe("the panel opened on a skill", () => {
+  it("shows that skill's detail straight away", async () => {
+    const { inspection } = renderPanel({ params: { skill: { kind: "discovered", id: "personal:/skills:deploy" } } });
+    expect(await screen.findByText("/skills/deploy/SKILL.md")).toBeTruthy();
+    expect(inspection.rpcCalls.map((call) => call.method)).toContain("read");
+    fireEvent.click(screen.getByRole("button", { name: "← All skills" }));
+    expect(await screen.findByLabelText("Search skills")).toBeTruthy();
+  });
+
+  it("shows a reported entry's detail straight away", async () => {
+    renderPanel({ params: { skill: { kind: "reported", name: "explain" } } });
+    expect(await screen.findByText("Explains code")).toBeTruthy();
+    expect(screen.getByText("[file]")).toBeTruthy();
+  });
+
+  it("opens on the list for params it does not recognise", async () => {
+    renderPanel({ params: { skill: { kind: "other", path: "/etc/passwd" } } });
+    expect(await screen.findByLabelText("Search skills")).toBeTruthy();
   });
 });

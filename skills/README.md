@@ -26,7 +26,7 @@ bb plugin install 'git:github.com/gpambrozio/bb-plugins@^0.1.0' --plugin skills 
 
 - **The Skills button** in a thread's composer shows how many entries the thread has. Press it for a
   popover (a sheet in a narrow window) listing them: search, pick one to read it, and press **Add to
-  chat**. **Open in panel** opens the full tab.
+  chat**. **Open in panel** opens the full tab — on the skill you were reading, if one was open.
 - **The Skills tab** in the thread's side panel (from the panel's launcher, or *Skills: show this
   thread's skills* in the command palette) shows the same list, and each skill's path with **Copy
   path** and its whole `SKILL.md`.

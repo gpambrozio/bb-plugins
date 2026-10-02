@@ -21,7 +21,16 @@ import { type ReportedSkill, type SkillEntry, type SkillList, SOURCE_KINDS } fro
 import { withoutImages } from "./markdown";
 import { type Loaded, useAddToChat, useSkillDocument } from "./use-skills";
 
-type Selection = { kind: "discovered"; id: string } | { kind: "reported"; name: string };
+/** The skill a browser shows the detail of; also the panel's `params`, so it is plain JSON. */
+export type Selection = { kind: "discovered"; id: string } | { kind: "reported"; name: string };
+
+/** A selection read back from a panel tab's persisted `params`, or null for anything else. */
+export function selectionFrom(params: unknown): Selection | null {
+  const skill = (params as { skill?: unknown } | null)?.skill as Record<string, unknown> | undefined;
+  if (skill?.kind === "discovered" && typeof skill.id === "string") return { kind: "discovered", id: skill.id };
+  if (skill?.kind === "reported" && typeof skill.name === "string") return { kind: "reported", name: skill.name };
+  return null;
+}
 
 /**
  * Where the browser is drawn. The panel is a tab the host scrolls and pads; the
@@ -225,16 +234,25 @@ export function SkillBrowser({
   frame,
   list,
   onAdded,
+  initialSelection = null,
+  onSelectionChange,
 }: {
   threadId: string;
   frame: SkillBrowserFrame;
   list: Loaded<SkillList>;
   onAdded: () => void;
+  /** The skill to open on, as **Open in panel** hands it over from the popover. */
+  initialSelection?: Selection | null;
+  onSelectionChange?: (selection: Selection | null) => void;
 }) {
   const [search, setSearch] = useState("");
   // Discovered entries are addressed by their id; reported ones have none and
   // are addressed by name, which the server keeps unique across both buckets.
-  const [selected, setSelected] = useState<Selection | null>(null);
+  const [selected, setSelected] = useState<Selection | null>(initialSelection);
+
+  useEffect(() => {
+    onSelectionChange?.(selected);
+  }, [selected, onSelectionChange]);
   const top = useRef<HTMLDivElement>(null);
 
   // A page opened from far down the list starts at its own top, and so does the
@@ -244,7 +262,10 @@ export function SkillBrowser({
   }, [selected]);
 
   // A thread switch under an open panel or popover is a new list.
+  const shownThread = useRef(threadId);
   useEffect(() => {
+    if (shownThread.current === threadId) return;
+    shownThread.current = threadId;
     setSelected(null);
     setSearch("");
   }, [threadId]);

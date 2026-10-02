@@ -20,7 +20,7 @@ you send it.
 - **Add to chat**: puts the skill's command at the start of the thread's message box, with the cursor
   after it, ready for any arguments. Nothing is sent until you send it.
 - **A Skills button in the composer** with a count, opening the same list in a popover — or a sheet,
-  in a narrow window — with a way to the full tab.
+  in a narrow window — with a way to the full tab, which opens on the skill you were reading.
 - **A palette command** that opens the tab.
 - Claude Code, Codex and Hermes threads have their skill files read off disk, in the order that agent
   reads them, so the copy listed is the copy it uses — in a worktree too. Every thread, on any

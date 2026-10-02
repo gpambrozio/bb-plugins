@@ -10,7 +10,7 @@
  * number until the first answer, rather than a `Skills 0` that then jumps.
  */
 import { useBbNavigate, useComposer, useComposerView } from "@get-bb/plugin-sdk/app";
-import { useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -18,7 +18,7 @@ import { Icon } from "@/components/ui/icon";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 import { countEntries } from "../shared/skills";
-import { SkillBrowser } from "./browser";
+import { type Selection, SkillBrowser } from "./browser";
 import { SKILLS_ICON } from "./icons";
 import { PANEL_ACTION_ID } from "./panel";
 import { useSkillList } from "./use-skills";
@@ -53,9 +53,29 @@ function SkillsButton({ threadId }: { threadId: string }) {
     if (next) reload();
   }
 
+  // The skill whose detail the popover shows, if any: **Open in panel** opens
+  // the tab on it, as a tab of its own named after it.
+  const selection = useRef<Selection | null>(null);
+  const handleSelectionChange = useCallback((next: Selection | null) => {
+    selection.current = next;
+  }, []);
+
+  function panelOptions() {
+    const skill = selection.current;
+    if (skill === null) return { actionId: PANEL_ACTION_ID };
+    const name =
+      skill.kind === "reported"
+        ? skill.name
+        : state.status === "ready"
+          ? state.data.skills.find((entry) => entry.id === skill.id)?.name
+          : undefined;
+    return { actionId: PANEL_ACTION_ID, title: name === undefined ? "Skills" : `Skills: ${name}`, params: { skill } };
+  }
+
   function openPanel() {
+    const options = panelOptions();
     setOpen(false);
-    if (!navigate.openThreadPanel({ actionId: PANEL_ACTION_ID })) {
+    if (!navigate.openThreadPanel(options)) {
       toast.error("This view has no side panel. Open the thread itself to see the Skills panel.");
     }
   }
@@ -99,6 +119,7 @@ function SkillsButton({ threadId }: { threadId: string }) {
             threadId={threadId}
             frame="popover"
             list={state}
+            onSelectionChange={handleSelectionChange}
             onAdded={() => {
               added.current = true;
               setOpen(false);

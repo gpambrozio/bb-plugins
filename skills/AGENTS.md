@@ -82,6 +82,10 @@ agrees with the composer. A failure there is shown under its own heading and nev
 the list itself and shows the count; it is `Skills` without a number until the first answer. It opens
 bb's vendored `@bb/popover`, which is a bottom sheet on a narrow window. **Open in panel** calls
 `useBbNavigate().openThreadPanel({ actionId: "skills" })`; the command palette entry opens the same tab.
+When the popover is showing a skill, **Open in panel** passes it as the tab's `params` (`{ skill:
+{ kind, id | name } }`, titled `Skills: <name>`), and the panel opens on it (`selectionFrom` in
+`app/browser.tsx`; anything else in `params` opens the list). bb persists `params` with the tab and
+opens a tab per distinct `params`, so each skill opened this way is a tab of its own.
 Nothing patches the DOM.
 
 **Add to chat, not invoke — the owner's decision.** The Paseo plugin (and issue #1's mapping) sent
