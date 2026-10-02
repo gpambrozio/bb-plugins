@@ -67,7 +67,9 @@ no shell. What that buys, and what must stay true:
 - **Tool-free where the tool allows it.** The Claude Code preset runs `claude -p --tools "" --max-turns 1
   --no-session-persistence --setting-sources "" --strict-mcp-config`, which is a model turn with no tools,
   no settings-file hooks and no MCP servers. Codex and Gemini have no "no tools" switch; their presets run
-  read-only (`--sandbox read-only`, `--approval-mode plan`). `--bare` is **not** in the Claude preset: with
+  read-only (`--sandbox read-only`, `--approval-mode plan`), and Codex with `--ignore-user-config`, so the
+  MCP servers, hooks and plugins of the user's `config.toml` do not load (`--ignore-rules` alone only
+  dropped execution-policy rules, which a review caught; login still comes from `CODEX_HOME`). `--bare` is **not** in the Claude preset: with
   it the CLI reported *Not logged in* on the machine this was built on. Every preset was checked by hand
   against its CLI's `--help`; only the Claude one has been run end to end here (Codex could not run inside
   the build sandbox, Gemini is not installed).
@@ -75,9 +77,17 @@ no shell. What that buys, and what must stay true:
   removed in a `finally`, so no project instructions, hooks or repository are in reach. One folder for
   the life of the plugin was the first version: macOS purges unused temp entries after a few days and a
   bb server runs for weeks, after which every spawn failed with an ENOENT that named the *tool*.
-- **A kill takes the tool's helpers with it.** The child is spawned `detached`, leading its own process
-  group, and a kill — timeout, abort, too much output — is `process.kill(-pid)`; `codex` and `claude`
-  start children of their own, and a tool stuck mid-call is exactly the one that times out.
+- **A kill takes the tool's helpers with it, on every way out.** The child is spawned `detached`, leading
+  its own process group, and the group gets `process.kill(-pid)` at the timeout, on abort, on too much
+  output, *and when the tool itself exits* — a tool that answers and leaves a helper behind would otherwise
+  leak one process per announcement. `codex` and `claude` start children of their own.
+- **A crashed bb server does not kill a run in progress, and that is accepted.** The timeout lives in the
+  server; a detached tool survives the server's death. There is no supervisor for it, on purpose: every
+  preset is a single model turn (`--max-turns 1`, stdin already closed) that ends on its own in seconds
+  and exits, so what a crash leaves behind finishes by itself; only a CLI that hangs would linger, which
+  is the same exposure as any command the user runs by hand, and macOS's `timeout` is not there to wrap
+  it with. The cap of two is per server instance. A supervisor process or a durable process registry was
+  judged more machinery than this feature is worth; revisit if a preset ever runs more than one turn.
 - **Fail closed, never queue, never wait long.** At most `MAX_IN_FLIGHT` (2) tools run at once; a third
   request gets the plain sentence at once. A run is killed after `WRITE_TIMEOUT_MS` (45 s; 20 s let a plugin build on the same Mac push two
   runs over), or once it has written `MAX_OUTPUT_BYTES` (256 KB) without finishing. A missing tool, a non-zero exit, an empty
@@ -91,14 +101,23 @@ no shell. What that buys, and what must stay true:
   `MAX_SPEECH_CHARS` limits as every sentence. The prompt tells the model that the data lines are not
   instructions, which a one-sentence Haiku turn honoured when tried; the real protection is that the tool
   has nothing to act with.
-- **No sentence lands on a newer event.** The entry is stored at once as `pending` with the plain sentence
-  as `fallback`, and `settleSentence` replaces it only while the entry is still that event and still
-  pending; a thread that moved on, or an entry a newer event replaced, drops the late sentence. After
+- **No sentence lands on a newer event, or on an answered question.** The entry is stored at once as
+  `pending` with the plain sentence as `fallback`, and `settleSentence` replaces it only while the entry
+  is still that event and still pending; a thread that moved on, or an entry a newer event replaced,
+  drops the late sentence. For a question or approval it first asks bb whether the interaction is still
+  pending (`EventsPort.interactionPending`): answering one fires no event, and a question answered while
+  its sentence was being written must not be announced — the entry is withdrawn instead. (The plain
+  sentence has no such window: it is listed and spoken as the event lands, as it always was.) After
   `hooks.dispose()` nothing lands at all.
-- **A reload settles, it does not resume.** On unload the hooks close first, then the writer kills its
-  children, then the store freezes — so a killed tool cannot write, and storage keeps the entry pending.
-  The next load calls `store.settlePending()` after `load()` and again after the post-drain `reconcile()`,
-  promoting every pending fallback to `ready`. There is nothing to find and put away.
+- **A reload settles, it does not resume — and settling is not a claim.** On unload the hooks close first,
+  then the writer kills its children, then the store freezes — so a killed tool cannot write, and storage
+  keeps the entry pending. The next load calls `store.settlePending()` after `load()` (a server that
+  starts fresh has no one to wait for) and again after the post-drain `reconcile()`, promoting pending
+  fallbacks to `ready`. Two rules keep that honest: promotion does **not** mark the thread `touched`, so
+  the drained instance's last word — a withdrawal on `thread.active`, a sentence that landed — still wins
+  at the reconcile read (the first version claimed, and resurrected an entry the old instance had
+  withdrawn); and the post-drain settle skips `hooks.inFlightEventIds()`, the sentences this instance is
+  itself writing, whose replies would otherwise be thrown away.
 - **Only the switch is in the host form; the tool, command and prompt are stored config.** The host
   form cannot show, hide or disable a field by the value of another (the descriptor has label,
   description, default, multiline, secret and a validation schema, nothing else, and settings are
@@ -109,6 +128,9 @@ no shell. What that buys, and what must stay true:
   block — a native select, the command's text area only under custom, the prompt with a reset button —
   each text with its own Save. Only `writeWithModel` stays in the form, whose description points down
   the page. These values are therefore not in `bb plugin config herald`.
+- **Saves are serialised.** `config.set` reads, merges and writes the whole stored configuration, so two
+  saves at once — the tool and the prompt, from two fields — are chained; unchained, the second read
+  predated the first write and reverted it.
 - **The custom command is seeded, not defaulted.** `config.set` fills a blank stored command with the
   previously selected tool's command (`customCommandSeed`) — only on the change *into* custom — and
   returns the whole configuration, so the section shows the seed as soon as the select changes. A
@@ -323,7 +345,8 @@ hook can only proceed, wait or reject. So the nearest thing is a **thread panel*
 (`app.slots.threadPanelAction`, `app/history-panel.tsx`): the sentences of the thread's past turns,
 newest first, from `server/history.ts` — appended by the hooks' `remember` when a sentence *lands*
 (plain, off, or the model's; never a pending one taken back), one kv row per thread capped at
-`HISTORY_LIMIT`, kept on archive and deleted with the thread. It re-reads on the entries nudge, since a
+`HISTORY_LIMIT` items with the headline cut at `HISTORY_HEADLINE_MAX` and the text at `MAX_SPEECH_CHARS`
+(fifty uncut error headlines passed kv's 256 KB row), kept on archive and deleted with the thread. It re-reads on the entries nudge, since a
 sentence landing is also an entries change. A megaphone in the thread header
 (`experimental_threadHeaderAction`, `app/header-action.tsx`) opens it through `useBbNavigate().openThreadPanel`;
 the host wants one 28px control there, so it is an icon button with its own accessible name. If bb gains a plugin-written timeline row, write the

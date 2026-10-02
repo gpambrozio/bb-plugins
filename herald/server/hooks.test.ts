@@ -28,6 +28,9 @@ function fakeEvents(): FakeEvents {
     async interruptedRecently() {
       return events.interrupted;
     },
+    async interactionPending() {
+      return true;
+    },
   };
   return events;
 }

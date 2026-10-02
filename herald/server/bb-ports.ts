@@ -46,6 +46,16 @@ function cached<T>(load: (key: string) => Promise<T>): (key: string) => Promise<
   };
 }
 
+/** Whether an interaction still waits on the user; one bb no longer knows does not. */
+async function interactionPending(sdk: PluginBbSdk, threadId: string, interactionId: string): Promise<boolean> {
+  try {
+    return (await sdk.threads.interactions.get({ threadId, interactionId })).status === "pending";
+  } catch (error) {
+    if (isNotFound(error)) return false;
+    throw error;
+  }
+}
+
 export function bbEvents(sdk: PluginBbSdk, log: Log): EventsPort {
   const projectName = cached(async (projectId) => (await sdk.projects.get({ projectId })).name);
   const folder = cached(async (environmentId) => {
@@ -78,6 +88,7 @@ export function bbEvents(sdk: PluginBbSdk, log: Log): EventsPort {
       ]);
       return { projectName: name, folder: where, lastRequest: request };
     },
+    interactionPending: (threadId, interactionId) => interactionPending(sdk, threadId, interactionId),
     async interruptedRecently(threadId, withinMs) {
       const interactions = await sdk.threads.interactions.list({ threadId });
       const since = Date.now() - withinMs;

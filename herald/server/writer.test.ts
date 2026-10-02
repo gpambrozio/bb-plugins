@@ -97,6 +97,18 @@ describe("SentenceWriter", () => {
     await w.dispose();
   });
 
+  it("reaps a tool's own child after the tool answered and exited", async () => {
+    const marker = join(tmpdir(), `herald-orphan-${process.pid}-${Date.now()}`);
+    const script = node(
+      `const {spawn}=require("child_process");const c=spawn(process.execPath,["-e","setTimeout(()=>{},60000)"],{stdio:"ignore"});c.unref();require("fs").writeFileSync(process.env.MARKER,String(c.pid));process.stdout.write("done")`,
+    );
+    const result = await runCommand(script, "", { cwd: process.cwd(), env: { ...process.env, MARKER: marker }, timeoutMs: 10_000 });
+    expect(result.stdout).toBe("done");
+    const grandchild = Number(await readFile(marker, "utf8"));
+    await unlink(marker);
+    await vi.waitFor(() => expect(() => process.kill(grandchild, 0)).toThrow(/ESRCH/));
+  });
+
   it("stops a tool that floods its output instead of answering", async () => {
     const flood = node(`setInterval(()=>process.stdout.write("x".repeat(65536)),1)`);
     await expect(runCommand(flood, "", { cwd: process.cwd(), env: process.env, timeoutMs: 10_000 })).rejects.toThrow(/too much output/);

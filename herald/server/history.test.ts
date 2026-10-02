@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { HISTORY_LIMIT, type HistoryItem } from "../shared/herald";
+import { HISTORY_HEADLINE_MAX, HISTORY_LIMIT, type HistoryItem } from "../shared/herald";
 import { SentenceHistory, type HistoryKv } from "./history";
 import { recordingLog } from "./testing/fixtures";
 
@@ -66,6 +66,17 @@ describe("SentenceHistory", () => {
     const items = await history.list("t1");
     expect(items).toHaveLength(HISTORY_LIMIT);
     expect(items[0]?.eventId).toBe(`t1:idle:${HISTORY_LIMIT + 5}`);
+  });
+
+  it("keeps a row under kv's limit by cutting a headline that runs to kilobytes", async () => {
+    const kv = fakeKv();
+    const history = new SentenceHistory(kv, recordingLog());
+    for (let n = 1; n <= HISTORY_LIMIT; n += 1) history.append("t1", item(n, { headline: "x".repeat(14_000), reason: "error" }));
+    await history.flush();
+    const items = await history.list("t1");
+    expect(items).toHaveLength(HISTORY_LIMIT);
+    expect(items[0]?.headline.length).toBeLessThanOrEqual(HISTORY_HEADLINE_MAX + 1);
+    expect(JSON.stringify(kv.rows.get("history:t1")).length).toBeLessThan(100_000);
   });
 
   it("forgets a thread, and reports a write that failed without throwing", async () => {

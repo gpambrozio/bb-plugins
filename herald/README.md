@@ -77,7 +77,8 @@ page, below bb's own form. The presets:
 
 - **claude** — Claude Code, with no tools, no settings-file hooks and no MCP servers, one turn of the
   Haiku model at low effort.
-- **codex** — OpenAI Codex, read-only, nothing saved to disk.
+- **codex** — OpenAI Codex without its user configuration (so none of your MCP servers or hooks),
+  read-only, nothing saved to disk. Its login still comes from your Codex home.
 - **gemini** — Gemini CLI, in its read-only plan mode.
 - **custom** — a command of your own. A *Custom command* field appears under the tool only while custom
   is selected, filled in with the command of the tool you had selected, to start from. The prompt
@@ -85,9 +86,10 @@ page, below bb's own form. The presets:
   runs the command: quote as you would in one, but `~` and `$VARIABLES` are not expanded, and it sees
   the bb server's environment.
 
-Only the Claude preset runs with no tools at all. Codex's read-only sandbox also cuts the network;
-Gemini's plan mode keeps its read and web tools, so an instruction hidden in an agent's reply could in
-principle have it read a file and send it somewhere. Pick claude if that matters to you.
+Only the Claude preset runs with no tools at all. Codex runs without your configuration and its
+read-only sandbox cuts the network for the commands it runs; Gemini's plan mode keeps its read and web
+tools, so an instruction hidden in an agent's reply could in principle have it read a file and send it
+somewhere. Pick claude if that matters to you.
 
 The *Sentence prompt* is yours to edit, with a button to get the default back; it has placeholders for
 the thread, project, folder, event, headline, detail, the request and the agent's output.

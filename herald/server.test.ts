@@ -7,6 +7,7 @@ import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/tes
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import plugin from "./server";
+import { announceDrained } from "./server/reload-signal";
 import type { AttentionEntry } from "./shared/herald";
 import { DEFAULT_STORED_CONFIG, ENTRIES_CHANNEL, TOOL_COMMANDS } from "./shared/herald";
 
@@ -206,5 +207,22 @@ describe("herald server", () => {
     await harness.emitThreadEvent("thread.deleted", { thread: USER_THREAD });
     await settle();
     expect(await harness.callRpc("history.list", { threadId: "thr_user" })).toEqual({ items: [] });
+  });
+
+  it("keeps both of two saves made at once", async () => {
+    const { harness } = await load();
+    await Promise.all([harness.callRpc("config.set", { sentenceTool: "codex" }), harness.callRpc("config.set", { sentencePrompt: "Say: {{headline}}" })]);
+    expect(await harness.callRpc("config.get", {})).toMatchObject({ sentenceTool: "codex", sentencePrompt: "Say: {{headline}}" });
+  });
+
+  it("does not give up on a sentence it is itself still writing when the instance before it drains", async () => {
+    const { harness, bb } = await load({ writeWithModel: true });
+    await harness.callRpc("config.set", { sentenceTool: "custom", sentenceCommand: SLOW_TOOL });
+    await harness.emitThreadEvent("thread.idle", { thread: USER_THREAD, lastAssistantText: "Done." });
+    await settle();
+    expect(entriesOf(await harness.callRpc("list", {}))[0]?.summary.status).toBe("pending");
+    announceDrained(bb.pluginId, "the-instance-before");
+    await settle();
+    expect(entriesOf(await harness.callRpc("list", {}))[0]?.summary.status).toBe("pending");
   });
 });

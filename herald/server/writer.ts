@@ -52,8 +52,9 @@ export interface RunResult {
 
 /**
  * `command[0]` with `command.slice(1)` as its arguments, no shell, `input` on
- * stdin. The tool leads its own process group, so a kill — at the timeout,
- * on abort, on too much output — takes the helpers it started with it.
+ * stdin. The tool leads its own process group, and the group is killed on
+ * every way out — the timeout, an abort, too much output, and the tool's own
+ * exit — so a helper it started never outlives the run.
  */
 export function runCommand(command: readonly string[], input: string, options: RunOptions): Promise<RunResult> {
   const [file, ...args] = command;
@@ -87,7 +88,11 @@ export function runCommand(command: readonly string[], input: string, options: R
     child.stdout.setEncoding("utf8").on("data", (chunk: string) => collect(chunk, (text) => (stdout += text)));
     child.stderr.setEncoding("utf8").on("data", (chunk: string) => collect(chunk, (text) => (stderr += text)));
     child.on("error", (error) => finish(() => reject(new Error(`${file}: ${error.message}`))));
-    child.on("close", (code) => finish(() => resolve({ code, stdout, stderr })));
+    child.on("close", (code) => {
+      // The tool is done; anything it started and left behind is not.
+      killGroup(child.pid, () => {});
+      finish(() => resolve({ code, stdout, stderr }));
+    });
     // A tool that never reads stdin closes it; that is not an error here.
     child.stdin.on("error", () => {});
     child.stdin.end(input, "utf8");

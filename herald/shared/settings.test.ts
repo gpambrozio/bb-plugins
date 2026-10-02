@@ -34,6 +34,12 @@ describe("sentenceSettingsOf", () => {
     expect(Object.keys(SETTINGS).filter((key) => key.startsWith("sentence"))).toEqual([]);
   });
 
+  it("runs Codex and Claude without their user configuration, so no MCP server or hook of the user's loads", () => {
+    expect(TOOL_COMMANDS.codex).toContain("--ignore-user-config");
+    expect(TOOL_COMMANDS.claude).toContain("--strict-mcp-config");
+    expect(TOOL_COMMANDS.claude).toContain('--setting-sources ""');
+  });
+
   it("has a command for every tool but custom", () => {
     for (const tool of SENTENCE_TOOLS) {
       if (tool === "custom") continue;

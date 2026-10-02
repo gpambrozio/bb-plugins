@@ -16,12 +16,16 @@ const CONFIG: HeraldConfig = {
   sentence: { command: "my-llm --fast", prompt: "Thread: {{thread}}\nEvent: {{event}}\nRequest: {{request}}\nOutput: {{output}}" },
 };
 
+let answered = false;
 const events: EventsPort = {
   async context(_thread, { withRequest }) {
     return { projectName: "Shop", folder: "repo", lastRequest: withRequest ? "Fix the login bug" : null };
   },
   async interruptedRecently() {
     return false;
+  },
+  async interactionPending() {
+    return !answered;
   },
 };
 
@@ -151,6 +155,31 @@ describe("hooks with a model-written sentence", () => {
     const hooks = createHooks({ store, readConfig: async () => CONFIG, events: longEvents, publish: vi.fn(), log: recordingLog(), writeSentence: w.write, remember: vi.fn() });
     await hooks.idle(thread(), "o".repeat(20_000));
     expect(w.calls[0]?.prompt.length).toBeLessThan(6_000);
+  });
+
+  it("drops a question the user answered before its sentence landed, and never speaks it", async () => {
+    answered = false;
+    const w = heldWriter();
+    const { hooks, store, publish, remembered } = setup(w.write);
+    await hooks.interactionPending(thread(), question());
+    expect(store.get("t1")?.summary.status).toBe("pending");
+    answered = true;
+    w.release("Login fix wants to know which database to use.");
+    await settle();
+    expect(store.get("t1")).toBeNull();
+    expect(remembered).not.toHaveBeenCalled();
+    expect(publish).toHaveBeenCalledTimes(2);
+    answered = false;
+  });
+
+  it("names the events whose sentences it is still writing, for a reload to leave alone", async () => {
+    const w = heldWriter();
+    const { hooks, store } = setup(w.write);
+    await hooks.idle(thread(), "Done.");
+    expect([...hooks.inFlightEventIds()]).toEqual([store.get("t1")?.eventId]);
+    w.release("Done indeed.");
+    await settle();
+    expect([...hooks.inFlightEventIds()]).toEqual([]);
   });
 
   it("never runs the tool for an entry that is not announced", async () => {

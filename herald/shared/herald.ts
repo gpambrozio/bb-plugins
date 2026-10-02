@@ -76,6 +76,9 @@ export type HistoryItem = z.infer<typeof HistoryItemSchema>;
 
 export const HISTORY_LIMIT = 50;
 
+/** A headline can be an error message of kilobytes; the history keeps its start. */
+export const HISTORY_HEADLINE_MAX = 200;
+
 /**
  * What is said for an entry, or null when it is never spoken. Never longer
  * than the server will render, whatever an older entry stored.
@@ -149,14 +152,16 @@ export const SentenceToolSchema = z.enum(SENTENCE_TOOLS);
 
 /**
  * One short turn per tool, with as little of the tool as it will switch off:
- * no tools, no project settings or hooks, no MCP servers, nothing saved to
- * disk, and a small, quick model. Claude Code can run with no tools at all;
- * Codex and Gemini only run read-only.
+ * no tools, no user or project configuration (so none of the user's MCP
+ * servers, hooks or plugins), nothing saved to disk, and a small, quick
+ * model. Claude Code can run with no tools at all; Codex and Gemini only run
+ * read-only, and Codex without its config file (`--ignore-user-config`; its
+ * login still comes from CODEX_HOME).
  */
 export const TOOL_COMMANDS: Record<Exclude<SentenceTool, "custom">, string> = {
   claude:
     'claude -p --tools "" --max-turns 1 --no-session-persistence --setting-sources "" --strict-mcp-config --model haiku --effort low',
-  codex: "codex exec --ephemeral --skip-git-repo-check --sandbox read-only --ignore-rules --color never -",
+  codex: "codex exec --ephemeral --ignore-user-config --skip-git-repo-check --sandbox read-only --ignore-rules --color never -",
   gemini: 'gemini -p "Reply with the sentence only." --approval-mode plan --output-format text',
 };
 

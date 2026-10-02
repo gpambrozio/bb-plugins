@@ -329,11 +329,24 @@ describe("AttentionStore", () => {
 });
 
 describe("settlePending", () => {
+  it("leaves alone the sentences this instance is itself still writing", () => {
+    const store = new AttentionStore(null, recordingLog());
+    store.upsert(entry({ threadId: "t1", eventId: "mine", summary: { status: "pending", fallback: "Mine." } }));
+    store.upsert(entry({ threadId: "t2", eventId: "theirs", summary: { status: "pending", fallback: "Theirs." } }));
+    expect(store.settlePending(new Set(["mine"]))).toBe(true);
+    expect(store.get("t1")?.summary.status).toBe("pending");
+    expect(store.get("t2")?.summary).toEqual({ status: "ready", text: "Theirs." });
+  });
+
   it("turns every sentence still being written into its plain fallback, and says whether anything changed", async () => {
     const backend = new FakeBackend();
+    // As a load finds them: left by the instance before, not written by this one.
+    backend.saved = [
+      entry({ threadId: "t1", summary: { status: "pending", fallback: "Login fix finished." } }),
+      entry({ threadId: "t2", summary: { status: "ready", text: "Done." } }),
+    ];
     const store = new AttentionStore(backend, recordingLog());
-    store.upsert(entry({ threadId: "t1", summary: { status: "pending", fallback: "Login fix finished." } }));
-    store.upsert(entry({ threadId: "t2", summary: { status: "ready", text: "Done." } }));
+    await store.load();
     expect(store.settlePending()).toBe(true);
     expect(store.get("t1")?.summary).toEqual({ status: "ready", text: "Login fix finished." });
     expect(store.get("t2")?.summary).toEqual({ status: "ready", text: "Done." });
@@ -343,5 +356,10 @@ describe("settlePending", () => {
       status: "ready",
       text: "Login fix finished.",
     });
+    // Promoting is not a claim: a later read of storage still wins for that thread, as a
+    // removal the instance before made on its way out must.
+    backend.saved = backend.saved.filter((saved) => (saved as AttentionEntry).threadId !== "t1");
+    await store.reconcile();
+    expect(store.get("t1")).toBeNull();
   });
 });

@@ -26,6 +26,12 @@ export interface EventsPort {
    * failure that follows is not news.
    */
   interruptedRecently(threadId: string, withinMs: number): Promise<boolean>;
+  /**
+   * Whether an interaction still waits on the user. Answering one fires no
+   * event a plugin hears, so a sentence that took time to write asks before
+   * it lands.
+   */
+  interactionPending(threadId: string, interactionId: string): Promise<boolean>;
 }
 
 export type ThreadFacts =

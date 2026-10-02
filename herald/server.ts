@@ -38,7 +38,11 @@ export default async function plugin(bb: BbPluginApi) {
     bb.log.error(`Could not load saved entries: ${error instanceof Error ? error.message : String(error)}`);
   });
   // A sentence the instance before this one was still writing is not coming:
-  // its tool died with it. The plain sentence stands.
+  // its tool died with it. The plain sentence stands — promoted now, for a
+  // server that starts fresh, and again below once a replaced instance has
+  // drained, for whatever it left pending then. Neither promotion is a claim:
+  // the drained instance's last word (a withdrawal, a sentence that landed)
+  // still wins at the read, and this instance's own runs are left alone.
   store.settlePending();
   // The instance a reload replaces may still be writing; read again once it says it is done.
   const instance = randomUUID();
@@ -46,7 +50,7 @@ export default async function plugin(bb: BbPluginApi) {
     store
       .reconcile()
       .then(() => {
-        store.settlePending();
+        store.settlePending(hooks.inFlightEventIds());
         publish();
       })
       .catch((error: unknown) => {
@@ -60,6 +64,8 @@ export default async function plugin(bb: BbPluginApi) {
   let events: EventsPort | null = null;
   let liveness: Liveness | null = null;
   const eventsPort = () => (events ??= bbEvents(bb.sdk, bb.log));
+  /** Saves are chained: two partial writes at once must both land. */
+  let configWrites: Promise<unknown> = Promise.resolve();
   const livenessOf = () => (liveness ??= new Liveness(bbLiveness(bb.sdk), bb.log));
 
   function publish(): void {
@@ -107,6 +113,7 @@ export default async function plugin(bb: BbPluginApi) {
     events: {
       context: (thread, options) => eventsPort().context(thread, options),
       interruptedRecently: (threadId, withinMs) => eventsPort().interruptedRecently(threadId, withinMs),
+      interactionPending: (threadId, interactionId) => eventsPort().interactionPending(threadId, interactionId),
     },
     publish,
     // The tool runs here, on the bb server's machine; see AGENTS.md.
@@ -133,13 +140,18 @@ export default async function plugin(bb: BbPluginApi) {
     // Any part of the stored configuration; the rest is kept. When the tool
     // becomes "custom" with nothing written yet, the command of the tool
     // selected before is filled in, so the user edits a working line.
-    "config.set": async (next) => {
-      const current = await storedConfig();
-      const merged = StoredConfigSchema.parse({ ...current, ...next });
-      const seed = customCommandSeed(current, merged);
-      const saved = seed === null ? merged : { ...merged, sentenceCommand: seed };
-      await bb.storage.kv.set(CONFIG_KEY, saved);
-      return saved;
+    "config.set": (next) => {
+      const write = configWrites.then(async () => {
+        const current = await storedConfig();
+        const merged = StoredConfigSchema.parse({ ...current, ...next });
+        const seed = customCommandSeed(current, merged);
+        const saved = seed === null ? merged : { ...merged, sentenceCommand: seed };
+        await bb.storage.kv.set(CONFIG_KEY, saved);
+        return saved;
+      });
+      // A failed save must not wedge the ones after it.
+      configWrites = write.catch(() => {});
+      return write;
     },
     log: ({ level, message }) => {
       bb.log[level](`app: ${message}`);

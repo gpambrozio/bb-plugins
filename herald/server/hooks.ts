@@ -93,6 +93,8 @@ export interface Hooks {
   interactionPending(thread: ThreadDto, interaction: Interaction): Promise<void>;
   /** Archived or deleted: gone for good. */
   gone(thread: ThreadDto): void;
+  /** The events whose sentences a tool is still writing; a reload's settling leaves these alone. */
+  inFlightEventIds(): ReadonlySet<string>;
   /** Stops recording: on unload, nothing an event still in flight learned is kept. */
   dispose(): void;
 }
@@ -118,6 +120,8 @@ export function createHooks(deps: HookDeps): Hooks {
   const latestEvent = new Map<string, number>();
   let eventCounter = 0;
   let disposed = false;
+  /** Event ids with a tool run under way, until their sentence lands or is dropped. */
+  const inFlight = new Set<string>();
 
   /** Marks the start of a recording; `isLatest` later says whether a newer one began since. */
   function beginEvent(threadId: string): number {
@@ -205,7 +209,11 @@ export function createHooks(deps: HookDeps): Hooks {
     // reply replaces it, or the stand-in is promoted when the tool fails.
     deps.store.upsert({ ...base, summary: { status: "pending", fallback } });
     deps.publish();
-    void writeSentence(config.sentence, base, recording).then((text) => settleSentence(base.threadId, base.eventId, text ?? fallback));
+    inFlight.add(base.eventId);
+    void writeSentence(config.sentence, base, recording)
+      .then((text) => settleSentence(base.threadId, base.eventId, text ?? fallback))
+      .catch((error: unknown) => deps.log.error(`Settling the sentence for ${base.threadId} failed: ${reasonOf(error)}`))
+      .finally(() => inFlight.delete(base.eventId));
   }
 
   /** The tool's sentence, or null — with the reason logged — when it gave none. Never rejects. */
@@ -233,11 +241,24 @@ export function createHooks(deps: HookDeps): Hooks {
    * Lands a sentence on the entry it was written for — only while that entry
    * is still the one waiting. The thread may have moved on, or a newer event
    * may have replaced it; a sentence about an earlier event is stale news.
+   * A question or approval the user answered meanwhile fired no event, so it
+   * is asked about first: answered, the entry is withdrawn, unspoken.
    */
-  function settleSentence(threadId: string, eventId: string, text: string): void {
-    if (disposed) return;
-    const current = deps.store.get(threadId);
-    if (current === null || current.eventId !== eventId || current.summary.status !== "pending") return;
+  async function settleSentence(threadId: string, eventId: string, text: string): Promise<void> {
+    const stillWaiting = () => {
+      if (disposed) return null;
+      const current = deps.store.get(threadId);
+      return current !== null && current.eventId === eventId && current.summary.status === "pending" ? current : null;
+    };
+    const entry = stillWaiting();
+    if (entry === null) return;
+    if (entry.requestId !== null && !(await deps.events.interactionPending(threadId, entry.requestId))) {
+      // Checked again after the wait: the thread may have moved on meanwhile.
+      if (stillWaiting() !== null && deps.store.remove(threadId) !== null) deps.publish();
+      return;
+    }
+    const current = stillWaiting();
+    if (current === null) return;
     deps.store.upsert({ ...current, summary: { status: "ready", text } });
     deps.publish();
     remember(current, text);
@@ -367,6 +388,10 @@ export function createHooks(deps: HookDeps): Hooks {
       movedOn(thread.id);
       recentIdles.delete(thread.id);
       removeEntry(thread.id);
+    },
+
+    inFlightEventIds() {
+      return inFlight;
     },
 
     dispose() {
