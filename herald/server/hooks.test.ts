@@ -8,6 +8,7 @@ import { commandApproval, question, recordingLog, thread } from "./testing/fixtu
 const CONFIG: HeraldConfig = {
   announce: { question: true, plan: true, permission: true, finished: true, error: true },
   announceSubagents: false,
+  sentence: null,
 };
 
 interface FakeEvents extends EventsPort {
@@ -27,6 +28,9 @@ function fakeEvents(): FakeEvents {
     async interruptedRecently() {
       return events.interrupted;
     },
+    async interactionPending() {
+      return true;
+    },
   };
   return events;
 }
@@ -36,12 +40,15 @@ function setup(overrides: Partial<HookDeps> = {}, config: HeraldConfig = CONFIG)
   const store = new AttentionStore(null, recordingLog());
   const events = fakeEvents();
   const publish = vi.fn();
+  const remembered = vi.fn();
   const log = recordingLog();
   const hooks = createHooks({
     store,
     readConfig: async () => config,
     events,
     publish,
+    writeSentence: () => Promise.reject(new Error("no tool in these tests")),
+    remember: remembered,
     log,
     now: () => new Date(clock),
     ...overrides,
@@ -51,6 +58,7 @@ function setup(overrides: Partial<HookDeps> = {}, config: HeraldConfig = CONFIG)
     store,
     events,
     publish,
+    remembered,
     log,
     advance(ms: number) {
       clock += ms;
@@ -59,9 +67,16 @@ function setup(overrides: Partial<HookDeps> = {}, config: HeraldConfig = CONFIG)
 }
 
 describe("createHooks", () => {
-  it("records a question with its plain sentence", async () => {
-    const { hooks, store, publish } = setup();
+  it("records a question with its plain sentence, and remembers it for the thread's history", async () => {
+    const { hooks, store, publish, remembered } = setup();
     await hooks.interactionPending(thread(), question());
+    expect(remembered).toHaveBeenCalledWith("t1", {
+      eventId: "t1:interaction:i1",
+      reason: "question",
+      createdAt: "2026-09-15T10:00:00.000Z",
+      headline: "Which DB?",
+      text: "Login fix has a question: Which DB? Options: Postgres / SQLite.",
+    });
     expect(store.get("t1")).toMatchObject({
       reason: "question",
       requestId: "i1",
@@ -190,12 +205,10 @@ describe("createHooks", () => {
     const { hooks, store, publish } = setup();
     await hooks.interactionPending(thread(), question());
     publish.mockClear();
+    // A new turn keeps a sentence already written: it stays above the composer until the next event.
     hooks.active(thread());
-    expect(store.get("t1")).toBeNull();
-    expect(publish).toHaveBeenCalledTimes(1);
-    // Nothing to remove, so nothing to tell the clients.
-    hooks.active(thread());
-    expect(publish).toHaveBeenCalledTimes(1);
+    expect(store.get("t1")).not.toBeNull();
+    expect(publish).not.toHaveBeenCalled();
 
     await hooks.idle(thread({ id: "t2" }), "Done.");
     hooks.gone(thread({ id: "t2" }));

@@ -88,6 +88,7 @@ export function bbEvents(sdk: PluginBbSdk, log: Log): EventsPort {
       ]);
       return { projectName: name, folder: where, lastRequest: request };
     },
+    interactionPending: (threadId, interactionId) => interactionPending(sdk, threadId, interactionId),
     async interruptedRecently(threadId, withinMs) {
       const interactions = await sdk.threads.interactions.list({ threadId });
       const since = Date.now() - withinMs;
@@ -115,6 +116,5 @@ export function bbLiveness(sdk: PluginBbSdk): LivenessPort {
         throw error;
       }
     },
-    interactionPending: (threadId, interactionId) => interactionPending(sdk, threadId, interactionId),
   };
 }

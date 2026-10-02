@@ -10,9 +10,11 @@ import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { RpcContract } from "../shared/contract";
-import { DEFAULT_STORED_CONFIG, ENTRIES_CHANNEL, type AttentionEntry } from "../shared/herald";
+import { DEFAULT_STORED_CONFIG, ENTRIES_CHANNEL, TOOL_COMMANDS, type AttentionEntry, type HistoryItem, type StoredConfig } from "../shared/herald";
 import { HeraldBanner } from "./banner";
 import { HeraldBridge } from "./bridge";
+import { HeraldHeaderAction } from "./header-action";
+import { HeraldHistoryPanel } from "./history-panel";
 import { HeraldPanel } from "./panel";
 import { HeraldSettingsSection } from "./settings-section";
 
@@ -73,6 +75,7 @@ function rpc(entries: () => AttentionEntry[], calls: { list: number }) {
     },
     "config.get": () => DEFAULT_STORED_CONFIG,
     "config.set": () => DEFAULT_STORED_CONFIG,
+    "history.list": () => ({ items: [] }),
     "speech.voices": () => ({ available: true, voices: [{ name: "Zoe (Premium)", lang: "en_US" }] }),
     "speech.render": () => ({ mimeType: "audio/wav", base64: "" }),
     log: () => null,
@@ -80,9 +83,11 @@ function rpc(entries: () => AttentionEntry[], calls: { list: number }) {
 }
 
 describe("Herald's app", () => {
-  it("registers its page, overlay, banner and settings section", async () => {
+  it("registers its page, overlay, banner, settings section and thread panel", async () => {
     const app = await loadPluginApp(() => import("../app"));
     expect(app.navPanels.map((panel) => panel.path)).toEqual(["waiting"]);
+    expect(app.threadPanelActions.map((action) => action.id)).toEqual(["history"]);
+    expect(app.threadHeaderActions.map((action) => action.id)).toEqual(["history"]);
     expect(app.appOverlays).toHaveLength(1);
     expect(app.composerCustomizations[0]?.banners?.map((banner) => banner.id)).toEqual(["summary"]);
     expect(app.settingsSections.map((section) => section.id)).toEqual(["summaries"]);
@@ -119,6 +124,18 @@ describe("Herald's app", () => {
     cleanup();
     renderSlot({ component: HeraldBanner }, {}, { ...options, composer: { scope: { kind: "thread", threadId: "other" } } });
     expect(screen.queryByText(/Herald ·/)).toBeNull();
+  });
+
+  it("keeps the sentence above the composer once the thread is read and working again", async () => {
+    const calls = { list: 0 };
+    renderSlot<object, RpcContract>({ component: HeraldBridge }, {}, { rpc: rpc(() => [entry({ eventId: "t1:idle:5" })], calls) });
+    const readAndWorking = { ...(sidebarThread as object), isUnread: false, status: "active", indicator: "none" } as never;
+    renderSlot(
+      { component: HeraldBanner },
+      {},
+      { sidebarThreads: { status: "ready" as const, threads: [readAndWorking] }, composer: { scope: { kind: "thread", threadId: "t1" } } },
+    );
+    await screen.findByText("Login fix is done.");
   });
 
   it("speaks a new sentence from the overlay alone, with no Herald page open", async () => {
@@ -174,11 +191,84 @@ describe("Herald's app", () => {
     expect((screen.getByLabelText("Read again") as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("renders the settings section with the voices and nothing about a model", async () => {
+  it("says the sentence is being written, on the card and above the composer, until it lands", async () => {
+    let current = [entry({ eventId: "t1:idle:20", summary: { status: "pending", fallback: "Login fix finished." } })];
+    const calls = { list: 0 };
+    const options = { rpc: rpc(() => current, calls), sidebarThreads: { status: "ready" as const, threads: [sidebarThread] } };
+    const bridge = renderSlot<object, RpcContract>({ component: HeraldBridge }, {}, options);
+    renderSlot<object, RpcContract>({ component: HeraldPanel }, {}, options);
+    renderSlot({ component: HeraldBanner }, {}, { ...options, composer: { scope: { kind: "thread", threadId: "t1" } } });
+    expect(await screen.findAllByText("Writing the sentence…")).toHaveLength(2);
+    // The card's button waits, disabled; the banner shows none until there is a sentence.
+    expect(screen.getAllByLabelText("Read again").map((button) => (button as HTMLButtonElement).disabled)).toEqual([true]);
+    current = [entry({ eventId: "t1:idle:20", summary: { status: "ready", text: "Login fix is done." } })];
+    await bridge.emitRealtime(ENTRIES_CHANNEL, { at: 4 });
+    expect(await screen.findAllByText("Login fix is done.")).toHaveLength(2);
+    expect(screen.queryByText("Writing the sentence…")).toBeNull();
+  });
+
+  it("opens the thread's Herald panel from a button in the thread header", async () => {
+    const slot = renderSlot<{ threadId: string }, RpcContract>({ component: HeraldHeaderAction }, { threadId: "t1" }, {});
+    fireEvent.click(screen.getByLabelText("Herald: this thread's sentences"));
+    expect(slot.inspection.navigateCalls).toEqual([{ method: "openThreadPanel", options: { actionId: "history" } }]);
+  });
+
+  it("lists a thread's past sentences in its panel, newest first, and re-reads on a nudge", async () => {
+    const calls = { list: 0 };
+    let items: HistoryItem[] = [
+      { eventId: "t1:idle:1", reason: "finished", createdAt: new Date(Date.now() - 3_600_000).toISOString(), headline: "Finished", text: "Login fix is done." },
+    ];
+    const backend = { ...rpc(() => [], calls), "history.list": () => ({ items }) };
+    const slot = renderSlot<{ threadId: string; params: null }, RpcContract>({ component: HeraldHistoryPanel }, { threadId: "t1", params: null }, { rpc: backend });
+    await screen.findByText("Login fix is done.");
+    expect(screen.getByText(/1 h ago/)).toBeTruthy();
+    items = [
+      { eventId: "t1:interaction:i1", reason: "question", createdAt: new Date().toISOString(), headline: "Which DB?", text: "Login fix has a question: Which DB?" },
+      ...items,
+    ];
+    await slot.emitRealtime(ENTRIES_CHANNEL, { at: 2 });
+    await screen.findByText("Login fix has a question: Which DB?");
+    const sentences = screen.getAllByText(/Login fix/).map((node) => node.textContent);
+    expect(sentences.indexOf("Login fix has a question: Which DB?")).toBeLessThan(sentences.indexOf("Login fix is done."));
+  });
+
+  it("renders the settings section with the model controls together, and the voices", async () => {
     const calls = { list: 0 };
     renderSlot<object, RpcContract>({ component: HeraldSettingsSection }, {}, { rpc: rpc(() => [], calls) });
     await screen.findByText("Zoe (Premium)");
-    expect(screen.queryByLabelText("Summary prompt")).toBeNull();
-    expect(screen.queryByText(/model/i)).toBeNull();
+    expect((screen.getByLabelText("Tool that writes the sentence") as HTMLSelectElement).value).toBe("claude");
+    expect(screen.queryByLabelText("Custom command")).toBeNull();
+    expect((screen.getByLabelText("Sentence prompt") as HTMLTextAreaElement).value).toBe(DEFAULT_STORED_CONFIG.sentencePrompt);
+  });
+
+  it("shows the custom command only while that is the tool, seeded by the server, and saves it and the prompt", async () => {
+    const calls = { list: 0 };
+    let stored: StoredConfig = { ...DEFAULT_STORED_CONFIG };
+    const backend = {
+      ...rpc(() => [], calls),
+      "config.get": () => stored,
+      "config.set": (input: Partial<StoredConfig>) => {
+        // The server seeds a blank custom command from the tool before.
+        const seeded = input.sentenceTool === "custom" && stored.sentenceTool !== "custom" && stored.sentenceCommand === "" ? TOOL_COMMANDS[stored.sentenceTool as "claude"] : undefined;
+        stored = { ...stored, ...input, ...(seeded === undefined ? {} : { sentenceCommand: seeded }) };
+        return stored;
+      },
+    };
+    renderSlot<object, RpcContract>({ component: HeraldSettingsSection }, {}, { rpc: backend });
+    const select = (await screen.findByLabelText("Tool that writes the sentence")) as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: "custom" } });
+    const field = (await screen.findByLabelText("Custom command")) as HTMLTextAreaElement;
+    await waitFor(() => expect(field.value).toBe(TOOL_COMMANDS.claude));
+    fireEvent.change(field, { target: { value: "my-llm --fast" } });
+    fireEvent.click(screen.getByText("Save command"));
+    await waitFor(() => expect(stored.sentenceCommand).toBe("my-llm --fast"));
+    const prompt = screen.getByLabelText("Sentence prompt") as HTMLTextAreaElement;
+    fireEvent.change(prompt, { target: { value: "Say: {{headline}}" } });
+    fireEvent.click(screen.getByText("Save prompt"));
+    await waitFor(() => expect(stored.sentencePrompt).toBe("Say: {{headline}}"));
+    fireEvent.click(screen.getByText("Reset to the default prompt"));
+    await waitFor(() => expect(stored.sentencePrompt).toBe(DEFAULT_STORED_CONFIG.sentencePrompt));
+    fireEvent.change(select, { target: { value: "claude" } });
+    await waitFor(() => expect(screen.queryByLabelText("Custom command")).toBeNull());
   });
 });

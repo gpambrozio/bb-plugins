@@ -1,13 +1,16 @@
 // Herald — the app entry.
 //
 // A sidebar page listing every thread waiting on you, a banner with the
-// sentence above a waiting thread's composer, a settings section for what the
-// host form cannot hold, and an app-wide overlay that keeps the list current
-// and speaks each new sentence. See AGENTS.md.
+// sentence above a thread's composer, a thread panel with the sentences of
+// its past turns, a settings section for what the host form cannot hold, and
+// an app-wide overlay that keeps the list current and speaks each new
+// sentence. See AGENTS.md.
 import { definePluginApp } from "@get-bb/plugin-sdk/app";
 
 import { HeraldBanner } from "./app/banner";
 import { HeraldBridge } from "./app/bridge";
+import { HeraldHeaderAction, HISTORY_PANEL_ACTION_ID } from "./app/header-action";
+import { HeraldHistoryPanel } from "./app/history-panel";
 import { HERALD_ICONS } from "./app/icons";
 import { HeraldPanel, PANEL_PATH, WaitingCount } from "./app/panel";
 import { HeraldSettingsSection } from "./app/settings-section";
@@ -30,10 +33,15 @@ export default definePluginApp((app) => {
     banners: [{ id: "summary", component: HeraldBanner }],
   });
 
+  // A sentence per turn, in the thread's side panel: a plugin cannot write into the transcript.
+  app.slots.threadPanelAction({ id: HISTORY_PANEL_ACTION_ID, title: "Herald", layout: "padded", component: HeraldHistoryPanel });
+  // And a megaphone in the thread header that opens it, beside bb's own actions.
+  app.slots.experimental_threadHeaderAction({ id: HISTORY_PANEL_ACTION_ID, title: "Herald", component: HeraldHeaderAction });
+
   app.slots.settingsSection({
     id: "summaries",
-    title: "Summaries and voices",
-    description: "The model and prompt that write each sentence, and the voices that say it.",
+    title: "Model-written sentences and voices",
+    description: "Which tool writes each sentence and what it is asked, when the switch above is on; and the voices that say it.",
     component: HeraldSettingsSection,
   });
 });

@@ -215,7 +215,8 @@ asking), `threads.spawn` takes no tool list, and the only plugin hook is `messag
 untrusted text is a decision to record, not a default. **Bounding helpers across a reload is the hard
 part**: the new instance loads before the old one is disposed, so a spawn the old one sent can answer
 after the new one has checked for leftovers, and a clean-up that fails or is aborted must keep spawning
-shut. `herald` dropped its helpers over this; issue #11 lists what a plugin that spawns them must
+shut. `herald` dropped its helpers over this and has a command-line tool (`claude -p --tools ""`, a child
+process of the server, see `herald/AGENTS.md`) write its sentences instead; issue #11 lists what a plugin that spawns them must
 guarantee.
 
 ### Host entry — `bb.host`

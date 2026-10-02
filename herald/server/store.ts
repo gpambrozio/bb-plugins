@@ -142,6 +142,27 @@ export class AttentionStore {
     return current;
   }
 
+  /**
+   * Removes every sentence still marked as being written — except the events
+   * in `except`, which this instance is writing itself. For a reload or a
+   * cold start: the tool that was writing it belonged to an instance that is
+   * gone, nothing is coming, and promoting its fallback instead was found to
+   * announce questions answered meanwhile and to resurrect entries the old
+   * instance had withdrawn. The next event on the thread speaks. Returns
+   * whether anything changed.
+   */
+  dropPending(except: ReadonlySet<string> = new Set()): boolean {
+    let changed = false;
+    for (const [threadId, entry] of this.entries) {
+      if (entry.summary.status !== "pending" || except.has(entry.eventId)) continue;
+      this.touched.add(threadId);
+      this.entries.delete(threadId);
+      changed = true;
+    }
+    if (changed) this.persist();
+    return changed;
+  }
+
   removeIf(threadId: string, predicate: (entry: AttentionEntry) => boolean): boolean {
     const current = this.entries.get(threadId);
     if (current === undefined) {

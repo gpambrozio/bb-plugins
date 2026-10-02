@@ -32,7 +32,7 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function relativeTime(at: number, now: number): string {
+export function relativeTime(at: number, now: number): string {
   const seconds = Math.round((now - at) / 1000);
   if (!Number.isFinite(seconds)) return "";
   if (seconds < 45) return "just now";
@@ -50,7 +50,7 @@ interface ReasonLook {
   className: string;
 }
 
-function lookOf(reason: RowReason): ReasonLook {
+export function lookOf(reason: RowReason): ReasonLook {
   switch (reason) {
     case "question":
       return { icon: "MessageQuestion", label: "Question", className: "text-foreground" };
@@ -69,7 +69,7 @@ function lookOf(reason: RowReason): ReasonLook {
   }
 }
 
-function useNow(): number {
+export function useNow(): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), TICK_MS);
@@ -113,6 +113,7 @@ export async function readAgain(sentence: string): Promise<void> {
 function Sentence({ entry }: { entry: AttentionEntry | null }): ReactNode {
   if (entry === null) return <p className="text-sm text-muted-foreground">No sentence from Herald for this one.</p>;
   if (entry.summary.status === "ready") return <p className="text-sm italic text-foreground">{entry.summary.text}</p>;
+  if (entry.summary.status === "pending") return <p className="text-sm italic text-muted-foreground">Writing the sentence…</p>;
   return (
     <p className="text-xs text-muted-foreground">
       Not announced: this kind of event is switched off, or the thread that started this one speaks for it.

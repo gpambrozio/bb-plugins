@@ -7,22 +7,27 @@
  *    returns; a failure is logged, never thrown into the bb server.
  * 2. **Dedupe a turn's end.** A second `thread.idle` with no `thread.active`
  *    between them, inside the window, is the same turn reported twice.
- * 3. **Follow the thread, not the plugin.** An entry lives until the events
- *    show the thread moving on: a new turn, an archive, a delete. bb's unread
- *    state decides what the panel *lists*; see `server/liveness.ts`.
+ * 3. **Follow the thread, not the plugin.** An entry is the thread's last
+ *    event and lives until the next one replaces it, or the thread is archived
+ *    or deleted. A new turn takes back only a sentence still being written.
+ *    bb's unread state decides what the panel *lists*; see `app/rows.ts`.
  * 4. **Leave hidden threads alone.** Another plugin's background worker is not
  *    something the user is waiting on; bb keeps it out of their attention too.
  */
-import type { AttentionEntry, AttentionReason } from "../shared/herald";
+import type { AttentionEntry, AttentionReason, HistoryItem } from "../shared/herald";
+import type { SentenceSettings } from "../shared/settings";
+import { fillTemplate, splitCommandLine } from "./command-line";
 import type { EventsPort, Interaction, Log, ThreadDto } from "./ports";
 import type { AttentionStore } from "./store";
-import { describeInteraction, fallbackSpeech, firstWords, preview } from "./timeline";
+import { describeInteraction, displayName, fallbackSpeech, firstWords, preview } from "./timeline";
 
 /** What the handlers act on, read fresh for every event so a settings change applies at once. */
 export interface HeraldConfig {
   announce: Record<AttentionReason, boolean>;
   /** Whether a thread another thread started is announced as well as its parent. */
   announceSubagents: boolean;
+  /** The tool that writes each sentence, or null for the plain one. */
+  sentence: SentenceSettings | null;
 }
 
 export interface HookDeps {
@@ -31,8 +36,30 @@ export interface HookDeps {
   events: EventsPort;
   /** Tells open clients the entries changed. */
   publish: () => void;
+  /** Runs the tool with the prompt on stdin and resolves to its sentence; rejects on any failure. */
+  writeSentence: (command: string[], prompt: string) => Promise<string>;
+  /** Adds a sentence that landed to the thread's history, for its panel. Never throws. */
+  remember: (threadId: string, item: HistoryItem) => void;
   log: Log;
   now?: () => Date;
+}
+
+/** How the prompt names each kind of event. */
+const EVENT_PHRASES: Record<AttentionReason, string> = {
+  question: "asks the developer a question",
+  plan: "waits for the developer to approve its plan",
+  permission: "asks for permission",
+  finished: "finished its turn",
+  error: "stopped with an error",
+};
+
+/** The agent's output is the longest thing in the prompt; this keeps a long turn from swamping the rest. */
+const PROMPT_OUTPUT_MAX = 3000;
+/** A pasted-in request or a kilobyte-long command is cut too; the prompt is about the event, not a transcript. */
+const PROMPT_PART_MAX = 1000;
+
+function cut(text: string | null, max: number): string | null {
+  return text !== null && text.length > max ? `${text.slice(0, max)}…` : text;
 }
 
 /** A second `thread.idle` for the same turn inside this window is a repeat, not a new turn. */
@@ -66,6 +93,8 @@ export interface Hooks {
   interactionPending(thread: ThreadDto, interaction: Interaction): Promise<void>;
   /** Archived or deleted: gone for good. */
   gone(thread: ThreadDto): void;
+  /** The events whose sentences a tool is still writing; a reload's settling leaves these alone. */
+  inFlightEventIds(): ReadonlySet<string>;
   /** Stops recording: on unload, nothing an event still in flight learned is kept. */
   dispose(): void;
 }
@@ -91,6 +120,8 @@ export function createHooks(deps: HookDeps): Hooks {
   const latestEvent = new Map<string, number>();
   let eventCounter = 0;
   let disposed = false;
+  /** Event ids with a tool run under way, until their sentence lands or is dropped. */
+  const inFlight = new Set<string>();
 
   /** Marks the start of a recording; `isLatest` later says whether a newer one began since. */
   function beginEvent(threadId: string): number {
@@ -139,6 +170,8 @@ export function createHooks(deps: HookDeps): Hooks {
     projectName: string | null;
     folder: string | null;
     lastUser: string | null;
+    /** The whole of what the agent last said, for the prompt; the entry keeps only its start. */
+    output: string | null;
   }
 
   function record(recording: Recording): void {
@@ -157,13 +190,103 @@ export function createHooks(deps: HookDeps): Hooks {
       headline: recording.headline,
       detail: recording.detail,
     };
+    const fallback = fallbackSpeech(base);
     // Switched off, or a subagent its parent speaks for: listed in the panel,
     // with its sentence, never spoken.
-    const summary: AttentionEntry["summary"] = isAnnounced(thread, reason, config)
-      ? { status: "ready", text: fallbackSpeech(base) }
-      : { status: "off", fallback: fallbackSpeech(base) };
-    deps.store.upsert({ ...base, summary });
+    if (!isAnnounced(thread, reason, config)) {
+      deps.store.upsert({ ...base, summary: { status: "off", fallback } });
+      deps.publish();
+      remember(base, fallback);
+      return;
+    }
+    if (config.sentence === null) {
+      deps.store.upsert({ ...base, summary: { status: "ready", text: fallback } });
+      deps.publish();
+      remember(base, fallback);
+      return;
+    }
+    // Listed at once with the plain sentence as its stand-in; the tool's
+    // reply replaces it, or the stand-in is promoted when the tool fails.
+    deps.store.upsert({ ...base, summary: { status: "pending", fallback } });
     deps.publish();
+    inFlight.add(base.eventId);
+    void writeSentence(config.sentence, base, recording)
+      .then((text) => settleSentence(base.threadId, base.eventId, text ?? fallback))
+      .catch((error: unknown) => deps.log.error(`Settling the sentence for ${base.threadId} failed: ${reasonOf(error)}`))
+      .finally(() => inFlight.delete(base.eventId));
+  }
+
+  /** The tool's sentence, or null — with the reason logged — when it gave none. Never rejects. */
+  async function writeSentence(sentence: SentenceSettings, base: Omit<AttentionEntry, "summary">, recording: Recording): Promise<string | null> {
+    try {
+      const command = splitCommandLine(sentence.command);
+      const prompt = fillTemplate(sentence.prompt, {
+        thread: displayName(base),
+        project: base.projectName,
+        folder: base.folder,
+        event: EVENT_PHRASES[base.reason],
+        headline: cut(base.headline, PROMPT_PART_MAX),
+        detail: cut(base.detail, PROMPT_PART_MAX),
+        request: cut(recording.lastUser, PROMPT_PART_MAX),
+        output: cut(recording.output, PROMPT_OUTPUT_MAX),
+      });
+      return await deps.writeSentence(command, prompt);
+    } catch (error) {
+      deps.log.warn(`The sentence for ${base.threadId} falls back to the plain one: ${reasonOf(error)}`);
+      return null;
+    }
+  }
+
+  /**
+   * Lands a sentence on the entry it was written for — only while that entry
+   * is still the one waiting. The thread may have moved on, or a newer event
+   * may have replaced it; a sentence about an earlier event is stale news.
+   * A question or approval the user answered meanwhile fired no event, so it
+   * is asked about first: answered, the entry is withdrawn, unspoken.
+   */
+  async function settleSentence(threadId: string, eventId: string, text: string): Promise<void> {
+    const stillWaiting = () => {
+      if (disposed) return null;
+      const current = deps.store.get(threadId);
+      return current !== null && current.eventId === eventId && current.summary.status === "pending" ? current : null;
+    };
+    const entry = stillWaiting();
+    if (entry === null) return;
+    if (entry.requestId !== null && !(await stillPending(threadId, entry.requestId))) {
+      // Checked again after the wait: the thread may have moved on meanwhile.
+      if (stillWaiting() !== null && deps.store.remove(threadId) !== null) deps.publish();
+      return;
+    }
+    const current = stillWaiting();
+    if (current === null) return;
+    deps.store.upsert({ ...current, summary: { status: "ready", text } });
+    deps.publish();
+    remember(current, text);
+  }
+
+  /**
+   * Whether the interaction still waits on the user. Fails closed: when bb
+   * cannot say, the answer is no, and the entry is withdrawn rather than
+   * left pending with nothing coming to settle it.
+   */
+  async function stillPending(threadId: string, requestId: string): Promise<boolean> {
+    try {
+      return await deps.events.interactionPending(threadId, requestId);
+    } catch (error) {
+      deps.log.warn(`Could not check whether ${requestId} on ${threadId} still waits; dropping its sentence: ${reasonOf(error)}`);
+      return false;
+    }
+  }
+
+  /** A sentence that landed — plain, or the model's — joins the thread's history. */
+  function remember(entry: Omit<AttentionEntry, "summary">, text: string): void {
+    deps.remember(entry.threadId, {
+      eventId: entry.eventId,
+      reason: entry.reason,
+      createdAt: entry.createdAt,
+      headline: entry.headline,
+      text,
+    });
   }
 
   /** Runs a handler's async work; a failure is logged, never left to reject inside the bb server. */
@@ -178,7 +301,12 @@ export function createHooks(deps: HookDeps): Hooks {
   return {
     active(thread) {
       movedOn(thread.id);
-      removeEntry(thread.id);
+      // The sentence is the thread's last event and stays above the composer
+      // through the next turn — unless it is still being written: the agent
+      // working again, on its own or on a new prompt, makes it stale before
+      // it is said, so it is taken back and never spoken.
+      const current = deps.store.get(thread.id);
+      if (current !== null && current.summary.status === "pending") removeEntry(thread.id);
     },
 
     idle(thread, lastAssistantText) {
@@ -210,6 +338,7 @@ export function createHooks(deps: HookDeps): Hooks {
           projectName: context.projectName,
           folder: context.folder,
           lastUser: context.lastRequest,
+          output,
         });
       });
     },
@@ -237,6 +366,7 @@ export function createHooks(deps: HookDeps): Hooks {
           projectName: context.projectName,
           folder: context.folder,
           lastUser: context.lastRequest,
+          output: null,
         });
       });
     },
@@ -263,6 +393,7 @@ export function createHooks(deps: HookDeps): Hooks {
           projectName: context.projectName,
           folder: context.folder,
           lastUser: null,
+          output: null,
         });
       });
     },
@@ -271,6 +402,10 @@ export function createHooks(deps: HookDeps): Hooks {
       movedOn(thread.id);
       recentIdles.delete(thread.id);
       removeEntry(thread.id);
+    },
+
+    inFlightEventIds() {
+      return inFlight;
     },
 
     dispose() {

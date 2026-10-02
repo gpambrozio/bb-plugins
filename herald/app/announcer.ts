@@ -71,12 +71,16 @@ export class Announcer {
     const present = new Set(entries.map((entry) => entry.eventId));
     this.current = present;
     if (!this.seeded) {
-      for (const id of present) this.spoken.add(id);
+      // What was waiting when the window opened is not news — except a
+      // sentence still being written, which is news the moment it lands.
+      for (const entry of entries) if (entry.summary.status !== "pending") this.spoken.add(entry.eventId);
       this.seeded = true;
       return;
     }
+    // A sentence still being written is left for the list that brings it
+    // ready: counted as spoken only then, and spoken once.
     const fresh = entries
-      .filter((entry) => !this.spoken.has(entry.eventId))
+      .filter((entry) => !this.spoken.has(entry.eventId) && entry.summary.status !== "pending")
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     for (const entry of fresh) {
       this.spoken.add(entry.eventId);

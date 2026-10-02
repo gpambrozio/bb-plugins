@@ -8,7 +8,7 @@
  */
 import type { PluginSettingDescriptor, PluginSettingsValues } from "@get-bb/plugin-sdk";
 
-import { RATE_OPTIONS, SPEECH_ENGINES, type SpeechEngine } from "./herald";
+import { DEFAULT_SENTENCE_PROMPT, RATE_OPTIONS, SPEECH_ENGINES, TOOL_COMMANDS, type SpeechEngine, type StoredConfig } from "./herald";
 
 export const SETTINGS = {
   speak: {
@@ -88,9 +88,47 @@ export const SETTINGS = {
       "Off: a child thread reports to the thread that started it, and you hear the parent's announcement instead of two. It is still listed in the panel. On: both are announced.",
     default: false,
   },
+  writeWithModel: {
+    type: "boolean",
+    label: "Write each sentence with a model",
+    description:
+      "Off: the plain sentence built from the event. On: a command-line tool runs once per announcement on the Mac running bb and writes the sentence from a prompt that includes the agent's own output — which can carry instructions, so the tool runs with no tools or read-only. Which tool, and the prompt, are under Model-written sentences further down this page. The plain sentence is used whenever the tool fails or takes longer than 45 seconds.",
+    default: false,
+  },
 } satisfies Record<string, PluginSettingDescriptor>;
 
 export type HeraldSettings = PluginSettingsValues<typeof SETTINGS>;
+
+/** How a sentence is written, as the server needs it, or null for the plain sentence. */
+export interface SentenceSettings {
+  /** The command line, to be split into words; never blank. */
+  command: string;
+  prompt: string;
+}
+
+/**
+ * Null unless the switch (from the host form) is on and the stored
+ * configuration names a command to run: a preset tool always has one, custom
+ * only once something is written.
+ */
+export function sentenceSettingsOf(writeWithModel: unknown, stored: StoredConfig): SentenceSettings | null {
+  if (writeWithModel !== true) return null;
+  const command = (stored.sentenceTool === "custom" ? stored.sentenceCommand : TOOL_COMMANDS[stored.sentenceTool]).trim();
+  if (command === "") return null;
+  return { command, prompt: stored.sentencePrompt.trim() === "" ? DEFAULT_SENTENCE_PROMPT : stored.sentencePrompt };
+}
+
+/**
+ * What to write into the custom command when the tool *becomes* custom while
+ * that command is blank: the command of the tool selected before, so the user
+ * edits a working line rather than an empty one. Null when there is nothing
+ * to seed — including a command the user cleared while already on custom,
+ * which is theirs to leave blank.
+ */
+export function customCommandSeed(prev: StoredConfig, next: StoredConfig): string | null {
+  if (prev.sentenceTool === "custom" || next.sentenceTool !== "custom" || next.sentenceCommand.trim() !== "") return null;
+  return TOOL_COMMANDS[prev.sentenceTool];
+}
 
 /** Where this copy of the app runs, which decides the switch that applies to it. */
 export type SpeechPlatform = "desktop" | "browser" | "mobile";
