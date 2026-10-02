@@ -102,11 +102,18 @@ focused again from `onMobileContentAnimationEnd`, once the drawer has finished c
 
 **Bodies render through bb's `Markdown`, with nothing in them that loads.** The host component loads
 images as it draws them and gives no say over it, and a skill someone else wrote can carry a remote
-image or raw HTML. `app/markdown.ts` parses the body the way bb's renderer does (mdast with GFM) and
-defuses each node in the source by its position: an image or image reference loses its `!` and
-becomes a link, raw HTML has its `<` escaped and shows as text. It parses again until nothing is left
-(an image can hide in another's alt text). Do not go back to matching image syntax with patterns:
-shortcut references, nested and multiline alt text and fence lengths all defeated the regex.
+image or raw HTML. `app/markdown.ts` parses the body once, the way bb's renderer does (mdast with GFM),
+walks it once, and replaces each loading node in the source by its position: an image or image
+reference becomes its alt text and source as escaped plain text (an image nested in alt text is part
+of that string, so it goes too), and raw HTML has its `<` escaped. Do not go back to matching image
+syntax with patterns (shortcut references, nested and multiline alt text and fence lengths defeated
+the regex), nor to re-parsing until nothing is left (each nesting level cost a whole parse).
+
+**A body nested or sized beyond any real skill is shown as a code block, unparsed.** The parser itself
+is quadratic in how deeply image labels nest — 4,096 levels in 16 KB take it seconds, and bb's own
+renderer is the same parser — so a linear scan sends a body with brackets nested more than 32 deep, or
+over 256 KiB, straight to a fenced code block. It shows as text, loads nothing, and parses in linear
+time.
 
 ## Invariants
 
