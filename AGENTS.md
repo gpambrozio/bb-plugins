@@ -29,8 +29,8 @@ around Paseo:
 
 Before porting a feature, check whether bb already ships it. bb has built-in plugins for
 automations (scheduled agent and script runs), push notifications, ask-user-question and
-parent/child thread supervision. Duplicating a built-in is a decision to record in the issue, not a
-default.
+parent/child thread supervision, and its own skill management (`bb skill`, `bb.sdk.skills`, Settings →
+Skills). Duplicating a built-in is a decision to record in the issue, not a default.
 
 Carry the pure logic across with its tests. Most of each Paseo plugin's `server/` and `shared/` is
 plain Node and moves unchanged; the Paseo-coupled part is the entry wiring, the host API calls and
@@ -121,13 +121,16 @@ bb plugin types                  # repin the SDK to the running bb; --check in C
 ```
 
 - **`~/.npm` on this machine has root-owned files**, so a plain `npm install` fails. Pass
-  `--cache "$TMPDIR/npm-cache"` rather than fixing permissions from an agent.
+  `--cache "$TMPDIR/npm-cache"` rather than fixing permissions from an agent; for `npx shadcn add`,
+  set `npm_config_cache="$TMPDIR/npm-cache"` instead.
 - **The scaffold has no test runner.** Add vitest per plugin (the Paseo tests are vitest and port
   directly) and a `"test": "vitest run"` script. The SDK ships harnesses:
   `@get-bb/plugin-sdk/testing` (`createFakePluginHost()` → `{ bb, harness }`, event and thread
   fixtures, `experimental_scanPublicSdkOnly` for the import boundary),
   `@get-bb/plugin-sdk/testing/app` (`loadPluginApp`, `renderSlot`; needs jsdom and Testing Library),
-  and `@get-bb/plugin-sdk/testing/host`.
+  and `@get-bb/plugin-sdk/testing/host`. `loadPluginApp` captures slots and composer customizations
+  but not `app.commands` registrations; run the definition's `setup` against a stub builder to test
+  those (`skills/app/app.test.tsx`).
 - The first `bb plugin build` on a machine downloads a pinned esbuild and Tailwind into
   `<dataDir>/plugins/toolchain-*/`. To build without a running bb (CI), add `bb-app` as a
   devDependency and a `"build": "bb plugin build"` script.
@@ -192,6 +195,11 @@ What a port only learns by running it:
 - **A project knows its `origin`.** `bb.sdk.projects.list()` carries `gitRemoteUrl` (any spelling:
   scp, https, with or without `.git`; null when there is none), so matching a repository to a project
   needs no `git` call. The same repository is often a separate project per machine, so expect several.
+- **A thread's machine and directory are its environment's.** `threads.get` gives `providerId` and
+  `environmentId`; `environments.get` gives `hostId` and `path`. An archived thread's environment is
+  `destroyed`, with a null `path`. A thread in a worktree runs somewhere other than the project's
+  checkout, so anything keyed on the checkout's path (Claude Code's project-scoped plugins, for one)
+  has to map the worktree back to its main checkout (`skills/host/resolve/repo-root.ts`).
 - **`bb.status.needsConfiguration(message)` lasts until the next load.** Fixing the cause does not
   clear it; tell the user to `bb plugin reload <id>`.
 - **The server's PATH may lack Homebrew.** The server takes the login shell's PATH, but keeps the one
@@ -264,7 +272,7 @@ mounted once per window. Paseo contribution → bb slot:
 | `addWorkspacePanel` (agent context) | `app.slots.threadPanelAction` (gets `threadId`) |
 | `addSettingsScreen` | host-rendered form from `bb.settings.define`, plus `app.slots.settingsSection` for anything custom |
 | `addCommandCenterItem` | `app.commands.register` — its `run` gets no navigation; hand it `useBbNavigate()` from an `app.slots.experimental_appOverlay` component that renders nothing (`github-board/app.tsx`) |
-| slash commands, composer pills | `app.composer.customize`, `app.slots.pendingInteraction` |
+| slash commands, composer pills | `app.composer.customize` (`actions` draws a component in the thread composer's toolbar — bb has no pill; a popover is the vendored `@bb/popover`), `app.slots.pendingInteraction` |
 | `addTimelineRenderer` | `app.slots.experimental_timelineRenderer` (kind `<pluginId>/<name>`), or `messageDirective` — but only for rows a provider bridge or `bb.ui.requestInput` writes. **A plugin cannot append a row to a thread's timeline** (no `timeline.append`); put the context in the prompt and `pluginMetadata` instead |
 | `useRpc(contract)` | `useRpc<typeof rpcContract>().call(method, input)`, the contract imported *as a type* from `./server` |
 | `usePaseo()` | `useSdk()` — prefer it over a plugin RPC for anything that only reads or changes bb state |
@@ -280,7 +288,9 @@ selection — and give it a `draftKey` per subject, since `initialPrompt` seeds 
 
 Host `Markdown` takes only `content` and `className`, so it gives no say over how a body's images
 load. Where they need gating (tracking pixels, private attachments), render the body yourself, as
-`github-board` does.
+`github-board` does, or defuse them in the source by parsing it as bb does (mdast with GFM) and
+editing each image and raw-HTML node by its position, as `skills/app/markdown.ts` does — patterns over
+the raw text miss reference, nested and multiline images.
 
 **Icon names are bb's own set, not Lucide's.** `experimental_Icon` (and every `icon` field) knows about
 170 names — `Settings`, `Play`, `Spinner`, `Lock`, `ListTodo`, `MessageQuestion`, `Github`… but no
