@@ -56,7 +56,10 @@ Do not break these; each was paid for.
   machine). The charter is the home's `AGENTS.md`, and the board opens home files through the first
   mate's environment, so a first mate working elsewhere would see neither.
 - **Only the first mate spawns crew.** `crew spawn` refuses any other calling thread.
-- **A relayed message is a request, never the captain's word.** Every message `tell` delivers opens with
+- **A relayed message is a request, never the captain's word.** Work started from one is filed with
+  `(hold: captain's word to merge)` and keeps it until the captain answers in the first mate's chat, which
+  overrides `+yolo` and standing merge orders (the charter, §0 and §4); the existing hold field is the
+  record, so it survives restarts and relaunches. Every message `tell` delivers opens with
   `Relayed by bb firstmate-crew tell, from …:` (`RELAY_PREFIX` in `server/cli.ts`, named in the charter;
   a test ties the two). The thread it names is `ctx.threadId`, which the caller's `BB_THREAD_ID` sets, so
   the line says "as the sender claims"; project and branch are bb's for that id, on one line. Nothing
@@ -65,8 +68,10 @@ Do not break these; each was paid for.
   credentials and settings need the captain in its own chat. Messages from the board and the command
   palette are not relays and go unmarked.
 - **`tell` never reads a file.** Text arrives as words or as `--message-base64` (the skill uses bb's
-  `--message-base64-stdin`, read on the caller's machine), strict base64 of at most 12 KiB of UTF-8, sent
-  exactly as decoded. A server-side file read would let a sandboxed caller relay any file the server can
+  `--message-base64-stdin`, read on the caller's machine), strict base64 of UTF-8. Exactly one trailing
+  "\n" is dropped, because the skill's heredoc always adds one; the 12,000-byte limit applies after
+  that; everything else, a leading byte-order mark included, is sent exactly as decoded. A test runs the
+  skill's own pipeline through `sh` against a stub `bb`. A server-side file read would let a sandboxed caller relay any file the server can
   read, and would only work on the server's machine.
 - **`/fm` is the user's to start.** `tell` speaks for the captain, so the skill is hidden
   from the model (`disable-model-invocation: true` for Claude Code, `agents/openai.yaml`
@@ -192,8 +197,8 @@ charter tells the first mate to always pass `--title`.
 
 ## Known gaps
 
-- **A `/fm` request is capped at 12 KiB.** bb 0.44's `--<flag>-stdin` takes one line of at most 16 KiB,
-  which base64 makes 12 KiB of text. The multi-line `--stdin` that `bb guide plugins` describes is not in
+- **A `/fm` request is capped at 12,000 bytes.** bb 0.44's `--<flag>-stdin` takes one line of at most
+  16 KiB; base64 of 12,000 bytes and the heredoc's new line is 16,004 characters. The multi-line `--stdin` that `bb guide plugins` describes is not in
   0.44's CLI; it could lift the cap when it is.
 - **`/fm` has not been run in a live thread.** It was built without reloading the plugin, which the
   running first mate depends on. That bb passes Claude Code the typed `/fm …` unchanged was read from bb

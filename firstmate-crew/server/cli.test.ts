@@ -1,4 +1,5 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -329,21 +330,37 @@ describe("bb firstmate-crew tell", () => {
   describe("--message-base64", () => {
     const AWKWARD = "    indented `git log` and $(whoami), then \"quote\" it — it's $HOME's\nsecond line\n\n";
 
-    it("sends the decoded text exactly, indentation, quotes, backticks, $(...) and trailing new lines included", async () => {
+    it("sends the decoded text less one trailing new line, indentation, quotes, backticks and $(...) intact", async () => {
       const { cli, threads } = await setup();
       const result = await cli.run(["tell", "--message-base64", base64(AWKWARD)], {});
       expect(result.exitCode).toBe(0);
-      expect(threads.sent).toEqual([{ id: "thr_mate", text: `${TERMINAL}\n\n${AWKWARD}`, mode: "auto" }]);
+      expect(threads.sent).toEqual([{ id: "thr_mate", text: `${TERMINAL}\n\n${AWKWARD.slice(0, -1)}`, mode: "auto" }]);
     });
 
-    it("takes a message of exactly the limit and refuses one byte more", async () => {
+    it("drops exactly one trailing new line, and none when the text has none", async () => {
+      const { cli, threads } = await setup();
+      await cli.run(["tell", "--message-base64", base64("hi")], {});
+      await cli.run(["tell", "--message-base64", base64("hi\n")], {});
+      await cli.run(["tell", "--message-base64", base64("hi\n\n")], {});
+      expect(threads.sent.map((sent) => sent.text)).toEqual([`${TERMINAL}\n\nhi`, `${TERMINAL}\n\nhi`, `${TERMINAL}\n\nhi\n`]);
+    });
+
+    it("keeps a leading byte-order mark", async () => {
+      const { cli, threads } = await setup();
+      await cli.run(["tell", "--message-base64", base64("\uFEFFhi")], {});
+      expect(threads.sent[0]!.text).toBe(`${TERMINAL}\n\n\uFEFFhi`);
+    });
+
+    it("takes a message of exactly the limit, with or without the new line, and refuses one byte more", async () => {
       const { cli, threads } = await setup();
       const atLimit = await cli.run(["tell", "--message-base64", base64("x".repeat(MESSAGE_MAX_BYTES))], {});
       expect(atLimit.exitCode).toBe(0);
+      const atLimitWithNewLine = await cli.run(["tell", "--message-base64", base64(`${"x".repeat(MESSAGE_MAX_BYTES)}\n`)], {});
+      expect(atLimitWithNewLine.exitCode).toBe(0);
       const over = await cli.run(["tell", "--message-base64", base64("x".repeat(MESSAGE_MAX_BYTES + 1))], {});
       expect(over.exitCode).not.toBe(0);
       expect(over.stderr).toContain(`longer than ${MESSAGE_MAX_BYTES} bytes`);
-      expect(threads.sent).toHaveLength(1);
+      expect(threads.sent).toHaveLength(2);
     });
 
     it.each([
@@ -369,8 +386,57 @@ describe("bb firstmate-crew tell", () => {
     });
   });
 
-  it("the charter names the relay line tell writes", async () => {
-    expect(await readTemplate(TEMPLATES.charter)).toContain(`\`${RELAY_PREFIX}, from …:\``);
+  it("the charter names the relay line tell writes, and holds relayed work for the captain's word to merge", async () => {
+    const charter = await readTemplate(TEMPLATES.charter);
+    expect(charter).toContain(`\`${RELAY_PREFIX}, from …:\``);
+    expect(charter).toContain("This overrides `+yolo` and any\nstanding merge order");
+    expect(charter).toContain("`(hold: captain's word to merge)`");
+  });
+
+  describe("through the /fm skill's own shell recipe", () => {
+    /**
+     * Runs the skill's pipeline with `request` in its heredoc against a stub `bb` that keeps its stdin,
+     * then checks that stdin the way bb's CLI does for `--message-base64-stdin` (one non-empty line of at
+     * most 16 KiB, one trailing new line dropped) and hands the line to `tell` as bb would.
+     */
+    async function viaRecipe(request: string, ctx: { threadId?: string } = {}) {
+      const skill = await readFile(new URL("../skills/fm/SKILL.md", import.meta.url), "utf8");
+      const recipe = /```sh\n([\s\S]*?)```/.exec(skill)![1]!.replace(/^ {3}/gm, "");
+      // The request's own text, then the new line every heredoc line ends with, as an agent writes it.
+      const script = recipe.replace("<the request, exactly as the user typed it>\n", `${request}\n`);
+      const dir = await mkdtemp(join(tmpdir(), "firstmate-recipe-"));
+      tempDirs.push(dir);
+      const stdinFile = join(dir, "stdin");
+      await writeFile(join(dir, "bb"), `#!/bin/sh\ncat > "${stdinFile}"\n`, { mode: 0o755 });
+      execFileSync("sh", ["-c", script], { env: { ...process.env, PATH: `${dir}:${process.env.PATH ?? ""}` } });
+      const stdin = await readFile(stdinFile);
+      expect(stdin.byteLength).toBeLessThanOrEqual(16 * 1024);
+      const line = stdin.toString("utf8").replace(/\r?\n$/, "");
+      expect(line).not.toMatch(/[\r\n]/);
+      const { cli, threads } = await setup();
+      const result = await cli.run(["tell", "--message-base64", line], ctx);
+      return { result, sent: threads.sent };
+    }
+
+    it("delivers a request with no trailing new line exactly", async () => {
+      const { result, sent } = await viaRecipe("    run `date` and $(whoami) on \"my\" work, it's $HOME's");
+      expect(result.exitCode).toBe(0);
+      expect(sent[0]!.text).toBe(`${TERMINAL}\n\n    run \`date\` and $(whoami) on "my" work, it's $HOME's`);
+    });
+
+    it("delivers a request that ends with a new line exactly", async () => {
+      const { sent } = await viaRecipe("first line\nsecond line\n");
+      expect(sent[0]!.text).toBe(`${TERMINAL}\n\nfirst line\nsecond line\n`);
+    });
+
+    it("fits a request of exactly the limit into bb's one stdin line, and refuses one byte more", async () => {
+      const atLimit = await viaRecipe("x".repeat(MESSAGE_MAX_BYTES));
+      expect(atLimit.result.exitCode).toBe(0);
+      expect(atLimit.sent[0]!.text).toBe(`${TERMINAL}\n\n${"x".repeat(MESSAGE_MAX_BYTES)}`);
+      const over = await viaRecipe("x".repeat(MESSAGE_MAX_BYTES + 1));
+      expect(over.result.exitCode).not.toBe(0);
+      expect(over.sent).toEqual([]);
+    });
   });
 
   it("tell with no first mate says so", async () => {

@@ -74,7 +74,7 @@ there, and `bb plugin dev` to rebuild on save. See [`AGENTS.md`](AGENTS.md).
   sends your words, unchanged, through `tell`, and replies in one line that the first mate has them; it
   does not do the work itself. The first mate receives them under the relayed line, which names the
   thread with its project and branch, so it knows which work you mean. `/fm` on its own asks what to
-  send, and requests up to 12 KiB fit. Only you can start it: agents do not use it on their own.
+  send, and requests up to 12,000 bytes fit. Only you can start it: agents do not use it on their own.
 - **Bearings** is where everything stands in four sections: what needs your call, what landed, what is
   under way, what is next. **Ahoy** is what happened since you last spoke, then each open decision, one at
   a time, with a recommendation. Both are buttons on the board and entries in the command palette

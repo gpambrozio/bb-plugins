@@ -27,7 +27,8 @@ the user typed after `/fm` themselves, never for one you think the first mate sh
    ```
 
    Run exactly that one pipeline; its exit status is `tell`'s. If a line of the request is exactly
-   `FM_REQUEST_END`, choose another delimiter. Requests up to 12 KiB fit.
+   `FM_REQUEST_END`, choose another delimiter. `tell` drops the one new line the heredoc adds after the
+   request, so it arrives as typed. Requests up to 12,000 bytes fit.
 
    Send the request alone. `tell` opens it with a line of its own saying it was relayed from this
    thread, with the thread's project and branch.

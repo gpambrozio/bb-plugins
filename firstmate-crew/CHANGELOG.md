@@ -13,7 +13,7 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   request to the first mate word for word, quotes and all, then says so in one line and leaves the work
   to it. The first mate sees which thread it came from, with the thread's project and branch, so "this"
   and "my work" mean that thread's. `/fm` on its own asks what to send, and agents never use it unless
-  you type it. It works in threads on any machine bb reaches, for requests up to 12 KiB.
+  you type it. It works in threads on any machine bb reaches, for requests up to 12,000 bytes.
 
 ### Changed
 

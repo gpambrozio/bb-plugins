@@ -71,29 +71,35 @@ async function readBrief(promptFile: string, cwd: string | undefined): Promise<s
   return brief;
 }
 
-/** The longest message `tell` takes, in UTF-8 bytes: what fits bb's one stdin line of 16 KiB as base64. */
-export const MESSAGE_MAX_BYTES = 12 * 1024;
+/**
+ * The longest message `tell` takes, in UTF-8 bytes. With the newline the skill's heredoc adds, its base64
+ * still fits the one stdin line of at most 16 KiB that bb's `--message-base64-stdin` reads.
+ */
+export const MESSAGE_MAX_BYTES = 12_000;
 
 /**
  * The message from `--message-base64`, which the `/fm` skill fills through bb's `--message-base64-stdin`:
  * bb's CLI reads one line from stdin on the caller's machine, so the text crosses machines and no shell
- * argument or server-side file ever holds it. Strict base64, at most `MESSAGE_MAX_BYTES` once decoded,
- * and valid UTF-8; the text is returned exactly as it decodes.
+ * argument or server-side file ever holds it. Strict base64 of valid UTF-8. A heredoc always ends its text
+ * with a newline, so exactly one trailing "\n" is dropped — a request that itself ended with one keeps
+ * it — and the size limit applies after that. Everything else, a leading byte-order mark included, is
+ * returned exactly as it decodes.
  */
 function decodeMessage(encoded: string): string {
   const compact = encoded.trim();
-  if (compact.length > Math.ceil(MESSAGE_MAX_BYTES / 3) * 4) {
+  if (compact.length > Math.ceil((MESSAGE_MAX_BYTES + 1) / 3) * 4) {
     throw new PluginCliError(`The message is longer than ${MESSAGE_MAX_BYTES} bytes.`, { code: "message_too_long" });
   }
   if (compact.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(compact)) {
     throw new PluginCliError("--message-base64 is not valid base64.", { code: "invalid_value" });
   }
-  const bytes = Buffer.from(compact, "base64");
+  const decoded = Buffer.from(compact, "base64");
+  const bytes = decoded.at(-1) === 0x0a ? decoded.subarray(0, -1) : decoded;
   if (bytes.byteLength > MESSAGE_MAX_BYTES) {
     throw new PluginCliError(`The message is longer than ${MESSAGE_MAX_BYTES} bytes.`, { code: "message_too_long" });
   }
   try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
   } catch {
     throw new PluginCliError("--message-base64 does not decode to UTF-8 text.", { code: "invalid_value" });
   }
