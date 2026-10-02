@@ -9,6 +9,7 @@ import { definePluginApp } from "@get-bb/plugin-sdk/app";
 
 import { HeraldBanner } from "./app/banner";
 import { HeraldBridge } from "./app/bridge";
+import { HeraldHeaderAction, HISTORY_PANEL_ACTION_ID } from "./app/header-action";
 import { HeraldHistoryPanel } from "./app/history-panel";
 import { HERALD_ICONS } from "./app/icons";
 import { HeraldPanel, PANEL_PATH, WaitingCount } from "./app/panel";
@@ -33,7 +34,9 @@ export default definePluginApp((app) => {
   });
 
   // A sentence per turn, in the thread's side panel: a plugin cannot write into the transcript.
-  app.slots.threadPanelAction({ id: "history", title: "Herald", layout: "padded", component: HeraldHistoryPanel });
+  app.slots.threadPanelAction({ id: HISTORY_PANEL_ACTION_ID, title: "Herald", layout: "padded", component: HeraldHistoryPanel });
+  // And a megaphone in the thread header that opens it, beside bb's own actions.
+  app.slots.experimental_threadHeaderAction({ id: HISTORY_PANEL_ACTION_ID, title: "Herald", component: HeraldHeaderAction });
 
   app.slots.settingsSection({
     id: "summaries",

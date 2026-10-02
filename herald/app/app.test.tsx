@@ -13,6 +13,7 @@ import type { RpcContract } from "../shared/contract";
 import { DEFAULT_STORED_CONFIG, ENTRIES_CHANNEL, TOOL_COMMANDS, type AttentionEntry, type HistoryItem, type StoredConfig } from "../shared/herald";
 import { HeraldBanner } from "./banner";
 import { HeraldBridge } from "./bridge";
+import { HeraldHeaderAction } from "./header-action";
 import { HeraldHistoryPanel } from "./history-panel";
 import { HeraldPanel } from "./panel";
 import { HeraldSettingsSection } from "./settings-section";
@@ -86,6 +87,7 @@ describe("Herald's app", () => {
     const app = await loadPluginApp(() => import("../app"));
     expect(app.navPanels.map((panel) => panel.path)).toEqual(["waiting"]);
     expect(app.threadPanelActions.map((action) => action.id)).toEqual(["history"]);
+    expect(app.threadHeaderActions.map((action) => action.id)).toEqual(["history"]);
     expect(app.appOverlays).toHaveLength(1);
     expect(app.composerCustomizations[0]?.banners?.map((banner) => banner.id)).toEqual(["summary"]);
     expect(app.settingsSections.map((section) => section.id)).toEqual(["summaries"]);
@@ -203,6 +205,12 @@ describe("Herald's app", () => {
     await bridge.emitRealtime(ENTRIES_CHANNEL, { at: 4 });
     expect(await screen.findAllByText("Login fix is done.")).toHaveLength(2);
     expect(screen.queryByText("Writing the sentence…")).toBeNull();
+  });
+
+  it("opens the thread's Herald panel from a button in the thread header", async () => {
+    const slot = renderSlot<{ threadId: string }, RpcContract>({ component: HeraldHeaderAction }, { threadId: "t1" }, {});
+    fireEvent.click(screen.getByLabelText("Herald: this thread's sentences"));
+    expect(slot.inspection.navigateCalls).toEqual([{ method: "openThreadPanel", options: { actionId: "history" } }]);
   });
 
   it("lists a thread's past sentences in its panel, newest first, and re-reads on a nudge", async () => {

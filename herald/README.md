@@ -14,7 +14,7 @@ of what was done — and the bb app speaks it.
   or not you have read the thread, and through your next turn — until the next event replaces it.
 - A **Herald** tab in each thread's side panel lists what Herald said about that thread's past turns,
   newest first, with when and a Read again button — a way to find a turn by its sentence. The last 50
-  are kept per thread.
+  are kept per thread. The megaphone in the thread's header opens it.
 - *Mute here* silences announcements on the device you are on until the app reloads; *Test voice* says a
   sample sentence; the gear opens Herald's settings. Read again and Test voice speak even when muted —
   you pressed them.

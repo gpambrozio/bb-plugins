@@ -35,7 +35,7 @@ what still holds and says what bb changed. The repo root `AGENTS.md` covers what
 | `app/speech.ts` | Every browser audio global, and which bb client this is. |
 | `app/rows.ts` | What the page lists: bb's unread and waiting-for-input joined with Herald's entries. |
 | `app/panel.tsx`, `app/banner.tsx` | The Herald page (and its sidebar count), and the sentence above a thread's composer. |
-| `app/history-panel.tsx` | The Herald tab in a thread's side panel: the sentences of its past turns. |
+| `app/history-panel.tsx`, `app/header-action.tsx` | The Herald tab in a thread's side panel — the sentences of its past turns — and the header megaphone that opens it. |
 | `app/settings-section.tsx`, `app/voice-picker.tsx` | The model-written sentence's tool, custom command (only under custom) and prompt; the voice lists and *Test voice*. |
 
 ## Where things run
@@ -324,7 +324,9 @@ hook can only proceed, wait or reject. So the nearest thing is a **thread panel*
 newest first, from `server/history.ts` — appended by the hooks' `remember` when a sentence *lands*
 (plain, off, or the model's; never a pending one taken back), one kv row per thread capped at
 `HISTORY_LIMIT`, kept on archive and deleted with the thread. It re-reads on the entries nudge, since a
-sentence landing is also an entries change. If bb gains a plugin-written timeline row, write the
+sentence landing is also an entries change. A megaphone in the thread header
+(`experimental_threadHeaderAction`, `app/header-action.tsx`) opens it through `useBbNavigate().openThreadPanel`;
+the host wants one 28px control there, so it is an icon button with its own accessible name. If bb gains a plugin-written timeline row, write the
 sentence there at the end of the turn and this panel becomes a convenience.
 
 ## Checking it
