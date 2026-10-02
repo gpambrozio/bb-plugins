@@ -287,7 +287,9 @@ selection — and give it a `draftKey` per subject, since `initialPrompt` seeds 
 
 Host `Markdown` takes only `content` and `className`, so it gives no say over how a body's images
 load. Where they need gating (tracking pixels, private attachments), render the body yourself, as
-`github-board` does.
+`github-board` does, or defuse them in the source by parsing it as bb does (mdast with GFM) and
+editing each image and raw-HTML node by its position, as `skills/app/markdown.ts` does — patterns over
+the raw text miss reference, nested and multiline images.
 
 **Icon names are bb's own set, not Lucide's.** `experimental_Icon` (and every `icon` field) knows about
 170 names — `Settings`, `Play`, `Spinner`, `Lock`, `ListTodo`, `MessageQuestion`, `Github`… but no

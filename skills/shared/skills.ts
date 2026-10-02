@@ -97,8 +97,8 @@ export type SkillDocument = z.infer<typeof SkillDocumentSchema>;
  * First name wins. Callers pass entries in precedence order, so a project skill
  * shadows a personal one of the same name without either being listed twice.
  */
-export function dedupeByName(entries: SkillEntry[]): SkillEntry[] {
-  const byName = new Map<string, SkillEntry>();
+export function dedupeByName<Entry extends { name: string }>(entries: Entry[]): Entry[] {
+  const byName = new Map<string, Entry>();
   for (const entry of entries) {
     if (!byName.has(entry.name)) byName.set(entry.name, entry);
   }

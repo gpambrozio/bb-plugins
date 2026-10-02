@@ -2,7 +2,7 @@ import { readdir, stat } from "node:fs/promises";
 import path from "node:path";
 
 import { readSkillCandidates, type SkillDirectoryCandidate } from "./skill-directory";
-import type { SkillEntry } from "./skill-entry";
+import type { ScannedSkill } from "./skill-entry";
 
 export interface HermesResolveOptions {
   /**
@@ -74,7 +74,7 @@ async function isFile(filePath: string): Promise<boolean> {
  * `EXCLUDED_DIRS` and `_org` are never treated as categories. Nothing below
  * the second level is read.
  */
-export async function resolveHermesSkills(options: HermesResolveOptions): Promise<SkillEntry[]> {
+export async function resolveHermesSkills(options: HermesResolveOptions): Promise<ScannedSkill[]> {
   const skillsDir = path.join(options.hermesHome, "skills");
 
   let dirEntries;

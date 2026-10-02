@@ -1,12 +1,11 @@
-import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { parseFrontmatter } from "../shared/frontmatter";
 import type { SkillDocument, SkillEntry } from "../shared/skills";
 import { resolveClaudeSkills } from "./resolve/claude";
 import { resolveCodexSkills } from "./resolve/codex";
 import { resolveHermesSkills } from "./resolve/hermes";
+import type { ScannedSkill } from "./resolve/skill-entry";
 
 export interface SkillRoots {
   claudeHome: string;
@@ -38,7 +37,7 @@ export function defaultSkillRoots(env: NodeJS.ProcessEnv = process.env): SkillRo
   };
 }
 
-type Scanner = (cwd: string, roots: SkillRoots) => Promise<SkillEntry[]>;
+type Scanner = (cwd: string, roots: SkillRoots) => Promise<ScannedSkill[]>;
 
 /**
  * bb's provider ids whose skill directories are documented. Every other
@@ -62,31 +61,32 @@ export interface Discovery {
   skills: SkillEntry[];
 }
 
+async function scan(input: { provider: string; cwd: string }, roots: SkillRoots): Promise<ScannedSkill[] | null> {
+  const scanner = SCANNERS[input.provider];
+  return scanner === undefined ? null : scanner(input.cwd, roots);
+}
+
+/** The list the browser shows. Bodies stay here; `read` serves one at a time. */
 export async function discoverSkills(
   input: { provider: string; cwd: string },
   roots: SkillRoots = defaultSkillRoots(),
 ): Promise<Discovery> {
-  const scan = SCANNERS[input.provider];
-  if (scan === undefined) return { scanned: false, skills: [] };
-  return { scanned: true, skills: await scan(input.cwd, roots) };
+  const scanned = await scan(input, roots);
+  if (scanned === null) return { scanned: false, skills: [] };
+  return { scanned: true, skills: scanned.map(({ body: _body, ...entry }) => entry) };
 }
 
 /**
  * Takes a skill id, never a path. Discovery runs again and the id is looked up
- * in its result, so the only readable files are ones discovery already found.
+ * in its result, so the only readable files are ones discovery already found —
+ * and the body returned is the one that scan read and validated, never a
+ * second read of the path, which could by then name a different file.
  */
 export async function readDiscoveredSkill(
   input: { provider: string; cwd: string; skillId: string },
   roots: SkillRoots = defaultSkillRoots(),
 ): Promise<SkillDocument> {
-  const { skills } = await discoverSkills(input, roots);
-  const skill = skills.find((entry) => entry.id === input.skillId);
+  const skill = (await scan(input, roots))?.find((entry) => entry.id === input.skillId);
   if (skill === undefined) throw new Error(`Skill not available: ${input.skillId}`);
-  const raw = await readFile(skill.path, "utf8");
-  return {
-    name: skill.name,
-    description: skill.description,
-    path: skill.path,
-    body: parseFrontmatter(raw).body,
-  };
+  return { name: skill.name, description: skill.description, path: skill.path, body: skill.body };
 }

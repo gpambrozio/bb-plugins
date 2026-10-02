@@ -34,9 +34,18 @@ function SkillsButton({ threadId }: { threadId: string }) {
   const [open, setOpen] = useState(false);
   const navigate = useBbNavigate();
   const composer = useComposer();
-  // After **Add to chat** the composer keeps the focus it was given,
-  // rather than the popover handing it back to this button as it closes.
+  // After **Add to chat** the composer gets the focus back, rather than the
+  // popover handing it to this button as it closes. On a wide window that is
+  // Radix's close-focus, which can be stopped; on a narrow one it is the
+  // drawer's, which restores focus as it closes, so the composer takes it
+  // once the drawer has finished closing.
   const added = useRef(false);
+  function focusComposerAfterAdd(): boolean {
+    if (!added.current) return false;
+    added.current = false;
+    composer.focus();
+    return true;
+  }
   const count = state.status === "ready" ? countEntries(state.data) : null;
 
   function handleOpenChange(next: boolean) {
@@ -71,10 +80,10 @@ function SkillsButton({ threadId }: { threadId: string }) {
         mobileTitle="Skills"
         className="flex max-h-[min(32rem,70vh)] w-[min(28rem,calc(100vw-2rem))] flex-col p-0"
         onCloseAutoFocus={(event) => {
-          if (!added.current) return;
-          added.current = false;
-          event.preventDefault();
-          composer.focus();
+          if (focusComposerAfterAdd()) event.preventDefault();
+        }}
+        onMobileContentAnimationEnd={(isOpen) => {
+          if (!isOpen) focusComposerAfterAdd();
         }}
       >
         <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">

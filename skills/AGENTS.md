@@ -14,7 +14,7 @@ specific to `skills`.
 | --- | --- |
 | `host.ts` | The host entry: binds `shared/host-contract.ts` to `host/discover.ts`. |
 | `host/discover.ts` | Provider id → resolver, the homes (`~/.claude`, `$CODEX_HOME`, `~/.agents`, `/etc/codex/skills`, `$HERMES_HOME`), and `read`, which re-runs discovery and reads only an id it produced. |
-| `host/resolve/*` | Carried over from Paseo: Claude, Codex and Hermes search paths, the repo walk, one skills directory, ids. |
+| `host/resolve/*` | Carried over from Paseo: Claude, Codex and Hermes search paths, the repo walk, one skills directory, ids; plus `read-bounded.ts`, the one way discovery reads a file. |
 | `server.ts` | Binds the ports in `server/skills.ts` to `bb.sdk` and the host entry. |
 | `server/skills.ts` | The two RPCs: thread → workspace, discovery + the skills taken from bb's list + the reported list, and `read`'s id boundary. |
 | `server/reported.ts` | Splits bb's command list into skills and commands, minus every name already listed. |
@@ -24,7 +24,7 @@ specific to `skills`.
 | `app/browser.tsx` | List, search, both detail screens, Add to chat — drawn by the panel and the popover. |
 | `app/panel.tsx`, `app/composer-button.tsx` | The thread-panel tab, and the composer button with its count and popover. |
 | `app/use-skills.ts`, `app/insert.ts` | The two RPC reads, and Add to chat: the text, where it goes in the draft, and which composers it may write to. |
-| `app/markdown.ts` | Turns a body's images into links before bb's `Markdown` draws it. |
+| `app/markdown.ts` | Defuses a body's images and raw HTML, by parsing it, before bb's `Markdown` draws it. |
 
 ## What bb already does, and what this adds
 
@@ -96,11 +96,17 @@ belongs to. `updateText` puts `/name ` first (a slash command runs only at the s
 keeps the draft after it; then `focus()`. The button is offered only when `composer.scope` is this
 thread's (`writesToThread`). After it, the panel calls `toThread` (which brings the composer back over
 the panel on a narrow window), and the popover closes and stops Radix handing focus back to its
-trigger, or the trigger would take it from the composer.
+trigger, or the trigger would take it from the composer. On a narrow window the popover is a drawer
+that restores focus to the trigger as it closes and offers no hook to stop it, so the composer is
+focused again from `onMobileContentAnimationEnd`, once the drawer has finished closing.
 
-**Bodies render through bb's `Markdown`, images as links.** The host component loads images as it
-draws them and gives no say over it, and a skill someone else wrote can carry a remote image, so
-`app/markdown.ts` drops the `!` from every image outside fenced code.
+**Bodies render through bb's `Markdown`, with nothing in them that loads.** The host component loads
+images as it draws them and gives no say over it, and a skill someone else wrote can carry a remote
+image or raw HTML. `app/markdown.ts` parses the body the way bb's renderer does (mdast with GFM) and
+defuses each node in the source by its position: an image or image reference loses its `!` and
+becomes a link, raw HTML has its `<` escaped and shows as text. It parses again until nothing is left
+(an image can hide in another's alt text). Do not go back to matching image syntax with patterns:
+shortcut references, nested and multiline alt text and fence lengths all defeated the regex.
 
 ## Invariants
 
@@ -109,6 +115,14 @@ draws them and gives no say over it, and a skill someone else wrote can carry a 
   and the id is looked up in a fresh scan (`host/discover.ts`) or in bb's list for that thread
   (`server/skills.ts`). Both sides have tests that try paths, crafted ids, another provider's id and
   another provider's bb row.
+- **`read` serves the bytes discovery validated; it never opens the path again.** The scan keeps
+  each body with its entry (`ScannedSkill`, host-only — `discover` strips it), so a `SKILL.md` swapped
+  for a symlink between the scan and the read changes nothing (`host/discover-race.test.ts`).
+- **Every file discovery reads that a workspace can plant goes through `readBoundedText`**:
+  `SKILL.md`, a worktree's `.git` and `commondir`, and Claude's plugin manifest. It opens non-blocking,
+  checks on that descriptor that it is a regular file, and stops past a byte cap (`SKILL.md`: 1 MiB),
+  so a FIFO, a device or a huge file is skipped instead of hanging or filling memory. A scan has no
+  cancellation; it does not need one once every read is bounded.
 - **Codex reads `.agents/skills` before `.codex/skills`**, in every directory from the thread's
   directory to the repository root, then `~/.agents/skills`, `$CODEX_HOME/skills`, `/etc/codex/skills`.
   Paseo's own `listCodexSkills` was stale on this; do not "fix" the resolver to match anything but

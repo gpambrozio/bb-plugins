@@ -13,6 +13,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { RpcContract } from "../shared/contract";
 import type { SkillDocument, SkillEntry, SkillList } from "../shared/skills";
+import { CompactViewportOverrideProvider } from "@/components/ui/hooks/use-compact-viewport";
+
 import { SkillsComposerButton } from "./composer-button";
 import { SkillsPanel } from "./panel";
 
@@ -158,12 +160,13 @@ describe("the panel", () => {
     expect(screen.getByText("tidy-imports")).toBeTruthy();
   });
 
-  it("reads a skill, with its path and its body, and its images turned into links", async () => {
+  it("reads a skill, with its path and its body", async () => {
     const { inspection } = renderPanel();
     fireEvent.click(await screen.findByText("tidy-imports"));
     expect(await screen.findByText("/skills/tidy-imports/SKILL.md")).toBeTruthy();
     expect(inspection.rpcCalls.at(-1)).toEqual({ method: "read", input: { threadId: "thr_example", skillId: "project:/skills:tidy-imports" } });
-    expect(document.querySelector("img")).toBeNull();
+    // The harness renders Markdown as plain text, so whether images load is
+    // checked on the parsed source, in markdown.test.ts.
     expect(screen.getByRole("button", { name: "Copy path" })).toBeTruthy();
   });
 
@@ -247,6 +250,38 @@ describe("the composer button", () => {
     expect(inspection.composer.focusCount).toBeGreaterThanOrEqual(1);
     expect(inspection.navigateCalls).toEqual([]);
     expect(inspection.sdkCalls).toEqual([]);
+  });
+
+  // On a narrow window the popover is a drawer, which hands focus back to the
+  // button that opened it as it closes. The composer must take it after that,
+  // or the cursor ends up on the Skills button instead of after the command.
+  it("gives the composer focus after the narrow-window drawer has handed it back to the button", async () => {
+    function CompactButton() {
+      return (
+        <CompactViewportOverrideProvider isCompactViewport>
+          <SkillsComposerButton />
+        </CompactViewportOverrideProvider>
+      );
+    }
+    const { inspection } = renderSlot<object, RpcContract>({ component: CompactButton }, {}, {
+      rpc,
+      composer: { scope: { kind: "thread", threadId: "thr_example" } },
+    });
+    const trigger = await screen.findByRole("button", { name: "Skills: 6" });
+    let focusCountWhenButtonRefocused: number | null = null;
+    trigger.focus();
+    fireEvent.click(trigger);
+    fireEvent.click(await screen.findByText("deploy", {}, { timeout: 2000 }));
+    trigger.addEventListener("focus", () => {
+      focusCountWhenButtonRefocused = inspection.composer.focusCount;
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "Add to chat" }));
+
+    expect(inspection.composer.text).toBe("/deploy ");
+    await waitFor(() => expect(focusCountWhenButtonRefocused).not.toBeNull());
+    await waitFor(() => expect(inspection.composer.focusCount).toBeGreaterThan(focusCountWhenButtonRefocused!), {
+      timeout: 2000,
+    });
   });
 
   it("opens the panel from the popover", async () => {

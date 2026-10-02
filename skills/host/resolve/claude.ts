@@ -1,9 +1,12 @@
-import { readFile } from "node:fs/promises";
 import path from "node:path";
 
+import { readBoundedText } from "./read-bounded";
 import { dirsUpToRepoRoot, findRepoRoot, mainCheckoutOf } from "./repo-root";
 import { readSkillCandidates, type SkillDirectoryCandidate } from "./skill-directory";
-import type { SkillEntry } from "./skill-entry";
+import type { ScannedSkill } from "./skill-entry";
+
+/** Claude's plugin manifest; a large one holds a few hundred entries. */
+const MAX_MANIFEST_BYTES = 16 * 1024 * 1024;
 
 export interface ClaudeResolveOptions {
   cwd: string;
@@ -53,9 +56,11 @@ async function readInstalledPluginDirs(
 ): Promise<Array<{ pluginName: string; dir: string }>> {
   const places = await projectPlacesOf(cwd);
   const manifestPath = path.join(claudeHome, "plugins", "installed_plugins.json");
+  const manifest = await readBoundedText(manifestPath, MAX_MANIFEST_BYTES);
+  if (manifest === null) return [];
   let parsed: unknown;
   try {
-    parsed = JSON.parse(await readFile(manifestPath, "utf8"));
+    parsed = JSON.parse(manifest);
   } catch {
     return [];
   }
@@ -87,7 +92,7 @@ async function readInstalledPluginDirs(
  * skills checked in at the repo root. Plugin skills are namespaced
  * `plugin:skill`, so in practice they never collide with the rest.
  */
-export async function resolveClaudeSkills(options: ClaudeResolveOptions): Promise<SkillEntry[]> {
+export async function resolveClaudeSkills(options: ClaudeResolveOptions): Promise<ScannedSkill[]> {
   const [pluginDirs, dirs] = await Promise.all([
     readInstalledPluginDirs(options.claudeHome, options.cwd),
     dirsUpToRepoRoot(options.cwd),

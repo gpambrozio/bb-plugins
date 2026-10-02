@@ -2,7 +2,7 @@ import path from "node:path";
 
 import { dirsUpToRepoRoot } from "./repo-root";
 import { readSkillCandidates, type SkillDirectoryCandidate } from "./skill-directory";
-import type { SkillEntry } from "./skill-entry";
+import type { ScannedSkill } from "./skill-entry";
 
 export interface CodexResolveOptions {
   cwd: string;
@@ -26,7 +26,7 @@ export interface CodexResolveOptions {
  *
  * Codex's bundled system skills have no path on disk and stay invisible here.
  */
-export async function resolveCodexSkills(options: CodexResolveOptions): Promise<SkillEntry[]> {
+export async function resolveCodexSkills(options: CodexResolveOptions): Promise<ScannedSkill[]> {
   const dirs = await dirsUpToRepoRoot(options.cwd);
 
   const candidates: SkillDirectoryCandidate[] = dirs.flatMap((dir, index) => {

@@ -1,8 +1,9 @@
-import { readdir, readFile } from "node:fs/promises";
+import { readdir } from "node:fs/promises";
 import path from "node:path";
 
 import { parseFrontmatter } from "../../shared/frontmatter";
-import { dedupeByName, makeSkillId, type SkillEntry, type SkillSourceKind } from "./skill-entry";
+import { MAX_SKILL_BYTES, readBoundedText } from "./read-bounded";
+import { dedupeByName, makeSkillId, type ScannedSkill, type SkillSourceKind } from "./skill-entry";
 
 export interface SkillDirectoryCandidate {
   dir: string;
@@ -30,7 +31,7 @@ export interface SkillDirectoryCandidate {
  */
 export async function readSkillCandidates(
   candidates: SkillDirectoryCandidate[],
-): Promise<SkillEntry[]> {
+): Promise<ScannedSkill[]> {
   const seen = new Set<string>();
   const unique = candidates.filter((candidate) => {
     const resolved = path.resolve(candidate.dir);
@@ -65,7 +66,7 @@ export async function readSkillsFromDirectory(
   label: string,
   nameFor: (frontmatterName: string) => string = (name) => name,
   includeEntry?: (name: string) => boolean,
-): Promise<SkillEntry[]> {
+): Promise<ScannedSkill[]> {
   let dirEntries;
   try {
     dirEntries = await readdir(dir, { withFileTypes: true });
@@ -79,15 +80,11 @@ export async function readSkillsFromDirectory(
       (includeEntry === undefined || includeEntry(entry.name)),
   );
   const results = await Promise.all(
-    candidates.map(async (entry): Promise<SkillEntry | null> => {
+    candidates.map(async (entry): Promise<ScannedSkill | null> => {
       const skillPath = path.join(dir, entry.name, "SKILL.md");
-      let raw: string;
-      try {
-        raw = await readFile(skillPath, "utf8");
-      } catch {
-        return null;
-      }
-      const { frontmatter } = parseFrontmatter(raw);
+      const raw = await readBoundedText(skillPath, MAX_SKILL_BYTES);
+      if (raw === null) return null;
+      const { frontmatter, body } = parseFrontmatter(raw);
       const rawName = frontmatter.name;
       const description = frontmatter.description;
       if (!rawName || !description) return null;
@@ -101,11 +98,12 @@ export async function readSkillsFromDirectory(
         path: skillPath,
         userInvocable,
         status: "discovered",
+        body,
       };
     }),
   );
 
   return results
-    .filter((entry): entry is SkillEntry => entry !== null)
+    .filter((entry): entry is ScannedSkill => entry !== null)
     .sort((a, b) => a.name.localeCompare(b.name));
 }

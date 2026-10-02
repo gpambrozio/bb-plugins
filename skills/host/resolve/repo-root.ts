@@ -1,5 +1,10 @@
-import { readFile, stat } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import path from "node:path";
+
+import { readBoundedText } from "./read-bounded";
+
+/** A `.git` pointer or a `commondir` is one short line. */
+const MAX_POINTER_BYTES = 64 * 1024;
 
 /**
  * Walks up from cwd looking for a `.git` entry. Matches a file as well as a
@@ -50,23 +55,18 @@ export async function dirsUpToRepoRoot(cwd: string): Promise<string[]> {
  * directory has no `commondir`, and a bare repository's common directory is
  * not a `.git` inside a checkout — both answer null.
  *
- * Read from the files rather than asked of `git`, so discovery spawns nothing.
+ * Read from the files rather than asked of `git`, so discovery spawns nothing,
+ * and read bounded: the worktree's `.git` is the workspace's to plant.
  */
 export async function mainCheckoutOf(repoRoot: string): Promise<string | null> {
-  let pointer: string;
-  try {
-    pointer = await readFile(path.join(repoRoot, ".git"), "utf8");
-  } catch {
-    return null; // A `.git` directory: this is the main checkout itself.
-  }
+  // A `.git` directory reads as null: this is the main checkout itself.
+  const pointer = await readBoundedText(path.join(repoRoot, ".git"), MAX_POINTER_BYTES);
+  if (pointer === null) return null;
   const gitDir = /^gitdir:\s*(.+)$/m.exec(pointer)?.[1]?.trim();
   if (!gitDir) return null;
   const resolvedGitDir = path.resolve(repoRoot, gitDir);
-  let commonDir: string;
-  try {
-    commonDir = path.resolve(resolvedGitDir, (await readFile(path.join(resolvedGitDir, "commondir"), "utf8")).trim());
-  } catch {
-    return null;
-  }
+  const common = await readBoundedText(path.join(resolvedGitDir, "commondir"), MAX_POINTER_BYTES);
+  if (common === null) return null;
+  const commonDir = path.resolve(resolvedGitDir, common.trim());
   return path.basename(commonDir) === ".git" ? path.dirname(commonDir) : null;
 }
