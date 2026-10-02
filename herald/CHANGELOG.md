@@ -18,6 +18,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   given (with placeholders you can move around, and a button to get the default back) and, only while
   the tool is *custom*, the custom command, filled in from the tool you had selected.
 - The Herald page and the banner above the composer say **Writing the sentence…** while the tool runs.
+- **A Herald tab in each thread's side panel** listing what Herald said about the thread's past turns,
+  newest first, with when and a Read again button: a way to find a turn by its sentence. The last 50
+  are kept per thread.
 
 ### Changed
 

@@ -16,6 +16,7 @@ what still holds and says what bb changed. The repo root `AGENTS.md` covers what
 | `server/reload-signal.ts` | What an old instance tells its replacement: storage closed and flushed, read it again. |
 | `server/store.ts` | One entry per thread, mirrored to storage; `load()` merges. |
 | `server/kv-backend.ts` | The store's rows in `bb.storage.kv`, one per thread. |
+| `server/history.ts` | Each thread's past sentences, one kv row per thread, capped; for the thread panel. |
 | `server/liveness.ts` | Asks bb whether each entry's thread still exists before the list goes out; gone ones are removed. |
 | `server/timeline.ts` | Pure text: what an interaction asks, the user's last prompt, the spoken sentence. |
 | `server/say.ts` | `say` on the bb server's Mac, driven for its voices: text in on stdin, a WAV out, bytes back. |
@@ -33,7 +34,8 @@ what still holds and says what bb changed. The repo root `AGENTS.md` covers what
 | `app/tip-button.tsx` | An icon button with bb's tooltip. |
 | `app/speech.ts` | Every browser audio global, and which bb client this is. |
 | `app/rows.ts` | What the page lists: bb's unread and waiting-for-input joined with Herald's entries. |
-| `app/panel.tsx`, `app/banner.tsx` | The Herald page (and its sidebar count), and the sentence above a waiting thread's composer. |
+| `app/panel.tsx`, `app/banner.tsx` | The Herald page (and its sidebar count), and the sentence above a thread's composer. |
+| `app/history-panel.tsx` | The Herald tab in a thread's side panel: the sentences of its past turns. |
 | `app/settings-section.tsx`, `app/voice-picker.tsx` | The model-written sentence's tool, custom command (only under custom) and prompt; the voice lists and *Test voice*. |
 
 ## Where things run
@@ -310,6 +312,20 @@ A plugin cannot add a row to a thread's timeline, so Paseo's transcript card is 
 in a **composer banner** instead (`app.composer.customize`, thread scope) — where the user is about to
 answer — with a play button, and stays there, read or not and through the next turn, until the next
 event replaces it. It reads Herald's entries, not the panel's rows. A switched-off kind gets no banner.
+
+The owner wanted the previous sentence in the chat right before the next prompt, to find a turn by its
+summary. **bb 0.44 has no way for a plugin to write a passive row into a transcript** — checked
+against the SDK and the server bundle: no append or annotate call on threads; `bb.ui.requestInput`
+writes a row but it is an interaction (the thread waits for input, bb notifies, the row reads
+"Submitted …"); extension rows are written by provider bridges only; system messages are delivered to
+the agent and start or steer a turn; prompt parts can be `agent-only` but not user-only; the dispatch
+hook can only proceed, wait or reject. So the nearest thing is a **thread panel**
+(`app.slots.threadPanelAction`, `app/history-panel.tsx`): the sentences of the thread's past turns,
+newest first, from `server/history.ts` — appended by the hooks' `remember` when a sentence *lands*
+(plain, off, or the model's; never a pending one taken back), one kv row per thread capped at
+`HISTORY_LIMIT`, kept on archive and deleted with the thread. It re-reads on the entries nudge, since a
+sentence landing is also an entries change. If bb gains a plugin-written timeline row, write the
+sentence there at the end of the turn and this panel becomes a convenience.
 
 ## Checking it
 

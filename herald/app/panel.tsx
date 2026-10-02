@@ -32,7 +32,7 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function relativeTime(at: number, now: number): string {
+export function relativeTime(at: number, now: number): string {
   const seconds = Math.round((now - at) / 1000);
   if (!Number.isFinite(seconds)) return "";
   if (seconds < 45) return "just now";
@@ -50,7 +50,7 @@ interface ReasonLook {
   className: string;
 }
 
-function lookOf(reason: RowReason): ReasonLook {
+export function lookOf(reason: RowReason): ReasonLook {
   switch (reason) {
     case "question":
       return { icon: "MessageQuestion", label: "Question", className: "text-foreground" };
@@ -69,7 +69,7 @@ function lookOf(reason: RowReason): ReasonLook {
   }
 }
 
-function useNow(): number {
+export function useNow(): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), TICK_MS);

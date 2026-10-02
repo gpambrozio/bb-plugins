@@ -193,4 +193,18 @@ describe("herald server", () => {
       sentencePrompt: "Say: {{headline}}",
     });
   });
+
+  it("keeps each thread's past sentences for its panel, and forgets a deleted thread", async () => {
+    const { harness } = await load();
+    await harness.emitThreadEvent("thread.idle", { thread: USER_THREAD, lastAssistantText: "I fixed auth.ts." });
+    await settle();
+    await harness.emitThreadEvent("thread.active", { thread: USER_THREAD });
+    await harness.emitThreadEvent("thread.idle", { thread: USER_THREAD, lastAssistantText: "And the tests pass." });
+    await settle();
+    const { items } = (await harness.callRpc("history.list", { threadId: "thr_user" })) as { items: Array<{ text: string }> };
+    expect(items.map((item) => item.text)).toEqual(["Login fix finished. And the tests pass.", "Login fix finished. I fixed auth.ts."]);
+    await harness.emitThreadEvent("thread.deleted", { thread: USER_THREAD });
+    await settle();
+    expect(await harness.callRpc("history.list", { threadId: "thr_user" })).toEqual({ items: [] });
+  });
 });

@@ -14,7 +14,7 @@
  * 4. **Leave hidden threads alone.** Another plugin's background worker is not
  *    something the user is waiting on; bb keeps it out of their attention too.
  */
-import type { AttentionEntry, AttentionReason } from "../shared/herald";
+import type { AttentionEntry, AttentionReason, HistoryItem } from "../shared/herald";
 import type { SentenceSettings } from "../shared/settings";
 import { fillTemplate, splitCommandLine } from "./command-line";
 import type { EventsPort, Interaction, Log, ThreadDto } from "./ports";
@@ -38,6 +38,8 @@ export interface HookDeps {
   publish: () => void;
   /** Runs the tool with the prompt on stdin and resolves to its sentence; rejects on any failure. */
   writeSentence: (command: string[], prompt: string) => Promise<string>;
+  /** Adds a sentence that landed to the thread's history, for its panel. Never throws. */
+  remember: (threadId: string, item: HistoryItem) => void;
   log: Log;
   now?: () => Date;
 }
@@ -190,11 +192,13 @@ export function createHooks(deps: HookDeps): Hooks {
     if (!isAnnounced(thread, reason, config)) {
       deps.store.upsert({ ...base, summary: { status: "off", fallback } });
       deps.publish();
+      remember(base, fallback);
       return;
     }
     if (config.sentence === null) {
       deps.store.upsert({ ...base, summary: { status: "ready", text: fallback } });
       deps.publish();
+      remember(base, fallback);
       return;
     }
     // Listed at once with the plain sentence as its stand-in; the tool's
@@ -236,6 +240,18 @@ export function createHooks(deps: HookDeps): Hooks {
     if (current === null || current.eventId !== eventId || current.summary.status !== "pending") return;
     deps.store.upsert({ ...current, summary: { status: "ready", text } });
     deps.publish();
+    remember(current, text);
+  }
+
+  /** A sentence that landed — plain, or the model's — joins the thread's history. */
+  function remember(entry: Omit<AttentionEntry, "summary">, text: string): void {
+    deps.remember(entry.threadId, {
+      eventId: entry.eventId,
+      reason: entry.reason,
+      createdAt: entry.createdAt,
+      headline: entry.headline,
+      text,
+    });
   }
 
   /** Runs a handler's async work; a failure is logged, never left to reject inside the bb server. */

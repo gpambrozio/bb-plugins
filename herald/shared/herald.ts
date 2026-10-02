@@ -60,6 +60,23 @@ export const AttentionEntrySchema = z.object({
 export type AttentionEntry = z.infer<typeof AttentionEntrySchema>;
 
 /**
+ * One past sentence of a thread, for the thread's Herald panel: a way to find a
+ * turn by what Herald said about it, since a plugin cannot write into the
+ * transcript itself. Kept newest first, at most `HISTORY_LIMIT` per thread.
+ */
+export const HistoryItemSchema = z.object({
+  eventId: z.string(),
+  reason: AttentionReasonSchema,
+  createdAt: z.string(),
+  headline: z.string(),
+  /** The sentence as it was spoken, or would have been. */
+  text: z.string(),
+});
+export type HistoryItem = z.infer<typeof HistoryItemSchema>;
+
+export const HISTORY_LIMIT = 50;
+
+/**
  * What is said for an entry, or null when it is never spoken. Never longer
  * than the server will render, whatever an older entry stored.
  */

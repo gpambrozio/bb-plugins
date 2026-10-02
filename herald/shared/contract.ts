@@ -7,6 +7,7 @@ import { z } from "zod";
 
 import {
   AttentionEntrySchema,
+  HistoryItemSchema,
   MAX_SPEECH_CHARS,
   SpeechVoiceSchema,
   StoredConfigSchema,
@@ -17,6 +18,11 @@ export const rpcContract = defineRpcContract({
   list: {
     input: z.object({}),
     output: z.object({ entries: z.array(AttentionEntrySchema) }),
+  },
+  /** A thread's past sentences, newest first, for its Herald panel. */
+  "history.list": {
+    input: z.object({ threadId: z.string().min(1) }),
+    output: z.object({ items: z.array(HistoryItemSchema) }),
   },
   "config.get": {
     input: z.object({}),

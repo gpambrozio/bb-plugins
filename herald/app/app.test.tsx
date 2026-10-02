@@ -10,9 +10,10 @@ import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { RpcContract } from "../shared/contract";
-import { DEFAULT_STORED_CONFIG, ENTRIES_CHANNEL, TOOL_COMMANDS, type AttentionEntry, type StoredConfig } from "../shared/herald";
+import { DEFAULT_STORED_CONFIG, ENTRIES_CHANNEL, TOOL_COMMANDS, type AttentionEntry, type HistoryItem, type StoredConfig } from "../shared/herald";
 import { HeraldBanner } from "./banner";
 import { HeraldBridge } from "./bridge";
+import { HeraldHistoryPanel } from "./history-panel";
 import { HeraldPanel } from "./panel";
 import { HeraldSettingsSection } from "./settings-section";
 
@@ -73,6 +74,7 @@ function rpc(entries: () => AttentionEntry[], calls: { list: number }) {
     },
     "config.get": () => DEFAULT_STORED_CONFIG,
     "config.set": () => DEFAULT_STORED_CONFIG,
+    "history.list": () => ({ items: [] }),
     "speech.voices": () => ({ available: true, voices: [{ name: "Zoe (Premium)", lang: "en_US" }] }),
     "speech.render": () => ({ mimeType: "audio/wav", base64: "" }),
     log: () => null,
@@ -80,9 +82,10 @@ function rpc(entries: () => AttentionEntry[], calls: { list: number }) {
 }
 
 describe("Herald's app", () => {
-  it("registers its page, overlay, banner and settings section", async () => {
+  it("registers its page, overlay, banner, settings section and thread panel", async () => {
     const app = await loadPluginApp(() => import("../app"));
     expect(app.navPanels.map((panel) => panel.path)).toEqual(["waiting"]);
+    expect(app.threadPanelActions.map((action) => action.id)).toEqual(["history"]);
     expect(app.appOverlays).toHaveLength(1);
     expect(app.composerCustomizations[0]?.banners?.map((banner) => banner.id)).toEqual(["summary"]);
     expect(app.settingsSections.map((section) => section.id)).toEqual(["summaries"]);
@@ -200,6 +203,25 @@ describe("Herald's app", () => {
     await bridge.emitRealtime(ENTRIES_CHANNEL, { at: 4 });
     expect(await screen.findAllByText("Login fix is done.")).toHaveLength(2);
     expect(screen.queryByText("Writing the sentence…")).toBeNull();
+  });
+
+  it("lists a thread's past sentences in its panel, newest first, and re-reads on a nudge", async () => {
+    const calls = { list: 0 };
+    let items: HistoryItem[] = [
+      { eventId: "t1:idle:1", reason: "finished", createdAt: new Date(Date.now() - 3_600_000).toISOString(), headline: "Finished", text: "Login fix is done." },
+    ];
+    const backend = { ...rpc(() => [], calls), "history.list": () => ({ items }) };
+    const slot = renderSlot<{ threadId: string; params: null }, RpcContract>({ component: HeraldHistoryPanel }, { threadId: "t1", params: null }, { rpc: backend });
+    await screen.findByText("Login fix is done.");
+    expect(screen.getByText(/1 h ago/)).toBeTruthy();
+    items = [
+      { eventId: "t1:interaction:i1", reason: "question", createdAt: new Date().toISOString(), headline: "Which DB?", text: "Login fix has a question: Which DB?" },
+      ...items,
+    ];
+    await slot.emitRealtime(ENTRIES_CHANNEL, { at: 2 });
+    await screen.findByText("Login fix has a question: Which DB?");
+    const sentences = screen.getAllByText(/Login fix/).map((node) => node.textContent);
+    expect(sentences.indexOf("Login fix has a question: Which DB?")).toBeLessThan(sentences.indexOf("Login fix is done."));
   });
 
   it("renders the settings section with the model controls together, and the voices", async () => {

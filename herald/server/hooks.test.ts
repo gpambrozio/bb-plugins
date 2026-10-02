@@ -37,6 +37,7 @@ function setup(overrides: Partial<HookDeps> = {}, config: HeraldConfig = CONFIG)
   const store = new AttentionStore(null, recordingLog());
   const events = fakeEvents();
   const publish = vi.fn();
+  const remembered = vi.fn();
   const log = recordingLog();
   const hooks = createHooks({
     store,
@@ -44,6 +45,7 @@ function setup(overrides: Partial<HookDeps> = {}, config: HeraldConfig = CONFIG)
     events,
     publish,
     writeSentence: () => Promise.reject(new Error("no tool in these tests")),
+    remember: remembered,
     log,
     now: () => new Date(clock),
     ...overrides,
@@ -53,6 +55,7 @@ function setup(overrides: Partial<HookDeps> = {}, config: HeraldConfig = CONFIG)
     store,
     events,
     publish,
+    remembered,
     log,
     advance(ms: number) {
       clock += ms;
@@ -61,9 +64,16 @@ function setup(overrides: Partial<HookDeps> = {}, config: HeraldConfig = CONFIG)
 }
 
 describe("createHooks", () => {
-  it("records a question with its plain sentence", async () => {
-    const { hooks, store, publish } = setup();
+  it("records a question with its plain sentence, and remembers it for the thread's history", async () => {
+    const { hooks, store, publish, remembered } = setup();
     await hooks.interactionPending(thread(), question());
+    expect(remembered).toHaveBeenCalledWith("t1", {
+      eventId: "t1:interaction:i1",
+      reason: "question",
+      createdAt: "2026-09-15T10:00:00.000Z",
+      headline: "Which DB?",
+      text: "Login fix has a question: Which DB? Options: Postgres / SQLite.",
+    });
     expect(store.get("t1")).toMatchObject({
       reason: "question",
       requestId: "i1",

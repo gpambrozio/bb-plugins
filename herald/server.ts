@@ -14,6 +14,7 @@ import { rpcContract } from "./shared/contract";
 import { DEFAULT_STORED_CONFIG, ENTRIES_CHANNEL, SentenceToolSchema, StoredConfigSchema, VoicesConfigSchema, type StoredConfig } from "./shared/herald";
 import { customCommandSeed, sentenceSettingsOf, SETTINGS } from "./shared/settings";
 import { bbEvents, bbLiveness } from "./server/bb-ports";
+import { SentenceHistory } from "./server/history";
 import { createHooks, type HeraldConfig } from "./server/hooks";
 import { kvBackend } from "./server/kv-backend";
 import { Liveness } from "./server/liveness";
@@ -54,6 +55,7 @@ export default async function plugin(bb: BbPluginApi) {
   });
 
   const writer = new SentenceWriter(bb.log);
+  const history = new SentenceHistory(bb.storage.kv, bb.log);
 
   let events: EventsPort | null = null;
   let liveness: Liveness | null = null;
@@ -109,6 +111,7 @@ export default async function plugin(bb: BbPluginApi) {
     publish,
     // The tool runs here, on the bb server's machine; see AGENTS.md.
     writeSentence: (command, prompt) => writer.write(command, prompt),
+    remember: (threadId, item) => history.append(threadId, item),
     log: bb.log,
   });
 
@@ -117,10 +120,15 @@ export default async function plugin(bb: BbPluginApi) {
   bb.events.on("thread.failed", ({ thread, error }) => hooks.failed(thread, error));
   bb.events.on("interaction.pending", ({ thread, interaction }) => hooks.interactionPending(thread, interaction));
   bb.events.on("thread.archived", ({ thread }) => hooks.gone(thread));
-  bb.events.on("thread.deleted", ({ thread }) => hooks.gone(thread));
+  bb.events.on("thread.deleted", ({ thread }) => {
+    hooks.gone(thread);
+    // Archived threads keep their history; a deleted one is gone for good.
+    history.remove(thread.id).catch(() => {});
+  });
 
   bb.rpc.register(rpcContract, {
     list: async () => ({ entries: await livenessOf().visible(store) }),
+    "history.list": ({ threadId }) => history.list(threadId).then((items) => ({ items })),
     "config.get": () => storedConfig(),
     // Any part of the stored configuration; the rest is kept. When the tool
     // becomes "custom" with nothing written yet, the command of the tool
@@ -156,6 +164,7 @@ export default async function plugin(bb: BbPluginApi) {
     hooks.dispose();
     await writer.dispose();
     await store.shutdown();
+    await history.flush();
     announceDrained(bb.pluginId, instance);
   });
 }

@@ -28,9 +28,10 @@ const events: EventsPort = {
 function setup(write: HookDeps["writeSentence"], config: HeraldConfig = CONFIG) {
   const store = new AttentionStore(null, recordingLog());
   const publish = vi.fn();
+  const remembered = vi.fn();
   const log = recordingLog();
-  const hooks = createHooks({ store, readConfig: async () => config, events, publish, log, writeSentence: write });
-  return { hooks, store, publish, log };
+  const hooks = createHooks({ store, readConfig: async () => config, events, publish, log, writeSentence: write, remember: remembered });
+  return { hooks, store, publish, log, remembered };
 }
 
 /** A writer whose reply the test releases. */
@@ -51,7 +52,7 @@ function heldWriter() {
 describe("hooks with a model-written sentence", () => {
   it("lists the entry with its fallback while the tool writes, then speaks what the tool wrote", async () => {
     const w = heldWriter();
-    const { hooks, store, publish } = setup(w.write);
+    const { hooks, store, publish, remembered } = setup(w.write);
     await hooks.idle(thread(), "I fixed auth.ts and added a test.");
     expect(store.get("t1")?.summary).toEqual({ status: "pending", fallback: "Login fix finished. I fixed auth.ts and added a test." });
     expect(publish).toHaveBeenCalledTimes(1);
@@ -59,10 +60,14 @@ describe("hooks with a model-written sentence", () => {
     expect(w.calls[0]?.prompt).toBe(
       "Thread: Login fix\nEvent: finished its turn\nRequest: Fix the login bug\nOutput: I fixed auth.ts and added a test.",
     );
+    expect(remembered).not.toHaveBeenCalled();
     w.release("Login fix is done; nothing is left for you.");
     await settle();
     expect(store.get("t1")?.summary).toEqual({ status: "ready", text: "Login fix is done; nothing is left for you." });
     expect(publish).toHaveBeenCalledTimes(2);
+    // Remembered once it has landed, with the model's words.
+    expect(remembered).toHaveBeenCalledTimes(1);
+    expect(remembered).toHaveBeenCalledWith("t1", expect.objectContaining({ text: "Login fix is done; nothing is left for you." }));
   });
 
   it("falls back to the plain sentence when the tool fails, and says why in the log", async () => {
@@ -86,7 +91,7 @@ describe("hooks with a model-written sentence", () => {
 
   it("takes back a sentence still being written when the agent works again, and keeps one already written", async () => {
     const w = heldWriter();
-    const { hooks, store, publish } = setup(w.write);
+    const { hooks, store, publish, remembered } = setup(w.write);
     await hooks.idle(thread(), "Done.");
     w.release("Login fix is done.");
     await settle();
@@ -95,10 +100,15 @@ describe("hooks with a model-written sentence", () => {
     expect(store.get("t1")?.summary).toEqual({ status: "ready", text: "Login fix is done." });
 
     publish.mockClear();
+    remembered.mockClear();
     await hooks.idle(thread({ id: "t2" }), "Done.");
     hooks.active(thread({ id: "t2" }));
     expect(store.get("t2")).toBeNull();
     expect(publish).toHaveBeenCalledTimes(2);
+    // Taken back before it was said: not part of the thread's history either.
+    w.release("Too late.");
+    await settle();
+    expect(remembered).not.toHaveBeenCalled();
   });
 
   it("drops a sentence that arrives after the thread moved on", async () => {
@@ -138,7 +148,7 @@ describe("hooks with a model-written sentence", () => {
       },
     };
     const store = new AttentionStore(null, recordingLog());
-    const hooks = createHooks({ store, readConfig: async () => CONFIG, events: longEvents, publish: vi.fn(), log: recordingLog(), writeSentence: w.write });
+    const hooks = createHooks({ store, readConfig: async () => CONFIG, events: longEvents, publish: vi.fn(), log: recordingLog(), writeSentence: w.write, remember: vi.fn() });
     await hooks.idle(thread(), "o".repeat(20_000));
     expect(w.calls[0]?.prompt.length).toBeLessThan(6_000);
   });
