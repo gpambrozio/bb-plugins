@@ -140,6 +140,29 @@ describe("AddToChatButton", () => {
     // The chat on screen is left alone.
     expect(view.inspection.composer.text).toBe("Look at this:");
   });
+
+  it("takes one thread at a time: a second pick waits, with the reason, while chats on screen still work", async () => {
+    const view = renderButton({ scope: { kind: "thread", threadId: "thr_a" } });
+
+    let menu = await openMenu(view);
+    fireEvent.click(within(menu).getByRole("menuitem", { name: /Tune the cache/ }));
+    await waitFor(() => expect(view.queryByRole("menu")).toBeNull());
+
+    // Neither opened thread's composer has appeared yet.
+    menu = await openMenu(view);
+    expect(within(menu).getByText("Adding to Tune the cache…")).toBeTruthy();
+    const other = within(menu).getByRole("menuitem", { name: /Write the changelog/ });
+    expect(other.getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(other);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(view.inspection.sidebarActionCalls).toHaveLength(1);
+    expect(pendingAdds.current()?.threadId).toBe("thr_b");
+
+    // The chat already on screen still takes the card at once.
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "Refactor the lexer" }));
+    await waitFor(() => expect(view.inspection.composer.text).toBe(`Look at this:\n\n${reference}`));
+    expect(pendingAdds.current()?.threadId).toBe("thr_b");
+  });
 });
 
 function fakeComposer(key: string, scope: PluginComposerScope) {
@@ -160,6 +183,7 @@ function renderControl(targets: ChatTargets<ReturnType<typeof fakeComposer>>, lo
         <AddToChatControl
           targets={targets as unknown as ChatTargets<PluginComposerApi>}
           loading={loading}
+          addingTo={null}
           item={item}
           column="issues"
           onOpenThread={onOpenThread}

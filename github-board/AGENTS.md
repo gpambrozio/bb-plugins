@@ -191,12 +191,15 @@ recently updated first. `chatTargets` in `app/add-to-chat.ts` makes that list.
 - **A thread that is not on screen is opened, then written to.** bb 0.45 has no way to write a draft
   that no composer shows: thread drafts live in the client, and a composer handle comes only from
   `useComposer()` or `useComposers()`. So picking such a thread puts the card in `pendingAdds`
-  (`app/pending-add.ts`, one per window, a later pick replaces it) and calls
+  (`app/pending-add.ts`, one per window: while it waits, the menu disables the other threads with
+  "Adding to <thread>…", and the store refuses a second request, so no card is dropped unseen; chats on
+  screen still take a card at once) and calls
   `experimental_useSidebarThreadActions().open(id, { split: true })`. bb splits the focused pane where
   it can and navigates to the thread where it cannot (compact viewport, splits off), which unmounts the
   board; that is why `PendingAddToChat` (`app/pending-add-delivery.tsx`), in the app overlay, delivers
   the card once a `thread`-scoped composer for that thread appears, and gives up with a toast after
-  15 s. It subscribes to `useComposers()` only while a card is pending.
+  15 s. The deadline is checked again at delivery, so a late timer or a remounted overlay never writes
+  an expired card. It subscribes to `useComposers()` only while a card is pending.
 - **It appends, never at the cursor.** `insert(…, { at: "end", block: true })`: a cursor insert replaces
   selected text, and the draft is the user's. Then `focus()`; never `submit()`. From the menu, a tick
   after the pick: while the menu is open its focus trap pulls the composer's focus back (the test

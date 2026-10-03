@@ -33,16 +33,17 @@ afterEach(() => {
 });
 
 describe("createPendingAdds", () => {
-  it("holds one card, which a later pick replaces", () => {
+  it("holds one card at a time and refuses another until it is taken", () => {
     const store = createPendingAdds(() => 1_000);
     const first = store.request(card);
-    const second = store.request({ ...card, threadId: "thr_c" });
-    expect(first.deadline).toBe(1_000 + PENDING_ADD_TIMEOUT_MS);
-    expect(store.current()).toBe(second);
-    expect(store.take(first.id)).toBeNull();
-    expect(store.take(second.id)).toBe(second);
+    expect(first).not.toBeNull();
+    expect(first?.deadline).toBe(1_000 + PENDING_ADD_TIMEOUT_MS);
+    expect(store.request({ ...card, threadId: "thr_c" })).toBeNull();
+    expect(store.current()).toBe(first);
+    expect(store.take(first?.id ?? -1)).toBe(first);
     expect(store.current()).toBeNull();
-    expect(store.take(second.id)).toBeNull();
+    expect(store.take(first?.id ?? -1)).toBeNull();
+    expect(store.request({ ...card, threadId: "thr_c" })?.threadId).toBe("thr_c");
   });
 
   it("tells subscribers when the card changes", () => {
@@ -50,7 +51,7 @@ describe("createPendingAdds", () => {
     const listener = vi.fn();
     const unsubscribe = store.subscribe(listener);
     const pending = store.request(card);
-    store.take(pending.id);
+    store.take(pending?.id ?? -1);
     unsubscribe();
     store.request(card);
     expect(listener).toHaveBeenCalledTimes(2);
@@ -71,6 +72,23 @@ describe("PendingAddToChat", () => {
     expect(view.inspection.composer.focusCount).toBe(1);
     expect(view.inspection.composer.submits).toEqual([]);
     expect(store.current()).toBeNull();
+  });
+
+  it("never writes a card past its deadline, even when its composer is on screen", () => {
+    // Requested long enough ago that the deadline has passed before the overlay saw it.
+    const store = createPendingAdds(() => Date.now() - PENDING_ADD_TIMEOUT_MS - 1);
+    store.request(card);
+    const view = renderSlot(
+      { component: () => <PendingAddToChat store={store} /> },
+      {},
+      { composer: { text: "Draft so far", scope: { kind: "thread", threadId: "thr_b" } } },
+    );
+
+    expect(store.current()).toBeNull();
+    expect(toastError).toHaveBeenCalledWith("Could not add to chat: “Tune the cache” did not open.");
+    expect(toastError).toHaveBeenCalledTimes(1);
+    expect(view.inspection.composer.text).toBe("Draft so far");
+    expect(view.inspection.composer.focusCount).toBe(0);
   });
 
   it("waits while another chat is on screen, then gives up and says so", async () => {

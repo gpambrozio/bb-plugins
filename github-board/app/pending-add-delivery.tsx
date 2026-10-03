@@ -4,7 +4,8 @@
  * after its draft and the caret follows, as for a chat that was already open.
  * Mounted once per window in the app overlay, and it subscribes to the
  * composers only while a card is pending, since `useComposers()` re-renders on
- * every keystroke in any draft.
+ * every keystroke in any draft. A card past its deadline is never written,
+ * even when its composer turns up before the timer fires.
  */
 import { useEffect, useSyncExternalStore } from "react";
 import { useComposers } from "@get-bb/plugin-sdk/app";
@@ -27,6 +28,10 @@ function Deliver({ pending, store }: { pending: PendingAdd; store: PendingAdds }
 
   useEffect(() => {
     if (target === undefined || store.take(pending.id) === null) return;
+    if (Date.now() >= pending.deadline) {
+      notOpened(pending);
+      return;
+    }
     try {
       addCardToComposer(target, pending.item, pending.column);
     } catch (cause) {
@@ -37,9 +42,7 @@ function Deliver({ pending, store }: { pending: PendingAdd; store: PendingAdds }
   useEffect(() => {
     const timer = setTimeout(
       () => {
-        if (store.take(pending.id) !== null) {
-          toast.error(`Could not add to chat: “${pending.title}” did not open.`);
-        }
+        if (store.take(pending.id) !== null) notOpened(pending);
       },
       Math.max(0, pending.deadline - Date.now()),
     );
@@ -47,4 +50,8 @@ function Deliver({ pending, store }: { pending: PendingAdd; store: PendingAdds }
   }, [pending, store]);
 
   return null;
+}
+
+function notOpened(pending: PendingAdd) {
+  toast.error(`Could not add to chat: “${pending.title}” did not open.`);
 }

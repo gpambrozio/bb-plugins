@@ -7,14 +7,16 @@
  * the card's own projects' first. A chat on screen gets the card at once. A
  * thread that is not on screen is opened (beside the board where bb can split
  * the window, in its place where it cannot) and gets the card once its
- * composer appears, which the app overlay sees to (`pending-add.ts`).
+ * composer appears, which the app overlay sees to (`pending-add.ts`). One such
+ * card at a time: until it lands, the other threads are disabled with the
+ * reason, while the chats on screen still take a card at once.
  *
  * The board's own Send to chat dialog is never a target (see `chatTargets`).
  * The hooks live in this small component on purpose: `useComposers()`
  * re-renders its caller on every keystroke in any listed draft, and the
  * detail panel around it renders a whole body of Markdown.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import {
   experimental_useSidebarThreadActions,
   experimental_useSidebarThreads,
@@ -43,6 +45,7 @@ const NO_PROJECTS: ReadonlySet<string> = new Set();
 export function AddToChatControl({
   targets,
   loading,
+  addingTo,
   item,
   column,
   onOpenThread,
@@ -50,6 +53,8 @@ export function AddToChatControl({
   targets: ChatTargets<PluginComposerApi>;
   /** The sidebar's thread list has not arrived yet. */
   loading: boolean;
+  /** The thread an earlier pick is still waiting to open, which keeps the others from being picked. */
+  addingTo: string | null;
   item: BoardItem;
   column: ColumnId;
   onOpenThread(target: ThreadTarget): void;
@@ -91,8 +96,15 @@ export function AddToChatControl({
         {threads.length > 0 ? (
           <>
             <DropdownMenuLabel>Open a thread and add</DropdownMenuLabel>
+            {addingTo === null ? null : (
+              <p className="px-2 pb-1 text-xs text-muted-foreground">Adding to {addingTo}…</p>
+            )}
             {threads.map((target) => (
-              <DropdownMenuItem key={target.threadId} onSelect={() => setTimeout(() => onOpenThread(target), 0)}>
+              <DropdownMenuItem
+                key={target.threadId}
+                disabled={addingTo !== null}
+                onSelect={() => setTimeout(() => onOpenThread(target), 0)}
+              >
                 <span className="flex min-w-0 flex-col">
                   <span className="truncate">{target.title}</span>
                   {target.projectName === null ? null : (
@@ -146,6 +158,7 @@ export function AddToChatButton({
   const { status, threads, projects } = experimental_useSidebarThreads();
   const actions = experimental_useSidebarThreadActions();
   const cardProjectIds = useCardProjectIds(item);
+  const pending = useSyncExternalStore(pendingAdds.subscribe, pendingAdds.current, pendingAdds.current);
   const targets = useMemo(
     () => chatTargets({ composers, threads, projects, cardProjectIds, sendDialogOpen }),
     [composers, threads, projects, cardProjectIds, sendDialogOpen],
@@ -153,12 +166,14 @@ export function AddToChatButton({
 
   const openThread = (target: ThreadTarget) => {
     const { repository, number, title, url } = item;
-    pendingAdds.request({
+    const held = pendingAdds.request({
       threadId: target.threadId,
       title: target.title,
       item: { repository, number, title, url },
       column,
     });
+    // The menu disables this while another card waits; this is the backstop.
+    if (held === null) return;
     actions.open(target.threadId, { split: true });
   };
 
@@ -166,6 +181,7 @@ export function AddToChatButton({
     <AddToChatControl
       targets={targets}
       loading={status === "loading"}
+      addingTo={pending?.title ?? null}
       item={item}
       column={column}
       onOpenThread={openThread}

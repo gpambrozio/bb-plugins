@@ -3,10 +3,11 @@
  * write a draft that no composer shows, so the board opens the thread and
  * this store holds the card until the thread's composer appears.
  *
- * One pending card per window; a later pick replaces an earlier one. The
- * app-wide overlay (`PendingAddToChat`) delivers it, because opening the
- * thread may navigate away from the board, which unmounts the detail panel
- * that asked. Nothing persists: a card still pending at a reload is dropped.
+ * One pending card per window: while one waits, another is refused, and the
+ * board's menu says why, so no card is ever dropped unseen. The app-wide
+ * overlay (`PendingAddToChat`) delivers it, because opening the thread may
+ * navigate away from the board, which unmounts the detail panel that asked.
+ * Nothing persists: a card still pending at a reload is dropped.
  */
 import type { BoardItem, ColumnId } from "../shared/board";
 
@@ -25,7 +26,8 @@ export interface PendingAdd {
 }
 
 export interface PendingAdds {
-  request(add: Omit<PendingAdd, "id" | "deadline">): PendingAdd;
+  /** Holds the card, or returns null and holds nothing while another card is pending. */
+  request(add: Omit<PendingAdd, "id" | "deadline">): PendingAdd | null;
   current(): PendingAdd | null;
   /** Removes and returns the pending card if it is still `id`, so it is delivered at most once. */
   take(id: number): PendingAdd | null;
@@ -42,6 +44,7 @@ export function createPendingAdds(now: () => number = Date.now): PendingAdds {
   };
   return {
     request(add) {
+      if (pending !== null) return null;
       const next = { ...add, id: nextId++, deadline: now() + PENDING_ADD_TIMEOUT_MS };
       set(next);
       return next;
