@@ -311,6 +311,7 @@ function Board() {
             updateError={updateErrors.get(detail.item.id) ?? null}
             onWidthCommitted={(fraction) => updatePrefs({ detailWidthFraction: fraction })}
             onClose={() => setDetailId(null)}
+            sendDialogOpen={sendTarget !== null}
             onSend={() => setSendTarget({ item: detail.item, column: detail.column })}
             onUpdateBranch={() => actions.onUpdateBranch(detail.item)}
           />

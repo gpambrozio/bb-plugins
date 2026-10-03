@@ -32,7 +32,8 @@ plugin here shares.
 | `app/markdown-parse.ts`, `app/html.ts`, `app/markdown.tsx` | The body renderer — see *Bodies and images*. |
 | `app/image-gate.ts`, `app/remote-image.tsx` | Whether an image may be requested yet, and the component that asks. |
 | `app/send-dialog.tsx` | Send to chat: bb's new-thread composer in a dialog. |
-| `app/add-to-chat.ts`, `app/add-to-chat-button.tsx` | Add to chat: the card into a composer already on screen. |
+| `app/add-to-chat.ts`, `app/add-to-chat-button.tsx` | Add to chat: the card into a chat's draft, picked from those on screen and recent threads. |
+| `app/pending-add.ts`, `app/pending-add-delivery.tsx` | Add to chat for a thread that was not on screen: held until its composer appears. |
 | `app/prompt-settings.tsx` | The template editor, on the settings page and behind the board's gear. |
 
 ## Where things run
@@ -174,12 +175,31 @@ composer's environment picker replaces.
 
 ## Add to chat
 
-`app/add-to-chat-button.tsx` sits beside Send to chat in the detail panel and writes into a composer
-that is already on screen, through bb 0.45's `useComposers()` — which is why `engines.bb` is `>=0.45`:
-on 0.44 the hook does not exist and the panel would crash. It draws nothing while no composer is on
-screen, a button with one, and a menu naming each (by `scope`, through the sidebar's thread and project
-names) with several.
+`app/add-to-chat-button.tsx` sits beside Send to chat in the detail panel and writes the card into a
+chat's draft, through bb 0.45's `useComposers()` — which is why `engines.bb` is `>=0.45`: on 0.44 the
+hook does not exist and the panel would crash. It is always there, as a menu: the composers on screen
+first (named by `scope`, through the sidebar's thread and project names), then up to eight sidebar
+threads that are not on screen, the card's projects' first (`sendOptions`' candidates) and the most
+recently updated first. `chatTargets` in `app/add-to-chat.ts` makes that list.
 
+- **The Send to chat dialog's composer is never a target.** `experimental_NewThreadComposer` is a
+  new-thread composer, and `useComposers()` lists it like any other; 0.2.0 showed Add to chat only while
+  a composer was on screen, so it appeared only behind the open dialog. No handle field names the
+  component that drew it (bb 0.45 builds `key` from the `draftKey`, but that format is not documented),
+  so the board passes `sendDialogOpen` down and `chatTargets` drops every new-thread composer while it
+  is set. The dialog is modal, so no other new-thread composer can be picked meanwhile anyway.
+- **A thread that is not on screen is opened, then written to.** bb 0.45 has no way to write a draft
+  that no composer shows: thread drafts live in the client, and a composer handle comes only from
+  `useComposer()` or `useComposers()`. So picking such a thread puts the card in `pendingAdds`
+  (`app/pending-add.ts`, one per window: while it waits, the menu disables the other threads with
+  "Adding to <thread>…", and the store refuses a second request, so no card is dropped unseen; chats on
+  screen still take a card at once) and calls
+  `experimental_useSidebarThreadActions().open(id, { split: true })`. bb splits the focused pane where
+  it can and navigates to the thread where it cannot (compact viewport, splits off), which unmounts the
+  board; that is why `PendingAddToChat` (`app/pending-add-delivery.tsx`), in the app overlay, delivers
+  the card once a `thread`-scoped composer for that thread appears, and gives up with a toast after
+  15 s. The deadline is checked again at delivery, so a late timer or a remounted overlay never writes
+  an expired card. It subscribes to `useComposers()` only while a card is pending.
 - **It appends, never at the cursor.** `insert(…, { at: "end", block: true })`: a cursor insert replaces
   selected text, and the draft is the user's. Then `focus()`; never `submit()`. From the menu, a tick
   after the pick: while the menu is open its focus trap pulls the composer's focus back (the test
@@ -191,8 +211,8 @@ names) with several.
   in any listed draft; the detail panel around it renders a Markdown body.
 - Not on the card's hover corner: at the narrowest column (240 px) it does not fit beside Send to chat
   and Update branch.
-- The SDK harness's `useComposers()` always reports exactly one composer, so the none and several cases
-  are tested through `AddToChatControl` with fake handles.
+- The SDK harness's `useComposers()` always reports exactly one composer, so several on screen are
+  tested through `AddToChatControl` with fake handles.
 
 ## Storage
 

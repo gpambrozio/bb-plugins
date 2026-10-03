@@ -91,6 +91,7 @@ export function DetailPanel({
   updateError,
   onWidthCommitted,
   onClose,
+  sendDialogOpen,
   onSend,
   onUpdateBranch,
 }: {
@@ -104,6 +105,8 @@ export function DetailPanel({
   updateError: string | null;
   onWidthCommitted(fraction: number): void;
   onClose(): void;
+  /** The board's Send to chat dialog is open; its composer is never an Add to chat target. */
+  sendDialogOpen: boolean;
   onSend(): void;
   onUpdateBranch(): void;
 }) {
@@ -236,7 +239,7 @@ export function DetailPanel({
             <Icon name="MessageSquarePlus" />
             Send to chat
           </Button>
-          <AddToChatButton item={item} column={column} />
+          <AddToChatButton item={item} column={column} sendDialogOpen={sendDialogOpen} />
           {item.branch?.canUpdate === true ? (
             <Button size="sm" variant="outline" disabled={updating} onClick={onUpdateBranch}>
               {updating ? "Updating…" : "Update branch"}
