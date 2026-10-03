@@ -17,13 +17,14 @@ import {
   useComposer,
 } from "@get-bb/plugin-sdk/app";
 import { type ComponentType, useState } from "react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { toast } from "sonner";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { RpcContract } from "../shared/contract";
 import type { SkillDocument, SkillEntry, SkillList } from "../shared/skills";
 
 import { SkillsComposerButton } from "./composer-button";
-import { SkillsPopup } from "./composer-popup";
+import { SkillsPopup, toggleSkillsPopup } from "./composer-popup";
 import { SkillsPanel } from "./panel";
 
 beforeEach(() => {
@@ -468,6 +469,28 @@ describe("the composer popup", () => {
     fireEvent.click(await screen.findByText("deploy"));
     await screen.findByRole("button", { name: "Add to chat" });
     for (const button of screen.getAllByRole("button")) expect(button.getAttribute("type")).toBe("button");
+  });
+
+  // Escape reaches the composer's form only from something focused inside it.
+  it("can take the focus a press on its text would drop on the page", async () => {
+    renderComposer(SkillsPopup);
+    await screen.findByText("deploy");
+    expect(screen.getByTestId("skills-popup").getAttribute("tabindex")).toBe("-1");
+  });
+
+  it("says so when bb will not open it", () => {
+    const spy = vi.spyOn(toast, "error").mockImplementation(() => 0);
+    const refused: string[] = [];
+    toggleSkillsPopup({
+      experimental_closePopup: () => false,
+      experimental_openPopup: (id) => {
+        refused.push(id);
+        return false;
+      },
+    });
+    expect(refused).toEqual(["skills"]);
+    expect(spy).toHaveBeenCalledWith("The Skills list opens only in a thread's own message box.");
+    spy.mockRestore();
   });
 
   // A press the form sees moves the focus to the editor, which closes the popup.

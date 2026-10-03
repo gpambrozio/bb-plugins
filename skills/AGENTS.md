@@ -97,11 +97,13 @@ desktop-v0.45.0), each with a test:
   the message, so every button the browser and the popup draw says `type="button"`.
 - **A press in the form that is not on a control focuses the editor, and the editor's focus closes the
   popup.** The popup's root stops `mousedown` from reaching the form, so a press on a body, a heading
-  or the scroll bar leaves it open.
+  or the scroll bar leaves it open. The root is also focusable (`tabIndex={-1}`): such a press would
+  otherwise drop the focus on the page, out of the form that handles Escape.
 - **Its component mounts each time it opens.** The button and the popup are separate slots with no
   props between them, so they share their answers through `app/answer-channel.ts`: the popup opens on
   the list the button counted, its own scan (one per opening) refreshes both, and a thread's last
-  answer is dropped once nothing shows it.
+  answer is dropped once nothing shows it. Answers are ordered by when they were asked for, so the
+  button's slower first scan cannot overwrite the popup's newer one.
 
 **Open in panel** calls `useBbNavigate().openThreadPanel({ actionId: "skills" })` after closing the
 popup; the command palette entry opens the same tab. When the popup is showing a skill, **Open in

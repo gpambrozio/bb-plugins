@@ -52,6 +52,18 @@ describe("withSkillCommand", () => {
     expect(after.mentions).toEqual([pill(deploy), fileMention(8)]);
   });
 
+  it("replaces a leading pill that text follows directly, and a longer one with a shorter", () => {
+    const outline: SkillCommand = { name: "outline", source: "skill", origin: "project", argumentHint: null };
+    const go: SkillCommand = { ...deploy, name: "go" };
+    const glued = withSkillCommand({ text: "/outline@auth.ts", mentions: [pill(outline), fileMention(8)] }, deploy);
+    expect(glued.text).toBe("/deploy @auth.ts");
+    expect(glued.mentions).toEqual([pill(deploy), fileMention(8)]);
+    const shorter = withSkillCommand({ text: "/outline then @auth.ts", mentions: [pill(outline), fileMention(14)] }, go);
+    expect(shorter.text).toBe("/go then @auth.ts");
+    expect(shorter.mentions).toEqual([pill(go), fileMention(9)]);
+    expect(shorter.text.slice(9, 17)).toBe("@auth.ts");
+  });
+
   it("keeps a command pill that is not at the start", () => {
     const explain: SkillCommand = { name: "explain", source: "command", origin: "builtin", argumentHint: null };
     const after = withSkillCommand({ text: "then /explain", mentions: [pill(explain, 5)] }, deploy);

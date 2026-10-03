@@ -45,11 +45,14 @@ function useLoaded<T>(
 
   useEffect(() => {
     let live = true;
+    const ticket = channel?.ticket() ?? 0;
     loadRef.current().then(
       (data) => {
         if (!live) return;
-        setAnswer({ key, state: { status: "ready", data } });
-        channel?.publish(key, data);
+        // Through the channel, this holder hears its own answer as a
+        // subscriber, unless a newer one is already out.
+        if (channel === undefined) setAnswer({ key, state: { status: "ready", data } });
+        else channel.publish(key, data, ticket);
       },
       (error: unknown) => live && setAnswer({ key, state: { status: "error", message: messageOf(error) } }),
     );

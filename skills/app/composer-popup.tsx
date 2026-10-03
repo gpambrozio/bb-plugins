@@ -38,7 +38,9 @@ export function toggleSkillsPopup(composer: {
  * bb draws the popup inside the composer's form, and a press anywhere in that
  * form that is not on a control moves the focus to the editor — which closes
  * the popup. Kept here, a press on the list's text, a skill's body or the
- * scroll bar leaves the popup open, as the popover it replaced did.
+ * scroll bar leaves the popup open, as the popover it replaced did. The root
+ * takes the focus such a press would otherwise drop on the page, so Escape and
+ * the browse command still reach the composer and close the popup.
  */
 function keepPressInPopup(event: MouseEvent) {
   event.stopPropagation();
@@ -85,7 +87,12 @@ function SkillsPopupContent({ threadId }: { threadId: string }) {
   }
 
   return (
-    <div className="flex max-h-[min(32rem,70vh)] flex-col" onMouseDown={keepPressInPopup}>
+    <div
+      className="flex max-h-[min(32rem,70vh)] flex-col outline-none"
+      tabIndex={-1}
+      data-testid="skills-popup"
+      onMouseDown={keepPressInPopup}
+    >
       <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
         <span className="text-sm font-medium text-foreground">Skills</span>
         <Button type="button" variant="link" size="sm" className="h-auto px-0" onClick={openPanel}>
