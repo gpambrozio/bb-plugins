@@ -215,9 +215,10 @@ describe("prepareHome and the charter", () => {
     expect(agents).not.toContain("firstmate-charter");
     expect(fingerprint(await read(home, CHARTER_FILE))).toBe(fingerprint(await readTemplate(TEMPLATES.charter)));
     // Pinned so a charter change is deliberate: every untouched home follows it, and every edited one is
-    // offered it as charter.new.md. 102ecce849ac9918 is the charter telling the first mate what to do when
+    // offered it as charter.new.md. dab8203ddd18566b is the charter telling the first mate what to do when
     // bb cuts a crewmate's work short (host loss, a daemon restart, a failed setup, an undelivered message)
-    // and that a stop by hand sends nothing; dda507f48da7647d held any work a relayed message starts,
+    // and to check the log for a stop by hand, which sends nothing, before any nudge, resend or relaunch;
+    // dda507f48da7647d held any work a relayed message starts,
     // steers or relaunches for the captain's word to merge; 022869ca9102c7d4 held only work it started, over
     // `+yolo` and standing orders; 7ac1042b58fb4a85 had it saying a message relayed by `tell` (as
     // `/fm` sends) opens with `Relayed by bb firstmate-crew tell` and never stands in for the captain's word;
@@ -228,7 +229,7 @@ describe("prepareHome and the charter", () => {
     // mate to always title its crew; 79b5a4bc6315ef40 the charter rewritten for bb; 09fd534b24db4e75 was Paseo's text
     // with only its placeholders renamed, e0b749cb695c5df6 the charter as it moved into templates/, and
     // 8b6df21d082df6e6 Paseo's before {{crewModeRule}} became {{crewReasoningRule}}.
-    expect(fingerprint(await readTemplate(TEMPLATES.charter))).toBe("102ecce849ac9918");
+    expect(fingerprint(await readTemplate(TEMPLATES.charter))).toBe("dab8203ddd18566b");
 
     await editCopy(home, "# My first mate\n\n<!-- a note to myself -->\nYour home is {{home}}; keep it tidy.");
     await prepareHome(home, homeConfig);

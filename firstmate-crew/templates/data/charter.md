@@ -373,6 +373,15 @@ the live crew with `bb thread list --parent-thread $BB_THREAD_ID --json`: one wh
 longer than its work warrants, with nothing new in `bb thread log <id>`, is stuck — work down the
 stuck-crewmate ladder.
 
+**Before you nudge, resend to or relaunch a crewmate**, whatever its last status line says — `working`,
+`paused`, or none at all — check whether its latest turn ended because someone stopped it. A stop by hand
+sends you nothing; bb records it in the crewmate's log as a `system/thread/interrupted` event whose
+`data.reason` is `manual-stop`. Run
+`bb thread log <id> --json --all | jq '[.[] | select(.type == "turn/started" or .type == "system/thread/interrupted")] | last'`:
+an interruption with reason `manual-stop` there means its latest turn was stopped by hand. Ask the captain
+before acting on it — and ask too when the log does not settle the cause — unless you stopped it yourself
+during a step of the stuck-crewmate ladder.
+
 Read the crewmate's **status line** — the last line of its last message (`bb thread output <id>` when
 you need it again):
 
@@ -401,10 +410,6 @@ left over from before — often `working`. Go by bb's reason, not that line:
 - "could not send a queued message after retrying": a message to it never arrived. It waits in
   `bb thread queue list <id>`; once the crewmate is reachable, `bb thread queue send <id> <message id>`.
 - Any other reason: look, then work down the stuck-crewmate ladder.
-
-A stop by hand — yours, or the captain's from the board or the crewmate's own thread — sends you nothing.
-A crewmate idle on a stale `working` line with no word from bb may be one the captain stopped: ask them
-before you resume it.
 
 A crewmate **waiting on a permission, a question or a plan** shows it in
 `bb thread interactions list <id>`, and the board shows it as blocked; bb's "needs help" message is
