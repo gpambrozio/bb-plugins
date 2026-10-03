@@ -5,6 +5,17 @@ Notable changes to `github-board`. The other plugins in this repository version 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.2.0
+
+Needs bb 0.45 or later. On bb 0.44, stay on 0.1.
+
+### Added
+
+- **Add to chat** in a card's detail panel puts the card — its kind, number, title and GitHub link — at
+  the end of a chat that is already open beside the board, without starting a thread or sending
+  anything. With several chats open it asks which one. It only shows while a chat is open, and it
+  never replaces what you have already typed.
+
 ## 0.1.1
 
 ### Changed
