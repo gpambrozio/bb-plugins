@@ -65,6 +65,7 @@ describe("bb firstmate-crew crew spawn", () => {
     expect(spawned.providerId).toBeUndefined();
     expect(spawned.model).toBeUndefined();
     expect(spawned.reasoningLevel).toBeUndefined();
+    expect(spawned.pinned).toBeUndefined();
     const newId = [...threads.threads.keys()].find((id) => id !== "thr_mate");
     expect(result.stdout).toBe(`${newId}\n`);
   });

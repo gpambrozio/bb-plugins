@@ -177,6 +177,7 @@ export function bbThreads(sdk: PluginBbSdk): ThreadsPort {
         model: optional(args.model),
         reasoningLevel: reasoningOf(args.reasoningLevel),
         pluginMetadata: args.metadata,
+        pinned: args.pinned,
       });
       return toInfo(row);
     },
@@ -224,9 +225,6 @@ export function bbThreads(sdk: PluginBbSdk): ThreadsPort {
     },
     async compact(id) {
       await sdk.threads.compact({ threadId: id });
-    },
-    async pin(id) {
-      await sdk.threads.pin({ threadId: id });
     },
   };
 }

@@ -101,9 +101,9 @@ async function readyHome(settings: FirstmateSettings, home: string = homePath(se
  * starts a pinned first mate in it with the captain's opening. Refused when a first mate is already
  * aboard, so a second launch cannot start a second one.
  *
- * A failure before the thread exists leaves no stored id and names the step that failed. Once the
- * thread exists its id is stored before it is pinned, so a pin that fails cannot leave a first mate
- * the plugin has forgotten.
+ * A failure before the thread exists leaves no stored id and names the step that failed. bb creates
+ * the thread pinned in the same request, so there is no later step to fail between starting the first
+ * mate and storing its id.
  */
 export function launchMate(
   deps: MateDeps,
@@ -126,10 +126,10 @@ export function launchMate(
       model: pick.model,
       ...(pick.reasoningLevel === undefined || pick.reasoningLevel === "" ? {} : { reasoningLevel: pick.reasoningLevel }),
       metadata: { [CREW_METADATA.role]: CREW_METADATA.mateRole },
+      pinned: true,
     };
     const mate = await step("The first mate could not be started", () => deps.threads.spawn(args));
     await deps.store.setMateThreadId(mate.id);
-    await step(`The first mate (${mate.id}) started but could not be pinned`, () => deps.threads.pin(mate.id));
     return mate;
   });
 }

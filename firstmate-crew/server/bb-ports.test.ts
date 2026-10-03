@@ -53,6 +53,15 @@ describe("bbThreads.spawn", () => {
     await bbThreads(sdk).spawn({ projectId: "proj_web", title: "t", prompt: "p", environment: { kind: "reuse", environmentId: "env_1" }, metadata: {} });
     expect(spawnedEnvironment(harness)).toEqual({ type: "reuse", environmentId: "env_1" });
   });
+
+  it("asks bb to create the thread pinned only when told to", async () => {
+    const { sdk, harness } = fakeSdk();
+    const threads = bbThreads(sdk);
+    await threads.spawn({ projectId: "proj_home", title: "First mate", prompt: "hi", environment: { kind: "path", path: "/home/fm" }, metadata: {}, pinned: true });
+    await threads.spawn({ projectId: "proj_web", title: "t", prompt: "p", environment: { kind: "reuse", environmentId: "env_1" }, metadata: {} });
+    const pinned = harness.callsTo("threads.spawn").map(([args]) => (args as { pinned?: boolean }).pinned);
+    expect(pinned).toEqual([true, undefined]);
+  });
 });
 
 describe("bbThreads.workspacePath", () => {
