@@ -15,6 +15,7 @@ import type { BoardItem, ColumnId, ItemComment, ItemDetails } from "../shared/bo
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
+import { AddToChatButton } from "./add-to-chat-button";
 import { absoluteDate, behindSentence, kindLabel, relativeTime, stateLabel, staleBranch } from "./board-logic";
 import { isOpenableLink } from "./link";
 import { MarkdownBody } from "./markdown";
@@ -235,6 +236,7 @@ export function DetailPanel({
             <Icon name="MessageSquarePlus" />
             Send to chat
           </Button>
+          <AddToChatButton item={item} column={column} />
           {item.branch?.canUpdate === true ? (
             <Button size="sm" variant="outline" disabled={updating} onClick={onUpdateBranch}>
               {updating ? "Updating…" : "Update branch"}

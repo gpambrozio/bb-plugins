@@ -32,6 +32,7 @@ plugin here shares.
 | `app/markdown-parse.ts`, `app/html.ts`, `app/markdown.tsx` | The body renderer — see *Bodies and images*. |
 | `app/image-gate.ts`, `app/remote-image.tsx` | Whether an image may be requested yet, and the component that asks. |
 | `app/send-dialog.tsx` | Send to chat: bb's new-thread composer in a dialog. |
+| `app/add-to-chat.ts`, `app/add-to-chat-button.tsx` | Add to chat: the card into a composer already on screen. |
 | `app/prompt-settings.tsx` | The template editor, on the settings page and behind the board's gear. |
 
 ## Where things run
@@ -170,6 +171,28 @@ append a row to a thread's timeline; the card lives in the prompt and the thread
 Also dropped: opening the card in a browser tab beside the new thread (`openUrl` follows the user's
 in-app/external preference, so it could throw them out to a browser), and the host picker, which the
 composer's environment picker replaces.
+
+## Add to chat
+
+`app/add-to-chat-button.tsx` sits beside Send to chat in the detail panel and writes into a composer
+that is already on screen, through bb 0.45's `useComposers()` — which is why `engines.bb` is `>=0.45`:
+on 0.44 the hook does not exist and the panel would crash. It draws nothing while no composer is on
+screen, a button with one, and a menu naming each (by `scope`, through the sidebar's thread and project
+names) with several.
+
+- **It appends, never at the cursor.** `insert(…, { at: "end", block: true })`: a cursor insert replaces
+  selected text, and the draft is the user's. Then `focus()`; never `submit()`. From the menu, a tick
+  after the pick: while the menu is open its focus trap pulls the composer's focus back (the test
+  checks where focus lands).
+- **One plain-text line**, `cardReference`: kind, `owner/name#number`, title (whitespace collapsed) and
+  the card's URL. No mention pill — that would need a mention provider on the server — and not the
+  column's prompt template, which is what Send to chat is for.
+- **The hooks stay in that small component.** `useComposers()` re-renders its caller on every keystroke
+  in any listed draft; the detail panel around it renders a Markdown body.
+- Not on the card's hover corner: at the narrowest column (240 px) it does not fit beside Send to chat
+  and Update branch.
+- The SDK harness's `useComposers()` always reports exactly one composer, so the none and several cases
+  are tested through `AddToChatControl` with fake handles.
 
 ## Storage
 

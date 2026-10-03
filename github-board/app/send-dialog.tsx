@@ -41,9 +41,7 @@ function seedsFrom(launch: LaunchDefaults | null): Partial<ComposerProps> {
     defaultModel: launch.model,
     defaultReasoningLevel: launch.reasoningLevel as ComposerProps["defaultReasoningLevel"],
     defaultPermissionMode: launch.permissionMode as ComposerProps["defaultPermissionMode"],
-    ...(launch.serviceTier === undefined
-      ? {}
-      : { defaultServiceTier: launch.serviceTier as ComposerProps["defaultServiceTier"] }),
+    ...(launch.serviceTier === undefined ? {} : { defaultServiceTier: launch.serviceTier }),
     ...(launch.environment === undefined
       ? {}
       : { defaultEnvironment: launch.environment as ComposerProps["defaultEnvironment"] }),

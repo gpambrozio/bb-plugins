@@ -1,6 +1,6 @@
 {
   "name": "@gpambrozio/bb-plugin-github-board",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "license": "MIT",
   "author": "gpambrozio (https://github.com/gpambrozio)",
   "homepage": "https://github.com/gpambrozio/bb-plugins/tree/main/github-board#readme",
@@ -14,8 +14,8 @@
   },
   "type": "module",
   "engines": {
-    "bb": ">=0.44",
-    "bbPluginSdk": ">=0.5.29"
+    "bb": ">=0.45",
+    "bbPluginSdk": ">=0.6.15"
   },
   "scripts": {
     "test": "vitest run",
