@@ -50,6 +50,8 @@ export const ReportedSkillSchema = z.object({
   name: z.string(),
   description: z.string(),
   argumentHint: z.string(),
+  /** Where bb's list says it comes from; Add to chat hands it on to the pill. */
+  origin: z.enum(["builtin", "project", "user"]),
 });
 
 export type ReportedSkill = z.infer<typeof ReportedSkillSchema>;

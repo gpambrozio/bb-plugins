@@ -6,8 +6,12 @@
  *
  * `onAdded` is what happens after **Add to chat** has put the command in the
  * composer, and the one thing the two callers do differently: the panel moves
- * to the thread, while the popover closes over a composer that is already the
+ * to the thread, while the popup closes over a composer that is already the
  * thread's.
+ *
+ * Every button here says `type="button"`. bb draws the composer popup inside
+ * the composer's `<form>`, where a button with no type submits the form — it
+ * would send the message.
  */
 import { Markdown } from "@get-bb/plugin-sdk/app";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
@@ -18,6 +22,7 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
 import { type ReportedSkill, type SkillEntry, type SkillList, SOURCE_KINDS } from "../shared/skills";
+import { discoveredCommand, reportedCommand, type SkillCommand } from "./insert";
 import { withoutImages } from "./markdown";
 import { type Loaded, useAddToChat, useSkillDocument } from "./use-skills";
 
@@ -34,10 +39,10 @@ export function selectionFrom(params: unknown): Selection | null {
 
 /**
  * Where the browser is drawn. The panel is a tab the host scrolls and pads; the
- * popover is a small surface, so the path and **Copy path** stay in the panel,
- * which is for locating a skill as well as using it.
+ * composer popup is a small surface, so the path and **Copy path** stay in the
+ * panel, which is for locating a skill as well as using it.
  */
-export type SkillBrowserFrame = "panel" | "popover";
+export type SkillBrowserFrame = "panel" | "popup";
 
 const PROVIDER_NAMES: Readonly<Record<string, string>> = {
   "claude-code": "Claude Code",
@@ -88,7 +93,7 @@ function Row({ name, hint, description, onSelect }: { name: string; hint?: strin
 
 function BackLink({ onBack }: { onBack: () => void }) {
   return (
-    <Button variant="link" size="sm" className="mb-2 h-auto px-0" onClick={onBack}>
+    <Button type="button" variant="link" size="sm" className="mb-2 h-auto px-0" onClick={onBack}>
       ← All skills
     </Button>
   );
@@ -98,11 +103,11 @@ function BackLink({ onBack }: { onBack: () => void }) {
  * **Add to chat**, shared by both detail screens. Shown only where the composer
  * it would write to is this thread's.
  */
-function AddToChat({ threadId, name, onAdded }: { threadId: string; name: string; onAdded: () => void }) {
+function AddToChat({ threadId, command, onAdded }: { threadId: string; command: SkillCommand; onAdded: () => void }) {
   const chat = useAddToChat(threadId, onAdded);
   if (!chat.canAdd) return null;
   return (
-    <Button className="my-3 w-full" onClick={() => chat.add(name)}>
+    <Button type="button" className="my-3 w-full" onClick={() => chat.add(command)}>
       Add to chat
     </Button>
   );
@@ -121,14 +126,15 @@ function SkillDetail({
   threadId,
   frame,
   skillId,
-  userInvocable,
+  entry,
   onBack,
   onAdded,
 }: {
   threadId: string;
   frame: SkillBrowserFrame;
   skillId: string;
-  userInvocable: boolean;
+  /** The skill's row in the list, or undefined while the list is loading. */
+  entry: SkillEntry | undefined;
   onBack: () => void;
   onAdded: () => void;
 }) {
@@ -150,13 +156,23 @@ function SkillDetail({
               <code className="min-w-0 flex-1 break-all font-mono text-xs text-muted-foreground select-text">
                 {state.data.path}
               </code>
-              <Button variant="outline" size="sm" className="shrink-0" onClick={() => copyPath(state.data.path)}>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="shrink-0"
+                onClick={() => copyPath(state.data.path)}
+              >
                 Copy path
               </Button>
             </div>
           ) : null}
-          {userInvocable ? (
-            <AddToChat threadId={threadId} name={state.data.name} onAdded={onAdded} />
+          {(entry?.userInvocable ?? true) ? (
+            <AddToChat
+              threadId={threadId}
+              command={discoveredCommand(state.data.name, entry?.source.kind)}
+              onAdded={onAdded}
+            />
           ) : (
             <p className="my-3 text-sm text-muted-foreground">
               This skill is model-invoked only. The agent can use it, but it has no command to add to the chat.
@@ -179,11 +195,14 @@ function SkillDetail({
 function ReportedDetail({
   threadId,
   entry,
+  source,
   onBack,
   onAdded,
 }: {
   threadId: string;
   entry: ReportedSkill;
+  /** Which of the provider's two lists it is in. */
+  source: SkillCommand["source"];
   onBack: () => void;
   onAdded: () => void;
 }) {
@@ -193,7 +212,7 @@ function ReportedDetail({
       <h2 className="text-base font-semibold text-foreground">{entry.name}</h2>
       {entry.argumentHint ? <p className="font-mono text-xs text-muted-foreground">{entry.argumentHint}</p> : null}
       {entry.description ? <p className="mt-2 text-sm text-muted-foreground select-text">{entry.description}</p> : null}
-      <AddToChat threadId={threadId} name={entry.name} onAdded={onAdded} />
+      <AddToChat threadId={threadId} command={reportedCommand(entry, source)} onAdded={onAdded} />
       <p className="text-sm text-muted-foreground">
         bb's provider reported this. It has no SKILL.md on disk, so there is nothing further to show.
       </p>
@@ -302,20 +321,21 @@ export function SkillBrowser({
         threadId={threadId}
         frame={frame}
         skillId={selected.id}
-        userInvocable={entry?.userInvocable ?? true}
+        entry={entry}
         onBack={() => setSelected(null)}
         onAdded={handleAdded}
       />
     );
   } else if (selected?.kind === "reported") {
-    const entry = [...(data?.reported.skills ?? []), ...(data?.reported.commands ?? [])].find(
-      (candidate) => candidate.name === selected.name,
-    );
+    const named = (candidate: ReportedSkill) => candidate.name === selected.name;
+    const skill = data?.reported.skills.find(named);
+    const entry = skill ?? data?.reported.commands.find(named);
     content =
       entry === undefined ? null : (
         <ReportedDetail
           threadId={threadId}
           entry={entry}
+          source={skill === undefined ? "command" : "skill"}
           onBack={() => setSelected(null)}
           onAdded={handleAdded}
         />
@@ -393,7 +413,7 @@ export function SkillBrowser({
   }
 
   return (
-    <div className={cn(frame === "popover" && "p-3")}>
+    <div className={cn(frame === "popup" && "p-3")}>
       <div ref={top} />
       {content}
     </div>

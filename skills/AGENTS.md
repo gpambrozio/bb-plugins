@@ -21,9 +21,10 @@ specific to `skills`.
 | `shared/skills.ts` | Zod shapes, `SOURCE_KINDS`, first-wins dedupe. No SDK import: the app uses it at run time. |
 | `shared/frontmatter.ts` | `SKILL.md` frontmatter. Used by the host and by the server (for bb's skills). |
 | `shared/contract.ts`, `shared/host-contract.ts` | App ⇄ server and server ⇄ host contracts. The app imports them as types only. |
-| `app/browser.tsx` | List, search, both detail screens, Add to chat — drawn by the panel and the popover. |
-| `app/panel.tsx`, `app/composer-button.tsx` | The thread-panel tab, and the composer button with its count and popover. |
-| `app/use-skills.ts`, `app/insert.ts` | The two RPC reads, and Add to chat: the text, where it goes in the draft, and which composers it may write to. |
+| `app/browser.tsx` | List, search, both detail screens, Add to chat — drawn by the panel and the composer popup. |
+| `app/panel.tsx`, `app/composer-button.tsx`, `app/composer-popup.tsx` | The thread-panel tab; the composer button with its count; the list in bb's composer popup, which the button and the composer command toggle. |
+| `app/use-skills.ts`, `app/answer-channel.ts` | The two RPC reads; the list shared by every surface showing one thread's skills. |
+| `app/insert.ts` | Add to chat: the pill, where it goes in the draft, the text fallback, and which composers it may write to. |
 | `app/markdown.ts` | Defuses a body's images and raw HTML, by parsing it, before bb's `Markdown` draws it. |
 
 ## What bb already does, and what this adds
@@ -77,37 +78,66 @@ equivalent is `bb.sdk.projects.commands({ projectId, environmentId, provider })`
 composer's `/` menu. Its `source` (`skill` | `command`) splits the two built-in sections, so the browser
 agrees with the composer. A failure there is shown under its own heading and never loses the rest.
 
-**Composer surfaces: an action, not a pill.** bb has no composer pill. `app.composer.customize`
+**Composer surfaces: an action, bb's popup and a composer command.** `app.composer.customize`
 `actions` renders a component in the thread composer's toolbar, so the button is a component that runs
-the list itself and shows the count; it is `Skills` without a number until the first answer. It opens
-bb's vendored `@bb/popover`, which is a bottom sheet on a narrow window. **Open in panel** calls
-`useBbNavigate().openThreadPanel({ actionId: "skills" })`; the command palette entry opens the same tab.
-When the popover is showing a skill, **Open in panel** passes it as the tab's `params` (`{ skill:
-{ kind, id | name } }`, titled `Skills: <name>`), and the panel opens on it (`selectionFrom` in
-`app/browser.tsx`; anything else in `params` opens the list). bb persists `params` with the tab and
-opens a tab per distinct `params`, so each skill opened this way is a tab of its own.
-Nothing patches the DOM.
+the list itself and shows the count; it is `Skills` without a number until the first answer. It
+toggles the list in bb's own composer popup (`experimental_popups`, opened with
+`useComposer().experimental_openPopup`, bb 0.45): bb places it like the mention menu, closes it on
+Escape or a click outside, uses its own drawer on a narrow window, and gives the editor its focus back
+when it closes. `experimental_closePopup()` answers whether one was open, which makes the toggle. A
+composer command (`app.composer.experimental_registerCommand`, `browse`) toggles the same popup in the
+composer that holds the caret; it has **no default key** (a clashing default is left unbound by bb, and
+a key bb does not know of may belong to the system), so the user binds one in bb's keyboard settings,
+and it is in the palette. Both APIs are experimental in bb 0.45; if they change, this is where.
+
+Three things about bb's popup that only its source says (`ComposerPopupHost`, `PromptBoxInternal` at
+desktop-v0.45.0), each with a test:
+
+- **It is drawn inside the composer's `<form>`.** A button with no `type` submits the form, which sends
+  the message, so every button the browser and the popup draw says `type="button"`.
+- **A press in the form that is not on a control focuses the editor, and the editor's focus closes the
+  popup.** The popup's root stops `mousedown` from reaching the form, so a press on a body, a heading
+  or the scroll bar leaves it open. The root is also focusable (`tabIndex={-1}`): such a press would
+  otherwise drop the focus on the page, out of the form that handles Escape. For the same reason it
+  takes the focus back whenever the popup changes screen, which removes the row or back link that had
+  it.
+- **Its component mounts each time it opens.** The button and the popup are separate slots with no
+  props between them, so they share their answers through `app/answer-channel.ts`: the popup opens on
+  the list the button counted, its own scan (one per opening) refreshes both, and a thread's last
+  answer is dropped once nothing shows it. Answers, failures included, are ordered by when they were
+  asked for, so the button's slower first scan cannot overwrite the popup's newer one.
+
+**Open in panel** calls `useBbNavigate().openThreadPanel({ actionId: "skills" })` after closing the
+popup; the command palette entry opens the same tab. When the popup is showing a skill, **Open in
+panel** passes it as the tab's `params` (`{ skill: { kind, id | name } }`, titled `Skills: <name>`),
+and the panel opens on it (`selectionFrom` in `app/browser.tsx`; anything else in `params` opens the
+list). bb persists `params` with the tab and opens a tab per distinct `params`, so each skill opened
+this way is a tab of its own. Nothing patches the DOM.
 
 **Add to chat, not invoke — the owner's decision.** The Paseo plugin (and issue #1's mapping) sent
 `/name args` to the agent. This port has no Invoke, no arguments field and no send: its one action,
-**Add to chat**, puts `/name ` at the start of the thread's message box and focuses it, so the user
-adds arguments and sends the message themselves. Do not bring the send back without the owner asking.
+**Add to chat**, puts the skill's command at the start of the thread's message box and focuses it, so
+the user adds arguments and sends the message themselves. Do not bring the send back without the
+owner asking.
 
-**Add to chat writes the draft through `useComposer()`.** It is public, not experimental
-(`useComposer`, `PluginComposerApi` in the SDK's app types): inside a thread context a component's
-writes land in that thread's draft — the composer the popover sits on, and the thread a side-panel tab
-belongs to. `composer.replace` puts `/name ` first (a slash command runs only at the start of a message)
-and keeps the draft after it; then `focus()`. `replace` takes text and mention pills together and does
-not rebase mention ranges, so `withCommand` (`app/insert.ts`) shifts every mention by what it added
-before it — the command, less the leading whitespace it trimmed. It passes no `attachments`, which
-leaves the draft's own in place; an explicit list would replace them. `replace` is new in SDK 0.6
-(bb 0.45): the 0.5 `updateText` is gone from the types, and bb 0.44 has no `replace`, which is why
-this plugin needs bb 0.45. The button is offered only when `composer.scope` is this
-thread's (`writesToThread`). After it, the panel calls `toThread` (which brings the composer back over
-the panel on a narrow window), and the popover closes and stops Radix handing focus back to its
-trigger, or the trigger would take it from the composer. On a narrow window the popover is a drawer
-that restores focus to the trigger as it closes and offers no hook to stop it, so the composer is
-focused again from `onMobileContentAnimationEnd`, once the drawer has finished closing.
+**Add to chat inserts bb's own command pill, through `useComposer()`.** `useComposer` is public, not
+experimental: inside a thread context a component's writes land in that thread's draft — the composer
+that opened the popup, and the thread a side-panel tab belongs to. `composer.replace` puts a
+`{ kind: "command", trigger: "/", source, origin, argumentHint }` mention over `/name` at the start,
+then a space, then the rest of the draft; then `focus()`. That is exactly what bb's `/` menu inserts
+(`promptCommandResourceFromSuggestion`), so the message is the same `/name …` text it was, and a
+provider that reads skill pills (Pi) gets one. A command pill already at the start is replaced, not
+joined by a second — what bb's Plan and Goal rows and its bundled `automations` plugin do. `source` is
+`skill` for a discovered skill and the reported list's own for a reported entry; `origin` is
+`project` for a project or repository skill and `user` for the rest (as bb's own skill rows), and the
+reported list's own otherwise, which is why the server passes it through. A name with whitespace in it
+cannot be a pill (the pill stands for `/name`), so it goes in as `/name ` text, replacing a leading
+command pill all the same. `replace` takes text and mentions together and does not rebase mention ranges, so
+`withSkillCommand` (`app/insert.ts`) shifts every other mention by what it added before it. It passes
+no `attachments`, which leaves the draft's own in place. `replace` is new in SDK 0.6 (bb 0.45), which
+is why this plugin needs bb 0.45. The button is offered only when `composer.scope` is this thread's
+(`writesToThread`). After it, the panel calls `toThread` (which brings the composer back over the panel
+on a narrow window), and the popup closes, bb handing the editor its focus.
 
 **Bodies render through bb's `Markdown`, with nothing in them that loads — conservatively.** The host
 component loads images as it draws them and gives no say over it, and a skill someone else wrote can
@@ -168,8 +198,8 @@ the reviews. Do not loosen this into pattern matching or re-parsing loops; each 
 Invoke (`client/invoke.ts`, the send and its re-entrancy guard, the arguments field) — see *Add to
 chat, not invoke*. The agents observation (`client/agents.ts`) and the pill registration loop — bb
 mounts the composer action itself, per composer. `agent.commands()` detection (`supportsCommands`,
-`available`): bb's command list is typed. The popover's size caps and `detailLines` — the popover is ours and scrolls
-itself. `host-imports.test.ts`, `sdk-types.ts`, React Native, `copyText` (the browser's clipboard
+`available`): bb's command list is typed. Paseo's popover size caps and `detailLines` — bb's popup scrolls
+what it is given. `host-imports.test.ts`, `sdk-types.ts`, React Native, `copyText` (the browser's clipboard
 API works in every bb client) and react-query (each surface holds one small fetch).
 
 ## Limitations

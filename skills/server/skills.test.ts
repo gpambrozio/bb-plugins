@@ -35,7 +35,7 @@ function bbSkill(overrides: Partial<BbSkill> & { name: string }): BbSkill {
 }
 
 function command(name: string, source: ReportedCommand["source"] = "skill"): ReportedCommand {
-  return { name, description: `Description for ${name}`, argumentHint: null, source };
+  return { name, description: `Description for ${name}`, argumentHint: null, source, origin: "builtin" };
 }
 
 /**
@@ -194,8 +194,8 @@ describe("listSkills", () => {
     expect(result.skills.map((skill) => skill.name)).toEqual(["plugin-guide"]);
     expect(result.reported).toEqual({
       error: null,
-      skills: [{ name: "explain", description: "Description for explain", argumentHint: "" }],
-      commands: [{ name: "clear", description: "Description for clear", argumentHint: "" }],
+      skills: [{ name: "explain", description: "Description for explain", argumentHint: "", origin: "builtin" }],
+      commands: [{ name: "clear", description: "Description for clear", argumentHint: "", origin: "builtin" }],
     });
   });
 
