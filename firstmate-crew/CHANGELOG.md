@@ -5,6 +5,18 @@ Notable changes to `firstmate`. The other plugins in this repository version sep
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.2.5
+
+### Changed
+
+- **A suggestion you send leaves the list.** Pressing a suggestion card still sends it to the first mate,
+  and once the first mate has it, the card goes away as if you had trashed it. If the send fails, the card
+  stays and the error shows as before. Only that suggestion is removed, even if the first mate has
+  rewritten its list meanwhile.
+- On a wide window the first mate's chat is already beside the board. On a phone the board stays open
+  after a send, because bb gives plugins no way to close a thread's side panel; close it yourself to see
+  the chat.
+
 ## 0.2.4
 
 ### Changed

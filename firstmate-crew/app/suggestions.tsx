@@ -1,8 +1,14 @@
 /**
  * The first mate's suggestions: one button per next step it wrote in `data/suggestions.md`. Pressing one
- * sends its prompt to the first mate and brings its thread into view. A trash button beside it takes that
- * one line out of the file without sending anything; it is the button's sibling, not its child, so
- * pressing it never presses the suggestion. Hidden when there is nothing to suggest.
+ * sends its prompt to the first mate; once the send has landed, the suggestion is taken out of the file as
+ * the trash would, and the first mate's thread is brought into view. A send that fails leaves the card
+ * where it was. A trash button beside it takes that one line out of the file without sending anything; it
+ * is the button's sibling, not its child, so pressing it never presses the suggestion. Hidden when there
+ * is nothing to suggest.
+ *
+ * Bringing the thread into view is `toThread`, and the board is a panel on that same thread, so on a wide
+ * layout the chat is already beside it. bb 0.45 gives a plugin no way to close a thread's side panel, so
+ * on a phone the board stays open over the chat; the card going away is what shows the send landed.
  *
  * A card cuts a long label to one line and its prompt to two. A chevron beside the trash, shown only when
  * something is cut, opens the whole suggestion below the card, wrapped and selectable, without sending it.
@@ -35,8 +41,12 @@ export function Suggestions({
   if (suggestions.length === 0) return null;
 
   function pick(suggestion: Suggestion): void {
-    // Refused while another message is on its way, so a double press sends the prompt once.
-    mate.ask(suggestion.prompt, () => navigate.toThread(mateThreadId));
+    // Refused while another message is on its way, so a double press sends the prompt once. The removal is
+    // by label and prompt, so a file the first mate rewrote meanwhile loses this suggestion or nothing.
+    mate.ask(suggestion.prompt, () => {
+      remove(suggestion);
+      navigate.toThread(mateThreadId);
+    });
   }
 
   function remove(suggestion: Suggestion): void {

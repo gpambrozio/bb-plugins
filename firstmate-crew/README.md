@@ -81,7 +81,9 @@ there, and `bb plugin dev` to rebuild on save. See [`AGENTS.md`](AGENTS.md).
   (FirstMate: bearings, FirstMate: ahoy), next to FirstMate: open.
 - **Suggestions.** When the first mate has an idea of what you will want next ("Land web#42"), it shows
   as a button above the columns. Pressing one sends that request to the first mate as if you had typed
-  it; it joins a turn under way, or starts one, and never interrupts. A card too long to show whole
+  it; it joins a turn under way, or starts one, and never interrupts. Once the first mate has it, the
+  card leaves the list; a send that fails keeps it. On a phone the board stays open over the chat after
+  a send, as bb gives plugins no way to close it. A card too long to show whole
   gets a chevron that opens the full request below it, to read or copy, without sending it. The trash
   takes a suggestion off the list without sending it.
 - **Compact** and **Restart** sit beside Bearings and Ahoy at the top of the board, with a gear that
