@@ -3,9 +3,12 @@
  * sends its prompt to the first mate and brings its thread into view. A trash button beside it takes that
  * one line out of the file without sending anything; it is the button's sibling, not its child, so
  * pressing it never presses the suggestion. Hidden when there is nothing to suggest.
+ *
+ * A card cuts a long label to one line and its prompt to two. A chevron beside the trash, shown only when
+ * something is cut, opens the whole suggestion below the card, wrapped and selectable, without sending it.
  */
 import { useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
-import { useSyncExternalStore } from "react";
+import { useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { Icon } from "../components/ui/icon";
 import type { rpcContract } from "../server";
@@ -48,36 +51,116 @@ export function Suggestions({
   return (
     <section className="flex flex-col gap-2">
       <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Suggestions</h3>
-      {suggestions.map((suggestion, index) => {
-        const busy = suggestionRemovals.pending(suggestion);
-        return (
-          <div
-            key={`${index}:${suggestion.label}`}
-            className="flex items-stretch rounded-lg border border-border bg-card text-card-foreground data-[busy=true]:opacity-50"
-            data-busy={busy}
-          >
-            <button
-              type="button"
-              disabled={busy || mate.sending}
-              onClick={() => pick(suggestion)}
-              aria-label={`${suggestion.label}: send "${suggestion.prompt}" to the first mate`}
-              className="flex min-w-0 flex-1 cursor-pointer flex-col gap-0.5 px-3 py-2 text-left hover:bg-state-hover disabled:cursor-not-allowed"
-            >
-              <span className="truncate text-sm font-semibold">{suggestion.label}</span>
-              <span className="line-clamp-2 text-xs text-muted-foreground">{suggestion.prompt}</span>
-            </button>
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => remove(suggestion)}
-              aria-label={`Remove suggestion: ${suggestion.label}`}
-              className="flex cursor-pointer items-center px-3 text-muted-foreground hover:text-foreground disabled:cursor-not-allowed"
-            >
-              <Icon name="Trash2" className="size-4" />
-            </button>
-          </div>
-        );
-      })}
+      {suggestions.map((suggestion, index) => (
+        <SuggestionCard
+          key={`${index}:${suggestion.label}`}
+          suggestion={suggestion}
+          busy={suggestionRemovals.pending(suggestion)}
+          sending={mate.sending}
+          onPick={() => pick(suggestion)}
+          onRemove={() => remove(suggestion)}
+        />
+      ))}
     </section>
   );
+}
+
+function SuggestionCard({
+  suggestion,
+  busy,
+  sending,
+  onPick,
+  onRemove,
+}: {
+  suggestion: Suggestion;
+  busy: boolean;
+  sending: boolean;
+  onPick: () => void;
+  onRemove: () => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const clipped = useClipped(expanded, suggestion);
+  const fullId = useId();
+
+  return (
+    <div
+      className="flex flex-col rounded-lg border border-border bg-card text-card-foreground data-[busy=true]:opacity-50"
+      data-busy={busy}
+    >
+      <div className="flex items-stretch">
+        <button
+          type="button"
+          disabled={busy || sending}
+          onClick={onPick}
+          aria-label={`${suggestion.label}: send "${suggestion.prompt}" to the first mate`}
+          className="flex min-w-0 flex-1 cursor-pointer flex-col gap-0.5 px-3 py-2 text-left hover:bg-state-hover disabled:cursor-not-allowed"
+        >
+          {expanded ? (
+            <span className="break-words text-sm font-semibold">{suggestion.label}</span>
+          ) : (
+            <>
+              <span ref={clipped.label} className="truncate text-sm font-semibold">
+                {suggestion.label}
+              </span>
+              <span ref={clipped.prompt} className="line-clamp-2 text-xs text-muted-foreground">
+                {suggestion.prompt}
+              </span>
+            </>
+          )}
+        </button>
+        {expanded || clipped.cut ? (
+          <button
+            type="button"
+            onClick={() => setExpanded(!expanded)}
+            aria-expanded={expanded}
+            aria-controls={expanded ? fullId : undefined}
+            aria-label={`${expanded ? "Hide" : "Show"} the whole suggestion: ${suggestion.label}`}
+            className="flex cursor-pointer items-center px-2 text-muted-foreground hover:text-foreground"
+          >
+            <Icon name={expanded ? "ChevronUp" : "ChevronDown"} className="size-4" />
+          </button>
+        ) : null}
+        <button
+          type="button"
+          disabled={busy}
+          onClick={onRemove}
+          aria-label={`Remove suggestion: ${suggestion.label}`}
+          className="flex cursor-pointer items-center px-3 text-muted-foreground hover:text-foreground disabled:cursor-not-allowed"
+        >
+          <Icon name="Trash2" className="size-4" />
+        </button>
+      </div>
+      {expanded ? (
+        <p
+          id={fullId}
+          className="cursor-text select-text whitespace-pre-wrap break-words border-t border-border px-3 py-2 text-xs text-muted-foreground"
+        >
+          {suggestion.prompt}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * Whether the collapsed card cuts its label or prompt, measured again whenever either line changes size.
+ * Assumed cut where the browser cannot say (no `ResizeObserver`), so the whole text is always one press
+ * away. While expanded nothing is measured; the chevron stays to fold the card again.
+ */
+function useClipped(expanded: boolean, suggestion: Suggestion) {
+  const label = useRef<HTMLSpanElement>(null);
+  const prompt = useRef<HTMLSpanElement>(null);
+  const [cut, setCut] = useState(true);
+
+  useLayoutEffect(() => {
+    if (expanded || typeof ResizeObserver === "undefined") return;
+    const lines = [label.current, prompt.current].filter((line) => line !== null);
+    const measure = () => setCut(lines.some((line) => line.scrollWidth > line.clientWidth || line.scrollHeight > line.clientHeight));
+    const observer = new ResizeObserver(measure);
+    lines.forEach((line) => observer.observe(line));
+    measure();
+    return () => observer.disconnect();
+  }, [expanded, suggestion.label, suggestion.prompt]);
+
+  return { label, prompt, cut };
 }

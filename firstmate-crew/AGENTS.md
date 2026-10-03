@@ -95,6 +95,8 @@ Do not break these; each was paid for.
   ticks, runs, deliveries and saves have settled, and `server.ts` changes runners through `syncRunner`,
   one change at a time, so a delivery still sending cannot overwrite what a new runner saved.
 - **Suggestions are removed by label and prompt**, not position. Nothing in code adds one.
+- **Only the card's main button sends a suggestion.** The chevron that opens the whole text and the trash
+  are its siblings, not its children, so neither can press it (`app/suggestions.tsx`).
 - **Watch output reaches the first mate only between turns**, at most 32,000 characters in one message,
   `<` of anything tag-shaped escaped. Failures are queued once until the watch succeeds.
 - **Titles never change; status lives in the section, the status line and `(hold: …)`.** The board's
