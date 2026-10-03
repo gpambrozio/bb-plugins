@@ -97,7 +97,8 @@ Do not break these; each was paid for.
 - **One watch runner at a time, drained before the next.** `WatchRunner.stop()` resolves only once its
   ticks, runs, deliveries and saves have settled, and `server.ts` changes runners through `syncRunner`,
   one change at a time, so a delivery still sending cannot overwrite what a new runner saved.
-- **Suggestions are removed by label and prompt**, not position. Nothing in code adds one.
+- **Suggestions are removed by label and prompt**, not position. Nothing in code adds one. A sent
+  suggestion is removed the same way, and only after `mate.ask` has resolved; a failed send keeps it.
 - **Only the card's main button sends a suggestion.** The chevron that opens the whole text and the trash
   are its siblings, not its children, so neither can press it (`app/suggestions.tsx`).
 - **Watch output reaches the first mate only between turns**, at most 32,000 characters in one message,
