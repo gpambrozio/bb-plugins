@@ -89,6 +89,40 @@ describe("renderCharter", () => {
     for (const mode of ["direct-PR", "reviewed-PR", "local-only", "+yolo"]) expect(charter).toContain(mode);
   });
 
+  // bb 0.45's own wording for a child whose work it cut short (its server's child-thread notifications).
+  // The charter quotes them so the first mate can match the message; each must stay on one line.
+  it("quotes bb's words for a crewmate's work cut short, and says a stop by hand sends nothing", async () => {
+    const [charter] = await renderAll();
+    for (const notice of [
+      "was interrupted because its host connection was lost",
+      "because its host daemon restarted",
+      "failed during workspace setup before a turn began",
+      "could not send a queued message after retrying",
+    ]) {
+      expect(charter).toContain(notice);
+    }
+    expect(charter).toContain("A stop by hand");
+  });
+
+  // A crewmate the captain stopped may still show `paused`, or no status line at all, from before the
+  // stop; the rules that nudge or run the ladder on those must not resume it without asking.
+  it("checks for a stop by hand before any nudge, resend or relaunch, whatever the stale status line", async () => {
+    const [charter] = await renderAll();
+    const rule = charter!.indexOf("**Before you nudge, resend to or relaunch a crewmate**");
+    expect(rule).toBeGreaterThan(-1);
+    const text = charter!.slice(rule, charter!.indexOf("\n\n", rule));
+    expect(text).toContain("whatever its last status line says — `working`,\n`paused`, or none at all");
+    expect(text).toContain("`system/thread/interrupted`");
+    expect(text).toContain("`manual-stop`");
+    expect(text).toContain("bb thread log <id> --json --all");
+    expect(text).toContain("ask too when the log does not settle the cause");
+    expect(text).toContain("unless you stopped it yourself\nduring a step of the stuck-crewmate ladder");
+    // It comes before the status-line rules it overrides: a stale `paused` and a missing status line.
+    for (const rest of ["- `working`, `paused`: the turn has ended", "- `blocked`, or no status line at all"]) {
+      expect(charter!.indexOf(rest)).toBeGreaterThan(rule);
+    }
+  });
+
   it("puts the chosen model and reasoning sentences in, or leaves each open", async () => {
     const chosen = await renderCharter({ home: "/h", crewProvider: "claude-code/sonnet", crewReasoning: "high" });
     expect(chosen).toContain(await partText(TEMPLATES.crewProviderChosen, { crewProvider: "claude-code/sonnet" }));

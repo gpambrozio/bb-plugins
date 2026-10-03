@@ -213,13 +213,6 @@ export class FakeThreads implements ThreadsPort {
     this.require(id);
   }
 
-  async pin(id: string): Promise<void> {
-    this.record("pin", id);
-    await tick();
-    this.throwIfFailing("pin");
-    this.require(id);
-  }
-
   private record(method: ThreadMethod, ...args: unknown[]): void {
     this.calls.push({ method, args });
   }

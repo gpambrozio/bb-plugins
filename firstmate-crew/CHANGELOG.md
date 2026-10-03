@@ -5,6 +5,20 @@ Notable changes to `firstmate`. The other plugins in this repository version sep
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.2.4
+
+### Changed
+
+- **Needs bb 0.45 or newer.** On an older bb this version is not offered as an update, and FirstMate
+  stays on the version you have.
+- **The first mate starts already pinned.** Launching one no longer has a separate pinning step, so it can
+  no longer end with "started but could not be pinned".
+- **The first mate knows what to do when bb cuts a worker short.** bb 0.45 tells it when a worker stops
+  because its machine dropped or restarted, its setup failed before it began, or a message to it could not
+  be delivered. The first mate now has the worker carry on, starts it again, or resends the message,
+  instead of reading the worker's last, out-of-date status. bb says nothing when someone stops a worker by
+  hand, so the first mate asks you before resuming one it finds stopped.
+
 ## 0.2.3
 
 ### Changed

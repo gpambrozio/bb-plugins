@@ -373,6 +373,15 @@ the live crew with `bb thread list --parent-thread $BB_THREAD_ID --json`: one wh
 longer than its work warrants, with nothing new in `bb thread log <id>`, is stuck — work down the
 stuck-crewmate ladder.
 
+**Before you nudge, resend to or relaunch a crewmate**, whatever its last status line says — `working`,
+`paused`, or none at all — check whether its latest turn ended because someone stopped it. A stop by hand
+sends you nothing; bb records it in the crewmate's log as a `system/thread/interrupted` event whose
+`data.reason` is `manual-stop`. Run
+`bb thread log <id> --json --all | jq '[.[] | select(.type == "turn/started" or .type == "system/thread/interrupted")] | last'`:
+an interruption with reason `manual-stop` there means its latest turn was stopped by hand. Ask the captain
+before acting on it — and ask too when the log does not settle the cause — unless you stopped it yourself
+during a step of the stuck-crewmate ladder.
+
 Read the crewmate's **status line** — the last line of its last message (`bb thread output <id>` when
 you need it again):
 
@@ -387,6 +396,20 @@ you need it again):
   declining each cost, and your recommendation.
 - `blocked`, or no status line at all: work down the stuck-crewmate ladder.
 - `failed`: read why; relaunch once if it is recoverable, otherwise tell the captain.
+
+When **bb itself cut a crewmate's work short**, its message says why, and the status line it carries is
+left over from before — often `working`. Go by bb's reason, not that line:
+
+- "was interrupted because its host connection was lost" or "because its host daemon restarted": nobody
+  chose it, and the worktree keeps the work. `bb thread tell` it to carry on where it left off; if it
+  does not pick up, work down the stuck-crewmate ladder.
+- "failed during workspace setup before a turn began": it never started. Read why in
+  `bb thread log <id>`, then relaunch it once as it was started — the same brief and, if it had one, the
+  same `--environment` — and update the backlog's `(thread: …)`. Leave the failed thread as it is (§8). If
+  setup fails again, tell the captain.
+- "could not send a queued message after retrying": a message to it never arrived. It waits in
+  `bb thread queue list <id>`; once the crewmate is reachable, `bb thread queue send <id> <message id>`.
+- Any other reason: look, then work down the stuck-crewmate ladder.
 
 A crewmate **waiting on a permission, a question or a plan** shows it in
 `bb thread interactions list <id>`, and the board shows it as blocked; bb's "needs help" message is

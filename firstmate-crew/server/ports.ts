@@ -57,6 +57,8 @@ export interface SpawnArgs {
   reasoningLevel?: string;
   /** Seeded into the plugin's own metadata namespace on the thread. */
   metadata: Record<string, string>;
+  /** Created already pinned in the sidebar, in the same request (bb 0.45+). */
+  pinned?: boolean;
 }
 
 export interface ThreadsPort {
@@ -82,7 +84,6 @@ export interface ThreadsPort {
   clearContext(id: string): Promise<void>;
   /** Asks bb for the same structured `/compact` turn its composer sends. */
   compact(id: string): Promise<void>;
-  pin(id: string): Promise<void>;
 }
 
 export interface ProjectsPort {

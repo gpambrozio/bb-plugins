@@ -81,7 +81,7 @@ describe("launchMate", () => {
     expect(spawn.providerId).toBe("claude-code");
     expect(spawn.model).toBe("opus");
     expect(spawn.prompt).toBe(await readOpening(home));
-    expect(threads.callsTo("pin")).toEqual([[mate.id]]);
+    expect(spawn.pinned).toBe(true);
     expect(await store.mateThreadId()).toBe(mate.id);
     expect(await exists(join(home, STATE_DIR))).toBe(true);
   });
@@ -143,7 +143,6 @@ describe("launchMate", () => {
     await expect(launch).rejects.toThrow("The first mate could not be started: provider exploded");
     await expect(launch.catch((error: Error) => (error.cause as Error).message)).resolves.toBe("provider exploded");
     expect(await store.mateThreadId()).toBeNull();
-    expect(threads.callsTo("pin")).toEqual([]);
   });
 });
 
