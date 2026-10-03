@@ -89,6 +89,21 @@ describe("renderCharter", () => {
     for (const mode of ["direct-PR", "reviewed-PR", "local-only", "+yolo"]) expect(charter).toContain(mode);
   });
 
+  // bb 0.45's own wording for a child whose work it cut short (its server's child-thread notifications).
+  // The charter quotes them so the first mate can match the message; each must stay on one line.
+  it("quotes bb's words for a crewmate's work cut short, and says a stop by hand sends nothing", async () => {
+    const [charter] = await renderAll();
+    for (const notice of [
+      "was interrupted because its host connection was lost",
+      "because its host daemon restarted",
+      "failed during workspace setup before a turn began",
+      "could not send a queued message after retrying",
+    ]) {
+      expect(charter).toContain(notice);
+    }
+    expect(charter).toContain("A stop by hand");
+  });
+
   it("puts the chosen model and reasoning sentences in, or leaves each open", async () => {
     const chosen = await renderCharter({ home: "/h", crewProvider: "claude-code/sonnet", crewReasoning: "high" });
     expect(chosen).toContain(await partText(TEMPLATES.crewProviderChosen, { crewProvider: "claude-code/sonnet" }));

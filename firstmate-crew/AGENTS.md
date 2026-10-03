@@ -8,7 +8,8 @@ plugin in `gpambrozio/paseo-plugins`; the design and its decisions are in
 
 The repo root `AGENTS.md` covers what every plugin here shares: the per-folder npm layout, the commands,
 the SDK surface, the dependency rules. This file covers only what is specific to `firstmate`. Checked
-against bb 0.44.0 and `@get-bb/plugin-sdk` 0.5.29.
+against bb 0.44.0 and `@get-bb/plugin-sdk` 0.5.29; the pinned launch and the interruption notices
+(below) against bb 0.45.0 and SDK 0.6.15, which the plugin needs since 0.2.4.
 
 ## Orientation
 
@@ -51,7 +52,9 @@ Do not break these; each was paid for.
   is idle or errored (buttons and server). Restart clears context on the same thread, so crew stay its
   children and two first mates cannot exist.
 - **Launch and adopt run under the `mate` lock**, and a launch that fails after the project exists stores
-  no id.
+  no id. A launch spawns the first mate with `pinned: true` (bb 0.45), so nothing can fail between the
+  spawn and storing its id; there is no separate pin call. Adopt does not pin, and restart keeps the
+  same thread and so its pin.
 - **Only a thread whose workspace is the home can be adopted** (compared by real path, on the bb server's
   machine). The charter is the home's `AGENTS.md`, and the board opens home files through the first
   mate's environment, so a first mate working elsewhere would see neither.
@@ -192,6 +195,15 @@ Run against bb 0.44.0 before the design was settled:
   (`systemMessageKind: "child-needs-attention"`): `@thread:<child> needs help. Blocked on file-change
   approval: …`, and the live run's first mate approved it from there. Questions go through the same
   pending-interaction path but were not staged live.
+
+- **bb 0.45 tells a parent why a child's work was cut short, and says nothing for a stop by hand.** A
+  child interrupted by host loss or a daemon restart gets `@thread:<child> was interrupted because its host
+  connection was lost` (or `… because its host daemon restarted`); one whose setup failed before its first
+  turn, `… failed during workspace setup before a turn began`; one whose queued message ran out of retries,
+  `… could not send a queued message after retrying`. A manual stop (`bb thread stop`, the board's
+  Interrupt) sends nothing at all, where bb 0.44 sent `was interrupted` with a "do not resume" line. The
+  charter (§7) quotes those words and says what to do with each; `server/charter.test.ts` keeps them on
+  one line each. Read from bb 0.45.0's server, not staged live.
 
 The live run added two: a spawn needs a `hostId` (fixed, see the machine rule), and a crew spawn without
 `--title` gets the brief's first line, which is the same "You are a crewmate" line for every brief, so the

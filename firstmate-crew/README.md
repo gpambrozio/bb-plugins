@@ -16,13 +16,13 @@ Done, Failed and Idle, each worker's last word on what it is doing, and a link t
 This is a bb port of the Paseo `firstmate` plugin in
 [`gpambrozio/paseo-plugins`](https://github.com/gpambrozio/paseo-plugins), itself a take on
 [firstmate](https://github.com/kunchenguid/firstmate) by Kun Chen. bb already supervises child threads
-(it tells the first mate when a worker finishes, fails, is interrupted or needs attention) and already
-has a chat, so the plugin is the charter, the board, the dispatch command and the watch runner, and
-nothing else.
+(it tells the first mate when a worker finishes, fails, is interrupted or needs attention, and why when
+its machine dropped or its setup failed) and already has a chat, so the plugin is the charter, the
+board, the dispatch command and the watch runner, and nothing else.
 
 ## What you need
 
-- bb 0.44 or newer.
+- bb 0.45 or newer.
 - A capable model for the first mate. It spends its day reading records and deciding who does what, and a
   small model gets the commands wrong. Claude Sonnet or better, or a comparable Codex model, works.
 - `git` for the projects it works on, and, for the pull request watch, the `gh` command, logged in.
@@ -96,7 +96,8 @@ Press **FirstMate** on the first mate's thread. Each card is a worker, a backlog
 
 - **Steer** sends a word straight to the worker. The first mate hears about it when the worker's turn
   ends, as with any turn.
-- **Interrupt** stops the worker's current turn.
+- **Interrupt** stops the worker's current turn. bb does not tell the first mate about a stop, and the
+  first mate asks you before resuming a worker it finds stopped this way.
 - **Relaunch** asks the first mate for a fresh worker in the same worktree, with your note. The work on
   disk carries over; the conversation does not.
 - **End** archives the worker. If its task is not in Done, it asks first: bb removes the worktree after

@@ -388,6 +388,24 @@ you need it again):
 - `blocked`, or no status line at all: work down the stuck-crewmate ladder.
 - `failed`: read why; relaunch once if it is recoverable, otherwise tell the captain.
 
+When **bb itself cut a crewmate's work short**, its message says why, and the status line it carries is
+left over from before — often `working`. Go by bb's reason, not that line:
+
+- "was interrupted because its host connection was lost" or "because its host daemon restarted": nobody
+  chose it, and the worktree keeps the work. `bb thread tell` it to carry on where it left off; if it
+  does not pick up, work down the stuck-crewmate ladder.
+- "failed during workspace setup before a turn began": it never started. Read why in
+  `bb thread log <id>`, then relaunch it once as it was started — the same brief and, if it had one, the
+  same `--environment` — and update the backlog's `(thread: …)`. Leave the failed thread as it is (§8). If
+  setup fails again, tell the captain.
+- "could not send a queued message after retrying": a message to it never arrived. It waits in
+  `bb thread queue list <id>`; once the crewmate is reachable, `bb thread queue send <id> <message id>`.
+- Any other reason: look, then work down the stuck-crewmate ladder.
+
+A stop by hand — yours, or the captain's from the board or the crewmate's own thread — sends you nothing.
+A crewmate idle on a stale `working` line with no word from bb may be one the captain stopped: ask them
+before you resume it.
+
 A crewmate **waiting on a permission, a question or a plan** shows it in
 `bb thread interactions list <id>`, and the board shows it as blocked; bb's "needs help" message is
 usually how you first hear of it. Allow routine actions inside its
