@@ -5,6 +5,15 @@ Notable changes to `firstmate`. The other plugins in this repository version sep
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.2.2
+
+### Added
+
+- **Read a whole suggestion before sending it.** A suggestion too long for its card now has a chevron
+  beside the trash. Press it to open the full request below the card, wrapped and ready to select and
+  copy; press it again to fold it. Opening a card never sends it, and pressing the card itself sends it
+  as before. It works with the keyboard and on a phone.
+
 ## 0.2.0
 
 ### Added
