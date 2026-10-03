@@ -7,6 +7,7 @@ const outline: ReportedCommand = {
   description: "Turns ideas into designs",
   argumentHint: "[topic]",
   source: "skill",
+  origin: "user",
 };
 
 describe("selectReported", () => {
@@ -16,17 +17,18 @@ describe("selectReported", () => {
     expect(result.commands.map((entry) => entry.name)).toEqual(["usage"]);
   });
 
-  test("carries name, description, and argument hint through", () => {
+  test("carries name, description, argument hint and origin through", () => {
     expect(selectReported([outline], []).skills).toEqual([
-      { name: "outline", description: "Turns ideas into designs", argumentHint: "[topic]" },
+      { name: "outline", description: "Turns ideas into designs", argumentHint: "[topic]", origin: "user" },
     ]);
+    expect(selectReported([{ ...outline, origin: "builtin" }], []).skills[0]?.origin).toBe("builtin");
   });
 
   // bb's list has nulls where the provider gave nothing; the browser draws strings.
   test("reads a missing description or argument hint as empty", () => {
     const bare = { ...outline, description: null, argumentHint: null };
     expect(selectReported([bare], []).skills).toEqual([
-      { name: "outline", description: "", argumentHint: "" },
+      { name: "outline", description: "", argumentHint: "", origin: "user" },
     ]);
   });
 
@@ -63,7 +65,7 @@ describe("selectReported", () => {
   test("drops a duplicate name the provider reported twice", () => {
     const commands = [outline, { ...outline, description: "Second copy" }];
     expect(selectReported(commands, []).skills).toEqual([
-      { name: "outline", description: "Turns ideas into designs", argumentHint: "[topic]" },
+      { name: "outline", description: "Turns ideas into designs", argumentHint: "[topic]", origin: "user" },
     ]);
   });
 

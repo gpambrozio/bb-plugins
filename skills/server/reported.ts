@@ -12,6 +12,7 @@ export interface ReportedCommand {
   description: string | null;
   argumentHint: string | null;
   source: "command" | "skill";
+  origin: "builtin" | "project" | "user";
 }
 
 export interface ReportedSplit {
@@ -41,6 +42,7 @@ export function selectReported(
       name: command.name,
       description: command.description ?? "",
       argumentHint: command.argumentHint ?? "",
+      origin: command.origin,
     });
   }
   const byName = (a: ReportedSkill, b: ReportedSkill) => a.name.localeCompare(b.name);

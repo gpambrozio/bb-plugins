@@ -5,6 +5,23 @@ Notable changes to `skills`. The other plugins in this repository version separa
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.3.0
+
+### Changed
+
+- **Add to chat** now puts the skill in the message box as a pill, the same one bb's own `/` menu
+  inserts, instead of as typed text. The message you send is the same. If the message already starts
+  with a command, the skill replaces it instead of being added in front of it.
+- **The Skills button** opens its list in the same pop-up bb uses for its `/` menu, above the message
+  box, instead of a pop-up of its own. Pressing the button again closes it. After **Add to chat** the
+  cursor goes straight back to the message box.
+
+### Added
+
+- **A keyboard command, *Skills: browse this thread's skills***, opens and closes the list from
+  whichever message box has the cursor. It has no key until you give it one in bb's keyboard
+  settings, and it is in the command palette.
+
 ## 0.2.0
 
 ### Changed
