@@ -6,7 +6,7 @@
  * shows as a "plugin crashed" chip in bb, so a render here is the cheapest
  * check that none of them throw.
  */
-import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import {
   type ComposerMention,
@@ -434,6 +434,43 @@ describe("the composer popup", () => {
     expect(inspection.rpcCalls.map((call) => call.method)).toEqual(["list", "list"]);
   });
 
+  it("keeps the newer list when an older scan fails after it", async () => {
+    const scans: Array<{ resolve: (list: SkillList) => void; reject: (error: Error) => void }> = [];
+    renderSlot<object, RpcContract>(
+      {
+        component: function ButtonThenPopup() {
+          const [open, setOpen] = useState(false);
+          return (
+            <>
+              <SkillsComposerButton />
+              <button type="button" onClick={() => setOpen(true)}>
+                open the popup
+              </button>
+              {open ? <SkillsPopup /> : null}
+            </>
+          );
+        },
+      },
+      {},
+      {
+        rpc: { ...rpc, list: () => new Promise<SkillList>((resolve, reject) => scans.push({ resolve, reject })) },
+        composer: { scope: { kind: "thread", threadId: "thr_example" } },
+      },
+    );
+    await waitFor(() => expect(scans).toHaveLength(1));
+    fireEvent.click(screen.getByRole("button", { name: "open the popup" }));
+    await waitFor(() => expect(scans).toHaveLength(2));
+    scans[1]!.resolve(LIST);
+    await screen.findByRole("button", { name: "Skills: 6" });
+    await act(async () => {
+      scans[0]!.reject(new Error("The older scan failed."));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect(screen.getByRole("button", { name: "Skills: 6" })).toBeTruthy();
+    expect(screen.getByText("deploy")).toBeTruthy();
+    expect(screen.queryByText("The older scan failed.")).toBeNull();
+  });
+
   it("adds the skill's pill to this composer and closes, leaving the path to the panel", async () => {
     const { inspection, host } = renderComposer(SkillsPopup);
     host().open = true;
@@ -469,6 +506,41 @@ describe("the composer popup", () => {
     fireEvent.click(await screen.findByText("deploy"));
     await screen.findByRole("button", { name: "Add to chat" });
     for (const button of screen.getAllByRole("button")) expect(button.getAttribute("type")).toBe("button");
+  });
+
+  // bb closes the popup on Escape from the composer's form, so the focus has to
+  // stay inside it when a screen change removes the button that had it.
+  it("keeps the focus inside as it changes screens, where Escape reaches the composer", async () => {
+    let escapes = 0;
+    renderSlot<object, RpcContract>(
+      {
+        component: function InComposerForm() {
+          return (
+            <form onKeyDown={(event) => event.key === "Escape" && (escapes += 1)}>
+              <SkillsPopup />
+            </form>
+          );
+        },
+      },
+      {},
+      { rpc, composer: { scope: { kind: "thread", threadId: "thr_example" } } },
+    );
+    const popup = await screen.findByTestId("skills-popup");
+    const row = (await screen.findByText("deploy")).closest("button")!;
+    row.focus();
+    fireEvent.click(row);
+    await screen.findByText("Description for deploy");
+    expect(popup.contains(document.activeElement)).toBe(true);
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    expect(escapes).toBe(1);
+
+    const back = screen.getByRole("button", { name: "← All skills" });
+    back.focus();
+    fireEvent.click(back);
+    await screen.findByLabelText("Search skills");
+    expect(popup.contains(document.activeElement)).toBe(true);
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    expect(escapes).toBe(2);
   });
 
   // Escape reaches the composer's form only from something focused inside it.

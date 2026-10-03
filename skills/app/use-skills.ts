@@ -20,19 +20,17 @@ function messageOf(error: unknown): string {
  * answer on screen until the new one lands; a new key starts from loading, so
  * one thread's skills never show under another's.
  *
- * With a `channel`, every holder of the same key shares its answers: one that
- * mounts starts from the last answer another holder has, and each answer one
- * holder gets reaches the rest.
+ * With a `channel`, every holder of the same key shares its answers, failures
+ * included: one that mounts starts from the last answer another holder has,
+ * and each answer one holder gets reaches the rest, unless it was asked for
+ * before one already out.
  */
 function useLoaded<T>(
   key: string,
   load: () => Promise<T>,
-  channel?: AnswerChannel<T>,
+  channel?: AnswerChannel<Loaded<T>>,
 ): { state: Loaded<T>; reload: () => void } {
-  const initial = (): Loaded<T> => {
-    const last = channel?.last(key);
-    return last === undefined ? { status: "loading" } : { status: "ready", data: last };
-  };
+  const initial = (): Loaded<T> => channel?.last(key) ?? { status: "loading" };
   const [answer, setAnswer] = useState<{ key: string; state: Loaded<T> }>(() => ({ key, state: initial() }));
   const [generation, setGeneration] = useState(0);
   const loadRef = useRef(load);
@@ -40,21 +38,22 @@ function useLoaded<T>(
 
   useEffect(() => {
     if (channel === undefined) return;
-    return channel.subscribe(key, (data) => setAnswer({ key, state: { status: "ready", data } }));
+    return channel.subscribe(key, (state) => setAnswer({ key, state }));
   }, [channel, key]);
 
   useEffect(() => {
     let live = true;
     const ticket = channel?.ticket() ?? 0;
+    // Through the channel, this holder hears its own answer as a subscriber,
+    // unless a newer one is already out.
+    const settle = (state: Loaded<T>) => {
+      if (!live) return;
+      if (channel === undefined) setAnswer({ key, state });
+      else channel.publish(key, state, ticket);
+    };
     loadRef.current().then(
-      (data) => {
-        if (!live) return;
-        // Through the channel, this holder hears its own answer as a
-        // subscriber, unless a newer one is already out.
-        if (channel === undefined) setAnswer({ key, state: { status: "ready", data } });
-        else channel.publish(key, data, ticket);
-      },
-      (error: unknown) => live && setAnswer({ key, state: { status: "error", message: messageOf(error) } }),
+      (data) => settle({ status: "ready", data }),
+      (error: unknown) => settle({ status: "error", message: messageOf(error) }),
     );
     return () => {
       live = false;
@@ -65,7 +64,7 @@ function useLoaded<T>(
   return { state: answer.key === key ? answer.state : initial(), reload };
 }
 
-const skillLists = createAnswerChannel<SkillList>();
+const skillLists = createAnswerChannel<Loaded<SkillList>>();
 
 /**
  * Everything one thread's agent can run. The composer button, its popup and the

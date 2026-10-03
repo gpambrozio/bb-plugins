@@ -61,9 +61,16 @@ function SkillsPopupContent({ threadId }: { threadId: string }) {
 
   // The skill whose detail the popup shows, if any: **Open in panel** opens
   // the tab on it, as a tab of its own named after it.
+  //
+  // Changing screens removes the row or back link that had the focus, which
+  // drops it on the page, outside the composer's form that handles Escape; the
+  // root takes it back.
+  const root = useRef<HTMLDivElement>(null);
   const selection = useRef<Selection | null>(null);
   const handleSelectionChange = useCallback((next: Selection | null) => {
     selection.current = next;
+    const focused = document.activeElement;
+    if (focused === null || focused === document.body) root.current?.focus({ preventScroll: true });
   }, []);
 
   function panelOptions() {
@@ -88,6 +95,7 @@ function SkillsPopupContent({ threadId }: { threadId: string }) {
 
   return (
     <div
+      ref={root}
       className="flex max-h-[min(32rem,70vh)] flex-col outline-none"
       tabIndex={-1}
       data-testid="skills-popup"

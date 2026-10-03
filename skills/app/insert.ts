@@ -57,42 +57,28 @@ type Draft = { text: string; mentions: readonly ComposerMention[] };
  * slash command runs only at the start of a message, so it goes first and
  * whatever the user had typed follows it. A command pill already at the start
  * is replaced rather than joined by a second one, as bb's Plan and Goal rows
- * do. The other pills move with the text they sit in: the host takes their
- * ranges as given and does not rebase them.
+ * do. A name that cannot be a pill goes in as text, replacing that pill all
+ * the same. The other pills move with the text they sit in: the host takes
+ * their ranges as given and does not rebase them.
  */
 export function withSkillCommand(draft: Draft, command: SkillCommand): ComposerDraftReplacement {
-  if (!canBePill(command.name)) return withCommand(draft, chatText(command.name));
   const leading = draft.mentions.find((mention) => mention.kind === "command" && mention.from === 0);
-  const pillText = `/${command.name}`;
   const rest = draft.text.slice(leading?.to ?? 0).trimStart();
-  const prefix = `${pillText} `;
+  const prefix = chatText(command.name);
   const shift = prefix.length - (draft.text.length - rest.length);
-  const pill: ComposerMention = { kind: "command", trigger: "/", from: 0, to: pillText.length, label: command.name, ...command };
-  return {
-    text: `${prefix}${rest}`,
-    mentions: [
-      pill,
-      ...draft.mentions
-        .filter((mention) => mention !== leading)
-        .map((mention) => ({ ...mention, from: mention.from + shift, to: mention.to + shift })),
-    ],
+  const others = draft.mentions
+    .filter((mention) => mention !== leading)
+    .map((mention) => ({ ...mention, from: mention.from + shift, to: mention.to + shift }));
+  if (!canBePill(command.name)) return { text: `${prefix}${rest}`, mentions: others };
+  const pill: ComposerMention = {
+    kind: "command",
+    trigger: "/",
+    from: 0,
+    to: prefix.length - 1,
+    label: command.name,
+    ...command,
   };
-}
-
-/**
- * The draft with `command` put first as plain text — the fallback for a name
- * that cannot be a pill. Mention pills move with the text they sit in.
- */
-export function withCommand<Mention extends { from: number; to: number }>(
-  draft: { text: string; mentions: readonly Mention[] },
-  command: string,
-): { text: string; mentions: Mention[] } {
-  const rest = draft.text.trimStart();
-  const shift = command.length - (draft.text.length - rest.length);
-  return {
-    text: rest.length === 0 ? command : `${command}${rest}`,
-    mentions: draft.mentions.map((mention) => ({ ...mention, from: mention.from + shift, to: mention.to + shift })),
-  };
+  return { text: `${prefix}${rest}`, mentions: [pill, ...others] };
 }
 
 /**

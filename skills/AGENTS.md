@@ -98,12 +98,14 @@ desktop-v0.45.0), each with a test:
 - **A press in the form that is not on a control focuses the editor, and the editor's focus closes the
   popup.** The popup's root stops `mousedown` from reaching the form, so a press on a body, a heading
   or the scroll bar leaves it open. The root is also focusable (`tabIndex={-1}`): such a press would
-  otherwise drop the focus on the page, out of the form that handles Escape.
+  otherwise drop the focus on the page, out of the form that handles Escape. For the same reason it
+  takes the focus back whenever the popup changes screen, which removes the row or back link that had
+  it.
 - **Its component mounts each time it opens.** The button and the popup are separate slots with no
   props between them, so they share their answers through `app/answer-channel.ts`: the popup opens on
   the list the button counted, its own scan (one per opening) refreshes both, and a thread's last
-  answer is dropped once nothing shows it. Answers are ordered by when they were asked for, so the
-  button's slower first scan cannot overwrite the popup's newer one.
+  answer is dropped once nothing shows it. Answers, failures included, are ordered by when they were
+  asked for, so the button's slower first scan cannot overwrite the popup's newer one.
 
 **Open in panel** calls `useBbNavigate().openThreadPanel({ actionId: "skills" })` after closing the
 popup; the command palette entry opens the same tab. When the popup is showing a skill, **Open in
@@ -129,8 +131,8 @@ joined by a second — what bb's Plan and Goal rows and its bundled `automations
 `skill` for a discovered skill and the reported list's own for a reported entry; `origin` is
 `project` for a project or repository skill and `user` for the rest (as bb's own skill rows), and the
 reported list's own otherwise, which is why the server passes it through. A name with whitespace in it
-cannot be a pill (the pill stands for `/name`), so it goes in as `/name ` text (`withCommand`) as
-before. `replace` takes text and mentions together and does not rebase mention ranges, so
+cannot be a pill (the pill stands for `/name`), so it goes in as `/name ` text, replacing a leading
+command pill all the same. `replace` takes text and mentions together and does not rebase mention ranges, so
 `withSkillCommand` (`app/insert.ts`) shifts every other mention by what it added before it. It passes
 no `attachments`, which leaves the draft's own in place. `replace` is new in SDK 0.6 (bb 0.45), which
 is why this plugin needs bb 0.45. The button is offered only when `composer.scope` is this thread's
