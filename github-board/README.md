@@ -19,14 +19,16 @@ whatever is open on repositories you own, and what is assigned to you anywhere.
   bb project whose checkout has that repository as a remote. Pick the model, environment and project as
   you would for any thread; the next card opens with the same choices.
 - **Add to chat**, in the detail panel, puts the card — its kind, `owner/name#number`, title and GitHub
-  link, on one line — at the end of a chat already open beside the board, without starting a thread or
-  sending anything. With several chats open (a split, a new-thread composer, a queued message being
-  edited) it asks which one. It shows only while a chat is open, and never replaces what you typed.
+  link, on one line — at the end of a chat's draft, without starting a thread or sending anything. It
+  lists the chats on screen first (a split, a new-thread composer, a queued message being edited), then
+  recent threads, those in the card's repository first. Picking a thread that is not on screen opens it
+  — beside the board where bb can split the window, in its place where it cannot — and adds the card
+  there. It never replaces what you typed.
 - A filter narrows the board to some repositories. It, and the detail panel's width, are remembered.
 
 ## What you need
 
-- bb 0.45 or later. On bb 0.44, install with `@^0.1.0` instead of `@^0.2.0`; it has everything but Add
+- bb 0.45 or later. On bb 0.44, install with `@^0.1.0` instead of `@^0.3.0`; it has everything but Add
   to chat.
 - The GitHub CLI, [`gh`](https://cli.github.com), installed and signed in (`gh auth login`) **on the
   machine running the bb server**. The board uses that login; it stores no token of its own. Without it
@@ -37,7 +39,7 @@ whatever is open on repositories you own, and what is assigned to you anywhere.
 ## Install
 
 ```bash
-bb plugin install 'git:github.com/gpambrozio/bb-plugins@^0.2.0' --plugin github-board --tag-prefix github-board/
+bb plugin install 'git:github.com/gpambrozio/bb-plugins@^0.3.0' --plugin github-board --tag-prefix github-board/
 ```
 
 The board is **GitHub Board** in the sidebar. The palette has *GitHub Board: open the board* and

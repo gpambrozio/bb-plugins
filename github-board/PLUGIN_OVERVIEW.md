@@ -12,8 +12,8 @@ columns, beside the threads that work on them.
 - Labels added and removed from a right-click menu.
 - Send to chat opens bb's new-thread composer on a card, with a prompt you can set per column and per
   project, in the bb project that has the repository checked out.
-- Add to chat puts a card's title and link at the end of a chat already open beside the board, without
-  sending it. With several chats open, you pick one.
+- Add to chat puts a card's title and link at the end of a chat's draft, without sending it. Pick a chat
+  on screen or a recent thread, which opens beside the board.
 
 ## What it needs
 

@@ -5,6 +5,20 @@ Notable changes to `github-board`. The other plugins in this repository version 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.3.0
+
+### Changed
+
+- **Add to chat** is always in a card's detail panel, also when the board fills the window. It lists the
+  chats on screen first, then your recent threads, those in the card's repository first. Picking a
+  thread that is not on screen opens it, beside the board where the window can be split, and adds the
+  card to the end of its draft. Nothing is sent, and what you have typed stays.
+
+### Fixed
+
+- **Add to chat** no longer appears only while the **Send to chat** dialog is open, hidden behind it,
+  and never offers to add the card to that dialog.
+
 ## 0.2.0
 
 Needs bb 0.45 or later. On bb 0.44, stay on 0.1.

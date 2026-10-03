@@ -6,18 +6,25 @@ import { definePluginApp, useBbNavigate, type BbNavigate } from "@get-bb/plugin-
 
 import { BoardPanel, PANEL_PATH, PROMPTS_SUBPATH } from "./app/board-panel";
 import { PromptSettingsEditor } from "./app/prompt-settings";
+import { PendingAddToChat } from "./app/pending-add-delivery";
 import { BoardPatchListener } from "./app/state";
 
 /**
  * A palette command gets no navigation of its own, so this app-wide overlay,
  * mounted once per window, hands the host's navigator to the commands. It also
- * keeps the remembered board current while no board is on screen.
+ * keeps the remembered board current while no board is on screen, and adds a
+ * card to a chat that Add to chat opened, once the chat is on screen.
  */
 let navigator: BbNavigate | null = null;
 
 function AppBridge() {
   navigator = useBbNavigate();
-  return <BoardPatchListener />;
+  return (
+    <>
+      <BoardPatchListener />
+      <PendingAddToChat />
+    </>
+  );
 }
 
 export default definePluginApp((app) => {

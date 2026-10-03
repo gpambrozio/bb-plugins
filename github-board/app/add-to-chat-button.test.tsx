@@ -1,19 +1,24 @@
 // @vitest-environment jsdom
 /**
- * Add to chat through the SDK's app harness: its `useComposers()` reports one
- * composer, which is the case drawn as a plain button. No composer and several
- * are driven through `AddToChatControl` with fake handles, because the harness
- * always has exactly one.
+ * Add to chat through the SDK's app harness. Its `useComposers()` reports one
+ * composer, so a picker with several on screen is driven through
+ * `AddToChatControl` with fake handles.
  */
-import { cleanup, fireEvent, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, waitFor, within } from "@testing-library/react";
 import type { PluginComposerApi, PluginComposerScope } from "@get-bb/plugin-sdk/app";
 import { renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { BoardItem } from "../shared/board";
 import { AddToChatButton, AddToChatControl } from "./add-to-chat-button";
+import type { ChatTargets } from "./add-to-chat";
+import { pendingAdds } from "./pending-add";
 
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  const pending = pendingAdds.current();
+  if (pending !== null) pendingAdds.take(pending.id);
+});
 
 const item: BoardItem = {
   id: "I_42",
@@ -32,31 +37,108 @@ const item: BoardItem = {
 };
 const reference = "Issue octo/widgets#42: Crash on empty input — https://github.com/octo/widgets/issues/42";
 
-const thread = {
-  id: "thr_a",
-  projectId: "proj_w",
-  title: "Refactor the lexer",
-  titleFallback: null,
-  displayTitle: "Refactor the lexer",
-};
+function sidebarThread(id: string, projectId: string, displayTitle: string, updatedAt: number) {
+  return { id, projectId, title: displayTitle, titleFallback: null, displayTitle, isHidden: false, isArchived: false, updatedAt };
+}
 
-describe("AddToChatButton with one composer on screen", () => {
-  it("adds the card after the draft, leaves the draft and sends nothing", async () => {
-    const view = renderSlot(
-      { component: () => <AddToChatButton item={item} column="issues" /> },
-      {},
-      {
-        composer: { text: "Look at this:", scope: { kind: "thread", threadId: "thr_a" } },
-        sidebarThreads: { status: "ready", threads: [thread as never], projects: [] },
-      },
-    );
+const projects = [
+  { id: "proj_w", name: "widgets" },
+  { id: "proj_g", name: "gadgets" },
+];
+const threads = [
+  sidebarThread("thr_a", "proj_w", "Refactor the lexer", 300),
+  sidebarThread("thr_b", "proj_g", "Tune the cache", 200),
+  sidebarThread("thr_c", "proj_w", "Write the changelog", 100),
+];
 
-    fireEvent.click(view.getByRole("button", { name: "Add to chat: Refactor the lexer" }));
+const sendOptions = () => ({
+  project: { id: "proj_w", name: "widgets" },
+  candidates: [{ id: "proj_w", name: "widgets" }],
+  launch: null,
+});
+
+function renderButton({
+  scope,
+  sendDialogOpen = false,
+}: {
+  scope: PluginComposerScope;
+  sendDialogOpen?: boolean;
+}) {
+  return renderSlot(
+    { component: () => <AddToChatButton item={item} column="issues" sendDialogOpen={sendDialogOpen} /> },
+    {},
+    {
+      composer: { text: "Look at this:", scope },
+      sidebarThreads: { status: "ready", threads: threads as never, projects: projects as never },
+      rpc: { sendOptions } as never,
+    },
+  );
+}
+
+async function openMenu(view: ReturnType<typeof renderSlot>) {
+  const trigger = view.getByRole("button", { name: "Add to chat" });
+  fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false, pointerType: "mouse" });
+  return view.findByRole("menu");
+}
+
+describe("AddToChatButton", () => {
+  it("adds the card to a chat on screen, after the draft, and sends nothing", async () => {
+    const view = renderButton({ scope: { kind: "thread", threadId: "thr_a" } });
+
+    const menu = await openMenu(view);
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "Refactor the lexer" }));
 
     await waitFor(() => expect(view.inspection.composer.text).toBe(`Look at this:\n\n${reference}`));
     expect(view.inspection.composer.focusCount).toBe(1);
     expect(view.inspection.composer.submits).toEqual([]);
-    expect(view.inspection.rpcCalls).toEqual([]);
+    expect(view.inspection.sidebarActionCalls).toEqual([]);
+  });
+
+  it("is there with no chat on screen but the Send to chat dialog's, and never offers that one", async () => {
+    // The dialog's composer is a new-thread composer, the only one on screen.
+    const view = renderButton({ scope: { kind: "new-thread", projectId: "proj_w" }, sendDialogOpen: true });
+
+    const menu = await openMenu(view);
+    expect(within(menu).queryByText("On screen")).toBeNull();
+    expect(within(menu).queryByRole("menuitem", { name: /New thread/ })).toBeNull();
+    // Recent threads instead, the card's project first.
+    await waitFor(() =>
+      expect(within(menu).getAllByRole("menuitem").map((entry) => entry.textContent)).toEqual([
+        "Refactor the lexerwidgets",
+        "Write the changelogwidgets",
+        "Tune the cachegadgets",
+      ]),
+    );
+  });
+
+  it("offers a new-thread composer on screen while the dialog is closed", async () => {
+    const view = renderButton({ scope: { kind: "new-thread", projectId: "proj_w" } });
+
+    const menu = await openMenu(view);
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "New thread in widgets" }));
+
+    await waitFor(() => expect(view.inspection.composer.text).toBe(`Look at this:\n\n${reference}`));
+  });
+
+  it("opens a thread that is not on screen beside the board and leaves the card pending for it", async () => {
+    const view = renderButton({ scope: { kind: "thread", threadId: "thr_a" } });
+
+    const menu = await openMenu(view);
+    fireEvent.click(within(menu).getByRole("menuitem", { name: /Tune the cache/ }));
+
+    await waitFor(() =>
+      expect(view.inspection.sidebarActionCalls).toEqual([
+        { method: "open", threadId: "thr_b", options: { split: true } },
+      ]),
+    );
+    expect(pendingAdds.current()).toMatchObject({
+      threadId: "thr_b",
+      title: "Tune the cache",
+      item: { repository: "octo/widgets", number: 42 },
+      column: "issues",
+    });
+    // The chat on screen is left alone.
+    expect(view.inspection.composer.text).toBe("Look at this:");
   });
 });
 
@@ -70,47 +152,43 @@ function fakeComposer(key: string, scope: PluginComposerScope) {
   };
 }
 
-const names = {
-  threads: [{ id: "thr_a", displayTitle: "Refactor the lexer" }],
-  projects: [{ id: "proj_w", name: "widgets" }],
-};
-
-function renderControl(composers: ReturnType<typeof fakeComposer>[]) {
-  return renderSlot(
+function renderControl(targets: ChatTargets<ReturnType<typeof fakeComposer>>, loading = false) {
+  const onOpenThread = vi.fn();
+  const view = renderSlot(
     {
       component: () => (
         <AddToChatControl
-          composers={composers as unknown as PluginComposerApi[]}
-          names={names}
+          targets={targets as unknown as ChatTargets<PluginComposerApi>}
+          loading={loading}
           item={item}
           column="issues"
+          onOpenThread={onOpenThread}
         />
       ),
     },
     {},
     {},
   );
+  return { view, onOpenThread };
 }
 
 describe("AddToChatControl", () => {
-  it("draws nothing while no composer is on screen", () => {
-    const view = renderControl([]);
-    expect(view.queryByRole("button", { name: /Add to chat/ })).toBeNull();
-  });
-
-  it("lets the user pick among several composers and writes only to that one", async () => {
+  it("lets the user pick among several chats on screen and writes only to that one", async () => {
     const first = fakeComposer("thread:thr_a", { kind: "thread", threadId: "thr_a" });
     const second = fakeComposer("new-thread", { kind: "new-thread", projectId: "proj_w" });
     // The composer's editor, outside the menu: picking must leave the caret there.
     const editor = document.body.appendChild(document.createElement("textarea"));
     second.focus.mockImplementation(() => editor.focus());
-    const view = renderControl([first, second]);
+    const { view, onOpenThread } = renderControl({
+      onScreen: [
+        { composer: first, label: "Refactor the lexer" },
+        { composer: second, label: "New thread in widgets" },
+      ],
+      threads: [],
+    });
 
-    const trigger = view.getByRole("button", { name: "Add to chat" });
-    fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false, pointerType: "mouse" });
-    const option = await view.findByRole("menuitem", { name: "New thread in widgets" });
-    expect(view.getByRole("menuitem", { name: "Refactor the lexer" })).toBeTruthy();
-    fireEvent.click(option);
+    const menu = await openMenu(view);
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "New thread in widgets" }));
 
     await waitFor(() => expect(second.insert).toHaveBeenCalledWith(reference, { at: "end", block: true }));
     expect(second.focus).toHaveBeenCalledTimes(1);
@@ -119,5 +197,20 @@ describe("AddToChatControl", () => {
     editor.remove();
     expect(first.insert).not.toHaveBeenCalled();
     expect(second.submit).not.toHaveBeenCalled();
+    expect(onOpenThread).not.toHaveBeenCalled();
+  });
+
+  it("says so when there is nothing to add to", async () => {
+    const { view } = renderControl({ onScreen: [], threads: [] });
+    const menu = await openMenu(view);
+    expect(within(menu).getByRole("menuitem", { name: "No threads to add to" }).getAttribute("aria-disabled")).toBe(
+      "true",
+    );
+  });
+
+  it("says the threads are loading while the sidebar has not answered", async () => {
+    const { view } = renderControl({ onScreen: [], threads: [] }, true);
+    const menu = await openMenu(view);
+    expect(within(menu).getByRole("menuitem", { name: "Loading threads…" })).toBeTruthy();
   });
 });
