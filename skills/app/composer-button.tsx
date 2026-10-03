@@ -9,7 +9,7 @@
  * again each time the popover opens; the button shows `Skills` without a
  * number until the first answer, rather than a `Skills 0` that then jumps.
  */
-import { useBbNavigate, useComposer, useComposerView } from "@get-bb/plugin-sdk/app";
+import { useBbNavigate, useComposer } from "@get-bb/plugin-sdk/app";
 import { useCallback, useRef, useState } from "react";
 import { toast } from "sonner";
 
@@ -24,9 +24,9 @@ import { PANEL_ACTION_ID } from "./panel";
 import { useSkillList } from "./use-skills";
 
 export function SkillsComposerButton() {
-  const view = useComposerView();
-  if (view.scope.kind !== "thread") return null;
-  return <SkillsButton threadId={view.scope.threadId} />;
+  const { scope } = useComposer();
+  if (scope.kind !== "thread") return null;
+  return <SkillsButton threadId={scope.threadId} />;
 }
 
 function SkillsButton({ threadId }: { threadId: string }) {

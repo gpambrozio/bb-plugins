@@ -5,7 +5,7 @@
  * read or not, through the next turn, until the next event replaces it. A
  * kind that is switched off gets no banner.
  */
-import { useComposerView } from "@get-bb/plugin-sdk/app";
+import { useComposer } from "@get-bb/plugin-sdk/app";
 
 import { Icon } from "@/components/ui/icon";
 
@@ -25,9 +25,12 @@ const LABELS = {
 } as const;
 
 export function HeraldBanner() {
-  const view = useComposerView();
+  const { scope } = useComposer();
   const { entries } = useEntries();
-  const threadId = view.scope.kind === "thread" ? view.scope.threadId : null;
+  // The banner is registered for thread composers only. bb 0.44 reports the
+  // thread's queued message instead while the user edits one, so that counts
+  // as the thread too.
+  const threadId = scope.kind === "thread" || scope.kind === "queued-message" ? scope.threadId : null;
   // Herald's own entry, not the panel's join with bb's unread state: the
   // sentence stays here once the thread is read, and through the next turn,
   // until the next event replaces it.

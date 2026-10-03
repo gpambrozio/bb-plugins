@@ -23,8 +23,8 @@ runs:
     - name: Install the bb CLI
       shell: bash
       env:
-        # The bb release that ships @get-bb/plugin-sdk 0.5.29, the version every plugin pins.
-        BB_VERSION: 0.44.0
+        # The bb release that ships @get-bb/plugin-sdk 0.6.15, the version every plugin pins.
+        BB_VERSION: 0.45.0
       # `--ignore-scripts`: the package's native install scripts serve the desktop app's terminals
       # and file watching, not the plugin build, which works without them.
       run: |

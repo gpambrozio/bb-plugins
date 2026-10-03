@@ -5,6 +5,12 @@ Notable changes to `github-board`. The other plugins in this repository version 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.1.1
+
+### Changed
+
+- Built and tested against bb 0.45. Nothing you can see changes, and it still runs on bb 0.44.
+
 ## 0.1.0
 
 The first release: GitHub Board for bb, ported from the Paseo plugin of the same name (0.9.2).

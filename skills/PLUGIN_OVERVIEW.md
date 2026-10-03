@@ -27,7 +27,7 @@ conversation.
 
 ## What it needs
 
-- bb 0.44 or later. No account, key or network access.
+- bb 0.45 or later. No account, key or network access.
 
 ## Limits
 

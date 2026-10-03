@@ -1,6 +1,6 @@
 {
   "name": "@gpambrozio/bb-plugin-github-board",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "license": "MIT",
   "author": "gpambrozio (https://github.com/gpambrozio)",
   "homepage": "https://github.com/gpambrozio/bb-plugins/tree/main/github-board#readme",
@@ -52,7 +52,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@get-bb/plugin-sdk": "0.5.29",
+    "@get-bb/plugin-sdk": "0.6.15",
     "@pierre/diffs": "^1.2.9",
     "@radix-ui/react-alert-dialog": "^1.1.19",
     "@radix-ui/react-context-menu": "^2.3.3",
