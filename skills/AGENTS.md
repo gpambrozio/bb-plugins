@@ -96,8 +96,13 @@ adds arguments and sends the message themselves. Do not bring the send back with
 **Add to chat writes the draft through `useComposer()`.** It is public, not experimental
 (`useComposer`, `PluginComposerApi` in the SDK's app types): inside a thread context a component's
 writes land in that thread's draft — the composer the popover sits on, and the thread a side-panel tab
-belongs to. `updateText` puts `/name ` first (a slash command runs only at the start of a message) and
-keeps the draft after it; then `focus()`. The button is offered only when `composer.scope` is this
+belongs to. `composer.replace` puts `/name ` first (a slash command runs only at the start of a message)
+and keeps the draft after it; then `focus()`. `replace` takes text and mention pills together and does
+not rebase mention ranges, so `withCommand` (`app/insert.ts`) shifts every mention by what it added
+before it — the command, less the leading whitespace it trimmed. It passes no `attachments`, which
+leaves the draft's own in place; an explicit list would replace them. `replace` is new in SDK 0.6
+(bb 0.45): the 0.5 `updateText` is gone from the types, and bb 0.44 has no `replace`, which is why
+this plugin needs bb 0.45. The button is offered only when `composer.scope` is this
 thread's (`writesToThread`). After it, the panel calls `toThread` (which brings the composer back over
 the panel on a narrow window), and the popover closes and stops Radix handing focus back to its
 trigger, or the trigger would take it from the composer. On a narrow window the popover is a drawer
