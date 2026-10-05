@@ -11,14 +11,23 @@ import { randomUUID } from "node:crypto";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import { rpcContract } from "./shared/contract";
-import { DEFAULT_STORED_CONFIG, ENTRIES_CHANNEL, SentenceToolSchema, StoredConfigSchema, VoicesConfigSchema, type StoredConfig } from "./shared/herald";
+import {
+  DEFAULT_STORED_CONFIG,
+  ENTRIES_CHANNEL,
+  RecentHistoryLimitSchema,
+  SentenceToolSchema,
+  StoredConfigSchema,
+  VoicesConfigSchema,
+  type StoredConfig,
+} from "./shared/herald";
 import { customCommandSeed, sentenceSettingsOf, SETTINGS } from "./shared/settings";
-import { bbEvents, bbLiveness } from "./server/bb-ports";
+import { bbEvents, bbLiveness, bbNames } from "./server/bb-ports";
 import { SentenceHistory } from "./server/history";
 import { createHooks, type HeraldConfig } from "./server/hooks";
 import { kvBackend } from "./server/kv-backend";
 import { Liveness } from "./server/liveness";
-import type { EventsPort } from "./server/ports";
+import type { EventsPort, NamesPort } from "./server/ports";
+import { withNames } from "./server/recent";
 import { announceDrained, onOtherDrained } from "./server/reload-signal";
 import { listSayVoices, renderWithSay, sayAvailable } from "./server/say";
 import { AttentionStore } from "./server/store";
@@ -75,10 +84,12 @@ export default async function plugin(bb: BbPluginApi) {
 
   let events: EventsPort | null = null;
   let liveness: Liveness | null = null;
+  let names: NamesPort | null = null;
   const eventsPort = () => (events ??= bbEvents(bb.sdk, bb.log));
   /** Saves are chained: two partial writes at once must both land. */
   let configWrites: Promise<unknown> = Promise.resolve();
   const livenessOf = () => (liveness ??= new Liveness(bbLiveness(bb.sdk), bb.log));
+  const namesPort = () => (names ??= bbNames(bb.sdk));
 
   function publish(): void {
     try {
@@ -94,12 +105,14 @@ export default async function plugin(bb: BbPluginApi) {
     const raw = await bb.storage.kv.get<Partial<StoredConfig>>(CONFIG_KEY);
     const voices = VoicesConfigSchema.safeParse(raw?.voices);
     const tool = SentenceToolSchema.safeParse(raw?.sentenceTool);
+    const limit = RecentHistoryLimitSchema.safeParse(raw?.recentHistoryLimit);
     const text = (value: unknown, fallback: string) => (typeof value === "string" ? value : fallback);
     return {
       voices: voices.success ? voices.data : { ...DEFAULT_STORED_CONFIG.voices },
       sentenceTool: tool.success ? tool.data : DEFAULT_STORED_CONFIG.sentenceTool,
       sentenceCommand: text(raw?.sentenceCommand, DEFAULT_STORED_CONFIG.sentenceCommand),
       sentencePrompt: text(raw?.sentencePrompt, DEFAULT_STORED_CONFIG.sentencePrompt),
+      recentHistoryLimit: limit.success ? limit.data : DEFAULT_STORED_CONFIG.recentHistoryLimit,
     };
   }
 
@@ -142,12 +155,18 @@ export default async function plugin(bb: BbPluginApi) {
   bb.events.on("thread.deleted", ({ thread }) => {
     hooks.gone(thread);
     // Archived threads keep their history; a deleted one is gone for good.
-    history.remove(thread.id).catch(() => {});
+    // An archived thread has no entry left for `gone` to publish about, so
+    // the Herald page hears of its sentences going from here.
+    void history.remove(thread.id).then(publish);
   });
 
   bb.rpc.register(rpcContract, {
     list: async () => ({ entries: await livenessOf().visible(store) }),
     "history.list": ({ threadId }) => history.list(threadId).then((items) => ({ items })),
+    "history.recent": async () => {
+      const { recentHistoryLimit } = await storedConfig();
+      return { items: await withNames(await history.recent(recentHistoryLimit), namesPort(), bb.log) };
+    },
     "config.get": () => storedConfig(),
     // Any part of the stored configuration; the rest is kept. When the tool
     // becomes "custom" with nothing written yet, the command of the tool
@@ -159,6 +178,8 @@ export default async function plugin(bb: BbPluginApi) {
         const seed = customCommandSeed(current, merged);
         const saved = seed === null ? merged : { ...merged, sentenceCommand: seed };
         await bb.storage.kv.set(CONFIG_KEY, saved);
+        // An open Herald page re-reads its history at the new length.
+        if (saved.recentHistoryLimit !== current.recentHistoryLimit) publish();
         return saved;
       });
       // A failed save must not wedge the ones after it.

@@ -4,6 +4,10 @@
  * stays far under kv's 256 KB. Writes to one thread are chained so two
  * sentences a moment apart cannot lose each other; a failed write is logged
  * and the next one tries again from storage.
+ *
+ * The Herald page lists the newest sentences of every thread: `recent` lists
+ * the rows by their prefix and merges them, so there is no second index to
+ * keep in step with the rows.
  */
 import { HISTORY_HEADLINE_MAX, HISTORY_LIMIT, HistoryItemSchema, MAX_SPEECH_CHARS, type HistoryItem } from "../shared/herald";
 import type { Log } from "./ports";
@@ -15,10 +19,18 @@ export interface HistoryKv {
   get<T>(key: string): Promise<T | undefined>;
   set(key: string, value: unknown): Promise<void>;
   delete(key: string): Promise<void>;
+  list(prefix: string): Promise<string[]>;
 }
+
+/** A past sentence with the thread it belongs to. */
+export type ThreadHistoryItem = HistoryItem & { threadId: string };
 
 export class SentenceHistory {
   private readonly chains = new Map<string, Promise<void>>();
+  /** Bumped by every write issued, so a scan knows whether it can still be shared. */
+  private writes = 0;
+  /** The scan in flight, shared by every caller that comes before the next write. */
+  private scan: { writes: number; items: Promise<ThreadHistoryItem[]> } | null = null;
 
   constructor(
     private readonly kv: HistoryKv,
@@ -51,6 +63,40 @@ export class SentenceHistory {
     return items;
   }
 
+  /**
+   * The newest `limit` sentences across every thread, newest first. Waits for
+   * the writes issued so far, so a sentence the app was just told about is in
+   * the answer. Callers at once share one scan of every row — several open
+   * pages hear the same nudge — unless a write was issued since it started.
+   */
+  async recent(limit: number): Promise<ThreadHistoryItem[]> {
+    return (await this.sharedScan()).slice(0, limit);
+  }
+
+  private sharedScan(): Promise<ThreadHistoryItem[]> {
+    if (this.scan !== null && this.scan.writes === this.writes) return this.scan.items;
+    const scan = { writes: this.writes, items: this.flush().then(() => this.scanAll()) };
+    this.scan = scan;
+    const done = () => {
+      if (this.scan === scan) this.scan = null;
+    };
+    scan.items.then(done, done);
+    return scan.items;
+  }
+
+  private async scanAll(): Promise<ThreadHistoryItem[]> {
+    const keys = await this.kv.list(HISTORY_PREFIX);
+    const rows = await Promise.all(
+      keys.map(async (key) => {
+        const threadId = key.slice(HISTORY_PREFIX.length);
+        return (await this.list(threadId)).map((item) => ({ ...item, threadId }));
+      }),
+    );
+    return rows
+      .flat()
+      .sort((a, b) => timeOf(b) - timeOf(a) || b.eventId.localeCompare(a.eventId));
+  }
+
   /** For a deleted thread. */
   remove(threadId: string): Promise<void> {
     this.enqueue(threadId, () => this.kv.delete(`${HISTORY_PREFIX}${threadId}`));
@@ -63,12 +109,19 @@ export class SentenceHistory {
   }
 
   private enqueue(threadId: string, work: () => Promise<void>): void {
+    this.writes += 1;
     const previous = this.chains.get(threadId) ?? Promise.resolve();
     const next = previous.then(work).catch((error: unknown) => {
       this.log.error(`Could not save thread ${threadId}'s sentence history: ${error instanceof Error ? error.message : String(error)}`);
     });
     this.chains.set(threadId, next);
   }
+}
+
+/** An unreadable time sorts last rather than scrambling the order. */
+function timeOf(item: HistoryItem): number {
+  const at = Date.parse(item.createdAt);
+  return Number.isFinite(at) ? at : 0;
 }
 
 function cut(text: string, max: number): string {

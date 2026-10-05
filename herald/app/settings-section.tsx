@@ -3,7 +3,8 @@
  * hold. The voices run to hundreds; and the model-written sentence's tool,
  * custom command and prompt belong together, with the command shown only
  * under "custom" — which the form cannot do, so all three live here, in the
- * stored configuration.
+ * stored configuration. So does the length of the Herald page's history,
+ * stored beside them.
  */
 import { useRpc } from "@get-bb/plugin-sdk/app";
 import { useEffect, useState, type ReactNode } from "react";
@@ -12,7 +13,15 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 
 import type { RpcContract } from "../shared/contract";
-import { DEFAULT_SENTENCE_PROMPT, SENTENCE_TOOLS, type SentenceTool, type StoredConfig } from "../shared/herald";
+import {
+  DEFAULT_SENTENCE_PROMPT,
+  RECENT_HISTORY_MAX,
+  RECENT_HISTORY_MIN,
+  RecentHistoryLimitSchema,
+  SENTENCE_TOOLS,
+  type SentenceTool,
+  type StoredConfig,
+} from "../shared/herald";
 import { getAnnouncer } from "./announcer";
 import { canPlaySpeech, listBrowserVoices, onVoicesChanged, type Voice } from "./speech";
 import { VoicePicker } from "./voice-picker";
@@ -134,6 +143,51 @@ function ModelSentence({ config, onSave }: { config: StoredConfig; onSave: (next
   );
 }
 
+/** How many past sentences the Herald page lists; saved only when it is a whole number in bounds. */
+function RecentHistoryLimit({ stored, onSave }: { stored: number; onSave: (next: Partial<StoredConfig>) => void }) {
+  const [draft, setDraft] = useState(String(stored));
+  useEffect(() => setDraft(String(stored)), [stored]);
+  const parsed = RecentHistoryLimitSchema.safeParse(draft.trim() === "" ? Number.NaN : Number(draft));
+  return (
+    <section className="space-y-3">
+      <Heading title="Herald page">
+        Below the threads waiting on you, the Herald page lists Herald&apos;s latest sentences from every thread in every project.
+      </Heading>
+      <div className="space-y-1">
+        <p className="text-xs font-semibold">Sentences listed</p>
+        <div className="flex gap-2">
+          <input
+            aria-label="Sentences listed"
+            type="number"
+            inputMode="numeric"
+            min={RECENT_HISTORY_MIN}
+            max={RECENT_HISTORY_MAX}
+            step={1}
+            className={`${FIELD_CLASS} w-24 font-sans`}
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+          />
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!parsed.success || parsed.data === stored}
+            onClick={() => {
+              if (parsed.success) onSave({ recentHistoryLimit: parsed.data });
+            }}
+          >
+            Save
+          </Button>
+        </div>
+        {parsed.success ? null : (
+          <p className="text-xs text-destructive">
+            A whole number from {RECENT_HISTORY_MIN} to {RECENT_HISTORY_MAX}.
+          </p>
+        )}
+      </div>
+    </section>
+  );
+}
+
 export function HeraldSettingsSection() {
   const rpc = useRpc<RpcContract>();
   const [config, setConfig] = useState<StoredConfig | null>(null);
@@ -163,6 +217,7 @@ export function HeraldSettingsSection() {
   return (
     <div className="flex flex-col gap-6">
       <ModelSentence config={config} onSave={save} />
+      <RecentHistoryLimit stored={config.recentHistoryLimit} onSave={save} />
       {canPlaySpeech() ? (
         <section className="space-y-3">
           <Heading title="Voices">

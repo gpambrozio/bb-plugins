@@ -9,6 +9,7 @@ import {
   AttentionEntrySchema,
   HistoryItemSchema,
   MAX_SPEECH_CHARS,
+  RecentHistoryItemSchema,
   SpeechVoiceSchema,
   StoredConfigSchema,
 } from "./herald";
@@ -23,6 +24,14 @@ export const rpcContract = defineRpcContract({
   "history.list": {
     input: z.object({ threadId: z.string().min(1) }),
     output: z.object({ items: z.array(HistoryItemSchema) }),
+  },
+  /**
+   * The newest past sentences of every thread, newest first, for the Herald
+   * page; as many as the stored `recentHistoryLimit`.
+   */
+  "history.recent": {
+    input: z.object({}),
+    output: z.object({ items: z.array(RecentHistoryItemSchema) }),
   },
   "config.get": {
     input: z.object({}),

@@ -16,14 +16,15 @@ what still holds and says what bb changed. The repo root `AGENTS.md` covers what
 | `server/reload-signal.ts` | What an old instance tells its replacement: storage closed and flushed, read it again. |
 | `server/store.ts` | One entry per thread, mirrored to storage; `load()` merges. |
 | `server/kv-backend.ts` | The store's rows in `bb.storage.kv`, one per thread. |
-| `server/history.ts` | Each thread's past sentences, one kv row per thread, capped; for the thread panel. |
+| `server/history.ts` | Each thread's past sentences, one kv row per thread, capped; for the thread panel, and merged across threads for the page. |
+| `server/recent.ts` | The page's history: each merged sentence named by its thread and project, looked up when the page reads. |
 | `server/liveness.ts` | Asks bb whether each entry's thread still exists before the list goes out; gone ones are removed. |
 | `server/timeline.ts` | Pure text: what an interaction asks, the user's last prompt, the spoken sentence. |
 | `server/say.ts` | `say` on the bb server's Mac, driven for its voices: text in on stdin, a WAV out, bytes back. |
 | `server/writer.ts` | The optional sentence-writing tool, run as a child process: prompt in on stdin, one line out; the timeout, the cap, the empty folder. |
 | `server/command-line.ts` | The user's command split into words without a shell, and the prompt template filled in. |
 | `server/ports.ts`, `server/bb-ports.ts` | The seams the logic is tested through, and their implementations over `bb.sdk`. |
-| `shared/herald.ts` | The entry shape and the stored configuration: the voices, and the model-written sentence's tool, command and prompt. No SDK import. |
+| `shared/herald.ts` | The entry shape and the stored configuration: the voices, the model-written sentence's tool, command and prompt, and the page's history length. No SDK import. |
 | `shared/settings.ts` | The host-rendered form, and the speech gate (`blockedMessage`) both halves agree on. |
 | `shared/contract.ts` | The RPC contract. The app imports it as a type only. |
 | `app/bridge.tsx` | The app-wide overlay: reads the list on every nudge and reconnect, and runs the announcer. |
@@ -34,9 +35,9 @@ what still holds and says what bb changed. The repo root `AGENTS.md` covers what
 | `app/tip-button.tsx` | An icon button with bb's tooltip. |
 | `app/speech.ts` | Every browser audio global, and which bb client this is. |
 | `app/rows.ts` | What the page lists: bb's unread and waiting-for-input joined with Herald's entries. |
-| `app/panel.tsx`, `app/banner.tsx` | The Herald page (and its sidebar count), and the sentence above a thread's composer. |
+| `app/panel.tsx`, `app/banner.tsx` | The Herald page (its waiting threads, then recent sentences from every thread; and its sidebar count), and the sentence above a thread's composer. |
 | `app/history-panel.tsx`, `app/header-action.tsx` | The Herald tab in a thread's side panel — the sentences of its past turns — and the header megaphone that opens it. |
-| `app/settings-section.tsx`, `app/voice-picker.tsx` | The model-written sentence's tool, custom command (only under custom) and prompt; the voice lists and *Test voice*. |
+| `app/settings-section.tsx`, `app/voice-picker.tsx` | The model-written sentence's tool, custom command (only under custom) and prompt; how many recent sentences the page lists; the voice lists and *Test voice*. |
 
 ## Where things run
 
@@ -361,6 +362,20 @@ sentence landing is also an entries change. A megaphone in the thread header
 (`experimental_threadHeaderAction`, `app/header-action.tsx`) opens it through `useBbNavigate().openThreadPanel`;
 the host wants one 28px control there, so it is an icon button with its own accessible name. If bb gains a plugin-written timeline row, write the
 sentence there at the end of the turn and this panel becomes a convenience.
+
+The **Herald page lists the same rows across threads** below its waiting list: `SentenceHistory.recent`
+lists the `history:` keys (`kv.list(prefix)`), reads each row and merges them newest first, so there is
+no second index to keep in step — a deleted thread's row going away takes its sentences off the page.
+It awaits the history's pending writes first, because the hooks publish the nudge before the write
+lands. Every open page hears the same nudge, so callers at once share one scan (unless a write was
+issued since it started), and the page keeps one read in flight with at most one queued after it. A
+deleted thread publishes once its row is gone: archiving already took its entry, so `gone` has nothing
+to publish about. `server/recent.ts` then names each thread and project by asking bb at read time (one lookup per
+thread): a renamed thread shows its new title, an archived one stays listed, and a thread bb answers
+404 for stays listed with `threadExists: false` and nothing to open. The length is the stored
+configuration's `recentHistoryLimit`, 20 by default and at most `HISTORY_LIMIT`: past what one thread's
+row keeps, the merge could skip a busy thread's sentences that its row had already let go. Changing it
+publishes the entries nudge so an open page re-reads.
 
 ## Checking it
 

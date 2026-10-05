@@ -9,6 +9,8 @@ know which thread to go back to without watching the sidebar.
   the start of what was done.
 - A Herald page in the sidebar listing every waiting thread with its reason and sentence, and a count
   beside the sidebar entry. Tap a row to open the thread, or Read again to hear it again.
+- Below them on the same page, the latest sentences from every thread in every project, 20 by default
+  and up to 50, each opening its thread.
 - The sentence above the waiting thread's composer, with a Read again button, until you answer.
 - Settings for where to speak (desktop app, browser tab, mobile app), the voice and speed, and which
   kinds of event are announced.

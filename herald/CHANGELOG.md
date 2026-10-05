@@ -5,6 +5,15 @@ Notable changes to `herald`. The other plugins in this repository version separa
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.2.2
+
+### Added
+
+- The Herald page lists **Recent sentences** below the threads waiting on you: what Herald last said
+  about any thread, in every project, newest first, with the thread, its project and how long ago. Tap
+  one to open its thread, or Read again to hear it. It keeps itself up to date.
+- A **Herald page** setting chooses how many it lists: 20 by default, from 1 to 50.
+
 ## 0.2.1
 
 ### Changed
