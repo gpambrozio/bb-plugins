@@ -10,6 +10,13 @@ import {
   withoutImages,
 } from "./markdown";
 
+// The time limit for the speed tests. They catch super-linear blow-ups, which
+// take tens of seconds or never finish, not small slowdowns. The slowest case
+// takes about 0.6 s on a Mac and has reached 1.7 s on a shared GitHub runner,
+// so 4 s leaves room for a slow runner and stays under vitest's 5 s timeout,
+// which would otherwise fail the test without saying how long it took.
+const SLOW_MS = 4000;
+
 /** Every node bb's renderer would draw as something that loads: images, image references, raw HTML. */
 function loaders(markdown: string): string[] {
   const found: string[] = [];
@@ -95,7 +102,7 @@ describe("withoutImages", () => {
     const started = performance.now();
     const result = withoutImages(markdown);
     parseBody(result);
-    expect(performance.now() - started).toBeLessThan(1500);
+    expect(performance.now() - started).toBeLessThan(SLOW_MS);
     expect(result.length).toBeLessThan(markdown.length * 2);
     expect(loaders(result)).toEqual([]);
   });
@@ -164,7 +171,7 @@ describe("budgets", () => {
 });
 
 // Each payload must come back — and parse again as bb's renderer will parse
-// it — well within a second. The bound is generous; the point is "not seconds".
+// it — within SLOW_MS. The bound is generous; the point is "not a blow-up".
 describe("speed on hostile bodies", () => {
   const PAYLOADS: Record<string, string> = {
     "nested images, depth 256 (review 2)": "![".repeat(256) + "x" + "](x)".repeat(256),
@@ -184,7 +191,7 @@ describe("speed on hostile bodies", () => {
     const started = performance.now();
     const result = withoutImages(markdown);
     parseBody(result);
-    expect(performance.now() - started).toBeLessThan(1500);
+    expect(performance.now() - started).toBeLessThan(SLOW_MS);
     expect(loaders(result)).toEqual([]);
   });
 });
