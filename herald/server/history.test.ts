@@ -22,6 +22,9 @@ function fakeKv(): HistoryKv & { rows: Map<string, unknown>; failNext: boolean }
     async delete(key: string): Promise<void> {
       rows.delete(key);
     },
+    async list(prefix: string): Promise<string[]> {
+      return [...rows.keys()].filter((key) => key.startsWith(prefix)).sort();
+    },
   };
   return kv;
 }
@@ -92,5 +95,49 @@ describe("SentenceHistory", () => {
     history.append("t1", item(2));
     await history.flush();
     expect(log.lines.some((line) => line.includes("disk full"))).toBe(true);
+  });
+
+  describe("recent", () => {
+    function at(threadId: string, second: number): HistoryItem {
+      return item(second, { eventId: `${threadId}:idle:${second}`, text: `${threadId} ${second}.` });
+    }
+
+    it("merges every thread's sentences newest first, cut to the limit", async () => {
+      const kv = fakeKv();
+      kv.rows.set("config", { other: "row" });
+      const history = new SentenceHistory(kv, recordingLog());
+      history.append("t1", at("t1", 1));
+      history.append("t1", at("t1", 4));
+      history.append("t2", at("t2", 2));
+      history.append("t2", at("t2", 5));
+      history.append("t3", at("t3", 3));
+      await history.flush();
+      expect((await history.recent(10)).map((entry) => entry.text)).toEqual(["t2 5.", "t1 4.", "t3 3.", "t2 2.", "t1 1."]);
+      expect((await history.recent(2)).map((entry) => [entry.threadId, entry.eventId])).toEqual([
+        ["t2", "t2:idle:5"],
+        ["t1", "t1:idle:4"],
+      ]);
+    });
+
+    it("includes a sentence whose write was only just issued", async () => {
+      const history = new SentenceHistory(fakeKv(), recordingLog());
+      history.append("t1", at("t1", 1));
+      expect((await history.recent(5)).map((entry) => entry.text)).toEqual(["t1 1."]);
+    });
+
+    it("leaves out a deleted thread, and skips what it cannot read", async () => {
+      const kv = fakeKv();
+      const history = new SentenceHistory(kv, recordingLog());
+      history.append("t1", at("t1", 1));
+      history.append("t2", at("t2", 2));
+      await history.remove("t2");
+      kv.rows.set("history:t3", "not a list");
+      kv.rows.set("history:t4", [{ eventId: "broken" }, at("t4", 3)]);
+      expect((await history.recent(5)).map((entry) => entry.text)).toEqual(["t4 3.", "t1 1."]);
+    });
+
+    it("is empty when no thread has a sentence", async () => {
+      expect(await new SentenceHistory(fakeKv(), recordingLog()).recent(20)).toEqual([]);
+    });
   });
 });

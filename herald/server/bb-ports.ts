@@ -8,7 +8,7 @@
  */
 import type { PluginBbSdk } from "@get-bb/plugin-sdk";
 
-import type { EventsPort, LivenessPort, Log } from "./ports";
+import type { EventsPort, LivenessPort, Log, NamesPort } from "./ports";
 import { lastPrompt } from "./timeline";
 
 /** How long a project's name or an environment's folder is trusted; both change rarely. */
@@ -116,5 +116,21 @@ export function bbLiveness(sdk: PluginBbSdk): LivenessPort {
         throw error;
       }
     },
+  };
+}
+
+export function bbNames(sdk: PluginBbSdk): NamesPort {
+  const projectName = cached(async (projectId) => (await sdk.projects.get({ projectId })).name);
+  return {
+    async thread(threadId) {
+      try {
+        const thread = await sdk.threads.get({ threadId });
+        return { title: thread.title ?? thread.titleFallback, projectId: thread.projectId };
+      } catch (error) {
+        if (isNotFound(error)) return null;
+        throw error;
+      }
+    },
+    projectName,
   };
 }

@@ -9,7 +9,9 @@ of what was done — and the bb app speaks it.
 
 - A **Herald** page in the sidebar lists every thread waiting on you, each with that sentence and how
   long ago it happened; the sidebar entry shows how many. The list keeps itself up to date. Tap a row to
-  open the thread, or **Read again** on it to hear the sentence again.
+  open the thread, or **Read again** on it to hear the sentence again. Below them, **Recent sentences**
+  lists what Herald last said about any thread, in every project — the last 20 by default — with the
+  thread, its project and how long ago; tap one to open its thread.
 - The sentence also sits above the thread's composer, with a Read again button, and stays there — whether
   or not you have read the thread, and through your next turn — until the next event replaces it.
 - A **Herald** tab in each thread's side panel lists what Herald said about that thread's past turns,
@@ -63,6 +65,8 @@ On the plugin's settings page (Settings → Plugins → Herald):
 - **Threads started by another thread** — off by default. A child thread reports to the thread that
   started it, and you hear the parent's announcement rather than two. It is still listed.
 - **Voices** — the Mac voice and the browser voice, and *Test voice*.
+- **Herald page** — how many recent sentences the page lists below the waiting threads: 20 by default,
+  from 1 to 50.
 - **Write each sentence with a model** — off by default. On, a command-line tool on the Mac running bb
   writes each sentence from the event, the request and the agent's reply, so you hear "Login fix is
   done; nothing is left for you" rather than the start of the reply. Which tool, and the prompt, are

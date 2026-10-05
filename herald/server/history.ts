@@ -4,6 +4,10 @@
  * stays far under kv's 256 KB. Writes to one thread are chained so two
  * sentences a moment apart cannot lose each other; a failed write is logged
  * and the next one tries again from storage.
+ *
+ * The Herald page lists the newest sentences of every thread: `recent` lists
+ * the rows by their prefix and merges them, so there is no second index to
+ * keep in step with the rows.
  */
 import { HISTORY_HEADLINE_MAX, HISTORY_LIMIT, HistoryItemSchema, MAX_SPEECH_CHARS, type HistoryItem } from "../shared/herald";
 import type { Log } from "./ports";
@@ -15,7 +19,11 @@ export interface HistoryKv {
   get<T>(key: string): Promise<T | undefined>;
   set(key: string, value: unknown): Promise<void>;
   delete(key: string): Promise<void>;
+  list(prefix: string): Promise<string[]>;
 }
+
+/** A past sentence with the thread it belongs to. */
+export type ThreadHistoryItem = HistoryItem & { threadId: string };
 
 export class SentenceHistory {
   private readonly chains = new Map<string, Promise<void>>();
@@ -51,6 +59,26 @@ export class SentenceHistory {
     return items;
   }
 
+  /**
+   * The newest `limit` sentences across every thread, newest first. Waits for
+   * the writes issued so far, so a sentence the app was just told about is in
+   * the answer.
+   */
+  async recent(limit: number): Promise<ThreadHistoryItem[]> {
+    await this.flush();
+    const keys = await this.kv.list(HISTORY_PREFIX);
+    const rows = await Promise.all(
+      keys.map(async (key) => {
+        const threadId = key.slice(HISTORY_PREFIX.length);
+        return (await this.list(threadId)).map((item) => ({ ...item, threadId }));
+      }),
+    );
+    return rows
+      .flat()
+      .sort((a, b) => timeOf(b) - timeOf(a) || b.eventId.localeCompare(a.eventId))
+      .slice(0, limit);
+  }
+
   /** For a deleted thread. */
   remove(threadId: string): Promise<void> {
     this.enqueue(threadId, () => this.kv.delete(`${HISTORY_PREFIX}${threadId}`));
@@ -69,6 +97,12 @@ export class SentenceHistory {
     });
     this.chains.set(threadId, next);
   }
+}
+
+/** An unreadable time sorts last rather than scrambling the order. */
+function timeOf(item: HistoryItem): number {
+  const at = Date.parse(item.createdAt);
+  return Number.isFinite(at) ? at : 0;
 }
 
 function cut(text: string, max: number): string {

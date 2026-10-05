@@ -3,16 +3,26 @@
  * Herald wrote for it. A tap opens the thread; *Read again* on a card says
  * its sentence again. The list keeps itself current — the overlay re-reads it
  * on every nudge from the server and on reconnect — so there is no Refresh.
+ * Below it, the newest past sentences of every thread, which the page re-reads
+ * on the same nudges.
  */
-import { experimental_useSidebarThreads, experimental_usePluginId, useBbNavigate } from "@get-bb/plugin-sdk/app";
-import { useEffect, useMemo, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode } from "react";
+import {
+  experimental_useSidebarThreads,
+  experimental_usePluginId,
+  useBbNavigate,
+  useRealtime,
+  useRealtimeConnectionState,
+  useRpc,
+} from "@get-bb/plugin-sdk/app";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode } from "react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
 
-import { speechText, type AttentionEntry } from "../shared/herald";
+import type { RpcContract } from "../shared/contract";
+import { ENTRIES_CHANNEL, speechText, type AttentionEntry, type RecentHistoryItem } from "../shared/herald";
 import { getAnnouncer, isMutedHere, onMuteChange, setMutedHere } from "./announcer";
 import { useEntries } from "./entries";
 import { HERALD_ICONS } from "./icons";
@@ -180,6 +190,116 @@ function RowCard({ row, now, onOpen }: { row: Row; now: number; onOpen: (threadI
   );
 }
 
+/**
+ * The newest past sentences of every thread, re-read on mount, on every
+ * entries nudge (a sentence landing is one) and when the connection comes
+ * back. A read that answers after a newer one is dropped.
+ */
+function useRecentHistory(): { items: RecentHistoryItem[] | null; error: string | null } {
+  const rpc = useRpc<RpcContract>();
+  const connection = useRealtimeConnectionState();
+  const [state, setState] = useState<{ items: RecentHistoryItem[] | null; error: string | null }>({ items: null, error: null });
+  const latest = useRef(0);
+
+  const refresh = useCallback(() => {
+    latest.current += 1;
+    const read = latest.current;
+    rpc.call("history.recent", {}).then(
+      ({ items }) => {
+        if (read === latest.current) setState({ items, error: null });
+      },
+      (cause: unknown) => {
+        if (read === latest.current) setState((current) => ({ ...current, error: errorText(cause) }));
+      },
+    );
+  }, [rpc]);
+
+  useEffect(refresh, [refresh]);
+  useRealtime(ENTRIES_CHANNEL, refresh);
+
+  // Whatever changed while the connection was down never arrives as a signal.
+  const previous = useRef(connection);
+  useEffect(() => {
+    if (previous.current === "reconnecting" && connection === "connected") refresh();
+    previous.current = connection;
+  }, [connection, refresh]);
+
+  return state;
+}
+
+function HistoryCard({ item, now, onOpen }: { item: RecentHistoryItem; now: number; onOpen: (threadId: string) => void }) {
+  const look = lookOf(item.reason);
+  const title = item.threadTitle ?? (item.threadExists ? "A thread" : "A thread that no longer exists");
+  const open = item.threadExists ? () => onOpen(item.threadId) : undefined;
+  const onKeyDown = (event: KeyboardEvent<HTMLLIElement>) => {
+    if (open === undefined || event.target !== event.currentTarget) return;
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      open();
+    }
+  };
+  return (
+    <li
+      role={open === undefined ? undefined : "link"}
+      tabIndex={open === undefined ? undefined : 0}
+      aria-label={open === undefined ? undefined : `Open ${title}`}
+      onClick={open}
+      onKeyDown={onKeyDown}
+      className={cn(
+        "space-y-1 rounded-lg border border-border bg-card p-3",
+        open !== undefined && "cursor-pointer hover:bg-state-hover focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+      )}
+    >
+      <div className="flex min-w-0 items-center gap-2">
+        <span className={cn("inline-flex shrink-0 items-center gap-1 text-xs font-semibold", look.className)}>
+          <Icon name={look.icon} className="size-3.5" aria-hidden />
+          {look.label}
+        </span>
+        <span className="min-w-0 truncate text-sm font-semibold">{title}</span>
+        <span className="ml-auto shrink-0 text-xs text-muted-foreground">{relativeTime(Date.parse(item.createdAt), now)}</span>
+        {canPlaySpeech() ? (
+          <TipButton
+            variant="ghost"
+            size="icon"
+            className="size-7 shrink-0"
+            label="Read again"
+            onClick={(event) => {
+              event.stopPropagation();
+              void readAgain(item.text);
+            }}
+            onKeyDown={(event) => event.stopPropagation()}
+          >
+            <Icon name={HERALD_ICONS.volume} />
+          </TipButton>
+        ) : null}
+      </div>
+      {item.projectName === null ? null : <p className="truncate text-xs text-muted-foreground">{item.projectName}</p>}
+      <p className="text-sm italic text-foreground">{item.text}</p>
+    </li>
+  );
+}
+
+/** Past sentences from every thread in every project, newest first. */
+function RecentHistory({ now, onOpen }: { now: number; onOpen: (threadId: string) => void }) {
+  const { items, error } = useRecentHistory();
+  return (
+    <section aria-label="Recent sentences" className="space-y-2 pt-4">
+      <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Recent sentences</h2>
+      {items === null ? (
+        <p className="text-sm text-muted-foreground">{error ?? "Loading…"}</p>
+      ) : items.length === 0 ? (
+        <p className="text-sm text-muted-foreground">Nothing yet: what Herald says about each thread, in every project, is listed here.</p>
+      ) : (
+        <ol className="space-y-2">
+          {items.map((item) => (
+            <HistoryCard key={`${item.threadId}:${item.eventId}`} item={item} now={now} onOpen={onOpen} />
+          ))}
+        </ol>
+      )}
+    </section>
+  );
+}
+
 function hintFor(): string | null {
   if (!canPlaySpeech()) return "This device can neither play audio nor speak, so summaries can only be read here.";
   switch (speechPlatform()) {
@@ -267,6 +387,7 @@ export function HeraldPanel() {
           ) : (
             rows.map((row) => <RowCard key={row.threadId} row={row} now={now} onOpen={(id) => navigate.toThread(id)} />)
           )}
+          <RecentHistory now={now} onOpen={(id) => navigate.toThread(id)} />
         </div>
       </div>
     </div>

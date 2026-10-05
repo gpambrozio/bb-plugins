@@ -10,7 +10,15 @@ import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { RpcContract } from "../shared/contract";
-import { DEFAULT_STORED_CONFIG, ENTRIES_CHANNEL, TOOL_COMMANDS, type AttentionEntry, type HistoryItem, type StoredConfig } from "../shared/herald";
+import {
+  DEFAULT_STORED_CONFIG,
+  ENTRIES_CHANNEL,
+  TOOL_COMMANDS,
+  type AttentionEntry,
+  type HistoryItem,
+  type RecentHistoryItem,
+  type StoredConfig,
+} from "../shared/herald";
 import { HeraldBanner } from "./banner";
 import { HeraldBridge } from "./bridge";
 import { HeraldHeaderAction } from "./header-action";
@@ -76,6 +84,7 @@ function rpc(entries: () => AttentionEntry[], calls: { list: number }) {
     "config.get": () => DEFAULT_STORED_CONFIG,
     "config.set": () => DEFAULT_STORED_CONFIG,
     "history.list": () => ({ items: [] }),
+    "history.recent": () => ({ items: [] as RecentHistoryItem[] }),
     "speech.voices": () => ({ available: true, voices: [{ name: "Zoe (Premium)", lang: "en_US" }] }),
     "speech.render": () => ({ mimeType: "audio/wav", base64: "" }),
     log: () => null,
@@ -270,5 +279,77 @@ describe("Herald's app", () => {
     await waitFor(() => expect(stored.sentencePrompt).toBe(DEFAULT_STORED_CONFIG.sentencePrompt));
     fireEvent.change(select, { target: { value: "claude" } });
     await waitFor(() => expect(screen.queryByLabelText("Custom command")).toBeNull());
+  });
+
+  it("lists past sentences from every project below the waiting threads, opens one, and re-reads on a nudge", async () => {
+    const calls = { list: 0 };
+    const recent = (overrides: Partial<RecentHistoryItem>): RecentHistoryItem => ({
+      threadId: "t2",
+      threadTitle: "Docs",
+      projectName: "Guide",
+      threadExists: true,
+      eventId: "t2:idle:1",
+      reason: "finished",
+      createdAt: new Date(Date.now() - 3_600_000).toISOString(),
+      headline: "Finished",
+      text: "Docs is written.",
+      ...overrides,
+    });
+    let items = [
+      recent({}),
+      recent({ threadId: "gone", threadTitle: null, projectName: null, threadExists: false, eventId: "gone:idle:1", text: "Old work is done." }),
+    ];
+    const backend = { ...rpc(() => [entry({ eventId: "t1:idle:30" })], calls), "history.recent": () => ({ items }) };
+    const options = { rpc: backend, sidebarThreads: { status: "ready" as const, threads: [sidebarThread] } };
+    renderSlot<object, RpcContract>({ component: HeraldBridge }, {}, options);
+    const page = renderSlot<object, RpcContract>({ component: HeraldPanel }, {}, options);
+    await screen.findByText("Docs is written.");
+    expect(screen.getByText("Guide")).toBeTruthy();
+    expect(screen.getAllByText("1 h ago")).toHaveLength(2);
+    // The waiting thread comes first, the history after it.
+    const order = screen.getAllByText(/Login fix is done\.|Docs is written\./).map((node) => node.textContent);
+    expect(order).toEqual(["Login fix is done.", "Docs is written."]);
+
+    fireEvent.click(screen.getByLabelText("Open Docs"));
+    expect(page.inspection.navigateCalls).toContainEqual({ method: "toThread", threadId: "t2" });
+    // A thread bb no longer knows is listed, with nothing to open.
+    expect(screen.getByText("A thread that no longer exists")).toBeTruthy();
+    expect(screen.queryByLabelText("Open A thread that no longer exists")).toBeNull();
+
+    items = [recent({ eventId: "t2:idle:2", createdAt: new Date().toISOString(), text: "Docs has a new page." }), ...items];
+    await page.emitRealtime(ENTRIES_CHANNEL, { at: 5 });
+    await screen.findByText("Docs has a new page.");
+  });
+
+  it("says so when there is no past sentence yet", async () => {
+    const calls = { list: 0 };
+    renderSlot<object, RpcContract>({ component: HeraldPanel }, {}, { rpc: rpc(() => [], calls), sidebarThreads: { status: "ready", threads: [] } });
+    await screen.findByText(/Nothing yet: what Herald says about each thread/);
+  });
+
+  it("saves how many past sentences the page lists, only a whole number in bounds", async () => {
+    const calls = { list: 0 };
+    let stored: StoredConfig = { ...DEFAULT_STORED_CONFIG };
+    const backend = {
+      ...rpc(() => [], calls),
+      "config.get": () => stored,
+      "config.set": (input: Partial<StoredConfig>) => {
+        stored = { ...stored, ...input };
+        return stored;
+      },
+    };
+    renderSlot<object, RpcContract>({ component: HeraldSettingsSection }, {}, { rpc: backend });
+    const field = (await screen.findByLabelText("Sentences listed")) as HTMLInputElement;
+    expect(field.value).toBe("20");
+    const save = () => screen.getByText("Save").closest("button") as HTMLButtonElement;
+    expect(save().disabled).toBe(true);
+    for (const bad of ["0", "51", "2.5", ""]) {
+      fireEvent.change(field, { target: { value: bad } });
+      expect(save().disabled).toBe(true);
+    }
+    expect(screen.getByText("A whole number from 1 to 50.")).toBeTruthy();
+    fireEvent.change(field, { target: { value: "35" } });
+    fireEvent.click(save());
+    await waitFor(() => expect(stored.recentHistoryLimit).toBe(35));
   });
 });

@@ -76,6 +76,31 @@ export type HistoryItem = z.infer<typeof HistoryItemSchema>;
 
 export const HISTORY_LIMIT = 50;
 
+/**
+ * One past sentence on the Herald page, which lists them from every thread:
+ * the item, its thread, and the names bb has for them now. A thread bb no
+ * longer knows keeps its row, with no names and nothing to open.
+ */
+export const RecentHistoryItemSchema = HistoryItemSchema.extend({
+  threadId: z.string(),
+  /** The thread's title, or bb's generated fallback title; null while unnamed or gone. */
+  threadTitle: z.string().nullable(),
+  projectName: z.string().nullable(),
+  /** False once bb answers that the thread does not exist. */
+  threadExists: z.boolean(),
+});
+export type RecentHistoryItem = z.infer<typeof RecentHistoryItemSchema>;
+
+/**
+ * How many past sentences the Herald page lists. The most is what one
+ * thread keeps: the page merges the threads' rows, so a longer list could
+ * skip a busy thread's sentences that its row already let go.
+ */
+export const RECENT_HISTORY_DEFAULT = 20;
+export const RECENT_HISTORY_MIN = 1;
+export const RECENT_HISTORY_MAX = HISTORY_LIMIT;
+export const RecentHistoryLimitSchema = z.number().int().min(RECENT_HISTORY_MIN).max(RECENT_HISTORY_MAX);
+
 /** A headline can be an error message of kilobytes; the history keeps its start. */
 export const HISTORY_HEADLINE_MAX = 200;
 
@@ -192,6 +217,8 @@ export const StoredConfigSchema = z.object({
   /** The command that writes the sentence when the tool is `custom`; blank means the plain sentence. */
   sentenceCommand: z.string(),
   sentencePrompt: z.string(),
+  /** How many past sentences the Herald page lists, from every thread. */
+  recentHistoryLimit: RecentHistoryLimitSchema,
 });
 export type StoredConfig = z.infer<typeof StoredConfigSchema>;
 
@@ -200,4 +227,5 @@ export const DEFAULT_STORED_CONFIG: StoredConfig = {
   sentenceTool: "claude",
   sentenceCommand: "",
   sentencePrompt: DEFAULT_SENTENCE_PROMPT,
+  recentHistoryLimit: RECENT_HISTORY_DEFAULT,
 };

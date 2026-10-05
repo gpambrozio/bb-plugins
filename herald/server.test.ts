@@ -24,6 +24,8 @@ const USER_THREAD = makeThreadResponse({
   lastReadAt: 1,
 });
 
+const OTHER_THREAD = makeThreadResponse({ id: "thr_other", projectId: "prj_shop", title: "Docs", latestAttentionAt: 2, lastReadAt: 1 });
+
 async function settle(): Promise<void> {
   for (let i = 0; i < 10; i += 1) await new Promise((resolve) => setTimeout(resolve, 0));
 }
@@ -36,7 +38,8 @@ async function load(settings: Record<string, string | number | boolean> = {}) {
       projects: { get: async () => ({ id: "prj_shop", name: "Shop" }) as never },
       environments: { get: async () => ({ id: "env_1", path: "/Users/me/shop" }) as never },
       threads: {
-        get: async ({ threadId }: { threadId: string }) => (threadId === USER_THREAD.id ? USER_THREAD : makeThreadResponse({ id: threadId })),
+        get: async ({ threadId }: { threadId: string }) =>
+          [USER_THREAD, OTHER_THREAD].find((known) => known.id === threadId) ?? makeThreadResponse({ id: threadId }),
         promptHistory: async () =>
           [{ id: "m1", createdAt: 1, input: [{ type: "text", text: "Fix the login bug", mentions: [] }] }] as never,
         interactions: { list: async () => [], get: async () => ({ status: "pending" }) as never },
@@ -224,6 +227,48 @@ describe("herald server", () => {
     await harness.emitThreadEvent("thread.deleted", { thread: USER_THREAD });
     await settle();
     expect(await harness.callRpc("history.list", { threadId: "thr_user" })).toEqual({ items: [] });
+  });
+
+  it("lists the newest sentences of every thread for the Herald page, as many as configured", async () => {
+    const { harness } = await load();
+    await harness.emitThreadEvent("thread.idle", { thread: USER_THREAD, lastAssistantText: "I fixed auth.ts." });
+    await settle();
+    await harness.emitThreadEvent("thread.idle", { thread: OTHER_THREAD, lastAssistantText: "Wrote the guide." });
+    await settle();
+    await harness.emitThreadEvent("thread.active", { thread: USER_THREAD });
+    await harness.emitThreadEvent("thread.idle", { thread: USER_THREAD, lastAssistantText: "And the tests pass." });
+    await settle();
+    type Recent = { items: Array<{ threadId: string; threadTitle: string | null; projectName: string | null; threadExists: boolean; text: string }> };
+    const all = (await harness.callRpc("history.recent", {})) as Recent;
+    expect(all.items.map(({ threadId, threadTitle, projectName, threadExists, text }) => ({ threadId, threadTitle, projectName, threadExists, text }))).toEqual([
+      { threadId: "thr_user", threadTitle: "Login fix", projectName: "Shop", threadExists: true, text: "Login fix finished. And the tests pass." },
+      { threadId: "thr_other", threadTitle: "Docs", projectName: "Shop", threadExists: true, text: "Docs finished. Wrote the guide." },
+      { threadId: "thr_user", threadTitle: "Login fix", projectName: "Shop", threadExists: true, text: "Login fix finished. I fixed auth.ts." },
+    ]);
+
+    const signals = harness.realtimeSignals.length;
+    expect(await harness.callRpc("config.set", { recentHistoryLimit: 2 })).toMatchObject({ recentHistoryLimit: 2 });
+    // An open page re-reads at its new length.
+    expect(harness.realtimeSignals.slice(signals).map((signal) => signal.channel)).toEqual([ENTRIES_CHANNEL]);
+    expect(((await harness.callRpc("history.recent", {})) as Recent).items.map((item) => item.threadId)).toEqual(["thr_user", "thr_other"]);
+
+    await harness.emitThreadEvent("thread.deleted", { thread: USER_THREAD });
+    await settle();
+    expect(((await harness.callRpc("history.recent", {})) as Recent).items.map((item) => item.threadId)).toEqual(["thr_other"]);
+  });
+
+  it("lists 20 by default, refuses a length out of bounds, and reads an unreadable one as the default", async () => {
+    const { bb, harness } = await load();
+    expect(await harness.callRpc("config.get", {})).toMatchObject({ recentHistoryLimit: 20 });
+    await expect(harness.callRpc("config.set", { recentHistoryLimit: 0 })).rejects.toThrow();
+    await expect(harness.callRpc("config.set", { recentHistoryLimit: 51 })).rejects.toThrow();
+    await expect(harness.callRpc("config.set", { recentHistoryLimit: 2.5 })).rejects.toThrow();
+    await harness.callRpc("config.set", { recentHistoryLimit: 50 });
+    expect(await harness.callRpc("config.get", {})).toMatchObject({ recentHistoryLimit: 50 });
+    // A configuration saved before the setting existed has none.
+    const { recentHistoryLimit: _, ...older } = DEFAULT_STORED_CONFIG;
+    await bb.storage.kv.set("config", older);
+    expect(await harness.callRpc("config.get", {})).toEqual(DEFAULT_STORED_CONFIG);
   });
 
   it("still drops what the instance before left when the read after its drain fails once", async () => {

@@ -47,6 +47,13 @@ export interface LivenessPort {
   facts(threadId: string): Promise<ThreadFacts>;
 }
 
+/** What bb calls a thread now, for the Herald page's history. */
+export interface NamesPort {
+  /** The thread's title and project, or null when bb answers that it does not exist; rejects when bb cannot say. */
+  thread(threadId: string): Promise<{ title: string | null; projectId: string } | null>;
+  projectName(projectId: string): Promise<string>;
+}
+
 export interface Log {
   info(message: string): void;
   warn(message: string): void;
