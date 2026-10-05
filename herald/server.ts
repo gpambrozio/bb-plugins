@@ -155,7 +155,9 @@ export default async function plugin(bb: BbPluginApi) {
   bb.events.on("thread.deleted", ({ thread }) => {
     hooks.gone(thread);
     // Archived threads keep their history; a deleted one is gone for good.
-    history.remove(thread.id).catch(() => {});
+    // An archived thread has no entry left for `gone` to publish about, so
+    // the Herald page hears of its sentences going from here.
+    void history.remove(thread.id).then(publish);
   });
 
   bb.rpc.register(rpcContract, {

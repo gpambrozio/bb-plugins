@@ -321,6 +321,29 @@ describe("Herald's app", () => {
     await screen.findByText("Docs has a new page.");
   });
 
+  it("reads the past sentences one at a time, and once more after a burst of nudges", async () => {
+    const calls = { list: 0 };
+    const pending: Array<() => void> = [];
+    let reads = 0;
+    const backend = {
+      ...rpc(() => [], calls),
+      "history.recent": () =>
+        new Promise<{ items: RecentHistoryItem[] }>((resolve) => {
+          reads += 1;
+          pending.push(() => resolve({ items: [] }));
+        }),
+    };
+    const page = renderSlot<object, RpcContract>({ component: HeraldPanel }, {}, { rpc: backend, sidebarThreads: { status: "ready", threads: [] } });
+    await waitFor(() => expect(reads).toBe(1));
+    for (let at = 0; at < 10; at += 1) await page.emitRealtime(ENTRIES_CHANNEL, { at });
+    expect(reads).toBe(1);
+    pending.shift()?.();
+    await waitFor(() => expect(reads).toBe(2));
+    pending.shift()?.();
+    await screen.findByText(/Nothing yet: what Herald says about each thread/);
+    expect(reads).toBe(2);
+  });
+
   it("says so when there is no past sentence yet", async () => {
     const calls = { list: 0 };
     renderSlot<object, RpcContract>({ component: HeraldPanel }, {}, { rpc: rpc(() => [], calls), sidebarThreads: { status: "ready", threads: [] } });

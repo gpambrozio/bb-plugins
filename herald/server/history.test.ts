@@ -136,6 +136,31 @@ describe("SentenceHistory", () => {
       expect((await history.recent(5)).map((entry) => entry.text)).toEqual(["t4 3.", "t1 1."]);
     });
 
+    it("shares one scan between callers at once, but not with a caller after a write", async () => {
+      const kv = fakeKv();
+      const history = new SentenceHistory(kv, recordingLog());
+      history.append("t1", at("t1", 1));
+      history.append("t2", at("t2", 2));
+      await history.flush();
+      let scans = 0;
+      const list = kv.list.bind(kv);
+      kv.list = async (prefix: string) => {
+        scans += 1;
+        return list(prefix);
+      };
+      const [all, one] = await Promise.all([history.recent(5), history.recent(1)]);
+      expect(scans).toBe(1);
+      expect(all.map((entry) => entry.text)).toEqual(["t2 2.", "t1 1."]);
+      expect(one.map((entry) => entry.text)).toEqual(["t2 2."]);
+
+      const before = history.recent(5);
+      history.append("t3", at("t3", 3));
+      const after = history.recent(5);
+      expect((await after).map((entry) => entry.text)).toEqual(["t3 3.", "t2 2.", "t1 1."]);
+      await before;
+      expect(scans).toBe(3);
+    });
+
     it("is empty when no thread has a sentence", async () => {
       expect(await new SentenceHistory(fakeKv(), recordingLog()).recent(20)).toEqual([]);
     });

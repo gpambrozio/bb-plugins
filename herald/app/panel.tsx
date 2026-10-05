@@ -193,25 +193,34 @@ function RowCard({ row, now, onOpen }: { row: Row; now: number; onOpen: (threadI
 /**
  * The newest past sentences of every thread, re-read on mount, on every
  * entries nudge (a sentence landing is one) and when the connection comes
- * back. A read that answers after a newer one is dropped.
+ * back. One read at a time; nudges during a read ask for one more afterwards.
  */
 function useRecentHistory(): { items: RecentHistoryItem[] | null; error: string | null } {
   const rpc = useRpc<RpcContract>();
   const connection = useRealtimeConnectionState();
   const [state, setState] = useState<{ items: RecentHistoryItem[] | null; error: string | null }>({ items: null, error: null });
-  const latest = useRef(0);
+  const reading = useRef<{ busy: boolean; again: boolean }>({ busy: false, again: false });
 
   const refresh = useCallback(() => {
-    latest.current += 1;
-    const read = latest.current;
-    rpc.call("history.recent", {}).then(
-      ({ items }) => {
-        if (read === latest.current) setState({ items, error: null });
-      },
-      (cause: unknown) => {
-        if (read === latest.current) setState((current) => ({ ...current, error: errorText(cause) }));
-      },
-    );
+    const flags = reading.current;
+    if (flags.busy) {
+      flags.again = true;
+      return;
+    }
+    flags.busy = true;
+    rpc
+      .call("history.recent", {})
+      .then(
+        ({ items }) => setState({ items, error: null }),
+        (cause: unknown) => setState((current) => ({ ...current, error: errorText(cause) })),
+      )
+      .finally(() => {
+        flags.busy = false;
+        if (flags.again) {
+          flags.again = false;
+          refresh();
+        }
+      });
   }, [rpc]);
 
   useEffect(refresh, [refresh]);

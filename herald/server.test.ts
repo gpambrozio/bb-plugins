@@ -257,6 +257,20 @@ describe("herald server", () => {
     expect(((await harness.callRpc("history.recent", {})) as Recent).items.map((item) => item.threadId)).toEqual(["thr_other"]);
   });
 
+  it("tells an open page when a deleted thread's sentences go, though archiving already took its entry", async () => {
+    const { harness } = await load();
+    await harness.emitThreadEvent("thread.idle", { thread: USER_THREAD, lastAssistantText: "I fixed auth.ts." });
+    await settle();
+    await harness.emitThreadEvent("thread.archived", { thread: USER_THREAD });
+    await settle();
+    expect(((await harness.callRpc("history.recent", {})) as { items: unknown[] }).items).toHaveLength(1);
+    const signals = harness.realtimeSignals.length;
+    await harness.emitThreadEvent("thread.deleted", { thread: USER_THREAD });
+    await settle();
+    expect(harness.realtimeSignals.slice(signals).map((signal) => signal.channel)).toContain(ENTRIES_CHANNEL);
+    expect(await harness.callRpc("history.recent", {})).toEqual({ items: [] });
+  });
+
   it("lists 20 by default, refuses a length out of bounds, and reads an unreadable one as the default", async () => {
     const { bb, harness } = await load();
     expect(await harness.callRpc("config.get", {})).toMatchObject({ recentHistoryLimit: 20 });

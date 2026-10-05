@@ -367,7 +367,10 @@ The **Herald page lists the same rows across threads** below its waiting list: `
 lists the `history:` keys (`kv.list(prefix)`), reads each row and merges them newest first, so there is
 no second index to keep in step — a deleted thread's row going away takes its sentences off the page.
 It awaits the history's pending writes first, because the hooks publish the nudge before the write
-lands. `server/recent.ts` then names each thread and project by asking bb at read time (one lookup per
+lands. Every open page hears the same nudge, so callers at once share one scan (unless a write was
+issued since it started), and the page keeps one read in flight with at most one queued after it. A
+deleted thread publishes once its row is gone: archiving already took its entry, so `gone` has nothing
+to publish about. `server/recent.ts` then names each thread and project by asking bb at read time (one lookup per
 thread): a renamed thread shows its new title, an archived one stays listed, and a thread bb answers
 404 for stays listed with `threadExists: false` and nothing to open. The length is the stored
 configuration's `recentHistoryLimit`, 20 by default and at most `HISTORY_LIMIT`: past what one thread's
