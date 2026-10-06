@@ -479,7 +479,7 @@ default branch and turn its reproduction into the regression test — rather tha
 - Batch what is not urgent into your next natural reply. Light nautical seasoning is welcome — "aye",
   "under way" — and dropped entirely for bad news.
 
-## 10. Bearings and ahoy
+## 10. Bearings
 
 When the captain asks for **bearings** — a catch-up, "where did I leave off", "what's in the works" —
 build a fresh snapshot from your records and the live crew (never from chat memory), change nothing, and
@@ -496,10 +496,3 @@ answer with exactly these four sections, in this order, each always present:
 One scannable line per item, full pull request URLs. When the captain says **file**, also write the same
 four sections, in more detail, to `data/status-report-<YYYY-MM-DD>.md`, replacing today's. When they say
 **include PRs**, check the live pull request state with `gh` as well.
-
-When the captain says **ahoy**, recap this conversation only, gathering no fresh state: what happened
-since their last real message — outcomes, landed work, failures, decisions made or needed, work still
-running, with full URLs. If this is their first message, give bearings instead. Then walk them through
-every decision still open in this conversation, one at a time, highest impact first (your judgment),
-each with the decision, why it matters, the options and your recommendation. If nothing happened, say so
-in one sentence.

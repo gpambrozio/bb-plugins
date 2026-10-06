@@ -12,5 +12,4 @@ export default definePluginApp((app) => {
   app.slots.experimental_appOverlay({ id: "watch-notes", component: WatchNoteExpander });
   app.commands.register({ id: "open", title: "FirstMate: open", run: openFirstMate });
   app.commands.register({ id: "bearings", title: "FirstMate: bearings", run: () => askFirstMate("bearings") });
-  app.commands.register({ id: "ahoy", title: "FirstMate: ahoy", run: () => askFirstMate("ahoy") });
 });

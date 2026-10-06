@@ -5,6 +5,14 @@ Notable changes to `firstmate`. The other plugins in this repository version sep
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.2.6
+
+### Removed
+
+- **Ahoy is gone.** The board no longer has an Ahoy button, the command palette no longer has
+  FirstMate: ahoy, and the first mate's charter no longer has its ahoy section. Bearings is unchanged.
+  If you have edited your charter, the board offers the new one to compare, as for any charter change.
+
 ## 0.2.5
 
 ### Changed

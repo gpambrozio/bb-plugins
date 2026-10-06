@@ -1,5 +1,5 @@
 /**
- * One message to the first mate in flight at a time. A suggestion's button, Bearings and Ahoy, and the
+ * One message to the first mate in flight at a time. A suggestion's button, Bearings and the
  * palette's commands all send the captain's words, so a double press must not send them twice. Pure.
  *
  * The gate the app uses is in module scope, not component state: a tab switch can unmount the board while

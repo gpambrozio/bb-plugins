@@ -22,7 +22,7 @@ export interface MateSender {
   /** A message to the first mate is on its way; buttons that send wait for it. */
   sending: boolean;
   ask: (text: string, onSent?: () => void) => boolean;
-  command: (command: "bearings" | "ahoy") => boolean;
+  command: (command: "bearings") => boolean;
 }
 
 export function useMateSender(): MateSender {

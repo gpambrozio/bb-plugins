@@ -348,8 +348,6 @@ describe("carrying words to the first mate", () => {
 
   it("commandText uses the -args template only when there are words after the command", async () => {
     expect(await commandText("bearings", "  ")).toBe(await message(TEMPLATES.bearings));
-    expect(await commandText("ahoy", "")).toBe(await message(TEMPLATES.ahoy));
     expect(await commandText("bearings", " the api ")).toBe(await message(TEMPLATES.bearingsArgs, { args: "the api" }));
-    expect(await commandText("ahoy", "ship")).toBe(await message(TEMPLATES.ahoyArgs, { args: "ship" }));
   });
 });

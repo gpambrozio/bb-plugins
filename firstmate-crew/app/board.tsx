@@ -1,6 +1,6 @@
 /**
  * The crew board, shown on the first mate's thread: a notice when the plugin's charter has moved on, the
- * Bearings and Ahoy buttons beside the first mate's own controls (Compact, Restart, settings), the first
+ * Bearings button beside the first mate's own controls (Compact, Restart, settings), the first
  * mate's suggestions, the seven columns in the captain's order — each a collapsible section with its
  * count and arrows that move it past its shown neighbour, empty ones left out — and the home's watches.
  */
@@ -84,9 +84,6 @@ export function Board({ fleet, mateThreadId, onChanged }: { fleet: Fleet; mateTh
       <div className="flex flex-wrap items-center gap-2">
         <Button size="sm" variant="outline" disabled={mate.sending} onClick={() => mate.command("bearings")}>
           Bearings
-        </Button>
-        <Button size="sm" variant="outline" disabled={mate.sending} onClick={() => mate.command("ahoy")}>
-          Ahoy
         </Button>
         {fleet.mate !== null ? <MateActions status={fleet.mate.status} sending={mate.sending} onChanged={onChanged} /> : null}
       </div>

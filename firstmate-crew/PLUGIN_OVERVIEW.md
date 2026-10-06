@@ -5,7 +5,7 @@ You tell the first mate what you want done; it sends each task to a worker, a bb
 - **A first mate in bb's own chat.** It is an ordinary pinned thread, so you read its tool calls and talk to it like any other thread. Its workers appear under it in the sidebar.
 - **A board of the crew.** A FirstMate tab on the first mate's thread sorts every worker into Queued, Working, Blocked, Parked, Done, Failed and Idle, with its last word on what it is doing and a link to its pull request.
 - **Control from each card.** Steer a worker with a word, interrupt its turn, relaunch it in the same worktree, or end it. Ending a worker whose task is not done asks first.
-- **Where things stand, on demand.** Bearings gives the state of everything; Ahoy gives what happened since you last spoke, then each open decision in turn. Both are buttons on the board and entries in the command palette.
+- **Where things stand, on demand.** Bearings gives the state of everything. It is a button on the board and an entry in the command palette.
 - **Next steps as buttons.** The first mate offers what you will probably want next; pressing one sends it as if you had typed it.
 - **/fm from any thread.** Type `/fm` and a request in any thread, say `/fm run a review loop on this`, and the first mate gets it word for word with that thread's id, project and branch, so it knows which work you mean.
 - **Compact and Restart on the board.** Compact frees room in the first mate's conversation. Restart starts it afresh on the same thread; its records and the workers already running carry over. A gear beside them opens the plugin's settings.
