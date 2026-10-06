@@ -76,9 +76,8 @@ there, and `bb plugin dev` to rebuild on save. See [`AGENTS.md`](AGENTS.md).
   thread with its project and branch, so it knows which work you mean. `/fm` on its own asks what to
   send, and requests up to 12,000 bytes fit. Only you can start it: agents do not use it on their own.
 - **Bearings** is where everything stands in four sections: what needs your call, what landed, what is
-  under way, what is next. **Ahoy** is what happened since you last spoke, then each open decision, one at
-  a time, with a recommendation. Both are buttons on the board and entries in the command palette
-  (FirstMate: bearings, FirstMate: ahoy), next to FirstMate: open.
+  under way, what is next. It is a button on the board and an entry in the command palette
+  (FirstMate: bearings), next to FirstMate: open.
 - **Suggestions.** When the first mate has an idea of what you will want next ("Land web#42"), it shows
   as a button above the columns. Pressing one sends that request to the first mate as if you had typed
   it; it joins a turn under way, or starts one, and never interrupts. Once the first mate has it, the
@@ -86,7 +85,7 @@ there, and `bb plugin dev` to rebuild on save. See [`AGENTS.md`](AGENTS.md).
   a send, as bb gives plugins no way to close it. A card too long to show whole
   gets a chevron that opens the full request below it, to read or copy, without sending it. The trash
   takes a suggestion off the list without sending it.
-- **Compact** and **Restart** sit beside Bearings and Ahoy at the top of the board, with a gear that
+- **Compact** and **Restart** sit beside Bearings at the top of the board, with a gear that
   opens FirstMate's settings. Compact has bb summarise the first mate's conversation to free room, as
   bb's own `/compact` does. Restart starts the first mate afresh on the same thread, after asking you:
   the old conversation stays readable above bb's "context cleared" line, its records carry over, and the

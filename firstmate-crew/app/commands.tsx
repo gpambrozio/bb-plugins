@@ -56,8 +56,8 @@ export function openFirstMate(context: PluginCommandContext): void {
   });
 }
 
-/** Asks the first mate for its bearings or an ahoy, as the board's buttons do. */
-export function askFirstMate(command: "bearings" | "ahoy"): void {
+/** Asks the first mate for its bearings, as the board's button does. */
+export function askFirstMate(command: "bearings"): void {
   withBridge(async ({ rpc }) => {
     // One message at a time with the board's buttons, so a double press sends it once.
     deliverToMate(() => rpc.call("mate.command", { command, args: "" }), () => toast.success("Sent to the first mate."));

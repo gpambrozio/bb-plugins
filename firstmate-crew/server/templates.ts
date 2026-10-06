@@ -29,8 +29,6 @@ export const TEMPLATES = {
   crewReasoningOpen: "parts/crew-reasoning-open.md",
   crewProviderChosen: "parts/crew-provider-chosen.md",
   crewProviderOpen: "parts/crew-provider-open.md",
-  ahoy: "messages/ahoy.md",
-  ahoyArgs: "messages/ahoy-args.md",
   boardNote: "messages/board-note.md",
   bearings: "messages/bearings.md",
   bearingsArgs: "messages/bearings-args.md",

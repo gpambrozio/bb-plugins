@@ -216,17 +216,16 @@ export function compactMate(deps: MateDeps): Promise<void> {
   });
 }
 
-export type MateCommand = "bearings" | "ahoy";
+export type MateCommand = "bearings";
 
 /** The template for each request, with nothing after it and with something. */
 const COMMANDS = {
   bearings: [TEMPLATES.bearings, TEMPLATES.bearingsArgs],
-  ahoy: [TEMPLATES.ahoy, TEMPLATES.ahoyArgs],
 } as const;
 
 /**
- * What Bearings and Ahoy send, from `templates/messages/`: plain requests, which the charter defines,
- * rather than slash commands, which the first mate's own harness would take as its own. `args` is
+ * What Bearings sends, from `templates/messages/`: a plain request, which the charter defines,
+ * rather than a slash command, which the first mate's own harness would take as its own. `args` is
  * whatever the captain typed after the command.
  */
 export function commandText(command: MateCommand, args: string): Promise<string> {
