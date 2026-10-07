@@ -18,8 +18,9 @@ whatever is open on repositories you own, and what is assigned to you anywhere.
 - **Send to chat** opens bb's new-thread composer with a prompt written for the card's column, in the
   bb project whose checkout has that repository as a remote. Pick the model, environment and project as
   you would for any thread; the next card opens with the same choices.
-- **Add to chat**, in the detail panel, puts the card — its kind, `owner/name#number`, title and GitHub
-  link, on one line — at the end of a chat's draft, without starting a thread or sending anything. It
+- **Add to chat**, in the detail panel, puts the prompt Send to chat would use — the card's column's
+  template, with the per-project override of the chat's own project — at the end of a chat's draft,
+  without starting a thread or sending anything. It
   lists the chats on screen first (a split, a new-thread composer, a queued message being edited), then
   recent threads, those in the card's repository first. Picking a thread that is not on screen opens it
   — beside the board where bb can split the window, in its place where it cannot — and adds the card
@@ -50,7 +51,8 @@ The board is **GitHub Board** in the sidebar. The palette has *GitHub Board: ope
 On the plugin's settings page:
 
 - **GitHub login** — whose work the board shows. Blank means the account `gh` is signed in as.
-- **Prompt templates** — what Send to chat opens with, one per column, with per-project overrides.
+- **Prompt templates** — what Send to chat opens with and Add to chat writes, one per column, with
+  per-project overrides.
   Placeholders: `{url}`, `{title}`, `{number}`, `{repository}`. Clear a field to go back to the
   default. The gear on the board opens the same editor.
 

@@ -33,7 +33,7 @@ function Deliver({ pending, store }: { pending: PendingAdd; store: PendingAdds }
       return;
     }
     try {
-      addCardToComposer(target, pending.item, pending.column);
+      addCardToComposer(target, pending.prompt);
     } catch (cause) {
       toast.error(`Could not add to chat: ${errorText(cause)}`);
     }

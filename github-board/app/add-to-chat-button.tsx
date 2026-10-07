@@ -11,6 +11,10 @@
  * card at a time: until it lands, the other threads are disabled with the
  * reason, while the chats on screen still take a card at once.
  *
+ * What goes in is the prompt Send to chat would use, for the picked chat's
+ * project (`cardPrompt`), so the menu's chats stay disabled until the
+ * templates have loaded: there is no lesser text to fall back to.
+ *
  * The board's own Send to chat dialog is never a target (see `chatTargets`).
  * The hooks live in this small component on purpose: `useComposers()`
  * re-renders its caller on every keystroke in any listed draft, and the
@@ -25,7 +29,7 @@ import {
 } from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
 
-import type { BoardItem, ColumnId } from "../shared/board";
+import type { BoardItem, ColumnId, PromptSettings } from "../shared/board";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -36,9 +40,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Icon } from "@/components/ui/icon";
-import { addCardToComposer, chatTargets, type ChatTargets, type ThreadTarget } from "./add-to-chat";
+import { addCardToComposer, cardPrompt, chatTargets, type ChatTargets, type ThreadTarget } from "./add-to-chat";
 import { pendingAdds } from "./pending-add";
-import { errorText, useBoardRpc } from "./state";
+import { errorText, useBoardRpc, usePrompts } from "./state";
 
 const NO_PROJECTS: ReadonlySet<string> = new Set();
 
@@ -46,6 +50,8 @@ export function AddToChatControl({
   targets,
   loading,
   addingTo,
+  prompts,
+  promptsError,
   item,
   column,
   onOpenThread,
@@ -55,18 +61,27 @@ export function AddToChatControl({
   loading: boolean;
   /** The thread an earlier pick is still waiting to open, which keeps the others from being picked. */
   addingTo: string | null;
+  /** The prompt templates; null until they load, which keeps every chat from being picked. */
+  prompts: PromptSettings | null;
+  /** Why the templates did not load. */
+  promptsError: string | null;
   item: BoardItem;
   column: ColumnId;
-  onOpenThread(target: ThreadTarget): void;
+  onOpenThread(target: ThreadTarget, prompt: string): void;
 }) {
-  const add = (composer: PluginComposerApi) => {
+  const add = (composer: PluginComposerApi, projectId: string | null) => {
+    if (prompts === null) return;
     try {
-      addCardToComposer(composer, item, column);
+      addCardToComposer(composer, cardPrompt(prompts, item, column, projectId));
     } catch (cause) {
       toast.error(`Could not add to chat: ${errorText(cause)}`);
     }
   };
+  const openThread = (target: ThreadTarget) => {
+    if (prompts !== null) onOpenThread(target, cardPrompt(prompts, item, column, target.projectId));
+  };
   const { onScreen, threads } = targets;
+  const waiting = prompts === null;
 
   return (
     <DropdownMenu>
@@ -77,15 +92,23 @@ export function AddToChatControl({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="max-h-96 max-w-80 overflow-y-auto">
+        {waiting && (onScreen.length > 0 || threads.length > 0) ? (
+          <p className={`px-2 py-1 text-xs ${promptsError === null ? "text-muted-foreground" : "text-destructive"}`}>
+            {promptsError === null ? "Loading prompt templates…" : `Could not load prompt templates: ${promptsError}`}
+          </p>
+        ) : null}
         {onScreen.length > 0 ? (
           <>
             <DropdownMenuLabel>On screen</DropdownMenuLabel>
-            {onScreen.map(({ composer, label }) => (
+            {onScreen.map(({ composer, label, projectId }) => (
               <DropdownMenuItem
                 key={composer.key}
+                // A thread's project comes from the sidebar, so until it answers
+                // that composer's project override is not known yet.
+                disabled={waiting || (loading && composer.scope.kind !== "new-thread")}
                 // A tick later: while the menu is open its focus trap would pull
                 // the composer's focus straight back into the menu.
-                onSelect={() => setTimeout(() => add(composer), 0)}
+                onSelect={() => setTimeout(() => add(composer, projectId), 0)}
               >
                 <span className="truncate">{label}</span>
               </DropdownMenuItem>
@@ -102,8 +125,8 @@ export function AddToChatControl({
             {threads.map((target) => (
               <DropdownMenuItem
                 key={target.threadId}
-                disabled={addingTo !== null}
-                onSelect={() => setTimeout(() => onOpenThread(target), 0)}
+                disabled={waiting || addingTo !== null}
+                onSelect={() => setTimeout(() => openThread(target), 0)}
               >
                 <span className="flex min-w-0 flex-col">
                   <span className="truncate">{target.title}</span>
@@ -159,19 +182,15 @@ export function AddToChatButton({
   const actions = experimental_useSidebarThreadActions();
   const cardProjectIds = useCardProjectIds(item);
   const pending = useSyncExternalStore(pendingAdds.subscribe, pendingAdds.current, pendingAdds.current);
+  // The same templates the Send to chat dialog reads, kept current by the same realtime push.
+  const { prompts, error: promptsError } = usePrompts();
   const targets = useMemo(
     () => chatTargets({ composers, threads, projects, cardProjectIds, sendDialogOpen }),
     [composers, threads, projects, cardProjectIds, sendDialogOpen],
   );
 
-  const openThread = (target: ThreadTarget) => {
-    const { repository, number, title, url } = item;
-    const held = pendingAdds.request({
-      threadId: target.threadId,
-      title: target.title,
-      item: { repository, number, title, url },
-      column,
-    });
+  const openThread = (target: ThreadTarget, prompt: string) => {
+    const held = pendingAdds.request({ threadId: target.threadId, title: target.title, prompt });
     // The menu disables this while another card waits; this is the backstop.
     if (held === null) return;
     actions.open(target.threadId, { split: true });
@@ -182,6 +201,8 @@ export function AddToChatButton({
       targets={targets}
       loading={status === "loading"}
       addingTo={pending?.title ?? null}
+      prompts={prompts}
+      promptsError={promptsError}
       item={item}
       column={column}
       onOpenThread={openThread}

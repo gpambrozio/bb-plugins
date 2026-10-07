@@ -16,15 +16,9 @@ import { createPendingAdds, PENDING_ADD_TIMEOUT_MS } from "./pending-add";
 const card = {
   threadId: "thr_b",
   title: "Tune the cache",
-  item: {
-    repository: "octo/widgets",
-    number: 7,
-    title: "Slow start",
-    url: "https://github.com/octo/widgets/pull/7",
-  },
-  column: "open-prs" as const,
+  // Rendered for the thread's project when it was picked.
+  prompt: "Review pull request https://github.com/octo/widgets/pull/7 and tell me what needs attention.",
 };
-const reference = "Pull request octo/widgets#7: Slow start — https://github.com/octo/widgets/pull/7";
 
 beforeEach(() => toastError.mockReset());
 afterEach(() => {
@@ -68,7 +62,7 @@ describe("PendingAddToChat", () => {
       { composer: { text: "Draft so far", scope: { kind: "thread", threadId: "thr_b" } } },
     );
 
-    await waitFor(() => expect(view.inspection.composer.text).toBe(`Draft so far\n\n${reference}`));
+    await waitFor(() => expect(view.inspection.composer.text).toBe(`Draft so far\n\n${card.prompt}`));
     expect(view.inspection.composer.focusCount).toBe(1);
     expect(view.inspection.composer.submits).toEqual([]);
     expect(store.current()).toBeNull();
