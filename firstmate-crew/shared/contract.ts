@@ -35,6 +35,7 @@ export const rpcContract = defineRpcContract({
   "crew.relaunch": { input: ThreadRef.extend({ note: z.string() }), output: Done },
   "crew.note": { input: ThreadRef.extend({ note: z.string() }), output: Done },
   "suggestion.remove": { input: SuggestionSchema, output: z.array(SuggestionSchema) },
+  "suggestion.dismiss": { input: SuggestionSchema, output: z.array(SuggestionSchema) },
   "charter.compare": { input: Empty, output: z.object({ path: z.string() }) },
   "charter.acknowledge": { input: Empty, output: Done },
   "watch.note": { input: z.object({ file: z.string().min(1) }), output: WatchNoteSchema },

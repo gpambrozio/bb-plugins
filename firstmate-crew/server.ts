@@ -16,7 +16,7 @@ import { acknowledgeCharter, NEW_CHARTER_FILE, writeNewCharter } from "./server/
 import { firstmateCli } from "./server/cli";
 import { endCrew, interruptCrew, noteCrew, relaunchCrew, steerCrew } from "./server/crew";
 import { loadFleet, ReportCache } from "./server/fleet";
-import { isHomeReady, prepareHome, removeSuggestion } from "./server/home";
+import { dismissSuggestion, isHomeReady, prepareHome, removeSuggestion } from "./server/home";
 import {
   activeHome,
   adoptMate,
@@ -294,6 +294,7 @@ export default async function plugin(bb: BbPluginApi) {
       return null;
     },
     "suggestion.remove": async (suggestion) => removeSuggestion(await currentHome(), suggestion),
+    "suggestion.dismiss": async (suggestion) => dismissSuggestion(await currentHome(), suggestion),
     "charter.compare": async () => {
       await writeNewCharter(await currentHome());
       return { path: NEW_CHARTER_FILE };

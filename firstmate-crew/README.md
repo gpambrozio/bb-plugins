@@ -84,7 +84,9 @@ there, and `bb plugin dev` to rebuild on save. See [`AGENTS.md`](AGENTS.md).
   card leaves the list; a send that fails keeps it. On a phone the board stays open over the chat after
   a send, as bb gives plugins no way to close it. A card too long to show whole
   gets a chevron that opens the full request below it, to read or copy, without sending it. The trash
-  takes a suggestion off the list without sending it.
+  takes a suggestion off the list without sending it, and remembers it: the first mate is told not to
+  suggest it again, and the board hides it if the first mate does, word for word. A suggestion whose
+  words change shows as usual.
 - **Compact** and **Restart** sit beside Bearings at the top of the board, with a gear that
   opens FirstMate's settings. Compact has bb summarise the first mate's conversation to free room, as
   bb's own `/compact` does. Restart starts the first mate afresh on the same thread, after asking you:
@@ -130,6 +132,7 @@ panel to read or edit any of it.
 | `data/projects.md` | How each project ships: direct pull request, local only, reviewed pull request, and whether it may merge green work itself. |
 | `data/backlog.md` | Every work item; the board draws from it. |
 | `data/suggestions.md` | The suggestion buttons. |
+| `data/suggestions-dismissed.md` | The suggestions you trashed, the newest 50; the board writes it. Delete a line to let that suggestion back. |
 | `data/learnings.md` | Facts worth keeping across sessions. |
 | `data/<task>/` | Each task's brief, and a scout's report. |
 | `watches/` | The scripts the plugin runs on a schedule. |

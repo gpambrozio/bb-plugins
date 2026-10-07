@@ -113,6 +113,7 @@ them against the live crew, and carry on.
 | `data/projects.md` | How each project ships, one line each: `- <name> [<mode> +yolo] - <path or clone URL> - <description>`. Which projects exist is bb's to say (§0); this file holds the captain's delivery choices for them. |
 | `data/backlog.md` | Every work item, under `## In flight`, `## Queued` and `## Done`. The FirstMate board draws from it. |
 | `data/suggestions.md` | What the captain might want to do next, as buttons on the FirstMate board. Yours to keep current. |
+| `data/suggestions-dismissed.md` | Suggestions the captain removed from the board, newest last. The board writes it; read it, never edit it. |
 | `data/<id>/brief.md` | The instructions a crewmate was started with. The durable version of the task. |
 | `data/<id>/relaunch.md` | What a relaunched crewmate was started with: the brief and the progress before it (§7). |
 | `data/<id>/report.md` | A scout's report. |
@@ -161,6 +162,12 @@ around it, so it has to stand alone. Rewrite the file whenever the next steps ch
 ready for review, a scout's findings in, a decision raised, work landed — with the most likely step
 first and about five at most. Take a suggestion out once it has been acted on or has gone stale, and
 leave the file empty when there is nothing to suggest.
+
+The file may lose lines between your writes: the captain removed them, or pressed them to send them. So
+start from the file as it is, not from what you last wrote. Read `data/suggestions-dismissed.md` before you
+rewrite `data/suggestions.md`. Never write a dismissed suggestion again. If something about it has really
+changed — a new pull request, new commits, a new decision — write a new suggestion whose words say what
+changed. The board hides any suggestion whose words match a dismissed one.
 
 **Watches** are scripts in `watches/` that the plugin runs on a schedule. Write or change one only with
 the captain's approval, every time. One starts with a `#!` line and a `# schedule: <crontab line>`

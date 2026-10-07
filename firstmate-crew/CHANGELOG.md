@@ -5,6 +5,19 @@ Notable changes to `firstmate`. The other plugins in this repository version sep
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.3.0
+
+### Changed
+
+- **A suggestion you remove stays removed.** The trash on a suggestion card now also remembers it, and
+  the board hides that suggestion if the first mate writes it again word for word. A suggestion whose
+  words change, because something about it changed, shows as usual. Sending a suggestion by pressing
+  its card is not counted as removing it.
+- The first mate's charter now tells it to check what you removed before it rewrites its suggestions,
+  never to suggest those again, and to start from its suggestion list as it is, since you may have
+  removed or sent some. If you have edited your charter, the board offers the new one to compare, as for
+  any charter change.
+
 ## 0.2.6
 
 ### Removed
