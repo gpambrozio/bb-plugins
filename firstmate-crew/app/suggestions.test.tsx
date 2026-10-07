@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 /**
  * The suggestion cards: pressing one sends its prompt and, once it has landed, removes it; the trash
- * removes it without sending; and the chevron opens the whole suggestion without sending anything. jsdom lays nothing out and has no `ResizeObserver`, so a card
+ * dismisses it — removes it and records it — without sending; and the chevron opens the whole suggestion without sending anything. jsdom lays nothing out and has no `ResizeObserver`, so a card
  * there counts as cut unless a test supplies an observer and the sizes it should read.
  */
 import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
@@ -32,6 +32,7 @@ function renderList(suggestions: readonly Suggestion[] = [LAND, TIDY], ask: () =
       rpc: {
         "mate.ask": ask,
         "suggestion.remove": () => [],
+        "suggestion.dismiss": () => [],
       },
     },
   );
@@ -71,11 +72,11 @@ describe("Suggestions", () => {
     expect((sendButton(LAND) as HTMLButtonElement).disabled).toBe(false);
   });
 
-  it("removes a suggestion with its trash, without sending it", async () => {
+  it("dismisses a suggestion with its trash, without sending it", async () => {
     const view = renderList();
     fireEvent.click(screen.getByRole("button", { name: `Remove suggestion: ${TIDY.label}` }));
     await waitFor(() => expect(view.changed).toHaveLength(1));
-    expect(view.rpcCalls).toEqual([{ method: "suggestion.remove", input: TIDY }]);
+    expect(view.rpcCalls).toEqual([{ method: "suggestion.dismiss", input: TIDY }]);
   });
 
   it("opens and folds the whole suggestion without sending it", () => {

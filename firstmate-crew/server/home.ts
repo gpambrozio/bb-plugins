@@ -10,6 +10,7 @@
  *     <home>/data/projects.md    the project registry
  *     <home>/data/backlog.md     every work item; the board reads it
  *     <home>/data/suggestions.md what the captain might do next; the board's buttons
+ *     <home>/data/suggestions-dismissed.md  the ones the captain removed; the board writes it (suggestions.ts)
  *     <home>/data/learnings.md
  *     <home>/data/opening.md     a new first mate's first message; the captain's, never overwritten
  *     <home>/watches/            scripts the plugin runs on a schedule (watch-files.ts, watches.ts)
@@ -48,10 +49,11 @@ import {
   readInHome,
   readTextFile,
   replaceTextIfUnchanged,
+  updateInHome,
   writeInHome,
   type WriteHooks,
 } from "./files";
-import { parseSuggestions, withoutSuggestion } from "./suggestions";
+import { DISMISSED_FILE, parseDismissedPrompts, parseSuggestions, withDismissal, withoutSuggestion } from "./suggestions";
 import { TEMPLATES, readTemplate, withoutNotes, type TemplatePath } from "./templates";
 import { seedWatches } from "./watch-files";
 
@@ -124,9 +126,15 @@ export async function readBacklog(home: string): Promise<BacklogItem[]> {
   return markdown === null ? [] : parseBacklog(markdown);
 }
 
+/** The normalized prompts the captain dismissed; none when the board has never written the file. */
+async function readDismissed(home: string): Promise<Set<string>> {
+  return parseDismissedPrompts((await readInHome(home, DISMISSED_FILE)) ?? "");
+}
+
+/** The board's suggestions: `data/suggestions.md` without any the captain dismissed. Never writes. */
 export async function readSuggestions(home: string): Promise<Suggestion[]> {
   const markdown = await readInHome(home, TEMPLATES.suggestions);
-  return markdown === null ? [] : parseSuggestions(markdown);
+  return markdown === null ? [] : parseSuggestions(markdown, await readDismissed(home));
 }
 
 /** How many times a removal starts over when the first mate rewrites the file under it. */
@@ -154,10 +162,10 @@ export async function removeSuggestion(home: string, target: Suggestion, hooks: 
     }
     if (file.content === null) throw new Error(`${TEMPLATES.suggestions} is not a text file the board can edit.`);
     const next = withoutSuggestion(file.content, target);
-    if (next === null) return parseSuggestions(file.content);
+    if (next === null) return parseSuggestions(file.content, await readDismissed(home));
     try {
       await replaceTextIfUnchanged(home, TEMPLATES.suggestions, file.content, next, hooks);
-      return parseSuggestions(next);
+      return parseSuggestions(next, await readDismissed(home));
     } catch (error) {
       if (!(error instanceof FileChangedError)) throw error;
       if (attempt >= REMOVE_ATTEMPTS) {
@@ -165,6 +173,24 @@ export async function removeSuggestion(home: string, target: Suggestion, hooks: 
       }
     }
   }
+}
+
+/**
+ * The trash: records the suggestion in `data/suggestions-dismissed.md`, so the first mate does not write
+ * it again and the board hides it if it does, then takes it out of `data/suggestions.md` as
+ * `removeSuggestion` does. Recorded first, so a removal that fails still leaves it hidden. Recorded even
+ * when the first mate has rewritten its list without it since the board looked: the captain still meant
+ * to dismiss it. The record is a staged rename, re-read and decided again when the file changes under it
+ * (`updateInHome`).
+ */
+export async function dismissSuggestion(
+  home: string,
+  target: Suggestion,
+  options: { now?: Date; hooks?: WriteHooks } = {},
+): Promise<Suggestion[]> {
+  const now = options.now ?? new Date();
+  await updateInHome(home, DISMISSED_FILE, (current) => withDismissal(current, target, now));
+  return removeSuggestion(home, target, options.hooks);
 }
 
 /**

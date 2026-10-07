@@ -25,7 +25,7 @@ against bb 0.44.0 and `@get-bb/plugin-sdk` 0.5.29; the pinned launch and the int
 | `server/store.ts` | `bb.storage.kv`: the first mate's thread id and the switched-off watches. Nothing else. |
 | `server/settings.ts` | `bb.settings.define`: home directory, crew provider/model/reasoning, board refresh. |
 | `server/home.ts`, `charter.ts`, `charter-file.ts` | Preparing the home; rendering `AGENTS.md`; the charter following the plugin until edited. |
-| `server/backlog.ts`, `suggestions.ts`, `crew-report.ts` | Parsing `data/backlog.md`, `data/suggestions.md`, and a worker's closing status line. |
+| `server/backlog.ts`, `suggestions.ts`, `crew-report.ts` | Parsing `data/backlog.md`, `data/suggestions.md` and `data/suggestions-dismissed.md`, and a worker's closing status line. |
 | `server/files.ts` | Confinement to the home (through symlinks) and `replaceTextIfUnchanged`. |
 | `server/watch-schedule.ts`, `watch-files.ts`, `watch-run.ts`, `watches.ts`, `watch-delivery.ts`, `watch-notes.ts` | Crontab parsing, which files are watches, one script run, the runner and its queue, when the queue reaches the first mate, and the line the captain sees with the saved note behind it. |
 | `server/serialize.ts` | One-at-a-time per key. |
@@ -99,6 +99,12 @@ Do not break these; each was paid for.
   one change at a time, so a delivery still sending cannot overwrite what a new runner saved.
 - **Suggestions are removed by label and prompt**, not position. Nothing in code adds one. A sent
   suggestion is removed the same way, and only after `mate.ask` has resolved; a failed send keeps it.
+- **The trash dismisses; a send only removes.** The trash calls `suggestion.dismiss`, which appends
+  `- <label> :: <prompt> (dismissed YYYY-MM-DD)` to `data/suggestions-dismissed.md` (newest 50 kept,
+  through `updateInHome`) before removing the line; a sent suggestion goes through `suggestion.remove` and
+  is never recorded. The board hides any suggestion whose whitespace-normalized prompt matches a dismissed
+  one, and never edits `data/suggestions.md` to do it. The file name and line shape are shared with the
+  Paseo plugin's first mate; keep them as they are.
 - **Only the card's main button sends a suggestion.** The chevron that opens the whole text and the trash
   are its siblings, not its children, so neither can press it (`app/suggestions.tsx`).
 - **Watch output reaches the first mate only between turns**, at most 32,000 characters in one message,

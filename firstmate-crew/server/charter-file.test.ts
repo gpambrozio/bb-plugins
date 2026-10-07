@@ -215,7 +215,9 @@ describe("prepareHome and the charter", () => {
     expect(agents).not.toContain("firstmate-charter");
     expect(fingerprint(await read(home, CHARTER_FILE))).toBe(fingerprint(await readTemplate(TEMPLATES.charter)));
     // Pinned so a charter change is deliberate: every untouched home follows it, and every edited one is
-    // offered it as charter.new.md. 8afda56015b32e19 is the charter with no ahoy section;
+    // offered it as charter.new.md. 94aa62a528a0a275 is the charter telling the first mate to read
+    // data/suggestions-dismissed.md before rewriting its suggestions, never to write a dismissed one again,
+    // and to start from data/suggestions.md as it is; 8afda56015b32e19 was the charter with no ahoy section;
     // dab8203ddd18566b was the charter telling the first mate what to do when
     // bb cuts a crewmate's work short (host loss, a daemon restart, a failed setup, an undelivered message)
     // and to check the log for a stop by hand, which sends nothing, before any nudge, resend or relaunch;
@@ -230,7 +232,7 @@ describe("prepareHome and the charter", () => {
     // mate to always title its crew; 79b5a4bc6315ef40 the charter rewritten for bb; 09fd534b24db4e75 was Paseo's text
     // with only its placeholders renamed, e0b749cb695c5df6 the charter as it moved into templates/, and
     // 8b6df21d082df6e6 Paseo's before {{crewModeRule}} became {{crewReasoningRule}}.
-    expect(fingerprint(await readTemplate(TEMPLATES.charter))).toBe("8afda56015b32e19");
+    expect(fingerprint(await readTemplate(TEMPLATES.charter))).toBe("94aa62a528a0a275");
 
     await editCopy(home, "# My first mate\n\n<!-- a note to myself -->\nYour home is {{home}}; keep it tidy.");
     await prepareHome(home, homeConfig);

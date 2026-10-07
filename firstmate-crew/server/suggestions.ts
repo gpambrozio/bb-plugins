@@ -88,11 +88,26 @@ function rangesOf(offsets: readonly number[]): Array<{ start: number; end: numbe
   return ranges;
 }
 
-/** Every well-formed suggestion, in file order, the first `MAX_SUGGESTIONS` of them. */
-export function parseSuggestions(markdown: string): Suggestion[] {
+/**
+ * Every well-formed suggestion, in file order, the first `MAX_SUGGESTIONS` of them. One whose prompt is in
+ * `dismissed` (normalized prompts, `parseDismissedPrompts`) is left out and takes no place.
+ */
+export function parseSuggestions(markdown: string, dismissed: ReadonlySet<string> = new Set()): Suggestion[] {
   return scan(markdown)
-    .slice(0, MAX_SUGGESTIONS)
-    .map((found) => found.suggestion);
+    .map((found) => found.suggestion)
+    .filter((suggestion) => !dismissed.has(normalizePrompt(suggestion.prompt)))
+    .slice(0, MAX_SUGGESTIONS);
+}
+
+/** `text` without the characters in `ranges`, which are ascending and do not overlap. */
+function withoutRanges(text: string, ranges: ReadonlyArray<{ start: number; end: number }>): string {
+  let next = "";
+  let at = 0;
+  for (const range of ranges) {
+    next += text.slice(at, range.start);
+    at = range.end;
+  }
+  return next + text.slice(at);
 }
 
 function same(a: Suggestion, b: Suggestion): boolean {
@@ -116,13 +131,7 @@ export function withoutSuggestion(markdown: string, target: Suggestion): string 
   const match = all[index];
   if (match === undefined) return null;
 
-  let next = "";
-  let at = 0;
-  for (const range of match.ranges) {
-    next += markdown.slice(at, range.start);
-    at = range.end;
-  }
-  next += markdown.slice(at);
+  const next = withoutRanges(markdown, match.ranges);
 
   const expected = all.filter((_, other) => other !== index).map((found) => found.suggestion);
   const left = scan(next).map((found) => found.suggestion);
@@ -130,4 +139,60 @@ export function withoutSuggestion(markdown: string, target: Suggestion): string 
     throw new Error("That suggestion could not be taken out cleanly; edit data/suggestions.md in Files instead.");
   }
   return next;
+}
+
+/**
+ * The suggestions the captain removed with the trash, `data/suggestions-dismissed.md` in the home, so
+ * the first mate does not write them again and the board hides them if it does. The board appends one
+ * line per removal, the newest last, in the suggestions' own shape plus the day:
+ *
+ *     - Land web#42 :: Merge https://github.com/you/web/pull/42 (dismissed 2026-10-07)
+ *
+ * A sent suggestion is acted on, not dismissed, and is not recorded. The file name and the line shape
+ * are shared with the Paseo plugin's first mate, so a home works with either.
+ */
+export const DISMISSED_FILE = "data/suggestions-dismissed.md";
+
+/** How many dismissals the file keeps; older ones are dropped as new ones come. */
+export const MAX_DISMISSED = 50;
+
+const DISMISSED_DATE = /\s*\(dismissed \d{4}-\d{2}-\d{2}\)\s*$/;
+
+/** A prompt as dismissals compare it: runs of whitespace as one space, none at either end. */
+export function normalizePrompt(prompt: string): string {
+  return prompt.replace(/\s+/g, " ").trim();
+}
+
+/** A dismissal's prompt without its day; the day is optional. */
+function dismissedPrompt(found: Found): string {
+  return found.suggestion.prompt.replace(DISMISSED_DATE, "");
+}
+
+/** The normalized prompt of every dismissal in the file. */
+export function parseDismissedPrompts(markdown: string): Set<string> {
+  const prompts = new Set<string>();
+  for (const found of scan(markdown)) {
+    const prompt = normalizePrompt(dismissedPrompt(found));
+    if (prompt !== "") prompts.add(prompt);
+  }
+  return prompts;
+}
+
+/** `YYYY-MM-DD` in the server's local time. */
+function day(now: Date): string {
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+}
+
+/**
+ * The dismissed file (`null` when there is none) with `suggestion` appended, dated `now`, and its oldest
+ * dismissals dropped past `MAX_DISMISSED`. Only those lines go; a heading, or a note the captain added,
+ * is kept as it was.
+ */
+export function withDismissal(markdown: string | null, suggestion: Suggestion, now: Date): string {
+  const text = markdown ?? "";
+  const line = `- ${normalizePrompt(suggestion.label)} :: ${normalizePrompt(suggestion.prompt)} (dismissed ${day(now)})`;
+  const appended = `${text}${text === "" || /[\r\n]$/.test(text) ? "" : "\n"}${line}\n`;
+  const all = scan(appended);
+  return withoutRanges(appended, all.slice(0, Math.max(0, all.length - MAX_DISMISSED)).flatMap((found) => found.ranges));
 }

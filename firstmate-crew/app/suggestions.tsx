@@ -2,9 +2,10 @@
  * The first mate's suggestions: one button per next step it wrote in `data/suggestions.md`. Pressing one
  * sends its prompt to the first mate; once the send has landed, the suggestion is taken out of the file as
  * the trash would, and the first mate's thread is brought into view. A send that fails leaves the card
- * where it was. A trash button beside it takes that one line out of the file without sending anything; it
- * is the button's sibling, not its child, so pressing it never presses the suggestion. Hidden when there
- * is nothing to suggest.
+ * where it was. A trash button beside it takes that one line out of the file without sending anything, and
+ * records it as dismissed, so the board hides it should the first mate write it again; a sent suggestion
+ * is not recorded. The trash is the button's sibling, not its child, so pressing it never presses the
+ * suggestion. Hidden when there is nothing to suggest.
  *
  * Bringing the thread into view is `toThread`, and the board is a panel on that same thread, so on a wide
  * layout the chat is already beside it. bb 0.45 gives a plugin no way to close a thread's side panel, so
@@ -44,15 +45,16 @@ export function Suggestions({
     // Refused while another message is on its way, so a double press sends the prompt once. The removal is
     // by label and prompt, so a file the first mate rewrote meanwhile loses this suggestion or nothing.
     mate.ask(suggestion.prompt, () => {
-      remove(suggestion);
+      remove(suggestion, "suggestion.remove");
       navigate.toThread(mateThreadId);
     });
   }
 
-  function remove(suggestion: Suggestion): void {
+  // Sent: taken out of the file. Trashed: also recorded as dismissed.
+  function remove(suggestion: Suggestion, method: "suggestion.remove" | "suggestion.dismiss"): void {
     void suggestionRemovals.run(suggestion, () =>
       rpc
-        .call("suggestion.remove", suggestion)
+        .call(method, suggestion)
         .then(onChanged)
         .catch(reportError),
     );
@@ -68,7 +70,7 @@ export function Suggestions({
           busy={suggestionRemovals.pending(suggestion)}
           sending={mate.sending}
           onPick={() => pick(suggestion)}
-          onRemove={() => remove(suggestion)}
+          onRemove={() => remove(suggestion, "suggestion.dismiss")}
         />
       ))}
     </section>
