@@ -9,8 +9,6 @@
  * navigate away from the board, which unmounts the detail panel that asked.
  * Nothing persists: a card still pending at a reload is dropped.
  */
-import type { BoardItem, ColumnId } from "../shared/board";
-
 /** How long the overlay waits for the opened thread's composer before giving up. */
 export const PENDING_ADD_TIMEOUT_MS = 15_000;
 
@@ -19,8 +17,11 @@ export interface PendingAdd {
   readonly threadId: string;
   /** The thread's name, for the message when it never opens. */
   readonly title: string;
-  readonly item: Pick<BoardItem, "repository" | "number" | "title" | "url">;
-  readonly column: ColumnId;
+  /**
+   * The card's prompt, rendered for the thread's project when it was picked,
+   * so the overlay needs neither the templates nor the sidebar.
+   */
+  readonly prompt: string;
   /** Epoch milliseconds after which the card is dropped. */
   readonly deadline: number;
 }

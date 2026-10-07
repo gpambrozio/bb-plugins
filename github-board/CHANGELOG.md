@@ -5,6 +5,15 @@ Notable changes to `github-board`. The other plugins in this repository version 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.4.0
+
+### Changed
+
+- **Add to chat** now writes the same prompt **Send to chat** starts a thread with: the template for the
+  card's column, using the per-project template of the chat you add it to when that project has one.
+  Until the templates have loaded, the chats in its menu wait. It used to write only the card's kind,
+  number, title and link.
+
 ## 0.3.0
 
 ### Changed

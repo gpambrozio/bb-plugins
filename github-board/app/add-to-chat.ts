@@ -2,27 +2,46 @@
  * Add to chat: what a card puts into a chat's draft, which chats the picker
  * offers, and what each is called there.
  *
- * The card goes in as one plain-text line — kind, `owner/name#number`, title
- * and the GitHub URL — on its own paragraph after whatever the draft already
- * holds. Never at the cursor: a cursor insert replaces selected text, and the
- * draft is the user's. Nothing is sent; the user reads it and sends it.
+ * The card goes in as the prompt Send to chat would start the thread with: its
+ * column's template, with the override of the chat's own project when it has
+ * one, filled in with the card. It lands on its own paragraph after whatever
+ * the draft already holds. Never at the cursor: a cursor insert replaces
+ * selected text, and the draft is the user's. Nothing is sent; the user reads
+ * it and sends it.
  *
  * Pure apart from the handle it is given, so it is tested with a fake one.
  */
 import type { PluginComposerApi, PluginComposerScope, PluginSidebarThread } from "@get-bb/plugin-sdk/app";
 
-import type { BoardItem, ColumnId } from "../shared/board";
-import { kindLabel } from "./board-logic";
+import type { BoardItem, ColumnId, PromptSettings } from "../shared/board";
+import { renderTemplate, templateFor } from "../shared/settings";
 
-/** The board's card as one line of prompt text. */
-export function cardReference(
+/**
+ * The card as the prompt Send to chat would use in project `projectId`. A chat
+ * with no project gets the column's template with no override, as Send to chat
+ * does for a card that reaches no project.
+ */
+export function cardPrompt(
+  prompts: PromptSettings,
   item: Pick<BoardItem, "repository" | "number" | "title" | "url">,
   column: ColumnId,
+  projectId: string | null,
 ): string {
-  // A title is one line on GitHub, but the line must stay one line whatever
-  // the API hands back.
-  const title = item.title.replace(/\s+/g, " ").trim();
-  return `${kindLabel(column)} ${item.repository}#${item.number}: ${title} — ${item.url}`;
+  return renderTemplate(templateFor(prompts, column, projectId), item);
+}
+
+/**
+ * The bb project a composer writes into: a new thread's selected project, or
+ * the project of the thread it belongs to as the sidebar lists it. Null when
+ * neither is known — a new-thread composer that has not resolved its project,
+ * or a thread the sidebar does not list.
+ */
+export function composerProjectId(
+  scope: PluginComposerScope,
+  threads: readonly Pick<PluginSidebarThread, "id" | "projectId">[],
+): string | null {
+  if (scope.kind === "new-thread") return scope.projectId;
+  return threads.find((thread) => thread.id === scope.threadId)?.projectId ?? null;
 }
 
 /** What the picker needs from bb's sidebar to name a composer. */
@@ -41,11 +60,14 @@ export type SidebarThreadFields = Pick<
 export interface ThreadTarget {
   threadId: string;
   title: string;
+  /** The thread's project, whose prompt override the card is written with. */
+  projectId: string;
   projectName: string | null;
 }
 
 export interface ChatTargets<Composer> {
-  onScreen: { composer: Composer; label: string }[];
+  /** `projectId` picks the prompt override, as `composerProjectId` resolves it. */
+  onScreen: { composer: Composer; label: string; projectId: string | null }[];
   threads: ThreadTarget[];
 }
 
@@ -83,7 +105,11 @@ export function chatTargets<Composer extends Pick<PluginComposerApi, "scope">>({
   const names: ComposerNames = { threads, projects };
   const onScreen = composers
     .filter((composer) => !(sendDialogOpen && composer.scope.kind === "new-thread"))
-    .map((composer) => ({ composer, label: composerLabel(composer.scope, names) }));
+    .map((composer) => ({
+      composer,
+      label: composerLabel(composer.scope, names),
+      projectId: composerProjectId(composer.scope, threads),
+    }));
 
   const shown = new Set<string>();
   for (const { composer } of onScreen) {
@@ -97,6 +123,7 @@ export function chatTargets<Composer extends Pick<PluginComposerApi, "scope">>({
     .map((thread) => ({
       threadId: thread.id,
       title: thread.displayTitle,
+      projectId: thread.projectId,
       projectName: projects.find((project) => project.id === thread.projectId)?.name ?? null,
     }));
   return { onScreen, threads: others };
@@ -113,15 +140,11 @@ export function composerLabel(scope: PluginComposerScope, names: ComposerNames):
 }
 
 /**
- * Appends the card to the composer's draft and puts the caret there, so the
- * user can say what to do with it. Throws what the handle throws — a composer
- * that closed since the menu was drawn is "no longer available".
+ * Appends the card's prompt (`cardPrompt`) to the composer's draft and puts the
+ * caret there, so the user can add to it. Throws what the handle throws — a
+ * composer that closed since the menu was drawn is "no longer available".
  */
-export function addCardToComposer(
-  composer: Pick<PluginComposerApi, "insert" | "focus">,
-  item: Pick<BoardItem, "repository" | "number" | "title" | "url">,
-  column: ColumnId,
-): void {
-  composer.insert(cardReference(item, column), { at: "end", block: true });
+export function addCardToComposer(composer: Pick<PluginComposerApi, "insert" | "focus">, prompt: string): void {
+  composer.insert(prompt, { at: "end", block: true });
   composer.focus();
 }

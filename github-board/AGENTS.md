@@ -204,9 +204,18 @@ recently updated first. `chatTargets` in `app/add-to-chat.ts` makes that list.
   selected text, and the draft is the user's. Then `focus()`; never `submit()`. From the menu, a tick
   after the pick: while the menu is open its focus trap pulls the composer's focus back (the test
   checks where focus lands).
-- **One plain-text line**, `cardReference`: kind, `owner/name#number`, title (whitespace collapsed) and
-  the card's URL. No mention pill — that would need a mention provider on the server — and not the
-  column's prompt template, which is what Send to chat is for.
+- **The column's prompt template, as Send to chat renders it** (`cardPrompt`: `renderTemplate(templateFor(…))`
+  from `shared/settings.ts`), so both buttons change together when the templates do. The project whose
+  override applies is the *target chat's*, not the card's: a new-thread composer's `scope.projectId`,
+  or the sidebar's `projectId` for a thread or queued-message composer and for a thread that is not on
+  screen (`composerProjectId`, `ThreadTarget.projectId`). No project known — an unresolved new-thread
+  composer, a thread the sidebar does not list — means the column template with no override, as
+  `templateFor(…, null)` gives; while the sidebar is still loading, thread composers stay disabled
+  rather than lose their project's override. The templates come from the same `usePrompts()` the dialog reads; until
+  they load every chat in the menu is disabled (with the reason, or the load error): there is no
+  lesser text to fall back to. A pending card holds the prompt already rendered for its thread's
+  project, so the overlay needs neither the templates nor the sidebar. No mention pill — that would
+  need a mention provider on the server.
 - **The hooks stay in that small component.** `useComposers()` re-renders its caller on every keystroke
   in any listed draft; the detail panel around it renders a Markdown body.
 - Not on the card's hover corner: at the narrowest column (240 px) it does not fit beside Send to chat
