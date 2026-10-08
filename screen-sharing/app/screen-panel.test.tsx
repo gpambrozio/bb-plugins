@@ -71,6 +71,7 @@ vi.mock("./rfb", () => ({
     fakes.rfbs.push(rfb);
     return rfb;
   },
+  releaseRemoteButtons: () => {},
 }));
 
 const sockets = fakes.sockets as FakeSocket[];

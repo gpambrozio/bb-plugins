@@ -31,6 +31,25 @@ function markRemoteCursor(rfb: Rfb, target: HTMLElement): void {
   };
 }
 
+/**
+ * Releases any mouse button noVNC still has pressed on the Mac, at the last
+ * pointer position. Touch gestures (a drag, a long press) press buttons
+ * through noVNC's private `_handleMouseButton` with no mouse event the store
+ * could track, so this reads noVNC's own state — `_mouseButtonMask` and
+ * `_mousePos` in the pinned noVNC 1.7.0. `app/novnc-session.test.ts` drives
+ * real gestures through it, so a noVNC that renames them fails there.
+ */
+export function releaseRemoteButtons(rfb: Rfb): void {
+  const internals = rfb as unknown as {
+    _mouseButtonMask?: number;
+    _mousePos?: { x?: number; y?: number };
+    _handleMouseButton?: (x: number, y: number, mask: number) => void;
+  };
+  if (!internals._mouseButtonMask || typeof internals._handleMouseButton !== "function") return;
+  const position = internals._mousePos ?? {};
+  internals._handleMouseButton(position.x ?? 0, position.y ?? 0, 0);
+}
+
 export function createRfb(target: HTMLElement, socket: WebSocket): Rfb {
   // A new connection starts with no cursor from the server.
   target.removeAttribute(REMOTE_CURSOR_ATTRIBUTE);

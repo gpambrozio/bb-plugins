@@ -71,7 +71,10 @@ buttons at the last pointer position — so noVNC sends the releases to the Mac,
 noVNC's `viewOnly` on; `attach()` restores the user's choice. Turning view-only on alone is not
 enough: noVNC's setter sets the flag before it ungrabs the keyboard, so the key-ups the ungrab
 generates are dropped as view-only input. For the same reason the user turning View only on releases
-held input first, in the same order.
+held input first, in the same order. Touch gestures (a drag, a long press) press the Mac's buttons
+through noVNC's private `_handleMouseButton` with no mouse event to track, so the release also asks
+noVNC itself, through `releaseRemoteButtons` in `app/rfb.ts`, to let go of any button it still has
+pressed (`_mouseButtonMask` at `_mousePos`, pinned 1.7.0; the real-noVNC tests drive real gestures).
 
 The button-up has to end noVNC's pointer capture too. A button-down makes noVNC capture the pointer:
 without a native `setCapture` it puts a full-window overlay (`#noVNC_mouse_capture_elem`) over the

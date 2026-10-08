@@ -18,7 +18,7 @@
 import { SESSION_LIMITS } from "../shared/channels";
 import { endMessage, type SessionEnd } from "./end-message";
 import { LOCAL_CURSOR_CSS } from "./cursor";
-import { createRfb, openRelaySocket, type Rfb } from "./rfb";
+import { createRfb, openRelaySocket, releaseRemoteButtons, type Rfb } from "./rfb";
 import { relayUrl } from "./relay-url";
 
 export type CredentialType = "username" | "password" | "target";
@@ -232,15 +232,15 @@ export class ScreenSessionStore {
   private finish(message: string): void {
     this.attempt++;
     this.stopIdleWatch();
+    // Before noVNC lets go of its canvas: a button held as the session ends would leave noVNC's
+    // pointer capture — a full-window overlay — over bb.
+    this.releaseHeldInput();
     const rfb = this.rfb;
     const socket = this.socket;
     this.rfb = null;
     this.socket = null;
-    this.set({ stage: { kind: "idle" }, ended: message });
-    // Before noVNC lets go of its canvas: a button held as the session ends would leave noVNC's
-    // pointer capture — a full-window overlay — over bb.
-    this.releaseHeldInput();
     this.canvas = null;
+    this.set({ stage: { kind: "idle" }, ended: message });
     // noVNC's own disconnect event fires from here and is ignored: the attempt has moved on.
     if (rfb !== null) rfb.disconnect();
     else socket?.close();
@@ -264,6 +264,8 @@ export class ScreenSessionStore {
   private releaseHeldInput(): void {
     this.releaseHeldKeys();
     this.releaseHeldMouse();
+    // Whatever noVNC still has pressed, touch gestures included: they press buttons without mouse events.
+    if (this.rfb !== null) releaseRemoteButtons(this.rfb);
   }
 
   private releaseHeldKeys(): void {

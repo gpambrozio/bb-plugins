@@ -10,8 +10,8 @@
  *   (`_rfbCredentials`) holds no user name or password — nor after a refused
  *   sign-in;
  * - taking the screen off the page, or turning View only on, releases a key
- *   and a mouse button held over it, as RFB key-up and button-up messages to
- *   the Mac;
+ *   and a mouse button held over it — a touch drag or long press included —
+ *   as RFB key-up and button-up messages to the Mac;
  * - a held button leaves no noVNC pointer capture (its full-window overlay)
  *   over bb once the screen leaves the page or the session ends;
  * - with no cursor shape from the Mac, the pointer over the screen is the
@@ -150,6 +150,15 @@ function capturedElement(): Element | null | undefined {
   return (document as Document & { captureElement?: Element | null }).captureElement;
 }
 
+/** A touch event as noVNC's GestureHandler reads it: one finger, by `changedTouches`. */
+function touch(type: "touchstart" | "touchmove" | "touchend", clientX: number, clientY: number): Event {
+  const point = { identifier: 1, clientX, clientY };
+  return Object.assign(new Event(type, { bubbles: true, cancelable: true }), {
+    changedTouches: [point],
+    touches: type === "touchend" ? [] : [point],
+  });
+}
+
 /** A FramebufferUpdate holding one Cursor pseudo-encoding rectangle (-239). */
 function cursorUpdate(width: number, height: number): number[] {
   const pixels = new Array(width * height * 4).fill(0x80);
@@ -269,6 +278,47 @@ describe("the session store with real noVNC", () => {
     const afterReturn = socket.sent.length;
     canvas.dispatchEvent(new KeyboardEvent("keydown", { key: "a", code: "KeyA", bubbles: true, cancelable: true }));
     expect(sentAfter(afterReturn).some((m) => m[0] === 4)).toBe(false);
+  });
+
+  describe.each([
+    { gesture: "drag", mask: 0x1 },
+    { gesture: "long press", mask: 0x4 },
+  ])("a touch $gesture in progress", ({ gesture, mask }) => {
+    /** Starts the gesture on the screen; noVNC presses the Mac's button with no mouse event. */
+    async function press(canvas: HTMLCanvasElement): Promise<void> {
+      const before = socket.sent.length;
+      if (gesture === "drag") {
+        canvas.dispatchEvent(touch("touchstart", 10, 10));
+        canvas.dispatchEvent(touch("touchmove", 120, 10));
+      } else {
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+        try {
+          canvas.dispatchEvent(touch("touchstart", 10, 10));
+          vi.advanceTimersByTime(1100);
+        } finally {
+          vi.useRealTimers();
+        }
+      }
+      expect(sentAfter(before).some((m) => m[0] === 5 && m[1] === mask)).toBe(true);
+    }
+
+    it.each(["the screen leaves the page", "View only is turned on"])("is released when %s", async (action) => {
+      await signIn();
+      await acceptAndInit();
+      const canvas = container.querySelector("canvas");
+      if (canvas === null) throw new Error("noVNC drew no canvas");
+      await press(canvas);
+
+      const before = socket.sent.length;
+      if (action === "the screen leaves the page") screenSession.detach();
+      else screenSession.setViewOnly(true);
+      expect(sentAfter(before).some((m) => m[0] === 5 && m[1] === 0)).toBe(true); // button-up reached the Mac
+
+      // Lifting the finger afterwards sends nothing more.
+      const lifted = socket.sent.length;
+      canvas.dispatchEvent(touch("touchend", 120, 10));
+      expect(sentAfter(lifted).some((m) => m[0] === 5)).toBe(false);
+    });
   });
 
   it("leaves no pointer capture over bb when the screen leaves the page with a button held", async () => {
