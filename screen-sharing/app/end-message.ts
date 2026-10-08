@@ -1,0 +1,46 @@
+/**
+ * What the page says when a session ends: from how the relay's WebSocket
+ * closed (its close code says why the server ended it) and whether macOS
+ * refused the sign-in.
+ */
+import { CloseCode, SESSION_LIMITS } from "../shared/channels";
+
+export interface SessionEnd {
+  /** How the WebSocket closed; null when it never opened or the page closed it. */
+  close: { code: number; reason: string } | null;
+  /** The reason noVNC reported for a refused sign-in, if any. */
+  securityFailure: string | null;
+  /** Whether the session got as far as showing the screen. */
+  connected: boolean;
+}
+
+function sentence(text: string): string {
+  const trimmed = text.trim();
+  if (trimmed === "") return trimmed;
+  const capital = trimmed[0]?.toUpperCase() + trimmed.slice(1);
+  return /[.!?]$/.test(capital) ? capital : `${capital}.`;
+}
+
+export function endMessage(end: SessionEnd): string {
+  if (end.securityFailure !== null) return `Sign-in failed: ${sentence(end.securityFailure)}`;
+  const close = end.close;
+  if (close === null) return "Disconnected.";
+  switch (close.code) {
+    case CloseCode.idle:
+      return `Closed after ${SESSION_LIMITS.idleMinutes} minutes without activity.`;
+    case CloseCode.maxAge:
+      return `Closed after ${SESSION_LIMITS.maxHours} hours, the longest a session lasts.`;
+    case CloseCode.closedByUser:
+      return "Closed from bb with Close all.";
+    case CloseCode.stopping:
+      return "Closed because the Screen Sharing plugin stopped or reloaded.";
+    case CloseCode.policy:
+      return `bb refused the session${close.reason === "" ? "" : ` (${close.reason})`}. Try again.`;
+    case CloseCode.failed:
+      return close.reason === "" ? "The relay failed." : sentence(close.reason);
+    case CloseCode.normal:
+      return end.connected ? "Screen Sharing ended the session." : "Screen Sharing closed the connection before you signed in.";
+    default:
+      return end.connected ? "The connection was lost." : "Could not connect to the relay.";
+  }
+}

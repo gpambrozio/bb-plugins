@@ -1,0 +1,90 @@
+# AGENTS.md
+
+A bb plugin that adds a **Screen Sharing** sidebar page: the screen of the Mac running the bb server,
+seen and controlled through noVNC in the page, relayed by the plugin to macOS Screen Sharing on
+`127.0.0.1:5900`. It is not a Paseo port.
+
+The repository root `AGENTS.md` covers what every plugin here shares. This file covers only what is
+specific to `screen-sharing`. The feasibility study behind it measured bb's channels and auth; its
+findings are summarised under *Decisions*.
+
+## Orientation
+
+| File | What it owns |
+| --- | --- |
+| `server.ts` | Wires the RPCs, the relay route, the sweep timer and disposal. Holds the limits (ticket life, idle, maximum length, buffer cap). |
+| `server/sessions.ts` | Tickets (single-use, bound to a Mac, short-lived) and sessions (idle and age limits, Close all). No sockets. |
+| `server/relay.ts` | One WebSocket ⇄ one TCP connection, bytes copied untouched; either end closing closes the other. |
+| `server/status.ts` | Is Screen Sharing on: `launchctl print-disabled system` and an RFB greeting probe that signs in to nothing. |
+| `shared/channels.ts` | Route, realtime channel, close codes, limits and zod shapes; no SDK import, so the app may use it. |
+| `shared/contract.ts` | The app ⇄ server RPC contract. The app imports it as a type only. |
+| `app/screen-panel.tsx` | The page: status and System Settings guidance, Connect/Disconnect, View only, the title bar's Close all. |
+| `app/vnc-session.tsx` | One session: ticket → WebSocket → noVNC; the sign-in form; why it ended. |
+| `app/rfb.ts` | The seam the page's tests replace: `new WebSocket` and noVNC's `RFB`. |
+| `app/sessions.tsx` | The open sessions as the app sees them; the sidebar "Live" and the corner Close all pill. |
+| `app/novnc.d.ts` | Types for the part of noVNC's `RFB` used here; noVNC ships none. |
+
+`npm test` runs everything. The tests never touch this machine's real port 5900: the relay and the
+probe run against fake TCP servers, and the fake-host test drives the route only with tickets it
+refuses.
+
+## Decisions
+
+**Which machine: the bb server's own, in `server.ts`, no `bb.host` entry.** The server runs on the Mac
+it shares, so a loopback `net.connect` reaches Screen Sharing. Other enrolled Macs are refused in
+`openSession` (the route's `host` parameter is there so a relay to them can be added later). The study
+measured the two ways to reach another Mac: a relay over the host channel (host RPC up, host signals
+down) works but the round trip was ≈600 ms to remote hosts; a gate-shared port
+(`bb.hosts.declareSharedPorts`) is unproven. Neither is in this version.
+
+**One same-origin WebSocket route, `bb.http.experimental_websocket("/vnc", …, { auth: "local" })`.**
+bb serves the app from the server's own origin (`window.location.origin` is what bb's own SDK uses for
+`/api` and `/ws`), so the page opens the route as a same-origin socket: over loopback on the Mac,
+through bb's getbb.app tunnel remotely. "local" auth refuses a browser on any other origin (403,
+checked in the study); requests with no `Origin` header pass, which only local processes send, and
+they can reach port 5900 directly anyway. The API is experimental; `engines.bb` is `>=0.45`.
+
+**Never expose a port.** No `bb connect expose`, no `declareSharedPorts`, no listening socket. The
+gate carries only HTTP and WebSockets, so raw VNC could not cross it anyway, and an exposed share
+would be one more door to a Mac's screen.
+
+**The page opens the WebSocket itself and hands it to noVNC** (`new RFB(target, socket)`), so it can
+read the close code and say why a session ended; noVNC reports only clean or not. No subprotocol is
+requested.
+
+**View only is noVNC's `viewOnly`, set in the page.** The relay does not parse RFB to enforce it; the
+user is the one viewing.
+
+## Security invariants
+
+- **A session needs a ticket.** `openSession` mints one only for the bb app (`experimental_caller` is
+  `client`, not another plugin) and only for the server's primary host. Redeeming it uses it up, a
+  wrong Mac uses it up too, and it expires after 30 s; at most 16 wait at once.
+- **One socket per ticket.** The relay connects to 5900 only after a ticket is redeemed; a refused
+  socket closes with 1008 and never opens TCP.
+- **Bytes only.** The relay never parses, logs or stores what crosses it, and logs only session ids
+  and close reasons — never the ticket. The sign-in travels inside RFB's own ARD Diffie-Hellman
+  exchange; the page hands it to noVNC and clears the form. No setting holds credentials.
+- **Everything closes.** WebSocket close or error destroys the TCP socket; TCP close or error closes
+  the WebSocket; the sweep (every 15 s) ends sessions idle 30 min or older than 8 h; `closeAll` ends
+  them all; `bb.onDispose` ends them all with 4004. Unmounting the session view disconnects noVNC,
+  and a ticket that arrives after unmount is never used.
+- **Open sessions are visible.** Every open and close publishes the list; the sidebar row and a corner
+  pill in every window show it, and both the pill and the page's title bar offer Close all.
+
+## Status check
+
+`status` is read-only and needs no root. The RFB probe reads the version line, answers `RFB 003.008`,
+reads the list of security types and hangs up before choosing one, so it never signs in. The probe
+decides `ready`: Remote Management also answers on 5900 while the Screen Sharing switch is off.
+`signInSupported` is false when the Mac offers none of noVNC's types (Apple offers 30, ARD, by
+default). Nothing here can turn Screen Sharing on: since macOS 12.1 that takes System Settings or MDM,
+and the page says so.
+
+## noVNC
+
+`@novnc/novnc` is pinned exactly and bundled into the app; it is MPL-2.0, noted in
+`THIRD_PARTY_NOTICES.md`. Keep it unmodified — a change to its files would have to be published under
+the MPL. It uses top-level await, which bb's ESM app build accepts. Its sign-in for Apple's type 30
+needs WebCrypto, so the page must be a secure context: `https://…getbb.app` and `http://127.0.0.1`
+both are, a bare LAN `http://` address is not.
