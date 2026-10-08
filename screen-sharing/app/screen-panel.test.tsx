@@ -105,8 +105,16 @@ function renderPanel(handlers: Partial<PluginRpcTestHandlers<RpcContract>> = {})
   });
 }
 
-async function connect() {
-  fireEvent.click(await screen.findByRole("button", { name: "Connect" }));
+/** The Connect buttons: the toolbar's, then the one under the page's text. */
+async function connectButtons(): Promise<{ toolbar: HTMLButtonElement; body: HTMLButtonElement }> {
+  const [toolbar, body, ...rest] = (await screen.findAllByRole("button", { name: "Connect" })) as HTMLButtonElement[];
+  expect(rest).toEqual([]);
+  if (toolbar === undefined || body === undefined) throw new Error("expected two Connect buttons");
+  return { toolbar, body };
+}
+
+async function connect(which: "toolbar" | "body" = "body") {
+  fireEvent.click((await connectButtons())[which]);
   await waitFor(() => expect(rfbs).toHaveLength(1));
   return rfbs[0] as FakeRfb;
 }
@@ -125,7 +133,7 @@ describe("the Screen Sharing page", () => {
     expect(screen.queryByRole("button", { name: "Connect" })).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Check again" }));
-    expect(await screen.findByRole("button", { name: "Connect" })).toBeTruthy();
+    await connectButtons();
     expect(view.rpcCalls.filter((call) => call.method === "status")).toHaveLength(2);
   });
 
@@ -135,7 +143,9 @@ describe("the Screen Sharing page", () => {
     try {
       renderPanel();
       expect(await screen.findByText(/plain http:\/\/ address/)).toBeTruthy();
-      expect((screen.getByRole("button", { name: "Connect" }) as HTMLButtonElement).disabled).toBe(true);
+      const { toolbar, body } = await connectButtons();
+      expect(toolbar.disabled).toBe(true);
+      expect(body.disabled).toBe(true);
     } finally {
       if (original === undefined) Reflect.deleteProperty(window, "isSecureContext");
       else Object.defineProperty(window, "isSecureContext", original);
@@ -189,6 +199,22 @@ describe("the Screen Sharing page", () => {
     expect(rfb.target).toBe(screen.getByTestId("vnc-screen"));
   });
 
+  it("connects from the button under the page's text and from the toolbar alike", async () => {
+    const view = renderPanel();
+    const { body } = await connectButtons();
+    expect(body.closest("div")?.textContent).toContain("A session closes when you leave this page");
+    const fromBody = await connect("body");
+    fireEvent.click(screen.getByRole("button", { name: "Disconnect" }));
+    expect(fromBody.disconnects).toBe(1);
+
+    rfbs.length = 0;
+    const fromToolbar = await connect("toolbar");
+    expect(fromToolbar.socket.url).toContain("host=host_mini");
+    expect(view.rpcCalls.filter((call) => call.method === "openSession")).toHaveLength(2);
+    // While a session is open there is only the toolbar's Disconnect.
+    expect(screen.queryByRole("button", { name: "Connect" })).toBeNull();
+  });
+
   it("hands View only to noVNC, before and during a session", async () => {
     renderPanel();
     fireEvent.click(await screen.findByRole("button", { name: "View only" }));
@@ -206,7 +232,7 @@ describe("the Screen Sharing page", () => {
     fireEvent.click(screen.getByRole("button", { name: "Disconnect" }));
     expect(rfb.disconnects).toBe(1);
     expect(await screen.findByText("Disconnected.")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Connect" })).toBeTruthy();
+    await connectButtons();
   });
 
   it("disconnects when the page goes away", async () => {
@@ -219,7 +245,7 @@ describe("the Screen Sharing page", () => {
   it("never opens a socket when the page goes away before the ticket arrives", async () => {
     let release: (value: { token: string; expiresAt: number }) => void = () => {};
     const view = renderPanel({ openSession: () => new Promise((resolve) => (release = resolve)) });
-    fireEvent.click(await screen.findByRole("button", { name: "Connect" }));
+    fireEvent.click((await connectButtons()).body);
     view.unmount();
     release({ token: "late", expiresAt: 0 });
     await new Promise((resolve) => setTimeout(resolve, 10));
@@ -276,7 +302,7 @@ describe("the Screen Sharing page", () => {
         throw new Error("only MacMini, the Mac running the bb server, can be shared in this version");
       },
     });
-    fireEvent.click(await screen.findByRole("button", { name: "Connect" }));
+    fireEvent.click((await connectButtons()).body);
     expect(
       await screen.findByText("Could not start a session: only MacMini, the Mac running the bb server, can be shared in this version"),
     ).toBeTruthy();

@@ -160,6 +160,12 @@ export function ScreenPanel(_props: PluginNavPanelProps) {
   // macOS's sign-in needs WebCrypto, which browsers offer only to https pages and to the machine itself.
   const insecure = window.isSecureContext === false;
 
+  /** Starts a session; the toolbar's Connect and the one under the page's text both do this. */
+  function connect(): void {
+    setEnded(null);
+    setLive(true);
+  }
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2">
@@ -179,15 +185,7 @@ export function ScreenPanel(_props: PluginNavPanelProps) {
             Disconnect
           </Button>
         ) : (
-          <Button
-            type="button"
-            size="sm"
-            disabled={insecure}
-            onClick={() => {
-              setEnded(null);
-              setLive(true);
-            }}
-          >
+          <Button type="button" size="sm" disabled={insecure} onClick={connect}>
             Connect
           </Button>
         )}
@@ -217,6 +215,9 @@ export function ScreenPanel(_props: PluginNavPanelProps) {
             A session closes when you leave this page, after {SESSION_LIMITS.idleMinutes} minutes without keyboard or
             mouse use, and after {SESSION_LIMITS.maxHours} hours.
           </p>
+          <Button type="button" disabled={insecure} onClick={connect}>
+            Connect
+          </Button>
         </Centered>
       )}
     </div>
