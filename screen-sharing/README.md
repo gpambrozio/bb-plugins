@@ -10,6 +10,12 @@ Mac and no port is opened to the internet.
 - **Connect** asks for a macOS user name and password — each time you connect; bb does not keep
   them — and then shows the screen, scaled to fit. Click into it to type and use the mouse.
 - **View only** watches without sending keys or clicks. It can be switched during a session.
+- **Send keys** sends the shortcuts your own Mac keeps for itself — ⌘Tab, ⌘Space, ⌘`, Mission
+  Control and the Spaces arrows, ⌥⌘Esc and more — to the shared Mac. *Hold ⌘ and open the app
+  switcher* keeps ⌘ down there so Tab on your keyboard steps through the apps; *Release ⌘* switches.
+- **Send all keys** (Chrome, Edge and bb's desktop app) puts the page in full screen and gives it the
+  whole keyboard, so the browser's own shortcuts — ⌘W, ⌘Q, ⌘T, Esc — go to the Mac too. Hold Esc to
+  leave full screen. Safari and Firefox can't do this; use Send keys there.
 - Leaving the page does not end the session: it keeps running in that bb window, and coming back shows
   it again, still signed in. **Disconnect** on the page ends it.
 - The pointer stays visible over the screen: macOS's own cursor when it sends one, otherwise your
@@ -40,6 +46,19 @@ bb plugin install 'git:github.com/gpambrozio/bb-plugins@^0.1.0' --plugin screen-
 
 The page is **Screen Sharing** in the sidebar; the palette has *Screen Sharing: open the server Mac's
 screen*.
+
+## Which keys reach the Mac
+
+On a Mac, macOS keeps ⌘Tab, ⌘Space, ⌘`, Mission Control and Spaces (⌃ arrows), ⌥⌘Esc, ⌃⌘Q, the
+screenshot shortcuts and the media keys for itself; no web page can take them, in any browser. Send
+them from **Send keys**.
+
+- **bb's desktop app:** every other key and shortcut already reaches the Mac, ⌘W and ⌘Q included,
+  except ⌘R and ⇧⌘R, which reload bb (and so end the session) — send ⌘R from Send keys.
+- **Chrome and Edge:** the browser keeps ⌘W, ⌘T, ⌘N, ⌘Q, ⇧⌘T and the tab-switching keys until
+  you turn on **Send all keys**; then they reach the Mac, and so does Esc (hold it to leave full
+  screen).
+- **Safari and Firefox:** the browser keeps its own shortcuts; use Send keys.
 
 ## How it reaches the screen
 

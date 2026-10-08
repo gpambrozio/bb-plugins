@@ -34,6 +34,8 @@ declare module "@novnc/novnc" {
     background: string;
     disconnect(): void;
     sendCredentials(credentials: RfbCredentials): void;
+    /** Sends a key to the server; does nothing unless connected and not view-only. */
+    sendKey(keysym: number, code: string | null, down?: boolean): void;
     focus(options?: FocusOptions): void;
     addEventListener<K extends keyof RfbEventMap>(type: K, listener: (event: RfbEventMap[K]) => void): void;
     removeEventListener<K extends keyof RfbEventMap>(type: K, listener: (event: RfbEventMap[K]) => void): void;

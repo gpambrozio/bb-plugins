@@ -423,3 +423,176 @@ describe("the session store with real noVNC", () => {
     expect(cursorCanvas.width).toBe(0);
   });
 });
+
+/** The RFB KeyEvents the client sent after `mark`: [down, keysym]. */
+function keyEventsAfter(mark: number): Array<[boolean, number]> {
+  return sentAfter(mark)
+    .filter((m) => m[0] === 4 && m.length === 8)
+    .map((m) => [m[1] === 1, ((m[4] ?? 0) << 24) | ((m[5] ?? 0) << 16) | ((m[6] ?? 0) << 8) | (m[7] ?? 0)]);
+}
+
+const SUPER_L = 0xffeb;
+const TAB = 0xff09;
+
+describe("Send keys, with real noVNC", () => {
+  it("presses a combination in order and releases it in reverse", async () => {
+    await signIn();
+    await acceptAndInit();
+    const { KEY_COMBOS } = await import("./keys");
+    const combo = (id: string) => {
+      const found = KEY_COMBOS.find((entry) => entry.id === id);
+      if (found === undefined) throw new Error(`no combo ${id}`);
+      return found;
+    };
+
+    let mark = socket.sent.length;
+    screenSession.sendKeys(combo("cmd-tab"));
+    expect(keyEventsAfter(mark)).toEqual([[true, SUPER_L], [true, TAB], [false, TAB], [false, SUPER_L]]);
+
+    mark = socket.sent.length;
+    screenSession.sendKeys(combo("force-quit"));
+    expect(keyEventsAfter(mark)).toEqual([
+      [true, 0xffe9],
+      [true, SUPER_L],
+      [true, 0xff1b],
+      [false, 0xff1b],
+      [false, SUPER_L],
+      [false, 0xffe9],
+    ]);
+  });
+
+  it("holds ⌘ for the app switcher, lets Tab step it, and releases ⌘ when asked", async () => {
+    await signIn();
+    await acceptAndInit();
+    const canvas = container.querySelector("canvas");
+    if (canvas === null) throw new Error("noVNC drew no canvas");
+
+    let mark = socket.sent.length;
+    screenSession.holdCommandForAppSwitcher();
+    expect(keyEventsAfter(mark)).toEqual([[true, SUPER_L], [true, TAB], [false, TAB]]);
+    expect(screenSession.getSnapshot().commandHeld).toBe(true);
+
+    mark = socket.sent.length;
+    canvas.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", code: "Tab", bubbles: true, cancelable: true }));
+    canvas.dispatchEvent(new KeyboardEvent("keyup", { key: "Tab", code: "Tab", bubbles: true, cancelable: true }));
+    expect(keyEventsAfter(mark)).toEqual([[true, TAB], [false, TAB]]);
+
+    mark = socket.sent.length;
+    screenSession.releaseCommand();
+    expect(keyEventsAfter(mark)).toEqual([[false, SUPER_L]]);
+    expect(screenSession.getSnapshot().commandHeld).toBe(false);
+  });
+
+  it.each([
+    ["the screen leaves the page", () => screenSession.detach()],
+    ["View only is turned on", () => screenSession.setViewOnly(true)],
+    ["the user disconnects", () => screenSession.disconnect()],
+  ])("lets go of a held ⌘ when %s", async (_what, action) => {
+    await signIn();
+    await acceptAndInit();
+    screenSession.holdCommandForAppSwitcher();
+    const mark = socket.sent.length;
+    action();
+    expect(keyEventsAfter(mark)).toEqual([[false, SUPER_L]]);
+    expect(screenSession.getSnapshot().commandHeld).toBe(false);
+  });
+
+  it("sends nothing while View only", async () => {
+    await signIn();
+    await acceptAndInit();
+    const { KEY_COMBOS } = await import("./keys");
+    screenSession.setViewOnly(true);
+    const mark = socket.sent.length;
+    for (const combo of KEY_COMBOS) screenSession.sendKeys(combo);
+    screenSession.holdCommandForAppSwitcher();
+    expect(keyEventsAfter(mark)).toEqual([]);
+    expect(screenSession.getSnapshot().commandHeld).toBe(false);
+  });
+});
+
+describe("Send all keys", () => {
+  let fullscreenElement: Element | null = null;
+  const lock = vi.fn(async () => {});
+  const unlock = vi.fn();
+  const requestFullscreen = vi.fn(async function (this: Element) {
+    fullscreenElement = this;
+    document.dispatchEvent(new Event("fullscreenchange"));
+  });
+  const exitFullscreen = vi.fn(async () => {
+    fullscreenElement = null;
+    document.dispatchEvent(new Event("fullscreenchange"));
+  });
+
+  beforeEach(() => {
+    fullscreenElement = null;
+    lock.mockClear();
+    unlock.mockClear();
+    requestFullscreen.mockClear();
+    exitFullscreen.mockClear();
+    Object.defineProperty(navigator, "keyboard", { value: { lock, unlock }, configurable: true });
+    Object.defineProperty(document, "fullscreenElement", { get: () => fullscreenElement, configurable: true });
+    Object.defineProperty(document, "exitFullscreen", { value: exitFullscreen, configurable: true });
+    Element.prototype.requestFullscreen = requestFullscreen as unknown as Element["requestFullscreen"];
+  });
+
+  afterEach(() => {
+    Reflect.deleteProperty(navigator, "keyboard");
+  });
+
+  async function sendAllKeys(): Promise<HTMLElement> {
+    await signIn();
+    await acceptAndInit();
+    const page = document.createElement("div");
+    document.body.append(page);
+    await screenSession.setSendAllKeys(true, page);
+    expect(requestFullscreen.mock.contexts).toEqual([page]);
+    expect(lock).toHaveBeenCalledWith();
+    expect(screenSession.getSnapshot().sendAllKeys).toBe(true);
+    return page;
+  }
+
+  it("ends when the user leaves full screen (holding Esc, in Chromium)", async () => {
+    await sendAllKeys();
+    fullscreenElement = null;
+    document.dispatchEvent(new Event("fullscreenchange"));
+    expect(unlock).toHaveBeenCalled();
+    expect(screenSession.getSnapshot().sendAllKeys).toBe(false);
+  });
+
+  it.each([
+    ["the switch is turned off", () => void screenSession.setSendAllKeys(false)],
+    ["View only is turned on", () => screenSession.setViewOnly(true)],
+    ["the screen leaves the page", () => screenSession.detach()],
+    ["the user disconnects", () => screenSession.disconnect()],
+  ])("ends, leaving full screen, when %s", async (_what, action) => {
+    await sendAllKeys();
+    action();
+    expect(unlock).toHaveBeenCalled();
+    expect(exitFullscreen).toHaveBeenCalled();
+    expect(screenSession.getSnapshot().sendAllKeys).toBe(false);
+  });
+
+  it("ends when the server ends the session (Close all)", async () => {
+    await sendAllKeys();
+    socket.close(4003, "closed from bb");
+    await until(() => screenSession.getSnapshot().stage.kind === "idle", "the session to end");
+    expect(unlock).toHaveBeenCalled();
+    expect(exitFullscreen).toHaveBeenCalled();
+    expect(screenSession.getSnapshot().sendAllKeys).toBe(false);
+  });
+
+  it("does nothing where the browser has no Keyboard Lock, or while View only", async () => {
+    await signIn();
+    await acceptAndInit();
+    const page = document.createElement("div");
+    screenSession.setViewOnly(true);
+    await screenSession.setSendAllKeys(true, page);
+    screenSession.setViewOnly(false);
+    Reflect.deleteProperty(navigator, "keyboard");
+    const { canSendAllKeys } = await import("./session-store");
+    expect(canSendAllKeys()).toBe(false);
+    await screenSession.setSendAllKeys(true, page);
+    expect(requestFullscreen).not.toHaveBeenCalled();
+    expect(screenSession.getSnapshot().sendAllKeys).toBe(false);
+  });
+});

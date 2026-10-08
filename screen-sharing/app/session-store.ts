@@ -18,6 +18,7 @@
 import { SESSION_LIMITS } from "../shared/channels";
 import { endMessage, type SessionEnd } from "./end-message";
 import { LOCAL_CURSOR_CSS } from "./cursor";
+import { Key, type KeyCombo } from "./keys";
 import { createRfb, openRelaySocket, releaseRemoteButtons, type Rfb } from "./rfb";
 import { relayUrl } from "./relay-url";
 
@@ -38,6 +39,27 @@ export interface ScreenSessionSnapshot {
   viewOnly: boolean;
   /** Why the last session ended; cleared when a new one starts. */
   ended: string | null;
+  /** "Send all keys" is on: full screen, with the keyboard locked to the page. */
+  sendAllKeys: boolean;
+  /** ⌘ is held down on the Mac from the Send keys menu, for stepping the app switcher. */
+  commandHeld: boolean;
+}
+
+/** The Keyboard Lock API, where the browser has it (Chromium only). */
+type KeyboardLockNavigator = Navigator & { keyboard?: { lock?: (codes?: string[]) => Promise<void>; unlock?: () => void } };
+
+/**
+ * Whether "Send all keys" can do anything here: Keyboard Lock (Chromium —
+ * Chrome, Edge, bb's Electron desktop app) plus the Fullscreen API it needs.
+ * Safari and Firefox have no Keyboard Lock.
+ */
+export function canSendAllKeys(): boolean {
+  return (
+    typeof navigator !== "undefined" &&
+    typeof (navigator as KeyboardLockNavigator).keyboard?.lock === "function" &&
+    typeof document !== "undefined" &&
+    typeof document.documentElement.requestFullscreen === "function"
+  );
 }
 
 /** Asks the server for a ticket; the page passes its RPC client's `openSession`. */
@@ -56,7 +78,17 @@ function errorText(error: unknown): string {
 }
 
 export class ScreenSessionStore {
-  private snapshot: ScreenSessionSnapshot = { stage: { kind: "idle" }, hostId: null, hostName: null, viewOnly: false, ended: null };
+  private snapshot: ScreenSessionSnapshot = {
+    stage: { kind: "idle" },
+    hostId: null,
+    hostName: null,
+    viewOnly: false,
+    ended: null,
+    sendAllKeys: false,
+    commandHeld: false,
+  };
+  /** The element put in full screen for "Send all keys". */
+  private fullscreenTarget: HTMLElement | null = null;
   private readonly listeners = new Set<() => void>();
   /** Bumped by every start and end, so late answers from an older attempt are dropped. */
   private attempt = 0;
@@ -136,6 +168,7 @@ export class ScreenSessionStore {
    * only on, and its key-ups are then dropped as view-only input.)
    */
   detach(): void {
+    this.stopSendingAllKeys();
     this.releaseHeldInput();
     this.attached = false;
     this.applyViewOnly();
@@ -211,9 +244,105 @@ export class ScreenSessionStore {
    * generates.
    */
   setViewOnly(viewOnly: boolean): void {
-    if (viewOnly && !this.snapshot.viewOnly) this.releaseHeldInput();
+    if (viewOnly && !this.snapshot.viewOnly) {
+      this.stopSendingAllKeys();
+      this.releaseHeldInput();
+    }
     this.set({ viewOnly });
     this.applyViewOnly();
+  }
+
+  /** Whether the Mac takes keys from this page right now. */
+  private get takesKeys(): boolean {
+    return this.rfb !== null && this.snapshot.stage.kind === "connected" && !this.snapshot.viewOnly && this.attached;
+  }
+
+  /** Presses a combination on the Mac — in order, released in reverse — from the Send keys menu. */
+  sendKeys(combo: KeyCombo): void {
+    const rfb = this.rfb;
+    if (rfb === null || !this.takesKeys) return;
+    for (const key of combo.keys) rfb.sendKey(key.keysym, key.code, true);
+    for (const key of [...combo.keys].reverse()) rfb.sendKey(key.keysym, key.code, false);
+    this.lastInput = Date.now();
+    this.focus();
+  }
+
+  /**
+   * Holds ⌘ down on the Mac and taps Tab, opening the app switcher; Tab on
+   * the user's own keyboard then steps it, as with a held ⌘ at the Mac, and
+   * `releaseCommand` picks the app. The hold ends with every other release.
+   */
+  holdCommandForAppSwitcher(): void {
+    const rfb = this.rfb;
+    if (rfb === null || !this.takesKeys || this.snapshot.commandHeld) return;
+    rfb.sendKey(Key.command.keysym, Key.command.code, true);
+    rfb.sendKey(Key.tab.keysym, Key.tab.code, true);
+    rfb.sendKey(Key.tab.keysym, Key.tab.code, false);
+    this.set({ commandHeld: true });
+    this.lastInput = Date.now();
+    this.focus();
+  }
+
+  /** Lets go of the ⌘ held for the app switcher, which picks the app on the Mac. */
+  releaseCommand(): void {
+    this.letGoOfCommand();
+    this.focus();
+  }
+
+  private letGoOfCommand(): void {
+    if (!this.snapshot.commandHeld) return;
+    this.rfb?.sendKey(Key.command.keysym, Key.command.code, false);
+    this.set({ commandHeld: false });
+  }
+
+  /**
+   * "Send all keys": puts `target` (the page) in full screen and locks the
+   * keyboard to it, the strongest capture a page gets. On a Mac that passes
+   * the shortcuts the browser or app would otherwise keep (⌘W, ⌘Q, ⌘T, Esc in
+   * Chrome; Esc in bb's desktop app) — never the ones macOS keeps (⌘Tab,
+   * ⌘Space, Mission Control): Chromium has no system keyboard hook on macOS.
+   * It ends when full screen ends (holding Esc, in Chromium), and with every
+   * other way input ends.
+   */
+  async setSendAllKeys(on: boolean, target?: HTMLElement): Promise<void> {
+    if (!on) {
+      this.stopSendingAllKeys();
+      return;
+    }
+    if (this.snapshot.sendAllKeys || target === undefined || !this.takesKeys || !canSendAllKeys()) return;
+    this.fullscreenTarget = target;
+    document.addEventListener("fullscreenchange", this.onFullscreenChange);
+    try {
+      await target.requestFullscreen();
+      await (navigator as KeyboardLockNavigator).keyboard?.lock?.();
+      if (this.fullscreenTarget !== target || !this.takesKeys) {
+        this.stopSendingAllKeys();
+        return;
+      }
+      this.set({ sendAllKeys: true });
+      this.focus();
+    } catch (error) {
+      console.warn("[screen-sharing] could not send all keys", error);
+      this.stopSendingAllKeys();
+    }
+  }
+
+  private readonly onFullscreenChange = (): void => {
+    if (this.fullscreenTarget !== null && document.fullscreenElement !== this.fullscreenTarget) this.stopSendingAllKeys();
+  };
+
+  private stopSendingAllKeys(): void {
+    const target = this.fullscreenTarget;
+    if (target === null && !this.snapshot.sendAllKeys) return;
+    this.fullscreenTarget = null;
+    document.removeEventListener("fullscreenchange", this.onFullscreenChange);
+    (navigator as KeyboardLockNavigator).keyboard?.unlock?.();
+    if (target !== null && document.fullscreenElement === target) {
+      document.exitFullscreen().catch(() => {
+        // Already leaving full screen.
+      });
+    }
+    if (this.snapshot.sendAllKeys) this.set({ sendAllKeys: false });
   }
 
   /** Gives the screen the keyboard, when it is on the page. */
@@ -226,12 +355,13 @@ export class ScreenSessionStore {
   /** Ends any session and forgets the last one: a fresh store, for tests. */
   reset(): void {
     this.disconnect();
-    this.set({ stage: { kind: "idle" }, hostId: null, hostName: null, viewOnly: false, ended: null });
+    this.set({ stage: { kind: "idle" }, hostId: null, hostName: null, viewOnly: false, ended: null, sendAllKeys: false, commandHeld: false });
   }
 
   private finish(message: string): void {
     this.attempt++;
     this.stopIdleWatch();
+    this.stopSendingAllKeys();
     // Before noVNC lets go of its canvas: a button held as the session ends would leave noVNC's
     // pointer capture — a full-window overlay — over bb.
     this.releaseHeldInput();
@@ -262,6 +392,7 @@ export class ScreenSessionStore {
 
   /** Releases every key and mouse button held over the screen, through noVNC's own handlers. */
   private releaseHeldInput(): void {
+    this.letGoOfCommand();
     this.releaseHeldKeys();
     this.releaseHeldMouse();
     // Whatever noVNC still has pressed, touch gestures included: they press buttons without mouse events.

@@ -12,6 +12,7 @@ import type { RpcContract } from "../shared/contract";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { useCloseAll, usePageOpen, useSessions } from "./sessions";
+import { KeysNotice, SendAllKeysButton, SendKeysMenu } from "./keys-toolbar";
 import { screenSession } from "./session-store";
 import { LiveScreen, useScreenSession } from "./vnc-session";
 
@@ -134,6 +135,8 @@ export function ScreenPanel(_props: PluginNavPanelProps) {
   const rpc = useRpc<RpcContract>();
   const session = useScreenSession();
   const { status, error, checking, check } = useStatus();
+  /** What "Send all keys" puts in full screen: the whole page, toolbar included. */
+  const page = useRef<HTMLDivElement>(null);
   const live = session.stage.kind !== "idle";
 
   // A session still running from an earlier visit is shown whatever a new status check says.
@@ -171,7 +174,7 @@ export function ScreenPanel(_props: PluginNavPanelProps) {
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div ref={page} className="flex h-full min-h-0 flex-col bg-background">
       <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2">
         <span className="min-w-0 flex-1 truncate text-sm font-medium">{hostName}</span>
         <Button
@@ -185,15 +188,20 @@ export function ScreenPanel(_props: PluginNavPanelProps) {
           View only
         </Button>
         {live ? (
-          <Button type="button" size="sm" variant="outline" onClick={() => screenSession.disconnect()}>
-            Disconnect
-          </Button>
+          <>
+            <SendAllKeysButton session={session} fullscreenTarget={page} />
+            <SendKeysMenu session={session} />
+            <Button type="button" size="sm" variant="outline" onClick={() => screenSession.disconnect()}>
+              Disconnect
+            </Button>
+          </>
         ) : (
           <Button type="button" size="sm" disabled={insecure} onClick={connect}>
             Connect
           </Button>
         )}
       </div>
+      {live ? <KeysNotice session={session} /> : null}
       {live ? (
         <LiveScreen />
       ) : (

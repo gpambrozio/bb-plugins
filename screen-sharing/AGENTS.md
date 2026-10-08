@@ -22,6 +22,8 @@ findings are summarised under *Decisions*.
 | `app/session-store.ts` | The window's session, outside React: ticket → WebSocket → noVNC into an element it owns; the input-idle disconnect; the local-cursor CSS; why it ended. |
 | `app/vnc-session.tsx` | The live screen on the page: lends the store's element a place while the page is open; the sign-in form. |
 | `app/rfb.ts` | The seam the page's tests replace: `new WebSocket` and noVNC's `RFB` (scaling; no dot cursor; marks a cursor sent by the Mac). |
+| `app/keys.ts` | The Send keys menu: each shortcut as RFB keysyms (⌘ is `Super_L`, as noVNC sends it). |
+| `app/keys-toolbar.tsx` | "Send all keys", "Send keys" and the notice saying what is held or locked and how to get out. |
 | `app/cursor.ts` | The arrow-fallback CSS and the attribute that switches it off once the Mac sends a cursor. |
 | `app/sessions.tsx` | The open sessions as the app sees them; the sidebar "Live" and the corner Close all pill. |
 | `app/novnc.d.ts` | Types for the part of noVNC's `RFB` used here; noVNC ships none. |
@@ -113,6 +115,46 @@ requested.
 
 **View only is noVNC's `viewOnly`, set in the page.** The relay does not parse RFB to enforce it; the
 user is the one viewing.
+
+## Keys
+
+What reaches the Mac depends on the computer the user sits at, and on a Mac some shortcuts never
+reach any page. The evidence, so nobody has to rediscover it:
+
+- **macOS keeps its own shortcuts, and no page can take them.** Keyboard Lock is the only web API for
+  claiming system keys, and Chromium's macOS system hook is a stub: `KeyboardHook::
+  CreateModifierKeyboardHook` in `ui/events/mac/keyboard_hook_mac.mm` returns `nullptr`, and
+  `-[RenderWidgetHostViewCocoa lockKeyboard:]` carries `TODO(joedow): Integrate System-level keyboard
+  hook`. Safari and Firefox have no Keyboard Lock. So ⌘Tab / ⇧⌘Tab (the Dock's app switcher),
+  ⌘Space and the input-source shortcuts, Mission Control and Spaces (⌃↑ ⌃↓ ⌃← ⌃→, F3), ⌥⌘Esc, ⌃⌘Q,
+  ⇧⌘3/4/5, Globe/Fn and the media keys stay on the user's own Mac. Chromium also never forwards ⌘`
+  (window cycling) or any shortcut listed in `com.apple.symbolichotkeys`: `EventIsReservedBySystem`
+  in `performKeyEquivalent:`, with ⌘` added by default in `content/browser/cocoa/system_hotkey_map.mm`.
+- **The only way to give those to the Mac is to send them**: the Send keys menu (`app/keys.ts`)
+  presses each shortcut with `rfb.sendKey`, and "Hold ⌘" keeps ⌘ down on the Mac so the user's own
+  Tab steps the app switcher; ⌘ is released by "Release ⌘" and by every release path above (detach,
+  View only, Disconnect, Close all, teardown). No remapping (say ⌃Tab sent as ⌘Tab): the menu covers
+  the same ground without making a key mean two things.
+- **bb's desktop app (Electron 44.3, Chromium 152)** gives the page every other ⌘ shortcut already.
+  Chromium hands a key equivalent to the page first and passes it to the app menu only if the page
+  leaves it unhandled (`performKeyEquivalent:` forwards it to the renderer; see
+  https://www.chromium.org/developers/os-x-keyboard-handling/, and electron/electron#11116 for a
+  renderer `preventDefault()` stopping a menu accelerator), and noVNC calls `preventDefault()` on
+  every key it takes. So ⌘W, ⌘Q, ⌘H, ⌘M, ⌘T, ⌘N and ⌘, reach the Mac instead of bb's menu. The
+  exceptions are ⌘R and ⇧⌘R: bb's main process takes them in `before-input-event` to reload bb
+  (`registerApplicationRendererReloadShortcut` in its `app.asar`), which also ends the session — send
+  ⌘R from the menu. This reading of the desktop app comes from source, not from a live session.
+- **Chrome and Edge** (bb through getbb.app) keep ⌘W, ⇧⌘W, ⌘T, ⌘N, ⇧⌘N, ⇧⌘T, ⌃Tab, ⌃⇧Tab, ⌥⌘← / →
+  and ⌘Q for themselves (`BrowserCommandController::IsReservedCommandOrKey`). Keyboard Lock marks
+  locked keys to skip that pre-handling (`event.skip_if_unhandled` in `keyEvent:`), so with "Send
+  all keys" they reach the Mac too. Esc then reaches the Mac as well; holding it for 1.5 s leaves full
+  screen (`kHoldEscapeTime` in `keyboard_lock_controller.cc`; Electron matches this since
+  electron/electron#40365).
+- **"Send all keys"** (`setSendAllKeys`) puts the whole page — toolbar included, so Send keys and
+  Release ⌘ stay in reach — in full screen and calls `navigator.keyboard.lock()` with no list (all
+  keys). It is offered only where Keyboard Lock exists (`canSendAllKeys`); elsewhere the switch is
+  disabled and the menu says why. It ends when full screen ends (`fullscreenchange`), on View only,
+  detach, Disconnect, Close all and teardown, each of which also unlocks the keyboard.
 
 ## Security invariants
 

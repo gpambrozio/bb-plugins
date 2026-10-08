@@ -35,6 +35,8 @@ class FakeSocket extends EventTarget {
 class FakeRfb extends EventTarget {
   viewOnly = false;
   credentials: unknown[] = [];
+  /** Keys sent with sendKey: [keysym, down]. */
+  keys: Array<[number, boolean]> = [];
   disconnects = 0;
   focused = 0;
   constructor(
@@ -48,6 +50,9 @@ class FakeRfb extends EventTarget {
   }
   sendCredentials(credentials: unknown): void {
     this.credentials.push(credentials);
+  }
+  sendKey(keysym: number, _code: string, down: boolean): void {
+    if (!this.viewOnly) this.keys.push([keysym, down]);
   }
   focus(): void {
     this.focused++;
@@ -408,5 +413,79 @@ describe("the page's title bar", () => {
     expect(await screen.findByText("2 sessions open")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Close all" }));
     await waitFor(() => expect(view.rpcCalls.some((call) => call.method === "closeAll")).toBe(true));
+  });
+});
+
+describe("the page's keyboard controls", () => {
+  async function connected(): Promise<FakeRfb> {
+    renderPanel();
+    const rfb = await connect();
+    act(() => rfb.emit("connect"));
+    return rfb;
+  }
+
+  it("sends a shortcut from the Send keys menu, and says Send all keys needs another browser here", async () => {
+    const rfb = await connected();
+    expect((screen.getByRole("button", { name: "Send all keys" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Send keys" }));
+    expect(screen.getByText(/can’t hand its own shortcuts/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("menuitem", { name: /Spotlight/ }));
+    expect(rfb.keys).toEqual([
+      [0xffeb, true],
+      [0x20, true],
+      [0x20, false],
+      [0xffeb, false],
+    ]);
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+
+  it("holds ⌘ for the app switcher until Release ⌘", async () => {
+    const rfb = await connected();
+    fireEvent.click(screen.getByRole("button", { name: "Send keys" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: /app switcher/ }));
+    expect(await screen.findByText(/⌘ is held down on MacMini/)).toBeTruthy();
+    rfb.keys.length = 0;
+    fireEvent.click(screen.getByRole("button", { name: "Release ⌘" }));
+    expect(rfb.keys).toEqual([[0xffeb, false]]);
+    expect(screen.queryByText(/⌘ is held down/)).toBeNull();
+  });
+
+  it("offers neither while View only", async () => {
+    await connected();
+    fireEvent.click(screen.getByRole("button", { name: "View only" }));
+    expect((screen.getByRole("button", { name: "Send keys" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Send all keys" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("puts the whole page in full screen with the keyboard locked, and says how to get out", async () => {
+    let fullscreenElement: Element | null = null;
+    const requestFullscreen = vi.fn(async function (this: Element) {
+      fullscreenElement = this;
+      document.dispatchEvent(new Event("fullscreenchange"));
+    });
+    Object.defineProperty(navigator, "keyboard", { value: { lock: vi.fn(async () => {}), unlock: vi.fn() }, configurable: true });
+    Object.defineProperty(document, "fullscreenElement", { get: () => fullscreenElement, configurable: true });
+    Object.defineProperty(document, "exitFullscreen", {
+      value: async () => {
+        fullscreenElement = null;
+        document.dispatchEvent(new Event("fullscreenchange"));
+      },
+      configurable: true,
+    });
+    const original = Element.prototype.requestFullscreen;
+    Element.prototype.requestFullscreen = requestFullscreen as unknown as Element["requestFullscreen"];
+    try {
+      await connected();
+      fireEvent.click(screen.getByRole("button", { name: "Send all keys" }));
+      expect(await screen.findByText(/Hold Esc to leave full screen/)).toBeTruthy();
+      expect(screen.getByText(/⌘Tab, ⌘Space, ⌘` and Mission Control stay on this computer/)).toBeTruthy();
+      const page = requestFullscreen.mock.contexts[0] as Element;
+      expect(page.contains(screen.getByRole("button", { name: "Send keys" }))).toBe(true);
+      expect(page.contains(screen.getByTestId("vnc-screen"))).toBe(true);
+      expect(screen.getByRole("button", { name: "Send all keys" }).getAttribute("aria-pressed")).toBe("true");
+    } finally {
+      Element.prototype.requestFullscreen = original;
+      Reflect.deleteProperty(navigator, "keyboard");
+    }
   });
 });
