@@ -12,7 +12,7 @@ import type { RpcContract } from "../shared/contract";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { useCloseAll, usePageOpen, useSessions } from "./sessions";
-import { KeysNotice, SendAllKeysButton, SendKeysMenu } from "./keys-toolbar";
+import { KeysNotice, FullScreenButton, SendKeysMenu } from "./keys-toolbar";
 import { screenSession } from "./session-store";
 import { LiveScreen, useScreenSession } from "./vnc-session";
 
@@ -135,7 +135,7 @@ export function ScreenPanel(_props: PluginNavPanelProps) {
   const rpc = useRpc<RpcContract>();
   const session = useScreenSession();
   const { status, error, checking, check } = useStatus();
-  /** What "Send all keys" puts in full screen: the whole page, toolbar included. */
+  /** What "Full screen" puts in full screen: the whole page, toolbar included. */
   const page = useRef<HTMLDivElement>(null);
   const live = session.stage.kind !== "idle";
 
@@ -189,7 +189,7 @@ export function ScreenPanel(_props: PluginNavPanelProps) {
         </Button>
         {live ? (
           <>
-            <SendAllKeysButton session={session} fullscreenTarget={page} />
+            <FullScreenButton session={session} fullscreenTarget={page} />
             <SendKeysMenu session={session} />
             <Button type="button" size="sm" variant="outline" onClick={() => screenSession.disconnect()}>
               Disconnect

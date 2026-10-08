@@ -9,8 +9,8 @@ port is opened to the internet.
   says where in System Settings to turn it on.
 - Connect, sign in with a macOS user name and password, and the screen appears scaled to the page.
 - View only, to watch without sending keys or clicks; switch it at any time.
-- Send keys, for ⌘Tab, ⌘Space, Mission Control and the other shortcuts your own Mac keeps; Send all
-  keys, in Chrome, Edge and bb's desktop app, to give the shared Mac the browser's shortcuts too.
+- Send keys, for ⌘Tab, ⌘Space, Mission Control and the other shortcuts your own Mac keeps; Full
+  screen, in Chrome, Edge and bb's desktop app, to give the shared Mac the browser's shortcuts too.
 - While any session is open, on any device, the sidebar row says Live and a pill in the corner of
   every bb window offers Close all.
 - Leave the page and come back: the session keeps running in that bb window and is still signed in.

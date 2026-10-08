@@ -39,8 +39,8 @@ export interface ScreenSessionSnapshot {
   viewOnly: boolean;
   /** Why the last session ended; cleared when a new one starts. */
   ended: string | null;
-  /** "Send all keys" is on: full screen, with the keyboard locked to the page. */
-  sendAllKeys: boolean;
+  /** "Full screen" is on: the page in full screen, with the keyboard locked to it. */
+  fullScreen: boolean;
   /** ⌘ is held down on the Mac from the Send keys menu, for stepping the app switcher. */
   commandHeld: boolean;
 }
@@ -49,11 +49,11 @@ export interface ScreenSessionSnapshot {
 type KeyboardLockNavigator = Navigator & { keyboard?: { lock?: (codes?: string[]) => Promise<void>; unlock?: () => void } };
 
 /**
- * Whether "Send all keys" can do anything here: Keyboard Lock (Chromium —
+ * Whether "Full screen" can do anything here: Keyboard Lock (Chromium —
  * Chrome, Edge, bb's Electron desktop app) plus the Fullscreen API it needs.
  * Safari and Firefox have no Keyboard Lock.
  */
-export function canSendAllKeys(): boolean {
+export function canGoFullScreen(): boolean {
   return (
     typeof navigator !== "undefined" &&
     typeof (navigator as KeyboardLockNavigator).keyboard?.lock === "function" &&
@@ -84,10 +84,10 @@ export class ScreenSessionStore {
     hostName: null,
     viewOnly: false,
     ended: null,
-    sendAllKeys: false,
+    fullScreen: false,
     commandHeld: false,
   };
-  /** The element put in full screen for "Send all keys". */
+  /** The element put in full screen by "Full screen". */
   private fullscreenTarget: HTMLElement | null = null;
   private readonly listeners = new Set<() => void>();
   /** Bumped by every start and end, so late answers from an older attempt are dropped. */
@@ -168,7 +168,7 @@ export class ScreenSessionStore {
    * only on, and its key-ups are then dropped as view-only input.)
    */
   detach(): void {
-    this.stopSendingAllKeys();
+    this.stopFullScreen();
     this.releaseHeldInput();
     this.attached = false;
     this.applyViewOnly();
@@ -245,7 +245,7 @@ export class ScreenSessionStore {
    */
   setViewOnly(viewOnly: boolean): void {
     if (viewOnly && !this.snapshot.viewOnly) {
-      this.stopSendingAllKeys();
+      this.stopFullScreen();
       this.releaseHeldInput();
     }
     this.set({ viewOnly });
@@ -296,7 +296,7 @@ export class ScreenSessionStore {
   }
 
   /**
-   * "Send all keys": puts `target` (the page) in full screen and locks the
+   * "Full screen": puts `target` (the page) in full screen and locks the
    * keyboard to it, the strongest capture a page gets. On a Mac that passes
    * the shortcuts the browser or app would otherwise keep (⌘W, ⌘Q, ⌘T, Esc in
    * Chrome; Esc in bb's desktop app) — never the ones macOS keeps (⌘Tab,
@@ -304,36 +304,36 @@ export class ScreenSessionStore {
    * It ends when full screen ends (holding Esc, in Chromium), and with every
    * other way input ends.
    */
-  async setSendAllKeys(on: boolean, target?: HTMLElement): Promise<void> {
+  async setFullScreen(on: boolean, target?: HTMLElement): Promise<void> {
     if (!on) {
-      this.stopSendingAllKeys();
+      this.stopFullScreen();
       return;
     }
-    if (this.snapshot.sendAllKeys || target === undefined || !this.takesKeys || !canSendAllKeys()) return;
+    if (this.snapshot.fullScreen || target === undefined || !this.takesKeys || !canGoFullScreen()) return;
     this.fullscreenTarget = target;
     document.addEventListener("fullscreenchange", this.onFullscreenChange);
     try {
       await target.requestFullscreen();
       await (navigator as KeyboardLockNavigator).keyboard?.lock?.();
       if (this.fullscreenTarget !== target || !this.takesKeys) {
-        this.stopSendingAllKeys();
+        this.stopFullScreen();
         return;
       }
-      this.set({ sendAllKeys: true });
+      this.set({ fullScreen: true });
       this.focus();
     } catch (error) {
-      console.warn("[screen-sharing] could not send all keys", error);
-      this.stopSendingAllKeys();
+      console.warn("[screen-sharing] could not go full screen", error);
+      this.stopFullScreen();
     }
   }
 
   private readonly onFullscreenChange = (): void => {
-    if (this.fullscreenTarget !== null && document.fullscreenElement !== this.fullscreenTarget) this.stopSendingAllKeys();
+    if (this.fullscreenTarget !== null && document.fullscreenElement !== this.fullscreenTarget) this.stopFullScreen();
   };
 
-  private stopSendingAllKeys(): void {
+  private stopFullScreen(): void {
     const target = this.fullscreenTarget;
-    if (target === null && !this.snapshot.sendAllKeys) return;
+    if (target === null && !this.snapshot.fullScreen) return;
     this.fullscreenTarget = null;
     document.removeEventListener("fullscreenchange", this.onFullscreenChange);
     (navigator as KeyboardLockNavigator).keyboard?.unlock?.();
@@ -342,7 +342,7 @@ export class ScreenSessionStore {
         // Already leaving full screen.
       });
     }
-    if (this.snapshot.sendAllKeys) this.set({ sendAllKeys: false });
+    if (this.snapshot.fullScreen) this.set({ fullScreen: false });
   }
 
   /** Gives the screen the keyboard, when it is on the page. */
@@ -355,13 +355,13 @@ export class ScreenSessionStore {
   /** Ends any session and forgets the last one: a fresh store, for tests. */
   reset(): void {
     this.disconnect();
-    this.set({ stage: { kind: "idle" }, hostId: null, hostName: null, viewOnly: false, ended: null, sendAllKeys: false, commandHeld: false });
+    this.set({ stage: { kind: "idle" }, hostId: null, hostName: null, viewOnly: false, ended: null, fullScreen: false, commandHeld: false });
   }
 
   private finish(message: string): void {
     this.attempt++;
     this.stopIdleWatch();
-    this.stopSendingAllKeys();
+    this.stopFullScreen();
     // Before noVNC lets go of its canvas: a button held as the session ends would leave noVNC's
     // pointer capture — a full-window overlay — over bb.
     this.releaseHeldInput();

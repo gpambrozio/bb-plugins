@@ -424,9 +424,9 @@ describe("the page's keyboard controls", () => {
     return rfb;
   }
 
-  it("sends a shortcut from the Send keys menu, and says Send all keys needs another browser here", async () => {
+  it("sends a shortcut from the Send keys menu, and says Full screen needs another browser here", async () => {
     const rfb = await connected();
-    expect((screen.getByRole("button", { name: "Send all keys" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Full screen" }) as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "Send keys" }));
     expect(screen.getByText(/can’t hand its own shortcuts/)).toBeTruthy();
     fireEvent.click(screen.getByRole("menuitem", { name: /Spotlight/ }));
@@ -454,7 +454,7 @@ describe("the page's keyboard controls", () => {
     await connected();
     fireEvent.click(screen.getByRole("button", { name: "View only" }));
     expect((screen.getByRole("button", { name: "Send keys" }) as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByRole("button", { name: "Send all keys" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Full screen" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("puts the whole page in full screen with the keyboard locked, and says how to get out", async () => {
@@ -476,13 +476,13 @@ describe("the page's keyboard controls", () => {
     Element.prototype.requestFullscreen = requestFullscreen as unknown as Element["requestFullscreen"];
     try {
       await connected();
-      fireEvent.click(screen.getByRole("button", { name: "Send all keys" }));
+      fireEvent.click(screen.getByRole("button", { name: "Full screen" }));
       expect(await screen.findByText(/Hold Esc to leave full screen/)).toBeTruthy();
       expect(screen.getByText(/⌘Tab, ⌘Space, ⌘` and Mission Control stay on this computer/)).toBeTruthy();
       const page = requestFullscreen.mock.contexts[0] as Element;
       expect(page.contains(screen.getByRole("button", { name: "Send keys" }))).toBe(true);
       expect(page.contains(screen.getByTestId("vnc-screen"))).toBe(true);
-      expect(screen.getByRole("button", { name: "Send all keys" }).getAttribute("aria-pressed")).toBe("true");
+      expect(screen.getByRole("button", { name: "Full screen" }).getAttribute("aria-pressed")).toBe("true");
     } finally {
       Element.prototype.requestFullscreen = original;
       Reflect.deleteProperty(navigator, "keyboard");

@@ -23,7 +23,7 @@ findings are summarised under *Decisions*.
 | `app/vnc-session.tsx` | The live screen on the page: lends the store's element a place while the page is open; the sign-in form. |
 | `app/rfb.ts` | The seam the page's tests replace: `new WebSocket` and noVNC's `RFB` (scaling; no dot cursor; marks a cursor sent by the Mac). |
 | `app/keys.ts` | The Send keys menu: each shortcut as RFB keysyms (⌘ is `Super_L`, as noVNC sends it). |
-| `app/keys-toolbar.tsx` | "Send all keys", "Send keys" and the notice saying what is held or locked and how to get out. |
+| `app/keys-toolbar.tsx` | "Full screen", "Send keys" and the notice saying what is held or locked and how to get out. |
 | `app/cursor.ts` | The arrow-fallback CSS and the attribute that switches it off once the Mac sends a cursor. |
 | `app/sessions.tsx` | The open sessions as the app sees them; the sidebar "Live" and the corner Close all pill. |
 | `app/novnc.d.ts` | Types for the part of noVNC's `RFB` used here; noVNC ships none. |
@@ -146,13 +146,13 @@ reach any page. The evidence, so nobody has to rediscover it:
   ⌘R from the menu. This reading of the desktop app comes from source, not from a live session.
 - **Chrome and Edge** (bb through getbb.app) keep ⌘W, ⇧⌘W, ⌘T, ⌘N, ⇧⌘N, ⇧⌘T, ⌃Tab, ⌃⇧Tab, ⌥⌘← / →
   and ⌘Q for themselves (`BrowserCommandController::IsReservedCommandOrKey`). Keyboard Lock marks
-  locked keys to skip that pre-handling (`event.skip_if_unhandled` in `keyEvent:`), so with "Send
-  all keys" they reach the Mac too. Esc then reaches the Mac as well; holding it for 1.5 s leaves full
+  locked keys to skip that pre-handling (`event.skip_if_unhandled` in `keyEvent:`), so with "Full
+  screen" on they reach the Mac too. Esc then reaches the Mac as well; holding it for 1.5 s leaves full
   screen (`kHoldEscapeTime` in `keyboard_lock_controller.cc`; Electron matches this since
   electron/electron#40365).
-- **"Send all keys"** (`setSendAllKeys`) puts the whole page — toolbar included, so Send keys and
+- **"Full screen"** (`setFullScreen`) puts the whole page — toolbar included, so Send keys and
   Release ⌘ stay in reach — in full screen and calls `navigator.keyboard.lock()` with no list (all
-  keys). It is offered only where Keyboard Lock exists (`canSendAllKeys`); elsewhere the switch is
+  keys). It is offered only where Keyboard Lock exists (`canGoFullScreen`); elsewhere the switch is
   disabled and the menu says why. It ends when full screen ends (`fullscreenchange`), on View only,
   detach, Disconnect, Close all and teardown, each of which also unlocks the keyboard.
 

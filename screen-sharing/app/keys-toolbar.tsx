@@ -1,5 +1,5 @@
 /**
- * The session toolbar's keyboard controls: "Send all keys" (full screen with
+ * The session toolbar's keyboard controls: "Full screen" (full screen with
  * the keyboard locked to the page) and the "Send keys" menu for the shortcuts
  * the computer in front of the user keeps for itself, whatever the page does.
  * Both act only on a connected session that is not View only.
@@ -9,7 +9,7 @@ import { useEffect, useRef, useState, type RefObject } from "react";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { KEY_COMBOS } from "./keys";
-import { canSendAllKeys, screenSession, type ScreenSessionSnapshot } from "./session-store";
+import { canGoFullScreen, screenSession, type ScreenSessionSnapshot } from "./session-store";
 
 /** Keys macOS keeps on the user's own Mac, whatever a page does. */
 export const SYSTEM_KEYS_NOTE = "⌘Tab, ⌘Space, ⌘` and Mission Control stay on this computer: send them from Send keys.";
@@ -18,22 +18,22 @@ function canType(session: ScreenSessionSnapshot): boolean {
   return session.stage.kind === "connected" && !session.viewOnly;
 }
 
-export function SendAllKeysButton({ session, fullscreenTarget }: { session: ScreenSessionSnapshot; fullscreenTarget: RefObject<HTMLElement | null> }) {
-  const supported = canSendAllKeys();
+export function FullScreenButton({ session, fullscreenTarget }: { session: ScreenSessionSnapshot; fullscreenTarget: RefObject<HTMLElement | null> }) {
+  const supported = canGoFullScreen();
   return (
     <Button
       type="button"
       size="sm"
       variant="ghost"
-      aria-pressed={session.sendAllKeys}
+      aria-pressed={session.fullScreen}
       disabled={!supported || !canType(session)}
       onClick={() => {
         const target = fullscreenTarget.current ?? undefined;
-        void screenSession.setSendAllKeys(!session.sendAllKeys, target);
+        void screenSession.setFullScreen(!session.fullScreen, target);
       }}
     >
-      <Icon name={session.sendAllKeys ? "Minimize2" : "Maximize2"} />
-      Send all keys
+      <Icon name={session.fullScreen ? "Minimize2" : "Maximize2"} />
+      Full screen
     </Button>
   );
 }
@@ -92,10 +92,10 @@ export function SendKeysMenu({ session }: { session: ScreenSessionSnapshot }) {
               <span className="text-xs text-muted-foreground">{combo.label}</span>
             </button>
           ))}
-          {!canSendAllKeys() ? (
+          {!canGoFullScreen() ? (
             <p className="px-2 py-1.5 text-xs text-muted-foreground">
               This browser can’t hand its own shortcuts (⌘W, ⌘Q, ⌘T…) to the Mac either; Chrome, Edge and bb’s desktop app
-              can, with Send all keys.
+              can, with Full screen.
             </p>
           ) : null}
         </div>
@@ -119,10 +119,10 @@ export function KeysNotice({ session }: { session: ScreenSessionSnapshot }) {
       </div>
     );
   }
-  if (session.sendAllKeys) {
+  if (session.fullScreen) {
     return (
       <div role="status" className="border-b border-border bg-card px-4 py-1.5 text-xs">
-        Sending all keys to {hostName}. Hold Esc to leave full screen. {SYSTEM_KEYS_NOTE}
+        Full screen: your keys go to {hostName}. Hold Esc to leave full screen. {SYSTEM_KEYS_NOTE}
       </div>
     );
   }

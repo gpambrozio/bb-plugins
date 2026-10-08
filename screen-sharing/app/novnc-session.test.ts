@@ -510,7 +510,7 @@ describe("Send keys, with real noVNC", () => {
   });
 });
 
-describe("Send all keys", () => {
+describe("Full screen", () => {
   let fullscreenElement: Element | null = null;
   const lock = vi.fn(async () => {});
   const unlock = vi.fn();
@@ -539,46 +539,46 @@ describe("Send all keys", () => {
     Reflect.deleteProperty(navigator, "keyboard");
   });
 
-  async function sendAllKeys(): Promise<HTMLElement> {
+  async function goFullScreen(): Promise<HTMLElement> {
     await signIn();
     await acceptAndInit();
     const page = document.createElement("div");
     document.body.append(page);
-    await screenSession.setSendAllKeys(true, page);
+    await screenSession.setFullScreen(true, page);
     expect(requestFullscreen.mock.contexts).toEqual([page]);
     expect(lock).toHaveBeenCalledWith();
-    expect(screenSession.getSnapshot().sendAllKeys).toBe(true);
+    expect(screenSession.getSnapshot().fullScreen).toBe(true);
     return page;
   }
 
   it("ends when the user leaves full screen (holding Esc, in Chromium)", async () => {
-    await sendAllKeys();
+    await goFullScreen();
     fullscreenElement = null;
     document.dispatchEvent(new Event("fullscreenchange"));
     expect(unlock).toHaveBeenCalled();
-    expect(screenSession.getSnapshot().sendAllKeys).toBe(false);
+    expect(screenSession.getSnapshot().fullScreen).toBe(false);
   });
 
   it.each([
-    ["the switch is turned off", () => void screenSession.setSendAllKeys(false)],
+    ["the switch is turned off", () => void screenSession.setFullScreen(false)],
     ["View only is turned on", () => screenSession.setViewOnly(true)],
     ["the screen leaves the page", () => screenSession.detach()],
     ["the user disconnects", () => screenSession.disconnect()],
   ])("ends, leaving full screen, when %s", async (_what, action) => {
-    await sendAllKeys();
+    await goFullScreen();
     action();
     expect(unlock).toHaveBeenCalled();
     expect(exitFullscreen).toHaveBeenCalled();
-    expect(screenSession.getSnapshot().sendAllKeys).toBe(false);
+    expect(screenSession.getSnapshot().fullScreen).toBe(false);
   });
 
   it("ends when the server ends the session (Close all)", async () => {
-    await sendAllKeys();
+    await goFullScreen();
     socket.close(4003, "closed from bb");
     await until(() => screenSession.getSnapshot().stage.kind === "idle", "the session to end");
     expect(unlock).toHaveBeenCalled();
     expect(exitFullscreen).toHaveBeenCalled();
-    expect(screenSession.getSnapshot().sendAllKeys).toBe(false);
+    expect(screenSession.getSnapshot().fullScreen).toBe(false);
   });
 
   it("does nothing where the browser has no Keyboard Lock, or while View only", async () => {
@@ -586,13 +586,13 @@ describe("Send all keys", () => {
     await acceptAndInit();
     const page = document.createElement("div");
     screenSession.setViewOnly(true);
-    await screenSession.setSendAllKeys(true, page);
+    await screenSession.setFullScreen(true, page);
     screenSession.setViewOnly(false);
     Reflect.deleteProperty(navigator, "keyboard");
-    const { canSendAllKeys } = await import("./session-store");
-    expect(canSendAllKeys()).toBe(false);
-    await screenSession.setSendAllKeys(true, page);
+    const { canGoFullScreen } = await import("./session-store");
+    expect(canGoFullScreen()).toBe(false);
+    await screenSession.setFullScreen(true, page);
     expect(requestFullscreen).not.toHaveBeenCalled();
-    expect(screenSession.getSnapshot().sendAllKeys).toBe(false);
+    expect(screenSession.getSnapshot().fullScreen).toBe(false);
   });
 });

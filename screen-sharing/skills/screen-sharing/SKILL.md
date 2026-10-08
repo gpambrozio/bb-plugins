@@ -36,7 +36,7 @@ sidebar (or the palette's *Screen Sharing: open the server Mac's screen*) and pr
 - Explain which keys reach the Mac: macOS keeps ⌘Tab, ⌘Space, ⌘`, Mission Control and similar
   system shortcuts on the user's own computer, so the user sends those from **Send keys** in the
   session toolbar (with *Hold ⌘* for stepping the app switcher). In Chrome, Edge and bb's desktop app,
-  **Send all keys** gives the page the browser's own shortcuts too (hold Esc to leave full screen);
+  **Full screen** gives the page the browser's own shortcuts too (hold Esc to leave full screen);
   bb's desktop app keeps ⌘R, which reloads bb.
 - Explain the limits: a session keeps running in its bb window while the user is on other pages, and
   ends on **Disconnect**, when the window closes, after 30 minutes without keyboard or mouse use, after

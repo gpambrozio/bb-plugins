@@ -13,7 +13,7 @@ Mac and no port is opened to the internet.
 - **Send keys** sends the shortcuts your own Mac keeps for itself — ⌘Tab, ⌘Space, ⌘`, Mission
   Control and the Spaces arrows, ⌥⌘Esc and more — to the shared Mac. *Hold ⌘ and open the app
   switcher* keeps ⌘ down there so Tab on your keyboard steps through the apps; *Release ⌘* switches.
-- **Send all keys** (Chrome, Edge and bb's desktop app) puts the page in full screen and gives it the
+- **Full screen** (Chrome, Edge and bb's desktop app) puts the page in full screen and gives it the
   whole keyboard, so the browser's own shortcuts — ⌘W, ⌘Q, ⌘T, Esc — go to the Mac too. Hold Esc to
   leave full screen. Safari and Firefox can't do this; use Send keys there.
 - Leaving the page does not end the session: it keeps running in that bb window, and coming back shows
@@ -56,7 +56,7 @@ them from **Send keys**.
 - **bb's desktop app:** every other key and shortcut already reaches the Mac, ⌘W and ⌘Q included,
   except ⌘R and ⇧⌘R, which reload bb (and so end the session) — send ⌘R from Send keys.
 - **Chrome and Edge:** the browser keeps ⌘W, ⌘T, ⌘N, ⌘Q, ⇧⌘T and the tab-switching keys until
-  you turn on **Send all keys**; then they reach the Mac, and so does Esc (hold it to leave full
+  you turn on **Full screen**; then they reach the Mac, and so does Esc (hold it to leave full
   screen).
 - **Safari and Firefox:** the browser keeps its own shortcuts; use Send keys.
 
