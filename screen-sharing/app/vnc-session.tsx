@@ -65,10 +65,8 @@ function ScreenMount() {
   useEffect(() => {
     const container = host.current;
     if (container === null) return;
-    const element = screenSession.element;
-    container.append(element);
-    screenSession.focus();
-    return () => element.remove();
+    screenSession.attach(container);
+    return () => screenSession.detach();
   }, []);
   return <div ref={host} data-testid="vnc-screen" className="min-h-0 flex-1 overflow-hidden" />;
 }

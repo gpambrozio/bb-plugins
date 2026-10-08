@@ -275,6 +275,39 @@ describe("the Screen Sharing page", () => {
     expect(await screen.findByText("Disconnected.")).toBeTruthy();
   });
 
+  it("Close all cancels this window's session while it is still waiting for its ticket", async () => {
+    let release: (value: { token: string; expiresAt: number }) => void = () => {};
+    const view = renderSlot<PluginNavPanelProps, RpcContract>(
+      {
+        component: (props: PluginNavPanelProps) => (
+          <>
+            <SessionsHeader {...props} />
+            <ScreenPanel {...props} />
+          </>
+        ),
+      },
+      { subPath: "" },
+      {
+        rpc: stubs({
+          status: () => ready,
+          openSession: () => new Promise((resolve) => (release = resolve)),
+          closeAll: () => ({ closed: 1 }),
+        }),
+      },
+    );
+    fireEvent.click((await connectButtons()).body);
+    const session = { id: "elsewhere", hostId: "host_mini", openedAt: 1, lastActivityAt: 1 };
+    await view.emitRealtime(SESSIONS_CHANGED, { sessions: [session] });
+    fireEvent.click(await screen.findByRole("button", { name: "Close all" }));
+    release({ token: "late", expiresAt: 0 });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(sockets).toEqual([]);
+    expect(await screen.findByText("Closed from bb with Close all.")).toBeTruthy();
+    await waitFor(() => expect(view.rpcCalls.some((call) => call.method === "closeAll")).toBe(true));
+    // What the server publishes once every session has ended.
+    await view.emitRealtime(SESSIONS_CHANGED, { sessions: [] });
+  });
+
   it("shows a pointer over the screen while macOS sends no cursor of its own", async () => {
     renderPanel();
     const rfb = await connect();

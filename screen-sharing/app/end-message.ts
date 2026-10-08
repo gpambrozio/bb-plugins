@@ -21,6 +21,8 @@ function sentence(text: string): string {
   return /[.!?]$/.test(capital) ? capital : `${capital}.`;
 }
 
+export const CLOSED_BY_USER_MESSAGE = "Closed from bb with Close all.";
+
 export function endMessage(end: SessionEnd): string {
   if (end.securityFailure !== null) return `Sign-in failed: ${sentence(end.securityFailure)}`;
   const close = end.close;
@@ -31,7 +33,7 @@ export function endMessage(end: SessionEnd): string {
     case CloseCode.maxAge:
       return `Closed after ${SESSION_LIMITS.maxHours} hours, the longest a session lasts.`;
     case CloseCode.closedByUser:
-      return "Closed from bb with Close all.";
+      return CLOSED_BY_USER_MESSAGE;
     case CloseCode.stopping:
     case CloseCode.bbPluginReloaded:
       return "Closed because the Screen Sharing plugin stopped or reloaded.";

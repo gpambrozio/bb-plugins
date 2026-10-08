@@ -11,6 +11,8 @@ import { SESSIONS_CHANGED, SessionListSchema, type SessionInfo } from "../shared
 import type { RpcContract } from "../shared/contract";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
+import { CLOSED_BY_USER_MESSAGE } from "./end-message";
+import { screenSession } from "./session-store";
 
 export const PANEL_PATH = "screen";
 
@@ -92,6 +94,11 @@ function useIsPageOpen(): boolean {
   return useSyncExternalStore(subscribePages, () => pagesOpen > 0);
 }
 
+/**
+ * Close all: this window's own session, including one still connecting, ends
+ * here at once; the server ends every other one and voids every ticket not yet
+ * used, so nothing still on its way in another window opens afterwards.
+ */
 export function useCloseAll(): { closeAll(): void; closing: boolean } {
   const rpc = useRpc<RpcContract>();
   const [closing, setClosing] = useState(false);
@@ -99,6 +106,7 @@ export function useCloseAll(): { closeAll(): void; closing: boolean } {
     closing,
     closeAll: () => {
       setClosing(true);
+      screenSession.disconnect(CLOSED_BY_USER_MESSAGE);
       rpc
         .call("closeAll", {})
         .catch((error: unknown) => console.warn("[screen-sharing] could not close the sessions", error))

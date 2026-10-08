@@ -18,7 +18,7 @@ export function createRfb(target: HTMLElement, socket: WebSocket): Rfb {
   rfb.clipViewport = false;
   rfb.resizeSession = false;
   rfb.background = "transparent";
-  // macOS sends no cursor shape noVNC can draw; see LOCAL_CURSOR_CSS in session-store.ts.
-  rfb.showDotCursor = true;
+  // No showDotCursor: macOS sends no cursor shape noVNC can draw, and LOCAL_CURSOR_CSS
+  // (session-store.ts) shows the ordinary arrow in its place.
   return rfb;
 }

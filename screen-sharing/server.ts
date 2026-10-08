@@ -60,11 +60,13 @@ export default async function plugin(bb: BbPluginApi) {
       // Other plugins have no business opening someone's screen. bb counts the app, the bb CLI and
       // agents alike as "client", so this refuses only plugins calling through bb.sdk.plugins.callRpc.
       if (context.experimental_caller.kind !== "client") throw new Error("other plugins cannot open a session");
+      // Read before the await: a Close all pressed meanwhile voids this request.
+      const generation = registry.generation;
       const host = await serverHost();
       if (hostId !== host.id) {
         throw new Error(`only ${host.name}, the Mac running the bb server, can be shared in this version`);
       }
-      return registry.mint(host.id);
+      return registry.mint(host.id, generation);
     },
     sessions: () => ({ sessions: registry.list() }),
     closeAll: () => ({ closed: registry.closeAll() }),

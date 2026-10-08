@@ -118,6 +118,21 @@ describe("sessions", () => {
     expect(ends[0]).toHaveBeenCalledTimes(1);
   });
 
+  it("Close all voids tickets not yet redeemed", () => {
+    const { registry } = setup();
+    const waiting = registry.mint("mini").token;
+    registry.closeAll();
+    expect(registry.redeem(waiting, "mini")).toEqual({ ok: false, reason: "unknown or already used ticket" });
+  });
+
+  it("Close all refuses a ticket for a request that began before it", () => {
+    const { registry } = setup();
+    const before = registry.generation;
+    registry.closeAll();
+    expect(() => registry.mint("mini", before)).toThrow("Close all ended sessions while this one was starting");
+    expect(registry.mint("mini", registry.generation).token).toMatch(/^id-/);
+  });
+
   it("are forgotten even when ending one throws", () => {
     const { registry } = setup();
     registry.open("mini", () => {

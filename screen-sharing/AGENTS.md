@@ -21,13 +21,15 @@ findings are summarised under *Decisions*.
 | `app/screen-panel.tsx` | The page: status and System Settings guidance, Connect/Disconnect, View only, the title bar's Close all. |
 | `app/session-store.ts` | The window's session, outside React: ticket → WebSocket → noVNC into an element it owns; the input-idle disconnect; the local-cursor CSS; why it ended. |
 | `app/vnc-session.tsx` | The live screen on the page: lends the store's element a place while the page is open; the sign-in form. |
-| `app/rfb.ts` | The seam the page's tests replace: `new WebSocket` and noVNC's `RFB` (scaling, dot cursor). |
+| `app/rfb.ts` | The seam the page's tests replace: `new WebSocket` and noVNC's `RFB` (scaling; no dot cursor). |
 | `app/sessions.tsx` | The open sessions as the app sees them; the sidebar "Live" and the corner Close all pill. |
 | `app/novnc.d.ts` | Types for the part of noVNC's `RFB` used here; noVNC ships none. |
 
 `npm test` runs everything. The tests never touch this machine's real port 5900: the relay and the
 probe run against fake TCP servers, and the fake-host test drives the route only with tickets it
-refuses.
+refuses. `app/novnc-session.test.ts` runs the store against the real, pinned noVNC client, playing
+Apple's side of an ARD sign-in over a fake relay socket; use it for anything that depends on what
+noVNC really does with credentials, keys, buttons or the cursor.
 
 ## Decisions
 
@@ -62,6 +64,13 @@ running detached (a 0×0 target scales to 0, and its ResizeObserver rescales on 
 shows the same connection, already signed in. Nothing about the sign-in is kept to make this work —
 the live connection is what persists. One session per window; another window has its own.
 
+While the screen is off the page its input is suspended: `detach()` first releases every key and
+mouse button held over it — a real `keyup` per held key and a `mouseup` with no buttons at the last
+pointer position, dispatched on noVNC's canvas so noVNC sends the releases to the Mac — and only then
+turns noVNC's `viewOnly` on; `attach()` restores the user's choice. Turning view-only on alone is not
+enough: noVNC's setter sets the flag before it ungrabs the keyboard, so the key-ups the ungrab
+generates are dropped as view-only input.
+
 **Idle is measured in the window.** noVNC asks for a screen update after every one it gets and the
 menu-bar clock changes each minute, so bytes flow as long as a session is open, seen or not. The
 server's 30-minute limit therefore only catches clients that went away (no traffic at all); the store
@@ -72,7 +81,9 @@ ends a session after 30 minutes without a key, click, touch, wheel or pointer mo
 (Cursor or VMware cursor pseudo-encoding), and macOS Screen Sharing sends none it can draw (noVNC
 issue #1430), so the pointer vanished over the screen. `LOCAL_CURSOR_CSS` shows the ordinary arrow
 while the canvas says `cursor: none` — the local pointer is exactly where a click lands — and leaves a
-real remote cursor (`url(…)`) alone; `showDotCursor` covers a remote cursor that is fully transparent.
+cursor the server does send (`url(…)`) alone, a transparent one included — that is how a server hides
+its pointer. `showDotCursor` stays off: it replaces noVNC's empty start-up cursor with a 3×3 dot, which
+a desktop browser shows as a `url()` cursor, so the arrow rule would never match.
 
 **Never expose a port.** No `bb connect expose`, no `declareSharedPorts`, no listening socket. The
 gate carries only HTTP and WebSockets, so raw VNC could not cross it anyway, and an exposed share
@@ -94,10 +105,16 @@ user is the one viewing.
   socket closes with 1008 and never opens TCP.
 - **Bytes only.** The relay never parses, logs or stores what crosses it, and logs only session ids
   and close reasons — never the ticket. The sign-in travels inside RFB's own ARD Diffie-Hellman
-  exchange; the page hands it to noVNC and clears the form. No setting holds credentials.
+  exchange; the page hands it to noVNC and clears the form. noVNC keeps the very object it is handed
+  (`_rfbCredentials`) for the life of the connection, so the store empties that object once the
+  sign-in is over — on `connect`, on `securityfailure` and on teardown. Not earlier: noVNC's ARD step
+  re-reads the fields when it resumes after its async encryption. No setting holds credentials.
 - **Everything closes.** WebSocket close or error destroys the TCP socket; TCP close or error closes
   the WebSocket; the sweep (every 15 s) ends sessions with no traffic for 30 min or older than 8 h;
-  `closeAll` ends them all (4003). On reload or disable bb closes the plugin's sockets itself with 1012
+  `closeAll` ends them all (4003), voids every unredeemed ticket, and bumps a generation that
+  `openSession` reads before its await, so a request already under way cannot mint afterwards; in the
+  window that pressed it, Close all also cancels the store's own attempt still waiting for a ticket.
+  On reload or disable bb closes the plugin's sockets itself with 1012
   before the dispose hooks run, and `bb.onDispose` then ends every session, which destroys the TCP
   sockets (its 4004 rarely reaches a page). The store ends a session after 30 min without input,
   seen or not, on Disconnect, and on `pagehide` (the window closing); a ticket that arrives after

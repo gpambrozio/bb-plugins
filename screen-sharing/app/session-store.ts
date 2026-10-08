@@ -51,8 +51,11 @@ const INPUT_EVENTS = ["keydown", "pointerdown", "pointermove", "wheel", "touchst
  * noVNC sets its canvas's CSS cursor to `none` until the server sends a
  * cursor shape, and macOS Screen Sharing sends none noVNC can draw, so the
  * pointer vanished over the screen. While noVNC says `none`, show the
- * ordinary arrow; a real remote cursor (a `url(…)` cursor) is left alone, and
- * `showDotCursor` covers a remote cursor that is fully transparent.
+ * ordinary arrow, which is exactly where a click lands. A cursor the server
+ * does send (a `url(…)` cursor) is left alone — including a transparent one,
+ * which is how a server hides its pointer. noVNC's `showDotCursor` stays off:
+ * it would replace the empty start-up cursor with a 3-pixel dot and keep this
+ * rule from ever matching.
  */
 export const LOCAL_CURSOR_CSS = `[data-screen-sharing-screen] canvas[style*="cursor: none"] { cursor: default !important; }`;
 
@@ -70,6 +73,18 @@ export class ScreenSessionStore {
   private idleTimer: ReturnType<typeof setInterval> | null = null;
   private lastInput = 0;
   private screenElement: HTMLDivElement | null = null;
+  /** Whether the page has the screen on show; input is suspended while it does not. */
+  private attached = false;
+  /** Keys held down over the screen, by `code`, with their `key`. */
+  private readonly heldKeys = new Map<string, string>();
+  /** Mouse buttons noVNC last saw held over the screen, and where. */
+  private heldMouse: { buttons: number; clientX: number; clientY: number } = { buttons: 0, clientX: 0, clientY: 0 };
+  /**
+   * The object handed to noVNC's `sendCredentials`. noVNC keeps that very
+   * object (`_rfbCredentials`) for the life of the connection, so its fields
+   * are deleted as soon as the sign-in is over: see `forgetCredentials`.
+   */
+  private handedCredentials: Partial<Record<CredentialType, string>> | null = null;
 
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
@@ -92,6 +107,14 @@ export class ScreenSessionStore {
         // Capture: noVNC handles these on its canvas inside the element and may stop them there.
         element.addEventListener(type, () => (this.lastInput = Date.now()), { capture: true, passive: true });
       }
+      const noteMouse = (event: MouseEvent) => {
+        this.heldMouse = { buttons: event.buttons, clientX: event.clientX, clientY: event.clientY };
+      };
+      for (const type of ["mousedown", "mouseup", "mousemove"] as const) {
+        element.addEventListener(type, noteMouse, { capture: true, passive: true });
+      }
+      element.addEventListener("keydown", (event) => this.heldKeys.set(event.code, event.key), { capture: true, passive: true });
+      element.addEventListener("keyup", (event) => this.heldKeys.delete(event.code), { capture: true, passive: true });
       this.screenElement = element;
     }
     return this.screenElement;
@@ -101,6 +124,30 @@ export class ScreenSessionStore {
     return this.snapshot.stage.kind !== "idle";
   }
 
+  /** Puts the screen on the page and gives input back to it. */
+  attach(container: HTMLElement): void {
+    container.append(this.element);
+    this.attached = true;
+    this.applyViewOnly();
+    this.focus();
+  }
+
+  /**
+   * Takes the screen off the page. A key or button held over the screen would
+   * otherwise stay down on the Mac — its release lands on whatever page the
+   * user went to — so everything held is released first, through noVNC's own
+   * handlers: a key-up for each key, and a button-up where the pointer last
+   * was. Only then is input suspended. (Suspending alone does not do it:
+   * noVNC's view-only setter ungrabs the keyboard after it has turned view
+   * only on, and its key-ups are then dropped as view-only input.)
+   */
+  detach(): void {
+    this.releaseHeldKeys();
+    this.releaseHeldMouse();
+    this.attached = false;
+    this.applyViewOnly();
+    this.element.remove();
+  }
   connect({ openSession, hostId, hostName }: { openSession: OpenSession; hostId: string; hostName: string }): void {
     if (this.live) return;
     const attempt = ++this.attempt;
@@ -118,15 +165,18 @@ export class ScreenSessionStore {
         });
         const rfb = createRfb(this.element, socket);
         this.rfb = rfb;
-        rfb.viewOnly = this.snapshot.viewOnly;
+        this.applyViewOnly();
         rfb.addEventListener("credentialsrequired", (event) => {
           if (attempt === this.attempt) this.set({ stage: { kind: "credentials", types: event.detail.types } });
         });
         rfb.addEventListener("securityfailure", (event) => {
           end.securityFailure = event.detail.reason ?? `macOS refused the sign-in (status ${event.detail.status})`;
+          this.forgetCredentials();
         });
         rfb.addEventListener("connect", () => {
           end.connected = true;
+          // Signed in: the encrypted sign-in has been sent, so noVNC no longer needs the plaintext.
+          this.forgetCredentials();
           if (attempt !== this.attempt) return;
           this.set({ stage: { kind: "connected" } });
           this.startIdleWatch();
@@ -146,16 +196,24 @@ export class ScreenSessionStore {
     if (this.live) this.finish(message);
   }
 
-  /** Hands the sign-in to noVNC. Nothing here keeps it. */
+  /**
+   * Hands the sign-in to noVNC, which keeps the object it is given until the
+   * sign-in is over; then `forgetCredentials` empties it. noVNC needs the
+   * fields until its ARD step has sent the encrypted payload (it re-reads them
+   * when it resumes), so they cannot be cleared any earlier.
+   */
   sendCredentials(values: Partial<Record<CredentialType, string>>): void {
     if (this.snapshot.stage.kind !== "credentials" || this.rfb === null) return;
     this.set({ stage: { kind: "signing-in" } });
-    this.rfb.sendCredentials(values);
+    this.forgetCredentials();
+    const handed = { ...values };
+    this.handedCredentials = handed;
+    this.rfb.sendCredentials(handed);
   }
 
   setViewOnly(viewOnly: boolean): void {
-    if (this.rfb !== null) this.rfb.viewOnly = viewOnly;
     this.set({ viewOnly });
+    this.applyViewOnly();
   }
 
   /** Gives the screen the keyboard, when it is on the page. */
@@ -182,6 +240,39 @@ export class ScreenSessionStore {
     // noVNC's own disconnect event fires from here and is ignored: the attempt has moved on.
     if (rfb !== null) rfb.disconnect();
     else socket?.close();
+    this.forgetCredentials();
+  }
+
+  /** Empties the object noVNC was handed, which noVNC still holds. */
+  private forgetCredentials(): void {
+    const handed = this.handedCredentials;
+    this.handedCredentials = null;
+    if (handed === null) return;
+    for (const key of Object.keys(handed)) delete handed[key as CredentialType];
+  }
+
+  /** View only as the user chose it, and always while the screen is off the page. */
+  private applyViewOnly(): void {
+    if (this.rfb !== null) this.rfb.viewOnly = this.snapshot.viewOnly || !this.attached;
+  }
+
+  private releaseHeldKeys(): void {
+    const canvas = this.element.querySelector("canvas");
+    for (const [code, key] of [...this.heldKeys]) {
+      canvas?.dispatchEvent(new KeyboardEvent("keyup", { code, key, bubbles: true, cancelable: true }));
+    }
+    this.heldKeys.clear();
+  }
+
+  private releaseHeldMouse(): void {
+    const held = this.heldMouse;
+    if (held.buttons === 0 || this.rfb === null) return;
+    const canvas = this.element.querySelector("canvas");
+    // noVNC reads the buttons still down from `buttons`: none, at the last pointer position.
+    canvas?.dispatchEvent(
+      new MouseEvent("mouseup", { bubbles: true, cancelable: true, buttons: 0, clientX: held.clientX, clientY: held.clientY }),
+    );
+    this.heldMouse = { ...held, buttons: 0 };
   }
 
   private startIdleWatch(): void {

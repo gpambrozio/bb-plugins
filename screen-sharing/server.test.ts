@@ -68,6 +68,28 @@ describe("the screen-sharing plugin", () => {
     expect(await harness.callRpc("sessions", {})).toEqual({ sessions: [] });
   });
 
+  it("Close all voids a ticket whose WebSocket has not arrived yet", async () => {
+    const { harness } = await load();
+    const ticket = (await harness.callRpc("openSession", { hostId: "host_mini" })) as { token: string };
+    await harness.callRpc("closeAll", {});
+    const late = await harness.experimental_openWebSocket(`${VNC_ROUTE}?host=host_mini&token=${ticket.token}`);
+    expect(late.closeCalls).toEqual([{ code: CloseCode.policy, reason: "unknown or already used ticket" }]);
+  });
+
+  it("Close all voids a ticket request still on its way", async () => {
+    const { harness } = await load();
+    let release: () => void = () => {};
+    const configured = new Promise<void>((resolve) => (release = resolve));
+    harness.sdk.stub("system.config", async () => {
+      await configured;
+      return { primaryHostId: "host_mini" };
+    });
+    const pending = harness.callRpc("openSession", { hostId: "host_mini" });
+    await harness.callRpc("closeAll", {});
+    release();
+    await expect(pending).rejects.toThrow("Close all ended sessions while this one was starting");
+  });
+
   it("answers the session list and Close all with nothing open", async () => {
     const { harness } = await load();
     expect(await harness.callRpc("sessions", {})).toEqual({ sessions: [] });

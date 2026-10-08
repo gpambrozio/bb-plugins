@@ -55,10 +55,21 @@ interface Session {
 export class SessionRegistry {
   private readonly tickets = new Map<string, Ticket>();
   private readonly sessions = new Map<string, Session>();
+  private closedAll = 0;
 
   constructor(private readonly options: SessionRegistryOptions) {}
 
-  mint(hostId: string): { token: string; expiresAt: number } {
+  /**
+   * Bumped by Close all. A caller that awaits something before minting reads
+   * it first and passes it to `mint`, so a request already under way when the
+   * user pressed Close all cannot hand out a ticket afterwards.
+   */
+  get generation(): number {
+    return this.closedAll;
+  }
+
+  mint(hostId: string, generation: number = this.closedAll): { token: string; expiresAt: number } {
+    if (generation !== this.closedAll) throw new Error("Close all ended sessions while this one was starting");
     this.dropExpiredTickets();
     while (this.tickets.size >= this.options.maxTickets) {
       const oldest = this.tickets.keys().next().value;
@@ -103,7 +114,13 @@ export class SessionRegistry {
   }
 
   /** Ends every session; returns how many there were. */
+  /**
+   * Ends every session and voids every unredeemed ticket, so a connection that
+   * was still on its way when the user pressed Close all never opens.
+   */
   closeAll(code: number = CloseCode.closedByUser, reason = "closed from bb"): number {
+    this.closedAll++;
+    this.tickets.clear();
     const ending = [...this.sessions.values()];
     for (const session of ending) this.end(session, code, reason);
     return ending.length;
