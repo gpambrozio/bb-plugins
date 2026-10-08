@@ -17,6 +17,7 @@
  */
 import { SESSION_LIMITS } from "../shared/channels";
 import { endMessage, type SessionEnd } from "./end-message";
+import { LOCAL_CURSOR_CSS } from "./cursor";
 import { createRfb, openRelaySocket, type Rfb } from "./rfb";
 import { relayUrl } from "./relay-url";
 
@@ -47,17 +48,8 @@ const INPUT_IDLE_CHECK_MS = 30_000;
 /** Input on the screen that counts as someone using it. */
 const INPUT_EVENTS = ["keydown", "pointerdown", "pointermove", "wheel", "touchstart"] as const;
 
-/**
- * noVNC sets its canvas's CSS cursor to `none` until the server sends a
- * cursor shape, and macOS Screen Sharing sends none noVNC can draw, so the
- * pointer vanished over the screen. While noVNC says `none`, show the
- * ordinary arrow, which is exactly where a click lands. A cursor the server
- * does send (a `url(…)` cursor) is left alone — including a transparent one,
- * which is how a server hides its pointer. noVNC's `showDotCursor` stays off:
- * it would replace the empty start-up cursor with a 3-pixel dot and keep this
- * rule from ever matching.
- */
-export const LOCAL_CURSOR_CSS = `[data-screen-sharing-screen] canvas[style*="cursor: none"] { cursor: default !important; }`;
+/** noVNC's emulated pointer capture marks the captured element here. */
+type CaptureDocument = Document & { captureElement?: Element | null; releaseCapture?: () => void };
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -79,6 +71,8 @@ export class ScreenSessionStore {
   private readonly heldKeys = new Map<string, string>();
   /** Mouse buttons noVNC last saw held over the screen, and where. */
   private heldMouse: { buttons: number; clientX: number; clientY: number } = { buttons: 0, clientX: 0, clientY: 0 };
+  /** noVNC's canvas for the current connection; kept because noVNC removes it from the page on disconnect. */
+  private canvas: HTMLCanvasElement | null = null;
   /**
    * The object handed to noVNC's `sendCredentials`. noVNC keeps that very
    * object (`_rfbCredentials`) for the life of the connection, so its fields
@@ -142,8 +136,7 @@ export class ScreenSessionStore {
    * only on, and its key-ups are then dropped as view-only input.)
    */
   detach(): void {
-    this.releaseHeldKeys();
-    this.releaseHeldMouse();
+    this.releaseHeldInput();
     this.attached = false;
     this.applyViewOnly();
     this.element.remove();
@@ -165,6 +158,7 @@ export class ScreenSessionStore {
         });
         const rfb = createRfb(this.element, socket);
         this.rfb = rfb;
+        this.canvas = this.element.querySelector("canvas");
         this.applyViewOnly();
         rfb.addEventListener("credentialsrequired", (event) => {
           if (attempt === this.attempt) this.set({ stage: { kind: "credentials", types: event.detail.types } });
@@ -211,7 +205,13 @@ export class ScreenSessionStore {
     this.rfb.sendCredentials(handed);
   }
 
+  /**
+   * Turning View only on first releases whatever is held over the screen, as
+   * leaving the page does: noVNC drops the key-ups its own view-only switch
+   * generates.
+   */
   setViewOnly(viewOnly: boolean): void {
+    if (viewOnly && !this.snapshot.viewOnly) this.releaseHeldInput();
     this.set({ viewOnly });
     this.applyViewOnly();
   }
@@ -237,6 +237,10 @@ export class ScreenSessionStore {
     this.rfb = null;
     this.socket = null;
     this.set({ stage: { kind: "idle" }, ended: message });
+    // Before noVNC lets go of its canvas: a button held as the session ends would leave noVNC's
+    // pointer capture — a full-window overlay — over bb.
+    this.releaseHeldInput();
+    this.canvas = null;
     // noVNC's own disconnect event fires from here and is ignored: the attempt has moved on.
     if (rfb !== null) rfb.disconnect();
     else socket?.close();
@@ -256,22 +260,44 @@ export class ScreenSessionStore {
     if (this.rfb !== null) this.rfb.viewOnly = this.snapshot.viewOnly || !this.attached;
   }
 
+  /** Releases every key and mouse button held over the screen, through noVNC's own handlers. */
+  private releaseHeldInput(): void {
+    this.releaseHeldKeys();
+    this.releaseHeldMouse();
+  }
+
   private releaseHeldKeys(): void {
-    const canvas = this.element.querySelector("canvas");
     for (const [code, key] of [...this.heldKeys]) {
-      canvas?.dispatchEvent(new KeyboardEvent("keyup", { code, key, bubbles: true, cancelable: true }));
+      this.canvas?.dispatchEvent(new KeyboardEvent("keyup", { code, key, bubbles: true, cancelable: true }));
     }
     this.heldKeys.clear();
   }
 
+  /**
+   * A button-up for buttons held over the screen, and the end of noVNC's
+   * pointer capture. A button-down makes noVNC capture the pointer: where the
+   * browser has no `setCapture`, it lays a full-window overlay over the page
+   * and listens on `window`, and lets go only when a `mouseup` reaches that
+   * `window` listener. So with that capture in place the button-up goes to
+   * `window`, where noVNC forwards it to the canvas (sending the release to
+   * the Mac) and then removes the overlay; dispatched on the canvas, it would
+   * do the first and never the second.
+   */
   private releaseHeldMouse(): void {
+    const canvas = this.canvas;
+    if (canvas === null) return;
     const held = this.heldMouse;
-    if (held.buttons === 0 || this.rfb === null) return;
-    const canvas = this.element.querySelector("canvas");
+    const captureDocument = document as CaptureDocument;
+    const captured = captureDocument.captureElement === canvas;
+    if (held.buttons === 0 && !captured) return;
     // noVNC reads the buttons still down from `buttons`: none, at the last pointer position.
-    canvas?.dispatchEvent(
-      new MouseEvent("mouseup", { bubbles: true, cancelable: true, buttons: 0, clientX: held.clientX, clientY: held.clientY }),
-    );
+    const up = new MouseEvent("mouseup", { bubbles: true, cancelable: true, buttons: 0, clientX: held.clientX, clientY: held.clientY });
+    if (captured && typeof captureDocument.releaseCapture !== "function") {
+      window.dispatchEvent(up);
+    } else {
+      canvas.dispatchEvent(up);
+      if (captured) captureDocument.releaseCapture?.();
+    }
     this.heldMouse = { ...held, buttons: 0 };
   }
 

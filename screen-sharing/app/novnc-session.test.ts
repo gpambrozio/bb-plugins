@@ -9,10 +9,14 @@
  * - the sign-in still completes, and afterwards the object noVNC keeps
  *   (`_rfbCredentials`) holds no user name or password — nor after a refused
  *   sign-in;
- * - taking the screen off the page releases a key and a mouse button held
- *   over it, as RFB key-up and button-up messages to the Mac;
+ * - taking the screen off the page, or turning View only on, releases a key
+ *   and a mouse button held over it, as RFB key-up and button-up messages to
+ *   the Mac;
+ * - a held button leaves no noVNC pointer capture (its full-window overlay)
+ *   over bb once the screen leaves the page or the session ends;
  * - with no cursor shape from the Mac, the pointer over the screen is the
- *   ordinary arrow, not noVNC's invisible cursor or its dot.
+ *   ordinary arrow, not noVNC's invisible cursor or its dot; a shape the Mac
+ *   does send, an empty one included, is left as sent.
  */
 import { webcrypto } from "node:crypto";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -137,6 +141,22 @@ function u32(value: number): number[] {
   return [(value >>> 24) & 0xff, (value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff];
 }
 
+/** noVNC's pointer-capture overlay, when it has made one. */
+function captureOverlay(): HTMLElement | null {
+  return document.getElementById("noVNC_mouse_capture_elem");
+}
+
+function capturedElement(): Element | null | undefined {
+  return (document as Document & { captureElement?: Element | null }).captureElement;
+}
+
+/** A FramebufferUpdate holding one Cursor pseudo-encoding rectangle (-239). */
+function cursorUpdate(width: number, height: number): number[] {
+  const pixels = new Array(width * height * 4).fill(0x80);
+  const mask = new Array(Math.ceil(width / 8) * height).fill(0xff);
+  return [0, 0, ...u16(1), ...u16(0), ...u16(0), ...u16(width), ...u16(height), ...u32(-239 >>> 0), ...pixels, ...mask];
+}
+
 function sentAfter(mark: number): Uint8Array[] {
   return socket.sent.slice(mark);
 }
@@ -229,6 +249,114 @@ describe("the session store with real noVNC", () => {
     screenSession.attach(container);
     canvas.dispatchEvent(new KeyboardEvent("keydown", { key: "a", code: "KeyA", bubbles: true, cancelable: true }));
     expect(sentAfter(whileAway).some((m) => m[0] === 4 && m[1] === 1)).toBe(true);
+  });
+
+  it("releases a key held when View only is turned on, and keeps View only across leaving and returning", async () => {
+    await signIn();
+    await acceptAndInit();
+    const canvas = container.querySelector("canvas");
+    if (canvas === null) throw new Error("noVNC drew no canvas");
+    canvas.dispatchEvent(new KeyboardEvent("keydown", { key: "Control", code: "ControlLeft", bubbles: true, cancelable: true }));
+
+    const beforeViewOnly = socket.sent.length;
+    screenSession.setViewOnly(true);
+    expect(sentAfter(beforeViewOnly).some((m) => m[0] === 4 && m[1] === 0 && m[6] === 0xff && m[7] === 0xe3)).toBe(true); // Control_L up
+
+    screenSession.detach();
+    screenSession.attach(container);
+    expect(screenSession.getSnapshot().viewOnly).toBe(true);
+    expect(rfbInstance().viewOnly).toBe(true);
+    const afterReturn = socket.sent.length;
+    canvas.dispatchEvent(new KeyboardEvent("keydown", { key: "a", code: "KeyA", bubbles: true, cancelable: true }));
+    expect(sentAfter(afterReturn).some((m) => m[0] === 4)).toBe(false);
+  });
+
+  it("leaves no pointer capture over bb when the screen leaves the page with a button held", async () => {
+    await signIn();
+    await acceptAndInit();
+    const canvas = container.querySelector("canvas");
+    if (canvas === null) throw new Error("noVNC drew no canvas");
+    canvas.dispatchEvent(new MouseEvent("mousedown", { button: 0, buttons: 1, clientX: 3, clientY: 4, bubbles: true, cancelable: true }));
+    expect(capturedElement()).toBe(canvas);
+    expect(captureOverlay()?.style.display).toBe("");
+
+    const beforeDetach = socket.sent.length;
+    screenSession.detach();
+    expect(sentAfter(beforeDetach).some((m) => m[0] === 5 && m[1] === 0)).toBe(true); // button-up reached the Mac
+    expect(capturedElement()).toBeNull();
+    expect(captureOverlay()?.style.display).toBe("none");
+
+    // Mouse use elsewhere in bb no longer reaches the detached screen.
+    const elsewhere = socket.sent.length;
+    const button = document.createElement("button");
+    document.body.append(button);
+    let clicked = 0;
+    button.addEventListener("mouseup", () => clicked++);
+    button.dispatchEvent(new MouseEvent("mousemove", { buttons: 1, clientX: 50, clientY: 50, bubbles: true }));
+    button.dispatchEvent(new MouseEvent("mouseup", { buttons: 0, clientX: 50, clientY: 50, bubbles: true }));
+    expect(clicked).toBe(1);
+    expect(sentAfter(elsewhere).some((m) => m[0] === 5)).toBe(false);
+    button.remove();
+  });
+
+  it("leaves no pointer capture over bb when the server ends a session with a button held", async () => {
+    await signIn();
+    await acceptAndInit();
+    const canvas = container.querySelector("canvas");
+    if (canvas === null) throw new Error("noVNC drew no canvas");
+    canvas.dispatchEvent(new MouseEvent("mousedown", { button: 0, buttons: 1, clientX: 3, clientY: 4, bubbles: true, cancelable: true }));
+    expect(capturedElement()).toBe(canvas);
+
+    socket.close(4003, "closed from bb");
+    await until(() => screenSession.getSnapshot().stage.kind === "idle", "the session to end");
+    expect(screenSession.getSnapshot().ended).toBe("Closed from bb with Close all.");
+    expect(capturedElement()).toBeNull();
+    expect(captureOverlay()?.style.display).toBe("none");
+  });
+
+  it("leaves an empty cursor from the Mac hidden, as sent", async () => {
+    await signIn();
+    await acceptAndInit();
+    const canvas = container.querySelector("canvas");
+    if (canvas === null) throw new Error("noVNC drew no canvas");
+    expect(getComputedStyle(canvas).cursor).toBe("default");
+
+    socket.serverSends(cursorUpdate(0, 0));
+    await until(() => container.querySelector("[data-remote-cursor]") !== null, "the cursor update");
+    expect(canvas.style.cursor).toBe("none");
+    expect(getComputedStyle(canvas).cursor).toBe("none");
+  });
+
+  it("leaves a cursor shape from the Mac to noVNC", async () => {
+    await signIn();
+    await acceptAndInit();
+    const canvas = container.querySelector("canvas");
+    if (canvas === null) throw new Error("noVNC drew no canvas");
+
+    socket.serverSends(cursorUpdate(2, 2));
+    await until(() => container.querySelector("[data-remote-cursor]") !== null, "the cursor update");
+    const cursorCanvas = (rfbInstance() as unknown as { _cursor: { _canvas: HTMLCanvasElement } })._cursor._canvas;
+    expect(cursorCanvas.width).toBe(2);
+    // jsdom takes no url() cursors, so noVNC draws the shape on its own canvas and keeps `none` here.
+    expect(getComputedStyle(canvas).cursor).not.toBe("default");
+  });
+
+  it("starts each connection with no cursor from the Mac", async () => {
+    await signIn();
+    await acceptAndInit();
+    socket.serverSends(cursorUpdate(0, 0));
+    await until(() => container.querySelector("[data-remote-cursor]") !== null, "the cursor update");
+    screenSession.disconnect();
+
+    socket = new FakeRelaySocket();
+    relay.socket = socket;
+    relay.rfbs.length = 0;
+    screenSession.detach();
+    await signIn();
+    await acceptAndInit();
+    const canvas = container.querySelector("canvas");
+    if (canvas === null) throw new Error("noVNC drew no canvas");
+    expect(getComputedStyle(canvas).cursor).toBe("default");
   });
 
   it("shows the ordinary arrow over the screen when the Mac sends no cursor", async () => {

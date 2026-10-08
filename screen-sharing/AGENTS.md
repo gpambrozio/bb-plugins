@@ -21,7 +21,8 @@ findings are summarised under *Decisions*.
 | `app/screen-panel.tsx` | The page: status and System Settings guidance, Connect/Disconnect, View only, the title bar's Close all. |
 | `app/session-store.ts` | The window's session, outside React: ticket → WebSocket → noVNC into an element it owns; the input-idle disconnect; the local-cursor CSS; why it ended. |
 | `app/vnc-session.tsx` | The live screen on the page: lends the store's element a place while the page is open; the sign-in form. |
-| `app/rfb.ts` | The seam the page's tests replace: `new WebSocket` and noVNC's `RFB` (scaling; no dot cursor). |
+| `app/rfb.ts` | The seam the page's tests replace: `new WebSocket` and noVNC's `RFB` (scaling; no dot cursor; marks a cursor sent by the Mac). |
+| `app/cursor.ts` | The arrow-fallback CSS and the attribute that switches it off once the Mac sends a cursor. |
 | `app/sessions.tsx` | The open sessions as the app sees them; the sidebar "Live" and the corner Close all pill. |
 | `app/novnc.d.ts` | Types for the part of noVNC's `RFB` used here; noVNC ships none. |
 
@@ -65,11 +66,20 @@ shows the same connection, already signed in. Nothing about the sign-in is kept 
 the live connection is what persists. One session per window; another window has its own.
 
 While the screen is off the page its input is suspended: `detach()` first releases every key and
-mouse button held over it — a real `keyup` per held key and a `mouseup` with no buttons at the last
-pointer position, dispatched on noVNC's canvas so noVNC sends the releases to the Mac — and only then
-turns noVNC's `viewOnly` on; `attach()` restores the user's choice. Turning view-only on alone is not
+mouse button held over it — a real `keyup` per held key on noVNC's canvas, and a `mouseup` with no
+buttons at the last pointer position — so noVNC sends the releases to the Mac, and only then turns
+noVNC's `viewOnly` on; `attach()` restores the user's choice. Turning view-only on alone is not
 enough: noVNC's setter sets the flag before it ungrabs the keyboard, so the key-ups the ungrab
-generates are dropped as view-only input.
+generates are dropped as view-only input. For the same reason the user turning View only on releases
+held input first, in the same order.
+
+The button-up has to end noVNC's pointer capture too. A button-down makes noVNC capture the pointer:
+without a native `setCapture` it puts a full-window overlay (`#noVNC_mouse_capture_elem`) over the
+page, listens on `window`, and lets go only when a `mouseup` reaches that `window` listener. So while
+`document.captureElement` is the store's canvas the `mouseup` is dispatched on `window` — noVNC
+forwards it to the canvas, then removes the overlay — never on the canvas, which sends the release but
+leaves the overlay over bb. Every teardown does this before noVNC drops its canvas (the store keeps a
+reference, since noVNC removes the canvas from the page on disconnect).
 
 **Idle is measured in the window.** noVNC asks for a screen update after every one it gets and the
 menu-bar clock changes each minute, so bytes flow as long as a session is open, seen or not. The
@@ -80,10 +90,15 @@ ends a session after 30 minutes without a key, click, touch, wheel or pointer mo
 **The pointer.** noVNC sets its canvas's CSS cursor to `none` until the server sends a cursor shape
 (Cursor or VMware cursor pseudo-encoding), and macOS Screen Sharing sends none it can draw (noVNC
 issue #1430), so the pointer vanished over the screen. `LOCAL_CURSOR_CSS` shows the ordinary arrow
-while the canvas says `cursor: none` — the local pointer is exactly where a click lands — and leaves a
-cursor the server does send (`url(…)`) alone, a transparent one included — that is how a server hides
-its pointer. `showDotCursor` stays off: it replaces noVNC's empty start-up cursor with a 3×3 dot, which
-a desktop browser shows as a `url()` cursor, so the arrow rule would never match.
+while the canvas says `cursor: none` and the Mac has sent no cursor yet — the local pointer is exactly
+where a click lands. noVNC also says `none` for an empty cursor the server sends on purpose (how a
+server hides its pointer), and raises no event for either, so `createRfb` wraps noVNC's private
+`_updateCursor` (both cursor encodings call it in the pinned 1.7.0) to set `data-remote-cursor` on the
+screen element; from then on the rule stands aside and the cursor is shown as sent. The attribute is
+cleared for each new connection. `app/novnc-session.test.ts` sends real Cursor rectangles, so a noVNC
+that renames `_updateCursor` fails there. `showDotCursor` stays off: it replaces noVNC's empty
+start-up cursor with a 3×3 dot, which a desktop browser shows as a `url()` cursor, so the arrow rule
+would never match.
 
 **Never expose a port.** No `bb connect expose`, no `declareSharedPorts`, no listening socket. The
 gate carries only HTTP and WebSockets, so raw VNC could not cross it anyway, and an exposed share
