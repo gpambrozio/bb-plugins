@@ -19,4 +19,5 @@ The first release.
 - **View only**, which can be switched during a session.
 - **Live** beside the sidebar row and a **Close all** pill in the corner of every bb window while any
   session is open, on any device.
-- Sessions end when their page closes, after 30 minutes without activity, and after 8 hours.
+- Sessions end when their page closes, after 30 minutes without keyboard or mouse use, and after 8
+  hours.

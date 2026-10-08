@@ -10,7 +10,12 @@ export const PLUGIN_ID = "screen-sharing";
 /** The relay's route, under `/api/v1/plugins/<id>/http`. */
 export const VNC_ROUTE = "/vnc";
 
-/** How long a session may sit idle, and last at most, before the server ends it. */
+/**
+ * When a session ends on its own. The page disconnects after `idleMinutes`
+ * without keyboard, mouse or touch input; the server ends a session after
+ * `idleMinutes` with no bytes either way (a client that went away) and after
+ * `maxHours` however busy.
+ */
 export const SESSION_LIMITS = { idleMinutes: 30, maxHours: 8 } as const;
 
 /** Published with a `SessionList` whenever a session opens or closes. */
@@ -26,6 +31,8 @@ export const CloseCode = {
   failed: 1011,
   idle: 4001,
   maxAge: 4002,
+  /** bb itself closes a plugin's sockets with this when the plugin reloads or is disabled. */
+  bbPluginReloaded: 1012,
   closedByUser: 4003,
   stopping: 4004,
 } as const;
@@ -49,9 +56,11 @@ export type SessionList = z.infer<typeof SessionListSchema>;
  * - `ready`: something answers on port 5900 with an RFB greeting.
  * - `off`: macOS says Screen Sharing is disabled, and nothing answers.
  * - `not-listening`: nothing answers, though macOS does not say it is off.
+ * - `refused`: Screen Sharing answers but turns connections away for now
+ *   (macOS does this after too many failed sign-ins, for one).
  * - `unsupported`: the bb server is not running on macOS.
  */
-export const ScreenStateSchema = z.enum(["ready", "off", "not-listening", "unsupported"]);
+export const ScreenStateSchema = z.enum(["ready", "off", "not-listening", "refused", "unsupported"]);
 
 export type ScreenState = z.infer<typeof ScreenStateSchema>;
 
@@ -65,6 +74,8 @@ export const ScreenStatusSchema = z.object({
   securityTypes: z.array(z.number().int()),
   /** False when the server offers no sign-in method noVNC knows. */
   signInSupported: z.boolean(),
+  /** Why the server turned the probe away, when it said; only with `refused`. */
+  refusedReason: z.string().nullable(),
 });
 
 export type ScreenStatus = z.infer<typeof ScreenStatusSchema>;

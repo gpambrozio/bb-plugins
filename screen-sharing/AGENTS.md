@@ -12,14 +12,14 @@ findings are summarised under *Decisions*.
 
 | File | What it owns |
 | --- | --- |
-| `server.ts` | Wires the RPCs, the relay route, the sweep timer and disposal. Holds the limits (ticket life, idle, maximum length, buffer cap). |
-| `server/sessions.ts` | Tickets (single-use, bound to a Mac, short-lived) and sessions (idle and age limits, Close all). No sockets. |
+| `server.ts` | Wires the RPCs, the relay route, the sweep timer and disposal. Holds the limits (ticket life, no-traffic, maximum length, buffer cap). |
+| `server/sessions.ts` | Tickets (single-use, bound to a Mac, short-lived) and sessions (no-traffic and age limits, Close all). No sockets. |
 | `server/relay.ts` | One WebSocket ⇄ one TCP connection, bytes copied untouched; either end closing closes the other. |
 | `server/status.ts` | Is Screen Sharing on: `launchctl print-disabled system` and an RFB greeting probe that signs in to nothing. |
 | `shared/channels.ts` | Route, realtime channel, close codes, limits and zod shapes; no SDK import, so the app may use it. |
 | `shared/contract.ts` | The app ⇄ server RPC contract. The app imports it as a type only. |
 | `app/screen-panel.tsx` | The page: status and System Settings guidance, Connect/Disconnect, View only, the title bar's Close all. |
-| `app/vnc-session.tsx` | One session: ticket → WebSocket → noVNC; the sign-in form; why it ended. |
+| `app/vnc-session.tsx` | One session: ticket → WebSocket → noVNC; the sign-in form; the input-idle disconnect; why it ended. |
 | `app/rfb.ts` | The seam the page's tests replace: `new WebSocket` and noVNC's `RFB`. |
 | `app/sessions.tsx` | The open sessions as the app sees them; the sidebar "Live" and the corner Close all pill. |
 | `app/novnc.d.ts` | Types for the part of noVNC's `RFB` used here; noVNC ships none. |
@@ -41,8 +41,22 @@ down) works but the round trip was ≈600 ms to remote hosts; a gate-shared port
 bb serves the app from the server's own origin (`window.location.origin` is what bb's own SDK uses for
 `/api` and `/ws`), so the page opens the route as a same-origin socket: over loopback on the Mac,
 through bb's getbb.app tunnel remotely. "local" auth refuses a browser on any other origin (403,
-checked in the study); requests with no `Origin` header pass, which only local processes send, and
-they can reach port 5900 directly anyway. The API is experimental; `engines.bb` is `>=0.45`.
+checked in the study); a request with no `Origin` header passes. Browsers always send one, so that
+is a non-browser client of the bb API: a local process (which can reach port 5900 directly anyway),
+or anything that can reach a bb server bound to the network with `BB_SERVER_BIND_HOST` — which can
+then already drive every bb API, terminals on every host included. The relay adds no reach beyond
+bb's own API. The API is experimental; `engines.bb` is `>=0.45`.
+
+**Who may mint a ticket.** `openSession` refuses callers bb marks `plugin` (another plugin through
+`bb.sdk.plugins.callRpc`). bb marks everything else `client` — the app, the `bb` CLI, agents — and
+nothing distinguishes the app, so the CLI and agents can mint tickets too. They still need the macOS
+user name and password to get past Screen Sharing's sign-in, and the skill tells agents never to try.
+Do not claim more than this in docs or messages.
+
+**Idle is measured in the page.** noVNC asks for a screen update after every one it gets and the
+menu-bar clock changes each minute, so bytes flow as long as a page is open. The server's 30-minute
+limit therefore only catches clients that went away (no traffic at all); `VncSession` ends a session
+after 30 minutes without a key, click, touch, wheel or pointer movement on the screen.
 
 **Never expose a port.** No `bb connect expose`, no `declareSharedPorts`, no listening socket. The
 gate carries only HTTP and WebSockets, so raw VNC could not cross it anyway, and an exposed share
@@ -57,8 +71,8 @@ user is the one viewing.
 
 ## Security invariants
 
-- **A session needs a ticket.** `openSession` mints one only for the bb app (`experimental_caller` is
-  `client`, not another plugin) and only for the server's primary host. Redeeming it uses it up, a
+- **A session needs a ticket.** `openSession` mints one only for `client` callers (not other plugins;
+  see *Who may mint a ticket*) and only for the server's primary host. Redeeming it uses it up, a
   wrong Mac uses it up too, and it expires after 30 s; at most 16 wait at once.
 - **One socket per ticket.** The relay connects to 5900 only after a ticket is redeemed; a refused
   socket closes with 1008 and never opens TCP.
@@ -66,17 +80,22 @@ user is the one viewing.
   and close reasons — never the ticket. The sign-in travels inside RFB's own ARD Diffie-Hellman
   exchange; the page hands it to noVNC and clears the form. No setting holds credentials.
 - **Everything closes.** WebSocket close or error destroys the TCP socket; TCP close or error closes
-  the WebSocket; the sweep (every 15 s) ends sessions idle 30 min or older than 8 h; `closeAll` ends
-  them all; `bb.onDispose` ends them all with 4004. Unmounting the session view disconnects noVNC,
-  and a ticket that arrives after unmount is never used.
+  the WebSocket; the sweep (every 15 s) ends sessions with no traffic for 30 min or older than 8 h;
+  `closeAll` ends them all (4003). On reload or disable bb closes the plugin's sockets itself with 1012
+  before the dispose hooks run, and `bb.onDispose` then ends every session, which destroys the TCP
+  sockets (its 4004 rarely reaches a page). The page ends a session after 30 min without input;
+  unmounting the session view disconnects noVNC, and a ticket that arrives after unmount is never used.
 - **Open sessions are visible.** Every open and close publishes the list; the sidebar row and a corner
   pill in every window show it, and both the pill and the page's title bar offer Close all.
 
 ## Status check
 
-`status` is read-only and needs no root. The RFB probe reads the version line, answers `RFB 003.008`,
-reads the list of security types and hangs up before choosing one, so it never signs in. The probe
-decides `ready`: Remote Management also answers on 5900 while the Screen Sharing switch is off.
+`status` is read-only and needs no root. The RFB probe reads the version line, answers with the
+highest version it speaks that the server offers (3.8 for Apple's `003.889`, never more than the
+server), reads the list of security types and hangs up before choosing one, so it never signs in. The
+probe decides `ready`: Remote Management also answers on 5900 while the Screen Sharing switch is off.
+An empty list is the server turning connections away (macOS does after repeated failed sign-ins); the
+probe reads its reason and reports `refused`.
 `signInSupported` is false when the Mac offers none of noVNC's types (Apple offers 30, ARD, by
 default). Nothing here can turn Screen Sharing on: since macOS 12.1 that takes System Settings or MDM,
 and the page says so.

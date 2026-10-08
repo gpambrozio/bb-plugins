@@ -57,8 +57,9 @@ export default async function plugin(bb: BbPluginApi) {
       return { hostId: host.id, hostName: host.name, ...check };
     },
     openSession: async ({ hostId }, context) => {
-      // Other plugins have no business opening someone's screen.
-      if (context.experimental_caller.kind !== "client") throw new Error("only the bb app can open a session");
+      // Other plugins have no business opening someone's screen. bb counts the app, the bb CLI and
+      // agents alike as "client", so this refuses only plugins calling through bb.sdk.plugins.callRpc.
+      if (context.experimental_caller.kind !== "client") throw new Error("other plugins cannot open a session");
       const host = await serverHost();
       if (hostId !== host.id) {
         throw new Error(`only ${host.name}, the Mac running the bb server, can be shared in this version`);

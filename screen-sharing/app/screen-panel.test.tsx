@@ -88,6 +88,7 @@ const ready: ScreenStatus = {
   rfbVersion: "RFB 003.889",
   securityTypes: [30, 33, 36, 35],
   signInSupported: true,
+  refusedReason: null,
 };
 
 function stubs(handlers: Partial<PluginRpcTestHandlers<RpcContract>>): PluginRpcTestHandlers<RpcContract> {
@@ -139,6 +140,15 @@ describe("the Screen Sharing page", () => {
       if (original === undefined) Reflect.deleteProperty(window, "isSecureContext");
       else Object.defineProperty(window, "isSecureContext", original);
     }
+  });
+
+  it("says when Screen Sharing is turning connections away", async () => {
+    renderPanel({
+      status: () => ({ ...ready, state: "refused", securityTypes: [], signInSupported: false, refusedReason: "Too many authentication failures" }),
+    });
+    expect(await screen.findByText("Screen Sharing on MacMini is turning connections away")).toBeTruthy();
+    expect(screen.getByText("“Too many authentication failures”")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Connect" })).toBeNull();
   });
 
   it("says when the bb server is not on a Mac", async () => {
@@ -216,15 +226,37 @@ describe("the Screen Sharing page", () => {
     expect(sockets).toEqual([]);
   });
 
+  it("ends a session after 30 minutes without keyboard or mouse use, and not before", async () => {
+    renderPanel();
+    const rfb = await connect();
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+    try {
+      act(() => rfb.emit("connect"));
+      const minutes = (count: number) => act(() => vi.advanceTimersByTime(count * 60_000));
+      minutes(29);
+      fireEvent.pointerMove(screen.getByTestId("vnc-screen"));
+      minutes(29);
+      expect(rfb.disconnects).toBe(0);
+      fireEvent.keyDown(screen.getByTestId("vnc-screen"), { key: "a" });
+      minutes(29);
+      expect(rfb.disconnects).toBe(0);
+      minutes(2);
+      expect(rfb.disconnects).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(await screen.findByText("Closed after 30 minutes without keyboard or mouse use.")).toBeTruthy();
+  });
+
   it("says why the server ended a session", async () => {
     renderPanel();
     const rfb = await connect();
     act(() => rfb.emit("connect"));
     act(() => {
-      rfb.socket.closeFromServer(CloseCode.idle, "session was idle too long");
+      rfb.socket.closeFromServer(CloseCode.closedByUser, "closed from bb");
       rfb.emit("disconnect", { clean: false });
     });
-    expect(await screen.findByText("Closed after 30 minutes without activity.")).toBeTruthy();
+    expect(await screen.findByText("Closed from bb with Close all.")).toBeTruthy();
   });
 
   it("says when macOS refused the sign-in", async () => {

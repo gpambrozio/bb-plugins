@@ -11,7 +11,8 @@ port is opened to the internet.
 - View only, to watch without sending keys or clicks; switch it at any time.
 - While any session is open, on any device, the sidebar row says Live and a pill in the corner of
   every bb window offers Close all.
-- Sessions end when you leave the page, after 30 minutes without activity, and after 8 hours.
+- Sessions end when you leave the page, after 30 minutes without keyboard or mouse use, and after 8
+  hours.
 
 ## Private by design
 

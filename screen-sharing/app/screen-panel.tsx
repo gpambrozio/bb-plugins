@@ -3,7 +3,7 @@
  * Sharing answers, and — once the user presses Connect — its screen. The
  * session lives only while this page is on screen: leaving the page ends it.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRpc, type PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 
 import { SESSION_LIMITS, type ScreenStatus } from "../shared/channels";
@@ -19,25 +19,45 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/**
+ * Checks once when the page opens and again on request, never on its own: a
+ * check that failed mid-session would swap the session for the not-ready view.
+ * Only the latest check's answer is used.
+ */
 function useStatus() {
   const rpc = useRpc<RpcContract>();
+  const rpcRef = useRef(rpc);
+  rpcRef.current = rpc;
+  const latest = useRef(0);
   const [status, setStatus] = useState<ScreenStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [checking, setChecking] = useState(true);
 
   const check = useCallback(() => {
+    const asked = ++latest.current;
     setChecking(true);
-    rpc
+    rpcRef.current
       .call("status", {})
       .then((value) => {
+        if (asked !== latest.current) return;
         setStatus(value);
         setError(null);
       })
-      .catch((caught: unknown) => setError(errorText(caught)))
-      .finally(() => setChecking(false));
-  }, [rpc]);
+      .catch((caught: unknown) => {
+        if (asked === latest.current) setError(errorText(caught));
+      })
+      .finally(() => {
+        if (asked === latest.current) setChecking(false);
+      });
+  }, []);
 
-  useEffect(check, [check]);
+  useEffect(() => {
+    check();
+    // A page that goes away mid-check ignores the answer.
+    return () => {
+      latest.current++;
+    };
+  }, [check]);
   return { status, error, checking, check };
 }
 
@@ -64,6 +84,15 @@ function NotReady({ status, checking, onCheck }: { status: ScreenStatus; checkin
     return (
       <Centered title="macOS only">
         <p>The bb server is not running on a Mac, so there is no macOS Screen Sharing to connect to.</p>
+      </Centered>
+    );
+  }
+  if (status.state === "refused") {
+    return (
+      <Centered title={`Screen Sharing on ${status.hostName} is turning connections away`}>
+        {status.refusedReason !== null ? <p className="font-medium text-foreground">“{status.refusedReason}”</p> : null}
+        <p>macOS does this for a while after too many failed sign-ins. Wait a few minutes, then check again.</p>
+        <CheckAgain checking={checking} onCheck={onCheck} />
       </Centered>
     );
   }
@@ -185,8 +214,8 @@ export function ScreenPanel(_props: PluginNavPanelProps) {
             </p>
           ) : null}
           <p>
-            A session closes when you leave this page, after {SESSION_LIMITS.idleMinutes} minutes without activity, and
-            after {SESSION_LIMITS.maxHours} hours.
+            A session closes when you leave this page, after {SESSION_LIMITS.idleMinutes} minutes without keyboard or
+            mouse use, and after {SESSION_LIMITS.maxHours} hours.
           </p>
         </Centered>
       )}

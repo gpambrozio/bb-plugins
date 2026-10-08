@@ -1,7 +1,16 @@
 import { createServer, type AddressInfo, type Server, type Socket } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { checkScreenSharing, parseScreenSharingDisabled, probeRfb, type StatusChecks } from "./status";
+import { checkScreenSharing, clientVersionLine, parseScreenSharingDisabled, probeRfb, type StatusChecks } from "./status";
+
+describe("clientVersionLine", () => {
+  it("never asks for more than the server offers", () => {
+    expect(clientVersionLine(3, 889, "RFB 003.889\n")).toBe("RFB 003.008\n");
+    expect(clientVersionLine(3, 8, "RFB 003.008\n")).toBe("RFB 003.008\n");
+    expect(clientVersionLine(3, 7, "RFB 003.007\n")).toBe("RFB 003.007\n");
+    expect(clientVersionLine(3, 3, "RFB 003.003\n")).toBe("RFB 003.003\n");
+  });
+});
 
 describe("parseScreenSharingDisabled", () => {
   const output = (value: string) => `disabled services = {\n\t"com.apple.ftp-proxy" => disabled\n\t"com.apple.screensharing" => ${value}\n}\n`;
@@ -30,14 +39,33 @@ describe("checkScreenSharing", () => {
 
   it("is ready when an RFB server answers, whatever launchctl says", async () => {
     const result = await checkScreenSharing(
-      checks({ probe: async () => ({ version: "RFB 003.889", securityTypes: [30, 33, 36, 35] }), serviceDisabled: async () => true }),
+      checks({
+        probe: async () => ({ version: "RFB 003.889", securityTypes: [30, 33, 36, 35], refusedReason: null }),
+        serviceDisabled: async () => true,
+      }),
     );
-    expect(result).toEqual({ state: "ready", rfbVersion: "RFB 003.889", securityTypes: [30, 33, 36, 35], signInSupported: true });
+    expect(result).toEqual({
+      state: "ready",
+      rfbVersion: "RFB 003.889",
+      securityTypes: [30, 33, 36, 35],
+      signInSupported: true,
+      refusedReason: null,
+    });
   });
 
   it("flags a server offering only sign-in methods noVNC lacks", async () => {
-    const result = await checkScreenSharing(checks({ probe: async () => ({ version: "RFB 003.889", securityTypes: [33, 35, 36] }) }));
+    const result = await checkScreenSharing(
+      checks({ probe: async () => ({ version: "RFB 003.889", securityTypes: [33, 35, 36], refusedReason: null }) }),
+    );
+    expect(result.state).toBe("ready");
     expect(result.signInSupported).toBe(false);
+  });
+
+  it("is refused when the server answers with no sign-in methods at all", async () => {
+    const result = await checkScreenSharing(
+      checks({ probe: async () => ({ version: "RFB 003.889", securityTypes: [], refusedReason: "Too many authentication failures" }) }),
+    );
+    expect(result).toMatchObject({ state: "refused", refusedReason: "Too many authentication failures" });
   });
 
   it("is off when nothing answers and macOS has it switched off", async () => {
@@ -90,7 +118,7 @@ describe("probeRfb", () => {
       socket.write("RFB 003.889\n");
       socket.once("data", () => socket.write(Buffer.from([4, 30, 33, 36, 35])));
     });
-    expect(await probeRfb(port)).toEqual({ version: "RFB 003.889", securityTypes: [30, 33, 36, 35] });
+    expect(await probeRfb(port)).toEqual({ version: "RFB 003.889", securityTypes: [30, 33, 36, 35], refusedReason: null });
     expect(Buffer.concat(clientSent).toString("latin1")).toBe("RFB 003.008\n");
   });
 
@@ -103,7 +131,8 @@ describe("probeRfb", () => {
         socket.write(type);
       });
     });
-    expect(await probeRfb(port)).toEqual({ version: "RFB 003.003", securityTypes: [2] });
+    expect(await probeRfb(port)).toEqual({ version: "RFB 003.003", securityTypes: [2], refusedReason: null });
+    expect(Buffer.concat(clientSent).toString("latin1")).toBe("RFB 003.003\n");
   });
 
   it("copes with the greeting arriving in pieces", async () => {
@@ -115,7 +144,34 @@ describe("probeRfb", () => {
         setTimeout(() => socket.write(Buffer.from([30, 2])), 10);
       });
     });
-    expect(await probeRfb(port)).toEqual({ version: "RFB 003.889", securityTypes: [30, 2] });
+    expect(await probeRfb(port)).toEqual({ version: "RFB 003.889", securityTypes: [30, 2], refusedReason: null });
+  });
+
+  it("asks a 3.7 server for 3.7, never more than it offers", async () => {
+    const port = await listen((socket) => {
+      socket.write("RFB 003.007\n");
+      socket.once("data", () => socket.write(Buffer.from([1, 2])));
+    });
+    expect(await probeRfb(port)).toEqual({ version: "RFB 003.007", securityTypes: [2], refusedReason: null });
+    expect(Buffer.concat(clientSent).toString("latin1")).toBe("RFB 003.007\n");
+  });
+
+  it("reads the reason a server gives for turning the connection away", async () => {
+    const port = await listen((socket) => {
+      socket.write("RFB 003.889\n");
+      socket.once("data", () => {
+        const reason = Buffer.from("Too many authentication failures");
+        const length = Buffer.alloc(4);
+        length.writeUInt32BE(reason.length);
+        socket.write(Buffer.concat([Buffer.from([0]), length]));
+        setTimeout(() => socket.write(reason), 10);
+      });
+    });
+    expect(await probeRfb(port)).toEqual({
+      version: "RFB 003.889",
+      securityTypes: [],
+      refusedReason: "Too many authentication failures",
+    });
   });
 
   it("is null for something that is not RFB", async () => {

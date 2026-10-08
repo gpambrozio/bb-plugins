@@ -23,6 +23,8 @@ export interface RfbProbe {
   /** e.g. "RFB 003.889". */
   version: string;
   securityTypes: number[];
+  /** With no security types, the reason the server gave for turning us away, if any. */
+  refusedReason: string | null;
 }
 
 export interface StatusChecks {
@@ -38,23 +40,31 @@ export interface ScreenCheck {
   rfbVersion: string | null;
   securityTypes: number[];
   signInSupported: boolean;
+  refusedReason: string | null;
+}
+
+/** The answer when nothing answered: only the state is known. */
+function unanswered(state: ScreenState): ScreenCheck {
+  return { state, rfbVersion: null, securityTypes: [], signInSupported: false, refusedReason: null };
 }
 
 export async function checkScreenSharing(checks: StatusChecks): Promise<ScreenCheck> {
   if (checks.platform !== "darwin") {
-    return { state: "unsupported", rfbVersion: null, securityTypes: [], signInSupported: false };
+    return unanswered("unsupported");
   }
   const probe = await checks.probe();
   if (probe !== null) {
     return {
-      state: "ready",
+      // No sign-in methods at all is the server turning connections away, not a choice of methods.
+      state: probe.securityTypes.length === 0 ? "refused" : "ready",
       rfbVersion: probe.version,
       securityTypes: probe.securityTypes,
       signInSupported: probe.securityTypes.some((type) => NOVNC_SECURITY_TYPES.has(type)),
+      refusedReason: probe.refusedReason,
     };
   }
   const disabled = await checks.serviceDisabled();
-  return { state: disabled === true ? "off" : "not-listening", rfbVersion: null, securityTypes: [], signInSupported: false };
+  return unanswered(disabled === true ? "off" : "not-listening");
 }
 
 /**
@@ -83,10 +93,26 @@ export function launchctlScreenSharingDisabled(timeoutMs = 3000): Promise<boolea
   });
 }
 
+/** A reason string longer than this is cut short. */
+const MAX_REASON_BYTES = 1024;
+
+/**
+ * Our answer to the server's version line. A client may not ask for more than
+ * the server offers: 3.7 gets 3.7, anything newer (Apple's "003.889"
+ * included) gets 3.8, the newest this probe speaks, and older servers are
+ * answered in their own version.
+ */
+export function clientVersionLine(major: number, minor: number, serverLine: string): string {
+  if (major > 3 || minor >= 8) return "RFB 003.008\n";
+  if (minor === 7) return "RFB 003.007\n";
+  return serverLine;
+}
+
 /**
  * The RFB handshake up to the list of sign-in methods, and no further: the
  * server's version line, our version line, then the security types. RFB 3.3
- * servers send a single type as a 32-bit number instead of a list.
+ * servers send a single type as a 32-bit number instead of a list. An empty
+ * list means the server is turning the connection away, and a reason follows.
  */
 export function probeRfb(port: number, timeoutMs = 3000, host = "127.0.0.1"): Promise<RfbProbe | null> {
   return new Promise((resolve) => {
@@ -116,19 +142,28 @@ export function probeRfb(port: number, timeoutMs = 3000, host = "127.0.0.1"): Pr
         const match = line.match(/^RFB (\d{3})\.(\d{3})\n$/);
         if (match === null) return settle(null);
         version = line.trimEnd();
-        legacy = Number(match[1]) === 3 && Number(match[2]) < 7;
+        const major = Number(match[1]);
+        const minor = Number(match[2]);
+        legacy = major === 3 && minor < 7;
         buffer = buffer.subarray(12);
-        socket.write(legacy ? line : "RFB 003.008\n");
+        socket.write(clientVersionLine(major, minor, line));
       }
       if (legacy) {
         if (buffer.length < 4) return;
-        return settle({ version, securityTypes: [buffer.readUInt32BE(0)] });
+        const type = buffer.readUInt32BE(0);
+        return settle({ version, securityTypes: type === 0 ? [] : [type], refusedReason: null });
       }
       if (buffer.length < 1) return;
       const count = buffer[0] ?? 0;
-      // Zero types means the server refused us and a reason follows; we only report the empty list.
-      if (buffer.length < 1 + count) return;
-      settle({ version, securityTypes: [...buffer.subarray(1, 1 + count)] });
+      if (count > 0) {
+        if (buffer.length < 1 + count) return;
+        return settle({ version, securityTypes: [...buffer.subarray(1, 1 + count)], refusedReason: null });
+      }
+      if (buffer.length < 5) return;
+      const length = Math.min(buffer.readUInt32BE(1), MAX_REASON_BYTES);
+      if (buffer.length < 5 + length) return;
+      const reason = buffer.subarray(5, 5 + length).toString("utf8").trim();
+      settle({ version, securityTypes: [], refusedReason: reason === "" ? null : reason });
     });
   });
 }

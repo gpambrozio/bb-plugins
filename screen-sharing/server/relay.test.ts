@@ -198,7 +198,7 @@ describe("the relay", () => {
     await until(() => ws.sent.length > 0, "the greeting");
     now += 60_000;
     registry.sweep();
-    expect(ws.closes).toEqual([{ code: CloseCode.idle, reason: "session was idle too long" }]);
+    expect(ws.closes).toEqual([{ code: CloseCode.idle, reason: "no traffic for too long" }]);
     await until(() => vnc.closed === 1, "the TCP close");
   });
 

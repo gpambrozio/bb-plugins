@@ -27,12 +27,13 @@ export function endMessage(end: SessionEnd): string {
   if (close === null) return "Disconnected.";
   switch (close.code) {
     case CloseCode.idle:
-      return `Closed after ${SESSION_LIMITS.idleMinutes} minutes without activity.`;
+      return `Closed after ${SESSION_LIMITS.idleMinutes} minutes with nothing passing between bb and the Mac.`;
     case CloseCode.maxAge:
       return `Closed after ${SESSION_LIMITS.maxHours} hours, the longest a session lasts.`;
     case CloseCode.closedByUser:
       return "Closed from bb with Close all.";
     case CloseCode.stopping:
+    case CloseCode.bbPluginReloaded:
       return "Closed because the Screen Sharing plugin stopped or reloaded.";
     case CloseCode.policy:
       return `bb refused the session${close.reason === "" ? "" : ` (${close.reason})`}. Try again.`;

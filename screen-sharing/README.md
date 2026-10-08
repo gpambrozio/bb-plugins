@@ -14,7 +14,7 @@ Mac and no port is opened to the internet.
 - While any session is open — in this window, another window or on another device — the sidebar row
   says **Live** and a pill in the corner of every bb window offers **Close all**. The page's title bar
   has the same Close all.
-- A session also ends after 30 minutes without activity, and after 8 hours.
+- A session also ends after 30 minutes without keyboard or mouse use, and after 8 hours.
 
 This version reaches only the Mac running the bb server. Other Macs connected to bb are not offered.
 

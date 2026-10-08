@@ -15,7 +15,11 @@ export interface SessionRegistryOptions {
   randomId(): string;
   /** How long a ticket may wait before its WebSocket opens. */
   ticketTtlMs: number;
-  /** A session with no bytes either way for this long is ended. */
+  /**
+   * A session with no bytes either way for this long is ended. While a page is
+   * open noVNC keeps bytes moving, so this catches clients that went away; the
+   * page ends sessions nobody is using (app/vnc-session.tsx).
+   */
   idleMs: number;
   /** A session is ended this long after it opened, busy or not. */
   maxAgeMs: number;
@@ -113,7 +117,7 @@ export class SessionRegistry {
       if (now - session.info.openedAt >= this.options.maxAgeMs) {
         this.end(session, CloseCode.maxAge, "session reached its maximum length");
       } else if (now - session.info.lastActivityAt >= this.options.idleMs) {
-        this.end(session, CloseCode.idle, "session was idle too long");
+        this.end(session, CloseCode.idle, "no traffic for too long");
       }
     }
   }

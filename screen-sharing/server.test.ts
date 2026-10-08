@@ -54,7 +54,7 @@ describe("the screen-sharing plugin", () => {
     const { harness } = await load();
     await expect(
       harness.callRpc("openSession", { hostId: "host_mini" }, { experimental_caller: { kind: "plugin", pluginId: "nosy" } }),
-    ).rejects.toThrow("only the bb app can open a session");
+    ).rejects.toThrow("other plugins cannot open a session");
   });
 
   it("closes a WebSocket that brings no valid ticket", async () => {

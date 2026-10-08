@@ -88,7 +88,7 @@ describe("sessions", () => {
     expect(end).not.toHaveBeenCalled();
     advance(1_000);
     registry.sweep();
-    expect(end).toHaveBeenCalledWith(CloseCode.idle, "session was idle too long");
+    expect(end).toHaveBeenCalledWith(CloseCode.idle, "no traffic for too long");
     expect(registry.list()).toEqual([]);
   });
 

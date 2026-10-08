@@ -7,10 +7,14 @@ const closed = (code: number, reason = "") => ({ close: { code, reason }, securi
 
 describe("endMessage", () => {
   it("says why the server ended a session", () => {
-    expect(endMessage(closed(CloseCode.idle))).toBe("Closed after 30 minutes without activity.");
+    expect(endMessage(closed(CloseCode.idle))).toBe("Closed after 30 minutes with nothing passing between bb and the Mac.");
     expect(endMessage(closed(CloseCode.maxAge))).toBe("Closed after 8 hours, the longest a session lasts.");
     expect(endMessage(closed(CloseCode.closedByUser))).toBe("Closed from bb with Close all.");
     expect(endMessage(closed(CloseCode.stopping))).toBe("Closed because the Screen Sharing plugin stopped or reloaded.");
+    // bb closes a plugin's sockets itself, before the plugin's own close reaches them.
+    expect(endMessage(closed(CloseCode.bbPluginReloaded, "Plugin reloaded or disabled"))).toBe(
+      "Closed because the Screen Sharing plugin stopped or reloaded.",
+    );
   });
 
   it("passes on the relay's own reasons", () => {

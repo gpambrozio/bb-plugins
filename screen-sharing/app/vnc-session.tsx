@@ -6,10 +6,16 @@
  *
  * The sign-in macOS asks for is typed into a form here and handed straight to
  * noVNC; nothing keeps it, logs it or sends it anywhere else.
+ *
+ * A session nobody uses ends here, not on the server: noVNC keeps bytes
+ * moving as long as the page is open (it asks for an update after every one,
+ * and the menu-bar clock changes each minute), so only the page can tell that
+ * no key, click, touch or pointer movement has reached the screen.
  */
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useRpc } from "@get-bb/plugin-sdk/app";
 
+import { SESSION_LIMITS } from "../shared/channels";
 import type { RpcContract } from "../shared/contract";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
@@ -25,6 +31,11 @@ type Stage =
   | { kind: "credentials"; types: CredentialType[] }
   | { kind: "signing-in" }
   | { kind: "connected" };
+
+const INPUT_IDLE_MS = SESSION_LIMITS.idleMinutes * 60_000;
+const INPUT_IDLE_CHECK_MS = 30_000;
+/** Input on the screen that counts as someone using it. */
+const INPUT_EVENTS = ["keydown", "pointerdown", "pointermove", "wheel", "touchstart"] as const;
 
 const FIELD_LABELS: Record<CredentialType, string> = {
   username: "User name",
@@ -90,6 +101,9 @@ export function VncSession({ hostId, hostName, viewOnly, onEnded }: VncSessionPr
   const onEndedRef = useRef(onEnded);
   onEndedRef.current = onEnded;
   const [stage, setStage] = useState<Stage>({ kind: "connecting" });
+  const connected = stage.kind === "connected";
+  /** Ends the session with a message; set while one is starting or open. */
+  const endRef = useRef<((message: string) => void) | null>(null);
 
   useEffect(() => {
     viewOnlyRef.current = viewOnly;
@@ -106,8 +120,11 @@ export function VncSession({ hostId, hostName, viewOnly, onEnded }: VncSessionPr
       if (disposed) return;
       disposed = true;
       rfbRef.current = null;
+      endRef.current = null;
+      // The page unmounts this view in answer, and the cleanup below disconnects noVNC.
       onEndedRef.current(message);
     }
+    endRef.current = finish;
 
     rpcRef.current
       .call("openSession", { hostId })
@@ -142,10 +159,31 @@ export function VncSession({ hostId, hostName, viewOnly, onEnded }: VncSessionPr
     return () => {
       disposed = true;
       rfbRef.current = null;
+      endRef.current = null;
       if (rfb !== null) rfb.disconnect();
       else socket?.close();
     };
   }, [hostId]);
+
+  useEffect(() => {
+    const element = screen.current;
+    if (!connected || element === null) return;
+    let lastInput = Date.now();
+    const noteInput = () => {
+      lastInput = Date.now();
+    };
+    // Capture: noVNC handles these on its canvas inside the element and may stop them there.
+    for (const type of INPUT_EVENTS) element.addEventListener(type, noteInput, { capture: true, passive: true });
+    const timer = setInterval(() => {
+      if (Date.now() - lastInput >= INPUT_IDLE_MS) {
+        endRef.current?.(`Closed after ${SESSION_LIMITS.idleMinutes} minutes without keyboard or mouse use.`);
+      }
+    }, INPUT_IDLE_CHECK_MS);
+    return () => {
+      clearInterval(timer);
+      for (const type of INPUT_EVENTS) element.removeEventListener(type, noteInput, { capture: true });
+    };
+  }, [connected]);
 
   function signIn(values: Partial<Record<CredentialType, string>>): void {
     setStage({ kind: "signing-in" });
