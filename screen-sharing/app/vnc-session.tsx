@@ -1,41 +1,18 @@
 /**
- * One live session: a ticket from the server, a WebSocket to the relay, and
- * noVNC drawing the screen into a div. Mounted only while the user wants the
- * session; unmounting it — Disconnect, leaving the page, closing the window —
- * closes the socket, and the server drops its side with it.
+ * The live screen on the page: the window's session (session-store.ts) shown
+ * in place, with the sign-in form and the "Connecting…" notes over it.
+ * Unmounting this — leaving the page — only puts the screen away; the session
+ * keeps running until it is disconnected or ends on its own.
  *
  * The sign-in macOS asks for is typed into a form here and handed straight to
  * noVNC; nothing keeps it, logs it or sends it anywhere else.
- *
- * A session nobody uses ends here, not on the server: noVNC keeps bytes
- * moving as long as the page is open (it asks for an update after every one,
- * and the menu-bar clock changes each minute), so only the page can tell that
- * no key, click, touch or pointer movement has reached the screen.
  */
-import { useEffect, useRef, useState, type FormEvent } from "react";
-import { useRpc } from "@get-bb/plugin-sdk/app";
+import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent } from "react";
 
-import { SESSION_LIMITS } from "../shared/channels";
-import type { RpcContract } from "../shared/contract";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Input } from "@/components/ui/input";
-import { endMessage, type SessionEnd } from "./end-message";
-import { createRfb, openRelaySocket, type Rfb } from "./rfb";
-import { relayUrl } from "./relay-url";
-
-type CredentialType = "username" | "password" | "target";
-
-type Stage =
-  | { kind: "connecting" }
-  | { kind: "credentials"; types: CredentialType[] }
-  | { kind: "signing-in" }
-  | { kind: "connected" };
-
-const INPUT_IDLE_MS = SESSION_LIMITS.idleMinutes * 60_000;
-const INPUT_IDLE_CHECK_MS = 30_000;
-/** Input on the screen that counts as someone using it. */
-const INPUT_EVENTS = ["keydown", "pointerdown", "pointermove", "wheel", "touchstart"] as const;
+import { screenSession, type CredentialType, type ScreenSessionSnapshot } from "./session-store";
 
 const FIELD_LABELS: Record<CredentialType, string> = {
   username: "User name",
@@ -43,18 +20,18 @@ const FIELD_LABELS: Record<CredentialType, string> = {
   target: "Target",
 };
 
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+export function useScreenSession(): ScreenSessionSnapshot {
+  return useSyncExternalStore(screenSession.subscribe, screenSession.getSnapshot);
 }
 
-function CredentialsForm({ hostName, types, onSubmit }: { hostName: string; types: CredentialType[]; onSubmit(values: Partial<Record<CredentialType, string>>): void }) {
+function CredentialsForm({ hostName, types }: { hostName: string; types: CredentialType[] }) {
   const [values, setValues] = useState<Partial<Record<CredentialType, string>>>({});
 
   function submit(event: FormEvent) {
     event.preventDefault();
     const entered = values;
     setValues({});
-    onSubmit(entered);
+    screenSession.sendCredentials(entered);
   }
 
   return (
@@ -82,121 +59,31 @@ function CredentialsForm({ hostName, types, onSubmit }: { hostName: string; type
   );
 }
 
-export interface VncSessionProps {
-  hostId: string;
-  hostName: string;
-  viewOnly: boolean;
-  /** The session is over, for the reason given; the page unmounts this. */
-  onEnded(message: string): void;
+/** Lends the session's screen element a place on the page while the page is open. */
+function ScreenMount() {
+  const host = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const container = host.current;
+    if (container === null) return;
+    const element = screenSession.element;
+    container.append(element);
+    screenSession.focus();
+    return () => element.remove();
+  }, []);
+  return <div ref={host} data-testid="vnc-screen" className="min-h-0 flex-1 overflow-hidden" />;
 }
 
-export function VncSession({ hostId, hostName, viewOnly, onEnded }: VncSessionProps) {
-  // Read through a ref: the session must not restart if the client object ever changes identity.
-  const rpc = useRpc<RpcContract>();
-  const rpcRef = useRef(rpc);
-  rpcRef.current = rpc;
-  const screen = useRef<HTMLDivElement>(null);
-  const rfbRef = useRef<Rfb | null>(null);
-  const viewOnlyRef = useRef(viewOnly);
-  const onEndedRef = useRef(onEnded);
-  onEndedRef.current = onEnded;
-  const [stage, setStage] = useState<Stage>({ kind: "connecting" });
-  const connected = stage.kind === "connected";
-  /** Ends the session with a message; set while one is starting or open. */
-  const endRef = useRef<((message: string) => void) | null>(null);
-
-  useEffect(() => {
-    viewOnlyRef.current = viewOnly;
-    if (rfbRef.current !== null) rfbRef.current.viewOnly = viewOnly;
-  }, [viewOnly]);
-
-  useEffect(() => {
-    let disposed = false;
-    let socket: WebSocket | null = null;
-    let rfb: Rfb | null = null;
-    const end: SessionEnd = { close: null, securityFailure: null, connected: false };
-
-    function finish(message: string): void {
-      if (disposed) return;
-      disposed = true;
-      rfbRef.current = null;
-      endRef.current = null;
-      // The page unmounts this view in answer, and the cleanup below disconnects noVNC.
-      onEndedRef.current(message);
-    }
-    endRef.current = finish;
-
-    rpcRef.current
-      .call("openSession", { hostId })
-      .then(({ token }) => {
-        if (disposed || screen.current === null) return;
-        const opened = openRelaySocket(relayUrl(window.location.origin, hostId, token));
-        socket = opened;
-        // Registered before noVNC's own handler, so it has run when noVNC reports the disconnect.
-        opened.addEventListener("close", (event) => {
-          end.close = { code: event.code, reason: event.reason };
-        });
-        const client = createRfb(screen.current, opened);
-        rfb = client;
-        rfbRef.current = client;
-        client.viewOnly = viewOnlyRef.current;
-        client.addEventListener("credentialsrequired", (event) => {
-          if (!disposed) setStage({ kind: "credentials", types: event.detail.types });
-        });
-        client.addEventListener("securityfailure", (event) => {
-          end.securityFailure = event.detail.reason ?? `macOS refused the sign-in (status ${event.detail.status})`;
-        });
-        client.addEventListener("connect", () => {
-          end.connected = true;
-          if (disposed) return;
-          setStage({ kind: "connected" });
-          client.focus({ preventScroll: true });
-        });
-        client.addEventListener("disconnect", () => finish(endMessage(end)));
-      })
-      .catch((error: unknown) => finish(`Could not start a session: ${errorText(error)}`));
-
-    return () => {
-      disposed = true;
-      rfbRef.current = null;
-      endRef.current = null;
-      if (rfb !== null) rfb.disconnect();
-      else socket?.close();
-    };
-  }, [hostId]);
-
-  useEffect(() => {
-    const element = screen.current;
-    if (!connected || element === null) return;
-    let lastInput = Date.now();
-    const noteInput = () => {
-      lastInput = Date.now();
-    };
-    // Capture: noVNC handles these on its canvas inside the element and may stop them there.
-    for (const type of INPUT_EVENTS) element.addEventListener(type, noteInput, { capture: true, passive: true });
-    const timer = setInterval(() => {
-      if (Date.now() - lastInput >= INPUT_IDLE_MS) {
-        endRef.current?.(`Closed after ${SESSION_LIMITS.idleMinutes} minutes without keyboard or mouse use.`);
-      }
-    }, INPUT_IDLE_CHECK_MS);
-    return () => {
-      clearInterval(timer);
-      for (const type of INPUT_EVENTS) element.removeEventListener(type, noteInput, { capture: true });
-    };
-  }, [connected]);
-
-  function signIn(values: Partial<Record<CredentialType, string>>): void {
-    setStage({ kind: "signing-in" });
-    rfbRef.current?.sendCredentials(values);
-  }
-
+export function LiveScreen() {
+  const session = useScreenSession();
+  const { stage } = session;
+  const hostName = session.hostName ?? "the Mac";
   return (
     <div className="relative flex min-h-0 flex-1 bg-muted">
-      <div ref={screen} data-testid="vnc-screen" className="min-h-0 flex-1 overflow-hidden" />
-      {stage.kind === "connected" ? null : (
+      <ScreenMount />
+      {stage.kind === "connected" || stage.kind === "idle" ? null : (
         <div className="absolute inset-0 flex items-center justify-center p-4">
           {stage.kind === "credentials" ? (
-            <CredentialsForm hostName={hostName} types={stage.types} onSubmit={signIn} />
+            <CredentialsForm hostName={hostName} types={stage.types} />
           ) : (
             <p className="flex items-center gap-2 text-sm text-muted-foreground">
               <Icon name="Spinner" />

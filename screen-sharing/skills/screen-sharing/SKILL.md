@@ -33,7 +33,8 @@ sidebar (or the palette's *Screen Sharing: open the server Mac's screen*) and pr
   or `unsupported`.
 - Explain how to turn it on: on that Mac, **System Settings → General → Sharing → Screen Sharing**.
   macOS does not let a script turn it on. "Allow access for: Only these users" limits who can sign in.
-- Explain the limits: a session ends when its page closes, after 30 minutes without keyboard or mouse
-  use, after 8 hours, or with **Close all** (in the page's title bar, and on the pill in the corner of
-  every bb window while a session is open). The user signs in with a macOS account every time; nothing keeps
-  the password.
+- Explain the limits: a session keeps running in its bb window while the user is on other pages, and
+  ends on **Disconnect**, when the window closes, after 30 minutes without keyboard or mouse use, after
+  8 hours, or with **Close all** (in the page's title bar, and on the pill in the corner of every bb
+  window while a session is open). The user signs in with a macOS account each time they connect;
+  nothing keeps the password.

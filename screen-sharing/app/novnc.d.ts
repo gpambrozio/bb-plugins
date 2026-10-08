@@ -30,6 +30,7 @@ declare module "@novnc/novnc" {
     clipViewport: boolean;
     resizeSession: boolean;
     focusOnClick: boolean;
+    showDotCursor: boolean;
     background: string;
     disconnect(): void;
     sendCredentials(credentials: RfbCredentials): void;

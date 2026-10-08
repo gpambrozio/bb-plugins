@@ -1,7 +1,8 @@
 /**
  * The Screen Sharing page: the Mac running the bb server, whether its Screen
  * Sharing answers, and — once the user presses Connect — its screen. The
- * session lives only while this page is on screen: leaving the page ends it.
+ * session belongs to the window (session-store.ts), not to this page: leaving
+ * the page puts the screen away, coming back shows the same live session.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRpc, type PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
@@ -11,7 +12,8 @@ import type { RpcContract } from "../shared/contract";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { useCloseAll, usePageOpen, useSessions } from "./sessions";
-import { VncSession } from "./vnc-session";
+import { screenSession } from "./session-store";
+import { LiveScreen, useScreenSession } from "./vnc-session";
 
 const SHARING_SETTINGS = "System Settings → General → Sharing";
 
@@ -129,59 +131,61 @@ export function SessionsHeader(_props: PluginNavPanelProps) {
 
 export function ScreenPanel(_props: PluginNavPanelProps) {
   usePageOpen();
+  const rpc = useRpc<RpcContract>();
+  const session = useScreenSession();
   const { status, error, checking, check } = useStatus();
-  const [live, setLive] = useState(false);
-  const [viewOnly, setViewOnly] = useState(false);
-  const [ended, setEnded] = useState<string | null>(null);
+  const live = session.stage.kind !== "idle";
 
-  const onEnded = useCallback((message: string) => {
-    setLive(false);
-    setEnded(message);
-  }, []);
-
-  if (status === null) {
-    return error !== null ? (
-      <Centered title="Could not check Screen Sharing">
-        <p>{error}</p>
-        <CheckAgain checking={checking} onCheck={check} />
-      </Centered>
-    ) : (
-      <Centered>
-        <p className="flex items-center gap-2">
-          <Icon name="Spinner" />
-          Checking Screen Sharing…
-        </p>
-      </Centered>
-    );
+  // A session still running from an earlier visit is shown whatever a new status check says.
+  if (!live) {
+    if (status === null) {
+      return error !== null ? (
+        <Centered title="Could not check Screen Sharing">
+          <p>{error}</p>
+          <CheckAgain checking={checking} onCheck={check} />
+        </Centered>
+      ) : (
+        <Centered>
+          <p className="flex items-center gap-2">
+            <Icon name="Spinner" />
+            Checking Screen Sharing…
+          </p>
+        </Centered>
+      );
+    }
+    if (status.state !== "ready") return <NotReady status={status} checking={checking} onCheck={check} />;
   }
 
-  if (status.state !== "ready") return <NotReady status={status} checking={checking} onCheck={check} />;
-
+  const hostName = (live ? session.hostName : status?.hostName) ?? "";
   // macOS's sign-in needs WebCrypto, which browsers offer only to https pages and to the machine itself.
   const insecure = window.isSecureContext === false;
 
   /** Starts a session; the toolbar's Connect and the one under the page's text both do this. */
   function connect(): void {
-    setEnded(null);
-    setLive(true);
+    if (status === null || status.state !== "ready") return;
+    screenSession.connect({
+      openSession: (hostId) => rpc.call("openSession", { hostId }),
+      hostId: status.hostId,
+      hostName: status.hostName,
+    });
   }
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2">
-        <span className="min-w-0 flex-1 truncate text-sm font-medium">{status.hostName}</span>
+        <span className="min-w-0 flex-1 truncate text-sm font-medium">{hostName}</span>
         <Button
           type="button"
           size="sm"
           variant="ghost"
-          aria-pressed={viewOnly}
-          onClick={() => setViewOnly((value) => !value)}
+          aria-pressed={session.viewOnly}
+          onClick={() => screenSession.setViewOnly(!session.viewOnly)}
         >
-          <Icon name={viewOnly ? "EyeOff" : "Eye"} />
+          <Icon name={session.viewOnly ? "EyeOff" : "Eye"} />
           View only
         </Button>
         {live ? (
-          <Button type="button" size="sm" variant="outline" onClick={() => onEnded("Disconnected.")}>
+          <Button type="button" size="sm" variant="outline" onClick={() => screenSession.disconnect()}>
             Disconnect
           </Button>
         ) : (
@@ -191,10 +195,10 @@ export function ScreenPanel(_props: PluginNavPanelProps) {
         )}
       </div>
       {live ? (
-        <VncSession hostId={status.hostId} hostName={status.hostName} viewOnly={viewOnly} onEnded={onEnded} />
+        <LiveScreen />
       ) : (
-        <Centered title={`Connect to ${status.hostName}`}>
-          {ended !== null ? <p className="font-medium text-foreground">{ended}</p> : null}
+        <Centered title={`Connect to ${hostName}`}>
+          {session.ended !== null ? <p className="font-medium text-foreground">{session.ended}</p> : null}
           {insecure ? (
             <p className="text-warning-text">
               This page was opened at a plain http:// address, where the browser blocks macOS’s sign-in. Open bb on
@@ -203,17 +207,18 @@ export function ScreenPanel(_props: PluginNavPanelProps) {
           ) : null}
           <p>
             You see and control this Mac’s screen through bb, at home or through getbb.app. macOS asks for a user name and
-            password every time; bb does not keep them.
+            password each time you connect; bb does not keep them.
           </p>
-          {!status.signInSupported ? (
+          {status !== null && !status.signInSupported ? (
             <p className="text-warning-text">
               This Mac offers no sign-in method this viewer knows (security types {status.securityTypes.join(", ")}).
               Connecting will likely fail.
             </p>
           ) : null}
           <p>
-            A session closes when you leave this page, after {SESSION_LIMITS.idleMinutes} minutes without keyboard or
-            mouse use, and after {SESSION_LIMITS.maxHours} hours.
+            A session keeps running in this bb window while you use other pages, and is here again, still signed in,
+            when you come back. It ends when you press Disconnect or Close all, when you close this window, after{" "}
+            {SESSION_LIMITS.idleMinutes} minutes without keyboard or mouse use, and after {SESSION_LIMITS.maxHours} hours.
           </p>
           <Button type="button" disabled={insecure} onClick={connect}>
             Connect

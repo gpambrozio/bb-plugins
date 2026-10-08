@@ -19,8 +19,9 @@ findings are summarised under *Decisions*.
 | `shared/channels.ts` | Route, realtime channel, close codes, limits and zod shapes; no SDK import, so the app may use it. |
 | `shared/contract.ts` | The app ⇄ server RPC contract. The app imports it as a type only. |
 | `app/screen-panel.tsx` | The page: status and System Settings guidance, Connect/Disconnect, View only, the title bar's Close all. |
-| `app/vnc-session.tsx` | One session: ticket → WebSocket → noVNC; the sign-in form; the input-idle disconnect; why it ended. |
-| `app/rfb.ts` | The seam the page's tests replace: `new WebSocket` and noVNC's `RFB`. |
+| `app/session-store.ts` | The window's session, outside React: ticket → WebSocket → noVNC into an element it owns; the input-idle disconnect; the local-cursor CSS; why it ended. |
+| `app/vnc-session.tsx` | The live screen on the page: lends the store's element a place while the page is open; the sign-in form. |
+| `app/rfb.ts` | The seam the page's tests replace: `new WebSocket` and noVNC's `RFB` (scaling, dot cursor). |
 | `app/sessions.tsx` | The open sessions as the app sees them; the sidebar "Live" and the corner Close all pill. |
 | `app/novnc.d.ts` | Types for the part of noVNC's `RFB` used here; noVNC ships none. |
 
@@ -53,10 +54,25 @@ nothing distinguishes the app, so the CLI and agents can mint tickets too. They 
 user name and password to get past Screen Sharing's sign-in, and the skill tells agents never to try.
 Do not claim more than this in docs or messages.
 
-**Idle is measured in the page.** noVNC asks for a screen update after every one it gets and the
-menu-bar clock changes each minute, so bytes flow as long as a page is open. The server's 30-minute
-limit therefore only catches clients that went away (no traffic at all); `VncSession` ends a session
-after 30 minutes without a key, click, touch, wheel or pointer movement on the screen.
+**A session belongs to the window, not the page.** bb unmounts the page whenever the user opens
+something else but keeps the plugin's app module loaded for the life of the window, so the session
+(`screenSession` in `app/session-store.ts`) lives at module scope: the WebSocket, noVNC's client and a
+`div` noVNC draws into. The page appends that `div` while open and removes it on unmount; noVNC keeps
+running detached (a 0×0 target scales to 0, and its ResizeObserver rescales on reattach). Coming back
+shows the same connection, already signed in. Nothing about the sign-in is kept to make this work —
+the live connection is what persists. One session per window; another window has its own.
+
+**Idle is measured in the window.** noVNC asks for a screen update after every one it gets and the
+menu-bar clock changes each minute, so bytes flow as long as a session is open, seen or not. The
+server's 30-minute limit therefore only catches clients that went away (no traffic at all); the store
+ends a session after 30 minutes without a key, click, touch, wheel or pointer movement on its element
+— which an unseen, detached screen never gets.
+
+**The pointer.** noVNC sets its canvas's CSS cursor to `none` until the server sends a cursor shape
+(Cursor or VMware cursor pseudo-encoding), and macOS Screen Sharing sends none it can draw (noVNC
+issue #1430), so the pointer vanished over the screen. `LOCAL_CURSOR_CSS` shows the ordinary arrow
+while the canvas says `cursor: none` — the local pointer is exactly where a click lands — and leaves a
+real remote cursor (`url(…)`) alone; `showDotCursor` covers a remote cursor that is fully transparent.
 
 **Never expose a port.** No `bb connect expose`, no `declareSharedPorts`, no listening socket. The
 gate carries only HTTP and WebSockets, so raw VNC could not cross it anyway, and an exposed share
@@ -83,8 +99,10 @@ user is the one viewing.
   the WebSocket; the sweep (every 15 s) ends sessions with no traffic for 30 min or older than 8 h;
   `closeAll` ends them all (4003). On reload or disable bb closes the plugin's sockets itself with 1012
   before the dispose hooks run, and `bb.onDispose` then ends every session, which destroys the TCP
-  sockets (its 4004 rarely reaches a page). The page ends a session after 30 min without input;
-  unmounting the session view disconnects noVNC, and a ticket that arrives after unmount is never used.
+  sockets (its 4004 rarely reaches a page). The store ends a session after 30 min without input,
+  seen or not, on Disconnect, and on `pagehide` (the window closing); a ticket that arrives after
+  Disconnect is never used. Leaving the page does not end a session — the sidebar "Live" and the
+  corner pill are how an unseen one stays visible.
 - **Open sessions are visible.** Every open and close publishes the list; the sidebar row and a corner
   pill in every window show it, and both the pill and the page's title bar offer Close all.
 

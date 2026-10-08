@@ -3,9 +3,10 @@
  * The page against a fake server, with noVNC and the relay's WebSocket
  * replaced: it points at System Settings when Screen Sharing is off, a
  * session asks for a ticket and opens the relay with it, the sign-in goes to
- * noVNC and nowhere else, View only reaches noVNC, and every way out —
- * Disconnect, leaving the page, the server ending it — closes the session and
- * says why.
+ * noVNC and nowhere else, View only reaches noVNC, leaving the page keeps the
+ * session for when the user comes back, the pointer stays visible, and every
+ * way out — Disconnect, no input, the server ending it — closes the session
+ * and says why.
  */
 import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import type { PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
@@ -15,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CloseCode, SESSIONS_CHANGED, type ScreenStatus } from "../shared/channels";
 import type { RpcContract } from "../shared/contract";
 import { ScreenPanel, SessionsHeader } from "./screen-panel";
+import { screenSession } from "./session-store";
 
 class FakeSocket extends EventTarget {
   closed = false;
@@ -79,7 +81,11 @@ beforeEach(() => {
   rfbs.length = 0;
 });
 
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  // The session belongs to the window, so it outlives each test's page.
+  screenSession.reset();
+});
 
 const ready: ScreenStatus = {
   hostId: "host_mini",
@@ -196,13 +202,13 @@ describe("the Screen Sharing page", () => {
     act(() => rfb.emit("connect"));
     expect(screen.queryByText("Signing in…")).toBeNull();
     expect(rfb.focused).toBe(1);
-    expect(rfb.target).toBe(screen.getByTestId("vnc-screen"));
+    expect(rfb.target.parentElement).toBe(screen.getByTestId("vnc-screen"));
   });
 
   it("connects from the button under the page's text and from the toolbar alike", async () => {
     const view = renderPanel();
     const { body } = await connectButtons();
-    expect(body.closest("div")?.textContent).toContain("A session closes when you leave this page");
+    expect(body.closest("div")?.textContent).toContain("A session keeps running in this bb window");
     const fromBody = await connect("body");
     fireEvent.click(screen.getByRole("button", { name: "Disconnect" }));
     expect(fromBody.disconnects).toBe(1);
@@ -235,21 +241,50 @@ describe("the Screen Sharing page", () => {
     await connectButtons();
   });
 
-  it("disconnects when the page goes away", async () => {
-    const view = renderPanel();
+  it("keeps the session when the user leaves the page, and shows the same one on return", async () => {
+    const first = renderPanel();
     const rfb = await connect();
-    view.unmount();
-    expect(rfb.disconnects).toBe(1);
+    act(() => rfb.emit("credentialsrequired", { types: ["username", "password"] }));
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "hunter2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    act(() => rfb.emit("connect"));
+    first.unmount();
+
+    expect(rfb.disconnects).toBe(0);
+    expect(rfb.socket.closed).toBe(false);
+    expect(rfb.target.isConnected).toBe(false);
+
+    const second = renderPanel();
+    expect(await screen.findByRole("button", { name: "Disconnect" })).toBeTruthy();
+    expect(rfb.target.parentElement).toBe(screen.getByTestId("vnc-screen"));
+    expect(screen.queryByLabelText("Password")).toBeNull();
+    expect(rfbs).toHaveLength(1);
+    expect(rfb.credentials).toHaveLength(1);
+    expect(second.rpcCalls.some((call) => call.method === "openSession")).toBe(false);
+    expect(rfb.focused).toBe(2);
   });
 
-  it("never opens a socket when the page goes away before the ticket arrives", async () => {
+  it("never opens a socket when Disconnect comes before the ticket", async () => {
     let release: (value: { token: string; expiresAt: number }) => void = () => {};
-    const view = renderPanel({ openSession: () => new Promise((resolve) => (release = resolve)) });
+    renderPanel({ openSession: () => new Promise((resolve) => (release = resolve)) });
     fireEvent.click((await connectButtons()).body);
-    view.unmount();
+    fireEvent.click(await screen.findByRole("button", { name: "Disconnect" }));
     release({ token: "late", expiresAt: 0 });
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(sockets).toEqual([]);
+    expect(await screen.findByText("Disconnected.")).toBeTruthy();
+  });
+
+  it("shows a pointer over the screen while macOS sends no cursor of its own", async () => {
+    renderPanel();
+    const rfb = await connect();
+    const canvas = document.createElement("canvas");
+    rfb.target.append(canvas);
+    canvas.style.cursor = "none";
+    expect(getComputedStyle(canvas).cursor).toBe("default");
+    // A real remote cursor is left alone.
+    canvas.style.cursor = "url(data:image/png;base64,AAAA) 1 1, default";
+    expect(getComputedStyle(canvas).cursor).toContain("url(");
   });
 
   it("ends a session after 30 minutes without keyboard or mouse use, and not before", async () => {
@@ -260,10 +295,10 @@ describe("the Screen Sharing page", () => {
       act(() => rfb.emit("connect"));
       const minutes = (count: number) => act(() => vi.advanceTimersByTime(count * 60_000));
       minutes(29);
-      fireEvent.pointerMove(screen.getByTestId("vnc-screen"));
+      fireEvent.pointerMove(rfb.target);
       minutes(29);
       expect(rfb.disconnects).toBe(0);
-      fireEvent.keyDown(screen.getByTestId("vnc-screen"), { key: "a" });
+      fireEvent.keyDown(rfb.target, { key: "a" });
       minutes(29);
       expect(rfb.disconnects).toBe(0);
       minutes(2);
@@ -271,6 +306,24 @@ describe("the Screen Sharing page", () => {
     } finally {
       vi.useRealTimers();
     }
+    expect(await screen.findByText("Closed after 30 minutes without keyboard or mouse use.")).toBeTruthy();
+  });
+
+  it("ends an unseen session after 30 minutes without input, and says so on return", async () => {
+    const view = renderPanel();
+    const rfb = await connect();
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+    try {
+      act(() => rfb.emit("connect"));
+      view.unmount();
+      act(() => vi.advanceTimersByTime(29 * 60_000));
+      expect(rfb.disconnects).toBe(0);
+      act(() => vi.advanceTimersByTime(2 * 60_000));
+      expect(rfb.disconnects).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+    renderPanel();
     expect(await screen.findByText("Closed after 30 minutes without keyboard or mouse use.")).toBeTruthy();
   });
 

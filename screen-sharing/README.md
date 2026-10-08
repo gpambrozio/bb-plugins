@@ -7,14 +7,18 @@ Mac and no port is opened to the internet.
 
 - The **Screen Sharing** page in the sidebar checks whether Screen Sharing is on and, if it is not,
   says where to turn it on.
-- **Connect** asks for a macOS user name and password — every time; bb does not keep them — and then
-  shows the screen, scaled to fit. Click into it to type and use the mouse.
+- **Connect** asks for a macOS user name and password — each time you connect; bb does not keep
+  them — and then shows the screen, scaled to fit. Click into it to type and use the mouse.
 - **View only** watches without sending keys or clicks. It can be switched during a session.
-- **Disconnect**, or leaving the page, ends the session.
+- Leaving the page does not end the session: it keeps running in that bb window, and coming back shows
+  it again, still signed in. **Disconnect** on the page ends it.
+- The pointer stays visible over the screen: macOS's own cursor when it sends one, otherwise your
+  usual arrow, which is exactly where a click lands.
 - While any session is open — in this window, another window or on another device — the sidebar row
   says **Live** and a pill in the corner of every bb window offers **Close all**. The page's title bar
   has the same Close all.
-- A session also ends after 30 minutes without keyboard or mouse use, and after 8 hours.
+- A session also ends after 30 minutes without keyboard or mouse use (whether or not it is on screen),
+  after 8 hours, and when you close the bb window.
 
 This version reaches only the Mac running the bb server. Other Macs connected to bb are not offered.
 

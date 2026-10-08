@@ -15,9 +15,11 @@ The first release.
   keyboard and mouse, at that Mac or remotely through getbb.app. It uses the Mac's own Screen Sharing.
 - When Screen Sharing is off, the page says where in System Settings to turn it on, and checks again
   when asked.
-- A sign-in with a macOS user name and password every time; nothing keeps them.
+- A sign-in with a macOS user name and password each time you connect; nothing keeps them.
 - **View only**, which can be switched during a session.
 - **Live** beside the sidebar row and a **Close all** pill in the corner of every bb window while any
   session is open, on any device.
-- Sessions end when their page closes, after 30 minutes without keyboard or mouse use, and after 8
-  hours.
+- A session keeps running while you use other pages in the same bb window, and is still signed in
+  when you come back. It ends on Disconnect or Close all, when the window closes, after 30 minutes
+  without keyboard or mouse use, and after 8 hours.
+- The pointer stays visible over the screen.
