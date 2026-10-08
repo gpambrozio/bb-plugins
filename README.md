@@ -2,8 +2,8 @@
 
 Plugins for [bb](https://getbb.app). One folder per plugin, each self-contained.
 
-These are ports of the plugins in [`gpambrozio/paseo-plugins`](https://github.com/gpambrozio/paseo-plugins).
-Each port is tracked by its own issue.
+Most are ports of the plugins in [`gpambrozio/paseo-plugins`](https://github.com/gpambrozio/paseo-plugins),
+each tracked by its own issue; `screen-sharing` is new here.
 
 | Plugin | What it does | Status |
 | --- | --- | --- |
@@ -13,6 +13,7 @@ Each port is tracked by its own issue.
 | [`herald`](herald) | Speaks one sentence when an agent needs you, and lists what is waiting. | [Ported — 0.1.0 (#4)](https://github.com/gpambrozio/bb-plugins/issues/4) |
 | [`model-pricing`](model-pricing) | What every model costs, across five providers, in one table. | [Ported — 0.1.0 (#5)](https://github.com/gpambrozio/bb-plugins/issues/5) |
 | [`firstmate-crew`](firstmate-crew) | Talk to one first mate; it runs a crew of agents in their own worktrees. | [Ported — 0.1.0 (#6)](https://github.com/gpambrozio/bb-plugins/issues/6) |
+| [`screen-sharing`](screen-sharing) | See and control the bb server Mac's screen from inside bb, at home or through getbb.app. | New — 0.1.0 |
 
 ## Install
 
