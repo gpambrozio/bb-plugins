@@ -5,6 +5,26 @@ Notable changes to `screen-sharing`. The other plugins in this repository versio
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.2.0
+
+### Added
+
+- **Every Mac connected to your bb**, not only the one running the bb server. The Screen Sharing page
+  lists the machines enrolled in bb, each marked with whether its Screen Sharing is on, off, not a
+  Mac or offline; pick one to connect to it, or to see where on that Mac to turn Screen Sharing on.
+  Nothing extra is installed on the other Macs, and no port is opened on any of them.
+- Sessions to several Macs at once in the same bb window. The page shows the Mac you pick; the others
+  keep running out of sight, and Close all ends every one of them.
+- The page says what to expect from a Mac reached through bb's link to it: about half a second
+  between a key or click and the screen answering, and fewer screen updates a second. Typing does not
+  wait for each key to arrive before sending the next.
+
+### Changed
+
+- A page that cannot keep up with a busy screen now slows the Mac down instead of letting data pile up
+  on the way.
+- A bb window still showing the previous version of the page is asked to reload before it connects.
+
 ## 0.1.0
 
 The first release.
