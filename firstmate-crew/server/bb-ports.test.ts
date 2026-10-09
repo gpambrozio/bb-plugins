@@ -127,3 +127,39 @@ describe("bbThreads.origin", () => {
     expect(await bbThreads(sdkWithThread({ threadGone: true }).sdk).origin("thr_1")).toBeNull();
   });
 });
+
+describe("bbThreads.metadataOf", () => {
+  function sdkWithMetadata(metadata: Record<string, Record<string, string>>) {
+    return createFakeSdk({
+      pluginId: "firstmate-crew",
+      overrides: {
+        threads: {
+          experimental_listPluginMetadata: ({ threadIds }) => ({
+            threads: threadIds.filter((threadId) => threadId in metadata).map((threadId) => ({ threadId, metadata: metadata[threadId]! })),
+          }),
+        },
+      },
+    });
+  }
+
+  it("reads every thread's metadata in one request, leaving out a thread with none", async () => {
+    const { sdk, harness } = sdkWithMetadata({ thr_a: { task: "a" }, thr_c: { task: "c" } });
+    const found = await bbThreads(sdk).metadataOf(["thr_a", "thr_b", "thr_c"]);
+    expect(found).toEqual(new Map([["thr_a", { task: "a" }], ["thr_c", { task: "c" }]]));
+    expect(harness.callsTo("threads.experimental_listPluginMetadata")).toEqual([[expect.objectContaining({ threadIds: ["thr_a", "thr_b", "thr_c"] })]]);
+  });
+
+  it("splits a crew larger than bb answers for at once into requests of 200, and sends none for no threads", async () => {
+    const ids = Array.from({ length: 450 }, (_, index) => `thr_${index}`);
+    const { sdk, harness } = sdkWithMetadata({ thr_0: { task: "first" }, thr_449: { task: "last" } });
+    const found = await bbThreads(sdk).metadataOf(ids);
+    expect(found).toEqual(new Map([["thr_0", { task: "first" }], ["thr_449", { task: "last" }]]));
+    const batches = harness.callsTo("threads.experimental_listPluginMetadata").map(([args]) => (args as { threadIds: string[] }).threadIds);
+    expect(batches.map((batch) => batch.length)).toEqual([200, 200, 50]);
+    expect(batches.flat()).toEqual(ids);
+
+    const empty = sdkWithMetadata({});
+    expect(await bbThreads(empty.sdk).metadataOf([])).toEqual(new Map());
+    expect(empty.harness.callsTo("threads.experimental_listPluginMetadata")).toEqual([]);
+  });
+});

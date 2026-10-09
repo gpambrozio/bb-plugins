@@ -9,7 +9,8 @@ plugin in `gpambrozio/paseo-plugins`; the design and its decisions are in
 The repo root `AGENTS.md` covers what every plugin here shares: the per-folder npm layout, the commands,
 the SDK surface, the dependency rules. This file covers only what is specific to `firstmate`. Checked
 against bb 0.44.0 and `@get-bb/plugin-sdk` 0.5.29; the pinned launch and the interruption notices
-(below) against bb 0.45.0 and SDK 0.6.15, which the plugin needs since 0.2.4.
+(below) against bb 0.45.0 and SDK 0.6.15, which the plugin needs since 0.2.4; the board's one-request
+crew metadata read against bb 0.46.0 and SDK 0.6.37, which it needs since 0.5.0.
 
 ## Orientation
 

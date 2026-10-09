@@ -29,8 +29,8 @@ whatever is open on repositories you own, and what is assigned to you anywhere.
 
 ## What you need
 
-- bb 0.45 or later. On bb 0.44, install with `@^0.1.0` instead of `@^0.3.0`; it has everything but Add
-  to chat.
+- bb 0.46 or later. On bb 0.45, install with `@^0.4.0` instead of `@^0.5.0`; on bb 0.44, with `@^0.1.0`,
+  which has everything but Add to chat.
 - The GitHub CLI, [`gh`](https://cli.github.com), installed and signed in (`gh auth login`) **on the
   machine running the bb server**. The board uses that login; it stores no token of its own. Without it
   the plugin shows as needing configuration.
@@ -40,7 +40,7 @@ whatever is open on repositories you own, and what is assigned to you anywhere.
 ## Install
 
 ```bash
-bb plugin install 'git:github.com/gpambrozio/bb-plugins@^0.3.0' --plugin github-board --tag-prefix github-board/
+bb plugin install 'git:github.com/gpambrozio/bb-plugins@^0.5.0' --plugin github-board --tag-prefix github-board/
 ```
 
 The board is **GitHub Board** in the sidebar. The palette has *GitHub Board: open the board* and

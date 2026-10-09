@@ -8,7 +8,9 @@ six Paseo plugins in [`gpambrozio/paseo-plugins`](https://github.com/gpambrozio/
 by its own issue in this repository. Plugin code is full-trust and unsandboxed: the server half runs
 **inside the bb server's own process**, and the app half runs inside the bb app.
 
-The plugins pin **`@get-bb/plugin-sdk` 0.6.15** and CI builds them with **bb 0.45.0**. This file was
+The plugins pin **`@get-bb/plugin-sdk` 0.6.15**, or 0.6.37 where a plugin needs bb 0.46 (`firstmate-crew`,
+`github-board`), and CI builds them all with **bb 0.46.0**. Re-pin a plugin only when it needs a newer API
+(see `engines` below). This file was
 written against bb 0.44.0 and SDK 0.5.29 and re-checked against the 0.45.0 changes; a point that names
 bb 0.44 was observed there and still holds in 0.45 unless it says otherwise. When the two
 disagree with this file, the installed SDK wins — its declarations are the contract, and `bb guide

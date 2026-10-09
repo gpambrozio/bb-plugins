@@ -5,9 +5,10 @@
 # installs a plugin from git. It downloads its pinned esbuild and Tailwind on the first build, from
 # npm, into `~/.bb/plugins/toolchain-*` — a few seconds, so it is not cached.
 #
-# One version for every plugin, because the plugins move together in practice: each pins the SDK
-# with `bb plugin types`, which writes the running bb's SDK version. When that pin moves, move this
-# with it; a plugin typed against a newer SDK than this bb ships is being built by the wrong bb.
+# One version for every plugin: the bb that ships the newest SDK any plugin pins. A newer bb builds a
+# plugin pinned to an older SDK, so plugins re-pin only when they need a newer API. When the newest
+# pin moves, move this with it; a plugin typed against a newer SDK than this bb ships is being built
+# by the wrong bb.
 name: Set up bb
 description: Install Node and the bb CLI that builds plugins.
 
@@ -23,8 +24,9 @@ runs:
     - name: Install the bb CLI
       shell: bash
       env:
-        # The bb release that ships @get-bb/plugin-sdk 0.6.15, the version every plugin pins.
-        BB_VERSION: 0.45.0
+        # The bb release that ships @get-bb/plugin-sdk 0.6.37, the newest SDK a plugin pins. It also
+        # builds the plugins still pinned to 0.6.15, with only the older-pin warning.
+        BB_VERSION: 0.46.0
       # `--ignore-scripts`: the package's native install scripts serve the desktop app's terminals
       # and file watching, not the plugin build, which works without them.
       run: |

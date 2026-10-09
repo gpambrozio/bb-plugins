@@ -68,6 +68,11 @@ export interface ThreadsPort {
   children(parentId: string): Promise<ThreadInfo[]>;
   /** The thread's metadata in this plugin's namespace. */
   metadata(id: string): Promise<Record<string, unknown>>;
+  /**
+   * The metadata of many threads in this plugin's namespace, read in as few requests as bb allows. A
+   * thread with none is left out of the map.
+   */
+  metadataOf(ids: readonly string[]): Promise<Map<string, Record<string, unknown>>>;
   /** How many interactions (questions, permissions, plans) wait on the thread. */
   pendingInteractions(id: string): Promise<number>;
   /** The thread's latest assistant text, or null when it has none. */
