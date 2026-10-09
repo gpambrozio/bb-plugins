@@ -284,6 +284,10 @@ is enrolled — say which one you chose in the plugin's `AGENTS.md`. `launchd-jo
   connection to the server, which starts each `experimental_onSignal` handler as it arrives, so
   signals arrive in order but are dropped while the link is down, and nothing guarantees either. A
   stream over signals needs sequence numbers and its own credit (`screen-sharing`'s host link).
+- **Concurrent host calls are not delivered in order.** bb's server awaits per call
+  (`resolveHostEnvironment`) before sending each one to the daemon, so a call made after another can
+  reach the host first. Number calls whose order matters and reorder them on the host, or wait for
+  each answer before the next call.
 - **`context.experimental_retainWorker()` works only while the call that asks is running**; it throws
   afterwards. Take the lease in the handler that starts the background work, and release it on every
   way that work ends.

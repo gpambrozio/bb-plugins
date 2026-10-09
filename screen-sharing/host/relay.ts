@@ -3,9 +3,12 @@
  * connection to this Mac's Screen Sharing on 127.0.0.1:5900 per session,
  * driven by the server over bb's host link. Bytes are copied, never read.
  *
- * - Up: the server's `write` calls, numbered from 0. They are written to the
- *   socket in that order; one out of order ends the session, so a lost or
- *   reordered call can never scramble what reaches Screen Sharing.
+ * - Up: the server's `write` calls, numbered from 0, written to the socket in
+ *   that order. bb does not keep concurrent host calls in order (its server
+ *   awaits per call before sending each one), so a write that arrives early
+ *   waits here for the ones before it — at most `MAX_WRITES_AHEAD` of them. A
+ *   repeated number, or one too far ahead, ends the session: what reaches
+ *   Screen Sharing is never scrambled.
  * - Down: what Screen Sharing sends goes out as `data` signals, numbered from
  *   0 and at most `maxChunkBytes` each; the server ends the session on a gap.
  *   When the session ends here, a `closed` signal follows the last `data`.
@@ -45,6 +48,13 @@ export interface HostRelayOptions {
   log(message: string): void;
 }
 
+/**
+ * Writes held for the ones before them. The server has at most 8 in flight
+ * (`MAX_PIPELINED_WRITES` in server.ts), each at most 128 KiB, so this bounds
+ * what one session holds while it waits, with room to spare.
+ */
+export const MAX_WRITES_AHEAD = 32;
+
 function errorCode(error: unknown): string {
   const code = (error as { code?: unknown } | null)?.code;
   return typeof code === "string" ? code : "error";
@@ -56,6 +66,8 @@ function errorText(error: unknown): string {
 
 class HostSession {
   private nextWriteSeq = 0;
+  /** Writes that arrived before an earlier one, by number. */
+  private readonly early = new Map<number, string>();
   private nextDataSeq = 0;
   /** Bytes sent to the server as `data`, and acknowledged by it. */
   private emitted = 0;
@@ -89,12 +101,21 @@ class HostSession {
   write(seq: number, data: string): void {
     this.heard();
     if (this.ended || this.ending !== null) return;
-    if (seq !== this.nextWriteSeq) {
-      this.end(`bytes from the viewer arrived out of order (expected ${this.nextWriteSeq}, got ${seq})`, true, true);
+    if (seq < this.nextWriteSeq || this.early.has(seq)) {
+      this.end(`bytes from the viewer arrived twice (write ${seq})`, true, true);
       return;
     }
-    this.nextWriteSeq++;
-    this.socket.write(Buffer.from(data, "base64"));
+    if (seq >= this.nextWriteSeq + MAX_WRITES_AHEAD) {
+      this.end(`bytes from the viewer went missing (waiting for write ${this.nextWriteSeq}, got ${seq})`, true, true);
+      return;
+    }
+    this.early.set(seq, data);
+    // Write everything that is now in order.
+    for (let next = this.early.get(this.nextWriteSeq); next !== undefined; next = this.early.get(this.nextWriteSeq)) {
+      this.early.delete(this.nextWriteSeq);
+      this.nextWriteSeq++;
+      this.socket.write(Buffer.from(next, "base64"));
+    }
     if (this.socket.writableLength > this.options.maxWriteBufferBytes) {
       this.end("Screen Sharing is not reading", true, true);
     }
@@ -115,6 +136,7 @@ class HostSession {
   end(reason: string, failed: boolean, tell: boolean): void {
     if (this.ended) return;
     this.ended = true;
+    this.early.clear();
     this.pending.length = 0;
     this.pendingBytes = 0;
     this.socket.destroy();

@@ -29,7 +29,11 @@ export const hostContract = defineRpcContract({
   status: { input: Empty, output: ScreenCheckSchema },
   /** Connects a session to this Mac's Screen Sharing. Resolves once the TCP connection is up. */
   open: { input: z.object({ sessionId: SessionId }), output: Empty },
-  /** The viewer's next bytes. `seq` counts from 0; one out of order ends the session. */
+  /**
+   * The viewer's next bytes. `seq` counts from 0; bb may deliver concurrent
+   * calls out of order, so the host puts them back in order, and a repeated or
+   * missing one ends the session.
+   */
   write: { input: z.object({ sessionId: SessionId, seq: Seq, data: Chunk }), output: Empty },
   /** The viewer has received `bytes` of the session's data in all. */
   ack: { input: z.object({ sessionId: SessionId, bytes: Seq }), output: Empty },

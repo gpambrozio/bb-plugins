@@ -3,14 +3,14 @@
  * loopback port: bytes cross both ways untouched and in order, the Mac's
  * bytes go out in numbered chunks no bigger than a chunk, reading stops while
  * the viewer is a window behind, and every way a session ends — the Mac, the
- * server, Close all, a write out of order, the server going quiet, a failed
+ * server, Close all, a repeated or missing write, the server going quiet, a failed
  * signal — closes the TCP connection and releases the session's worker lease.
  */
 import { connect, type Socket } from "node:net";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { closedPort, sleep, startFakeVnc, until, type FakeVnc } from "../testing/fake-vnc";
-import { HostRelay, type HostRelayOptions, type SessionPort } from "./relay";
+import { HostRelay, MAX_WRITES_AHEAD, type HostRelayOptions, type SessionPort } from "./relay";
 
 interface FakePort extends SessionPort {
   data: { seq: number; bytes: Buffer }[];
@@ -139,17 +139,44 @@ describe("a remote session on its Mac", () => {
     expect(port.released).toBe(1);
   });
 
-  it("ends a session on a write out of order, before it reaches the Mac", async () => {
+  it("holds a write that arrives early until the ones before it are in, as bb's host calls can overtake each other", async () => {
     const host = relay();
     const port = fakePort();
     await host.open("s1", port);
-    host.write("s1", 1, b64("too early"));
-    expect(port.closed).toEqual([{ reason: "bytes from the viewer arrived out of order (expected 0, got 1)", failed: true }]);
-    await until(() => vnc.closed === 1, "the TCP close");
-    expect(Buffer.concat(vnc.received).toString()).toBe("");
-    expect(port.released).toBe(1);
+    // The RFB version reply, one byte per write, arriving as the live MacBook saw them: 6 first, then the rest.
+    const reply = "RFB 003.008\n";
+    const order = [6, 1, 0, 11, 2, 3, 5, 4, 10, 7, 9, 8];
+    for (const seq of order) {
+      host.write("s1", seq, b64(reply[seq] ?? ""));
+      if (seq === 6) {
+        await sleep(20);
+        expect(Buffer.concat(vnc.received).toString()).toBe("");
+      }
+    }
+    await until(() => Buffer.concat(vnc.received).length === 12, "the reply at the Mac");
+    expect(Buffer.concat(vnc.received).toString()).toBe(reply);
+    expect(port.closed).toEqual([]);
+  });
+
+  it("ends a session on a repeated write, or one too far ahead, before either reaches the Mac", async () => {
+    const host = relay();
+    const repeated = fakePort();
+    await host.open("s1", repeated);
+    host.write("s1", 0, b64("a"));
+    host.write("s1", 0, b64("a"));
+    expect(repeated.closed).toEqual([{ reason: "bytes from the viewer arrived twice (write 0)", failed: true }]);
+    expect(repeated.released).toBe(1);
+    expect(() => host.write("s1", 1, b64("x"))).toThrow("no such session");
+
+    const ahead = fakePort();
+    await host.open("s2", ahead);
+    host.write("s2", MAX_WRITES_AHEAD, b64("too far"));
+    expect(ahead.closed).toEqual([
+      { reason: `bytes from the viewer went missing (waiting for write 0, got ${MAX_WRITES_AHEAD})`, failed: true },
+    ]);
+    await until(() => vnc.closed === 2, "both TCP closes");
+    expect(Buffer.concat(vnc.received).toString()).toBe("a");
     expect(host.size).toBe(0);
-    expect(() => host.write("s1", 0, b64("x"))).toThrow("no such session");
   });
 
   it("when the Mac hangs up, passes on what it said first, then says the session closed", async () => {

@@ -21,6 +21,12 @@ export interface FakeDaemonOptions {
   /** Each machine's fake Screen Sharing port. */
   ports: Record<string, number>;
   oneWayMs: number;
+  /**
+   * Up to this much more on the way to the host, at random per call, so that
+   * concurrent calls overtake each other — as bb's own server lets them, since
+   * it awaits per call before sending each one.
+   */
+  callJitterMs?: number;
   windowBytes: number;
   silenceMs?: number;
   /** Answers `status` instead of probing. */
@@ -61,7 +67,7 @@ export class FakeDaemon {
 
   /** What bb's fake plugin host calls for `bb.hosts.experimental_client(...).call`. */
   readonly call = async ({ method, input, hostId }: Call): Promise<unknown> => {
-    await sleep(this.options.oneWayMs);
+    await sleep(this.options.oneWayMs + Math.random() * (this.options.callJitterMs ?? 0));
     if (this.down.has(hostId)) throw new Error(`host ${hostId} is not connected`);
     this.calls.push({ method, input, hostId });
     try {

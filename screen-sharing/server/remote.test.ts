@@ -39,12 +39,15 @@ interface Setup {
   laptop: FakeVnc;
 }
 
-async function setup(options: { oneWayMs?: number; windowBytes?: number; mac?: (socket: Socket) => void } = {}): Promise<Setup> {
+async function setup(
+  options: { oneWayMs?: number; callJitterMs?: number; windowBytes?: number; mac?: (socket: Socket) => void } = {},
+): Promise<Setup> {
   const laptop = await startFakeVnc(options.mac ?? ((socket) => socket.write("RFB 003.889\n")));
   cleanups.push(() => laptop.close());
   const daemon = new FakeDaemon({
     ports: { host_laptop: laptop.port, host_doxbook: laptop.port },
     oneWayMs: options.oneWayMs ?? 0,
+    callJitterMs: options.callJitterMs ?? 0,
     windowBytes: options.windowBytes ?? 1024 * 1024,
     status: (hostId) => {
       if (hostId === "host_linux") return { ...READY, state: "unsupported", rfbVersion: null, securityTypes: [], signInSupported: false };
@@ -159,6 +162,21 @@ describe("a remote session", () => {
     expect([...Buffer.concat(laptop.received)]).toEqual(frames.flatMap((frame) => [...frame]));
     expect(ws.closeCalls).toEqual([]);
     expect((await harness.callRpc("sessions", {})) as { sessions: unknown[] }).toMatchObject({ sessions: [{ hostId: "host_laptop" }] });
+  });
+
+  it("keeps the viewer's bytes in order when bb delivers the calls carrying them out of order", async () => {
+    // The live failure: typing at the MacBook's sign-in, pipelined writes overtook each other on bb's host link.
+    const { harness, laptop } = await setup({ oneWayMs: 5, callJitterMs: 40 });
+    const ws = await openSession(harness);
+    await until(() => received(ws).length === 12, "the greeting");
+    const typed = Array.from({ length: 120 }, (_, index) => new Uint8Array([4, 1, 0, 0, 0, 0, 0, 0x61 + (index % 26)]));
+    for (const key of typed) {
+      await ws.receive(key);
+      await sleep(1);
+    }
+    await until(() => Buffer.concat(laptop.received).length === typed.length * 8, "every key at the Mac", 10_000);
+    expect([...Buffer.concat(laptop.received)]).toEqual(typed.flatMap((key) => [...key]));
+    expect(ws.closeCalls).toEqual([]);
   });
 
   it("forwards the page's acknowledgements to the Mac, latest first", async () => {

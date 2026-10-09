@@ -4,8 +4,8 @@
  * through getbb.app is ≈0.6 s, so nothing here waits a round trip per key:
  *
  * - Up: the viewer's bytes are batched into `write` calls numbered from 0,
- *   with up to `maxPipelinedWrites` in flight at once. The host writes them in
- *   order and ends the session on one out of order.
+ *   with up to `maxPipelinedWrites` in flight at once. bb's host link may
+ *   deliver them out of order; the host puts them back in order.
  * - Down: `data` signals numbered from 0; a gap (a signal lost or reordered on
  *   the way) ends the session, since a VNC stream with a hole in it is garbage.
  * - Credit: the viewer's acknowledgements go to the host as `ack`, one call in
