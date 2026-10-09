@@ -9,9 +9,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- **Every Mac connected to your bb**, not only the one running the bb server. The Screen Sharing page
-  lists the machines enrolled in bb, each marked with whether its Screen Sharing is on, off, not a
-  Mac or offline; pick one to connect to it, or to see where on that Mac to turn Screen Sharing on.
+- **Every Mac connected to your bb**, not only the one running the bb server. A Mac picker in the
+  Screen Sharing page's title bar lists the machines enrolled in bb, each marked with whether its
+  Screen Sharing is on, off, not a Mac or offline; pick one to connect to it, or to see where on that Mac to turn Screen Sharing on.
   Nothing extra is installed on the other Macs, and no port is opened on any of them.
 - Sessions to several Macs at once in the same bb window. The page shows the Mac you pick; the others
   keep running out of sight, and Close all ends every one of them.

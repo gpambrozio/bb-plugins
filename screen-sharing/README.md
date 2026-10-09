@@ -5,9 +5,10 @@ server and every other Mac enrolled in it, at home or from anywhere through getb
 Mac's own **Screen Sharing**, drawn in a bb page by [noVNC](https://github.com/novnc/noVNC). Nothing
 extra is installed on any Mac and no port is opened to the internet.
 
-- The **Screen Sharing** page in the sidebar lists the machines enrolled in bb, each with whether its
-  Screen Sharing is on, off, not a Mac or offline. Pick one; if its Screen Sharing is off, the page
-  says where on that Mac to turn it on.
+- The **Screen Sharing** page in the sidebar has a Mac picker in its title bar: the Mac on show,
+  with a coloured dot for its state, and a menu of every machine enrolled in bb with whether its
+  Screen Sharing is on, off, not a Mac or offline (a sheet on a phone-sized window). Pick one; if its
+  Screen Sharing is off, the page says where on that Mac to turn it on.
 - **Connect** asks for a macOS user name and password — each time you connect; bb does not keep
   them — and then shows the screen, scaled to fit. Click into it to type and use the mouse.
 - **View only** watches without sending keys or clicks. It can be switched during a session.

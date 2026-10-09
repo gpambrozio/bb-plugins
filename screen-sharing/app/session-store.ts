@@ -474,8 +474,6 @@ export class ScreenSessions {
   private readonly listeners = new Set<() => void>();
   /** Bumped whenever a session starts or ends; a new store is idle, so making one changes nothing. */
   private version = 0;
-  /** The Mac picked last on the page in this window, so coming back shows it again. */
-  picked: string | null = null;
 
   for(hostId: string): ScreenSessionStore {
     let store = this.stores.get(hostId);
@@ -513,7 +511,6 @@ export class ScreenSessions {
   reset(): void {
     for (const store of this.stores.values()) store.reset();
     this.stores.clear();
-    this.picked = null;
     this.changed();
   }
 

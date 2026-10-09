@@ -25,7 +25,9 @@ findings are summarised under *Decisions*.
 | `shared/channels.ts` | Route, realtime channel, flow-control frames, close codes, session limits and zod shapes; no SDK import, so the app may use it. |
 | `shared/contract.ts` | The app ⇄ server RPC contract. The app imports it as a type only. |
 | `shared/host-contract.ts`, `shared/limits.ts` | The server ⇄ host contract and signals, and the numbers both ends share (port, windows, keepalive). The app imports neither. |
-| `app/screen-panel.tsx` | The page: the Mac picker with each one's status, System Settings guidance, Connect/Disconnect, View only, the title bar's Close all. |
+| `app/screen-panel.tsx` | The page: the picked Mac's status and System Settings guidance, Connect/Disconnect, View only; the title bar's right side (`SessionsHeader`: the picker, open sessions, Close all). |
+| `app/hosts.ts` | The machines, their statuses and the picked Mac, outside React: the page and the title bar are separate React trees and both read it. |
+| `app/host-picker.tsx` | The picker in the title bar: a dot and the picked Mac's name, opening bb's dropdown menu of every machine with its state (a sheet on a compact viewport). |
 | `app/session-store.ts` | One session per Mac per window, outside React: ticket → WebSocket → noVNC into an element it owns; the input-idle disconnect; the local-cursor CSS; why it ended. `screenSessions` holds them. |
 | `app/flow.ts` | The page's acknowledgements of what it received. |
 | `app/vnc-session.tsx` | The live screen on the page: lends the store's element a place while the page is open; the sign-in form. |
@@ -82,7 +84,16 @@ the live connection is what persists. One session per Mac per window (`screenSes
 another window has its own. Sessions to different Macs run at once: the page attaches the picked
 Mac's element and the others stay detached, input suspended, exactly as when the page is closed —
 `HostScreen` is keyed by host, so switching Macs is an unmount and a mount. Close all and `pagehide`
-end every store. The picked Mac is `screenSessions.picked`, window state like the sessions.
+end every store. The picked Mac is `hostDirectory.picked` (`app/hosts.ts`), window state like the
+sessions.
+
+**The picker is in the title bar.** `headerContent` is the only place a nav panel gets in bb's title
+bar: a `flex shrink-0` box on its right, while the title takes the rest and truncates. So the picker
+is compact — a dot coloured by state and the Mac's name, truncated, with the states in its menu —
+and sits left of the open sessions and Close all. The menu is bb's vendored dropdown
+(`components/ui/dropdown-menu.tsx`, copied from `github-board`), which portals out of the title bar
+and becomes a sheet on a compact viewport. The session toolbar shows no name; the picker says which
+Mac is on show. The page lists the machines and checks them when it opens; the title bar only reads.
 
 While the screen is off the page its input is suspended: `detach()` first releases every key and
 mouse button held over it — a real `keyup` per held key on noVNC's canvas, and a `mouseup` with no
@@ -148,9 +159,16 @@ which starts each handler as it arrives. So signals arrive in order in practice,
 guaranteed, and the design must not depend on either.
 
 - **Up:** the viewer's bytes are batched into `write` calls of at most 128 KiB, numbered from 0, with
-  up to 8 in flight (`MAX_PIPELINED_WRITES`). The host writes them to Screen Sharing in order and ends
-  the session on one out of order. Pipelining is what keeps typing from waiting a round trip per key;
-  serialised writes would make each key wait for the one before it.
+  up to 8 in flight (`MAX_PIPELINED_WRITES`). **bb does not deliver concurrent host calls in order**:
+  its server awaits `resolveHostEnvironment` for each call before sending it, so calls overtake each
+  other. The 0.2.0 candidate ended the session on the first one out of order, and every session to a
+  MacBook died while the user typed the password (the log said "expected 4, got 5"); twelve one-byte
+  writes reproduced it three times in three, and arrived as early as 6 before 0. So the host holds a
+  write that arrives early until the ones before it are in (`MAX_WRITES_AHEAD`, 32), and ends the
+  session only on a repeated number or one too far ahead. `testing/fake-daemon.ts`'s `callJitterMs`
+  makes calls overtake each other, and `server/remote.test.ts` types through it. Pipelining is what
+  keeps typing from waiting a round trip per key; serialised writes would make each key wait for the
+  one before it.
 - **Down:** the host coalesces what Screen Sharing sends into `data` signals of at most 128 KiB raw,
   numbered from 0, emitted one at a time. The server ends the session on a gap — a VNC stream with a
   hole is garbage — and ignores a signal from any host but the session's own.

@@ -1,109 +1,27 @@
 /**
  * The Screen Sharing page: the Macs enrolled in this bb, whether each one's
  * Screen Sharing answers, and — once the user presses Connect — the picked
- * Mac's screen. Sessions belong to the window (session-store.ts), one per
- * Mac, not to this page: leaving the page or picking another Mac puts the
- * screen away, coming back shows the same live session.
+ * Mac's screen. The picker sits in the page's title bar (host-picker.tsx),
+ * beside the open sessions and Close all. Sessions belong to the window
+ * (session-store.ts), one per Mac, not to this page: leaving the page or
+ * picking another Mac puts the screen away, coming back shows the same live
+ * session.
  */
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef } from "react";
 import { useRpc, type PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 
 import { SESSION_LIMITS, type HostEntry, type ScreenStatus } from "../shared/channels";
 import type { RpcContract } from "../shared/contract";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
+import { HostPicker, useLiveHere } from "./host-picker";
+import { currentHost, hostDirectory, useHostDirectory, UNCHECKED, type HostCheck } from "./hosts";
 import { useCloseAll, usePageOpen, useSessions } from "./sessions";
 import { KeysNotice, FullScreenButton, SendKeysMenu } from "./keys-toolbar";
 import { screenSessions, type ScreenSessionStore } from "./session-store";
 import { LiveScreen, useScreenSession } from "./vnc-session";
 
 const SHARING_SETTINGS = "System Settings → General → Sharing";
-
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-/** What the page knows about one Mac's Screen Sharing. */
-interface HostCheck {
-  status: ScreenStatus | null;
-  error: string | null;
-  checking: boolean;
-}
-
-const UNCHECKED: HostCheck = { status: null, error: null, checking: true };
-
-/**
- * The enrolled machines, listed once when the page opens, and each one's
- * status, checked once then and again on request — never on its own: a check
- * that failed mid-session would swap the session for the not-ready view. Every
- * Mac is checked at once, so the server's own (instant) does not wait on a
- * laptop's round trip. Only each Mac's latest check counts.
- */
-function useHosts() {
-  const rpc = useRpc<RpcContract>();
-  const rpcRef = useRef(rpc);
-  rpcRef.current = rpc;
-  const latest = useRef(new Map<string, number>());
-  const mounted = useRef(true);
-  const [hosts, setHosts] = useState<HostEntry[] | null>(null);
-  const [listError, setListError] = useState<string | null>(null);
-  const [checks, setChecks] = useState<Record<string, HostCheck>>({});
-
-  const check = useCallback((hostId: string) => {
-    const asked = (latest.current.get(hostId) ?? 0) + 1;
-    latest.current.set(hostId, asked);
-    const current = () => mounted.current && latest.current.get(hostId) === asked;
-    setChecks((all) => ({ ...all, [hostId]: { ...(all[hostId] ?? UNCHECKED), checking: true } }));
-    rpcRef.current
-      .call("status", { hostId })
-      .then((status) => {
-        if (current()) setChecks((all) => ({ ...all, [hostId]: { status, error: null, checking: false } }));
-      })
-      .catch((caught: unknown) => {
-        if (current()) setChecks((all) => ({ ...all, [hostId]: { ...(all[hostId] ?? UNCHECKED), error: errorText(caught), checking: false } }));
-      });
-  }, []);
-
-  const list = useCallback(() => {
-    setListError(null);
-    rpcRef.current
-      .call("hosts", {})
-      .then(({ hosts: listed }) => {
-        if (!mounted.current) return;
-        setHosts(listed);
-        for (const host of listed) check(host.id);
-      })
-      .catch((caught: unknown) => {
-        if (mounted.current) setListError(errorText(caught));
-      });
-  }, [check]);
-
-  useEffect(() => {
-    mounted.current = true;
-    list();
-    // A page that goes away mid-check ignores the answers.
-    return () => {
-      mounted.current = false;
-    };
-  }, [list]);
-
-  return { hosts, listError, checks, check, list };
-}
-
-/** The Macs with a live session in this window, read again whenever one starts or ends. */
-function useLiveHere(): string[] {
-  useSyncExternalStore(screenSessions.subscribe, screenSessions.getVersion);
-  return screenSessions.liveHostIds();
-}
-
-function pickDefault(hosts: HostEntry[], liveHere: string[]): string | null {
-  const ids = new Set(hosts.map((host) => host.id));
-  const lastPicked = screenSessions.picked;
-  if (lastPicked !== null && ids.has(lastPicked)) return lastPicked;
-  const live = liveHere.find((id) => ids.has(id));
-  if (live !== undefined) return live;
-  return (hosts.find((host) => host.isServer) ?? hosts[0])?.id ?? null;
-}
 
 function Centered({ title, children }: { title?: string; children: React.ReactNode }) {
   return (
@@ -173,84 +91,24 @@ function NotReady({ status, checking, onCheck }: { status: ScreenStatus; checkin
   );
 }
 
-/** A Mac's state in a word or two, for its place in the picker. */
-function pickerNote(host: HostEntry, check: HostCheck | undefined, live: boolean): { text: string; className: string } {
-  if (live) return { text: "Live", className: "text-destructive" };
-  // The latest check knows better than the list read when the page opened.
-  const status = check?.status ?? null;
-  if (status === null && !host.connected) return { text: "Offline", className: "text-muted-foreground" };
-  if (status === null) {
-    return check?.error != null ? { text: "Can't check", className: "text-warning-text" } : { text: "Checking…", className: "text-muted-foreground" };
-  }
-  switch (status.state) {
-    case "ready":
-      return { text: "On", className: "text-success" };
-    case "off":
-    case "not-listening":
-      return { text: "Screen Sharing off", className: "text-muted-foreground" };
-    case "refused":
-      return { text: "Refusing", className: "text-warning-text" };
-    case "unsupported":
-      return { text: "Not a Mac", className: "text-muted-foreground" };
-    case "offline":
-      return { text: "Offline", className: "text-muted-foreground" };
-    case "unreachable":
-      return { text: "Can't check", className: "text-warning-text" };
-  }
-}
-
-function HostPicker({
-  hosts,
-  checks,
-  live,
-  picked,
-  onPick,
-}: {
-  hosts: HostEntry[];
-  checks: Record<string, HostCheck>;
-  live: Set<string>;
-  picked: string;
-  onPick(hostId: string): void;
-}) {
-  return (
-    <div role="radiogroup" aria-label="Mac" className="flex flex-wrap gap-1 border-b border-border px-3 py-2">
-      {hosts.map((host) => {
-        const note = pickerNote(host, checks[host.id], live.has(host.id));
-        const selected = host.id === picked;
-        return (
-          <button
-            key={host.id}
-            type="button"
-            role="radio"
-            aria-checked={selected}
-            onClick={() => onPick(host.id)}
-            className={`flex min-w-0 max-w-full flex-col items-start rounded-md border px-2.5 py-1 text-left text-sm ${
-              selected ? "border-border bg-card shadow-sm" : "border-transparent hover:bg-state-hover"
-            }`}
-          >
-            <span className="max-w-48 truncate font-medium">{host.name}</span>
-            <span className={`text-xs ${note.className}`}>{note.text}</span>
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-/** The title bar's right side: open sessions on any device, and Close all. */
+/** The title bar's right side: the Mac picker, open sessions on any device, and Close all. */
 export function SessionsHeader(_props: PluginNavPanelProps) {
   const sessions = useSessions();
   const { closeAll, closing } = useCloseAll();
-  if (sessions.length === 0) return null;
   return (
-    <div className="flex items-center gap-2">
-      <span className="flex items-center gap-1.5 text-xs font-medium text-destructive">
-        <span className="size-2 rounded-full bg-destructive" aria-hidden />
-        {sessions.length === 1 ? "1 session open" : `${sessions.length} sessions open`}
-      </span>
-      <Button type="button" size="sm" variant="outline" disabled={closing} onClick={closeAll}>
-        Close all
-      </Button>
+    <div className="flex min-w-0 items-center gap-2">
+      <HostPicker />
+      {sessions.length > 0 ? (
+        <>
+          <span className="flex items-center gap-1.5 text-xs font-medium whitespace-nowrap text-destructive">
+            <span className="size-2 rounded-full bg-destructive" aria-hidden />
+            {sessions.length === 1 ? "1 session open" : `${sessions.length} sessions open`}
+          </span>
+          <Button type="button" size="sm" variant="outline" disabled={closing} onClick={closeAll}>
+            Close all
+          </Button>
+        </>
+      ) : null}
     </div>
   );
 }
@@ -300,8 +158,7 @@ function HostScreen({ host, check, onCheck, store }: { host: HostEntry; check: H
 
   return (
     <div ref={page} className="flex min-h-0 flex-1 flex-col bg-background">
-      <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2">
-        <span className="min-w-0 flex-1 truncate text-sm font-medium">{hostName}</span>
+      <div className="flex flex-wrap items-center justify-end gap-2 border-b border-border px-4 py-2">
         <Button type="button" size="sm" variant="ghost" aria-pressed={session.viewOnly} onClick={() => store.setViewOnly(!session.viewOnly)}>
           <Icon name={session.viewOnly ? "EyeOff" : "Eye"} />
           View only
@@ -364,16 +221,22 @@ function HostScreen({ host, check, onCheck, store }: { host: HostEntry; check: H
 
 export function ScreenPanel(_props: PluginNavPanelProps) {
   usePageOpen();
-  const { hosts, listError, checks, check, list } = useHosts();
+  const rpc = useRpc<RpcContract>();
+  const rpcRef = useRef(rpc);
+  rpcRef.current = rpc;
+  const directory = useHostDirectory();
   const liveHere = useLiveHere();
-  const sessions = useSessions();
-  const [picked, setPicked] = useState<string | null>(null);
 
-  if (hosts === null) {
-    return listError !== null ? (
+  // The machines, and each one's status, are read again every time the page opens.
+  useEffect(() => {
+    hostDirectory.refresh(rpcRef.current);
+  }, []);
+
+  if (directory.hosts === null) {
+    return directory.listError !== null ? (
       <Centered title="Could not list the Macs">
-        <p>{listError}</p>
-        <Button type="button" variant="outline" size="sm" onClick={list}>
+        <p>{directory.listError}</p>
+        <Button type="button" variant="outline" size="sm" onClick={() => hostDirectory.refresh(rpc)}>
           <Icon name="ArrowReloadHorizontal" />
           Try again
         </Button>
@@ -388,8 +251,7 @@ export function ScreenPanel(_props: PluginNavPanelProps) {
     );
   }
 
-  const current = (picked !== null && hosts.some((host) => host.id === picked) ? picked : null) ?? pickDefault(hosts, liveHere);
-  const host = hosts.find((entry) => entry.id === current);
+  const host = currentHost(directory, liveHere);
   if (host === undefined) {
     return (
       <Centered title="No machines">
@@ -398,16 +260,15 @@ export function ScreenPanel(_props: PluginNavPanelProps) {
     );
   }
 
-  const live = new Set([...liveHere, ...sessions.map((session) => session.hostId)]);
-  function pick(hostId: string): void {
-    screenSessions.picked = hostId;
-    setPicked(hostId);
-  }
-
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
-      {hosts.length > 1 ? <HostPicker hosts={hosts} checks={checks} live={live} picked={host.id} onPick={pick} /> : null}
-      <HostScreen key={host.id} host={host} check={checks[host.id] ?? UNCHECKED} onCheck={() => check(host.id)} store={screenSessions.for(host.id)} />
+      <HostScreen
+        key={host.id}
+        host={host}
+        check={directory.checks[host.id] ?? UNCHECKED}
+        onCheck={() => hostDirectory.check(rpc, host.id)}
+        store={screenSessions.for(host.id)}
+      />
     </div>
   );
 }
