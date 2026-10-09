@@ -1,5 +1,5 @@
 /** Words and small pure helpers the board shares. */
-import type { ColumnId, CrewState, ThreadStatus, WatchResult, WatchSummary } from "../shared/types";
+import type { BacklogItem, ColumnId, CrewState, ThreadStatus, WatchResult, WatchSummary } from "../shared/types";
 
 export const COLUMN_TITLES: Readonly<Record<ColumnId, string>> = {
   queued: "Queued",
@@ -71,4 +71,9 @@ export function watchStatusText(watch: WatchSummary, now: number = Date.now()): 
 /** A pull request's address without the host: "owner/repo/pull/12". */
 export function shortUrl(url: string): string {
   return url.replace(/^https?:\/\/(www\.)?github\.com\//, "");
+}
+
+/** What a held card's Answer box sends: the captain's words under the task they answer. The charter quotes it. */
+export function answerText(item: Pick<BacklogItem, "id" | "title">, text: string): string {
+  return `${item.id} — ${item.title}: ${text}`;
 }

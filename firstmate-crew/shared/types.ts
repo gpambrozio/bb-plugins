@@ -49,6 +49,16 @@ export type CrewReport = z.infer<typeof CrewReportSchema>;
 export const BacklogSectionSchema = z.enum(["in-flight", "queued", "done"]);
 export type BacklogSection = z.infer<typeof BacklogSectionSchema>;
 
+/**
+ * A button on a backlog item's card, from its `(actions: Label => prompt | …)` field: usually the
+ * captain's likely answers to a hold. Pressing it sends the prompt to the first mate, as a suggestion does.
+ */
+export const BacklogActionSchema = z.object({
+  label: z.string(),
+  prompt: z.string(),
+});
+export type BacklogAction = z.infer<typeof BacklogActionSchema>;
+
 export const BacklogItemSchema = z.object({
   section: BacklogSectionSchema,
   id: z.string(),
@@ -58,6 +68,7 @@ export const BacklogItemSchema = z.object({
   mode: z.string().nullable(),
   threadId: z.string().nullable(),
   hold: z.string().nullable(),
+  actions: z.array(BacklogActionSchema),
   blockedBy: z.string().nullable(),
   since: z.string().nullable(),
   url: z.string().nullable(),
