@@ -145,6 +145,21 @@ describe("Answer box", () => {
     expect(view.navigateCalls).toEqual([{ method: "toThread", threadId: "thr_mate" }]);
   });
 
+  it("keeps words typed while the send was out", async () => {
+    let land: (value: null) => void = () => {};
+    const view = renderCard(backlog(), () => new Promise((resolve) => (land = resolve)));
+    fireEvent.change(answerBox(), { target: { value: "Postgres" } });
+    fireEvent.click(sendButton());
+    await waitFor(() => expect(sendButton().disabled).toBe(true));
+    fireEvent.change(answerBox(), { target: { value: "Actually, wait for the benchmark" } });
+
+    land(null);
+    await waitFor(() => expect(view.changed).toHaveLength(1));
+    expect(answerBox().value).toBe("Actually, wait for the benchmark");
+    expect(view.rpcCalls).toEqual([{ method: "mate.ask", input: { text: "pick-db — Choose the database: Postgres" } }]);
+    expect(sendButton().disabled).toBe(false);
+  });
+
   it("sends on Enter", async () => {
     const view = renderCard(backlog({ actions: [] }));
     fireEvent.change(answerBox(), { target: { value: "Postgres" } });

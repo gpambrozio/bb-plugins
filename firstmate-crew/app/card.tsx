@@ -257,7 +257,9 @@ function AnswerBox({
       onSubmit={(event) => {
         event.preventDefault();
         if (answer === "" || sending) return;
-        onSend(answerText(item, answer), () => setText(""));
+        const sent = text;
+        // Clears only what was sent: words typed while the send was out stay.
+        onSend(answerText(item, answer), () => setText((current) => (current === sent ? "" : current)));
       }}
     >
       <Input
