@@ -238,7 +238,11 @@ function BacklogActions({
   );
 }
 
-/** A line for the captain's own answer to a hold, sent under the task's id and title. */
+/**
+ * A line for the captain's own answer to a hold, sent under the task's id and title. The line is shut while
+ * a send is out: a landed send clears it and may bring the first mate's thread into view, which unmounts a
+ * worker's panel, so words typed meanwhile would be lost either way.
+ */
 function AnswerBox({
   item,
   sending,
@@ -257,9 +261,7 @@ function AnswerBox({
       onSubmit={(event) => {
         event.preventDefault();
         if (answer === "" || sending) return;
-        const sent = text;
-        // Clears only what was sent: words typed while the send was out stay.
-        onSend(answerText(item, answer), () => setText((current) => (current === sent ? "" : current)));
+        onSend(answerText(item, answer), () => setText(""));
       }}
     >
       <Input
@@ -267,6 +269,7 @@ function AnswerBox({
         onChange={(event) => setText(event.target.value)}
         placeholder="Answer the first mate…"
         aria-label={`Answer for ${item.id}`}
+        disabled={sending}
         className="h-8 min-w-0 flex-1 text-xs"
       />
       <Button type="submit" size="sm" className="shrink-0" disabled={sending || answer === ""}>

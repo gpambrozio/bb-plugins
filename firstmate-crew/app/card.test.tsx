@@ -145,19 +145,19 @@ describe("Answer box", () => {
     expect(view.navigateCalls).toEqual([{ method: "toThread", threadId: "thr_mate" }]);
   });
 
-  it("keeps words typed while the send was out", async () => {
+  it("shuts the line while its send is out, so nothing newer can be typed and lost", async () => {
     let land: (value: null) => void = () => {};
     const view = renderCard(backlog(), () => new Promise((resolve) => (land = resolve)));
     fireEvent.change(answerBox(), { target: { value: "Postgres" } });
     fireEvent.click(sendButton());
-    await waitFor(() => expect(sendButton().disabled).toBe(true));
-    fireEvent.change(answerBox(), { target: { value: "Actually, wait for the benchmark" } });
+    await waitFor(() => expect(answerBox().disabled).toBe(true));
+    expect(sendButton().disabled).toBe(true);
 
     land(null);
     await waitFor(() => expect(view.changed).toHaveLength(1));
-    expect(answerBox().value).toBe("Actually, wait for the benchmark");
+    expect(answerBox().disabled).toBe(false);
+    expect(answerBox().value).toBe("");
     expect(view.rpcCalls).toEqual([{ method: "mate.ask", input: { text: "pick-db — Choose the database: Postgres" } }]);
-    expect(sendButton().disabled).toBe(false);
   });
 
   it("sends on Enter", async () => {
