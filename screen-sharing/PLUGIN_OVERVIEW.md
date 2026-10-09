@@ -6,7 +6,7 @@ port is opened to the internet.
 
 ## What you get
 
-- A Screen Sharing page in the sidebar, with a Mac picker in its title bar listing your machines,
+- A Screen Sharing page in the sidebar, with a Mac picker at the left of its toolbar listing your machines,
   each with whether its Screen Sharing is on, off, not a Mac or offline. When it is off, the page says where in System Settings to turn
   it on.
 - Pick a Mac, Connect, sign in with a macOS user name and password, and its screen appears scaled to

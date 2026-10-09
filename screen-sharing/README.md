@@ -5,7 +5,7 @@ server and every other Mac enrolled in it, at home or from anywhere through getb
 Mac's own **Screen Sharing**, drawn in a bb page by [noVNC](https://github.com/novnc/noVNC). Nothing
 extra is installed on any Mac and no port is opened to the internet.
 
-- The **Screen Sharing** page in the sidebar has a Mac picker in its title bar: the Mac on show,
+- The **Screen Sharing** page in the sidebar has a Mac picker at the left of its toolbar: the Mac on show,
   with a coloured dot for its state, and a menu of every machine enrolled in bb with whether its
   Screen Sharing is on, off, not a Mac or offline (a sheet on a phone-sized window). Pick one; if its
   Screen Sharing is off, the page says where on that Mac to turn it on.
@@ -19,7 +19,8 @@ extra is installed on any Mac and no port is opened to the internet.
   switcher* keeps ⌘ down there so Tab on your keyboard steps through the apps; *Release ⌘* switches.
 - **Full screen** (Chrome, Edge and bb's desktop app) puts the page in full screen and gives it the
   whole keyboard, so the browser's own shortcuts — ⌘W, ⌘Q, ⌘T, Esc — go to the Mac too. Hold Esc to
-  leave full screen. Safari and Firefox can't do this; use Send keys there.
+  leave full screen, and leave it to switch to another Mac. Safari and Firefox can't do this; use
+  Send keys there.
 - Leaving the page does not end the session: it keeps running in that bb window, and coming back shows
   it again, still signed in. **Disconnect** on the page ends it.
 - Sessions to several Macs can be open at once in the same window. The page shows the Mac picked; the

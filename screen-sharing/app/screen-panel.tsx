@@ -1,8 +1,9 @@
 /**
  * The Screen Sharing page: the Macs enrolled in this bb, whether each one's
  * Screen Sharing answers, and — once the user presses Connect — the picked
- * Mac's screen. The picker sits in the page's title bar (host-picker.tsx),
- * beside the open sessions and Close all. Sessions belong to the window
+ * Mac's screen. The picker (host-picker.tsx) leads the toolbar row in every
+ * state, so another Mac is one click away whatever this one says; the title
+ * bar keeps the open sessions and Close all. Sessions belong to the window
  * (session-store.ts), one per Mac, not to this page: leaving the page or
  * picking another Mac puts the screen away, coming back shows the same live
  * session.
@@ -91,29 +92,25 @@ function NotReady({ status, checking, onCheck }: { status: ScreenStatus; checkin
   );
 }
 
-/** The title bar's right side: the Mac picker, open sessions on any device, and Close all. */
+/** The title bar's right side: open sessions on any device, and Close all. */
 export function SessionsHeader(_props: PluginNavPanelProps) {
   const sessions = useSessions();
   const { closeAll, closing } = useCloseAll();
+  if (sessions.length === 0) return null;
   return (
-    <div className="flex min-w-0 items-center gap-2">
-      <HostPicker />
-      {sessions.length > 0 ? (
-        <>
-          <span className="flex items-center gap-1.5 text-xs font-medium whitespace-nowrap text-destructive">
-            <span className="size-2 rounded-full bg-destructive" aria-hidden />
-            {sessions.length === 1 ? "1 session open" : `${sessions.length} sessions open`}
-          </span>
-          <Button type="button" size="sm" variant="outline" disabled={closing} onClick={closeAll}>
-            Close all
-          </Button>
-        </>
-      ) : null}
+    <div className="flex items-center gap-2">
+      <span className="flex items-center gap-1.5 text-xs font-medium whitespace-nowrap text-destructive">
+        <span className="size-2 rounded-full bg-destructive" aria-hidden />
+        {sessions.length === 1 ? "1 session open" : `${sessions.length} sessions open`}
+      </span>
+      <Button type="button" size="sm" variant="outline" disabled={closing} onClick={closeAll}>
+        Close all
+      </Button>
     </div>
   );
 }
 
-/** One Mac: its status or its screen, with the session's toolbar. */
+/** One Mac: the toolbar row (the picker, then the session's controls) over its status or its screen. */
 function HostScreen({ host, check, onCheck, store }: { host: HostEntry; check: HostCheck; onCheck(): void; store: ScreenSessionStore }) {
   const rpc = useRpc<RpcContract>();
   const session = useScreenSession(store);
@@ -121,26 +118,6 @@ function HostScreen({ host, check, onCheck, store }: { host: HostEntry; check: H
   /** What "Full screen" puts in full screen: this Mac's screen and its toolbar. */
   const page = useRef<HTMLDivElement>(null);
   const live = session.stage.kind !== "idle";
-
-  // A session still running from an earlier visit is shown whatever a new status check says.
-  if (!live) {
-    if (status === null) {
-      return error !== null ? (
-        <Centered title={`Could not check Screen Sharing on ${host.name}`}>
-          <p>{error}</p>
-          <CheckAgain checking={checking} onCheck={onCheck} />
-        </Centered>
-      ) : (
-        <Centered>
-          <p className="flex items-center gap-2">
-            <Icon name="Spinner" />
-            Checking Screen Sharing on {host.name}…
-          </p>
-        </Centered>
-      );
-    }
-    if (status.state !== "ready") return <NotReady status={status} checking={checking} onCheck={onCheck} />;
-  }
 
   const hostName = (live ? session.hostName : status?.hostName) ?? host.name;
   // macOS's sign-in needs WebCrypto, which browsers offer only to https pages and to the machine itself.
@@ -156,30 +133,57 @@ function HostScreen({ host, check, onCheck, store }: { host: HostEntry; check: H
     });
   }
 
+  // A session still running from an earlier visit is shown whatever a new status check says.
+  const ready = live || status?.state === "ready";
+
   return (
     <div ref={page} className="flex min-h-0 flex-1 flex-col bg-background">
-      <div className="flex flex-wrap items-center justify-end gap-2 border-b border-border px-4 py-2">
-        <Button type="button" size="sm" variant="ghost" aria-pressed={session.viewOnly} onClick={() => store.setViewOnly(!session.viewOnly)}>
-          <Icon name={session.viewOnly ? "EyeOff" : "Eye"} />
-          View only
-        </Button>
-        {live ? (
-          <>
-            <FullScreenButton store={store} session={session} fullscreenTarget={page} />
-            <SendKeysMenu store={store} session={session} />
-            <Button type="button" size="sm" variant="outline" onClick={() => store.disconnect()}>
-              Disconnect
+      <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2">
+        <div className="mr-auto flex min-w-0 max-w-full">
+          {/* bb's menu opens outside a full-screen page, out of sight: switch Macs after leaving full screen. */}
+          <HostPicker disabled={session.fullScreen} />
+        </div>
+        {ready ? (
+          <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+            <Button type="button" size="sm" variant="ghost" aria-pressed={session.viewOnly} onClick={() => store.setViewOnly(!session.viewOnly)}>
+              <Icon name={session.viewOnly ? "EyeOff" : "Eye"} />
+              View only
             </Button>
-          </>
-        ) : (
-          <Button type="button" size="sm" disabled={insecure} onClick={connect}>
-            Connect
-          </Button>
-        )}
+            {live ? (
+              <>
+                <FullScreenButton store={store} session={session} fullscreenTarget={page} />
+                <SendKeysMenu store={store} session={session} />
+                <Button type="button" size="sm" variant="outline" onClick={() => store.disconnect()}>
+                  Disconnect
+                </Button>
+              </>
+            ) : (
+              <Button type="button" size="sm" disabled={insecure} onClick={connect}>
+                Connect
+              </Button>
+            )}
+          </div>
+        ) : null}
       </div>
       {live ? <KeysNotice store={store} session={session} /> : null}
       {live ? (
         <LiveScreen store={store} />
+      ) : status === null ? (
+        error !== null ? (
+          <Centered title={`Could not check Screen Sharing on ${host.name}`}>
+            <p>{error}</p>
+            <CheckAgain checking={checking} onCheck={onCheck} />
+          </Centered>
+        ) : (
+          <Centered>
+            <p className="flex items-center gap-2">
+              <Icon name="Spinner" />
+              Checking Screen Sharing on {host.name}…
+            </p>
+          </Centered>
+        )
+      ) : status.state !== "ready" ? (
+        <NotReady status={status} checking={checking} onCheck={onCheck} />
       ) : (
         <Centered title={`Connect to ${hostName}`}>
           {session.ended !== null ? <p className="font-medium text-foreground">{session.ended}</p> : null}

@@ -25,9 +25,9 @@ findings are summarised under *Decisions*.
 | `shared/channels.ts` | Route, realtime channel, flow-control frames, close codes, session limits and zod shapes; no SDK import, so the app may use it. |
 | `shared/contract.ts` | The app ⇄ server RPC contract. The app imports it as a type only. |
 | `shared/host-contract.ts`, `shared/limits.ts` | The server ⇄ host contract and signals, and the numbers both ends share (port, windows, keepalive). The app imports neither. |
-| `app/screen-panel.tsx` | The page: the picked Mac's status and System Settings guidance, Connect/Disconnect, View only; the title bar's right side (`SessionsHeader`: the picker, open sessions, Close all). |
-| `app/hosts.ts` | The machines, their statuses and the picked Mac, outside React: the page and the title bar are separate React trees and both read it. |
-| `app/host-picker.tsx` | The picker in the title bar: a dot and the picked Mac's name, opening bb's dropdown menu of every machine with its state (a sheet on a compact viewport). |
+| `app/screen-panel.tsx` | The page: the toolbar row (the picker, then View only, Connect/Disconnect and the keys), the picked Mac's status and System Settings guidance; the title bar's right side (`SessionsHeader`: open sessions, Close all). |
+| `app/hosts.ts` | The machines, their statuses and the picked Mac, outside React, so the picker, the page and other windows' visits share them. |
+| `app/host-picker.tsx` | The picker at the left of the toolbar row: a dot and the picked Mac's name, opening bb's dropdown menu of every machine with its state (a sheet on a compact viewport). |
 | `app/session-store.ts` | One session per Mac per window, outside React: ticket → WebSocket → noVNC into an element it owns; the input-idle disconnect; the local-cursor CSS; why it ended. `screenSessions` holds them. |
 | `app/flow.ts` | The page's acknowledgements of what it received. |
 | `app/vnc-session.tsx` | The live screen on the page: lends the store's element a place while the page is open; the sign-in form. |
@@ -87,13 +87,17 @@ Mac's element and the others stay detached, input suspended, exactly as when the
 end every store. The picked Mac is `hostDirectory.picked` (`app/hosts.ts`), window state like the
 sessions.
 
-**The picker is in the title bar.** `headerContent` is the only place a nav panel gets in bb's title
-bar: a `flex shrink-0` box on its right, while the title takes the rest and truncates. So the picker
-is compact — a dot coloured by state and the Mac's name, truncated, with the states in its menu —
-and sits left of the open sessions and Close all. The menu is bb's vendored dropdown
-(`components/ui/dropdown-menu.tsx`, copied from `github-board`), which portals out of the title bar
-and becomes a sheet on a compact viewport. The session toolbar shows no name; the picker says which
-Mac is on show. The page lists the machines and checks them when it opens; the title bar only reads.
+**The picker leads the toolbar row, in every state.** A dot coloured by state and the Mac's name,
+truncated, with every machine's state in its menu, at the left of the row that holds View only,
+Connect or Disconnect and the keys — so the row names the Mac it acts on, and no other place does.
+The row is drawn while the Mac is being checked, is off, offline or not a Mac (with only the picker
+in it then), so another Mac is always one click away. It wraps in a narrow window: the picker keeps the
+left, the controls go right-aligned onto the next line. The menu is bb's vendored dropdown
+(`components/ui/dropdown-menu.tsx`, copied from `github-board`), which portals to the page body and
+becomes a sheet on a compact viewport; because a full-screen page hides anything portalled outside
+it, the picker is disabled while Full screen is on. It was in the title bar (`headerContent`, a
+fixed box on the bar's right) for a while; the captain preferred it under the title, where the bar
+keeps only the open sessions and Close all.
 
 While the screen is off the page its input is suspended: `detach()` first releases every key and
 mouse button held over it — a real `keyup` per held key on noVNC's canvas, and a `mouseup` with no

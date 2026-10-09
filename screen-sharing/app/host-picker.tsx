@@ -1,8 +1,8 @@
 /**
- * The Mac picker, in the page's title bar: a dot and the picked Mac's name,
- * opening a menu of every machine with its state (On, Live, Screen Sharing
- * off, Offline…). bb's menu turns into a sheet on a compact viewport, and the
- * name truncates, so it fits a narrow window.
+ * The Mac picker, at the left of the page's toolbar row: a dot and the picked
+ * Mac's name, opening a menu of every machine with its state (On, Live,
+ * Screen Sharing off, Offline…). bb's menu turns into a sheet on a compact
+ * viewport, and the name truncates, so it fits a narrow window.
  */
 import { useSyncExternalStore } from "react";
 
@@ -44,7 +44,7 @@ export function useLiveHosts(): Set<string> {
   return new Set([...liveHere, ...sessions.map((session) => session.hostId)]);
 }
 
-export function HostPicker() {
+export function HostPicker({ disabled = false }: { disabled?: boolean }) {
   const directory = useHostDirectory();
   const liveHere = useLiveHere();
   const live = useLiveHosts();
@@ -55,13 +55,20 @@ export function HostPicker() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button type="button" size="sm" variant="ghost" aria-label={`Mac: ${picked.name}, ${note.text}`} className="min-w-0 max-w-56">
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          disabled={disabled}
+          aria-label={`Mac: ${picked.name}, ${note.text}`}
+          className="min-w-0 max-w-56"
+        >
           <Dot tone={note.tone} />
           <span className="min-w-0 truncate">{picked.name}</span>
           <Icon name="ChevronDown" />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="min-w-64 max-w-80">
+      <DropdownMenuContent align="start" className="min-w-64 max-w-80">
         {directory.hosts.map((host) => {
           const entry = hostNote(host, directory.checks[host.id], live.has(host.id));
           return (

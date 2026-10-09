@@ -408,7 +408,7 @@ describe("the Screen Sharing page", () => {
   });
 });
 
-describe("the Mac picker, in the title bar", () => {
+describe("the Mac picker, at the left of the toolbar", () => {
   const laptop: HostEntry = { id: "host_laptop", name: "MacBook Pro", connected: true, isServer: false };
   const doxbook: HostEntry = { id: "host_doxbook", name: "DoxBook", connected: true, isServer: false };
   const linux: HostEntry = { id: "host_linux", name: "buildbox", connected: true, isServer: false };
@@ -446,7 +446,7 @@ describe("the Mac picker, in the title bar", () => {
     );
   }
 
-  const picker = () => within(screen.getByTestId("title-bar")).getByRole("button", { name: /^Mac: / });
+  const picker = () => screen.getByRole("button", { name: /^Mac: / });
 
   async function openPicker(): Promise<HTMLElement> {
     fireEvent.pointerDown(picker(), { button: 0, ctrlKey: false, pointerType: "mouse" });
@@ -470,13 +470,33 @@ describe("the Mac picker, in the title bar", () => {
     return listed;
   }
 
-  it("sits in the title bar with the picked Mac and its state, and leaves the toolbar without a name", async () => {
+  it("leads the toolbar row with the picked Mac and its state, and stays out of the title bar", async () => {
     renderWithTitleBar();
     await waitFor(() => expect(picker().getAttribute("aria-label")).toBe("Mac: MacMini, On"));
     expect(picker().textContent).toContain("MacMini");
     await connectButtons();
-    const toolbar = screen.getByRole("button", { name: "View only" }).parentElement as HTMLElement;
-    expect(toolbar.textContent).not.toContain("MacMini");
+    const row = screen.getByRole("button", { name: "View only" }).closest(".border-b") as HTMLElement;
+    expect(row.contains(picker())).toBe(true);
+    expect(row.firstElementChild?.contains(picker())).toBe(true);
+    expect(within(screen.getByTestId("title-bar")).queryByRole("button", { name: /^Mac: / })).toBeNull();
+  });
+
+  it("stays in reach whatever the picked Mac says, while its status is checked and when it is not ready", async () => {
+    let answer: (status: ScreenStatus) => void = () => {};
+    renderWithTitleBar({
+      status: ({ hostId }) =>
+        hostId === "host_mini" ? new Promise<ScreenStatus>((resolve) => (answer = resolve)) : (statuses[hostId] as ScreenStatus),
+    });
+    expect(await screen.findByText("Checking Screen Sharing on MacMini…")).toBeTruthy();
+    expect(picker().getAttribute("aria-label")).toBe("Mac: MacMini, Checking…");
+    expect(screen.queryByRole("button", { name: "View only" })).toBeNull();
+    await pick(/DoxBook/);
+    expect(await screen.findByText("Screen Sharing is off on DoxBook")).toBeTruthy();
+    expect(picker().getAttribute("aria-label")).toBe("Mac: DoxBook, Screen Sharing off");
+    expect(screen.queryByRole("button", { name: "Connect" })).toBeNull();
+    await pick(/Travel MacBook/);
+    expect(await screen.findByText("Travel MacBook is offline")).toBeTruthy();
+    act(() => answer(ready));
   });
 
   it("lists every machine with whether its Screen Sharing is on", async () => {
@@ -493,8 +513,8 @@ describe("the Mac picker, in the title bar", () => {
   it("shows the one machine there is, too", async () => {
     renderPanel();
     await connectButtons();
-    renderSlot<PluginNavPanelProps, RpcContract>({ component: SessionsHeader }, { subPath: "" }, { rpc: stubs({}) });
     await waitFor(() => expect(screen.getByRole("button", { name: "Mac: MacMini, On" })).toBeTruthy());
+    expect(screen.getAllByRole("button", { name: /^Mac: / })).toHaveLength(1);
   });
 
   it("trusts a newer check over the list when a Mac comes online", async () => {
