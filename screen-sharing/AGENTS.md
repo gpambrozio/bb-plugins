@@ -194,6 +194,11 @@ guaranteed, and the design must not depend on either.
   `close`, in case the host did connect. `ws.send` is guarded: it runs inside socket and signal
   callbacks in the bb server's process.
 
+Live, holding a connection at Screen Sharing's security-type list without signing in: the MacBook
+and the MacMini (over loopback, no host link) both hang up at 240 s ("Screen Sharing closed the
+connection"), which is macOS's own limit on an unauthenticated connection, not the relay. Over the
+host link that is past `HOST_SILENCE_MS`, so the keepalives reach the Mac.
+
 Measured with `testing/fake-daemon.ts` at 300 ms each way: greeting and a key echo ≈ 600 ms (one
 round trip), 30 keys typed over 600 ms all echoed after ≈ 1.2 s, ≈ 19 MiB/s with the 16 MiB window.
 The real link adds bandwidth limits the fake has none of (the study measured ≥ 17 MB/s of base64

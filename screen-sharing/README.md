@@ -10,7 +10,9 @@ extra is installed on any Mac and no port is opened to the internet.
   Screen Sharing is on, off, not a Mac or offline (a sheet on a phone-sized window). Pick one; if its
   Screen Sharing is off, the page says where on that Mac to turn it on.
 - **Connect** asks for a macOS user name and password — each time you connect; bb does not keep
-  them — and then shows the screen, scaled to fit. Click into it to type and use the mouse.
+  them — and then shows the screen, scaled to fit. Click into it to type and use the mouse. macOS
+  itself hangs up on a connection that has not signed in within 4 minutes; connect again if that
+  happens.
 - **View only** watches without sending keys or clicks. It can be switched during a session.
 - **Send keys** sends the shortcuts your own Mac keeps for itself — ⌘Tab, ⌘Space, ⌘`, Mission
   Control and the Spaces arrows, ⌥⌘Esc and more — to the shared Mac. *Hold ⌘ and open the app
