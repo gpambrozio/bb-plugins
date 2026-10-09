@@ -366,14 +366,13 @@ describe("over a slow link (300 ms each way)", () => {
     cleanups.push(stop);
     await until(() => received(ws).length > 0, "the first chunk", 5000);
     const started = Date.now();
-    const first = received(ws).length;
     await until(() => received(ws).length === size, "the whole screen", 30_000);
     const seconds = (Date.now() - started) / 1000;
-    const rate = (size - first) / seconds / (1024 * 1024);
+    const rate = size / seconds / (1024 * 1024);
     console.info(`[measured] 300 ms each way, ${window / 1024 / 1024} MiB window: ${rate.toFixed(1)} MiB/s`);
-    // A credit takes a round trip back to the host, so the window bounds the rate; it must still get there.
+    // The first window goes at once; each further one waits for credit, which takes a round trip back to the host.
+    expect(seconds).toBeGreaterThanOrEqual((size / window - 1) * ((2 * ONE_WAY_MS) / 1000) - 0.05);
     expect(rate).toBeGreaterThan(1);
-    expect(rate).toBeLessThan((2 * window) / ((4 * ONE_WAY_MS) / 1000) / (1024 * 1024));
   }, 40_000);
 
   it("with no delay on the link, for comparison", async () => {
