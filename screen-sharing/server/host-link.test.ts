@@ -156,11 +156,12 @@ describe("a host link", () => {
     expect(method("close").map((call) => call.input)).toEqual([{ sessionId: "s1" }]);
   });
 
-  it("says why when the Mac cannot be reached", async () => {
-    const { calls, ended } = setup();
-    calls[0]?.reject(new Error("cannot reach Screen Sharing (ECONNREFUSED)"));
+  it("says why when the Mac cannot be reached, and tells the Mac to close in case it did connect", async () => {
+    const { calls, ended, method } = setup();
+    calls[0]?.reject(new Error("timed out"));
     await flush();
-    expect(ended).toEqual([{ code: CloseCode.failed, reason: "MacBook Pro: cannot reach Screen Sharing (ECONNREFUSED)" }]);
+    expect(ended).toEqual([{ code: CloseCode.failed, reason: "MacBook Pro: timed out" }]);
+    expect(method("close").map((call) => call.input)).toEqual([{ sessionId: "s1" }]);
   });
 
   it("closes on the Mac when the server ends it, and raises nothing after", async () => {

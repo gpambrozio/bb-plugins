@@ -176,8 +176,9 @@ function NotReady({ status, checking, onCheck }: { status: ScreenStatus; checkin
 /** A Mac's state in a word or two, for its place in the picker. */
 function pickerNote(host: HostEntry, check: HostCheck | undefined, live: boolean): { text: string; className: string } {
   if (live) return { text: "Live", className: "text-destructive" };
-  if (!host.connected) return { text: "Offline", className: "text-muted-foreground" };
+  // The latest check knows better than the list read when the page opened.
   const status = check?.status ?? null;
+  if (status === null && !host.connected) return { text: "Offline", className: "text-muted-foreground" };
   if (status === null) {
     return check?.error != null ? { text: "Can't check", className: "text-warning-text" } : { text: "Checking…", className: "text-muted-foreground" };
   }

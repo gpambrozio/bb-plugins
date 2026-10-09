@@ -226,6 +226,34 @@ describe("a remote session on its Mac", () => {
     expect(host.size).toBe(0);
   });
 
+  it("never opens a session closed while it was connecting, whoever closed it", async () => {
+    const host = relay();
+    const byServer = fakePort();
+    const opening = host.open("s1", byServer);
+    host.close("s1");
+    await expect(opening).rejects.toThrow("the session was closed while it was connecting");
+    expect(byServer.released).toBe(1);
+
+    const cancelled = new AbortController();
+    const byBb = fakePort();
+    const aborted = host.open("s2", byBb, cancelled.signal);
+    cancelled.abort();
+    await expect(aborted).rejects.toThrow("the session was closed while it was connecting");
+    expect(byBb.released).toBe(1);
+
+    const byStopping = fakePort();
+    const stopping = host.open("s3", byStopping);
+    host.closeAll("the plugin's helper stopped");
+    await expect(stopping).rejects.toThrow("the session was closed while it was connecting");
+    expect(byStopping.released).toBe(1);
+    const late = fakePort();
+    await expect(host.open("s4", late)).rejects.toThrow("the plugin's helper is stopping");
+    expect(late.released).toBe(1);
+
+    expect(host.size).toBe(0);
+    await until(() => vnc.closed === vnc.sockets.length, "every TCP connection closed");
+  });
+
   it("refuses a second open of the same session", async () => {
     const host = relay();
     await host.open("s1", fakePort());

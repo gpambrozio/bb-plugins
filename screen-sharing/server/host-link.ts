@@ -84,6 +84,8 @@ class HostLink implements Link {
       },
       (error: unknown) => {
         this.openSettled = true;
+        // The call failed here (a timeout, a lost reply), yet the host may have connected.
+        this.closeOnHost();
         this.fail(errorText(error));
       },
     );

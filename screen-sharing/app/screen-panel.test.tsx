@@ -450,6 +450,14 @@ describe("the Mac picker", () => {
     await connectButtons();
   });
 
+  it("trusts a newer check over the list when a Mac comes online", async () => {
+    renderPanel({
+      hosts: () => ({ hosts: [mini, away] }),
+      status: ({ hostId }) => (hostId === "host_away" ? { ...(statuses.host_laptop as ScreenStatus), hostId, hostName: "Travel MacBook" } : ready),
+    });
+    await waitFor(() => expect(option(/Travel MacBook/).textContent).toContain("On"));
+  });
+
   it("says where to turn Screen Sharing on, on the Mac picked", async () => {
     renderMany();
     await waitFor(() => expect(option(/DoxBook/).textContent).toContain("Screen Sharing off"));

@@ -170,7 +170,11 @@ guaranteed, and the design must not depend on either.
   `data`, then `closed`), bb stopping the worker (lifecycle abort and `dispose` close every session and
   signal `closed`), the worker crashing (`experimental_onWorkerExit`), the link dropping (the next call
   fails here; the host expires it), and the page leaving while the host is still connecting (`close`
-  is sent once `open` answers).
+  is sent once `open` answers). On the host, a session closed while it is still connecting — by
+  `close`, by bb cancelling the call (`context.signal`) or by the worker stopping — never opens, and a
+  stopping worker opens nothing more. An `open` that fails on the server (a timeout) still sends
+  `close`, in case the host did connect. `ws.send` is guarded: it runs inside socket and signal
+  callbacks in the bb server's process.
 
 Measured with `testing/fake-daemon.ts` at 300 ms each way: greeting and a key echo ≈ 600 ms (one
 round trip), 30 keys typed over 600 ms all echoed after ≈ 1.2 s, ≈ 19 MiB/s with the 16 MiB window.

@@ -221,6 +221,17 @@ describe("the relay", () => {
     await until(() => vnc.closed === 1, "the TCP close");
   });
 
+  it("ends the session, instead of throwing, when the page's socket refuses a send", async () => {
+    const { ws } = open(ticket());
+    ws.send = () => {
+      throw new Error("socket is closing");
+    };
+    await until(() => ws.closes.length === 1, "the WebSocket close");
+    expect(ws.closes[0]).toEqual({ code: CloseCode.failed, reason: "could not send to the page (socket is closing)" });
+    await until(() => vnc.closed === 1, "the TCP close");
+    expect(registry.list()).toEqual([]);
+  });
+
   it("logs sessions without their bytes or tickets", async () => {
     const query = ticket();
     const { ws, handlers } = open(query);

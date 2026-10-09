@@ -105,7 +105,12 @@ export function createRelay(options: RelayOptions): ExperimentalPluginWebSocketH
               if (done) return;
               open.touch();
               sent += bytes.length;
-              opened.send(bytes);
+              try {
+                opened.send(bytes);
+              } catch (error) {
+                // Called from socket and signal callbacks in the bb server's process: never let it escape.
+                finish({ code: CloseCode.failed, reason: `could not send to the page (${error instanceof Error ? error.message : String(error)})` });
+              }
             },
             end: (code, reason) => finish({ code, reason }),
           },

@@ -63,11 +63,15 @@ export function createHostEntry(options: HostEntryOptions) {
         watchLifecycle(context.lifecycle.signal);
         // Taken while the call is live, as bb requires; the relay releases it when the session ends.
         const lease = context.experimental_retainWorker();
-        await relay.open(sessionId, {
-          emitData: (payload) => context.experimental_emitSignal("data", payload),
-          emitClosed: (payload) => context.experimental_emitSignal("closed", payload),
-          lease,
-        });
+        await relay.open(
+          sessionId,
+          {
+            emitData: (payload) => context.experimental_emitSignal("data", payload),
+            emitClosed: (payload) => context.experimental_emitSignal("closed", payload),
+            lease,
+          },
+          context.signal,
+        );
         return {};
       },
       write: ({ sessionId, seq, data }) => {

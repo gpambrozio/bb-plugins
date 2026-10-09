@@ -202,6 +202,10 @@ export class HostRelay {
   private readonly sessions = new Map<string, HostSession>();
   /** Sessions still connecting, so a second `open` for the same id is refused. */
   private readonly opening = new Set<string>();
+  /** Sessions closed by the server while still connecting: they never open. */
+  private readonly cancelled = new Set<string>();
+  /** Set by `closeAll`: the worker is stopping, so nothing opens any more. */
+  private stopped = false;
   private timer: ReturnType<typeof setInterval> | null = null;
 
   constructor(private readonly options: HostRelayOptions) {}
@@ -214,10 +218,10 @@ export class HostRelay {
    * Connects a session. The port's lease is the caller's to take; from here
    * on the relay releases it, on failure as on every end.
    */
-  async open(sessionId: string, port: SessionPort): Promise<void> {
-    if (this.sessions.has(sessionId) || this.opening.has(sessionId)) {
+  async open(sessionId: string, port: SessionPort, signal?: AbortSignal): Promise<void> {
+    if (this.stopped || this.sessions.has(sessionId) || this.opening.has(sessionId)) {
       void port.lease.dispose().catch(() => {});
-      throw new Error("session is already open");
+      throw new Error(this.stopped ? "the plugin's helper is stopping" : "session is already open");
     }
     this.opening.add(sessionId);
     const socket = this.options.connect();
@@ -239,6 +243,13 @@ export class HostRelay {
       throw new Error(`cannot reach Screen Sharing (${errorCode(error) === "error" ? errorText(error) : errorCode(error)})`);
     } finally {
       this.opening.delete(sessionId);
+    }
+    // Closed while connecting — by the server, by bb cancelling the call, or by the worker stopping.
+    const cancelled = this.cancelled.delete(sessionId);
+    if (cancelled || this.stopped || signal?.aborted === true) {
+      socket.destroy();
+      void port.lease.dispose().catch(() => {});
+      throw new Error("the session was closed while it was connecting");
     }
     const session = new HostSession(sessionId, socket, port, this.options, (ended) => this.forget(ended));
     this.sessions.set(sessionId, session);
@@ -264,11 +275,13 @@ export class HostRelay {
 
   /** The server ended the session; it needs no `closed` signal. */
   close(sessionId: string): void {
+    if (this.opening.has(sessionId)) this.cancelled.add(sessionId);
     this.sessions.get(sessionId)?.end("closed by the server", false, false);
   }
 
-  /** Ends every session, telling the server about each. */
+  /** The worker is stopping: ends every session, telling the server about each, and opens no more. */
   closeAll(reason: string): void {
+    this.stopped = true;
     for (const session of [...this.sessions.values()]) session.end(reason, true, true);
   }
 
