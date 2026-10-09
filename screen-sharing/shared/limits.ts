@@ -17,6 +17,16 @@ export const SCREEN_SHARING_PORT = 5900;
 export const LOOPBACK_WINDOW_BYTES = 8 * 1024 * 1024;
 export const HOST_WINDOW_BYTES = 16 * 1024 * 1024;
 
+/**
+ * Writes to a remote Mac the server keeps in flight, counted from the
+ * earliest one not yet answered: input never waits a round trip behind the
+ * last batch. bb may deliver them out of order, and the host holds a write
+ * that arrives early, up to `MAX_WRITES_AHEAD` past the one it waits for —
+ * which must stay above the server's window.
+ */
+export const MAX_PIPELINED_WRITES = 8;
+export const MAX_WRITES_AHEAD = 32;
+
 /** The server calls a quiet remote session's host at least this often… */
 export const HOST_KEEPALIVE_MS = 60_000;
 /** …and the host ends a session the server has not called about for this long. */

@@ -89,6 +89,30 @@ describe("a host link", () => {
     ]);
   });
 
+  it("never runs more than its window past a write still unanswered, however fast the later ones are answered", async () => {
+    const { calls, link, method } = setup();
+    calls[0]?.resolve({});
+    await flush();
+    // The host answers every write but the first at once, as it does for one that overtook it.
+    for (let key = 0; key < 40; key++) {
+      link.write(new Uint8Array([key]));
+      for (const call of method("write")) if (call.input.seq !== 0) call.resolve({});
+      await flush();
+    }
+    // Window 2 (setup): with write 0 unanswered, nothing past write 1 goes out.
+    expect(method("write").map((call) => call.input.seq)).toEqual([0, 1]);
+    method("write")[0]?.resolve({});
+    await flush();
+    for (let round = 0; round < 40; round++) {
+      for (const call of method("write")) call.resolve({});
+      await flush();
+    }
+    const sent = method("write");
+    expect(sent.map((call) => call.input.seq)).toEqual(sent.map((_, index) => index));
+    const bytes = Buffer.concat(sent.map((call) => Buffer.from(String(call.input.data), "base64")));
+    expect([...bytes]).toEqual(Array.from({ length: 40 }, (_, key) => key));
+  });
+
   it("ends the session when the viewer sends faster than the Mac takes it", async () => {
     const { calls, link, ended } = setup();
     calls[0]?.resolve({});

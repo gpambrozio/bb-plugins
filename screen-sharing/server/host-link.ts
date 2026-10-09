@@ -50,7 +50,8 @@ class HostLink implements Link {
   private closed = false;
   private readonly queue: Uint8Array[] = [];
   private queuedBytes = 0;
-  private inFlight = 0;
+  /** Writes sent and not yet answered, by number. */
+  private readonly unanswered = new Set<number>();
   private inFlightBytes = 0;
   private nextWriteSeq = 0;
   private nextDataSeq = 0;
@@ -157,16 +158,23 @@ class HostLink implements Link {
     );
   }
 
-  /** Sends what the viewer typed, a batch per call, without waiting on the calls before it. */
+  /**
+   * Sends what the viewer typed, a batch per call, without waiting on the
+   * calls before it — but never more than `maxPipelinedWrites` numbers past
+   * the earliest write still unanswered. Counting calls in flight is not
+   * enough: the host answers a write that overtook an earlier one as soon as
+   * it holds it, and later writes would then run far ahead of one delayed
+   * call, past what the host holds (`MAX_WRITES_AHEAD` in host/relay.ts).
+   */
   private pump(): void {
-    while (this.opened && !this.closed && this.inFlight < this.options.maxPipelinedWrites && this.queuedBytes > 0) {
+    while (this.opened && !this.closed && this.queuedBytes > 0 && this.nextWriteSeq - this.earliestUnanswered() < this.options.maxPipelinedWrites) {
       const chunk = this.take();
       const seq = this.nextWriteSeq++;
-      this.inFlight++;
+      this.unanswered.add(seq);
       this.inFlightBytes += chunk.length;
       this.call("write", { sessionId: this.target.sessionId, seq, data: chunk.toString("base64") }).then(
         () => {
-          this.inFlight--;
+          this.unanswered.delete(seq);
           this.inFlightBytes -= chunk.length;
           this.heard();
           this.pump();
@@ -174,6 +182,12 @@ class HostLink implements Link {
         (error: unknown) => this.lost(error),
       );
     }
+  }
+
+  private earliestUnanswered(): number {
+    let earliest = this.nextWriteSeq;
+    for (const seq of this.unanswered) earliest = Math.min(earliest, seq);
+    return earliest;
   }
 
   /** The latest acknowledgement, one call at a time: a newer total replaces any not yet sent. */

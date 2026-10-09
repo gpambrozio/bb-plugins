@@ -26,9 +26,25 @@ export interface RelayOptions {
   log(message: string): void;
 }
 
-/** A close reason is at most 123 bytes on the wire. */
-function shortReason(reason: string): string {
-  return reason.length > 100 ? `${reason.slice(0, 99)}…` : reason;
+/** A close reason is at most 123 bytes of UTF-8 on the wire; `ws` throws on a longer one. */
+const MAX_REASON_BYTES = 123;
+const encoder = new TextEncoder();
+
+/**
+ * The reason cut to fit, by bytes and at a whole character: a Mac's name in
+ * the reason may be Chinese or emoji, three or four bytes a character.
+ */
+export function shortReason(reason: string): string {
+  if (encoder.encode(reason).length <= MAX_REASON_BYTES) return reason;
+  const ellipsis = "…";
+  let budget = MAX_REASON_BYTES - encoder.encode(ellipsis).length;
+  let cut = "";
+  for (const character of reason) {
+    budget -= encoder.encode(character).length;
+    if (budget < 0) break;
+    cut += character;
+  }
+  return `${cut}${ellipsis}`;
 }
 
 function closeQuietly(ws: ExperimentalPluginWebSocket, code: number, reason: string): void {

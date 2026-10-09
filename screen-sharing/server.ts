@@ -22,7 +22,7 @@ import {
 } from "./shared/channels";
 import { rpcContract } from "./shared/contract";
 import { hostContract, hostSignals } from "./shared/host-contract";
-import { HOST_KEEPALIVE_MS, LOOPBACK_WINDOW_BYTES, SCREEN_SHARING_PORT } from "./shared/limits";
+import { HOST_KEEPALIVE_MS, LOOPBACK_WINDOW_BYTES, MAX_PIPELINED_WRITES, SCREEN_SHARING_PORT } from "./shared/limits";
 import { checkScreenSharing, launchctlScreenSharingDisabled, probeRfb } from "./host/status";
 import { HostLinks } from "./server/host-link";
 import { errorText, type OpenLink } from "./server/link";
@@ -39,8 +39,6 @@ const MAX_AGE_MS = SESSION_LIMITS.maxHours * 60 * 60_000;
 const SWEEP_MS = 15_000;
 const MAX_TICKETS = 16;
 const MAX_BUFFERED_BYTES = 8 * 1024 * 1024;
-/** Writes to a remote Mac in flight at once: input never waits a whole round trip behind the last batch. */
-const MAX_PIPELINED_WRITES = 8;
 /** Connecting to a remote Mac's Screen Sharing: two round trips and a TCP connect, with room to spare. */
 const HOST_OPEN_TIMEOUT_MS = 15_000;
 /** A status check on a remote Mac: a round trip, a TCP probe (3 s) and launchctl (3 s). */

@@ -12,7 +12,7 @@ import { CloseCode } from "../shared/channels";
 import { startFakeVnc, until, type FakeVnc } from "../testing/fake-vnc";
 import { createLoopbackLink } from "./loopback-link";
 import type { OpenLink } from "./link";
-import { createRelay } from "./relay";
+import { createRelay, shortReason } from "./relay";
 import { SessionRegistry } from "./sessions";
 
 class FakeWebSocket implements ExperimentalPluginWebSocket {
@@ -24,6 +24,8 @@ class FakeWebSocket implements ExperimentalPluginWebSocket {
     this.sent.push(data);
   }
   close(code?: number, reason?: string): void {
+    // As bb's `ws` does: a reason over 123 bytes of UTF-8 is refused and nothing is closed.
+    if (reason !== undefined && Buffer.byteLength(reason) > 123) throw new SyntaxError("The message must not be greater than 123 bytes");
     this.closes.push({ code, reason });
     this.readyState = 3;
   }
@@ -230,6 +232,35 @@ describe("the relay", () => {
     expect(ws.closes[0]).toEqual({ code: CloseCode.failed, reason: "could not send to the page (socket is closing)" });
     await until(() => vnc.closed === 1, "the TCP close");
     expect(registry.list()).toEqual([]);
+  });
+
+  it("tells the page why even when the reason names a Mac in a script of many bytes a character", async () => {
+    const name = "測試電腦".repeat(10);
+    const reason = `${name}: Screen Sharing closed the connection`;
+    expect(reason.length).toBeLessThan(100);
+    expect(Buffer.byteLength(reason)).toBeGreaterThan(123);
+    const ending: OpenLink = (_target, events) => {
+      queueMicrotask(() => events.end(CloseCode.normal, reason));
+      return { write() {}, ack() {}, close() {} };
+    };
+    const { ws } = open(ticket(), ending);
+    await until(() => ws.closes.length === 1, "the WebSocket close");
+    const sent = ws.closes[0]?.reason ?? "";
+    expect(Buffer.byteLength(sent)).toBeLessThanOrEqual(123);
+    expect(sent.endsWith("…")).toBe(true);
+    expect(reason.startsWith(sent.slice(0, -1))).toBe(true);
+    expect(registry.list()).toEqual([]);
+  });
+
+  it("cuts a reason at whole characters and leaves a short one alone", () => {
+    expect(shortReason("Screen Sharing closed the connection")).toBe("Screen Sharing closed the connection");
+    const emoji = "🖥️".repeat(40);
+    const cut = shortReason(emoji);
+    expect(Buffer.byteLength(cut)).toBeLessThanOrEqual(123);
+    expect(cut).not.toContain("\uFFFD");
+    expect([...cut.slice(0, -1)].every((character) => emoji.includes(character))).toBe(true);
+    expect(Buffer.byteLength(shortReason("a".repeat(123)))).toBe(123);
+    expect(shortReason("a".repeat(124))).toBe(`${"a".repeat(120)}…`);
   });
 
   it("logs sessions without their bytes or tickets", async () => {

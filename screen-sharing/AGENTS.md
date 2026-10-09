@@ -169,7 +169,11 @@ guaranteed, and the design must not depend on either.
   MacBook died while the user typed the password (the log said "expected 4, got 5"); twelve one-byte
   writes reproduced it three times in three, and arrived as early as 6 before 0. So the host holds a
   write that arrives early until the ones before it are in (`MAX_WRITES_AHEAD`, 32), and ends the
-  session only on a repeated number or one too far ahead. `testing/fake-daemon.ts`'s `callJitterMs`
+  session only on a repeated number or one too far ahead. The server's window is counted from the
+  earliest write still unanswered, not by calls in flight: the host answers an early write as soon
+  as it holds it, so counting calls let later writes run past the host's 32 behind one slow call
+  (review pass 1; `server/remote.test.ts` holds write 0 back while 72 more are typed).
+  `MAX_PIPELINED_WRITES` and `MAX_WRITES_AHEAD` live together in `shared/limits.ts`. `testing/fake-daemon.ts`'s `callJitterMs`
   makes calls overtake each other, and `server/remote.test.ts` types through it. Pipelining is what
   keeps typing from waiting a round trip per key; serialised writes would make each key wait for the
   one before it.
@@ -196,7 +200,9 @@ guaranteed, and the design must not depend on either.
   `close`, by bb cancelling the call (`context.signal`) or by the worker stopping — never opens, and a
   stopping worker opens nothing more. An `open` that fails on the server (a timeout) still sends
   `close`, in case the host did connect. `ws.send` is guarded: it runs inside socket and signal
-  callbacks in the bb server's process.
+  callbacks in the bb server's process. Close reasons are cut to 123 bytes of UTF-8 at whole characters
+  (`shortReason`): they carry the Mac's name, and bb's `ws` refuses a longer reason and closes
+  nothing, which would leave the page showing a session the server has already ended.
 
 Live, holding a connection at Screen Sharing's security-type list without signing in: the MacBook
 and the MacMini (over loopback, no host link) both hang up at 240 s ("Screen Sharing closed the

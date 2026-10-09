@@ -15,7 +15,7 @@ import { MAX_CHUNK_BYTES } from "../shared/host-contract";
 import { sleep } from "./fake-vnc";
 
 type Harness = ReturnType<typeof createFakePluginHost>["harness"];
-type Call = { method: string; input: unknown; hostId: string };
+export type Call = { method: string; input: unknown; hostId: string };
 
 export interface FakeDaemonOptions {
   /** Each machine's fake Screen Sharing port. */
@@ -27,6 +27,8 @@ export interface FakeDaemonOptions {
    * it awaits per call before sending each one.
    */
   callJitterMs?: number;
+  /** Awaited before a call reaches the host: a test holds one call back with it. */
+  gate?: (call: Call) => Promise<void> | void;
   windowBytes: number;
   silenceMs?: number;
   /** Answers `status` instead of probing. */
@@ -68,6 +70,7 @@ export class FakeDaemon {
   /** What bb's fake plugin host calls for `bb.hosts.experimental_client(...).call`. */
   readonly call = async ({ method, input, hostId }: Call): Promise<unknown> => {
     await sleep(this.options.oneWayMs + Math.random() * (this.options.callJitterMs ?? 0));
+    await this.options.gate?.({ method, input, hostId });
     if (this.down.has(hostId)) throw new Error(`host ${hostId} is not connected`);
     this.calls.push({ method, input, hostId });
     try {

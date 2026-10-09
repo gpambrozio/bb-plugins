@@ -23,6 +23,8 @@
  */
 import type { Socket } from "node:net";
 
+import { MAX_WRITES_AHEAD } from "../shared/limits";
+
 export interface Lease {
   dispose(): Promise<void>;
 }
@@ -48,12 +50,8 @@ export interface HostRelayOptions {
   log(message: string): void;
 }
 
-/**
- * Writes held for the ones before them. The server has at most 8 in flight
- * (`MAX_PIPELINED_WRITES` in server.ts), each at most 128 KiB, so this bounds
- * what one session holds while it waits, with room to spare.
- */
-export const MAX_WRITES_AHEAD = 32;
+/** Writes held for the ones before them; see shared/limits.ts. */
+export { MAX_WRITES_AHEAD };
 
 function errorCode(error: unknown): string {
   const code = (error as { code?: unknown } | null)?.code;

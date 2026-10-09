@@ -18,8 +18,8 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import plugin from "../server";
 import { CloseCode, SESSIONS_CHANGED, VNC_ROUTE, ackFrame } from "../shared/channels";
-import { HOST_WINDOW_BYTES } from "../shared/limits";
-import { FakeDaemon } from "../testing/fake-daemon";
+import { HOST_WINDOW_BYTES, MAX_WRITES_AHEAD } from "../shared/limits";
+import { FakeDaemon, type Call } from "../testing/fake-daemon";
 import { sleep, startFakeVnc, until, type FakeVnc } from "../testing/fake-vnc";
 
 type Harness = ReturnType<typeof createFakePluginHost>["harness"];
@@ -40,7 +40,13 @@ interface Setup {
 }
 
 async function setup(
-  options: { oneWayMs?: number; callJitterMs?: number; windowBytes?: number; mac?: (socket: Socket) => void } = {},
+  options: {
+    oneWayMs?: number;
+    callJitterMs?: number;
+    gate?: (call: Call) => Promise<void> | void;
+    windowBytes?: number;
+    mac?: (socket: Socket) => void;
+  } = {},
 ): Promise<Setup> {
   const laptop = await startFakeVnc(options.mac ?? ((socket) => socket.write("RFB 003.889\n")));
   cleanups.push(() => laptop.close());
@@ -48,6 +54,7 @@ async function setup(
     ports: { host_laptop: laptop.port, host_doxbook: laptop.port },
     oneWayMs: options.oneWayMs ?? 0,
     callJitterMs: options.callJitterMs ?? 0,
+    ...(options.gate === undefined ? {} : { gate: options.gate }),
     windowBytes: options.windowBytes ?? 1024 * 1024,
     status: (hostId) => {
       if (hostId === "host_linux") return { ...READY, state: "unsupported", rfbVersion: null, securityTypes: [], signInSupported: false };
@@ -175,6 +182,28 @@ describe("a remote session", () => {
       await sleep(1);
     }
     await until(() => Buffer.concat(laptop.received).length === typed.length * 8, "every key at the Mac", 10_000);
+    expect([...Buffer.concat(laptop.received)]).toEqual(typed.flatMap((key) => [...key]));
+    expect(ws.closeCalls).toEqual([]);
+  });
+
+  it("survives one write held back while many more are typed, and delivers them all in order", async () => {
+    // Pass-1 review: early writes are answered at once; the server must not run past the host's hold.
+    let release: () => void = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const { harness, laptop } = await setup({
+      gate: (call) => (call.method === "write" && (call.input as { seq: number }).seq === 0 ? held : undefined),
+    });
+    const ws = await openSession(harness);
+    await until(() => received(ws).length === 12, "the greeting");
+    const typed = Array.from({ length: 2 * MAX_WRITES_AHEAD + 8 }, (_, index) => new Uint8Array([index % 256]));
+    for (const key of typed) {
+      await ws.receive(key);
+      await sleep(2);
+    }
+    expect(laptop.received).toEqual([]);
+    expect(ws.closeCalls).toEqual([]);
+    release();
+    await until(() => Buffer.concat(laptop.received).length === typed.length, "every key at the Mac", 10_000);
     expect([...Buffer.concat(laptop.received)]).toEqual(typed.flatMap((key) => [...key]));
     expect(ws.closeCalls).toEqual([]);
   });
