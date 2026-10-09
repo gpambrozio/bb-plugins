@@ -73,7 +73,13 @@ export default async function plugin(bb: BbPluginApi) {
     idleMs: IDLE_MS,
     maxAgeMs: MAX_AGE_MS,
     maxTickets: MAX_TICKETS,
-    onChange: (sessions) => bb.realtime.publish(SESSIONS_CHANGED, { sessions } satisfies SessionList),
+    onChange: (sessions) => {
+      try {
+        bb.realtime.publish(SESSIONS_CHANGED, { sessions } satisfies SessionList);
+      } catch {
+        // A retired instance has no app to tell; the new one publishes its own list.
+      }
+    },
   });
 
   const hostClient = bb.hosts.experimental_client({ contract: hostContract, experimental_signals: hostSignals });
