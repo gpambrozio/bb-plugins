@@ -77,7 +77,9 @@ function PanelBody({ fleet, threadId, reload }: { fleet: Fleet; threadId: string
     return <Board fleet={fleet} mateThreadId={threadId} onChanged={reload} />;
   }
   const card = fleet.cards.find((candidate) => candidate.crew?.threadId === threadId);
-  if (card !== undefined) return <CrewPanel card={card} threadId={threadId} onChanged={reload} />;
+  if (card !== undefined) {
+    return <CrewPanel card={card} threadId={threadId} mateThreadId={fleet.mate?.threadId ?? null} onChanged={reload} />;
+  }
   return <Elsewhere fleet={fleet} threadId={threadId} onChanged={reload} />;
 }
 

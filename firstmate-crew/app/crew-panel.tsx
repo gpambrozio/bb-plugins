@@ -10,7 +10,17 @@ import type { FleetCard } from "../shared/types";
 import { Card } from "./card";
 import { reportError } from "./notify";
 
-export function CrewPanel({ card, threadId, onChanged }: { card: FleetCard; threadId: string; onChanged: () => void }) {
+export function CrewPanel({
+  card,
+  threadId,
+  mateThreadId,
+  onChanged,
+}: {
+  card: FleetCard;
+  threadId: string;
+  mateThreadId: string | null;
+  onChanged: () => void;
+}) {
   const rpc = useRpc<typeof rpcContract>();
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
@@ -30,7 +40,7 @@ export function CrewPanel({ card, threadId, onChanged }: { card: FleetCard; thre
 
   return (
     <div className="flex flex-col gap-4">
-      <Card card={card} onChanged={onChanged} showOpen={false} />
+      <Card card={card} onChanged={onChanged} mateThreadId={mateThreadId} showOpen={false} />
       <div className="flex flex-col gap-2">
         <label htmlFor="firstmate-note" className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
           Note

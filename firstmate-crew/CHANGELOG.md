@@ -5,6 +5,19 @@ Notable changes to `firstmate`. The other plugins in this repository version sep
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.4.0
+
+### Added
+
+- **Answer a held card from the board.** A card waiting on your call now shows a button for each answer
+  the first mate expects, most likely first. Pressing one sends that answer to the first mate as if you
+  had typed it, as a suggestion does. For any other answer, type it in the card's Answer box and press
+  Send; the first mate gets it with the task's name in front. The first mate can put buttons on other
+  cards too.
+- The first mate's charter now tells it to write those likely answers for everything it holds for you,
+  each one a complete request, to rewrite them as things change and to drop them once you have answered.
+  If you have edited your charter, the board offers the new one to compare, as for any charter change.
+
 ## 0.3.0
 
 ### Changed

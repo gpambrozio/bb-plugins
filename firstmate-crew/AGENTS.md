@@ -107,6 +107,14 @@ Do not break these; each was paid for.
   Paseo plugin's first mate; keep them as they are.
 - **Only the card's main button sends a suggestion.** The chevron that opens the whole text and the trash
   are its siblings, not its children, so neither can press it (`app/suggestions.tsx`).
+- **A backlog item's `(actions: …)` are its card's buttons; a held item also gets an Answer box.** Both
+  send through `useMateSender` like a suggestion, so they share the one send in flight, and nothing in the
+  plugin edits the backlog afterwards: the first mate rewrites or drops the actions. The field's syntax
+  and escapes are `takeActions` in `server/backlog.ts`; the charter teaches the same ones and quotes the
+  Answer box's `<id> — <title>: <words>` (`answerText` in `app/format.ts`), and `server/charter.test.ts`
+  parses the charter's examples, so change the three together. The Paseo plugin's port parses the same
+  lines by the same rules; keep the two in step. The field is taken out of the line before
+  anything else is read, so a prompt's URLs and parentheses never reach the card's title, URL or fields.
 - **Watch output reaches the first mate only between turns**, at most 32,000 characters in one message,
   `<` of anything tag-shaped escaped. Failures are queued once until the watch succeeds.
 - **Titles never change; status lives in the section, the status line and `(hold: …)`.** The board's

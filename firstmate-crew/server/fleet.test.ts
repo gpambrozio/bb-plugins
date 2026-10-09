@@ -67,6 +67,7 @@ describe("backlogColumn", () => {
     mode: null,
     threadId: null,
     hold: null,
+    actions: [],
     blockedBy: null,
     since: null,
     url: null,

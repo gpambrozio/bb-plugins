@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseBacklog } from "./backlog";
+import { parseBacklog, takeActions } from "./backlog";
 import { TEMPLATES, readTemplate } from "./templates";
 
 const SAMPLE = `# Backlog
@@ -84,5 +84,116 @@ describe("parseBacklog", () => {
   it("still reads the Paseo (agent: …) spelling as threadId", () => {
     const [item] = parseBacklog("## In flight\n- [ ] T3 - Fix login (project: web) (agent: 3f2a9c)");
     expect(item?.threadId).toBe("3f2a9c");
+  });
+
+  it("reads a held item's actions and keeps them out of its title, URL and fields", () => {
+    const [item] = parseBacklog(
+      "## In flight\n- [ ] fix-login - Fix login https://github.com/you/web/pull/42 (project: web) (hold: merge?) " +
+        "(actions: Merge => Merge https://github.com/you/web/pull/42 (project: web) | Wait => Leave web#42 open until Monday) (review-head: 0a1b2c3d)",
+    );
+    expect(item).toMatchObject({
+      title: "Fix login",
+      url: "https://github.com/you/web/pull/42",
+      project: "web",
+      hold: "merge?",
+      actions: [
+        { label: "Merge", prompt: "Merge https://github.com/you/web/pull/42 (project: web)" },
+        { label: "Wait", prompt: "Leave web#42 open until Monday" },
+      ],
+    });
+  });
+
+  it("reads actions on an item with no hold, and none where there is no field", () => {
+    const [listed, none] = parseBacklog("## Queued\n- [ ] a - Alpha (actions: Go => Start a)\n- [ ] b - Beta");
+    expect(listed?.actions).toEqual([{ label: "Go", prompt: "Start a" }]);
+    expect(none?.actions).toEqual([]);
+  });
+
+  it("drops an unclosed actions field and still reads the rest of the line", () => {
+    const [item] = parseBacklog("## Queued\n- [ ] pick-db - Choose the database (kind: captain) (hold: which?) (actions: Postgres => Use (Postgres");
+    expect(item).toMatchObject({ id: "pick-db", title: "Choose the database", kind: "captain", hold: "which?", actions: [] });
+  });
+});
+
+describe("takeActions", () => {
+  const actionsOf = (field: string) => takeActions(`x - Title ${field} (project: web)`).actions;
+
+  it("returns the line without the field", () => {
+    expect(takeActions("x - Title (actions: A => a) (project: web)").rest).toBe("x - Title  (project: web)");
+  });
+
+  it("runs the field to its balanced closing parenthesis, URLs with parentheses included", () => {
+    expect(actionsOf("(actions: Read => Read https://en.wikipedia.org/wiki/Fish_(disambiguation) and (briefly) sum it up)")).toEqual([
+      { label: "Read", prompt: "Read https://en.wikipedia.org/wiki/Fish_(disambiguation) and (briefly) sum it up" },
+    ]);
+  });
+
+  it("keeps full URLs whole, query strings and fragments included", () => {
+    expect(actionsOf("(actions: Open => Look at https://example.com/a?b=c&d=e#f:g)")).toEqual([
+      { label: "Open", prompt: "Look at https://example.com/a?b=c&d=e#f:g" },
+    ]);
+  });
+
+  it("reads \\| as a pipe and \\( \\) as lone parentheses", () => {
+    expect(actionsOf(String.raw`(actions: Pipe => Run a \| b | Smile => Reply :\) and 1\( | Slash => Keep a\\b and C:\Users)`)).toEqual([
+      { label: "Pipe", prompt: "Run a | b" },
+      { label: "Smile", prompt: "Reply :) and 1(" },
+      { label: "Slash", prompt: String.raw`Keep a\b and C:\Users` },
+    ]);
+  });
+
+  it("splits each button at its first spaced =>, so a prompt may hold more", () => {
+    expect(actionsOf("(actions: Map => Rename a => b and c=>d)")).toEqual([{ label: "Map", prompt: "Rename a => b and c=>d" }]);
+    expect(actionsOf("(actions: a=>b => Use b)")).toEqual([{ label: "a=>b", prompt: "Use b" }]);
+  });
+
+  it("skips buttons with no spaced =>, an empty label or an empty prompt", () => {
+    expect(actionsOf("(actions: Just words | Tight=>prompt | => no label | No prompt => | Good => yes |  )")).toEqual([
+      { label: "Good", prompt: "yes" },
+    ]);
+  });
+
+  it("is case-insensitive about the key, and the first field gives the buttons", () => {
+    const taken = takeActions("x - T (Actions : A => a) (actions: B => b)");
+    expect(taken.actions).toEqual([{ label: "A", prompt: "a" }]);
+    expect(taken.rest.trim()).toBe("x - T");
+  });
+
+  it("leaves an (actions: inside another group as that group's text", () => {
+    const line =
+      "x - Title (hold: Explain (actions: Merge => Merge https://github.com/you/web/pull/42) before proceeding) " +
+      "(actions: Wait => Wait for approval) (project: web)";
+    const taken = takeActions(line);
+    expect(taken.actions).toEqual([{ label: "Wait", prompt: "Wait for approval" }]);
+    expect(taken.rest).toBe(
+      "x - Title (hold: Explain (actions: Merge => Merge https://github.com/you/web/pull/42) before proceeding)  (project: web)",
+    );
+  });
+
+  it("gives no buttons, and suppresses nothing, for an (actions: that only appears inside another group", () => {
+    expect(takeActions("x - T (note: write (actions: syntax) like this) (project: web)")).toEqual({
+      rest: "x - T (note: write (actions: syntax) like this) (project: web)",
+      actions: [],
+    });
+    expect(takeActions("x - T (note: see (actions: syntax)) (actions: Go => Start x)").actions).toEqual([{ label: "Go", prompt: "Start x" }]);
+  });
+
+  it("reads the real field of a line whose hold mentions (actions:", () => {
+    // A hold holding parentheses is beyond the other fields' reader either way; only the buttons are at stake here.
+    const [item] = parseBacklog(
+      "## Queued\n- [ ] pick-db - Choose the database (kind: captain) (hold: answer with (actions: Merge => Merge it) later) (actions: Postgres => Use Postgres)",
+    );
+    expect(item).toMatchObject({ id: "pick-db", kind: "captain", actions: [{ label: "Postgres", prompt: "Use Postgres" }] });
+  });
+
+  it("finds a field after a stray closing parenthesis outside any group", () => {
+    expect(takeActions("x - Smile :) (actions: Go => Start x)")).toEqual({ rest: "x - Smile :) ", actions: [{ label: "Go", prompt: "Start x" }] });
+  });
+
+  it("never throws on odd input", () => {
+    for (const field of ["(actions:", "(actions:)", "(actions: \\", "(actions: ((((", "(actions: ) ) )", "(actions: =>=>|||)"]) {
+      expect(() => takeActions(field)).not.toThrow();
+    }
+    expect(actionsOf("(actions:)")).toEqual([]);
   });
 });

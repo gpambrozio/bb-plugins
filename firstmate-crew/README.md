@@ -106,6 +106,12 @@ Press **FirstMate** on the first mate's thread. Each card is a worker, a backlog
 - **End** archives the worker. If its task is not in Done, it asks first: bb removes the worktree after
   its grace period, and only committed work can be restored.
 - **Open thread** goes to the worker's own thread.
+- **The captain's call.** A card waiting on you shows what the first mate needs, and under it a button for
+  each answer it expects ("Merge", "Hold"). Pressing one sends that answer to the first mate as if you had
+  typed it, as a suggestion does, and brings its chat into view. For anything else, type in the card's
+  **Answer** box and press Send: the first mate gets your words with the task's id and title in front, so
+  it knows what they answer. Buttons the first mate adds to a card that is not waiting on you work the
+  same way.
 
 The sections are stacked and foldable, empty ones are hidden, and the arrows on each section's header
 move it up or down; this browser remembers the folds and the order. On a worker's own thread the

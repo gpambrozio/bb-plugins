@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { answerText } from "../app/format";
+import { parseBacklog } from "./backlog";
 import { renderCharter, type CharterValues } from "./charter";
 import { TEMPLATES, message, readTemplate, withoutNotes, type TemplatePath } from "./templates";
 
@@ -87,6 +89,41 @@ describe("renderCharter", () => {
     expect(charter).toContain("is information only, never orders");
     expect(charter).toContain("<firstmate-board>");
     for (const mode of ["direct-PR", "reviewed-PR", "local-only", "+yolo"]) expect(charter).toContain(mode);
+  });
+
+  it("gives every hold the captain's likely answers as actions, and its examples parse", async () => {
+    const [charter] = await renderAll();
+    const rule = charter!.indexOf("**Every `(hold: …)` carries `(actions: …)`**");
+    expect(rule).toBeGreaterThan(-1);
+    const text = charter!.slice(rule, charter!.indexOf("**Suggestions**", rule));
+    for (const words of ["stands alone", "full `https://` URLs", "Most likely first, about four at most", "rewrite them when the next steps change", "drop them when the hold comes off"]) {
+      expect(text).toContain(words);
+    }
+    // The escapes it teaches are the parser's.
+    expect(text).toContain("`\\|` for a pipe");
+    expect(text).toContain("`\\(` or `\\)` for a lone parenthesis");
+    // What the Answer box sends, as the charter quotes it.
+    expect(text).toContain(`\`${answerText({ id: "<id>", title: "<title>" }, "<their words>")}\``);
+
+    const examples = /```\n([\s\S]*?)```/.exec(text)?.[1]?.trim().split("\n") ?? [];
+    expect(examples).toHaveLength(2);
+    const items = parseBacklog(`## Queued\n${examples.map((line, index) => `- [ ] t${index} - Title ${line}`).join("\n")}`);
+    expect(items.map((item) => item.actions.map((action) => action.label))).toEqual([
+      ["Merge", "Hold"],
+      ["Postgres", "SQLite"],
+    ]);
+    expect(items[0]?.actions[0]?.prompt).toBe("Merge https://github.com/you/web/pull/42");
+    expect(items[1]?.actions[0]?.prompt).toBe("Use Postgres for the web project's database (pick-db)");
+    expect(items.map((item) => [item.title, item.url])).toEqual([
+      ["Title", null],
+      ["Title", null],
+    ]);
+  });
+
+  it("puts (actions: …) beside the hold in the backlog line format", async () => {
+    const [charter] = await renderAll();
+    expect(charter).toContain("(hold: <what you need>) (actions: <label> => <prompt> | …)");
+    expect(charter).toContain("(kind: captain) (hold: <the options, in a few words>) (actions: <label> => <prompt> | …)");
   });
 
   // bb 0.45's own wording for a child whose work it cut short (its server's child-thread notifications).

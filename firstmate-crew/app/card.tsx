@@ -3,19 +3,25 @@
  * relaunching goes through the first mate, because it owns the brief the new crewmate starts from.
  * Ending archives the thread, which removes its worktree after bb's grace period — so a worker whose
  * task is not Done is only ended after the captain has said so.
+ *
+ * A backlog item's `(actions: …)` are buttons that send their prompt to the first mate, as a suggestion
+ * does; a held item — the captain's call — also gets an Answer box, whose words go to the first mate
+ * under the task's id and title. Both share the one send in flight (`./send-gate`).
  */
 import { UrlLink, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 import { useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "../components/ui/button";
+import { Input } from "../components/ui/input";
 import { Textarea } from "../components/ui/textarea";
 import { cn } from "../lib/utils";
 import type { rpcContract } from "../server";
-import type { ColumnId, FleetCard } from "../shared/types";
+import type { BacklogAction, BacklogItem, ColumnId, FleetCard } from "../shared/types";
 import { ConfirmDialog } from "./confirm-dialog";
-import { STATE_WORDS, STATUS_WORDS, isRunning, relativeTime, shortUrl } from "./format";
+import { STATE_WORDS, STATUS_WORDS, answerText, isRunning, relativeTime, shortUrl } from "./format";
 import { reportError } from "./notify";
+import { useMateSender } from "./use-mate-sender";
 
 const TONES: Readonly<Record<ColumnId, string>> = {
   queued: "border-l-muted-foreground",
@@ -35,16 +41,20 @@ type Draft = { kind: "steer" | "relaunch"; text: string };
 export function Card({
   card,
   onChanged,
+  mateThreadId = null,
   showOpen = true,
 }: {
   card: FleetCard;
   /** Called after an action lands, so the board refreshes without waiting for its poll. */
   onChanged: () => void;
+  /** The first mate's thread, brought into view once an action or answer has reached it. */
+  mateThreadId?: string | null;
   /** False where the worker's own thread is already in view. */
   showOpen?: boolean;
 }) {
   const rpc = useRpc<typeof rpcContract>();
   const navigate = useBbNavigate();
+  const mate = useMateSender();
   const [draft, setDraft] = useState<Draft | null>(null);
   const [busy, setBusy] = useState(false);
   const [confirmEnd, setConfirmEnd] = useState(false);
@@ -78,6 +88,16 @@ export function Card({
       })
       .catch(reportError)
       .finally(() => setBusy(false));
+  }
+
+  /** Sends the captain's words to the first mate; refused while another send is out. */
+  function tellMate(text: string, onSent?: () => void): void {
+    mate.ask(text, () => {
+      toast.success("Sent to the first mate.");
+      onSent?.();
+      onChanged();
+      if (mateThreadId !== null) navigate.toThread(mateThreadId);
+    });
   }
 
   function submitDraft(): void {
@@ -114,6 +134,10 @@ export function Card({
           {backlog.hold}
         </div>
       ) : null}
+      {backlog === null || backlog.actions.length === 0 ? null : (
+        <BacklogActions actions={backlog.actions} sending={mate.sending} onPick={(action) => tellMate(action.prompt)} />
+      )}
+      {backlog?.hold ? <AnswerBox item={backlog} sending={mate.sending} onSend={tellMate} /> : null}
       {crew === null && backlog?.section === "in-flight" ? (
         <div className="text-xs text-muted-foreground">No worker is running for this item.</div>
       ) : null}
@@ -183,5 +207,74 @@ export function Card({
         onConfirm={() => end(true)}
       />
     </div>
+  );
+}
+
+function BacklogActions({
+  actions,
+  sending,
+  onPick,
+}: {
+  actions: readonly BacklogAction[];
+  sending: boolean;
+  onPick: (action: BacklogAction) => void;
+}) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      {actions.map((action, index) => (
+        <Button
+          key={`${index}:${action.label}`}
+          size="sm"
+          variant="secondary"
+          className="max-w-full"
+          disabled={sending}
+          aria-label={`${action.label}: send "${action.prompt}" to the first mate`}
+          onClick={() => onPick(action)}
+        >
+          <span className="truncate">{action.label}</span>
+        </Button>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * A line for the captain's own answer to a hold, sent under the task's id and title. The line is shut while
+ * a send is out: a landed send clears it and may bring the first mate's thread into view, which unmounts a
+ * worker's panel, so words typed meanwhile would be lost either way.
+ */
+function AnswerBox({
+  item,
+  sending,
+  onSend,
+}: {
+  item: BacklogItem;
+  sending: boolean;
+  onSend: (text: string, onSent: () => void) => void;
+}) {
+  const [text, setText] = useState("");
+  const answer = text.trim();
+
+  return (
+    <form
+      className="flex items-center gap-2"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (answer === "" || sending) return;
+        onSend(answerText(item, answer), () => setText(""));
+      }}
+    >
+      <Input
+        value={text}
+        onChange={(event) => setText(event.target.value)}
+        placeholder="Answer the first mate…"
+        aria-label={`Answer for ${item.id}`}
+        disabled={sending}
+        className="h-8 min-w-0 flex-1 text-xs"
+      />
+      <Button type="submit" size="sm" className="shrink-0" disabled={sending || answer === ""}>
+        Send
+      </Button>
+    </form>
   );
 }

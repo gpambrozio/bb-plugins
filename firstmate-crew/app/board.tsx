@@ -124,7 +124,7 @@ export function Board({ fleet, mateThreadId, onChanged }: { fleet: Fleet; mateTh
             </div>
             <CollapsibleContent className="flex flex-col gap-2">
               {cards.map((card) => (
-                <Card key={card.key} card={card} onChanged={onChanged} />
+                <Card key={card.key} card={card} onChanged={onChanged} mateThreadId={mateThreadId} />
               ))}
             </CollapsibleContent>
           </Collapsible>
