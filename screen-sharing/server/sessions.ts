@@ -2,12 +2,14 @@
  * Tickets and sessions, with no sockets in sight.
  *
  * A ticket is what the app asks for before it opens the relay's WebSocket: a
- * random token bound to one Mac, usable once, for a few seconds. Redeeming it
+ * random token bound to one Mac — and to the way the relay reaches it, its own
+ * loopback or bb's host link — usable once, for a few seconds. Redeeming it
  * opens a session; the relay (relay.ts) owns the sockets and tells the
  * registry when they close. The registry ends a session itself when it has
  * been idle too long, when it is too old, or when the user closes them all.
  */
 import { CloseCode, type SessionInfo } from "../shared/channels";
+import type { Route } from "./link";
 
 export interface SessionRegistryOptions {
   now(): number;
@@ -29,7 +31,14 @@ export interface SessionRegistryOptions {
   onChange(sessions: SessionInfo[]): void;
 }
 
-export type Redeemed = { ok: true; hostId: string } | { ok: false; reason: string };
+/** The Mac a ticket is for, and how the relay reaches it. */
+export interface TicketTarget {
+  hostId: string;
+  hostName: string;
+  route: Route;
+}
+
+export type Redeemed = { ok: true; target: TicketTarget } | { ok: false; reason: string };
 
 /** How the registry asks the relay to drop a session's sockets. */
 export type EndSession = (code: number, reason: string) => void;
@@ -43,7 +52,7 @@ export interface OpenSession {
 }
 
 interface Ticket {
-  hostId: string;
+  target: TicketTarget;
   expiresAt: number;
 }
 
@@ -68,7 +77,7 @@ export class SessionRegistry {
     return this.closedAll;
   }
 
-  mint(hostId: string, generation: number = this.closedAll): { token: string; expiresAt: number } {
+  mint(target: TicketTarget, generation: number = this.closedAll): { token: string; expiresAt: number } {
     if (generation !== this.closedAll) throw new Error("Close all ended sessions while this one was starting");
     this.dropExpiredTickets();
     while (this.tickets.size >= this.options.maxTickets) {
@@ -78,7 +87,7 @@ export class SessionRegistry {
     }
     const token = this.options.randomId();
     const expiresAt = this.options.now() + this.options.ticketTtlMs;
-    this.tickets.set(token, { hostId, expiresAt });
+    this.tickets.set(token, { target: { ...target }, expiresAt });
     return { token, expiresAt };
   }
 
@@ -88,8 +97,8 @@ export class SessionRegistry {
     this.tickets.delete(token);
     if (ticket === undefined) return { ok: false, reason: "unknown or already used ticket" };
     if (ticket.expiresAt <= this.options.now()) return { ok: false, reason: "expired ticket" };
-    if (ticket.hostId !== hostId) return { ok: false, reason: "ticket is for another Mac" };
-    return { ok: true, hostId };
+    if (ticket.target.hostId !== hostId) return { ok: false, reason: "ticket is for another Mac" };
+    return { ok: true, target: ticket.target };
   }
 
   open(hostId: string, end: EndSession): OpenSession {
@@ -113,7 +122,6 @@ export class SessionRegistry {
     return [...this.sessions.values()].map((session) => ({ ...session.info }));
   }
 
-  /** Ends every session; returns how many there were. */
   /**
    * Ends every session and voids every unredeemed ticket, so a connection that
    * was still on its way when the user pressed Close all never opens.

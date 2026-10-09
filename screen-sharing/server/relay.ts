@@ -1,32 +1,50 @@
 /**
- * The relay: one WebSocket from noVNC in the app, one TCP connection to the
- * Mac's Screen Sharing on 127.0.0.1:5900, bytes copied both ways and never
- * read. It reads only the ticket in the URL; the VNC sign-in (macOS user name
- * and password) travels inside the RFB stream, encrypted by Apple's ARD
- * handshake, and is never seen here.
+ * The relay: one WebSocket from noVNC in the app, one link to the chosen
+ * Mac's Screen Sharing (link.ts) — a TCP connection on the server's own
+ * loopback, or bb's host link to another Mac. Bytes are copied both ways and
+ * never read. It reads only the ticket in the URL and the page's ack frames;
+ * the VNC sign-in (macOS user name and password) travels inside the RFB
+ * stream, encrypted by Apple's ARD handshake, and is never seen here.
  *
  * A WebSocket opens a session only with a ticket the registry minted for that
  * Mac (sessions.ts). Either side closing closes the other, and the registry
  * can close both (idle, maximum length, Close all, plugin stopping).
+ *
+ * Flow control: the page acknowledges what it has received (`ack:<bytes>`
+ * text frames, shared/channels.ts); the link stops reading from the Mac while
+ * too much is unacknowledged.
  */
-import type { Socket } from "node:net";
 import type { ExperimentalPluginWebSocket, ExperimentalPluginWebSocketHandler } from "@get-bb/plugin-sdk";
 
-import { CloseCode } from "../shared/channels";
+import { CloseCode, FLOW_PARAM, FLOW_VERSION, parseAck } from "../shared/channels";
+import type { Link, OpenLink } from "./link";
 import type { OpenSession, SessionRegistry } from "./sessions";
 
 export interface RelayOptions {
   registry: SessionRegistry;
-  /** Opens the TCP connection to Screen Sharing. */
-  connect(): Socket;
-  /** Bytes the app may send faster than Screen Sharing reads them before the session is ended. */
-  maxBufferedBytes: number;
+  openLink: OpenLink;
   log(message: string): void;
 }
 
-/** A close reason is at most 123 bytes on the wire. */
-function shortReason(reason: string): string {
-  return reason.length > 100 ? `${reason.slice(0, 99)}…` : reason;
+/** A close reason is at most 123 bytes of UTF-8 on the wire; `ws` throws on a longer one. */
+const MAX_REASON_BYTES = 123;
+const encoder = new TextEncoder();
+
+/**
+ * The reason cut to fit, by bytes and at a whole character: a Mac's name in
+ * the reason may be Chinese or emoji, three or four bytes a character.
+ */
+export function shortReason(reason: string): string {
+  if (encoder.encode(reason).length <= MAX_REASON_BYTES) return reason;
+  const ellipsis = "…";
+  let budget = MAX_REASON_BYTES - encoder.encode(ellipsis).length;
+  let cut = "";
+  for (const character of reason) {
+    budget -= encoder.encode(character).length;
+    if (budget < 0) break;
+    cut += character;
+  }
+  return `${cut}${ellipsis}`;
 }
 
 function closeQuietly(ws: ExperimentalPluginWebSocket, code: number, reason: string): void {
@@ -37,35 +55,55 @@ function closeQuietly(ws: ExperimentalPluginWebSocket, code: number, reason: str
   }
 }
 
-function errorCode(error: unknown): string {
-  const code = (error as { code?: unknown } | null)?.code;
-  return typeof code === "string" ? code : "error";
-}
-
 export function createRelay(options: RelayOptions): ExperimentalPluginWebSocketHandler {
   const { registry } = options;
 
   return (context) => {
     const hostId = context.url.searchParams.get("host") ?? "";
     const token = context.url.searchParams.get("token") ?? "";
+    const flow = context.url.searchParams.get(FLOW_PARAM);
     let ws: ExperimentalPluginWebSocket | null = null;
-    let socket: Socket | null = null;
+    let link: Link | null = null;
     let session: OpenSession | null = null;
     let done = false;
+    /** Bytes sent to the page, and the most it has acknowledged. */
+    let sent = 0;
+    let acked = 0;
 
     /** Drops both ends once; `tell` is what the app hears, when it is still there to hear it. */
     function finish(tell?: { code: number; reason: string }): void {
       if (done) return;
       done = true;
-      socket?.destroy();
+      link?.close();
       session?.closed();
       if (tell !== undefined && ws !== null) closeQuietly(ws, tell.code, tell.reason);
       if (session !== null) options.log(`session ${session.id} closed${tell === undefined ? "" : `: ${tell.reason}`}`);
     }
 
+    function onAck(frame: string): void {
+      const total = parseAck(frame);
+      if (total === null) {
+        finish({ code: CloseCode.policy, reason: "text frames other than acks are not part of VNC" });
+        return;
+      }
+      if (total < acked || total > sent) {
+        finish({ code: CloseCode.policy, reason: "the page acknowledged bytes it was never sent" });
+        return;
+      }
+      acked = total;
+      link?.ack(total);
+    }
+
     return {
       onOpen(opened) {
         ws = opened;
+        // Checked before the ticket, which stays unused: a page from before flow control would stall.
+        if (flow !== FLOW_VERSION) {
+          done = true;
+          options.log("refused a connection from a page without flow control");
+          closeQuietly(opened, CloseCode.policy, "this page is out of date; reload bb and connect again");
+          return;
+        }
         const redeemed = registry.redeem(token, hostId);
         if (!redeemed.ok) {
           done = true;
@@ -73,36 +111,36 @@ export function createRelay(options: RelayOptions): ExperimentalPluginWebSocketH
           closeQuietly(opened, CloseCode.policy, redeemed.reason);
           return;
         }
-        const tcp = options.connect();
-        socket = tcp;
         const open = registry.open(hostId, (code, reason) => finish({ code, reason }));
         session = open;
-        options.log(`session ${open.id} opened`);
-
-        tcp.on("data", (chunk: Buffer) => {
-          if (done) return;
-          open.touch();
-          opened.send(new Uint8Array(chunk));
-        });
-        tcp.on("error", (error) => {
-          finish({ code: CloseCode.failed, reason: `cannot reach Screen Sharing (${errorCode(error)})` });
-        });
-        tcp.on("close", () => {
-          finish({ code: CloseCode.normal, reason: "Screen Sharing closed the connection" });
-        });
+        options.log(`session ${open.id} opened (${redeemed.target.route})`);
+        const opening = options.openLink(
+          { ...redeemed.target, sessionId: open.id },
+          {
+            data: (bytes) => {
+              if (done) return;
+              open.touch();
+              sent += bytes.length;
+              try {
+                opened.send(bytes);
+              } catch (error) {
+                // Called from socket and signal callbacks in the bb server's process: never let it escape.
+                finish({ code: CloseCode.failed, reason: `could not send to the page (${error instanceof Error ? error.message : String(error)})` });
+              }
+            },
+            end: (code, reason) => finish({ code, reason }),
+          },
+        );
+        // A link that failed while opening has already finished the session.
+        if (done) opening.close();
+        else link = opening;
       },
 
       onMessage(_ws, data) {
-        if (done || socket === null || session === null) return;
-        if (typeof data === "string") {
-          finish({ code: CloseCode.policy, reason: "text frames are not part of VNC" });
-          return;
-        }
+        if (done || link === null || session === null) return;
         session.touch();
-        socket.write(data);
-        if (socket.writableLength > options.maxBufferedBytes) {
-          finish({ code: CloseCode.failed, reason: "Screen Sharing is not reading" });
-        }
+        if (typeof data === "string") onAck(data);
+        else link.write(data);
       },
 
       onClose() {

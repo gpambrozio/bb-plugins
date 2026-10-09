@@ -1,6 +1,6 @@
 {
   "name": "@gpambrozio/bb-plugin-screen-sharing",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "license": "MIT",
   "author": "gpambrozio (https://github.com/gpambrozio)",
   "homepage": "https://github.com/gpambrozio/bb-plugins/tree/main/screen-sharing#readme",
@@ -25,6 +25,8 @@
   "files": [
     "server.ts",
     "server/",
+    "host.ts",
+    "host/",
     "shared/",
     "app.tsx",
     "app/",
@@ -42,7 +44,7 @@
   ],
   "bb": {
     "name": "Screen Sharing",
-    "description": "See and control the screen of the Mac running your bb server from inside bb, at home or remotely. Uses macOS Screen Sharing.",
+    "description": "See and control the screens of the Macs connected to your bb from inside bb, at home or remotely. Uses macOS Screen Sharing on each Mac.",
     "branding": {
       "icon": "./icons/screen-share.svg",
       "experimental_icons": {
@@ -50,6 +52,7 @@
       }
     },
     "server": "./server.ts",
+    "host": "./host.ts",
     "app": "./app.tsx"
   },
   "dependencies": {

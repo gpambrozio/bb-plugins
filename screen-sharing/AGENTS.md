@@ -1,8 +1,9 @@
 # AGENTS.md
 
-A bb plugin that adds a **Screen Sharing** sidebar page: the screen of the Mac running the bb server,
-seen and controlled through noVNC in the page, relayed by the plugin to macOS Screen Sharing on
-`127.0.0.1:5900`. It is not a Paseo port.
+A bb plugin that adds a **Screen Sharing** sidebar page: the screens of the Macs enrolled in bb, seen
+and controlled through noVNC in the page, relayed by the plugin to macOS Screen Sharing on each Mac's
+own `127.0.0.1:5900` — directly for the Mac running the bb server, over bb's host link for the others.
+It is not a Paseo port.
 
 The repository root `AGENTS.md` covers what every plugin here shares. This file covers only what is
 specific to `screen-sharing`. The feasibility study behind it measured bb's channels and auth; its
@@ -12,14 +13,23 @@ findings are summarised under *Decisions*.
 
 | File | What it owns |
 | --- | --- |
-| `server.ts` | Wires the RPCs, the relay route, the sweep timer and disposal. Holds the limits (ticket life, no-traffic, maximum length, buffer cap). |
-| `server/sessions.ts` | Tickets (single-use, bound to a Mac, short-lived) and sessions (no-traffic and age limits, Close all). No sockets. |
-| `server/relay.ts` | One WebSocket ⇄ one TCP connection, bytes copied untouched; either end closing closes the other. |
-| `server/status.ts` | Is Screen Sharing on: `launchctl print-disabled system` and an RFB greeting probe that signs in to nothing. |
-| `shared/channels.ts` | Route, realtime channel, close codes, limits and zod shapes; no SDK import, so the app may use it. |
+| `server.ts` | Wires the RPCs (host list, per-host status, tickets), the relay route, host signals and worker exits, the sweep timer and disposal. Holds the server's limits (ticket life, no-traffic, maximum length, buffer cap, pipelining). |
+| `server/sessions.ts` | Tickets (single-use, bound to a Mac and its route, short-lived) and sessions (no-traffic and age limits, Close all). No sockets. |
+| `server/relay.ts` | One WebSocket ⇄ one link, bytes copied untouched; the page's ack frames; either end closing closes the other. |
+| `server/link.ts` | The seam between the relay and the Mac's side: `Link`, its events and the route. |
+| `server/loopback-link.ts` | The server's own Mac: a TCP connection to `127.0.0.1:5900`, paused while the page is a window behind. |
+| `server/host-link.ts` | Every other Mac: pipelined, numbered `write` calls up; numbered `data` signals down, a gap ends it; acks and keepalives to the host. `HostLinks` routes signals by session and checks their host. |
+| `host.ts`, `host/entry.ts` | The host entry, on every enrolled machine: `status`, and `open`/`write`/`ack`/`keepalive`/`close`; a lease per session; close-all on lifecycle abort and dispose. |
+| `host/relay.ts` | A Mac's side of a remote session: its TCP connection, numbered chunks out, the credit window, the silence expiry. |
+| `host/status.ts` | Is Screen Sharing on: `launchctl print-disabled system` and an RFB greeting probe that signs in to nothing. Runs on each Mac, and in the server for its own. |
+| `shared/channels.ts` | Route, realtime channel, flow-control frames, close codes, session limits and zod shapes; no SDK import, so the app may use it. |
 | `shared/contract.ts` | The app ⇄ server RPC contract. The app imports it as a type only. |
-| `app/screen-panel.tsx` | The page: status and System Settings guidance, Connect/Disconnect, View only, the title bar's Close all. |
-| `app/session-store.ts` | The window's session, outside React: ticket → WebSocket → noVNC into an element it owns; the input-idle disconnect; the local-cursor CSS; why it ended. |
+| `shared/host-contract.ts`, `shared/limits.ts` | The server ⇄ host contract and signals, and the numbers both ends share (port, windows, keepalive). The app imports neither. |
+| `app/screen-panel.tsx` | The page: the toolbar row (the picker, then View only, Connect/Disconnect and the keys), the picked Mac's status and System Settings guidance; the title bar's right side (`SessionsHeader`: open sessions, Close all). |
+| `app/hosts.ts` | The machines, their statuses and the picked Mac, outside React, so the picker, the page and other windows' visits share them. |
+| `app/host-picker.tsx` | The picker at the left of the toolbar row: a dot and the picked Mac's name, opening bb's dropdown menu of every machine with its state (a sheet on a compact viewport). |
+| `app/session-store.ts` | One session per Mac per window, outside React: ticket → WebSocket → noVNC into an element it owns; the input-idle disconnect; the local-cursor CSS; why it ended. `screenSessions` holds them. |
+| `app/flow.ts` | The page's acknowledgements of what it received. |
 | `app/vnc-session.tsx` | The live screen on the page: lends the store's element a place while the page is open; the sign-in form. |
 | `app/rfb.ts` | The seam the page's tests replace: `new WebSocket` and noVNC's `RFB` (scaling; no dot cursor; marks a cursor sent by the Mac). |
 | `app/keys.ts` | The Send keys menu: each shortcut as RFB keysyms (⌘ is `Super_L`, as noVNC sends it). |
@@ -28,20 +38,25 @@ findings are summarised under *Decisions*.
 | `app/sessions.tsx` | The open sessions as the app sees them; the sidebar "Live" and the corner Close all pill. |
 | `app/novnc.d.ts` | Types for the part of noVNC's `RFB` used here; noVNC ships none. |
 
-`npm test` runs everything. The tests never touch this machine's real port 5900: the relay and the
-probe run against fake TCP servers, and the fake-host test drives the route only with tickets it
-refuses. `app/novnc-session.test.ts` runs the store against the real, pinned noVNC client, playing
+`npm test` runs everything. The tests never touch this machine's real port 5900: the relay, the host
+relay and the probe run against fake TCP servers (`testing/fake-vnc.ts`), and the fake-host test
+drives the loopback route only with tickets it refuses. `server/remote.test.ts` runs the real server
+entry on bb's fake plugin host against a real `HostRelay` behind `testing/fake-daemon.ts`, which
+delays every call and signal by a chosen one-way time; it covers every way a remote session ends and
+logs `[measured]` round trips and throughput at 300 ms each way. `app/novnc-session.test.ts` runs the store against the real, pinned noVNC client, playing
 Apple's side of an ARD sign-in over a fake relay socket; use it for anything that depends on what
 noVNC really does with credentials, keys, buttons or the cursor.
 
 ## Decisions
 
-**Which machine: the bb server's own, in `server.ts`, no `bb.host` entry.** The server runs on the Mac
-it shares, so a loopback `net.connect` reaches Screen Sharing. Other enrolled Macs are refused in
-`openSession` (the route's `host` parameter is there so a relay to them can be added later). The study
-measured the two ways to reach another Mac: a relay over the host channel (host RPC up, host signals
-down) works but the round trip was ≈600 ms to remote hosts; a gate-shared port
-(`bb.hosts.declareSharedPorts`) is unproven. Neither is in this version.
+**Which machine: every enrolled one, two ways.** The server's own Mac (`system.config().primaryHostId`)
+is reached from `server.ts` with a loopback `net.connect`, as before. Every other Mac goes through the
+plugin's `bb.host` entry over bb's host link: host calls up, host signals down. `openSession` decides
+which when it mints the ticket (the ticket carries the route), so the route cannot be swapped later;
+a Mac that is offline or unknown gets no ticket. The study measured ≈600 ms round trips to the
+MacBooks through getbb.app. A gate-shared port (`bb.hosts.declareSharedPorts`, path C in the study)
+might be faster but needs a port exposed on the Mac and has open questions about the getbb.app cookie;
+it is not used.
 
 **One same-origin WebSocket route, `bb.http.experimental_websocket("/vnc", …, { auth: "local" })`.**
 bb serves the app from the server's own origin (`window.location.origin` is what bb's own SDK uses for
@@ -61,11 +76,28 @@ Do not claim more than this in docs or messages.
 
 **A session belongs to the window, not the page.** bb unmounts the page whenever the user opens
 something else but keeps the plugin's app module loaded for the life of the window, so the session
-(`screenSession` in `app/session-store.ts`) lives at module scope: the WebSocket, noVNC's client and a
-`div` noVNC draws into. The page appends that `div` while open and removes it on unmount; noVNC keeps
+(a `ScreenSessionStore` in `app/session-store.ts`) lives at module scope: the WebSocket, noVNC's
+client and a `div` noVNC draws into. The page appends that `div` while open and removes it on unmount; noVNC keeps
 running detached (a 0×0 target scales to 0, and its ResizeObserver rescales on reattach). Coming back
 shows the same connection, already signed in. Nothing about the sign-in is kept to make this work —
-the live connection is what persists. One session per window; another window has its own.
+the live connection is what persists. One session per Mac per window (`screenSessions.for(hostId)`);
+another window has its own. Sessions to different Macs run at once: the page attaches the picked
+Mac's element and the others stay detached, input suspended, exactly as when the page is closed —
+`HostScreen` is keyed by host, so switching Macs is an unmount and a mount. Close all and `pagehide`
+end every store. The picked Mac is `hostDirectory.picked` (`app/hosts.ts`), window state like the
+sessions.
+
+**The picker leads the toolbar row, in every state.** A dot coloured by state and the Mac's name,
+truncated, with every machine's state in its menu, at the left of the row that holds View only,
+Connect or Disconnect and the keys — so the row names the Mac it acts on, and no other place does.
+The row is drawn while the Mac is being checked, is off, offline or not a Mac (with only the picker
+in it then), so another Mac is always one click away. It wraps in a narrow window: the picker keeps the
+left, the controls go right-aligned onto the next line. The menu is bb's vendored dropdown
+(`components/ui/dropdown-menu.tsx`, copied from `github-board`), which portals to the page body and
+becomes a sheet on a compact viewport; because a full-screen page hides anything portalled outside
+it, the picker is disabled while Full screen is on. It was in the title bar (`headerContent`, a
+fixed box on the bar's right) for a while; the captain preferred it under the title, where the bar
+keeps only the open sessions and Close all.
 
 While the screen is off the page its input is suspended: `detach()` first releases every key and
 mouse button held over it — a real `keyup` per held key on noVNC's canvas, and a `mouseup` with no
@@ -111,10 +143,86 @@ would be one more door to a Mac's screen.
 
 **The page opens the WebSocket itself and hands it to noVNC** (`new RFB(target, socket)`), so it can
 read the close code and say why a session ended; noVNC reports only clean or not. No subprotocol is
-requested.
+requested. The page also listens on that socket beside noVNC to acknowledge what arrives (see *Flow
+control*); noVNC sends only binary frames, so text frames on the route are the page's acks.
+
+**One display picture.** A Mac with several displays sends noVNC one framebuffer; picking a display is
+Apple's private extension to its own Screen Sharing app. Apple documents nothing for third-party
+viewers and the plugin was not tried on a multi-display Mac. Do not add display selection without
+seeing what such a Mac sends (ServerInit size, any ExtendedDesktopSize screen list).
 
 **View only is noVNC's `viewOnly`, set in the page.** The relay does not parse RFB to enforce it; the
 user is the one viewing.
+
+## The host link
+
+How a session to a Mac other than the server's works (`server/host-link.ts`, `host/relay.ts`). bb's
+host link is a JSON RPC up and lossy, ephemeral signals down (the SDK guide calls them "invalidation
+signals"); the worker sends each signal over IPC and the daemon over its one WebSocket to the server,
+which starts each handler as it arrives. So signals arrive in order in practice, but none is
+guaranteed, and the design must not depend on either.
+
+- **Up:** the viewer's bytes are batched into `write` calls of at most 128 KiB, numbered from 0, with
+  up to 8 in flight (`MAX_PIPELINED_WRITES`). **bb does not deliver concurrent host calls in order**:
+  its server awaits `resolveHostEnvironment` for each call before sending it, so calls overtake each
+  other. The 0.2.0 candidate ended the session on the first one out of order, and every session to a
+  MacBook died while the user typed the password (the log said "expected 4, got 5"); twelve one-byte
+  writes reproduced it three times in three, and arrived as early as 6 before 0. So the host holds a
+  write that arrives early until the ones before it are in (`MAX_WRITES_AHEAD`, 32), and ends the
+  session only on a repeated number or one too far ahead. The server's window is counted from the
+  earliest write still unanswered, not by calls in flight: the host answers an early write as soon
+  as it holds it, so counting calls let later writes run past the host's 32 behind one slow call
+  (review pass 1; `server/remote.test.ts` holds write 0 back while 72 more are typed).
+  `MAX_PIPELINED_WRITES` and `MAX_WRITES_AHEAD` live together in `shared/limits.ts`. `testing/fake-daemon.ts`'s `callJitterMs`
+  makes calls overtake each other, and `server/remote.test.ts` types through it. Pipelining is what
+  keeps typing from waiting a round trip per key; serialised writes would make each key wait for the
+  one before it.
+- **Down:** the host coalesces what Screen Sharing sends into `data` signals of at most 128 KiB raw,
+  numbered from 0, emitted one at a time. The server ends the session on a gap — a VNC stream with a
+  hole is garbage — and ignores a signal from any host but the session's own.
+- **Flow control** (end to end, see below): the server forwards the page's acknowledgement totals as
+  `ack`, one call in flight carrying the latest total; the host pauses its socket while emitted minus
+  acknowledged (plus pending) exceeds `HOST_WINDOW_BYTES` (16 MiB). So neither the host nor the server
+  holds more than the window for a slow page.
+- **Leases:** `open` takes a worker lease (`experimental_retainWorker`, which bb allows only during a
+  call) and the session releases it on every end, failure to connect included. Without it the daemon
+  stops an idle worker after five minutes and its sockets with it.
+- **Liveness:** the sweep (15 s) sends `keepalive` for a session quiet for `HOST_KEEPALIVE_MS` (60 s);
+  the host ends a session it has heard nothing about for `HOST_SILENCE_MS` (3 min). A failed call ends
+  the session on the server; a server that vanished (crash, reload whose close never arrived, a lost
+  link) leaves the host's session to expire.
+- **Teardown, all tested in `server/remote.test.ts`:** the page closing, Close all, the plugin stopping
+  (bb closes the sockets, the relay asks the host to close), Screen Sharing hanging up (the host's last
+  `data`, then `closed`), bb stopping the worker (lifecycle abort and `dispose` close every session and
+  signal `closed`), the worker crashing (`experimental_onWorkerExit`), the link dropping (the next call
+  fails here; the host expires it), and the page leaving while the host is still connecting (`close`
+  is sent once `open` answers). On the host, a session closed while it is still connecting — by
+  `close`, by bb cancelling the call (`context.signal`) or by the worker stopping — never opens, and a
+  stopping worker opens nothing more. An `open` that fails on the server (a timeout) still sends
+  `close`, in case the host did connect. `ws.send` is guarded: it runs inside socket and signal
+  callbacks in the bb server's process. Close reasons are cut to 123 bytes of UTF-8 at whole characters
+  (`shortReason`): they carry the Mac's name, and bb's `ws` refuses a longer reason and closes
+  nothing, which would leave the page showing a session the server has already ended.
+
+Live, holding a connection at Screen Sharing's security-type list without signing in: the MacBook
+and the MacMini (over loopback, no host link) both hang up at 240 s ("Screen Sharing closed the
+connection"), which is macOS's own limit on an unauthenticated connection, not the relay. Over the
+host link that is past `HOST_SILENCE_MS`, so the keepalives reach the Mac.
+
+Measured with `testing/fake-daemon.ts` at 300 ms each way: greeting and a key echo ≈ 600 ms (one
+round trip), 30 keys typed over 600 ms all echoed after ≈ 1.2 s, ≈ 19 MiB/s with the 16 MiB window.
+The real link adds bandwidth limits the fake has none of (the study measured ≥ 17 MB/s of base64
+signals from a MacBook).
+
+## Flow control
+
+The page acknowledges what it has received (`app/flow.ts`): a text frame `ack:<total bytes>` at most
+every 50 ms. The relay checks it (never less than before, never more than it sent; anything else ends
+the session with 1008) and hands it to the link. The loopback link pauses the server's TCP socket
+while more than `LOOPBACK_WINDOW_BYTES` (8 MiB) is unacknowledged; the host link forwards it to the
+host. bb's plugin WebSocket has no `bufferedAmount`, so this is the only way the server can tell a
+page is behind. The relay URL carries `flow=ack`; a page from before flow control is refused with a
+"reload bb" reason instead of stalling at the window.
 
 ## Keys
 
@@ -158,20 +266,25 @@ reach any page. The evidence, so nobody has to rediscover it:
 
 ## Security invariants
 
-- **A session needs a ticket.** `openSession` mints one only for `client` callers (not other plugins;
-  see *Who may mint a ticket*) and only for the server's primary host. Redeeming it uses it up, a
-  wrong Mac uses it up too, and it expires after 30 s; at most 16 wait at once.
-- **One socket per ticket.** The relay connects to 5900 only after a ticket is redeemed; a refused
-  socket closes with 1008 and never opens TCP.
-- **Bytes only.** The relay never parses, logs or stores what crosses it, and logs only session ids
-  and close reasons — never the ticket. The sign-in travels inside RFB's own ARD Diffie-Hellman
+- **A session needs a ticket, for one Mac.** `openSession` mints one only for `client` callers (not
+  other plugins; see *Who may mint a ticket*) and only for a machine bb has — the server's own, or a
+  connected one. The ticket names the Mac and the route; redeeming it uses it up, a wrong Mac uses it
+  up too, and it expires after 30 s; at most 16 wait at once.
+- **One socket per ticket.** The relay connects to Screen Sharing — loopback TCP, or `open` on the host
+  — only after a ticket is redeemed; a refused socket closes with 1008 and never reaches any Mac.
+- **The same on every Mac.** Nothing listens and nothing is exposed on any of them: the host entry
+  connects out to its own loopback, and only the plugin's own server can call it. Plaintext RFB leaves
+  a loopback interface only inside TLS (the getbb.app tunnel, the host daemon's link).
+- **Bytes only.** Neither the relay nor the host entry parses, logs or stores what crosses it; they log
+  only session ids and close reasons — never the ticket. The sign-in travels inside RFB's own ARD Diffie-Hellman
   exchange; the page hands it to noVNC and clears the form. noVNC keeps the very object it is handed
   (`_rfbCredentials`) for the life of the connection, so the store empties that object once the
   sign-in is over — on `connect`, on `securityfailure` and on teardown. Not earlier: noVNC's ARD step
   re-reads the fields when it resumes after its async encryption. No setting holds credentials.
-- **Everything closes.** WebSocket close or error destroys the TCP socket; TCP close or error closes
-  the WebSocket; the sweep (every 15 s) ends sessions with no traffic for 30 min or older than 8 h;
-  `closeAll` ends them all (4003), voids every unredeemed ticket, and bumps a generation that
+- **Everything closes.** WebSocket close or error destroys the TCP socket or closes the host's session;
+  TCP close or error, or the host's `closed`, closes the WebSocket; every remote teardown also releases
+  the host's socket and lease (see *The host link*); the sweep (every 15 s) ends sessions with no traffic for 30 min or older than 8 h;
+  `closeAll` ends them all, on every Mac (4003), voids every unredeemed ticket, and bumps a generation that
   `openSession` reads before its await, so a request already under way cannot mint afterwards; in the
   window that pressed it, Close all also cancels the store's own attempt still waiting for a ticket.
   On reload or disable bb closes the plugin's sockets itself with 1012
@@ -180,12 +293,20 @@ reach any page. The evidence, so nobody has to rediscover it:
   seen or not, on Disconnect, and on `pagehide` (the window closing); a ticket that arrives after
   Disconnect is never used. Leaving the page does not end a session — the sidebar "Live" and the
   corner pill are how an unseen one stays visible.
-- **Open sessions are visible.** Every open and close publishes the list; the sidebar row and a corner
-  pill in every window show it, and both the pill and the page's title bar offer Close all.
+- **Open sessions are visible.** Every open and close publishes the list, whichever Mac; the sidebar row
+  and a corner pill in every window show it, both the pill and the page's title bar offer Close all,
+  and the picker marks each Mac with a session as Live.
 
 ## Status check
 
-`status` is read-only and needs no root. The RFB probe reads the version line, answers with the
+`hosts` lists the enrolled machines without asking any of them anything; the page then calls
+`status` for each at once, so the server's own answer does not wait on a laptop's round trip. For the
+server's Mac the check runs in the server; for any other the server asks its host entry (12 s
+timeout), answers `offline` for a machine bb is not connected to without calling it, and
+`unreachable` with the error when the call fails (an old bb on that machine, say). The host entry
+answers `unsupported` off macOS.
+
+The check itself is read-only and needs no root. The RFB probe reads the version line, answers with the
 highest version it speaks that the server offers (3.8 for Apple's `003.889`, never more than the
 server), reads the list of security types and hangs up before choosing one, so it never signs in. The
 probe decides `ready`: Remote Management also answers on 5900 while the Screen Sharing switch is off.

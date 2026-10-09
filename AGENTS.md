@@ -203,6 +203,10 @@ What a port only learns by running it:
   nothing at run time names the plugin's directory, and a `templates/` or `data/` folder beside
   `server.ts` is unreachable. Ship such data through a generated module (a script writes the files
   into a checked-in `.ts` file, a test fails when the two differ), as `firstmate-crew` does.
+- **A plugin WebSocket has no `bufferedAmount`.** `bb.http.experimental_websocket`'s socket offers
+  `send`, `close` and `readyState` only, so the server cannot tell that a client is falling behind; a
+  route that streams needs the client to acknowledge what it received (`screen-sharing/app/flow.ts`).
+  The fake host closes route sockets with 1012 before running dispose hooks, as bb does.
 - **`bb.storage.kv` is 256 KB per value.** A queue or a log that can outgrow that belongs in a file
   beside the data it describes, or in `bb.storage.database()`.
 - **A plugin CLI command knows its caller.** `run(input, ctx)` gets the calling thread and project
@@ -275,6 +279,22 @@ is enrolled — say which one you chose in the plugin's `AGENTS.md`. `launchd-jo
   `experimental_onSignal`. An active watch keeps the worker alive, so give it an expiry.
 - The worker stops after five idle minutes. A server-side poll more frequent than that keeps it running
   for good; say so where you add one.
+- **Host signals are lossy and only ordered in practice.** `experimental_emitSignal` resolves once the
+  worker has handed the signal to the daemon, not on delivery. The daemon sends it over its one
+  connection to the server, which starts each `experimental_onSignal` handler as it arrives, so
+  signals arrive in order but are dropped while the link is down, and nothing guarantees either. A
+  stream over signals needs sequence numbers and its own credit (`screen-sharing`'s host link).
+- **Concurrent host calls are not delivered in order.** bb's server awaits per call
+  (`resolveHostEnvironment`) before sending each one to the daemon, so a call made after another can
+  reach the host first. Number calls whose order matters and reorder them on the host, or wait for
+  each answer before the next call.
+- **`context.experimental_retainWorker()` works only while the call that asks is running**; it throws
+  afterwards. Take the lease in the handler that starts the background work, and release it on every
+  way that work ends.
+- **Testing a host entry:** `experimental_createHostEntryHarness` (`@get-bb/plugin-sdk/testing/host`)
+  runs it with the daemon's validation and counts leases. Wiring `createFakePluginHost`'s
+  `experimental_callHostRpc` and `harness.experimental_emitHostSignal` to the entry's logic tests the
+  server and host together (`screen-sharing/testing/fake-daemon.ts`).
 
 ### App — `app.tsx`
 

@@ -1,11 +1,11 @@
 /**
  * The plugin against bb's fake host: the relay route is registered with
- * "local" auth, tickets are only for the Mac running the bb server and only
- * for the bb app, and stopping the plugin ends every session.
+ * "local" auth, tickets are only for machines bb has and only for the bb app,
+ * and nothing is ever exposed.
  *
  * The route is driven only with tickets it must refuse, so no test here
  * connects to this machine's real port 5900; server/relay.test.ts covers the
- * relay against a fake Screen Sharing.
+ * relay against a fake Screen Sharing, server/remote.test.ts the other Macs.
  */
 import { createFakePluginHost, makeHostResponse } from "@get-bb/plugin-sdk/testing";
 import { afterEach, describe, expect, it } from "vitest";
@@ -23,7 +23,10 @@ async function load() {
   const host = createFakePluginHost({ pluginId: "screen-sharing" });
   hosts.push(host);
   host.harness.sdk.stub("system.config", () => ({ primaryHostId: "host_mini" }));
-  host.harness.sdk.stub("hosts.get", () => makeHostResponse({ id: "host_mini", name: "MacMini" }));
+  host.harness.sdk.stub("hosts.list", () => [
+    makeHostResponse({ id: "host_mini", name: "MacMini" }),
+    makeHostResponse({ id: "host_laptop", name: "MacBook Pro" }),
+  ]);
   await plugin(host.bb);
   return host;
 }
@@ -43,11 +46,9 @@ describe("the screen-sharing plugin", () => {
     expect(ticket.expiresAt).toBeGreaterThan(Date.now());
   });
 
-  it("refuses any other Mac", async () => {
+  it("refuses a machine bb does not have", async () => {
     const { harness } = await load();
-    await expect(harness.callRpc("openSession", { hostId: "host_laptop" })).rejects.toThrow(
-      "only MacMini, the Mac running the bb server, can be shared in this version",
-    );
+    await expect(harness.callRpc("openSession", { hostId: "host_elsewhere" })).rejects.toThrow("bb has no such machine");
   });
 
   it("refuses other plugins", async () => {
@@ -59,11 +60,11 @@ describe("the screen-sharing plugin", () => {
 
   it("closes a WebSocket that brings no valid ticket", async () => {
     const { harness } = await load();
-    const forged = await harness.experimental_openWebSocket(`${VNC_ROUTE}?host=host_mini&token=forged`);
+    const forged = await harness.experimental_openWebSocket(`${VNC_ROUTE}?host=host_mini&flow=ack&token=forged`);
     expect(forged.closeCalls).toEqual([{ code: CloseCode.policy, reason: "unknown or already used ticket" }]);
 
     const ticket = (await harness.callRpc("openSession", { hostId: "host_mini" })) as { token: string };
-    const elsewhere = await harness.experimental_openWebSocket(`${VNC_ROUTE}?host=host_laptop&token=${ticket.token}`);
+    const elsewhere = await harness.experimental_openWebSocket(`${VNC_ROUTE}?host=host_laptop&flow=ack&token=${ticket.token}`);
     expect(elsewhere.closeCalls).toEqual([{ code: CloseCode.policy, reason: "ticket is for another Mac" }]);
     expect(await harness.callRpc("sessions", {})).toEqual({ sessions: [] });
   });
@@ -72,7 +73,7 @@ describe("the screen-sharing plugin", () => {
     const { harness } = await load();
     const ticket = (await harness.callRpc("openSession", { hostId: "host_mini" })) as { token: string };
     await harness.callRpc("closeAll", {});
-    const late = await harness.experimental_openWebSocket(`${VNC_ROUTE}?host=host_mini&token=${ticket.token}`);
+    const late = await harness.experimental_openWebSocket(`${VNC_ROUTE}?host=host_mini&flow=ack&token=${ticket.token}`);
     expect(late.closeCalls).toEqual([{ code: CloseCode.policy, reason: "unknown or already used ticket" }]);
   });
 

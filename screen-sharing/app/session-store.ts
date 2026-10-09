@@ -1,5 +1,6 @@
 /**
- * The session of this bb window, kept outside React so it outlives the page.
+ * The sessions of this bb window, one per Mac, kept outside React so they
+ * outlive the page.
  *
  * bb unmounts the Screen Sharing page whenever the user opens something else,
  * but keeps this module loaded for the life of the window. The session — the
@@ -7,7 +8,9 @@
  * here; the page only lends that element a place on screen while it is open
  * (`ScreenMount` in vnc-session.tsx). Coming back reattaches the same live
  * connection: nothing is signed in again, and nothing about the sign-in is
- * kept to make that possible.
+ * kept to make that possible. Sessions to different Macs run side by side;
+ * the page shows the one whose Mac is picked, and the others keep running
+ * detached, input suspended, as a session does while the page is closed.
  *
  * The session still ends on Disconnect, on Close all and the server's own
  * limits (the relay closes the socket), when the plugin reloads (bb closes the
@@ -19,6 +22,7 @@ import { SESSION_LIMITS } from "../shared/channels";
 import { endMessage, type SessionEnd } from "./end-message";
 import { LOCAL_CURSOR_CSS } from "./cursor";
 import { Key, type KeyCombo } from "./keys";
+import { acknowledgeReceived } from "./flow";
 import { createRfb, openRelaySocket, releaseRemoteButtons, type Rfb } from "./rfb";
 import { relayUrl } from "./relay-url";
 
@@ -93,6 +97,8 @@ export class ScreenSessionStore {
   /** Bumped by every start and end, so late answers from an older attempt are dropped. */
   private attempt = 0;
   private socket: WebSocket | null = null;
+  /** Stops acknowledging what the relay sends (flow.ts). */
+  private stopAcks: (() => void) | null = null;
   private rfb: Rfb | null = null;
   private idleTimer: ReturnType<typeof setInterval> | null = null;
   private lastInput = 0;
@@ -185,6 +191,7 @@ export class ScreenSessionStore {
         if (attempt !== this.attempt) return;
         const socket = openRelaySocket(relayUrl(window.location.origin, hostId, token));
         this.socket = socket;
+        this.stopAcks = acknowledgeReceived(socket);
         // Registered before noVNC's own handler, so it has run when noVNC reports the disconnect.
         socket.addEventListener("close", (event) => {
           end.close = { code: event.code, reason: event.reason };
@@ -367,6 +374,8 @@ export class ScreenSessionStore {
     this.releaseHeldInput();
     const rfb = this.rfb;
     const socket = this.socket;
+    this.stopAcks?.();
+    this.stopAcks = null;
     this.rfb = null;
     this.socket = null;
     this.canvas = null;
@@ -455,10 +464,65 @@ export class ScreenSessionStore {
   }
 }
 
-/** This window's session. */
-export const screenSession = new ScreenSessionStore();
+/**
+ * This window's sessions, one store per Mac, made when first asked for. Each
+ * store is a whole session as described above; nothing is shared between
+ * them but the window.
+ */
+export class ScreenSessions {
+  private readonly stores = new Map<string, ScreenSessionStore>();
+  private readonly listeners = new Set<() => void>();
+  /** Bumped whenever a session starts or ends; a new store is idle, so making one changes nothing. */
+  private version = 0;
+
+  for(hostId: string): ScreenSessionStore {
+    let store = this.stores.get(hostId);
+    if (store === undefined) {
+      const made = new ScreenSessionStore();
+      let live = false;
+      made.subscribe(() => {
+        if (made.live === live) return;
+        live = made.live;
+        this.changed();
+      });
+      this.stores.set(hostId, made);
+      store = made;
+    }
+    return store;
+  }
+
+  /** The Macs with a live session in this window. */
+  liveHostIds(): string[] {
+    return [...this.stores].filter(([, store]) => store.live).map(([hostId]) => hostId);
+  }
+
+  disconnectAll(message?: string): void {
+    for (const store of this.stores.values()) store.disconnect(message);
+  }
+
+  subscribe = (listener: () => void): (() => void) => {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  };
+
+  getVersion = (): number => this.version;
+
+  /** Ends every session and forgets every store: a fresh window, for tests. */
+  reset(): void {
+    for (const store of this.stores.values()) store.reset();
+    this.stores.clear();
+    this.changed();
+  }
+
+  private changed(): void {
+    this.version++;
+    for (const listener of this.listeners) listener();
+  }
+}
+
+export const screenSessions = new ScreenSessions();
 
 if (typeof window !== "undefined") {
-  // A page put away for good (closed, or into the back/forward cache) takes its session with it.
-  window.addEventListener("pagehide", () => screenSession.disconnect());
+  // A page put away for good (closed, or into the back/forward cache) takes its sessions with it.
+  window.addEventListener("pagehide", () => screenSessions.disconnectAll());
 }

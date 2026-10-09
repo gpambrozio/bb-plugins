@@ -9,7 +9,7 @@ import { useEffect, useRef, useState, type RefObject } from "react";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { KEY_COMBOS } from "./keys";
-import { canGoFullScreen, screenSession, type ScreenSessionSnapshot } from "./session-store";
+import { canGoFullScreen, type ScreenSessionSnapshot, type ScreenSessionStore } from "./session-store";
 
 /** Keys macOS keeps on the user's own Mac, whatever a page does. */
 export const SYSTEM_KEYS_NOTE = "⌘Tab, ⌘Space, ⌘` and Mission Control stay on this computer: send them from Send keys.";
@@ -18,7 +18,15 @@ function canType(session: ScreenSessionSnapshot): boolean {
   return session.stage.kind === "connected" && !session.viewOnly;
 }
 
-export function FullScreenButton({ session, fullscreenTarget }: { session: ScreenSessionSnapshot; fullscreenTarget: RefObject<HTMLElement | null> }) {
+export function FullScreenButton({
+  store,
+  session,
+  fullscreenTarget,
+}: {
+  store: ScreenSessionStore;
+  session: ScreenSessionSnapshot;
+  fullscreenTarget: RefObject<HTMLElement | null>;
+}) {
   const supported = canGoFullScreen();
   return (
     <Button
@@ -29,7 +37,7 @@ export function FullScreenButton({ session, fullscreenTarget }: { session: Scree
       disabled={!supported || !canType(session)}
       onClick={() => {
         const target = fullscreenTarget.current ?? undefined;
-        void screenSession.setFullScreen(!session.fullScreen, target);
+        void store.setFullScreen(!session.fullScreen, target);
       }}
     >
       <Icon name={session.fullScreen ? "Minimize2" : "Maximize2"} />
@@ -38,7 +46,7 @@ export function FullScreenButton({ session, fullscreenTarget }: { session: Scree
   );
 }
 
-export function SendKeysMenu({ session }: { session: ScreenSessionSnapshot }) {
+export function SendKeysMenu({ store, session }: { store: ScreenSessionStore; session: ScreenSessionSnapshot }) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
   const enabled = canType(session);
@@ -70,7 +78,7 @@ export function SendKeysMenu({ session }: { session: ScreenSessionSnapshot }) {
             className="flex items-center justify-between gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-state-hover"
             onClick={() => {
               setOpen(false);
-              screenSession.holdCommandForAppSwitcher();
+              store.holdCommandForAppSwitcher();
             }}
           >
             <span>Hold ⌘ and open the app switcher</span>
@@ -85,7 +93,7 @@ export function SendKeysMenu({ session }: { session: ScreenSessionSnapshot }) {
               className="flex items-center justify-between gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-state-hover"
               onClick={() => {
                 setOpen(false);
-                screenSession.sendKeys(combo);
+                store.sendKeys(combo);
               }}
             >
               <span>{combo.description}</span>
@@ -105,7 +113,7 @@ export function SendKeysMenu({ session }: { session: ScreenSessionSnapshot }) {
 }
 
 /** What is going on with the keyboard, and how to get out of it. */
-export function KeysNotice({ session }: { session: ScreenSessionSnapshot }) {
+export function KeysNotice({ store, session }: { store: ScreenSessionStore; session: ScreenSessionSnapshot }) {
   const hostName = session.hostName ?? "the Mac";
   if (session.commandHeld) {
     return (
@@ -113,7 +121,7 @@ export function KeysNotice({ session }: { session: ScreenSessionSnapshot }) {
         <span className="flex-1">
           ⌘ is held down on {hostName}. Press Tab to step through the apps, then release ⌘ to switch.
         </span>
-        <Button type="button" size="sm" variant="outline" onClick={() => screenSession.releaseCommand()}>
+        <Button type="button" size="sm" variant="outline" onClick={() => store.releaseCommand()}>
           Release ⌘
         </Button>
       </div>

@@ -4,41 +4,16 @@
  * ticket opens exactly one session, and whichever side ends, nothing is left
  * open — no TCP connection, no session.
  */
-import { connect, createServer, type AddressInfo, type Server, type Socket } from "node:net";
+import { connect, type Socket } from "node:net";
 import type { ExperimentalPluginWebSocket, ExperimentalPluginWebSocketHandlers } from "@get-bb/plugin-sdk";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { CloseCode } from "../shared/channels";
-import { createRelay } from "./relay";
+import { startFakeVnc, until, type FakeVnc } from "../testing/fake-vnc";
+import { createLoopbackLink } from "./loopback-link";
+import type { OpenLink } from "./link";
+import { createRelay, shortReason } from "./relay";
 import { SessionRegistry } from "./sessions";
-
-/** A TCP server that records its connections and what they sent. */
-interface FakeVnc {
-  port: number;
-  sockets: Socket[];
-  received: Buffer[];
-  closed: number;
-  close(): Promise<void>;
-}
-
-async function startFakeVnc(onConnection?: (socket: Socket) => void): Promise<FakeVnc> {
-  const fake: FakeVnc = { port: 0, sockets: [], received: [], closed: 0, close: async () => {} };
-  const server: Server = createServer((socket) => {
-    fake.sockets.push(socket);
-    socket.on("data", (chunk) => fake.received.push(chunk));
-    socket.on("close", () => fake.closed++);
-    socket.on("error", () => {});
-    onConnection?.(socket);
-  });
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  fake.port = (server.address() as AddressInfo).port;
-  fake.close = () =>
-    new Promise((resolve) => {
-      for (const socket of fake.sockets) socket.destroy();
-      server.close(() => resolve());
-    });
-  return fake;
-}
 
 class FakeWebSocket implements ExperimentalPluginWebSocket {
   readyState = 1;
@@ -49,16 +24,10 @@ class FakeWebSocket implements ExperimentalPluginWebSocket {
     this.sent.push(data);
   }
   close(code?: number, reason?: string): void {
+    // As bb's `ws` does: a reason over 123 bytes of UTF-8 is refused and nothing is closed.
+    if (reason !== undefined && Buffer.byteLength(reason) > 123) throw new SyntaxError("The message must not be greater than 123 bytes");
     this.closes.push({ code, reason });
     this.readyState = 3;
-  }
-}
-
-async function until(condition: () => boolean, what: string): Promise<void> {
-  const deadline = Date.now() + 2000;
-  while (!condition()) {
-    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
-    await new Promise((resolve) => setTimeout(resolve, 5));
   }
 }
 
@@ -87,13 +56,13 @@ afterEach(async () => {
   await vnc.close();
 });
 
-function open(query: string): { ws: FakeWebSocket; handlers: ExperimentalPluginWebSocketHandlers } {
-  const relay = createRelay({
-    registry,
-    connect: () => connect({ host: "127.0.0.1", port: vnc.port }),
-    maxBufferedBytes: 1024 * 1024,
-    log: (message) => logs.push(message),
-  });
+function loopback(port: number, windowBytes = 1024 * 1024, maxBufferedBytes = 1024 * 1024): OpenLink {
+  return (_target, events) =>
+    createLoopbackLink({ socket: connect({ host: "127.0.0.1", port }), windowBytes, maxBufferedBytes }, events);
+}
+
+function open(query: string, openLink: OpenLink = loopback(vnc.port)): { ws: FakeWebSocket; handlers: ExperimentalPluginWebSocketHandlers } {
+  const relay = createRelay({ registry, openLink, log: (message) => logs.push(message) });
   const url = new URL(`http://127.0.0.1/api/v1/plugins/screen-sharing/http/vnc?${query}`);
   const handlers = relay({ request: new Request(url), url, headers: new Headers() });
   const ws = new FakeWebSocket();
@@ -102,8 +71,10 @@ function open(query: string): { ws: FakeWebSocket; handlers: ExperimentalPluginW
 }
 
 function ticket(hostId = "mini"): string {
-  return `host=${hostId}&token=${registry.mint(hostId).token}`;
+  return `host=${hostId}&flow=ack&token=${registry.mint({ hostId, hostName: "MacMini", route: "loopback" }).token}`;
 }
+
+const total = (chunks: Uint8Array[]) => chunks.reduce((sum, chunk) => sum + chunk.length, 0);
 
 describe("the relay", () => {
   it("copies bytes both ways, untouched", async () => {
@@ -119,7 +90,7 @@ describe("the relay", () => {
   });
 
   it("refuses a WebSocket without a ticket and never connects", async () => {
-    const { ws } = open("host=mini&token=made-up");
+    const { ws } = open("host=mini&flow=ack&token=made-up");
     expect(ws.closes).toEqual([{ code: CloseCode.policy, reason: "unknown or already used ticket" }]);
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(vnc.sockets).toHaveLength(0);
@@ -137,7 +108,7 @@ describe("the relay", () => {
   });
 
   it("refuses a ticket for another Mac", () => {
-    const { ws } = open(`host=laptop&token=${registry.mint("mini").token}`);
+    const { ws } = open(`host=laptop&flow=ack&token=${registry.mint({ hostId: "mini", hostName: "MacMini", route: "loopback" }).token}`);
     expect(ws.closes).toEqual([{ code: CloseCode.policy, reason: "ticket is for another Mac" }]);
   });
 
@@ -170,12 +141,7 @@ describe("the relay", () => {
   it("says so when Screen Sharing cannot be reached", async () => {
     const port = vnc.port;
     await vnc.close();
-    const relay = createRelay({
-      registry,
-      connect: () => connect({ host: "127.0.0.1", port }),
-      maxBufferedBytes: 1024,
-      log: () => {},
-    });
+    const relay = createRelay({ registry, openLink: loopback(port), log: () => {} });
     const url = new URL(`http://127.0.0.1/vnc?${ticket()}`);
     const ws = new FakeWebSocket();
     await relay({ request: new Request(url), url, headers: new Headers() }).onOpen?.(ws);
@@ -202,12 +168,99 @@ describe("the relay", () => {
     await until(() => vnc.closed === 1, "the TCP close");
   });
 
-  it("closes on a text frame, which VNC never sends", async () => {
+  it("closes on a text frame that is not an ack, which VNC never sends", async () => {
     const { ws, handlers } = open(ticket());
     await until(() => vnc.sockets.length === 1, "the connection");
     await handlers.onMessage?.(ws, "hello");
     expect(ws.closes[0]?.code).toBe(CloseCode.policy);
     await until(() => vnc.closed === 1, "the TCP close");
+  });
+
+  it("closes on an ack for bytes the page was never sent", async () => {
+    const { ws, handlers } = open(ticket());
+    await until(() => ws.sent.length > 0, "the greeting");
+    await handlers.onMessage?.(ws, `ack:${total(ws.sent) + 1}`);
+    expect(ws.closes).toEqual([{ code: CloseCode.policy, reason: "the page acknowledged bytes it was never sent" }]);
+    await until(() => vnc.closed === 1, "the TCP close");
+  });
+
+  it("turns away a page from before flow control, leaving its ticket unused", async () => {
+    const minted = registry.mint({ hostId: "mini", hostName: "MacMini", route: "loopback" }).token;
+    const { ws } = open(`host=mini&token=${minted}`);
+    expect(ws.closes).toEqual([{ code: CloseCode.policy, reason: "this page is out of date; reload bb and connect again" }]);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(vnc.sockets).toHaveLength(0);
+  });
+
+  it("stops reading from Screen Sharing while the page is behind, and goes on once it catches up", async () => {
+    const window = 64 * 1024;
+    const { ws, handlers } = open(ticket(), loopback(vnc.port, window));
+    await until(() => vnc.sockets.length === 1, "the connection");
+    const mac = vnc.sockets[0] as Socket;
+    const block = Buffer.alloc(16 * 1024, 7);
+    // The Mac sends 4 MiB as fast as TCP lets it; the page acknowledges nothing yet.
+    let written = 0;
+    const pump = () => {
+      while (written < 4 * 1024 * 1024 && mac.write(block)) written += block.length;
+      if (written < 4 * 1024 * 1024) mac.once("drain", () => ((written += block.length), pump()));
+    };
+    pump();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    // One socket read past the window at most, whatever TCP buffers below it.
+    const stalled = total(ws.sent);
+    expect(stalled).toBeGreaterThan(window);
+    expect(stalled).toBeLessThan(window + 128 * 1024);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(total(ws.sent)).toBe(stalled);
+
+    // Acknowledging as it goes lets everything through.
+    while (total(ws.sent) < 4 * 1024 * 1024 + 12) {
+      await handlers.onMessage?.(ws, `ack:${total(ws.sent)}`);
+      await new Promise((resolve) => setTimeout(resolve, 2));
+    }
+    expect(ws.closes).toEqual([]);
+    await handlers.onClose?.(ws, { code: 1000, reason: "" });
+    await until(() => vnc.closed === 1, "the TCP close");
+  });
+
+  it("ends the session, instead of throwing, when the page's socket refuses a send", async () => {
+    const { ws } = open(ticket());
+    ws.send = () => {
+      throw new Error("socket is closing");
+    };
+    await until(() => ws.closes.length === 1, "the WebSocket close");
+    expect(ws.closes[0]).toEqual({ code: CloseCode.failed, reason: "could not send to the page (socket is closing)" });
+    await until(() => vnc.closed === 1, "the TCP close");
+    expect(registry.list()).toEqual([]);
+  });
+
+  it("tells the page why even when the reason names a Mac in a script of many bytes a character", async () => {
+    const name = "測試電腦".repeat(10);
+    const reason = `${name}: Screen Sharing closed the connection`;
+    expect(reason.length).toBeLessThan(100);
+    expect(Buffer.byteLength(reason)).toBeGreaterThan(123);
+    const ending: OpenLink = (_target, events) => {
+      queueMicrotask(() => events.end(CloseCode.normal, reason));
+      return { write() {}, ack() {}, close() {} };
+    };
+    const { ws } = open(ticket(), ending);
+    await until(() => ws.closes.length === 1, "the WebSocket close");
+    const sent = ws.closes[0]?.reason ?? "";
+    expect(Buffer.byteLength(sent)).toBeLessThanOrEqual(123);
+    expect(sent.endsWith("…")).toBe(true);
+    expect(reason.startsWith(sent.slice(0, -1))).toBe(true);
+    expect(registry.list()).toEqual([]);
+  });
+
+  it("cuts a reason at whole characters and leaves a short one alone", () => {
+    expect(shortReason("Screen Sharing closed the connection")).toBe("Screen Sharing closed the connection");
+    const emoji = "🖥️".repeat(40);
+    const cut = shortReason(emoji);
+    expect(Buffer.byteLength(cut)).toBeLessThanOrEqual(123);
+    expect(cut).not.toContain("\uFFFD");
+    expect([...cut.slice(0, -1)].every((character) => emoji.includes(character))).toBe(true);
+    expect(Buffer.byteLength(shortReason("a".repeat(123)))).toBe(123);
+    expect(shortReason("a".repeat(124))).toBe(`${"a".repeat(120)}…`);
   });
 
   it("logs sessions without their bytes or tickets", async () => {
@@ -219,6 +272,6 @@ describe("the relay", () => {
     const token = new URLSearchParams(query).get("token") ?? "";
     expect(logs.join("\n")).not.toContain(token);
     expect(logs.join("\n")).not.toContain("secret-ish");
-    expect(logs).toEqual([expect.stringMatching(/^session id-\d+ opened$/), expect.stringMatching(/^session id-\d+ closed$/)]);
+    expect(logs).toEqual([expect.stringMatching(/^session id-\d+ opened \(loopback\)$/), expect.stringMatching(/^session id-\d+ closed$/)]);
   });
 });
