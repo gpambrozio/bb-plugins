@@ -1,6 +1,6 @@
 // screen-sharing — the app entry.
 //
-// A sidebar page with the screen of the Mac running the bb server
+// A sidebar page with the screens of the Macs enrolled in this bb
 // (app/screen-panel.tsx), whose sidebar row says "Live" while any session is
 // open; a pill in every window's corner offering Close all while one is; and a
 // palette command that opens the page.
@@ -37,7 +37,7 @@ export default definePluginApp((app) => {
 
   app.commands.register({
     id: "open-screen-sharing",
-    title: "Screen Sharing: open the server Mac's screen",
+    title: "Screen Sharing: see and control a Mac's screen",
     run: () => navigator?.toPluginPanel(PANEL_PATH),
   });
 });

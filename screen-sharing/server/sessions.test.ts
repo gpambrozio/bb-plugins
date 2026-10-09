@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { CloseCode, type SessionInfo } from "../shared/channels";
-import { SessionRegistry } from "./sessions";
+import { SessionRegistry, type TicketTarget } from "./sessions";
+
+const mini: TicketTarget = { hostId: "mini", hostName: "MacMini", route: "loopback" };
 
 function setup(overrides: { maxTickets?: number } = {}) {
   let now = 1_000;
@@ -26,40 +28,47 @@ function setup(overrides: { maxTickets?: number } = {}) {
 }
 
 describe("tickets", () => {
+  it("carry the way to their Mac", () => {
+    const { registry } = setup();
+    const laptop: TicketTarget = { hostId: "laptop", hostName: "MacBook Pro", route: "host" };
+    const { token } = registry.mint(laptop);
+    expect(registry.redeem(token, "laptop")).toEqual({ ok: true, target: laptop });
+  });
+
   it("redeem once, for the Mac they were minted for", () => {
     const { registry } = setup();
-    const { token, expiresAt } = registry.mint("mini");
+    const { token, expiresAt } = registry.mint(mini);
     expect(expiresAt).toBe(31_000);
-    expect(registry.redeem(token, "mini")).toEqual({ ok: true, hostId: "mini" });
+    expect(registry.redeem(token, "mini")).toEqual({ ok: true, target: mini });
     expect(registry.redeem(token, "mini")).toEqual({ ok: false, reason: "unknown or already used ticket" });
   });
 
   it("are used up by a try for another Mac", () => {
     const { registry } = setup();
-    const { token } = registry.mint("mini");
+    const { token } = registry.mint(mini);
     expect(registry.redeem(token, "laptop")).toEqual({ ok: false, reason: "ticket is for another Mac" });
     expect(registry.redeem(token, "mini").ok).toBe(false);
   });
 
   it("expire", () => {
     const { registry, advance } = setup();
-    const { token } = registry.mint("mini");
+    const { token } = registry.mint(mini);
     advance(30_000);
     expect(registry.redeem(token, "mini")).toEqual({ ok: false, reason: "expired ticket" });
   });
 
   it("refuse an unknown or empty token", () => {
     const { registry } = setup();
-    registry.mint("mini");
+    registry.mint(mini);
     expect(registry.redeem("", "mini").ok).toBe(false);
     expect(registry.redeem("guess", "mini").ok).toBe(false);
   });
 
   it("keep only the newest few unredeemed", () => {
     const { registry } = setup({ maxTickets: 2 });
-    const first = registry.mint("mini").token;
-    const second = registry.mint("mini").token;
-    const third = registry.mint("mini").token;
+    const first = registry.mint(mini).token;
+    const second = registry.mint(mini).token;
+    const third = registry.mint(mini).token;
     expect(registry.redeem(first, "mini").ok).toBe(false);
     expect(registry.redeem(second, "mini").ok).toBe(true);
     expect(registry.redeem(third, "mini").ok).toBe(true);
@@ -120,7 +129,7 @@ describe("sessions", () => {
 
   it("Close all voids tickets not yet redeemed", () => {
     const { registry } = setup();
-    const waiting = registry.mint("mini").token;
+    const waiting = registry.mint(mini).token;
     registry.closeAll();
     expect(registry.redeem(waiting, "mini")).toEqual({ ok: false, reason: "unknown or already used ticket" });
   });
@@ -129,8 +138,8 @@ describe("sessions", () => {
     const { registry } = setup();
     const before = registry.generation;
     registry.closeAll();
-    expect(() => registry.mint("mini", before)).toThrow("Close all ended sessions while this one was starting");
-    expect(registry.mint("mini", registry.generation).token).toMatch(/^id-/);
+    expect(() => registry.mint(mini, before)).toThrow("Close all ended sessions while this one was starting");
+    expect(registry.mint(mini, registry.generation).token).toMatch(/^id-/);
   });
 
   it("are forgotten even when ending one throws", () => {

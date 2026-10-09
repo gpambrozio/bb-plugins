@@ -69,7 +69,8 @@ vi.mock("./rfb", async (importActual) => {
   };
 });
 
-const { screenSession } = await import("./session-store");
+const { screenSessions } = await import("./session-store");
+const screenSession = screenSessions.for("host_mini");
 
 /** A 2D context that accepts every call: noVNC draws, nothing here looks. */
 function fakeContext(): CanvasRenderingContext2D {

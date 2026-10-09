@@ -12,7 +12,7 @@ import type { RpcContract } from "../shared/contract";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { CLOSED_BY_USER_MESSAGE } from "./end-message";
-import { screenSession } from "./session-store";
+import { screenSessions } from "./session-store";
 
 export const PANEL_PATH = "screen";
 
@@ -95,9 +95,10 @@ function useIsPageOpen(): boolean {
 }
 
 /**
- * Close all: this window's own session, including one still connecting, ends
- * here at once; the server ends every other one and voids every ticket not yet
- * used, so nothing still on its way in another window opens afterwards.
+ * Close all: this window's own sessions, to every Mac and including any still
+ * connecting, end here at once; the server ends every other one and voids
+ * every ticket not yet used, so nothing still on its way in another window
+ * opens afterwards.
  */
 export function useCloseAll(): { closeAll(): void; closing: boolean } {
   const rpc = useRpc<RpcContract>();
@@ -106,7 +107,7 @@ export function useCloseAll(): { closeAll(): void; closing: boolean } {
     closing,
     closeAll: () => {
       setClosing(true);
-      screenSession.disconnect(CLOSED_BY_USER_MESSAGE);
+      screenSessions.disconnectAll(CLOSED_BY_USER_MESSAGE);
       rpc
         .call("closeAll", {})
         .catch((error: unknown) => console.warn("[screen-sharing] could not close the sessions", error))

@@ -13,10 +13,10 @@ import type { PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 import { renderSlot, type PluginRpcTestHandlers } from "@get-bb/plugin-sdk/testing/app";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { CloseCode, SESSIONS_CHANGED, type ScreenStatus } from "../shared/channels";
+import { CloseCode, SESSIONS_CHANGED, type HostEntry, type ScreenStatus } from "../shared/channels";
 import type { RpcContract } from "../shared/contract";
 import { ScreenPanel, SessionsHeader } from "./screen-panel";
-import { screenSession } from "./session-store";
+import { screenSessions } from "./session-store";
 
 class FakeSocket extends EventTarget {
   closed = false;
@@ -90,21 +90,26 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   // The session belongs to the window, so it outlives each test's page.
-  screenSession.reset();
+  screenSessions.reset();
 });
 
 const ready: ScreenStatus = {
   hostId: "host_mini",
   hostName: "MacMini",
+  isServer: true,
   state: "ready",
   rfbVersion: "RFB 003.889",
   securityTypes: [30, 33, 36, 35],
   signInSupported: true,
   refusedReason: null,
+  unreachableReason: null,
 };
+
+const mini: HostEntry = { id: "host_mini", name: "MacMini", connected: true, isServer: true };
 
 function stubs(handlers: Partial<PluginRpcTestHandlers<RpcContract>>): PluginRpcTestHandlers<RpcContract> {
   return {
+    hosts: () => ({ hosts: [mini] }),
     sessions: () => ({ sessions: [] }),
     openSession: () => ({ token: "tkt", expiresAt: Date.now() + 30_000 }),
     ...handlers,
@@ -175,7 +180,14 @@ describe("the Screen Sharing page", () => {
 
   it("says when the bb server is not on a Mac", async () => {
     renderPanel({ status: () => ({ ...ready, state: "unsupported", rfbVersion: null, securityTypes: [] }) });
-    expect(await screen.findByText("macOS only")).toBeTruthy();
+    expect(await screen.findByText("Not a Mac")).toBeTruthy();
+    expect(screen.getByText(/The bb server is not running on a Mac/)).toBeTruthy();
+  });
+
+  it("shows no picker when bb has only the one machine", async () => {
+    renderPanel();
+    await connectButtons();
+    expect(screen.queryByRole("radiogroup", { name: "Mac" })).toBeNull();
   });
 
   it("opens the relay with a fresh ticket, signs in through noVNC only, and shows the screen", async () => {
@@ -391,14 +403,132 @@ describe("the Screen Sharing page", () => {
   it("says when no ticket was given", async () => {
     renderPanel({
       openSession: () => {
-        throw new Error("only MacMini, the Mac running the bb server, can be shared in this version");
+        throw new Error("MacMini is offline");
       },
     });
     fireEvent.click((await connectButtons()).body);
-    expect(
-      await screen.findByText("Could not start a session: only MacMini, the Mac running the bb server, can be shared in this version"),
-    ).toBeTruthy();
+    expect(await screen.findByText("Could not start a session: MacMini is offline")).toBeTruthy();
     expect(sockets).toEqual([]);
+  });
+});
+
+describe("the Mac picker", () => {
+  const laptop: HostEntry = { id: "host_laptop", name: "MacBook Pro", connected: true, isServer: false };
+  const doxbook: HostEntry = { id: "host_doxbook", name: "DoxBook", connected: true, isServer: false };
+  const linux: HostEntry = { id: "host_linux", name: "buildbox", connected: true, isServer: false };
+  const away: HostEntry = { id: "host_away", name: "Travel MacBook", connected: false, isServer: false };
+  const statuses: Record<string, ScreenStatus> = {
+    host_mini: ready,
+    host_laptop: { ...ready, hostId: "host_laptop", hostName: "MacBook Pro", isServer: false },
+    host_doxbook: { ...ready, hostId: "host_doxbook", hostName: "DoxBook", isServer: false, state: "off", rfbVersion: null, securityTypes: [] },
+    host_linux: { ...ready, hostId: "host_linux", hostName: "buildbox", isServer: false, state: "unsupported", rfbVersion: null, securityTypes: [] },
+    host_away: { ...ready, hostId: "host_away", hostName: "Travel MacBook", isServer: false, state: "offline", rfbVersion: null, securityTypes: [] },
+  };
+
+  function renderMany(handlers: Partial<PluginRpcTestHandlers<RpcContract>> = {}) {
+    return renderPanel({
+      hosts: () => ({ hosts: [mini, laptop, doxbook, linux, away] }),
+      status: ({ hostId }) => statuses[hostId] as ScreenStatus,
+      openSession: ({ hostId }) => ({ token: `tkt-${hostId}`, expiresAt: Date.now() + 30_000 }),
+      ...handlers,
+    });
+  }
+
+  const option = (name: RegExp) => screen.getByRole("radio", { name });
+
+  it("lists every machine with whether its Screen Sharing is on, the server's picked", async () => {
+    const view = renderMany();
+    await waitFor(() => expect(option(/DoxBook/).textContent).toContain("Screen Sharing off"));
+    expect(option(/MacMini/).textContent).toContain("On");
+    expect(option(/MacMini/).getAttribute("aria-checked")).toBe("true");
+    expect(option(/MacBook Pro/).textContent).toContain("On");
+    expect(option(/buildbox/).textContent).toContain("Not a Mac");
+    expect(option(/Travel MacBook/).textContent).toContain("Offline");
+    expect(view.rpcCalls.filter((call) => call.method === "status").map((call) => call.input)).toEqual(
+      ["host_mini", "host_laptop", "host_doxbook", "host_linux", "host_away"].map((hostId) => ({ hostId })),
+    );
+    await connectButtons();
+  });
+
+  it("says where to turn Screen Sharing on, on the Mac picked", async () => {
+    renderMany();
+    await waitFor(() => expect(option(/DoxBook/).textContent).toContain("Screen Sharing off"));
+    fireEvent.click(option(/DoxBook/));
+    expect(await screen.findByText("Screen Sharing is off on DoxBook")).toBeTruthy();
+    expect(screen.getByText(/On DoxBook, open/)).toBeTruthy();
+    fireEvent.click(option(/Travel MacBook/));
+    expect(await screen.findByText("Travel MacBook is offline")).toBeTruthy();
+    fireEvent.click(option(/buildbox/));
+    expect(await screen.findByText(/buildbox is not a Mac/)).toBeTruthy();
+  });
+
+  it("connects to the Mac picked, saying what to expect from one reached through bb", async () => {
+    const view = renderMany();
+    await waitFor(() => expect(option(/MacBook Pro/).textContent).toContain("On"));
+    expect(screen.queryByText(/about half a second/)).toBeNull();
+    fireEvent.click(option(/MacBook Pro/));
+    expect(await screen.findByText(/about half a second between a key or click/)).toBeTruthy();
+    const rfb = await connect();
+    expect(view.rpcCalls.find((call) => call.method === "openSession")?.input).toEqual({ hostId: "host_laptop" });
+    expect(new URL(rfb.socket.url).searchParams.get("host")).toBe("host_laptop");
+    expect(new URL(rfb.socket.url).searchParams.get("token")).toBe("tkt-host_laptop");
+    expect(screen.getByText("Connecting to MacBook Pro…")).toBeTruthy();
+    expect(option(/MacBook Pro/).textContent).toContain("Live");
+  });
+
+  it("keeps sessions to several Macs at once, showing the one picked, and Close all ends them all", async () => {
+    renderMany({ closeAll: () => ({ closed: 2 }) });
+    await waitFor(() => expect(option(/MacBook Pro/).textContent).toContain("On"));
+    const onMini = await connect();
+    act(() => onMini.emit("connect"));
+
+    fireEvent.click(option(/MacBook Pro/));
+    fireEvent.click((await connectButtons()).body);
+    await waitFor(() => expect(rfbs).toHaveLength(2));
+    const onLaptop = rfbs[1] as FakeRfb;
+    act(() => onLaptop.emit("connect"));
+    // The other session runs on, put away with its input suspended.
+    expect(onMini.target.isConnected).toBe(false);
+    expect(onMini.viewOnly).toBe(true);
+    expect(onMini.disconnects).toBe(0);
+    expect(onLaptop.target.parentElement).toBe(screen.getByTestId("vnc-screen"));
+
+    fireEvent.click(option(/MacMini/));
+    await waitFor(() => expect(onMini.target.parentElement).toBe(screen.getByTestId("vnc-screen")));
+    expect(onMini.viewOnly).toBe(false);
+    expect(onLaptop.viewOnly).toBe(true);
+    expect(rfbs).toHaveLength(2);
+
+    act(() => screenSessions.disconnectAll("Closed from bb with Close all."));
+    expect(onMini.disconnects).toBe(1);
+    expect(onLaptop.disconnects).toBe(1);
+  });
+
+  it("shows the Mac a live session in this window is on when the page opens again", async () => {
+    const first = renderMany();
+    await waitFor(() => expect(option(/MacBook Pro/).textContent).toContain("On"));
+    fireEvent.click(option(/MacBook Pro/));
+    const rfb = await connect();
+    act(() => rfb.emit("connect"));
+    first.unmount();
+    renderMany();
+    expect(await screen.findByRole("button", { name: "Disconnect" })).toBeTruthy();
+    expect(option(/MacBook Pro/).getAttribute("aria-checked")).toBe("true");
+    expect(rfb.target.parentElement).toBe(screen.getByTestId("vnc-screen"));
+  });
+
+  it("says when bb could not list the machines, and tries again", async () => {
+    let calls = 0;
+    renderPanel({
+      hosts: () => {
+        calls++;
+        if (calls === 1) throw new Error("server busy");
+        return { hosts: [mini] };
+      },
+    });
+    expect(await screen.findByText("server busy")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await connectButtons();
   });
 });
 

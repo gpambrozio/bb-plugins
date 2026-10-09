@@ -12,7 +12,7 @@ import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent } fro
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Input } from "@/components/ui/input";
-import { screenSession, type CredentialType, type ScreenSessionSnapshot } from "./session-store";
+import type { CredentialType, ScreenSessionSnapshot, ScreenSessionStore } from "./session-store";
 
 const FIELD_LABELS: Record<CredentialType, string> = {
   username: "User name",
@@ -20,18 +20,18 @@ const FIELD_LABELS: Record<CredentialType, string> = {
   target: "Target",
 };
 
-export function useScreenSession(): ScreenSessionSnapshot {
-  return useSyncExternalStore(screenSession.subscribe, screenSession.getSnapshot);
+export function useScreenSession(store: ScreenSessionStore): ScreenSessionSnapshot {
+  return useSyncExternalStore(store.subscribe, store.getSnapshot);
 }
 
-function CredentialsForm({ hostName, types }: { hostName: string; types: CredentialType[] }) {
+function CredentialsForm({ store, hostName, types }: { store: ScreenSessionStore; hostName: string; types: CredentialType[] }) {
   const [values, setValues] = useState<Partial<Record<CredentialType, string>>>({});
 
   function submit(event: FormEvent) {
     event.preventDefault();
     const entered = values;
     setValues({});
-    screenSession.sendCredentials(entered);
+    store.sendCredentials(entered);
   }
 
   return (
@@ -60,28 +60,28 @@ function CredentialsForm({ hostName, types }: { hostName: string; types: Credent
 }
 
 /** Lends the session's screen element a place on the page while the page is open. */
-function ScreenMount() {
+function ScreenMount({ store }: { store: ScreenSessionStore }) {
   const host = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const container = host.current;
     if (container === null) return;
-    screenSession.attach(container);
-    return () => screenSession.detach();
-  }, []);
+    store.attach(container);
+    return () => store.detach();
+  }, [store]);
   return <div ref={host} data-testid="vnc-screen" className="min-h-0 flex-1 overflow-hidden" />;
 }
 
-export function LiveScreen() {
-  const session = useScreenSession();
+export function LiveScreen({ store }: { store: ScreenSessionStore }) {
+  const session = useScreenSession(store);
   const { stage } = session;
   const hostName = session.hostName ?? "the Mac";
   return (
     <div className="relative flex min-h-0 flex-1 bg-muted">
-      <ScreenMount />
+      <ScreenMount store={store} />
       {stage.kind === "connected" || stage.kind === "idle" ? null : (
         <div className="absolute inset-0 flex items-center justify-center p-4">
           {stage.kind === "credentials" ? (
-            <CredentialsForm hostName={hostName} types={stage.types} />
+            <CredentialsForm store={store} hostName={hostName} types={stage.types} />
           ) : (
             <p className="flex items-center gap-2 text-sm text-muted-foreground">
               <Icon name="Spinner" />

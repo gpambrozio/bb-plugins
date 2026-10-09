@@ -1,6 +1,7 @@
 /**
- * Is Screen Sharing on, on the Mac running the bb server? Two read-only
- * checks, neither needing root:
+ * Is Screen Sharing on, on this Mac? Two read-only checks, neither needing
+ * root. The host entry runs them on each Mac (host.ts); the server runs them
+ * for its own Mac (server.ts).
  *
  * - `launchctl print-disabled system` says whether macOS has the
  *   `com.apple.screensharing` service switched off. Turning it on takes System
@@ -14,7 +15,7 @@
 import { execFile } from "node:child_process";
 import { connect } from "node:net";
 
-import type { ScreenState } from "../shared/channels";
+import type { ScreenCheck, ScreenState } from "../shared/channels";
 
 /** The RFB security types noVNC can sign in with (core/rfb.js). */
 const NOVNC_SECURITY_TYPES = new Set([1, 2, 6, 16, 19, 22, 30, 113, 256]);
@@ -33,14 +34,6 @@ export interface StatusChecks {
   probe(): Promise<RfbProbe | null>;
   /** True or false when launchctl says so; null when it cannot tell. */
   serviceDisabled(): Promise<boolean | null>;
-}
-
-export interface ScreenCheck {
-  state: ScreenState;
-  rfbVersion: string | null;
-  securityTypes: number[];
-  signInSupported: boolean;
-  refusedReason: string | null;
 }
 
 /** The answer when nothing answered: only the state is known. */
