@@ -17,6 +17,10 @@ extra is installed on any Mac and no port is opened to the internet.
 - **Send keys** sends the shortcuts your own Mac keeps for itself — ⌘Tab, ⌘Space, ⌘`, Mission
   Control and the Spaces arrows, ⌥⌘Esc and more — to the shared Mac. *Hold ⌘ and open the app
   switcher* keeps ⌘ down there so Tab on your keyboard steps through the apps; *Release ⌘* switches.
+- **Clipboard** moves text between your computer and the Mac: *Send clipboard* puts your clipboard on
+  the Mac, *Receive clipboard* puts the Mac's here, and *Auto sync clipboard* does both whenever either
+  side's clipboard changes. bb remembers Auto sync on each computer for the next connection. See
+  [Clipboard](#clipboard) for what crosses and what each browser allows.
 - **Full screen** (Chrome, Edge and bb's desktop app) puts the page in full screen and gives it the
   whole keyboard, so the browser's own shortcuts — ⌘W, ⌘Q, ⌘T, Esc — go to the Mac too. Hold Esc to
   leave full screen, and leave it to switch to another Mac. Safari and Firefox can't do this; use
@@ -41,7 +45,7 @@ extra is installed on any Mac and no port is opened to the internet.
 
 ## What you need
 
-- bb 0.45 or later. The other Macs need bb's host daemon connected to this bb (they are in Settings →
+- bb 0.46 or later. The other Macs need bb's host daemon connected to this bb (they are in Settings →
   Machines); the plugin's helper reaches them through it, so nothing else is installed on them.
 - **Screen Sharing turned on** on each Mac you want to see: System Settings → General → Sharing →
   Screen Sharing. macOS does not let an app or a script turn it on. Under its ⓘ options, "Allow access
@@ -53,7 +57,7 @@ extra is installed on any Mac and no port is opened to the internet.
 ## Install
 
 ```bash
-bb plugin install 'git:github.com/gpambrozio/bb-plugins@^0.2.0' --plugin screen-sharing --tag-prefix screen-sharing/
+bb plugin install 'git:github.com/gpambrozio/bb-plugins@^0.4.0' --plugin screen-sharing --tag-prefix screen-sharing/
 ```
 
 The page is **Screen Sharing** in the sidebar; the palette has *Screen Sharing: see and control a
@@ -71,6 +75,31 @@ them from **Send keys**.
   you turn on **Full screen**; then they reach the Mac, and so does Esc (hold it to leave full
   screen).
 - **Safari and Firefox:** the browser keeps its own shortcuts; use Send keys.
+
+## Clipboard
+
+The **Clipboard** menu in the session toolbar, next to Send keys, moves text — any characters, no
+images or files, up to 1 MB — between your computer and the Mac. It works while the screen is on the
+page and View only is off.
+
+- **Send clipboard** puts the text on your clipboard on the Mac's clipboard.
+- **Receive clipboard** puts the Mac's clipboard text on yours.
+- **Auto sync clipboard** does both on its own: it checks the Mac's clipboard about once a second
+  while its screen is showing (and once more as you leave the page), and sends yours when you come
+  back to the screen after copying something elsewhere — when the session connects, when the page or
+  the window comes back, and when the pointer or the keyboard focus enters the screen. bb remembers
+  the choice on each computer (not on your other devices) for the next connection.
+
+macOS Screen Sharing does not share the clipboard with viewers other than Apple's own, so the plugin
+reads and writes the Mac's clipboard itself, through bb's own connection to that Mac, beside the
+screen session. That reaches the clipboard of **the macOS account bb runs as on that Mac**. Sign in to
+Screen Sharing as that account: signed in as another one, you see that account's own desktop, with a
+clipboard of its own the plugin cannot reach, and the menu says so.
+
+On your side, **bb's desktop app** reads and writes your clipboard without asking. **Chrome and Edge**
+ask once for permission to read it. **Safari, Firefox and bb's mobile app** let a page read the
+clipboard only when you click, so Auto sync cannot send yours on its own there — it says so once; use
+Send clipboard — and when a browser needs a click to write, Receive offers a **Copy** button.
 
 ## How it reaches the screen
 

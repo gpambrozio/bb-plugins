@@ -22,6 +22,7 @@
  */
 import { SESSION_LIMITS } from "../shared/channels";
 import { DEFAULT_SCROLL_SPEED } from "../shared/settings";
+import { ClipboardSync, clipboardPreference, type ClipboardNotice, type ClipboardAccess, type MacClipboard } from "./clipboard";
 import { LOST_MESSAGE, endMessage, type SessionEnd } from "./end-message";
 import { LOCAL_CURSOR_CSS } from "./cursor";
 import { Key, type KeyCombo } from "./keys";
@@ -51,6 +52,10 @@ export interface ScreenSessionSnapshot {
   fullScreen: boolean;
   /** ⌘ is held down on the Mac from the Send keys menu, for stepping the app switcher. */
   commandHeld: boolean;
+  /** What the last clipboard action, or Auto sync, has to say; cleared when a session starts or ends. */
+  clipboardNotice: ClipboardNotice | null;
+  /** Whether clipboard sync can work for this session, and whose clipboard it reaches; null until the Mac says. */
+  clipboardAccess: ClipboardAccess | null;
 }
 
 /** The Keyboard Lock API, where the browser has it (Chromium only). */
@@ -75,6 +80,8 @@ export type OpenSession = (hostId: string) => Promise<{ token: string }>;
 
 const INPUT_IDLE_MS = SESSION_LIMITS.idleMinutes * 60_000;
 const INPUT_IDLE_CHECK_MS = 30_000;
+/** How long a clipboard notice that needs nothing from the user stays up. */
+const CLIPBOARD_INFO_MS = 5_000;
 /** Input on the screen that counts as someone using it. */
 const INPUT_EVENTS = ["keydown", "pointerdown", "pointermove", "wheel", "touchstart"] as const;
 
@@ -94,6 +101,8 @@ export class ScreenSessionStore {
     ended: null,
     fullScreen: false,
     commandHeld: false,
+    clipboardNotice: null,
+    clipboardAccess: null,
   };
   /** The element put in full screen by "Full screen". */
   private fullscreenTarget: HTMLElement | null = null;
@@ -125,6 +134,15 @@ export class ScreenSessionStore {
    * are deleted as soon as the sign-in is over: see `forgetCredentials`.
    */
   private handedCredentials: Partial<Record<CredentialType, string>> | null = null;
+  /** The current connection's clipboard sync (clipboard.ts). */
+  private clipboard: ClipboardSync | null = null;
+  /**
+   * The user name typed at sign-in, and nothing else of it: the clipboard
+   * reaches only the account bb runs as on the Mac, and this says whether it
+   * is that one. Forgotten when the session ends.
+   */
+  private signedInAs: string | null = null;
+  private clipboardNoticeTimer: ReturnType<typeof setTimeout> | null = null;
 
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
@@ -155,6 +173,9 @@ export class ScreenSessionStore {
       }
       element.addEventListener("keydown", (event) => this.heldKeys.set(event.code, event.key), { capture: true, passive: true });
       element.addEventListener("keyup", (event) => this.heldKeys.delete(event.code), { capture: true, passive: true });
+      // Coming back to the screen is when something copied elsewhere is about to be pasted on the Mac.
+      element.addEventListener("pointerenter", this.checkLocalClipboard, { passive: true });
+      element.addEventListener("focusin", this.checkLocalClipboard, { passive: true });
       this.screenElement = element;
     }
     return this.screenElement;
@@ -170,6 +191,7 @@ export class ScreenSessionStore {
     this.attached = true;
     this.applyViewOnly();
     this.focus();
+    this.checkLocalClipboard();
   }
 
   /**
@@ -182,16 +204,30 @@ export class ScreenSessionStore {
    * only on, and its key-ups are then dropped as view-only input.)
    */
   detach(): void {
+    // A copy made on the Mac just before leaving the page still comes here with Auto sync.
+    void this.clipboard?.pollMac();
     this.stopFullScreen();
     this.releaseHeldInput();
     this.attached = false;
     this.applyViewOnly();
     this.element.remove();
   }
-  connect({ openSession, hostId, hostName }: { openSession: OpenSession; hostId: string; hostName: string }): void {
+  connect({
+    openSession,
+    macClipboard,
+    hostId,
+    hostName,
+  }: {
+    openSession: OpenSession;
+    /** The Mac's clipboard, through the page's RPC client. */
+    macClipboard: MacClipboard;
+    hostId: string;
+    hostName: string;
+  }): void {
     if (this.live) return;
     const attempt = ++this.attempt;
-    this.set({ stage: { kind: "connecting" }, hostId, hostName, ended: null });
+    this.signedInAs = null;
+    this.set({ stage: { kind: "connecting" }, hostId, hostName, ended: null, clipboardNotice: null, clipboardAccess: null });
     const end: SessionEnd = { close: null, securityFailure: null, connected: false };
 
     openSession(hostId)
@@ -212,6 +248,20 @@ export class ScreenSessionStore {
         this.rfb = rfb;
         this.canvas = this.element.querySelector("canvas");
         this.applyViewOnly();
+        this.clipboard = new ClipboardSync(
+          {
+            canSync: () => attempt === this.attempt && this.takesKeys,
+            hostName: () => this.snapshot.hostName ?? "the Mac",
+            signedInAs: () => this.signedInAs,
+          },
+          macClipboard,
+          (notice) => {
+            if (attempt === this.attempt) this.showClipboardNotice(notice);
+          },
+          (access) => {
+            if (attempt === this.attempt) this.set({ clipboardAccess: access });
+          },
+        );
         rfb.addEventListener("credentialsrequired", (event) => {
           if (attempt === this.attempt) this.set({ stage: { kind: "credentials", types: event.detail.types } });
         });
@@ -226,7 +276,10 @@ export class ScreenSessionStore {
           if (attempt !== this.attempt) return;
           this.set({ stage: { kind: "connected" } });
           this.startIdleWatch();
+          this.startClipboardWatch();
           this.focus();
+          void this.clipboard?.start();
+          this.checkLocalClipboard();
         });
         rfb.addEventListener("disconnect", () => {
           if (attempt === this.attempt) this.finish(endMessage(end));
@@ -259,6 +312,7 @@ export class ScreenSessionStore {
     this.forgetCredentials();
     const handed = { ...values };
     this.handedCredentials = handed;
+    this.signedInAs = values.username?.trim() || null;
     this.rfb.sendCredentials(handed);
   }
 
@@ -311,6 +365,48 @@ export class ScreenSessionStore {
   releaseCommand(): void {
     this.letGoOfCommand();
     this.focus();
+  }
+
+  /**
+   * Send clipboard: this computer's clipboard to the Mac. The clipboard is
+   * read before anything is awaited, so a browser that allows it only within
+   * a click (Safari) sees the click; the screen gets the keyboard back after.
+   */
+  async sendClipboard(): Promise<void> {
+    if (!this.takesKeys) return;
+    await this.clipboard?.send();
+    this.focus();
+  }
+
+  /** Receive clipboard: the last text the Mac sent, onto this computer's clipboard. Written within the click, as above. */
+  async receiveClipboard(): Promise<void> {
+    if (!this.takesKeys) return;
+    await this.clipboard?.receive();
+    this.focus();
+  }
+
+  /** Turns Auto sync on or off for every session in this window and the next ones; on, it reads this computer's clipboard now. */
+  async setAutoSyncClipboard(on: boolean): Promise<void> {
+    clipboardPreference.setAutoSync(on);
+    if (on) await this.clipboard?.check({ asked: true });
+    this.focus();
+  }
+
+  /** The Clipboard menu opening: a Mac whose clipboard could not be reached is asked again. */
+  refreshClipboardAccess(): void {
+    if (this.snapshot.clipboardAccess?.available === false) void this.clipboard?.start();
+  }
+
+  /** The clipboard notice's Copy button: the Mac's text, copied here on a click of its own. */
+  async copyClipboardFromNotice(): Promise<void> {
+    const text = this.snapshot.clipboardNotice?.copy;
+    if (text === undefined) return;
+    await this.clipboard?.copyFromNotice(text);
+    this.focus();
+  }
+
+  dismissClipboardNotice(): void {
+    this.showClipboardNotice(null);
   }
 
   private letGoOfCommand(): void {
@@ -379,12 +475,28 @@ export class ScreenSessionStore {
   /** Ends any session and forgets the last one: a fresh store, for tests. */
   reset(): void {
     this.disconnect();
-    this.set({ stage: { kind: "idle" }, hostId: null, hostName: null, viewOnly: false, ended: null, fullScreen: false, commandHeld: false });
+    this.set({
+      stage: { kind: "idle" },
+      hostId: null,
+      hostName: null,
+      viewOnly: false,
+      ended: null,
+      fullScreen: false,
+      commandHeld: false,
+      clipboardNotice: null,
+      clipboardAccess: null,
+    });
   }
 
   private finish(message: string): void {
     this.attempt++;
     this.stopIdleWatch();
+    this.stopClipboardWatch();
+    this.clipboard?.end();
+    this.clipboard = null;
+    this.signedInAs = null;
+    this.showClipboardNotice(null);
+    if (this.snapshot.clipboardAccess !== null) this.set({ clipboardAccess: null });
     this.stopFullScreen();
     // Before noVNC lets go of its canvas: a button held as the session ends would leave noVNC's
     // pointer capture — a full-window overlay — over bb.
@@ -460,6 +572,38 @@ export class ScreenSessionStore {
       if (captured) captureDocument.releaseCapture?.();
     }
     this.heldMouse = { ...held, buttons: 0 };
+  }
+
+  /** Auto sync: this computer's clipboard may have changed. clipboard.ts decides whether to read it. */
+  private readonly checkLocalClipboard = (): void => {
+    if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+    void this.clipboard?.check();
+  };
+
+  /** The window or tab coming back is the other moment something may have been copied elsewhere. */
+  private startClipboardWatch(): void {
+    this.stopClipboardWatch();
+    window.addEventListener("focus", this.checkLocalClipboard);
+    document.addEventListener("visibilitychange", this.checkLocalClipboard);
+  }
+
+  private stopClipboardWatch(): void {
+    if (typeof window === "undefined") return;
+    window.removeEventListener("focus", this.checkLocalClipboard);
+    document.removeEventListener("visibilitychange", this.checkLocalClipboard);
+  }
+
+  /** Shows a clipboard notice; one that needs nothing from the user goes away on its own. */
+  private showClipboardNotice(notice: ClipboardNotice | null): void {
+    if (this.clipboardNoticeTimer !== null) clearTimeout(this.clipboardNoticeTimer);
+    this.clipboardNoticeTimer = null;
+    if (notice?.tone === "info") {
+      this.clipboardNoticeTimer = setTimeout(() => this.showClipboardNotice(null), CLIPBOARD_INFO_MS);
+    }
+    const shown = this.snapshot.clipboardNotice;
+    // Auto sync can say the same thing every second while a Mac does not answer; it is shown once.
+    if (notice !== null && shown !== null && notice.tone === shown.tone && notice.text === shown.text && notice.copy === shown.copy) return;
+    if (notice !== shown) this.set({ clipboardNotice: notice });
   }
 
   private startIdleWatch(): void {

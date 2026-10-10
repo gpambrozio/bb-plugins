@@ -19,6 +19,7 @@ import { HostPicker, useLiveHere } from "./host-picker";
 import { currentHost, hostDirectory, useHostDirectory, UNCHECKED, type HostCheck } from "./hosts";
 import { useCloseAll, usePageOpen, useSessions } from "./sessions";
 import { KeysNotice, FullScreenButton, SendKeysMenu } from "./keys-toolbar";
+import { ClipboardMenu, ClipboardNotice } from "./clipboard-menu";
 import { screenSessions, type ScreenSessionStore } from "./session-store";
 import { LiveScreen, useScreenSession } from "./vnc-session";
 
@@ -126,9 +127,14 @@ function HostScreen({ host, check, onCheck, store }: { host: HostEntry; check: H
   /** Starts a session; the toolbar's Connect and the one under the page's text both do this. */
   function connect(): void {
     if (status === null || status.state !== "ready") return;
+    const hostId = status.hostId;
     store.connect({
-      openSession: (hostId) => rpc.call("openSession", { hostId }),
-      hostId: status.hostId,
+      openSession: () => rpc.call("openSession", { hostId }),
+      macClipboard: {
+        read: (since) => rpc.call("clipboardRead", { hostId, since }),
+        write: (text) => rpc.call("clipboardWrite", { hostId, text }),
+      },
+      hostId,
       hostName: status.hostName,
     });
   }
@@ -153,6 +159,7 @@ function HostScreen({ host, check, onCheck, store }: { host: HostEntry; check: H
               <>
                 <FullScreenButton store={store} session={session} fullscreenTarget={page} />
                 <SendKeysMenu store={store} session={session} />
+                <ClipboardMenu store={store} session={session} />
                 <Button type="button" size="sm" variant="outline" onClick={() => store.disconnect()}>
                   Disconnect
                 </Button>
@@ -166,6 +173,7 @@ function HostScreen({ host, check, onCheck, store }: { host: HostEntry; check: H
         ) : null}
       </div>
       {live ? <KeysNotice store={store} session={session} /> : null}
+      {live ? <ClipboardNotice store={store} session={session} /> : null}
       {live ? (
         <LiveScreen store={store} />
       ) : status === null ? (

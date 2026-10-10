@@ -155,3 +155,36 @@ export type HostEntry = z.infer<typeof HostEntrySchema>;
 export const HostListSchema = z.object({ hosts: z.array(HostEntrySchema) });
 
 export type HostList = z.infer<typeof HostListSchema>;
+
+/**
+ * The most clipboard text that syncs with a Mac, in UTF-8 bytes: it crosses
+ * bb's link to the Mac as one call, and the page as one RPC.
+ */
+export const MAX_CLIPBOARD_BYTES = 1024 * 1024;
+
+/** The macOS account whose clipboard the plugin reads and writes on a Mac: the one bb runs as there. */
+export const ClipboardAccountSchema = z.object({
+  /** The short name, e.g. "ci". */
+  userName: z.string(),
+  /** The full name, when macOS has one; a sign-in may use either. */
+  fullName: z.string().nullable(),
+});
+
+export type ClipboardAccount = z.infer<typeof ClipboardAccountSchema>;
+
+/** A Mac's clipboard, as read: its change count always, its text only when asked for and changed. */
+export const ClipboardReadSchema = z.object({
+  account: ClipboardAccountSchema,
+  /** macOS's pasteboard change count; it moves on every copy. */
+  changeCount: z.number().int(),
+  /** The text, when asked for and the count moved; null otherwise, and when it holds no text. */
+  text: z.string().max(MAX_CLIPBOARD_BYTES).nullable(),
+  /** The text is longer than `MAX_CLIPBOARD_BYTES`, so it was not sent. */
+  tooLarge: z.boolean(),
+});
+
+export type ClipboardRead = z.infer<typeof ClipboardReadSchema>;
+
+export const ClipboardWrittenSchema = z.object({ account: ClipboardAccountSchema, changeCount: z.number().int() });
+
+export type ClipboardWritten = z.infer<typeof ClipboardWrittenSchema>;

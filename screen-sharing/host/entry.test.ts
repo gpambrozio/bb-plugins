@@ -8,8 +8,10 @@
 import { experimental_createHostEntryHarness } from "@get-bb/plugin-sdk/testing/host";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { FakePasteboardCommands } from "../testing/fake-pasteboard";
 import { closedPort, startFakeVnc, until, type FakeVnc } from "../testing/fake-vnc";
 import { createHostEntry } from "./entry";
+import { Pasteboard } from "./pasteboard";
 
 let vnc: FakeVnc;
 
@@ -98,6 +100,20 @@ describe("the host entry", () => {
   it("refuses a write for a session it does not have", async () => {
     const entry = harness();
     await expect(entry.experimental_call("write", { sessionId: "nope", seq: 0, data: "" })).rejects.toThrow("no such session");
+    await entry.experimental_dispose();
+  });
+
+  it("reads and writes the Mac's clipboard, any characters, holding no lease", async () => {
+    const commands = new FakePasteboardCommands();
+    const entry = experimental_createHostEntryHarness(
+      createHostEntry({ port: vnc.port, windowBytes: 1024 * 1024, silenceMs: 60_000, pasteboard: new Pasteboard(commands) }),
+    );
+    expect(await entry.experimental_call("clipboardWrite", { text: "日本語 🙂" })).toEqual({
+      account: { userName: "ci", fullName: "CI Bot" },
+      changeCount: 2,
+    });
+    expect(await entry.experimental_call("clipboardRead", { since: 1 })).toMatchObject({ changeCount: 2, text: "日本語 🙂" });
+    expect(entry.experimental_getRetainedWorkerLeaseCount()).toBe(0);
     await entry.experimental_dispose();
   });
 });

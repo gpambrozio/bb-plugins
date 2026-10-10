@@ -30,6 +30,7 @@ import {
   MAX_PIPELINED_WRITES,
   SCREEN_SHARING_PORT,
 } from "./shared/limits";
+import { Pasteboard } from "./host/pasteboard";
 import { checkScreenSharing, launchctlScreenSharingDisabled, probeRfb } from "./host/status";
 import { HostLinks } from "./server/host-link";
 import { errorText, type OpenLink } from "./server/link";
@@ -52,6 +53,8 @@ const MAX_BUFFERED_BYTES = 8 * 1024 * 1024;
 const HOST_OPEN_TIMEOUT_MS = 15_000;
 /** A status check on a remote Mac: a round trip, a TCP probe (3 s) and launchctl (3 s). */
 const HOST_STATUS_TIMEOUT_MS = 12_000;
+/** A clipboard call to a remote Mac: a round trip and a few quick commands, up to a megabyte each way. */
+const HOST_CLIPBOARD_TIMEOUT_MS = 12_000;
 
 type Host = Awaited<ReturnType<BbPluginApi["sdk"]["hosts"]["list"]>>[number];
 
@@ -107,6 +110,19 @@ export default async function plugin(bb: BbPluginApi) {
   bb.onDispose(hostClient.experimental_onSignal("data", ({ hostId, payload }) => hostLinks.data(hostId, payload)));
   bb.onDispose(hostClient.experimental_onSignal("closed", ({ hostId, payload }) => hostLinks.closed(hostId, payload)));
   bb.onDispose(hostClient.experimental_onWorkerExit(({ hostId }) => hostLinks.workerExited(hostId)));
+
+  /** The server's own Mac's clipboard; every other Mac's is read by its host entry. */
+  const ownPasteboard = new Pasteboard();
+
+  /**
+   * Who may touch a Mac's clipboard: the app (bb counts the CLI and agents as
+   * the same "client"), never another plugin, and only while a session to that
+   * Mac is open — the clipboard belongs to the screen being used.
+   */
+  function requireClipboardAccess(hostId: string, caller: { kind: string }): void {
+    if (caller.kind !== "client") throw new Error("other plugins cannot use a Mac's clipboard");
+    if (!registry.list().some((session) => session.hostId === hostId)) throw new Error("no session to that Mac is open");
+  }
 
   async function primaryHostId(): Promise<string | null> {
     return (await bb.sdk.system.config()).primaryHostId;
@@ -166,6 +182,16 @@ export default async function plugin(bb: BbPluginApi) {
     },
     sessions: () => ({ sessions: registry.list() }),
     closeAll: () => ({ closed: registry.closeAll() }),
+    clipboardRead: async ({ hostId, since }, context) => {
+      requireClipboardAccess(hostId, context.experimental_caller);
+      if (hostId === (await primaryHostId())) return ownPasteboard.read(since);
+      return hostClient.call("clipboardRead", { since }, { hostId, timeoutMs: HOST_CLIPBOARD_TIMEOUT_MS });
+    },
+    clipboardWrite: async ({ hostId, text }, context) => {
+      requireClipboardAccess(hostId, context.experimental_caller);
+      if (hostId === (await primaryHostId())) return ownPasteboard.write(text);
+      return hostClient.call("clipboardWrite", { text }, { hostId, timeoutMs: HOST_CLIPBOARD_TIMEOUT_MS });
+    },
   });
 
   const openLink: OpenLink = (target, events) =>

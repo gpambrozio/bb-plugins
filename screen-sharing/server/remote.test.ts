@@ -490,4 +490,36 @@ describe("over a slow link (300 ms each way)", () => {
     console.info(`[measured] no link delay: first update byte after ${firstByte} ms, ${rate.toFixed(0)} MiB/s`);
     expect(firstByte).toBeLessThan(200);
   }, 40_000);
+
+  it("reads and writes a Mac's clipboard through its host entry, only while a session to it is open", async () => {
+    const { harness, daemon } = await setup();
+    await expect(harness.callRpc("clipboardRead", { hostId: "host_laptop", since: null })).rejects.toThrow("no session to that Mac is open");
+    await expect(harness.callRpc("clipboardWrite", { hostId: "host_laptop", text: "x" })).rejects.toThrow("no session to that Mac is open");
+
+    const ws = await openSession(harness);
+    await until(() => daemon.openSessions() === 1, "the session to open");
+    await expect(
+      harness.callRpc("clipboardRead", { hostId: "host_laptop", since: null }, { experimental_caller: { kind: "plugin", pluginId: "nosy" } }),
+    ).rejects.toThrow("other plugins cannot use a Mac's clipboard");
+    // Not the server's Mac's: no session is open to that one.
+    await expect(harness.callRpc("clipboardRead", { hostId: "host_mini", since: null })).rejects.toThrow("no session to that Mac is open");
+
+    expect(await harness.callRpc("clipboardWrite", { hostId: "host_laptop", text: "naïve 🙂" })).toEqual({
+      account: { userName: "ci", fullName: "CI Bot" },
+      changeCount: 2,
+    });
+    daemon.pasteboardFor("host_laptop").copy("copied on the MacBook");
+    expect(await harness.callRpc("clipboardRead", { hostId: "host_laptop", since: 2 })).toMatchObject({
+      changeCount: 3,
+      text: "copied on the MacBook",
+    });
+    expect(daemon.calls.filter((call) => call.method.startsWith("clipboard")).map((call) => call.method)).toEqual([
+      "clipboardWrite",
+      "clipboardRead",
+    ]);
+
+    await ws.close(1000, "");
+    await until(() => daemon.openSessions() === 0, "the session to end");
+    await expect(harness.callRpc("clipboardRead", { hostId: "host_laptop", since: null })).rejects.toThrow("no session to that Mac is open");
+  });
 });

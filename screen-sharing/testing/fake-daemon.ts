@@ -10,8 +10,10 @@
 import { connect } from "node:net";
 import type { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 
+import { Pasteboard } from "../host/pasteboard";
 import { HostRelay, type HostRelayOptions } from "../host/relay";
 import { MAX_CHUNK_BYTES } from "../shared/host-contract";
+import { FakePasteboardCommands } from "./fake-pasteboard";
 import { sleep } from "./fake-vnc";
 
 type Harness = ReturnType<typeof createFakePluginHost>["harness"];
@@ -37,6 +39,8 @@ export interface FakeDaemonOptions {
 
 export class FakeDaemon {
   readonly relays = new Map<string, HostRelay>();
+  /** Each machine's pasteboard, in memory, made when first used. */
+  readonly pasteboards = new Map<string, FakePasteboardCommands>();
   /** Every call that reached a machine, in order. */
   readonly calls: Call[] = [];
   leases = 0;
@@ -67,6 +71,15 @@ export class FakeDaemon {
     return relay;
   }
 
+  pasteboardFor(hostId: string): FakePasteboardCommands {
+    let commands = this.pasteboards.get(hostId);
+    if (commands === undefined) {
+      commands = new FakePasteboardCommands();
+      this.pasteboards.set(hostId, commands);
+    }
+    return commands;
+  }
+
   /** What bb's fake plugin host calls for `bb.hosts.experimental_client(...).call`. */
   readonly call = async ({ method, input, hostId }: Call): Promise<unknown> => {
     await sleep(this.options.oneWayMs + Math.random() * (this.options.callJitterMs ?? 0));
@@ -82,6 +95,11 @@ export class FakeDaemon {
 
   private async handle(method: string, input: Record<string, never>, hostId: string): Promise<unknown> {
     if (method === "status") return this.options.status?.(hostId);
+    if (method === "clipboardRead" || method === "clipboardWrite") {
+      const pasteboard = new Pasteboard(this.pasteboardFor(hostId));
+      const args = input as { since?: number | null; text?: string };
+      return method === "clipboardRead" ? pasteboard.read(args.since ?? null) : pasteboard.write(args.text ?? "");
+    }
     const relay = this.relayFor(hostId);
     switch (method) {
       case "open": {

@@ -13,13 +13,14 @@ findings are summarised under *Decisions*.
 
 | File | What it owns |
 | --- | --- |
-| `server.ts` | Wires the RPCs (host list, per-host status, tickets), the relay route, host signals and worker exits, the sweep and keepalive timers and disposal. Holds the server's limits (ticket life, no-traffic, maximum length, buffer cap, pipelining). |
+| `server.ts` | Wires the RPCs (host list, per-host status, tickets, the Mac's clipboard), the relay route, host signals and worker exits, the sweep and keepalive timers and disposal. Holds the server's limits (ticket life, no-traffic, maximum length, buffer cap, pipelining). |
 | `server/sessions.ts` | Tickets (single-use, bound to a Mac and its route, short-lived) and sessions (no-traffic and age limits, Close all). No sockets. |
 | `server/relay.ts` | One WebSocket ⇄ one link, bytes copied untouched; the page's ack frames, and a `pong` for each `ping`; either end closing closes the other. |
 | `server/link.ts` | The seam between the relay and the Mac's side: `Link`, its events and the route. |
 | `server/loopback-link.ts` | The server's own Mac: a TCP connection to `127.0.0.1:5900`, paused while the page is a window behind. |
 | `server/host-link.ts` | Every other Mac: pipelined, numbered `write` calls up; numbered `data` signals down, a gap ends it; acks and keepalives to the host. `HostLinks` routes signals by session and checks their host. |
-| `host.ts`, `host/entry.ts` | The host entry, on every enrolled machine: `status`, and `open`/`write`/`ack`/`keepalive`/`close`; a lease per session; close-all on lifecycle abort and dispose. |
+| `host.ts`, `host/entry.ts` | The host entry, on every enrolled machine: `status`, `open`/`write`/`ack`/`keepalive`/`close`, and `clipboardRead`/`clipboardWrite`; a lease per session; close-all on lifecycle abort and dispose. |
+| `host/pasteboard.ts` | The Mac's clipboard as UTF-8 text: `pbpaste`/`pbcopy` with a UTF-8 locale, the change count through JXA, the account it belongs to. Runs on each Mac, and in the server for its own. |
 | `host/relay.ts` | A Mac's side of a remote session: its TCP connection, numbered chunks out, the credit window, the silence expiry. |
 | `host/status.ts` | Is Screen Sharing on: `launchctl print-disabled system` and an RFB greeting probe that signs in to nothing. Runs on each Mac, and in the server for its own. |
 | `shared/channels.ts` | Route, realtime channel, flow-control frames, close codes, session limits and zod shapes; no SDK import, so the app may use it. |
@@ -38,6 +39,9 @@ findings are summarised under *Decisions*.
 | `app/rfb.ts` | The seam the page's tests replace: `new WebSocket` and noVNC's `RFB` (scaling; no dot cursor; marks a cursor sent by the Mac; its own wheel handler). |
 | `app/keys.ts` | The Send keys menu: each shortcut as RFB keysyms (⌘ is `Super_L`, as noVNC sends it). |
 | `app/keys-toolbar.tsx` | "Full screen", "Send keys" and the notice saying what is held or locked and how to get out. |
+| `app/toolbar-menu.tsx` | The shell of the toolbar's menus (Send keys, Clipboard): drawn inside the page, so they work in full screen. |
+| `app/clipboard.ts` | Clipboard text between this computer and the Mac: `ClipboardSync` (one per connection; Send, Receive, Auto sync, whose account), the remembered Auto sync choice. |
+| `app/clipboard-menu.tsx` | The "Clipboard" menu and the notice saying what the last clipboard action did. |
 | `app/cursor.ts` | The arrow-fallback CSS and the attribute that switches it off once the Mac sends a cursor. |
 | `app/sessions.tsx` | The open sessions as the app sees them; the sidebar "Live" and the corner Close all pill. |
 | `app/novnc.d.ts` | Types for the part of noVNC's `RFB` used here; noVNC ships none. |
@@ -70,7 +74,8 @@ checked in the study); a request with no `Origin` header passes. Browsers always
 is a non-browser client of the bb API: a local process (which can reach port 5900 directly anyway),
 or anything that can reach a bb server bound to the network with `BB_SERVER_BIND_HOST` — which can
 then already drive every bb API, terminals on every host included. The relay adds no reach beyond
-bb's own API. The API is experimental; `engines.bb` is `>=0.45`.
+bb's own API. The API is experimental; `engines.bb` is `>=0.46`, for `experimental_copyToClipboard`
+(see *Clipboard*).
 
 **Who may mint a ticket.** `openSession` refuses callers bb marks `plugin` (another plugin through
 `bb.sdk.plugins.callRpc`). bb marks everything else `client` — the app, the `bb` CLI, agents — and
@@ -198,6 +203,70 @@ seeing what such a Mac sends (ServerInit size, any ExtendedDesktopSize screen li
 
 **View only is noVNC's `viewOnly`, set in the page.** The relay does not parse RFB to enforce it; the
 user is the one viewing.
+
+## Clipboard
+
+Text only, any characters. **Not through the screen session:** the page asks the plugin's server
+(`clipboardRead`, `clipboardWrite`), which runs `host/pasteboard.ts` itself for its own Mac and calls the
+host entry for the others. `app/clipboard.ts` holds the page's side, one `ClipboardSync` per connection.
+
+- **Why not RFB.** 0.3.0's first candidate used RFB cut text through noVNC (`clipboardPasteFrom`, the
+  `clipboard` event). On the MacMini, signed in as the console account, nothing crossed either way:
+  macOS sent no ServerCutText and ignored ClientCutText. remotex, an open-source viewer that
+  reverse-engineered Apple's protocol, says the same in `src/vnc_apple_clipboard.rs` ("macOS does not
+  bridge its pasteboard through RFB Client/ServerCutText, even after accepting the Extended Clipboard
+  pseudo-encoding") and documents Apple's own pasteboard messages in `docs/apple-vnc-889.md`:
+  `AutoPasteboard` (`0x15`) after `ViewerInfo` and `SetMode(control)`, `MiscStatus` (`0x14`) command 2
+  when the Mac's pasteboard changes, a fetch (`0x0b`), and `0x1f` carrying a zlib archive of every
+  flavor (`public.utf8-plain-text` among them) both ways. Apple's viewer and remotex speak them only
+  in RFB `003.889`, Apple's private revision, with ClientInit `0x81` and Apple's extended ServerInit;
+  noVNC answers `003.008`, and 003.889 also changes the pointer buttons and the wheel. Making noVNC
+  speak it would mean faking the version, parsing Apple's ServerInit and server messages through
+  noVNC's private message loop, and remapping input — unverifiable without a live session, and a
+  macOS update is free to change any of it. Nobody has tried Apple's messages in a 3.8 session.
+- **Whose clipboard.** `pbpaste` and `pbcopy` act on the pasteboard of the login session they run in:
+  the account bb runs as on that Mac (`ci` on the MacMini). A Screen Sharing sign-in as another account
+  that is not at the console opens that account's own desktop, with its own pasteboard, which only root
+  could reach (`launchctl asuser`); bb runs as a non-admin there. So each read and write answers the
+  account (`id -F` for the full name), the page compares it with the user name typed at sign-in (short
+  or full name, any case). The store keeps that user name — never the password — for the session only.
+- **When sync cannot work** — a sign-in as another account, or a Mac whose clipboard could not be
+  reached (the session's first `clipboardRead` failed) — the session's `clipboardAccess` says why, and
+  the Clipboard menu holds only that reason, one step up the type scale (`text-sm` where its notes are
+  `text-xs`), with none of its items; nothing syncs. Opening the menu asks an unreachable Mac again.
+  The captain's choice: a menu of items that can only fail is worse than one sentence saying why.
+- **UTF-8.** `pbpaste`/`pbcopy` take their encoding from the locale; without one they use Mac Roman and
+  write "?" for the rest (checked on the MacMini). They run with `LANG`/`LC_ALL=en_US.UTF-8`.
+- **The Mac's changes.** `NSPasteboard.changeCount` through `osascript -l JavaScript`, about 40 ms. The
+  page reads it once a second (`MAC_POLL_MS`) while Auto sync is on and the screen is on the page, and
+  once more as the screen leaves it; the text is read only when the count moved. A remote Mac's poll
+  is a host call (≈0.6 s there and back), one at a time. The polls keep that Mac's worker alive, which
+  its session's lease already does.
+- **Limits.** 1 MiB of UTF-8 each way (`MAX_CLIPBOARD_BYTES`), one host call or RPC; more is refused
+  with its size, not cut. A copied picture or file has no text and is left alone.
+- **Who may.** The two RPCs refuse `plugin` callers and any Mac with no session open (any window or
+  device: the registry's list). The CLI and agents count as `client`, as for tickets; the skill tells
+  agents never to call them. They log nothing, and the server never stores the text.
+- **Reading this computer's clipboard** is `navigator.clipboard.readText`: focus required everywhere;
+  Chrome asks once; Safari, Firefox and the mobile app's web view only within a click. bb's desktop
+  app sets no permission handler on its main window's session (it does on the in-app browser's), so
+  Electron grants `clipboard-read` — read from its `app.asar`, not from a live run. Auto sync
+  therefore reads it only at moments the user is likely to have copied elsewhere (connect, attach,
+  window `focus`, `visibilitychange`, `pointerenter` / `focusin` on the screen), one read at a time
+  and at most every 500 ms, and stops after the first refusal until the user asks again. This side
+  is not polled. Send clipboard and turning Auto sync on call `readText` before awaiting anything,
+  so a click-only browser sees the click.
+- **Writing it** is bb's `experimental_copyToClipboard` (native in bb's desktop app, focus not needed).
+  Receive awaits the Mac first, so where a browser writes only within a click the notice offers a
+  Copy button: a click of its own.
+- **No ping-pong.** `ClipboardSync` keeps what each side was last known to hold. Auto sync sends only
+  text it has not already read or written locally, and copies only text the local clipboard does not
+  already hold; so the Mac's count moving for text sent from here changes nothing, and a failed local
+  write is not followed by the old local text going back over the Mac's new one.
+- **Auto sync is per computer**, in `localStorage`, not a bb setting: clipboard access depends on the
+  computer and browser, and a phone that cannot read the clipboard should not turn it on everywhere.
+- **The menus are drawn inside the page**, not bb's portalled dropdown, because full screen hides
+  what is portalled outside the page (`app/toolbar-menu.tsx`).
 
 ## The host link
 
@@ -352,6 +421,11 @@ reach any page. The evidence, so nobody has to rediscover it:
   seen or not, on Disconnect, and on `pagehide` (the window closing); a ticket that arrives after
   Disconnect is never used. Leaving the page does not end a session — the sidebar "Live" and the
   corner pill are how an unseen one stays visible.
+- **The clipboard only beside an open session.** `clipboardRead` and `clipboardWrite` refuse other
+  plugins and any Mac with no session open, and reach only the clipboard of the account bb runs as
+  there; the page uses them only for a signed-in session as that account. Neither the server nor the
+  host entry logs or stores clipboard text. The page keeps the user name typed at sign-in for the
+  session, to tell whether it is that account; the password is never kept.
 - **Open sessions are visible.** Every open and close publishes the list, whichever Mac; the sidebar row
   and a corner pill in every window show it, both the pill and the page's title bar offer Close all,
   and the picker marks each Mac with a session as Live.

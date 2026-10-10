@@ -7,6 +7,7 @@ import { connect } from "node:net";
 import { experimental_defineHostEntry } from "@get-bb/plugin-sdk";
 
 import { MAX_CHUNK_BYTES, hostContract, hostSignals } from "../shared/host-contract";
+import { Pasteboard } from "./pasteboard";
 import { HostRelay } from "./relay";
 import { checkScreenSharing, launchctlScreenSharingDisabled, probeRfb } from "./status";
 
@@ -18,6 +19,8 @@ export interface HostEntryOptions {
   platform?: NodeJS.Platform;
   /** Stands in for launchctl in tests. */
   serviceDisabled?: () => Promise<boolean | null>;
+  /** Stands in for the Mac's clipboard in tests. */
+  pasteboard?: Pasteboard;
 }
 
 const MAX_WRITE_BUFFER_BYTES = 8 * 1024 * 1024;
@@ -38,6 +41,7 @@ export function createHostEntry(options: HostEntryOptions) {
     now: () => Date.now(),
     log,
   });
+  const pasteboard = options.pasteboard ?? new Pasteboard();
   /** Every call carries the same worker lifecycle signal; listen to it once. */
   let watchingLifecycle = false;
 
@@ -87,6 +91,8 @@ export function createHostEntry(options: HostEntryOptions) {
         relay.close(sessionId);
         return {};
       },
+      clipboardRead: ({ since }) => pasteboard.read(since),
+      clipboardWrite: ({ text }) => pasteboard.write(text),
     },
     dispose: () => relay.closeAll("the plugin's helper stopped"),
   });

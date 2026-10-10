@@ -9,7 +9,7 @@ by its own issue in this repository. Plugin code is full-trust and unsandboxed: 
 **inside the bb server's own process**, and the app half runs inside the bb app.
 
 The plugins pin **`@get-bb/plugin-sdk` 0.6.15**, or 0.6.37 where a plugin needs bb 0.46 (`firstmate-crew`,
-`github-board`), and CI builds them all with **bb 0.46.0**. Re-pin a plugin only when it needs a newer API
+`github-board`, `screen-sharing`), and CI builds them all with **bb 0.46.0**. Re-pin a plugin only when it needs a newer API
 (see `engines` below). This file was
 written against bb 0.44.0 and SDK 0.5.29 and re-checked against the 0.45.0 changes; a point that names
 bb 0.44 was observed there and still holds in 0.45 unless it says otherwise. When the two
@@ -348,6 +348,13 @@ load. Where they need gating (tracking pixels, private attachments), render the 
 `github-board` does, or defuse them in the source by parsing it as bb does (mdast with GFM) and
 editing each image and raw-HTML node by its position, as `skills/app/markdown.ts` does — patterns over
 the raw text miss reference, nested and multiline images.
+
+**The clipboard.** Write with `experimental_copyToClipboard` (bb 0.46, SDK 0.6.37): bb's desktop app
+writes the native clipboard, focused or not; a browser needs focus, and Safari a click. There is no
+read API: `navigator.clipboard.readText` needs focus everywhere, Chrome asks once, and Safari, Firefox
+and the mobile app's web view allow it only within a click — so call it before awaiting anything in
+the click handler. bb's desktop app sets no permission handler on its main window, so reads work there
+without a prompt (read from its `app.asar`; `screen-sharing/AGENTS.md`).
 
 **Icon names are bb's own set, not Lucide's.** `experimental_Icon` (and every `icon` field) knows about
 170 names — `Settings`, `Play`, `Spinner`, `Lock`, `ListTodo`, `MessageQuestion`, `Github`… but no
