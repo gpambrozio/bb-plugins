@@ -120,6 +120,18 @@ export class FakeThreads implements ThreadsPort {
     return { ...(this.metadataById.get(id) ?? {}) };
   }
 
+  async metadataOf(ids: readonly string[]): Promise<Map<string, Record<string, unknown>>> {
+    this.record("metadataOf", [...ids]);
+    await tick();
+    this.throwIfFailing("metadataOf");
+    const found = new Map<string, Record<string, unknown>>();
+    for (const id of ids) {
+      const metadata = this.metadataById.get(id);
+      if (metadata !== undefined) found.set(id, { ...metadata });
+    }
+    return found;
+  }
+
   async pendingInteractions(id: string): Promise<number> {
     this.record("pendingInteractions", id);
     await tick();

@@ -123,6 +123,9 @@ function reasoningOf(level: string | undefined): ReasoningLevel | undefined {
   return level;
 }
 
+/** The most threads bb answers for in one `experimental_listPluginMetadata` request. */
+const METADATA_BATCH = 200;
+
 /** Empty strings mean "bb's default", which the SDK expresses by leaving the field out. */
 function optional(value: string | undefined): string | undefined {
   return value === undefined || value === "" ? undefined : value;
@@ -145,6 +148,12 @@ export function bbThreads(sdk: PluginBbSdk): ThreadsPort {
     },
     async metadata(id) {
       return sdk.threads.getPluginMetadata({ threadId: id });
+    },
+    async metadataOf(ids) {
+      const batches: string[][] = [];
+      for (let start = 0; start < ids.length; start += METADATA_BATCH) batches.push(ids.slice(start, start + METADATA_BATCH));
+      const results = await Promise.all(batches.map((threadIds) => sdk.threads.experimental_listPluginMetadata({ threadIds })));
+      return new Map(results.flatMap((result) => result.threads.map((row) => [row.threadId, row.metadata] as const)));
     },
     async pendingInteractions(id) {
       const interactions = await sdk.threads.interactions.list({ threadId: id });

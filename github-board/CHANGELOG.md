@@ -5,6 +5,16 @@ Notable changes to `github-board`. The other plugins in this repository version 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.5.0
+
+### Changed
+
+- **Needs bb 0.46 or newer.** On an older bb this version is not offered as an update, and GitHub Board
+  stays on the version you have.
+- **Add to chat** opens a thread that is not on screen through bb's own "open beside" rule, so where it
+  lands follows how you have set up split views, and it still opens in place where the window cannot be
+  split.
+
 ## 0.4.0
 
 ### Changed

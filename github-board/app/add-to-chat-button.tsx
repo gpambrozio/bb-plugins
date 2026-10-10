@@ -22,8 +22,8 @@
  */
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import {
-  experimental_useSidebarThreadActions,
   experimental_useSidebarThreads,
+  useBbNavigate,
   useComposers,
   type PluginComposerApi,
 } from "@get-bb/plugin-sdk/app";
@@ -179,7 +179,7 @@ export function AddToChatButton({
 }) {
   const composers = useComposers();
   const { status, threads, projects } = experimental_useSidebarThreads();
-  const actions = experimental_useSidebarThreadActions();
+  const navigate = useBbNavigate();
   const cardProjectIds = useCardProjectIds(item);
   const pending = useSyncExternalStore(pendingAdds.subscribe, pendingAdds.current, pendingAdds.current);
   // The same templates the Send to chat dialog reads, kept current by the same realtime push.
@@ -193,7 +193,7 @@ export function AddToChatButton({
     const held = pendingAdds.request({ threadId: target.threadId, title: target.title, prompt });
     // The menu disables this while another card waits; this is the backstop.
     if (held === null) return;
-    actions.open(target.threadId, { split: true });
+    navigate.toThread(target.threadId, { split: true });
   };
 
   return (

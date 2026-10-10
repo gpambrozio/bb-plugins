@@ -179,15 +179,17 @@ async function orFallback<T>(log: Log, what: string, fallback: T, read: () => Pr
 }
 
 /**
- * What the board needs of one of the first mate's child threads. A thread whose metadata or pending
- * interactions cannot be read is still a card, with no metadata or nothing pending, and the failure is
- * logged: one bad child must not blank the board.
+ * What the board needs of one of the first mate's child threads, given its metadata (read for the whole
+ * crew at once by `loadFleet`). A thread whose pending interactions cannot be read is still a card, with
+ * nothing pending, and the failure is logged: one bad child must not blank the board.
  */
-export async function summarizeCrew(threads: ThreadsPort, thread: ThreadInfo, log: Log): Promise<CrewSummary> {
-  const [metadata, pendingInteractions] = await Promise.all([
-    orFallback(log, `the metadata of ${thread.id}`, {} as Record<string, unknown>, () => threads.metadata(thread.id)),
-    orFallback(log, `the pending interactions of ${thread.id}`, 0, () => threads.pendingInteractions(thread.id)),
-  ]);
+export async function summarizeCrew(
+  threads: ThreadsPort,
+  thread: ThreadInfo,
+  metadata: Record<string, unknown>,
+  log: Log,
+): Promise<CrewSummary> {
+  const pendingInteractions = await orFallback(log, `the pending interactions of ${thread.id}`, 0, () => threads.pendingInteractions(thread.id));
   return {
     threadId: thread.id,
     title: thread.title,
@@ -200,6 +202,17 @@ export async function summarizeCrew(threads: ThreadsPort, thread: ThreadInfo, lo
     kind: metadataText(metadata, CREW_METADATA.kind),
     project: metadataText(metadata, CREW_METADATA.project),
   };
+}
+
+/**
+ * The crew's metadata, in one request per refresh rather than one per crewmate. A crewmate with none, or
+ * a crew whose metadata cannot be read (logged), gets an empty record: the cards stay on the board.
+ */
+async function crewMetadata(threads: ThreadsPort, children: ThreadInfo[], log: Log): Promise<Map<string, Record<string, unknown>>> {
+  if (children.length === 0) return new Map();
+  return orFallback(log, "the metadata of the crew", new Map<string, Record<string, unknown>>(), () =>
+    threads.metadataOf(children.map((child) => child.id)),
+  );
 }
 
 /** The state the board shows for a charter it could not read: nothing the captain needs to act on. */
@@ -237,9 +250,10 @@ export async function loadFleet(deps: FleetDeps): Promise<Fleet> {
 
   const children = mate === null ? [] : await deps.threads.children(mate.id);
   deps.reports.retain(new Set(children.map((child) => child.id)));
+  const metadata = await crewMetadata(deps.threads, children, deps.log);
   const crew = await Promise.all(
     children.map(async (child) => {
-      const summary = await summarizeCrew(deps.threads, child, deps.log);
+      const summary = await summarizeCrew(deps.threads, child, metadata.get(child.id) ?? {}, deps.log);
       const report = await deps.reports.report(summary).catch((error: unknown) => {
         deps.log.error(`Could not read the status line of ${child.id}: ${errorText(error)}`);
         return null;

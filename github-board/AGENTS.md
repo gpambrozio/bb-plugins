@@ -176,8 +176,8 @@ composer's environment picker replaces.
 ## Add to chat
 
 `app/add-to-chat-button.tsx` sits beside Send to chat in the detail panel and writes the card into a
-chat's draft, through bb 0.45's `useComposers()` — which is why `engines.bb` is `>=0.45`: on 0.44 the
-hook does not exist and the panel would crash. It is always there, as a menu: the composers on screen
+chat's draft, through bb 0.45's `useComposers()`, so it needs bb 0.45 at least: on 0.44 the hook does
+not exist and the panel would crash. It is always there, as a menu: the composers on screen
 first (named by `scope`, through the sidebar's thread and project names), then up to eight sidebar
 threads that are not on screen, the card's projects' first (`sendOptions`' candidates) and the most
 recently updated first. `chatTargets` in `app/add-to-chat.ts` makes that list.
@@ -193,10 +193,11 @@ recently updated first. `chatTargets` in `app/add-to-chat.ts` makes that list.
   `useComposer()` or `useComposers()`. So picking such a thread puts the card in `pendingAdds`
   (`app/pending-add.ts`, one per window: while it waits, the menu disables the other threads with
   "Adding to <thread>…", and the store refuses a second request, so no card is dropped unseen; chats on
-  screen still take a card at once) and calls
-  `experimental_useSidebarThreadActions().open(id, { split: true })`. bb splits the focused pane where
-  it can and navigates to the thread where it cannot (compact viewport, splits off), which unmounts the
-  board; that is why `PendingAddToChat` (`app/pending-add-delivery.tsx`), in the app overlay, delivers
+  screen still take a card at once) and calls `useBbNavigate().toThread(id, { split: true })` — which is
+  why `engines.bb` is `>=0.46`: bb 0.45 ignores `split` and opens the thread in the board's place, and
+  SDK 0.6.34 made `experimental_useSidebarThreadActions`, which 0.4 used, internal. bb splits the focused
+  pane where it can and navigates to the thread where it cannot (compact viewport, splits off), which
+  unmounts the board; that is why `PendingAddToChat` (`app/pending-add-delivery.tsx`), in the app overlay, delivers
   the card once a `thread`-scoped composer for that thread appears, and gives up with a toast after
   15 s. The deadline is checked again at delivery, so a late timer or a remounted overlay never writes
   an expired card. It subscribes to `useComposers()` only while a card is pending.

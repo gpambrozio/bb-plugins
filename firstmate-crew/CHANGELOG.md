@@ -5,6 +5,16 @@ Notable changes to `firstmate`. The other plugins in this repository version sep
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.5.0
+
+### Changed
+
+- **Needs bb 0.46 or newer.** On an older bb this version is not offered as an update, and FirstMate
+  stays on the version you have.
+- **The board asks bb less on every refresh.** It now reads what each worker is working on for the whole
+  crew at once, instead of asking once per worker, so a large crew costs bb the same as a small one. The
+  board shows the same cards as before.
+
 ## 0.4.0
 
 ### Added

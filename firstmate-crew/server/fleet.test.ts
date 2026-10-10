@@ -358,19 +358,38 @@ describe("loadFleet", () => {
     expect(log.errors[0]).toContain(home);
   });
 
-  it("keeps a child on the board when reading its metadata or pending interactions fails", async () => {
+  it("reads the whole crew's metadata in one request, and none for a mate with no crew", async () => {
+    const { deps, store, threads } = await setup();
+    const mate = threads.add({ id: "thr_mate" });
+    await store.setMateThreadId(mate.id);
+    await loadFleet(deps);
+    expect(threads.callsTo("metadataOf")).toEqual([]);
+
+    threads.add({ id: "thr_a", parentThreadId: mate.id });
+    threads.add({ id: "thr_b", parentThreadId: mate.id });
+    threads.add({ id: "thr_c", parentThreadId: mate.id });
+    threads.setMetadata("thr_b", { [CREW_METADATA.task]: "b-task" });
+
+    const fleet = await loadFleet(deps);
+    expect(threads.callsTo("metadataOf")).toEqual([[["thr_a", "thr_b", "thr_c"]]]);
+    expect(threads.callsTo("metadata")).toEqual([]);
+    const tasks = new Map(fleet.cards.map((card) => [card.crew?.threadId, card.crew?.task]));
+    expect(tasks).toEqual(new Map([["thr_a", null], ["thr_b", "b-task"], ["thr_c", null]]));
+  });
+
+  it("keeps the crew on the board when reading its metadata or a child's pending interactions fails", async () => {
     const { deps, store, threads, log } = await setup();
     const mate = threads.add({ id: "thr_mate" });
     await store.setMateThreadId(mate.id);
     threads.add({ id: "thr_a", title: "A", parentThreadId: mate.id });
     threads.add({ id: "thr_b", title: "B", parentThreadId: mate.id });
     threads.setMetadata("thr_a", { [CREW_METADATA.task]: "a-task" });
-    threads.failNext("metadata", new Error("metadata unavailable"));
+    threads.failNext("metadataOf", new Error("metadata unavailable"));
 
     const fleet = await loadFleet(deps);
     expect(fleet.cards).toHaveLength(2);
-    expect(fleet.cards.every((card) => card.crew !== null)).toBe(true);
-    expect(log.errors).toEqual([expect.stringMatching(/metadata of thr_.*metadata unavailable/)]);
+    expect(fleet.cards.every((card) => card.crew !== null && card.crew.task === null)).toBe(true);
+    expect(log.errors).toEqual([expect.stringMatching(/metadata of the crew.*metadata unavailable/)]);
 
     threads.failNext("pendingInteractions", new Error("interactions unavailable"));
     const again = await loadFleet(deps);

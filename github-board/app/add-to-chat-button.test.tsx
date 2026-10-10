@@ -108,7 +108,7 @@ describe("AddToChatButton", () => {
     await waitFor(() => expect(view.inspection.composer.text).toBe(`Look at this:\n\n${widgetsPrompt}`));
     expect(view.inspection.composer.focusCount).toBe(1);
     expect(view.inspection.composer.submits).toEqual([]);
-    expect(view.inspection.sidebarActionCalls).toEqual([]);
+    expect(view.inspection.navigateCalls).toEqual([]);
   });
 
   it("is there with no chat on screen but the Send to chat dialog's, and never offers that one", async () => {
@@ -168,7 +168,7 @@ describe("AddToChatButton", () => {
     fireEvent.click(other);
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(view.inspection.composer.text).toBe("Look at this:");
-    expect(view.inspection.sidebarActionCalls).toEqual([]);
+    expect(view.inspection.navigateCalls).toEqual([]);
     expect(pendingAdds.current()).toBeNull();
   });
 
@@ -192,8 +192,8 @@ describe("AddToChatButton", () => {
     await clickWhenEnabled(within(menu).getByRole("menuitem", { name: /Tune the cache/ }));
 
     await waitFor(() =>
-      expect(view.inspection.sidebarActionCalls).toEqual([
-        { method: "open", threadId: "thr_b", options: { split: true } },
+      expect(view.inspection.navigateCalls).toEqual([
+        { method: "toThread", threadId: "thr_b", options: { split: true } },
       ]),
     );
     // thr_b is in gadgets, which overrides no issue template.
@@ -225,7 +225,7 @@ describe("AddToChatButton", () => {
     expect(other.getAttribute("aria-disabled")).toBe("true");
     fireEvent.click(other);
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(view.inspection.sidebarActionCalls).toHaveLength(1);
+    expect(view.inspection.navigateCalls).toHaveLength(1);
     expect(pendingAdds.current()?.threadId).toBe("thr_b");
 
     // The chat already on screen still takes the card at once.
