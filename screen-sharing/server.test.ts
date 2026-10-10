@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import plugin from "./server";
 import { CloseCode, SESSIONS_CHANGED, VNC_ROUTE } from "./shared/channels";
+import { SETTINGS } from "./shared/settings";
 
 const hosts: { harness: { dispose(): Promise<void> } }[] = [];
 
@@ -37,6 +38,11 @@ describe("the screen-sharing plugin", () => {
     expect(harness.registrations.websocketRoutes.map((route) => [route.path, route.auth])).toEqual([[VNC_ROUTE, "local"]]);
     expect(harness.registrations.httpRoutes).toEqual([]);
     expect(harness.sharedPortDeclarations).toEqual([]);
+  });
+
+  it("offers the scroll speed in its settings", async () => {
+    const { harness } = await load();
+    expect(harness.registrations.settingsDescriptors).toEqual(SETTINGS);
   });
 
   it("gives the app a ticket for the server's Mac", async () => {

@@ -8,10 +8,13 @@
  * noVNC; nothing keeps it, logs it or sends it anywhere else.
  */
 import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent } from "react";
+import { useSettings } from "@get-bb/plugin-sdk/app";
 
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Input } from "@/components/ui/input";
+
+import { scrollSpeedOf } from "../shared/settings";
 import type { CredentialType, ScreenSessionSnapshot, ScreenSessionStore } from "./session-store";
 
 const FIELD_LABELS: Record<CredentialType, string> = {
@@ -59,9 +62,15 @@ function CredentialsForm({ store, hostName, types }: { store: ScreenSessionStore
   );
 }
 
-/** Lends the session's screen element a place on the page while the page is open. */
+/**
+ * Lends the session's screen element a place on the page while the page is
+ * open, and hands it the "Scroll speed" setting: the screen takes the wheel
+ * only while it is here, so this is where a change to the setting applies.
+ */
 function ScreenMount({ store }: { store: ScreenSessionStore }) {
   const host = useRef<HTMLDivElement>(null);
+  const scrollSpeed = scrollSpeedOf(useSettings().values);
+  useEffect(() => store.setScrollSpeed(scrollSpeed), [store, scrollSpeed]);
   useEffect(() => {
     const container = host.current;
     if (container === null) return;

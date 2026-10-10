@@ -68,7 +68,8 @@ const WHEEL_LEFT = 1 << 5;
 const WHEEL_RIGHT = 1 << 6;
 
 /**
- * Scrolls the Mac in proportion to the gesture (wheel.ts), in place of
+ * Scrolls the Mac in proportion to the gesture (wheel.ts), at the speed the
+ * user set (read on every event, so a change applies at once), in place of
  * noVNC's own wheel handler, which sends at most one step per event. It
  * listens on `target` in the capture phase and stops the event there, so
  * noVNC's handler on its canvas never sees it, and presses the wheel buttons
@@ -78,7 +79,7 @@ const WHEEL_RIGHT = 1 << 6;
  * event's steps go to the relay as one frame. The listener goes when the
  * connection ends.
  */
-function scrollProportionally(rfb: Rfb, target: HTMLElement, channel: RelayChannel): void {
+function scrollProportionally(rfb: Rfb, target: HTMLElement, channel: RelayChannel, scrollSpeed: () => number): void {
   const internals = rfb as unknown as WheelInternals;
   const steps = new WheelAccumulator();
   const listening = new AbortController();
@@ -92,7 +93,7 @@ function scrollProportionally(rfb: Rfb, target: HTMLElement, channel: RelayChann
       if (internals._rfbConnectionState !== "connected" || rfb.viewOnly) return;
       event.stopPropagation();
       event.preventDefault();
-      const { x, y } = steps.add(event);
+      const { x, y } = steps.add(event, scrollSpeed());
       const bounds = canvas.getBoundingClientRect();
       const atX = Math.min(Math.max(event.clientX - bounds.left, 0), Math.max(bounds.width - 1, 0));
       const atY = Math.min(Math.max(event.clientY - bounds.top, 0), Math.max(bounds.height - 1, 0));
@@ -112,13 +113,14 @@ function scrollProportionally(rfb: Rfb, target: HTMLElement, channel: RelayChann
   );
 }
 
-export function createRfb(target: HTMLElement, socket: WebSocket): Rfb {
+/** `scrollSpeed` is read on every wheel event: the "Scroll speed" setting, 1 to 5. */
+export function createRfb(target: HTMLElement, socket: WebSocket, scrollSpeed: () => number): Rfb {
   // A new connection starts with no cursor from the server.
   target.removeAttribute(REMOTE_CURSOR_ATTRIBUTE);
   const channel = new RelayChannel(socket);
   const rfb = new RFB(target, channel as unknown as WebSocket, { shared: true });
   markRemoteCursor(rfb, target);
-  scrollProportionally(rfb, target, channel);
+  scrollProportionally(rfb, target, channel, scrollSpeed);
   rfb.scaleViewport = true;
   rfb.clipViewport = false;
   rfb.resizeSession = false;

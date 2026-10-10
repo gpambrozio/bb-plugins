@@ -24,6 +24,7 @@ findings are summarised under *Decisions*.
 | `host/status.ts` | Is Screen Sharing on: `launchctl print-disabled system` and an RFB greeting probe that signs in to nothing. Runs on each Mac, and in the server for its own. |
 | `shared/channels.ts` | Route, realtime channel, flow-control frames, close codes, session limits and zod shapes; no SDK import, so the app may use it. |
 | `shared/contract.ts` | The app ⇄ server RPC contract. The app imports it as a type only. |
+| `shared/settings.ts` | The settings form (Scroll speed), declared by the server and read only by the app; a type-only SDK import, so the app may import it. |
 | `shared/host-contract.ts`, `shared/limits.ts` | The server ⇄ host contract and signals, and the numbers both ends share (port, windows, keepalive). The app imports neither. |
 | `app/screen-panel.tsx` | The page: the toolbar row (the picker, then View only, Connect/Disconnect and the keys), the picked Mac's status and System Settings guidance; the title bar's right side (`SessionsHeader`: open sessions, Close all). |
 | `app/hosts.ts` | The machines, their statuses and the picked Mac, outside React, so the picker, the page and other windows' visits share them. |
@@ -169,11 +170,14 @@ it, and Connect starts again.
 1.7.0 sends at most one step per browser wheel event, once 50 px have gathered, and drops the rest:
 a flick or a wheel notch was one step, a trackpad one step per 50 px. `createRfb` puts its own wheel
 listener on the screen element, in the capture phase so noVNC's on the canvas never sees the event,
-and sends one step per `WHEEL_STEP_PX` (20 px, about a line) of scrolling with the remainder kept,
-at most `MAX_WHEEL_STEPS` (16) per event, through noVNC's private `_handleMouseButton` like
-`releaseRemoteButtons`. How far macOS scrolls for one step has not been measured on a real Mac (the
-reading is about a line); tune `WHEEL_STEP_PX` if it is still slow or now too fast. One event's steps
-go to the relay as one frame (`RelayChannel.gather`), so a scroll is one host call per event.
+and sends `speed` steps per `WHEEL_STEP_PX` (20 px, about a line) of scrolling with the remainder
+kept, at most `MAX_WHEEL_STEPS × speed` (16 ×) per event, through noVNC's private `_handleMouseButton`
+like `releaseRemoteButtons`. `speed` is the "Scroll speed" setting (1–5, `shared/settings.ts`): one
+step per line (speed 1) still moved the Mac far too little — the owner tried it on the server's own
+Mac, so it was distance, not delay — and the default is 3. The page (`ScreenMount`) reads it with
+`useSettings()` and hands it to the store, and the wheel handler reads it on every event, so a
+change applies to an open session. One event's steps go to the relay as one frame
+(`RelayChannel.gather`), so a scroll is one host call per event.
 
 **One display picture.** A Mac with several displays sends noVNC one framebuffer; picking a display is
 Apple's private extension to its own Screen Sharing app. Apple documents nothing for third-party

@@ -53,6 +53,8 @@ class FakeRfb extends EventTarget {
   constructor(
     readonly target: HTMLElement,
     readonly socket: FakeSocket,
+    /** The "Scroll speed" setting, as the store hands it to the wheel handler. */
+    readonly scrollSpeed: () => number,
   ) {
     super();
   }
@@ -82,8 +84,8 @@ vi.mock("./rfb", () => ({
     fakes.sockets.push(socket);
     return socket;
   },
-  createRfb: (target: HTMLElement, socket: FakeSocket) => {
-    const rfb = new FakeRfb(target, socket);
+  createRfb: (target: HTMLElement, socket: FakeSocket, scrollSpeed: () => number) => {
+    const rfb = new FakeRfb(target, socket, scrollSpeed);
     fakes.rfbs.push(rfb);
     return rfb;
   },
@@ -128,9 +130,10 @@ function stubs(handlers: Partial<PluginRpcTestHandlers<RpcContract>>): PluginRpc
   } as PluginRpcTestHandlers<RpcContract>;
 }
 
-function renderPanel(handlers: Partial<PluginRpcTestHandlers<RpcContract>> = {}) {
+function renderPanel(handlers: Partial<PluginRpcTestHandlers<RpcContract>> = {}, settings?: Record<string, string | number | boolean>) {
   return renderSlot<PluginNavPanelProps, RpcContract>({ component: ScreenPanel }, { subPath: "" }, {
     rpc: stubs({ status: () => ready, ...handlers }),
+    ...(settings === undefined ? {} : { settings }),
   });
 }
 
@@ -423,6 +426,17 @@ describe("the Screen Sharing page", () => {
     expect(await screen.findByText(LOST_MESSAGE)).toBeTruthy();
     expect(screenSessions.for("host_mini").getSnapshot().stage.kind).toBe("idle");
     expect((await connectButtons()).toolbar.disabled).toBe(false);
+  });
+
+  it("scrolls at the speed set in the plugin's settings, 3 when none is set", async () => {
+    const view = renderPanel();
+    const rfb = await connect();
+    act(() => rfb.emit("connect"));
+    expect(rfb.scrollSpeed()).toBe(3);
+    view.unmount();
+    // The setting is read where the screen is shown; the running session picks it up.
+    renderPanel({}, { scrollSpeed: "5" });
+    await waitFor(() => expect(rfb.scrollSpeed()).toBe(5));
   });
 
   it("says when macOS refused the sign-in", async () => {

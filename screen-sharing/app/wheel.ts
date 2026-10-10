@@ -7,18 +7,21 @@
  * step, and a trackpad gesture sends one per 50 px. Scrolling the Mac felt
  * many times slower than scrolling the page.
  *
- * Here every `WHEEL_STEP_PX` of scrolling is a step, as many in one event as
- * its distance holds, and the remainder carries over to the next event.
- * `WHEEL_STEP_PX` is about one line of text (noVNC's own line height), on
- * the reading that the Mac scrolls about a line per step. Nobody has measured
- * that against a real Mac; tune it here if scrolling is still slow, or now
- * too fast.
+ * Here scrolling is turned into as many steps as one event's distance holds,
+ * and the remainder carries over to the next event. At speed 1 a step is
+ * `WHEEL_STEP_PX` of scrolling, about a line of text (noVNC's own line
+ * height). That still scrolled the Mac far too little: tried on the bb
+ * server's own Mac, with no link delay, a swipe moved the remote page a
+ * fraction of what it moves a local one. So the "Scroll speed" setting
+ * (shared/settings.ts) multiplies the steps, 1 to 5, and defaults to 3: a
+ * step per ≈7 px.
  */
 
+/** Scrolling per step at speed 1. */
 export const WHEEL_STEP_PX = 20;
 /** noVNC's figure for a scroll given in lines (deltaMode 1) rather than pixels. */
 export const WHEEL_LINE_PX = 19;
-/** One wheel event never sends more than this many steps per direction; the rest is dropped. */
+/** At speed 1, one wheel event never sends more than this many steps per direction; the rest is dropped. The cap grows with the speed. */
 export const MAX_WHEEL_STEPS = 16;
 
 /** DOM WheelEvent.deltaMode values. */
@@ -39,16 +42,18 @@ export class WheelAccumulator {
   private x = 0;
   private y = 0;
 
-  /** The steps `event` adds, keeping what is left over for the next one. */
-  add(event: Pick<WheelEvent, "deltaX" | "deltaY" | "deltaMode">): WheelSteps {
-    const scale = event.deltaMode === DOM_DELTA_PIXEL ? 1 : event.deltaMode === DOM_DELTA_PAGE ? WHEEL_LINE_PX * LINES_PER_PAGE : WHEEL_LINE_PX;
+  /** The steps `event` adds at `speed` (1–5), keeping what is left over for the next one. */
+  add(event: Pick<WheelEvent, "deltaX" | "deltaY" | "deltaMode">, speed: number): WheelSteps {
+    const pixels = event.deltaMode === DOM_DELTA_PIXEL ? 1 : event.deltaMode === DOM_DELTA_PAGE ? WHEEL_LINE_PX * LINES_PER_PAGE : WHEEL_LINE_PX;
+    // What is gathered is scrolling times the speed, so the steps grow with it.
+    const scale = pixels * speed;
     this.x = this.sameWay(this.x, event.deltaX) + event.deltaX * scale;
     this.y = this.sameWay(this.y, event.deltaY) + event.deltaY * scale;
     const x = this.take(this.x);
     const y = this.take(this.y);
     this.x -= x * WHEEL_STEP_PX;
     this.y -= y * WHEEL_STEP_PX;
-    return { x: clamp(x), y: clamp(y) };
+    return { x: clamp(x, MAX_WHEEL_STEPS * speed), y: clamp(y, MAX_WHEEL_STEPS * speed) };
   }
 
   /** A turn the other way starts afresh, rather than first paying back what was left over. */
@@ -61,6 +66,6 @@ export class WheelAccumulator {
   }
 }
 
-function clamp(steps: number): number {
-  return Math.max(-MAX_WHEEL_STEPS, Math.min(MAX_WHEEL_STEPS, steps));
+function clamp(steps: number, most: number): number {
+  return Math.max(-most, Math.min(most, steps));
 }

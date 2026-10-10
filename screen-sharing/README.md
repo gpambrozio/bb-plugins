@@ -27,6 +27,9 @@ extra is installed on any Mac and no port is opened to the internet.
   seconds, and **Connect** starts a new session once it is back.
 - Sessions to several Macs can be open at once in the same window. The page shows the Mac picked; the
   others keep running out of sight, with your keyboard and mouse going only to the one on screen.
+- Scrolling with a trackpad or a mouse wheel moves the Mac's page in step with how far you scroll.
+  If it moves too little or too far, change **Scroll speed** (1 to 5, 3 by default) in Settings →
+  Plugins → Screen Sharing; a session that is already open uses the new speed straight away.
 - The pointer stays visible over the screen: macOS's own cursor when it sends one, otherwise your
   usual arrow, which is exactly where a click lands.
 - While any session is open — to any Mac, in this window, another window or on another device — the

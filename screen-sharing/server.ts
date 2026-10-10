@@ -21,6 +21,7 @@ import {
   type SessionList,
 } from "./shared/channels";
 import { rpcContract } from "./shared/contract";
+import { SETTINGS } from "./shared/settings";
 import { hostContract, hostSignals } from "./shared/host-contract";
 import {
   HOST_KEEPALIVE_MS,
@@ -63,6 +64,9 @@ function connected(host: Host): boolean {
 }
 
 export default async function plugin(bb: BbPluginApi) {
+  // Read only by the app (scroll speed); the server needs none of it.
+  bb.settings.define(SETTINGS);
+
   /** Late callbacks (a host call failing after a reload) may log after bb has retired this instance. */
   function log(message: string): void {
     try {

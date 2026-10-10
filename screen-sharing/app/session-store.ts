@@ -21,6 +21,7 @@
  * never gets.
  */
 import { SESSION_LIMITS } from "../shared/channels";
+import { DEFAULT_SCROLL_SPEED } from "../shared/settings";
 import { LOST_MESSAGE, endMessage, type SessionEnd } from "./end-message";
 import { LOCAL_CURSOR_CSS } from "./cursor";
 import { Key, type KeyCombo } from "./keys";
@@ -104,6 +105,8 @@ export class ScreenSessionStore {
   private stopAcks: (() => void) | null = null;
   /** Stops pinging the relay (liveness.ts). */
   private stopWatch: (() => void) | null = null;
+  /** The "Scroll speed" setting, as the page last read it. */
+  private scrollSpeed = DEFAULT_SCROLL_SPEED;
   private rfb: Rfb | null = null;
   private idleTimer: ReturnType<typeof setInterval> | null = null;
   private lastInput = 0;
@@ -205,7 +208,7 @@ export class ScreenSessionStore {
         socket.addEventListener("close", (event) => {
           end.close = { code: event.code, reason: event.reason };
         });
-        const rfb = createRfb(this.element, socket);
+        const rfb = createRfb(this.element, socket, () => this.scrollSpeed);
         this.rfb = rfb;
         this.canvas = this.element.querySelector("canvas");
         this.applyViewOnly();
@@ -232,6 +235,11 @@ export class ScreenSessionStore {
       .catch((error: unknown) => {
         if (attempt === this.attempt) this.finish(`Could not start a session: ${errorText(error)}`);
       });
+  }
+
+  /** The "Scroll speed" setting (shared/settings.ts); the page passes it on whenever it changes. */
+  setScrollSpeed(speed: number): void {
+    this.scrollSpeed = speed;
   }
 
   /** Ends the session, if any, and says so on the page. */

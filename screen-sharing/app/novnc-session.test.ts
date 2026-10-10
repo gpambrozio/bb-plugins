@@ -22,6 +22,7 @@ import { webcrypto } from "node:crypto";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LOST_AFTER_MS, PING_EVERY_MS, PING_FRAME, PONG_FRAME } from "../shared/channels";
+import { DEFAULT_SCROLL_SPEED } from "../shared/settings";
 import { LOST_MESSAGE } from "./end-message";
 import type { Rfb } from "./rfb";
 import { MAX_WHEEL_STEPS, WHEEL_STEP_PX } from "./wheel";
@@ -79,8 +80,8 @@ vi.mock("./rfb", async (importActual) => {
   return {
     ...actual,
     openRelaySocket: () => relay.socket,
-    createRfb: (target: HTMLElement, socket: WebSocket) => {
-      const rfb = actual.createRfb(target, socket);
+    createRfb: (target: HTMLElement, socket: WebSocket, scrollSpeed: () => number) => {
+      const rfb = actual.createRfb(target, socket, scrollSpeed);
       relay.rfbs.push(rfb);
       return rfb;
     },
@@ -645,8 +646,11 @@ describe("scrolling the Mac", () => {
     return canvas;
   }
 
+  afterEach(() => screenSession.setScrollSpeed(DEFAULT_SCROLL_SPEED));
+
   it("sends as many wheel steps as the scroll covers, in one frame, where noVNC would send one", async () => {
     const canvas = await connected();
+    screenSession.setScrollSpeed(1);
     const mark = socket.sent.length;
     const event = wheel(canvas, 5 * WHEEL_STEP_PX);
     expect(event.defaultPrevented).toBe(true);
@@ -656,8 +660,23 @@ describe("scrolling the Mac", () => {
     expect(pointerEvents(frames)).toEqual([16, 0, 16, 0, 16, 0, 16, 0, 16, 0]);
   });
 
+  it("sends three times as many steps by default, and follows the Scroll speed setting", async () => {
+    const canvas = await connected();
+    const downs = (deltaY: number) => {
+      const mark = socket.sent.length;
+      wheel(canvas, deltaY);
+      return pointerEvents(sentAfter(mark)).filter((mask) => mask === 16).length;
+    };
+    expect(downs(5 * WHEEL_STEP_PX)).toBe(15);
+    screenSession.setScrollSpeed(5);
+    expect(downs(5 * WHEEL_STEP_PX)).toBe(25);
+    screenSession.setScrollSpeed(1);
+    expect(downs(5 * WHEEL_STEP_PX)).toBe(5);
+  });
+
   it("scrolls up and sideways, and keeps a held button held", async () => {
     const canvas = await connected();
+    screenSession.setScrollSpeed(1);
     canvas.dispatchEvent(new MouseEvent("mousedown", { button: 0, buttons: 1, clientX: 2, clientY: 2, bubbles: true, cancelable: true }));
     const mark = socket.sent.length;
     wheel(canvas, -WHEEL_STEP_PX, WHEEL_STEP_PX);
@@ -670,14 +689,14 @@ describe("scrolling the Mac", () => {
     const mark = socket.sent.length;
     for (let event = 0; event < 60; event++) wheel(canvas, 7);
     const presses = pointerEvents(sentAfter(mark)).filter((mask) => mask === 16);
-    expect(presses).toHaveLength(Math.floor((60 * 7) / WHEEL_STEP_PX));
+    expect(presses).toHaveLength(Math.floor((60 * 7 * DEFAULT_SCROLL_SPEED) / WHEEL_STEP_PX));
   });
 
   it("bounds what one event sends", async () => {
     const canvas = await connected();
     const mark = socket.sent.length;
     wheel(canvas, 10_000);
-    expect(pointerEvents(sentAfter(mark)).filter((mask) => mask === 16)).toHaveLength(MAX_WHEEL_STEPS);
+    expect(pointerEvents(sentAfter(mark)).filter((mask) => mask === 16)).toHaveLength(MAX_WHEEL_STEPS * DEFAULT_SCROLL_SPEED);
   });
 
   it("sends nothing while View only, and leaves the page's own scrolling alone", async () => {
