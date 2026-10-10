@@ -285,9 +285,9 @@ host entry for the others. `app/clipboard.ts` holds the page's side, one `Clipbo
   cannot overwrite a newer Receive. Reading this computer's clipboard starts at once (inside the click,
   where there is one) and only its use waits in the queue; an automatic read that a write here
   overtook is dropped as stale (`localRevision`, bumped only by a write that took). A write here that
-  failed leaves the clipboard as it was, possibly never read, so the next automatic read is adopted as
-  what it holds instead of sent: otherwise old text here went over the Mac's newer copy (review pass
-  2). An automatic send also checks again, just before it runs, that Auto sync is still on under the
+  failed leaves the clipboard as it was; if that was never read, the next automatic read is adopted as
+  what it holds instead of sent — otherwise old text here went over the Mac's newer copy (review pass
+  2) — and if it was, the next read is compared with it as usual, so a new copy is still sent (pass 3). An automatic send also checks again, just before it runs, that Auto sync is still on under the
   same choice (`clipboardPreference.getVersion()`), the screen still takes input and the page is not
   hidden; Send clipboard does not depend on Auto sync. The Copy button writes at once, outside the queue,
   so it keeps its click. After every await a step checks the session has not ended, so nothing from

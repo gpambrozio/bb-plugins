@@ -494,6 +494,30 @@ describe("a failed copy here, and Auto sync switched off (review pass 2)", () =>
     expect(mac.writes).toEqual(["genuinely new"]);
   });
 
+  it("still sends a new copy here after a failed copy from the Mac, when what this computer held was known", async () => {
+    const sync = makeSync();
+    await sync.start();
+    // A is known here: Auto sync read it and sent it.
+    clipboard.text = "A";
+    await sync.check();
+    expect(mac.writes).toEqual(["A"]);
+    // The Mac gets B, and copying it here is refused.
+    mac.copy("B");
+    clipboard.writable = false;
+    await sync.pollMac();
+    expect(clipboard.text).toBe("A");
+    // C, copied here before any other read, is a real change and reaches the Mac.
+    clipboard.writable = true;
+    clipboard.text = "C";
+    later();
+    await sync.check();
+    expect(mac.writes).toEqual(["A", "C"]);
+    // And it is not copied back.
+    await sync.pollMac();
+    expect(clipboard.writes).toEqual([]);
+    expect(clipboard.text).toBe("C");
+  });
+
   it("does not count a failed copy here as a change to this computer's clipboard", async () => {
     const sync = makeSync();
     await sync.start();

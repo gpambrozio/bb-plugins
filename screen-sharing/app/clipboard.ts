@@ -453,8 +453,8 @@ export class ClipboardSync {
   /**
    * Writes this computer's clipboard. Only a write that took makes earlier
    * reads stale and becomes what it holds; one that failed left the clipboard
-   * as it was, so the next read of it is adopted as what it holds rather than
-   * sent as a copy.
+   * as it was, so if what it holds was never read, the next read of it is
+   * adopted as that rather than sent as a copy (review passes 2 and 3).
    */
   private async writeLocal(text: string): Promise<boolean> {
     const written = await this.clipboard.writeText(text);
@@ -462,7 +462,8 @@ export class ClipboardSync {
       this.localRevision++;
       this.localHolds = text;
       this.adoptNextLocalRead = false;
-    } else {
+    } else if (this.localHolds === null) {
+      // Only when what it holds was never read: a known baseline already tells a real change from old text.
       this.adoptNextLocalRead = true;
     }
     return written;
