@@ -20,7 +20,7 @@ findings are summarised under *Decisions*.
 | `server/loopback-link.ts` | The server's own Mac: a TCP connection to `127.0.0.1:5900`, paused while the page is a window behind. |
 | `server/host-link.ts` | Every other Mac: pipelined, numbered `write` calls up; numbered `data` signals down, a gap ends it; acks and keepalives to the host. `HostLinks` routes signals by session and checks their host. |
 | `host.ts`, `host/entry.ts` | The host entry, on every enrolled machine: `status`, `open`/`write`/`ack`/`keepalive`/`close`, and `clipboardRead`/`clipboardWrite`; a lease per session; close-all on lifecycle abort and dispose. |
-| `host/pasteboard.ts` | The Mac's clipboard as UTF-8 text: `pbpaste`/`pbcopy` with a UTF-8 locale, the change count through JXA, the account it belongs to. Runs on each Mac, and in the server for its own. |
+| `host/pasteboard.ts` | The Mac's clipboard as UTF-8 plain text, through NSPasteboard in JXA: the change count, the text with the count it was read at, writes that answer their own count; the account it belongs to; `runCommand`, which every command goes through. Runs on each Mac, and in the server for its own. |
 | `host/relay.ts` | A Mac's side of a remote session: its TCP connection, numbered chunks out, the credit window, the silence expiry. |
 | `host/status.ts` | Is Screen Sharing on: `launchctl print-disabled system` and an RFB greeting probe that signs in to nothing. Runs on each Mac, and in the server for its own. |
 | `shared/channels.ts` | Route, realtime channel, flow-control frames, close codes, session limits and zod shapes; no SDK import, so the app may use it. |
@@ -224,29 +224,49 @@ host entry for the others. `app/clipboard.ts` holds the page's side, one `Clipbo
   speak it would mean faking the version, parsing Apple's ServerInit and server messages through
   noVNC's private message loop, and remapping input — unverifiable without a live session, and a
   macOS update is free to change any of it. Nobody has tried Apple's messages in a 3.8 session.
-- **Whose clipboard.** `pbpaste` and `pbcopy` act on the pasteboard of the login session they run in:
+- **Plain text through NSPasteboard, not `pbpaste`/`pbcopy`** (review pass 1). Those two pick formats
+  for you: `pbcopy` writes text that starts like RTF or EPS as that format, and `pbpaste` falls back to
+  RTF or EPS when there is no plain text (`man pbcopy`). And a `pbcopy` followed by a separate count
+  query can pair the count of someone else's copy with the text just written, so a poll would skip
+  that copy. The JXA scripts read and write `public.utf8-plain-text` only (a picture reads as no
+  text); a read samples the count before and after the text and tries again if it moved; a write
+  answers the count `clearContents` returned for it, and fails if another copy took the pasteboard
+  before its text was set. Text crosses as UTF-8 on stdin/stdout, never the locale or argv. Checked
+  on the MacMini against a private named pasteboard (`macPasteboardCommandsFor(name)`), never the
+  clipboard: literal RTF source and full Unicode round-trip as plain text, the counts match, and an
+  EPS-only pasteboard reads as no text. Tests use `testing/fake-pasteboard.ts`.
+- **`runCommand`** settles once on exit, spawn error, stdin error (EPIPE: a child that exits before
+  reading 1 MiB of input), timeout and output limit, and kills the child on every failure. A bare
+  `spawn` with only a child `error` listener let an EPIPE on stdin escape as an uncaught exception,
+  in the bb server's own process for its own Mac (review pass 1). Its tests run Node children only.
+- **Whose clipboard.** The scripts act on the pasteboard of the login session they run in:
   the account bb runs as on that Mac (`ci` on the MacMini). A Screen Sharing sign-in as another account
   that is not at the console opens that account's own desktop, with its own pasteboard, which only root
   could reach (`launchctl asuser`); bb runs as a non-admin there. So each read and write answers the
   account (`id -F` for the full name), the page compares it with the user name typed at sign-in (short
   or full name, any case). The store keeps that user name — never the password — for the session only.
 - **When sync cannot work** — a sign-in as another account, or a Mac whose clipboard could not be
-  reached (the session's first `clipboardRead` failed) — the session's `clipboardAccess` says why, and
+  reached (the first `clipboardRead` failed, or any later call did) — the session's `clipboardAccess` says why, and
   the Clipboard menu holds only that reason, one step up the type scale (`text-sm` where its notes are
-  `text-xs`), with none of its items; nothing syncs. Opening the menu asks an unreachable Mac again.
+  `text-xs`), with none of its items; nothing syncs. Opening the menu asks an unreachable Mac again;
+  after a failed call that probe reads the text, not only the count, since the count alone does not
+  show the text can be read (review pass 1).
   The captain's choice: a menu of items that can only fail is worse than one sentence saying why.
-- **UTF-8.** `pbpaste`/`pbcopy` take their encoding from the locale; without one they use Mac Roman and
-  write "?" for the rest (checked on the MacMini). They run with `LANG`/`LC_ALL=en_US.UTF-8`.
 - **The Mac's changes.** `NSPasteboard.changeCount` through `osascript -l JavaScript`, about 40 ms. The
-  page reads it once a second (`MAC_POLL_MS`) while Auto sync is on and the screen is on the page, and
-  once more as the screen leaves it; the text is read only when the count moved. A remote Mac's poll
+  page reads it once a second (`MAC_POLL_MS`) while Auto sync is on, the screen is on the page and the
+  page is not hidden (another tab, a minimised window), and once more as the screen leaves the page;
+  the text is read only when the count moved, and an answer that comes back after the page was hidden
+  or the screen went is dropped (the next poll asks again). A remote Mac's poll
   is a host call (≈0.6 s there and back), one at a time. The polls keep that Mac's worker alive, which
   its session's lease already does.
 - **Limits.** 1 MiB of UTF-8 each way (`MAX_CLIPBOARD_BYTES`), one host call or RPC; more is refused
   with its size, not cut. A copied picture or file has no text and is left alone.
 - **Who may.** The two RPCs refuse `plugin` callers and any Mac with no session open (any window or
-  device: the registry's list). The CLI and agents count as `client`, as for tickets; the skill tells
-  agents never to call them. They log nothing, and the server never stores the text.
+  device: the registry's list). That is a per-Mac gate for bb's clients, not ownership of a session:
+  any window, device, the CLI or an agent may call while any relay session to that Mac exists, even
+  one not yet past Screen Sharing's sign-in, and the account check is the page's, not the server's.
+  The CLI and agents count as `client`, as for tickets; the skill tells agents never to call them.
+  They log nothing, and the server never stores the text.
 - **Reading this computer's clipboard** is `navigator.clipboard.readText`: focus required everywhere;
   Chrome asks once; Safari, Firefox and the mobile app's web view only within a click. bb's desktop
   app sets no permission handler on its main window's session (it does on the in-app browser's), so
@@ -259,6 +279,14 @@ host entry for the others. `app/clipboard.ts` holds the page's side, one `Clipbo
 - **Writing it** is bb's `experimental_copyToClipboard` (native in bb's desktop app, focus not needed).
   Receive awaits the Mac first, so where a browser writes only within a click the notice offers a
   Copy button: a click of its own.
+- **One step at a time** (review pass 1). Every read or write of the Mac's clipboard, and every write
+  of this computer's, runs in one queue in `ClipboardSync`, in the order asked — Send, Receive and
+  Auto sync alike — so no answer lands between another step's read and write, and an older poll
+  cannot overwrite a newer Receive. Reading this computer's clipboard starts at once (inside the click,
+  where there is one) and only its use waits in the queue; an automatic read that a write here
+  overtook is dropped as stale (`localRevision`). The Copy button writes at once, outside the queue,
+  so it keeps its click. After every await a step checks the session has not ended, so nothing from
+  a closed session reaches either clipboard.
 - **No ping-pong.** `ClipboardSync` keeps what each side was last known to hold. Auto sync sends only
   text it has not already read or written locally, and copies only text the local clipboard does not
   already hold; so the Mac's count moving for text sent from here changes nothing, and a failed local

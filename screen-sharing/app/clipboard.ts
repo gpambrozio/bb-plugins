@@ -8,8 +8,8 @@
  *   messages are known to work only in its private 003.889 revision of the
  *   protocol, which noVNC does not speak (AGENTS.md, *Clipboard*). So the
  *   page asks the plugin's server for the Mac's clipboard (`clipboardRead`,
- *   `clipboardWrite`), which reads and writes it with `pbpaste` and `pbcopy`
- *   on that Mac (host/pasteboard.ts).
+ *   `clipboardWrite`), which reads and writes its plain text through
+ *   NSPasteboard on that Mac (host/pasteboard.ts).
  * - **Whose clipboard.** That is the clipboard of the macOS account bb runs as
  *   on the Mac. A Screen Sharing sign-in as another account shows that
  *   account's own desktop, whose clipboard only root could reach; the sync
@@ -166,7 +166,29 @@ function tooLarge(hostName: string): string {
   return `${hostName}’s clipboard holds more than ${MAX_CLIPBOARD_MEGABYTES} MB of text, more than the clipboard syncs.`;
 }
 
-/** One session's clipboard sync. The session makes one per connection. */
+/** UTF-8 bytes, as the Mac's side counts the limit. */
+function utf8Length(text: string): number {
+  return new TextEncoder().encode(text).length;
+}
+
+function hidden(): boolean {
+  return typeof document !== "undefined" && document.visibilityState === "hidden";
+}
+
+/**
+ * One session's clipboard sync. The session makes one per connection and
+ * ends it with the connection.
+ *
+ * Every step that reads or writes the Mac's clipboard, or writes this
+ * computer's, runs in one queue, in the order asked for — Send, Receive and
+ * Auto sync alike — so no answer lands between another step's read and
+ * write. Reading this computer's clipboard is the exception: it starts at
+ * once, inside the click that asked for it where there is one, and only its
+ * use waits in the queue. An automatic read that a write here overtook is
+ * dropped as stale. Each step checks, after everything it awaited, that the
+ * session has not ended: nothing from a closed session reaches either
+ * clipboard.
+ */
 export class ClipboardSync {
   /** The Mac's pasteboard change count when last read. */
   private macCount: number | null = null;
@@ -174,9 +196,15 @@ export class ClipboardSync {
   private macHolds: string | null = null;
   /** What this computer's clipboard was last known to hold: read or written. */
   private localHolds: string | null = null;
+  /** Bumped by every write to this computer's clipboard, so a read from before it is known stale. */
+  private localRevision = 0;
   private access: ClipboardAccess | null = null;
   /** The first read of the Mac: its count, and whose clipboard it is. Everything else waits for it. */
   private ready: Promise<void> | null = null;
+  /** After a failed call the next probe reads the text too: a count alone does not show the text can be read. */
+  private probeText = false;
+  /** The steps, one after another. */
+  private queue: Promise<void> = Promise.resolve();
   private reading = false;
   private polling = false;
   private lastAutoRead = 0;
@@ -200,26 +228,32 @@ export class ClipboardSync {
    */
   start(): Promise<void> {
     if (this.pollTimer === null && !this.ended) this.pollTimer = setInterval(() => void this.pollMac(), MAC_POLL_MS);
-    this.ready ??= this.mac
-      .read(null)
-      .then((read) => {
-        this.macCount = read.changeCount;
-        const typed = this.session.signedInAs();
-        const signedInAsOther = typed !== null && !signedInAsAccount(typed, read.account);
-        this.setAccess(
-          signedInAsOther
-            ? { available: false, reason: wrongAccount(this.session.hostName(), read.account) }
-            : { available: true, account: read.account },
-        );
-      })
-      .catch((error: unknown) => {
-        this.setAccess({ available: false, reason: `Could not reach ${this.session.hostName()}’s clipboard: ${errorText(error)}.` });
-        this.ready = null;
-      });
+    if (this.ready === null) {
+      const withText = this.probeText;
+      this.ready = this.mac
+        .read(withText ? -1 : null)
+        .then((read) => {
+          if (this.ended) return;
+          this.probeText = false;
+          this.macCount = read.changeCount;
+          if (withText) this.macHolds = read.text;
+          const typed = this.session.signedInAs();
+          const signedInAsOther = typed !== null && !signedInAsAccount(typed, read.account);
+          this.setAccess(
+            signedInAsOther
+              ? { available: false, reason: wrongAccount(this.session.hostName(), read.account) }
+              : { available: true, account: read.account },
+          );
+        })
+        .catch((error: unknown) => {
+          this.ready = null;
+          this.setAccess({ available: false, reason: unreachable(this.session.hostName(), error) });
+        });
+    }
     return this.ready;
   }
 
-  /** The session is over: nothing more is sent, copied or said. */
+  /** The session is over: nothing more is read, sent, copied or said, whatever is still on its way. */
   end(): void {
     this.ended = true;
     if (this.pollTimer !== null) clearInterval(this.pollTimer);
@@ -227,59 +261,76 @@ export class ClipboardSync {
   }
 
   /**
-   * Send clipboard: this computer's clipboard to the Mac, now. The clipboard
-   * is read before anything is awaited, so a browser that allows it only
-   * within a click sees the click.
+   * Send clipboard: this computer's clipboard to the Mac. The clipboard is
+   * read at once, so a browser that allows it only within a click sees the
+   * click; sending it waits its turn.
    */
-  async send(): Promise<void> {
+  send(): Promise<void> {
     this.autoReadRefused = false;
     const reading = this.clipboard.readText();
     reading.catch(() => undefined);
-    if (!(await this.usable())) return;
-    let text: string;
-    try {
-      text = await reading;
-    } catch (error) {
-      this.say({ tone: "warning", text: `bb could not read this computer’s clipboard: ${errorText(error)}.` });
-      return;
-    }
-    this.localHolds = text;
-    if (text === "") {
-      this.say({ tone: "info", text: "This computer’s clipboard holds no text." });
-      return;
-    }
-    if (await this.push(text)) this.say({ tone: "info", text: `Sent this computer’s clipboard to ${this.session.hostName()}.` });
+    const revision = this.localRevision;
+    return this.enqueue(async () => {
+      if (!(await this.usable())) return;
+      let text: string;
+      try {
+        text = await reading;
+      } catch (error) {
+        this.say({ tone: "warning", text: `bb could not read this computer’s clipboard: ${errorText(error)}.` });
+        return;
+      }
+      if (this.ended) return;
+      if (this.localRevision === revision) this.localHolds = text;
+      if (text === "") {
+        this.say({ tone: "info", text: "This computer’s clipboard holds no text." });
+        return;
+      }
+      if (await this.push(text)) this.say({ tone: "info", text: `Sent this computer’s clipboard to ${this.session.hostName()}.` });
+    });
   }
 
   /** Receive clipboard: the Mac's clipboard, onto this computer's. */
-  async receive(): Promise<void> {
-    if (!(await this.usable())) return;
-    const hostName = this.session.hostName();
-    let read: ClipboardRead;
-    try {
-      // A count the Mac never has, so the text always comes back.
-      read = await this.mac.read(-1);
-    } catch (error) {
-      this.say({ tone: "warning", text: `Could not read ${hostName}’s clipboard: ${errorText(error)}.` });
-      return;
-    }
-    this.macCount = read.changeCount;
-    if (read.tooLarge) {
-      this.say({ tone: "warning", text: tooLarge(hostName) });
-      return;
-    }
-    const text = read.text ?? "";
-    if (text === "") {
-      this.say({ tone: "info", text: `${hostName}’s clipboard holds no text.` });
-      return;
-    }
-    this.macHolds = text;
-    await this.copyHere(text, { offerCopy: true });
+  receive(): Promise<void> {
+    return this.enqueue(async () => {
+      if (!(await this.usable())) return;
+      const hostName = this.session.hostName();
+      let read: ClipboardRead;
+      try {
+        // A count the Mac never has, so the text always comes back.
+        read = await this.mac.read(-1);
+      } catch (error) {
+        this.lostMac(error);
+        return;
+      }
+      if (this.ended) return;
+      this.macCount = read.changeCount;
+      if (read.tooLarge) {
+        this.say({ tone: "warning", text: tooLarge(hostName) });
+        return;
+      }
+      const text = read.text ?? "";
+      if (text === "") {
+        this.say({ tone: "info", text: `${hostName}’s clipboard holds no text.` });
+        return;
+      }
+      this.macHolds = text;
+      await this.copyHere(text, { offerCopy: true });
+    });
   }
 
-  /** The notice's Copy button: a click of its own, which a browser that writes only within one allows. */
-  copyFromNotice(text: string): Promise<void> {
-    return this.copyHere(text, { offerCopy: false });
+  /**
+   * The notice's Copy button: a click of its own, which a browser that writes
+   * only within one allows — so it writes at once rather than waiting its turn.
+   */
+  async copyFromNotice(text: string): Promise<void> {
+    if (this.ended) return;
+    this.localRevision++;
+    if (await this.clipboard.writeText(text)) {
+      this.localHolds = text;
+      this.say({ tone: "info", text: `Copied ${this.session.hostName()}’s clipboard to this computer.` });
+    } else {
+      this.say({ tone: "warning", text: "bb could not write to this computer’s clipboard." });
+    }
   }
 
   /**
@@ -295,6 +346,7 @@ export class ClipboardSync {
     if (!asked && now - this.lastAutoRead < AUTO_READ_GAP_MS) return;
     this.lastAutoRead = now;
     this.reading = true;
+    const revision = this.localRevision;
     let text: string;
     try {
       // Read before the first await, for a browser that reads only within a click.
@@ -312,48 +364,77 @@ export class ClipboardSync {
     } finally {
       this.reading = false;
     }
-    // Only a change on this computer is sent: text it already held, or was given by the Mac, is not.
-    if (text === this.localHolds) return;
-    this.localHolds = text;
-    if (text === "" || text === this.macHolds) return;
-    await this.push(text);
+    await this.enqueue(async () => {
+      // A write here since the read began makes what was read stale; the Mac already has newer.
+      if (this.localRevision !== revision || !this.session.canSync()) return;
+      // Only a change on this computer is sent: text it already held, or was given by the Mac, is not.
+      if (text === this.localHolds) return;
+      this.localHolds = text;
+      if (text === "" || text === this.macHolds) return;
+      await this.push(text);
+    });
   }
 
   /**
    * Auto sync: copies the Mac's clipboard here if it changed. Runs every
-   * `MAC_POLL_MS` while the screen is on the page, and as it leaves it.
+   * `MAC_POLL_MS` while the screen is on the page and the page is not hidden;
+   * `leaving` is the one more read as the screen leaves the page, which a copy
+   * made just before still reaches.
    */
-  async pollMac(): Promise<void> {
-    if (!clipboardPreference.getAutoSync() || this.polling || this.ended || this.macCount === null) return;
-    if (!this.session.canSync() || this.access?.available !== true) return;
-    this.polling = true;
-    let read: ClipboardRead;
-    try {
-      read = await this.mac.read(this.macCount);
-    } catch (error) {
-      this.say({ tone: "warning", text: `Could not read ${this.session.hostName()}’s clipboard: ${errorText(error)}.` });
-      return;
-    } finally {
-      this.polling = false;
-    }
-    if (this.ended || read.changeCount === this.macCount) return;
-    this.macCount = read.changeCount;
-    if (read.tooLarge) {
-      this.say({ tone: "warning", text: tooLarge(this.session.hostName()) });
-      return;
-    }
-    const text = read.text ?? "";
-    // Nothing to copy for a copied picture or file, and nothing new for text that came from here.
-    if (text === "" || text === this.macHolds) return;
-    this.macHolds = text;
-    if (text === this.localHolds) return;
-    // Left as it was when the write fails, so the next read does not send the old text back over this.
-    if (await this.clipboard.writeText(text)) this.localHolds = text;
-    else this.say({ tone: "warning", text: `Could not copy ${this.session.hostName()}’s clipboard here on its own. Use Receive clipboard.` });
+  pollMac({ leaving = false }: { leaving?: boolean } = {}): Promise<void> {
+    const eligible = () =>
+      clipboardPreference.getAutoSync() &&
+      !this.ended &&
+      this.macCount !== null &&
+      this.access?.available === true &&
+      (leaving || (this.session.canSync() && !hidden()));
+    // A regular poll still on its way drops its answer once the screen is gone, so the leaving one never waits for it.
+    if ((!leaving && this.polling) || !eligible() || (leaving && !this.session.canSync())) return Promise.resolve();
+    if (!leaving) this.polling = true;
+    return this.enqueue(async () => {
+      if (!eligible()) return;
+      let read: ClipboardRead;
+      try {
+        read = await this.mac.read(this.macCount);
+      } catch (error) {
+        this.lostMac(error);
+        return;
+      }
+      // Hidden, gone or ended meanwhile: the answer is dropped, and the next poll asks again.
+      if (!eligible() || read.changeCount === this.macCount) return;
+      this.macCount = read.changeCount;
+      if (read.tooLarge) {
+        this.say({ tone: "warning", text: tooLarge(this.session.hostName()) });
+        return;
+      }
+      const text = read.text ?? "";
+      // Nothing to copy for a copied picture or file, and nothing new for text that came from here.
+      if (text === "" || text === this.macHolds) return;
+      this.macHolds = text;
+      if (text === this.localHolds) return;
+      // Left as it was when the write fails, so the next read does not send the old text back over this.
+      this.localRevision++;
+      if (!(await this.clipboard.writeText(text))) {
+        this.say({ tone: "warning", text: `Could not copy ${this.session.hostName()}’s clipboard here on its own. Use Receive clipboard.` });
+      } else if (!this.ended) {
+        this.localHolds = text;
+      }
+    }).finally(() => {
+      if (!leaving) this.polling = false;
+    });
+  }
+
+  /** Runs `step` after every step asked for before it; a step of an ended session does nothing. */
+  private enqueue(step: () => Promise<void>): Promise<void> {
+    const run = this.queue.then(() => (this.ended ? undefined : step()));
+    this.queue = run.catch((error: unknown) => console.warn("[screen-sharing] clipboard step failed", error));
+    return this.queue;
   }
 
   private async copyHere(text: string, { offerCopy }: { offerCopy: boolean }): Promise<void> {
+    if (this.ended) return;
     const hostName = this.session.hostName();
+    this.localRevision++;
     if (await this.clipboard.writeText(text)) {
       this.localHolds = text;
       this.say({ tone: "info", text: `Copied ${hostName}’s clipboard to this computer.` });
@@ -376,26 +457,51 @@ export class ClipboardSync {
     return true;
   }
 
+  /** Puts `text` on the Mac's clipboard; false, having said why, when that failed. */
+  private async push(text: string): Promise<boolean> {
+    if (this.ended || !this.session.canSync()) return false;
+    if (utf8Length(text) > MAX_CLIPBOARD_BYTES) {
+      this.say({ tone: "warning", text: `This computer’s clipboard holds more than ${MAX_CLIPBOARD_MEGABYTES} MB of text, more than the clipboard syncs.` });
+      return false;
+    }
+    let written: ClipboardWritten;
+    try {
+      written = await this.mac.write(text);
+    } catch (error) {
+      this.lostMac(error);
+      return false;
+    }
+    if (this.ended) return false;
+    this.macHolds = text;
+    // The count of this very write (host/pasteboard.ts), so a copy on the Mac after it is still seen.
+    this.macCount = written.changeCount;
+    return true;
+  }
+
+  /**
+   * A call to the Mac failed: the clipboard is unavailable until a probe —
+   * which reads the text this time — succeeds. Opening the menu tries one;
+   * Auto sync stops meanwhile.
+   */
+  private lostMac(error: unknown): void {
+    if (this.ended) return;
+    const reason = unreachable(this.session.hostName(), error);
+    this.ready = null;
+    this.probeText = true;
+    this.setAccess({ available: false, reason });
+    this.say({ tone: "warning", text: reason });
+  }
+
   private setAccess(access: ClipboardAccess): void {
     this.access = access;
     if (!this.ended) this.onAccess(access);
   }
 
-  /** Puts `text` on the Mac's clipboard; false, having said why, when that failed. */
-  private async push(text: string): Promise<boolean> {
-    if (this.ended || !this.session.canSync()) return false;
-    try {
-      const written = await this.mac.write(text);
-      this.macHolds = text;
-      this.macCount = written.changeCount;
-      return true;
-    } catch (error) {
-      this.say({ tone: "warning", text: `Could not put the text on ${this.session.hostName()}’s clipboard: ${errorText(error)}.` });
-      return false;
-    }
-  }
-
   private say(notice: ClipboardNotice): void {
     if (!this.ended) this.notify(notice);
   }
+}
+
+function unreachable(hostName: string, error: unknown): string {
+  return `Could not reach ${hostName}’s clipboard: ${errorText(error)}.`;
 }

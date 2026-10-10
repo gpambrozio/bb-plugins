@@ -46,15 +46,30 @@ class FakeMac implements MacClipboard {
   reads: Array<number | null> = [];
   writes: string[] = [];
   error: Error | null = null;
+  attemptedWrites: string[] = [];
+  /** While set, every call waits for it before answering: a slow link. */
+  gate: Promise<void> | null = null;
+
+  /** While true, each call waits for its own release, in `held`, before answering. */
+  holdEach = false;
+  held: Array<() => void> = [];
+
+  private async hold(): Promise<void> {
+    if (this.gate !== null) await this.gate;
+    if (this.holdEach) await new Promise<void>((release) => this.held.push(release));
+  }
 
   async read(since: number | null): Promise<ClipboardRead> {
     this.reads.push(since);
+    await this.hold();
     if (this.error !== null) throw this.error;
     const text = since === null || since === this.changeCount ? null : this.text;
     return { account: this.account, changeCount: this.changeCount, text, tooLarge: false };
   }
 
   async write(text: string) {
+    this.attemptedWrites.push(text);
+    await this.hold();
     if (this.error !== null) throw this.error;
     this.writes.push(text);
     this.text = text;
@@ -67,6 +82,19 @@ class FakeMac implements MacClipboard {
     this.text = text;
     this.changeCount++;
   }
+}
+
+/** A promise and the function that settles it. */
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve = () => {};
+  const promise = new Promise<void>((done) => (resolve = done));
+  return { promise, resolve };
+}
+
+/** Lets every queued step and answer run. */
+async function settle(): Promise<void> {
+  for (let i = 0; i < 20; i++) await Promise.resolve();
+  await new Promise((done) => setTimeout(done, 0));
 }
 
 let clipboard: FakeClipboard;
@@ -153,7 +181,7 @@ describe("Send and Receive", () => {
     clipboard.text = "x";
     mac.error = new Error("MacMini is offline");
     await sync.send();
-    expect(notices.at(-1)).toEqual({ tone: "warning", text: "Could not put the text on MacMini’s clipboard: MacMini is offline." });
+    expect(notices.at(-1)).toEqual({ tone: "warning", text: "Could not reach MacMini’s clipboard: MacMini is offline." });
   });
 
   it("says nothing of a Mac it could not reach until asked, then tries again", async () => {
@@ -344,6 +372,202 @@ describe("Auto sync", () => {
     expect(clipboard.reads).toBe(0);
     expect(clipboard.writes).toEqual([]);
     expect(mac.reads).toEqual([null]);
+  });
+});
+
+describe("one step at a time (review pass 1)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    clipboardPreference.setAutoSync(true);
+  });
+
+  it("lets no Mac read land between a send and its answer: the Mac's copy made meanwhile still comes here", async () => {
+    const sync = makeSync();
+    await sync.start();
+    const link = deferred();
+    mac.gate = link.promise;
+    clipboard.text = "B";
+    const sending = sync.check();
+    await settle();
+    expect(mac.attemptedWrites).toEqual(["B"]);
+    // A poll asked for while B is on its way waits for it.
+    const polling = sync.pollMac();
+    await settle();
+    expect(mac.reads).toEqual([null]);
+    // Someone copies A on the Mac after B landed there.
+    link.resolve();
+    mac.gate = null;
+    await sending;
+    mac.copy("A");
+    await polling;
+    await sync.pollMac();
+    expect(clipboard.text).toBe("A");
+    expect(mac.text).toBe("A");
+  });
+
+  it("answers Send, Receive and polls in the order asked, so an older poll never overwrites a newer Receive", async () => {
+    const sync = makeSync();
+    await sync.start();
+    mac.holdEach = true;
+    mac.copy("older");
+    const polling = sync.pollMac();
+    const receiving = sync.receive();
+    await settle();
+    // Only the poll is on the link; Receive waits its turn.
+    expect(mac.reads).toEqual([null, 10]);
+    mac.held.shift()?.();
+    await polling;
+    await settle();
+    expect(mac.reads).toEqual([null, 10, -1]);
+    // Receive's answer is the newer one, and it is the last word here.
+    mac.copy("newer");
+    mac.held.shift()?.();
+    await receiving;
+    expect(clipboard.writes).toEqual(["older", "newer"]);
+    expect(clipboard.text).toBe("newer");
+  });
+
+  it("drops an automatic read of this computer's clipboard that a copy from the Mac overtook", async () => {
+    const sync = makeSync();
+    await sync.start();
+    let release = (_text: string) => {};
+    clipboard.readText = () => new Promise<string>((done) => (release = done));
+    const checking = sync.check();
+    mac.copy("from the Mac");
+    await sync.pollMac();
+    expect(clipboard.text).toBe("from the Mac");
+    // The read began before that copy: what it saw is older, and is not sent over the Mac's.
+    release("stale here");
+    await checking;
+    expect(mac.writes).toEqual([]);
+  });
+});
+
+describe("after the session ends (review pass 1)", () => {
+  it("drops a Receive whose answer comes after the end", async () => {
+    const sync = makeSync();
+    await sync.start();
+    const link = deferred();
+    mac.gate = link.promise;
+    mac.copy("from a closed session");
+    const receiving = sync.receive();
+    await settle();
+    sync.end();
+    // A new session may be open by now; the old answer must not reach the clipboard.
+    link.resolve();
+    mac.gate = null;
+    await receiving;
+    expect(clipboard.writes).toEqual([]);
+    expect(notices).toEqual([]);
+  });
+
+  it("drops a poll, a send and a step still queued at the end", async () => {
+    clipboardPreference.setAutoSync(true);
+    const sync = makeSync();
+    await sync.start();
+    const link = deferred();
+    mac.gate = link.promise;
+    mac.copy("on the Mac");
+    clipboard.text = "here";
+    const polling = sync.pollMac();
+    const sending = sync.send();
+    await settle();
+    sync.end();
+    link.resolve();
+    mac.gate = null;
+    await Promise.all([polling, sending]);
+    expect(clipboard.writes).toEqual([]);
+    expect(mac.writes).toEqual([]);
+  });
+});
+
+describe("a hidden page (review pass 1)", () => {
+  let visibility: DocumentVisibilityState;
+
+  beforeEach(() => {
+    visibility = "visible";
+    vi.spyOn(document, "visibilityState", "get").mockImplementation(() => visibility);
+    clipboardPreference.setAutoSync(true);
+  });
+
+  it("asks the Mac nothing while hidden, and again once shown", async () => {
+    const sync = makeSync();
+    await sync.start();
+    visibility = "hidden";
+    mac.copy("copied while hidden");
+    await sync.pollMac();
+    expect(mac.reads).toEqual([null]);
+    expect(clipboard.writes).toEqual([]);
+    visibility = "visible";
+    await sync.pollMac();
+    expect(clipboard.writes).toEqual(["copied while hidden"]);
+  });
+
+  it("drops an answer that arrives after the page was hidden, and asks again later", async () => {
+    const sync = makeSync();
+    await sync.start();
+    const link = deferred();
+    mac.gate = link.promise;
+    mac.copy("answered late");
+    const polling = sync.pollMac();
+    await settle();
+    visibility = "hidden";
+    link.resolve();
+    mac.gate = null;
+    await polling;
+    expect(clipboard.writes).toEqual([]);
+    visibility = "visible";
+    await sync.pollMac();
+    expect(clipboard.writes).toEqual(["answered late"]);
+  });
+
+  it("still reads once as the screen leaves the page", async () => {
+    const sync = makeSync();
+    await sync.start();
+    mac.copy("copied just before leaving");
+    const leaving = sync.pollMac({ leaving: true });
+    canSync = false;
+    await leaving;
+    expect(clipboard.writes).toEqual(["copied just before leaving"]);
+  });
+});
+
+describe("a Mac that stops answering (review pass 1)", () => {
+  it("becomes unavailable, stops polling, and comes back when a probe that reads the text succeeds", async () => {
+    clipboardPreference.setAutoSync(true);
+    const sync = makeSync();
+    await sync.start();
+    expect(accesses.at(-1)).toEqual({ available: true, account: mac.account });
+    mac.copy("x");
+    mac.error = new Error("the link dropped");
+    await sync.pollMac();
+    expect(accesses.at(-1)).toEqual({ available: false, reason: "Could not reach MacMini’s clipboard: the link dropped." });
+    await sync.pollMac();
+    await sync.pollMac();
+    expect(mac.reads).toEqual([null, 10]);
+
+    // The menu opening asks again: a probe that reads the text, which still fails.
+    await sync.start();
+    expect(mac.reads.at(-1)).toBe(-1);
+    expect(accesses.at(-1)?.available).toBe(false);
+    mac.error = null;
+    await sync.start();
+    expect(accesses.at(-1)).toEqual({ available: true, account: mac.account });
+    // What the Mac held at the probe is known, so it is not copied as a change.
+    await sync.pollMac();
+    expect(clipboard.writes).toEqual([]);
+    mac.copy("after recovery");
+    await sync.pollMac();
+    expect(clipboard.writes).toEqual(["after recovery"]);
+  });
+
+  it("refuses to send more than the clipboard syncs without calling the Mac", async () => {
+    const sync = makeSync();
+    clipboard.text = "é".repeat(600 * 1024);
+    await sync.send();
+    expect(mac.attemptedWrites).toEqual([]);
+    expect(notices.at(-1)?.text).toBe("This computer’s clipboard holds more than 1 MB of text, more than the clipboard syncs.");
+    expect(accesses.at(-1)?.available).toBe(true);
   });
 });
 

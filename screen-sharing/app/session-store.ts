@@ -205,7 +205,7 @@ export class ScreenSessionStore {
    */
   detach(): void {
     // A copy made on the Mac just before leaving the page still comes here with Auto sync.
-    void this.clipboard?.pollMac();
+    void this.clipboard?.pollMac({ leaving: true });
     this.stopFullScreen();
     this.releaseHeldInput();
     this.attached = false;
