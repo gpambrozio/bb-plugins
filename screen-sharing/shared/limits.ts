@@ -23,11 +23,23 @@ export const HOST_WINDOW_BYTES = 16 * 1024 * 1024;
  * last batch. bb may deliver them out of order, and the host holds a write
  * that arrives early, up to `MAX_WRITES_AHEAD` past the one it waits for —
  * which must stay above the server's window.
+ *
+ * A scroll or a drag sends input every frame (≈60 a second), and at a
+ * ≈0.6 s round trip that is ≈36 writes a round trip. With 8 in flight, input
+ * queued behind the window for up to a round trip more: a scroll over a link
+ * 300 ms each way reached the Mac after ≈550 ms (median) instead of 300 ms.
+ * 24 brings that to ≈300 ms (`server/remote.test.ts` measures it).
  */
-export const MAX_PIPELINED_WRITES = 8;
+export const MAX_PIPELINED_WRITES = 24;
 export const MAX_WRITES_AHEAD = 32;
 
-/** The server calls a quiet remote session's host at least this often… */
-export const HOST_KEEPALIVE_MS = 60_000;
+/**
+ * The server calls a quiet remote session's host at least this often, so a
+ * Mac that has gone (its bb restarted, its network lost) ends the session in
+ * seconds: a call to a host bb is not connected to fails…
+ */
+export const HOST_KEEPALIVE_MS = 5_000;
+/** …and gives up on a keepalive left unanswered for this long… */
+export const HOST_KEEPALIVE_TIMEOUT_MS = 10_000;
 /** …and the host ends a session the server has not called about for this long. */
-export const HOST_SILENCE_MS = 3 * HOST_KEEPALIVE_MS;
+export const HOST_SILENCE_MS = 3 * 60_000;

@@ -8,7 +8,7 @@ import { connect, type Socket } from "node:net";
 import type { ExperimentalPluginWebSocket, ExperimentalPluginWebSocketHandlers } from "@get-bb/plugin-sdk";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { CloseCode } from "../shared/channels";
+import { CloseCode, FLOW_VERSION, PING_FRAME, PONG_FRAME } from "../shared/channels";
 import { startFakeVnc, until, type FakeVnc } from "../testing/fake-vnc";
 import { createLoopbackLink } from "./loopback-link";
 import type { OpenLink } from "./link";
@@ -18,10 +18,12 @@ import { SessionRegistry } from "./sessions";
 class FakeWebSocket implements ExperimentalPluginWebSocket {
   readyState = 1;
   sent: Uint8Array[] = [];
+  /** Text frames: the relay's answers to the page's pings, and nothing else. */
+  texts: string[] = [];
   closes: { code?: number; reason?: string }[] = [];
   send(data: string | Uint8Array): void {
-    if (typeof data === "string") throw new Error("the relay sends binary only");
-    this.sent.push(data);
+    if (typeof data === "string") this.texts.push(data);
+    else this.sent.push(data);
   }
   close(code?: number, reason?: string): void {
     // As bb's `ws` does: a reason over 123 bytes of UTF-8 is refused and nothing is closed.
@@ -71,7 +73,7 @@ function open(query: string, openLink: OpenLink = loopback(vnc.port)): { ws: Fak
 }
 
 function ticket(hostId = "mini"): string {
-  return `host=${hostId}&flow=ack&token=${registry.mint({ hostId, hostName: "MacMini", route: "loopback" }).token}`;
+  return `host=${hostId}&flow=${FLOW_VERSION}&token=${registry.mint({ hostId, hostName: "MacMini", route: "loopback" }).token}`;
 }
 
 const total = (chunks: Uint8Array[]) => chunks.reduce((sum, chunk) => sum + chunk.length, 0);
@@ -90,7 +92,7 @@ describe("the relay", () => {
   });
 
   it("refuses a WebSocket without a ticket and never connects", async () => {
-    const { ws } = open("host=mini&flow=ack&token=made-up");
+    const { ws } = open(`host=mini&flow=${FLOW_VERSION}&token=made-up`);
     expect(ws.closes).toEqual([{ code: CloseCode.policy, reason: "unknown or already used ticket" }]);
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(vnc.sockets).toHaveLength(0);
@@ -108,7 +110,7 @@ describe("the relay", () => {
   });
 
   it("refuses a ticket for another Mac", () => {
-    const { ws } = open(`host=laptop&flow=ack&token=${registry.mint({ hostId: "mini", hostName: "MacMini", route: "loopback" }).token}`);
+    const { ws } = open(`host=laptop&flow=${FLOW_VERSION}&token=${registry.mint({ hostId: "mini", hostName: "MacMini", route: "loopback" }).token}`);
     expect(ws.closes).toEqual([{ code: CloseCode.policy, reason: "ticket is for another Mac" }]);
   });
 
@@ -176,12 +178,39 @@ describe("the relay", () => {
     await until(() => vnc.closed === 1, "the TCP close");
   });
 
+  it("answers the page's ping, so the page can tell the relay is still there, and sends the Mac nothing", async () => {
+    const { ws, handlers } = open(ticket());
+    await until(() => ws.sent.length > 0, "the greeting");
+    now += 50_000;
+    await handlers.onMessage?.(ws, PING_FRAME);
+    expect(ws.texts).toEqual([PONG_FRAME]);
+    expect(ws.closes).toEqual([]);
+    // A ping is traffic: the page is there, even when the screen is still.
+    now += 50_000;
+    registry.sweep();
+    expect(ws.closes).toEqual([]);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(vnc.received).toEqual([]);
+  });
+
   it("closes on an ack for bytes the page was never sent", async () => {
     const { ws, handlers } = open(ticket());
     await until(() => ws.sent.length > 0, "the greeting");
     await handlers.onMessage?.(ws, `ack:${total(ws.sent) + 1}`);
     expect(ws.closes).toEqual([{ code: CloseCode.policy, reason: "the page acknowledged bytes it was never sent" }]);
     await until(() => vnc.closed === 1, "the TCP close");
+  });
+
+  it("turns away a page from before liveness (0.2.0's flow=ack), which would never ping, leaving its ticket unused", async () => {
+    const minted = registry.mint({ hostId: "mini", hostName: "MacMini", route: "loopback" }).token;
+    const { ws } = open(`host=mini&flow=ack&token=${minted}`);
+    expect(ws.closes).toEqual([{ code: CloseCode.policy, reason: "this page is out of date; reload bb and connect again" }]);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(vnc.sockets).toHaveLength(0);
+    // The ticket was not used up: the same page, reloaded, may still redeem it.
+    const { ws: reloaded } = open(`host=mini&flow=${FLOW_VERSION}&token=${minted}`);
+    await until(() => vnc.sockets.length === 1, "the connection");
+    expect(reloaded.closes).toEqual([]);
   });
 
   it("turns away a page from before flow control, leaving its ticket unused", async () => {

@@ -5,6 +5,32 @@ Notable changes to `screen-sharing`. The other plugins in this repository versio
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.3.0
+
+### Added
+
+- A **Scroll speed** setting (1 to 5) for how far the shared Mac scrolls for a swipe or a turn of the
+  wheel. It changes an open session straight away.
+
+### Changed
+
+- A bb window still showing an earlier version of the Screen Sharing page is asked to reload bb
+  before it connects, so every session can tell when its connection is lost.
+
+### Fixed
+
+- A session whose connection to bb is gone now ends, and the page says so, within a few seconds.
+  Before, restarting bb (or losing the network) could leave the page showing a session that was
+  already over, still marked as connected; Connect starts a new one once bb is back. A session to
+  another Mac that disappears (its bb restarted, its network lost) also ends within seconds while
+  nothing is happening on screen, instead of after a minute or more.
+- Scrolling on the shared Mac follows how far you scroll. Before, a quick flick or a turn of a mouse
+  wheel scrolled the Mac by one small step, and a trackpad by far less than it scrolls a page. If it
+  is still too slow or now too fast, change Scroll speed.
+- A pinch on the trackpad over the shared screen no longer scrolls the Mac.
+- Scrolling and dragging on another Mac reach it sooner: input no longer waits behind what was sent
+  just before it, which over bb's link to a laptop could add up to half a second.
+
 ## 0.2.0
 
 ### Added

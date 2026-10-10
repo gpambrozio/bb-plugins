@@ -14,15 +14,19 @@
  *
  * The session still ends on Disconnect, on Close all and the server's own
  * limits (the relay closes the socket), when the plugin reloads (bb closes the
- * socket), when the window goes away, and after `SESSION_LIMITS.idleMinutes`
- * without a key, click, touch, wheel or pointer movement on the screen — which
- * a detached, unseen screen never gets.
+ * socket), when the relay stops answering pings with its socket left open (bb
+ * restarting behind the getbb.app tunnel; liveness.ts), when the window goes
+ * away, and after `SESSION_LIMITS.idleMinutes` without a key, click, touch,
+ * wheel or pointer movement on the screen — which a detached, unseen screen
+ * never gets.
  */
 import { SESSION_LIMITS } from "../shared/channels";
-import { endMessage, type SessionEnd } from "./end-message";
+import { DEFAULT_SCROLL_SPEED } from "../shared/settings";
+import { LOST_MESSAGE, endMessage, type SessionEnd } from "./end-message";
 import { LOCAL_CURSOR_CSS } from "./cursor";
 import { Key, type KeyCombo } from "./keys";
 import { acknowledgeReceived } from "./flow";
+import { watchRelay } from "./liveness";
 import { createRfb, openRelaySocket, releaseRemoteButtons, type Rfb } from "./rfb";
 import { relayUrl } from "./relay-url";
 
@@ -99,6 +103,10 @@ export class ScreenSessionStore {
   private socket: WebSocket | null = null;
   /** Stops acknowledging what the relay sends (flow.ts). */
   private stopAcks: (() => void) | null = null;
+  /** Stops pinging the relay (liveness.ts). */
+  private stopWatch: (() => void) | null = null;
+  /** The "Scroll speed" setting, as the page last read it. */
+  private scrollSpeed = DEFAULT_SCROLL_SPEED;
   private rfb: Rfb | null = null;
   private idleTimer: ReturnType<typeof setInterval> | null = null;
   private lastInput = 0;
@@ -192,11 +200,15 @@ export class ScreenSessionStore {
         const socket = openRelaySocket(relayUrl(window.location.origin, hostId, token));
         this.socket = socket;
         this.stopAcks = acknowledgeReceived(socket);
+        // A socket can outlive the server behind it, and then no close event ever comes.
+        this.stopWatch = watchRelay(socket, () => {
+          if (attempt === this.attempt) this.finish(LOST_MESSAGE);
+        });
         // Registered before noVNC's own handler, so it has run when noVNC reports the disconnect.
         socket.addEventListener("close", (event) => {
           end.close = { code: event.code, reason: event.reason };
         });
-        const rfb = createRfb(this.element, socket);
+        const rfb = createRfb(this.element, socket, () => this.scrollSpeed);
         this.rfb = rfb;
         this.canvas = this.element.querySelector("canvas");
         this.applyViewOnly();
@@ -223,6 +235,11 @@ export class ScreenSessionStore {
       .catch((error: unknown) => {
         if (attempt === this.attempt) this.finish(`Could not start a session: ${errorText(error)}`);
       });
+  }
+
+  /** The "Scroll speed" setting (shared/settings.ts); the page passes it on whenever it changes. */
+  setScrollSpeed(speed: number): void {
+    this.scrollSpeed = speed;
   }
 
   /** Ends the session, if any, and says so on the page. */
@@ -376,6 +393,8 @@ export class ScreenSessionStore {
     const socket = this.socket;
     this.stopAcks?.();
     this.stopAcks = null;
+    this.stopWatch?.();
+    this.stopWatch = null;
     this.rfb = null;
     this.socket = null;
     this.canvas = null;

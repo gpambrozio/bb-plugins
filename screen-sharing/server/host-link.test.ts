@@ -13,6 +13,7 @@ import { HostLinks, type HostClient } from "./host-link";
 interface PendingCall {
   method: string;
   input: Record<string, unknown>;
+  options: { hostId: string; timeoutMs?: number };
   resolve(value: unknown): void;
   reject(error: Error): void;
 }
@@ -20,8 +21,8 @@ interface PendingCall {
 function scripted() {
   const calls: PendingCall[] = [];
   const client = {
-    call: (method: string, input: Record<string, unknown>) =>
-      new Promise((resolve, reject) => calls.push({ method, input, resolve, reject })),
+    call: (method: string, input: Record<string, unknown>, options: PendingCall["options"]) =>
+      new Promise((resolve, reject) => calls.push({ method, input, options, resolve, reject })),
   } as unknown as HostClient;
   return { calls, client };
 }
@@ -38,6 +39,7 @@ function setup() {
     maxPipelinedWrites: 2,
     maxQueuedBytes: 1024,
     keepaliveMs: 60_000,
+    keepaliveTimeoutMs: 10_000,
     openTimeoutMs: 15_000,
     now: () => now,
     log: () => {},
@@ -147,6 +149,8 @@ describe("a host link", () => {
     links.keepalive();
     links.keepalive();
     expect(method("keepalive")).toHaveLength(1);
+    // A keepalive that hangs counts as lost after its own short timeout, not bb's default 30 s.
+    expect(method("keepalive")[0]?.options).toEqual({ hostId: "host_laptop", timeoutMs: 10_000 });
     method("keepalive")[0]?.resolve({ open: true });
     await flush();
     expect(ended).toEqual([]);

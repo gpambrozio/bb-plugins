@@ -52,6 +52,7 @@ sidebar (or the palette's *Screen Sharing: see and control a Mac's screen*), pic
   bb's desktop app keeps ⌘R, which reloads bb.
 - Explain the limits: a session keeps running in its bb window while the user is on other pages, and
   ends on **Disconnect**, when the window closes, after 30 minutes without keyboard or mouse use, after
-  8 hours, or with **Close all** (in the page's title bar, and on the pill in the corner of every bb
+  8 hours, within a few seconds of losing its connection to bb or to the Mac (bb restarting, the
+  network dropping; the page says so and **Connect** starts a new one), or with **Close all** (in the page's title bar, and on the pill in the corner of every bb
   window while a session is open), which ends every session on every Mac. The user signs in with a macOS account each time they connect;
   nothing keeps the password.

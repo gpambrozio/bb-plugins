@@ -12,9 +12,10 @@
  *   flight at a time, carrying the latest total. The host pauses reading from
  *   Screen Sharing while its window is unacknowledged, so what is in flight
  *   here is bounded by that window.
- * - Liveness: a quiet session calls `keepalive` every `keepaliveMs`; the host
- *   ends sessions the server stops asking about, and a call that fails here
- *   ends the session, so neither end outlives the other for long.
+ * - Liveness: a quiet session calls `keepalive` every `keepaliveMs` — a few
+ *   seconds, so a Mac that has gone ends its page's session in seconds; the
+ *   host ends sessions the server stops asking about, and a call that fails
+ *   or times out here ends the session, so neither end outlives the other.
  *
  * `HostLinks` keeps the open links by session id and routes the host's
  * signals to them, checking that a signal comes from the session's own host.
@@ -33,6 +34,8 @@ export interface HostLinksOptions {
   /** Bytes the viewer may send faster than the host takes them before the session ends. */
   maxQueuedBytes: number;
   keepaliveMs: number;
+  /** How long a keepalive may go unanswered before the session counts as lost. */
+  keepaliveTimeoutMs: number;
   openTimeoutMs: number;
   now(): number;
   log(message: string): void;
@@ -148,7 +151,7 @@ class HostLink implements Link {
     if (!this.opened || this.closed || this.keepaliveInFlight) return;
     if (this.options.now() - this.lastHeard < this.options.keepaliveMs) return;
     this.keepaliveInFlight = true;
-    this.call("keepalive", { sessionId: this.target.sessionId }).then(
+    this.call("keepalive", { sessionId: this.target.sessionId }, this.options.keepaliveTimeoutMs).then(
       ({ open }) => {
         this.keepaliveInFlight = false;
         this.heard();

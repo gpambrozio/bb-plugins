@@ -13,9 +13,9 @@ findings are summarised under *Decisions*.
 
 | File | What it owns |
 | --- | --- |
-| `server.ts` | Wires the RPCs (host list, per-host status, tickets), the relay route, host signals and worker exits, the sweep timer and disposal. Holds the server's limits (ticket life, no-traffic, maximum length, buffer cap, pipelining). |
+| `server.ts` | Wires the RPCs (host list, per-host status, tickets), the relay route, host signals and worker exits, the sweep and keepalive timers and disposal. Holds the server's limits (ticket life, no-traffic, maximum length, buffer cap, pipelining). |
 | `server/sessions.ts` | Tickets (single-use, bound to a Mac and its route, short-lived) and sessions (no-traffic and age limits, Close all). No sockets. |
-| `server/relay.ts` | One WebSocket ⇄ one link, bytes copied untouched; the page's ack frames; either end closing closes the other. |
+| `server/relay.ts` | One WebSocket ⇄ one link, bytes copied untouched; the page's ack frames, and a `pong` for each `ping`; either end closing closes the other. |
 | `server/link.ts` | The seam between the relay and the Mac's side: `Link`, its events and the route. |
 | `server/loopback-link.ts` | The server's own Mac: a TCP connection to `127.0.0.1:5900`, paused while the page is a window behind. |
 | `server/host-link.ts` | Every other Mac: pipelined, numbered `write` calls up; numbered `data` signals down, a gap ends it; acks and keepalives to the host. `HostLinks` routes signals by session and checks their host. |
@@ -24,14 +24,18 @@ findings are summarised under *Decisions*.
 | `host/status.ts` | Is Screen Sharing on: `launchctl print-disabled system` and an RFB greeting probe that signs in to nothing. Runs on each Mac, and in the server for its own. |
 | `shared/channels.ts` | Route, realtime channel, flow-control frames, close codes, session limits and zod shapes; no SDK import, so the app may use it. |
 | `shared/contract.ts` | The app ⇄ server RPC contract. The app imports it as a type only. |
+| `shared/settings.ts` | The settings form (Scroll speed), declared by the server and read only by the app; a type-only SDK import, so the app may import it. |
 | `shared/host-contract.ts`, `shared/limits.ts` | The server ⇄ host contract and signals, and the numbers both ends share (port, windows, keepalive). The app imports neither. |
 | `app/screen-panel.tsx` | The page: the toolbar row (the picker, then View only, Connect/Disconnect and the keys), the picked Mac's status and System Settings guidance; the title bar's right side (`SessionsHeader`: open sessions, Close all). |
 | `app/hosts.ts` | The machines, their statuses and the picked Mac, outside React, so the picker, the page and other windows' visits share them. |
 | `app/host-picker.tsx` | The picker at the left of the toolbar row: a dot and the picked Mac's name, opening bb's dropdown menu of every machine with its state (a sheet on a compact viewport). |
 | `app/session-store.ts` | One session per Mac per window, outside React: ticket → WebSocket → noVNC into an element it owns; the input-idle disconnect; the local-cursor CSS; why it ended. `screenSessions` holds them. |
 | `app/flow.ts` | The page's acknowledgements of what it received. |
+| `app/liveness.ts` | The page's pings, and the session called lost when the relay stops answering with its socket still open. |
+| `app/relay-channel.ts` | The socket as noVNC sees it: text frames kept out, one wheel event's messages sent as one frame. |
+| `app/wheel.ts` | Scrolling as RFB wheel steps, in proportion to the distance. |
 | `app/vnc-session.tsx` | The live screen on the page: lends the store's element a place while the page is open; the sign-in form. |
-| `app/rfb.ts` | The seam the page's tests replace: `new WebSocket` and noVNC's `RFB` (scaling; no dot cursor; marks a cursor sent by the Mac). |
+| `app/rfb.ts` | The seam the page's tests replace: `new WebSocket` and noVNC's `RFB` (scaling; no dot cursor; marks a cursor sent by the Mac; its own wheel handler). |
 | `app/keys.ts` | The Send keys menu: each shortcut as RFB keysyms (⌘ is `Super_L`, as noVNC sends it). |
 | `app/keys-toolbar.tsx` | "Full screen", "Send keys" and the notice saying what is held or locked and how to get out. |
 | `app/cursor.ts` | The arrow-fallback CSS and the attribute that switches it off once the Mac sends a cursor. |
@@ -43,9 +47,9 @@ relay and the probe run against fake TCP servers (`testing/fake-vnc.ts`), and th
 drives the loopback route only with tickets it refuses. `server/remote.test.ts` runs the real server
 entry on bb's fake plugin host against a real `HostRelay` behind `testing/fake-daemon.ts`, which
 delays every call and signal by a chosen one-way time; it covers every way a remote session ends and
-logs `[measured]` round trips and throughput at 300 ms each way. `app/novnc-session.test.ts` runs the store against the real, pinned noVNC client, playing
+logs `[measured]` round trips, scroll latency and throughput at 300 ms each way. `app/novnc-session.test.ts` runs the store against the real, pinned noVNC client, playing
 Apple's side of an ARD sign-in over a fake relay socket; use it for anything that depends on what
-noVNC really does with credentials, keys, buttons or the cursor.
+noVNC really does with credentials, keys, buttons, the wheel, the cursor or the relay's text frames.
 
 ## Decisions
 
@@ -141,10 +145,51 @@ would never match.
 gate carries only HTTP and WebSockets, so raw VNC could not cross it anyway, and an exposed share
 would be one more door to a Mac's screen.
 
-**The page opens the WebSocket itself and hands it to noVNC** (`new RFB(target, socket)`), so it can
+**The page opens the WebSocket itself and hands it to noVNC** (`new RFB(target, channel)`), so it can
 read the close code and say why a session ended; noVNC reports only clean or not. No subprotocol is
 requested. The page also listens on that socket beside noVNC to acknowledge what arrives (see *Flow
-control*); noVNC sends only binary frames, so text frames on the route are the page's acks.
+control*) and to ping the relay (see *A socket can outlive bb*). noVNC sends only binary frames, so
+text frames on the route are the page's acks and pings, and the relay's pongs. noVNC reads every
+frame it gets as RFB bytes (`new Uint8Array(data)`: a `pong` comes out empty and is ignored, which is
+luck, not design), so it gets the socket through `RelayChannel` (`app/relay-channel.ts`), which
+passes it binary frames only.
+
+**A socket can outlive bb.** Restarting bb on the server's Mac while the owner watched through
+getbb.app left the page saying "connected": the browser's end of the socket stays open when the server
+behind the tunnel goes away, and no close event comes, so nothing told noVNC or the store. The page now
+sends `ping` every `PING_EVERY_MS` (2 s), the relay answers `pong` at once, and the store ends the
+session with `LOST_MESSAGE` when a ping has had no answer, and nothing else has arrived either, for
+`LOST_AFTER_MS` (6 s) — so within about 8 s. Any frame counts as an answer, so a pong stuck behind a
+big screen update is no false alarm. The wait is counted in ticks, and a late tick decides nothing: a
+browser holds back a busy, hidden or suspended page's timers, and on resume the late tick may run
+before the pong that arrived meanwhile is handled. So a tick more than 1.5 intervals after the one
+before (or after the clock went back) starts the wait afresh, and the session ends only after 6 s of
+ticks on time with nothing heard; a tick a little late counts as one interval (review passes 1 and 2
+found a late first, then a late final, tick ending a session whose pong was waiting). The cost: a tab
+whose every tick is held back (Chrome's one-a-minute throttling of hidden tabs) never ends a dead
+session while hidden — it does within seconds of being shown again. A ping is traffic for the server's 30-minute no-traffic limit, which
+already only catches clients that went away. There is no reconnect: the session's sign-in is gone with
+it, and Connect starts again.
+
+**Scrolling.** RFB has no scroll distance, only steps (buttons 4–7 pressed and released), and noVNC
+1.7.0 sends at most one step per browser wheel event, once 50 px have gathered, and drops the rest:
+a flick or a wheel notch was one step, a trackpad one step per 50 px. `createRfb` puts its own wheel
+listener on the screen element, in the capture phase so noVNC's on the canvas never sees the event,
+and sends `speed` steps per `WHEEL_STEP_PX` (12 px) of scrolling with the remainder kept, at most
+`maxWheelSteps(speed)` per event (80 at the default), through noVNC's private `_handleMouseButton`
+like `releaseRemoteButtons`. `speed` is the "Scroll speed" setting (1–5, `shared/settings.ts`,
+default 3), so the default is a step per 4 px. The owner tuned it on the server's own Mac, where
+there is no link delay: one step per line (20 px) moved the Mac far too little, three per line was
+still short, and five per line felt right — that is the default now, with 1–5 spread around it in
+proportion. The page (`ScreenMount`) reads it with
+`useSettings()` and hands it to the store, and the wheel handler reads it on every event, so a
+change applies to an open session. One event's steps go to the relay as one frame
+(`RelayChannel.gather`), so a scroll is one host call per event. A trackpad pinch arrives as wheel
+events with `ctrlKey` set and no key event (Chromium's `touchpad_pinch_event_queue.cc`); the handler
+drops it — no step, nothing gathered, kept from noVNC and from the browser's zoom — unless noVNC has
+Control down on the Mac (`_keyboard._keyDownList`, pinned 1.7.0), when it scrolls with Control held
+there. noVNC's own list decides because noVNC releases every key on window blur without a DOM key-up;
+a tracker of the page's key events stayed "down" and let a pinch after blur scroll (review pass 2).
 
 **One display picture.** A Mac with several displays sends noVNC one framebuffer; picking a display is
 Apple's private extension to its own Screen Sharing app. Apple documents nothing for third-party
@@ -163,7 +208,9 @@ which starts each handler as it arrives. So signals arrive in order in practice,
 guaranteed, and the design must not depend on either.
 
 - **Up:** the viewer's bytes are batched into `write` calls of at most 128 KiB, numbered from 0, with
-  up to 8 in flight (`MAX_PIPELINED_WRITES`). **bb does not deliver concurrent host calls in order**:
+  up to 24 in flight (`MAX_PIPELINED_WRITES`; 8 until 0.2.1 — a scroll or drag sends input every
+  frame, and at 8 a second of scrolling reached the Mac ≈550 ms after each event instead of ≈300 ms
+  at 300 ms each way, waiting behind the window). **bb does not deliver concurrent host calls in order**:
   its server awaits `resolveHostEnvironment` for each call before sending it, so calls overtake each
   other. The 0.2.0 candidate ended the session on the first one out of order, and every session to a
   MacBook died while the user typed the password (the log said "expected 4, got 5"); twelve one-byte
@@ -187,10 +234,13 @@ guaranteed, and the design must not depend on either.
 - **Leases:** `open` takes a worker lease (`experimental_retainWorker`, which bb allows only during a
   call) and the session releases it on every end, failure to connect included. Without it the daemon
   stops an idle worker after five minutes and its sockets with it.
-- **Liveness:** the sweep (15 s) sends `keepalive` for a session quiet for `HOST_KEEPALIVE_MS` (60 s);
-  the host ends a session it has heard nothing about for `HOST_SILENCE_MS` (3 min). A failed call ends
-  the session on the server; a server that vanished (crash, reload whose close never arrived, a lost
-  link) leaves the host's session to expire.
+- **Liveness:** a timer (every 2.5 s) sends `keepalive` for a session quiet for `HOST_KEEPALIVE_MS`
+  (5 s), timed out after `HOST_KEEPALIVE_TIMEOUT_MS` (10 s); the host ends a session it has heard
+  nothing about for `HOST_SILENCE_MS` (3 min). A failed call ends the session on the server — a call to a host bb is not connected
+  to fails, so a Mac whose bb restarted or whose network dropped ends a quiet session in ≈7.5 s with
+  the fake daemon (it was 60–75 s), or within the keepalive's timeout if the call hangs instead; a server that vanished (crash, reload whose close
+  never arrived, a lost link) leaves the host's session to expire. bb raises no plugin event when a host
+  disconnects, and `experimental_onWorkerExit` skips daemon shutdown, so the keepalive is what notices.
 - **Teardown, all tested in `server/remote.test.ts`:** the page closing, Close all, the plugin stopping
   (bb closes the sockets, the relay asks the host to close), Screen Sharing hanging up (the host's last
   `data`, then `closed`), bb stopping the worker (lifecycle abort and `dispose` close every session and
@@ -210,7 +260,11 @@ connection"), which is macOS's own limit on an unauthenticated connection, not t
 host link that is past `HOST_SILENCE_MS`, so the keepalives reach the Mac.
 
 Measured with `testing/fake-daemon.ts` at 300 ms each way: greeting and a key echo ≈ 600 ms (one
-round trip), 30 keys typed over 600 ms all echoed after ≈ 1.2 s, ≈ 19 MiB/s with the 16 MiB window.
+round trip), 30 keys typed over 600 ms all echoed after ≈ 1.2 s, a second of scrolling (60 events)
+at the Mac ≈ 300 ms after each event (median; under 500 ms at worst), ≈ 19–26 MiB/s with the 16 MiB
+window. Over that link a scroll still redraws slowly: noVNC asks for the next screen update once the
+last has arrived, so the frame rate is bounded by the round trip — the plugin cannot change that
+without changing how noVNC asks.
 The real link adds bandwidth limits the fake has none of (the study measured ≥ 17 MB/s of base64
 signals from a MacBook).
 
@@ -221,8 +275,12 @@ every 50 ms. The relay checks it (never less than before, never more than it sen
 the session with 1008) and hands it to the link. The loopback link pauses the server's TCP socket
 while more than `LOOPBACK_WINDOW_BYTES` (8 MiB) is unacknowledged; the host link forwards it to the
 host. bb's plugin WebSocket has no `bufferedAmount`, so this is the only way the server can tell a
-page is behind. The relay URL carries `flow=ack`; a page from before flow control is refused with a
-"reload bb" reason instead of stalling at the window.
+page is behind. The relay URL carries `flow=ack-ping` — the text frames the page speaks, acks and
+pings — and the relay refuses any other value before redeeming the ticket, with a "reload bb" reason.
+That covers both sides of an update: a window still running an older page (no flow control, or
+0.2.0's `flow=ack`, which never pings and would stay "connected" after bb restarts) is refused
+instead of stalling, and a relay from 0.2.0, which accepted only `ack`, refuses this page instead of
+closing its session on the first ping. Change the value whenever the page's text frames change.
 
 ## Keys
 
@@ -282,6 +340,7 @@ reach any page. The evidence, so nobody has to rediscover it:
   sign-in is over — on `connect`, on `securityfailure` and on teardown. Not earlier: noVNC's ARD step
   re-reads the fields when it resumes after its async encryption. No setting holds credentials.
 - **Everything closes.** WebSocket close or error destroys the TCP socket or closes the host's session;
+  a relay that stops answering the page's pings ends the page's session even with its socket open;
   TCP close or error, or the host's `closed`, closes the WebSocket; every remote teardown also releases
   the host's socket and lease (see *The host link*); the sweep (every 15 s) ends sessions with no traffic for 30 min or older than 8 h;
   `closeAll` ends them all, on every Mac (4003), voids every unredeemed ticket, and bumps a generation that

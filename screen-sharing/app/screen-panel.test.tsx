@@ -13,16 +13,26 @@ import type { PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 import { renderSlot, type PluginRpcTestHandlers } from "@get-bb/plugin-sdk/testing/app";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { CloseCode, SESSIONS_CHANGED, type HostEntry, type ScreenStatus } from "../shared/channels";
+import { CloseCode, LOST_AFTER_MS, PING_EVERY_MS, PING_FRAME, PONG_FRAME, SESSIONS_CHANGED, type HostEntry, type ScreenStatus } from "../shared/channels";
 import type { RpcContract } from "../shared/contract";
 import { ScreenPanel, SessionsHeader } from "./screen-panel";
 import { hostDirectory } from "./hosts";
 import { screenSessions } from "./session-store";
+import { LOST_MESSAGE } from "./end-message";
 
 class FakeSocket extends EventTarget {
   closed = false;
+  readyState = 1;
+  /** Whether the relay behind it answers pings; false is a server gone with the socket left open. */
+  answering = true;
+  pings = 0;
   constructor(readonly url: string) {
     super();
+  }
+  send(data: unknown): void {
+    if (data !== PING_FRAME) return;
+    this.pings++;
+    if (this.answering) this.dispatchEvent(new MessageEvent("message", { data: PONG_FRAME }));
   }
   close(): void {
     this.closed = true;
@@ -43,6 +53,8 @@ class FakeRfb extends EventTarget {
   constructor(
     readonly target: HTMLElement,
     readonly socket: FakeSocket,
+    /** The "Scroll speed" setting, as the store hands it to the wheel handler. */
+    readonly scrollSpeed: () => number,
   ) {
     super();
   }
@@ -72,8 +84,8 @@ vi.mock("./rfb", () => ({
     fakes.sockets.push(socket);
     return socket;
   },
-  createRfb: (target: HTMLElement, socket: FakeSocket) => {
-    const rfb = new FakeRfb(target, socket);
+  createRfb: (target: HTMLElement, socket: FakeSocket, scrollSpeed: () => number) => {
+    const rfb = new FakeRfb(target, socket, scrollSpeed);
     fakes.rfbs.push(rfb);
     return rfb;
   },
@@ -118,9 +130,10 @@ function stubs(handlers: Partial<PluginRpcTestHandlers<RpcContract>>): PluginRpc
   } as PluginRpcTestHandlers<RpcContract>;
 }
 
-function renderPanel(handlers: Partial<PluginRpcTestHandlers<RpcContract>> = {}) {
+function renderPanel(handlers: Partial<PluginRpcTestHandlers<RpcContract>> = {}, settings?: Record<string, string | number | boolean>) {
   return renderSlot<PluginNavPanelProps, RpcContract>({ component: ScreenPanel }, { subPath: "" }, {
     rpc: stubs({ status: () => ready, ...handlers }),
+    ...(settings === undefined ? {} : { settings }),
   });
 }
 
@@ -383,6 +396,47 @@ describe("the Screen Sharing page", () => {
       rfb.emit("disconnect", { clean: false });
     });
     expect(await screen.findByText("Closed from bb with Close all.")).toBeTruthy();
+  });
+
+  it("says the connection was lost within seconds when the relay goes quiet and its socket stays open", async () => {
+    renderPanel();
+    const { body } = await connectButtons();
+    // The pings start with the socket, before the sign-in. (Testing Library's waitFor polls with
+    // setInterval, so this waits for the socket by hand.)
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+    try {
+      fireEvent.click(body);
+      for (let turn = 0; turn < 50 && rfbs.length === 0; turn++) await act(() => Promise.resolve());
+      const rfb = rfbs[0] as FakeRfb;
+      const socket = sockets[0] as FakeSocket;
+      act(() => rfb.emit("connect"));
+      // Answered pings keep it going, for as long as it lasts.
+      act(() => vi.advanceTimersByTime(10 * LOST_AFTER_MS));
+      expect(socket.pings).toBeGreaterThan(0);
+      expect(rfb.disconnects).toBe(0);
+      // bb restarts behind the tunnel: no close event reaches the page, and nothing more arrives.
+      socket.answering = false;
+      act(() => vi.advanceTimersByTime(LOST_AFTER_MS));
+      expect(rfb.disconnects).toBe(0);
+      act(() => vi.advanceTimersByTime(2 * PING_EVERY_MS));
+      expect(rfb.disconnects).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(await screen.findByText(LOST_MESSAGE)).toBeTruthy();
+    expect(screenSessions.for("host_mini").getSnapshot().stage.kind).toBe("idle");
+    expect((await connectButtons()).toolbar.disabled).toBe(false);
+  });
+
+  it("scrolls at the speed set in the plugin's settings, 3 when none is set", async () => {
+    const view = renderPanel();
+    const rfb = await connect();
+    act(() => rfb.emit("connect"));
+    expect(rfb.scrollSpeed()).toBe(3);
+    view.unmount();
+    // The setting is read where the screen is shown; the running session picks it up.
+    renderPanel({}, { scrollSpeed: "5" });
+    await waitFor(() => expect(rfb.scrollSpeed()).toBe(5));
   });
 
   it("says when macOS refused the sign-in", async () => {

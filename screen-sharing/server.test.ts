@@ -11,7 +11,8 @@ import { createFakePluginHost, makeHostResponse } from "@get-bb/plugin-sdk/testi
 import { afterEach, describe, expect, it } from "vitest";
 
 import plugin from "./server";
-import { CloseCode, SESSIONS_CHANGED, VNC_ROUTE } from "./shared/channels";
+import { CloseCode, FLOW_VERSION, SESSIONS_CHANGED, VNC_ROUTE } from "./shared/channels";
+import { SETTINGS } from "./shared/settings";
 
 const hosts: { harness: { dispose(): Promise<void> } }[] = [];
 
@@ -39,6 +40,11 @@ describe("the screen-sharing plugin", () => {
     expect(harness.sharedPortDeclarations).toEqual([]);
   });
 
+  it("offers the scroll speed in its settings", async () => {
+    const { harness } = await load();
+    expect(harness.registrations.settingsDescriptors).toEqual(SETTINGS);
+  });
+
   it("gives the app a ticket for the server's Mac", async () => {
     const { harness } = await load();
     const ticket = (await harness.callRpc("openSession", { hostId: "host_mini" })) as { token: string; expiresAt: number };
@@ -60,11 +66,11 @@ describe("the screen-sharing plugin", () => {
 
   it("closes a WebSocket that brings no valid ticket", async () => {
     const { harness } = await load();
-    const forged = await harness.experimental_openWebSocket(`${VNC_ROUTE}?host=host_mini&flow=ack&token=forged`);
+    const forged = await harness.experimental_openWebSocket(`${VNC_ROUTE}?host=host_mini&flow=${FLOW_VERSION}&token=forged`);
     expect(forged.closeCalls).toEqual([{ code: CloseCode.policy, reason: "unknown or already used ticket" }]);
 
     const ticket = (await harness.callRpc("openSession", { hostId: "host_mini" })) as { token: string };
-    const elsewhere = await harness.experimental_openWebSocket(`${VNC_ROUTE}?host=host_laptop&flow=ack&token=${ticket.token}`);
+    const elsewhere = await harness.experimental_openWebSocket(`${VNC_ROUTE}?host=host_laptop&flow=${FLOW_VERSION}&token=${ticket.token}`);
     expect(elsewhere.closeCalls).toEqual([{ code: CloseCode.policy, reason: "ticket is for another Mac" }]);
     expect(await harness.callRpc("sessions", {})).toEqual({ sessions: [] });
   });
@@ -73,7 +79,7 @@ describe("the screen-sharing plugin", () => {
     const { harness } = await load();
     const ticket = (await harness.callRpc("openSession", { hostId: "host_mini" })) as { token: string };
     await harness.callRpc("closeAll", {});
-    const late = await harness.experimental_openWebSocket(`${VNC_ROUTE}?host=host_mini&flow=ack&token=${ticket.token}`);
+    const late = await harness.experimental_openWebSocket(`${VNC_ROUTE}?host=host_mini&flow=${FLOW_VERSION}&token=${ticket.token}`);
     expect(late.closeCalls).toEqual([{ code: CloseCode.policy, reason: "unknown or already used ticket" }]);
   });
 
