@@ -112,6 +112,8 @@ const AUTO_SYNC_KEY = "screen-sharing:clipboard-auto-sync";
 
 class ClipboardPreference {
   private value: boolean | null = null;
+  /** Bumped by every change, so an automatic step begun under an earlier choice is dropped. */
+  private version = 0;
   private readonly listeners = new Set<() => void>();
 
   subscribe = (listener: () => void): (() => void) => {
@@ -130,8 +132,11 @@ class ClipboardPreference {
     return this.value;
   };
 
+  getVersion = (): number => this.version;
+
   setAutoSync(on: boolean): void {
     this.value = on;
+    this.version++;
     try {
       if (on) globalThis.localStorage?.setItem(AUTO_SYNC_KEY, "on");
       else globalThis.localStorage?.removeItem(AUTO_SYNC_KEY);
@@ -196,8 +201,15 @@ export class ClipboardSync {
   private macHolds: string | null = null;
   /** What this computer's clipboard was last known to hold: read or written. */
   private localHolds: string | null = null;
-  /** Bumped by every write to this computer's clipboard, so a read from before it is known stale. */
+  /** Bumped by every write to this computer's clipboard that took, so a read from before it is known stale. */
   private localRevision = 0;
+  /**
+   * A write here failed, so this computer's clipboard still holds whatever it
+   * held — which may never have been read. The next read is taken as what it
+   * holds, not as a copy to send, so old text never goes over the Mac's newer
+   * text (review pass 2).
+   */
+  private adoptNextLocalRead = false;
   private access: ClipboardAccess | null = null;
   /** The first read of the Mac: its count, and whose clipboard it is. Everything else waits for it. */
   private ready: Promise<void> | null = null;
@@ -280,7 +292,10 @@ export class ClipboardSync {
         return;
       }
       if (this.ended) return;
-      if (this.localRevision === revision) this.localHolds = text;
+      if (this.localRevision === revision) {
+        this.localHolds = text;
+        this.adoptNextLocalRead = false;
+      }
       if (text === "") {
         this.say({ tone: "info", text: "This computer’s clipboard holds no text." });
         return;
@@ -324,9 +339,7 @@ export class ClipboardSync {
    */
   async copyFromNotice(text: string): Promise<void> {
     if (this.ended) return;
-    this.localRevision++;
-    if (await this.clipboard.writeText(text)) {
-      this.localHolds = text;
+    if (await this.writeLocal(text)) {
       this.say({ tone: "info", text: `Copied ${this.session.hostName()}’s clipboard to this computer.` });
     } else {
       this.say({ tone: "warning", text: "bb could not write to this computer’s clipboard." });
@@ -347,6 +360,7 @@ export class ClipboardSync {
     this.lastAutoRead = now;
     this.reading = true;
     const revision = this.localRevision;
+    const choice = clipboardPreference.getVersion();
     let text: string;
     try {
       // Read before the first await, for a browser that reads only within a click.
@@ -365,8 +379,17 @@ export class ClipboardSync {
       this.reading = false;
     }
     await this.enqueue(async () => {
+      // Auto sync switched off (or off and on) since the read began, the screen gone, the page hidden:
+      // what was read is no longer this step's to send (review pass 2).
+      const stillAuto = clipboardPreference.getAutoSync() && clipboardPreference.getVersion() === choice;
+      if (!stillAuto || this.ended || !this.session.canSync() || hidden()) return;
       // A write here since the read began makes what was read stale; the Mac already has newer.
-      if (this.localRevision !== revision || !this.session.canSync()) return;
+      if (this.localRevision !== revision) return;
+      if (this.adoptNextLocalRead) {
+        this.adoptNextLocalRead = false;
+        this.localHolds = text;
+        return;
+      }
       // Only a change on this computer is sent: text it already held, or was given by the Mac, is not.
       if (text === this.localHolds) return;
       this.localHolds = text;
@@ -412,12 +435,8 @@ export class ClipboardSync {
       if (text === "" || text === this.macHolds) return;
       this.macHolds = text;
       if (text === this.localHolds) return;
-      // Left as it was when the write fails, so the next read does not send the old text back over this.
-      this.localRevision++;
-      if (!(await this.clipboard.writeText(text))) {
+      if (!(await this.writeLocal(text))) {
         this.say({ tone: "warning", text: `Could not copy ${this.session.hostName()}’s clipboard here on its own. Use Receive clipboard.` });
-      } else if (!this.ended) {
-        this.localHolds = text;
       }
     }).finally(() => {
       if (!leaving) this.polling = false;
@@ -431,12 +450,28 @@ export class ClipboardSync {
     return this.queue;
   }
 
+  /**
+   * Writes this computer's clipboard. Only a write that took makes earlier
+   * reads stale and becomes what it holds; one that failed left the clipboard
+   * as it was, so the next read of it is adopted as what it holds rather than
+   * sent as a copy.
+   */
+  private async writeLocal(text: string): Promise<boolean> {
+    const written = await this.clipboard.writeText(text);
+    if (written) {
+      this.localRevision++;
+      this.localHolds = text;
+      this.adoptNextLocalRead = false;
+    } else {
+      this.adoptNextLocalRead = true;
+    }
+    return written;
+  }
+
   private async copyHere(text: string, { offerCopy }: { offerCopy: boolean }): Promise<void> {
     if (this.ended) return;
     const hostName = this.session.hostName();
-    this.localRevision++;
-    if (await this.clipboard.writeText(text)) {
-      this.localHolds = text;
+    if (await this.writeLocal(text)) {
       this.say({ tone: "info", text: `Copied ${hostName}’s clipboard to this computer.` });
     } else if (offerCopy) {
       this.say({ tone: "warning", text: `This browser needs one more click to copy ${hostName}’s clipboard here.`, copy: text });

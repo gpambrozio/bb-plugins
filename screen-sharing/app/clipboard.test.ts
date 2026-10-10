@@ -443,6 +443,101 @@ describe("one step at a time (review pass 1)", () => {
   });
 });
 
+describe("a failed copy here, and Auto sync switched off (review pass 2)", () => {
+  let visibility: DocumentVisibilityState;
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    visibility = "visible";
+    vi.spyOn(document, "visibilityState", "get").mockImplementation(() => visibility);
+    clipboardPreference.setAutoSync(true);
+  });
+
+  /** Holds this computer's clipboard reads until `release`; later reads answer at once. */
+  function holdLocalRead(): (text: string) => void {
+    let release = (_text: string) => {};
+    const answer = clipboard.readText.bind(clipboard);
+    clipboard.readText = () => {
+      clipboard.readText = answer;
+      return new Promise<string>((done) => (release = done));
+    };
+    return (text) => release(text);
+  }
+
+  it("never sends old text here over the Mac's newer text when copying the Mac's here failed", async () => {
+    const sync = makeSync();
+    await sync.start();
+    clipboard.text = "old local";
+    // Auto sync's first read of this computer's clipboard, held.
+    const release = holdLocalRead();
+    const checking = sync.check();
+    // Meanwhile the Mac gets new text, and copying it here is refused.
+    mac.copy("new Mac");
+    clipboard.writable = false;
+    await sync.pollMac();
+    expect(clipboard.text).toBe("old local");
+    release("old local");
+    await checking;
+    expect(mac.writes).toEqual([]);
+
+    // The next check reads the same old text: still nothing is sent.
+    clipboard.writable = true;
+    later();
+    await sync.check();
+    expect(mac.writes).toEqual([]);
+    expect(mac.text).toBe("new Mac");
+
+    // A copy made here afterwards is new, and is sent.
+    clipboard.text = "genuinely new";
+    later();
+    await sync.check();
+    expect(mac.writes).toEqual(["genuinely new"]);
+  });
+
+  it("does not count a failed copy here as a change to this computer's clipboard", async () => {
+    const sync = makeSync();
+    await sync.start();
+    clipboard.text = "kept";
+    clipboard.writable = false;
+    mac.copy("refused here");
+    await sync.pollMac();
+    clipboard.writable = true;
+    // The first read after the failure is taken as what this computer holds.
+    later();
+    await sync.check();
+    expect(mac.writes).toEqual([]);
+  });
+
+  it.each([
+    ["switched off", () => clipboardPreference.setAutoSync(false)],
+    ["switched off and on again", () => {
+      clipboardPreference.setAutoSync(false);
+      clipboardPreference.setAutoSync(true);
+    }],
+    ["hidden", () => {
+      visibility = "hidden";
+    }],
+  ])("sends nothing a read began before Auto sync was %s", async (_what, change) => {
+    const sync = makeSync();
+    await sync.start();
+    const release = holdLocalRead();
+    const checking = sync.check();
+    await settle();
+    change();
+    release("read before the change");
+    await checking;
+    expect(mac.attemptedWrites).toEqual([]);
+  });
+
+  it("leaves Send clipboard alone with Auto sync off", async () => {
+    clipboardPreference.setAutoSync(false);
+    const sync = makeSync();
+    clipboard.text = "sent by hand";
+    await sync.send();
+    expect(mac.writes).toEqual(["sent by hand"]);
+  });
+});
+
 describe("after the session ends (review pass 1)", () => {
   it("drops a Receive whose answer comes after the end", async () => {
     const sync = makeSync();

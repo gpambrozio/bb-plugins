@@ -284,7 +284,12 @@ host entry for the others. `app/clipboard.ts` holds the page's side, one `Clipbo
   Auto sync alike — so no answer lands between another step's read and write, and an older poll
   cannot overwrite a newer Receive. Reading this computer's clipboard starts at once (inside the click,
   where there is one) and only its use waits in the queue; an automatic read that a write here
-  overtook is dropped as stale (`localRevision`). The Copy button writes at once, outside the queue,
+  overtook is dropped as stale (`localRevision`, bumped only by a write that took). A write here that
+  failed leaves the clipboard as it was, possibly never read, so the next automatic read is adopted as
+  what it holds instead of sent: otherwise old text here went over the Mac's newer copy (review pass
+  2). An automatic send also checks again, just before it runs, that Auto sync is still on under the
+  same choice (`clipboardPreference.getVersion()`), the screen still takes input and the page is not
+  hidden; Send clipboard does not depend on Auto sync. The Copy button writes at once, outside the queue,
   so it keeps its click. After every await a step checks the session has not ended, so nothing from
   a closed session reaches either clipboard.
 - **No ping-pong.** `ClipboardSync` keeps what each side was last known to hold. Auto sync sends only
