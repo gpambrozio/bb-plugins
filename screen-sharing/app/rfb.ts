@@ -78,12 +78,26 @@ const WHEEL_RIGHT = 1 << 6;
  * the real noVNC, so a noVNC that renames any of these fails there. One
  * event's steps go to the relay as one frame. The listener goes when the
  * connection ends.
+ *
+ * A trackpad pinch is no scroll: Chromium sends it as wheel events with
+ * `ctrlKey` set and no key event, and scrolling the Mac by its deltas would
+ * move the page there for a zoom gesture here. It is dropped — kept from
+ * noVNC and from the browser's own zoom, and added to nothing — unless the
+ * Control key is really down over the screen (noVNC has then sent Control to
+ * the Mac too, so the Mac gets a Control-scroll, as from its own keyboard).
  */
 function scrollProportionally(rfb: Rfb, target: HTMLElement, channel: RelayChannel, scrollSpeed: () => number): void {
   const internals = rfb as unknown as WheelInternals;
   const steps = new WheelAccumulator();
   const listening = new AbortController();
   rfb.addEventListener("disconnect", () => listening.abort());
+  /** The Control key is down over the screen, by a key event — which a pinch never sends. */
+  let controlDown = false;
+  const noteControl = (event: KeyboardEvent) => {
+    if (event.key === "Control") controlDown = event.type === "keydown";
+  };
+  target.addEventListener("keydown", noteControl, { capture: true, passive: true, signal: listening.signal });
+  target.addEventListener("keyup", noteControl, { capture: true, passive: true, signal: listening.signal });
   target.addEventListener(
     "wheel",
     (event) => {
@@ -93,6 +107,9 @@ function scrollProportionally(rfb: Rfb, target: HTMLElement, channel: RelayChann
       if (internals._rfbConnectionState !== "connected" || rfb.viewOnly) return;
       event.stopPropagation();
       event.preventDefault();
+      // A wheel event without ctrlKey also says Control is up, should its key-up have gone elsewhere.
+      if (!event.ctrlKey) controlDown = false;
+      else if (!controlDown) return; // A pinch.
       const { x, y } = steps.add(event, scrollSpeed());
       const bounds = canvas.getBoundingClientRect();
       const atX = Math.min(Math.max(event.clientX - bounds.left, 0), Math.max(bounds.width - 1, 0));

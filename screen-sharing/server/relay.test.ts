@@ -8,7 +8,7 @@ import { connect, type Socket } from "node:net";
 import type { ExperimentalPluginWebSocket, ExperimentalPluginWebSocketHandlers } from "@get-bb/plugin-sdk";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { CloseCode, PING_FRAME, PONG_FRAME } from "../shared/channels";
+import { CloseCode, FLOW_VERSION, PING_FRAME, PONG_FRAME } from "../shared/channels";
 import { startFakeVnc, until, type FakeVnc } from "../testing/fake-vnc";
 import { createLoopbackLink } from "./loopback-link";
 import type { OpenLink } from "./link";
@@ -73,7 +73,7 @@ function open(query: string, openLink: OpenLink = loopback(vnc.port)): { ws: Fak
 }
 
 function ticket(hostId = "mini"): string {
-  return `host=${hostId}&flow=ack&token=${registry.mint({ hostId, hostName: "MacMini", route: "loopback" }).token}`;
+  return `host=${hostId}&flow=${FLOW_VERSION}&token=${registry.mint({ hostId, hostName: "MacMini", route: "loopback" }).token}`;
 }
 
 const total = (chunks: Uint8Array[]) => chunks.reduce((sum, chunk) => sum + chunk.length, 0);
@@ -92,7 +92,7 @@ describe("the relay", () => {
   });
 
   it("refuses a WebSocket without a ticket and never connects", async () => {
-    const { ws } = open("host=mini&flow=ack&token=made-up");
+    const { ws } = open(`host=mini&flow=${FLOW_VERSION}&token=made-up`);
     expect(ws.closes).toEqual([{ code: CloseCode.policy, reason: "unknown or already used ticket" }]);
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(vnc.sockets).toHaveLength(0);
@@ -110,7 +110,7 @@ describe("the relay", () => {
   });
 
   it("refuses a ticket for another Mac", () => {
-    const { ws } = open(`host=laptop&flow=ack&token=${registry.mint({ hostId: "mini", hostName: "MacMini", route: "loopback" }).token}`);
+    const { ws } = open(`host=laptop&flow=${FLOW_VERSION}&token=${registry.mint({ hostId: "mini", hostName: "MacMini", route: "loopback" }).token}`);
     expect(ws.closes).toEqual([{ code: CloseCode.policy, reason: "ticket is for another Mac" }]);
   });
 
@@ -199,6 +199,18 @@ describe("the relay", () => {
     await handlers.onMessage?.(ws, `ack:${total(ws.sent) + 1}`);
     expect(ws.closes).toEqual([{ code: CloseCode.policy, reason: "the page acknowledged bytes it was never sent" }]);
     await until(() => vnc.closed === 1, "the TCP close");
+  });
+
+  it("turns away a page from before liveness (0.2.0's flow=ack), which would never ping, leaving its ticket unused", async () => {
+    const minted = registry.mint({ hostId: "mini", hostName: "MacMini", route: "loopback" }).token;
+    const { ws } = open(`host=mini&flow=ack&token=${minted}`);
+    expect(ws.closes).toEqual([{ code: CloseCode.policy, reason: "this page is out of date; reload bb and connect again" }]);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(vnc.sockets).toHaveLength(0);
+    // The ticket was not used up: the same page, reloaded, may still redeem it.
+    const { ws: reloaded } = open(`host=mini&flow=${FLOW_VERSION}&token=${minted}`);
+    await until(() => vnc.sockets.length === 1, "the connection");
+    expect(reloaded.closes).toEqual([]);
   });
 
   it("turns away a page from before flow control, leaving its ticket unused", async () => {

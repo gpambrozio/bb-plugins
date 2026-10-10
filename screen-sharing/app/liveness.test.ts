@@ -65,15 +65,35 @@ describe("the relay's liveness", () => {
     expect(lost).toBe(0);
   });
 
-  it("does not blame the relay for a timer the browser held back", () => {
-    vi.advanceTimersByTime(PING_EVERY_MS);
-    expect(socket.texts).toHaveLength(1);
-    // A hidden tab's timers run late: the next tick comes long after the ping went out.
-    vi.setSystemTime(Date.now() + 60_000);
+  it("does not count a tick the browser ran 2 s late as silence, with the pong queued behind it", () => {
+    vi.advanceTimersByTime(PING_EVERY_MS); // t=2: ping
+    vi.advanceTimersByTime(PING_EVERY_MS); // t=4
+    // The t=6 tick runs at t=8: a short sleep or a busy page, with the pong waiting to be handled.
+    vi.setSystemTime(Date.now() + PING_EVERY_MS);
     vi.advanceTimersByTime(PING_EVERY_MS);
     expect(lost).toBe(0);
-    // It pings again and waits the full time for that answer, and no longer.
-    expect(socket.texts).toHaveLength(2);
+    // The pong is handled once the page runs again: the relay was there all along.
+    socket.receive(PONG_FRAME);
+    vi.advanceTimersByTime(PING_EVERY_MS);
+    expect(lost).toBe(0);
+    expect(socket.texts).toEqual([PING_FRAME, PING_FRAME]);
+  });
+
+  it.each([2_000, 4_000, 60_000])("counts a tick %i ms late as one interval, so a dead relay still ends the session soon after", (delay) => {
+    vi.advanceTimersByTime(PING_EVERY_MS); // ping out
+    vi.setSystemTime(Date.now() + delay);
+    vi.advanceTimersByTime(PING_EVERY_MS);
+    expect(lost).toBe(0);
+    // Two more on-time intervals make LOST_AFTER_MS of waiting the page could vouch for.
+    vi.advanceTimersByTime(LOST_AFTER_MS - 2 * PING_EVERY_MS);
+    expect(lost).toBe(0);
+    vi.advanceTimersByTime(PING_EVERY_MS);
+    expect(lost).toBe(1);
+  });
+
+  it("ignores the clock going backwards", () => {
+    vi.advanceTimersByTime(PING_EVERY_MS);
+    vi.setSystemTime(Date.now() - 3_600_000);
     vi.advanceTimersByTime(LOST_AFTER_MS - PING_EVERY_MS);
     expect(lost).toBe(0);
     vi.advanceTimersByTime(PING_EVERY_MS);

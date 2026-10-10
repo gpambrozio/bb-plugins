@@ -17,7 +17,7 @@ import { createFakePluginHost, makeHostResponse } from "@get-bb/plugin-sdk/testi
 import { afterEach, describe, expect, it } from "vitest";
 
 import plugin from "../server";
-import { CloseCode, SESSIONS_CHANGED, VNC_ROUTE, ackFrame } from "../shared/channels";
+import { CloseCode, FLOW_VERSION, SESSIONS_CHANGED, VNC_ROUTE, ackFrame } from "../shared/channels";
 import { HOST_KEEPALIVE_MS, HOST_WINDOW_BYTES, MAX_WRITES_AHEAD } from "../shared/limits";
 import { FakeDaemon, type Call } from "../testing/fake-daemon";
 import { sleep, startFakeVnc, until, type FakeVnc } from "../testing/fake-vnc";
@@ -81,7 +81,7 @@ async function setup(
 
 async function openSession(harness: Harness, hostId = "host_laptop"): Promise<WsSession> {
   const { token } = (await harness.callRpc("openSession", { hostId })) as { token: string };
-  return harness.experimental_openWebSocket(`${VNC_ROUTE}?host=${hostId}&flow=ack&token=${token}`);
+  return harness.experimental_openWebSocket(`${VNC_ROUTE}?host=${hostId}&flow=${FLOW_VERSION}&token=${token}`);
 }
 
 const binary = (ws: WsSession) => ws.sent.filter((frame): frame is Uint8Array => typeof frame !== "string");
@@ -147,7 +147,7 @@ describe("a ticket for another Mac", () => {
   it("opens nothing on any Mac when used for another one", async () => {
     const { harness, daemon } = await setup();
     const { token } = (await harness.callRpc("openSession", { hostId: "host_laptop" })) as { token: string };
-    const ws = await harness.experimental_openWebSocket(`${VNC_ROUTE}?host=host_doxbook&flow=ack&token=${token}`);
+    const ws = await harness.experimental_openWebSocket(`${VNC_ROUTE}?host=host_doxbook&flow=${FLOW_VERSION}&token=${token}`);
     expect(ws.closeCalls).toEqual([{ code: CloseCode.policy, reason: "ticket is for another Mac" }]);
     await sleep(20);
     expect(daemon.calls).toEqual([]);

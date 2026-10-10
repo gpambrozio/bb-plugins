@@ -15,12 +15,19 @@ export const VNC_ROUTE = "/vnc";
  * many bytes it has received in all, in a text frame (`ack:<bytes>`), at most
  * every `ACK_EVERY_MS`; noVNC itself sends only binary frames. The relay stops
  * reading from the Mac while more than its window is unacknowledged, so a slow
- * viewer slows the Mac down instead of filling memory on the way. The relay
- * URL says `flow=ack`, so a page from before flow control is turned away
- * instead of stalling.
+ * viewer slows the Mac down instead of filling memory on the way.
+ *
+ * The relay URL names the text frames the page speaks, `flow=ack-ping` (acks,
+ * and the liveness pings below), and the relay turns away any other value
+ * before it redeems the ticket, telling the page to reload bb. So a window
+ * still running an older page — no flow control, or 0.2.0's `flow=ack` with
+ * no pings, which would sit "connected" after bb restarts — is refused, and so
+ * is this page by a relay from before pings (0.2.0 accepted only `ack`), which
+ * would otherwise close the session on the first ping. Change the value
+ * whenever the page's text frames change.
  */
 export const FLOW_PARAM = "flow";
-export const FLOW_VERSION = "ack";
+export const FLOW_VERSION = "ack-ping";
 export const ACK_EVERY_MS = 50;
 const ACK_PREFIX = "ack:";
 

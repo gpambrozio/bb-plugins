@@ -631,8 +631,8 @@ function pointerEvents(frames: Uint8Array[]): number[] {
   return masks;
 }
 
-function wheel(canvas: HTMLCanvasElement, deltaY: number, deltaX = 0): WheelEvent {
-  const event = new WheelEvent("wheel", { deltaY, deltaX, deltaMode: 0, clientX: 2, clientY: 2, bubbles: true, cancelable: true });
+function wheel(canvas: HTMLCanvasElement, deltaY: number, deltaX = 0, ctrlKey = false): WheelEvent {
+  const event = new WheelEvent("wheel", { deltaY, deltaX, deltaMode: 0, ctrlKey, clientX: 2, clientY: 2, bubbles: true, cancelable: true });
   canvas.dispatchEvent(event);
   return event;
 }
@@ -697,6 +697,34 @@ describe("scrolling the Mac", () => {
     const mark = socket.sent.length;
     wheel(canvas, 10_000);
     expect(pointerEvents(sentAfter(mark)).filter((mask) => mask === 16)).toHaveLength(maxWheelSteps(DEFAULT_SCROLL_SPEED));
+  });
+
+  it("takes a trackpad pinch (a wheel event with ctrlKey and no Control key down) for no scroll at all", async () => {
+    const canvas = await connected();
+    const mark = socket.sent.length;
+    // Chromium sends a pinch as wheel events with ctrlKey set; no key event comes with it.
+    const pinch = wheel(canvas, 48, 0, true);
+    expect(sentAfter(mark)).toEqual([]);
+    // Neither noVNC's handler nor the browser's zoom gets it.
+    expect(pinch.defaultPrevented).toBe(true);
+    // And it leaves nothing behind to add to the next scroll: 3 px is not a step on its own.
+    wheel(canvas, 3);
+    expect(sentAfter(mark)).toEqual([]);
+  });
+
+  it("still scrolls with the Control key really held, sending Control with it", async () => {
+    const canvas = await connected();
+    const mark = socket.sent.length;
+    canvas.dispatchEvent(new KeyboardEvent("keydown", { key: "Control", code: "ControlLeft", ctrlKey: true, bubbles: true, cancelable: true }));
+    wheel(canvas, WHEEL_STEP_PX, 0, true);
+    canvas.dispatchEvent(new KeyboardEvent("keyup", { key: "Control", code: "ControlLeft", bubbles: true, cancelable: true }));
+    const sent = sentAfter(mark);
+    expect(sent.some((m) => m[0] === 4 && m[1] === 1 && m[7] === 0xe3)).toBe(true); // Control_L down
+    expect(pointerEvents(sent).filter((mask) => mask === 16)).toHaveLength(DEFAULT_SCROLL_SPEED);
+    // Let go, a pinch is a pinch again.
+    const after = socket.sent.length;
+    wheel(canvas, 48, 0, true);
+    expect(sentAfter(after)).toEqual([]);
   });
 
   it("sends nothing while View only, and leaves the page's own scrolling alone", async () => {

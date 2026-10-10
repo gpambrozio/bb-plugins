@@ -160,9 +160,12 @@ behind the tunnel goes away, and no close event comes, so nothing told noVNC or 
 sends `ping` every `PING_EVERY_MS` (2 s), the relay answers `pong` at once, and the store ends the
 session with `LOST_MESSAGE` when a ping has had no answer, and nothing else has arrived either, for
 `LOST_AFTER_MS` (6 s) — so within about 8 s. Any frame counts as an answer, so a pong stuck behind a
-big screen update is no false alarm. A tick that comes more than two intervals late (a hidden tab's
-throttled timers, a laptop waking) only sends a fresh ping and times that one, so a frozen page is not
-called lost for its own delay. A ping is traffic for the server's 30-minute no-traffic limit, which
+big screen update is no false alarm. The wait is counted in ticks, each worth at most one interval
+however late it runs, and a clock set back counts as one interval: a browser holds back a busy or
+hidden page's timers and handles the pong that arrived meanwhile only after the late tick, so time the
+page was not running never counts as the relay's silence (review pass 1 found a 2 s-late tick ending
+a session whose pong was waiting). A tab throttled to a tick a minute is called lost only after three
+of them with nothing heard in between, and no clock jump counts for more than an interval. A ping is traffic for the server's 30-minute no-traffic limit, which
 already only catches clients that went away. There is no reconnect: the session's sign-in is gone with
 it, and Connect starts again.
 
@@ -179,7 +182,11 @@ still short, and five per line felt right — that is the default now, with 1–
 proportion. The page (`ScreenMount`) reads it with
 `useSettings()` and hands it to the store, and the wheel handler reads it on every event, so a
 change applies to an open session. One event's steps go to the relay as one frame
-(`RelayChannel.gather`), so a scroll is one host call per event.
+(`RelayChannel.gather`), so a scroll is one host call per event. A trackpad pinch arrives as wheel
+events with `ctrlKey` set and no key event (Chromium's `touchpad_pinch_event_queue.cc`); the handler
+drops it — no step, nothing gathered, kept from noVNC and from the browser's zoom — unless a real
+Control key-down went through the screen element, when it scrolls (noVNC has already sent Control to
+the Mac).
 
 **One display picture.** A Mac with several displays sends noVNC one framebuffer; picking a display is
 Apple's private extension to its own Screen Sharing app. Apple documents nothing for third-party
@@ -265,8 +272,12 @@ every 50 ms. The relay checks it (never less than before, never more than it sen
 the session with 1008) and hands it to the link. The loopback link pauses the server's TCP socket
 while more than `LOOPBACK_WINDOW_BYTES` (8 MiB) is unacknowledged; the host link forwards it to the
 host. bb's plugin WebSocket has no `bufferedAmount`, so this is the only way the server can tell a
-page is behind. The relay URL carries `flow=ack`; a page from before flow control is refused with a
-"reload bb" reason instead of stalling at the window.
+page is behind. The relay URL carries `flow=ack-ping` — the text frames the page speaks, acks and
+pings — and the relay refuses any other value before redeeming the ticket, with a "reload bb" reason.
+That covers both sides of an update: a window still running an older page (no flow control, or
+0.2.0's `flow=ack`, which never pings and would stay "connected" after bb restarts) is refused
+instead of stalling, and a relay from 0.2.0, which accepted only `ack`, refuses this page instead of
+closing its session on the first ping. Change the value whenever the page's text frames change.
 
 ## Keys
 

@@ -8,6 +8,13 @@
  * (shared/channels.ts). Any frame counts as an answer: a busy screen's bytes
  * may arrive ahead of the pong.
  *
+ * The wait is counted in ticks, not by the clock: each tick adds at most one
+ * interval, however late it runs. A browser holds back a page's timers — a
+ * busy page, a hidden tab, a short sleep — and the pong that arrived meanwhile
+ * is handled only after the late tick, so time the page was not running must
+ * not count as the relay's silence. The clock jumping either way does not
+ * count either.
+ *
  * It listens beside noVNC on the same socket, as flow.ts does; the relay's
  * pongs never reach noVNC (relay-channel.ts).
  */
@@ -18,28 +25,31 @@ const OPEN = 1;
 
 /** Starts watching `socket`; the returned function stops. */
 export function watchRelay(socket: WebSocket, onLost: () => void): () => void {
-  /** When the unanswered ping went out, or null when nothing is waiting for an answer. */
-  let pingSentAt: number | null = null;
+  /** Whether a ping is out with nothing heard since. */
+  let waiting = false;
+  /** How long it has been out, as the page could watch it: at most one interval per tick. */
+  let waited = 0;
   let lastTick = Date.now();
 
   function onMessage(): void {
-    pingSentAt = null;
+    waiting = false;
   }
 
   function tick(): void {
     const now = Date.now();
-    // A browser holds back the timers of a hidden tab or a sleeping laptop: a ping that waited
-    // that long says nothing about the relay, so it is sent again and timed afresh.
-    const late = now - lastTick > 2 * PING_EVERY_MS;
+    const elapsed = now - lastTick;
     lastTick = now;
     if (socket.readyState !== OPEN) return;
-    if (pingSentAt !== null && !late) {
-      if (now - pingSentAt < LOST_AFTER_MS) return;
+    if (waiting) {
+      // Late ticks count as one interval; a clock set back counts as one too.
+      waited += elapsed < 0 ? PING_EVERY_MS : Math.min(elapsed, PING_EVERY_MS);
+      if (waited < LOST_AFTER_MS) return;
       stop();
       onLost();
       return;
     }
-    pingSentAt = now;
+    waiting = true;
+    waited = 0;
     try {
       socket.send(PING_FRAME);
     } catch {
