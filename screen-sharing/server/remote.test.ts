@@ -18,7 +18,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import plugin from "../server";
 import { CloseCode, SESSIONS_CHANGED, VNC_ROUTE, ackFrame } from "../shared/channels";
-import { HOST_WINDOW_BYTES, MAX_WRITES_AHEAD } from "../shared/limits";
+import { HOST_KEEPALIVE_MS, HOST_WINDOW_BYTES, MAX_WRITES_AHEAD } from "../shared/limits";
 import { FakeDaemon, type Call } from "../testing/fake-daemon";
 import { sleep, startFakeVnc, until, type FakeVnc } from "../testing/fake-vnc";
 
@@ -346,6 +346,21 @@ describe("a remote session ends, leaving nothing open on the Mac", () => {
     expect(laptop.closed).toBe(0);
   });
 
+  it("when the Mac's bb goes away while nothing is passing, within seconds", async () => {
+    const { harness, daemon, ws } = await opened();
+    const quiet = Date.now();
+    daemon.down.add("host_laptop");
+    await until(() => ws.closeCalls.length === 1, "the page told", 3 * HOST_KEEPALIVE_MS);
+    const noticed = Date.now() - quiet;
+    console.info(`[measured] a quiet session to a Mac that went away ended after ${noticed} ms`);
+    expect(ws.closeCalls[0]).toEqual({
+      code: CloseCode.failed,
+      reason: "MacBook Pro: lost the connection (host host_laptop is not connected)",
+    });
+    expect(noticed).toBeLessThan(HOST_KEEPALIVE_MS * 1.5 + 500);
+    expect(await harness.callRpc("sessions", {})).toEqual({ sessions: [] });
+  }, 20_000);
+
   it("when the page closes while the Mac is still connecting", async () => {
     const { harness, daemon, laptop } = await setup({ oneWayMs: 30 });
     const ws = await openSession(harness);
@@ -398,6 +413,37 @@ describe("over a slow link (300 ms each way)", () => {
     expect(roundTrip).toBeLessThan(2 * ONE_WAY_MS + 300);
     // Serialised, 30 keys would take 30 round trips (≈18 s); pipelined, the typing time plus one.
     expect(typed).toBeLessThan(30 * 20 + 2 * ONE_WAY_MS + 1000);
+  }, 20_000);
+
+  it("delivers a scroll's steps about one link delay after each wheel event, not queued behind the write window", async () => {
+    const arrived: number[] = [];
+    const { harness } = await setup({
+      oneWayMs: ONE_WAY_MS,
+      mac: (socket) => {
+        socket.write("RFB 003.889\n");
+        socket.on("data", (chunk) => {
+          for (let at = 0; at < chunk.length; at += 12) arrived.push(Date.now());
+        });
+      },
+    });
+    const ws = await openSession(harness);
+    await until(() => received(ws).length === 12, "the greeting", 5000);
+    // A second of trackpad scrolling at 60 events a second, each one wheel step (a press and a release, one frame).
+    const sent: number[] = [];
+    const step = new Uint8Array([5, 16, 0, 1, 0, 1, 5, 0, 0, 1, 0, 1]);
+    for (let event = 0; event < 60; event++) {
+      sent.push(Date.now());
+      await ws.receive(step);
+      await sleep(16);
+    }
+    await until(() => arrived.length === sent.length, "every step at the Mac", 10_000);
+    const delays = arrived.map((at, index) => at - (sent[index] ?? at)).sort((a, b) => a - b);
+    const median = delays[Math.floor(delays.length / 2)] ?? 0;
+    const worst = delays.at(-1) ?? 0;
+    console.info(`[measured] 300 ms each way, a second of scrolling: each step reached the Mac after ${median} ms (median), ${worst} ms at worst`);
+    // With 8 writes in flight the median was ≈550 ms and the worst ≈800 ms: input waited behind the window.
+    expect(median).toBeLessThan(ONE_WAY_MS + 100);
+    expect(worst).toBeLessThan(2 * ONE_WAY_MS);
   }, 20_000);
 
   it("moves screen updates at about window ÷ round trip, with the window the host uses", async () => {

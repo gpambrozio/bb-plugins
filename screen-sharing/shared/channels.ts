@@ -38,6 +38,20 @@ export function parseAck(frame: string): number | null {
 }
 
 /**
+ * Liveness between the page and the relay. A socket can stay open in the
+ * browser after the server behind it is gone — bb restarting behind the
+ * getbb.app tunnel leaves the browser's end open — so the page does not wait
+ * for a close event alone: it sends `ping` every `PING_EVERY_MS`, the relay
+ * answers `pong`, and the page ends the session when a ping has gone
+ * unanswered, with nothing at all from the relay, for `LOST_AFTER_MS`. noVNC
+ * never sees either frame.
+ */
+export const PING_FRAME = "ping";
+export const PONG_FRAME = "pong";
+export const PING_EVERY_MS = 2_000;
+export const LOST_AFTER_MS = 6_000;
+
+/**
  * When a session ends on its own. The page disconnects after `idleMinutes`
  * without keyboard, mouse or touch input; the server ends a session after
  * `idleMinutes` with no bytes either way (a client that went away) and after

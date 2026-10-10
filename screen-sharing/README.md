@@ -22,7 +22,9 @@ extra is installed on any Mac and no port is opened to the internet.
   leave full screen, and leave it to switch to another Mac. Safari and Firefox can't do this; use
   Send keys there.
 - Leaving the page does not end the session: it keeps running in that bb window, and coming back shows
-  it again, still signed in. **Disconnect** on the page ends it.
+  it again, still signed in. **Disconnect** on the page ends it. If bb or the Mac goes away during a
+  session — bb restarting, the network dropping — the page says the connection was lost within a few
+  seconds, and **Connect** starts a new session once it is back.
 - Sessions to several Macs can be open at once in the same window. The page shows the Mac picked; the
   others keep running out of sight, with your keyboard and mouse going only to the one on screen.
 - The pointer stays visible over the screen: macOS's own cursor when it sends one, otherwise your
@@ -102,8 +104,10 @@ plain VNC: fine for working on a Mac, not for video.
 - **Other Macs** go through bb's link to them, which on a laptop away from the server is about 0.6 s
   there and back. Expect about half a second between pressing a key or clicking and seeing the
   screen answer, and a few screen updates a second. Typing and moving the mouse never wait for that
-  round trip key by key: what you type is sent as you type it and arrives in order. A big change on
-  screen (a window opening, scrolling) can take a second or two to draw. It is usable for working on
+  round trip key by key: what you type is sent as you type it and arrives in order, and a scroll
+  moves the Mac as far as you scroll. A big change on screen (a window opening, scrolling) can take
+  a second or two to draw: the viewer asks for each new picture once the last has arrived, so that
+  round trip sets how often the screen redraws. It is usable for working on
   the Mac; it does not feel local.
 
 ## A Mac with more than one display

@@ -22,7 +22,13 @@ import {
 } from "./shared/channels";
 import { rpcContract } from "./shared/contract";
 import { hostContract, hostSignals } from "./shared/host-contract";
-import { HOST_KEEPALIVE_MS, LOOPBACK_WINDOW_BYTES, MAX_PIPELINED_WRITES, SCREEN_SHARING_PORT } from "./shared/limits";
+import {
+  HOST_KEEPALIVE_MS,
+  HOST_KEEPALIVE_TIMEOUT_MS,
+  LOOPBACK_WINDOW_BYTES,
+  MAX_PIPELINED_WRITES,
+  SCREEN_SHARING_PORT,
+} from "./shared/limits";
 import { checkScreenSharing, launchctlScreenSharingDisabled, probeRfb } from "./host/status";
 import { HostLinks } from "./server/host-link";
 import { errorText, type OpenLink } from "./server/link";
@@ -37,6 +43,8 @@ const TICKET_TTL_MS = 30_000;
 const IDLE_MS = SESSION_LIMITS.idleMinutes * 60_000;
 const MAX_AGE_MS = SESSION_LIMITS.maxHours * 60 * 60_000;
 const SWEEP_MS = 15_000;
+/** How often quiet remote sessions are checked for a keepalive that is due. */
+const KEEPALIVE_CHECK_MS = HOST_KEEPALIVE_MS / 2;
 const MAX_TICKETS = 16;
 const MAX_BUFFERED_BYTES = 8 * 1024 * 1024;
 /** Connecting to a remote Mac's Screen Sharing: two round trips and a TCP connect, with room to spare. */
@@ -86,6 +94,7 @@ export default async function plugin(bb: BbPluginApi) {
     maxPipelinedWrites: MAX_PIPELINED_WRITES,
     maxQueuedBytes: MAX_BUFFERED_BYTES,
     keepaliveMs: HOST_KEEPALIVE_MS,
+    keepaliveTimeoutMs: HOST_KEEPALIVE_TIMEOUT_MS,
     openTimeoutMs: HOST_OPEN_TIMEOUT_MS,
     now: () => Date.now(),
     log,
@@ -175,14 +184,15 @@ export default async function plugin(bb: BbPluginApi) {
     { auth: "local" },
   );
 
-  const sweep = setInterval(() => {
-    registry.sweep();
-    hostLinks.keepalive();
-  }, SWEEP_MS);
+  const sweep = setInterval(() => registry.sweep(), SWEEP_MS);
   sweep.unref?.();
+  // Calls a host only for its quiet sessions, whose leases keep its worker running anyway.
+  const keepalive = setInterval(() => hostLinks.keepalive(), KEEPALIVE_CHECK_MS);
+  keepalive.unref?.();
 
   bb.onDispose(() => {
     clearInterval(sweep);
+    clearInterval(keepalive);
     // Ends the remote sessions too: each link asks its host to close, and the hosts close
     // whatever is left when bb stops their workers or the server stops calling.
     registry.closeAll(CloseCode.stopping, "Screen Sharing plugin stopped");

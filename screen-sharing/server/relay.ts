@@ -12,11 +12,13 @@
  *
  * Flow control: the page acknowledges what it has received (`ack:<bytes>`
  * text frames, shared/channels.ts); the link stops reading from the Mac while
- * too much is unacknowledged.
+ * too much is unacknowledged. Liveness: the page also pings (`ping`), and the
+ * relay answers each with `pong` at once, so a page whose socket outlived the
+ * server can tell.
  */
 import type { ExperimentalPluginWebSocket, ExperimentalPluginWebSocketHandler } from "@get-bb/plugin-sdk";
 
-import { CloseCode, FLOW_PARAM, FLOW_VERSION, parseAck } from "../shared/channels";
+import { CloseCode, FLOW_PARAM, FLOW_VERSION, PING_FRAME, PONG_FRAME, parseAck } from "../shared/channels";
 import type { Link, OpenLink } from "./link";
 import type { OpenSession, SessionRegistry } from "./sessions";
 
@@ -80,6 +82,15 @@ export function createRelay(options: RelayOptions): ExperimentalPluginWebSocketH
       if (session !== null) options.log(`session ${session.id} closed${tell === undefined ? "" : `: ${tell.reason}`}`);
     }
 
+    /** Tells the page the relay is still here (shared/channels.ts: liveness). */
+    function pong(): void {
+      try {
+        ws?.send(PONG_FRAME);
+      } catch (error) {
+        finish({ code: CloseCode.failed, reason: `could not send to the page (${error instanceof Error ? error.message : String(error)})` });
+      }
+    }
+
     function onAck(frame: string): void {
       const total = parseAck(frame);
       if (total === null) {
@@ -139,7 +150,8 @@ export function createRelay(options: RelayOptions): ExperimentalPluginWebSocketH
       onMessage(_ws, data) {
         if (done || link === null || session === null) return;
         session.touch();
-        if (typeof data === "string") onAck(data);
+        if (data === PING_FRAME) pong();
+        else if (typeof data === "string") onAck(data);
         else link.write(data);
       },
 

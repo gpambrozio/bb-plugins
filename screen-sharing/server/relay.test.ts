@@ -8,7 +8,7 @@ import { connect, type Socket } from "node:net";
 import type { ExperimentalPluginWebSocket, ExperimentalPluginWebSocketHandlers } from "@get-bb/plugin-sdk";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { CloseCode } from "../shared/channels";
+import { CloseCode, PING_FRAME, PONG_FRAME } from "../shared/channels";
 import { startFakeVnc, until, type FakeVnc } from "../testing/fake-vnc";
 import { createLoopbackLink } from "./loopback-link";
 import type { OpenLink } from "./link";
@@ -18,10 +18,12 @@ import { SessionRegistry } from "./sessions";
 class FakeWebSocket implements ExperimentalPluginWebSocket {
   readyState = 1;
   sent: Uint8Array[] = [];
+  /** Text frames: the relay's answers to the page's pings, and nothing else. */
+  texts: string[] = [];
   closes: { code?: number; reason?: string }[] = [];
   send(data: string | Uint8Array): void {
-    if (typeof data === "string") throw new Error("the relay sends binary only");
-    this.sent.push(data);
+    if (typeof data === "string") this.texts.push(data);
+    else this.sent.push(data);
   }
   close(code?: number, reason?: string): void {
     // As bb's `ws` does: a reason over 123 bytes of UTF-8 is refused and nothing is closed.
@@ -174,6 +176,21 @@ describe("the relay", () => {
     await handlers.onMessage?.(ws, "hello");
     expect(ws.closes[0]?.code).toBe(CloseCode.policy);
     await until(() => vnc.closed === 1, "the TCP close");
+  });
+
+  it("answers the page's ping, so the page can tell the relay is still there, and sends the Mac nothing", async () => {
+    const { ws, handlers } = open(ticket());
+    await until(() => ws.sent.length > 0, "the greeting");
+    now += 50_000;
+    await handlers.onMessage?.(ws, PING_FRAME);
+    expect(ws.texts).toEqual([PONG_FRAME]);
+    expect(ws.closes).toEqual([]);
+    // A ping is traffic: the page is there, even when the screen is still.
+    now += 50_000;
+    registry.sweep();
+    expect(ws.closes).toEqual([]);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(vnc.received).toEqual([]);
   });
 
   it("closes on an ack for bytes the page was never sent", async () => {

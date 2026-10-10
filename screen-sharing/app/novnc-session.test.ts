@@ -21,20 +21,32 @@
 import { webcrypto } from "node:crypto";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { LOST_AFTER_MS, PING_EVERY_MS, PING_FRAME, PONG_FRAME } from "../shared/channels";
+import { LOST_MESSAGE } from "./end-message";
 import type { Rfb } from "./rfb";
+import { MAX_WHEEL_STEPS, WHEEL_STEP_PX } from "./wheel";
 
 class FakeRelaySocket extends EventTarget {
   binaryType = "arraybuffer";
   protocol = "";
   readyState = 1;
   onopen: ((event: Event) => void) | null = null;
-  onmessage: ((event: { data: ArrayBuffer }) => void) | null = null;
+  onmessage: ((event: MessageEvent) => void) | null = null;
   onerror: ((event: Event) => void) | null = null;
   onclose: ((event: { code: number; reason: string; wasClean: boolean }) => void) | null = null;
-  /** Every message the client sent, one entry per `send`. */
+  /** Every binary frame the client sent, one entry per `send`. */
   sent: Uint8Array[] = [];
+  /** The page's own text frames: acks and pings. */
+  texts: string[] = [];
+  /** Whether the relay answers pings; false is bb gone with this socket left open. */
+  answering = true;
 
-  send(data: ArrayBufferView | ArrayBuffer): void {
+  send(data: string | ArrayBufferView | ArrayBuffer): void {
+    if (typeof data === "string") {
+      this.texts.push(data);
+      if (data === PING_FRAME && this.answering) this.receive(PONG_FRAME);
+      return;
+    }
     const bytes = data instanceof ArrayBuffer ? new Uint8Array(data) : new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
     this.sent.push(new Uint8Array(bytes));
   }
@@ -50,7 +62,13 @@ class FakeRelaySocket extends EventTarget {
   /** The Mac sending bytes to the client. */
   serverSends(...parts: (number[] | Uint8Array | string)[]): void {
     const bytes = parts.flatMap((part) => (typeof part === "string" ? [...Buffer.from(part, "latin1")] : [...part]));
-    this.onmessage?.({ data: new Uint8Array(bytes).buffer });
+    this.receive(new Uint8Array(bytes).buffer);
+  }
+
+  private receive(data: string | ArrayBuffer): void {
+    const event = new MessageEvent("message", { data });
+    this.dispatchEvent(event);
+    this.onmessage?.(event);
   }
 }
 
@@ -595,5 +613,111 @@ describe("Full screen", () => {
     await screenSession.setFullScreen(true, page);
     expect(requestFullscreen).not.toHaveBeenCalled();
     expect(screenSession.getSnapshot().fullScreen).toBe(false);
+  });
+});
+
+/** Splits what the page sent after the sign-in into RFB messages: PointerEvents (6 bytes) and FramebufferUpdateRequests (10). */
+function pointerEvents(frames: Uint8Array[]): number[] {
+  const masks: number[] = [];
+  for (const frame of frames) {
+    let at = 0;
+    while (at < frame.length) {
+      const type = frame[at];
+      if (type === 5) masks.push(frame[at + 1] ?? -1);
+      at += type === 5 ? 6 : type === 3 ? 10 : type === 4 ? 8 : frame.length;
+    }
+  }
+  return masks;
+}
+
+function wheel(canvas: HTMLCanvasElement, deltaY: number, deltaX = 0): WheelEvent {
+  const event = new WheelEvent("wheel", { deltaY, deltaX, deltaMode: 0, clientX: 2, clientY: 2, bubbles: true, cancelable: true });
+  canvas.dispatchEvent(event);
+  return event;
+}
+
+describe("scrolling the Mac", () => {
+  async function connected(): Promise<HTMLCanvasElement> {
+    await signIn();
+    await acceptAndInit();
+    const canvas = container.querySelector("canvas");
+    if (canvas === null) throw new Error("noVNC drew no canvas");
+    return canvas;
+  }
+
+  it("sends as many wheel steps as the scroll covers, in one frame, where noVNC would send one", async () => {
+    const canvas = await connected();
+    const mark = socket.sent.length;
+    const event = wheel(canvas, 5 * WHEEL_STEP_PX);
+    expect(event.defaultPrevented).toBe(true);
+    const frames = sentAfter(mark);
+    expect(frames).toHaveLength(1);
+    // Button 5 (down) pressed and released, five times.
+    expect(pointerEvents(frames)).toEqual([16, 0, 16, 0, 16, 0, 16, 0, 16, 0]);
+  });
+
+  it("scrolls up and sideways, and keeps a held button held", async () => {
+    const canvas = await connected();
+    canvas.dispatchEvent(new MouseEvent("mousedown", { button: 0, buttons: 1, clientX: 2, clientY: 2, bubbles: true, cancelable: true }));
+    const mark = socket.sent.length;
+    wheel(canvas, -WHEEL_STEP_PX, WHEEL_STEP_PX);
+    // Right (button 7) then up (button 4), each with the left button still down.
+    expect(pointerEvents(sentAfter(mark))).toEqual([1 | 64, 1, 1 | 8, 1]);
+  });
+
+  it("loses none of a trackpad's small movements", async () => {
+    const canvas = await connected();
+    const mark = socket.sent.length;
+    for (let event = 0; event < 60; event++) wheel(canvas, 7);
+    const presses = pointerEvents(sentAfter(mark)).filter((mask) => mask === 16);
+    expect(presses).toHaveLength(Math.floor((60 * 7) / WHEEL_STEP_PX));
+  });
+
+  it("bounds what one event sends", async () => {
+    const canvas = await connected();
+    const mark = socket.sent.length;
+    wheel(canvas, 10_000);
+    expect(pointerEvents(sentAfter(mark)).filter((mask) => mask === 16)).toHaveLength(MAX_WHEEL_STEPS);
+  });
+
+  it("sends nothing while View only, and leaves the page's own scrolling alone", async () => {
+    const canvas = await connected();
+    screenSession.setViewOnly(true);
+    const mark = socket.sent.length;
+    const event = wheel(canvas, 5 * WHEEL_STEP_PX);
+    expect(sentAfter(mark)).toEqual([]);
+    expect(event.defaultPrevented).toBe(false);
+  });
+});
+
+describe("the relay's liveness, with real noVNC", () => {
+  it("pings the relay while the screen keeps working", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+    try {
+      await signIn();
+      await acceptAndInit();
+      vi.advanceTimersByTime(5 * PING_EVERY_MS);
+      expect(socket.texts.filter((text) => text === PING_FRAME)).toHaveLength(5);
+      // The pongs on the same socket leave noVNC's reading of the screen's bytes alone.
+      socket.serverSends(cursorUpdate(2, 2));
+      await until(() => container.querySelector("[data-screen-sharing-screen]")?.hasAttribute("data-remote-cursor") === true, "the cursor");
+      expect(screenSession.getSnapshot().stage.kind).toBe("connected");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("ends the session, saying so, when bb goes away and leaves the socket open", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+    try {
+      await signIn();
+      await acceptAndInit();
+      socket.answering = false;
+      vi.advanceTimersByTime(LOST_AFTER_MS + 2 * PING_EVERY_MS);
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(screenSession.getSnapshot()).toMatchObject({ stage: { kind: "idle" }, ended: LOST_MESSAGE });
+    expect(socket.readyState).toBe(3);
   });
 });

@@ -3,7 +3,7 @@
  * closed (its close code says why the server ended it) and whether macOS
  * refused the sign-in.
  */
-import { CloseCode, SESSION_LIMITS } from "../shared/channels";
+import { CloseCode, LOST_AFTER_MS, SESSION_LIMITS } from "../shared/channels";
 
 export interface SessionEnd {
   /** How the WebSocket closed; null when it never opened or the page closed it. */
@@ -22,6 +22,9 @@ function sentence(text: string): string {
 }
 
 export const CLOSED_BY_USER_MESSAGE = "Closed from bb with Close all.";
+
+/** The relay stopped answering with its socket still open (liveness.ts): bb restarting, or the network gone. */
+export const LOST_MESSAGE = `Lost the connection to bb: nothing came back for ${LOST_AFTER_MS / 1000} seconds. Connect again once bb is reachable.`;
 
 export function endMessage(end: SessionEnd): string {
   if (end.securityFailure !== null) return `Sign-in failed: ${sentence(end.securityFailure)}`;
