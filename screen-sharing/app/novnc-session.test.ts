@@ -24,6 +24,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import { LOST_AFTER_MS, PING_EVERY_MS, PING_FRAME, PONG_FRAME } from "../shared/channels";
 import { DEFAULT_SCROLL_SPEED } from "../shared/settings";
 import { LOST_MESSAGE } from "./end-message";
+import { wrongAccount } from "./clipboard";
 import type { Rfb } from "./rfb";
 import { WHEEL_STEP_PX, maxWheelSteps } from "./wheel";
 
@@ -130,6 +131,12 @@ beforeAll(() => {
 
 let socket: FakeRelaySocket;
 let container: HTMLDivElement;
+/** The account bb runs as on the fake Mac, whose clipboard the Clipboard menu reaches. */
+let macAccount: { userName: string; fullName: string | null } = { userName: "ci", fullName: "CI Bot" };
+const macClipboard = {
+  read: async () => ({ account: macAccount, changeCount: 1, text: null, tooLarge: false }),
+  write: async () => ({ account: macAccount, changeCount: 2 }),
+};
 
 beforeEach(() => {
   socket = new FakeRelaySocket();
@@ -204,7 +211,7 @@ function heldCredentials(): Record<string, unknown> {
 /** Connects, plays Apple's side up to the sign-in prompt, and signs in. */
 async function signIn(): Promise<void> {
   screenSession.attach(container);
-  screenSession.connect({ openSession: async () => ({ token: "t" }), hostId: "host_mini", hostName: "MacMini" });
+  screenSession.connect({ openSession: async () => ({ token: "t" }), macClipboard, hostId: "host_mini", hostName: "MacMini" });
   await until(() => relay.rfbs.length === 1, "the RFB client");
 
   socket.serverSends("RFB 003.889\n");
@@ -614,6 +621,24 @@ describe("Full screen", () => {
     await screenSession.setFullScreen(true, page);
     expect(requestFullscreen).not.toHaveBeenCalled();
     expect(screenSession.getSnapshot().fullScreen).toBe(false);
+  });
+
+  it.each([
+    { account: { userName: "captain", fullName: null }, matches: true },
+    { account: { userName: "ci", fullName: "Captain" }, matches: true },
+    { account: { userName: "ci", fullName: "CI Bot" }, matches: false },
+  ])("says whether the sign-in was the account bb runs as on the Mac ($account.userName, $account.fullName)", async ({ account, matches }) => {
+    macAccount = account;
+    await signIn();
+    await acceptAndInit();
+    await until(() => screenSession.getSnapshot().clipboardAccess !== null, "whose clipboard it is");
+    expect(screenSession.getSnapshot().clipboardAccess).toEqual(
+      matches ? { available: true, account } : { available: false, reason: wrongAccount("MacMini", account) },
+    );
+    // Only the user name was kept for it, and only for the session.
+    expect(heldCredentials().password).toBeUndefined();
+    screenSession.disconnect();
+    expect(screenSession.getSnapshot().clipboardAccess).toBeNull();
   });
 });
 

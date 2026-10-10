@@ -5,6 +5,21 @@ Notable changes to `screen-sharing`. The other plugins in this repository versio
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.4.0
+
+### Added
+
+- A **Clipboard** menu in the session toolbar, next to Send keys. *Send clipboard* puts the text on
+  your clipboard on the Mac; *Receive clipboard* puts the Mac's clipboard text on yours; *Auto sync
+  clipboard* does both whenever either side's clipboard changes, and is remembered on that computer
+  for the next connection. Text only, in any language, up to 1 MB. It reaches the clipboard of the
+  macOS account bb runs as on that Mac, so sign in to Screen Sharing as that account; signed in as
+  another one, the menu says why it is off.
+
+### Changed
+
+- Needs bb 0.46 or later.
+
 ## 0.3.0
 
 ### Added

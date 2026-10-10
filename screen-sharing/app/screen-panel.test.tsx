@@ -19,6 +19,7 @@ import { ScreenPanel, SessionsHeader } from "./screen-panel";
 import { hostDirectory } from "./hosts";
 import { screenSessions } from "./session-store";
 import { LOST_MESSAGE } from "./end-message";
+import { clipboardPreference } from "./clipboard";
 
 class FakeSocket extends EventTarget {
   closed = false;
@@ -105,6 +106,7 @@ afterEach(() => {
   // The session belongs to the window, so it outlives each test's page.
   screenSessions.reset();
   hostDirectory.reset();
+  clipboardPreference.reset();
 });
 
 const ready: ScreenStatus = {
@@ -747,5 +749,152 @@ describe("the page's keyboard controls", () => {
       Element.prototype.requestFullscreen = original;
       Reflect.deleteProperty(navigator, "keyboard");
     }
+  });
+});
+
+describe("the page's clipboard controls", () => {
+  /** This computer's clipboard, as `navigator.clipboard.readText` gives it. */
+  let local: string;
+  /** The Mac's clipboard, as the server's `clipboardRead` and `clipboardWrite` answer for it. */
+  let mac: { text: string; changeCount: number; writes: string[]; error: string | null };
+  const account = { userName: "ci", fullName: "CI Bot" };
+
+  beforeEach(() => {
+    local = "";
+    mac = { text: "", changeCount: 1, writes: [], error: null };
+    Object.defineProperty(navigator, "clipboard", { value: { readText: vi.fn(async () => local) }, configurable: true });
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
+  });
+
+  afterEach(() => {
+    Reflect.deleteProperty(navigator, "clipboard");
+    vi.restoreAllMocks();
+  });
+
+  function renderWithMac() {
+    return renderPanel({
+      clipboardRead: ({ since }: { since: number | null }) => {
+        if (mac.error !== null) throw new Error(mac.error);
+        return {
+        account,
+        changeCount: mac.changeCount,
+        text: since === null || since === mac.changeCount ? null : mac.text,
+        tooLarge: false,
+        };
+      },
+      clipboardWrite: ({ text }: { text: string }) => {
+        mac.writes.push(text);
+        mac.text = text;
+        mac.changeCount++;
+        return { account, changeCount: mac.changeCount };
+      },
+    } as Partial<PluginRpcTestHandlers<RpcContract>>);
+  }
+
+  async function connected(userName?: string) {
+    const view = renderWithMac();
+    const rfb = await connect();
+    if (userName !== undefined) {
+      act(() => rfb.emit("credentialsrequired", { types: ["username", "password"] }));
+      fireEvent.change(screen.getByLabelText("User name"), { target: { value: userName } });
+      fireEvent.change(screen.getByLabelText("Password"), { target: { value: "pw" } });
+      fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    }
+    act(() => rfb.emit("connect"));
+    await waitFor(() => expect(view.rpcCalls.some((call) => call.method === "clipboardRead")).toBe(true));
+    return { view, rfb };
+  }
+
+  async function pick(item: RegExp | string): Promise<void> {
+    fireEvent.click(screen.getByRole("button", { name: "Clipboard" }));
+    const role = item === "Auto sync clipboard" ? "menuitemcheckbox" : "menuitem";
+    await act(async () => {
+      fireEvent.click(screen.getByRole(role, { name: item }));
+    });
+  }
+
+  it("sends this computer's clipboard to the Mac, and copies the Mac's here, any characters", async () => {
+    const { view } = await connected("ci");
+    local = "from here 🙂";
+    await pick(/Send clipboard/);
+    await waitFor(() => expect(mac.writes).toEqual(["from here 🙂"]));
+    expect(view.rpcCalls.find((call) => call.method === "clipboardWrite")?.input).toEqual({ hostId: "host_mini", text: "from here 🙂" });
+    expect(screen.getByRole("status").textContent).toContain("Sent this computer’s clipboard to MacMini.");
+    expect(screen.queryByRole("menu")).toBeNull();
+
+    mac.text = "from the Mac 日本語";
+    mac.changeCount++;
+    await pick(/Receive clipboard/);
+    await waitFor(() => expect(view.experimental_clipboardWrites).toEqual([{ text: "from the Mac 日本語" }]));
+    expect(screen.getByRole("status").textContent).toContain("Copied MacMini’s clipboard to this computer.");
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  /** The open menu's items, by role. */
+  function menuItems(): string[] {
+    return Array.from(screen.getByRole("menu").querySelectorAll('[role="menuitem"], [role="menuitemcheckbox"]'), (item) => item.textContent ?? "");
+  }
+
+  it("offers its three items, and says in small print whose clipboard they reach", async () => {
+    await connected("ci");
+    fireEvent.click(screen.getByRole("button", { name: "Clipboard" }));
+    expect(menuItems()).toEqual(["Auto sync clipboard", "Send clipboardto MacMini", "Receive clipboardfrom MacMini"]);
+    const note = screen.getByText("Text only. It reaches the clipboard of ci, the account bb runs as on MacMini.");
+    expect(note.className).toContain("text-xs");
+  });
+
+  it("holds only the reason, one size up, after signing in as another account", async () => {
+    await connected("gustavo");
+    fireEvent.click(screen.getByRole("button", { name: "Clipboard" }));
+    const reason = await screen.findByText(
+      "Clipboard sync reaches only the clipboard of ci, the account bb runs as on MacMini. Sign in as ci to use it.",
+    );
+    expect(reason.className).toContain("text-sm");
+    expect(menuItems()).toEqual([]);
+    expect(mac.writes).toEqual([]);
+  });
+
+  it("holds only the reason when the Mac's clipboard cannot be reached, and asks again as it opens", async () => {
+    mac.error = "old bb on that Mac";
+    const { view } = await connected("ci");
+    fireEvent.click(screen.getByRole("button", { name: "Clipboard" }));
+    expect((await screen.findByText("Could not reach MacMini’s clipboard: old bb on that Mac.")).className).toContain("text-sm");
+    expect(menuItems()).toEqual([]);
+
+    mac.error = null;
+    fireEvent.click(screen.getByRole("button", { name: "Clipboard" }));
+    const reads = view.rpcCalls.filter((call) => call.method === "clipboardRead").length;
+    fireEvent.click(screen.getByRole("button", { name: "Clipboard" }));
+    await waitFor(() => expect(view.rpcCalls.filter((call) => call.method === "clipboardRead").length).toBe(reads + 1));
+    await waitFor(() => expect(menuItems()).toHaveLength(3));
+  });
+
+  it("syncs both ways with Auto sync, and keeps it on for the next connection", async () => {
+    const { view } = await connected("ci");
+    local = "copied here";
+    await pick("Auto sync clipboard");
+    await waitFor(() => expect(mac.writes).toEqual(["copied here"]));
+
+    // The Mac's clipboard is checked about once a second while the screen is shown.
+    mac.text = "copied on the Mac";
+    mac.changeCount++;
+    await waitFor(() => expect(view.experimental_clipboardWrites).toEqual([{ text: "copied on the Mac" }]), { timeout: 3_000 });
+
+    fireEvent.click(screen.getByRole("button", { name: "Disconnect" }));
+    local = "copied while away";
+    const [, body] = await screen.findAllByRole("button", { name: "Connect" });
+    fireEvent.click(body as HTMLElement);
+    await waitFor(() => expect(rfbs).toHaveLength(2));
+    act(() => (rfbs[1] as FakeRfb).emit("connect"));
+    await waitFor(() => expect(mac.writes).toEqual(["copied here", "copied while away"]));
+    fireEvent.click(screen.getByRole("button", { name: "Clipboard" }));
+    expect(screen.getByRole("menuitemcheckbox", { name: "Auto sync clipboard" }).getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("is not offered while View only", async () => {
+    await connected();
+    fireEvent.click(screen.getByRole("button", { name: "View only" }));
+    expect((screen.getByRole("button", { name: "Clipboard" }) as HTMLButtonElement).disabled).toBe(true);
   });
 });

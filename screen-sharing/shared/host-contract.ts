@@ -7,12 +7,13 @@
  * Sharing only as fast as the viewer takes it. Bytes travel as base64, since
  * host calls and signals are JSON.
  *
- * Neither end parses the bytes. The app never imports this file.
+ * Neither end parses the bytes. The clipboard calls carry the Mac's clipboard
+ * text beside the session, not through it. The app never imports this file.
  */
 import { defineRpcContract, type ExperimentalHostSignals } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
-import { ScreenCheckSchema } from "./channels";
+import { ClipboardReadSchema, ClipboardWrittenSchema, MAX_CLIPBOARD_BYTES, ScreenCheckSchema } from "./channels";
 
 /** The most raw bytes one `write` or one `data` signal carries. */
 export const MAX_CHUNK_BYTES = 128 * 1024;
@@ -41,6 +42,14 @@ export const hostContract = defineRpcContract({
   keepalive: { input: z.object({ sessionId: SessionId }), output: z.object({ open: z.boolean() }) },
   /** Ends a session. Safe for one the host does not know. */
   close: { input: z.object({ sessionId: SessionId }), output: Empty },
+  /**
+   * This Mac's clipboard, for the account bb runs as (host/pasteboard.ts): the
+   * change count, and the text when `since` is a count other than the current
+   * one. The server calls it only for a Mac with a session open.
+   */
+  clipboardRead: { input: z.object({ since: z.number().int().nullable() }), output: ClipboardReadSchema },
+  /** Puts text on this Mac's clipboard. */
+  clipboardWrite: { input: z.object({ text: z.string().max(MAX_CLIPBOARD_BYTES) }), output: ClipboardWrittenSchema },
 });
 
 export type HostContract = typeof hostContract;
