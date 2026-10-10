@@ -55,6 +55,8 @@ export function releaseRemoteButtons(rfb: Rfb): void {
 
 /** The parts of noVNC 1.7.0 the wheel handler below uses. */
 interface WheelInternals {
+  /** noVNC's keyboard, and the keys it has sent down and not up, by `code`. */
+  _keyboard?: { _keyDownList?: Record<string, number> } | null;
   _rfbConnectionState?: string;
   _canvas?: HTMLCanvasElement;
   _mouseButtonMask?: number;
@@ -82,22 +84,22 @@ const WHEEL_RIGHT = 1 << 6;
  * A trackpad pinch is no scroll: Chromium sends it as wheel events with
  * `ctrlKey` set and no key event, and scrolling the Mac by its deltas would
  * move the page there for a zoom gesture here. It is dropped — kept from
- * noVNC and from the browser's own zoom, and added to nothing — unless the
- * Control key is really down over the screen (noVNC has then sent Control to
- * the Mac too, so the Mac gets a Control-scroll, as from its own keyboard).
+ * noVNC and from the browser's own zoom, and added to nothing — unless noVNC
+ * has Control down on the Mac (its keyboard's `_keyDownList`), when the Mac
+ * gets a Control-scroll, as from its own keyboard. noVNC's list is the one
+ * that counts: it lets go of every key when the window loses focus, with no
+ * key-up on the page.
  */
 function scrollProportionally(rfb: Rfb, target: HTMLElement, channel: RelayChannel, scrollSpeed: () => number): void {
   const internals = rfb as unknown as WheelInternals;
   const steps = new WheelAccumulator();
   const listening = new AbortController();
   rfb.addEventListener("disconnect", () => listening.abort());
-  /** The Control key is down over the screen, by a key event — which a pinch never sends. */
-  let controlDown = false;
-  const noteControl = (event: KeyboardEvent) => {
-    if (event.key === "Control") controlDown = event.type === "keydown";
+  /** Whether noVNC has Control down on the Mac: a real key, which a pinch never presses. */
+  const controlDown = () => {
+    const held = internals._keyboard?._keyDownList ?? {};
+    return "ControlLeft" in held || "ControlRight" in held;
   };
-  target.addEventListener("keydown", noteControl, { capture: true, passive: true, signal: listening.signal });
-  target.addEventListener("keyup", noteControl, { capture: true, passive: true, signal: listening.signal });
   target.addEventListener(
     "wheel",
     (event) => {
@@ -107,9 +109,7 @@ function scrollProportionally(rfb: Rfb, target: HTMLElement, channel: RelayChann
       if (internals._rfbConnectionState !== "connected" || rfb.viewOnly) return;
       event.stopPropagation();
       event.preventDefault();
-      // A wheel event without ctrlKey also says Control is up, should its key-up have gone elsewhere.
-      if (!event.ctrlKey) controlDown = false;
-      else if (!controlDown) return; // A pinch.
+      if (event.ctrlKey && !controlDown()) return; // A pinch.
       const { x, y } = steps.add(event, scrollSpeed());
       const bounds = canvas.getBoundingClientRect();
       const atX = Math.min(Math.max(event.clientX - bounds.left, 0), Math.max(bounds.width - 1, 0));

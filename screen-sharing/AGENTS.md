@@ -160,12 +160,14 @@ behind the tunnel goes away, and no close event comes, so nothing told noVNC or 
 sends `ping` every `PING_EVERY_MS` (2 s), the relay answers `pong` at once, and the store ends the
 session with `LOST_MESSAGE` when a ping has had no answer, and nothing else has arrived either, for
 `LOST_AFTER_MS` (6 s) — so within about 8 s. Any frame counts as an answer, so a pong stuck behind a
-big screen update is no false alarm. The wait is counted in ticks, each worth at most one interval
-however late it runs, and a clock set back counts as one interval: a browser holds back a busy or
-hidden page's timers and handles the pong that arrived meanwhile only after the late tick, so time the
-page was not running never counts as the relay's silence (review pass 1 found a 2 s-late tick ending
-a session whose pong was waiting). A tab throttled to a tick a minute is called lost only after three
-of them with nothing heard in between, and no clock jump counts for more than an interval. A ping is traffic for the server's 30-minute no-traffic limit, which
+big screen update is no false alarm. The wait is counted in ticks, and a late tick decides nothing: a
+browser holds back a busy, hidden or suspended page's timers, and on resume the late tick may run
+before the pong that arrived meanwhile is handled. So a tick more than 1.5 intervals after the one
+before (or after the clock went back) starts the wait afresh, and the session ends only after 6 s of
+ticks on time with nothing heard; a tick a little late counts as one interval (review passes 1 and 2
+found a late first, then a late final, tick ending a session whose pong was waiting). The cost: a tab
+whose every tick is held back (Chrome's one-a-minute throttling of hidden tabs) never ends a dead
+session while hidden — it does within seconds of being shown again. A ping is traffic for the server's 30-minute no-traffic limit, which
 already only catches clients that went away. There is no reconnect: the session's sign-in is gone with
 it, and Connect starts again.
 
@@ -184,9 +186,10 @@ proportion. The page (`ScreenMount`) reads it with
 change applies to an open session. One event's steps go to the relay as one frame
 (`RelayChannel.gather`), so a scroll is one host call per event. A trackpad pinch arrives as wheel
 events with `ctrlKey` set and no key event (Chromium's `touchpad_pinch_event_queue.cc`); the handler
-drops it — no step, nothing gathered, kept from noVNC and from the browser's zoom — unless a real
-Control key-down went through the screen element, when it scrolls (noVNC has already sent Control to
-the Mac).
+drops it — no step, nothing gathered, kept from noVNC and from the browser's zoom — unless noVNC has
+Control down on the Mac (`_keyboard._keyDownList`, pinned 1.7.0), when it scrolls with Control held
+there. noVNC's own list decides because noVNC releases every key on window blur without a DOM key-up;
+a tracker of the page's key events stayed "down" and let a pinch after blur scroll (review pass 2).
 
 **One display picture.** A Mac with several displays sends noVNC one framebuffer; picking a display is
 Apple's private extension to its own Screen Sharing app. Apple documents nothing for third-party

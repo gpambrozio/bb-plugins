@@ -79,24 +79,50 @@ describe("the relay's liveness", () => {
     expect(socket.texts).toEqual([PING_FRAME, PING_FRAME]);
   });
 
-  it.each([2_000, 4_000, 60_000])("counts a tick %i ms late as one interval, so a dead relay still ends the session soon after", (delay) => {
+  it.each([2_000, 4_000, 60_000])("gives a tick %i ms late a fresh grace period, so a dead relay ends the session a full wait later", (delay) => {
     vi.advanceTimersByTime(PING_EVERY_MS); // ping out
     vi.setSystemTime(Date.now() + delay);
     vi.advanceTimersByTime(PING_EVERY_MS);
     expect(lost).toBe(0);
-    // Two more on-time intervals make LOST_AFTER_MS of waiting the page could vouch for.
-    vi.advanceTimersByTime(LOST_AFTER_MS - 2 * PING_EVERY_MS);
+    // From the late tick on, LOST_AFTER_MS of on-time ticks with nothing heard.
+    vi.advanceTimersByTime(LOST_AFTER_MS - PING_EVERY_MS);
     expect(lost).toBe(0);
     vi.advanceTimersByTime(PING_EVERY_MS);
     expect(lost).toBe(1);
   });
 
-  it("ignores the clock going backwards", () => {
+  it.each([2_000, 60_000])("does not end the session on a final tick run %i ms late, before the queued pong is handled", (delay) => {
+    vi.advanceTimersByTime(PING_EVERY_MS); // t=2: ping
+    vi.advanceTimersByTime(LOST_AFTER_MS - PING_EVERY_MS); // t=4 and t=6: one interval short of the deadline
+    expect(lost).toBe(0);
+    // The page is suspended; the t=8 tick runs at t=8 + delay, ahead of the pong that arrived meanwhile.
+    vi.setSystemTime(Date.now() + delay);
     vi.advanceTimersByTime(PING_EVERY_MS);
+    expect(lost).toBe(0);
+    socket.receive(PONG_FRAME);
+    vi.advanceTimersByTime(PING_EVERY_MS);
+    expect(lost).toBe(0);
+  });
+
+  it("gives the clock going backwards a fresh grace period too", () => {
+    vi.advanceTimersByTime(PING_EVERY_MS);
+    vi.advanceTimersByTime(LOST_AFTER_MS - PING_EVERY_MS);
     vi.setSystemTime(Date.now() - 3_600_000);
+    vi.advanceTimersByTime(PING_EVERY_MS);
+    expect(lost).toBe(0);
     vi.advanceTimersByTime(LOST_AFTER_MS - PING_EVERY_MS);
     expect(lost).toBe(0);
     vi.advanceTimersByTime(PING_EVERY_MS);
+    expect(lost).toBe(1);
+  });
+
+  it("still ends the session on time when ticks are only a little late", () => {
+    vi.advanceTimersByTime(PING_EVERY_MS); // ping out
+    // Every tick 0.9 s late: a busy page, not a suspended one.
+    for (let tick = 0; tick < LOST_AFTER_MS / PING_EVERY_MS; tick++) {
+      vi.setSystemTime(Date.now() + 900);
+      vi.advanceTimersByTime(PING_EVERY_MS);
+    }
     expect(lost).toBe(1);
   });
 

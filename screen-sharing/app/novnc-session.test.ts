@@ -727,6 +727,19 @@ describe("scrolling the Mac", () => {
     expect(sentAfter(after)).toEqual([]);
   });
 
+  it("takes a pinch for a pinch after noVNC let go of Control when the window lost focus", async () => {
+    const canvas = await connected();
+    canvas.dispatchEvent(new KeyboardEvent("keydown", { key: "Control", code: "ControlLeft", ctrlKey: true, bubbles: true, cancelable: true }));
+    // The user switches away with Control down and lets go of it elsewhere: noVNC releases it on blur,
+    // with no key-up on the page.
+    const mark = socket.sent.length;
+    window.dispatchEvent(new Event("blur"));
+    expect(sentAfter(mark).some((m) => m[0] === 4 && m[1] === 0 && m[7] === 0xe3)).toBe(true); // Control_L up
+    const after = socket.sent.length;
+    wheel(canvas, 48, 0, true);
+    expect(sentAfter(after)).toEqual([]);
+  });
+
   it("sends nothing while View only, and leaves the page's own scrolling alone", async () => {
     const canvas = await connected();
     screenSession.setViewOnly(true);

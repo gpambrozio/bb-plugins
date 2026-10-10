@@ -8,12 +8,13 @@
  * (shared/channels.ts). Any frame counts as an answer: a busy screen's bytes
  * may arrive ahead of the pong.
  *
- * The wait is counted in ticks, not by the clock: each tick adds at most one
- * interval, however late it runs. A browser holds back a page's timers — a
- * busy page, a hidden tab, a short sleep — and the pong that arrived meanwhile
- * is handled only after the late tick, so time the page was not running must
- * not count as the relay's silence. The clock jumping either way does not
- * count either.
+ * The wait is counted in ticks, not by the clock, and a late tick decides
+ * nothing. A browser holds back a page's timers — a busy page, a hidden tab,
+ * a laptop asleep — and when the page runs again the late tick may run before
+ * the pong that arrived meanwhile is handled. So a tick more than half an
+ * interval late (`LATE_MS`), or one after the clock went back, starts the
+ * wait afresh: the session ends only after `LOST_AFTER_MS` of ticks on time
+ * with nothing heard. A tick a little late counts as one interval.
  *
  * It listens beside noVNC on the same socket, as flow.ts does; the relay's
  * pongs never reach noVNC (relay-channel.ts).
@@ -22,12 +23,14 @@ import { LOST_AFTER_MS, PING_EVERY_MS, PING_FRAME } from "../shared/channels";
 
 /** WebSocket.OPEN, which the test doubles do not define. */
 const OPEN = 1;
+/** A tick this long after the one before ran late: the page was held back, not the relay. */
+const LATE_MS = PING_EVERY_MS * 1.5;
 
 /** Starts watching `socket`; the returned function stops. */
 export function watchRelay(socket: WebSocket, onLost: () => void): () => void {
   /** Whether a ping is out with nothing heard since. */
   let waiting = false;
-  /** How long it has been out, as the page could watch it: at most one interval per tick. */
+  /** How long it has been out, as the page could watch it: one interval per tick on time. */
   let waited = 0;
   let lastTick = Date.now();
 
@@ -41,8 +44,12 @@ export function watchRelay(socket: WebSocket, onLost: () => void): () => void {
     lastTick = now;
     if (socket.readyState !== OPEN) return;
     if (waiting) {
-      // Late ticks count as one interval; a clock set back counts as one too.
-      waited += elapsed < 0 ? PING_EVERY_MS : Math.min(elapsed, PING_EVERY_MS);
+      if (elapsed < 0 || elapsed > LATE_MS) {
+        // Held back, or the clock moved: let what arrived meanwhile be handled before judging.
+        waited = 0;
+        return;
+      }
+      waited += Math.min(elapsed, PING_EVERY_MS);
       if (waited < LOST_AFTER_MS) return;
       stop();
       onLost();
