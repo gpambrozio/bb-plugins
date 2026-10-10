@@ -170,11 +170,13 @@ it, and Connect starts again.
 1.7.0 sends at most one step per browser wheel event, once 50 px have gathered, and drops the rest:
 a flick or a wheel notch was one step, a trackpad one step per 50 px. `createRfb` puts its own wheel
 listener on the screen element, in the capture phase so noVNC's on the canvas never sees the event,
-and sends `speed` steps per `WHEEL_STEP_PX` (20 px, about a line) of scrolling with the remainder
-kept, at most `MAX_WHEEL_STEPS × speed` (16 ×) per event, through noVNC's private `_handleMouseButton`
-like `releaseRemoteButtons`. `speed` is the "Scroll speed" setting (1–5, `shared/settings.ts`): one
-step per line (speed 1) still moved the Mac far too little — the owner tried it on the server's own
-Mac, so it was distance, not delay — and the default is 3. The page (`ScreenMount`) reads it with
+and sends `speed` steps per `WHEEL_STEP_PX` (12 px) of scrolling with the remainder kept, at most
+`maxWheelSteps(speed)` per event (80 at the default), through noVNC's private `_handleMouseButton`
+like `releaseRemoteButtons`. `speed` is the "Scroll speed" setting (1–5, `shared/settings.ts`,
+default 3), so the default is a step per 4 px. The owner tuned it on the server's own Mac, where
+there is no link delay: one step per line (20 px) moved the Mac far too little, three per line was
+still short, and five per line felt right — that is the default now, with 1–5 spread around it in
+proportion. The page (`ScreenMount`) reads it with
 `useSettings()` and hands it to the store, and the wheel handler reads it on every event, so a
 change applies to an open session. One event's steps go to the relay as one frame
 (`RelayChannel.gather`), so a scroll is one host call per event.

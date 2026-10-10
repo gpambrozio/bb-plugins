@@ -8,21 +8,26 @@
  * many times slower than scrolling the page.
  *
  * Here scrolling is turned into as many steps as one event's distance holds,
- * and the remainder carries over to the next event. At speed 1 a step is
- * `WHEEL_STEP_PX` of scrolling, about a line of text (noVNC's own line
- * height). That still scrolled the Mac far too little: tried on the bb
- * server's own Mac, with no link delay, a swipe moved the remote page a
- * fraction of what it moves a local one. So the "Scroll speed" setting
- * (shared/settings.ts) multiplies the steps, 1 to 5, and defaults to 3: a
- * step per ≈7 px.
+ * and the remainder carries over to the next event; the "Scroll speed"
+ * setting (shared/settings.ts, 1 to 5) multiplies the steps. Tried on the bb
+ * server's own Mac, with no link delay: a step per line of scrolling (20 px)
+ * moved the remote page far too little, and five steps per line felt right.
+ * So the default, 3, is a step per 4 px, and each speed s is s/3 of that.
  */
 
-/** Scrolling per step at speed 1. */
-export const WHEEL_STEP_PX = 20;
+import { DEFAULT_SCROLL_SPEED } from "../shared/settings";
+
+/** Scrolling per step at speed 1: 4 px at the default speed of 3. */
+export const WHEEL_STEP_PX = 12;
 /** noVNC's figure for a scroll given in lines (deltaMode 1) rather than pixels. */
 export const WHEEL_LINE_PX = 19;
-/** At speed 1, one wheel event never sends more than this many steps per direction; the rest is dropped. The cap grows with the speed. */
-export const MAX_WHEEL_STEPS = 16;
+/** At the default speed, one wheel event never sends more than this many steps per direction; the rest is dropped. */
+const MAX_WHEEL_STEPS = 80;
+
+/** The most steps one wheel event sends per direction at `speed`, in proportion to the default's. */
+export function maxWheelSteps(speed: number): number {
+  return Math.round((MAX_WHEEL_STEPS * speed) / DEFAULT_SCROLL_SPEED);
+}
 
 /** DOM WheelEvent.deltaMode values. */
 const DOM_DELTA_PIXEL = 0;
@@ -53,7 +58,7 @@ export class WheelAccumulator {
     const y = this.take(this.y);
     this.x -= x * WHEEL_STEP_PX;
     this.y -= y * WHEEL_STEP_PX;
-    return { x: clamp(x, MAX_WHEEL_STEPS * speed), y: clamp(y, MAX_WHEEL_STEPS * speed) };
+    return { x: clamp(x, maxWheelSteps(speed)), y: clamp(y, maxWheelSteps(speed)) };
   }
 
   /** A turn the other way starts afresh, rather than first paying back what was left over. */

@@ -7,7 +7,7 @@
  */
 import type { PluginSettingDescriptor } from "@get-bb/plugin-sdk";
 
-/** How many times 1× the Mac scrolls: 1× is one wheel step per 20 px of scrolling (app/wheel.ts). */
+/** How far the Mac scrolls, in proportion: 3 is a wheel step per 4 px of scrolling, and s is s/3 of that (app/wheel.ts). */
 export const SCROLL_SPEEDS = ["1", "2", "3", "4", "5"] as const;
 export const DEFAULT_SCROLL_SPEED = 3;
 

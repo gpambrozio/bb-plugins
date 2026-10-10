@@ -25,7 +25,7 @@ import { LOST_AFTER_MS, PING_EVERY_MS, PING_FRAME, PONG_FRAME } from "../shared/
 import { DEFAULT_SCROLL_SPEED } from "../shared/settings";
 import { LOST_MESSAGE } from "./end-message";
 import type { Rfb } from "./rfb";
-import { MAX_WHEEL_STEPS, WHEEL_STEP_PX } from "./wheel";
+import { WHEEL_STEP_PX, maxWheelSteps } from "./wheel";
 
 class FakeRelaySocket extends EventTarget {
   binaryType = "arraybuffer";
@@ -696,7 +696,7 @@ describe("scrolling the Mac", () => {
     const canvas = await connected();
     const mark = socket.sent.length;
     wheel(canvas, 10_000);
-    expect(pointerEvents(sentAfter(mark)).filter((mask) => mask === 16)).toHaveLength(MAX_WHEEL_STEPS * DEFAULT_SCROLL_SPEED);
+    expect(pointerEvents(sentAfter(mark)).filter((mask) => mask === 16)).toHaveLength(maxWheelSteps(DEFAULT_SCROLL_SPEED));
   });
 
   it("sends nothing while View only, and leaves the page's own scrolling alone", async () => {
