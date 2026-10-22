@@ -135,6 +135,29 @@ describe("bb firstmate-crew crew spawn", () => {
       expect(modelOnly.exitCode).not.toBe(0);
       expect(threads.spawned).toEqual([]);
     });
+
+    it("--reasoning takes a level the provider lists beyond the standard ones", async () => {
+      const { cli, threads, dir } = await setup();
+      const result = await cli.run([...SPAWN, "--provider", "codex", "--model", "gpt-5", "--reasoning", "minimal"], { threadId: "thr_mate", cwd: dir });
+      expect(result.exitCode).toBe(0);
+      expect(threads.spawned[0]!.reasoningLevel).toBe("minimal");
+    });
+
+    it("an empty --reasoning is refused and spawns nothing", async () => {
+      const { cli, threads, dir } = await setup({ crewReasoning: "high" });
+      const result = await cli.run([...SPAWN, "--reasoning", " "], { threadId: "thr_mate", cwd: dir });
+      expect(result.exitCode).not.toBe(0);
+      expect(result.stderr).toContain("--reasoning needs a level");
+      expect(threads.spawned).toEqual([]);
+    });
+
+    it("bb's refusal of a level the model does not list reaches the caller", async () => {
+      const { cli, threads, dir } = await setup();
+      threads.failSpawn(new Error('Model gpt-5 does not support reasoning level "ultra".'));
+      const result = await cli.run([...SPAWN, "--reasoning", "ultra"], { threadId: "thr_mate", cwd: dir });
+      expect(result.exitCode).not.toBe(0);
+      expect(result.stderr).toContain('does not support reasoning level "ultra"');
+    });
   });
 
   it("crew spawn --environment reuses that environment", async () => {

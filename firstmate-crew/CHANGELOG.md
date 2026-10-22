@@ -5,6 +5,15 @@ Notable changes to `firstmate`. The other plugins in this repository version sep
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.5.1
+
+### Fixed
+
+- **A crewmate can be started with any reasoning level its model offers.** FirstMate used to accept only
+  a fixed set of levels and refused others that a model lists, such as "minimal". Now the first mate can
+  pass any level, and bb says so plainly when the chosen model does not offer it. Asking for the level
+  with nothing after it is refused rather than quietly falling back to the default.
+
 ## 0.5.0
 
 ### Changed

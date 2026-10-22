@@ -12,22 +12,6 @@ import type { ProjectsPort, SendMode, SpawnEnvironment, ThreadInfo, ThreadsPort 
 type SpawnRequest = Parameters<PluginBbSdk["threads"]["spawn"]>[0];
 type ReasoningLevel = NonNullable<SpawnRequest["reasoningLevel"]>;
 
-/** Every reasoning level bb accepts; a `Record` so the compiler flags a level bb adds or drops. */
-const REASONING_LEVELS: Record<ReasoningLevel, true> = {
-  none: true,
-  low: true,
-  medium: true,
-  high: true,
-  xhigh: true,
-  max: true,
-  ultra: true,
-  ultracode: true,
-};
-
-function isReasoningLevel(value: string): value is ReasoningLevel {
-  return Object.hasOwn(REASONING_LEVELS, value);
-}
-
 /** The fields of a bb thread row the plugin reads; `threads.get` and `threads.list` rows both have them. */
 interface ThreadRow extends ThreadInfo {
   deletedAt: number | null;
@@ -115,12 +99,13 @@ async function environmentOf(sdk: PluginBbSdk, projectId: string, environment: S
   }
 }
 
+/**
+ * Any level the chosen model lists; bb checks it against the model and its refusal reaches the caller.
+ * bb 0.46.1 takes any non-empty string, but the pinned SDK still types the field as its own eight
+ * levels, hence the cast.
+ */
 function reasoningOf(level: string | undefined): ReasoningLevel | undefined {
-  if (level === undefined || level === "") return undefined;
-  if (!isReasoningLevel(level)) {
-    throw new Error(`bb has no reasoning level "${level}". Use one of: ${Object.keys(REASONING_LEVELS).join(", ")}.`);
-  }
-  return level;
+  return optional(level) as ReasoningLevel | undefined;
 }
 
 /** The most threads bb answers for in one `experimental_listPluginMetadata` request. */
