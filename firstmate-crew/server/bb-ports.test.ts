@@ -62,6 +62,16 @@ describe("bbThreads.spawn", () => {
     const pinned = harness.callsTo("threads.spawn").map(([args]) => (args as { pinned?: boolean }).pinned);
     expect(pinned).toEqual([true, undefined]);
   });
+
+  it("passes any reasoning level through for bb to check against the model", async () => {
+    const { sdk, harness } = fakeSdk();
+    const threads = bbThreads(sdk);
+    for (const reasoningLevel of ["minimal", "high", ""]) {
+      await threads.spawn({ projectId: "proj_web", title: "t", prompt: "p", environment: { kind: "reuse", environmentId: "env_1" }, reasoningLevel, metadata: {} });
+    }
+    const levels = harness.callsTo("threads.spawn").map(([args]) => (args as { reasoningLevel?: string }).reasoningLevel);
+    expect(levels).toEqual(["minimal", "high", undefined]);
+  });
 });
 
 describe("bbThreads.workspacePath", () => {

@@ -155,6 +155,9 @@ function crewPick(
       : fromSettings === ""
         ? [undefined, undefined]
         : [fromSettings, settings.crewModel.trim() || undefined];
+  if (flags.reasoning !== undefined && flags.reasoning.trim() === "") {
+    throw new PluginCliError("--reasoning needs a level; leave it off for the crew reasoning setting.", { code: "empty_reasoning" });
+  }
   const level = flags.reasoning ?? settings.crewReasoning;
   const reasoningLevel = level === "default" || level.trim() === "" ? undefined : level.trim();
   return {
@@ -186,7 +189,11 @@ export function firstmateCli(deps: MateDeps): PluginCliRegistration {
           },
           provider: { type: "string", description: "Provider for the crewmate; overrides the crew settings. Needs --model", placeholder: "id" },
           model: { type: "string", description: "Model for the crewmate; overrides the crew settings. Needs --provider", placeholder: "model" },
-          reasoning: { type: "string", description: "Reasoning level; overrides the crew reasoning setting", placeholder: "level" },
+          reasoning: {
+            type: "string",
+            description: "Reasoning level, any the model lists (bb refuses one it does not); overrides the crew reasoning setting",
+            placeholder: "level",
+          },
           json: { type: "boolean", description: "Print {\"threadId\": \"...\"} instead of the bare id" },
         },
         constraints: [
