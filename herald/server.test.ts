@@ -4,6 +4,9 @@
  * a running bb.
  */
 import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import plugin, { ABANDONED_AFTER_MS } from "./server";
@@ -11,8 +14,16 @@ import { announceDrained } from "./server/reload-signal";
 import type { AttentionEntry } from "./shared/herald";
 import { DEFAULT_STORED_CONFIG, ENTRIES_CHANNEL, TOOL_COMMANDS } from "./shared/herald";
 
-/** A "tool" that answers with whether the prompt carried the request: real process, no model. */
-const ECHO_TOOL = `"${process.execPath}" -e "let s='';process.stdin.on('data',c=>s+=c).on('end',()=>process.stdout.write(s.includes('Fix the login bug')?'Login fix is done; nothing is left for you.':'No request seen.'))"`;
+/**
+ * A "tool" that answers with whether the prompt carried the request: real process, no model. It
+ * holds its answer until the file `gate` exists, so a test sees the sentence pending for as long as
+ * it needs, however slowly a loaded machine runs it.
+ */
+function gatedEchoTool(gate: string): string {
+  const answer = "process.stdout.write(s.includes('Fix the login bug')?'Login fix is done; nothing is left for you.':'No request seen.')";
+  const script = `let s='';process.stdin.on('data',c=>s+=c).on('end',()=>{const t=setInterval(()=>{if(require('fs').existsSync(process.argv[1])){clearInterval(t);${answer}}},5)})`;
+  return `"${process.execPath}" -e "${script}" "${gate}"`;
+}
 const SLOW_TOOL = `"${process.execPath}" -e "setTimeout(()=>{},60000)"`;
 
 const USER_THREAD = makeThreadResponse({
@@ -153,18 +164,25 @@ describe("herald server", () => {
   });
 
   it("has the configured tool write the sentence, listing the plain one while it does", async () => {
-    const { harness } = await load({ writeWithModel: true });
-    await harness.callRpc("config.set", { sentenceTool: "custom", sentenceCommand: ECHO_TOOL });
-    await harness.emitThreadEvent("thread.idle", { thread: USER_THREAD, lastAssistantText: "I fixed auth.ts." });
-    await settle();
-    const [pending] = entriesOf(await harness.callRpc("list", {}));
-    expect(pending?.summary).toEqual({ status: "pending", fallback: "Login fix finished. I fixed auth.ts." });
-    await vi.waitFor(async () => {
-      const [entry] = entriesOf(await harness.callRpc("list", {}));
-      expect(entry?.summary).toEqual({ status: "ready", text: "Login fix is done; nothing is left for you." });
-    });
-    expect(harness.realtimeSignals.filter((signal) => signal.channel === ENTRIES_CHANNEL)).toHaveLength(2);
-    expect(harness.sdk.callsTo("threads.spawn")).toEqual([]);
+    const gateDir = mkdtempSync(join(tmpdir(), "herald-gate-"));
+    const gate = join(gateDir, "open");
+    try {
+      const { harness } = await load({ writeWithModel: true });
+      await harness.callRpc("config.set", { sentenceTool: "custom", sentenceCommand: gatedEchoTool(gate) });
+      await harness.emitThreadEvent("thread.idle", { thread: USER_THREAD, lastAssistantText: "I fixed auth.ts." });
+      await settle();
+      const [pending] = entriesOf(await harness.callRpc("list", {}));
+      expect(pending?.summary).toEqual({ status: "pending", fallback: "Login fix finished. I fixed auth.ts." });
+      writeFileSync(gate, "");
+      await vi.waitFor(async () => {
+        const [entry] = entriesOf(await harness.callRpc("list", {}));
+        expect(entry?.summary).toEqual({ status: "ready", text: "Login fix is done; nothing is left for you." });
+      });
+      expect(harness.realtimeSignals.filter((signal) => signal.channel === ENTRIES_CHANNEL)).toHaveLength(2);
+      expect(harness.sdk.callsTo("threads.spawn")).toEqual([]);
+    } finally {
+      rmSync(gateDir, { recursive: true, force: true });
+    }
   });
 
   it("drops, unspoken, a sentence the instance before it was still writing — a question answered meanwhile included", async () => {
