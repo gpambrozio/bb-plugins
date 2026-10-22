@@ -109,7 +109,7 @@ describe("the host entry", () => {
       createHostEntry({ port: vnc.port, windowBytes: 1024 * 1024, silenceMs: 60_000, pasteboard: new Pasteboard(commands) }),
     );
     expect(await entry.experimental_call("clipboardWrite", { text: "日本語 🙂" })).toEqual({
-      account: { userName: "ci", fullName: "CI Bot" },
+      account: { userName: "alice", fullName: "Alice Example" },
       changeCount: 2,
     });
     expect(await entry.experimental_call("clipboardRead", { since: 1 })).toMatchObject({ changeCount: 2, text: "日本語 🙂" });

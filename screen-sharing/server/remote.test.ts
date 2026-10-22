@@ -51,7 +51,7 @@ async function setup(
   const laptop = await startFakeVnc(options.mac ?? ((socket) => socket.write("RFB 003.889\n")));
   cleanups.push(() => laptop.close());
   const daemon = new FakeDaemon({
-    ports: { host_laptop: laptop.port, host_doxbook: laptop.port },
+    ports: { host_laptop: laptop.port, host_desk: laptop.port },
     oneWayMs: options.oneWayMs ?? 0,
     callJitterMs: options.callJitterMs ?? 0,
     ...(options.gate === undefined ? {} : { gate: options.gate }),
@@ -70,7 +70,7 @@ async function setup(
   harness.sdk.stub("hosts.list", () => [
     makeHostResponse({ id: "host_mini", name: "MacMini" }),
     makeHostResponse({ id: "host_laptop", name: "MacBook Pro" }),
-    makeHostResponse({ id: "host_doxbook", name: "DoxBook" }),
+    makeHostResponse({ id: "host_desk", name: "DeskMac" }),
     makeHostResponse({ id: "host_linux", name: "buildbox" }),
     makeHostResponse({ id: "host_broken", name: "Old bb" }),
     makeHostResponse({ id: "host_away", name: "Travel MacBook", status: "disconnected" }),
@@ -107,7 +107,7 @@ describe("the host picker", () => {
       hosts: [
         { id: "host_mini", name: "MacMini", connected: true, isServer: true },
         { id: "host_linux", name: "buildbox", connected: true, isServer: false },
-        { id: "host_doxbook", name: "DoxBook", connected: true, isServer: false },
+        { id: "host_desk", name: "DeskMac", connected: true, isServer: false },
         { id: "host_laptop", name: "MacBook Pro", connected: true, isServer: false },
         { id: "host_broken", name: "Old bb", connected: true, isServer: false },
         { id: "host_away", name: "Travel MacBook", connected: false, isServer: false },
@@ -147,7 +147,7 @@ describe("a ticket for another Mac", () => {
   it("opens nothing on any Mac when used for another one", async () => {
     const { harness, daemon } = await setup();
     const { token } = (await harness.callRpc("openSession", { hostId: "host_laptop" })) as { token: string };
-    const ws = await harness.experimental_openWebSocket(`${VNC_ROUTE}?host=host_doxbook&flow=${FLOW_VERSION}&token=${token}`);
+    const ws = await harness.experimental_openWebSocket(`${VNC_ROUTE}?host=host_desk&flow=${FLOW_VERSION}&token=${token}`);
     expect(ws.closeCalls).toEqual([{ code: CloseCode.policy, reason: "ticket is for another Mac" }]);
     await sleep(20);
     expect(daemon.calls).toEqual([]);
@@ -235,8 +235,8 @@ describe("a remote session", () => {
     const ws = await openSession(harness);
     await until(() => received(ws).length === 12, "the greeting");
     const [session] = ((await harness.callRpc("sessions", {})) as { sessions: { id: string }[] }).sessions;
-    await harness.experimental_emitHostSignal("host_doxbook", "data", { sessionId: session?.id, seq: 1, data: "AAAA" });
-    await harness.experimental_emitHostSignal("host_doxbook", "closed", { sessionId: session?.id, reason: "forged", failed: true });
+    await harness.experimental_emitHostSignal("host_desk", "data", { sessionId: session?.id, seq: 1, data: "AAAA" });
+    await harness.experimental_emitHostSignal("host_desk", "closed", { sessionId: session?.id, reason: "forged", failed: true });
     expect(received(ws).length).toBe(12);
     expect(ws.closeCalls).toEqual([]);
   });
@@ -505,7 +505,7 @@ describe("over a slow link (300 ms each way)", () => {
     await expect(harness.callRpc("clipboardRead", { hostId: "host_mini", since: null })).rejects.toThrow("no session to that Mac is open");
 
     expect(await harness.callRpc("clipboardWrite", { hostId: "host_laptop", text: "naïve 🙂" })).toEqual({
-      account: { userName: "ci", fullName: "CI Bot" },
+      account: { userName: "alice", fullName: "Alice Example" },
       changeCount: 2,
     });
     daemon.pasteboardFor("host_laptop").copy("copied on the MacBook");

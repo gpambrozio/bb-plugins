@@ -164,7 +164,7 @@ export const MAX_CLIPBOARD_BYTES = 1024 * 1024;
 
 /** The macOS account whose clipboard the plugin reads and writes on a Mac: the one bb runs as there. */
 export const ClipboardAccountSchema = z.object({
-  /** The short name, e.g. "ci". */
+  /** The short name, e.g. "alice". */
   userName: z.string(),
   /** The full name, when macOS has one; a sign-in may use either. */
   fullName: z.string().nullable(),
