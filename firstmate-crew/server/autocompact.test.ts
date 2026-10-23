@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { checkAutoCompact, type AutoCompactDeps } from "./autocompact";
+import { checkAutoCompact, FailureLog, type AutoCompactDeps } from "./autocompact";
 import { withMateLock } from "./mate";
 import { autoCompactRules, defaultSettings, type AutoCompactRule, type AutoCompactRules } from "./settings";
 import { createStore, type Store } from "./store";
@@ -23,6 +23,8 @@ interface Harness {
   /** How often the first mate's compaction took the mate lock. */
   locks: () => number;
   setNow: (now: number) => void;
+  /** Aborts the check's signal, as the service stopping would. */
+  abort: () => void;
 }
 
 async function harness(rules: Partial<AutoCompactRules> = {}, kv = memoryKv()): Promise<Harness> {
@@ -33,6 +35,7 @@ async function harness(rules: Partial<AutoCompactRules> = {}, kv = memoryKv()): 
   await store.setMateThreadId(mate.id);
   let now = NOW;
   let locks = 0;
+  const controller = new AbortController();
   const deps: AutoCompactDeps = {
     threads,
     store,
@@ -43,6 +46,8 @@ async function harness(rules: Partial<AutoCompactRules> = {}, kv = memoryKv()): 
     },
     now: () => now,
     log,
+    failures: new FailureLog(log),
+    signal: controller.signal,
   };
   return {
     threads,
@@ -54,6 +59,7 @@ async function harness(rules: Partial<AutoCompactRules> = {}, kv = memoryKv()): 
     setNow: (next) => {
       now = next;
     },
+    abort: () => controller.abort(),
   };
 }
 
@@ -286,11 +292,11 @@ describe("checkAutoCompact", () => {
       const h = await harness({ crew: on() });
       const ended = crewmate(h, 75, 250_000);
       await checkAutoCompact(h.deps);
-      expect(Object.keys(await h.store.compactions())).toEqual([ended.id]);
+      expect(await h.store.compactionMarkIds()).toEqual([ended.id]);
 
       h.threads.archiveNow(ended.id);
       await checkAutoCompact(h.deps);
-      expect(await h.store.compactions()).toEqual({});
+      expect(await h.store.compactionMarkIds()).toEqual([]);
     });
   });
 
@@ -302,5 +308,228 @@ describe("checkAutoCompact", () => {
 
     expect((await checkAutoCompact(h.deps))?.threadId).toBe(fine.id);
     expect(h.log.warnings).toEqual([`Autocompact could not check crewmate ${broken.id} "Broken": bb is busy`]);
+  });
+
+  describe("the mark, written before the request (finding: a failed write)", () => {
+    /** A kv whose writes of autocompact's marks reject from the `from`th one on. */
+    function failingMarks(from = 1) {
+      const kv = memoryKv();
+      const set = kv.set.bind(kv);
+      let writes = 0;
+      kv.set = async (key, value) => {
+        if (key.startsWith("autoCompaction:") && ++writes >= from) throw new Error("storage is full");
+        return set(key, value);
+      };
+      return kv;
+    }
+
+    it("is in the store, as accepted, by the time the request reaches bb", async () => {
+      const h = await harness({ crew: on() });
+      const thread = crewmate(h, 75, 250_000);
+      const seen: unknown[] = [];
+      const compact = h.threads.compact.bind(h.threads);
+      h.threads.compact = async (id) => {
+        seen.push(await h.store.compactionMark(id));
+        return compact(id);
+      };
+
+      await checkAutoCompact(h.deps);
+
+      expect(seen).toEqual([{ afterSeq: expect.any(Number), ok: true, at: NOW }]);
+      expect(h.threads.callsTo("compact")).toEqual([[thread.id]]);
+    });
+
+    it("stops the compaction when it cannot be saved, and sends none to any other thread", async () => {
+      const h = await harness({ crew: on() }, failingMarks());
+      const first = crewmate(h, 75, 250_000, "One");
+      const second = crewmate(h, 75, 250_000, "Two");
+
+      expect(await checkAutoCompact(h.deps)).toBeNull();
+
+      expect(h.threads.callsTo("compact")).toEqual([]);
+      expect(h.log.warnings).toEqual([
+        `Autocompact could not check crewmate ${first.id} "One": its mark could not be saved, so it was not compacted: storage is full`,
+        `Autocompact could not check crewmate ${second.id} "Two": its mark could not be saved, so it was not compacted: storage is full`,
+      ]);
+    });
+
+    it("ends the check once a request is sent, even when noting bb's refusal fails, and keeps the stricter mark", async () => {
+      const h = await harness({ crew: on() }, failingMarks(2));
+      const first = crewmate(h, 75, 250_000, "One");
+      crewmate(h, 75, 250_000, "Two");
+      h.threads.failNext("compact", new Error("compaction is not supported"));
+
+      expect(await checkAutoCompact(h.deps)).toMatchObject({ threadId: first.id, ok: false });
+
+      expect(h.threads.callsTo("compact")).toEqual([[first.id]]);
+      expect(await h.store.compactionMark(first.id)).toMatchObject({ ok: true });
+      expect(h.log.warnings).toContain(
+        `Autocompact could not note that bb refused to compact ${first.id}, so it waits for two turns instead of one: storage is full`,
+      );
+    });
+
+    it("keeps each thread's mark under its own key, so a large crew never meets kv's 256 KB limit on one value", async () => {
+      const kv = memoryKv();
+      const store = createStore(kv);
+      for (let n = 0; n < 5_000; n += 1) await store.setCompactionMark(`thr_${n}`, { afterSeq: 1_000_000 + n, ok: true, at: NOW });
+
+      expect(await store.compactionMarkIds()).toHaveLength(5_000);
+      const largest = Math.max(...[...kv.entries.values()].map((value) => value.length));
+      expect(largest).toBeLessThan(100);
+      expect(await store.compactionMark("thr_4999")).toEqual({ afterSeq: 1_004_999, ok: true, at: NOW });
+    });
+  });
+
+  describe("stopping (finding: work after the service is aborted)", () => {
+    it("sends nothing when the service stops during a read", async () => {
+      const h = await harness({ crew: on() });
+      crewmate(h, 75, 250_000);
+      const release = h.threads.hold("lastTurnEnd");
+
+      const check = checkAutoCompact(h.deps);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      h.abort();
+      release();
+
+      expect(await check).toBeNull();
+      expect(h.threads.callsTo("compact")).toEqual([]);
+      expect(h.log.warnings).toEqual([]);
+    });
+
+    it("sends nothing when the service stops while the check waits for the mate lock", async () => {
+      const h = await harness({ mate: on() });
+      h.threads.runTurn(h.mateId, NOW - 75 * MINUTE);
+      h.threads.setUsage(h.mateId, { usedTokens: 250_000, estimated: false });
+      let unlock!: () => void;
+      const held = withMateLock(() => new Promise<void>((resolve) => (unlock = resolve)));
+
+      const check = checkAutoCompact(h.deps);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      h.abort();
+      unlock();
+      await held;
+
+      expect(await check).toBeNull();
+      expect(h.threads.callsTo("compact")).toEqual([]);
+      expect(await h.store.compactionMark(h.mateId)).toBeNull();
+    });
+
+    it("visits no further thread once stopped", async () => {
+      const h = await harness({ crew: on() });
+      crewmate(h, 75, 250_000, "One");
+      crewmate(h, 75, 250_000, "Two");
+      h.abort();
+
+      expect(await checkAutoCompact(h.deps)).toBeNull();
+      expect(h.threads.callsTo("lastTurnEnd")).toEqual([]);
+    });
+  });
+
+  describe("the first mate changing (finding: a release or adoption that came first)", () => {
+    /** Runs `change` under the mate lock, as release or adopt would, before the check's own turn there. */
+    function changeFirst(h: Harness, change: () => Promise<void>) {
+      h.deps.withMateLock = (work) => {
+        void withMateLock(change);
+        return withMateLock(work);
+      };
+    }
+
+    it("leaves a first mate released before the check took the lock", async () => {
+      const h = await harness({ mate: on(), crew: on() });
+      h.threads.runTurn(h.mateId, NOW - 75 * MINUTE);
+      h.threads.setUsage(h.mateId, { usedTokens: 250_000, estimated: false });
+      changeFirst(h, () => h.store.setMateThreadId(null));
+
+      expect(await checkAutoCompact(h.deps)).toBeNull();
+      expect(h.threads.callsTo("compact")).toEqual([]);
+      expect(await h.store.compactionMark(h.mateId)).toBeNull();
+    });
+
+    it("leaves the old first mate and its crew alone when another was adopted first", async () => {
+      const h = await harness({ mate: on(), crew: on() });
+      h.threads.runTurn(h.mateId, NOW - 75 * MINUTE);
+      h.threads.setUsage(h.mateId, { usedTokens: 250_000, estimated: false });
+      crewmate(h, 75, 250_000);
+      const adopted = h.threads.add({ title: "New first mate" });
+      changeFirst(h, () => h.store.setMateThreadId(adopted.id));
+
+      expect(await checkAutoCompact(h.deps)).toBeNull();
+      expect(h.threads.callsTo("compact")).toEqual([]);
+    });
+
+    it("leaves a crewmate that is no longer the first mate's child", async () => {
+      const h = await harness({ crew: on() });
+      const thread = crewmate(h, 75, 250_000);
+      changeFirst(h, async () => h.threads.set(thread.id, { parentThreadId: "thr_elsewhere" }));
+
+      expect(await checkAutoCompact(h.deps)).toBeNull();
+      expect(h.threads.callsTo("compact")).toEqual([]);
+    });
+
+    it("compacts crew under the mate lock too", async () => {
+      const h = await harness({ crew: on() });
+      crewmate(h, 75, 250_000);
+
+      await checkAutoCompact(h.deps);
+      expect(h.locks()).toBe(1);
+    });
+  });
+
+  describe("repeated failures (finding: a warning every minute)", () => {
+    it("warns once while a thread's read keeps failing the same way, and again after it recovers", async () => {
+      const h = await harness({ crew: on() });
+      const thread = crewmate(h, 75, 10_000);
+      const warning = `Autocompact could not check crewmate ${thread.id} "Fix the bug": bb is busy`;
+
+      for (let n = 0; n < 3; n += 1) {
+        h.threads.failNext("lastTurnEnd", new Error("bb is busy"));
+        await checkAutoCompact(h.deps);
+      }
+      expect(h.log.warnings).toEqual([warning]);
+
+      await checkAutoCompact(h.deps); // recovers
+      h.threads.failNext("lastTurnEnd", new Error("bb is busy"));
+      await checkAutoCompact(h.deps);
+      expect(h.log.warnings).toEqual([warning, warning]);
+    });
+
+    it("warns again when the failure changes", async () => {
+      const h = await harness({ crew: on() });
+      crewmate(h, 75, 10_000);
+      h.threads.failNext("lastTurnEnd", new Error("bb is busy"));
+      await checkAutoCompact(h.deps);
+      h.threads.failNext("lastTurnEnd", new Error("bb went away"));
+      await checkAutoCompact(h.deps);
+
+      expect(h.log.warnings).toHaveLength(2);
+    });
+
+    it("warns once while the first mate and its crew cannot be read", async () => {
+      const h = await harness({ crew: on() });
+      for (let n = 0; n < 3; n += 1) {
+        h.threads.failNext("children", new Error("bb is busy"));
+        await checkAutoCompact(h.deps);
+      }
+      expect(h.log.warnings).toEqual(["Autocompact could not read the first mate and its crew: bb is busy"]);
+    });
+
+    it("forgets the failures of threads that are gone, and remembers a bounded number", async () => {
+      const h = await harness({ crew: on() });
+      const thread = crewmate(h, 75, 10_000);
+      h.threads.failNext("lastTurnEnd", new Error("bb is busy"));
+      await checkAutoCompact(h.deps);
+      expect(h.deps.failures.size).toBe(1);
+
+      h.threads.archiveNow(thread.id);
+      await checkAutoCompact(h.deps);
+      expect(h.deps.failures.size).toBe(0);
+
+      const log = fakeLog();
+      const failures = new FailureLog(log, 3);
+      for (const key of ["a", "b", "c", "d"]) failures.warn(key, `failed ${key}`);
+      expect(failures.size).toBe(3);
+      failures.warn("a", "failed a");
+      expect(log.warnings).toEqual(["failed a", "failed b", "failed c", "failed d", "failed a"]);
+    });
   });
 });

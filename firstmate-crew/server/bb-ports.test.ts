@@ -181,6 +181,7 @@ describe("bbThreads, autocompact's reads", () => {
       makeThreadResponse({
         id: "thr_1",
         status: "idle",
+        parentThreadId: "thr_mate",
         runtime: { displayStatus: "waiting-for-host" },
         queuedMessageCount: 2,
         activeBackgroundAgentCount: 1,
@@ -190,6 +191,7 @@ describe("bbThreads, autocompact's reads", () => {
 
     expect(await bbThreads(sdk).restState("thr_1")).toEqual({
       status: "idle",
+      parentThreadId: "thr_mate",
       runtimeStatus: "waiting-for-host",
       queuedMessages: 2,
       pendingInteractions: 1,

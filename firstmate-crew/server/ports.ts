@@ -20,6 +20,8 @@ export interface ThreadInfo {
 /** What says whether a thread is truly at rest, beyond its status: everything that would wake it. */
 export interface RestState {
   status: ThreadStatus;
+  /** Whose child it is now, so a caller can check it still belongs where it was found. */
+  parentThreadId: string | null;
   /**
    * `status` refined by bb with the machine's state: "waiting-for-host" or "provisioning" while the
    * thread's machine is not ready. Anything but "idle" is not at rest.
@@ -92,9 +94,9 @@ export interface SpawnArgs {
 
 export interface ThreadsPort {
   /** Null when the thread is missing, deleted or archived. */
-  get(id: string): Promise<ThreadInfo | null>;
+  get(id: string, signal?: AbortSignal): Promise<ThreadInfo | null>;
   /** The thread's non-archived children. */
-  children(parentId: string): Promise<ThreadInfo[]>;
+  children(parentId: string, signal?: AbortSignal): Promise<ThreadInfo[]>;
   /** The thread's metadata in this plugin's namespace. */
   metadata(id: string): Promise<Record<string, unknown>>;
   /**
@@ -119,13 +121,13 @@ export interface ThreadsPort {
   /** Asks bb for the same structured `/compact` turn its composer sends. */
   compact(id: string): Promise<void>;
   /** Null when the thread is missing, deleted or archived. */
-  restState(id: string): Promise<RestState | null>;
+  restState(id: string, signal?: AbortSignal): Promise<RestState | null>;
   /** The thread's latest `turn/completed` event, or null when no turn has ended yet. */
-  lastTurnEnd(id: string): Promise<TurnEnd | null>;
+  lastTurnEnd(id: string, signal?: AbortSignal): Promise<TurnEnd | null>;
   /** How many turns have started since the event `afterSeq`, counting no further than `limit`. */
-  turnsStartedAfter(id: string, afterSeq: number, limit: number): Promise<number>;
+  turnsStartedAfter(id: string, afterSeq: number, limit: number, signal?: AbortSignal): Promise<number>;
   /** The thread's context usage, or null when bb has no figure for it. */
-  contextUsage(id: string): Promise<ContextUsage | null>;
+  contextUsage(id: string, signal?: AbortSignal): Promise<ContextUsage | null>;
 }
 
 export interface ProjectsPort {

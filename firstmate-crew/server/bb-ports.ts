@@ -118,17 +118,17 @@ function optional(value: string | undefined): string | undefined {
 
 export function bbThreads(sdk: PluginBbSdk): ThreadsPort {
   return {
-    async get(id) {
+    async get(id, signal) {
       try {
-        const row = await sdk.threads.get({ threadId: id });
+        const row = await sdk.threads.get({ threadId: id, signal });
         return isLive(row) ? toInfo(row) : null;
       } catch (error) {
         if (isNotFound(error)) return null;
         throw error;
       }
     },
-    async children(parentId) {
-      const rows = await sdk.threads.list({ parentThreadId: parentId, archived: false });
+    async children(parentId, signal) {
+      const rows = await sdk.threads.list({ parentThreadId: parentId, archived: false, signal });
       return rows.filter(isLive).map(toInfo);
     },
     async metadata(id) {
@@ -220,34 +220,36 @@ export function bbThreads(sdk: PluginBbSdk): ThreadsPort {
     async compact(id) {
       await sdk.threads.compact({ threadId: id });
     },
-    async restState(id) {
-      const row = await nullIfNotFound(sdk.threads.get({ threadId: id }));
+    async restState(id, signal) {
+      const row = await nullIfNotFound(sdk.threads.get({ threadId: id, signal }));
       if (row === null || row.archivedAt !== null || row.deletedAt !== null) return null;
-      const interactions = await sdk.threads.interactions.list({ threadId: id });
+      const interactions = await sdk.threads.interactions.list({ threadId: id, signal });
       return {
         status: row.status,
+        parentThreadId: row.parentThreadId,
         runtimeStatus: row.runtime.displayStatus,
         queuedMessages: row.queuedMessageCount,
         pendingInteractions: interactions.filter((interaction) => interaction.status === "pending").length,
         backgroundAgents: row.activeBackgroundAgentCount,
       };
     },
-    async lastTurnEnd(id) {
-      const [row] = await sdk.threads.events.list({ threadId: id, types: ["turn/completed"], order: "desc", limit: "1" });
+    async lastTurnEnd(id, signal) {
+      const [row] = await sdk.threads.events.list({ threadId: id, types: ["turn/completed"], order: "desc", limit: "1", signal });
       return row === undefined ? null : { seq: row.seq, at: row.createdAt };
     },
-    async turnsStartedAfter(id, afterSeq, limit) {
+    async turnsStartedAfter(id, afterSeq, limit, signal) {
       const rows = await sdk.threads.events.list({
         threadId: id,
         types: ["turn/started"],
         afterSeq: String(afterSeq),
         order: "asc",
         limit: String(limit),
+        signal,
       });
       return Math.min(rows.length, limit);
     },
-    async contextUsage(id) {
-      const { usage } = await sdk.threads.context({ threadId: id });
+    async contextUsage(id, signal) {
+      const { usage } = await sdk.threads.context({ threadId: id, signal });
       return usage === null ? null : { usedTokens: usage.usedTokens, estimated: usage.estimated };
     },
   };

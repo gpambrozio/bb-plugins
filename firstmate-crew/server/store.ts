@@ -10,7 +10,8 @@ import type { PluginKvStorage } from "@get-bb/plugin-sdk";
 
 /**
  * Autocompact's record of compacting one thread: `afterSeq` is the `turn/completed` event that began the
- * idle stretch it compacted, `ok` whether bb accepted the request, `at` when (epoch milliseconds).
+ * idle stretch it compacted, `ok` whether bb accepted the request (true from before the request is sent
+ * until bb refuses it), `at` when (epoch milliseconds).
  */
 export interface CompactionMark {
   afterSeq: number;
@@ -24,14 +25,18 @@ export interface Store {
   setMateThreadId(id: string | null): Promise<void>;
   disabledWatches(): Promise<string[]>;
   setDisabledWatches(names: string[]): Promise<void>;
-  /** Autocompact's marks, by thread id. */
-  compactions(): Promise<Record<string, CompactionMark>>;
-  setCompactions(marks: Record<string, CompactionMark>): Promise<void>;
+  /** Autocompact's mark for one thread, or null when it has none. */
+  compactionMark(threadId: string): Promise<CompactionMark | null>;
+  setCompactionMark(threadId: string, mark: CompactionMark): Promise<void>;
+  deleteCompactionMark(threadId: string): Promise<void>;
+  /** The threads that have a mark. */
+  compactionMarkIds(): Promise<string[]>;
 }
 
 const MATE_THREAD_ID = "mateThreadId";
 const DISABLED_WATCHES = "disabledWatches";
-const COMPACTIONS = "autoCompactions";
+/** One key per thread, so a large crew never meets kv's 256 KB limit on one value. */
+const COMPACTION_PREFIX = "autoCompaction:";
 
 function isMark(value: unknown): value is CompactionMark {
   if (typeof value !== "object" || value === null) return false;
@@ -56,14 +61,18 @@ export function createStore(kv: PluginKvStorage): Store {
     async setDisabledWatches(names) {
       await kv.set(DISABLED_WATCHES, [...new Set(names)]);
     },
-    async compactions() {
-      const stored = await kv.get<unknown>(COMPACTIONS);
-      if (typeof stored !== "object" || stored === null) return {};
-      return Object.fromEntries(Object.entries(stored).filter((entry): entry is [string, CompactionMark] => isMark(entry[1])));
+    async compactionMark(threadId) {
+      const mark = await kv.get<unknown>(COMPACTION_PREFIX + threadId);
+      return isMark(mark) ? { afterSeq: mark.afterSeq, ok: mark.ok, at: mark.at } : null;
     },
-    async setCompactions(marks) {
-      if (Object.keys(marks).length === 0) await kv.delete(COMPACTIONS);
-      else await kv.set(COMPACTIONS, marks);
+    async setCompactionMark(threadId, mark) {
+      await kv.set(COMPACTION_PREFIX + threadId, mark);
+    },
+    async deleteCompactionMark(threadId) {
+      await kv.delete(COMPACTION_PREFIX + threadId);
+    },
+    async compactionMarkIds() {
+      return (await kv.list(COMPACTION_PREFIX)).map((key) => key.slice(COMPACTION_PREFIX.length));
     },
   };
 }

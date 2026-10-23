@@ -5,13 +5,15 @@
  *
  * A thread is compacted when its rule is on, it is at rest (`isAtRest`), its last turn ended at least
  * `idleMinutes` ago (the `turn/completed` event's time in bb's event log, so a restart neither resets nor
- * fakes the clock), and its context holds more than `minTokens` tokens. Each compaction leaves a mark in
- * the store naming the turn that began the idle stretch, and a marked thread is left alone until it has
- * run a turn of its own since: compaction is itself a turn, so that takes two turns after the mark when
- * bb accepted the request, and one when it refused it. Stale or estimated usage therefore cannot loop.
+ * fakes the clock), and its context holds more than `minTokens` tokens. Each attempt leaves a mark in the
+ * store naming the turn that began the idle stretch, written before the request goes to bb, and a marked
+ * thread is left alone until it has run a turn of its own since: compaction is itself a turn, so that
+ * takes two turns after the mark when bb accepted the request, and one when it refused it. Stale or
+ * estimated usage therefore cannot loop, and a mark that cannot be written stops the compaction.
  *
- * One check compacts at most one thread, so after a long stop the backlog is worked through one thread a
- * minute rather than all at once.
+ * One check sends at most one compaction, so after a long stop the backlog is worked through one thread a
+ * minute rather than all at once. Every compaction runs under the `mate` lock, after checking that the
+ * thread still belongs to the stored first mate, so a release or adoption that came first is respected.
  */
 import { errorText, type Log } from "./log";
 import type { ContextUsage, RestState, ThreadInfo, ThreadsPort, TurnEnd } from "./ports";
@@ -23,16 +25,60 @@ export const AUTOCOMPACT_INTERVAL_MS = 60_000;
 
 const MINUTE_MS = 60_000;
 
+/** The failure key for reading the first mate and its crew, before any one thread is looked at. */
+const CHECK_KEY = "check";
+
 export type AutoCompactRole = "mate" | "crew";
+
+/**
+ * Logs each failure once until it changes or clears, so a failure that lasts does not repeat a warning
+ * every minute for every thread. Kept across checks; it remembers at most `limit` keys.
+ */
+export class FailureLog {
+  private readonly logged = new Map<string, string>();
+
+  constructor(
+    private readonly log: Log,
+    private readonly limit = 1_000,
+  ) {}
+
+  warn(key: string, message: string): void {
+    if (this.logged.get(key) === message) return;
+    this.logged.delete(key);
+    if (this.logged.size >= this.limit) {
+      const oldest = this.logged.keys().next();
+      if (oldest.done !== true) this.logged.delete(oldest.value);
+    }
+    this.logged.set(key, message);
+    this.log.warn(message);
+  }
+
+  /** The thing works again: its next failure is logged. */
+  clear(key: string): void {
+    this.logged.delete(key);
+  }
+
+  /** Forgets every key but these. */
+  keepOnly(keys: ReadonlySet<string>): void {
+    for (const key of [...this.logged.keys()]) if (!keys.has(key)) this.logged.delete(key);
+  }
+
+  get size(): number {
+    return this.logged.size;
+  }
+}
 
 export interface AutoCompactDeps {
   threads: ThreadsPort;
   store: Store;
   rules: () => Promise<AutoCompactRules>;
-  /** Runs the first mate's compaction under the lock its launch, restart and Compact button share. */
+  /** The lock the first mate's launch, adoption, release, restart and Compact button share. */
   withMateLock: <T>(work: () => Promise<T>) => Promise<T>;
   now: () => number;
   log: Log;
+  failures: FailureLog;
+  /** Aborted when the service stops: nothing is sent to bb after it, though an attempt already sent is recorded. */
+  signal: AbortSignal;
 }
 
 /** What one check did: the thread it asked bb to compact, and whether bb accepted. */
@@ -71,24 +117,26 @@ export function isAtRest(state: RestState): boolean {
 }
 
 /** Whether the thread has run a turn of its own since its mark, so its new idle stretch may be compacted. */
-async function ranTurnSinceMark(threads: ThreadsPort, threadId: string, mark: CompactionMark): Promise<boolean> {
+async function ranTurnSinceMark(deps: AutoCompactDeps, threadId: string, mark: CompactionMark): Promise<boolean> {
   // An accepted compaction runs a turn itself; the thread's own turn is the one after it.
   const needed = mark.ok ? 2 : 1;
-  return (await threads.turnsStartedAfter(threadId, mark.afterSeq, needed)) >= needed;
+  return (await deps.threads.turnsStartedAfter(threadId, mark.afterSeq, needed, deps.signal)) >= needed;
 }
 
 /** The thread's case for compaction now, or null when it has none. Cheapest reads first. */
-async function assess(deps: AutoCompactDeps, candidate: Candidate, mark: CompactionMark | undefined): Promise<Due | null> {
+async function assess(deps: AutoCompactDeps, candidate: Candidate): Promise<Due | null> {
   const { thread, rule } = candidate;
+  const { threads, signal } = deps;
   if (thread.status !== "idle") return null;
-  if (mark !== undefined && !(await ranTurnSinceMark(deps.threads, thread.id, mark))) return null;
-  const lastTurn = await deps.threads.lastTurnEnd(thread.id);
+  const mark = await deps.store.compactionMark(thread.id);
+  if (mark !== null && !(await ranTurnSinceMark(deps, thread.id, mark))) return null;
+  const lastTurn = await threads.lastTurnEnd(thread.id, signal);
   if (lastTurn === null) return null;
   const idleMs = deps.now() - lastTurn.at;
   if (idleMs < rule.idleMinutes * MINUTE_MS) return null;
-  const usage = await deps.threads.contextUsage(thread.id);
+  const usage = await threads.contextUsage(thread.id, signal);
   if (usage === null || usage.usedTokens <= rule.minTokens) return null;
-  const state = await deps.threads.restState(thread.id);
+  const state = await threads.restState(thread.id, signal);
   if (state === null || !isAtRest(state)) return null;
   return { lastTurn, usage, idleMinutes: Math.floor(idleMs / MINUTE_MS) };
 }
@@ -99,18 +147,41 @@ function describe(candidate: Candidate): string {
   return `${who} ${candidate.thread.id}${title}`;
 }
 
+/** Whether the thread is still the first mate `mateId`, or one of its crew, now that the lock is held. */
+function stillAboard(candidate: Candidate, mateId: string, storedMateId: string | null, state: RestState): boolean {
+  if (storedMateId !== mateId) return false;
+  return candidate.role === "mate" ? candidate.thread.id === mateId : state.parentThreadId === mateId;
+}
+
 /**
- * Compacts the thread if it is still where `assess` found it: at rest, with no turn since. bb itself
- * refuses to compact a thread mid-turn; this also catches a message queued or a question asked meanwhile.
- * The mark is written whether bb accepts or refuses, so a refusal is not retried every minute.
+ * Runs under the `mate` lock. Compacts the thread if it is still where `assess` found it: aboard the same
+ * first mate, at rest, with no turn since, and the service still running. Null means nothing was sent;
+ * a read or the mark's write failing before that rejects, and nothing is sent either. Once the request
+ * is sent this never rejects: the attempt is the check's one, whatever its bookkeeping does.
  */
-async function compact(deps: AutoCompactDeps, candidate: Candidate, due: Due, marks: Record<string, CompactionMark>): Promise<AutoCompaction | null> {
-  const { threads, log } = deps;
+async function compact(deps: AutoCompactDeps, candidate: Candidate, mateId: string, due: Due): Promise<AutoCompaction | null> {
+  const { threads, store, log, signal } = deps;
   const id = candidate.thread.id;
-  const state = await threads.restState(id);
-  if (state === null || !isAtRest(state)) return null;
-  const lastTurn = await threads.lastTurnEnd(id);
+  if (signal.aborted) return null;
+  const storedMateId = await store.mateThreadId();
+  const state = await threads.restState(id, signal);
+  if (state === null || !stillAboard(candidate, mateId, storedMateId, state) || !isAtRest(state)) return null;
+  const lastTurn = await threads.lastTurnEnd(id, signal);
   if (lastTurn?.seq !== due.lastTurn.seq) return null;
+
+  // Marked as accepted before it is sent, so a write that fails stops it, and a failure after it errs
+  // on waiting for two turns.
+  const mark: CompactionMark = { afterSeq: due.lastTurn.seq, ok: true, at: deps.now() };
+  if (signal.aborted) return null;
+  try {
+    await store.setCompactionMark(id, mark);
+  } catch (error) {
+    throw new Error(`its mark could not be saved, so it was not compacted: ${errorText(error)}`, { cause: error });
+  }
+  if (signal.aborted) {
+    await store.deleteCompactionMark(id).catch(() => undefined);
+    return null;
+  }
 
   let ok = true;
   try {
@@ -119,55 +190,75 @@ async function compact(deps: AutoCompactDeps, candidate: Candidate, due: Due, ma
     ok = false;
     log.warn(`Autocompact could not compact ${describe(candidate)}: ${errorText(error)}. It is tried again after its next turn.`);
   }
-  await deps.store.setCompactions({ ...marks, [id]: { afterSeq: due.lastTurn.seq, ok, at: deps.now() } });
   if (ok) {
     const estimate = due.usage.estimated ? " (estimated)" : "";
     log.info(
       `Autocompact compacted ${describe(candidate)}: ${due.usage.usedTokens.toLocaleString("en-US")} tokens${estimate}, idle ${due.idleMinutes} minutes.`,
     );
+  } else {
+    try {
+      await store.setCompactionMark(id, { ...mark, ok: false });
+    } catch (error) {
+      log.warn(`Autocompact could not note that bb refused to compact ${id}, so it waits for two turns instead of one: ${errorText(error)}`);
+    }
   }
   return { threadId: id, role: candidate.role, usage: due.usage, idleMinutes: due.idleMinutes, ok };
 }
 
-/** The marks of threads that are still the first mate or one of its live crew; null when none was dropped. */
-function liveMarks(marks: Record<string, CompactionMark>, live: Set<string>): Record<string, CompactionMark> | null {
-  const kept = Object.fromEntries(Object.entries(marks).filter(([id]) => live.has(id)));
-  return Object.keys(kept).length === Object.keys(marks).length ? null : kept;
-}
-
-/**
- * One check: compacts the first thread that is due — the first mate before its crew — and no other.
- * A thread whose reads fail is logged and skipped; the next check tries it again.
- */
-export async function checkAutoCompact(deps: AutoCompactDeps): Promise<AutoCompaction | null> {
-  const rules = await deps.rules();
-  if (!rules.mate.enabled && !rules.crew.enabled) return null;
-  const mateId = await deps.store.mateThreadId();
+/** The first mate and the candidates its rules allow, with the marks of anything else dropped. */
+async function gather(deps: AutoCompactDeps, rules: AutoCompactRules): Promise<{ mateId: string; candidates: Candidate[] } | null> {
+  const { threads, store, signal } = deps;
+  const mateId = await store.mateThreadId();
   if (mateId === null) return null;
-  const mate = await deps.threads.get(mateId);
+  const mate = await threads.get(mateId, signal);
   if (mate === null) return null;
-  const crew = await deps.threads.children(mate.id);
+  const crew = await threads.children(mate.id, signal);
 
-  let marks = await deps.store.compactions();
-  const pruned = liveMarks(marks, new Set([mate.id, ...crew.map((thread) => thread.id)]));
-  if (pruned !== null) {
-    marks = pruned;
-    await deps.store.setCompactions(marks);
-  }
+  const live = new Set([mate.id, ...crew.map((thread) => thread.id)]);
+  for (const id of await store.compactionMarkIds()) if (!live.has(id)) await store.deleteCompactionMark(id);
 
   const candidates: Candidate[] = [];
   if (rules.mate.enabled) candidates.push({ thread: mate, role: "mate", rule: rules.mate });
   if (rules.crew.enabled) candidates.push(...crew.map((thread) => ({ thread, role: "crew" as const, rule: rules.crew })));
+  return { mateId: mate.id, candidates };
+}
+
+/**
+ * One check: sends at most one compaction, to the first thread that is due — the first mate before its
+ * crew. A thread whose reads fail is logged (once while the failure lasts) and skipped. Stops quietly once
+ * the service's signal aborts.
+ */
+export async function checkAutoCompact(deps: AutoCompactDeps): Promise<AutoCompaction | null> {
+  const { failures, signal } = deps;
+  const rules = await deps.rules();
+  if (!rules.mate.enabled && !rules.crew.enabled) {
+    failures.keepOnly(new Set());
+    return null;
+  }
+
+  let found: Awaited<ReturnType<typeof gather>>;
+  try {
+    found = await gather(deps, rules);
+    failures.clear(CHECK_KEY);
+  } catch (error) {
+    if (!signal.aborted) failures.warn(CHECK_KEY, `Autocompact could not read the first mate and its crew: ${errorText(error)}`);
+    return null;
+  }
+  if (found === null) return null;
+  const { mateId, candidates } = found;
+  failures.keepOnly(new Set([CHECK_KEY, ...candidates.map((candidate) => candidate.thread.id)]));
 
   for (const candidate of candidates) {
+    if (signal.aborted) return null;
+    const id = candidate.thread.id;
     try {
-      const due = await assess(deps, candidate, marks[candidate.thread.id]);
-      if (due === null) continue;
-      const run = () => compact(deps, candidate, due, marks);
-      const done = candidate.role === "mate" ? await deps.withMateLock(run) : await run();
+      const due = await assess(deps, candidate);
+      const done = due === null ? null : await deps.withMateLock(() => compact(deps, candidate, mateId, due));
+      failures.clear(id);
       if (done !== null) return done;
     } catch (error) {
-      deps.log.warn(`Autocompact could not check ${describe(candidate)}: ${errorText(error)}`);
+      if (signal.aborted) return null;
+      failures.warn(id, `Autocompact could not check ${describe(candidate)}: ${errorText(error)}`);
     }
   }
   return null;

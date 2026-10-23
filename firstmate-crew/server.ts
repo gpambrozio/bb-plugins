@@ -11,7 +11,7 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import { rpcContract } from "./shared/contract";
 import { STATE_DIR } from "./shared/types";
-import { AUTOCOMPACT_INTERVAL_MS, checkAutoCompact } from "./server/autocompact";
+import { AUTOCOMPACT_INTERVAL_MS, checkAutoCompact, FailureLog } from "./server/autocompact";
 import { bbProjects, bbThreads } from "./server/bb-ports";
 import { acknowledgeCharter, NEW_CHARTER_FILE, writeNewCharter } from "./server/charter-file";
 import { firstmateCli } from "./server/cli";
@@ -203,8 +203,10 @@ export default async function plugin(bb: BbPluginApi) {
   /**
    * Checks once a minute, the first time a minute after loading, so a reload's new instance does not check
    * while the old one is being disposed. Each check reads bb afresh and compacts at most one thread
-   * (`server/autocompact.ts`).
+   * (`server/autocompact.ts`). The service's signal goes into the check, so a check under way when the
+   * plugin stops or reloads sends nothing more to bb.
    */
+  const autoCompactFailures = new FailureLog(bb.log);
   bb.background.service("autocompact", {
     async start(signal) {
       while (!signal.aborted) {
@@ -218,9 +220,11 @@ export default async function plugin(bb: BbPluginApi) {
             withMateLock,
             now: Date.now,
             log: bb.log,
+            failures: autoCompactFailures,
+            signal,
           });
         } catch (error) {
-          bb.log.error(`Autocompact's check failed: ${reason(error)}`);
+          if (!signal.aborted) autoCompactFailures.warn("settings", `Autocompact's check failed: ${reason(error)}`);
         }
       }
     },

@@ -125,12 +125,19 @@ Do not break these; each was paid for.
 - **Autocompact never touches a thread that is not at rest, and compacts each idle stretch once.** At
   rest is `isAtRest` in `server/autocompact.ts`: status and runtime status `idle`, no queued message, no
   pending interaction, no background agent. Idle time runs from the thread's latest `turn/completed`
-  event in bb's log, never from when the plugin saw something, so a reload cannot reset it. A
-  compaction (accepted or refused) leaves a mark naming that event's `seq`; a marked thread is skipped
-  until `turn/started` events after it show a turn of its own — two when bb accepted, because the
-  compaction is itself a turn, one when it refused. The state is re-read just before compacting, the
-  first mate's under the `mate` lock, and one check compacts at most one thread. Only the first mate
-  and its live children are candidates; marks of anything else are dropped.
+  event in bb's log, never from when the plugin saw something, so a reload cannot reset it. Every
+  attempt leaves a mark naming that event's `seq`, written as accepted *before* the request goes to bb:
+  a mark that cannot be saved stops the compaction, and a refusal only relaxes it afterwards, so failed
+  bookkeeping errs on waiting. A marked thread is skipped until `turn/started` events after it show a
+  turn of its own — two when bb accepted, because the compaction is itself a turn, one when it refused.
+  Marks are one kv key per thread (`autoCompaction:<id>`), never one value that a large crew could push
+  past 256 KB. Once a request is sent the check ends, whatever its bookkeeping does: one compaction per
+  check. Every compaction runs under the `mate` lock, where the stored first mate, the crewmate's parent,
+  the rest state and the last turn are read again, so a release or adoption queued first is respected.
+  The service's signal goes into the check and its reads and is checked again inside the lock, so a
+  stopping or reloading instance sends nothing more. A failure is logged once until it changes or clears
+  (`FailureLog`). Only the first mate and its live children are candidates; marks of anything else are
+  dropped.
 - **Nothing throws into the server's event loop.** Services and listeners catch and log per tick;
   everything is released in `bb.onDispose`.
 - **Server code logs only through the injected `Log` (`server/log.ts`), wired to `bb.log`**, never
