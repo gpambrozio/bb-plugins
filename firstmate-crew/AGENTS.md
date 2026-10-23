@@ -25,7 +25,7 @@ against bb 0.46.1's server and the same SDK.
 | `server/cli.ts` | `bb firstmate-crew crew spawn` and `bb firstmate-crew tell` (words or `--message-base64`, always under the relay line). |
 | `server/bb-ports.ts`, `server/ports.ts` | The narrow `ThreadsPort` and `ProjectsPort` over `bb.sdk`, so everything else is tested against fakes. Where the machine rule below lives. |
 | `server/store.ts` | `bb.storage.kv`: the first mate's thread id, the switched-off watches and autocompact's marks. Nothing else. |
-| `server/settings.ts` | `bb.settings.define`: home directory, crew provider/model/reasoning, board refresh, and autocompact's six (on, tokens, idle minutes, for the first mate and for the crew). |
+| `server/settings.ts` | `bb.settings.define`: home directory, crew provider/model/reasoning, board refresh, and autocompact's six (on, thousands of tokens, idle minutes, for the first mate and for the crew). The token thresholds are set in thousands (`*KTokens`, ×1,000 in `autoCompactRules`) because bb's number field shows no thousands separators. |
 | `server/autocompact.ts` | One autocompact check: which thread is at rest, idle long enough and over its threshold; the once-per-idle-stretch marks. |
 | `server/home.ts`, `charter.ts`, `charter-file.ts` | Preparing the home; rendering `AGENTS.md`; the charter following the plugin until edited. |
 | `server/backlog.ts`, `suggestions.ts`, `crew-report.ts` | Parsing `data/backlog.md`, `data/suggestions.md` and `data/suggestions-dismissed.md`, and a worker's closing status line. |

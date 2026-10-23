@@ -165,8 +165,8 @@ how to write one; the first mate adds none without your approval.
   first mate chooses; a model is used only with a provider.
 - **Board refresh**: how often the open board reloads, in seconds. Default 10.
 - **Autocompact**, once for the first mate and once for the crew: whether to compact the conversation on
-  its own (default off), above how many tokens of context (default 200,000), and after how many idle
-  minutes (default 60). See below.
+  its own (default off), above how many thousand tokens of context (default 200, meaning 200,000
+  tokens), and after how many idle minutes (default 60). See below.
 
 The board's gear opens this page. The settings also hold the first mate's status, **Launch**, **Restart**
 and **Release**. Release lets go

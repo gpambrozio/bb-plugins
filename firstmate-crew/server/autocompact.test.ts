@@ -2,15 +2,17 @@ import { describe, expect, it } from "vitest";
 
 import { checkAutoCompact, type AutoCompactDeps } from "./autocompact";
 import { withMateLock } from "./mate";
-import { AUTOCOMPACT_DEFAULTS, type AutoCompactRule, type AutoCompactRules } from "./settings";
+import { autoCompactRules, defaultSettings, type AutoCompactRule, type AutoCompactRules } from "./settings";
 import { createStore, type Store } from "./store";
 import { fakeLog, fakeThreads, memoryKv, type FakeLog, type FakeThreads } from "./testing/fakes";
 
 const MINUTE = 60_000;
 const NOW = 100 * 24 * 60 * MINUTE;
 
-const on = (fields: Partial<AutoCompactRule> = {}): AutoCompactRule => ({ ...AUTOCOMPACT_DEFAULTS, enabled: true, ...fields });
-const off = (): AutoCompactRule => ({ ...AUTOCOMPACT_DEFAULTS });
+/** The crew's rule from the default settings: off, above 200,000 tokens, after 60 minutes. */
+const DEFAULT_RULE = autoCompactRules(defaultSettings()).crew;
+const on = (fields: Partial<AutoCompactRule> = {}): AutoCompactRule => ({ ...DEFAULT_RULE, enabled: true, ...fields });
+const off = (): AutoCompactRule => ({ ...DEFAULT_RULE });
 
 interface Harness {
   threads: FakeThreads;

@@ -43,21 +43,24 @@ describe("homeConfig", () => {
 });
 
 describe("autocompact settings", () => {
-  it("start off, at 200,000 tokens and 60 idle minutes, for the first mate and the crew alike", () => {
+  it("start off, at 200 thousand tokens and 60 idle minutes, for the first mate and the crew alike", () => {
+    const defaults = defaultSettings();
+    expect(defaults.mateAutoCompactKTokens).toBe(200);
+    expect(defaults.crewAutoCompactKTokens).toBe(200);
     expect(autoCompactRules(defaultSettings())).toEqual({
       mate: { enabled: false, minTokens: 200_000, idleMinutes: 60 },
       crew: { enabled: false, minTokens: 200_000, idleMinutes: 60 },
     });
   });
 
-  it("give the first mate and the crew a rule each", () => {
+  it("give the first mate and the crew a rule each, the thousands of tokens multiplied out", () => {
     const rules = autoCompactRules(
       settings({
         mateAutoCompact: true,
-        mateAutoCompactTokens: 150_000,
+        mateAutoCompactKTokens: 150,
         mateAutoCompactIdleMinutes: 30,
         crewAutoCompact: false,
-        crewAutoCompactTokens: 400_000,
+        crewAutoCompactKTokens: 400,
         crewAutoCompactIdleMinutes: 90,
       }),
     );
@@ -67,12 +70,17 @@ describe("autocompact settings", () => {
     });
   });
 
-  it.each(["mateAutoCompactTokens", "mateAutoCompactIdleMinutes", "crewAutoCompactTokens", "crewAutoCompactIdleMinutes"] as const)(
+  it("keep no setting that holds a raw token count", () => {
+    expect(Object.keys(SETTINGS)).not.toContain("mateAutoCompactTokens");
+    expect(Object.keys(SETTINGS)).not.toContain("crewAutoCompactTokens");
+  });
+
+  it.each(["mateAutoCompactKTokens", "mateAutoCompactIdleMinutes", "crewAutoCompactKTokens", "crewAutoCompactIdleMinutes"] as const)(
     "%s takes only a whole number above zero",
     (key) => {
       const schema = SETTINGS[key].experimental_schema;
       expect(schema.safeParse(1).success).toBe(true);
-      expect(schema.safeParse(200_000).success).toBe(true);
+      expect(schema.safeParse(200).success).toBe(true);
       expect(schema.safeParse(0).success).toBe(false);
       expect(schema.safeParse(-5).success).toBe(false);
       expect(schema.safeParse(1.5).success).toBe(false);
