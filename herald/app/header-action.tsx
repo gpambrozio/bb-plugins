@@ -10,7 +10,7 @@ import { Icon } from "@/components/ui/icon";
 import { HERALD_ICONS } from "./icons";
 import { TipButton } from "./tip-button";
 
-/** The `threadPanelAction` id this button opens; registered in `app.tsx`. */
+/** The id of the thread tab this button opens (`experimental_tab`); registered in `app.tsx`. */
 export const HISTORY_PANEL_ACTION_ID = "history";
 
 export function HeraldHeaderAction(_props: { threadId: string }) {

@@ -43,7 +43,7 @@ findings are summarised under *Decisions*.
 | `app/clipboard.ts` | Clipboard text between this computer and the Mac: `ClipboardSync` (one per connection; Send, Receive, Auto sync, whose account), the remembered Auto sync choice. |
 | `app/clipboard-menu.tsx` | The "Clipboard" menu and the notice saying what the last clipboard action did. |
 | `app/cursor.ts` | The arrow-fallback CSS and the attribute that switches it off once the Mac sends a cursor. |
-| `app/sessions.tsx` | The open sessions as the app sees them; the sidebar "Live" and the corner Close all pill. |
+| `app/sessions.tsx` | The open sessions as the app sees them; the sidebar entry's LIVE badge and the corner Close all pill. |
 | `app/novnc.d.ts` | Types for the part of noVNC's `RFB` used here; noVNC ships none. |
 
 `npm test` runs everything. The tests never touch this machine's real port 5900: the relay, the host
@@ -74,8 +74,8 @@ checked in the study); a request with no `Origin` header passes. Browsers always
 is a non-browser client of the bb API: a local process (which can reach port 5900 directly anyway),
 or anything that can reach a bb server bound to the network with `BB_SERVER_BIND_HOST` — which can
 then already drive every bb API, terminals on every host included. The relay adds no reach beyond
-bb's own API. The API is experimental; `engines.bb` is `>=0.46`, for `experimental_copyToClipboard`
-(see *Clipboard*).
+bb's own API. The API is experimental; `engines.bb` is `>=0.47`, for the sidebar badge (see *Open
+sessions are visible*), and was `>=0.46` before that, for `experimental_copyToClipboard` (see *Clipboard*).
 
 **Who may mint a ticket.** `openSession` refuses callers bb marks `plugin` (another plugin through
 `bb.sdk.plugins.callRpc`). bb marks everything else `client` — the app, the `bb` CLI, agents — and
@@ -452,16 +452,20 @@ reach any page. The evidence, so nobody has to rediscover it:
   before the dispose hooks run, and `bb.onDispose` then ends every session, which destroys the TCP
   sockets (its 4004 rarely reaches a page). The store ends a session after 30 min without input,
   seen or not, on Disconnect, and on `pagehide` (the window closing); a ticket that arrives after
-  Disconnect is never used. Leaving the page does not end a session — the sidebar "Live" and the
+  Disconnect is never used. Leaving the page does not end a session — the sidebar's LIVE badge and the
   corner pill are how an unseen one stays visible.
 - **The clipboard only beside an open session.** `clipboardRead` and `clipboardWrite` refuse other
   plugins and any Mac with no session open, and reach only the clipboard of the account bb runs as
   there; the page uses them only for a signed-in session as that account. Neither the server nor the
   host entry logs or stores clipboard text. The page keeps the user name typed at sign-in for the
   session, to tell whether it is that account; the password is never kept.
-- **Open sessions are visible.** Every open and close publishes the list, whichever Mac; the sidebar row
-  and a corner pill in every window show it, both the pill and the page's title bar offer Close all,
-  and the picker marks each Mac with a session as Live.
+- **Open sessions are visible.** Every open and close publishes the list, whichever Mac; the sidebar
+  entry's badge and a corner pill in every window show it, both the pill and the page's title bar offer
+  Close all, and the picker marks each Mac with a session as Live. The badge is the nav panel's
+  `experimental_useBadge` (bb 0.47, SDK 0.6.75), a hook bb calls in the plugin's scope: `text: "LIVE"`,
+  `tone: "critical"`, the count in its `label`; the icon-only rail draws `text` as a dot. bb 0.46 drew
+  nothing for the `experimental_sidebarAccessory` it replaced, and refuses the new key (`unknown
+  field`).
 
 ## Status check
 

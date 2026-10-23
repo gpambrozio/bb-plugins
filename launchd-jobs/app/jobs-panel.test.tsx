@@ -6,13 +6,13 @@
  */
 import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import type { PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
-import { renderSlot, type PluginRpcTestHandlers } from "@get-bb/plugin-sdk/testing/app";
+import { loadPluginApp, renderSlot, type PluginRpcTestHandlers } from "@get-bb/plugin-sdk/testing/app";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { LOG_CHANGED } from "../shared/channels";
 import type { RpcContract } from "../shared/contract";
 import type { Job, LogChunk } from "../shared/jobs";
-import { FailingAccessory } from "./health";
+import { useFailingBadge } from "./health";
 import { JobsPanel } from "./jobs-panel";
 
 beforeAll(() => {
@@ -149,20 +149,34 @@ describe("the Scheduled jobs page", () => {
     expect(screen.getByText("Enable")).toBeTruthy();
   });
 
-  it("shows the failing count beside the sidebar row, and updates it when the server publishes", async () => {
-    const view = renderSlot<object, RpcContract>({ component: FailingAccessory }, {}, {
+  it("puts the failing count on the sidebar entry, and updates it when the server publishes", async () => {
+    const app = await loadPluginApp(() => import("../app"));
+    expect(app.navPanels.map((panel) => panel.experimental_useBadge)).toEqual([useFailingBadge]);
+    function BadgeProbe() {
+      return <output>{JSON.stringify(useFailingBadge())}</output>;
+    }
+    const view = renderSlot<object, RpcContract>({ component: BadgeProbe }, {}, {
       rpc: stubs({ health: () => ({ failing: [], checkedAt: 1 }) }),
     });
     await waitFor(() => expect(view.rpcCalls.some((call) => call.method === "health")).toBe(true));
-    expect(view.container.textContent).toBe("");
+    expect(view.container.textContent).toBe("null");
+
+    await view.emitRealtime("health-changed", {
+      failing: [{ hostId: "mini", hostName: "Mini", id: "a", name: "A" }],
+      checkedAt: 2,
+    });
+    expect(JSON.parse(view.container.textContent ?? "")).toEqual({ count: 1, tone: "critical", label: "1 failing job: A" });
 
     await view.emitRealtime("health-changed", {
       failing: [
         { hostId: "mini", hostName: "Mini", id: "a", name: "A" },
         { hostId: "mini", hostName: "Mini", id: "b", name: "B" },
       ],
-      checkedAt: 2,
+      checkedAt: 3,
     });
-    expect(view.container.textContent).toBe("2 failing");
+    expect(JSON.parse(view.container.textContent ?? "")).toEqual({ count: 2, tone: "critical", label: "2 failing jobs: A, B" });
+
+    await view.emitRealtime("health-changed", { failing: [], checkedAt: 4 });
+    expect(view.container.textContent).toBe("null");
   });
 });

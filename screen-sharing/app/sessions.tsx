@@ -1,11 +1,11 @@
 /**
  * The open sessions, as the app sees them, and the two places that show them
- * whatever page is open: the sidebar row's "Live" and a floating "Close all"
- * pill. The server publishes the list on every open and close; this asks again
- * after a reconnect, because a publish sent while disconnected is gone.
+ * whatever page is open: the sidebar entry's LIVE badge and a floating "Close
+ * all" pill. The server publishes the list on every open and close; this asks
+ * again after a reconnect, because a publish sent while disconnected is gone.
  */
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { useBbNavigate, useRealtime, useRealtimeConnectionState, useRpc } from "@get-bb/plugin-sdk/app";
+import { useBbNavigate, useRealtime, useRealtimeConnectionState, useRpc, type ExperimentalBadge } from "@get-bb/plugin-sdk/app";
 
 import { SESSIONS_CHANGED, SessionListSchema, type SessionInfo } from "../shared/channels";
 import type { RpcContract } from "../shared/contract";
@@ -120,11 +120,16 @@ function liveLabel(count: number): string {
   return count === 1 ? "Live" : `${count} live`;
 }
 
-/** The sidebar row's trailing text while any session is open, on any device. */
-export function LiveAccessory() {
+/**
+ * The sidebar entry's badge while any session is open, on any device: LIVE in
+ * lists, a dot on the icon-only rail, the count in the tooltip. A hook bb calls
+ * in the plugin's scope (`experimental_useBadge`), not a component.
+ */
+export function useLiveBadge(): ExperimentalBadge | null {
   const sessions = useSessions();
   if (sessions.length === 0) return null;
-  return <span className="truncate text-xs font-medium text-destructive">{liveLabel(sessions.length)}</span>;
+  const label = sessions.length === 1 ? "1 Screen Sharing session open" : `${sessions.length} Screen Sharing sessions open`;
+  return { text: "LIVE", tone: "critical", label };
 }
 
 /**

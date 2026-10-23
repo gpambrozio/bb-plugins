@@ -37,7 +37,7 @@ extra is installed on any Mac and no port is opened to the internet.
 - The pointer stays visible over the screen: macOS's own cursor when it sends one, otherwise your
   usual arrow, which is exactly where a click lands.
 - While any session is open — to any Mac, in this window, another window or on another device — the
-  sidebar row says **Live** and a pill in the corner of every bb window offers **Close all**, which
+  sidebar entry carries a **LIVE** badge and a pill in the corner of every bb window offers **Close all**, which
   ends every one of them. The page's title bar has the same Close all, and the picker marks each Mac
   with a session open as Live.
 - A session also ends after 30 minutes without keyboard or mouse use (whether or not it is on screen),
@@ -45,7 +45,7 @@ extra is installed on any Mac and no port is opened to the internet.
 
 ## What you need
 
-- bb 0.46 or later. The other Macs need bb's host daemon connected to this bb (they are in Settings →
+- bb 0.47 or later (on bb 0.46, install with `@^0.4.0` instead of `@^0.5.0`). The other Macs need bb's host daemon connected to this bb (they are in Settings →
   Machines); the plugin's helper reaches them through it, so nothing else is installed on them.
 - **Screen Sharing turned on** on each Mac you want to see: System Settings → General → Sharing →
   Screen Sharing. macOS does not let an app or a script turn it on. Under its ⓘ options, "Allow access
@@ -57,7 +57,7 @@ extra is installed on any Mac and no port is opened to the internet.
 ## Install
 
 ```bash
-bb plugin install 'git:github.com/gpambrozio/bb-plugins@^0.4.0' --plugin screen-sharing --tag-prefix screen-sharing/
+bb plugin install 'git:github.com/gpambrozio/bb-plugins@^0.5.0' --plugin screen-sharing --tag-prefix screen-sharing/
 ```
 
 The page is **Screen Sharing** in the sidebar; the palette has *Screen Sharing: see and control a

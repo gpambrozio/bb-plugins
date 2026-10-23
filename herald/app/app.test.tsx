@@ -23,7 +23,7 @@ import { HeraldBanner } from "./banner";
 import { HeraldBridge } from "./bridge";
 import { HeraldHeaderAction } from "./header-action";
 import { HeraldHistoryPanel } from "./history-panel";
-import { HeraldPanel } from "./panel";
+import { HeraldPanel, useWaitingBadge } from "./panel";
 import { HeraldSettingsSection } from "./settings-section";
 
 beforeEach(() => {
@@ -95,11 +95,39 @@ describe("Herald's app", () => {
   it("registers its page, overlay, banner, settings section and thread panel", async () => {
     const app = await loadPluginApp(() => import("../app"));
     expect(app.navPanels.map((panel) => panel.path)).toEqual(["waiting"]);
-    expect(app.threadPanelActions.map((action) => action.id)).toEqual(["history"]);
+    expect(app.tabs.map((tab) => [tab.id, tab.context.kind, tab.availability, tab.icon])).toEqual([
+      ["history", "thread", "action", "herald/megaphone"],
+    ]);
     expect(app.threadHeaderActions.map((action) => action.id)).toEqual(["history"]);
     expect(app.appOverlays).toHaveLength(1);
     expect(app.composerCustomizations[0]?.banners?.map((banner) => banner.id)).toEqual(["summary"]);
     expect(app.settingsSections.map((section) => section.id)).toEqual(["summaries"]);
+  });
+
+  it("draws the waiting count on the sidebar entry, and no badge when nothing waits", async () => {
+    const app = await loadPluginApp(() => import("../app"));
+    expect(app.navPanels[0]?.experimental_useBadge).toBe(useWaitingBadge);
+    function BadgeProbe() {
+      return <output data-testid="badge">{JSON.stringify(useWaitingBadge())}</output>;
+    }
+    // Read and idle, so only Herald's entries put them on the list.
+    const read = (id: string) => ({ ...(sidebarThread as object), id, isUnread: false, indicator: "none" }) as never;
+    let current: AttentionEntry[] = [];
+    const calls = { list: 0 };
+    const sidebarThreads = { status: "ready" as const, threads: [read("t1"), read("t2")] };
+    const bridge = renderSlot<object, RpcContract>({ component: HeraldBridge }, {}, { rpc: rpc(() => current, calls) });
+    renderSlot({ component: BadgeProbe }, {}, { sidebarThreads });
+    await waitFor(() => expect(calls.list).toBe(1));
+    expect(screen.getByTestId("badge").textContent).toBe("null");
+    current = [entry({ eventId: "t1:idle:40" }), entry({ threadId: "t2", eventId: "t2:idle:40" })];
+    await bridge.emitRealtime(ENTRIES_CHANNEL, { at: 6 });
+    await waitFor(() =>
+      expect(JSON.parse(screen.getByTestId("badge").textContent ?? "")).toEqual({
+        count: 2,
+        tone: "critical",
+        label: "2 threads waiting for you",
+      }),
+    );
   });
 
   it("lists what the overlay reads, and re-reads on a nudge and on reconnect", async () => {

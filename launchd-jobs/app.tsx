@@ -1,10 +1,10 @@
 // launchd-jobs — the app entry.
 //
-// A sidebar page with the jobs (app/jobs-panel.tsx), whose sidebar row says
-// how many jobs are failing, and a palette command that opens it.
+// A sidebar page with the jobs (app/jobs-panel.tsx), whose sidebar entry
+// carries how many jobs are failing, and a palette command that opens it.
 import { definePluginApp, useBbNavigate, type BbNavigate } from "@get-bb/plugin-sdk/app";
 
-import { FailingAccessory } from "./app/health";
+import { useFailingBadge } from "./app/health";
 import { JobsPanel, PANEL_PATH } from "./app/jobs-panel";
 
 /**
@@ -26,8 +26,8 @@ export default definePluginApp((app) => {
     icon: "TimeSchedule",
     path: PANEL_PATH,
     component: JobsPanel,
-    // The row's own title and icon are static; the count rides beside them.
-    experimental_sidebarAccessory: FailingAccessory,
+    // The entry's own title and icon are static; the count is its badge.
+    experimental_useBadge: useFailingBadge,
   });
 
   app.slots.experimental_appOverlay({ id: "navigator", component: NavigatorBridge });

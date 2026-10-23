@@ -8,11 +8,13 @@ six Paseo plugins in [`gpambrozio/paseo-plugins`](https://github.com/gpambrozio/
 by its own issue in this repository. Plugin code is full-trust and unsandboxed: the server half runs
 **inside the bb server's own process**, and the app half runs inside the bb app.
 
-The plugins pin **`@get-bb/plugin-sdk` 0.6.15**, or 0.6.37 where a plugin needs bb 0.46 (`firstmate-crew`,
-`github-board`, `screen-sharing`), and CI builds them all with **bb 0.46.0**. Re-pin a plugin only when it needs a newer API
-(see `engines` below). This file was
+The plugins pin **`@get-bb/plugin-sdk` 0.6.15**, 0.6.37 where a plugin needs bb 0.46 (`firstmate-crew`,
+`github-board`), or 0.6.75 where it needs bb 0.47 (`herald`, `launchd-jobs`, `screen-sharing`), and CI
+builds them all with **bb 0.47.0**. Re-pin a plugin only when it needs a newer API (see `engines`
+below). This file was
 written against bb 0.44.0 and SDK 0.5.29 and re-checked against the 0.45.0 changes; a point that names
-bb 0.44 was observed there and still holds in 0.45 unless it says otherwise. When the two
+bb 0.44 was observed there and still holds in 0.45 unless it says otherwise. The 0.47 points (SDK
+0.6.75) name the version. When the two
 disagree with this file, the installed SDK wins — its declarations are the contract, and `bb guide
 plugins` is the prose. Fix this file when you find the drift.
 
@@ -326,8 +328,8 @@ mounted once per window. Paseo contribution → bb slot:
 
 | Paseo | bb |
 | --- | --- |
-| `addSurface` + `addSidebarItem` | `app.slots.navPanel` (own sidebar entry and route `/plugins/<id>/<path>/*`); a live count beside the row is its `experimental_sidebarAccessory` component, not a re-registration |
-| `addWorkspacePanel` (agent context) | `app.slots.threadPanelAction` (gets `threadId`) |
+| `addSurface` + `addSidebarItem` | `app.slots.navPanel` (own sidebar entry and route `/plugins/<id>/<path>/*`); a live count on the entry is its `experimental_useBadge` hook (bb 0.47, SDK 0.6.75), not a re-registration: bb calls it in the plugin's scope and draws `{ count?, text?, tone?, label }`, or nothing for null. bb 0.46 draws no `experimental_sidebarAccessory`, bb 0.47 ignores it with a warning, and bb 0.46 refuses `experimental_useBadge` as an unknown field, so a badge means `engines.bb >=0.47` (`launchd-jobs/app/health.tsx`). Test the hook by rendering a component that prints what it returns |
+| `addWorkspacePanel` (agent context) | `app.slots.experimental_tab({ context: { kind: "thread" }, availability: "action", icon, … })` (gets `threadId` and `params`; `icon` is required; `useBbNavigate().openThreadPanel({ actionId })` opens it by its id, `herald/app.tsx`). It replaced `app.slots.threadPanelAction` in SDK 0.6.73: bb 0.47 still loads a bundle that uses the old slot, but the 0.6.75 typings have no such slot, and bb 0.46 has no `experimental_tab` |
 | `addSettingsScreen` | host-rendered form from `bb.settings.define`, plus `app.slots.settingsSection` for anything custom |
 | `addCommandCenterItem` | `app.commands.register` — its `run` gets no navigation; hand it `useBbNavigate()` from an `app.slots.experimental_appOverlay` component that renders nothing (`github-board/app.tsx`) |
 | slash commands, composer pills | `app.composer.customize` (`actions` draws a component in the thread composer's toolbar; a pop-up over the composer is `experimental_popups`, opened with `useComposer().experimental_openPopup` — drawn *inside the composer's `<form>`*, so give every button `type="button"` and stop `mousedown` at its root, see `skills/AGENTS.md`), `app.composer.experimental_registerCommand` for a bindable key, a `{ kind: "command" }` mention through `composer.replace` for the pill bb's `/` menu inserts, `app.slots.pendingInteraction` |
