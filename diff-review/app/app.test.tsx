@@ -192,7 +192,9 @@ describe("the Review tab", () => {
       {
         rpc: {
           getReview: () => view,
-          loadPatches: ({ paths }: { paths: string[] }) => ({ patches: paths.map((path) => ({ path, patch: PATCH, truncated: false })) }),
+          loadPatches: (input: unknown) => ({
+            patches: (input as { paths: string[] }).paths.map((path) => ({ path, patch: PATCH, truncated: false })),
+          }),
         },
       },
     );
