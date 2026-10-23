@@ -85,6 +85,7 @@ const VIEW: Extract<ReviewView, { ok: true }> = {
   ],
   ignoredPaths: ["package-lock.json"],
   truncated: false,
+  runs: [],
   threads: [
     // Made on line 5 but its text is on line 2 now: shown there, as moved.
     thread({ id: "aaaaaa000001", body: "Why three?", startLine: 5, endLine: 5, severity: "question" }),
@@ -145,7 +146,7 @@ describe("the Review tab", () => {
     const slot = render({ createThread: () => ({ thread: created }) });
     fireEvent.click(await screen.findByText("gutter +"));
     expect(screen.getByText("New comment on lines 1–2 (new side)")).toBeTruthy();
-    fireEvent.change(screen.getByPlaceholderText("Leave a comment. Markdown works."), { target: { value: "Rename b" } });
+    fireEvent.change(screen.getByPlaceholderText(/^Leave a comment\. Markdown works/), { target: { value: "Rename b" } });
     fireEvent.click(screen.getByRole("button", { name: "Comment" }));
     await screen.findByText("Rename b");
     expect(slot.inspection.rpcCalls.find((call) => call.method === "createThread")!.input).toEqual({
@@ -175,7 +176,7 @@ describe("the Review tab", () => {
   });
 
   it("re-reads the threads when the workspace's channel says they changed, and reloads on a diff signal", async () => {
-    const slot = render({ listThreads: () => ({ threads: [thread({ id: "cccccc000001", body: "From the agent's side" })] }) });
+    const slot = render({ listThreads: () => ({ threads: [thread({ id: "cccccc000001", body: "From the agent's side" })], runs: [] }) });
     await screen.findByText("Why three?");
     await slot.behavior.emitRealtime("environment:env_1", { kind: "threads", sessionId: "ses_1" });
     await screen.findByText("From the agent's side");
@@ -291,6 +292,75 @@ describe("the Review tab", () => {
     await slot.behavior.setRealtimeConnectionState("reconnecting");
     await slot.behavior.setRealtimeConnectionState("connected");
     await waitFor(() => expect(slot.inspection.rpcCalls.filter((call) => call.method === "getReview")).toHaveLength(2));
+  });
+
+  it("lists the AI runs, with the files a review changed, and closes one", async () => {
+    const run = {
+      id: "run000000001",
+      sessionId: "ses_1",
+      kind: "review" as const,
+      threadId: "thr_run",
+      reviewThreadId: null,
+      focus: "Security",
+      providerId: "claude-code",
+      model: "big",
+      status: "done" as const,
+      summary: "1 must-fix",
+      changedFiles: ["src/a.ts"],
+      createdAt: 1,
+      finishedAt: 2,
+    };
+    const slot = renderSlot(
+      { component: ReviewPanel },
+      { threadId: "thr_1", params: null },
+      { rpc: { getReview: () => ({ ...VIEW, runs: [run] }), closeRun: () => ({ ok: true }) } },
+    );
+    const row = (await screen.findByText("AI review · Security")).closest("li")!;
+    expect(within(row).getByText("Files changed in this workspace while it ran: src/a.ts")).toBeTruthy();
+    fireEvent.click(within(row).getByRole("button", { name: "Open thread" }));
+    expect(slot.inspection.navigateCalls[0]).toMatchObject({ method: "toThread", threadId: "thr_run" });
+    fireEvent.click(within(row).getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(screen.queryByText("AI review · Security")).toBeNull());
+    expect(slot.inspection.rpcCalls.find((call) => call.method === "closeRun")!.input).toEqual({ runId: "run000000001" });
+  });
+
+  it("starts an AI review with the chosen focus and the default agent", async () => {
+    const execution = { providerId: "claude-code", model: "big", reasoningLevel: "high" };
+    const slot = render({
+      runDefaults: () => ({ execution, message: null }),
+      startReview: () => ({
+        run: { id: "run1", sessionId: "ses_1", kind: "review", threadId: "thr_run", reviewThreadId: null, focus: "Security", providerId: "claude-code", model: "big", status: "running", summary: null, changedFiles: null, createdAt: 1, finishedAt: null },
+      }),
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "AI review" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Security" }));
+    await waitFor(() => expect((screen.getByRole("button", { name: "Start review" }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByRole("button", { name: "Start review" }));
+    await screen.findByText("AI review · Security");
+    expect(slot.inspection.rpcCalls.find((call) => call.method === "startReview")!.input).toEqual({ sessionId: "ses_1", focuses: ["Security"], instructions: "", execution });
+  });
+
+  it("sends to a new thread when asked", async () => {
+    const execution = { providerId: "claude-code", model: "big", reasoningLevel: "high" };
+    const slot = render({
+      runDefaults: () => ({ execution, message: null }),
+      fixInNewThread: () => ({
+        count: 3,
+        run: { id: "run2", sessionId: "ses_1", kind: "fix", threadId: "thr_fix", reviewThreadId: null, focus: null, providerId: "claude-code", model: "big", status: "running", summary: null, changedFiles: null, createdAt: 1, finishedAt: null },
+      }),
+    });
+    fireEvent.click(await screen.findByRole("button", { name: /Send to agent/ }));
+    fireEvent.click(await screen.findByRole("radio", { name: "A new thread…" }));
+    await waitFor(() => expect((screen.getByRole("button", { name: "Start a thread with 3" }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByRole("button", { name: "Start a thread with 3" }));
+    await screen.findByText("Fixes in a new thread");
+    expect(slot.inspection.rpcCalls.find((call) => call.method === "fixInNewThread")!.input).toEqual({
+      sessionId: "ses_1",
+      reviewThreadIds: ["aaaaaa000001", "aaaaaa000002", "aaaaaa000003"],
+      note: "",
+      execution,
+    });
+    expect(slot.inspection.rpcCalls.some((call) => call.method === "send")).toBe(false);
   });
 
   it("says why there is nothing to review", async () => {

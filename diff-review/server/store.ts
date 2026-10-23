@@ -11,7 +11,7 @@ import { randomBytes } from "node:crypto";
 
 import type Database from "better-sqlite3";
 
-import type { AuthorType, DeliveryState, ReviewComment, ReviewThread, Severity, Side, ThreadStatus } from "../shared/types";
+import type { AuthorType, DeliveryState, ReviewComment, ReviewThread, Run, RunKind, RunStatus, Severity, Side, ThreadStatus } from "../shared/types";
 
 export const MIGRATIONS: string[] = [
   `CREATE TABLE review_sessions (
@@ -55,6 +55,25 @@ export const MIGRATIONS: string[] = [
      created_at INTEGER NOT NULL
    )`,
   `CREATE INDEX sends_bb_thread ON sends(bb_thread_id)`,
+  // 0.2.0: AI runs.
+  `CREATE TABLE runs (
+     id TEXT PRIMARY KEY,
+     session_id TEXT NOT NULL REFERENCES review_sessions(id) ON DELETE CASCADE,
+     kind TEXT NOT NULL CHECK (kind IN ('review', 'mention', 'fix')),
+     bb_thread_id TEXT,
+     review_thread_id TEXT REFERENCES review_threads(id) ON DELETE SET NULL,
+     focus TEXT,
+     provider_id TEXT NOT NULL,
+     model TEXT,
+     status TEXT NOT NULL CHECK (status IN ('running', 'done', 'failed', 'closed')),
+     summary TEXT,
+     baseline TEXT,
+     changed_files TEXT,
+     created_at INTEGER NOT NULL,
+     finished_at INTEGER
+   )`,
+  `CREATE INDEX runs_session ON runs(session_id)`,
+  `CREATE INDEX runs_bb_thread ON runs(bb_thread_id)`,
 ];
 
 export interface Session {
@@ -98,6 +117,41 @@ interface ThreadRow {
   bb_thread_id: string | null;
   sent_at: number | null;
 }
+
+export interface NewRun {
+  /** Chosen by the caller when the run's thread must carry it before the row exists. */
+  id?: string;
+  sessionId: string;
+  kind: RunKind;
+  bbThreadId: string | null;
+  reviewThreadId: string | null;
+  focus: string | null;
+  providerId: string;
+  model: string | null;
+  status: RunStatus;
+  summary?: string | null;
+  baseline?: string | null;
+}
+
+interface RunRow {
+  id: string;
+  session_id: string;
+  kind: RunKind;
+  bb_thread_id: string | null;
+  review_thread_id: string | null;
+  focus: string | null;
+  provider_id: string;
+  model: string | null;
+  status: RunStatus;
+  summary: string | null;
+  baseline: string | null;
+  changed_files: string | null;
+  created_at: number;
+  finished_at: number | null;
+}
+
+/** A run as stored, with the baseline only the server reads. */
+export type StoredRun = Run & { baseline: string | null };
 
 interface CommentRow {
   id: string;
@@ -163,7 +217,8 @@ export class ReviewStore {
     return this.withComments(rows);
   }
 
-  createThread(input: NewThread): ReviewThread {
+  /** Makes a thread with its first comment, the user's unless `author` says otherwise. */
+  createThread(input: NewThread, author: { type: AuthorType; name: string } = { type: "user", name: "You" }): ReviewThread {
     const id = newId();
     const at = this.now();
     this.db.transaction(() => {
@@ -173,7 +228,7 @@ export class ReviewStore {
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(id, input.sessionId, input.filePath, input.side, input.startLine, input.endLine, input.severity, input.anchorContent, at, at);
-      this.insertComment({ threadId: id, authorType: "user", authorName: "You", body: input.body }, at);
+      this.insertComment({ threadId: id, authorType: author.type, authorName: author.name, body: input.body }, at);
     })();
     return this.thread(id)!;
   }
@@ -269,6 +324,70 @@ export class ReviewStore {
       .map((row) => ({ id: row.id, environmentId, targetKey: row.target_key }));
   }
 
+  createRun(input: NewRun): StoredRun {
+    const id = input.id ?? newId();
+    const at = this.now();
+    const finished = input.status === "running" ? null : at;
+    this.db
+      .prepare(
+        `INSERT INTO runs (id, session_id, kind, bb_thread_id, review_thread_id, focus, provider_id, model, status, summary, baseline, created_at, finished_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(id, input.sessionId, input.kind, input.bbThreadId, input.reviewThreadId, input.focus, input.providerId, input.model, input.status, input.summary ?? null, input.baseline ?? null, at, finished);
+    return this.run(id)!;
+  }
+
+  run(id: string): StoredRun | null {
+    const row = this.db.prepare<[string], RunRow>("SELECT * FROM runs WHERE id = ?").get(id);
+    return row === undefined ? null : toRun(row);
+  }
+
+  /** The runs of a session not yet closed, newest first. */
+  openRuns(sessionId: string): StoredRun[] {
+    return this.db
+      .prepare<[string], RunRow>("SELECT * FROM runs WHERE session_id = ? AND status != 'closed' ORDER BY created_at DESC, rowid DESC")
+      .all(sessionId)
+      .map(toRun);
+  }
+
+  /** The runs a bb thread carries that are not closed, newest first. */
+  runsOfThread(bbThreadId: string): StoredRun[] {
+    return this.db
+      .prepare<[string], RunRow>("SELECT * FROM runs WHERE bb_thread_id = ? AND status != 'closed' ORDER BY created_at DESC, rowid DESC")
+      .all(bbThreadId)
+      .map(toRun);
+  }
+
+  /** The open mention run answering a comment thread with a provider, if any. */
+  mentionRun(reviewThreadId: string, providerId: string): StoredRun | null {
+    const row = this.db
+      .prepare<[string, string], RunRow>(
+        "SELECT * FROM runs WHERE kind = 'mention' AND review_thread_id = ? AND provider_id = ? AND status != 'closed' AND bb_thread_id IS NOT NULL ORDER BY created_at DESC LIMIT 1",
+      )
+      .get(reviewThreadId, providerId);
+    return row === undefined ? null : toRun(row);
+  }
+
+  /** Records the thread a run was started in. */
+  setRunThread(id: string, bbThreadId: string): void {
+    this.db.prepare("UPDATE runs SET bb_thread_id = ? WHERE id = ?").run(bbThreadId, id);
+  }
+
+  /** Marks a run running again (a follow-up was sent to its thread). */
+  restartRun(id: string): void {
+    this.db.prepare("UPDATE runs SET status = 'running', finished_at = NULL WHERE id = ? AND status != 'closed'").run(id);
+  }
+
+  finishRun(id: string, status: "done" | "failed", summary: string | null, changedFiles: readonly string[] | null): void {
+    this.db
+      .prepare("UPDATE runs SET status = ?, summary = ?, changed_files = ?, finished_at = ? WHERE id = ? AND status != 'closed'")
+      .run(status, summary, changedFiles === null ? null : JSON.stringify(changedFiles), this.now(), id);
+  }
+
+  closeRun(id: string): void {
+    this.db.prepare("UPDATE runs SET status = 'closed' WHERE id = ?").run(id);
+  }
+
   private insertComment(input: NewComment, at: number): string {
     const id = newId();
     this.db
@@ -313,6 +432,25 @@ export class ReviewStore {
           : { state: row.delivery, sendId: row.send_id, threadId: row.bb_thread_id, sentAt: row.sent_at },
     }));
   }
+}
+
+function toRun(row: RunRow): StoredRun {
+  return {
+    id: row.id,
+    sessionId: row.session_id,
+    kind: row.kind,
+    threadId: row.bb_thread_id,
+    reviewThreadId: row.review_thread_id,
+    focus: row.focus,
+    providerId: row.provider_id,
+    model: row.model,
+    status: row.status,
+    summary: row.summary,
+    changedFiles: row.changed_files === null ? null : (JSON.parse(row.changed_files) as string[]),
+    createdAt: row.created_at,
+    finishedAt: row.finished_at,
+    baseline: row.baseline,
+  };
 }
 
 function toComment(row: CommentRow): ReviewComment {

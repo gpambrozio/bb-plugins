@@ -14,6 +14,11 @@ and answers each one. It is diffity's review loop on your own working tree, insi
 - Send to agent: pick open comment threads, add a note, and send them to the thread under review,
   queued behind its current turn. The agent answers in each thread from its own chat, and the tab
   shows every answer as it arrives, or "No reply" with a link back to the thread.
+- AI review: an agent reviews the diff, with an optional focus such as security or tests, in a thread
+  of its own you can watch, and leaves its comments in the tab.
+- Mention @claude, @codex or @opencode in a comment and that agent answers in the comment thread.
+- Fix in a new thread: send the comments to a new thread in the same workspace, with the agent and
+  model you pick, instead of the thread under review.
 - Ignore patterns for lockfiles and generated files, in the plugin's settings and in the workspace's
   own .diffityignore.
 
@@ -26,11 +31,14 @@ the comments were sent to can answer them.
 
 ## What it costs
 
-Nothing beyond bb: no account, no service and nothing else to install. The fixes are made by the
-thread's own agent, in its own turn, on your provider plan.
+Nothing beyond bb: no account, no service and nothing else to install. Fixes, reviews and answers
+are made by agents in bb threads, on your own provider plans; AI runs start with Claude Code unless
+you pick another provider.
 
 ## Limits
 
 - The Review tab draws its own diff; bb's built-in diff panel has no comment hook.
-- AI review runs, mentions of an agent in a comment, GitHub pull request review, staged versus unstaged
-  changes, viewed marks and applying suggestions are planned, not built.
+- bb cannot make a thread read-only, so an AI review is only asked not to edit files; the tab lists any
+  file that changed while it ran.
+- GitHub pull request review, staged versus unstaged changes, viewed marks and applying suggestions are
+  planned, not built.

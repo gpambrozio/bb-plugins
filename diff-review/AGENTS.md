@@ -2,8 +2,11 @@
 
 A bb plugin that adds a **Review** tab beside each thread: the thread's workspace diff, drawn with the
 `@pierre/diffs` bb provides, with comment threads on lines, ranges, files and the whole diff, stored in
-the plugin's own SQLite, and **Send to agent**, which puts the open ones in the thread's chat. The
-thread's agent answers each one with `bb diff-review reply|resolve|dismiss`, and the tab updates live.
+the plugin's own SQLite, and **Send to agent**, which puts the open ones in the thread's chat (or a new
+thread's). The agent answers each one with `bb diff-review reply|resolve|dismiss` or the
+`diff_review_*` tools, and the tab updates live. **AI runs** — an AI review, an answer to an
+`@claude`/`@codex`/`@opencode` mention, fixes in a new thread — each run in a visible thread of their
+own in the reviewed workspace.
 It is a bb take on [diffity](https://github.com/nilbuild/diffity)'s review loop, not a Paseo port.
 
 The repository root `AGENTS.md` covers what every plugin here shares. This file covers only what is
@@ -19,7 +22,11 @@ specific to `diff-review`.
 | `server/diff.ts` | The workspace a thread runs in, its refs (base branch, the branch's commits), and the diff from `bb.sdk.environments.diffFiles` / `diffPatch`, minus ignored files. |
 | `server/ignore.ts` | Gitignore-style ignore patterns, from the setting and the workspace's diffity ignore files. |
 | `server/prompt.ts` | The "Address review comments" message a send puts in the thread (adapted from diffity's prompts, MIT). |
-| `server/cli.ts` | `bb diff-review list|reply|resolve|dismiss`; base64 text through `--text-base64-stdin`. |
+| `server/cli.ts` | `bb diff-review list|reply|resolve|dismiss|comment`; base64 text through `--text-base64-stdin`. |
+| `server/runs.ts` | `RunService`: AI runs — the pickers' defaults, starting a review, a mention's answer or a fix thread, a run's end (summary, files changed during a review), Close (archive), and a review run's comments, checked against the diff. |
+| `server/run-prompts.ts` | The first message of each run's thread (adapted from diffity's `review.md` and `thread.md`, MIT). |
+| `server/tools.ts`, `server/tool-names.ts` | The `diff_review_*` agent tools; their names and the run-id metadata key `configure` reads. |
+| `shared/mentions.ts` | Which `@claude`, `@codex`, `@opencode` count (outside code; ported from diffity) and the provider each starts. |
 | `shared/types.ts` | The data model and zod schemas, the realtime channel and its signals. No SDK import, so the app may use it at run time. |
 | `shared/contract.ts` | The RPC contract. Imports the SDK root, so the app imports it as a type only. |
 | `shared/patch-lines.ts`, `shared/anchors.ts` | A patch's lines by side and number, and where a thread belongs in the current diff (anchored, moved, outdated). |
@@ -28,7 +35,9 @@ specific to `diff-review`.
 | `app/patch-loader.ts` | Patches bb did not send with the file list, asked for as files come near the screen and fetched in batches, one request at a time. |
 | `app/header-action.tsx` | The Review button in the thread's title bar (`experimental_threadHeaderAction`), which opens the tab. |
 | `app/thread-card.tsx`, `app/comment-composer.tsx` | A thread and its comments; the box comments are written in. |
-| `app/send-dialog.tsx` | Picking threads and a note for **Send to agent**. |
+| `app/send-dialog.tsx` | Picking threads and a note for **Send to agent**, to this thread or a new one. |
+| `app/ai-review-dialog.tsx`, `app/execution-picker.tsx` | The AI review dialog (focus chips, instructions); bb's provider/model picker, seeded from the settings. |
+| `app/runs-list.tsx` | The session's runs under the toolbar: status, files a review changed, Open thread, Close. |
 | `app/use-review.ts`, `app/actions.tsx` | The tab's data (RPC + realtime) and the thread actions every card shares. |
 | `skills/diff-review/SKILL.md` | What an agent needs to answer: the commands, base64 through stdin, how to write answers. |
 
@@ -43,9 +52,40 @@ with Node 24) runs the script itself.
 
 ## Decisions
 
-**The fixer is the thread under review.** A send goes to the thread the tab belongs to, through
-`threads.send` with `queue-if-active`, so it waits for a running turn instead of steering it. The
-agent that wrote the code has the context. "Fix in a new thread" with a provider picker is phase 2.
+**The fixer is the thread under review**, by default. A send goes to the thread the tab belongs to,
+through `threads.send` with `queue-if-active`, so it waits for a running turn instead of steering it;
+the agent that wrote the code has the context. *A new thread…* in the send dialog starts a fix run
+instead.
+
+**AI runs are visible threads in the reviewed workspace** (`threads.spawn` with `environment: { type:
+"reuse" }`), never children of the user's thread (a child would post into it when it finishes), never
+hidden (the owner watches, steers and approves there, and hidden helpers bring the reload problems of
+issue #11). They spawn in `accept-edits`, bb's least privileged mode, with the provider and model from
+the per-run picker, seeded from the settings (Claude Code unless changed); a mention runs the
+mentioned agent at its default model and reasoning. A run's row is written before its thread is
+spawned, so a thread bb refuses leaves a *failed* run that says why. **Close** archives the thread.
+A run ends on its thread's `thread.idle` / `thread.failed`, keeping the agent's last message as the
+summary; it is never parsed for answers.
+
+**A review run cannot be read-only, so it is watched.** bb has no tool-free thread. The review prompt
+says not to edit; the workspace's uncommitted changes are fingerprinted (each file's change kind, line
+counts and patch hash) when the run starts and when it ends, and every file that differs is listed on
+the run. Another thread editing the same workspace meanwhile shows up there too, which the tab says.
+
+**Mention and fix runs are sends.** They record a send to the run's thread in the same ledger, so the
+agent's answers go through the same check as the thread under review's: only the thread a comment
+thread was last sent to may answer it. A later mention of the same agent in the same comment thread
+goes to the same run thread (`threads.send`), not a new one. A review run may also act on every thread
+of the session it reviews, and only a review run may open new threads (`comment`), each checked to
+lie on lines the current diff shows; a refusal lists the lines that are (diffity's `add_comment`
+checks).
+
+**Tools for runs, the CLI for everyone.** `bb.agents.configure` offers the `diff_review_*` tools only
+to threads whose plugin metadata carries a run id, and the `diff-review` skill to every thread
+(returning `skills` is required once `configure` exists: a fake host or bb without the skill id fails
+the whole selection closed). Metadata grants nothing by itself: each tool call is checked against the
+store by the calling thread's id, which bb supplies (unlike the CLI's claimed `ctx.threadId`). Run
+prompts name the CLI as the fallback when a tool is missing.
 
 **The agent answers through the CLI, never through its transcript.** `threads.send` is the only way in
 and `bb diff-review` the only way back: the plugin never parses the agent's text. A plugin CLI works
@@ -103,7 +143,8 @@ Move to `experimental_tab` when the plugin re-pins to an SDK that has it (and ra
 
 ## Invariants
 
-- `MIGRATIONS` is append-only; bb checks each applied statement's hash.
+- `MIGRATIONS` is append-only; bb checks each applied statement's hash. 0.1.0 shipped indexes 0–6;
+  0.2.0 added the `runs` table at 7–9.
 - The app never imports the SDK root at run time: the contract is a type import, the schemas and the
   channel name live in `shared/types.ts`.
 - `@pierre/diffs` stays a devDependency: bb provides it.
@@ -112,10 +153,6 @@ Move to `experimental_tab` when the plugin re-pins to an SDK that has it (and ra
 
 ## Roadmap
 
-- **Phase 2:** AI review runs with an optional focus, `@claude` mentions answered in the thread, and
-  "fix in a new thread", all in visible threads in the reviewed workspace, defaulting to Claude Code
-  in `accept-edits` with a per-run picker. bb cannot make a review run read-only, so a run that edits
-  a file must be flagged.
 - **Phase 3:** GitHub pull request review — https://github.com/gpambrozio/bb-plugins/issues/47.
 - **Phase 4:** polish (Reviews page, staged/unstaged and ranges through a host entry, find, viewed
   marks on bb 0.47's `experimental_diffViewed`, suggestions, palette commands) —

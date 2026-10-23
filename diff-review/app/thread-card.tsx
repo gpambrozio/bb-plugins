@@ -132,7 +132,7 @@ export function ThreadCard({ thread, placement }: { thread: ReviewThread; placem
       ))}
       {replying ? (
         <CommentComposer
-          placeholder="Reply"
+          placeholder="Reply (mention @claude, @codex or @opencode for an agent's answer)"
           submitLabel="Reply"
           onSubmit={async ({ body }) => {
             await actions.reply(thread.id, body);

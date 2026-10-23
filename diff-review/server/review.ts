@@ -14,6 +14,7 @@ import {
   targetKey,
   type RealtimeSignal,
   type ReviewThread,
+  type Run,
   type ReviewView,
   type Severity,
   type Side,
@@ -23,7 +24,13 @@ import {
 } from "../shared/types";
 import { ignorePatterns, loadDiff, loadPatches, resolveTarget, ReviewUnavailable, workspaceOf, workspaceRefs } from "./diff";
 import { sendPrompt } from "./prompt";
-import type { ReviewStore } from "./store";
+import type { ReviewStore, StoredRun } from "./store";
+
+/** A run as the tab sees it, without the baseline only the server reads. */
+export function publicRun(run: StoredRun): Run {
+  const { baseline: _baseline, ...rest } = run;
+  return rest;
+}
 
 /** A failure the caller caused, worded for them. */
 export class ReviewError extends Error {
@@ -65,6 +72,9 @@ const PROVIDER_NAMES: Record<string, string> = {
 const MAX_RANGE_LINES = 2_000;
 
 export class ReviewService {
+  /** Told of every comment the user writes, after it is stored (for @-mentions); must not throw. */
+  onUserComment: (thread: ReviewThread, body: string) => void = () => undefined;
+
   constructor(
     private readonly bb: BbPluginApi,
     private readonly store: ReviewStore,
@@ -106,6 +116,7 @@ export class ReviewService {
         ignoredPaths: diff.ignoredPaths,
         truncated: diff.truncated,
         threads: this.store.threads(session.id),
+        runs: this.store.openRuns(session.id).map(publicRun),
       };
     } catch (error) {
       if (error instanceof ReviewUnavailable) return { ok: false, message: error.message };
@@ -119,9 +130,10 @@ export class ReviewService {
     return loadPatches(this.bb.sdk, environment, target, paths);
   }
 
-  threads(sessionId: string): ReviewThread[] {
+  /** A session's threads and its runs not yet closed. */
+  sessionState(sessionId: string): { threads: ReviewThread[]; runs: Run[] } {
     this.requireSession(sessionId);
-    return this.store.threads(sessionId);
+    return { threads: this.store.threads(sessionId), runs: this.store.openRuns(sessionId).map(publicRun) };
   }
 
   createThread(input: NewThreadInput): ReviewThread {
@@ -129,13 +141,24 @@ export class ReviewService {
     const placed = normalisePlace(input);
     const thread = this.store.createThread({ ...input, ...placed, body: requireText(input.body, "The comment") });
     this.publish(session.environmentId, session.id);
+    this.onUserComment(thread, input.body);
+    return thread;
+  }
+
+  /** A thread an AI review run opened, already checked against the diff (`RunService.addComment`). */
+  createAgentThread(input: NewThreadInput, authorName: string): ReviewThread {
+    const session = this.requireSession(input.sessionId);
+    const thread = this.store.createThread({ ...input, ...normalisePlace(input) }, { type: "agent", name: authorName });
+    this.publish(session.environmentId, session.id);
     return thread;
   }
 
   addUserComment(reviewThreadId: string, body: string): ReviewThread {
     const thread = this.requireThread(reviewThreadId);
     this.store.addComment({ threadId: thread.id, authorType: "user", authorName: "You", body: requireText(body, "The comment") });
-    return this.changed(thread.id);
+    const changed = this.changed(thread.id);
+    this.onUserComment(changed, body);
+    return changed;
   }
 
   editComment(commentId: string, body: string): ReviewThread {
@@ -196,9 +219,9 @@ export class ReviewService {
     }
   }
 
-  /** The threads whose last send went to `callerThreadId`; with `all`, the closed ones too. */
+  /** The threads an agent's thread may answer (`agentScope`); with `all`, the closed ones too. */
   sentTo(callerThreadId: string, all: boolean): ReviewThread[] {
-    const rows = this.store.threadsSentTo(callerThreadId);
+    const rows = this.agentScope(callerThreadId);
     return all ? rows : rows.filter((row) => row.status === "open");
   }
 
@@ -244,12 +267,23 @@ export class ReviewService {
     return own?.createdAt ?? null;
   }
 
+  /**
+   * The comment threads an agent's thread may read and answer: those whose last send went to it, and,
+   * for an AI review run, every thread of the session it reviews.
+   */
+  agentScope(callerThreadId: string): ReviewThread[] {
+    const byId = new Map(this.store.threadsSentTo(callerThreadId).map((row) => [row.id, row]));
+    const reviewed = new Set(this.store.runsOfThread(callerThreadId).filter((run) => run.kind === "review").map((run) => run.sessionId));
+    for (const sessionId of reviewed) for (const row of this.store.threads(sessionId)) byId.set(row.id, row);
+    return [...byId.values()].sort((a, b) => a.createdAt - b.createdAt);
+  }
+
   private findSent(callerThreadId: string, idPrefix: string): ReviewThread {
     const prefix = idPrefix.trim().toLowerCase();
     if (!/^[0-9a-f]{4,}$/.test(prefix)) {
       throw new ReviewError(`"${idPrefix}" is not a comment thread id (at least four hex characters).`, "invalid_id");
     }
-    const matches = this.store.threadsSentTo(callerThreadId).filter((row) => row.id.startsWith(prefix));
+    const matches = this.agentScope(callerThreadId).filter((row) => row.id.startsWith(prefix));
     if (matches.length === 1) return matches[0]!;
     if (matches.length > 1) {
       throw new ReviewError(`"${idPrefix}" matches ${matches.length} threads (${matches.map((row) => row.id).join(", ")}); give more of the id.`, "ambiguous_id");
@@ -261,7 +295,8 @@ export class ReviewService {
     throw new ReviewError(`No comment thread ${idPrefix} was sent to this thread. Run \`bb diff-review list\` to see the ones that were.`, "unknown_thread");
   }
 
-  private async agentName(threadId: string): Promise<string> {
+  /** How an agent's comments are signed: its thread's provider. */
+  async agentName(threadId: string): Promise<string> {
     try {
       const thread = await this.bb.sdk.threads.get({ threadId });
       return PROVIDER_NAMES[thread.providerId] ?? thread.providerId;
@@ -278,6 +313,12 @@ export class ReviewService {
     return thread;
   }
 
+  /** Tells open tabs on a session's workspace that its threads or runs changed. */
+  publishSession(sessionId: string): void {
+    const session = this.store.sessionById(sessionId);
+    if (session !== null) this.publish(session.environmentId, session.id);
+  }
+
   private publish(environmentId: string, sessionId: string): void {
     this.signal(environmentId, { kind: "threads", sessionId });
   }
@@ -286,13 +327,13 @@ export class ReviewService {
     this.bb.realtime.publish(environmentChannel(environmentId), signal);
   }
 
-  private requireSession(id: string) {
+  requireSession(id: string) {
     const session = this.store.sessionById(id);
     if (session === null) throw new ReviewError(`No review session ${id}.`, "unknown_session");
     return session;
   }
 
-  private requireThread(id: string): ReviewThread {
+  requireThread(id: string): ReviewThread {
     const thread = this.store.thread(id);
     if (thread === null) throw new ReviewError(`No comment thread ${id}.`, "unknown_thread");
     return thread;

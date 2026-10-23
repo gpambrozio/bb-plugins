@@ -1,6 +1,6 @@
 ---
 name: diff-review
-description: "Answer review comments sent from Diff Review's Review tab with `bb diff-review`. Use when a message titled \"Address review comments\" arrives, or the user asks you to reply to, resolve or dismiss a Diff Review comment thread."
+description: "Answer review comments sent from Diff Review's Review tab with `bb diff-review` (or its `diff_review_*` tools). Use when a message titled \"Address review comments\", \"Address a review thread\" or \"Review\" from Diff Review arrives, or the user asks you to reply to, resolve or dismiss a Diff Review comment thread."
 ---
 
 # Answering Diff Review comments
@@ -17,8 +17,16 @@ comments were sent to, and the user sees them in the tab, next to the code.
 - `bb diff-review reply <id>` — answer in a thread; it stays open.
 - `bb diff-review resolve <id>` — mark it resolved, with a one-line summary of what you changed.
 - `bb diff-review dismiss <id>` — close it without acting, with the reason.
+- `bb diff-review comment <file> --line <n> [--end-line <n>] [--side new|old] [--severity …]` — only in
+  an AI review run's thread: a new comment on lines the diff shows (`--line 0` for the whole file,
+  `--general` instead of a file for the whole diff).
 
 An id may be shortened to any unique prefix of four or more characters.
+
+In a thread Diff Review started (an AI review, an answer to a mention, fixes in a new thread), the
+`diff_review_threads`, `diff_review_comment`, `diff_review_general_comment`, `diff_review_reply`,
+`diff_review_resolve` and `diff_review_dismiss` tools do the same without the base64; use them when
+they are there.
 
 ## Passing the text
 

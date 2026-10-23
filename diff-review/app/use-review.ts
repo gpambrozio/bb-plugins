@@ -7,7 +7,7 @@ import { useRealtime, useRealtimeConnectionState, useRpc } from "@get-bb/plugin-
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { RpcContract } from "../shared/contract";
-import { environmentChannel, realtimeSignalSchema, type DiffFile, type ReviewThread, type ReviewView, type Target, type TargetRequest } from "../shared/types";
+import { environmentChannel, realtimeSignalSchema, type DiffFile, type ReviewThread, type ReviewView, type Run, type Target, type TargetRequest } from "../shared/types";
 
 export type ReadyView = Extract<ReviewView, { ok: true }>;
 
@@ -73,9 +73,9 @@ export function useReview(threadId: string, target: TargetRequest, autoTarget = 
   const refreshThreads = useCallback(async () => {
     if (sessionId === null) return;
     try {
-      const { threads } = await rpc.call("listThreads", { sessionId });
+      const { threads, runs } = await rpc.call("listThreads", { sessionId });
       setState((previous) =>
-        previous.status === "ready" && previous.view.sessionId === sessionId ? { ...previous, view: { ...previous.view, threads } } : previous,
+        previous.status === "ready" && previous.view.sessionId === sessionId ? { ...previous, view: { ...previous.view, threads, runs } } : previous,
       );
     } catch (error) {
       setState({ status: "error", message: errorMessage(error) });
@@ -90,6 +90,16 @@ export function useReview(threadId: string, target: TargetRequest, autoTarget = 
         ? previous.view.threads.map((row) => (row.id === thread.id ? thread : row))
         : [...previous.view.threads, thread];
       return { ...previous, view: { ...previous.view, threads } };
+    });
+  }, []);
+
+  /** Puts a run an RPC returned in place (or first), so the tab does not wait for the signal. */
+  const putRun = useCallback((run: Run) => {
+    setState((previous) => {
+      if (previous.status !== "ready" || previous.view.sessionId !== run.sessionId) return previous;
+      const others = previous.view.runs.filter((row) => row.id !== run.id);
+      const runs = run.status === "closed" ? others : [run, ...others];
+      return { ...previous, view: { ...previous.view, runs } };
     });
   }, []);
 
@@ -125,5 +135,5 @@ export function useReview(threadId: string, target: TargetRequest, autoTarget = 
     if (connection === "connected" && previous !== "connected") void loadRef.current();
   }, [connection]);
 
-  return { state, reload: load, putThread, putPatches, refreshThreads };
+  return { state, reload: load, putThread, putRun, putPatches, refreshThreads };
 }
