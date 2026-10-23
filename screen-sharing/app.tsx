@@ -1,13 +1,13 @@
 // screen-sharing — the app entry.
 //
 // A sidebar page with the screens of the Macs enrolled in this bb
-// (app/screen-panel.tsx), whose sidebar row says "Live" while any session is
-// open; a pill in every window's corner offering Close all while one is; and a
-// palette command that opens the page.
+// (app/screen-panel.tsx), whose sidebar entry carries a LIVE badge while any
+// session is open; a pill in every window's corner offering Close all while
+// one is; and a palette command that opens the page.
 import { definePluginApp, useBbNavigate, type BbNavigate } from "@get-bb/plugin-sdk/app";
 
 import { ScreenPanel, SessionsHeader } from "./app/screen-panel";
-import { LiveAccessory, LiveSessionsOverlay, PANEL_PATH } from "./app/sessions";
+import { LiveSessionsOverlay, PANEL_PATH, useLiveBadge } from "./app/sessions";
 
 /**
  * A palette command gets no navigation of its own, so this app-wide overlay,
@@ -29,7 +29,7 @@ export default definePluginApp((app) => {
     path: PANEL_PATH,
     component: ScreenPanel,
     headerContent: SessionsHeader,
-    experimental_sidebarAccessory: LiveAccessory,
+    experimental_useBadge: useLiveBadge,
   });
 
   app.slots.experimental_appOverlay({ id: "live-sessions", component: LiveSessionsOverlay });

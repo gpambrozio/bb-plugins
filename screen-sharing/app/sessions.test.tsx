@@ -1,16 +1,16 @@
 // @vitest-environment jsdom
 /**
- * The two always-visible signs of an open session: the sidebar row's "Live"
- * and the corner pill with Close all, which steps aside while the Screen
+ * The two always-visible signs of an open session: the sidebar entry's LIVE
+ * badge and the corner pill with Close all, which steps aside while the Screen
  * Sharing page itself is on screen.
  */
 import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
-import { renderSlot, type PluginRpcTestHandlers } from "@get-bb/plugin-sdk/testing/app";
+import { loadPluginApp, renderSlot, type PluginRpcTestHandlers } from "@get-bb/plugin-sdk/testing/app";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { SESSIONS_CHANGED, type SessionInfo } from "../shared/channels";
 import type { RpcContract } from "../shared/contract";
-import { LiveAccessory, LiveSessionsOverlay, PANEL_PATH, usePageOpen } from "./sessions";
+import { LiveSessionsOverlay, PANEL_PATH, useLiveBadge, usePageOpen } from "./sessions";
 
 afterEach(() => cleanup());
 
@@ -30,21 +30,36 @@ function PageStandIn() {
   return null;
 }
 
-describe("the sidebar row", () => {
-  it("says Live while a session is open, and nothing otherwise", async () => {
-    const view = renderSlot({ component: LiveAccessory }, {}, { rpc: stubs([session]) });
-    expect(await screen.findByText("Live")).toBeTruthy();
+function BadgeProbe() {
+  return <output data-testid="badge">{JSON.stringify(useLiveBadge())}</output>;
+}
+
+function badge(): unknown {
+  return JSON.parse(screen.getByTestId("badge").textContent ?? "");
+}
+
+const oneLive = { text: "LIVE", tone: "critical", label: "1 Screen Sharing session open" };
+
+describe("the sidebar entry", () => {
+  it("is the panel's badge", async () => {
+    const app = await loadPluginApp(() => import("../app"));
+    expect(app.navPanels.map((panel) => panel.experimental_useBadge)).toEqual([useLiveBadge]);
+  });
+
+  it("says LIVE while a session is open, with the count in its label, and nothing otherwise", async () => {
+    const view = renderSlot({ component: BadgeProbe }, {}, { rpc: stubs([session]) });
+    await waitFor(() => expect(badge()).toEqual(oneLive));
     await view.emitRealtime(SESSIONS_CHANGED, { sessions: [session, { ...session, id: "s2" }] });
-    expect(await screen.findByText("2 live")).toBeTruthy();
+    await waitFor(() => expect(badge()).toEqual({ ...oneLive, label: "2 Screen Sharing sessions open" }));
     await view.emitRealtime(SESSIONS_CHANGED, { sessions: [] });
-    await waitFor(() => expect(screen.queryByText(/live/i)).toBeNull());
+    await waitFor(() => expect(badge()).toBeNull());
   });
 
   it("ignores a malformed push", async () => {
-    const view = renderSlot({ component: LiveAccessory }, {}, { rpc: stubs([session]) });
-    expect(await screen.findByText("Live")).toBeTruthy();
+    const view = renderSlot({ component: BadgeProbe }, {}, { rpc: stubs([session]) });
+    await waitFor(() => expect(badge()).toEqual(oneLive));
     await view.emitRealtime(SESSIONS_CHANGED, { sessions: "nope" });
-    expect(screen.getByText("Live")).toBeTruthy();
+    expect(badge()).toEqual(oneLive);
   });
 });
 
