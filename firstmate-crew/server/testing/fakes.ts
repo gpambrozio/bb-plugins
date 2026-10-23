@@ -7,7 +7,18 @@ import { resolve } from "node:path";
 import type { PluginKvStorage } from "@get-bb/plugin-sdk";
 
 import type { Log } from "../log";
-import type { ProjectsPort, SendMode, ShortenedMessage, SpawnArgs, ThreadInfo, ThreadOrigin, ThreadsPort } from "../ports";
+import type {
+  ContextUsage,
+  ProjectsPort,
+  RestState,
+  SendMode,
+  ShortenedMessage,
+  SpawnArgs,
+  ThreadInfo,
+  ThreadOrigin,
+  ThreadsPort,
+  TurnEnd,
+} from "../ports";
 import { createStore, type Store } from "../store";
 
 type ThreadMethod = keyof ThreadsPort;
@@ -29,6 +40,14 @@ export class FakeThreads implements ThreadsPort {
   private readonly workspaces = new Map<string, string>();
   private readonly origins = new Map<string, ThreadOrigin>();
   private readonly failures = new Map<ThreadMethod, Error>();
+  /** Calls held open until a test releases them, by method. */
+  private readonly holds = new Map<ThreadMethod, Promise<void>>();
+  /** Each thread's turn events, in the order bb would number them. */
+  private readonly turnEvents = new Map<string, { type: "started" | "completed"; seq: number; at: number }[]>();
+  private readonly usages = new Map<string, ContextUsage>();
+  /** What `restState` adds to a thread's status; absent fields are at rest. */
+  private readonly rest = new Map<string, Partial<Omit<RestState, "status" | "parentThreadId">>>();
+  private nextSeq = 1;
   private nextId = 1;
   private clock = 1_000;
 
@@ -76,9 +95,44 @@ export class FakeThreads implements ThreadsPort {
     this.update(id, { status });
   }
 
+  /** Changes a thread's fields as bb would after some event, without a port call. */
+  set(id: string, fields: Partial<ThreadInfo>): void {
+    this.update(id, fields);
+  }
+
+  /** Appends a whole turn to the thread's event log: it started and ended at `endedAt`. */
+  runTurn(id: string, endedAt: number): TurnEnd {
+    const events = this.turnEvents.get(id) ?? [];
+    events.push({ type: "started", seq: this.nextSeq++, at: endedAt });
+    const end = { type: "completed" as const, seq: this.nextSeq++, at: endedAt };
+    events.push(end);
+    this.turnEvents.set(id, events);
+    return { seq: end.seq, at: end.at };
+  }
+
+  /** Sets what keeps a thread awake beyond its status: a queue, an interaction, background agents, its machine. */
+  setRest(id: string, fields: Partial<Omit<RestState, "status" | "parentThreadId">>): void {
+    this.rest.set(id, { ...this.rest.get(id), ...fields });
+  }
+
+  setUsage(id: string, usage: ContextUsage | null): void {
+    if (usage === null) this.usages.delete(id);
+    else this.usages.set(id, { ...usage });
+  }
+
   /** Archives without recording a call, as the captain archiving it in bb would. */
   archiveNow(id: string): void {
     this.update(id, { archivedAt: this.clock++ });
+  }
+
+  /**
+   * Holds the next call to `method` open until the returned function is called, so a test can act while
+   * it is in flight.
+   */
+  hold(method: ThreadMethod): () => void {
+    let release!: () => void;
+    this.holds.set(method, new Promise<void>((resolve) => (release = resolve)));
+    return () => release();
   }
 
   /** The next call to `method` rejects with this error; the one after works again. */
@@ -96,17 +150,17 @@ export class FakeThreads implements ThreadsPort {
     return this.calls.filter((call) => call.method === method).map((call) => call.args);
   }
 
-  async get(id: string): Promise<ThreadInfo | null> {
+  async get(id: string, signal?: AbortSignal): Promise<ThreadInfo | null> {
     this.record("get", id);
-    await tick();
+    await this.settle("get", signal);
     this.throwIfFailing("get");
     const thread = this.threads.get(id);
     return thread === undefined || thread.archivedAt !== null ? null : { ...thread };
   }
 
-  async children(parentId: string): Promise<ThreadInfo[]> {
+  async children(parentId: string, signal?: AbortSignal): Promise<ThreadInfo[]> {
     this.record("children", parentId);
-    await tick();
+    await this.settle("children", signal);
     this.throwIfFailing("children");
     return [...this.threads.values()]
       .filter((thread) => thread.parentThreadId === parentId && thread.archivedAt === null)
@@ -225,8 +279,61 @@ export class FakeThreads implements ThreadsPort {
     this.require(id);
   }
 
+  async restState(id: string, signal?: AbortSignal): Promise<RestState | null> {
+    this.record("restState", id);
+    await this.settle("restState", signal);
+    this.throwIfFailing("restState");
+    const thread = this.threads.get(id);
+    if (thread === undefined || thread.archivedAt !== null) return null;
+    const rest = this.rest.get(id) ?? {};
+    return {
+      status: thread.status,
+      parentThreadId: thread.parentThreadId,
+      runtimeStatus: rest.runtimeStatus ?? thread.status,
+      queuedMessages: rest.queuedMessages ?? 0,
+      pendingInteractions: rest.pendingInteractions ?? this.pending.get(id) ?? 0,
+      backgroundAgents: rest.backgroundAgents ?? 0,
+    };
+  }
+
+  async lastTurnEnd(id: string, signal?: AbortSignal): Promise<TurnEnd | null> {
+    this.record("lastTurnEnd", id);
+    await this.settle("lastTurnEnd", signal);
+    this.throwIfFailing("lastTurnEnd");
+    const ends = (this.turnEvents.get(id) ?? []).filter((event) => event.type === "completed");
+    const last = ends.at(-1);
+    return last === undefined ? null : { seq: last.seq, at: last.at };
+  }
+
+  async turnsStartedAfter(id: string, afterSeq: number, limit: number, signal?: AbortSignal): Promise<number> {
+    this.record("turnsStartedAfter", id, afterSeq, limit);
+    await this.settle("turnsStartedAfter", signal);
+    this.throwIfFailing("turnsStartedAfter");
+    const started = (this.turnEvents.get(id) ?? []).filter((event) => event.type === "started" && event.seq > afterSeq);
+    return Math.min(started.length, limit);
+  }
+
+  async contextUsage(id: string, signal?: AbortSignal): Promise<ContextUsage | null> {
+    this.record("contextUsage", id);
+    await this.settle("contextUsage", signal);
+    this.throwIfFailing("contextUsage");
+    const usage = this.usages.get(id);
+    return usage === undefined ? null : { ...usage };
+  }
+
   private record(method: ThreadMethod, ...args: unknown[]): void {
     this.calls.push({ method, args });
+  }
+
+  /** A later turn of the event loop, after any hold on the method; rejects as bb's client does once aborted. */
+  private async settle(method: ThreadMethod, signal: AbortSignal | undefined): Promise<void> {
+    await tick();
+    const held = this.holds.get(method);
+    if (held !== undefined) {
+      this.holds.delete(method);
+      await held;
+    }
+    signal?.throwIfAborted();
   }
 
   private throwIfFailing(method: ThreadMethod): void {
@@ -318,16 +425,22 @@ export function memoryStore(): Store {
 
 /** A `Log` that keeps every message, so a test can assert what was logged and with what context. */
 export interface FakeLog extends Log {
+  readonly infos: string[];
   readonly warnings: string[];
   readonly errors: string[];
 }
 
 export function fakeLog(): FakeLog {
+  const infos: string[] = [];
   const warnings: string[] = [];
   const errors: string[] = [];
   return {
+    infos,
     warnings,
     errors,
+    info(message) {
+      infos.push(message);
+    },
     warn(message) {
       warnings.push(message);
     },

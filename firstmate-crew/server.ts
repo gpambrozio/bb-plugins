@@ -11,6 +11,7 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import { rpcContract } from "./shared/contract";
 import { STATE_DIR } from "./shared/types";
+import { AUTOCOMPACT_INTERVAL_MS, checkAutoCompact, FailureLog } from "./server/autocompact";
 import { bbProjects, bbThreads } from "./server/bb-ports";
 import { acknowledgeCharter, NEW_CHARTER_FILE, writeNewCharter } from "./server/charter-file";
 import { firstmateCli } from "./server/cli";
@@ -27,11 +28,12 @@ import {
   releaseMate,
   resolveMate,
   restartMate,
+  withMateLock,
   type MateDeps,
 } from "./server/mate";
 import type { ProjectsPort, ThreadsPort } from "./server/ports";
 import { serialized } from "./server/serialize";
-import { homeConfig, homePath, SETTINGS } from "./server/settings";
+import { autoCompactRules, homeConfig, homePath, SETTINGS } from "./server/settings";
 import { createStore } from "./server/store";
 import { createDeliver } from "./server/watch-delivery";
 import { readWatchNote } from "./server/watch-notes";
@@ -50,6 +52,20 @@ function reason(error: unknown): string {
 function untilAborted(signal: AbortSignal): Promise<void> {
   if (signal.aborted) return Promise.resolve();
   return new Promise((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
+}
+
+/** Resolves after `ms`, or as soon as the signal aborts. */
+function pause(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    signal.addEventListener("abort", done, { once: true });
+    if (signal.aborted) done();
+  });
 }
 
 export default async function plugin(bb: BbPluginApi) {
@@ -178,6 +194,38 @@ export default async function plugin(bb: BbPluginApi) {
       } finally {
         watching = false;
         await syncRunner();
+      }
+    },
+  });
+
+  // --- Autocompact --------------------------------------------------------------------------------
+
+  /**
+   * Checks once a minute, the first time a minute after loading, so a reload's new instance does not check
+   * while the old one is being disposed. Each check reads bb afresh and compacts at most one thread
+   * (`server/autocompact.ts`). The service's signal goes into the check, so a check under way when the
+   * plugin stops or reloads sends nothing more to bb.
+   */
+  const autoCompactFailures = new FailureLog(bb.log);
+  bb.background.service("autocompact", {
+    async start(signal) {
+      while (!signal.aborted) {
+        await pause(AUTOCOMPACT_INTERVAL_MS, signal);
+        if (signal.aborted) return;
+        try {
+          await checkAutoCompact({
+            threads: deps.threads,
+            store,
+            rules: async () => autoCompactRules(await settings.get()),
+            withMateLock,
+            now: Date.now,
+            log: bb.log,
+            failures: autoCompactFailures,
+            signal,
+          });
+        } catch (error) {
+          if (!signal.aborted) autoCompactFailures.warn("settings", `Autocompact's check failed: ${reason(error)}`);
+        }
       }
     },
   });

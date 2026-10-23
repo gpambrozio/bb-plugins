@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { CREW_METADATA } from "../shared/types";
 import { endCrew, interruptCrew, noteCrew, relaunchCrew, steerCrew } from "./crew";
 import { ReportCache, type FleetDeps } from "./fleet";
-import type { FirstmateSettings } from "./settings";
+import { defaultSettings, type FirstmateSettings } from "./settings";
 import { fakeLog, fakeProjects, fakeThreads, memoryStore } from "./testing/fakes";
 
 // The wording is the templates' (charter.test.ts reads it); these tests pin the values they are filled from.
@@ -30,7 +30,7 @@ async function setup(backlog = "") {
   if (backlog !== "") await writeFile(join(home, "data", "backlog.md"), backlog, "utf8");
   const threads = fakeThreads();
   const store = memoryStore();
-  const settings: FirstmateSettings = { homeDirectory: home, crewProvider: "", crewModel: "", crewReasoning: "default", refreshSeconds: 10 };
+  const settings: FirstmateSettings = { ...defaultSettings(), homeDirectory: home };
   const deps: FleetDeps = {
     threads,
     projects: fakeProjects(),

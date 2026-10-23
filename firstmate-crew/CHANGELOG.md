@@ -5,6 +5,20 @@ Notable changes to `firstmate`. The other plugins in this repository version sep
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.6.0
+
+### Added
+
+- **Autocompact.** FirstMate can compact a conversation on its own once it has sat idle with a large
+  context, so its next turn starts from a summary instead of sending everything again after the
+  provider's cache has expired. It is off by default and set separately for the first mate and for the
+  crew in FirstMate's settings: switch it on, and choose above how many thousand tokens (default 200,
+  that is 200,000 tokens) and after how many idle minutes (default 60). A thread is never compacted
+  mid-turn, with a message waiting, or while it waits on you, and once compacted it is left alone until
+  it has run another turn. FirstMate compacts at most one thread a minute and notes each one in its log.
+- **Compacting a worker wakes the first mate briefly.** The compaction is a turn of the worker's own,
+  and bb tells the first mate about it like any other, with nothing new in it.
+
 ## 0.5.1
 
 ### Fixed

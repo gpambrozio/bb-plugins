@@ -3,10 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { PluginThreadEventPayloads } from "@get-bb/plugin-sdk";
 import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import plugin, { rpcContract } from "./server";
 import { prepareHome } from "./server/home";
+import { withMateLock } from "./server/mate";
 import type { Fleet, WatchSummary } from "./shared/types";
 
 type PendingInteraction = PluginThreadEventPayloads["interaction.pending"]["interaction"];
@@ -38,12 +39,12 @@ function fleetSignals(harness: { realtimeSignals: { channel: string }[] }): numb
 }
 
 describe("server wiring", () => {
-  it("registers every method of the contract, the CLI and the watch service", async () => {
+  it("registers every method of the contract, the CLI, the watch service and autocompact", async () => {
     const { harness } = await load();
     expect([...harness.registrations.rpcMethods].sort()).toEqual(Object.keys(rpcContract).sort());
     expect(harness.registrations.rpcMethods).toHaveLength(19);
     expect(harness.registrations.cli?.name).toBe("firstmate-crew");
-    expect(harness.registrations.services.map((service) => service.name)).toEqual(["watches"]);
+    expect(harness.registrations.services.map((service) => service.name)).toEqual(["watches", "autocompact"]);
   });
 
   it("loads a fleet with no first mate without asking bb anything", async () => {
@@ -107,6 +108,96 @@ describe("server wiring", () => {
 
     expect(fleet.cards.map((card) => card.report)).toEqual([{ state: "done", text: "shipped the fix" }]);
     expect(harness.sdk.callsTo("threads.output")).toEqual([]);
+  });
+
+  it("checks nothing on load, and stops autocompact at once on abort", async () => {
+    const { harness } = await load({ mateId: "thr_mate" });
+    await harness.setSettings({ mateAutoCompact: true, crewAutoCompact: true });
+    const service = harness.runService("autocompact");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(harness.sdk.calls).toEqual([]);
+
+    service.controller.abort();
+    await service.done;
+  });
+
+  describe("autocompact's service", () => {
+    /** A first mate idle for ages with a large context; `events` is how bb answers its event reads. */
+    async function idleMate(events: () => Promise<unknown[]>) {
+      const loaded = await load({ mateId: "thr_mate" });
+      await loaded.harness.setSettings({ mateAutoCompact: true });
+      const { sdk } = loaded.harness;
+      sdk.stub("threads.get", () => makeThreadResponse({ id: "thr_mate", status: "idle" }));
+      sdk.stub("threads.list", () => []);
+      sdk.stub("threads.events.list", events);
+      sdk.stub("threads.context", () => ({ usage: { usedTokens: 900_000, estimated: false } }));
+      sdk.stub("threads.interactions.list", () => []);
+      sdk.stub("threads.compact", () => ({ ok: true }));
+      return loaded;
+    }
+
+    it("compacts an idle first mate a minute after loading", async () => {
+      vi.useFakeTimers();
+      try {
+        const { harness } = await idleMate(async () => [{ seq: 7, createdAt: 0, type: "turn/completed" }]);
+        const service = harness.runService("autocompact");
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(harness.sdk.callsTo("threads.compact")).toEqual([[{ threadId: "thr_mate" }]]);
+        service.controller.abort();
+        await service.done;
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("stops at once while another operation holds the mate lock", async () => {
+      vi.useFakeTimers();
+      let unlock!: () => void;
+      const held = withMateLock(() => new Promise<void>((resolve) => (unlock = resolve)));
+      try {
+        const { harness } = await idleMate(async () => [{ seq: 7, createdAt: 0, type: "turn/completed" }]);
+        const service = harness.runService("autocompact");
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(harness.sdk.callsTo("threads.context")).toHaveLength(1);
+
+        service.controller.abort();
+        let settled = false;
+        void service.done.then(() => (settled = true));
+        await vi.advanceTimersByTimeAsync(10);
+        expect(settled).toBe(true);
+
+        unlock();
+        await held;
+        await withMateLock(async () => undefined);
+        expect(harness.sdk.callsTo("threads.compact")).toEqual([]);
+      } finally {
+        unlock();
+        vi.useRealTimers();
+      }
+    });
+
+    it("sends nothing once stopped while a check's read is in flight", async () => {
+      vi.useFakeTimers();
+      try {
+        let release!: () => void;
+        const held = new Promise<void>((resolve) => (release = resolve));
+        const { harness } = await idleMate(async () => {
+          await held;
+          return [{ seq: 7, createdAt: 0, type: "turn/completed" }];
+        });
+        const service = harness.runService("autocompact");
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(harness.sdk.callsTo("threads.events.list")).toHaveLength(1);
+
+        service.controller.abort();
+        release();
+        await vi.advanceTimersByTimeAsync(10);
+        await service.done;
+        expect(harness.sdk.callsTo("threads.compact")).toEqual([]);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 
   it("runs the watches for a prepared home, toggles them in the store, and stops on abort", async () => {

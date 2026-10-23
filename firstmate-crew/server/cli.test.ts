@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { CREW_METADATA } from "../shared/types";
 import { MESSAGE_MAX_BYTES, RELAY_PREFIX, firstmateCli } from "./cli";
 import type { MateDeps } from "./mate";
-import type { FirstmateSettings } from "./settings";
+import { defaultSettings, type FirstmateSettings } from "./settings";
 import { TEMPLATES, readTemplate } from "./templates";
 import { fakeProjects, fakeThreads, memoryStore } from "./testing/fakes";
 
@@ -24,14 +24,7 @@ async function setup(overrides: Partial<FirstmateSettings> = {}) {
   await writeFile(join(dir, "brief.md"), BRIEF, "utf8");
   const threads = fakeThreads();
   const store = memoryStore();
-  const settings: FirstmateSettings = {
-    homeDirectory: "~/FirstMate",
-    crewProvider: "",
-    crewModel: "",
-    crewReasoning: "default",
-    refreshSeconds: 10,
-    ...overrides,
-  };
+  const settings: FirstmateSettings = { ...defaultSettings(), ...overrides };
   const projects = fakeProjects([
     { id: "prj_app", name: "App", path: "/work/app" },
     { id: "prj_site", name: "Site", path: "/work/site" },

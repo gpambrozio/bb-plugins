@@ -4,7 +4,7 @@
  */
 import type { PluginLogger } from "@get-bb/plugin-sdk";
 
-export type Log = Pick<PluginLogger, "warn" | "error">;
+export type Log = Pick<PluginLogger, "info" | "warn" | "error">;
 
 /** An error as one line of a log message. */
 export function errorText(error: unknown): string {

@@ -19,7 +19,7 @@ import {
   restartMate,
   type MateDeps,
 } from "./mate";
-import type { FirstmateSettings } from "./settings";
+import { defaultSettings, type FirstmateSettings } from "./settings";
 import { TEMPLATES, message } from "./templates";
 import { fakeProjects, fakeThreads, memoryStore } from "./testing/fakes";
 
@@ -49,13 +49,7 @@ async function setup(options: { projects?: { id: string; path: string }[] } = {}
   const threads = fakeThreads();
   const projects = fakeProjects(options.projects?.map((project) => ({ ...project, path: project.path === "<home>" ? home : project.path })));
   const store = memoryStore();
-  const settings: FirstmateSettings = {
-    homeDirectory: home,
-    crewProvider: "",
-    crewModel: "",
-    crewReasoning: "default",
-    refreshSeconds: 10,
-  };
+  const settings: FirstmateSettings = { ...defaultSettings(), homeDirectory: home };
   const deps: MateDeps = { threads, projects, store, settings: async () => settings };
   return { home, threads, projects, store, deps };
 }

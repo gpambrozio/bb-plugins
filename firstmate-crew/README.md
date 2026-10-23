@@ -22,7 +22,7 @@ board, the dispatch command and the watch runner, and nothing else.
 
 ## What you need
 
-- bb 0.46 or newer. On bb 0.45, install with `@^0.4.0` instead of `@^0.5.0`.
+- bb 0.46 or newer. On bb 0.45, install with `@^0.4.0` instead of `@^0.6.0`.
 - A capable model for the first mate. It spends its day reading records and deciding who does what, and a
   small model gets the commands wrong. Claude Sonnet or better, or a comparable Codex model, works.
 - `git` for the projects it works on, and, for the pull request watch, the `gh` command, logged in.
@@ -39,7 +39,7 @@ bb plugin install firstmate-crew@bb-community
 Straight from this repository, tracking compatible releases:
 
 ```bash
-bb plugin install 'git:github.com/gpambrozio/bb-plugins@^0.5.0' --plugin firstmate-crew --tag-prefix firstmate-crew/
+bb plugin install 'git:github.com/gpambrozio/bb-plugins@^0.6.0' --plugin firstmate-crew --tag-prefix firstmate-crew/
 ```
 
 Add `--yes` to skip the confirmation prompt, which a script needs. To hack on it, clone the repository,
@@ -164,10 +164,37 @@ how to write one; the first mate adds none without your approval.
 - **Crew provider**, **crew model** and **crew reasoning**: what workers are started with. Left empty, the
   first mate chooses; a model is used only with a provider.
 - **Board refresh**: how often the open board reloads, in seconds. Default 10.
+- **Autocompact**, once for the first mate and once for the crew: whether to compact the conversation on
+  its own (default off), above how many thousand tokens of context (default 200, meaning 200,000
+  tokens), and after how many idle minutes (default 60). See below.
 
 The board's gear opens this page. The settings also hold the first mate's status, **Launch**, **Restart**
 and **Release**. Release lets go
 of the thread, leaving it and its crew as they are.
+
+## Autocompact
+
+A provider keeps a conversation's start in a prompt cache for a while, and a turn after the cache has
+expired pays to send all of it again. Autocompact compacts a thread that has sat idle long enough with a
+large context, so the next turn starts from a summary instead, as bb's own `/compact` does. Switch it on
+separately for the first mate and for the crew, each with its own token threshold and idle time; how
+long a cache lasts depends on the provider, so the idle time is yours to choose.
+
+- A thread is compacted when its context holds more than the token threshold and its last turn ended at
+  least the idle time ago. It must be truly at rest: no turn running, no message queued, nothing waiting
+  on you (a permission, a question or a plan), no background agent still running, and its machine
+  connected. Ended (archived) workers are left alone.
+- Once compacted, a thread is not compacted again until it has run another turn and sat idle again, so a
+  usage figure bb has not measured since cannot set off a second compaction. If bb refuses a compaction,
+  it is not retried until after the thread's next turn.
+- FirstMate checks once a minute and compacts at most one thread per check, so after bb has been off for
+  a while the idle threads are compacted one a minute rather than all at once. Idle time comes from bb's
+  own record of when each turn ended, so a restart neither resets nor shortens it.
+- Each compaction is written to the plugin's log (`bb plugin logs firstmate-crew`), with the thread, its
+  tokens beforehand and how long it had been idle. A problem that lasts, such as bb not answering, is
+  logged once, not every minute.
+- A compaction is a turn of its own. For a worker, bb reports it to the first mate like any of the
+  worker's turns, so the first mate wakes briefly to a turn with nothing new in it.
 
 ## Limitations
 
