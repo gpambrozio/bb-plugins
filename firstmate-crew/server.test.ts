@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import plugin, { rpcContract } from "./server";
 import { prepareHome } from "./server/home";
+import { withMateLock } from "./server/mate";
 import type { Fleet, WatchSummary } from "./shared/types";
 
 type PendingInteraction = PluginThreadEventPayloads["interaction.pending"]["interaction"];
@@ -145,6 +146,32 @@ describe("server wiring", () => {
         service.controller.abort();
         await service.done;
       } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("stops at once while another operation holds the mate lock", async () => {
+      vi.useFakeTimers();
+      let unlock!: () => void;
+      const held = withMateLock(() => new Promise<void>((resolve) => (unlock = resolve)));
+      try {
+        const { harness } = await idleMate(async () => [{ seq: 7, createdAt: 0, type: "turn/completed" }]);
+        const service = harness.runService("autocompact");
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(harness.sdk.callsTo("threads.context")).toHaveLength(1);
+
+        service.controller.abort();
+        let settled = false;
+        void service.done.then(() => (settled = true));
+        await vi.advanceTimersByTimeAsync(10);
+        expect(settled).toBe(true);
+
+        unlock();
+        await held;
+        await withMateLock(async () => undefined);
+        expect(harness.sdk.callsTo("threads.compact")).toEqual([]);
+      } finally {
+        unlock();
         vi.useRealTimers();
       }
     });

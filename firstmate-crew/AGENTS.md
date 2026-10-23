@@ -134,9 +134,10 @@ Do not break these; each was paid for.
   past 256 KB. Once a request is sent the check ends, whatever its bookkeeping does: one compaction per
   check. Every compaction runs under the `mate` lock, where the stored first mate, the crewmate's parent,
   the rest state and the last turn are read again, so a release or adoption queued first is respected.
-  The service's signal goes into the check and its reads and is checked again inside the lock, so a
-  stopping or reloading instance sends nothing more. A failure is logged once until it changes or clears
-  (`FailureLog`). Only the first mate and its live children are candidates; marks of anything else are
+  The service's signal goes into the check and its reads, ends a wait for the lock at once (whatever
+  holds it), and is checked again inside the lock, so a stopping or reloading instance settles promptly
+  and sends nothing more. A failure is logged once until it changes or clears (`FailureLog`); past its
+  1,000 threads it admits no new ones and logs one summary, rather than evicting and logging again. Only the first mate and its live children are candidates; marks of anything else are
   dropped.
 - **Nothing throws into the server's event loop.** Services and listeners catch and log per tick;
   everything is released in `bb.onDispose`.

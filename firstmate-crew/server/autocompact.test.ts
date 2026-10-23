@@ -414,6 +414,27 @@ describe("checkAutoCompact", () => {
       expect(await h.store.compactionMark(h.mateId)).toBeNull();
     });
 
+    it("settles at once when stopped while something else holds the mate lock, and the abandoned wait sends nothing later", async () => {
+      const h = await harness({ mate: on() });
+      h.threads.runTurn(h.mateId, NOW - 75 * MINUTE);
+      h.threads.setUsage(h.mateId, { usedTokens: 250_000, estimated: false });
+      let unlock!: () => void;
+      const held = withMateLock(() => new Promise<void>((resolve) => (unlock = resolve)));
+
+      const check = checkAutoCompact(h.deps);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      h.abort();
+
+      // Settles while the lock is still held.
+      expect(await check).toBeNull();
+
+      unlock();
+      await held;
+      await withMateLock(async () => undefined);
+      expect(h.threads.callsTo("compact")).toEqual([]);
+      expect(await h.store.compactionMark(h.mateId)).toBeNull();
+    });
+
     it("visits no further thread once stopped", async () => {
       const h = await harness({ crew: on() });
       crewmate(h, 75, 250_000, "One");
@@ -524,12 +545,42 @@ describe("checkAutoCompact", () => {
       await checkAutoCompact(h.deps);
       expect(h.deps.failures.size).toBe(0);
 
+    });
+
+    it("at its limit admits no new failure and evicts none, so nothing is logged again; a recovery makes room", () => {
       const log = fakeLog();
       const failures = new FailureLog(log, 3);
-      for (const key of ["a", "b", "c", "d"]) failures.warn(key, `failed ${key}`);
+      for (let pass = 0; pass < 3; pass += 1) for (const key of ["a", "b", "c", "d", "e"]) failures.warn(key, `failed ${key}`);
+
       expect(failures.size).toBe(3);
-      failures.warn("a", "failed a");
-      expect(log.warnings).toEqual(["failed a", "failed b", "failed c", "failed d", "failed a"]);
+      const summary = "Autocompact is failing for more than 3 threads; it logs no further failures until some recover.";
+      expect(log.warnings).toEqual(["failed a", "failed b", "failed c", summary]);
+
+      failures.clear("a");
+      failures.warn("d", "failed d");
+      failures.warn("e", "failed e");
+      expect(log.warnings).toEqual(["failed a", "failed b", "failed c", summary, "failed d", summary]);
+    });
+
+    it("logs a crew of more failing threads than it remembers once, not on every check", async () => {
+      const h = await harness({ crew: on() });
+      for (let n = 0; n < 1_001; n += 1) crewmate(h, 75, 10_000, `Task ${n}`);
+      const lastTurnEnd = h.threads.lastTurnEnd.bind(h.threads);
+      h.threads.lastTurnEnd = async (id, signal) => {
+        await lastTurnEnd(id, signal);
+        throw new Error("bb is busy");
+      };
+
+      const counts: number[] = [];
+      for (let check = 0; check < 3; check += 1) {
+        const before = h.log.warnings.length;
+        await checkAutoCompact(h.deps);
+        counts.push(h.log.warnings.length - before);
+      }
+
+      // The first 1,000 threads are logged one by one, the 1,001st only in the summary line.
+      expect(counts).toEqual([1_001, 0, 0]);
+      expect(h.log.warnings.at(-1)).toBe("Autocompact is failing for more than 1000 threads; it logs no further failures until some recover.");
     });
   });
 });

@@ -32,10 +32,14 @@ export type AutoCompactRole = "mate" | "crew";
 
 /**
  * Logs each failure once until it changes or clears, so a failure that lasts does not repeat a warning
- * every minute for every thread. Kept across checks; it remembers at most `limit` keys.
+ * every minute for every thread. Kept across checks; it remembers at most `limit` keys. At that limit a
+ * new key is not admitted, and evicting none means none is logged again: one summary line says that
+ * further failures go unlogged, until a remembered one clears and makes room.
  */
 export class FailureLog {
   private readonly logged = new Map<string, string>();
+  /** The summary was logged since the log last had room. */
+  private overflowed = false;
 
   constructor(
     private readonly log: Log,
@@ -43,11 +47,14 @@ export class FailureLog {
   ) {}
 
   warn(key: string, message: string): void {
-    if (this.logged.get(key) === message) return;
-    this.logged.delete(key);
-    if (this.logged.size >= this.limit) {
-      const oldest = this.logged.keys().next();
-      if (oldest.done !== true) this.logged.delete(oldest.value);
+    const known = this.logged.get(key);
+    if (known === message) return;
+    if (known === undefined && this.logged.size >= this.limit) {
+      if (!this.overflowed) {
+        this.overflowed = true;
+        this.log.warn(`Autocompact is failing for more than ${this.limit} threads; it logs no further failures until some recover.`);
+      }
+      return;
     }
     this.logged.set(key, message);
     this.log.warn(message);
@@ -56,15 +63,47 @@ export class FailureLog {
   /** The thing works again: its next failure is logged. */
   clear(key: string): void {
     this.logged.delete(key);
+    this.makeRoom();
   }
 
   /** Forgets every key but these. */
   keepOnly(keys: ReadonlySet<string>): void {
     for (const key of [...this.logged.keys()]) if (!keys.has(key)) this.logged.delete(key);
+    this.makeRoom();
   }
 
   get size(): number {
     return this.logged.size;
+  }
+
+  private makeRoom(): void {
+    if (this.logged.size < this.limit) this.overflowed = false;
+  }
+}
+
+/**
+ * Runs `work` under the lock, or gives up with null as soon as `signal` aborts while it waits there, so
+ * a stopping service settles without waiting on whatever holds the lock. The abandoned `work` still runs
+ * when the lock frees, and must check the signal itself before doing anything.
+ */
+async function underLockUnlessAborted<T>(
+  withLock: <R>(work: () => Promise<R>) => Promise<R>,
+  signal: AbortSignal,
+  work: () => Promise<T>,
+): Promise<T | null> {
+  if (signal.aborted) return null;
+  const locked = withLock(work);
+  let onAbort!: () => void;
+  const aborted = new Promise<null>((resolve) => {
+    onAbort = () => resolve(null);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  try {
+    return await Promise.race([locked, aborted]);
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+    // Once abandoned, nobody awaits it: its failure must not be an unhandled rejection.
+    locked.catch(() => undefined);
   }
 }
 
@@ -253,7 +292,7 @@ export async function checkAutoCompact(deps: AutoCompactDeps): Promise<AutoCompa
     const id = candidate.thread.id;
     try {
       const due = await assess(deps, candidate);
-      const done = due === null ? null : await deps.withMateLock(() => compact(deps, candidate, mateId, due));
+      const done = due === null ? null : await underLockUnlessAborted(deps.withMateLock, signal, () => compact(deps, candidate, mateId, due));
       failures.clear(id);
       if (done !== null) return done;
     } catch (error) {
