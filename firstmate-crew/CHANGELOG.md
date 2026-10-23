@@ -16,9 +16,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   that is 200,000 tokens) and after how many idle minutes (default 60). A thread is never compacted
   mid-turn, with a message waiting, or while it waits on you, and once compacted it is left alone until
   it has run another turn. FirstMate compacts at most one thread a minute and notes each one in its log.
-- The first mate's charter now tells it that a worker's turn after a long quiet spell, with nothing new,
-  is that worker being compacted and needs nothing. If you have edited your charter, the board offers the
-  new one to compare, as for any charter change.
+- **Compacting a worker wakes the first mate briefly.** The compaction is a turn of the worker's own,
+  and bb tells the first mate about it like any other, with nothing new in it.
 
 ## 0.5.1
 

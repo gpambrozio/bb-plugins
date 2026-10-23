@@ -194,7 +194,7 @@ long a cache lasts depends on the provider, so the idle time is yours to choose.
   tokens beforehand and how long it had been idle. A problem that lasts, such as bb not answering, is
   logged once, not every minute.
 - A compaction is a turn of its own. For a worker, bb reports it to the first mate like any of the
-  worker's turns, so the first mate wakes briefly; its charter tells it that such a turn is no news.
+  worker's turns, so the first mate wakes briefly to a turn with nothing new in it.
 
 ## Limitations
 

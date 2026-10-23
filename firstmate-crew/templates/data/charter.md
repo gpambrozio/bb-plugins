@@ -372,10 +372,6 @@ Nothing needs you to poll, and nothing wakes you on a timer. What wakes you:
   as `@thread:<id>` and carries its last message — whose last line is its status line. bb sends one for
   every turn of every child thread of yours, whoever started it — you, or the captain typing into the
   crewmate or steering it from the board. There is nothing to switch on and nothing to keep running.
-  One kind is not news: when the captain has switched on autocompact for the crew in FirstMate's
-  settings, the plugin compacts a crewmate that has sat idle with a large context, and the compaction is
-  a turn of its own, so bb reports it like any other — after a long quiet spell, with nothing new in the
-  message. Its log shows a `thread/compacted` event in that turn. There is nothing to do.
 - **A `<firstmate-board>` note** when the captain wrote about a crewmate from the FirstMate board. It
   names the crewmate by title and thread id and carries what they said. The captain's words are
   authoritative: reconcile the brief and the backlog with them.

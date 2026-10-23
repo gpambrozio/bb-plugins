@@ -202,8 +202,9 @@ Do not break these; each was paid for.
   minute after load, so a reload's new instance does not check while the old one is being disposed. Its
   log is the plugin's log only: the board has no activity feed, and adding one was out of scope.
 - **A crewmate's compaction wakes the first mate.** bb 0.46.1 reports every root turn of a child to its
-  parent, the compaction's included (`addParentTurnNotificationFollowUp` has no exemption), so the
-  charter (§7) tells the first mate that a quiet crewmate's turn with nothing new is a compaction.
+  parent, the compaction's included (`addParentTurnNotificationFollowUp` has no exemption), so the first
+  mate gets a `completed` notice with nothing new in it. The charter does not mention autocompact: the
+  captain chose to leave it unchanged, so the first mate reads that notice like any other.
 - **Relaunch is a message to the first mate**, which spawns the replacement with `--environment` set to
   the old worker's environment. The old thread stays stopped, not archived, so the shared worktree lives.
 
