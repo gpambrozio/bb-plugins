@@ -35,7 +35,7 @@ what still holds and says what bb changed. The repo root `AGENTS.md` covers what
 | `app/tip-button.tsx` | An icon button with bb's tooltip. |
 | `app/speech.ts` | Every browser audio global, and which bb client this is. |
 | `app/rows.ts` | What the page lists: bb's unread and waiting-for-input joined with Herald's entries. |
-| `app/panel.tsx`, `app/banner.tsx` | The Herald page (its waiting threads, then recent sentences from every thread; and its sidebar count), and the sentence above a thread's composer. |
+| `app/panel.tsx`, `app/banner.tsx` | The Herald page (its waiting threads, then recent sentences from every thread; and the count on its sidebar entry, `useWaitingBadge`), and the sentence above a thread's composer. |
 | `app/history-panel.tsx`, `app/header-action.tsx` | The Herald tab in a thread's side panel — the sentences of its past turns — and the header megaphone that opens it. |
 | `app/settings-section.tsx`, `app/voice-picker.tsx` | The model-written sentence's tool, custom command (only under custom) and prompt; how many recent sentences the page lists; the voice lists and *Test voice*. |
 
@@ -330,6 +330,12 @@ a minute as a backstop — so the page has no Refresh button. Its header has *Mu
 Settings button that goes where bb's own `openSettings()` goes (`/settings/plugins/<pluginId>`); the
 panel SDK has no call for it, so `app/open-settings.ts` pushes that route as `firstmate-crew` does.
 
+The **count on the sidebar entry** is the page's own rows, through the nav panel's `experimental_useBadge`
+(bb 0.47, SDK 0.6.75): a hook bb calls in the plugin's scope, which returns `{ count, tone: "critical",
+label }` or null when nothing waits. It reads the same store the overlay fills, so it costs no read of its
+own. bb 0.46 drew nothing for the `experimental_sidebarAccessory` component this replaced, and refuses
+the new key (`unknown field`), which is why `engines.bb` is `>=0.47`.
+
 ## Icons
 
 bb's icon names are its own set (about 170, listed in `app/testing/bb-icon-names.ts`), not Lucide's: there
@@ -353,7 +359,7 @@ writes a row but it is an interaction (the thread waits for input, bb notifies, 
 "Submitted …"); extension rows are written by provider bridges only; system messages are delivered to
 the agent and start or steer a turn; prompt parts can be `agent-only` but not user-only; the dispatch
 hook can only proceed, wait or reject. So the nearest thing is a **thread panel**
-(`app.slots.threadPanelAction`, `app/history-panel.tsx`): the sentences of the thread's past turns,
+(an action tab, `app.slots.experimental_tab` with `context: { kind: "thread" }`, `app/history-panel.tsx`): the sentences of the thread's past turns,
 newest first, from `server/history.ts` — appended by the hooks' `remember` when a sentence *lands*
 (plain, off, or the model's; never a pending one taken back), one kv row per thread capped at
 `HISTORY_LIMIT` items with the headline cut at `HISTORY_HEADLINE_MAX` and the text at `MAX_SPEECH_CHARS`
@@ -400,3 +406,5 @@ cover, check by hand after `bb plugin reload herald`:
    under *Model-written sentences*, pick the tool *custom*: a *Custom command* field
    appears under the select, filled in with the Claude command. Save a command that does not exist:
    the plain sentence is spoken and the log says why. Pick *claude* again: the field goes.
+7. With a thread waiting, Herald's sidebar entry carries the count, and its tooltip says "1 thread waiting
+   for you"; open the thread so nothing waits, and the badge goes.
