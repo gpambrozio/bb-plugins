@@ -6,7 +6,7 @@
  * window was disconnected is gone.
  */
 import { useEffect, useRef, useState } from "react";
-import { useRealtime, useRealtimeConnectionState, useRpc } from "@get-bb/plugin-sdk/app";
+import { useRealtime, useRealtimeConnectionState, useRpc, type ExperimentalBadge } from "@get-bb/plugin-sdk/app";
 
 import { HEALTH_CHANGED, HealthSchema, type Health } from "../shared/channels";
 import type { RpcContract } from "../shared/contract";
@@ -59,17 +59,15 @@ export function useHealth(): Health | null {
 }
 
 /**
- * The sidebar row's trailing text: "2 failing" while any job's latest run
- * failed unseen, nothing otherwise. The host clips it and hides it on a
- * compact viewport, where the panel's own list carries the same news.
+ * The badge on the sidebar entry: the count of jobs whose latest run failed
+ * unseen, with their names in the tooltip, or no badge at all. A hook bb
+ * calls in the plugin's scope (`experimental_useBadge`), not a component.
  */
-export function FailingAccessory() {
+export function useFailingBadge(): ExperimentalBadge | null {
   const health = useHealth();
-  const count = health?.failing.length ?? 0;
-  if (count === 0) return null;
-  return (
-    <span className="truncate text-xs font-medium text-destructive" title={health?.failing.map((entry) => entry.name).join(", ")}>
-      {count} failing
-    </span>
-  );
+  const failing = health?.failing ?? [];
+  if (failing.length === 0) return null;
+  const names = failing.map((entry) => entry.name).join(", ");
+  const label = failing.length === 1 ? `1 failing job: ${names}` : `${failing.length} failing jobs: ${names}`;
+  return { count: failing.length, tone: "critical", label };
 }

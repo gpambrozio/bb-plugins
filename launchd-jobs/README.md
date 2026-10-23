@@ -15,8 +15,8 @@ with how long each took and how it exited, and the tail of its log.
 - **Run now**, **Enable** / **Disable**, **Edit** and **Delete**, each doing the launchd part for you.
 - **Follow** shows the log as the job writes it. Press it again to stop; it also stops when you leave
   the job.
-- When a job's most recent run failed, the sidebar row says **N failing**. Opening the job clears it
-  from the count, until it fails again.
+- When a job's most recent run failed, the sidebar entry carries **a count of the failing jobs**, with
+  their names in its tooltip. Opening the job clears it from the count, until it fails again.
 - With more than one Mac connected to bb, a picker at the top chooses whose jobs you see. It starts on
   the Mac running the bb server.
 
@@ -25,13 +25,13 @@ source of truth, and the page reads them back every time.
 
 ## What you need
 
-- bb 0.44 or later.
+- bb 0.47 or later. On bb 0.44 to 0.46, install with `@^0.1.0` instead of `@^0.2.0`.
 - macOS, on the Mac whose jobs you manage. On any other machine the page says the plugin is macOS only.
 
 ## Install
 
 ```bash
-bb plugin install 'git:github.com/gpambrozio/bb-plugins@^0.1.0' --plugin launchd-jobs --tag-prefix launchd-jobs/
+bb plugin install 'git:github.com/gpambrozio/bb-plugins@^0.2.0' --plugin launchd-jobs --tag-prefix launchd-jobs/
 ```
 
 The page is **Scheduled jobs** in the sidebar; the palette has *Scheduled jobs: open launchd jobs*.

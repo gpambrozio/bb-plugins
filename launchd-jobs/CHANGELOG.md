@@ -5,6 +5,18 @@ Notable changes to `launchd-jobs`. The other plugins in this repository version 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.2.0
+
+### Added
+
+- The **Scheduled jobs** entry in the sidebar shows how many jobs are failing again, with their names in
+  its tooltip. bb 0.46 had stopped drawing it.
+
+### Changed
+
+- **Needs bb 0.47 or newer.** On an older bb this version is not offered as an update, and Scheduled
+  jobs 0.1.1 keeps working there.
+
 ## 0.1.1
 
 ### Changed
