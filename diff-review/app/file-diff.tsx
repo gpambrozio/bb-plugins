@@ -1,0 +1,239 @@
+/**
+ * One changed file: its header (with "Comment on file"), its whole-file threads, and the patch drawn
+ * by the `@pierre/diffs` bb provides, with each line thread as an annotation under its last line. The
+ * gutter "+" (or a dragged line selection, then "+") opens a new comment there.
+ *
+ * Pierre's line ranges carry a side for each end; a thread has one side, so a selection that crosses
+ * from removed to added lines keeps only its first line.
+ */
+import { PatchDiff, type DiffLineAnnotation, type SelectedLineRange } from "@pierre/diffs/react";
+import { experimental_useCodeTheme } from "@get-bb/plugin-sdk/app";
+import { useMemo, useRef, useState } from "react";
+
+import { Button } from "@/components/ui/button";
+import { Icon } from "@/components/ui/icon";
+
+import { placeThread, type Placement } from "../shared/anchors";
+import { linesText, parsePatchLines } from "../shared/patch-lines";
+import { describeLocation, type DiffFile, type ReviewThread, type Side } from "../shared/types";
+import { useActions } from "./actions";
+import { CommentComposer } from "./comment-composer";
+import { ThreadCard } from "./thread-card";
+
+export type DiffStyle = "split" | "unified";
+
+/** Files with more changed lines than this start folded, so one huge file does not stall the tab. */
+const FOLD_ABOVE_LINES = 2_000;
+
+type Annotation =
+  | { kind: "threads"; threads: { thread: ReviewThread; placement: Placement }[] }
+  | { kind: "draft"; side: Side; startLine: number; endLine: number };
+
+interface Draft {
+  side: Side;
+  startLine: number;
+  endLine: number;
+}
+
+function toSide(side: SelectedLineRange["side"]): Side {
+  return side === "deletions" ? "old" : "new";
+}
+
+function toPierreSide(side: Side): "deletions" | "additions" {
+  return side === "old" ? "deletions" : "additions";
+}
+
+/** A Pierre range as a thread's place: one side, start before end. */
+export function draftFrom(range: SelectedLineRange): Draft {
+  const side = toSide(range.side);
+  if (range.endSide !== undefined && range.endSide !== range.side) return { side, startLine: range.start, endLine: range.start };
+  return { side, startLine: Math.min(range.start, range.end), endLine: Math.max(range.start, range.end) };
+}
+
+/** The threads of a file placed against its current patch, split into line threads and the rest. */
+export function placeFileThreads(file: DiffFile, threads: readonly ReviewThread[]) {
+  const wholeFile = threads.filter((thread) => thread.startLine === 0);
+  // Until an on-demand patch is loaded, line threads cannot be placed: they wait above the button.
+  if (file.patch === null) {
+    return { lines: undefined, wholeFile, onLines: [], unplaced: threads.filter((thread) => thread.startLine > 0), outdated: [] };
+  }
+  const lines = parsePatchLines(file.patch);
+  const placed = threads.filter((thread) => thread.startLine > 0).map((thread) => ({ thread, placement: placeThread(thread, lines) }));
+  return {
+    lines,
+    wholeFile,
+    onLines: placed.filter(({ placement }) => placement.state !== "outdated"),
+    unplaced: [],
+    outdated: placed.filter(({ placement }) => placement.state === "outdated").map(({ thread }) => thread),
+  };
+}
+
+function lineCount(file: DiffFile): string {
+  return `+${file.additions} −${file.deletions}`;
+}
+
+export function FileDiff({ file, threads, diffStyle, onLoadPatch }: { file: DiffFile; threads: readonly ReviewThread[]; diffStyle: DiffStyle; onLoadPatch(path: string): Promise<void> }) {
+  const actions = useActions();
+  const codeTheme = experimental_useCodeTheme();
+  const [collapsed, setCollapsed] = useState(() => file.additions + file.deletions > FOLD_ABOVE_LINES);
+  const [draft, setDraft] = useState<Draft | null>(null);
+  // The draft's text lives here, not in its composer: Pierre may remount annotations when the patch
+  // reloads (an agent's turn ended), and the text must survive that.
+  const draftBody = useRef("");
+  const [fileDraft, setFileDraft] = useState(false);
+  const [selected, setSelected] = useState<SelectedLineRange | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const { lines, wholeFile, onLines, unplaced } = useMemo(() => placeFileThreads(file, threads), [file, threads]);
+
+  const annotations = useMemo(() => {
+    const byLine = new Map<string, DiffLineAnnotation<Annotation>>();
+    for (const entry of onLines) {
+      if (entry.placement.state === "outdated" || entry.thread.side === null) continue;
+      const side = toPierreSide(entry.thread.side);
+      const key = `${side}:${entry.placement.endLine}`;
+      const existing = byLine.get(key);
+      if (existing !== undefined && existing.metadata.kind === "threads") existing.metadata.threads.push(entry);
+      else byLine.set(key, { side, lineNumber: entry.placement.endLine, metadata: { kind: "threads", threads: [entry] } });
+    }
+    const list = [...byLine.values()];
+    if (draft !== null) list.push({ side: toPierreSide(draft.side), lineNumber: draft.endLine, metadata: { kind: "draft", ...draft } });
+    return list;
+  }, [onLines, draft]);
+
+  const options = useMemo(
+    () => ({
+      diffStyle,
+      theme: codeTheme.name,
+      themeType: codeTheme.mode,
+      overflow: "wrap" as const,
+      disableFileHeader: true,
+      enableGutterUtility: true,
+      enableLineSelection: true,
+      onLineSelected: (range: SelectedLineRange | null) => setSelected(range),
+      onGutterUtilityClick: (range: SelectedLineRange) => {
+        draftBody.current = "";
+        setDraft(draftFrom(range));
+        setSelected(null);
+      },
+    }),
+    [diffStyle, codeTheme.name, codeTheme.mode],
+  );
+
+  const renderAnnotation = (annotation: DiffLineAnnotation<Annotation>) => {
+    const meta = annotation.metadata;
+    if (meta.kind === "threads") {
+      return (
+        <div className="flex flex-col gap-2 px-3 py-2">
+          {meta.threads.map(({ thread, placement }) => (
+            <ThreadCard key={thread.id} thread={thread} placement={placement} />
+          ))}
+        </div>
+      );
+    }
+    const range = meta.startLine === meta.endLine ? `line ${meta.startLine}` : `lines ${meta.startLine}–${meta.endLine}`;
+    return (
+      <div className="flex flex-col gap-2 border-l-2 border-primary bg-card px-3 py-2 font-sans">
+        <span className="text-xs text-muted-foreground">
+          New comment on {range} ({meta.side === "old" ? "removed" : "new"} side)
+        </span>
+        <CommentComposer
+          placeholder="Leave a comment. Markdown works."
+          submitLabel="Comment"
+          withSeverity
+          initialBody={draftBody.current}
+          onBodyChange={(text) => (draftBody.current = text)}
+          onSubmit={async ({ body, severity }) => {
+            const anchorContent = lines === undefined ? null : linesText(lines, meta.side, meta.startLine, meta.endLine);
+            await actions.create({ filePath: file.path, side: meta.side, startLine: meta.startLine, endLine: meta.endLine, anchorContent, body, severity });
+            setDraft(null);
+          }}
+          onCancel={() => setDraft(null)}
+        />
+      </div>
+    );
+  };
+
+  const loadPatch = async () => {
+    setLoading(true);
+    try {
+      await onLoadPatch(file.path);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  let body: React.ReactNode;
+  if (file.binary) body = <p className="px-3 py-2 text-xs text-muted-foreground">Binary file; no line diff.</p>;
+  else if (file.loadMode === "too_large") body = <p className="px-3 py-2 text-xs text-muted-foreground">This file's diff is too large to show.</p>;
+  else if (file.patch === null)
+    body = (
+      <div className="px-3 py-2">
+        <Button type="button" variant="outline" size="sm" onClick={() => void loadPatch()} disabled={loading}>
+          {loading ? "Loading…" : "Load diff"}
+        </Button>
+      </div>
+    );
+  else
+    body = (
+      <PatchDiff<Annotation, undefined>
+        patch={file.patch}
+        options={options}
+        lineAnnotations={annotations}
+        selectedLines={selected}
+        renderAnnotation={renderAnnotation}
+      />
+    );
+
+  return (
+    <section className="border-b border-border" data-file-path={file.path}>
+      <header className="sticky top-0 z-10 flex items-center gap-2 border-b border-border bg-background px-3 py-1.5">
+        <Button type="button" variant="ghost" size="sm" className="h-6 px-1" aria-label={collapsed ? "Expand file" : "Collapse file"} onClick={() => setCollapsed(!collapsed)}>
+          <Icon name={collapsed ? "ChevronRight" : "ChevronDown"} className="size-3.5" />
+        </Button>
+        <span className="min-w-0 truncate font-mono text-xs" title={file.path}>
+          {file.previousPath === null ? file.path : `${file.previousPath} → ${file.path}`}
+        </span>
+        <span className="shrink-0 text-xs text-muted-foreground">
+          {file.untracked ? "new, untracked · " : file.changeKind === "modified" ? "" : `${file.changeKind} · `}
+          {lineCount(file)}
+        </span>
+        {file.patchTruncated ? <span className="shrink-0 text-xs text-warning-text">truncated</span> : null}
+        <Button type="button" variant="ghost" size="sm" className="ml-auto h-6 shrink-0 gap-1 px-1.5 text-xs" onClick={() => setFileDraft(true)}>
+          <Icon name="MessageSquarePlus" className="size-3.5" />
+          Comment on file
+        </Button>
+      </header>
+      {collapsed ? null : (
+        <>
+          {wholeFile.length > 0 || unplaced.length > 0 || fileDraft ? (
+            <div className="flex flex-col gap-2 px-3 py-2">
+              {wholeFile.map((thread) => (
+                <ThreadCard key={thread.id} thread={thread} />
+              ))}
+              {unplaced.map((thread) => (
+                <div key={thread.id} className="flex flex-col gap-1">
+                  <span className="text-xs text-muted-foreground">On {describeLocation(thread)}; load the diff to see it in place.</span>
+                  <ThreadCard thread={thread} />
+                </div>
+              ))}
+              {fileDraft ? (
+                <CommentComposer
+                  placeholder="A comment about the whole file"
+                  submitLabel="Comment"
+                  withSeverity
+                  onSubmit={async ({ body: text, severity }) => {
+                    await actions.create({ filePath: file.path, side: null, startLine: 0, endLine: 0, anchorContent: null, body: text, severity });
+                    setFileDraft(false);
+                  }}
+                  onCancel={() => setFileDraft(false)}
+                />
+              ) : null}
+            </div>
+          ) : null}
+          {body}
+        </>
+      )}
+    </section>
+  );
+}
