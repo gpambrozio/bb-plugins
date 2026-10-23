@@ -184,7 +184,7 @@ export function FileDiff({ file, threads, diffStyle, patchState, requestPatch, s
           New comment on {range} ({meta.side === "old" ? "removed" : "new"} side)
         </span>
         <CommentComposer
-          placeholder="Leave a comment. Markdown works."
+          placeholder="Leave a comment. Markdown works; @claude, @codex or @opencode gets an agent's answer."
           submitLabel="Comment"
           withSeverity
           initialBody={draftBody.current}

@@ -3,6 +3,8 @@
  * `@pierre/diffs`, with comment threads on lines, ranges, files and the whole diff, and "Send to
  * agent", which hands the open ones to this thread.
  *
+ * AI review starts a review run; the runs not yet closed are listed under the toolbar.
+ *
  * A tab opened with `params: { target }` starts on that view; otherwise on the uncommitted changes, or,
  * when there are none, on the changes committed since the base branch.
  */
@@ -15,12 +17,14 @@ import { Icon } from "@/components/ui/icon";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 import type { RpcContract } from "../shared/contract";
-import { GENERAL_PATH, targetRequestSchema, type ReviewThread, type TargetRequest } from "../shared/types";
+import { GENERAL_PATH, targetRequestSchema, type ReviewThread, type Run, type TargetRequest } from "../shared/types";
 import { ReviewActionsProvider, useActions } from "./actions";
+import { AiReviewDialog } from "./ai-review-dialog";
 import { CommentComposer } from "./comment-composer";
 import { FileDiff, placeFileThreads, type DiffStyle } from "./file-diff";
 import { usePatchLoader } from "./patch-loader";
 import { targetLabel } from "./labels";
+import { RunsList } from "./runs-list";
 import { SendDialog } from "./send-dialog";
 import { ThreadCard } from "./thread-card";
 import { errorMessage, useReview, type ReadyView } from "./use-review";
@@ -91,6 +95,7 @@ export function ReviewPanel({ threadId, params }: PluginThreadPanelProps) {
         onReload={() => void review.reload()}
         loadId={state.loadId}
         putPatches={review.putPatches}
+        putRun={review.putRun}
       />
     </ReviewActionsProvider>
   );
@@ -109,6 +114,7 @@ function ReadyPanel({
   onReload,
   loadId,
   putPatches,
+  putRun,
 }: {
   threadId: string;
   view: ReadyView;
@@ -118,12 +124,14 @@ function ReadyPanel({
   onReload(): void;
   loadId: number;
   putPatches(patches: readonly { path: string; patch: string; truncated: boolean }[]): void;
+  putRun(run: Run): void;
 }) {
   const rpc = useRpc<RpcContract>();
   const actions = useActions();
   const [diffStyle, setDiffStyle] = useState<DiffStyle>(storedDiffStyle);
   const [generalDraft, setGeneralDraft] = useState(false);
   const [sending, setSending] = useState(false);
+  const [reviewing, setReviewing] = useState(false);
 
   const toggleStyle = () => {
     const next = diffStyle === "split" ? "unified" : "split";
@@ -212,11 +220,17 @@ function ReadyPanel({
           <Icon name="MessageSquarePlus" className="size-4" />
           Comment on the diff
         </Button>
+        <Button type="button" variant="ghost" size="sm" className="gap-1" onClick={() => setReviewing(true)}>
+          <Icon name="Bot" className="size-4" />
+          AI review
+        </Button>
         <Button type="button" size="sm" className="ml-auto gap-1" onClick={() => setSending(true)} disabled={open.length === 0}>
           <Icon name="Sent" className="size-4" />
           Send to agent{open.length === 0 ? "" : ` (${open.length})`}
         </Button>
       </div>
+
+      <RunsList runs={view.runs} threads={view.threads} onClosed={putRun} />
 
       <div ref={setScrollRoot} className="min-h-0 flex-1 overflow-y-auto">
         <p className="px-3 py-2 text-xs text-muted-foreground">
@@ -269,7 +283,16 @@ function ReadyPanel({
         ))}
       </div>
 
-      <SendDialog open={sending} onOpenChange={setSending} sessionId={view.sessionId} threadId={threadId} threads={open} />
+      <SendDialog
+        open={sending}
+        onOpenChange={setSending}
+        sessionId={view.sessionId}
+        threadId={threadId}
+        environmentId={view.environmentId}
+        threads={open}
+        onStarted={putRun}
+      />
+      <AiReviewDialog open={reviewing} onOpenChange={setReviewing} sessionId={view.sessionId} threadId={threadId} environmentId={view.environmentId} onStarted={putRun} />
     </div>
   );
 }
