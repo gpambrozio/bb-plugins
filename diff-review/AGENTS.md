@@ -25,6 +25,8 @@ specific to `diff-review`.
 | `shared/patch-lines.ts`, `shared/anchors.ts` | A patch's lines by side and number, and where a thread belongs in the current diff (anchored, moved, outdated). |
 | `app/review-panel.tsx` | The tab: the view picker, split/unified, reload, whole-diff comments, the *Not on the current diff* list, the files, the send dialog. |
 | `app/file-diff.tsx` | One file: its header, whole-file threads, and Pierre's `PatchDiff` with thread annotations and the gutter "+". |
+| `app/patch-loader.ts` | Patches bb did not send with the file list, asked for as files come near the screen and fetched in batches, one request at a time. |
+| `app/header-action.tsx` | The Review button in the thread's title bar (`experimental_threadHeaderAction`), which opens the tab. |
 | `app/thread-card.tsx`, `app/comment-composer.tsx` | A thread and its comments; the box comments are written in. |
 | `app/send-dialog.tsx` | Picking threads and a note for **Send to agent**. |
 | `app/use-review.ts`, `app/actions.tsx` | The tab's data (RPC + realtime) and the thread actions every card shares. |
@@ -82,6 +84,12 @@ the ignore files from `bb.sdk.files.read` on the environment's host, both of whi
 machine holds the workspace, remote hosts included. What needs raw git — staged against unstaged,
 arbitrary `a..b` ranges, a pull request's head — will run on the **bb server's Mac only** until phase 4
 adds a `bb.host` git entry (decision 8 of the plan). Say so in each feature that adds raw git.
+
+**Diffs load without a tap.** bb's `diffFiles` may send no patches up front (it sent none for a
+42-file working tree), so every file without one asks for it when it comes within a screen of the
+tab's scroll area; the asks are batched (25 paths, one request at a time). Only a change of more than
+2,000 lines starts folded, and it loads when unfolded; binary and too-large files say why they have no
+line diff. Never put a "Load diff" button back.
 
 **The tab is a `threadPanelAction`.** It is the only tab surface bb 0.46 has. bb 0.47 drops it from
 the SDK typings in favour of `app.slots.experimental_tab({ context: { kind: "thread" }, availability:

@@ -15,7 +15,8 @@ export type ReviewState =
   | { status: "loading" }
   | { status: "unavailable"; message: string }
   | { status: "error"; message: string }
-  | { status: "ready"; view: ReadyView; refreshing: boolean };
+  /** `loadId` changes with every load of the view, so the tab knows its patches were replaced. */
+  | { status: "ready"; view: ReadyView; refreshing: boolean; loadId: number };
 
 export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -34,7 +35,7 @@ export function useReview(threadId: string, target: TargetRequest) {
     try {
       const view = await rpc.call("getReview", { threadId, target: JSON.parse(targetJson) as TargetRequest });
       if (mine !== generation.current) return;
-      setState(view.ok ? { status: "ready", view, refreshing: false } : { status: "unavailable", message: view.message });
+      setState(view.ok ? { status: "ready", view, refreshing: false, loadId: mine } : { status: "unavailable", message: view.message });
     } catch (error) {
       if (mine !== generation.current) return;
       setState({ status: "error", message: errorMessage(error) });

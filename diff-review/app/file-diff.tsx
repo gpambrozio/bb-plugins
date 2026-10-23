@@ -17,6 +17,7 @@ import { placeThread, type Placement } from "../shared/anchors";
 import { linesText, parsePatchLines } from "../shared/patch-lines";
 import { describeLocation, type DiffFile, type ReviewThread, type Side } from "../shared/types";
 import { useActions } from "./actions";
+import { useNearScreen, type PatchState } from "./patch-loader";
 import { CommentComposer } from "./comment-composer";
 import { ThreadCard } from "./thread-card";
 
@@ -72,17 +73,40 @@ function lineCount(file: DiffFile): string {
   return `+${file.additions} −${file.deletions}`;
 }
 
-export function FileDiff({ file, threads, diffStyle, onLoadPatch }: { file: DiffFile; threads: readonly ReviewThread[]; diffStyle: DiffStyle; onLoadPatch(path: string): Promise<void> }) {
+export interface FileDiffProps {
+  file: DiffFile;
+  threads: readonly ReviewThread[];
+  diffStyle: DiffStyle;
+  /** Where the patch stands when bb did not send it with the file list; undefined before it is asked for. */
+  patchState: PatchState | undefined;
+  /** Asks for the patch; called on its own when the file comes near the screen. */
+  requestPatch(path: string): void;
+  /** The tab's scroll container, to tell when the file comes near the screen. */
+  scrollRoot: Element | null;
+}
+
+/** Why a file shows no line diff, or null when it can. */
+export function noDiffReason(file: DiffFile): string | null {
+  if (file.binary) return "Binary file; no line diff.";
+  if (file.loadMode === "too_large") return "This file's diff is too large to show.";
+  return null;
+}
+
+export function FileDiff({ file, threads, diffStyle, patchState, requestPatch, scrollRoot }: FileDiffProps) {
   const actions = useActions();
   const codeTheme = experimental_useCodeTheme();
-  const [collapsed, setCollapsed] = useState(() => file.additions + file.deletions > FOLD_ABOVE_LINES);
+  const changedLines = file.additions + file.deletions;
+  const [collapsed, setCollapsed] = useState(() => changedLines > FOLD_ABOVE_LINES);
+  const sectionRef = useRef<HTMLElement>(null);
+  const reason = noDiffReason(file);
+  // The patch loads by itself once the file is near the screen; a folded file waits until unfolded.
+  useNearScreen(sectionRef, scrollRoot, file.patch === null && reason === null && !collapsed && patchState === undefined, () => requestPatch(file.path));
   const [draft, setDraft] = useState<Draft | null>(null);
   // The draft's text lives here, not in its composer: Pierre may remount annotations when the patch
   // reloads (an agent's turn ended), and the text must survive that.
   const draftBody = useRef("");
   const [fileDraft, setFileDraft] = useState(false);
   const [selected, setSelected] = useState<SelectedLineRange | null>(null);
-  const [loading, setLoading] = useState(false);
 
   const { lines, wholeFile, onLines, unplaced } = useMemo(() => placeFileThreads(file, threads), [file, threads]);
 
@@ -154,26 +178,19 @@ export function FileDiff({ file, threads, diffStyle, onLoadPatch }: { file: Diff
     );
   };
 
-  const loadPatch = async () => {
-    setLoading(true);
-    try {
-      await onLoadPatch(file.path);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   let body: React.ReactNode;
-  if (file.binary) body = <p className="px-3 py-2 text-xs text-muted-foreground">Binary file; no line diff.</p>;
-  else if (file.loadMode === "too_large") body = <p className="px-3 py-2 text-xs text-muted-foreground">This file's diff is too large to show.</p>;
-  else if (file.patch === null)
+  if (reason !== null) body = <p className="px-3 py-2 text-xs text-muted-foreground">{reason}</p>;
+  else if (file.patch === null && patchState === "failed")
     body = (
-      <div className="px-3 py-2">
-        <Button type="button" variant="outline" size="sm" onClick={() => void loadPatch()} disabled={loading}>
-          {loading ? "Loading…" : "Load diff"}
+      <div className="flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground">
+        Could not load this file's diff.
+        <Button type="button" variant="outline" size="sm" onClick={() => requestPatch(file.path)}>
+          Try again
         </Button>
       </div>
     );
+  else if (file.patch === null && patchState === "missing") body = <p className="px-3 py-2 text-xs text-muted-foreground">No diff for this file now; it changed meanwhile. Reload the review.</p>;
+  else if (file.patch === null) body = <p className="min-h-16 px-3 py-2 text-xs text-muted-foreground">Loading the diff…</p>;
   else
     body = (
       <PatchDiff<Annotation, undefined>
@@ -186,7 +203,7 @@ export function FileDiff({ file, threads, diffStyle, onLoadPatch }: { file: Diff
     );
 
   return (
-    <section className="border-b border-border" data-file-path={file.path}>
+    <section ref={sectionRef} className="border-b border-border" data-file-path={file.path}>
       <header className="sticky top-0 z-10 flex items-center gap-2 border-b border-border bg-background px-3 py-1.5">
         <Button type="button" variant="ghost" size="sm" className="h-6 px-1" aria-label={collapsed ? "Expand file" : "Collapse file"} onClick={() => setCollapsed(!collapsed)}>
           <Icon name={collapsed ? "ChevronRight" : "ChevronDown"} className="size-3.5" />
@@ -199,6 +216,7 @@ export function FileDiff({ file, threads, diffStyle, onLoadPatch }: { file: Diff
           {lineCount(file)}
         </span>
         {file.patchTruncated ? <span className="shrink-0 text-xs text-warning-text">truncated</span> : null}
+        {collapsed && changedLines > FOLD_ABOVE_LINES ? <span className="shrink-0 text-xs text-muted-foreground">folded: a large change</span> : null}
         <Button type="button" variant="ghost" size="sm" className="ml-auto h-6 shrink-0 gap-1 px-1.5 text-xs" onClick={() => setFileDraft(true)}>
           <Icon name="MessageSquarePlus" className="size-3.5" />
           Comment on file
@@ -213,7 +231,7 @@ export function FileDiff({ file, threads, diffStyle, onLoadPatch }: { file: Diff
               ))}
               {unplaced.map((thread) => (
                 <div key={thread.id} className="flex flex-col gap-1">
-                  <span className="text-xs text-muted-foreground">On {describeLocation(thread)}; load the diff to see it in place.</span>
+                  <span className="text-xs text-muted-foreground">On {describeLocation(thread)}; it shows in place once the diff loads.</span>
                   <ThreadCard thread={thread} />
                 </div>
               ))}

@@ -10,6 +10,7 @@ import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ReviewThread, ReviewView } from "../shared/types";
+import { ReviewHeaderAction } from "./header-action";
 import { ReviewPanel } from "./review-panel";
 
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn(), info: vi.fn() } }));
@@ -106,9 +107,16 @@ function render(rpc: Record<string, (input: never) => unknown> = {}) {
 }
 
 describe("the app", () => {
-  it("registers the Review tab and a palette command", async () => {
+  it("registers the Review tab, a title-bar button and a palette command", async () => {
     const app = await loadPluginApp(() => import("../app"));
     expect(app.threadPanelActions.map((action) => [action.id, action.title, action.layout])).toEqual([["review", "Review", "flush"]]);
+    expect(app.threadHeaderActions.map((action) => [action.id, action.title])).toEqual([["review", "Review"]]);
+  });
+
+  it("opens the Review tab from the title-bar button", () => {
+    const slot = renderSlot({ component: ReviewHeaderAction }, { threadId: "thr_1", projectId: "proj_1", isCompactViewport: false });
+    fireEvent.click(screen.getByRole("button", { name: "Review this thread's changes" }));
+    expect(slot.inspection.navigateCalls).toEqual([{ method: "openThreadPanel", options: { actionId: "review" } }]);
   });
 });
 
@@ -173,6 +181,56 @@ describe("the Review tab", () => {
     await screen.findByText("From the agent's side");
     await slot.behavior.emitRealtime("environment:env_1", { kind: "diff" });
     await waitFor(() => expect(slot.inspection.rpcCalls.filter((call) => call.method === "getReview")).toHaveLength(2));
+  });
+
+  it("loads the patches bb did not send, in one batch, without a tap", async () => {
+    const unloaded = (path: string) => ({ ...VIEW.files[0]!, path, patch: null, loadMode: "on_demand" as const });
+    const view = { ...VIEW, threads: [], files: [unloaded("src/a.ts"), unloaded("src/b.ts")] };
+    const slot = renderSlot(
+      { component: ReviewPanel },
+      { threadId: "thr_1", params: null },
+      {
+        rpc: {
+          getReview: () => view,
+          loadPatches: ({ paths }: { paths: string[] }) => ({ patches: paths.map((path) => ({ path, patch: PATCH, truncated: false })) }),
+        },
+      },
+    );
+    await waitFor(() => expect(screen.getAllByTestId("patch")).toHaveLength(2));
+    expect(screen.queryByRole("button", { name: "Load diff" })).toBeNull();
+    expect(slot.inspection.rpcCalls.filter((call) => call.method === "loadPatches").map((call) => call.input)).toEqual([
+      { threadId: "thr_1", target: { kind: "uncommitted" }, paths: ["src/a.ts", "src/b.ts"] },
+    ]);
+  });
+
+  it("offers to try again when a patch fails to load, and says why a file has no diff", async () => {
+    const view = {
+      ...VIEW,
+      threads: [],
+      files: [
+        { ...VIEW.files[0]!, patch: null },
+        { ...VIEW.files[0]!, path: "logo.png", patch: null, binary: true },
+      ],
+    };
+    let fail = true;
+    renderSlot(
+      { component: ReviewPanel },
+      { threadId: "thr_1", params: null },
+      {
+        rpc: {
+          getReview: () => view,
+          loadPatches: () => {
+            if (fail) throw new Error("host offline");
+            return { patches: [{ path: "src/a.ts", patch: PATCH, truncated: false }] };
+          },
+        },
+      },
+    );
+    expect(await screen.findByText("Binary file; no line diff.")).toBeTruthy();
+    const retry = await screen.findByRole("button", { name: "Try again" });
+    fail = false;
+    fireEvent.click(retry);
+    await screen.findByTestId("patch");
   });
 
   it("says why there is nothing to review", async () => {

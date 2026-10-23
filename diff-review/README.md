@@ -9,10 +9,12 @@ It is a bb take on [diffity](https://github.com/nilbuild/diffity)'s review loop,
 
 ## What you get
 
-- **A Review tab** in each thread's side panel (add it from the side panel's tabs, or with the command
-  palette: *Diff Review: review this thread's changes*). It shows the diff of the thread's workspace:
-  the **uncommitted changes**, the changes **committed since** the base branch, **all changes since**
-  the base branch, or **one commit** of the branch. Split or unified, in bb's code theme.
+- **A Review tab** in each thread's side panel, opened from the **Review** button in the thread's title
+  bar, the side panel's tabs, or the command palette (*Diff Review: review this thread's changes*). It
+  shows the diff of the thread's workspace: the **uncommitted changes**, the changes **committed
+  since** the base branch, **all changes since** the base branch, or **one commit** of the branch.
+  Split or unified, in bb's code theme. Each file's diff loads by itself as it scrolls into view; a
+  very large change starts folded, and a binary or oversized file says why it has no line diff.
 - **Comments where you need them.** Hover a line and click **+**, or drag across lines and click **+**
   for a range. **Comment on file** sits in each file's header, **Comment on the diff** in the toolbar.
   A comment can carry a severity (must fix, suggestion, nit, question) and is written in Markdown.

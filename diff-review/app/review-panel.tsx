@@ -18,6 +18,7 @@ import { GENERAL_PATH, targetRequestSchema, type ReviewThread, type TargetReques
 import { ReviewActionsProvider, useActions } from "./actions";
 import { CommentComposer } from "./comment-composer";
 import { FileDiff, placeFileThreads, type DiffStyle } from "./file-diff";
+import { usePatchLoader } from "./patch-loader";
 import { targetLabel } from "./labels";
 import { SendDialog } from "./send-dialog";
 import { ThreadCard } from "./thread-card";
@@ -80,6 +81,7 @@ export function ReviewPanel({ threadId, params }: PluginThreadPanelProps) {
         pickerValue={pickerValue(state.view.target.kind === "commit" ? state.view.target : target)}
         onPick={pick}
         onReload={() => void review.reload()}
+        loadId={state.loadId}
         putPatches={review.putPatches}
       />
     </ReviewActionsProvider>
@@ -97,6 +99,7 @@ function ReadyPanel({
   pickerValue: value,
   onPick,
   onReload,
+  loadId,
   putPatches,
 }: {
   threadId: string;
@@ -105,6 +108,7 @@ function ReadyPanel({
   pickerValue: string;
   onPick(value: string): void;
   onReload(): void;
+  loadId: number;
   putPatches(patches: readonly { path: string; patch: string; truncated: boolean }[]): void;
 }) {
   const rpc = useRpc<RpcContract>();
@@ -143,17 +147,22 @@ function ReadyPanel({
 
   const open = view.threads.filter((thread) => thread.status === "open");
 
-  const loadPatch = useCallback(
-    async (path: string) => {
+  // Patches bb did not send with the file list load as their files come near the screen.
+  const loadPatches = useCallback(
+    async (paths: string[]) => {
       try {
-        const { patches } = await rpc.call("loadPatches", { threadId, target: view.target, paths: [path] });
+        const { patches } = await rpc.call("loadPatches", { threadId, target: view.target, paths });
         putPatches(patches);
+        return patches.map((patch) => patch.path);
       } catch (error) {
-        toast.error(`Could not load the diff of ${path}: ${errorMessage(error)}`);
+        toast.error(`Could not load ${paths.length === 1 ? `the diff of ${paths[0]}` : `${paths.length} files' diffs`}: ${errorMessage(error)}`);
+        throw error;
       }
     },
     [rpc, threadId, view.target, putPatches],
   );
+  const patchLoader = usePatchLoader(loadPatches, `${view.sessionId}:${loadId}`);
+  const [scrollRoot, setScrollRoot] = useState<HTMLDivElement | null>(null);
 
   // A commit view opened from params may name a commit the branch list does not hold.
   const shown = view.target;
@@ -201,7 +210,7 @@ function ReadyPanel({
         </Button>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div ref={setScrollRoot} className="min-h-0 flex-1 overflow-y-auto">
         <p className="px-3 py-2 text-xs text-muted-foreground">
           {view.files.length} file{view.files.length === 1 ? "" : "s"} · +{additions} −{deletions}
           {view.ignoredPaths.length === 0 ? "" : ` · ${view.ignoredPaths.length} left out by the ignore patterns`}
@@ -240,7 +249,15 @@ function ReadyPanel({
 
         {view.files.length === 0 ? <Centered>No changes to review here.</Centered> : null}
         {view.files.map((file) => (
-          <FileDiff key={file.path} file={file} threads={byFile.get(file.path) ?? []} diffStyle={diffStyle} onLoadPatch={loadPatch} />
+          <FileDiff
+            key={file.path}
+            file={file}
+            threads={byFile.get(file.path) ?? []}
+            diffStyle={diffStyle}
+            patchState={patchLoader.states.get(file.path)}
+            requestPatch={patchLoader.request}
+            scrollRoot={scrollRoot}
+          />
         ))}
       </div>
 

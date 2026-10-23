@@ -3,9 +3,10 @@ and answers each one. It is diffity's review loop on your own working tree, insi
 
 ## What you get
 
-- A Review tab in each thread's side panel with the diff of the thread's workspace: its uncommitted
-  changes, the changes committed since the base branch, all changes since the base branch, or one of
-  the branch's commits. Split or unified, in bb's code theme.
+- A Review tab in each thread's side panel, one click away in the thread's title bar, with the diff of
+  the thread's workspace: its uncommitted changes, the changes committed since the base branch, all
+  changes since the base branch, or one of the branch's commits. Split or unified, in bb's code theme,
+  loading as you scroll.
 - Comments on a line, a range of lines, a whole file or the whole diff, in Markdown, with an optional
   severity: must fix, suggestion, nit or question. Reply, edit, resolve, reopen or dismiss.
 - Comments that follow the code as it moves. A comment whose code changed or left the view is listed
