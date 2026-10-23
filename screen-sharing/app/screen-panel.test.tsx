@@ -466,13 +466,13 @@ describe("the Screen Sharing page", () => {
 
 describe("the Mac picker, at the left of the toolbar", () => {
   const laptop: HostEntry = { id: "host_laptop", name: "MacBook Pro", connected: true, isServer: false };
-  const doxbook: HostEntry = { id: "host_doxbook", name: "DoxBook", connected: true, isServer: false };
+  const desk: HostEntry = { id: "host_desk", name: "DeskMac", connected: true, isServer: false };
   const linux: HostEntry = { id: "host_linux", name: "buildbox", connected: true, isServer: false };
   const away: HostEntry = { id: "host_away", name: "Travel MacBook", connected: false, isServer: false };
   const statuses: Record<string, ScreenStatus> = {
     host_mini: ready,
     host_laptop: { ...ready, hostId: "host_laptop", hostName: "MacBook Pro", isServer: false },
-    host_doxbook: { ...ready, hostId: "host_doxbook", hostName: "DoxBook", isServer: false, state: "off", rfbVersion: null, securityTypes: [] },
+    host_desk: { ...ready, hostId: "host_desk", hostName: "DeskMac", isServer: false, state: "off", rfbVersion: null, securityTypes: [] },
     host_linux: { ...ready, hostId: "host_linux", hostName: "buildbox", isServer: false, state: "unsupported", rfbVersion: null, securityTypes: [] },
     host_away: { ...ready, hostId: "host_away", hostName: "Travel MacBook", isServer: false, state: "offline", rfbVersion: null, securityTypes: [] },
   };
@@ -493,7 +493,7 @@ describe("the Mac picker, at the left of the toolbar", () => {
       { subPath: "" },
       {
         rpc: stubs({
-          hosts: () => ({ hosts: [mini, laptop, doxbook, linux, away] }),
+          hosts: () => ({ hosts: [mini, laptop, desk, linux, away] }),
           status: ({ hostId }) => statuses[hostId] as ScreenStatus,
           openSession: ({ hostId }) => ({ token: `tkt-${hostId}`, expiresAt: Date.now() + 30_000 }),
           ...handlers,
@@ -546,9 +546,9 @@ describe("the Mac picker, at the left of the toolbar", () => {
     expect(await screen.findByText("Checking Screen Sharing on MacMini…")).toBeTruthy();
     expect(picker().getAttribute("aria-label")).toBe("Mac: MacMini, Checking…");
     expect(screen.queryByRole("button", { name: "View only" })).toBeNull();
-    await pick(/DoxBook/);
-    expect(await screen.findByText("Screen Sharing is off on DoxBook")).toBeTruthy();
-    expect(picker().getAttribute("aria-label")).toBe("Mac: DoxBook, Screen Sharing off");
+    await pick(/DeskMac/);
+    expect(await screen.findByText("Screen Sharing is off on DeskMac")).toBeTruthy();
+    expect(picker().getAttribute("aria-label")).toBe("Mac: DeskMac, Screen Sharing off");
     expect(screen.queryByRole("button", { name: "Connect" })).toBeNull();
     await pick(/Travel MacBook/);
     expect(await screen.findByText("Travel MacBook is offline")).toBeTruthy();
@@ -559,10 +559,10 @@ describe("the Mac picker, at the left of the toolbar", () => {
     const view = renderWithTitleBar();
     await waitFor(() => expect(view.rpcCalls.filter((call) => call.method === "status")).toHaveLength(5));
     await waitFor(async () =>
-      expect(await entries()).toEqual(["MacMini On", "MacBook Pro On", "DoxBook Screen Sharing off", "buildbox Not a Mac", "Travel MacBook Offline"]),
+      expect(await entries()).toEqual(["MacMini On", "MacBook Pro On", "DeskMac Screen Sharing off", "buildbox Not a Mac", "Travel MacBook Offline"]),
     );
     expect(view.rpcCalls.filter((call) => call.method === "status").map((call) => call.input)).toEqual(
-      ["host_mini", "host_laptop", "host_doxbook", "host_linux", "host_away"].map((hostId) => ({ hostId })),
+      ["host_mini", "host_laptop", "host_desk", "host_linux", "host_away"].map((hostId) => ({ hostId })),
     );
   });
 
@@ -584,10 +584,10 @@ describe("the Mac picker, at the left of the toolbar", () => {
   it("says where to turn Screen Sharing on, on the Mac picked", async () => {
     renderWithTitleBar();
     await connectButtons();
-    await pick(/DoxBook/);
-    expect(await screen.findByText("Screen Sharing is off on DoxBook")).toBeTruthy();
-    expect(screen.getByText(/On DoxBook, open/)).toBeTruthy();
-    expect(picker().getAttribute("aria-label")).toBe("Mac: DoxBook, Screen Sharing off");
+    await pick(/DeskMac/);
+    expect(await screen.findByText("Screen Sharing is off on DeskMac")).toBeTruthy();
+    expect(screen.getByText(/On DeskMac, open/)).toBeTruthy();
+    expect(picker().getAttribute("aria-label")).toBe("Mac: DeskMac, Screen Sharing off");
     await pick(/Travel MacBook/);
     expect(await screen.findByText("Travel MacBook is offline")).toBeTruthy();
     await pick(/buildbox/);
@@ -757,7 +757,7 @@ describe("the page's clipboard controls", () => {
   let local: string;
   /** The Mac's clipboard, as the server's `clipboardRead` and `clipboardWrite` answer for it. */
   let mac: { text: string; changeCount: number; writes: string[]; error: string | null };
-  const account = { userName: "ci", fullName: "CI Bot" };
+  const account = { userName: "alice", fullName: "Alice Example" };
 
   beforeEach(() => {
     local = "";
@@ -814,7 +814,7 @@ describe("the page's clipboard controls", () => {
   }
 
   it("sends this computer's clipboard to the Mac, and copies the Mac's here, any characters", async () => {
-    const { view } = await connected("ci");
+    const { view } = await connected("alice");
     local = "from here 🙂";
     await pick(/Send clipboard/);
     await waitFor(() => expect(mac.writes).toEqual(["from here 🙂"]));
@@ -837,18 +837,18 @@ describe("the page's clipboard controls", () => {
   }
 
   it("offers its three items, and says in small print whose clipboard they reach", async () => {
-    await connected("ci");
+    await connected("alice");
     fireEvent.click(screen.getByRole("button", { name: "Clipboard" }));
     expect(menuItems()).toEqual(["Auto sync clipboard", "Send clipboardto MacMini", "Receive clipboardfrom MacMini"]);
-    const note = screen.getByText("Text only. It reaches the clipboard of ci, the account bb runs as on MacMini.");
+    const note = screen.getByText("Text only. It reaches the clipboard of alice, the account bb runs as on MacMini.");
     expect(note.className).toContain("text-xs");
   });
 
   it("holds only the reason, one size up, after signing in as another account", async () => {
-    await connected("gustavo");
+    await connected("bob");
     fireEvent.click(screen.getByRole("button", { name: "Clipboard" }));
     const reason = await screen.findByText(
-      "Clipboard sync reaches only the clipboard of ci, the account bb runs as on MacMini. Sign in as ci to use it.",
+      "Clipboard sync reaches only the clipboard of alice, the account bb runs as on MacMini. Sign in as alice to use it.",
     );
     expect(reason.className).toContain("text-sm");
     expect(menuItems()).toEqual([]);
@@ -857,7 +857,7 @@ describe("the page's clipboard controls", () => {
 
   it("holds only the reason when the Mac's clipboard cannot be reached, and asks again as it opens", async () => {
     mac.error = "old bb on that Mac";
-    const { view } = await connected("ci");
+    const { view } = await connected("alice");
     fireEvent.click(screen.getByRole("button", { name: "Clipboard" }));
     expect((await screen.findByText("Could not reach MacMini’s clipboard: old bb on that Mac.")).className).toContain("text-sm");
     expect(menuItems()).toEqual([]);
@@ -871,7 +871,7 @@ describe("the page's clipboard controls", () => {
   });
 
   it("syncs both ways with Auto sync, and keeps it on for the next connection", async () => {
-    const { view } = await connected("ci");
+    const { view } = await connected("alice");
     local = "copied here";
     await pick("Auto sync clipboard");
     await waitFor(() => expect(mac.writes).toEqual(["copied here"]));

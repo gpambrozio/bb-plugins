@@ -12,7 +12,7 @@ import { MAX_CLIPBOARD_BYTES } from "../shared/channels";
 import { FakePasteboardCommands } from "../testing/fake-pasteboard";
 import { Pasteboard, runCommand } from "./pasteboard";
 
-const account = { userName: "ci", fullName: "CI Bot" };
+const account = { userName: "alice", fullName: "Alice Example" };
 
 describe("a Mac's clipboard", () => {
   it("answers the change count, and the text only when asked for and changed", async () => {
@@ -40,11 +40,11 @@ describe("a Mac's clipboard", () => {
   });
 
   it("asks macOS for the account's full name once", async () => {
-    const commands = new FakePasteboardCommands("gustavo", null);
+    const commands = new FakePasteboardCommands("bob", null);
     const pasteboard = new Pasteboard(commands);
     await pasteboard.read(null);
     await pasteboard.read(null);
-    expect((await pasteboard.read(null)).account).toEqual({ userName: "gustavo", fullName: null });
+    expect((await pasteboard.read(null)).account).toEqual({ userName: "bob", fullName: null });
     expect(commands.fullNameCalls).toBe(1);
   });
 

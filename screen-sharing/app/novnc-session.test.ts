@@ -132,7 +132,7 @@ beforeAll(() => {
 let socket: FakeRelaySocket;
 let container: HTMLDivElement;
 /** The account bb runs as on the fake Mac, whose clipboard the Clipboard menu reaches. */
-let macAccount: { userName: string; fullName: string | null } = { userName: "ci", fullName: "CI Bot" };
+let macAccount: { userName: string; fullName: string | null } = { userName: "alice", fullName: "Alice Example" };
 const macClipboard = {
   read: async () => ({ account: macAccount, changeCount: 1, text: null, tooLarge: false }),
   write: async () => ({ account: macAccount, changeCount: 2 }),
@@ -625,8 +625,8 @@ describe("Full screen", () => {
 
   it.each([
     { account: { userName: "captain", fullName: null }, matches: true },
-    { account: { userName: "ci", fullName: "Captain" }, matches: true },
-    { account: { userName: "ci", fullName: "CI Bot" }, matches: false },
+    { account: { userName: "alice", fullName: "Captain" }, matches: true },
+    { account: { userName: "alice", fullName: "Alice Example" }, matches: false },
   ])("says whether the sign-in was the account bb runs as on the Mac ($account.userName, $account.fullName)", async ({ account, matches }) => {
     macAccount = account;
     await signIn();

@@ -5,6 +5,13 @@ Notable changes to `screen-sharing`. The other plugins in this repository versio
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.4.1
+
+### Changed
+
+- The developer notes and tests use made-up account and Mac names instead of real ones. Nothing
+  changes in how the plugin works.
+
 ## 0.4.0
 
 ### Added

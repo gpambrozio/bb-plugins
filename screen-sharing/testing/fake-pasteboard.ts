@@ -16,8 +16,8 @@ export class FakePasteboardCommands implements PasteboardCommands {
   beforeChangeCount: (() => void) | null = null;
 
   constructor(
-    private readonly user = "ci",
-    private readonly full: string | null = "CI Bot",
+    private readonly user = "alice",
+    private readonly full: string | null = "Alice Example",
   ) {}
 
   userName(): string {

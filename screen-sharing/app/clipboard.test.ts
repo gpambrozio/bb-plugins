@@ -40,7 +40,7 @@ class FakeClipboard implements LocalClipboard {
 
 /** A Mac's pasteboard as host/pasteboard.ts answers for it. */
 class FakeMac implements MacClipboard {
-  account: ClipboardAccount = { userName: "ci", fullName: "CI Bot" };
+  account: ClipboardAccount = { userName: "alice", fullName: "Alice Example" };
   changeCount = 10;
   text = "";
   reads: Array<number | null> = [];
@@ -123,7 +123,7 @@ beforeEach(() => {
   notices = [];
   accesses = [];
   canSync = true;
-  signedInAs = "ci";
+  signedInAs = "alice";
   syncs = [];
   vi.spyOn(document, "hasFocus").mockReturnValue(true);
 });
@@ -212,28 +212,28 @@ describe("Send and Receive", () => {
 
 describe("the account", () => {
   it("is the one bb runs as on the Mac, by short or full name", () => {
-    const account = { userName: "ci", fullName: "CI Bot" };
-    expect(signedInAsAccount(" CI ", account)).toBe(true);
-    expect(signedInAsAccount("ci bot", account)).toBe(true);
-    expect(signedInAsAccount("gustavo", account)).toBe(false);
+    const account = { userName: "alice", fullName: "Alice Example" };
+    expect(signedInAsAccount(" ALICE ", account)).toBe(true);
+    expect(signedInAsAccount("alice example", account)).toBe(true);
+    expect(signedInAsAccount("bob", account)).toBe(false);
   });
 
   it("keeps the sync off, saying why, when the sign-in was another account", async () => {
-    signedInAs = "gustavo";
+    signedInAs = "bob";
     clipboardPreference.setAutoSync(true);
     const sync = makeSync();
     await sync.start();
     expect(accesses).toEqual([
-      { available: false, reason: "Clipboard sync reaches only the clipboard of ci, the account bb runs as on MacMini. Sign in as ci to use it." },
+      { available: false, reason: "Clipboard sync reaches only the clipboard of alice, the account bb runs as on MacMini. Sign in as alice to use it." },
     ]);
     clipboard.text = "secret of another desktop";
     await sync.send();
     await sync.receive();
-    mac.copy("ci's clipboard");
+    mac.copy("alice's clipboard");
     await sync.pollMac();
     expect(mac.writes).toEqual([]);
     expect(clipboard.writes).toEqual([]);
-    expect(notices.at(-1)?.text).toBe("Clipboard sync reaches only the clipboard of ci, the account bb runs as on MacMini. Sign in as ci to use it.");
+    expect(notices.at(-1)?.text).toBe("Clipboard sync reaches only the clipboard of alice, the account bb runs as on MacMini. Sign in as alice to use it.");
   });
 
   it("makes no claim when the sign-in named no account", async () => {

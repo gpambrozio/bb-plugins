@@ -240,7 +240,7 @@ host entry for the others. `app/clipboard.ts` holds the page's side, one `Clipbo
   `spawn` with only a child `error` listener let an EPIPE on stdin escape as an uncaught exception,
   in the bb server's own process for its own Mac (review pass 1). Its tests run Node children only.
 - **Whose clipboard.** The scripts act on the pasteboard of the login session they run in:
-  the account bb runs as on that Mac (`ci` on the MacMini). A Screen Sharing sign-in as another account
+  the account bb runs as on that Mac (`alice` on the MacMini). A Screen Sharing sign-in as another account
   that is not at the console opens that account's own desktop, with its own pasteboard, which only root
   could reach (`launchctl asuser`); bb runs as a non-admin there. So each read and write answers the
   account (`id -F` for the full name), the page compares it with the user name typed at sign-in (short
