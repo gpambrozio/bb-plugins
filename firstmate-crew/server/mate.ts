@@ -40,6 +40,11 @@ export interface MateDeps {
  */
 const MATE_LOCK = "mate";
 
+/** Runs `work` under the `mate` lock, so it cannot interleave with a launch, restart or Compact. */
+export function withMateLock<T>(work: () => Promise<T>): Promise<T> {
+  return serialized(MATE_LOCK, work);
+}
+
 const NO_MATE = "No first mate aboard. Launch one in FirstMate settings.";
 
 function aboard(mate: ThreadInfo): Error {

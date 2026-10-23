@@ -10,21 +10,23 @@ The repo root `AGENTS.md` covers what every plugin here shares: the per-folder n
 the SDK surface, the dependency rules. This file covers only what is specific to `firstmate`. Checked
 against bb 0.44.0 and `@get-bb/plugin-sdk` 0.5.29; the pinned launch and the interruption notices
 (below) against bb 0.45.0 and SDK 0.6.15, which the plugin needs since 0.2.4; the board's one-request
-crew metadata read against bb 0.46.0 and SDK 0.6.37, which it needs since 0.5.0.
+crew metadata read against bb 0.46.0 and SDK 0.6.37, which it needs since 0.5.0; autocompact (0.6.0)
+against bb 0.46.1's server and the same SDK.
 
 ## Orientation
 
 | File | What it owns |
 | --- | --- |
-| `server.ts` | Wiring only: settings, the RPCs, `bb firstmate-crew`, the watch service, the thread events that publish `fleet` (created, active, idle, failed, archived, and a pending interaction). Every decision lives in `server/`. |
+| `server.ts` | Wiring only: settings, the RPCs, `bb firstmate-crew`, the watch and autocompact services, the thread events that publish `fleet` (created, active, idle, failed, archived, and a pending interaction). Every decision lives in `server/`. |
 | `shared/contract.ts`, `shared/types.ts` | The RPC contract (zod), the card and fleet shapes, the crew metadata keys, `STATE_DIR`. |
 | `server/mate.ts` | Launch, adopt, release, restart, compact, `askMate`; the `mate` lock; the stored id. |
 | `server/crew.ts` | Steer, interrupt, end, relaunch, board note. |
 | `server/fleet.ts` | The first mate's children joined to backlog items on `task`; the seven columns; `ReportCache`. |
 | `server/cli.ts` | `bb firstmate-crew crew spawn` and `bb firstmate-crew tell` (words or `--message-base64`, always under the relay line). |
 | `server/bb-ports.ts`, `server/ports.ts` | The narrow `ThreadsPort` and `ProjectsPort` over `bb.sdk`, so everything else is tested against fakes. Where the machine rule below lives. |
-| `server/store.ts` | `bb.storage.kv`: the first mate's thread id and the switched-off watches. Nothing else. |
-| `server/settings.ts` | `bb.settings.define`: home directory, crew provider/model/reasoning, board refresh. |
+| `server/store.ts` | `bb.storage.kv`: the first mate's thread id, the switched-off watches and autocompact's marks. Nothing else. |
+| `server/settings.ts` | `bb.settings.define`: home directory, crew provider/model/reasoning, board refresh, and autocompact's six (on, tokens, idle minutes, for the first mate and for the crew). |
+| `server/autocompact.ts` | One autocompact check: which thread is at rest, idle long enough and over its threshold; the once-per-idle-stretch marks. |
 | `server/home.ts`, `charter.ts`, `charter-file.ts` | Preparing the home; rendering `AGENTS.md`; the charter following the plugin until edited. |
 | `server/backlog.ts`, `suggestions.ts`, `crew-report.ts` | Parsing `data/backlog.md`, `data/suggestions.md` and `data/suggestions-dismissed.md`, and a worker's closing status line. |
 | `server/files.ts` | Confinement to the home (through symlinks) and `replaceTextIfUnchanged`. |
@@ -120,6 +122,15 @@ Do not break these; each was paid for.
   `<` of anything tag-shaped escaped. Failures are queued once until the watch succeeds.
 - **Titles never change; status lives in the section, the status line and `(hold: …)`.** The board's
   columns follow from those, not from the plugin's guesses.
+- **Autocompact never touches a thread that is not at rest, and compacts each idle stretch once.** At
+  rest is `isAtRest` in `server/autocompact.ts`: status and runtime status `idle`, no queued message, no
+  pending interaction, no background agent. Idle time runs from the thread's latest `turn/completed`
+  event in bb's log, never from when the plugin saw something, so a reload cannot reset it. A
+  compaction (accepted or refused) leaves a mark naming that event's `seq`; a marked thread is skipped
+  until `turn/started` events after it show a turn of its own — two when bb accepted, because the
+  compaction is itself a turn, one when it refused. The state is re-read just before compacting, the
+  first mate's under the `mate` lock, and one check compacts at most one thread. Only the first mate
+  and its live children are candidates; marks of anything else are dropped.
 - **Nothing throws into the server's event loop.** Services and listeners catch and log per tick;
   everything is released in `bb.onDispose`.
 - **Server code logs only through the injected `Log` (`server/log.ts`), wired to `bb.log`**, never
@@ -178,6 +189,13 @@ Do not break these; each was paid for.
   react-router browser history, so `app/open-plugin-settings.ts` pushes the route with the router's
   `{ usr, key, idx }` state and dispatches `popstate`. It is an internal route: if a bb upgrade moves it,
   the gear lands on a not-found page, and this is the place to fix.
+- **Autocompact has its own one-minute service, not the watch runner's tick.** The runner exists only
+  for a prepared home and stops with it; autocompact concerns threads, not the home. Its first check is a
+  minute after load, so a reload's new instance does not check while the old one is being disposed. Its
+  log is the plugin's log only: the board has no activity feed, and adding one was out of scope.
+- **A crewmate's compaction wakes the first mate.** bb 0.46.1 reports every root turn of a child to its
+  parent, the compaction's included (`addParentTurnNotificationFollowUp` has no exemption), so the
+  charter (§7) tells the first mate that a quiet crewmate's turn with nothing new is a compaction.
 - **Relaunch is a message to the first mate**, which spawns the replacement with `--environment` set to
   the old worker's environment. The old thread stays stopped, not archived, so the shared worktree lives.
 

@@ -220,6 +220,36 @@ export function bbThreads(sdk: PluginBbSdk): ThreadsPort {
     async compact(id) {
       await sdk.threads.compact({ threadId: id });
     },
+    async restState(id) {
+      const row = await nullIfNotFound(sdk.threads.get({ threadId: id }));
+      if (row === null || row.archivedAt !== null || row.deletedAt !== null) return null;
+      const interactions = await sdk.threads.interactions.list({ threadId: id });
+      return {
+        status: row.status,
+        runtimeStatus: row.runtime.displayStatus,
+        queuedMessages: row.queuedMessageCount,
+        pendingInteractions: interactions.filter((interaction) => interaction.status === "pending").length,
+        backgroundAgents: row.activeBackgroundAgentCount,
+      };
+    },
+    async lastTurnEnd(id) {
+      const [row] = await sdk.threads.events.list({ threadId: id, types: ["turn/completed"], order: "desc", limit: "1" });
+      return row === undefined ? null : { seq: row.seq, at: row.createdAt };
+    },
+    async turnsStartedAfter(id, afterSeq, limit) {
+      const rows = await sdk.threads.events.list({
+        threadId: id,
+        types: ["turn/started"],
+        afterSeq: String(afterSeq),
+        order: "asc",
+        limit: String(limit),
+      });
+      return Math.min(rows.length, limit);
+    },
+    async contextUsage(id) {
+      const { usage } = await sdk.threads.context({ threadId: id });
+      return usage === null ? null : { usedTokens: usage.usedTokens, estimated: usage.estimated };
+    },
   };
 }
 

@@ -6,8 +6,14 @@ import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 
 import type { PluginSettingDescriptor, PluginSettingsValues } from "@get-bb/plugin-sdk";
+import { z } from "zod";
 
 import type { HomeConfig } from "./home";
+
+/** A token count or a number of minutes: a whole number above zero. */
+const POSITIVE_WHOLE = z.number().int("Use a whole number.").positive("Use a number above zero.");
+
+export const AUTOCOMPACT_DEFAULTS = { enabled: false, minTokens: 200_000, idleMinutes: 60 } as const;
 
 export const REASONING_OPTIONS = ["default", "low", "medium", "high", "xhigh", "max"];
 
@@ -44,9 +50,58 @@ export const SETTINGS = {
     description: "How often the board reloads the crew while it is open.",
     default: 10,
   },
+  mateAutoCompact: {
+    type: "boolean",
+    label: "First mate: compact when idle",
+    description:
+      "Compact the first mate's conversation once it has been idle for a while with a large context, so its next turn does not resend all of it.",
+    default: AUTOCOMPACT_DEFAULTS.enabled,
+  },
+  mateAutoCompactTokens: {
+    type: "number",
+    label: "First mate: compact above (tokens)",
+    description: "Compact only when the first mate's context holds more than this many tokens.",
+    experimental_schema: POSITIVE_WHOLE,
+    default: AUTOCOMPACT_DEFAULTS.minTokens,
+  },
+  mateAutoCompactIdleMinutes: {
+    type: "number",
+    label: "First mate: compact after idle (minutes)",
+    description:
+      "How long after its last turn ended the first mate is compacted. Nothing is compacted mid-turn, with a message queued, or while waiting on an answer.",
+    experimental_schema: POSITIVE_WHOLE,
+    default: AUTOCOMPACT_DEFAULTS.idleMinutes,
+  },
+  crewAutoCompact: {
+    type: "boolean",
+    label: "Crew: compact when idle",
+    description: "Compact each crewmate's conversation once it has been idle for a while with a large context. Ended crewmates are left alone.",
+    default: AUTOCOMPACT_DEFAULTS.enabled,
+  },
+  crewAutoCompactTokens: {
+    type: "number",
+    label: "Crew: compact above (tokens)",
+    description: "Compact a crewmate only when its context holds more than this many tokens.",
+    experimental_schema: POSITIVE_WHOLE,
+    default: AUTOCOMPACT_DEFAULTS.minTokens,
+  },
+  crewAutoCompactIdleMinutes: {
+    type: "number",
+    label: "Crew: compact after idle (minutes)",
+    description:
+      "How long after its last turn ended a crewmate is compacted. Nothing is compacted mid-turn, with a message queued, or while waiting on an answer.",
+    experimental_schema: POSITIVE_WHOLE,
+    default: AUTOCOMPACT_DEFAULTS.idleMinutes,
+  },
 } satisfies Record<string, PluginSettingDescriptor>;
 
 export type FirstmateSettings = PluginSettingsValues<typeof SETTINGS>;
+
+/** Every setting at its default, as bb reports them before the captain changes any. */
+export function defaultSettings(): FirstmateSettings {
+  const entries = Object.entries(SETTINGS).map(([key, descriptor]) => [key, descriptor.default]);
+  return Object.fromEntries(entries) as FirstmateSettings;
+}
 
 /** The home directory setting as an absolute path: a leading `~` is the user's home directory. */
 export function homePath(setting: string): string {
@@ -64,5 +119,33 @@ export function homeConfig(settings: FirstmateSettings): HomeConfig {
   return {
     crewProvider: provider !== "" && model !== "" ? `${provider}/${model}` : "",
     crewReasoning: settings.crewReasoning === "default" ? "" : settings.crewReasoning,
+  };
+}
+
+/** When one kind of thread is compacted on its own: switched on, above `minTokens`, `idleMinutes` after its last turn. */
+export interface AutoCompactRule {
+  enabled: boolean;
+  minTokens: number;
+  idleMinutes: number;
+}
+
+export interface AutoCompactRules {
+  mate: AutoCompactRule;
+  crew: AutoCompactRule;
+}
+
+/** The six autocompact settings as one rule for the first mate and one for its crew. */
+export function autoCompactRules(settings: FirstmateSettings): AutoCompactRules {
+  return {
+    mate: {
+      enabled: settings.mateAutoCompact,
+      minTokens: settings.mateAutoCompactTokens,
+      idleMinutes: settings.mateAutoCompactIdleMinutes,
+    },
+    crew: {
+      enabled: settings.crewAutoCompact,
+      minTokens: settings.crewAutoCompactTokens,
+      idleMinutes: settings.crewAutoCompactIdleMinutes,
+    },
   };
 }

@@ -173,3 +173,66 @@ describe("bbThreads.metadataOf", () => {
     expect(empty.harness.callsTo("threads.experimental_listPluginMetadata")).toEqual([]);
   });
 });
+
+describe("bbThreads, autocompact's reads", () => {
+  it("reads a thread's rest state from its row and its pending interactions", async () => {
+    const { sdk, harness } = fakeSdk();
+    harness.stub("threads.get", () =>
+      makeThreadResponse({
+        id: "thr_1",
+        status: "idle",
+        runtime: { displayStatus: "waiting-for-host" },
+        queuedMessageCount: 2,
+        activeBackgroundAgentCount: 1,
+      }),
+    );
+    harness.stub("threads.interactions.list", () => [{ status: "pending" }, { status: "resolved" }]);
+
+    expect(await bbThreads(sdk).restState("thr_1")).toEqual({
+      status: "idle",
+      runtimeStatus: "waiting-for-host",
+      queuedMessages: 2,
+      pendingInteractions: 1,
+      backgroundAgents: 1,
+    });
+  });
+
+  it("has no rest state for an archived thread", async () => {
+    const { sdk, harness } = fakeSdk();
+    harness.stub("threads.get", () => makeThreadResponse({ id: "thr_1", archivedAt: 5 }));
+    expect(await bbThreads(sdk).restState("thr_1")).toBeNull();
+  });
+
+  it("takes the end of the last turn from the newest turn/completed event", async () => {
+    const { sdk, harness } = fakeSdk();
+    harness.stub("threads.events.list", () => [{ seq: 42, createdAt: 1_700_000_000_000, type: "turn/completed" }]);
+
+    expect(await bbThreads(sdk).lastTurnEnd("thr_1")).toEqual({ seq: 42, at: 1_700_000_000_000 });
+    expect(harness.callsTo("threads.events.list")[0]).toEqual([{ threadId: "thr_1", types: ["turn/completed"], order: "desc", limit: "1" }]);
+  });
+
+  it("has no last turn for a thread that has never finished one", async () => {
+    const { sdk, harness } = fakeSdk();
+    harness.stub("threads.events.list", () => []);
+    expect(await bbThreads(sdk).lastTurnEnd("thr_1")).toBeNull();
+  });
+
+  it("counts turn/started events after a sequence, no further than the limit", async () => {
+    const { sdk, harness } = fakeSdk();
+    harness.stub("threads.events.list", () => [{ seq: 43 }, { seq: 50 }]);
+
+    expect(await bbThreads(sdk).turnsStartedAfter("thr_1", 42, 2)).toBe(2);
+    expect(harness.callsTo("threads.events.list")[0]).toEqual([
+      { threadId: "thr_1", types: ["turn/started"], afterSeq: "42", order: "asc", limit: "2" },
+    ]);
+  });
+
+  it("reads context usage, and none when bb has no figure", async () => {
+    const { sdk, harness } = fakeSdk();
+    harness.stub("threads.context", () => ({ usage: { usedTokens: 250_000, estimated: true, modelContextWindow: 1_000_000 } }));
+    expect(await bbThreads(sdk).contextUsage("thr_1")).toEqual({ usedTokens: 250_000, estimated: true });
+
+    harness.stub("threads.context", () => ({ usage: null }));
+    expect(await bbThreads(sdk).contextUsage("thr_1")).toBeNull();
+  });
+});

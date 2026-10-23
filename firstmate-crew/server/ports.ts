@@ -17,6 +17,35 @@ export interface ThreadInfo {
   archivedAt: number | null;
 }
 
+/** What says whether a thread is truly at rest, beyond its status: everything that would wake it. */
+export interface RestState {
+  status: ThreadStatus;
+  /**
+   * `status` refined by bb with the machine's state: "waiting-for-host" or "provisioning" while the
+   * thread's machine is not ready. Anything but "idle" is not at rest.
+   */
+  runtimeStatus: string;
+  /** Messages queued for the thread, waiting to be sent. */
+  queuedMessages: number;
+  /** Permissions, questions and plans waiting on someone. */
+  pendingInteractions: number;
+  /** Background agents the thread started that are still running, though its turn has ended. */
+  backgroundAgents: number;
+}
+
+/** Where a thread's event log stands at the end of a turn. `at` is epoch milliseconds. */
+export interface TurnEnd {
+  seq: number;
+  at: number;
+}
+
+/** How much of its context window a thread's conversation fills, as bb last measured it. */
+export interface ContextUsage {
+  usedTokens: number;
+  /** bb marks the figure as an estimate rather than the provider's own count. */
+  estimated: boolean;
+}
+
 /** Where a thread's work is, for telling the first mate which thread a request comes from. */
 export interface ThreadOrigin {
   /** Null when bb no longer has the project. */
@@ -89,6 +118,14 @@ export interface ThreadsPort {
   clearContext(id: string): Promise<void>;
   /** Asks bb for the same structured `/compact` turn its composer sends. */
   compact(id: string): Promise<void>;
+  /** Null when the thread is missing, deleted or archived. */
+  restState(id: string): Promise<RestState | null>;
+  /** The thread's latest `turn/completed` event, or null when no turn has ended yet. */
+  lastTurnEnd(id: string): Promise<TurnEnd | null>;
+  /** How many turns have started since the event `afterSeq`, counting no further than `limit`. */
+  turnsStartedAfter(id: string, afterSeq: number, limit: number): Promise<number>;
+  /** The thread's context usage, or null when bb has no figure for it. */
+  contextUsage(id: string): Promise<ContextUsage | null>;
 }
 
 export interface ProjectsPort {

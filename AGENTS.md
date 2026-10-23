@@ -233,6 +233,15 @@ What a port only learns by running it:
   `destroyed`, with a null `path`. A thread in a worktree runs somewhere other than the project's
   checkout, so anything keyed on the checkout's path (Claude Code's project-scoped plugins, for one)
   has to map the worktree back to its main checkout (`skills/host/resolve/repo-root.ts`).
+- **A `threads.get` row is not a `threads.list` row.** Only list rows carry `queuedWork`,
+  `hasPendingInteraction` and the `activity` counts; a get row has `queuedMessageCount` and
+  `activeBackgroundAgentCount` instead, and neither says whether an interaction is pending (read
+  `threads.interactions.list`). Both carry `runtime.displayStatus`, which adds "waiting-for-host" to `status`.
+- **When a turn ended is in the thread's event log.** `bb.sdk.threads.events.list({ threadId, types:
+  ["turn/completed"], order: "desc", limit: "1" })` gives the last one, with `createdAt` in epoch
+  milliseconds; `threads.context` gives context usage, which may be marked `estimated` (a live Claude Code thread's was in bb 0.46.1). A
+  compaction (`threads.compact`) is a turn of its own, and a child's compaction turn notifies its parent
+  like any other (`firstmate-crew/AGENTS.md`).
 - **`bb.status.needsConfiguration(message)` lasts until the next load.** Fixing the cause does not
   clear it; tell the user to `bb plugin reload <id>`.
 - **The server's PATH may lack Homebrew.** The server takes the login shell's PATH, but keeps the one

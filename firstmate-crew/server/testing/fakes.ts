@@ -7,7 +7,18 @@ import { resolve } from "node:path";
 import type { PluginKvStorage } from "@get-bb/plugin-sdk";
 
 import type { Log } from "../log";
-import type { ProjectsPort, SendMode, ShortenedMessage, SpawnArgs, ThreadInfo, ThreadOrigin, ThreadsPort } from "../ports";
+import type {
+  ContextUsage,
+  ProjectsPort,
+  RestState,
+  SendMode,
+  ShortenedMessage,
+  SpawnArgs,
+  ThreadInfo,
+  ThreadOrigin,
+  ThreadsPort,
+  TurnEnd,
+} from "../ports";
 import { createStore, type Store } from "../store";
 
 type ThreadMethod = keyof ThreadsPort;
@@ -29,6 +40,12 @@ export class FakeThreads implements ThreadsPort {
   private readonly workspaces = new Map<string, string>();
   private readonly origins = new Map<string, ThreadOrigin>();
   private readonly failures = new Map<ThreadMethod, Error>();
+  /** Each thread's turn events, in the order bb would number them. */
+  private readonly turnEvents = new Map<string, { type: "started" | "completed"; seq: number; at: number }[]>();
+  private readonly usages = new Map<string, ContextUsage>();
+  /** What `restState` adds to a thread's status; absent fields are at rest. */
+  private readonly rest = new Map<string, Partial<Omit<RestState, "status">>>();
+  private nextSeq = 1;
   private nextId = 1;
   private clock = 1_000;
 
@@ -74,6 +91,31 @@ export class FakeThreads implements ThreadsPort {
 
   setStatus(id: string, status: ThreadInfo["status"]): void {
     this.update(id, { status });
+  }
+
+  /** Changes a thread's fields as bb would after some event, without a port call. */
+  set(id: string, fields: Partial<ThreadInfo>): void {
+    this.update(id, fields);
+  }
+
+  /** Appends a whole turn to the thread's event log: it started and ended at `endedAt`. */
+  runTurn(id: string, endedAt: number): TurnEnd {
+    const events = this.turnEvents.get(id) ?? [];
+    events.push({ type: "started", seq: this.nextSeq++, at: endedAt });
+    const end = { type: "completed" as const, seq: this.nextSeq++, at: endedAt };
+    events.push(end);
+    this.turnEvents.set(id, events);
+    return { seq: end.seq, at: end.at };
+  }
+
+  /** Sets what keeps a thread awake beyond its status: a queue, an interaction, background agents, its machine. */
+  setRest(id: string, fields: Partial<Omit<RestState, "status">>): void {
+    this.rest.set(id, { ...this.rest.get(id), ...fields });
+  }
+
+  setUsage(id: string, usage: ContextUsage | null): void {
+    if (usage === null) this.usages.delete(id);
+    else this.usages.set(id, { ...usage });
   }
 
   /** Archives without recording a call, as the captain archiving it in bb would. */
@@ -225,6 +267,47 @@ export class FakeThreads implements ThreadsPort {
     this.require(id);
   }
 
+  async restState(id: string): Promise<RestState | null> {
+    this.record("restState", id);
+    await tick();
+    this.throwIfFailing("restState");
+    const thread = this.threads.get(id);
+    if (thread === undefined || thread.archivedAt !== null) return null;
+    const rest = this.rest.get(id) ?? {};
+    return {
+      status: thread.status,
+      runtimeStatus: rest.runtimeStatus ?? thread.status,
+      queuedMessages: rest.queuedMessages ?? 0,
+      pendingInteractions: rest.pendingInteractions ?? this.pending.get(id) ?? 0,
+      backgroundAgents: rest.backgroundAgents ?? 0,
+    };
+  }
+
+  async lastTurnEnd(id: string): Promise<TurnEnd | null> {
+    this.record("lastTurnEnd", id);
+    await tick();
+    this.throwIfFailing("lastTurnEnd");
+    const ends = (this.turnEvents.get(id) ?? []).filter((event) => event.type === "completed");
+    const last = ends.at(-1);
+    return last === undefined ? null : { seq: last.seq, at: last.at };
+  }
+
+  async turnsStartedAfter(id: string, afterSeq: number, limit: number): Promise<number> {
+    this.record("turnsStartedAfter", id, afterSeq, limit);
+    await tick();
+    this.throwIfFailing("turnsStartedAfter");
+    const started = (this.turnEvents.get(id) ?? []).filter((event) => event.type === "started" && event.seq > afterSeq);
+    return Math.min(started.length, limit);
+  }
+
+  async contextUsage(id: string): Promise<ContextUsage | null> {
+    this.record("contextUsage", id);
+    await tick();
+    this.throwIfFailing("contextUsage");
+    const usage = this.usages.get(id);
+    return usage === undefined ? null : { ...usage };
+  }
+
   private record(method: ThreadMethod, ...args: unknown[]): void {
     this.calls.push({ method, args });
   }
@@ -318,16 +401,22 @@ export function memoryStore(): Store {
 
 /** A `Log` that keeps every message, so a test can assert what was logged and with what context. */
 export interface FakeLog extends Log {
+  readonly infos: string[];
   readonly warnings: string[];
   readonly errors: string[];
 }
 
 export function fakeLog(): FakeLog {
+  const infos: string[] = [];
   const warnings: string[] = [];
   const errors: string[] = [];
   return {
+    infos,
     warnings,
     errors,
+    info(message) {
+      infos.push(message);
+    },
     warn(message) {
       warnings.push(message);
     },

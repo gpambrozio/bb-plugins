@@ -38,12 +38,12 @@ function fleetSignals(harness: { realtimeSignals: { channel: string }[] }): numb
 }
 
 describe("server wiring", () => {
-  it("registers every method of the contract, the CLI and the watch service", async () => {
+  it("registers every method of the contract, the CLI, the watch service and autocompact", async () => {
     const { harness } = await load();
     expect([...harness.registrations.rpcMethods].sort()).toEqual(Object.keys(rpcContract).sort());
     expect(harness.registrations.rpcMethods).toHaveLength(19);
     expect(harness.registrations.cli?.name).toBe("firstmate-crew");
-    expect(harness.registrations.services.map((service) => service.name)).toEqual(["watches"]);
+    expect(harness.registrations.services.map((service) => service.name)).toEqual(["watches", "autocompact"]);
   });
 
   it("loads a fleet with no first mate without asking bb anything", async () => {
@@ -107,6 +107,17 @@ describe("server wiring", () => {
 
     expect(fleet.cards.map((card) => card.report)).toEqual([{ state: "done", text: "shipped the fix" }]);
     expect(harness.sdk.callsTo("threads.output")).toEqual([]);
+  });
+
+  it("checks nothing on load, and stops autocompact at once on abort", async () => {
+    const { harness } = await load({ mateId: "thr_mate" });
+    await harness.setSettings({ mateAutoCompact: true, crewAutoCompact: true });
+    const service = harness.runService("autocompact");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(harness.sdk.calls).toEqual([]);
+
+    service.controller.abort();
+    await service.done;
   });
 
   it("runs the watches for a prepared home, toggles them in the store, and stops on abort", async () => {

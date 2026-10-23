@@ -2,16 +2,9 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { homeConfig, homePath, type FirstmateSettings } from "./settings";
+import { autoCompactRules, defaultSettings, homeConfig, homePath, SETTINGS, type FirstmateSettings } from "./settings";
 
-const settings = (overrides: Partial<FirstmateSettings> = {}): FirstmateSettings => ({
-  homeDirectory: "~/FirstMate",
-  crewProvider: "",
-  crewModel: "",
-  crewReasoning: "default",
-  refreshSeconds: 10,
-  ...overrides,
-});
+const settings = (overrides: Partial<FirstmateSettings> = {}): FirstmateSettings => ({ ...defaultSettings(), ...overrides });
 
 describe("homePath", () => {
   it("expands a leading ~ to the user's home directory", () => {
@@ -47,4 +40,42 @@ describe("homeConfig", () => {
     expect(homeConfig(settings()).crewReasoning).toBe("");
     expect(homeConfig(settings({ crewReasoning: "high" })).crewReasoning).toBe("high");
   });
+});
+
+describe("autocompact settings", () => {
+  it("start off, at 200,000 tokens and 60 idle minutes, for the first mate and the crew alike", () => {
+    expect(autoCompactRules(defaultSettings())).toEqual({
+      mate: { enabled: false, minTokens: 200_000, idleMinutes: 60 },
+      crew: { enabled: false, minTokens: 200_000, idleMinutes: 60 },
+    });
+  });
+
+  it("give the first mate and the crew a rule each", () => {
+    const rules = autoCompactRules(
+      settings({
+        mateAutoCompact: true,
+        mateAutoCompactTokens: 150_000,
+        mateAutoCompactIdleMinutes: 30,
+        crewAutoCompact: false,
+        crewAutoCompactTokens: 400_000,
+        crewAutoCompactIdleMinutes: 90,
+      }),
+    );
+    expect(rules).toEqual({
+      mate: { enabled: true, minTokens: 150_000, idleMinutes: 30 },
+      crew: { enabled: false, minTokens: 400_000, idleMinutes: 90 },
+    });
+  });
+
+  it.each(["mateAutoCompactTokens", "mateAutoCompactIdleMinutes", "crewAutoCompactTokens", "crewAutoCompactIdleMinutes"] as const)(
+    "%s takes only a whole number above zero",
+    (key) => {
+      const schema = SETTINGS[key].experimental_schema;
+      expect(schema.safeParse(1).success).toBe(true);
+      expect(schema.safeParse(200_000).success).toBe(true);
+      expect(schema.safeParse(0).success).toBe(false);
+      expect(schema.safeParse(-5).success).toBe(false);
+      expect(schema.safeParse(1.5).success).toBe(false);
+    },
+  );
 });

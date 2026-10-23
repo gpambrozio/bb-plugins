@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { CREW_METADATA, type BacklogItem, type CrewSummary, type ThreadStatus, type WatchSummary } from "../shared/types";
 import { parseBacklog } from "./backlog";
 import { ReportCache, backlogColumn, buildCards, crewColumn, loadFleet, type FleetDeps } from "./fleet";
-import type { FirstmateSettings } from "./settings";
+import { defaultSettings, type FirstmateSettings } from "./settings";
 import { fakeLog, fakeProjects, fakeThreads, memoryStore } from "./testing/fakes";
 
 function crew(overrides: Partial<CrewSummary> = {}): CrewSummary {
@@ -217,13 +217,7 @@ describe("loadFleet", () => {
     for (const [name, text] of Object.entries(files)) await writeFile(join(home, name), text, "utf8");
     const threads = fakeThreads();
     const store = memoryStore();
-    const settings: FirstmateSettings = {
-      homeDirectory: home,
-      crewProvider: "",
-      crewModel: "",
-      crewReasoning: "default",
-      refreshSeconds: 10,
-    };
+    const settings: FirstmateSettings = { ...defaultSettings(), homeDirectory: home };
     const log = fakeLog();
     const deps: FleetDeps = {
       threads,
