@@ -9,8 +9,8 @@ by its own issue in this repository. Plugin code is full-trust and unsandboxed: 
 **inside the bb server's own process**, and the app half runs inside the bb app.
 
 The plugins pin **`@get-bb/plugin-sdk` 0.6.15**, 0.6.37 where a plugin needs bb 0.46 (`firstmate-crew`,
-`github-board`), or 0.6.75 where it needs bb 0.47 (`herald`, `launchd-jobs`, `screen-sharing`), and CI
-builds them all with **bb 0.47.0**. Re-pin a plugin only when it needs a newer API (see `engines`
+`github-board`), or 0.6.79 where it needs bb 0.47 (`herald`, `launchd-jobs`, `screen-sharing`), and CI
+builds them all with **bb 0.47.1**. Re-pin a plugin only when it needs a newer API (see `engines`
 below). This file was
 written against bb 0.44.0 and SDK 0.5.29 and re-checked against the 0.45.0 changes; a point that names
 bb 0.44 was observed there and still holds in 0.45 unless it says otherwise. The 0.47 points (SDK
