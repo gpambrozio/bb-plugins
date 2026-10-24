@@ -124,7 +124,7 @@ export function ReviewPanel({ threadId, params }: PluginThreadPanelProps) {
     return (
       <Centered>
         <span>Could not load the review: {state.message}</span>
-        <Button type="button" variant="outline" size="sm" onClick={() => void review.reload()}>
+        <Button type="button" variant="outline" size="sm" onClick={() => void review.reload("retry")}>
           Try again
         </Button>
       </Centered>
@@ -141,7 +141,7 @@ export function ReviewPanel({ threadId, params }: PluginThreadPanelProps) {
         refreshing={state.refreshing}
         pickerValue={pickerValue(state.view.target.kind === "commit" ? state.view.target : target)}
         onPick={pick}
-        onReload={() => void review.reload()}
+        onReload={() => void review.reload("manual")}
         loadId={state.loadId}
         stalePatches={state.stalePatches}
         putPatches={review.putPatches}

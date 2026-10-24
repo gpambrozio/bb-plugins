@@ -64,7 +64,7 @@ export default async function plugin(bb: BbPluginApi) {
   service.onUserComment = (thread, body, viewerThreadId) => runs.onUserComment(thread, body, viewerThreadId);
 
   bb.rpc.register(rpcContract, {
-    getReview: ({ threadId, target, autoTarget }) => service.view(threadId, target, autoTarget === true),
+    getReview: ({ threadId, target, autoTarget, reason, tab }) => service.view(threadId, target, autoTarget === true, reason, tab),
     loadPatches: async ({ threadId, target, paths }) => ({ patches: await service.patches(threadId, target, paths) }),
     listThreads: ({ sessionId }) => service.sessionState(sessionId),
     createThread: ({ threadId, ...input }) => ({ thread: service.createThread(input, threadId ?? null) }),

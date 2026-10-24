@@ -61,28 +61,40 @@ export async function workspaceRefs(sdk: Sdk, log: BbPluginApi["log"], environme
 }
 
 /**
- * A short key for the state of a workspace's diffs: its checkout (HEAD), how it stands against its
- * base, and its uncommitted changes (each file's kind and line counts, and the hash of each patch bb
- * sends up front). Two equal keys mean no view of the workspace changed, give or take an edit to a
- * large file that kept its line counts (bb sends no patch for those up front).
+ * The state of a workspace's diffs: its checkout (HEAD), how it stands against its base, and its
+ * uncommitted changes (each file's kind and line counts, and the hash of each patch bb sends up
+ * front). Two equal keys mean no view of the workspace changed, give or take an edit to a large file
+ * that kept its line counts (bb sends no patch for those up front). Only the named fields count:
+ * anything else bb's answers carry (now or in a later bb) must not make an unchanged workspace look
+ * changed. `summary` says the same in words, for the log.
  */
-export async function workspaceStateKey(sdk: Sdk, environmentId: string): Promise<string> {
+export interface WorkspaceState {
+  key: string;
+  summary: string;
+}
+
+export async function workspaceState(sdk: Sdk, environmentId: string): Promise<WorkspaceState> {
   const [status, uncommitted] = await Promise.all([
     sdk.environments.status({ environmentId }),
     sdk.environments.diffFiles({ environmentId, target: "uncommitted" }),
   ]);
-  const hash = createHash("sha256");
+  const parts: string[] = [];
   if (status.outcome === "available") {
     const { checkout, mergeBase } = status.workspace;
-    hash.update(JSON.stringify({ checkout, base: mergeBase === null || mergeBase === undefined ? null : [mergeBase.baseRef, mergeBase.aheadCount, mergeBase.behindCount] }));
-  } else hash.update(`status:${status.outcome}`);
+    const head = checkout.kind === "branch" || checkout.kind === "detached" ? (checkout.headSha ?? "none") : checkout.kind;
+    parts.push(`head ${head}`);
+    parts.push(mergeBase === null || mergeBase === undefined ? "no base" : `base ${mergeBase.baseRef} +${mergeBase.aheadCount}/-${mergeBase.behindCount}`);
+  } else parts.push(`status ${status.outcome}`);
+  const hash = createHash("sha256");
   if (uncommitted.outcome === "available") {
     const patches = new Map(uncommitted.initialPatches.map((patch) => [patch.path, patch.patch]));
     for (const file of uncommitted.files) {
       hash.update(`\n${file.path}\0${file.previousPath ?? ""}\0${file.changeKind}\0${file.additions}\0${file.deletions}\0${patches.get(file.path) ?? ""}`);
     }
-  } else hash.update(`diff:${uncommitted.outcome}`);
-  return hash.digest("hex");
+    parts.push(`${uncommitted.files.length} uncommitted file(s) ${hash.digest("hex").slice(0, 12)}`);
+  } else parts.push(`uncommitted ${uncommitted.outcome}`);
+  const summary = parts.join(", ");
+  return { key: createHash("sha256").update(summary).digest("hex"), summary };
 }
 
 /** Fills in the base a branch view left out. */

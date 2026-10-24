@@ -195,8 +195,18 @@ Move to `experimental_tab` when the plugin re-pins to an SDK that has it (and ra
   (`stalePatches`). The patch loader resets during render, not in an effect: an effect ran after the
   files' own effects had asked for their patches and wiped those asks.
 - A turn's end sends the `diff` signal (every tab reloads its whole view) only when the workspace's
-  state key (HEAD, base, uncommitted files and up-front patches) changed since the last turn's end;
-  most turns, such as a reviewer's answer and the parent reading its notice, change no file.
+  state (`workspaceState`: HEAD, base, uncommitted files and up-front patches, from named fields only)
+  changed since the last turn's end or since a tab first loaded it (so the first turn after a plugin
+  load does not reload everything); most turns, such as a reviewer's answer and the parent reading its
+  notice, change no file. Another agent editing the reviewed workspace does change it, so a reviewer's
+  turn ending then reloads, in place. A tab merges triggers: a signal or a reconnect during a load runs
+  one more load after it, never a second one beside it.
+- **Reading a reload in the log** (`bb plugin logs diff-review`, debug level): each full load says
+  `Loading the <kind> view of <thread>'s workspace <env> for tab <id> (<reason>)` (`open`, `view`,
+  `diff-signal`, `reconnect`, `manual`, `retry`); each turn end says whether the workspace was
+  `unchanged` or `changed from (…) to (…)`. One signal reloads every open tab, so two loads with the
+  same reason and different tab ids are two tabs, not a duplicate. A review run's new comment reads the
+  ignore files too, after `Reading the diff of <env> to check a review comment`.
 - The app never imports the SDK root at run time: the contract is a type import, the schemas and the
   channel name live in `shared/types.ts`.
 - `@pierre/diffs` stays a devDependency: bb provides it.

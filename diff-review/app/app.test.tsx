@@ -149,7 +149,7 @@ describe("the Review tab", () => {
   it("shows the diff with each thread where its code is now, whole-diff threads on top, and lost ones apart", async () => {
     const slot = render();
     await screen.findByText("1 file · +1 −1 · 1 left out by the ignore patterns");
-    expect(slot.inspection.rpcCalls[0]).toEqual({ method: "getReview", input: { threadId: "thr_1", target: { kind: "uncommitted" }, autoTarget: true } });
+    expect(slot.inspection.rpcCalls[0]).toEqual({ method: "getReview", input: { threadId: "thr_1", target: { kind: "uncommitted" }, reason: "open", tab: expect.any(String), autoTarget: true } });
 
     const line = screen.getByTestId("annotation-additions-2");
     expect(within(line).getByText("Why three?")).toBeTruthy();
@@ -380,15 +380,34 @@ describe("the Review tab", () => {
     await waitFor(() => expect(slot.inspection.rpcCalls.filter((call) => call.method === "getReview")).toHaveLength(2));
     // The first load may pick; every later one keeps the view, now the branch's.
     expect(slot.inspection.rpcCalls.filter((call) => call.method === "getReview").map((call) => call.input)).toEqual([
-      { threadId: "thr_1", target: { kind: "uncommitted" }, autoTarget: true },
-      { threadId: "thr_1", target: { kind: "branch", base: "main" } },
+      { threadId: "thr_1", target: { kind: "uncommitted" }, reason: "open", tab: expect.any(String), autoTarget: true },
+      { threadId: "thr_1", target: { kind: "branch", base: "main" }, reason: "diff-signal", tab: expect.any(String) },
     ]);
   });
 
   it("never picks for a tab opened on a chosen view", async () => {
     const slot = renderSlot({ component: ReviewPanel }, { threadId: "thr_1", params: { target: { kind: "uncommitted" } } }, { rpc: { getReview: () => VIEW } });
     await screen.findByText("1 file · +1 −1 · 1 left out by the ignore patterns");
-    expect(slot.inspection.rpcCalls[0]!.input).toEqual({ threadId: "thr_1", target: { kind: "uncommitted" } });
+    expect(slot.inspection.rpcCalls[0]!.input).toEqual({ threadId: "thr_1", target: { kind: "uncommitted" }, reason: "open", tab: expect.any(String) });
+  });
+
+  it("runs one load for signals that arrive while a load is under way, and names each load's trigger", async () => {
+    let answer: ((value: unknown) => void) | null = null;
+    let loads = 0;
+    const slot = render({ getReview: () => (++loads === 2 ? new Promise((resolve) => (answer = resolve)) : VIEW) });
+    await screen.findByText("Why three?");
+    await slot.behavior.emitRealtime("environment:env_1", { kind: "diff" });
+    await waitFor(() => expect(answer).not.toBeNull());
+    // While that load runs, another signal and a reconnect: no second load beside it.
+    await slot.behavior.emitRealtime("environment:env_1", { kind: "diff" });
+    await slot.behavior.setRealtimeConnectionState("reconnecting");
+    await slot.behavior.setRealtimeConnectionState("connected");
+    expect(slot.inspection.rpcCalls.filter((call) => call.method === "getReview")).toHaveLength(2);
+    // When it ends, one more load runs, for what may have changed meanwhile.
+    answer!(VIEW);
+    await waitFor(() => expect(slot.inspection.rpcCalls.filter((call) => call.method === "getReview")).toHaveLength(3));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(slot.inspection.rpcCalls.filter((call) => call.method === "getReview").map((call) => (call.input as { reason: string }).reason)).toEqual(["open", "diff-signal", "reconnect"]);
   });
 
   it("reloads once when the connection comes back, and not on the first connection", async () => {

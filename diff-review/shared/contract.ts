@@ -17,6 +17,7 @@ import {
   sideSchema,
   targetRequestSchema,
   viewStateSchema,
+  loadReasonSchema,
   targetSchema,
   threadStatusSchema,
 } from "./types";
@@ -33,6 +34,9 @@ export const rpcContract = defineRpcContract({
         target: targetRequestSchema,
         /** The tab's first load: an empty uncommitted view may give way to the branch's commits. */
         autoTarget: z.boolean().optional(),
+        /** What made the tab load, and which open tab it is, for the debug log. */
+        reason: loadReasonSchema.optional(),
+        tab: z.string().max(16).optional(),
       })
       .strict(),
     output: reviewViewSchema,

@@ -21,10 +21,11 @@ import {
   type Target,
   type TargetRequest,
   type ThreadStatus,
+  type LoadReason,
   type ViewState,
   viewStateSchema,
 } from "../shared/types";
-import { ignorePatterns, loadDiff, loadPatches, resolveTarget, ReviewUnavailable, workspaceOf, workspaceRefs, workspaceStateKey } from "./diff";
+import { ignorePatterns, loadDiff, loadPatches, resolveTarget, ReviewUnavailable, workspaceOf, workspaceRefs, workspaceState, type WorkspaceState } from "./diff";
 import { sendPrompt } from "./prompt";
 import type { ReviewStore, StoredRun } from "./store";
 
@@ -74,8 +75,8 @@ const PROVIDER_NAMES: Record<string, string> = {
 const MAX_RANGE_LINES = 2_000;
 
 export class ReviewService {
-  /** Each workspace's state key at the end of its last turn (`workspaceChanged`). */
-  private readonly workspaceStates = new Map<string, string>();
+  /** Each workspace's state at the end of its last turn, or when a tab first loaded it. */
+  private readonly workspaceStates = new Map<string, WorkspaceState>();
 
   /** Told of every comment the user writes, after it is stored (for @-mentions); must not throw. */
   onUserComment: (thread: ReviewThread, body: string, viewerThreadId: string | null) => void = () => undefined;
@@ -91,9 +92,11 @@ export class ReviewService {
    * was not opened on a chosen view), an empty uncommitted view gives way to the changes committed
    * since the base branch, when there are any; when both are empty, the uncommitted view stands.
    */
-  async view(threadId: string, request: TargetRequest, autoTarget = false): Promise<ReviewView> {
+  async view(threadId: string, request: TargetRequest, autoTarget = false, reason: LoadReason = "unknown", tab = "?"): Promise<ReviewView> {
     try {
       const environment = await workspaceOf(this.bb.sdk, threadId);
+      this.bb.log.debug(`Loading the ${request.kind} view of ${threadId}'s workspace ${environment.id} for tab ${tab} (${reason}).`);
+      await this.seedWorkspaceState(environment.id);
       const base = request.kind === "branch" || request.kind === "all" ? request.base : undefined;
       const refs = await workspaceRefs(this.bb.sdk, this.bb.log, environment, base);
       let target = resolveTarget(request, refs.defaultBase);
@@ -290,7 +293,7 @@ export class ReviewService {
         if (session !== null) this.publish(session.environmentId, session.id);
       }
     }
-    if (thread.environmentId !== null && this.store.sessionsOf(thread.environmentId).length > 0 && (await this.workspaceChanged(thread.environmentId))) {
+    if (thread.environmentId !== null && this.store.sessionsOf(thread.environmentId).length > 0 && (await this.workspaceChanged(thread.environmentId, thread.id))) {
       this.signal(thread.environmentId, { kind: "diff" });
     }
   }
@@ -298,21 +301,44 @@ export class ReviewService {
   /**
    * Whether the workspace's diffs changed since the last turn that ended in it. Most turns change no
    * file (a reviewer answering a question, the thread under review reading a run's notice), and a
-   * `diff` signal makes every open tab reload its whole view. Unknown (the first turn since the plugin
-   * loaded) or unreadable counts as changed.
+   * `diff` signal makes every open tab reload its whole view. Unknown or unreadable counts as changed.
+   * Two turns ending together cannot both signal for one change: the compare and the update below
+   * run in one step, after the state is read.
    */
-  private async workspaceChanged(environmentId: string): Promise<boolean> {
-    let key: string;
+  private async workspaceChanged(environmentId: string, threadId: string): Promise<boolean> {
+    let state: WorkspaceState;
     try {
-      key = await workspaceStateKey(this.bb.sdk, environmentId);
+      state = await workspaceState(this.bb.sdk, environmentId);
     } catch (error) {
       this.bb.log.warn(`Could not read the state of ${environmentId}; telling its tabs to reload: ${error instanceof Error ? error.message : String(error)}`);
       this.workspaceStates.delete(environmentId);
       return true;
     }
     const previous = this.workspaceStates.get(environmentId);
-    this.workspaceStates.set(environmentId, key);
-    return previous !== key;
+    this.workspaceStates.set(environmentId, state);
+    if (previous?.key === state.key) {
+      this.bb.log.debug(`A turn of ${threadId} ended; ${environmentId} is unchanged (${state.summary}), so no reload.`);
+      return false;
+    }
+    this.bb.log.debug(
+      `A turn of ${threadId} ended; ${environmentId} ${previous === undefined ? "had no known state" : `changed from (${previous.summary})`} to (${state.summary}): telling its tabs to reload.`,
+    );
+    return true;
+  }
+
+  /**
+   * Records a workspace's state the first time a tab loads one of its views, before the diff is read,
+   * so the first turn to end after a plugin load does not reload every tab for nothing. A turn that
+   * changes files ends after it, with another key.
+   */
+  private async seedWorkspaceState(environmentId: string): Promise<void> {
+    if (this.workspaceStates.has(environmentId)) return;
+    try {
+      const state = await workspaceState(this.bb.sdk, environmentId);
+      if (!this.workspaceStates.has(environmentId)) this.workspaceStates.set(environmentId, state);
+    } catch (error) {
+      this.bb.log.debug(`No state recorded for ${environmentId}: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   private async latestTurnStart(threadId: string): Promise<number | null> {

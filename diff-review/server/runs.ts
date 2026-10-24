@@ -300,6 +300,8 @@ export class RunService {
   }
 
   private async patchOf(environmentId: string, targetKey: string, path: string): Promise<string> {
+    // Reads the ignore files like a tab's load does; this line tells the two apart in the log.
+    this.bb.log.debug(`Reading the diff of ${environmentId} to check a review comment on ${path}.`);
     const environment = await this.bb.sdk.environments.get({ environmentId });
     const target = targetFromKey(targetKey);
     const settings = await this.settings();

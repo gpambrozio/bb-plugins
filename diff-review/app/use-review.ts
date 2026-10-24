@@ -13,7 +13,7 @@ import { useRealtime, useRealtimeConnectionState, useRpc } from "@get-bb/plugin-
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { RpcContract } from "../shared/contract";
-import { environmentChannel, realtimeSignalSchema, type DiffFile, type ReviewThread, type ReviewView, type Run, type Target, type TargetRequest } from "../shared/types";
+import { environmentChannel, realtimeSignalSchema, type DiffFile, type LoadReason, type ReviewThread, type ReviewView, type Run, type Target, type TargetRequest } from "../shared/types";
 
 export type ReadyView = Extract<ReviewView, { ok: true }>;
 
@@ -100,13 +100,28 @@ export function useReview(threadId: string, target: TargetRequest, autoTarget = 
   const onTargetRef = useRef(onTarget);
   onTargetRef.current = onTarget;
 
-  const load = useCallback(async () => {
+  // A signal or a reconnect while a load is under way does not start a second one beside it: it waits,
+  // and one more load runs when the current one ends (it may have read the workspace before the
+  // change). A new view or the user's own reload replaces the current load instead.
+  const inFlight = useRef(false);
+  // Which tab this is, in the plugin's debug log: one signal reloads every open tab, so a pair of loads
+  // from two tabs (a desktop and a remote browser) reads apart from one tab loading twice.
+  const [tab] = useState(() => Math.random().toString(36).slice(2, 8));
+  const queued = useRef<LoadReason | null>(null);
+  const loadRef = useRef<(reason: LoadReason) => Promise<void>>(async () => undefined);
+
+  const load = useCallback(async (reason: LoadReason) => {
+    if (inFlight.current && (reason === "diff-signal" || reason === "reconnect")) {
+      queued.current = reason;
+      return;
+    }
+    inFlight.current = true;
     const mine = ++generation.current;
     const auto = autoPending.current;
     autoPending.current = false;
     setState((previous) => (previous.status === "ready" ? { ...previous, refreshing: true } : { status: "loading" }));
     try {
-      const view = await rpc.call("getReview", { threadId, target: JSON.parse(targetJson) as TargetRequest, ...(auto ? { autoTarget: true } : {}) });
+      const view = await rpc.call("getReview", { threadId, target: JSON.parse(targetJson) as TargetRequest, reason, tab, ...(auto ? { autoTarget: true } : {}) });
       if (mine !== generation.current) return;
       setState((previous) => {
         if (!view.ok) return { status: "unavailable", message: view.message };
@@ -123,15 +138,25 @@ export function useReview(threadId: string, target: TargetRequest, autoTarget = 
     } catch (error) {
       if (mine !== generation.current) return;
       setState({ status: "error", message: errorMessage(error) });
+    } finally {
+      if (mine === generation.current) {
+        inFlight.current = false;
+        const next = queued.current;
+        queued.current = null;
+        if (next !== null) void loadRef.current(next);
+      }
     }
-  }, [rpc, threadId, targetJson]);
+  }, [rpc, threadId, targetJson, tab]);
+  loadRef.current = load;
 
+  const firstLoad = useRef(true);
   useEffect(() => {
     if (adopted.current === targetJson) {
       adopted.current = null;
       return;
     }
-    void load();
+    void load(firstLoad.current ? "open" : "view");
+    firstLoad.current = false;
   }, [load, targetJson]);
 
   const sessionId = state.status === "ready" ? state.view.sessionId : null;
@@ -193,7 +218,7 @@ export function useReview(threadId: string, target: TargetRequest, autoTarget = 
   useRealtime(environmentId === null ? "" : environmentChannel(environmentId), (payload) => {
     const signal = realtimeSignalSchema.safeParse(payload);
     if (!signal.success) return;
-    if (signal.data.kind === "diff") void load();
+    if (signal.data.kind === "diff") void load("diff-signal");
     else if (signal.data.sessionId === sessionId) void refreshThreads();
   });
 
@@ -201,12 +226,10 @@ export function useReview(threadId: string, target: TargetRequest, autoTarget = 
   // a new `load` (another view) is loaded by the effect above.
   const connection = useRealtimeConnectionState();
   const lastConnection = useRef(connection);
-  const loadRef = useRef(load);
-  loadRef.current = load;
   useEffect(() => {
     const previous = lastConnection.current;
     lastConnection.current = connection;
-    if (connection === "connected" && previous !== "connected") void loadRef.current();
+    if (connection === "connected" && previous !== "connected") void loadRef.current("reconnect");
   }, [connection]);
 
   return { state, reload: load, putThread, putRun, putPatches, refreshThreads };

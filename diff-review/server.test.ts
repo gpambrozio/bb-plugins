@@ -51,6 +51,8 @@ interface Setup {
   /** Awaited before answering `threads.get` for that thread, or `threads.spawn`: a test holds bb mid-call. */
   holdThreadGet?: (threadId: string) => Promise<void>;
   holdSpawn?: () => Promise<void>;
+  /** More fields in bb's status answer, as a later bb may add (a time stamp, say). */
+  statusExtra?: () => Record<string, unknown>;
   /** Views (`uncommitted`, `branch_committed`, …) whose diff has no files. */
   emptyTargets?: string[];
 }
@@ -105,7 +107,7 @@ async function setup(options: Setup = {}) {
           outcome: "available" as const,
           workspace: {
             branch: { currentBranch: "feature", defaultBranch: "main" },
-            checkout: { kind: "branch" as const, branchName: "feature", headSha: workspace.head },
+            checkout: { kind: "branch" as const, branchName: "feature", headSha: workspace.head, ...options.statusExtra?.() },
             mergeBase: {
               aheadCount: 1,
               baseRef: "origin/main",
@@ -474,20 +476,32 @@ describe("sending to the agent and its answers", () => {
     await view();
     const diffSignals = () => harness.inspection.realtimeSignals.filter((signal) => (signal.payload as { kind: string }).kind === "diff").length;
     const idle = () => harness.behavior.emitThreadEvent("thread.idle", { thread: makeThreadResponse({ id: THREAD, environmentId: ENV }), lastAssistantText: "done" });
-    // The first turn end since the plugin loaded cannot tell, so it signals.
+    // The tab's load recorded the state, so even the first turn end since the plugin loaded knows a
+    // turn that changed nothing (an answer to a question, a notice read): no reload.
     await idle();
-    expect(diffSignals()).toBe(1);
-    // A turn that changed nothing (an answer to a question, a notice read): no reload.
     await idle();
-    expect(diffSignals()).toBe(1);
+    expect(diffSignals()).toBe(0);
     workspace.extraFile = true;
     await idle();
-    expect(diffSignals()).toBe(2);
+    expect(diffSignals()).toBe(1);
     workspace.head = "def";
     await idle();
-    expect(diffSignals()).toBe(3);
+    expect(diffSignals()).toBe(2);
     await idle();
-    expect(diffSignals()).toBe(3);
+    expect(diffSignals()).toBe(2);
+    expect(harness.inspection.logEntries.some((entry) => entry.level === "debug" && /ended; env_1 changed from \(head abc.*\) to \(head def/.test(entry.message))).toBe(true);
+  });
+
+  it("signals once for turns that end together, and ignores fields of bb's status it does not use", async () => {
+    const { harness, view, workspace } = await setup({ statusExtra: () => ({ checkedAt: Date.now() + Math.random() }) });
+    await view();
+    const diffSignals = () => harness.inspection.realtimeSignals.filter((signal) => (signal.payload as { kind: string }).kind === "diff").length;
+    const idle = (id: string) => harness.behavior.emitThreadEvent("thread.idle", { thread: makeThreadResponse({ id, environmentId: ENV }), lastAssistantText: "done" });
+    await idle(THREAD);
+    expect(diffSignals()).toBe(0);
+    workspace.extraFile = true;
+    await Promise.all([idle(THREAD), idle("thr_reviewer")]);
+    expect(diffSignals()).toBe(1);
   });
 });
 

@@ -43,6 +43,14 @@ export type DeliveryState = z.infer<typeof deliveryStateSchema>;
  * The view under review, as the Review tab asks for it. `base` may be left out for the branch views;
  * the server fills in the workspace's merge-base branch.
  */
+/**
+ * Why the tab loads its whole view, for the plugin's debug log: it opened, the user picked another
+ * view, a `diff` signal (the workspace changed), the realtime link came back, the reload button, or
+ * "Try again" after an error.
+ */
+export const loadReasonSchema = z.enum(["open", "view", "diff-signal", "reconnect", "manual", "retry", "unknown"]);
+export type LoadReason = z.infer<typeof loadReasonSchema>;
+
 export const targetRequestSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("uncommitted") }).strict(),
   z.object({ kind: z.literal("branch"), base: z.string().min(1).max(256).optional() }).strict(),
