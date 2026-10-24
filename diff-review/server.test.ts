@@ -301,7 +301,7 @@ describe("the tab's kept state", () => {
     await rpc("deleteComment", { commentId: gone.comments[0]!.id });
 
     const { [`reply:${gone.id}`]: _dropped, ...expected } = saved.drafts;
-    expect((await view()).viewState).toEqual({ ...saved, drafts: expected });
+    expect((await view()).viewState).toEqual({ ...saved, drafts: expected, expandedThreads: {} });
     // Another thread's tab and another view start empty.
     expect(((await rpc("getReview", { threadId: "thr_other", target: { kind: "uncommitted" } })) as { viewState: unknown }).viewState).toBeNull();
     expect((await view({ kind: "branch" })).viewState).toBeNull();
@@ -314,7 +314,7 @@ describe("the tab's kept state", () => {
     const older = { ...state({ general: { body: "Older", severity: null, range: null } }), savedAt: 10 };
     await rpc("saveViewState", { threadId: THREAD, sessionId, state: newer });
     await rpc("saveViewState", { threadId: THREAD, sessionId, state: older });
-    expect((await view()).viewState).toEqual(newer);
+    expect((await view()).viewState).toEqual({ ...newer, expandedThreads: {} });
   });
 
   it("refuses a state that is too big or for an unknown session", async () => {

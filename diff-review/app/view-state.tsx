@@ -43,12 +43,15 @@ export interface ViewStateStore {
   setDraft(key: string, draft: Draft | null): void;
   collapsed(path: string): boolean | undefined;
   setCollapsed(path: string, collapsed: boolean): void;
+  /** Whether the user left a comment thread open (true) or folded (false); undefined if never touched. */
+  threadExpanded(threadId: string): boolean | undefined;
+  setThreadExpanded(threadId: string, expanded: boolean): void;
   scroll(): ScrollAnchor | null;
   setScroll(anchor: ScrollAnchor): void;
 }
 
 function emptyState(): ViewState {
-  return { drafts: {}, collapsed: {}, scroll: null, savedAt: 0 };
+  return { drafts: {}, collapsed: {}, expandedThreads: {}, scroll: null, savedAt: 0 };
 }
 
 /** The newest entries of a record, at most `max` (insertion order is age). */
@@ -65,6 +68,7 @@ export function createViewStateStore(initial: ViewState, changed: (state: ViewSt
     state = {
       drafts: newest(next.drafts, VIEW_STATE_MAX_DRAFTS),
       collapsed: newest(next.collapsed, VIEW_STATE_MAX_FOLDS),
+      expandedThreads: newest(next.expandedThreads ?? {}, VIEW_STATE_MAX_FOLDS),
       scroll: next.scroll,
       savedAt: Date.now(),
     };
@@ -87,6 +91,11 @@ export function createViewStateStore(initial: ViewState, changed: (state: ViewSt
     setCollapsed: (path, collapsed) => {
       const { [path]: _old, ...rest } = state.collapsed;
       update({ ...state, collapsed: { ...rest, [path]: collapsed } });
+    },
+    threadExpanded: (threadId) => state.expandedThreads?.[threadId],
+    setThreadExpanded: (threadId, expanded) => {
+      const { [threadId]: _old, ...rest } = state.expandedThreads ?? {};
+      update({ ...state, expandedThreads: { ...rest, [threadId]: expanded } });
     },
     scroll: () => state.scroll,
     setScroll: (anchor) => {

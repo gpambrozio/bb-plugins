@@ -664,6 +664,37 @@ describe("the Review tab", () => {
       expect(slot.inspection.rpcCalls.find((call) => call.method === "createThread")!.input).toMatchObject({ filePath: "src/gone.ts", startLine: 0, body: "On the gone file" });
     });
 
+    it("folds a thread as soon as it is dismissed, opens it again on a click, and keeps it as left", async () => {
+      const dismissed = { ...VIEW.threads[0]!, status: "dismissed" as const };
+      const first = render({ getReview: () => ({ ...VIEW, viewState: null }), setStatus: () => ({ thread: dismissed }), saveViewState: () => ({ ok: true }) });
+      const card = (await screen.findByText("Why three?")).closest("[data-thread-id]") as HTMLElement;
+      fireEvent.click(within(card).getByRole("button", { name: "Dismiss" }));
+      // The one-line folded form: a button with the first comment, no Reply.
+      const folded = await screen.findByRole("button", { name: /Why three\?/ });
+      expect(screen.queryByText("Why three?")?.closest("[data-thread-id]")).toBeFalsy();
+      expect(first.inspection.rpcCalls.find((call) => call.method === "setStatus")!.input).toEqual({ reviewThreadId: "aaaaaa000001", status: "dismissed" });
+
+      fireEvent.click(folded);
+      const open = (await screen.findByText("Why three?")).closest("[data-thread-id]") as HTMLElement;
+      expect(within(open).getByRole("button", { name: "Reopen" })).toBeTruthy();
+
+      // Left open, it comes back open; folded again, it comes back folded.
+      cleanup();
+      const saved = lastSaved(first);
+      expect(saved.expandedThreads).toEqual({ aaaaaa000001: true });
+      forgetViewStates();
+      const threads = [dismissed, ...VIEW.threads.slice(1)];
+      const second = renderWith(saved, { threads });
+      const reopened = (await screen.findByText("Why three?")).closest("[data-thread-id]") as HTMLElement;
+      fireEvent.click(within(reopened).getByRole("button", { name: "Fold" }));
+      await screen.findByRole("button", { name: /Why three\?/ });
+      cleanup();
+      forgetViewStates();
+      renderWith(lastSaved(second), { threads });
+      await screen.findByRole("button", { name: /Why three\?/ });
+      expect(screen.queryByText("Why three?")?.closest("[data-thread-id]")).toBeFalsy();
+    });
+
     it("comes back to this window's copy when the server's is older", async () => {
       renderWith(null);
       await screen.findByText("Why three?");

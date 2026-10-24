@@ -179,7 +179,7 @@ Move to `experimental_tab` when the plugin re-pins to an SDK that has it (and ra
 - `MIGRATIONS` is append-only; bb checks each applied statement's hash. 0.1.0 shipped indexes 0–6;
   0.2.0 added the `runs` table at 7–9, its `parent_thread_id` at 10 (an `ALTER`, since 7 was
   already applied on installs of the branch) and `view_states` at 11.
-- The tab's kept state (drafts, folds, scroll) lives in the plugin's database, keyed by bb thread and
+- The tab's kept state (drafts, file and thread folds, scroll) lives in the plugin's database, keyed by bb thread and
   session, not in `localStorage`: it must survive a restart and follow the user to another device (the
   owner uses bb remotely). Saves are debounced and flushed when the tab unmounts or the page hides; a
   copy per window wins over the server's when it is newer (`savedAt`), so a remount never loses to a

@@ -147,7 +147,9 @@ export class ReviewService {
         return true;
       }),
     );
-    return { ...parsed.data, drafts };
+    // Folds of threads that are gone are dropped the same way.
+    const expandedThreads = Object.fromEntries(Object.entries(parsed.data.expandedThreads ?? {}).filter(([id]) => threadIds.has(id)));
+    return { ...parsed.data, drafts, expandedThreads };
   }
 
   /** Keeps what `threadId`'s tab holds of a session's view. */

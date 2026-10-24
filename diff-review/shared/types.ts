@@ -212,6 +212,11 @@ export const viewStateSchema = z
     drafts: z.record(z.string().max(4200), draftSchema).refine((drafts) => Object.keys(drafts).length <= VIEW_STATE_MAX_DRAFTS, "Too many drafts."),
     /** Files the user folded (true) or unfolded (false); the rest follow the default. */
     collapsed: z.record(z.string().max(4096), z.boolean()).refine((folds) => Object.keys(folds).length <= VIEW_STATE_MAX_FOLDS, "Too many folds."),
+    /** Comment threads the user folded (false) or opened (true) by hand; absent in older copies. */
+    expandedThreads: z
+      .record(z.string().max(64), z.boolean())
+      .refine((threads) => Object.keys(threads).length <= VIEW_STATE_MAX_FOLDS, "Too many thread folds.")
+      .optional(),
     scroll: scrollAnchorSchema.nullable(),
     savedAt: z.number(),
   })

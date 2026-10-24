@@ -20,7 +20,8 @@ It is a bb take on [diffity](https://github.com/nilbuild/diffity)'s review loop,
   for a range. **Comment on file** sits in each file's header, **Comment on the diff** in the toolbar.
   A comment can carry a severity (must fix, suggestion, nit, question) and is written in Markdown.
 - **Threads.** Reply, edit or delete your comments, resolve, reopen or dismiss a thread. Resolved and
-  dismissed threads fold to one line. Each file's header shows how many comment threads it has, open
+  dismissed threads fold to one line (dismissing one folds it at once); click one to open it again,
+  and it stays as you left it. Each file's header shows how many comment threads it has, open
   and closed, and **Only files with comments** in the toolbar hides the files without any, for going
   through a review's findings; the tab remembers that switch.
 - **Nothing is lost by leaving the tab.** Each thread's tab keeps, per view, every comment, reply or

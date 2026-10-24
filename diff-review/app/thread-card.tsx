@@ -16,7 +16,7 @@ import { describeLocation, type ReviewComment, type ReviewThread } from "../shar
 import { useActions } from "./actions";
 import { CommentComposer } from "./comment-composer";
 import { ago, DELIVERY_LABELS, SEVERITY_LABELS, STATUS_LABELS } from "./labels";
-import { draftKeys, useDraft } from "./view-state";
+import { draftKeys, useDraft, useViewState } from "./view-state";
 
 function Delivery({ thread }: { thread: ReviewThread }) {
   const actions = useActions();
@@ -79,11 +79,23 @@ function Comment({ comment }: { comment: ReviewComment }) {
 
 export function ThreadCard({ thread, placement }: { thread: ReviewThread; placement?: Placement }) {
   const actions = useActions();
+  const viewState = useViewState();
   const closed = thread.status !== "open";
   const replyDraft = useDraft(draftKeys.reply(thread.id));
   const replying = replyDraft.active !== null;
-  // A folded thread with a reply being written opens, so the reply shows.
-  const [expanded, setExpanded] = useState(!closed || replying);
+  // A thread stays as the user left it (kept with the view); otherwise closed ones start folded. A
+  // folded thread with a reply being written opens, so the reply shows.
+  const [expanded, setExpandedState] = useState(() => replying || (viewState.threadExpanded(thread.id) ?? !closed));
+  const setExpanded = (value: boolean) => {
+    viewState.setThreadExpanded(thread.id, value);
+    setExpandedState(value);
+  };
+  // Dismissing folds the thread at once; a click on the folded line opens it again.
+  const dismiss = () =>
+    void actions
+      .setStatus(thread.id, "dismissed")
+      .then(() => setExpanded(false))
+      .catch(() => undefined);
   const first = thread.comments[0];
 
   const header = (
@@ -161,7 +173,7 @@ export function ThreadCard({ thread, placement }: { thread: ReviewThread; placem
               <Button type="button" variant="ghost" size="sm" onClick={() => void actions.setStatus(thread.id, "resolved").catch(() => undefined)}>
                 Resolve
               </Button>
-              <Button type="button" variant="ghost" size="sm" onClick={() => void actions.setStatus(thread.id, "dismissed").catch(() => undefined)}>
+              <Button type="button" variant="ghost" size="sm" onClick={dismiss}>
                 Dismiss
               </Button>
             </>
