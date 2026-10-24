@@ -49,7 +49,7 @@ export const rpcContract = defineRpcContract({
     input: z
       .object({
         sessionId: id,
-        /** The thread whose Review tab it was written in; an @-mention's run becomes its child. */
+        /** The thread whose Review tab it was written in; a reviewer an @reviewer starts becomes its child. */
         threadId: id.optional(),
         filePath: z.string().min(1).max(4096),
         side: sideSchema.nullable(),

@@ -19,7 +19,8 @@ and answers each one. It is diffity's review loop on your own working tree, insi
 - AI review: an agent reviews the diff, with an optional focus such as security or tests, in a thread
   under the one being reviewed that you can watch, and leaves its comments in the tab. AI runs use
   bb's Approve for me mode unless you choose Accept edits.
-- Mention @claude, @codex or @opencode in a comment and that agent answers in the comment thread.
+- Write @reviewer in a comment and the view's AI reviewer, which already knows the diff, answers in the
+  comment thread.
 - Fix in a new thread: send the comments to a new thread in the same workspace, with the agent and
   model you pick, instead of the thread under review.
 - Ignore patterns for lockfiles and generated files, in the plugin's settings and in the workspace's

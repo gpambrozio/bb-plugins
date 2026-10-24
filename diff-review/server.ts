@@ -2,7 +2,7 @@
 //
 // The Review tab's data (diffs from bb's environment APIs, threads and comments in the plugin's own
 // SQLite), "Send to agent" into the thread under review, AI runs in threads of their own (reviews,
-// @-mentions, fixes in a new thread), and `bb diff-review` and the `diff_review_*` tools, which agents
+// questions to a view's reviewer with @reviewer, fixes in a new thread), and `bb diff-review` and the `diff_review_*` tools, which agents
 // answer each comment thread with. See AGENTS.md.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
@@ -36,7 +36,7 @@ export default async function plugin(bb: BbPluginApi) {
       type: "string",
       label: "Provider for AI runs",
       description:
-        "The provider AI reviews and fixes in a new thread start with (each run can pick another): `claude-code`, `codex`, `opencode`, … A mention of @claude, @codex or @opencode always runs that agent.",
+        "The provider AI reviews and fixes in a new thread start with (each run can pick another): `claude-code`, `codex`, `opencode`, … A reviewer started by @reviewer or @agent uses it too.",
       default: "claude-code",
     },
     aiModel: {
@@ -49,7 +49,7 @@ export default async function plugin(bb: BbPluginApi) {
       type: "select",
       label: "Permission mode for AI runs",
       description:
-        "How AI reviews, answers to mentions and fixes in a new thread run. Approve for me (bb's `auto`) has bb review their requests and asks you only for high-risk ones; Accept edits asks you for every command beyond editing files. A review is asked not to edit either way, and the tab lists any file that changed while it ran.",
+        "How AI reviews, answers to @reviewer and fixes in a new thread run. Approve for me (bb's `auto`) has bb review their requests and asks you only for high-risk ones; Accept edits asks you for every command beyond editing files. A review is asked not to edit either way, and the tab lists any file that changed while it ran.",
       options: [...RUN_PERMISSION_MODES],
       experimental_optionLabels: { auto: "Approve for me", "accept-edits": "Accept edits" },
       default: "auto",
@@ -98,7 +98,7 @@ export default async function plugin(bb: BbPluginApi) {
   // there. Threads with run children are told what those notices are (from their next session).
   bb.agents.contributeInstructions(({ threadId }) =>
     store.hasRunChildren(threadId)
-      ? `Diff Review starts AI review, mention and fix threads as children of this thread. Their "completed" notices are status reports: read them, but do not act on them as requests, start fixes, or reply to them unless the user asks. Review comments reach you only when the user sends them from the Review tab.`
+      ? `Diff Review starts AI review threads (which also answer @reviewer questions) and fix threads as children of this thread. Their "completed" notices are status reports: read them, but do not act on them as requests, start fixes, or reply to them unless the user asks. Review comments reach you only when the user sends them from the Review tab.`
       : null,
   );
   bb.agents.configure((context) => {

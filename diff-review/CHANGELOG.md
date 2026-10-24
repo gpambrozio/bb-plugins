@@ -13,9 +13,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   correctness, naming, tests, types) and your own instructions. It runs in a thread of its own in the
   same workspace, under the thread being reviewed, which you can watch and steer, and leaves its
   comments in the Review tab as it goes, with a summary comment on the whole diff.
-- **Mention an agent in a comment.** Writing @claude, @codex or @opencode in a comment or a reply
-  gets that agent's answer in the same comment thread, from a thread of its own; mentioning it again
-  in that comment thread continues the same conversation.
+- **Ask the reviewer in a comment.** Writing @reviewer (or @agent) in a comment or a reply asks the AI
+  reviewer of that view, which already knows the diff and its own comments, and its answer appears in
+  the same comment thread. When there is no reviewer yet, one starts and answers the next questions too.
 - **Fix in a new thread.** Send to agent can now start a new thread in the same workspace instead of
   sending to the thread under review, with the provider and model you pick.
 - **The runs, listed in the tab**, with a link to each thread and Close, which archives it. An AI review

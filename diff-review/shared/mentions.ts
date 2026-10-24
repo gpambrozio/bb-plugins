@@ -1,19 +1,14 @@
 /**
- * `@claude`, `@codex` and `@opencode` in a comment, outside code: the agent that should answer it.
+ * `@reviewer` or `@agent` in a comment, outside code: the user asks the view's AI reviewer about the
+ * comment thread. Both words mean the same. Provider names (`@claude`, …) start nothing.
  *
  * Ported from diffity's `src/lib/mentions.ts` (https://github.com/nilbuild/diffity), Copyright (c)
  * 2026 Kamran Ahmed, MIT License — see THIRD_PARTY_NOTICES.md. Same rules: case-insensitive, whole
  * word, not inside a fenced block or an inline code span, not part of an email address or a path.
  */
 
-/** Mention handles, and the bb provider each one starts. */
-export const AGENT_HANDLES = {
-  claude: "claude-code",
-  codex: "codex",
-  opencode: "opencode",
-} as const;
-
-export type AgentHandle = keyof typeof AGENT_HANDLES;
+/** The words that ask the view's reviewer. */
+export const REVIEWER_HANDLES = ["reviewer", "agent"] as const;
 
 function stripCode(body: string): string {
   const out: string[] = [];
@@ -36,11 +31,10 @@ function stripCode(body: string): string {
   return out.join("\n");
 }
 
-const HANDLES = Object.keys(AGENT_HANDLES).join("|");
+const HANDLES = REVIEWER_HANDLES.join("|");
 const MENTION = new RegExp(`(^|[^\\p{L}\\p{N}_\\-@./])(@(${HANDLES}))(?![\\p{L}\\p{N}_\\-@/]|\\.[\\p{L}\\p{N}_-])`, "iu");
 
-/** The handle of the earliest agent mention outside code, if any. */
-export function mentionedAgent(body: string): AgentHandle | null {
-  const match = MENTION.exec(stripCode(body));
-  return match === null ? null : (match[3]!.toLowerCase() as AgentHandle);
+/** Whether the comment asks the reviewer: `@reviewer` or `@agent`, outside code. */
+export function mentionsReviewer(body: string): boolean {
+  return MENTION.test(stripCode(body));
 }

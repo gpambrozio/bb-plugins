@@ -137,7 +137,7 @@ export function ThreadCard({ thread, placement }: { thread: ReviewThread; placem
       ))}
       {replying ? (
         <CommentComposer
-          placeholder="Reply (mention @claude, @codex or @opencode for an agent's answer)"
+          placeholder="Reply (@reviewer or @agent asks this view's AI reviewer)"
           submitLabel="Reply"
           initialBody={replyDraft.latest().body}
           onChange={replyDraft.change}

@@ -1,26 +1,27 @@
 import { describe, expect, it } from "vitest";
 
-import { mentionedAgent } from "./mentions";
+import { mentionsReviewer } from "./mentions";
 
-describe("mentionedAgent", () => {
-  it("finds the earliest handle, in any case", () => {
-    expect(mentionedAgent("@Claude can you check this?")).toBe("claude");
-    expect(mentionedAgent("Ask @codex, or @claude")).toBe("codex");
-    expect(mentionedAgent("(@opencode)")).toBe("opencode");
-    expect(mentionedAgent("thanks @claude.")).toBe("claude");
+describe("mentionsReviewer", () => {
+  it("finds @reviewer and @agent as whole words, in any case", () => {
+    expect(mentionsReviewer("@Reviewer can you check this?")).toBe(true);
+    expect(mentionsReviewer("Ask the @agent")).toBe(true);
+    expect(mentionsReviewer("(@agent)")).toBe(true);
+    expect(mentionsReviewer("thanks @reviewer.")).toBe(true);
   });
 
-  it("ignores code, emails, paths and longer words", () => {
-    expect(mentionedAgent("`@claude` is the handle")).toBeNull();
-    expect(mentionedAgent("```\n@claude\n```")).toBeNull();
-    expect(mentionedAgent("mail me at me@claude.ai")).toBeNull();
-    expect(mentionedAgent("see ./@claude/x")).toBeNull();
-    expect(mentionedAgent("@claudette")).toBeNull();
-    expect(mentionedAgent("@claude.ts")).toBeNull();
-    expect(mentionedAgent("no mention")).toBeNull();
+  it("ignores code, email addresses, paths, longer words and provider names", () => {
+    expect(mentionsReviewer("`@reviewer` is the handle")).toBe(false);
+    expect(mentionsReviewer("```\n@agent\n```")).toBe(false);
+    expect(mentionsReviewer("mail me at me@agent.ai")).toBe(false);
+    expect(mentionsReviewer("see ./@agent/x")).toBe(false);
+    expect(mentionsReviewer("@agents")).toBe(false);
+    expect(mentionsReviewer("@reviewer.ts")).toBe(false);
+    expect(mentionsReviewer("@claude, @codex or @opencode")).toBe(false);
+    expect(mentionsReviewer("no mention")).toBe(false);
   });
 
-  it("finds a handle after a closed fence", () => {
-    expect(mentionedAgent("```\ncode\n```\n@codex please")).toBe("codex");
+  it("finds a mention after a closed fence", () => {
+    expect(mentionsReviewer("```\ncode\n```\n@agent please")).toBe(true);
   });
 });

@@ -6,8 +6,10 @@
  *   bb cannot make a thread read-only (its least privileged mode is `accept-edits`), so the
  *   workspace's uncommitted changes are fingerprinted before and after, and every file that changed
  *   while it ran is listed on the run.
- * - **mention** — a user comment that @-mentions an agent gets that agent's answer in the thread. A
- *   later mention of the same agent in the same thread goes to the same run thread.
+ *   The latest review run of a view not yet closed is the view's **reviewer**: a user comment with
+ *   `@reviewer` or `@agent` goes to its thread as a follow-up turn, and it answers in the comment
+ *   thread. With no reviewer, such a comment starts one (a review run that answers the question first).
+ * - **mention** — kept for runs from before the reviewer: a provider @-mention used to start one.
  * - **fix** — "Fix in a new thread": the comments go to a new thread instead of the one under review.
  *
  * Mention and fix runs are sends (`sends` ledger), so the agent answers through the same checks as the
@@ -19,7 +21,7 @@ import { createHash } from "node:crypto";
 
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
-import { AGENT_HANDLES, mentionedAgent } from "../shared/mentions";
+import { mentionsReviewer } from "../shared/mentions";
 import { linesText, parsePatchLines } from "../shared/patch-lines";
 import {
   describeLocation,
@@ -31,7 +33,7 @@ import {
   type Side,
 } from "../shared/types";
 import { ignorePatterns, loadDiff, loadPatches, ReviewUnavailable } from "./diff";
-import { fixPrompt, mentionPrompt, reviewPrompt } from "./run-prompts";
+import { fixPrompt, reviewerPrompt, reviewPrompt } from "./run-prompts";
 import { publicRun, ReviewError, targetFromKey, type ReviewService, type ReviewSettings } from "./review";
 import { newId, type ReviewStore } from "./store";
 import { RUN_METADATA_KEY } from "./tool-names";
@@ -68,6 +70,9 @@ export interface AgentCommentInput {
 }
 
 export class RunService {
+  /** Each view's latest question to its reviewer: the next one waits for it, so two never race. */
+  private readonly asking = new Map<string, Promise<unknown>>();
+
   constructor(
     private readonly bb: BbPluginApi,
     private readonly store: ReviewStore,
@@ -130,51 +135,72 @@ export class RunService {
   }
 
   /**
-   * A user comment that @-mentions an agent: that agent answers in the thread. The run starts in the
-   * background; a failure to start shows as a failed run.
+   * A user comment with `@reviewer` or `@agent` (outside code) asks the view's reviewer about its
+   * thread, in the background; a failure to start one shows as a failed run. Agents' comments never
+   * come here (`ReviewService` calls this for the user's own comments only).
    */
   onUserComment(thread: ReviewThread, body: string, viewerThreadId: string | null): void {
-    const handle = mentionedAgent(body);
-    if (handle === null) return;
-    void this.answerMention(thread.id, AGENT_HANDLES[handle], viewerThreadId).catch((error: unknown) => {
-      this.bb.log.warn(`Could not answer the mention in ${thread.id}: ${error instanceof Error ? error.message : String(error)}`);
+    if (!mentionsReviewer(body)) return;
+    void this.askReviewer(thread.id, viewerThreadId).catch((error: unknown) => {
+      this.bb.log.warn(`Could not ask the reviewer about ${thread.id}: ${error instanceof Error ? error.message : String(error)}`);
     });
   }
 
-  /** `viewerThreadId`: the thread whose Review tab the comment was written in; the run becomes its child. */
-  async answerMention(reviewThreadId: string, providerId: string, viewerThreadId: string | null = null): Promise<Run> {
+  /**
+   * Sends a comment thread to its view's reviewer, one question per view at a time.
+   * `viewerThreadId`: the thread whose Review tab the comment was written in; a new reviewer becomes
+   * its child.
+   */
+  askReviewer(reviewThreadId: string, viewerThreadId: string | null = null): Promise<Run | null> {
+    const thread = this.review.requireThread(reviewThreadId);
+    const previous = this.asking.get(thread.sessionId) ?? Promise.resolve();
+    const next = previous.catch(() => undefined).then(() => this.sendToReviewer(reviewThreadId, viewerThreadId));
+    this.asking.set(thread.sessionId, next);
+    void next.finally(() => {
+      if (this.asking.get(thread.sessionId) === next) this.asking.delete(thread.sessionId);
+    }).catch(() => undefined);
+    return next;
+  }
+
+  /**
+   * Queues the thread as a follow-up turn of the view's reviewer, or starts a reviewer when the view
+   * has none (never reviewed, closed, cleared, or its thread is gone). A thread already waiting on the
+   * reviewer is not sent again: the queued turn reads the thread as it is when it runs. Returns null
+   * when nothing was sent for that reason.
+   */
+  private async sendToReviewer(reviewThreadId: string, viewerThreadId: string | null): Promise<Run | null> {
     const thread = this.review.requireThread(reviewThreadId);
     const session = this.review.requireSession(thread.sessionId);
-    const prompt = mentionPrompt(targetFromKey(session.targetKey), thread);
-    const existing = this.store.mentionRun(thread.id, providerId);
-    if (existing !== null && existing.threadId !== null) {
-      const send = this.store.recordSend(session.id, existing.threadId, [thread.id], "");
+    const target = targetFromKey(session.targetKey);
+    const reviewer = this.store.reviewerRun(session.id);
+    if (reviewer !== null && reviewer.threadId !== null) {
+      if (thread.delivery?.state === "sent" && thread.delivery.threadId === reviewer.threadId) return null;
+      const send = this.store.recordSend(session.id, reviewer.threadId, [thread.id], "");
       try {
-        await this.bb.sdk.threads.send({ threadId: existing.threadId, mode: "queue-if-active", input: [{ type: "text", text: prompt, mentions: [] }] });
-        this.store.restartRun(existing.id);
+        await this.bb.sdk.threads.send({ threadId: reviewer.threadId, mode: "queue-if-active", input: [{ type: "text", text: reviewerPrompt(target, thread, true), mentions: [] }] });
+        this.store.restartRun(reviewer.id);
         this.review.publishSession(session.id);
-        return publicRun(this.store.run(existing.id)!);
+        return publicRun(this.store.run(reviewer.id)!);
       } catch (error) {
         // Its thread is gone (archived or deleted outside the tab): close that run and start anew.
         this.store.dropSend(send.id);
-        this.store.closeRun(existing.id);
-        this.bb.log.info(`Mention run ${existing.id} could not take a follow-up (${error instanceof Error ? error.message : String(error)}); starting a new one.`);
+        this.store.closeRun(reviewer.id);
+        this.bb.log.info(`Reviewer run ${reviewer.id} could not take a follow-up (${error instanceof Error ? error.message : String(error)}); starting a new one.`);
       }
     }
     const settings = await this.settings();
-    const model = providerId === (settings.aiProvider.trim() || "claude-code") && settings.aiModel.trim() !== "" ? settings.aiModel.trim() : "";
     const run = await this.spawn({
       sessionId: session.id,
       environmentId: session.environmentId,
       parentThreadId: viewerThreadId,
-      kind: "mention",
-      reviewThreadId: thread.id,
+      kind: "review",
+      reviewThreadId: null,
       focus: null,
-      execution: { providerId, model, reasoningLevel: "medium" },
+      execution: { providerId: settings.aiProvider.trim() || "claude-code", model: settings.aiModel.trim(), reasoningLevel: "medium" },
       reasoningFromProvider: true,
-      title: `Review: ${describeLocation(thread)}`,
-      prompt,
-      baseline: null,
+      title: `Reviewer: ${describeLocation(thread)}`,
+      prompt: reviewerPrompt(target, thread, false),
+      baseline: await this.fingerprint(session.environmentId),
     });
     if (run.threadId !== null && run.status !== "closed") {
       this.store.recordSend(session.id, run.threadId, [thread.id], "");
@@ -216,8 +242,14 @@ export class RunService {
     }
   }
 
-  /** A run thread's turn ended: the run is done (or failed), with the agent's last words as its summary. */
+  /**
+   * A run thread's turn ended: the run is done (or failed), with the agent's last words as its
+   * summary, unless a question is still queued for it. `ReviewService.turnEnded` runs first and marks
+   * the sends that turn should have answered "no reply", so a send still waiting was queued behind
+   * this turn and the next turn will take it.
+   */
   async turnEnded(threadId: string, lastAssistantText: string | null, failed: boolean): Promise<void> {
+    if (!failed && this.store.waitingOn(threadId).length > 0) return;
     const runs = this.store.runsOfThread(threadId).filter((run) => run.status === "running");
     for (const run of runs) {
       const summary = lastAssistantText === null ? null : lastAssistantText.slice(0, SUMMARY_MAX_CHARS);

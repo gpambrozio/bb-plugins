@@ -333,7 +333,7 @@ function LineDraftBox({
         New comment on {lines} ({range.side === "old" ? "removed" : "new"} side){note === null ? "" : `. ${note}`}
       </span>
       <CommentComposer
-        placeholder="Leave a comment. Markdown works; @claude, @codex or @opencode gets an agent's answer."
+        placeholder="Leave a comment. Markdown works; @reviewer (or @agent) asks this view's AI reviewer."
         submitLabel="Comment"
         withSeverity
         initialBody={draft.latest().body}

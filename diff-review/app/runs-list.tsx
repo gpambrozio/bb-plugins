@@ -24,6 +24,7 @@ const STATUS_LABELS: Record<Run["status"], string> = {
 
 export function runTitle(run: Run, threads: readonly ReviewThread[]): string {
   if (run.kind === "review") return run.focus === null ? "AI review" : `AI review · ${run.focus}`;
+  // From before @reviewer: a provider @-mention started a run of its own.
   if (run.kind === "fix") return "Fixes in a new thread";
   const thread = threads.find((row) => row.id === run.reviewThreadId);
   return thread === undefined ? "Answer to a mention" : `Answer on ${describeLocation(thread)}`;

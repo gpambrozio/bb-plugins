@@ -38,8 +38,11 @@ It is a bb take on [diffity](https://github.com/nilbuild/diffity)'s review loop,
   focus (Security, Performance, Correctness, Naming, Tests, Types) and your own instructions. It works
   in a thread of its own in the same workspace — open it to watch or steer — and its comments appear in
   the tab as it leaves them.
-- **Mention an agent.** Write @claude, @codex or @opencode in a comment or a reply, outside code, and
-  that agent answers in the comment thread, from a thread of its own; mention it again there to carry on.
+- **Ask the reviewer.** Write @reviewer (or @agent) in a comment or a reply, outside code, and the view's
+  AI reviewer answers in the comment thread. It is the latest AI review's thread, which already knows
+  the diff and its own comments; the question goes there as a follow-up. If the view has no reviewer
+  yet (or it was closed or cleared), one starts and takes the next questions too. It answers and
+  recommends; it does not edit. Provider names such as @claude start nothing.
 - **Fix in a new thread.** In **Send to agent**, choose *A new thread…* and an agent to have the fixes
   made in a new thread in the same workspace instead of the thread under review.
 - **Runs.** Each AI run is a thread under the thread you are reviewing, in the same workspace, listed

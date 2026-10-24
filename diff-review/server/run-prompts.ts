@@ -1,6 +1,7 @@
 /**
- * The first messages of the threads AI runs start in: a review, an answer to an @-mention, and a fix
- * in a new thread.
+ * The messages AI runs get: a review, a question to the view's reviewer (`@reviewer` / `@agent`, as a
+ * follow-up turn of the reviewer's thread or the first message of a new one), and a fix in a new
+ * thread.
  *
  * Adapted from diffity's `src-tauri/prompts/review.md` and `thread.md`
  * (https://github.com/nilbuild/diffity), Copyright (c) 2026 Kamran Ahmed, MIT License — see
@@ -28,12 +29,6 @@ Comments show in a small box next to the code, and the reader is busy. Write in 
 - Say what is wrong and what to do, in 1-3 sentences (about 50 words at most). Lead with the problem.
 - Cite \`path:line\` instead of quoting code or walking through it. Do not explain things the author already knows.
 - For a project-rule violation, quote the rule in a few words.`;
-
-const REJECTED = `## Rejected edits
-
-A file write may be shown to the user, who can allow or reject it. A rejected write means the user does NOT want that change.
-- Never resolve a thread (and never write "Fixed: …") unless your edit for it was actually applied. If any write for a thread is rejected, stop editing for that thread: make no further edits for it (not a retry, not the remaining parts of the same change, not another route to it).
-- Instead reply on the thread: say the edit was rejected, describe the change you proposed, and ask how they would like to proceed. Leave the thread open.`;
 
 function fallback(commands: string): string {
   return `If a \`diff_review_*\` tool is not available in this session, use the \`${CLI}\` command instead (${commands}); the \`diff-review\` skill describes it. Text goes to it as one line of base64 through \`--text-base64-stdin\`.`;
@@ -150,6 +145,8 @@ ${WRITING}
 
 Reply with a short summary: counts per severity (e.g. "2 must-fix, 1 suggestion") and one line per must-fix. The comments are already visible in the Review tab.
 
+You are now this view's reviewer: when the user asks about a comment thread with @reviewer, the question arrives here as a new message, and you answer it in that thread.
+
 ${REPORT}
 `;
 }
@@ -161,49 +158,56 @@ function quote(body: string): string {
     .join("\n");
 }
 
-export function mentionPrompt(target: Target, thread: ReviewThread): string {
+/**
+ * A question to the view's reviewer about one comment thread. `followUp`: sent as a new turn of the
+ * reviewer's own thread, which already knows the diff; otherwise the first message of a new reviewer.
+ */
+export function reviewerPrompt(target: Target, thread: ReviewThread, followUp: boolean): string {
   const comments = thread.comments
     .map((comment) => `**${comment.authorType === "user" ? "User" : `Agent (${comment.authorName})`}:**\n\n${quote(comment.body)}`)
     .join("\n\n");
   const code =
     thread.startLine > 0 && thread.anchorContent !== null ? `\nCommented code, as it read then:\n\n\`\`\`\n${thread.anchorContent}\n\`\`\`\n` : "";
-  return `# Address a review thread
+  const intro = followUp
+    ? "The user asked you, the reviewer of this view, about a review thread (they wrote @reviewer or @agent). Use what you already know of the diff and your earlier comments."
+    : `You are the reviewer of a diff in Diff Review. The user asked about a review thread (they wrote @reviewer or @agent). Read the diff with ${gitCommandFor(target)} as you need it. Later questions about this view's threads will arrive here as new messages, so you stay its reviewer.`;
+  return `# A question about a review thread
 
-You were mentioned in a review thread in Diff Review. Read the thread, look at the code it points to, and respond in the thread with Diff Review's tools.
+${intro}
 
 - Diff: ${describeTarget(target)}, in this workspace
 - Thread: \`${thread.id}\` — ${describeLocation(thread)}
 ${code}
-## The thread
+## The thread, when the question was sent
 
 ${comments}
+
+The user may have added comments since; \`${TOOL.threads}\` shows the thread as it is now. Answer its latest user comment.
 
 ## Tools
 
 - \`${TOOL.reply}(threadId, text)\` — answer in the thread. Your reply is shown to the user as your comment.
-- \`${TOOL.resolve}(threadId, text)\` — mark the thread resolved with a summary of what you changed.
-- \`${TOOL.threads}\` — the thread again, with any newer comments.
+- \`${TOOL.resolve}\`, \`${TOOL.dismiss}\` — close a thread, with a one-line reason.
+- \`${TOOL.comment}\`, \`${TOOL.generalComment}\` — a new review comment, if the question shows a problem no thread covers.
+- \`${TOOL.threads}\` — this view's threads, with every comment.
 
-${fallback(`\`reply\`, \`resolve\`, \`list\``)}
+${fallback(`\`list\`, \`reply\`, \`resolve\`, \`dismiss\`, \`comment\``)}
 
-${REJECTED}
+**Do not edit files, and do not run commands that change the repository.** You review; the user sends fixes to an agent. Diff Review lists every file that changes in this workspace while you run.
 
 ${WRITING}
 
-- A \`resolve\` summary: one sentence, under 15 words, saying what changed. Example: "Fixed: accept http as well as https."
 - If you disagree with a comment, say why in one or two sentences and leave the thread open.
 
 ## Instructions
 
-1. Work on thread \`${thread.id}\` only. The latest user comment (especially one that mentions you) is what you are responding to; earlier comments are context.
-2. Read the file around the commented lines (the old side means removed code, visible only in the diff). A whole-file thread is about the file; a whole-diff thread is about the whole change (read it with \`git diff\`).
-3. Decide what the comment asks for:
-   a. **A question or discussion** ("why…?", "is this safe?", "what does this do?"): answer it with a reply, grounded in code you actually read (cite \`path:line\`). Do not edit files and do not resolve the thread — the user decides when it is done.
-   b. **A change** ("rename…", "fix…", "can we add…?", "should handle X"): make the minimal change, then resolve the thread with a one-line summary like "Fixed: <what changed>".
-   c. **Unclear**: reply asking a specific clarifying question instead of guessing.
-   d. If an edit is rejected, follow **Rejected edits** above.
-4. Always leave exactly one response in the thread (a reply, or the resolve summary).
-5. Finish with one sentence here saying what you did. If the user mentions you again in this thread, you will get it here.
+1. Work on thread \`${thread.id}\`. Read the code it points to (the old side means removed code, visible only in the diff); a whole-file thread is about the file, a whole-diff thread about the whole change.
+2. Decide what the latest user comment asks for:
+   a. **A question or discussion** ("why…?", "is this safe?", "what does this do?"): answer with a reply, grounded in code you actually read (cite \`path:line\`). Leave the thread open; the user decides when it is done.
+   b. **A change** ("rename…", "fix…", "can we add…?"): do not make it. Reply with the change you recommend, specific enough for an agent to apply, and leave the thread open.
+   c. **Unclear**: reply with a specific clarifying question instead of guessing.
+3. Leave exactly one response in the thread.
+4. Finish with one sentence here saying what you did.
 
 ${REPORT}
 `;

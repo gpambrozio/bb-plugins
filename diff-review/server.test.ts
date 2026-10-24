@@ -563,48 +563,125 @@ describe("AI runs", () => {
     expect(finished).toMatchObject({ status: "done", summary: "1 must-fix", changedFiles: ["src/new.ts"] });
   });
 
-  it("answers an @-mention in a thread of the mentioned agent, and sends a later mention to the same thread", async () => {
+  it("sends an @reviewer question to the view's reviewer as a follow-up turn, which answers with a review run's rights", async () => {
     const { harness, rpc, view, comment } = await setup();
     const { sessionId } = await view();
-    const thread = await comment(sessionId, "@claude is this right?");
-    await vi.waitFor(() => expect(harness.inspection.sdk.callsTo("threads.spawn")).toHaveLength(1));
-    const spawn = harness.inspection.sdk.callsTo("threads.spawn")[0]![0] as Record<string, unknown>;
-    expect(spawn).toMatchObject({ providerId: "claude-code", permissionMode: "auto", parentThreadId: THREAD, title: "Review: src/a.ts:2 (new side)" });
-    expect(spawn.prompt).toContain(REPORT_LINE);
-    expect(spawn.prompt).toContain(`- Thread: \`${thread.id}\``);
-    await vi.waitFor(async () => expect((await sessionState(rpc, sessionId)).threads[0]!.delivery).toMatchObject({ state: "sent", threadId: "thr_run_1" }));
+    const { run } = (await rpc("startReview", { sessionId, threadId: THREAD, focuses: [], instructions: "", execution })) as RunResult;
+    await harness.behavior.emitThreadEvent("thread.idle", { thread: makeThreadResponse({ id: run.threadId!, environmentId: ENV }), lastAssistantText: "1 must-fix" });
+    expect((await sessionState(rpc, sessionId)).runs[0]!.status).toBe("done");
 
-    const reply = await tool(harness, "diff_review_reply", { threadId: thread.id, text: "Yes: b is 3 on purpose." }, "thr_run_1");
-    expect(isError(reply)).toBe(false);
-    const state = await sessionState(rpc, sessionId);
-    expect(state.threads[0]!.comments.at(-1)).toMatchObject({ authorType: "agent", body: "Yes: b is 3 on purpose." });
-    expect(state.runs).toHaveLength(1);
-    expect(state.runs[0]).toMatchObject({ kind: "mention", reviewThreadId: thread.id });
-
-    await rpc("addComment", { reviewThreadId: thread.id, body: "@claude and the old value?" });
+    const thread = await comment(sessionId, "@reviewer is this right?");
     await vi.waitFor(() => expect(harness.inspection.sdk.callsTo("threads.send")).toHaveLength(1));
     expect(harness.inspection.sdk.callsTo("threads.spawn")).toHaveLength(1);
-    expect((harness.inspection.sdk.callsTo("threads.send")[0]![0] as { threadId: string }).threadId).toBe("thr_run_1");
+    const send = harness.inspection.sdk.callsTo("threads.send")[0]![0] as { threadId: string; mode: string; input: { text: string }[] };
+    expect(send).toMatchObject({ threadId: run.threadId, mode: "queue-if-active" });
+    expect(send.input[0]!.text).toContain("The user asked you, the reviewer of this view");
+    expect(send.input[0]!.text).toContain(`- Thread: \`${thread.id}\``);
+    expect(send.input[0]!.text).toContain(REPORT_LINE);
+    const state = await sessionState(rpc, sessionId);
+    expect(state.runs).toMatchObject([{ id: run.id, status: "running" }]);
+    expect(state.threads[0]!.delivery).toMatchObject({ state: "sent", threadId: run.threadId });
+
+    // The follow-up turn still has a review run's rights: it answers, and may comment.
+    expect(isError(await tool(harness, "diff_review_reply", { threadId: thread.id, text: "Yes: b is 3 on purpose." }, run.threadId!))).toBe(false);
+    expect(isError(await tool(harness, "diff_review_general_comment", { body: "Also check c." }, run.threadId!))).toBe(false);
+    await harness.behavior.emitThreadEvent("thread.idle", { thread: makeThreadResponse({ id: run.threadId!, environmentId: ENV }), lastAssistantText: "Answered." });
+    expect((await sessionState(rpc, sessionId)).runs).toMatchObject([{ id: run.id, status: "done", summary: "Answered." }]);
+
+    // @agent means the same.
+    await comment(sessionId, "@agent and this one?");
+    await vi.waitFor(() => expect(harness.inspection.sdk.callsTo("threads.send")).toHaveLength(2));
+    expect((harness.inspection.sdk.callsTo("threads.send")[1]![0] as { threadId: string }).threadId).toBe(run.threadId);
+    expect(harness.inspection.sdk.callsTo("threads.spawn")).toHaveLength(1);
   });
 
-  it("starts a new mention run when the earlier one's thread is gone", async () => {
-    const context = await setup();
-    const { harness, rpc, view, comment } = context;
+  it("starts a reviewer for a view without one, which then takes the next questions", async () => {
+    const { harness, rpc, view, comment } = await setup();
     const { sessionId } = await view();
-    const thread = await comment(sessionId, "@claude why?");
+    const first = await comment(sessionId, "@agent why 3?");
     await vi.waitFor(() => expect(harness.inspection.sdk.callsTo("threads.spawn")).toHaveLength(1));
+    const spawn = harness.inspection.sdk.callsTo("threads.spawn")[0]![0] as Record<string, unknown>;
+    expect(spawn).toMatchObject({ providerId: "claude-code", permissionMode: "auto", parentThreadId: THREAD, title: "Reviewer: src/a.ts:2 (new side)" });
+    // The settings' provider at its default model, as no model is set.
+    expect(spawn.model).toBeUndefined();
+    expect(spawn.prompt).toContain("You are the reviewer of a diff in Diff Review");
+    expect(spawn.prompt).toContain(`- Thread: \`${first.id}\``);
+    await vi.waitFor(async () => expect((await sessionState(rpc, sessionId)).threads[0]!.delivery).toMatchObject({ state: "sent", threadId: "thr_run_1" }));
+    expect((await sessionState(rpc, sessionId)).runs).toMatchObject([{ kind: "review", threadId: "thr_run_1" }]);
+
+    await comment(sessionId, "@reviewer and here?");
+    await vi.waitFor(() => expect(harness.inspection.sdk.callsTo("threads.send")).toHaveLength(1));
+    expect((harness.inspection.sdk.callsTo("threads.send")[0]![0] as { threadId: string }).threadId).toBe("thr_run_1");
+    expect(harness.inspection.sdk.callsTo("threads.spawn")).toHaveLength(1);
+
+    // Once closed, it is no longer the reviewer: the next question starts another.
+    const [reviewer] = (await sessionState(rpc, sessionId)).runs;
+    await rpc("closeRun", { runId: reviewer!.id });
+    await comment(sessionId, "@reviewer again?");
+    await vi.waitFor(() => expect(harness.inspection.sdk.callsTo("threads.spawn")).toHaveLength(2));
+  });
+
+  it("starts a new reviewer when the reviewer's thread is gone", async () => {
+    const { harness, rpc, view, comment } = await setup();
+    const { sessionId } = await view();
+    await rpc("startReview", { sessionId, threadId: THREAD, focuses: [], instructions: "", execution });
     harness.sdk.stub("threads.send", async () => {
       throw new Error("thread is archived");
     });
-    await rpc("addComment", { reviewThreadId: thread.id, body: "@claude still there?" });
+    await comment(sessionId, "@reviewer still there?");
     await vi.waitFor(() => expect(harness.inspection.sdk.callsTo("threads.spawn")).toHaveLength(2));
     await vi.waitFor(async () => expect((await sessionState(rpc, sessionId)).runs.map((run) => run.threadId)).toEqual(["thr_run_2"]));
   });
 
-  it("does not start a run for a mention inside code", async () => {
+  it("starts nothing for provider names, which no longer start agents", async () => {
+    const { harness, rpc, view, comment } = await setup();
+    const { sessionId } = await view();
+    await rpc("startReview", { sessionId, threadId: THREAD, focuses: [], instructions: "", execution });
+    await comment(sessionId, "@claude, @codex or @opencode: why?");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(harness.inspection.sdk.callsTo("threads.spawn")).toHaveLength(1);
+    expect(harness.inspection.sdk.callsTo("threads.send")).toHaveLength(0);
+  });
+
+  it("never sends one question twice: concurrent questions start one reviewer, and a thread already queued is not queued again", async () => {
+    const { harness, rpc, view, comment } = await setup();
+    const { sessionId } = await view();
+    const a = await comment(sessionId, "Why?");
+    const b = await comment(sessionId, "And this?");
+    await Promise.all([
+      rpc("addComment", { reviewThreadId: a.id, body: "@reviewer?" }),
+      rpc("addComment", { reviewThreadId: b.id, body: "@agent?" }),
+    ]);
+    await vi.waitFor(() => expect(harness.inspection.sdk.callsTo("threads.send")).toHaveLength(1));
+    expect(harness.inspection.sdk.callsTo("threads.spawn")).toHaveLength(1);
+    // Asked again while its question is still queued: the queued turn reads the thread as it is then.
+    await rpc("addComment", { reviewThreadId: b.id, body: "@agent, and also this?" });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(harness.inspection.sdk.callsTo("threads.send")).toHaveLength(1);
+    expect(harness.inspection.sdk.callsTo("threads.spawn")).toHaveLength(1);
+  });
+
+  it("keeps a reviewer running while a question is queued behind its turn", async () => {
+    const { harness, rpc, view, comment, turnStarts } = await setup({ turnStarts: [1] });
+    const { sessionId } = await view();
+    const { run } = (await rpc("startReview", { sessionId, threadId: THREAD, focuses: [], instructions: "", execution })) as RunResult;
+    await comment(sessionId, "@reviewer while you review?");
+    await vi.waitFor(() => expect(harness.inspection.sdk.callsTo("threads.send")).toHaveLength(1));
+    // The review's own turn ends; the question was queued after it started, so the next turn takes it.
+    await harness.behavior.emitThreadEvent("thread.idle", { thread: makeThreadResponse({ id: run.threadId!, environmentId: ENV }), lastAssistantText: "Review done." });
+    expect((await sessionState(rpc, sessionId)).runs[0]!.status).toBe("running");
+    // The next turn ends without answering it: no reply, and the run is done.
+    turnStarts.splice(0, turnStarts.length, Date.now() + 60_000);
+    await harness.behavior.emitThreadEvent("thread.idle", { thread: makeThreadResponse({ id: run.threadId!, environmentId: ENV }), lastAssistantText: "Nothing." });
+    const state = await sessionState(rpc, sessionId);
+    expect(state.runs[0]!.status).toBe("done");
+    expect(state.threads[0]!.delivery!.state).toBe("no_reply");
+  });
+
+  it("does not ask the reviewer for a mention inside code", async () => {
     const { harness, view, comment } = await setup();
     const { sessionId } = await view();
-    await comment(sessionId, "Rename `@claude` here");
+    await comment(sessionId, "Rename `@reviewer` here");
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(harness.inspection.sdk.callsTo("threads.spawn")).toHaveLength(0);
   });
@@ -659,7 +736,7 @@ describe("AI runs", () => {
     const { sessionId } = await view();
     const thread = await comment(sessionId, "Why?");
     await rpc("send", { sessionId, threadId: THREAD, reviewThreadIds: [thread.id], note: "" });
-    await harness.behavior.runCli(["reply", thread.id, "Ask", "@claude", "about", "it."], { threadId: THREAD });
+    await harness.behavior.runCli(["reply", thread.id, "Ask", "@reviewer", "about", "it."], { threadId: THREAD });
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(harness.inspection.sdk.callsTo("threads.spawn")).toHaveLength(0);
   });

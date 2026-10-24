@@ -4,9 +4,9 @@ A bb plugin that adds a **Review** tab beside each thread: the thread's workspac
 `@pierre/diffs` bb provides, with comment threads on lines, ranges, files and the whole diff, stored in
 the plugin's own SQLite, and **Send to agent**, which puts the open ones in the thread's chat (or a new
 thread's). The agent answers each one with `bb diff-review reply|resolve|dismiss` or the
-`diff_review_*` tools, and the tab updates live. **AI runs** — an AI review, an answer to an
-`@claude`/`@codex`/`@opencode` mention, fixes in a new thread — each run in a visible thread of their
-own in the reviewed workspace.
+`diff_review_*` tools, and the tab updates live. **AI runs** — an AI review (which then answers
+`@reviewer` / `@agent` questions about the view's threads), fixes in a new thread — each run in a
+visible thread of their own in the reviewed workspace.
 It is a bb take on [diffity](https://github.com/nilbuild/diffity)'s review loop, not a Paseo port.
 
 The repository root `AGENTS.md` covers what every plugin here shares. This file covers only what is
@@ -23,10 +23,10 @@ specific to `diff-review`.
 | `server/ignore.ts` | Gitignore-style ignore patterns, from the setting and the workspace's diffity ignore files. |
 | `server/prompt.ts` | The "Address review comments" message a send puts in the thread (adapted from diffity's prompts, MIT). |
 | `server/cli.ts` | `bb diff-review list|reply|resolve|dismiss|comment`; base64 text through `--text-base64-stdin`. |
-| `server/runs.ts` | `RunService`: AI runs — the pickers' defaults, starting a review, a mention's answer or a fix thread, a run's end (summary, files changed during a review), Close (archive), Clear review, and a review run's comments, checked against the diff. |
+| `server/runs.ts` | `RunService`: AI runs — the pickers' defaults, starting a review, questions to the view's reviewer (follow-up turn or a new reviewer), a fix thread, a run's end (summary, files changed during a review), Close (archive), Clear review, and a review run's comments, checked against the diff. |
 | `server/run-prompts.ts` | The first message of each run's thread (adapted from diffity's `review.md` and `thread.md`, MIT). |
 | `server/tools.ts`, `server/tool-names.ts` | The `diff_review_*` agent tools; their names and the run-id metadata key `configure` reads. |
-| `shared/mentions.ts` | Which `@claude`, `@codex`, `@opencode` count (outside code; ported from diffity) and the provider each starts. |
+| `shared/mentions.ts` | Whether a comment says `@reviewer` or `@agent` (outside code; diffity's rules, ported). |
 | `shared/types.ts` | The data model and zod schemas, the realtime channel and its signals. No SDK import, so the app may use it at run time. |
 | `shared/contract.ts` | The RPC contract. Imports the SDK root, so the app imports it as a type only. |
 | `shared/patch-lines.ts`, `shared/anchors.ts` | A patch's lines by side and number, and where a thread belongs in the current diff (anchored, moved, outdated). |
@@ -61,13 +61,13 @@ instead.
 **AI runs are visible child threads of the thread under review**, in its workspace (`threads.spawn`
 with `parentThreadId` and `environment: { type: "reuse" }`), so they sit under it in the sidebar. The
 owner chose this over the plan's root-level threads after trying them. The parent is the thread whose
-Review tab started the run (for a mention, the tab the comment was written in), and only while it
+Review tab started the run (for a reviewer an @reviewer starts, the tab the comment was written in), and only while it
 still works in the reviewed workspace; otherwise the run starts at the root. They are never hidden
 (the owner watches, steers and approves there, and hidden helpers bring the reload problems of issue
 #11). They run in the `aiPermissionMode` setting's mode, **`auto` ("Approve for me") by default**:
 `accept-edits` asked the owner to approve most of a review's commands. The provider and model come
-from the per-run picker, seeded from the settings (Claude Code unless changed); a mention runs the
-mentioned agent at its default model and reasoning.
+from the per-run picker, seeded from the settings (Claude Code unless changed); a reviewer an
+@reviewer starts runs the settings' provider and model, at the provider's default reasoning.
 
 **A child reports to its parent, and that must not turn into work.** bb posts every finished turn of
 a child to its parent (`[bb system] @thread:<child> completed: <its final message>`, and a
@@ -77,7 +77,7 @@ keep the parent from taking a report for a request: every run prompt makes the f
 running; `contributeInstructions` tells a thread with run children (`runs.parent_thread_id`) what the
 notices are, from its next session; and the skill says the same. Nothing can loop: the plugin sends
 nothing to the parent when a run ends, agents cannot start runs (only the tab's buttons and a
-*user's* @-mention do; an agent's comment never triggers a mention), and the parent's agent can only
+*user's* @reviewer does; an agent's comment never triggers one), and the parent's agent can only
 answer threads already sent to it. A notice still costs the parent a short turn. A run's row is written before its thread is
 spawned, so a thread bb refuses leaves a *failed* run that says why. **Close** archives the thread.
 **Clear review** deletes a session's threads and sends and closes its runs in one transaction, then
@@ -94,13 +94,24 @@ says not to edit; the workspace's uncommitted changes are fingerprinted (each fi
 counts and patch hash) when the run starts and when it ends, and every file that differs is listed on
 the run. Another thread editing the same workspace meanwhile shows up there too, which the tab says.
 
-**Mention and fix runs are sends.** They record a send to the run's thread in the same ledger, so the
-agent's answers go through the same check as the thread under review's: only the thread a comment
-thread was last sent to may answer it. A later mention of the same agent in the same comment thread
-goes to the same run thread (`threads.send`), not a new one. A review run may also act on every thread
-of the session it reviews, and only a review run may open new threads (`comment`), each checked to
-lie on lines the current diff shows; a refusal lists the lines that are (diffity's `add_comment`
-checks).
+**A view's reviewer answers @reviewer.** The owner wanted follow-up questions to reach the agent that
+already knows the diff, not a fresh one per mention. `@reviewer` or `@agent` (both the same; provider
+names like `@claude` start nothing since) in the user's own comment sends that comment thread to the
+view's reviewer — its latest review run not closed (`reviewerRun`) — as a follow-up turn
+(`threads.send`, `queue-if-active`), and marks the run running. With none (never reviewed, closed,
+cleared, or its thread gone), it starts a review run that answers the question first and is the
+reviewer from then on. Questions are taken one at a time per view (`asking`), so two at once cannot
+start two reviewers, and a comment thread already queued to the reviewer is not queued again: the
+follow-up prompt has the agent read the thread as it is when its turn runs. The reviewer is told not to
+edit (it recommends changes instead), like any review run. A run's rights last until it is closed, so
+follow-up turns keep them; a turn that ends while a question is still queued behind it leaves the run
+running. Old `mention` runs stay readable but no new ones start.
+
+**Questions to the reviewer and fix runs are sends.** They record a send to the run's thread in the
+same ledger, so the agent's answers go through the same check as the thread under review's: only the
+thread a comment thread was last sent to may answer it. A review run may also act on every thread of
+the session it reviews, and only a review run may open new threads (`comment`), each checked to lie
+on lines the current diff shows; a refusal lists the lines that are (diffity's `add_comment` checks).
 
 **Tools for runs, the CLI for everyone.** `bb.agents.configure` offers the `diff_review_*` tools only
 to threads whose plugin metadata carries a run id, and the `diff-review` skill to every thread

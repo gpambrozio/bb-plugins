@@ -147,7 +147,8 @@ export type Execution = z.infer<typeof executionSchema>;
 
 /**
  * An AI run the plugin started, in a visible thread of its own in the reviewed workspace: a `review`
- * that leaves comments, a `mention` answering one thread an agent was @-mentioned in, or a `fix` that
+ * that leaves comments (and, as the view's reviewer, answers @reviewer questions), a `mention` from
+ * before @reviewer (a provider @-mention answering one thread), or a `fix` that
  * got comments sent to a new thread.
  */
 export const runKindSchema = z.enum(["review", "mention", "fix"]);

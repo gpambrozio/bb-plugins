@@ -23,7 +23,8 @@ comments were sent to, and the user sees them in the tab, next to the code.
 
 An id may be shortened to any unique prefix of four or more characters.
 
-In a thread Diff Review started (an AI review, an answer to a mention, fixes in a new thread), the
+In a thread Diff Review started (an AI review, which also answers @reviewer questions, or fixes in a
+new thread), the
 `diff_review_threads`, `diff_review_comment`, `diff_review_general_comment`, `diff_review_reply`,
 `diff_review_resolve` and `diff_review_dismiss` tools do the same without the base64; use them when
 they are there.
@@ -59,7 +60,7 @@ If you end your turn without answering a thread, the tab marks it "No reply" and
 
 ## Notices from Diff Review's threads
 
-Diff Review starts its AI reviews, answers to mentions and fixes as child threads of the thread under
+Diff Review starts its AI reviews (which also answer @reviewer questions) and fixes as child threads of the thread under
 review, so that thread gets bb's `@thread:… completed: …` notice after each of their turns. A notice
 that opens with "Diff Review status report — no action needed" is a report: read it, and do nothing
 about it unless the user asks. Review comments reach you only as a message from the Review tab.

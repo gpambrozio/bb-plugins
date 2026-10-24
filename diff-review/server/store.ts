@@ -376,13 +376,13 @@ export class ReviewStore {
     return this.db.prepare<[string], { n: number }>("SELECT count(*) AS n FROM runs WHERE parent_thread_id = ?").get(threadId)!.n > 0;
   }
 
-  /** The open mention run answering a comment thread with a provider, if any. */
-  mentionRun(reviewThreadId: string, providerId: string): StoredRun | null {
+  /** A view's reviewer: its latest review run that has a thread and is not closed, if any. */
+  reviewerRun(sessionId: string): StoredRun | null {
     const row = this.db
-      .prepare<[string, string], RunRow>(
-        "SELECT * FROM runs WHERE kind = 'mention' AND review_thread_id = ? AND provider_id = ? AND status != 'closed' AND bb_thread_id IS NOT NULL ORDER BY created_at DESC LIMIT 1",
+      .prepare<[string], RunRow>(
+        "SELECT * FROM runs WHERE session_id = ? AND kind = 'review' AND status != 'closed' AND bb_thread_id IS NOT NULL ORDER BY created_at DESC, rowid DESC LIMIT 1",
       )
-      .get(reviewThreadId, providerId);
+      .get(sessionId);
     return row === undefined ? null : toRun(row);
   }
 
