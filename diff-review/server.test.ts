@@ -592,6 +592,36 @@ describe("AI runs", () => {
     expect((await sessionState(rpc, sessionId)).runs).toEqual([]);
   });
 
+  it("clears a review: every thread of the view goes, its runs close and their threads are archived, and the runs lose their rights", async () => {
+    const { harness, rpc, view, comment } = await setup();
+    const { sessionId } = await view();
+    const other = await view({ kind: "branch" });
+    const kept = await comment(other.sessionId, "Another view's comment");
+    const { run: review } = (await rpc("startReview", { sessionId, threadId: THREAD, focuses: [], instructions: "", execution })) as RunResult;
+    await tool(harness, "diff_review_general_comment", { body: "Looks fine." }, review.threadId!);
+    const mine = await comment(sessionId, "Use a constant");
+    await rpc("setStatus", { reviewThreadId: mine.id, status: "resolved" });
+    const fix = await comment(sessionId, "Rename b");
+    const { run: fixRun } = (await rpc("fixInNewThread", { sessionId, threadId: THREAD, reviewThreadIds: [fix.id], note: "", execution })) as { run: Run };
+
+    expect(await rpc("clearReview", { sessionId })).toEqual({ deletedThreads: 3, closedRuns: 2 });
+    expect(await sessionState(rpc, sessionId)).toEqual({ threads: [], runs: [] });
+    expect(harness.inspection.sdk.callsTo("threads.archive").map((call) => (call[0] as { threadId: string }).threadId).sort()).toEqual([review.threadId, fixRun.threadId].sort());
+    // Another view's review is not this one.
+    expect((await sessionState(rpc, other.sessionId)).threads.map((row) => row.id)).toEqual([kept.id]);
+
+    // A run still working when its thread is archived can no longer comment or answer.
+    expect(isError(await tool(harness, "diff_review_general_comment", { body: "Late." }, review.threadId!))).toBe(true);
+    expect(isError(await tool(harness, "diff_review_resolve", { threadId: fix.id, text: "Fixed." }, fixRun.threadId!))).toBe(true);
+    expect((await sessionState(rpc, sessionId)).threads).toEqual([]);
+    // The parent keeps the notice instructions: bb may still report the archived runs to it.
+    expect(harness.inspection.registrations.instructionProvider!({ threadId: THREAD, projectId: "proj_1" })).toContain("are status reports");
+
+    // The tab starts fresh: new comments and runs work as before.
+    await comment(sessionId, "After the clear");
+    expect((await sessionState(rpc, sessionId)).threads).toHaveLength(1);
+  });
+
   it("lets a review run comment through the command too, on the whole diff with --general", async () => {
     const { harness, rpc, view } = await setup();
     const { sessionId } = await view();

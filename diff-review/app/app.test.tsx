@@ -413,6 +413,52 @@ describe("the Review tab", () => {
     expect(screen.queryByText("src/a.ts")).toBeNull();
   });
 
+  it("clears the whole review after a confirm that says it can't be undone", async () => {
+    const run = { id: "run000000001", sessionId: "ses_1", kind: "review" as const, threadId: "thr_run", reviewThreadId: null, focus: null, providerId: "claude-code", model: "big", status: "done" as const, summary: null, changedFiles: null, createdAt: 1, finishedAt: 2 };
+    let cleared = false;
+    const slot = renderSlot(
+      { component: ReviewPanel },
+      { threadId: "thr_1", params: null },
+      {
+        rpc: {
+          getReview: () => ({ ...VIEW, runs: [run] }),
+          clearReview: () => {
+            cleared = true;
+            return { deletedThreads: 4, closedRuns: 1 };
+          },
+          listThreads: () => (cleared ? { threads: [], runs: [] } : { threads: VIEW.threads, runs: [run] }),
+        },
+      },
+    );
+    await screen.findByText("Why three?");
+    expect(screen.getAllByRole("listitem")).toHaveLength(1);
+
+    // Cancel keeps everything.
+    fireEvent.click(screen.getByRole("button", { name: "Clear review" }));
+    let dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("This deletes 4 comment threads in this view, yours and the AI's, open or closed, and closes 1 AI run, archiving its thread in bb. It can't be undone.")).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(slot.inspection.rpcCalls.some((call) => call.method === "clearReview")).toBe(false);
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear review" }));
+    dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Clear review" }));
+    await waitFor(() => expect(screen.queryByText("Why three?")).toBeNull());
+    expect(slot.inspection.rpcCalls.find((call) => call.method === "clearReview")!.input).toEqual({ sessionId: "ses_1" });
+    expect(screen.queryByRole("listitem")).toBeNull(); // the run's row
+    expect(screen.queryByText("About the whole diff")).toBeNull();
+    // With nothing left there is nothing to clear.
+    expect(screen.queryByRole("button", { name: "Clear review" })).toBeNull();
+    expect(screen.getByTestId("patch")).toBeTruthy();
+  });
+
+  it("offers no clear before the view has comments or runs", async () => {
+    render({ getReview: () => ({ ...VIEW, threads: [] }) });
+    await screen.findByText("1 file · +1 −1 · 1 left out by the ignore patterns");
+    expect(screen.queryByRole("button", { name: "Clear review" })).toBeNull();
+  });
+
   it("says why there is nothing to review", async () => {
     renderSlot({ component: ReviewPanel }, { threadId: "thr_1", params: null }, { rpc: { getReview: () => ({ ok: false, message: "No workspace." }) } });
     await screen.findByText("No workspace.");

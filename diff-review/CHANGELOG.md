@@ -28,6 +28,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Only files with comments.** A switch in the toolbar hides the files without comments, so you can go
   through a review's findings file by file; the tab remembers it. With the switch off, each file's
   header shows how many comment threads it has, open and closed.
+- **Clear review.** Deletes every comment thread in the view and closes its AI runs, archiving their
+  threads, so you can start over. It asks first, since it can't be undone.
 
 ## 0.1.0
 

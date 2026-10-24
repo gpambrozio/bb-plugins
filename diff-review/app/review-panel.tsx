@@ -5,6 +5,7 @@
  *
  * AI review starts a review run; the runs not yet closed are listed under the toolbar. "Only files with
  * comments" narrows the files to those with a comment thread, for going through a review's findings.
+ * "Clear review", shown once the view has threads or runs, deletes them all (after a confirm).
  *
  * A tab opened with `params: { target }` starts on that view; otherwise on the uncommitted changes, or,
  * when there are none, on the changes committed since the base branch.
@@ -22,6 +23,7 @@ import type { RpcContract } from "../shared/contract";
 import { GENERAL_PATH, targetRequestSchema, type ReviewThread, type Run, type TargetRequest } from "../shared/types";
 import { ReviewActionsProvider, useActions } from "./actions";
 import { AiReviewDialog } from "./ai-review-dialog";
+import { ClearReviewDialog } from "./clear-dialog";
 import { CommentComposer } from "./comment-composer";
 import { FileDiff, placeFileThreads, type DiffStyle } from "./file-diff";
 import { usePatchLoader } from "./patch-loader";
@@ -112,6 +114,7 @@ export function ReviewPanel({ threadId, params }: PluginThreadPanelProps) {
         loadId={state.loadId}
         putPatches={review.putPatches}
         putRun={review.putRun}
+        refreshThreads={review.refreshThreads}
       />
     </ReviewActionsProvider>
   );
@@ -131,6 +134,7 @@ function ReadyPanel({
   loadId,
   putPatches,
   putRun,
+  refreshThreads,
 }: {
   threadId: string;
   view: ReadyView;
@@ -141,6 +145,7 @@ function ReadyPanel({
   loadId: number;
   putPatches(patches: readonly { path: string; patch: string; truncated: boolean }[]): void;
   putRun(run: Run): void;
+  refreshThreads(): Promise<void>;
 }) {
   const rpc = useRpc<RpcContract>();
   const actions = useActions();
@@ -149,6 +154,7 @@ function ReadyPanel({
   const [generalDraft, setGeneralDraft] = useState(false);
   const [sending, setSending] = useState(false);
   const [reviewing, setReviewing] = useState(false);
+  const [clearing, setClearing] = useState(false);
 
   const toggleStyle = () => {
     const next = diffStyle === "split" ? "unified" : "split";
@@ -248,6 +254,12 @@ function ReadyPanel({
           <Icon name="Bot" className="size-4" />
           AI review
         </Button>
+        {view.threads.length > 0 || view.runs.length > 0 ? (
+          <Button type="button" variant="ghost" size="sm" className="gap-1" onClick={() => setClearing(true)}>
+            <Icon name="Trash2" className="size-4" />
+            Clear review
+          </Button>
+        ) : null}
         <Button type="button" size="sm" className="ml-auto gap-1" onClick={() => setSending(true)} disabled={open.length === 0}>
           <Icon name="Sent" className="size-4" />
           Send to agent{open.length === 0 ? "" : ` (${open.length})`}
@@ -320,6 +332,17 @@ function ReadyPanel({
         environmentId={view.environmentId}
         threads={open}
         onStarted={putRun}
+      />
+      <ClearReviewDialog
+        open={clearing}
+        onOpenChange={setClearing}
+        sessionId={view.sessionId}
+        threadCount={view.threads.length}
+        runCount={view.runs.length}
+        onCleared={() => {
+          setGeneralDraft(false);
+          void refreshThreads();
+        }}
       />
       <AiReviewDialog open={reviewing} onOpenChange={setReviewing} sessionId={view.sessionId} threadId={threadId} environmentId={view.environmentId} onStarted={putRun} />
     </div>

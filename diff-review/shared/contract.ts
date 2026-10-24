@@ -124,6 +124,10 @@ export const rpcContract = defineRpcContract({
     input: z.object({ runId: id }).strict(),
     output: z.object({ ok: z.literal(true) }).strict(),
   },
+  clearReview: {
+    input: z.object({ sessionId: id }).strict(),
+    output: z.object({ deletedThreads: z.number().int().nonnegative(), closedRuns: z.number().int().nonnegative() }).strict(),
+  },
 });
 
 export type RpcContract = typeof rpcContract;

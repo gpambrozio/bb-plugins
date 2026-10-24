@@ -9,7 +9,8 @@ and answers each one. It is diffity's review loop on your own working tree, insi
   loading as you scroll.
 - Comments on a line, a range of lines, a whole file or the whole diff, in Markdown, with an optional
   severity: must fix, suggestion, nit or question. Reply, edit, resolve, reopen or dismiss. Each file
-  shows its comment count, and one switch narrows the diff to the files with comments.
+  shows its comment count, and one switch narrows the diff to the files with comments. Clear review
+  deletes a view's comments and closes its AI runs, to start over.
 - Comments that follow the code as it moves. A comment whose code changed or left the view is listed
   apart, with the code as it read when you made it.
 - Send to agent: pick open comment threads, add a note, and send them to the thread under review,
