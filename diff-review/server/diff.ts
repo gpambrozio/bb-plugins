@@ -3,6 +3,7 @@
  * the machine that holds the workspace, remote hosts included, so nothing here needs a host entry. What
  * they cannot give — staged against unstaged, arbitrary ranges — is phase 4's.
  */
+import { createHash } from "node:crypto";
 import { posix } from "node:path";
 
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
@@ -57,6 +58,31 @@ export async function workspaceRefs(sdk: Sdk, log: BbPluginApi["log"], environme
     currentBranch: branch.currentBranch,
     commits: (mergeBase?.commits ?? []).map((commit) => ({ sha: commit.sha, shortSha: commit.shortSha, subject: commit.subject })),
   };
+}
+
+/**
+ * A short key for the state of a workspace's diffs: its checkout (HEAD), how it stands against its
+ * base, and its uncommitted changes (each file's kind and line counts, and the hash of each patch bb
+ * sends up front). Two equal keys mean no view of the workspace changed, give or take an edit to a
+ * large file that kept its line counts (bb sends no patch for those up front).
+ */
+export async function workspaceStateKey(sdk: Sdk, environmentId: string): Promise<string> {
+  const [status, uncommitted] = await Promise.all([
+    sdk.environments.status({ environmentId }),
+    sdk.environments.diffFiles({ environmentId, target: "uncommitted" }),
+  ]);
+  const hash = createHash("sha256");
+  if (status.outcome === "available") {
+    const { checkout, mergeBase } = status.workspace;
+    hash.update(JSON.stringify({ checkout, base: mergeBase === null || mergeBase === undefined ? null : [mergeBase.baseRef, mergeBase.aheadCount, mergeBase.behindCount] }));
+  } else hash.update(`status:${status.outcome}`);
+  if (uncommitted.outcome === "available") {
+    const patches = new Map(uncommitted.initialPatches.map((patch) => [patch.path, patch.patch]));
+    for (const file of uncommitted.files) {
+      hash.update(`\n${file.path}\0${file.previousPath ?? ""}\0${file.changeKind}\0${file.additions}\0${file.deletions}\0${patches.get(file.path) ?? ""}`);
+    }
+  } else hash.update(`diff:${uncommitted.outcome}`);
+  return hash.digest("hex");
 }
 
 /** Fills in the base a branch view left out. */

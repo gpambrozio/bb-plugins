@@ -12,7 +12,7 @@
  * when there are none, on the changes committed since the base branch.
  */
 import { useRpc, type PluginThreadPanelProps } from "@get-bb/plugin-sdk/app";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -65,6 +65,24 @@ function store(key: string, value: string): void {
   } catch {
     // A browser without storage just forgets the choice.
   }
+}
+
+const NO_THREADS: readonly ReviewThread[] = [];
+
+/** Threads by file path; a file whose threads are the same objects as in `previous` keeps that array. */
+export function groupByFile(threads: readonly ReviewThread[], previous: ReadonlyMap<string, readonly ReviewThread[]>): ReadonlyMap<string, readonly ReviewThread[]> {
+  const groups = new Map<string, ReviewThread[]>();
+  for (const thread of threads) {
+    const list = groups.get(thread.filePath) ?? [];
+    list.push(thread);
+    groups.set(thread.filePath, list);
+  }
+  const shared = new Map<string, readonly ReviewThread[]>();
+  for (const [path, list] of groups) {
+    const old = previous.get(path);
+    shared.set(path, old !== undefined && old.length === list.length && old.every((thread, index) => thread === list[index]) ? old : list);
+  }
+  return shared;
 }
 
 /**
@@ -125,6 +143,7 @@ export function ReviewPanel({ threadId, params }: PluginThreadPanelProps) {
         onPick={pick}
         onReload={() => void review.reload()}
         loadId={state.loadId}
+        stalePatches={state.stalePatches}
         putPatches={review.putPatches}
         putRun={review.putRun}
         refreshThreads={review.refreshThreads}
@@ -146,6 +165,7 @@ function ReadyPanel({
   onPick,
   onReload,
   loadId,
+  stalePatches,
   putPatches,
   putRun,
   refreshThreads,
@@ -157,6 +177,7 @@ function ReadyPanel({
   onPick(value: string): void;
   onReload(): void;
   loadId: number;
+  stalePatches: ReadonlySet<string>;
   putPatches(sessionId: string, loadId: number, patches: readonly { path: string; patch: string; truncated: boolean }[]): void;
   putRun(run: Run): void;
   refreshThreads(): Promise<void>;
@@ -182,14 +203,13 @@ function ReadyPanel({
     store(ONLY_COMMENTED_KEY, String(next));
   };
 
+  // Each file's threads keep their array while they are the same threads, so a reply re-renders
+  // only its own file (Pierre redraws a diff whenever its annotations array is a new one).
+  const lastByFile = useRef<ReadonlyMap<string, readonly ReviewThread[]>>(new Map());
   const byFile = useMemo(() => {
-    const map = new Map<string, ReviewThread[]>();
-    for (const thread of view.threads) {
-      const list = map.get(thread.filePath) ?? [];
-      list.push(thread);
-      map.set(thread.filePath, list);
-    }
-    return map;
+    const next = groupByFile(view.threads, lastByFile.current);
+    lastByFile.current = next;
+    return next;
   }, [view.threads]);
 
   const general = byFile.get(GENERAL_PATH) ?? [];
@@ -347,7 +367,8 @@ function ReadyPanel({
           <FileDiff
             key={file.path}
             file={file}
-            threads={byFile.get(file.path) ?? []}
+            threads={byFile.get(file.path) ?? NO_THREADS}
+            stalePatch={stalePatches.has(file.path)}
             showThreadCount={!onlyCommented}
             diffStyle={diffStyle}
             patchState={patchLoader.states.get(file.path)}

@@ -60,7 +60,7 @@ async function setup(options: Setup = {}) {
   const turnStarts = options.turnStarts ?? [];
   const reads: string[] = [];
   // What the workspace holds; a test edits it to play a run that changes files.
-  const workspace = { extraFile: false };
+  const workspace = { extraFile: false, head: "abc" };
   let spawned = 0;
   const { bb, harness } = createFakePluginHost({
     pluginId: "diff-review",
@@ -105,7 +105,7 @@ async function setup(options: Setup = {}) {
           outcome: "available" as const,
           workspace: {
             branch: { currentBranch: "feature", defaultBranch: "main" },
-            checkout: { kind: "branch" as const, branchName: "feature", headSha: "abc" },
+            checkout: { kind: "branch" as const, branchName: "feature", headSha: workspace.head },
             mergeBase: {
               aheadCount: 1,
               baseRef: "origin/main",
@@ -465,10 +465,29 @@ describe("sending to the agent and its answers", () => {
     await idle();
     [row] = ((await rpc("listThreads", { sessionId })) as { threads: ReviewThread[] }).threads;
     expect(row!.delivery!.state).toBe("no_reply");
-    expect(harness.inspection.realtimeSignals.slice(-2)).toEqual([
-      { channel: `environment:${ENV}`, payload: { kind: "threads", sessionId } },
-      { channel: `environment:${ENV}`, payload: { kind: "diff" } },
-    ]);
+    // The workspace did not change since the first turn's end, so only the threads are re-read.
+    expect(harness.inspection.realtimeSignals.at(-1)).toEqual({ channel: `environment:${ENV}`, payload: { kind: "threads", sessionId } });
+  });
+
+  it("tells the tabs to reload only when a turn ends with the workspace changed", async () => {
+    const { harness, view, workspace } = await setup();
+    await view();
+    const diffSignals = () => harness.inspection.realtimeSignals.filter((signal) => (signal.payload as { kind: string }).kind === "diff").length;
+    const idle = () => harness.behavior.emitThreadEvent("thread.idle", { thread: makeThreadResponse({ id: THREAD, environmentId: ENV }), lastAssistantText: "done" });
+    // The first turn end since the plugin loaded cannot tell, so it signals.
+    await idle();
+    expect(diffSignals()).toBe(1);
+    // A turn that changed nothing (an answer to a question, a notice read): no reload.
+    await idle();
+    expect(diffSignals()).toBe(1);
+    workspace.extraFile = true;
+    await idle();
+    expect(diffSignals()).toBe(2);
+    workspace.head = "def";
+    await idle();
+    expect(diffSignals()).toBe(3);
+    await idle();
+    expect(diffSignals()).toBe(3);
   });
 });
 

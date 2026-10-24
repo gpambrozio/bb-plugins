@@ -24,7 +24,7 @@ import {
   type ViewState,
   viewStateSchema,
 } from "../shared/types";
-import { ignorePatterns, loadDiff, loadPatches, resolveTarget, ReviewUnavailable, workspaceOf, workspaceRefs } from "./diff";
+import { ignorePatterns, loadDiff, loadPatches, resolveTarget, ReviewUnavailable, workspaceOf, workspaceRefs, workspaceStateKey } from "./diff";
 import { sendPrompt } from "./prompt";
 import type { ReviewStore, StoredRun } from "./store";
 
@@ -74,6 +74,9 @@ const PROVIDER_NAMES: Record<string, string> = {
 const MAX_RANGE_LINES = 2_000;
 
 export class ReviewService {
+  /** Each workspace's state key at the end of its last turn (`workspaceChanged`). */
+  private readonly workspaceStates = new Map<string, string>();
+
   /** Told of every comment the user writes, after it is stored (for @-mentions); must not throw. */
   onUserComment: (thread: ReviewThread, body: string, viewerThreadId: string | null) => void = () => undefined;
 
@@ -285,9 +288,29 @@ export class ReviewService {
         if (session !== null) this.publish(session.environmentId, session.id);
       }
     }
-    if (thread.environmentId !== null && this.store.sessionsOf(thread.environmentId).length > 0) {
+    if (thread.environmentId !== null && this.store.sessionsOf(thread.environmentId).length > 0 && (await this.workspaceChanged(thread.environmentId))) {
       this.signal(thread.environmentId, { kind: "diff" });
     }
+  }
+
+  /**
+   * Whether the workspace's diffs changed since the last turn that ended in it. Most turns change no
+   * file (a reviewer answering a question, the thread under review reading a run's notice), and a
+   * `diff` signal makes every open tab reload its whole view. Unknown (the first turn since the plugin
+   * loaded) or unreadable counts as changed.
+   */
+  private async workspaceChanged(environmentId: string): Promise<boolean> {
+    let key: string;
+    try {
+      key = await workspaceStateKey(this.bb.sdk, environmentId);
+    } catch (error) {
+      this.bb.log.warn(`Could not read the state of ${environmentId}; telling its tabs to reload: ${error instanceof Error ? error.message : String(error)}`);
+      this.workspaceStates.delete(environmentId);
+      return true;
+    }
+    const previous = this.workspaceStates.get(environmentId);
+    this.workspaceStates.set(environmentId, key);
+    return previous !== key;
   }
 
   private async latestTurnStart(threadId: string): Promise<number | null> {

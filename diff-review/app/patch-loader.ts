@@ -14,49 +14,62 @@ export type PatchState = "loading" | "failed" | "missing";
 
 /** `load` puts the patches it got in place and returns the paths it got them for. */
 export function usePatchLoader(load: (paths: string[]) => Promise<string[]>, resetKey: string) {
-  const [states, setStates] = useState<ReadonlyMap<string, PatchState>>(new Map());
+  const [current, setCurrent] = useState<{ key: string; states: ReadonlyMap<string, PatchState> }>({ key: resetKey, states: new Map() });
+  const keyRef = useRef(resetKey);
   const queue = useRef<string[]>([]);
   const busy = useRef(false);
   const loadRef = useRef(load);
   loadRef.current = load;
 
-  // A new view (another target, a reload) starts with nothing asked for.
-  useEffect(() => {
+  // A new view (another target, a reload) starts with nothing asked for. This resets during render,
+  // before the files' effects ask for their patches: an effect here would run after them and wipe
+  // their asks, leaving those files waiting until they scrolled away and back.
+  if (current.key !== resetKey) {
+    keyRef.current = resetKey;
     queue.current = [];
-    setStates(new Map());
-  }, [resetKey]);
+    setCurrent({ key: resetKey, states: new Map() });
+  }
+  const states = current.key === resetKey ? current.states : NO_STATES;
+
+  /** Changes the states of view `key`; an answer for a view since replaced is dropped. */
+  const update = useCallback((key: string, change: (states: ReadonlyMap<string, PatchState>) => ReadonlyMap<string, PatchState>) => {
+    setCurrent((previous) => (previous.key === key ? { key, states: change(previous.states) } : previous));
+  }, []);
 
   const pump = useCallback(async () => {
     if (busy.current) return;
     busy.current = true;
     try {
       while (queue.current.length > 0) {
+        const key = keyRef.current;
         const batch = queue.current.splice(0, BATCH_SIZE);
         try {
           const loaded = new Set(await loadRef.current(batch));
-          setStates((previous) => withState(without(previous, batch), batch.filter((path) => !loaded.has(path)), "missing"));
+          update(key, (previous) => withState(without(previous, batch), batch.filter((path) => !loaded.has(path)), "missing"));
         } catch {
-          setStates((previous) => withState(previous, batch, "failed"));
+          update(key, (previous) => withState(previous, batch, "failed"));
         }
       }
     } finally {
       busy.current = false;
     }
-  }, []);
+  }, [update]);
 
   const request = useCallback(
     (path: string) => {
       if (queue.current.includes(path)) return;
       queue.current.push(path);
-      setStates((previous) => withState(previous, [path], "loading"));
+      update(keyRef.current, (previous) => withState(previous, [path], "loading"));
       // Let every file that came into view in the same frame join this batch.
       setTimeout(() => void pump(), 0);
     },
-    [pump],
+    [pump, update],
   );
 
   return { states, request };
 }
+
+const NO_STATES: ReadonlyMap<string, PatchState> = new Map();
 
 function withState(map: ReadonlyMap<string, PatchState>, paths: readonly string[], state: PatchState): Map<string, PatchState> {
   const next = new Map(map);

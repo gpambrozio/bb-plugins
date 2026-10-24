@@ -16,13 +16,23 @@ import { forgetViewStates } from "./view-state";
 
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn(), info: vi.fn() } }));
 
-vi.mock("@pierre/diffs/react", () => ({
+/** What the stand-in saw: each render's patch and annotations array, and how many times one mounted. */
+const pierre = vi.hoisted(() => ({ renders: [] as { patch: string; annotations: unknown }[], mounts: 0 }));
+
+vi.mock("@pierre/diffs/react", async () => {
+  const { useEffect } = await import("react");
+  return {
   PatchDiff: (props: {
     patch: string;
     lineAnnotations: { side: string; lineNumber: number; metadata: unknown }[];
     renderAnnotation(annotation: unknown): ReactNode;
     options: { onGutterUtilityClick(range: { start: number; end: number; side: string }): void };
-  }) => (
+  }) => {
+    pierre.renders.push({ patch: props.patch, annotations: props.lineAnnotations });
+    useEffect(() => {
+      pierre.mounts += 1;
+    }, []);
+    return (
     <div data-testid="patch" data-patch={props.patch}>
       <button type="button" onClick={() => props.options.onGutterUtilityClick({ start: 1, end: 2, side: "additions" })}>
         gutter +
@@ -33,11 +43,15 @@ vi.mock("@pierre/diffs/react", () => ({
         </div>
       ))}
     </div>
-  ),
-}));
+    );
+  },
+  };
+});
 
 afterEach(() => {
   cleanup();
+  pierre.renders.length = 0;
+  pierre.mounts = 0;
   vi.clearAllMocks();
   window.localStorage.clear();
   forgetViewStates();
@@ -193,6 +207,62 @@ describe("the Review tab", () => {
     await screen.findByText("From the agent's side");
     await slot.behavior.emitRealtime("environment:env_1", { kind: "diff" });
     await waitFor(() => expect(slot.inspection.rpcCalls.filter((call) => call.method === "getReview")).toHaveLength(2));
+  });
+
+  describe("an agent's answer arriving", () => {
+    const PATCH_B = PATCH.replaceAll("src/a.ts", "src/b.ts");
+    /** What the RPC returns, as the wire does: a fresh copy each time. */
+    const fresh = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+    const onB = thread({ id: "bbbbbb000009", body: "Untouched", filePath: "src/b.ts" });
+    const twoFiles = { ...VIEW, files: [VIEW.files[0]!, { ...VIEW.files[0]!, path: "src/b.ts", patch: PATCH_B }], threads: [...VIEW.threads, onB] };
+    const annotationsOf = (patch: string) => new Set(pierre.renders.filter((entry) => entry.patch === patch).map((entry) => entry.annotations));
+
+    it("updates only the answered thread in place: no reload, no remount, other files' diffs untouched", async () => {
+      const answered = fresh(twoFiles.threads);
+      answered[0]!.comments.push({ id: "c_reply", authorType: "agent", authorName: "Claude Code", body: "Because b changed.", createdAt: 2, editedAt: null });
+      const slot = render({ getReview: () => fresh(twoFiles), listThreads: () => ({ threads: fresh(answered), runs: [] }) });
+      await waitFor(() => expect(screen.getAllByTestId("patch")).toHaveLength(2));
+      const mounts = pierre.mounts;
+      const before = { a: annotationsOf(PATCH), b: annotationsOf(PATCH_B) };
+      expect(before.b.size).toBe(1);
+
+      await slot.behavior.emitRealtime("environment:env_1", { kind: "threads", sessionId: "ses_1" });
+      await screen.findByText("Because b changed.");
+      expect(slot.inspection.rpcCalls.filter((call) => call.method === "getReview")).toHaveLength(1);
+      expect(pierre.mounts).toBe(mounts);
+      // src/b.ts's thread did not change: its diff is handed the very same annotations, so Pierre leaves it be.
+      expect(annotationsOf(PATCH_B)).toEqual(before.b);
+      expect(screen.queryByText("Loading the diff…")).toBeNull();
+    });
+
+    it("reloads a changed diff in place: unchanged files keep their diffs, and loaded patches stay up while they reload", async () => {
+      const onDemand = { ...VIEW.files[0]!, path: "src/big.ts", patch: null, loadMode: "on_demand" as const };
+      const BIG = PATCH.replaceAll("src/a.ts", "src/big.ts");
+      const view = { ...VIEW, threads: [], files: [VIEW.files[0]!, onDemand] };
+      let answer: ((value: unknown) => void) | null = null;
+      let loads = 0;
+      const slot = render({
+        getReview: () => fresh(view),
+        loadPatches: () =>
+          ++loads === 1 ? { patches: [{ path: "src/big.ts", patch: BIG, truncated: false }] } : new Promise((resolve) => (answer = resolve)),
+      });
+      await waitFor(() => expect(screen.getAllByTestId("patch").map((node) => node.getAttribute("data-patch"))).toEqual([PATCH, BIG]));
+      const mounts = pierre.mounts;
+      const before = annotationsOf(PATCH);
+
+      await slot.behavior.emitRealtime("environment:env_1", { kind: "diff" });
+      await waitFor(() => expect(slot.inspection.rpcCalls.filter((call) => call.method === "getReview")).toHaveLength(2));
+      await waitFor(() => expect(answer).not.toBeNull());
+      // While the on-demand patch reloads, the one already shown stays: no "Loading the diff…" flash.
+      expect(screen.queryByText("Loading the diff…")).toBeNull();
+      expect(screen.getAllByTestId("patch").map((node) => node.getAttribute("data-patch"))).toEqual([PATCH, BIG]);
+      expect(pierre.mounts).toBe(mounts);
+      expect(annotationsOf(PATCH)).toEqual(before);
+
+      const NEWER = BIG.replace("const b = 3;", "const b = 4;");
+      answer!({ patches: [{ path: "src/big.ts", patch: NEWER, truncated: false }] });
+      await waitFor(() => expect(screen.getAllByTestId("patch")[1]!.getAttribute("data-patch")).toBe(NEWER));
+    });
   });
 
   it("loads the patches bb did not send, in one batch, without a tap", async () => {

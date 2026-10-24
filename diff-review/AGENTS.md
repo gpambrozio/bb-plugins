@@ -188,6 +188,15 @@ Move to `experimental_tab` when the plugin re-pins to an SDK that has it (and ra
   opens, the comment filter shows it, a line draft whose lines left the diff sits above the diff, and
   drafts on files no longer in the view are listed apart. Reopening an editor keeps its draft.
 - Patches loaded on demand land only on the session and load that asked for them.
+- Updates land in place. Pierre redraws a file's whole diff whenever its `lineAnnotations` array is a
+  new object, so unchanged threads, runs and files keep their objects across a refresh or reload
+  (`shareById`, `mergeView`, `groupByFile`, and `NO_THREADS` rather than a fresh `[]`), and a reply
+  redraws only its own file. A reload keeps an on-demand patch on screen while it is fetched again
+  (`stalePatches`). The patch loader resets during render, not in an effect: an effect ran after the
+  files' own effects had asked for their patches and wiped those asks.
+- A turn's end sends the `diff` signal (every tab reloads its whole view) only when the workspace's
+  state key (HEAD, base, uncommitted files and up-front patches) changed since the last turn's end;
+  most turns, such as a reviewer's answer and the parent reading its notice, change no file.
 - The app never imports the SDK root at run time: the contract is a type import, the schemas and the
   channel name live in `shared/types.ts`.
 - `@pierre/diffs` stays a devDependency: bb provides it.

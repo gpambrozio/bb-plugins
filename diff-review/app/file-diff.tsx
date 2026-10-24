@@ -80,6 +80,8 @@ export interface FileDiffProps {
   /** Whether the header shows how many comment threads the file has, open and closed. */
   showThreadCount: boolean;
   diffStyle: DiffStyle;
+  /** The patch shown is the previous load's, kept on screen while it is fetched again. */
+  stalePatch?: boolean;
   /** Where the patch stands when bb did not send it with the file list; undefined before it is asked for. */
   patchState: PatchState | undefined;
   /** Asks for the patch; called on its own when the file comes near the screen. */
@@ -113,7 +115,7 @@ export function threadCount(threads: readonly ReviewThread[]): { open: number; c
   return { open, closed, label: `${threads.length} comment thread${threads.length === 1 ? "" : "s"}: ${parts.join(", ")}` };
 }
 
-export function FileDiff({ file, threads, showThreadCount, diffStyle, patchState, requestPatch, scrollRoot }: FileDiffProps) {
+export function FileDiff({ file, threads, showThreadCount, diffStyle, stalePatch = false, patchState, requestPatch, scrollRoot }: FileDiffProps) {
   const actions = useActions();
   const codeTheme = experimental_useCodeTheme();
   const viewState = useViewState();
@@ -140,7 +142,8 @@ export function FileDiff({ file, threads, showThreadCount, diffStyle, patchState
   };
   const reason = noDiffReason(file);
   // The patch loads by itself once the file is near the screen; a folded file waits until unfolded.
-  useNearScreen(sectionRef, scrollRoot, file.patch === null && reason === null && !collapsed && patchState === undefined, () => requestPatch(file.path));
+  // A stale patch (the previous load's, still shown) is fetched again the same way.
+  useNearScreen(sectionRef, scrollRoot, (file.patch === null || stalePatch) && reason === null && !collapsed && patchState === undefined, () => requestPatch(file.path));
   // A new comment on lines: one per file, as the gutter offers. Its text lives in the view state, not
   // in its composer: Pierre may remount annotations when the patch reloads (an agent's turn ended).
   const lineDraft = useDraft(draftKeys.line(file.path));

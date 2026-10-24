@@ -373,6 +373,11 @@ and the mobile app's web view allow it only within a click — so call it before
 the click handler. bb's desktop app sets no permission handler on its main window, so reads work there
 without a prompt (read from its `app.asar`; `screen-sharing/AGENTS.md`).
 
+**`@pierre/diffs` redraws on identity.** A `PatchDiff` whose `lineAnnotations` (or `options`) is a new
+object re-renders the whole file's diff, so keep both stable across re-renders (memoize them, share
+unchanged data after a refetch, and never pass a fresh `[]`), or every refresh flickers every file
+(`diff-review/AGENTS.md`).
+
 **Icon names are bb's own set, not Lucide's.** `experimental_Icon` (and every `icon` field) knows about
 170 names — `Settings`, `Play`, `Spinner`, `Lock`, `ListTodo`, `MessageQuestion`, `Github`… but no
 `Volume2`, `RefreshCw`, `Megaphone`, `Shield` or `Loader2` — and draws its generic bolt for anything else,
