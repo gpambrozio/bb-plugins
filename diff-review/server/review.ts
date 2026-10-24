@@ -21,6 +21,8 @@ import {
   type Target,
   type TargetRequest,
   type ThreadStatus,
+  type ViewState,
+  viewStateSchema,
 } from "../shared/types";
 import { ignorePatterns, loadDiff, loadPatches, resolveTarget, ReviewUnavailable, workspaceOf, workspaceRefs } from "./diff";
 import { sendPrompt } from "./prompt";
@@ -104,6 +106,7 @@ export class ReviewService {
         }
       }
       const session = this.store.session(environment.id, targetKey(target));
+      const threads = this.store.threads(session.id);
       return {
         ok: true,
         sessionId: session.id,
@@ -115,13 +118,39 @@ export class ReviewService {
         files: diff.files,
         ignoredPaths: diff.ignoredPaths,
         truncated: diff.truncated,
-        threads: this.store.threads(session.id),
+        threads,
         runs: this.store.openRuns(session.id).map(publicRun),
+        viewState: this.viewState(threadId, session.id, threads),
       };
     } catch (error) {
       if (error instanceof ReviewUnavailable) return { ok: false, message: error.message };
       throw error;
     }
+  }
+
+  /**
+   * What `threadId`'s tab kept of a view, minus the reply and edit drafts whose thread or comment is
+   * gone (deleted, or cleared with the review). A stored copy that no longer parses counts as none.
+   */
+  private viewState(threadId: string, sessionId: string, threads: readonly ReviewThread[]): ViewState | null {
+    const parsed = viewStateSchema.safeParse(this.store.viewState(threadId, sessionId));
+    if (!parsed.success) return null;
+    const threadIds = new Set(threads.map((thread) => thread.id));
+    const commentIds = new Set(threads.flatMap((thread) => thread.comments.map((comment) => comment.id)));
+    const drafts = Object.fromEntries(
+      Object.entries(parsed.data.drafts).filter(([key]) => {
+        if (key.startsWith("reply:")) return threadIds.has(key.slice("reply:".length));
+        if (key.startsWith("edit:")) return commentIds.has(key.slice("edit:".length));
+        return true;
+      }),
+    );
+    return { ...parsed.data, drafts };
+  }
+
+  /** Keeps what `threadId`'s tab holds of a session's view. */
+  saveViewState(threadId: string, sessionId: string, state: ViewState): void {
+    const session = this.requireSession(sessionId);
+    this.store.saveViewState(threadId, session.id, state);
   }
 
   /** Patches bb left to load on demand. */

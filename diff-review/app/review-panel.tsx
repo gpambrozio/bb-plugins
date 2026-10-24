@@ -6,6 +6,7 @@
  * AI review starts a review run; the runs not yet closed are listed under the toolbar. "Only files with
  * comments" narrows the files to those with a comment thread, for going through a review's findings.
  * "Clear review", shown once the view has threads or runs, deletes them all (after a confirm).
+ * Unsent comments, folds and the scroll position are kept per thread and view (`view-state.tsx`).
  *
  * A tab opened with `params: { target }` starts on that view; otherwise on the uncommitted changes, or,
  * when there are none, on the changes committed since the base branch.
@@ -29,9 +30,11 @@ import { FileDiff, placeFileThreads, type DiffStyle } from "./file-diff";
 import { usePatchLoader } from "./patch-loader";
 import { targetLabel } from "./labels";
 import { RunsList } from "./runs-list";
+import { useScrollMemory } from "./scroll-memory";
 import { SendDialog } from "./send-dialog";
 import { ThreadCard } from "./thread-card";
 import { errorMessage, useReview, type ReadyView } from "./use-review";
+import { draftKeys, useDraft, useViewState, ViewStateProvider } from "./view-state";
 
 /** The `threadPanelAction` id; the palette command opens it by this. */
 export const PANEL_ACTION_ID = "review";
@@ -64,9 +67,17 @@ function store(key: string, value: string): void {
   }
 }
 
-/** The files a view shows: all of them, or with `onlyCommented` those with a comment thread. */
-export function shownFiles<File extends { path: string }>(files: readonly File[], byFile: ReadonlyMap<string, readonly ReviewThread[]>, onlyCommented: boolean): readonly File[] {
-  return onlyCommented ? files.filter((file) => (byFile.get(file.path)?.length ?? 0) > 0) : files;
+/**
+ * The files a view shows: all of them, or with `onlyCommented` those with a comment thread or an
+ * unsent comment (`hasDraft`).
+ */
+export function shownFiles<File extends { path: string }>(
+  files: readonly File[],
+  byFile: ReadonlyMap<string, readonly ReviewThread[]>,
+  onlyCommented: boolean,
+  hasDraft: (path: string) => boolean = () => false,
+): readonly File[] {
+  return onlyCommented ? files.filter((file) => (byFile.get(file.path)?.length ?? 0) > 0 || hasDraft(file.path)) : files;
 }
 
 function pickerValue(target: TargetRequest): string {
@@ -104,6 +115,8 @@ export function ReviewPanel({ threadId, params }: PluginThreadPanelProps) {
 
   return (
     <ReviewActionsProvider sessionId={state.view.sessionId} threadId={threadId} putThread={review.putThread} refreshThreads={review.refreshThreads}>
+      {/* Keyed by the view: each view of this thread has its own drafts, folds and place. */}
+      <ViewStateProvider key={state.view.sessionId} threadId={threadId} sessionId={state.view.sessionId} saved={state.view.viewState}>
       <ReadyPanel
         threadId={threadId}
         view={state.view}
@@ -116,6 +129,7 @@ export function ReviewPanel({ threadId, params }: PluginThreadPanelProps) {
         putRun={review.putRun}
         refreshThreads={review.refreshThreads}
       />
+      </ViewStateProvider>
     </ReviewActionsProvider>
   );
 }
@@ -151,7 +165,8 @@ function ReadyPanel({
   const actions = useActions();
   const [diffStyle, setDiffStyle] = useState<DiffStyle>(() => (stored(DIFF_STYLE_KEY) === "split" ? "split" : "unified"));
   const [onlyCommented, setOnlyCommented] = useState(() => stored(ONLY_COMMENTED_KEY) === "true");
-  const [generalDraft, setGeneralDraft] = useState(false);
+  const viewState = useViewState();
+  const generalDraft = useDraft(draftKeys.general);
   const [sending, setSending] = useState(false);
   const [reviewing, setReviewing] = useState(false);
   const [clearing, setClearing] = useState(false);
@@ -203,12 +218,13 @@ function ReadyPanel({
   );
   const patchLoader = usePatchLoader(loadPatches, `${view.sessionId}:${loadId}`);
   const [scrollRoot, setScrollRoot] = useState<HTMLDivElement | null>(null);
+  useScrollMemory(scrollRoot, viewState.scroll(), viewState.setScroll);
 
   // A commit view opened from params may name a commit the branch list does not hold.
   const shown = view.target;
   const orphanCommit = shown.kind === "commit" && !view.commits.some((commit) => commit.sha === shown.sha) ? shown : null;
 
-  const files = shownFiles(view.files, byFile, onlyCommented);
+  const files = shownFiles(view.files, byFile, onlyCommented, (path) => viewState.draft(draftKeys.line(path)) !== undefined || viewState.draft(draftKeys.file(path)) !== undefined);
   const additions = files.reduce((sum, file) => sum + file.additions, 0);
   const deletions = files.reduce((sum, file) => sum + file.deletions, 0);
   const fileCount = onlyCommented ? `${files.length} of ${view.files.length} files` : `${files.length} file${files.length === 1 ? "" : "s"}`;
@@ -246,7 +262,7 @@ function ReadyPanel({
         <Button type="button" variant="ghost" size="sm" onClick={onReload} disabled={refreshing} aria-label="Reload the diff">
           <Icon name={refreshing ? "Spinner" : "ArrowReloadHorizontal"} className="size-4" />
         </Button>
-        <Button type="button" variant="ghost" size="sm" className="gap-1" onClick={() => setGeneralDraft(true)}>
+        <Button type="button" variant="ghost" size="sm" className="gap-1" onClick={() => generalDraft.open()}>
           <Icon name="MessageSquarePlus" className="size-4" />
           Comment on the diff
         </Button>
@@ -275,22 +291,25 @@ function ReadyPanel({
           {view.truncated ? " · bb cut this diff short" : ""}
         </p>
 
-        {general.length > 0 || generalDraft ? (
+        {general.length > 0 || generalDraft.active !== null ? (
           <section className="flex flex-col gap-2 border-b border-border px-3 py-2">
             <h3 className="text-xs font-medium text-muted-foreground">About the whole diff</h3>
             {general.map((thread) => (
               <ThreadCard key={thread.id} thread={thread} />
             ))}
-            {generalDraft ? (
+            {generalDraft.active !== null ? (
               <CommentComposer
                 placeholder="A comment about the whole change"
                 submitLabel="Comment"
                 withSeverity
+                initialBody={generalDraft.latest().body}
+                initialSeverity={generalDraft.latest().severity}
+                onChange={generalDraft.change}
                 onSubmit={async ({ body, severity }) => {
                   await actions.create({ filePath: GENERAL_PATH, side: null, startLine: 0, endLine: 0, anchorContent: null, body, severity });
-                  setGeneralDraft(false);
+                  generalDraft.close();
                 }}
-                onCancel={() => setGeneralDraft(false)}
+                onCancel={generalDraft.close}
               />
             ) : null}
           </section>
@@ -339,10 +358,7 @@ function ReadyPanel({
         sessionId={view.sessionId}
         threadCount={view.threads.length}
         runCount={view.runs.length}
-        onCleared={() => {
-          setGeneralDraft(false);
-          void refreshThreads();
-        }}
+        onCleared={() => void refreshThreads()}
       />
       <AiReviewDialog open={reviewing} onOpenChange={setReviewing} sessionId={view.sessionId} threadId={threadId} environmentId={view.environmentId} onStarted={putRun} />
     </div>

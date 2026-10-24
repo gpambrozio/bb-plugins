@@ -76,6 +76,14 @@ export const MIGRATIONS: string[] = [
   `CREATE INDEX runs_bb_thread ON runs(bb_thread_id)`,
   // Runs start as children of the thread under review.
   `ALTER TABLE runs ADD COLUMN parent_thread_id TEXT`,
+  // What each thread's Review tab keeps of a view: drafts, folds, scroll.
+  `CREATE TABLE view_states (
+     thread_id TEXT NOT NULL,
+     session_id TEXT NOT NULL REFERENCES review_sessions(id) ON DELETE CASCADE,
+     state TEXT NOT NULL,
+     updated_at INTEGER NOT NULL,
+     PRIMARY KEY (thread_id, session_id)
+   )`,
 ];
 
 export interface Session {
@@ -396,6 +404,23 @@ export class ReviewStore {
 
   closeRun(id: string): void {
     this.db.prepare("UPDATE runs SET status = 'closed' WHERE id = ?").run(id);
+  }
+
+  /** What `threadId`'s tab kept of a session's view, as it saved it; null when nothing was kept. */
+  viewState(threadId: string, sessionId: string): unknown {
+    const row = this.db
+      .prepare<[string, string], { state: string }>("SELECT state FROM view_states WHERE thread_id = ? AND session_id = ?")
+      .get(threadId, sessionId);
+    return row === undefined ? null : (JSON.parse(row.state) as unknown);
+  }
+
+  saveViewState(threadId: string, sessionId: string, state: unknown): void {
+    this.db
+      .prepare(
+        `INSERT INTO view_states (thread_id, session_id, state, updated_at) VALUES (?, ?, ?, ?)
+         ON CONFLICT (thread_id, session_id) DO UPDATE SET state = excluded.state, updated_at = excluded.updated_at`,
+      )
+      .run(threadId, sessionId, JSON.stringify(state), this.now());
   }
 
   /**

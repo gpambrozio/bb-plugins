@@ -20,6 +20,7 @@ import { useActions } from "./actions";
 import { useNearScreen, type PatchState } from "./patch-loader";
 import { CommentComposer } from "./comment-composer";
 import { ThreadCard } from "./thread-card";
+import { draftKeys, useDraft, useViewState } from "./view-state";
 
 export type DiffStyle = "split" | "unified";
 
@@ -30,7 +31,7 @@ type Annotation =
   | { kind: "threads"; threads: { thread: ReviewThread; placement: Placement }[] }
   | { kind: "draft"; side: Side; startLine: number; endLine: number };
 
-interface Draft {
+interface LineRange {
   side: Side;
   startLine: number;
   endLine: number;
@@ -45,7 +46,7 @@ function toPierreSide(side: Side): "deletions" | "additions" {
 }
 
 /** A Pierre range as a thread's place: one side, start before end. */
-export function draftFrom(range: SelectedLineRange): Draft {
+export function draftFrom(range: SelectedLineRange): LineRange {
   const side = toSide(range.side);
   if (range.endSide !== undefined && range.endSide !== range.side) return { side, startLine: range.start, endLine: range.start };
   return { side, startLine: Math.min(range.start, range.end), endLine: Math.max(range.start, range.end) };
@@ -115,8 +116,14 @@ export function threadCount(threads: readonly ReviewThread[]): { open: number; c
 export function FileDiff({ file, threads, showThreadCount, diffStyle, patchState, requestPatch, scrollRoot }: FileDiffProps) {
   const actions = useActions();
   const codeTheme = experimental_useCodeTheme();
+  const viewState = useViewState();
   const changedLines = file.additions + file.deletions;
-  const [collapsed, setCollapsed] = useState(() => changedLines > FOLD_ABOVE_LINES);
+  // Folded or unfolded by hand, a file stays so; otherwise a large change starts folded.
+  // A file with an unsent comment in it opens, so the comment shows.
+  const [collapsed, setCollapsed] = useState(() => {
+    if (viewState.draft(draftKeys.line(file.path)) !== undefined || viewState.draft(draftKeys.file(file.path)) !== undefined) return false;
+    return viewState.collapsed(file.path) ?? changedLines > FOLD_ABOVE_LINES;
+  });
   const sectionRef = useRef<HTMLElement>(null);
   // Folding a file scrolled part-way through would leave the scroll offset where it was, so the next
   // file would show up already scrolled down by as much. Pull the folded file's header to the top.
@@ -128,19 +135,27 @@ export function FileDiff({ file, threads, showThreadCount, diffStyle, patchState
   }, [collapsed, scrollRoot]);
   const toggleCollapsed = () => {
     if (!collapsed && sectionRef.current !== null && scrollRoot !== null) alignAfterFold.current = scrollToAlign(sectionRef.current, scrollRoot);
+    viewState.setCollapsed(file.path, !collapsed);
     setCollapsed(!collapsed);
   };
   const reason = noDiffReason(file);
   // The patch loads by itself once the file is near the screen; a folded file waits until unfolded.
   useNearScreen(sectionRef, scrollRoot, file.patch === null && reason === null && !collapsed && patchState === undefined, () => requestPatch(file.path));
-  const [draft, setDraft] = useState<Draft | null>(null);
-  // The draft's text lives here, not in its composer: Pierre may remount annotations when the patch
-  // reloads (an agent's turn ended), and the text must survive that.
-  const draftBody = useRef("");
-  const [fileDraft, setFileDraft] = useState(false);
+  // A new comment on lines: one per file, as the gutter offers. Its text lives in the view state, not
+  // in its composer: Pierre may remount annotations when the patch reloads (an agent's turn ended).
+  const lineDraft = useDraft(draftKeys.line(file.path));
+  const lineDraftRef = useRef(lineDraft);
+  lineDraftRef.current = lineDraft;
+  const draft: LineRange | null = lineDraft.active?.range ?? null;
+  const fileDraft = useDraft(draftKeys.file(file.path));
   const [selected, setSelected] = useState<SelectedLineRange | null>(null);
 
   const { lines, wholeFile, onLines, unplaced } = useMemo(() => placeFileThreads(file, threads), [file, threads]);
+
+  // A restored line draft goes under its lines when the diff still shows them; otherwise above the
+  // diff, so it is never out of sight.
+  const draftInDiff = draft !== null && lines !== undefined && linesText(lines, draft.side, draft.startLine, draft.endLine) !== null;
+  const draftAbove = draft === null || draftInDiff ? null : lines === undefined ? "It shows in place once the diff loads." : "Those lines are no longer in this diff.";
 
   const annotations = useMemo(() => {
     const byLine = new Map<string, DiffLineAnnotation<Annotation>>();
@@ -153,9 +168,9 @@ export function FileDiff({ file, threads, showThreadCount, diffStyle, patchState
       else byLine.set(key, { side, lineNumber: entry.placement.endLine, metadata: { kind: "threads", threads: [entry] } });
     }
     const list = [...byLine.values()];
-    if (draft !== null) list.push({ side: toPierreSide(draft.side), lineNumber: draft.endLine, metadata: { kind: "draft", ...draft } });
+    if (draft !== null && draftInDiff) list.push({ side: toPierreSide(draft.side), lineNumber: draft.endLine, metadata: { kind: "draft", ...draft } });
     return list;
-  }, [onLines, draft]);
+  }, [onLines, draft, draftInDiff]);
 
   const options = useMemo(
     () => ({
@@ -168,8 +183,7 @@ export function FileDiff({ file, threads, showThreadCount, diffStyle, patchState
       enableLineSelection: true,
       onLineSelected: (range: SelectedLineRange | null) => setSelected(range),
       onGutterUtilityClick: (range: SelectedLineRange) => {
-        draftBody.current = "";
-        setDraft(draftFrom(range));
+        lineDraftRef.current.open({ range: draftFrom(range) });
         setSelected(null);
       },
     }),
@@ -187,24 +201,30 @@ export function FileDiff({ file, threads, showThreadCount, diffStyle, patchState
         </div>
       );
     }
+    return lineDraftComposer(meta, null);
+  };
+
+  /** The new comment on lines, in place under them, or above the diff with `note` saying why not. */
+  const lineDraftComposer = (meta: LineRange, note: string | null) => {
     const range = meta.startLine === meta.endLine ? `line ${meta.startLine}` : `lines ${meta.startLine}–${meta.endLine}`;
     return (
       <div className="flex flex-col gap-2 border-l-2 border-primary bg-card px-3 py-2 font-sans">
         <span className="text-xs text-muted-foreground">
-          New comment on {range} ({meta.side === "old" ? "removed" : "new"} side)
+          New comment on {range} ({meta.side === "old" ? "removed" : "new"} side){note === null ? "" : `. ${note}`}
         </span>
         <CommentComposer
           placeholder="Leave a comment. Markdown works; @claude, @codex or @opencode gets an agent's answer."
           submitLabel="Comment"
           withSeverity
-          initialBody={draftBody.current}
-          onBodyChange={(text) => (draftBody.current = text)}
+          initialBody={lineDraft.latest().body}
+          initialSeverity={lineDraft.latest().severity}
+          onChange={lineDraft.change}
           onSubmit={async ({ body, severity }) => {
             const anchorContent = lines === undefined ? null : linesText(lines, meta.side, meta.startLine, meta.endLine);
             await actions.create({ filePath: file.path, side: meta.side, startLine: meta.startLine, endLine: meta.endLine, anchorContent, body, severity });
-            setDraft(null);
+            lineDraft.close();
           }}
-          onCancel={() => setDraft(null)}
+          onCancel={lineDraft.close}
         />
       </div>
     );
@@ -250,14 +270,14 @@ export function FileDiff({ file, threads, showThreadCount, diffStyle, patchState
         {file.patchTruncated ? <span className="shrink-0 text-xs text-warning-text">truncated</span> : null}
         {collapsed && changedLines > FOLD_ABOVE_LINES ? <span className="shrink-0 text-xs text-muted-foreground">folded: a large change</span> : null}
         {showThreadCount && threads.length > 0 ? <ThreadCount threads={threads} /> : null}
-        <Button type="button" variant="ghost" size="sm" className="ml-auto h-6 shrink-0 gap-1 px-1.5 text-xs" onClick={() => setFileDraft(true)}>
+        <Button type="button" variant="ghost" size="sm" className="ml-auto h-6 shrink-0 gap-1 px-1.5 text-xs" onClick={() => fileDraft.open()}>
           <Icon name="MessageSquarePlus" className="size-3.5" />
           Comment on file
         </Button>
       </header>
       {collapsed ? null : (
         <>
-          {wholeFile.length > 0 || unplaced.length > 0 || fileDraft ? (
+          {wholeFile.length > 0 || unplaced.length > 0 || fileDraft.active !== null || draftAbove !== null ? (
             <div className="flex flex-col gap-2 px-3 py-2">
               {wholeFile.map((thread) => (
                 <ThreadCard key={thread.id} thread={thread} />
@@ -268,16 +288,20 @@ export function FileDiff({ file, threads, showThreadCount, diffStyle, patchState
                   <ThreadCard thread={thread} />
                 </div>
               ))}
-              {fileDraft ? (
+              {draft !== null && draftAbove !== null ? lineDraftComposer(draft, draftAbove) : null}
+              {fileDraft.active !== null ? (
                 <CommentComposer
                   placeholder="A comment about the whole file"
                   submitLabel="Comment"
                   withSeverity
+                  initialBody={fileDraft.latest().body}
+                  initialSeverity={fileDraft.latest().severity}
+                  onChange={fileDraft.change}
                   onSubmit={async ({ body: text, severity }) => {
                     await actions.create({ filePath: file.path, side: null, startLine: 0, endLine: 0, anchorContent: null, body: text, severity });
-                    setFileDraft(false);
+                    fileDraft.close();
                   }}
-                  onCancel={() => setFileDraft(false)}
+                  onCancel={fileDraft.close}
                 />
               ) : null}
             </div>

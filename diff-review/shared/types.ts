@@ -180,6 +180,43 @@ export const runSchema = z
   .strict();
 export type Run = z.infer<typeof runSchema>;
 
+/** Most unsent comments one tab keeps for a view, and most files whose fold it remembers. */
+export const VIEW_STATE_MAX_DRAFTS = 200;
+export const VIEW_STATE_MAX_FOLDS = 5_000;
+
+/**
+ * An unsent comment, kept as typed until it is sent or cancelled. Its key says what it belongs to:
+ * `general`, `file:<path>`, `line:<path>` (with `range`: one line draft per file, as the tab offers),
+ * `reply:<thread id>` or `edit:<comment id>`.
+ */
+export const draftSchema = z
+  .object({
+    body: z.string().max(BODY_MAX_CHARS),
+    severity: severitySchema.nullable(),
+    range: z.object({ side: sideSchema, startLine: z.number().int().positive(), endLine: z.number().int().positive() }).strict().nullable(),
+  })
+  .strict();
+export type Draft = z.infer<typeof draftSchema>;
+
+/**
+ * Where the tab was scrolled: `offset` pixels into the file `path` (the `index`th shown, the fallback
+ * when that file left the diff), or with a null `path`, `offset` pixels from the top.
+ */
+export const scrollAnchorSchema = z.object({ path: z.string().max(4096).nullable(), index: z.number().int().nonnegative(), offset: z.number() }).strict();
+export type ScrollAnchor = z.infer<typeof scrollAnchorSchema>;
+
+/** What one thread's tab keeps of one view across navigation and restarts. `savedAt` orders copies. */
+export const viewStateSchema = z
+  .object({
+    drafts: z.record(z.string().max(4200), draftSchema).refine((drafts) => Object.keys(drafts).length <= VIEW_STATE_MAX_DRAFTS, "Too many drafts."),
+    /** Files the user folded (true) or unfolded (false); the rest follow the default. */
+    collapsed: z.record(z.string().max(4096), z.boolean()).refine((folds) => Object.keys(folds).length <= VIEW_STATE_MAX_FOLDS, "Too many folds."),
+    scroll: scrollAnchorSchema.nullable(),
+    savedAt: z.number(),
+  })
+  .strict();
+export type ViewState = z.infer<typeof viewStateSchema>;
+
 export const reviewViewSchema = z.discriminatedUnion("ok", [
   z
     .object({
@@ -199,6 +236,8 @@ export const reviewViewSchema = z.discriminatedUnion("ok", [
       threads: z.array(reviewThreadSchema),
       /** The session's AI runs not yet closed, newest first. */
       runs: z.array(runSchema),
+      /** What this thread's tab kept of this view, or null the first time. */
+      viewState: viewStateSchema.nullable(),
     })
     .strict(),
   z.object({ ok: z.literal(false), message: z.string() }).strict(),

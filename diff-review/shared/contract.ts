@@ -16,6 +16,7 @@ import {
   severitySchema,
   sideSchema,
   targetRequestSchema,
+  viewStateSchema,
   targetSchema,
   threadStatusSchema,
 } from "./types";
@@ -122,6 +123,10 @@ export const rpcContract = defineRpcContract({
   },
   closeRun: {
     input: z.object({ runId: id }).strict(),
+    output: z.object({ ok: z.literal(true) }).strict(),
+  },
+  saveViewState: {
+    input: z.object({ threadId: id, sessionId: id, state: viewStateSchema }).strict(),
     output: z.object({ ok: z.literal(true) }).strict(),
   },
   clearReview: {

@@ -22,24 +22,26 @@ export function CommentComposer({
   placeholder,
   submitLabel,
   initialBody = "",
+  initialSeverity = null,
   withSeverity = false,
   autoFocus = true,
-  onBodyChange,
+  onChange,
   onSubmit,
   onCancel,
 }: {
   placeholder: string;
   submitLabel: string;
   initialBody?: string;
+  initialSeverity?: Severity | null;
   withSeverity?: boolean;
   autoFocus?: boolean;
-  /** Told of every edit, for a parent that must keep the text across a remount. */
-  onBodyChange?(body: string): void;
+  /** Told of every edit, for a parent that keeps the draft (across a remount, a reload, a restart). */
+  onChange?(value: ComposerSubmit): void;
   onSubmit(value: ComposerSubmit): Promise<void>;
   onCancel?(): void;
 }) {
   const [body, setBody] = useState(initialBody);
-  const [severity, setSeverity] = useState<string>(NO_SEVERITY);
+  const [severity, setSeverity] = useState<string>(initialSeverity ?? NO_SEVERITY);
   const [busy, setBusy] = useState(false);
   const empty = body.trim() === "";
 
@@ -71,7 +73,7 @@ export function CommentComposer({
         value={body}
         onChange={(event) => {
           setBody(event.target.value);
-          onBodyChange?.(event.target.value);
+          onChange?.({ body: event.target.value, severity: severity === NO_SEVERITY ? null : (severity as Severity) });
         }}
         onKeyDown={onKeyDown}
         placeholder={placeholder}
@@ -83,7 +85,14 @@ export function CommentComposer({
       />
       <div className="flex items-center gap-2">
         {withSeverity ? (
-          <Select value={severity} onValueChange={setSeverity} disabled={busy}>
+          <Select
+            value={severity}
+            onValueChange={(value) => {
+              setSeverity(value);
+              onChange?.({ body, severity: value === NO_SEVERITY ? null : (value as Severity) });
+            }}
+            disabled={busy}
+          >
             <SelectTrigger className="h-8 w-36 text-xs" aria-label="Severity">
               <SelectValue />
             </SelectTrigger>

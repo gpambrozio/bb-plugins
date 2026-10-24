@@ -23,6 +23,9 @@ It is a bb take on [diffity](https://github.com/nilbuild/diffity)'s review loop,
   dismissed threads fold to one line. Each file's header shows how many comment threads it has, open
   and closed, and **Only files with comments** in the toolbar hides the files without any, for going
   through a review's findings; the tab remembers that switch.
+- **Nothing is lost by leaving the tab.** Each thread's tab keeps, per view, every comment, reply or
+  edit you have not sent yet (with its box open), the files you folded or unfolded, and where you were
+  scrolled, across switching threads, a reload or a restart, and on another device.
 - **Comments follow the code.** When the lines under a comment move, the comment moves with them.
   When they change or leave the view, the comment is listed at the top under *Not on the current diff*,
   with the code as it read when you commented.

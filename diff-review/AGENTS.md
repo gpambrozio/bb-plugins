@@ -18,7 +18,7 @@ specific to `diff-review`.
 | --- | --- |
 | `server.ts` | Wires the settings, the database and its migrations, the RPCs, the CLI and the `thread.idle` / `thread.failed` listeners. |
 | `server/review.ts` | `ReviewService`: everything the tab, the CLI and the thread events do to reviews — the view, threads and comments, sends, the agent's answers and who may give them, closing out a send after a turn. |
-| `server/store.ts` | The SQLite tables (sessions, threads, comments, sends), their append-only `MIGRATIONS`, and every query. |
+| `server/store.ts` | The SQLite tables (sessions, threads, comments, sends, runs, view states), their append-only `MIGRATIONS`, and every query. |
 | `server/diff.ts` | The workspace a thread runs in, its refs (base branch, the branch's commits), and the diff from `bb.sdk.environments.diffFiles` / `diffPatch`, minus ignored files. |
 | `server/ignore.ts` | Gitignore-style ignore patterns, from the setting and the workspace's diffity ignore files. |
 | `server/prompt.ts` | The "Address review comments" message a send puts in the thread (adapted from diffity's prompts, MIT). |
@@ -35,6 +35,7 @@ specific to `diff-review`.
 | `app/patch-loader.ts` | Patches bb did not send with the file list, asked for as files come near the screen and fetched in batches, one request at a time. |
 | `app/header-action.tsx` | The Review button in the thread's title bar (`experimental_threadHeaderAction`), which opens the tab. |
 | `app/thread-card.tsx`, `app/comment-composer.tsx` | A thread and its comments; the box comments are written in. |
+| `app/view-state.tsx`, `app/scroll-memory.ts` | What the tab keeps per thread and view (unsent comments, folds, scroll place as file + offset) and its saving; restoring the scroll place while patches load. |
 | `app/send-dialog.tsx` | Picking threads and a note for **Send to agent**, to this thread or a new one. |
 | `app/ai-review-dialog.tsx`, `app/execution-picker.tsx` | The AI review dialog (focus chips, instructions); bb's provider/model picker, seeded from the settings. |
 | `app/runs-list.tsx` | The session's runs under the toolbar: status, files a review changed, Open thread, Close. |
@@ -163,8 +164,15 @@ Move to `experimental_tab` when the plugin re-pins to an SDK that has it (and ra
 ## Invariants
 
 - `MIGRATIONS` is append-only; bb checks each applied statement's hash. 0.1.0 shipped indexes 0–6;
-  0.2.0 added the `runs` table at 7–9 and its `parent_thread_id` at 10 (an `ALTER`, since 7 was
-  already applied on installs of the branch).
+  0.2.0 added the `runs` table at 7–9, its `parent_thread_id` at 10 (an `ALTER`, since 7 was
+  already applied on installs of the branch) and `view_states` at 11.
+- The tab's kept state (drafts, folds, scroll) lives in the plugin's database, keyed by bb thread and
+  session, not in `localStorage`: it must survive a restart and follow the user to another device (the
+  owner uses bb remotely). Saves are debounced and flushed when the tab unmounts or the page hides; a
+  copy per window wins over the server's when it is newer (`savedAt`), so a remount never loses to a
+  save in flight. `getReview` drops reply and edit drafts whose thread or comment is gone. A draft is
+  never hidden: a file with one opens, the comment filter shows it, and a line draft whose lines left
+  the diff sits above the diff.
 - The app never imports the SDK root at run time: the contract is a type import, the schemas and the
   channel name live in `shared/types.ts`.
 - `@pierre/diffs` stays a devDependency: bb provides it.

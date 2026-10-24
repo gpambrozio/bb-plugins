@@ -9,9 +9,10 @@ import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { ReviewThread, ReviewView } from "../shared/types";
+import type { ReviewThread, ReviewView, ViewState } from "../shared/types";
 import { ReviewHeaderAction } from "./header-action";
 import { ReviewPanel } from "./review-panel";
+import { forgetViewStates } from "./view-state";
 
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn(), info: vi.fn() } }));
 
@@ -38,6 +39,7 @@ afterEach(() => {
   cleanup();
   vi.clearAllMocks();
   window.localStorage.clear();
+  forgetViewStates();
 });
 
 const PATCH = ["--- a/src/a.ts", "+++ b/src/a.ts", "@@ -1,3 +1,3 @@", " const a = 1;", "-const b = 2;", "+const b = 3;", " const c = 4;", ""].join("\n");
@@ -86,6 +88,7 @@ const VIEW: Extract<ReviewView, { ok: true }> = {
   ignoredPaths: ["package-lock.json"],
   truncated: false,
   runs: [],
+  viewState: null,
   threads: [
     // Made on line 5 but its text is on line 2 now: shown there, as moved.
     thread({ id: "aaaaaa000001", body: "Why three?", startLine: 5, endLine: 5, severity: "question" }),
@@ -457,6 +460,135 @@ describe("the Review tab", () => {
     render({ getReview: () => ({ ...VIEW, threads: [] }) });
     await screen.findByText("1 file · +1 −1 · 1 left out by the ignore patterns");
     expect(screen.queryByRole("button", { name: "Clear review" })).toBeNull();
+  });
+
+  describe("leaving the tab and coming back", () => {
+    type Slot = ReturnType<typeof render>;
+    const lastSaved = (slot: Slot) => {
+      const saves = slot.inspection.rpcCalls.filter((call) => call.method === "saveViewState");
+      expect(saves.length).toBeGreaterThan(0);
+      return (saves.at(-1)!.input as { state: ViewState }).state;
+    };
+    const renderWith = (viewState: ViewState | null, view: Partial<typeof VIEW> = {}) =>
+      render({ getReview: () => ({ ...VIEW, ...view, viewState }), saveViewState: () => ({ ok: true }) });
+    const type = (placeholder: RegExp, value: string) => fireEvent.change(screen.getByPlaceholderText(placeholder), { target: { value } });
+
+    it("keeps every unsent comment as typed, with its editor open, until it is sent or cancelled", async () => {
+      const first = renderWith(null);
+      await screen.findByText("Why three?");
+      fireEvent.click(screen.getByRole("button", { name: "Comment on the diff" }));
+      type(/A comment about the whole change/, "Half a thought");
+      fireEvent.click(screen.getByRole("button", { name: "Comment on file" }));
+      type(/A comment about the whole file/, "File note");
+      fireEvent.click(within(screen.getByTestId("patch")).getByRole("button", { name: "gutter +" }));
+      type(/Leave a comment/, "Line note");
+      const card = screen.getByText("Why three?").closest("[data-thread-id]") as HTMLElement;
+      fireEvent.click(within(card).getByRole("button", { name: "Reply" }));
+      type(/^Reply/, "Not sure");
+      fireEvent.click(within(card).getAllByRole("button", { name: "Edit" })[0]!);
+      type(/Edit your comment/, "Why three, really?");
+
+      // Leaving the tab writes at once; a restart starts from what was written.
+      cleanup();
+      const saved = lastSaved(first);
+      expect(saved.drafts).toEqual({
+        general: { body: "Half a thought", severity: null, range: null },
+        "file:src/a.ts": { body: "File note", severity: null, range: null },
+        "line:src/a.ts": { body: "Line note", severity: null, range: { side: "new", startLine: 1, endLine: 2 } },
+        "reply:aaaaaa000001": { body: "Not sure", severity: null, range: null },
+        "edit:c_aaaaaa000001": { body: "Why three, really?", severity: null, range: null },
+      });
+      forgetViewStates();
+
+      const second = renderWith(saved);
+      await screen.findByDisplayValue("Half a thought");
+      expect(screen.getByDisplayValue("File note")).toBeTruthy();
+      expect(screen.getByDisplayValue("Line note")).toBeTruthy();
+      expect(screen.getByText("New comment on lines 1–2 (new side)")).toBeTruthy();
+      expect(screen.getByDisplayValue("Not sure")).toBeTruthy();
+      expect(screen.getByDisplayValue("Why three, really?")).toBeTruthy();
+
+      // Cancelling drops a draft for good.
+      fireEvent.keyDown(screen.getByDisplayValue("Half a thought"), { key: "Escape" });
+      cleanup();
+      expect(Object.keys(lastSaved(second).drafts).sort()).toEqual(["edit:c_aaaaaa000001", "file:src/a.ts", "line:src/a.ts", "reply:aaaaaa000001"]);
+    });
+
+    it("never hides a restored draft: its folded file opens, and lines gone from the diff put it above the diff", async () => {
+      renderWith({
+        drafts: { "line:src/a.ts": { body: "About old lines", severity: null, range: { side: "new", startLine: 7, endLine: 8 } } },
+        collapsed: { "src/a.ts": true },
+        scroll: null,
+        savedAt: 1,
+      });
+      const composer = await screen.findByDisplayValue("About old lines");
+      expect(screen.getByText("New comment on lines 7–8 (new side). Those lines are no longer in this diff.")).toBeTruthy();
+      expect(within(screen.getByTestId("patch")).queryByDisplayValue("About old lines")).toBeNull();
+      expect(composer.closest("section")!.querySelector('[aria-label="Collapse file"]')).toBeTruthy();
+    });
+
+    it("comes back to this window's copy when the server's is older", async () => {
+      renderWith(null);
+      await screen.findByText("Why three?");
+      fireEvent.click(screen.getByRole("button", { name: "Comment on the diff" }));
+      type(/A comment about the whole change/, "Typed just now");
+      cleanup();
+      renderWith(null);
+      await screen.findByDisplayValue("Typed just now");
+    });
+
+    it("keeps files folded or unfolded by hand", async () => {
+      const first = renderWith(null);
+      const section = (await screen.findByTestId("patch")).closest("section")!;
+      fireEvent.click(within(section).getByRole("button", { name: "Collapse file" }));
+      cleanup();
+      const saved = lastSaved(first);
+      expect(saved.collapsed).toEqual({ "src/a.ts": true });
+      forgetViewStates();
+      renderWith(saved);
+      await screen.findByRole("button", { name: "Expand file" });
+      expect(screen.queryByTestId("patch")).toBeNull();
+    });
+
+    it("comes back to the same file and offset, even when files were added or removed above it", async () => {
+      const file = (path: string) => ({ ...VIEW.files[0]!, path });
+      // Each file is 500px tall; the scroll area's top is at 100px.
+      vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+        const root = document.querySelector("section[data-file-path]")?.parentElement;
+        if (!(this instanceof HTMLElement) || this.dataset.filePath === undefined || root == null) return { top: 100, bottom: 100 } as DOMRect;
+        const index = Array.from(root.querySelectorAll("section[data-file-path]")).indexOf(this);
+        const top = 100 + index * 500 - root.scrollTop;
+        return { top, bottom: top + 500 } as DOMRect;
+      });
+      try {
+        const first = renderWith(null, { threads: [], files: [file("src/a.ts"), file("src/b.ts")] });
+        await waitFor(() => expect(screen.getAllByTestId("patch")).toHaveLength(2));
+        const root = document.querySelector("section[data-file-path]")!.parentElement!;
+        root.scrollTop = 540;
+        fireEvent.scroll(root);
+        await waitFor(() => expect(lastSaved(first).scroll).toEqual({ path: "src/b.ts", index: 1, offset: 40 }));
+        cleanup();
+        const saved = lastSaved(first);
+        forgetViewStates();
+
+        renderWith(saved, { threads: [], files: [file("src/a.ts"), file("src/b.ts")] });
+        await waitFor(() => expect(document.querySelector("section[data-file-path]")!.parentElement!.scrollTop).toBe(540));
+        cleanup();
+        forgetViewStates();
+
+        // A file added above: the same place in src/b.ts is now 500px further down.
+        renderWith(saved, { threads: [], files: [file("src/0.ts"), file("src/a.ts"), file("src/b.ts")] });
+        await waitFor(() => expect(document.querySelector("section[data-file-path]")!.parentElement!.scrollTop).toBe(1040));
+        cleanup();
+        forgetViewStates();
+
+        // src/b.ts left the diff: the file now in its place takes over.
+        renderWith(saved, { threads: [], files: [file("src/a.ts"), file("src/c.ts")] });
+        await waitFor(() => expect(document.querySelector("section[data-file-path]")!.parentElement!.scrollTop).toBe(540));
+      } finally {
+        vi.restoreAllMocks();
+      }
+    });
   });
 
   it("says why there is nothing to review", async () => {

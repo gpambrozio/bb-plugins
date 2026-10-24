@@ -16,6 +16,7 @@ import { describeLocation, type ReviewComment, type ReviewThread } from "../shar
 import { useActions } from "./actions";
 import { CommentComposer } from "./comment-composer";
 import { ago, DELIVERY_LABELS, SEVERITY_LABELS, STATUS_LABELS } from "./labels";
+import { draftKeys, useDraft } from "./view-state";
 
 function Delivery({ thread }: { thread: ReviewThread }) {
   const actions = useActions();
@@ -36,7 +37,8 @@ function Delivery({ thread }: { thread: ReviewThread }) {
 
 function Comment({ comment }: { comment: ReviewComment }) {
   const actions = useActions();
-  const [editing, setEditing] = useState(false);
+  const editDraft = useDraft(draftKeys.edit(comment.id));
+  const editing = editDraft.active !== null;
   const own = comment.authorType === "user";
   return (
     <div className="flex flex-col gap-1">
@@ -47,7 +49,7 @@ function Comment({ comment }: { comment: ReviewComment }) {
         {comment.editedAt === null ? null : <span>(edited)</span>}
         {own && !editing ? (
           <span className="ml-auto flex items-center gap-1">
-            <Button type="button" variant="ghost" size="sm" className="h-6 px-1.5 text-xs" onClick={() => setEditing(true)}>
+            <Button type="button" variant="ghost" size="sm" className="h-6 px-1.5 text-xs" onClick={() => editDraft.open({ body: comment.body })}>
               Edit
             </Button>
             <Button type="button" variant="ghost" size="sm" className="h-6 px-1.5 text-xs" onClick={() => void actions.remove(comment.id).catch(() => undefined)}>
@@ -60,12 +62,13 @@ function Comment({ comment }: { comment: ReviewComment }) {
         <CommentComposer
           placeholder="Edit your comment"
           submitLabel="Save"
-          initialBody={comment.body}
+          initialBody={editDraft.latest().body}
+          onChange={editDraft.change}
           onSubmit={async ({ body }) => {
             await actions.edit(comment.id, body);
-            setEditing(false);
+            editDraft.close();
           }}
-          onCancel={() => setEditing(false)}
+          onCancel={editDraft.close}
         />
       ) : (
         <Markdown content={comment.body} className="text-sm" />
@@ -77,8 +80,10 @@ function Comment({ comment }: { comment: ReviewComment }) {
 export function ThreadCard({ thread, placement }: { thread: ReviewThread; placement?: Placement }) {
   const actions = useActions();
   const closed = thread.status !== "open";
-  const [expanded, setExpanded] = useState(!closed);
-  const [replying, setReplying] = useState(false);
+  const replyDraft = useDraft(draftKeys.reply(thread.id));
+  const replying = replyDraft.active !== null;
+  // A folded thread with a reply being written opens, so the reply shows.
+  const [expanded, setExpanded] = useState(!closed || replying);
   const first = thread.comments[0];
 
   const header = (
@@ -134,15 +139,17 @@ export function ThreadCard({ thread, placement }: { thread: ReviewThread; placem
         <CommentComposer
           placeholder="Reply (mention @claude, @codex or @opencode for an agent's answer)"
           submitLabel="Reply"
+          initialBody={replyDraft.latest().body}
+          onChange={replyDraft.change}
           onSubmit={async ({ body }) => {
             await actions.reply(thread.id, body);
-            setReplying(false);
+            replyDraft.close();
           }}
-          onCancel={() => setReplying(false)}
+          onCancel={replyDraft.close}
         />
       ) : (
         <div className="flex flex-wrap items-center gap-2">
-          <Button type="button" variant="outline" size="sm" onClick={() => setReplying(true)}>
+          <Button type="button" variant="outline" size="sm" onClick={() => replyDraft.open()}>
             Reply
           </Button>
           {closed ? (

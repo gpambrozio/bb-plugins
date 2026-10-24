@@ -271,6 +271,46 @@ describe("the Review tab's view", () => {
   });
 });
 
+describe("the tab's kept state", () => {
+  const state = (drafts: Record<string, unknown> = {}) => ({
+    drafts,
+    collapsed: { "src/a.ts": true },
+    scroll: { path: "src/a.ts", index: 0, offset: 40 },
+    savedAt: 5,
+  });
+
+  it("keeps drafts, folds and the scroll place per thread and view, and drops drafts whose thread or comment is gone", async () => {
+    const { rpc, view, comment } = await setup({ threads: { [THREAD]: { environmentId: ENV }, thr_other: { environmentId: ENV } } });
+    const first = await view();
+    expect(first.viewState).toBeNull();
+    const kept = await comment(first.sessionId, "Keep me");
+    const gone = await comment(first.sessionId, "Delete me");
+    const saved = state({
+      general: { body: "Half a thought", severity: "nit", range: null },
+      "line:src/a.ts": { body: "On b", severity: null, range: { side: "new", startLine: 2, endLine: 2 } },
+      [`reply:${kept.id}`]: { body: "Not sure", severity: null, range: null },
+      [`reply:${gone.id}`]: { body: "Lost", severity: null, range: null },
+      [`edit:${kept.comments[0]!.id}`]: { body: "Keep me, edited", severity: null, range: null },
+    });
+    expect(await rpc("saveViewState", { threadId: THREAD, sessionId: first.sessionId, state: saved })).toEqual({ ok: true });
+    await rpc("deleteComment", { commentId: gone.comments[0]!.id });
+
+    const { [`reply:${gone.id}`]: _dropped, ...expected } = saved.drafts;
+    expect((await view()).viewState).toEqual({ ...saved, drafts: expected });
+    // Another thread's tab and another view start empty.
+    expect(((await rpc("getReview", { threadId: "thr_other", target: { kind: "uncommitted" } })) as { viewState: unknown }).viewState).toBeNull();
+    expect((await view({ kind: "branch" })).viewState).toBeNull();
+  });
+
+  it("refuses a state that is too big or for an unknown session", async () => {
+    const { rpc, view } = await setup();
+    const { sessionId } = await view();
+    const drafts = Object.fromEntries(Array.from({ length: 201 }, (_, index) => [`file:f${index}`, { body: "x", severity: null, range: null }]));
+    await expect(rpc("saveViewState", { threadId: THREAD, sessionId, state: state(drafts) })).rejects.toThrow();
+    await expect(rpc("saveViewState", { threadId: THREAD, sessionId: "nope", state: state() })).rejects.toThrow();
+  });
+});
+
 describe("comments", () => {
   it("stores line, file and whole-diff threads and signals the workspace's channel", async () => {
     const { harness, rpc, view, comment } = await setup();
