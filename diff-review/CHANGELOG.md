@@ -25,6 +25,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   you change them; each run can pick another) and for how they run: *Approve for me* unless you choose
   *Accept edits*.
 - **Runs appear under the thread they review**, and their reports to it say that nothing needs doing.
+- **Only files with comments.** A switch in the toolbar hides the files without comments, so you can go
+  through a review's findings file by file; the tab remembers it. With the switch off, each file's
+  header shows how many comment threads it has, open and closed.
 
 ## 0.1.0
 

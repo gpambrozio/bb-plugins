@@ -1,5 +1,5 @@
 /**
- * One changed file: its header (with "Comment on file"), its whole-file threads, and the patch drawn
+ * One changed file: its header (with "Comment on file" and how many comment threads it has), its whole-file threads, and the patch drawn
  * by the `@pierre/diffs` bb provides, with each line thread as an annotation under its last line. The
  * gutter "+" (or a dragged line selection, then "+") opens a new comment there.
  *
@@ -76,6 +76,8 @@ function lineCount(file: DiffFile): string {
 export interface FileDiffProps {
   file: DiffFile;
   threads: readonly ReviewThread[];
+  /** Whether the header shows how many comment threads the file has, open and closed. */
+  showThreadCount: boolean;
   diffStyle: DiffStyle;
   /** Where the patch stands when bb did not send it with the file list; undefined before it is asked for. */
   patchState: PatchState | undefined;
@@ -102,7 +104,15 @@ export function scrollToAlign(section: Element, root: Element): number {
   return offset < 0 ? offset : 0;
 }
 
-export function FileDiff({ file, threads, diffStyle, patchState, requestPatch, scrollRoot }: FileDiffProps) {
+/** The header's comment count: open threads, and resolved or dismissed ones, with the words a screen reader says. */
+export function threadCount(threads: readonly ReviewThread[]): { open: number; closed: number; label: string } {
+  const open = threads.filter((thread) => thread.status === "open").length;
+  const closed = threads.length - open;
+  const parts = [open > 0 ? `${open} open` : null, closed > 0 ? `${closed} resolved or dismissed` : null].filter((part) => part !== null);
+  return { open, closed, label: `${threads.length} comment thread${threads.length === 1 ? "" : "s"}: ${parts.join(", ")}` };
+}
+
+export function FileDiff({ file, threads, showThreadCount, diffStyle, patchState, requestPatch, scrollRoot }: FileDiffProps) {
   const actions = useActions();
   const codeTheme = experimental_useCodeTheme();
   const changedLines = file.additions + file.deletions;
@@ -239,6 +249,7 @@ export function FileDiff({ file, threads, diffStyle, patchState, requestPatch, s
         </span>
         {file.patchTruncated ? <span className="shrink-0 text-xs text-warning-text">truncated</span> : null}
         {collapsed && changedLines > FOLD_ABOVE_LINES ? <span className="shrink-0 text-xs text-muted-foreground">folded: a large change</span> : null}
+        {showThreadCount && threads.length > 0 ? <ThreadCount threads={threads} /> : null}
         <Button type="button" variant="ghost" size="sm" className="ml-auto h-6 shrink-0 gap-1 px-1.5 text-xs" onClick={() => setFileDraft(true)}>
           <Icon name="MessageSquarePlus" className="size-3.5" />
           Comment on file
@@ -275,5 +286,17 @@ export function FileDiff({ file, threads, diffStyle, patchState, requestPatch, s
         </>
       )}
     </section>
+  );
+}
+
+function ThreadCount({ threads }: { threads: readonly ReviewThread[] }) {
+  const { open, closed, label } = threadCount(threads);
+  return (
+    <span className="flex shrink-0 items-center gap-1 text-xs" role="img" aria-label={label} title={label}>
+      <Icon name="MessageSquare" className="size-3.5 text-muted-foreground" />
+      {open > 0 ? <span>{open} open</span> : null}
+      {open > 0 && closed > 0 ? <span className="text-muted-foreground">·</span> : null}
+      {closed > 0 ? <span className="text-muted-foreground">{closed} closed</span> : null}
+    </span>
   );
 }

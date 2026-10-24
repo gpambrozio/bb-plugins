@@ -30,8 +30,8 @@ specific to `diff-review`.
 | `shared/types.ts` | The data model and zod schemas, the realtime channel and its signals. No SDK import, so the app may use it at run time. |
 | `shared/contract.ts` | The RPC contract. Imports the SDK root, so the app imports it as a type only. |
 | `shared/patch-lines.ts`, `shared/anchors.ts` | A patch's lines by side and number, and where a thread belongs in the current diff (anchored, moved, outdated). |
-| `app/review-panel.tsx` | The tab: the view picker, split/unified, reload, whole-diff comments, the *Not on the current diff* list, the files, the send dialog. |
-| `app/file-diff.tsx` | One file: its header, whole-file threads, and Pierre's `PatchDiff` with thread annotations and the gutter "+". |
+| `app/review-panel.tsx` | The tab: the view picker, split/unified, *Only files with comments* (remembered in `localStorage` like split/unified), reload, whole-diff comments, the *Not on the current diff* list, the files, the send dialog. |
+| `app/file-diff.tsx` | One file: its header (with its thread count while the switch is off), whole-file threads, and Pierre's `PatchDiff` with thread annotations and the gutter "+". |
 | `app/patch-loader.ts` | Patches bb did not send with the file list, asked for as files come near the screen and fetched in batches, one request at a time. |
 | `app/header-action.tsx` | The Review button in the thread's title bar (`experimental_threadHeaderAction`), which opens the tab. |
 | `app/thread-card.tsx`, `app/comment-composer.tsx` | A thread and its comments; the box comments are written in. |

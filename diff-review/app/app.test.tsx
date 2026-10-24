@@ -99,6 +99,12 @@ const VIEW: Extract<ReviewView, { ok: true }> = {
   ],
 };
 
+/** VIEW with a second, uncommented file, and any more threads given. */
+function withSecondFile(more: ReviewThread[] = []): Extract<ReviewView, { ok: true }> {
+  const second = { ...VIEW.files[0]!, path: "src/b.ts", additions: 2, deletions: 1, patch: PATCH.replaceAll("src/a.ts", "src/b.ts") };
+  return { ...VIEW, files: [...VIEW.files, second], threads: [...VIEW.threads, ...more] };
+}
+
 function render(rpc: Record<string, (input: never) => unknown> = {}) {
   return renderSlot(
     { component: ReviewPanel },
@@ -364,6 +370,47 @@ describe("the Review tab", () => {
       execution,
     });
     expect(slot.inspection.rpcCalls.some((call) => call.method === "send")).toBe(false);
+  });
+
+  it("counts each file's comment threads, open and closed, in its header", async () => {
+    render({ getReview: () => withSecondFile([thread({ id: "aaaaaa000005", body: "Done", status: "resolved" })]) });
+    await screen.findByText("2 files · +3 −2 · 1 left out by the ignore patterns");
+    const counts = screen.getAllByRole("img", { name: /comment thread/ });
+    expect(counts.map((count) => count.getAttribute("aria-label"))).toEqual(["4 comment threads: 3 open, 1 resolved or dismissed"]);
+    expect(counts[0]!.textContent).toBe("3 open·1 closed");
+  });
+
+  it("shows only the files with comments when the switch is on, and remembers it", async () => {
+    render({ getReview: () => withSecondFile() });
+    await screen.findByText("2 files · +3 −2 · 1 left out by the ignore patterns");
+    expect(screen.getByText("src/b.ts")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("switch", { name: "Only files with comments" }));
+    await screen.findByText("1 of 2 files · +1 −1 · 1 left out by the ignore patterns");
+    expect(screen.queryByText("src/b.ts")).toBeNull();
+    expect(screen.getByText("src/a.ts")).toBeTruthy();
+    // With the switch on every file shown has comments, so the headers drop the count.
+    expect(screen.queryByRole("img", { name: /comment thread/ })).toBeNull();
+    expect(window.localStorage.getItem("diff-review:only-commented")).toBe("true");
+
+    cleanup();
+    render({ getReview: () => withSecondFile() });
+    await screen.findByText("1 of 2 files · +1 −1 · 1 left out by the ignore patterns");
+    expect(screen.getByRole("switch", { name: "Only files with comments" }).getAttribute("aria-checked")).toBe("true");
+
+    fireEvent.click(screen.getByRole("switch", { name: "Only files with comments" }));
+    await screen.findByText("2 files · +3 −2 · 1 left out by the ignore patterns");
+    expect(window.localStorage.getItem("diff-review:only-commented")).toBe("false");
+  });
+
+  it("says so when the switch is on and no file has comments", async () => {
+    window.localStorage.setItem("diff-review:only-commented", "true");
+    // A comment on the whole diff is on no file: it stays, and no file is shown.
+    render({ getReview: () => ({ ...withSecondFile(), threads: VIEW.threads.filter((entry) => entry.filePath === "__general__") }) });
+    await screen.findByText('No file in this view has comments. Turn off "Only files with comments" to see all 2 files.');
+    expect(screen.getByText("0 of 2 files · +0 −0 · 1 left out by the ignore patterns")).toBeTruthy();
+    expect(screen.getByText("Add tests for this change")).toBeTruthy();
+    expect(screen.queryByText("src/a.ts")).toBeNull();
   });
 
   it("says why there is nothing to review", async () => {
