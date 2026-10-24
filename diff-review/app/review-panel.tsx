@@ -26,7 +26,7 @@ import { ReviewActionsProvider, useActions } from "./actions";
 import { AiReviewDialog } from "./ai-review-dialog";
 import { ClearReviewDialog } from "./clear-dialog";
 import { CommentComposer } from "./comment-composer";
-import { FileDiff, placeFileThreads, type DiffStyle } from "./file-diff";
+import { FileDiff, OrphanDrafts, placeFileThreads, type DiffStyle } from "./file-diff";
 import { usePatchLoader } from "./patch-loader";
 import { targetLabel } from "./labels";
 import { RunsList } from "./runs-list";
@@ -34,7 +34,7 @@ import { useScrollMemory } from "./scroll-memory";
 import { SendDialog } from "./send-dialog";
 import { ThreadCard } from "./thread-card";
 import { errorMessage, useReview, type ReadyView } from "./use-review";
-import { draftKeys, useDraft, useViewState, ViewStateProvider } from "./view-state";
+import { draftKeys, useDraft, useDraftKeys, useViewState, ViewStateProvider } from "./view-state";
 
 /** The `threadPanelAction` id; the palette command opens it by this. */
 export const PANEL_ACTION_ID = "review";
@@ -157,7 +157,7 @@ function ReadyPanel({
   onPick(value: string): void;
   onReload(): void;
   loadId: number;
-  putPatches(patches: readonly { path: string; patch: string; truncated: boolean }[]): void;
+  putPatches(sessionId: string, loadId: number, patches: readonly { path: string; patch: string; truncated: boolean }[]): void;
   putRun(run: Run): void;
   refreshThreads(): Promise<void>;
 }) {
@@ -207,14 +207,14 @@ function ReadyPanel({
     async (paths: string[]) => {
       try {
         const { patches } = await rpc.call("loadPatches", { threadId, target: view.target, paths });
-        putPatches(patches);
+        putPatches(view.sessionId, loadId, patches);
         return patches.map((patch) => patch.path);
       } catch (error) {
         toast.error(`Could not load ${paths.length === 1 ? `the diff of ${paths[0]}` : `${paths.length} files' diffs`}: ${errorMessage(error)}`);
         throw error;
       }
     },
-    [rpc, threadId, view.target, putPatches],
+    [rpc, threadId, view.target, view.sessionId, loadId, putPatches],
   );
   const patchLoader = usePatchLoader(loadPatches, `${view.sessionId}:${loadId}`);
   const [scrollRoot, setScrollRoot] = useState<HTMLDivElement | null>(null);
@@ -224,7 +224,12 @@ function ReadyPanel({
   const shown = view.target;
   const orphanCommit = shown.kind === "commit" && !view.commits.some((commit) => commit.sha === shown.sha) ? shown : null;
 
-  const files = shownFiles(view.files, byFile, onlyCommented, (path) => viewState.draft(draftKeys.line(path)) !== undefined || viewState.draft(draftKeys.file(path)) !== undefined);
+  // Files with an unsent comment: shown by the comment filter, and listed apart once out of the view.
+  const draftKeyList = useDraftKeys();
+  const draftPaths = new Set(draftKeyList.filter((key) => key.startsWith("file:") || key.startsWith("line:")).map((key) => key.slice("file:".length)));
+  const files = shownFiles(view.files, byFile, onlyCommented, (path) => draftPaths.has(path));
+  const inView = new Set(view.files.map((file) => file.path));
+  const orphanPaths = [...draftPaths].filter((path) => !inView.has(path));
   const additions = files.reduce((sum, file) => sum + file.additions, 0);
   const deletions = files.reduce((sum, file) => sum + file.deletions, 0);
   const fileCount = onlyCommented ? `${files.length} of ${view.files.length} files` : `${files.length} file${files.length === 1 ? "" : "s"}`;
@@ -320,6 +325,15 @@ function ReadyPanel({
             <h3 className="text-xs font-medium text-muted-foreground">Not on the current diff (the code changed or left the view)</h3>
             {outdated.map((thread) => (
               <ThreadCard key={thread.id} thread={thread} placement={{ state: "outdated" }} />
+            ))}
+          </section>
+        ) : null}
+
+        {orphanPaths.length > 0 ? (
+          <section className="flex flex-col gap-3 border-b border-border px-3 py-2">
+            <h3 className="text-xs font-medium text-muted-foreground">Unsent comments on files not in this view</h3>
+            {orphanPaths.map((path) => (
+              <OrphanDrafts key={path} path={path} />
             ))}
           </section>
         ) : null}

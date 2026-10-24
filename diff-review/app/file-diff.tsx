@@ -205,30 +205,15 @@ export function FileDiff({ file, threads, showThreadCount, diffStyle, patchState
   };
 
   /** The new comment on lines, in place under them, or above the diff with `note` saying why not. */
-  const lineDraftComposer = (meta: LineRange, note: string | null) => {
-    const range = meta.startLine === meta.endLine ? `line ${meta.startLine}` : `lines ${meta.startLine}–${meta.endLine}`;
-    return (
-      <div className="flex flex-col gap-2 border-l-2 border-primary bg-card px-3 py-2 font-sans">
-        <span className="text-xs text-muted-foreground">
-          New comment on {range} ({meta.side === "old" ? "removed" : "new"} side){note === null ? "" : `. ${note}`}
-        </span>
-        <CommentComposer
-          placeholder="Leave a comment. Markdown works; @claude, @codex or @opencode gets an agent's answer."
-          submitLabel="Comment"
-          withSeverity
-          initialBody={lineDraft.latest().body}
-          initialSeverity={lineDraft.latest().severity}
-          onChange={lineDraft.change}
-          onSubmit={async ({ body, severity }) => {
-            const anchorContent = lines === undefined ? null : linesText(lines, meta.side, meta.startLine, meta.endLine);
-            await actions.create({ filePath: file.path, side: meta.side, startLine: meta.startLine, endLine: meta.endLine, anchorContent, body, severity });
-            lineDraft.close();
-          }}
-          onCancel={lineDraft.close}
-        />
-      </div>
-    );
-  };
+  const lineDraftComposer = (meta: LineRange, note: string | null) => (
+    <LineDraftBox
+      filePath={file.path}
+      range={meta}
+      draft={lineDraft}
+      note={note}
+      anchorContent={lines === undefined ? null : linesText(lines, meta.side, meta.startLine, meta.endLine)}
+    />
+  );
 
   let body: React.ReactNode;
   if (reason !== null) body = <p className="px-3 py-2 text-xs text-muted-foreground">{reason}</p>;
@@ -322,5 +307,80 @@ function ThreadCount({ threads }: { threads: readonly ReviewThread[] }) {
       {open > 0 && closed > 0 ? <span className="text-muted-foreground">·</span> : null}
       {closed > 0 ? <span className="text-muted-foreground">{closed} closed</span> : null}
     </span>
+  );
+}
+
+/** A new comment on lines: what it is about, and its editor, bound to its draft. */
+function LineDraftBox({
+  filePath,
+  range,
+  draft,
+  note,
+  anchorContent,
+}: {
+  filePath: string;
+  range: LineRange;
+  draft: ReturnType<typeof useDraft>;
+  note: string | null;
+  /** The commented lines' text in the current diff, or null when it does not show them. */
+  anchorContent: string | null;
+}) {
+  const actions = useActions();
+  const lines = range.startLine === range.endLine ? `line ${range.startLine}` : `lines ${range.startLine}–${range.endLine}`;
+  return (
+    <div className="flex flex-col gap-2 border-l-2 border-primary bg-card px-3 py-2 font-sans">
+      <span className="text-xs text-muted-foreground">
+        New comment on {lines} ({range.side === "old" ? "removed" : "new"} side){note === null ? "" : `. ${note}`}
+      </span>
+      <CommentComposer
+        placeholder="Leave a comment. Markdown works; @claude, @codex or @opencode gets an agent's answer."
+        submitLabel="Comment"
+        withSeverity
+        initialBody={draft.latest().body}
+        initialSeverity={draft.latest().severity}
+        onChange={draft.change}
+        onSubmit={async ({ body, severity }) => {
+          await actions.create({ filePath, side: range.side, startLine: range.startLine, endLine: range.endLine, anchorContent, body, severity });
+          draft.close();
+        }}
+        onCancel={draft.close}
+      />
+    </div>
+  );
+}
+
+/**
+ * The unsent comments on a file that is not in the view any more (committed, reverted, or left out by
+ * the ignore patterns since), so they can still be sent or cancelled.
+ */
+export function OrphanDrafts({ path }: { path: string }) {
+  const actions = useActions();
+  const lineDraft = useDraft(draftKeys.line(path));
+  const fileDraft = useDraft(draftKeys.file(path));
+  const range = lineDraft.active?.range ?? null;
+  if (range === null && fileDraft.active === null) return null;
+  return (
+    <div className="flex flex-col gap-2" data-orphan-path={path}>
+      <span className="truncate font-mono text-xs" title={path}>
+        {path}
+      </span>
+      {range === null ? null : <LineDraftBox filePath={path} range={range} draft={lineDraft} note="This file is not in this view any more." anchorContent={null} />}
+      {fileDraft.active === null ? null : (
+        <CommentComposer
+          placeholder="A comment about the whole file"
+          submitLabel="Comment"
+          withSeverity
+          autoFocus={false}
+          initialBody={fileDraft.latest().body}
+          initialSeverity={fileDraft.latest().severity}
+          onChange={fileDraft.change}
+          onSubmit={async ({ body, severity }) => {
+            await actions.create({ filePath: path, side: null, startLine: 0, endLine: 0, anchorContent: null, body, severity });
+            fileDraft.close();
+          }}
+          onCancel={fileDraft.close}
+        />
+      )}
+    </div>
   );
 }

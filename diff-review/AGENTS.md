@@ -83,7 +83,9 @@ spawned, so a thread bb refuses leaves a *failed* run that says why. **Close** a
 **Clear review** deletes a session's threads and sends and closes its runs in one transaction, then
 archives the runs' threads; closing first means a run still working loses its rights at once (a
 closed review run cannot comment, and no send is left to answer). Closed run rows are kept, so
-`hasRunChildren` keeps telling the parent what late notices are.
+`hasRunChildren` keeps telling the parent what late notices are. Work in flight when a run closes
+loses too: a review comment rechecks the run after its awaits, and a thread bb starts for a run
+already closed is archived as soon as it exists.
 A run ends on its thread's `thread.idle` / `thread.failed`, keeping the agent's last message as the
 summary; it is never parsed for answers.
 
@@ -170,9 +172,11 @@ Move to `experimental_tab` when the plugin re-pins to an SDK that has it (and ra
   session, not in `localStorage`: it must survive a restart and follow the user to another device (the
   owner uses bb remotely). Saves are debounced and flushed when the tab unmounts or the page hides; a
   copy per window wins over the server's when it is newer (`savedAt`), so a remount never loses to a
-  save in flight. `getReview` drops reply and edit drafts whose thread or comment is gone. A draft is
-  never hidden: a file with one opens, the comment filter shows it, and a line draft whose lines left
-  the diff sits above the diff.
+  save in flight; the server keeps an older copy from out of order (by `savedAt`). `getReview` drops
+  reply and edit drafts whose thread or comment is gone. A draft is never hidden: a file with one
+  opens, the comment filter shows it, a line draft whose lines left the diff sits above the diff, and
+  drafts on files no longer in the view are listed apart. Reopening an editor keeps its draft.
+- Patches loaded on demand land only on the session and load that asked for them.
 - The app never imports the SDK root at run time: the contract is a type import, the schemas and the
   channel name live in `shared/types.ts`.
 - `@pierre/diffs` stays a devDependency: bb provides it.

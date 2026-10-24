@@ -48,6 +48,9 @@ interface Setup {
   diffityignore?: string;
   /** More files the host can read, by absolute path; `/work/repo/.git` is a directory unless listed. */
   files?: Record<string, string>;
+  /** Awaited before answering `threads.get` for that thread, or `threads.spawn`: a test holds bb mid-call. */
+  holdThreadGet?: (threadId: string) => Promise<void>;
+  holdSpawn?: () => Promise<void>;
   /** Views (`uncommitted`, `branch_committed`, …) whose diff has no files. */
   emptyTargets?: string[];
 }
@@ -66,6 +69,7 @@ async function setup(options: Setup = {}) {
     sdk: {
       threads: {
         get: async ({ threadId }: { threadId: string }) => {
+          await options.holdThreadGet?.(threadId);
           const row = threads[threadId];
           if (row === undefined) throw new Error(`thread ${threadId} not found`);
           return makeThreadResponse({ id: threadId, environmentId: row.environmentId, providerId: row.providerId ?? "claude-code" });
@@ -75,6 +79,7 @@ async function setup(options: Setup = {}) {
           return { ok: true as const, delivery: "sent" as const };
         },
         spawn: async () => {
+          await options.holdSpawn?.();
           if (options.spawnFails === true) throw new Error("provider not installed");
           const id = `thr_run_${++spawned}`;
           threads[id] = { environmentId: ENV };
@@ -300,6 +305,16 @@ describe("the tab's kept state", () => {
     // Another thread's tab and another view start empty.
     expect(((await rpc("getReview", { threadId: "thr_other", target: { kind: "uncommitted" } })) as { viewState: unknown }).viewState).toBeNull();
     expect((await view({ kind: "branch" })).viewState).toBeNull();
+  });
+
+  it("keeps the copy saved last when an older one arrives after it", async () => {
+    const { rpc, view } = await setup();
+    const { sessionId } = await view();
+    const newer = { ...state({ general: { body: "Newer", severity: null, range: null } }), savedAt: 20 };
+    const older = { ...state({ general: { body: "Older", severity: null, range: null } }), savedAt: 10 };
+    await rpc("saveViewState", { threadId: THREAD, sessionId, state: newer });
+    await rpc("saveViewState", { threadId: THREAD, sessionId, state: older });
+    expect((await view()).viewState).toEqual(newer);
   });
 
   it("refuses a state that is too big or for an unknown session", async () => {
@@ -693,6 +708,38 @@ describe("AI runs", () => {
     // The tab starts fresh: new comments and runs work as before.
     await comment(sessionId, "After the clear");
     expect((await sessionState(rpc, sessionId)).threads).toHaveLength(1);
+  });
+
+  it("drops a review run's comment that was in flight when Clear review closed the run", async () => {
+    // Hold the author lookup, the last thing the comment awaits before it is stored.
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const { harness, rpc, view } = await setup({ holdThreadGet: (threadId) => (threadId === "thr_run_1" ? gate : Promise.resolve()) });
+    const { sessionId } = await view();
+    const { run } = (await rpc("startReview", { sessionId, threadId: THREAD, focuses: [], instructions: "", execution })) as RunResult;
+    const late = tool(harness, "diff_review_general_comment", { body: "Late finding." }, run.threadId!);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await rpc("clearReview", { sessionId });
+    release();
+    expect(isError(await late)).toBe(true);
+    expect((await sessionState(rpc, sessionId)).threads).toEqual([]);
+  });
+
+  it("archives a run's thread that bb started after the run was closed, and sends it nothing", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const { harness, rpc, view, comment } = await setup({ holdSpawn: () => gate });
+    const { sessionId } = await view();
+    const thread = await comment(sessionId, "Rename b");
+    const fixing = rpc("fixInNewThread", { sessionId, threadId: THREAD, reviewThreadIds: [thread.id], note: "", execution });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(await rpc("clearReview", { sessionId })).toEqual({ deletedThreads: 1, closedRuns: 1 });
+    expect(harness.inspection.sdk.callsTo("threads.archive")).toHaveLength(0);
+    release();
+    const { run } = (await fixing) as { run: Run };
+    expect(run).toMatchObject({ status: "closed", threadId: "thr_run_1" });
+    expect(harness.inspection.sdk.callsTo("threads.archive").map((call) => (call[0] as { threadId: string }).threadId)).toEqual(["thr_run_1"]);
+    expect(await sessionState(rpc, sessionId)).toEqual({ threads: [], runs: [] });
   });
 
   it("lets a review run comment through the command too, on the whole diff with --general", async () => {

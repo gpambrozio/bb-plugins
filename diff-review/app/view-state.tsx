@@ -9,7 +9,7 @@
  * of the two, the one saved last wins.
  */
 import { useRpc } from "@get-bb/plugin-sdk/app";
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { toast } from "sonner";
 
 import type { RpcContract } from "../shared/contract";
@@ -36,6 +36,10 @@ export const draftKeys = {
 
 export interface ViewStateStore {
   draft(key: string): Draft | undefined;
+  /** The keys of every draft kept, oldest first. */
+  draftKeyList(): string[];
+  /** Calls `listener` after every change; returns the unsubscribe. */
+  subscribe(listener: () => void): () => void;
   setDraft(key: string, draft: Draft | null): void;
   collapsed(path: string): boolean | undefined;
   setCollapsed(path: string, collapsed: boolean): void;
@@ -56,6 +60,7 @@ function newest<T>(record: Record<string, T>, max: number): Record<string, T> {
 /** A store over `state` that hands every change to `changed`. */
 export function createViewStateStore(initial: ViewState, changed: (state: ViewState) => void): ViewStateStore {
   let state = initial;
+  const listeners = new Set<() => void>();
   const update = (next: Omit<ViewState, "savedAt">) => {
     state = {
       drafts: newest(next.drafts, VIEW_STATE_MAX_DRAFTS),
@@ -64,9 +69,15 @@ export function createViewStateStore(initial: ViewState, changed: (state: ViewSt
       savedAt: Date.now(),
     };
     changed(state);
+    for (const listener of listeners) listener();
   };
   return {
     draft: (key) => state.drafts[key],
+    draftKeyList: () => Object.keys(state.drafts),
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
     setDraft: (key, draft) => {
       const { [key]: _old, ...rest } = state.drafts;
       // Re-inserted, so the draft touched last is the newest.
@@ -91,6 +102,13 @@ const ViewStateContext = createContext<ViewStateStore>(createViewStateStore(empt
 
 export function useViewState(): ViewStateStore {
   return useContext(ViewStateContext);
+}
+
+/** The keys of the drafts kept, re-rendering when one is opened or closed (not on every key typed). */
+export function useDraftKeys(): string[] {
+  const store = useViewState();
+  const json = useSyncExternalStore(store.subscribe, () => JSON.stringify(store.draftKeyList()));
+  return JSON.parse(json) as string[];
 }
 
 export function ViewStateProvider({ threadId, sessionId, saved, children }: { threadId: string; sessionId: string; saved: ViewState | null; children: ReactNode }) {
@@ -148,8 +166,13 @@ export function useDraft(key: string) {
   return {
     active,
     latest: (): Draft => store.draft(key) ?? active ?? EMPTY_DRAFT,
+    /**
+     * Opens the editor. A draft already kept stays as typed (a second click on "Comment on file", or
+     * Edit on a comment being edited); a new `range` only moves it to the lines just picked.
+     */
     open(initial: Partial<Draft> = {}) {
-      const draft = { ...EMPTY_DRAFT, ...initial };
+      const kept = store.draft(key);
+      const draft = kept === undefined ? { ...EMPTY_DRAFT, ...initial } : initial.range === undefined ? kept : { ...kept, range: initial.range };
       store.setDraft(key, draft);
       setActive(draft);
     },

@@ -122,7 +122,7 @@ export class RunService {
     const prompt = fixPrompt({ target, threads: chosen, note: input.note });
     const title = `Review fixes: ${chosen.length} comment${chosen.length === 1 ? "" : "s"}`;
     const run = await this.spawn({ sessionId: session.id, environmentId: session.environmentId, parentThreadId: input.threadId, kind: "fix", reviewThreadId: null, focus: null, execution: input.execution, title, prompt, baseline: null });
-    if (run.threadId !== null) {
+    if (run.threadId !== null && run.status !== "closed") {
       this.store.recordSend(session.id, run.threadId, chosen.map((row) => row.id), input.note);
       this.review.publishSession(session.id);
     }
@@ -176,7 +176,7 @@ export class RunService {
       prompt,
       baseline: null,
     });
-    if (run.threadId !== null) {
+    if (run.threadId !== null && run.status !== "closed") {
       this.store.recordSend(session.id, run.threadId, [thread.id], "");
       this.review.publishSession(session.id);
     }
@@ -260,6 +260,10 @@ export class RunService {
       }
     }
     const authorName = await this.review.agentName(callerThreadId);
+    // The checks above awaited bb; the run may have been closed (Close, Clear review) meanwhile.
+    if (this.store.runsOfThread(callerThreadId).every((row) => row.id !== run.id)) {
+      throw new ReviewError("This review run was closed; its comments are no longer taken.", "not_a_review_run");
+    }
     return this.review.createAgentThread({ ...input, sessionId: session.id, anchorContent, body }, authorName);
   }
 
@@ -351,6 +355,8 @@ export class RunService {
         pluginMetadata: { [RUN_METADATA_KEY]: id },
       });
       this.store.setRunThread(id, thread.id);
+      // Closed (Close, Clear review) while bb was starting it: that path had no thread to archive.
+      if (this.store.run(id)?.status === "closed") await this.archive({ id, threadId: thread.id });
     } catch (error) {
       this.store.finishRun(id, "failed", `Could not start the thread: ${error instanceof Error ? error.message : String(error)}`, null);
     }

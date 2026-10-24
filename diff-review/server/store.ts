@@ -414,13 +414,22 @@ export class ReviewStore {
     return row === undefined ? null : (JSON.parse(row.state) as unknown);
   }
 
-  saveViewState(threadId: string, sessionId: string, state: unknown): void {
-    this.db
-      .prepare(
-        `INSERT INTO view_states (thread_id, session_id, state, updated_at) VALUES (?, ?, ?, ?)
-         ON CONFLICT (thread_id, session_id) DO UPDATE SET state = excluded.state, updated_at = excluded.updated_at`,
-      )
-      .run(threadId, sessionId, JSON.stringify(state), this.now());
+  /**
+   * Keeps a tab's state unless a copy saved later (by `savedAt`) is already there: two windows can
+   * flush in the reverse order of their edits. Returns whether it was kept.
+   */
+  saveViewState(threadId: string, sessionId: string, state: { savedAt: number }): boolean {
+    return this.db.transaction(() => {
+      const current = this.viewState(threadId, sessionId) as { savedAt?: unknown } | null;
+      if (current !== null && typeof current.savedAt === "number" && current.savedAt > state.savedAt) return false;
+      this.db
+        .prepare(
+          `INSERT INTO view_states (thread_id, session_id, state, updated_at) VALUES (?, ?, ?, ?)
+           ON CONFLICT (thread_id, session_id) DO UPDATE SET state = excluded.state, updated_at = excluded.updated_at`,
+        )
+        .run(threadId, sessionId, JSON.stringify(state), this.now());
+      return true;
+    })();
   }
 
   /**

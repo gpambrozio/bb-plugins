@@ -18,11 +18,12 @@ vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn(), info: vi.f
 
 vi.mock("@pierre/diffs/react", () => ({
   PatchDiff: (props: {
+    patch: string;
     lineAnnotations: { side: string; lineNumber: number; metadata: unknown }[];
     renderAnnotation(annotation: unknown): ReactNode;
     options: { onGutterUtilityClick(range: { start: number; end: number; side: string }): void };
   }) => (
-    <div data-testid="patch">
+    <div data-testid="patch" data-patch={props.patch}>
       <button type="button" onClick={() => props.options.onGutterUtilityClick({ start: 1, end: 2, side: "additions" })}>
         gutter +
       </button>
@@ -214,6 +215,30 @@ describe("the Review tab", () => {
     expect(slot.inspection.rpcCalls.filter((call) => call.method === "loadPatches").map((call) => call.input)).toEqual([
       { threadId: "thr_1", target: { kind: "uncommitted" }, paths: ["src/a.ts", "src/b.ts"] },
     ]);
+  });
+
+  it("drops a patch that arrives after the view was reloaded", async () => {
+    const unloaded = { ...VIEW.files[0]!, patch: null, loadMode: "on_demand" as const };
+    const stale = PATCH.replace("const b = 3;", "const b = 9;");
+    let answer!: (value: unknown) => void;
+    let loads = 0;
+    renderSlot(
+      { component: ReviewPanel },
+      { threadId: "thr_1", params: null },
+      {
+        rpc: {
+          getReview: () => (++loads === 1 ? { ...VIEW, threads: [], files: [unloaded] } : { ...VIEW, threads: [] }),
+          loadPatches: () => new Promise((resolve) => (answer = resolve)),
+        },
+      },
+    );
+    await screen.findByText("Loading the diff…");
+    await waitFor(() => expect(answer).toBeTypeOf("function"));
+    fireEvent.click(screen.getByRole("button", { name: "Reload the diff" }));
+    await waitFor(() => expect(screen.getByTestId("patch").getAttribute("data-patch")).toBe(PATCH));
+    answer({ patches: [{ path: "src/a.ts", patch: stale, truncated: false }] });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.getByTestId("patch").getAttribute("data-patch")).toBe(PATCH);
   });
 
   it("offers to try again when a patch fails to load, and says why a file has no diff", async () => {
@@ -525,6 +550,48 @@ describe("the Review tab", () => {
       expect(screen.getByText("New comment on lines 7–8 (new side). Those lines are no longer in this diff.")).toBeTruthy();
       expect(within(screen.getByTestId("patch")).queryByDisplayValue("About old lines")).toBeNull();
       expect(composer.closest("section")!.querySelector('[aria-label="Collapse file"]')).toBeTruthy();
+    });
+
+    it("keeps a draft's text when its editor is opened again", async () => {
+      const first = renderWith(null);
+      await screen.findByText("Why three?");
+      fireEvent.click(screen.getByRole("button", { name: "Comment on the diff" }));
+      type(/A comment about the whole change/, "Keep this");
+      fireEvent.click(screen.getByRole("button", { name: "Comment on the diff" }));
+      fireEvent.click(within(screen.getByTestId("patch")).getByRole("button", { name: "gutter +" }));
+      type(/Leave a comment/, "And this");
+      fireEvent.click(within(screen.getByTestId("patch")).getByRole("button", { name: "gutter +" }));
+      expect(screen.getByDisplayValue("Keep this")).toBeTruthy();
+      expect(screen.getByDisplayValue("And this")).toBeTruthy();
+      cleanup();
+      expect(lastSaved(first).drafts).toMatchObject({ general: { body: "Keep this" }, "line:src/a.ts": { body: "And this" } });
+    });
+
+    it("lists unsent comments on files that left the view, where they can still be sent or cancelled", async () => {
+      const slot = render({
+        getReview: () => ({
+          ...VIEW,
+          viewState: {
+            drafts: {
+              "line:src/gone.ts": { body: "On gone lines", severity: null, range: { side: "new", startLine: 3, endLine: 3 } },
+              "file:src/gone.ts": { body: "On the gone file", severity: null, range: null },
+            },
+            collapsed: {},
+            scroll: null,
+            savedAt: 1,
+          },
+        }),
+        saveViewState: () => ({ ok: true }),
+        createThread: (input: never) => ({ thread: thread({ id: "cccccc000001", body: (input as { body: string }).body, filePath: "src/gone.ts", side: null, startLine: 0, endLine: 0, anchorContent: null }) }),
+      });
+      const section = (await screen.findByText("Unsent comments on files not in this view")).parentElement!;
+      expect(within(section).getByText("src/gone.ts")).toBeTruthy();
+      expect(within(section).getByText("New comment on line 3 (new side). This file is not in this view any more.")).toBeTruthy();
+      fireEvent.keyDown(within(section).getByDisplayValue("On gone lines"), { key: "Escape" });
+      await waitFor(() => expect(within(section).queryByDisplayValue("On gone lines")).toBeNull());
+      fireEvent.click(within(section).getByRole("button", { name: "Comment" }));
+      await waitFor(() => expect(screen.queryByText("Unsent comments on files not in this view")).toBeNull());
+      expect(slot.inspection.rpcCalls.find((call) => call.method === "createThread")!.input).toMatchObject({ filePath: "src/gone.ts", startLine: 0, body: "On the gone file" });
     });
 
     it("comes back to this window's copy when the server's is older", async () => {

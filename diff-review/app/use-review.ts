@@ -103,11 +103,14 @@ export function useReview(threadId: string, target: TargetRequest, autoTarget = 
     });
   }, []);
 
-  /** Fills in patches loaded on demand. */
-  const putPatches = useCallback((patches: readonly { path: string; patch: string; truncated: boolean }[]) => {
+  /**
+   * Fills in patches loaded on demand for the load `loadId` of session `sessionId`. An answer that
+   * arrives after the view changed (another view, or a reload) is dropped: same paths, other diffs.
+   */
+  const putPatches = useCallback((sessionId: string, loadId: number, patches: readonly { path: string; patch: string; truncated: boolean }[]) => {
     const byPath = new Map(patches.map((patch) => [patch.path, patch]));
     setState((previous) => {
-      if (previous.status !== "ready") return previous;
+      if (previous.status !== "ready" || previous.view.sessionId !== sessionId || previous.loadId !== loadId) return previous;
       const files = previous.view.files.map((file): DiffFile => {
         const patch = byPath.get(file.path);
         return patch === undefined ? file : { ...file, patch: patch.patch, patchTruncated: patch.truncated };
