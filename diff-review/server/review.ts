@@ -71,16 +71,28 @@ export class ReviewService {
     private readonly settings: () => Promise<ReviewSettings>,
   ) {}
 
-  /** The Review tab's whole view of a thread's diff. */
-  async view(threadId: string, request: TargetRequest): Promise<ReviewView> {
+  /**
+   * The Review tab's whole view of a thread's diff. With `autoTarget` (the tab's first load, when it
+   * was not opened on a chosen view), an empty uncommitted view gives way to the changes committed
+   * since the base branch, when there are any; when both are empty, the uncommitted view stands.
+   */
+  async view(threadId: string, request: TargetRequest, autoTarget = false): Promise<ReviewView> {
     try {
       const environment = await workspaceOf(this.bb.sdk, threadId);
       const base = request.kind === "branch" || request.kind === "all" ? request.base : undefined;
       const refs = await workspaceRefs(this.bb.sdk, this.bb.log, environment, base);
-      const target = resolveTarget(request, refs.defaultBase);
+      let target = resolveTarget(request, refs.defaultBase);
       const settings = await this.settings();
       const patterns = await ignorePatterns(this.bb.sdk, this.bb.log, environment, settings.ignorePatterns, settings.readIgnoreFiles);
-      const diff = await loadDiff(this.bb.sdk, environment, target, patterns);
+      let diff = await loadDiff(this.bb.sdk, environment, target, patterns);
+      if (autoTarget && target.kind === "uncommitted" && diff.files.length === 0 && refs.defaultBase !== null) {
+        const branch: Target = { kind: "branch", base: refs.defaultBase };
+        const committed = await loadDiff(this.bb.sdk, environment, branch, patterns);
+        if (committed.files.length > 0) {
+          target = branch;
+          diff = committed;
+        }
+      }
       const session = this.store.session(environment.id, targetKey(target));
       return {
         ok: true,

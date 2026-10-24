@@ -3,7 +3,8 @@
  * `@pierre/diffs`, with comment threads on lines, ranges, files and the whole diff, and "Send to
  * agent", which hands the open ones to this thread.
  *
- * A tab opened with `params: { target }` starts on that view; otherwise on the uncommitted changes.
+ * A tab opened with `params: { target }` starts on that view; otherwise on the uncommitted changes, or,
+ * when there are none, on the changes committed since the base branch.
  */
 import { useRpc, type PluginThreadPanelProps } from "@get-bb/plugin-sdk/app";
 import { useCallback, useMemo, useState } from "react";
@@ -34,6 +35,10 @@ function initialTarget(params: unknown): TargetRequest {
   return parsed.success ? parsed.data : { kind: "uncommitted" };
 }
 
+function hasTarget(params: unknown): boolean {
+  return targetRequestSchema.safeParse((params as { target?: unknown } | null)?.target).success;
+}
+
 function storedDiffStyle(): DiffStyle {
   try {
     return window.localStorage.getItem(DIFF_STYLE_KEY) === "split" ? "split" : "unified";
@@ -54,7 +59,10 @@ function fromPicker(value: string): TargetRequest {
 
 export function ReviewPanel({ threadId, params }: PluginThreadPanelProps) {
   const [target, setTarget] = useState<TargetRequest>(() => initialTarget(params));
-  const review = useReview(threadId, target);
+  // A tab opened without a view starts on the uncommitted changes, unless there are none and the
+  // branch has commits: the first load decides, and the picker follows it.
+  const [autoTarget] = useState(() => !hasTarget(params));
+  const review = useReview(threadId, target, autoTarget, setTarget);
   const { state } = review;
 
   const pick = (value: string) => setTarget(fromPicker(value));

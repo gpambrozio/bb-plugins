@@ -43,6 +43,8 @@ interface Setup {
   turnStarts?: number[];
   sendFails?: boolean;
   diffityignore?: string;
+  /** Views (`uncommitted`, `branch_committed`, …) whose diff has no files. */
+  emptyTargets?: string[];
 }
 
 async function setup(options: Setup = {}) {
@@ -96,14 +98,14 @@ async function setup(options: Setup = {}) {
             workingTree: { deletions: 1, files: [], hasUncommittedChanges: true, insertions: 1, lineStatsComplete: true, state: "dirty_uncommitted" as const },
           },
         }),
-        diffFiles: async () => ({
+        diffFiles: async (query: { target: string }) => ({
           outcome: "available" as const,
-          files: [
+          files: (options.emptyTargets ?? []).includes(query.target) ? [] : [
             { path: "src/a.ts", previousPath: null, changeKind: "modified" as const, additions: 1, deletions: 1, binary: false, loadMode: "auto" as const, origin: "tracked" as const },
             { path: "package-lock.json", previousPath: null, changeKind: "modified" as const, additions: 9, deletions: 9, binary: false, loadMode: "auto" as const, origin: "tracked" as const },
             { path: "big.txt", previousPath: null, changeKind: "added" as const, additions: 9000, deletions: 0, binary: false, loadMode: "on_demand" as const, origin: "untracked" as const },
           ],
-          initialPatches: [{ path: "src/a.ts", patch: PATCH, truncated: false }],
+          initialPatches: (options.emptyTargets ?? []).includes(query.target) ? [] : [{ path: "src/a.ts", patch: PATCH, truncated: false }],
           mergeBaseRef: null,
           shortstat: "",
           truncated: false,
@@ -171,6 +173,23 @@ describe("the Review tab's view", () => {
     const uncommitted = await view();
     expect(again.sessionId).toBe(branch.sessionId);
     expect(uncommitted.sessionId).not.toBe(branch.sessionId);
+  });
+
+  it("opens on the branch's commits when there is nothing uncommitted, only when asked to pick", async () => {
+    const { rpc } = await setup({ emptyTargets: ["uncommitted"] });
+    const picked = (await rpc("getReview", { threadId: THREAD, target: { kind: "uncommitted" }, autoTarget: true })) as Extract<ReviewView, { ok: true }>;
+    expect(picked.target).toEqual({ kind: "branch", base: "main" });
+    expect(picked.files.map((file) => file.path)).toContain("src/a.ts");
+    const chosen = (await rpc("getReview", { threadId: THREAD, target: { kind: "uncommitted" } })) as Extract<ReviewView, { ok: true }>;
+    expect(chosen.target).toEqual({ kind: "uncommitted" });
+    expect(chosen.files).toEqual([]);
+  });
+
+  it("keeps the uncommitted view when the branch has nothing either, or when there are uncommitted changes", async () => {
+    const empty = await setup({ emptyTargets: ["uncommitted", "branch_committed"] });
+    expect(((await empty.rpc("getReview", { threadId: THREAD, target: { kind: "uncommitted" }, autoTarget: true })) as ReviewView & { target: unknown }).target).toEqual({ kind: "uncommitted" });
+    const dirty = await setup();
+    expect(((await dirty.rpc("getReview", { threadId: THREAD, target: { kind: "uncommitted" }, autoTarget: true })) as ReviewView & { target: unknown }).target).toEqual({ kind: "uncommitted" });
   });
 
   it("says why there is nothing to review", async () => {

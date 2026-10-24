@@ -36,7 +36,7 @@ export default async function plugin(bb: BbPluginApi) {
   const service = new ReviewService(bb, store, () => settings.get());
 
   bb.rpc.register(rpcContract, {
-    getReview: ({ threadId, target }) => service.view(threadId, target),
+    getReview: ({ threadId, target, autoTarget }) => service.view(threadId, target, autoTarget === true),
     loadPatches: async ({ threadId, target, paths }) => ({ patches: await service.patches(threadId, target, paths) }),
     listThreads: ({ sessionId }) => ({ threads: service.threads(sessionId) }),
     createThread: (input) => ({ thread: service.createThread(input) }),

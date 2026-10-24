@@ -23,7 +23,14 @@ const threadResult = z.object({ thread: reviewThreadSchema }).strict();
 
 export const rpcContract = defineRpcContract({
   getReview: {
-    input: z.object({ threadId: id, target: targetRequestSchema }).strict(),
+    input: z
+      .object({
+        threadId: id,
+        target: targetRequestSchema,
+        /** The tab's first load: an empty uncommitted view may give way to the branch's commits. */
+        autoTarget: z.boolean().optional(),
+      })
+      .strict(),
     output: reviewViewSchema,
   },
   loadPatches: {

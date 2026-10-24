@@ -124,7 +124,7 @@ describe("the Review tab", () => {
   it("shows the diff with each thread where its code is now, whole-diff threads on top, and lost ones apart", async () => {
     const slot = render();
     await screen.findByText("1 file · +1 −1 · 1 left out by the ignore patterns");
-    expect(slot.inspection.rpcCalls[0]).toEqual({ method: "getReview", input: { threadId: "thr_1", target: { kind: "uncommitted" } } });
+    expect(slot.inspection.rpcCalls[0]).toEqual({ method: "getReview", input: { threadId: "thr_1", target: { kind: "uncommitted" }, autoTarget: true } });
 
     const line = screen.getByTestId("annotation-additions-2");
     expect(within(line).getByText("Why three?")).toBeTruthy();
@@ -254,6 +254,43 @@ describe("the Review tab", () => {
     other.getBoundingClientRect = () => ({ top: 150 }) as DOMRect;
     fireEvent.click(within(other).getByRole("button", { name: "Collapse file" }));
     expect(root.scrollTop).toBe(200);
+  });
+
+  it("opens on the branch's commits when the server finds nothing uncommitted, and asks only once", async () => {
+    const slot = renderSlot(
+      { component: ReviewPanel },
+      { threadId: "thr_1", params: null },
+      {
+        rpc: {
+          getReview: (input: unknown) => {
+            const { autoTarget } = input as { autoTarget?: boolean };
+            return autoTarget === true ? { ...VIEW, target: { kind: "branch", base: "main" } } : { ...VIEW, target: (input as { target: unknown }).target };
+          },
+        },
+      },
+    );
+    await screen.findByText("Committed since main");
+    await slot.behavior.emitRealtime("environment:env_1", { kind: "diff" });
+    await waitFor(() => expect(slot.inspection.rpcCalls.filter((call) => call.method === "getReview")).toHaveLength(2));
+    // The first load may pick; every later one keeps the view, now the branch's.
+    expect(slot.inspection.rpcCalls.filter((call) => call.method === "getReview").map((call) => call.input)).toEqual([
+      { threadId: "thr_1", target: { kind: "uncommitted" }, autoTarget: true },
+      { threadId: "thr_1", target: { kind: "branch", base: "main" } },
+    ]);
+  });
+
+  it("never picks for a tab opened on a chosen view", async () => {
+    const slot = renderSlot({ component: ReviewPanel }, { threadId: "thr_1", params: { target: { kind: "uncommitted" } } }, { rpc: { getReview: () => VIEW } });
+    await screen.findByText("1 file · +1 −1 · 1 left out by the ignore patterns");
+    expect(slot.inspection.rpcCalls[0]!.input).toEqual({ threadId: "thr_1", target: { kind: "uncommitted" } });
+  });
+
+  it("reloads once when the connection comes back, and not on the first connection", async () => {
+    const slot = renderSlot({ component: ReviewPanel }, { threadId: "thr_1", params: null }, { rpc: { getReview: () => VIEW } });
+    await screen.findByText("Why three?");
+    await slot.behavior.setRealtimeConnectionState("reconnecting");
+    await slot.behavior.setRealtimeConnectionState("connected");
+    await waitFor(() => expect(slot.inspection.rpcCalls.filter((call) => call.method === "getReview")).toHaveLength(2));
   });
 
   it("says why there is nothing to review", async () => {

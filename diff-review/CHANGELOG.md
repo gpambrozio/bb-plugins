@@ -11,8 +11,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - **A Review tab beside each thread** with the diff of the thread's workspace: its uncommitted
   changes, the changes committed since the base branch, all changes since the base branch, or one of
-  the branch's commits, split or unified, in bb's code theme. Diffs load on their own as you scroll;
-  very large changes start folded.
+  the branch's commits, split or unified, in bb's code theme. It opens on the uncommitted changes, or,
+  when there are none, on the changes committed since the base branch. Diffs load on their own as you
+  scroll; very large changes start folded.
 - **A Review button in the thread's title bar** that opens the tab.
 - **Comments on a line, a range of lines, a whole file or the whole diff**, with an optional severity
   (must fix, suggestion, nit, question), in Markdown. Reply, edit, delete, resolve, reopen and

@@ -91,6 +91,11 @@ tab's scroll area; the asks are batched (25 paths, one request at a time). Only 
 2,000 lines starts folded, and it loads when unfolded; binary and too-large files say why they have no
 line diff. Never put a "Load diff" button back.
 
+**The first view is picked once.** A tab opened without a view sends `autoTarget` on its first
+`getReview` only; the server answers with the branch's commits when the uncommitted view is empty and
+the branch has some, and the tab's picker adopts that view without loading it again. No later load
+(a reload, a realtime signal, a reconnect, the user's pick) sends it, so a choice is never overridden.
+
 **The tab is a `threadPanelAction`.** It is the only tab surface bb 0.46 has. bb 0.47 drops it from
 the SDK typings in favour of `app.slots.experimental_tab({ context: { kind: "thread" }, availability:
 "action", icon, … })` and keeps loading it through an adapter, keeping saved tabs and their params.
