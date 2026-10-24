@@ -13,6 +13,7 @@ import {
   useRealtime,
   useRealtimeConnectionState,
   useRpc,
+  type ExperimentalBadge,
 } from "@get-bb/plugin-sdk/app";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode } from "react";
 import { toast } from "sonner";
@@ -403,9 +404,14 @@ export function HeraldPanel() {
   );
 }
 
-/** The count beside the panel's sidebar entry. */
-export function WaitingCount() {
+/**
+ * The count on the panel's sidebar entry: a hook bb calls in the plugin's
+ * scope (`experimental_useBadge`), not a component. `critical` is bb's tone for
+ * something waiting on the user; nothing waiting draws no badge.
+ */
+export function useWaitingBadge(): ExperimentalBadge | null {
   const { rows } = useRows();
   if (rows === null || rows.length === 0) return null;
-  return <span className="text-xs text-muted-foreground">{rows.length}</span>;
+  const label = rows.length === 1 ? "1 thread waiting for you" : `${rows.length} threads waiting for you`;
+  return { count: rows.length, tone: "critical", label };
 }

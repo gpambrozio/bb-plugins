@@ -37,7 +37,7 @@ What it adds:
 
 ## What you need
 
-- bb 0.44 or later.
+- bb 0.47 or later. On bb 0.44 to 0.46, install with `@^0.2.0` instead of `@^0.3.0`.
 - For the default voice, **bb running on a Mac**: its `say` voices render each sentence and the app plays
   the audio, so you hear the Mac's voices on every device. Otherwise each device's own browser voice is
   used.
@@ -49,7 +49,7 @@ What it adds:
 ## Install
 
 ```bash
-bb plugin install 'git:github.com/gpambrozio/bb-plugins@^0.2.0' --plugin herald --tag-prefix herald/
+bb plugin install 'git:github.com/gpambrozio/bb-plugins@^0.3.0' --plugin herald --tag-prefix herald/
 ```
 
 The page is **Herald** in the sidebar.

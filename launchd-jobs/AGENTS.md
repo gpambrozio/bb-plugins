@@ -22,7 +22,7 @@ specific to `launchd-jobs`.
 | `shared/contract.ts`, `shared/host-contract.ts` | The app ⇄ server and server ⇄ host contracts. The app imports them as types only. |
 | `app/jobs-panel.tsx` | The page: Mac picker, list, and the detail or form pane. An answer that arrives after the user switched Macs is dropped, and a pane never outlives the Mac it was opened on: the same slug on another Mac is another job. |
 | `app/job-detail.tsx`, `app/job-form.tsx`, `app/log.ts` | The detail pane, the form, and the log with Follow. |
-| `app/health.tsx` | The failing count as the app sees it, and the sidebar row's accessory. |
+| `app/health.tsx` | The failing count as the app sees it, and the sidebar entry's badge. |
 | `host/fake-launchd.ts` | Test support: an in-memory launchd behind the same `RunCommand`. |
 
 `npm test` runs everything; the tests that write or parse plists, or run the runner, need macOS.
@@ -210,8 +210,11 @@ as `log-changed` over realtime; the app reads only what was appended (`log` with
 
 ## The failing count
 
-`app.slots.navPanel`'s `experimental_sidebarAccessory` renders "N failing" beside the static row —
-no re-registering, unlike Paseo. The server owns the count (`server/health.ts`), re-taken every 60 s
+`app.slots.navPanel`'s `experimental_useBadge` (bb 0.47, SDK 0.6.75) puts the count on the static
+entry, with the jobs' names as its tooltip — a hook bb calls in the plugin's scope, no re-registering,
+unlike Paseo. It returns `tone: "critical"` while any job is failing and null otherwise. The
+`experimental_sidebarAccessory` component it replaced was not drawn from bb 0.46 on, and bb 0.46 refuses
+the new key (`unknown field`), which is why `engines.bb` is `>=0.47`. The server owns the count (`server/health.ts`), re-taken every 60 s
 by a background service whether or not any window is open, and published on `health-changed` only
 when it changes; the app reads it on mount and after a reconnect.
 
