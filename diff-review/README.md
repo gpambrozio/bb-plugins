@@ -53,7 +53,7 @@ It is a bb take on [diffity](https://github.com/nilbuild/diffity)'s review loop,
   finishes a turn. Each run's last message opens with "Diff Review status report — no action
   needed", and the thread's agent is told these notices are reports, so it reads them without acting.
 - **Leave generated files out.** List gitignore patterns in Settings → Plugins → Diff Review, and
-  the workspace's own `.diffityignore` (and `.git/info/diffityignore`) is read too, as diffity does.
+  the workspace's own `.diffityignore` (and `.git/info/diffityignore`, the main repository's in a git worktree) is read too, as diffity does.
 
 Comments are stored by the plugin, per workspace and view, on the bb server; they stay when the tab or
 bb closes.

@@ -237,7 +237,10 @@ What a port only learns by running it:
   `environmentId`; `environments.get` gives `hostId` and `path`. An archived thread's environment is
   `destroyed`, with a null `path`. A thread in a worktree runs somewhere other than the project's
   checkout, so anything keyed on the checkout's path (Claude Code's project-scoped plugins, for one)
-  has to map the worktree back to its main checkout (`skills/host/resolve/repo-root.ts`).
+  has to map the worktree back to its main checkout (`skills/host/resolve/repo-root.ts`). In a
+  worktree `.git` is a file (`gitdir: …`), so `<path>/.git/info/…` fails with ENOTDIR; through
+  `files.read` alone, follow the gitfile and its git dir's `commondir`, as `git rev-parse --git-path`
+  does (`diff-review/server/diff.ts`, `gitInfoParent`).
 - **A `threads.get` row is not a `threads.list` row.** Only list rows carry `queuedWork`,
   `hasPendingInteraction` and the `activity` counts; a get row has `queuedMessageCount` and
   `activeBackgroundAgentCount` instead, and neither says whether an interaction is pending (read

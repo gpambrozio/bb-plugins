@@ -8,7 +8,7 @@ import { posix } from "node:path";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import type { Commit, DiffFile, Target, TargetRequest } from "../shared/types";
-import { IGNORE_FILES, ignoreMatcher, patternLines } from "./ignore";
+import { gitfileTarget, ignoreMatcher, INFO_IGNORE_FILE, patternLines, WORKSPACE_IGNORE_FILE } from "./ignore";
 
 type Sdk = BbPluginApi["sdk"];
 type Environment = Awaited<ReturnType<Sdk["environments"]["get"]>>;
@@ -97,6 +97,37 @@ function failureMessage(result: { outcome: "not_applicable"; message: string } |
   return result.outcome === "not_applicable" ? result.message : result.failure.message;
 }
 
+async function readText(sdk: Sdk, hostId: string, path: string): Promise<string> {
+  const file = await sdk.files.read({ hostId, path });
+  return file.contentEncoding === "base64" ? Buffer.from(file.content, "base64").toString("utf8") : file.content;
+}
+
+async function readTextOrNull(sdk: Sdk, hostId: string, path: string): Promise<string | null> {
+  try {
+    return await readText(sdk, hostId, path);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The directory whose `info/` holds the repository's ignore file, as `git rev-parse --git-path
+ * info/diffityignore` finds it, read through bb rather than by running git, so it works on any host.
+ * In a plain checkout that is `.git`. In a linked worktree `.git` is a file naming the worktree's
+ * git dir, and `info/` is shared: it lives in the common dir that git dir's `commondir` names. A
+ * submodule's gitfile has no `commondir`, so its git dir is the one.
+ */
+export async function gitInfoParent(sdk: Sdk, hostId: string, root: string): Promise<string> {
+  const dotGit = posix.join(root, ".git");
+  // A directory cannot be read as a file: that is a plain checkout.
+  const gitfile = await readTextOrNull(sdk, hostId, dotGit);
+  const target = gitfile === null ? null : gitfileTarget(gitfile);
+  if (target === null) return dotGit;
+  const gitDir = posix.resolve(root, target);
+  const common = (await readTextOrNull(sdk, hostId, posix.join(gitDir, "commondir")))?.trim() ?? "";
+  return common === "" ? gitDir : posix.resolve(gitDir, common);
+}
+
 /**
  * The ignore patterns for a workspace: the setting's, then the workspace's diffity ignore files when
  * `readIgnoreFiles` is on. A file that cannot be read counts as absent — the usual case is that it
@@ -111,13 +142,12 @@ export async function ignorePatterns(
 ): Promise<string[]> {
   const patterns = patternLines(setting);
   if (!readIgnoreFiles || environment.path === null) return patterns;
-  for (const name of IGNORE_FILES) {
+  const paths = [posix.join(environment.path, WORKSPACE_IGNORE_FILE), posix.join(await gitInfoParent(sdk, environment.hostId, environment.path), INFO_IGNORE_FILE)];
+  for (const path of paths) {
     try {
-      const file = await sdk.files.read({ hostId: environment.hostId, path: posix.join(environment.path, name) });
-      const text = file.contentEncoding === "base64" ? Buffer.from(file.content, "base64").toString("utf8") : file.content;
-      patterns.push(...patternLines(text));
+      patterns.push(...patternLines(await readText(sdk, environment.hostId, path)));
     } catch (error) {
-      log.debug(`No ${name} read in ${environment.id}: ${error instanceof Error ? error.message : String(error)}`);
+      log.debug(`No ${path} read in ${environment.id}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
   return patterns;

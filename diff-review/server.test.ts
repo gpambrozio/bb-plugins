@@ -46,6 +46,8 @@ interface Setup {
   sendFails?: boolean;
   spawnFails?: boolean;
   diffityignore?: string;
+  /** More files the host can read, by absolute path; `/work/repo/.git` is a directory unless listed. */
+  files?: Record<string, string>;
   /** Views (`uncommitted`, `branch_committed`, …) whose diff has no files. */
   emptyTargets?: string[];
 }
@@ -53,6 +55,7 @@ interface Setup {
 async function setup(options: Setup = {}) {
   const threads = options.threads ?? { [THREAD]: { environmentId: ENV } };
   const turnStarts = options.turnStarts ?? [];
+  const reads: string[] = [];
   // What the workspace holds; a test edits it to play a run that changes files.
   const workspace = { extraFile: false };
   let spawned = 0;
@@ -146,9 +149,13 @@ async function setup(options: Setup = {}) {
       },
       files: {
         read: async ({ path }: { path: string }) => {
+          reads.push(path);
           if (path === "/work/repo/.diffityignore" && options.diffityignore !== undefined) {
             return { content: options.diffityignore, contentEncoding: "utf8", sha256: "x" };
           }
+          const content = options.files?.[path];
+          if (content !== undefined) return { content, contentEncoding: "utf8", sha256: "x" };
+          if (path === "/work/repo/.git") throw new Error("EISDIR: illegal operation on a directory, read");
           throw new Error("ENOENT");
         },
       },
@@ -169,7 +176,7 @@ async function setup(options: Setup = {}) {
       anchorContent: "const b = 3;",
       body,
     })) as { thread: ReviewThread }).thread;
-  return { bb, harness, rpc, view, comment, threads, turnStarts, workspace };
+  return { bb, harness, rpc, view, comment, threads, turnStarts, workspace, reads };
 }
 
 describe("the Review tab's view", () => {
@@ -193,6 +200,32 @@ describe("the Review tab's view", () => {
     await harness.behavior.setSettings({ ignorePatterns: "*.json", readIgnoreFiles: false });
     const result = await view();
     expect(result.files.map((file) => file.path)).toEqual(["src/a.ts", "big.txt"]);
+  });
+
+  it("reads the repository's info/diffityignore from .git in a plain checkout", async () => {
+    const { view } = await setup({ files: { "/work/repo/.git/info/diffityignore": "src/\n" } });
+    expect((await view()).ignoredPaths).toEqual(["src/a.ts"]);
+  });
+
+  it("reads info/diffityignore from the common git dir in a linked worktree, whose .git is a file", async () => {
+    const { view, reads } = await setup({
+      files: {
+        "/work/repo/.git": "gitdir: /main/.git/worktrees/repo\n",
+        "/main/.git/worktrees/repo/commondir": "../..\n",
+        "/main/.git/info/diffityignore": "src/\n",
+      },
+    });
+    expect((await view()).ignoredPaths).toEqual(["src/a.ts"]);
+    expect(reads.some((path) => path.startsWith("/work/repo/.git/"))).toBe(false);
+  });
+
+  it("follows a relative gitdir, and treats a missing ignore file in a worktree as no ignores", async () => {
+    const relative = await setup({ files: { "/work/repo/.git": "gitdir: ../main/.git/worktrees/repo", "/work/main/.git/worktrees/repo/commondir": "../..", "/work/main/.git/info/diffityignore": "src/" } });
+    expect((await relative.view()).ignoredPaths).toEqual(["src/a.ts"]);
+    const missing = await setup({ files: { "/work/repo/.git": "gitdir: /main/.git/worktrees/repo\n", "/main/.git/worktrees/repo/commondir": "../..\n" } });
+    const result = await missing.view();
+    expect(result.ok).toBe(true);
+    expect(result.ignoredPaths).toEqual([]);
   });
 
   it("fills in the base branch, and keeps one session per view", async () => {
