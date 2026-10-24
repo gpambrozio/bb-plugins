@@ -235,6 +235,27 @@ describe("the Review tab", () => {
     await screen.findByTestId("patch");
   });
 
+  it("keeps a folded file's header at the top when it is folded while scrolled part-way through", async () => {
+    const second = { ...VIEW.files[0]!, path: "src/b.ts" };
+    renderSlot({ component: ReviewPanel }, { threadId: "thr_1", params: null }, { rpc: { getReview: () => ({ ...VIEW, threads: [], files: [VIEW.files[0]!, second] }) } });
+    await waitFor(() => expect(screen.getAllByTestId("patch")).toHaveLength(2));
+    const section = document.querySelector('[data-file-path="src/a.ts"]') as HTMLElement;
+    const root = section.parentElement!;
+    // src/a.ts starts 300px above the scroll area's top: its sticky header is pinned, its lines scrolled past.
+    root.scrollTop = 500;
+    root.getBoundingClientRect = () => ({ top: 100 }) as DOMRect;
+    section.getBoundingClientRect = () => ({ top: -200 }) as DOMRect;
+    fireEvent.click(within(section).getByRole("button", { name: "Collapse file" }));
+    expect(within(section).queryByTestId("patch")).toBeNull();
+    expect(root.scrollTop).toBe(200);
+
+    // A file whose header is in view folds without moving the view.
+    const other = document.querySelector('[data-file-path="src/b.ts"]') as HTMLElement;
+    other.getBoundingClientRect = () => ({ top: 150 }) as DOMRect;
+    fireEvent.click(within(other).getByRole("button", { name: "Collapse file" }));
+    expect(root.scrollTop).toBe(200);
+  });
+
   it("says why there is nothing to review", async () => {
     renderSlot({ component: ReviewPanel }, { threadId: "thr_1", params: null }, { rpc: { getReview: () => ({ ok: false, message: "No workspace." }) } });
     await screen.findByText("No workspace.");

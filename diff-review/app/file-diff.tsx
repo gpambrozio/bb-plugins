@@ -8,7 +8,7 @@
  */
 import { PatchDiff, type DiffLineAnnotation, type SelectedLineRange } from "@pierre/diffs/react";
 import { experimental_useCodeTheme } from "@get-bb/plugin-sdk/app";
-import { useMemo, useRef, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
@@ -92,12 +92,34 @@ export function noDiffReason(file: DiffFile): string | null {
   return null;
 }
 
+/**
+ * How far to scroll `root` up so `section` starts at its top: the section's top minus the root's,
+ * when the section starts above the visible area (its sticky header is pinned while the rest of it
+ * is scrolled past); 0 otherwise.
+ */
+export function scrollToAlign(section: Element, root: Element): number {
+  const offset = section.getBoundingClientRect().top - root.getBoundingClientRect().top;
+  return offset < 0 ? offset : 0;
+}
+
 export function FileDiff({ file, threads, diffStyle, patchState, requestPatch, scrollRoot }: FileDiffProps) {
   const actions = useActions();
   const codeTheme = experimental_useCodeTheme();
   const changedLines = file.additions + file.deletions;
   const [collapsed, setCollapsed] = useState(() => changedLines > FOLD_ABOVE_LINES);
   const sectionRef = useRef<HTMLElement>(null);
+  // Folding a file scrolled part-way through would leave the scroll offset where it was, so the next
+  // file would show up already scrolled down by as much. Pull the folded file's header to the top.
+  const alignAfterFold = useRef(0);
+  useLayoutEffect(() => {
+    if (!collapsed || alignAfterFold.current === 0 || scrollRoot === null) return;
+    scrollRoot.scrollTop += alignAfterFold.current;
+    alignAfterFold.current = 0;
+  }, [collapsed, scrollRoot]);
+  const toggleCollapsed = () => {
+    if (!collapsed && sectionRef.current !== null && scrollRoot !== null) alignAfterFold.current = scrollToAlign(sectionRef.current, scrollRoot);
+    setCollapsed(!collapsed);
+  };
   const reason = noDiffReason(file);
   // The patch loads by itself once the file is near the screen; a folded file waits until unfolded.
   useNearScreen(sectionRef, scrollRoot, file.patch === null && reason === null && !collapsed && patchState === undefined, () => requestPatch(file.path));
@@ -205,7 +227,7 @@ export function FileDiff({ file, threads, diffStyle, patchState, requestPatch, s
   return (
     <section ref={sectionRef} className="border-b border-border" data-file-path={file.path}>
       <header className="sticky top-0 z-10 flex items-center gap-2 border-b border-border bg-background px-3 py-1.5">
-        <Button type="button" variant="ghost" size="sm" className="h-6 px-1" aria-label={collapsed ? "Expand file" : "Collapse file"} onClick={() => setCollapsed(!collapsed)}>
+        <Button type="button" variant="ghost" size="sm" className="h-6 px-1" aria-label={collapsed ? "Expand file" : "Collapse file"} onClick={toggleCollapsed}>
           <Icon name={collapsed ? "ChevronRight" : "ChevronDown"} className="size-3.5" />
         </Button>
         <span className="min-w-0 truncate font-mono text-xs" title={file.path}>
