@@ -3,6 +3,10 @@
  * `@pierre/diffs`, with comment threads on lines, ranges, files and the whole diff, and "Send to
  * agent", which hands the open ones to this thread.
  *
+ * AI review starts a review run; the runs not yet closed are listed under the toolbar. "Only files with
+ * comments" narrows the files to those with a comment thread, for going through a review's findings.
+ * "Clear review", shown once the view has threads or runs, deletes them all (after a confirm).
+ *
  * A tab opened with `params: { target }` starts on that view; otherwise on the uncommitted changes, or,
  * when there are none, on the changes committed since the base branch.
  */
@@ -13,14 +17,18 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 
 import type { RpcContract } from "../shared/contract";
-import { GENERAL_PATH, targetRequestSchema, type ReviewThread, type TargetRequest } from "../shared/types";
+import { GENERAL_PATH, targetRequestSchema, type ReviewThread, type Run, type TargetRequest } from "../shared/types";
 import { ReviewActionsProvider, useActions } from "./actions";
+import { AiReviewDialog } from "./ai-review-dialog";
+import { ClearReviewDialog } from "./clear-dialog";
 import { CommentComposer } from "./comment-composer";
 import { FileDiff, placeFileThreads, type DiffStyle } from "./file-diff";
 import { usePatchLoader } from "./patch-loader";
 import { targetLabel } from "./labels";
+import { RunsList } from "./runs-list";
 import { SendDialog } from "./send-dialog";
 import { ThreadCard } from "./thread-card";
 import { errorMessage, useReview, type ReadyView } from "./use-review";
@@ -29,6 +37,7 @@ import { errorMessage, useReview, type ReadyView } from "./use-review";
 export const PANEL_ACTION_ID = "review";
 
 const DIFF_STYLE_KEY = "diff-review:diff-style";
+const ONLY_COMMENTED_KEY = "diff-review:only-commented";
 
 function initialTarget(params: unknown): TargetRequest {
   const parsed = targetRequestSchema.safeParse((params as { target?: unknown } | null)?.target);
@@ -39,12 +48,25 @@ function hasTarget(params: unknown): boolean {
   return targetRequestSchema.safeParse((params as { target?: unknown } | null)?.target).success;
 }
 
-function storedDiffStyle(): DiffStyle {
+function stored(key: string): string | null {
   try {
-    return window.localStorage.getItem(DIFF_STYLE_KEY) === "split" ? "split" : "unified";
+    return window.localStorage.getItem(key);
   } catch {
-    return "unified";
+    return null;
   }
+}
+
+function store(key: string, value: string): void {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // A browser without storage just forgets the choice.
+  }
+}
+
+/** The files a view shows: all of them, or with `onlyCommented` those with a comment thread. */
+export function shownFiles<File extends { path: string }>(files: readonly File[], byFile: ReadonlyMap<string, readonly ReviewThread[]>, onlyCommented: boolean): readonly File[] {
+  return onlyCommented ? files.filter((file) => (byFile.get(file.path)?.length ?? 0) > 0) : files;
 }
 
 function pickerValue(target: TargetRequest): string {
@@ -81,7 +103,7 @@ export function ReviewPanel({ threadId, params }: PluginThreadPanelProps) {
   }
 
   return (
-    <ReviewActionsProvider sessionId={state.view.sessionId} putThread={review.putThread} refreshThreads={review.refreshThreads}>
+    <ReviewActionsProvider sessionId={state.view.sessionId} threadId={threadId} putThread={review.putThread} refreshThreads={review.refreshThreads}>
       <ReadyPanel
         threadId={threadId}
         view={state.view}
@@ -91,6 +113,8 @@ export function ReviewPanel({ threadId, params }: PluginThreadPanelProps) {
         onReload={() => void review.reload()}
         loadId={state.loadId}
         putPatches={review.putPatches}
+        putRun={review.putRun}
+        refreshThreads={review.refreshThreads}
       />
     </ReviewActionsProvider>
   );
@@ -109,6 +133,8 @@ function ReadyPanel({
   onReload,
   loadId,
   putPatches,
+  putRun,
+  refreshThreads,
 }: {
   threadId: string;
   view: ReadyView;
@@ -118,21 +144,27 @@ function ReadyPanel({
   onReload(): void;
   loadId: number;
   putPatches(patches: readonly { path: string; patch: string; truncated: boolean }[]): void;
+  putRun(run: Run): void;
+  refreshThreads(): Promise<void>;
 }) {
   const rpc = useRpc<RpcContract>();
   const actions = useActions();
-  const [diffStyle, setDiffStyle] = useState<DiffStyle>(storedDiffStyle);
+  const [diffStyle, setDiffStyle] = useState<DiffStyle>(() => (stored(DIFF_STYLE_KEY) === "split" ? "split" : "unified"));
+  const [onlyCommented, setOnlyCommented] = useState(() => stored(ONLY_COMMENTED_KEY) === "true");
   const [generalDraft, setGeneralDraft] = useState(false);
   const [sending, setSending] = useState(false);
+  const [reviewing, setReviewing] = useState(false);
+  const [clearing, setClearing] = useState(false);
 
   const toggleStyle = () => {
     const next = diffStyle === "split" ? "unified" : "split";
     setDiffStyle(next);
-    try {
-      window.localStorage.setItem(DIFF_STYLE_KEY, next);
-    } catch {
-      // A browser without storage just forgets the choice.
-    }
+    store(DIFF_STYLE_KEY, next);
+  };
+
+  const toggleOnlyCommented = (next: boolean) => {
+    setOnlyCommented(next);
+    store(ONLY_COMMENTED_KEY, String(next));
   };
 
   const byFile = useMemo(() => {
@@ -176,8 +208,10 @@ function ReadyPanel({
   const shown = view.target;
   const orphanCommit = shown.kind === "commit" && !view.commits.some((commit) => commit.sha === shown.sha) ? shown : null;
 
-  const additions = view.files.reduce((sum, file) => sum + file.additions, 0);
-  const deletions = view.files.reduce((sum, file) => sum + file.deletions, 0);
+  const files = shownFiles(view.files, byFile, onlyCommented);
+  const additions = files.reduce((sum, file) => sum + file.additions, 0);
+  const deletions = files.reduce((sum, file) => sum + file.deletions, 0);
+  const fileCount = onlyCommented ? `${files.length} of ${view.files.length} files` : `${files.length} file${files.length === 1 ? "" : "s"}`;
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background text-foreground">
@@ -205,6 +239,10 @@ function ReadyPanel({
         <Button type="button" variant="ghost" size="sm" onClick={toggleStyle} aria-pressed={diffStyle === "split"}>
           {diffStyle === "split" ? "Split" : "Unified"}
         </Button>
+        <label className="flex cursor-pointer items-center gap-1.5 px-1 text-xs">
+          <Switch checked={onlyCommented} onCheckedChange={toggleOnlyCommented} />
+          Only files with comments
+        </label>
         <Button type="button" variant="ghost" size="sm" onClick={onReload} disabled={refreshing} aria-label="Reload the diff">
           <Icon name={refreshing ? "Spinner" : "ArrowReloadHorizontal"} className="size-4" />
         </Button>
@@ -212,15 +250,27 @@ function ReadyPanel({
           <Icon name="MessageSquarePlus" className="size-4" />
           Comment on the diff
         </Button>
+        <Button type="button" variant="ghost" size="sm" className="gap-1" onClick={() => setReviewing(true)}>
+          <Icon name="Bot" className="size-4" />
+          AI review
+        </Button>
+        {view.threads.length > 0 || view.runs.length > 0 ? (
+          <Button type="button" variant="ghost" size="sm" className="gap-1" onClick={() => setClearing(true)}>
+            <Icon name="Trash2" className="size-4" />
+            Clear review
+          </Button>
+        ) : null}
         <Button type="button" size="sm" className="ml-auto gap-1" onClick={() => setSending(true)} disabled={open.length === 0}>
           <Icon name="Sent" className="size-4" />
           Send to agent{open.length === 0 ? "" : ` (${open.length})`}
         </Button>
       </div>
 
+      <RunsList runs={view.runs} threads={view.threads} onClosed={putRun} />
+
       <div ref={setScrollRoot} className="min-h-0 flex-1 overflow-y-auto">
         <p className="px-3 py-2 text-xs text-muted-foreground">
-          {view.files.length} file{view.files.length === 1 ? "" : "s"} · +{additions} −{deletions}
+          {fileCount} · +{additions} −{deletions}
           {view.ignoredPaths.length === 0 ? "" : ` · ${view.ignoredPaths.length} left out by the ignore patterns`}
           {view.truncated ? " · bb cut this diff short" : ""}
         </p>
@@ -255,12 +305,17 @@ function ReadyPanel({
           </section>
         ) : null}
 
-        {view.files.length === 0 ? <Centered>No changes to review here.</Centered> : null}
-        {view.files.map((file) => (
+        {view.files.length === 0 ? (
+          <Centered>No changes to review here.</Centered>
+        ) : files.length === 0 ? (
+          <Centered>No file in this view has comments. Turn off "Only files with comments" to see all {view.files.length} files.</Centered>
+        ) : null}
+        {files.map((file) => (
           <FileDiff
             key={file.path}
             file={file}
             threads={byFile.get(file.path) ?? []}
+            showThreadCount={!onlyCommented}
             diffStyle={diffStyle}
             patchState={patchLoader.states.get(file.path)}
             requestPatch={patchLoader.request}
@@ -269,7 +324,27 @@ function ReadyPanel({
         ))}
       </div>
 
-      <SendDialog open={sending} onOpenChange={setSending} sessionId={view.sessionId} threadId={threadId} threads={open} />
+      <SendDialog
+        open={sending}
+        onOpenChange={setSending}
+        sessionId={view.sessionId}
+        threadId={threadId}
+        environmentId={view.environmentId}
+        threads={open}
+        onStarted={putRun}
+      />
+      <ClearReviewDialog
+        open={clearing}
+        onOpenChange={setClearing}
+        sessionId={view.sessionId}
+        threadCount={view.threads.length}
+        runCount={view.runs.length}
+        onCleared={() => {
+          setGeneralDraft(false);
+          void refreshThreads();
+        }}
+      />
+      <AiReviewDialog open={reviewing} onOpenChange={setReviewing} sessionId={view.sessionId} threadId={threadId} environmentId={view.environmentId} onStarted={putRun} />
     </div>
   );
 }

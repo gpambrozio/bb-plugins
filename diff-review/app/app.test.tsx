@@ -85,6 +85,7 @@ const VIEW: Extract<ReviewView, { ok: true }> = {
   ],
   ignoredPaths: ["package-lock.json"],
   truncated: false,
+  runs: [],
   threads: [
     // Made on line 5 but its text is on line 2 now: shown there, as moved.
     thread({ id: "aaaaaa000001", body: "Why three?", startLine: 5, endLine: 5, severity: "question" }),
@@ -97,6 +98,12 @@ const VIEW: Extract<ReviewView, { ok: true }> = {
     }),
   ],
 };
+
+/** VIEW with a second, uncommented file, and any more threads given. */
+function withSecondFile(more: ReviewThread[] = []): Extract<ReviewView, { ok: true }> {
+  const second = { ...VIEW.files[0]!, path: "src/b.ts", additions: 2, deletions: 1, patch: PATCH.replaceAll("src/a.ts", "src/b.ts") };
+  return { ...VIEW, files: [...VIEW.files, second], threads: [...VIEW.threads, ...more] };
+}
 
 function render(rpc: Record<string, (input: never) => unknown> = {}) {
   return renderSlot(
@@ -145,11 +152,12 @@ describe("the Review tab", () => {
     const slot = render({ createThread: () => ({ thread: created }) });
     fireEvent.click(await screen.findByText("gutter +"));
     expect(screen.getByText("New comment on lines 1–2 (new side)")).toBeTruthy();
-    fireEvent.change(screen.getByPlaceholderText("Leave a comment. Markdown works."), { target: { value: "Rename b" } });
+    fireEvent.change(screen.getByPlaceholderText(/^Leave a comment\. Markdown works/), { target: { value: "Rename b" } });
     fireEvent.click(screen.getByRole("button", { name: "Comment" }));
     await screen.findByText("Rename b");
     expect(slot.inspection.rpcCalls.find((call) => call.method === "createThread")!.input).toEqual({
       sessionId: "ses_1",
+      threadId: "thr_1",
       filePath: "src/a.ts",
       side: "new",
       startLine: 1,
@@ -175,7 +183,7 @@ describe("the Review tab", () => {
   });
 
   it("re-reads the threads when the workspace's channel says they changed, and reloads on a diff signal", async () => {
-    const slot = render({ listThreads: () => ({ threads: [thread({ id: "cccccc000001", body: "From the agent's side" })] }) });
+    const slot = render({ listThreads: () => ({ threads: [thread({ id: "cccccc000001", body: "From the agent's side" })], runs: [] }) });
     await screen.findByText("Why three?");
     await slot.behavior.emitRealtime("environment:env_1", { kind: "threads", sessionId: "ses_1" });
     await screen.findByText("From the agent's side");
@@ -291,6 +299,164 @@ describe("the Review tab", () => {
     await slot.behavior.setRealtimeConnectionState("reconnecting");
     await slot.behavior.setRealtimeConnectionState("connected");
     await waitFor(() => expect(slot.inspection.rpcCalls.filter((call) => call.method === "getReview")).toHaveLength(2));
+  });
+
+  it("lists the AI runs, with the files a review changed, and closes one", async () => {
+    const run = {
+      id: "run000000001",
+      sessionId: "ses_1",
+      kind: "review" as const,
+      threadId: "thr_run",
+      reviewThreadId: null,
+      focus: "Security",
+      providerId: "claude-code",
+      model: "big",
+      status: "done" as const,
+      summary: "1 must-fix",
+      changedFiles: ["src/a.ts"],
+      createdAt: 1,
+      finishedAt: 2,
+    };
+    const slot = renderSlot(
+      { component: ReviewPanel },
+      { threadId: "thr_1", params: null },
+      { rpc: { getReview: () => ({ ...VIEW, runs: [run] }), closeRun: () => ({ ok: true }) } },
+    );
+    const row = (await screen.findByText("AI review · Security")).closest("li")!;
+    expect(within(row).getByText("Files changed in this workspace while it ran: src/a.ts")).toBeTruthy();
+    fireEvent.click(within(row).getByRole("button", { name: "Open thread" }));
+    expect(slot.inspection.navigateCalls[0]).toMatchObject({ method: "toThread", threadId: "thr_run" });
+    fireEvent.click(within(row).getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(screen.queryByText("AI review · Security")).toBeNull());
+    expect(slot.inspection.rpcCalls.find((call) => call.method === "closeRun")!.input).toEqual({ runId: "run000000001" });
+  });
+
+  it("starts an AI review with the chosen focus and the default agent", async () => {
+    const execution = { providerId: "claude-code", model: "big", reasoningLevel: "high" };
+    const slot = render({
+      runDefaults: () => ({ execution, message: null, permissionMode: "auto" }),
+      startReview: () => ({
+        run: { id: "run1", sessionId: "ses_1", kind: "review", threadId: "thr_run", reviewThreadId: null, focus: "Security", providerId: "claude-code", model: "big", status: "running", summary: null, changedFiles: null, createdAt: 1, finishedAt: null },
+      }),
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "AI review" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Security" }));
+    await screen.findByText(/in Approve for me mode/);
+    await waitFor(() => expect((screen.getByRole("button", { name: "Start review" }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByRole("button", { name: "Start review" }));
+    await screen.findByText("AI review · Security");
+    expect(slot.inspection.rpcCalls.find((call) => call.method === "startReview")!.input).toEqual({ sessionId: "ses_1", threadId: "thr_1", focuses: ["Security"], instructions: "", execution });
+  });
+
+  it("sends to a new thread when asked", async () => {
+    const execution = { providerId: "claude-code", model: "big", reasoningLevel: "high" };
+    const slot = render({
+      runDefaults: () => ({ execution, message: null, permissionMode: "auto" }),
+      fixInNewThread: () => ({
+        count: 3,
+        run: { id: "run2", sessionId: "ses_1", kind: "fix", threadId: "thr_fix", reviewThreadId: null, focus: null, providerId: "claude-code", model: "big", status: "running", summary: null, changedFiles: null, createdAt: 1, finishedAt: null },
+      }),
+    });
+    fireEvent.click(await screen.findByRole("button", { name: /Send to agent/ }));
+    fireEvent.click(await screen.findByRole("radio", { name: "A new thread…" }));
+    await waitFor(() => expect((screen.getByRole("button", { name: "Start a thread with 3" }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByRole("button", { name: "Start a thread with 3" }));
+    await screen.findByText("Fixes in a new thread");
+    expect(slot.inspection.rpcCalls.find((call) => call.method === "fixInNewThread")!.input).toEqual({
+      sessionId: "ses_1",
+      threadId: "thr_1",
+      reviewThreadIds: ["aaaaaa000001", "aaaaaa000002", "aaaaaa000003"],
+      note: "",
+      execution,
+    });
+    expect(slot.inspection.rpcCalls.some((call) => call.method === "send")).toBe(false);
+  });
+
+  it("counts each file's comment threads, open and closed, in its header", async () => {
+    render({ getReview: () => withSecondFile([thread({ id: "aaaaaa000005", body: "Done", status: "resolved" })]) });
+    await screen.findByText("2 files · +3 −2 · 1 left out by the ignore patterns");
+    const counts = screen.getAllByRole("img", { name: /comment thread/ });
+    expect(counts.map((count) => count.getAttribute("aria-label"))).toEqual(["4 comment threads: 3 open, 1 resolved or dismissed"]);
+    expect(counts[0]!.textContent).toBe("3 open·1 closed");
+  });
+
+  it("shows only the files with comments when the switch is on, and remembers it", async () => {
+    render({ getReview: () => withSecondFile() });
+    await screen.findByText("2 files · +3 −2 · 1 left out by the ignore patterns");
+    expect(screen.getByText("src/b.ts")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("switch", { name: "Only files with comments" }));
+    await screen.findByText("1 of 2 files · +1 −1 · 1 left out by the ignore patterns");
+    expect(screen.queryByText("src/b.ts")).toBeNull();
+    expect(screen.getByText("src/a.ts")).toBeTruthy();
+    // With the switch on every file shown has comments, so the headers drop the count.
+    expect(screen.queryByRole("img", { name: /comment thread/ })).toBeNull();
+    expect(window.localStorage.getItem("diff-review:only-commented")).toBe("true");
+
+    cleanup();
+    render({ getReview: () => withSecondFile() });
+    await screen.findByText("1 of 2 files · +1 −1 · 1 left out by the ignore patterns");
+    expect(screen.getByRole("switch", { name: "Only files with comments" }).getAttribute("aria-checked")).toBe("true");
+
+    fireEvent.click(screen.getByRole("switch", { name: "Only files with comments" }));
+    await screen.findByText("2 files · +3 −2 · 1 left out by the ignore patterns");
+    expect(window.localStorage.getItem("diff-review:only-commented")).toBe("false");
+  });
+
+  it("says so when the switch is on and no file has comments", async () => {
+    window.localStorage.setItem("diff-review:only-commented", "true");
+    // A comment on the whole diff is on no file: it stays, and no file is shown.
+    render({ getReview: () => ({ ...withSecondFile(), threads: VIEW.threads.filter((entry) => entry.filePath === "__general__") }) });
+    await screen.findByText('No file in this view has comments. Turn off "Only files with comments" to see all 2 files.');
+    expect(screen.getByText("0 of 2 files · +0 −0 · 1 left out by the ignore patterns")).toBeTruthy();
+    expect(screen.getByText("Add tests for this change")).toBeTruthy();
+    expect(screen.queryByText("src/a.ts")).toBeNull();
+  });
+
+  it("clears the whole review after a confirm that says it can't be undone", async () => {
+    const run = { id: "run000000001", sessionId: "ses_1", kind: "review" as const, threadId: "thr_run", reviewThreadId: null, focus: null, providerId: "claude-code", model: "big", status: "done" as const, summary: null, changedFiles: null, createdAt: 1, finishedAt: 2 };
+    let cleared = false;
+    const slot = renderSlot(
+      { component: ReviewPanel },
+      { threadId: "thr_1", params: null },
+      {
+        rpc: {
+          getReview: () => ({ ...VIEW, runs: [run] }),
+          clearReview: () => {
+            cleared = true;
+            return { deletedThreads: 4, closedRuns: 1 };
+          },
+          listThreads: () => (cleared ? { threads: [], runs: [] } : { threads: VIEW.threads, runs: [run] }),
+        },
+      },
+    );
+    await screen.findByText("Why three?");
+    expect(screen.getAllByRole("listitem")).toHaveLength(1);
+
+    // Cancel keeps everything.
+    fireEvent.click(screen.getByRole("button", { name: "Clear review" }));
+    let dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("This deletes 4 comment threads in this view, yours and the AI's, open or closed, and closes 1 AI run, archiving its thread in bb. It can't be undone.")).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(slot.inspection.rpcCalls.some((call) => call.method === "clearReview")).toBe(false);
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear review" }));
+    dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Clear review" }));
+    await waitFor(() => expect(screen.queryByText("Why three?")).toBeNull());
+    expect(slot.inspection.rpcCalls.find((call) => call.method === "clearReview")!.input).toEqual({ sessionId: "ses_1" });
+    expect(screen.queryByRole("listitem")).toBeNull(); // the run's row
+    expect(screen.queryByText("About the whole diff")).toBeNull();
+    // With nothing left there is nothing to clear.
+    expect(screen.queryByRole("button", { name: "Clear review" })).toBeNull();
+    expect(screen.getByTestId("patch")).toBeTruthy();
+  });
+
+  it("offers no clear before the view has comments or runs", async () => {
+    render({ getReview: () => ({ ...VIEW, threads: [] }) });
+    await screen.findByText("1 file · +1 −1 · 1 left out by the ignore patterns");
+    expect(screen.queryByRole("button", { name: "Clear review" })).toBeNull();
   });
 
   it("says why there is nothing to review", async () => {

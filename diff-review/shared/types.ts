@@ -128,6 +128,58 @@ export type DiffFile = z.infer<typeof diffFileSchema>;
 export const commitSchema = z.object({ sha: z.string(), shortSha: z.string(), subject: z.string() }).strict();
 export type Commit = z.infer<typeof commitSchema>;
 
+/** diffity's review focus chips; a review run may also get free-form instructions. */
+export const REVIEW_FOCUSES = ["Security", "Performance", "Correctness", "Naming", "Tests", "Types"] as const;
+
+/** The reasoning levels bb's thread spawn takes. */
+export const reasoningLevelSchema = z.enum(["none", "low", "medium", "high", "xhigh", "max", "ultra", "ultracode"]);
+
+/** The provider, model and reasoning a spawned thread runs with, as bb's provider picker gives them. */
+export const executionSchema = z
+  .object({
+    providerId: z.string().min(1).max(128),
+    model: z.string().max(256),
+    reasoningLevel: reasoningLevelSchema,
+    serviceTier: z.string().max(128).optional(),
+  })
+  .strict();
+export type Execution = z.infer<typeof executionSchema>;
+
+/**
+ * An AI run the plugin started, in a visible thread of its own in the reviewed workspace: a `review`
+ * that leaves comments, a `mention` answering one thread an agent was @-mentioned in, or a `fix` that
+ * got comments sent to a new thread.
+ */
+export const runKindSchema = z.enum(["review", "mention", "fix"]);
+export type RunKind = z.infer<typeof runKindSchema>;
+
+export const runStatusSchema = z.enum(["running", "done", "failed", "closed"]);
+export type RunStatus = z.infer<typeof runStatusSchema>;
+
+export const runSchema = z
+  .object({
+    id: z.string(),
+    sessionId: z.string(),
+    kind: runKindSchema,
+    /** The run's bb thread; null when it could not be started. */
+    threadId: z.string().nullable(),
+    /** The comment thread a mention run answers. */
+    reviewThreadId: z.string().nullable(),
+    /** A review run's focus, as the user picked it. */
+    focus: z.string().nullable(),
+    providerId: z.string(),
+    model: z.string().nullable(),
+    status: runStatusSchema,
+    /** The agent's last message when its turn ended, or why the run could not start. */
+    summary: z.string().nullable(),
+    /** Files that changed in the workspace while a review run ran; null before it ends. */
+    changedFiles: z.array(z.string()).nullable(),
+    createdAt: z.number(),
+    finishedAt: z.number().nullable(),
+  })
+  .strict();
+export type Run = z.infer<typeof runSchema>;
+
 export const reviewViewSchema = z.discriminatedUnion("ok", [
   z
     .object({
@@ -145,6 +197,8 @@ export const reviewViewSchema = z.discriminatedUnion("ok", [
       ignoredPaths: z.array(z.string()),
       truncated: z.boolean(),
       threads: z.array(reviewThreadSchema),
+      /** The session's AI runs not yet closed, newest first. */
+      runs: z.array(runSchema),
     })
     .strict(),
   z.object({ ok: z.literal(false), message: z.string() }).strict(),
@@ -158,7 +212,7 @@ export function environmentChannel(environmentId: string): string {
 
 /** What a realtime signal on an environment channel says changed. */
 export const realtimeSignalSchema = z.discriminatedUnion("kind", [
-  /** A thread or comment in this session changed; re-read the threads. */
+  /** A thread, comment or run in this session changed; re-read them. */
   z.object({ kind: z.literal("threads"), sessionId: z.string() }).strict(),
   /** An agent's turn in this workspace ended; the files may have changed. */
   z.object({ kind: z.literal("diff") }).strict(),

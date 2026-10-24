@@ -5,6 +5,32 @@ Notable changes to `diff-review`. The other plugins in this repository version s
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.2.0
+
+### Added
+
+- **AI review.** Ask an agent to review the diff, with an optional focus (security, performance,
+  correctness, naming, tests, types) and your own instructions. It runs in a thread of its own in the
+  same workspace, under the thread being reviewed, which you can watch and steer, and leaves its
+  comments in the Review tab as it goes, with a summary comment on the whole diff.
+- **Mention an agent in a comment.** Writing @claude, @codex or @opencode in a comment or a reply
+  gets that agent's answer in the same comment thread, from a thread of its own; mentioning it again
+  in that comment thread continues the same conversation.
+- **Fix in a new thread.** Send to agent can now start a new thread in the same workspace instead of
+  sending to the thread under review, with the provider and model you pick.
+- **The runs, listed in the tab**, with a link to each thread and Close, which archives it. An AI review
+  that ended while files in the workspace changed lists them, since bb cannot stop a review from
+  editing.
+- **Settings** for the provider and model AI runs start with (Claude Code and its default model unless
+  you change them; each run can pick another) and for how they run: *Approve for me* unless you choose
+  *Accept edits*.
+- **Runs appear under the thread they review**, and their reports to it say that nothing needs doing.
+- **Only files with comments.** A switch in the toolbar hides the files without comments, so you can go
+  through a review's findings file by file; the tab remembers it. With the switch off, each file's
+  header shows how many comment threads it has, open and closed.
+- **Clear review.** Deletes every comment thread in the view and closes its AI runs, archiving their
+  threads, so you can start over. It asks first, since it can't be undone.
+
 ## 0.1.0
 
 ### Added

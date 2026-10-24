@@ -1,10 +1,12 @@
 import { fileURLToPath } from "node:url";
 
-import { createFakePluginHost, experimental_scanPublicSdkOnly, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
-import { describe, expect, it } from "vitest";
+import { createFakePluginHost, experimental_scanPublicSdkOnly, makePluginAgentConfigurationContext, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
+import { describe, expect, it, vi } from "vitest";
 
 import plugin from "./server";
-import type { ReviewThread, ReviewView } from "./shared/types";
+import { REPORT_LINE } from "./server/run-prompts";
+import { TOOL_NAMES } from "./server/tool-names";
+import type { ReviewThread, ReviewView, Run } from "./shared/types";
 
 const ENV = "env_1";
 const THREAD = "thr_review";
@@ -42,6 +44,7 @@ interface Setup {
   threads?: Record<string, { environmentId: string | null; providerId?: string }>;
   turnStarts?: number[];
   sendFails?: boolean;
+  spawnFails?: boolean;
   diffityignore?: string;
   /** Views (`uncommitted`, `branch_committed`, …) whose diff has no files. */
   emptyTargets?: string[];
@@ -50,8 +53,13 @@ interface Setup {
 async function setup(options: Setup = {}) {
   const threads = options.threads ?? { [THREAD]: { environmentId: ENV } };
   const turnStarts = options.turnStarts ?? [];
+  // What the workspace holds; a test edits it to play a run that changes files.
+  const workspace = { extraFile: false };
+  let spawned = 0;
   const { bb, harness } = createFakePluginHost({
     pluginId: "diff-review",
+    // The skill bb imports from `skills/diff-review`, which `configure` names.
+    agentSkillIds: ["diff-review"],
     sdk: {
       threads: {
         get: async ({ threadId }: { threadId: string }) => {
@@ -63,6 +71,13 @@ async function setup(options: Setup = {}) {
           if (options.sendFails === true) throw new Error("thread is archived");
           return { ok: true as const, delivery: "sent" as const };
         },
+        spawn: async () => {
+          if (options.spawnFails === true) throw new Error("provider not installed");
+          const id = `thr_run_${++spawned}`;
+          threads[id] = { environmentId: ENV };
+          return makeThreadResponse({ id, environmentId: ENV, providerId: "claude-code" });
+        },
+        archive: async () => ({ ok: true as const }),
         events: {
           list: async () =>
             turnStarts.map((createdAt, index) => ({
@@ -104,6 +119,9 @@ async function setup(options: Setup = {}) {
             { path: "src/a.ts", previousPath: null, changeKind: "modified" as const, additions: 1, deletions: 1, binary: false, loadMode: "auto" as const, origin: "tracked" as const },
             { path: "package-lock.json", previousPath: null, changeKind: "modified" as const, additions: 9, deletions: 9, binary: false, loadMode: "auto" as const, origin: "tracked" as const },
             { path: "big.txt", previousPath: null, changeKind: "added" as const, additions: 9000, deletions: 0, binary: false, loadMode: "on_demand" as const, origin: "untracked" as const },
+            ...(workspace.extraFile
+              ? [{ path: "src/new.ts", previousPath: null, changeKind: "added" as const, additions: 3, deletions: 0, binary: false, loadMode: "auto" as const, origin: "untracked" as const }]
+              : []),
           ],
           initialPatches: (options.emptyTargets ?? []).includes(query.target) ? [] : [{ path: "src/a.ts", patch: PATCH, truncated: false }],
           mergeBaseRef: null,
@@ -113,6 +131,17 @@ async function setup(options: Setup = {}) {
         diffPatch: async ({ paths }: { paths: string[] }) => ({
           outcome: "available" as const,
           patches: paths.map((path) => ({ path, patch: `patch of ${path}`, truncated: false })),
+        }),
+      },
+      providers: {
+        models: async () => ({
+          modelLoadError: null,
+          models: [
+            { id: "small", model: "small", displayName: "Small", description: "", isDefault: false, defaultReasoningEffort: "low" as const, supportedReasoningEfforts: [] },
+            { id: "big", model: "big", displayName: "Big", description: "", isDefault: true, defaultReasoningEffort: "high" as const, supportedReasoningEfforts: [] },
+          ],
+          permissionCeiling: "full" as const,
+          providers: [],
         }),
       },
       files: {
@@ -131,6 +160,7 @@ async function setup(options: Setup = {}) {
   const comment = async (sessionId: string, body = "Why 3?") =>
     ((await rpc("createThread", {
       sessionId,
+      threadId: THREAD,
       filePath: "src/a.ts",
       side: "new",
       startLine: 2,
@@ -139,7 +169,7 @@ async function setup(options: Setup = {}) {
       anchorContent: "const b = 3;",
       body,
     })) as { thread: ReviewThread }).thread;
-  return { bb, harness, rpc, view, comment, threads, turnStarts };
+  return { bb, harness, rpc, view, comment, threads, turnStarts, workspace };
 }
 
 describe("the Review tab's view", () => {
@@ -351,6 +381,256 @@ describe("sending to the agent and its answers", () => {
       { channel: `environment:${ENV}`, payload: { kind: "threads", sessionId } },
       { channel: `environment:${ENV}`, payload: { kind: "diff" } },
     ]);
+  });
+});
+
+describe("AI runs", () => {
+  type RunResult = { run: Run };
+  const execution = { providerId: "claude-code", model: "big", reasoningLevel: "high" };
+  const sessionState = async (rpc: (method: string, input?: unknown) => Promise<unknown>, sessionId: string) =>
+    (await rpc("listThreads", { sessionId })) as { threads: ReviewThread[]; runs: Run[] };
+  const tool = (harness: Awaited<ReturnType<typeof setup>>["harness"], name: string, input: unknown, threadId: string) =>
+    harness.behavior.callAgentTool(name, input, { threadId, projectId: "proj_1" });
+  const textOf = (result: unknown) =>
+    typeof result === "string" ? result : (result as { content: { text: string }[] }).content.map((part) => part.text).join("");
+  const isError = (result: unknown) => typeof result !== "string" && (result as { isError?: boolean }).isError === true;
+
+  it("starts the pickers on the settings' provider and its default model", async () => {
+    const { rpc } = await setup();
+    expect(await rpc("runDefaults", { threadId: THREAD })).toEqual({
+      execution: { providerId: "claude-code", model: "big", reasoningLevel: "high" },
+      message: null,
+      permissionMode: "auto",
+    });
+  });
+
+  it("starts an AI review as a child of the thread under review, in its workspace, in Approve for me mode", async () => {
+    const { harness, rpc, view } = await setup();
+    const { sessionId } = await view();
+    const { run } = (await rpc("startReview", { sessionId, threadId: THREAD, focuses: ["Security", "Tests"], instructions: "Check the auth path.", execution })) as RunResult;
+    expect(run).toMatchObject({ kind: "review", focus: "Security, Tests", status: "running", threadId: "thr_run_1", providerId: "claude-code", model: "big" });
+    const spawn = harness.inspection.sdk.callsTo("threads.spawn")[0]![0] as Record<string, unknown>;
+    expect(spawn).toMatchObject({
+      projectId: "proj_1",
+      title: "Review: Security, Tests",
+      environment: { type: "reuse", environmentId: ENV },
+      providerId: "claude-code",
+      model: "big",
+      reasoningLevel: "high",
+      permissionMode: "auto",
+      parentThreadId: THREAD,
+      pluginMetadata: { diffReviewRunId: run.id },
+    });
+    expect(spawn.visibility).toBeUndefined();
+    expect(spawn.prompt).toContain("- Focus: Security, Tests");
+    expect(spawn.prompt).toContain("Check the auth path.");
+    // Its final message, which bb posts to the parent, says it is a report.
+    expect(spawn.prompt).toContain(`Start your final message with this line, exactly: "${REPORT_LINE}"`);
+    expect((await view()).runs.map((row) => row.id)).toEqual([run.id]);
+  });
+
+  it("gives the tools only to run threads, and the skill to every thread", async () => {
+    const { harness } = await setup();
+    const runThread = await harness.behavior.resolveAgentConfiguration(makePluginAgentConfigurationContext({ pluginMetadata: { diffReviewRunId: "0123456789ab" } }));
+    expect(runThread.tools.map((entry) => entry.name).sort()).toEqual([...TOOL_NAMES].sort());
+    expect(runThread.skills).toEqual(["diff-review"]);
+    const other = await harness.behavior.resolveAgentConfiguration(makePluginAgentConfigurationContext());
+    expect(other.tools).toEqual([]);
+    expect(other.skills).toEqual(["diff-review"]);
+  });
+
+  it("lets a review run comment on lines shown in the diff, and says which are when they are not", async () => {
+    const { harness, rpc, view } = await setup();
+    const { sessionId } = await view();
+    const { run } = (await rpc("startReview", { sessionId, threadId: THREAD, focuses: [], instructions: "", execution })) as RunResult;
+    const ok = await tool(harness, "diff_review_comment", { file: "src/a.ts", startLine: 2, severity: "must-fix", body: "b must stay 2" }, run.threadId!);
+    expect(textOf(ok)).toMatch(/^Added [0-9a-f]{12} on src\/a.ts:2 \(new side\)\.$/);
+    const bad = await tool(harness, "diff_review_comment", { file: "src/a.ts", startLine: 9, body: "x" }, run.threadId!);
+    expect(isError(bad)).toBe(true);
+    expect(textOf(bad)).toContain("Lines shown there: 1-2.");
+    const gone = await tool(harness, "diff_review_comment", { file: "nope.ts", startLine: 1, body: "x" }, run.threadId!);
+    expect(textOf(gone)).toContain("nope.ts is not in the diff under review.");
+    await tool(harness, "diff_review_general_comment", { body: "One must-fix." }, run.threadId!);
+
+    const { threads } = await sessionState(rpc, sessionId);
+    expect(threads.map((row) => [row.filePath, row.startLine, row.severity, row.anchorContent, row.comments[0]!.authorType])).toEqual([
+      ["src/a.ts", 2, "must-fix", "const b = 3;", "agent"],
+      ["__general__", 0, null, null, "agent"],
+    ]);
+    // The thread under review is not a review run: it answers, it does not comment.
+    expect(isError(await tool(harness, "diff_review_comment", { file: "src/a.ts", startLine: 2, body: "x" }, THREAD))).toBe(true);
+    // A review run may resolve any thread of its review, through the tool or the command.
+    const general = threads[1]!;
+    const resolved = await harness.behavior.runCli(["resolve", general.id, "Summary", "posted."], { threadId: run.threadId! });
+    expect(resolved.exitCode).toBe(0);
+  });
+
+  it("closes a review run when its turn ends, listing files that changed while it ran", async () => {
+    const { harness, rpc, view, workspace } = await setup();
+    const { sessionId } = await view();
+    const { run } = (await rpc("startReview", { sessionId, threadId: THREAD, focuses: [], instructions: "", execution })) as RunResult;
+    workspace.extraFile = true;
+    await harness.behavior.emitThreadEvent("thread.idle", { thread: makeThreadResponse({ id: run.threadId!, environmentId: ENV }), lastAssistantText: "1 must-fix" });
+    const [finished] = (await sessionState(rpc, sessionId)).runs;
+    expect(finished).toMatchObject({ status: "done", summary: "1 must-fix", changedFiles: ["src/new.ts"] });
+  });
+
+  it("answers an @-mention in a thread of the mentioned agent, and sends a later mention to the same thread", async () => {
+    const { harness, rpc, view, comment } = await setup();
+    const { sessionId } = await view();
+    const thread = await comment(sessionId, "@claude is this right?");
+    await vi.waitFor(() => expect(harness.inspection.sdk.callsTo("threads.spawn")).toHaveLength(1));
+    const spawn = harness.inspection.sdk.callsTo("threads.spawn")[0]![0] as Record<string, unknown>;
+    expect(spawn).toMatchObject({ providerId: "claude-code", permissionMode: "auto", parentThreadId: THREAD, title: "Review: src/a.ts:2 (new side)" });
+    expect(spawn.prompt).toContain(REPORT_LINE);
+    expect(spawn.prompt).toContain(`- Thread: \`${thread.id}\``);
+    await vi.waitFor(async () => expect((await sessionState(rpc, sessionId)).threads[0]!.delivery).toMatchObject({ state: "sent", threadId: "thr_run_1" }));
+
+    const reply = await tool(harness, "diff_review_reply", { threadId: thread.id, text: "Yes: b is 3 on purpose." }, "thr_run_1");
+    expect(isError(reply)).toBe(false);
+    const state = await sessionState(rpc, sessionId);
+    expect(state.threads[0]!.comments.at(-1)).toMatchObject({ authorType: "agent", body: "Yes: b is 3 on purpose." });
+    expect(state.runs).toHaveLength(1);
+    expect(state.runs[0]).toMatchObject({ kind: "mention", reviewThreadId: thread.id });
+
+    await rpc("addComment", { reviewThreadId: thread.id, body: "@claude and the old value?" });
+    await vi.waitFor(() => expect(harness.inspection.sdk.callsTo("threads.send")).toHaveLength(1));
+    expect(harness.inspection.sdk.callsTo("threads.spawn")).toHaveLength(1);
+    expect((harness.inspection.sdk.callsTo("threads.send")[0]![0] as { threadId: string }).threadId).toBe("thr_run_1");
+  });
+
+  it("starts a new mention run when the earlier one's thread is gone", async () => {
+    const context = await setup();
+    const { harness, rpc, view, comment } = context;
+    const { sessionId } = await view();
+    const thread = await comment(sessionId, "@claude why?");
+    await vi.waitFor(() => expect(harness.inspection.sdk.callsTo("threads.spawn")).toHaveLength(1));
+    harness.sdk.stub("threads.send", async () => {
+      throw new Error("thread is archived");
+    });
+    await rpc("addComment", { reviewThreadId: thread.id, body: "@claude still there?" });
+    await vi.waitFor(() => expect(harness.inspection.sdk.callsTo("threads.spawn")).toHaveLength(2));
+    await vi.waitFor(async () => expect((await sessionState(rpc, sessionId)).runs.map((run) => run.threadId)).toEqual(["thr_run_2"]));
+  });
+
+  it("does not start a run for a mention inside code", async () => {
+    const { harness, view, comment } = await setup();
+    const { sessionId } = await view();
+    await comment(sessionId, "Rename `@claude` here");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(harness.inspection.sdk.callsTo("threads.spawn")).toHaveLength(0);
+  });
+
+  it("fixes in a new thread: the comments go there, and only that thread may answer them", async () => {
+    const { harness, rpc, view, comment } = await setup();
+    const { sessionId } = await view();
+    const thread = await comment(sessionId, "Use a constant");
+    const result = (await rpc("fixInNewThread", { sessionId, threadId: THREAD, reviewThreadIds: [thread.id], note: "Small please", execution })) as { run: Run; count: number };
+    expect(result).toMatchObject({ count: 1, run: { kind: "fix", threadId: "thr_run_1", status: "running" } });
+    const spawn = harness.inspection.sdk.callsTo("threads.spawn")[0]![0] as { prompt: string; title: string; parentThreadId?: string };
+    expect(spawn.title).toBe("Review fixes: 1 comment");
+    expect(spawn.parentThreadId).toBe(THREAD);
+    expect(spawn.prompt).toContain(REPORT_LINE);
+    expect(spawn.prompt).toContain(`### Thread \`${thread.id}\``);
+    expect(spawn.prompt).toContain("Small please");
+    const refused = await harness.behavior.runCli(["resolve", thread.id, "Fixed."], { threadId: THREAD });
+    expect(refused.stderr).toContain("was not sent to this thread");
+    const resolved = await tool(harness, "diff_review_resolve", { threadId: thread.id, text: "Fixed: added a constant." }, "thr_run_1");
+    expect(isError(resolved)).toBe(false);
+    expect((await sessionState(rpc, sessionId)).threads[0]!.status).toBe("resolved");
+  });
+
+  it("starts runs in Accept edits mode when the settings say so", async () => {
+    const { harness, rpc, view } = await setup();
+    await harness.behavior.setSettings({ aiPermissionMode: "accept-edits" });
+    const { sessionId } = await view();
+    await rpc("startReview", { sessionId, threadId: THREAD, focuses: [], instructions: "", execution });
+    expect(harness.inspection.sdk.callsTo("threads.spawn")[0]![0]).toMatchObject({ permissionMode: "accept-edits" });
+    expect(((await rpc("runDefaults", { threadId: THREAD })) as { permissionMode: string }).permissionMode).toBe("accept-edits");
+  });
+
+  it("starts a run without a parent when the tab's thread works in another workspace", async () => {
+    const { harness, rpc, view } = await setup({ threads: { [THREAD]: { environmentId: ENV }, thr_elsewhere: { environmentId: "env_2" } } });
+    const { sessionId } = await view();
+    await rpc("startReview", { sessionId, threadId: "thr_elsewhere", focuses: [], instructions: "", execution });
+    expect((harness.inspection.sdk.callsTo("threads.spawn")[0]![0] as { parentThreadId?: string }).parentThreadId).toBeUndefined();
+  });
+
+  it("tells a thread with run children that their completion notices are reports, and no other thread", async () => {
+    const { harness, rpc, view } = await setup();
+    const { sessionId } = await view();
+    const instructions = harness.inspection.registrations.instructionProvider!;
+    expect(instructions({ threadId: THREAD, projectId: "proj_1" })).toBeNull();
+    await rpc("startReview", { sessionId, threadId: THREAD, focuses: [], instructions: "", execution });
+    expect(instructions({ threadId: THREAD, projectId: "proj_1" })).toContain("are status reports");
+    expect(instructions({ threadId: "thr_run_1", projectId: "proj_1" })).toBeNull();
+  });
+
+  it("never starts a run from an agent's comment, so a run's report cannot set off another run", async () => {
+    const { harness, rpc, view, comment } = await setup();
+    const { sessionId } = await view();
+    const thread = await comment(sessionId, "Why?");
+    await rpc("send", { sessionId, threadId: THREAD, reviewThreadIds: [thread.id], note: "" });
+    await harness.behavior.runCli(["reply", thread.id, "Ask", "@claude", "about", "it."], { threadId: THREAD });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(harness.inspection.sdk.callsTo("threads.spawn")).toHaveLength(0);
+  });
+
+  it("shows a run whose thread could not start as failed, with the reason", async () => {
+    const { rpc, view } = await setup({ spawnFails: true });
+    const { sessionId } = await view();
+    const { run } = (await rpc("startReview", { sessionId, threadId: THREAD, focuses: [], instructions: "", execution })) as RunResult;
+    expect(run).toMatchObject({ status: "failed", threadId: null, summary: "Could not start the thread: provider not installed" });
+  });
+
+  it("closes a run by archiving its thread", async () => {
+    const { harness, rpc, view } = await setup();
+    const { sessionId } = await view();
+    const { run } = (await rpc("startReview", { sessionId, threadId: THREAD, focuses: [], instructions: "", execution })) as RunResult;
+    await rpc("closeRun", { runId: run.id });
+    expect(harness.inspection.sdk.callsTo("threads.archive")[0]![0]).toMatchObject({ threadId: run.threadId });
+    expect((await sessionState(rpc, sessionId)).runs).toEqual([]);
+  });
+
+  it("clears a review: every thread of the view goes, its runs close and their threads are archived, and the runs lose their rights", async () => {
+    const { harness, rpc, view, comment } = await setup();
+    const { sessionId } = await view();
+    const other = await view({ kind: "branch" });
+    const kept = await comment(other.sessionId, "Another view's comment");
+    const { run: review } = (await rpc("startReview", { sessionId, threadId: THREAD, focuses: [], instructions: "", execution })) as RunResult;
+    await tool(harness, "diff_review_general_comment", { body: "Looks fine." }, review.threadId!);
+    const mine = await comment(sessionId, "Use a constant");
+    await rpc("setStatus", { reviewThreadId: mine.id, status: "resolved" });
+    const fix = await comment(sessionId, "Rename b");
+    const { run: fixRun } = (await rpc("fixInNewThread", { sessionId, threadId: THREAD, reviewThreadIds: [fix.id], note: "", execution })) as { run: Run };
+
+    expect(await rpc("clearReview", { sessionId })).toEqual({ deletedThreads: 3, closedRuns: 2 });
+    expect(await sessionState(rpc, sessionId)).toEqual({ threads: [], runs: [] });
+    expect(harness.inspection.sdk.callsTo("threads.archive").map((call) => (call[0] as { threadId: string }).threadId).sort()).toEqual([review.threadId, fixRun.threadId].sort());
+    // Another view's review is not this one.
+    expect((await sessionState(rpc, other.sessionId)).threads.map((row) => row.id)).toEqual([kept.id]);
+
+    // A run still working when its thread is archived can no longer comment or answer.
+    expect(isError(await tool(harness, "diff_review_general_comment", { body: "Late." }, review.threadId!))).toBe(true);
+    expect(isError(await tool(harness, "diff_review_resolve", { threadId: fix.id, text: "Fixed." }, fixRun.threadId!))).toBe(true);
+    expect((await sessionState(rpc, sessionId)).threads).toEqual([]);
+    // The parent keeps the notice instructions: bb may still report the archived runs to it.
+    expect(harness.inspection.registrations.instructionProvider!({ threadId: THREAD, projectId: "proj_1" })).toContain("are status reports");
+
+    // The tab starts fresh: new comments and runs work as before.
+    await comment(sessionId, "After the clear");
+    expect((await sessionState(rpc, sessionId)).threads).toHaveLength(1);
+  });
+
+  it("lets a review run comment through the command too, on the whole diff with --general", async () => {
+    const { harness, rpc, view } = await setup();
+    const { sessionId } = await view();
+    const { run } = (await rpc("startReview", { sessionId, threadId: THREAD, focuses: [], instructions: "", execution })) as RunResult;
+    const general = await harness.behavior.runCli(["comment", "--general", "No", "issues", "found."], { threadId: run.threadId! });
+    expect(general).toMatchObject({ exitCode: 0 });
+    const line = await harness.behavior.runCli(["comment", "src/a.ts", "--line", "1", "--severity", "nit", "Name", "it", "better."], { threadId: run.threadId! });
+    expect(line.stdout).toContain("on src/a.ts:1 (new side)");
+    expect((await sessionState(rpc, sessionId)).threads.map((row) => row.comments[0]!.body)).toEqual(["No issues found.", "Name it better."]);
   });
 });
 
