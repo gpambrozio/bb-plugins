@@ -57,12 +57,27 @@ through `threads.send` with `queue-if-active`, so it waits for a running turn in
 the agent that wrote the code has the context. *A new thread…* in the send dialog starts a fix run
 instead.
 
-**AI runs are visible threads in the reviewed workspace** (`threads.spawn` with `environment: { type:
-"reuse" }`), never children of the user's thread (a child would post into it when it finishes), never
-hidden (the owner watches, steers and approves there, and hidden helpers bring the reload problems of
-issue #11). They spawn in `accept-edits`, bb's least privileged mode, with the provider and model from
-the per-run picker, seeded from the settings (Claude Code unless changed); a mention runs the
-mentioned agent at its default model and reasoning. A run's row is written before its thread is
+**AI runs are visible child threads of the thread under review**, in its workspace (`threads.spawn`
+with `parentThreadId` and `environment: { type: "reuse" }`), so they sit under it in the sidebar. The
+owner chose this over the plan's root-level threads after trying them. The parent is the thread whose
+Review tab started the run (for a mention, the tab the comment was written in), and only while it
+still works in the reviewed workspace; otherwise the run starts at the root. They are never hidden
+(the owner watches, steers and approves there, and hidden helpers bring the reload problems of issue
+#11). They run in the `aiPermissionMode` setting's mode, **`auto` ("Approve for me") by default**:
+`accept-edits` asked the owner to approve most of a review's commands. The provider and model come
+from the per-run picker, seeded from the settings (Claude Code unless changed); a mention runs the
+mentioned agent at its default model and reasoning.
+
+**A child reports to its parent, and that must not turn into work.** bb posts every finished turn of
+a child to its parent (`[bb system] @thread:<child> completed: <its final message>`, and a
+"needs help" notice when a child waits on an approval), which wakes the parent's agent. Three things
+keep the parent from taking a report for a request: every run prompt makes the final message open with
+`REPORT_LINE` ("Diff Review status report — no action needed…"), which works on a session already
+running; `contributeInstructions` tells a thread with run children (`runs.parent_thread_id`) what the
+notices are, from its next session; and the skill says the same. Nothing can loop: the plugin sends
+nothing to the parent when a run ends, agents cannot start runs (only the tab's buttons and a
+*user's* @-mention do; an agent's comment never triggers a mention), and the parent's agent can only
+answer threads already sent to it. A notice still costs the parent a short turn. A run's row is written before its thread is
 spawned, so a thread bb refuses leaves a *failed* run that says why. **Close** archives the thread.
 A run ends on its thread's `thread.idle` / `thread.failed`, keeping the agent's last message as the
 summary; it is never parsed for answers.
@@ -144,7 +159,8 @@ Move to `experimental_tab` when the plugin re-pins to an SDK that has it (and ra
 ## Invariants
 
 - `MIGRATIONS` is append-only; bb checks each applied statement's hash. 0.1.0 shipped indexes 0–6;
-  0.2.0 added the `runs` table at 7–9.
+  0.2.0 added the `runs` table at 7–9 and its `parent_thread_id` at 10 (an `ALTER`, since 7 was
+  already applied on installs of the branch).
 - The app never imports the SDK root at run time: the contract is a type import, the schemas and the
   channel name live in `shared/types.ts`.
 - `@pierre/diffs` stays a devDependency: bb provides it.

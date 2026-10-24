@@ -85,7 +85,7 @@ export function ReviewPanel({ threadId, params }: PluginThreadPanelProps) {
   }
 
   return (
-    <ReviewActionsProvider sessionId={state.view.sessionId} putThread={review.putThread} refreshThreads={review.refreshThreads}>
+    <ReviewActionsProvider sessionId={state.view.sessionId} threadId={threadId} putThread={review.putThread} refreshThreads={review.refreshThreads}>
       <ReadyPanel
         threadId={threadId}
         view={state.view}

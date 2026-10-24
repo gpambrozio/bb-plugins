@@ -11,8 +11,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - **AI review.** Ask an agent to review the diff, with an optional focus (security, performance,
   correctness, naming, tests, types) and your own instructions. It runs in a thread of its own in the
-  same workspace, which you can watch and steer, and leaves its comments in the Review tab as it goes,
-  with a summary comment on the whole diff.
+  same workspace, under the thread being reviewed, which you can watch and steer, and leaves its
+  comments in the Review tab as it goes, with a summary comment on the whole diff.
 - **Mention an agent in a comment.** Writing @claude, @codex or @opencode in a comment or a reply
   gets that agent's answer in the same comment thread, from a thread of its own; mentioning it again
   in that comment thread continues the same conversation.
@@ -21,8 +21,10 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **The runs, listed in the tab**, with a link to each thread and Close, which archives it. An AI review
   that ended while files in the workspace changed lists them, since bb cannot stop a review from
   editing.
-- **Settings** for the provider and model AI runs start with: Claude Code and its default model unless
-  you change them; each run can pick another.
+- **Settings** for the provider and model AI runs start with (Claude Code and its default model unless
+  you change them; each run can pick another) and for how they run: *Approve for me* unless you choose
+  *Accept edits*.
+- **Runs appear under the thread they review**, and their reports to it say that nothing needs doing.
 
 ## 0.1.0
 

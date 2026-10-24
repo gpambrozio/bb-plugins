@@ -13,10 +13,13 @@ import { errorMessage } from "./use-review";
 const FALLBACK: Execution = { providerId: "claude-code", model: "", reasoningLevel: "medium" };
 
 /** The starting choice for a thread's runs, read once each time `active` turns on. */
+export type RunPermissionMode = "auto" | "accept-edits";
+
 export function useRunDefaults(threadId: string, active: boolean) {
   const rpc = useRpc<RpcContract>();
   const [execution, setExecution] = useState<Execution | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [permissionMode, setPermissionMode] = useState<RunPermissionMode>("auto");
   useEffect(() => {
     if (!active) return;
     let live = true;
@@ -28,6 +31,7 @@ export function useRunDefaults(threadId: string, active: boolean) {
         if (!live) return;
         setExecution(result.execution ?? FALLBACK);
         setMessage(result.message);
+        setPermissionMode(result.permissionMode);
       })
       .catch((error: unknown) => {
         if (!live) return;
@@ -38,7 +42,7 @@ export function useRunDefaults(threadId: string, active: boolean) {
       live = false;
     };
   }, [rpc, threadId, active]);
-  return { execution, setExecution, message };
+  return { execution, setExecution, message, permissionMode };
 }
 
 export function ExecutionPicker({
@@ -46,17 +50,22 @@ export function ExecutionPicker({
   execution,
   onChange,
   message,
+  permissionMode,
   disabled,
 }: {
   environmentId: string;
   execution: Execution | null;
   onChange(value: Execution): void;
   message: string | null;
+  permissionMode: RunPermissionMode;
   disabled?: boolean;
 }) {
   return (
     <div className="flex flex-col gap-1">
-      <span className="text-xs text-muted-foreground">Runs in a new thread in this workspace, allowed to edit files (accept edits).</span>
+      <span className="text-xs text-muted-foreground">
+        Runs in a new thread under this one, in the same workspace, in {permissionMode === "auto" ? "Approve for me" : "Accept edits"} mode (set in Diff
+        Review's settings).
+      </span>
       {execution === null ? (
         <span className="text-xs text-muted-foreground">Loading the providers…</span>
       ) : (

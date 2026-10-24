@@ -73,7 +73,7 @@ const MAX_RANGE_LINES = 2_000;
 
 export class ReviewService {
   /** Told of every comment the user writes, after it is stored (for @-mentions); must not throw. */
-  onUserComment: (thread: ReviewThread, body: string) => void = () => undefined;
+  onUserComment: (thread: ReviewThread, body: string, viewerThreadId: string | null) => void = () => undefined;
 
   constructor(
     private readonly bb: BbPluginApi,
@@ -136,12 +136,13 @@ export class ReviewService {
     return { threads: this.store.threads(sessionId), runs: this.store.openRuns(sessionId).map(publicRun) };
   }
 
-  createThread(input: NewThreadInput): ReviewThread {
+  /** `viewerThreadId`: the thread whose Review tab it was written in, when the tab says. */
+  createThread(input: NewThreadInput, viewerThreadId: string | null = null): ReviewThread {
     const session = this.requireSession(input.sessionId);
     const placed = normalisePlace(input);
     const thread = this.store.createThread({ ...input, ...placed, body: requireText(input.body, "The comment") });
     this.publish(session.environmentId, session.id);
-    this.onUserComment(thread, input.body);
+    this.onUserComment(thread, input.body, viewerThreadId);
     return thread;
   }
 
@@ -153,11 +154,11 @@ export class ReviewService {
     return thread;
   }
 
-  addUserComment(reviewThreadId: string, body: string): ReviewThread {
+  addUserComment(reviewThreadId: string, body: string, viewerThreadId: string | null = null): ReviewThread {
     const thread = this.requireThread(reviewThreadId);
     this.store.addComment({ threadId: thread.id, authorType: "user", authorName: "You", body: requireText(body, "The comment") });
     const changed = this.changed(thread.id);
-    this.onUserComment(changed, body);
+    this.onUserComment(changed, body, viewerThreadId);
     return changed;
   }
 

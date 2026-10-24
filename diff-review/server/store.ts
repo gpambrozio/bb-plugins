@@ -74,6 +74,8 @@ export const MIGRATIONS: string[] = [
    )`,
   `CREATE INDEX runs_session ON runs(session_id)`,
   `CREATE INDEX runs_bb_thread ON runs(bb_thread_id)`,
+  // Runs start as children of the thread under review.
+  `ALTER TABLE runs ADD COLUMN parent_thread_id TEXT`,
 ];
 
 export interface Session {
@@ -131,6 +133,8 @@ export interface NewRun {
   status: RunStatus;
   summary?: string | null;
   baseline?: string | null;
+  /** The thread under review the run's thread is a child of. */
+  parentThreadId?: string | null;
 }
 
 interface RunRow {
@@ -148,6 +152,7 @@ interface RunRow {
   changed_files: string | null;
   created_at: number;
   finished_at: number | null;
+  parent_thread_id: string | null;
 }
 
 /** A run as stored, with the baseline only the server reads. */
@@ -330,10 +335,10 @@ export class ReviewStore {
     const finished = input.status === "running" ? null : at;
     this.db
       .prepare(
-        `INSERT INTO runs (id, session_id, kind, bb_thread_id, review_thread_id, focus, provider_id, model, status, summary, baseline, created_at, finished_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO runs (id, session_id, kind, bb_thread_id, review_thread_id, focus, provider_id, model, status, summary, baseline, created_at, finished_at, parent_thread_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(id, input.sessionId, input.kind, input.bbThreadId, input.reviewThreadId, input.focus, input.providerId, input.model, input.status, input.summary ?? null, input.baseline ?? null, at, finished);
+      .run(id, input.sessionId, input.kind, input.bbThreadId, input.reviewThreadId, input.focus, input.providerId, input.model, input.status, input.summary ?? null, input.baseline ?? null, at, finished, input.parentThreadId ?? null);
     return this.run(id)!;
   }
 
@@ -356,6 +361,11 @@ export class ReviewStore {
       .prepare<[string], RunRow>("SELECT * FROM runs WHERE bb_thread_id = ? AND status != 'closed' ORDER BY created_at DESC, rowid DESC")
       .all(bbThreadId)
       .map(toRun);
+  }
+
+  /** Whether a thread has run threads as children (closed ones included: bb may still be reporting them). */
+  hasRunChildren(threadId: string): boolean {
+    return this.db.prepare<[string], { n: number }>("SELECT count(*) AS n FROM runs WHERE parent_thread_id = ?").get(threadId)!.n > 0;
   }
 
   /** The open mention run answering a comment thread with a provider, if any. */

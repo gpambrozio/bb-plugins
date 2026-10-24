@@ -151,6 +151,7 @@ describe("the Review tab", () => {
     await screen.findByText("Rename b");
     expect(slot.inspection.rpcCalls.find((call) => call.method === "createThread")!.input).toEqual({
       sessionId: "ses_1",
+      threadId: "thr_1",
       filePath: "src/a.ts",
       side: "new",
       startLine: 1,
@@ -327,23 +328,24 @@ describe("the Review tab", () => {
   it("starts an AI review with the chosen focus and the default agent", async () => {
     const execution = { providerId: "claude-code", model: "big", reasoningLevel: "high" };
     const slot = render({
-      runDefaults: () => ({ execution, message: null }),
+      runDefaults: () => ({ execution, message: null, permissionMode: "auto" }),
       startReview: () => ({
         run: { id: "run1", sessionId: "ses_1", kind: "review", threadId: "thr_run", reviewThreadId: null, focus: "Security", providerId: "claude-code", model: "big", status: "running", summary: null, changedFiles: null, createdAt: 1, finishedAt: null },
       }),
     });
     fireEvent.click(await screen.findByRole("button", { name: "AI review" }));
     fireEvent.click(await screen.findByRole("button", { name: "Security" }));
+    await screen.findByText(/in Approve for me mode/);
     await waitFor(() => expect((screen.getByRole("button", { name: "Start review" }) as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(screen.getByRole("button", { name: "Start review" }));
     await screen.findByText("AI review · Security");
-    expect(slot.inspection.rpcCalls.find((call) => call.method === "startReview")!.input).toEqual({ sessionId: "ses_1", focuses: ["Security"], instructions: "", execution });
+    expect(slot.inspection.rpcCalls.find((call) => call.method === "startReview")!.input).toEqual({ sessionId: "ses_1", threadId: "thr_1", focuses: ["Security"], instructions: "", execution });
   });
 
   it("sends to a new thread when asked", async () => {
     const execution = { providerId: "claude-code", model: "big", reasoningLevel: "high" };
     const slot = render({
-      runDefaults: () => ({ execution, message: null }),
+      runDefaults: () => ({ execution, message: null, permissionMode: "auto" }),
       fixInNewThread: () => ({
         count: 3,
         run: { id: "run2", sessionId: "ses_1", kind: "fix", threadId: "thr_fix", reviewThreadId: null, focus: null, providerId: "claude-code", model: "big", status: "running", summary: null, changedFiles: null, createdAt: 1, finishedAt: null },
@@ -356,6 +358,7 @@ describe("the Review tab", () => {
     await screen.findByText("Fixes in a new thread");
     expect(slot.inspection.rpcCalls.find((call) => call.method === "fixInNewThread")!.input).toEqual({
       sessionId: "ses_1",
+      threadId: "thr_1",
       reviewThreadIds: ["aaaaaa000001", "aaaaaa000002", "aaaaaa000003"],
       note: "",
       execution,

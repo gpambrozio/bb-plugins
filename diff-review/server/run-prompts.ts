@@ -12,6 +12,15 @@ import { describeLocation, describeTarget, type ReviewThread, type Target } from
 import { CLI, sendPrompt } from "./prompt";
 import { TOOL } from "./tool-names";
 
+/**
+ * The line every run's final message opens with. A run's thread is a child of the thread under review,
+ * and bb posts each of a child's finished turns to its parent ("@thread:… completed: <final message>"),
+ * which wakes the parent's agent; this line tells that agent the notice is a report, not a request.
+ */
+export const REPORT_LINE = "Diff Review status report — no action needed; the results are in the Review tab.";
+
+const REPORT = `Start your final message with this line, exactly: "${REPORT_LINE}" bb shows your final message to the thread whose changes are under review (this thread is its child), and that line tells its agent this is a report to read, not a request to act on.`;
+
 const WRITING = `## How to write comments
 
 Comments show in a small box next to the code, and the reader is busy. Write in simple English: short sentences, common words, no filler.
@@ -140,6 +149,8 @@ ${WRITING}
 ## Step 4: Report
 
 Reply with a short summary: counts per severity (e.g. "2 must-fix, 1 suggestion") and one line per must-fix. The comments are already visible in the Review tab.
+
+${REPORT}
 `;
 }
 
@@ -193,11 +204,15 @@ ${WRITING}
    d. If an edit is rejected, follow **Rejected edits** above.
 4. Always leave exactly one response in the thread (a reply, or the resolve summary).
 5. Finish with one sentence here saying what you did. If the user mentions you again in this thread, you will get it here.
+
+${REPORT}
 `;
 }
 
 export function fixPrompt(input: { target: Target; threads: readonly ReviewThread[]; note: string }): string {
-  return `You were started by Diff Review in the workspace of another thread, whose changes the user reviewed. Make the fixes here; the other thread is not told.
+  return `You were started by Diff Review as a child of the thread whose changes the user reviewed, in its workspace. Make the fixes here; that thread is not asked to.
+
+${REPORT}
 
 The \`diff_review_*\` tools (\`${TOOL.threads}\`, \`${TOOL.reply}\`, \`${TOOL.resolve}\`, \`${TOOL.dismiss}\`) do the same as the commands below; use them when they are available.
 

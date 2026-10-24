@@ -37,11 +37,15 @@ It is a bb take on [diffity](https://github.com/nilbuild/diffity)'s review loop,
   that agent answers in the comment thread, from a thread of its own; mention it again there to carry on.
 - **Fix in a new thread.** In **Send to agent**, choose *A new thread…* and an agent to have the fixes
   made in a new thread in the same workspace instead of the thread under review.
-- **Runs.** The AI runs are listed under the toolbar, with **Open thread** and **Close** (which archives
-  the thread). They start with the provider and model in Settings → Plugins → Diff Review (Claude Code
-  and its default model unless changed), each in bb's *accept edits* mode. bb cannot make a thread
-  read-only, so an AI review is only asked not to edit; when it ends, the run lists every file that
-  changed in the workspace while it ran.
+- **Runs.** Each AI run is a thread under the thread you are reviewing, in the same workspace, listed
+  under the toolbar too, with **Open thread** and **Close** (which archives the thread). They start
+  with the provider and model in Settings → Plugins → Diff Review (Claude Code and its default model
+  unless changed), in bb's *Approve for me* mode unless you choose *Accept edits* there. bb cannot make
+  a thread read-only, so an AI review is only asked not to edit; when it ends, the run lists every file
+  that changed in the workspace while it ran.
+- **The thread under review hears from its runs.** bb tells a thread when one of its child threads
+  finishes a turn. Each run's last message opens with "Diff Review status report — no action
+  needed", and the thread's agent is told these notices are reports, so it reads them without acting.
 - **Leave generated files out.** List gitignore patterns in Settings → Plugins → Diff Review, and
   the workspace's own `.diffityignore` (and `.git/info/diffityignore`) is read too, as diffity does.
 
@@ -56,7 +60,7 @@ bb closes.
   arbitrary ranges, find, viewed marks or suggestion apply
   ([#48](https://github.com/gpambrozio/bb-plugins/issues/48)).
 - The agent may edit files the way it always can in its thread: Diff Review adds no permission of its
-  own. Its AI runs use *accept edits*, bb's most limited mode.
+  own. Its AI runs use *Approve for me* (or *Accept edits*, if you set it).
 
 ## Install
 

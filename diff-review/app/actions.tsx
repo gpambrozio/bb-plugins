@@ -49,11 +49,14 @@ async function reported<T>(what: string, work: () => Promise<T>): Promise<T> {
 
 export function ReviewActionsProvider({
   sessionId,
+  threadId,
   putThread,
   refreshThreads,
   children,
 }: {
   sessionId: string;
+  /** The thread whose Review tab this is. */
+  threadId: string;
   putThread(thread: ReviewThread): void;
   refreshThreads(): Promise<void>;
   children: ReactNode;
@@ -64,11 +67,11 @@ export function ReviewActionsProvider({
     () => ({
       create: (thread) =>
         reported("Could not add the comment", async () => {
-          putThread((await rpc.call("createThread", { sessionId, ...thread })).thread);
+          putThread((await rpc.call("createThread", { sessionId, threadId, ...thread })).thread);
         }),
       reply: (reviewThreadId, body) =>
         reported("Could not reply", async () => {
-          putThread((await rpc.call("addComment", { reviewThreadId, body })).thread);
+          putThread((await rpc.call("addComment", { reviewThreadId, body, threadId })).thread);
         }),
       edit: (commentId, body) =>
         reported("Could not save the comment", async () => {
@@ -85,7 +88,7 @@ export function ReviewActionsProvider({
         }),
       openThread: (threadId) => navigate.toThread(threadId),
     }),
-    [rpc, navigate, sessionId, putThread, refreshThreads],
+    [rpc, navigate, sessionId, threadId, putThread, refreshThreads],
   );
   return <ActionsContext.Provider value={actions}>{children}</ActionsContext.Provider>;
 }
