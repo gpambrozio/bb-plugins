@@ -48,6 +48,8 @@ export const rpcContract = defineRpcContract({
     input: z
       .object({
         sessionId: id,
+        /** The thread whose Review tab it was written in; an @-mention's run becomes its child. */
+        threadId: id.optional(),
         filePath: z.string().min(1).max(4096),
         side: sideSchema.nullable(),
         startLine: z.number().int().min(0),
@@ -60,7 +62,7 @@ export const rpcContract = defineRpcContract({
     output: threadResult,
   },
   addComment: {
-    input: z.object({ reviewThreadId: id, body }).strict(),
+    input: z.object({ reviewThreadId: id, body, threadId: id.optional() }).strict(),
     output: threadResult,
   },
   editComment: {
@@ -88,12 +90,16 @@ export const rpcContract = defineRpcContract({
   },
   runDefaults: {
     input: z.object({ threadId: id }).strict(),
-    output: z.object({ execution: executionSchema.nullable(), message: z.string().nullable() }).strict(),
+    output: z
+      .object({ execution: executionSchema.nullable(), message: z.string().nullable(), permissionMode: z.enum(["auto", "accept-edits"]) })
+      .strict(),
   },
   startReview: {
     input: z
       .object({
         sessionId: id,
+        /** The thread under review; the run's thread becomes its child. */
+        threadId: id,
         focuses: z.array(z.string().min(1).max(64)).max(REVIEW_FOCUSES.length + 10),
         instructions: z.string().max(BODY_MAX_CHARS),
         execution: executionSchema,
@@ -105,6 +111,8 @@ export const rpcContract = defineRpcContract({
     input: z
       .object({
         sessionId: id,
+        /** The thread under review; the fix thread becomes its child. */
+        threadId: id,
         reviewThreadIds: z.array(id).min(1).max(200),
         note: z.string().max(BODY_MAX_CHARS),
         execution: executionSchema,

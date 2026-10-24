@@ -4,6 +4,7 @@ import { createFakePluginHost, experimental_scanPublicSdkOnly, makePluginAgentCo
 import { describe, expect, it, vi } from "vitest";
 
 import plugin from "./server";
+import { REPORT_LINE } from "./server/run-prompts";
 import { TOOL_NAMES } from "./server/tool-names";
 import type { ReviewThread, ReviewView, Run } from "./shared/types";
 
@@ -159,6 +160,7 @@ async function setup(options: Setup = {}) {
   const comment = async (sessionId: string, body = "Why 3?") =>
     ((await rpc("createThread", {
       sessionId,
+      threadId: THREAD,
       filePath: "src/a.ts",
       side: "new",
       startLine: 2,
@@ -395,13 +397,17 @@ describe("AI runs", () => {
 
   it("starts the pickers on the settings' provider and its default model", async () => {
     const { rpc } = await setup();
-    expect(await rpc("runDefaults", { threadId: THREAD })).toEqual({ execution: { providerId: "claude-code", model: "big", reasoningLevel: "high" }, message: null });
+    expect(await rpc("runDefaults", { threadId: THREAD })).toEqual({
+      execution: { providerId: "claude-code", model: "big", reasoningLevel: "high" },
+      message: null,
+      permissionMode: "auto",
+    });
   });
 
-  it("starts an AI review in a visible thread of its own, in the same workspace, allowed only to accept edits", async () => {
+  it("starts an AI review as a child of the thread under review, in its workspace, in Approve for me mode", async () => {
     const { harness, rpc, view } = await setup();
     const { sessionId } = await view();
-    const { run } = (await rpc("startReview", { sessionId, focuses: ["Security", "Tests"], instructions: "Check the auth path.", execution })) as RunResult;
+    const { run } = (await rpc("startReview", { sessionId, threadId: THREAD, focuses: ["Security", "Tests"], instructions: "Check the auth path.", execution })) as RunResult;
     expect(run).toMatchObject({ kind: "review", focus: "Security, Tests", status: "running", threadId: "thr_run_1", providerId: "claude-code", model: "big" });
     const spawn = harness.inspection.sdk.callsTo("threads.spawn")[0]![0] as Record<string, unknown>;
     expect(spawn).toMatchObject({
@@ -411,13 +417,15 @@ describe("AI runs", () => {
       providerId: "claude-code",
       model: "big",
       reasoningLevel: "high",
-      permissionMode: "accept-edits",
+      permissionMode: "auto",
+      parentThreadId: THREAD,
       pluginMetadata: { diffReviewRunId: run.id },
     });
-    expect(spawn.parentThreadId).toBeUndefined();
     expect(spawn.visibility).toBeUndefined();
     expect(spawn.prompt).toContain("- Focus: Security, Tests");
     expect(spawn.prompt).toContain("Check the auth path.");
+    // Its final message, which bb posts to the parent, says it is a report.
+    expect(spawn.prompt).toContain(`Start your final message with this line, exactly: "${REPORT_LINE}"`);
     expect((await view()).runs.map((row) => row.id)).toEqual([run.id]);
   });
 
@@ -434,7 +442,7 @@ describe("AI runs", () => {
   it("lets a review run comment on lines shown in the diff, and says which are when they are not", async () => {
     const { harness, rpc, view } = await setup();
     const { sessionId } = await view();
-    const { run } = (await rpc("startReview", { sessionId, focuses: [], instructions: "", execution })) as RunResult;
+    const { run } = (await rpc("startReview", { sessionId, threadId: THREAD, focuses: [], instructions: "", execution })) as RunResult;
     const ok = await tool(harness, "diff_review_comment", { file: "src/a.ts", startLine: 2, severity: "must-fix", body: "b must stay 2" }, run.threadId!);
     expect(textOf(ok)).toMatch(/^Added [0-9a-f]{12} on src\/a.ts:2 \(new side\)\.$/);
     const bad = await tool(harness, "diff_review_comment", { file: "src/a.ts", startLine: 9, body: "x" }, run.threadId!);
@@ -460,7 +468,7 @@ describe("AI runs", () => {
   it("closes a review run when its turn ends, listing files that changed while it ran", async () => {
     const { harness, rpc, view, workspace } = await setup();
     const { sessionId } = await view();
-    const { run } = (await rpc("startReview", { sessionId, focuses: [], instructions: "", execution })) as RunResult;
+    const { run } = (await rpc("startReview", { sessionId, threadId: THREAD, focuses: [], instructions: "", execution })) as RunResult;
     workspace.extraFile = true;
     await harness.behavior.emitThreadEvent("thread.idle", { thread: makeThreadResponse({ id: run.threadId!, environmentId: ENV }), lastAssistantText: "1 must-fix" });
     const [finished] = (await sessionState(rpc, sessionId)).runs;
@@ -473,7 +481,8 @@ describe("AI runs", () => {
     const thread = await comment(sessionId, "@claude is this right?");
     await vi.waitFor(() => expect(harness.inspection.sdk.callsTo("threads.spawn")).toHaveLength(1));
     const spawn = harness.inspection.sdk.callsTo("threads.spawn")[0]![0] as Record<string, unknown>;
-    expect(spawn).toMatchObject({ providerId: "claude-code", permissionMode: "accept-edits", title: "Review: src/a.ts:2 (new side)" });
+    expect(spawn).toMatchObject({ providerId: "claude-code", permissionMode: "auto", parentThreadId: THREAD, title: "Review: src/a.ts:2 (new side)" });
+    expect(spawn.prompt).toContain(REPORT_LINE);
     expect(spawn.prompt).toContain(`- Thread: \`${thread.id}\``);
     await vi.waitFor(async () => expect((await sessionState(rpc, sessionId)).threads[0]!.delivery).toMatchObject({ state: "sent", threadId: "thr_run_1" }));
 
@@ -516,10 +525,12 @@ describe("AI runs", () => {
     const { harness, rpc, view, comment } = await setup();
     const { sessionId } = await view();
     const thread = await comment(sessionId, "Use a constant");
-    const result = (await rpc("fixInNewThread", { sessionId, reviewThreadIds: [thread.id], note: "Small please", execution })) as { run: Run; count: number };
+    const result = (await rpc("fixInNewThread", { sessionId, threadId: THREAD, reviewThreadIds: [thread.id], note: "Small please", execution })) as { run: Run; count: number };
     expect(result).toMatchObject({ count: 1, run: { kind: "fix", threadId: "thr_run_1", status: "running" } });
-    const spawn = harness.inspection.sdk.callsTo("threads.spawn")[0]![0] as { prompt: string; title: string };
+    const spawn = harness.inspection.sdk.callsTo("threads.spawn")[0]![0] as { prompt: string; title: string; parentThreadId?: string };
     expect(spawn.title).toBe("Review fixes: 1 comment");
+    expect(spawn.parentThreadId).toBe(THREAD);
+    expect(spawn.prompt).toContain(REPORT_LINE);
     expect(spawn.prompt).toContain(`### Thread \`${thread.id}\``);
     expect(spawn.prompt).toContain("Small please");
     const refused = await harness.behavior.runCli(["resolve", thread.id, "Fixed."], { threadId: THREAD });
@@ -529,17 +540,53 @@ describe("AI runs", () => {
     expect((await sessionState(rpc, sessionId)).threads[0]!.status).toBe("resolved");
   });
 
+  it("starts runs in Accept edits mode when the settings say so", async () => {
+    const { harness, rpc, view } = await setup();
+    await harness.behavior.setSettings({ aiPermissionMode: "accept-edits" });
+    const { sessionId } = await view();
+    await rpc("startReview", { sessionId, threadId: THREAD, focuses: [], instructions: "", execution });
+    expect(harness.inspection.sdk.callsTo("threads.spawn")[0]![0]).toMatchObject({ permissionMode: "accept-edits" });
+    expect(((await rpc("runDefaults", { threadId: THREAD })) as { permissionMode: string }).permissionMode).toBe("accept-edits");
+  });
+
+  it("starts a run without a parent when the tab's thread works in another workspace", async () => {
+    const { harness, rpc, view } = await setup({ threads: { [THREAD]: { environmentId: ENV }, thr_elsewhere: { environmentId: "env_2" } } });
+    const { sessionId } = await view();
+    await rpc("startReview", { sessionId, threadId: "thr_elsewhere", focuses: [], instructions: "", execution });
+    expect((harness.inspection.sdk.callsTo("threads.spawn")[0]![0] as { parentThreadId?: string }).parentThreadId).toBeUndefined();
+  });
+
+  it("tells a thread with run children that their completion notices are reports, and no other thread", async () => {
+    const { harness, rpc, view } = await setup();
+    const { sessionId } = await view();
+    const instructions = harness.inspection.registrations.instructionProvider!;
+    expect(instructions({ threadId: THREAD, projectId: "proj_1" })).toBeNull();
+    await rpc("startReview", { sessionId, threadId: THREAD, focuses: [], instructions: "", execution });
+    expect(instructions({ threadId: THREAD, projectId: "proj_1" })).toContain("are status reports");
+    expect(instructions({ threadId: "thr_run_1", projectId: "proj_1" })).toBeNull();
+  });
+
+  it("never starts a run from an agent's comment, so a run's report cannot set off another run", async () => {
+    const { harness, rpc, view, comment } = await setup();
+    const { sessionId } = await view();
+    const thread = await comment(sessionId, "Why?");
+    await rpc("send", { sessionId, threadId: THREAD, reviewThreadIds: [thread.id], note: "" });
+    await harness.behavior.runCli(["reply", thread.id, "Ask", "@claude", "about", "it."], { threadId: THREAD });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(harness.inspection.sdk.callsTo("threads.spawn")).toHaveLength(0);
+  });
+
   it("shows a run whose thread could not start as failed, with the reason", async () => {
     const { rpc, view } = await setup({ spawnFails: true });
     const { sessionId } = await view();
-    const { run } = (await rpc("startReview", { sessionId, focuses: [], instructions: "", execution })) as RunResult;
+    const { run } = (await rpc("startReview", { sessionId, threadId: THREAD, focuses: [], instructions: "", execution })) as RunResult;
     expect(run).toMatchObject({ status: "failed", threadId: null, summary: "Could not start the thread: provider not installed" });
   });
 
   it("closes a run by archiving its thread", async () => {
     const { harness, rpc, view } = await setup();
     const { sessionId } = await view();
-    const { run } = (await rpc("startReview", { sessionId, focuses: [], instructions: "", execution })) as RunResult;
+    const { run } = (await rpc("startReview", { sessionId, threadId: THREAD, focuses: [], instructions: "", execution })) as RunResult;
     await rpc("closeRun", { runId: run.id });
     expect(harness.inspection.sdk.callsTo("threads.archive")[0]![0]).toMatchObject({ threadId: run.threadId });
     expect((await sessionState(rpc, sessionId)).runs).toEqual([]);
@@ -548,7 +595,7 @@ describe("AI runs", () => {
   it("lets a review run comment through the command too, on the whole diff with --general", async () => {
     const { harness, rpc, view } = await setup();
     const { sessionId } = await view();
-    const { run } = (await rpc("startReview", { sessionId, focuses: [], instructions: "", execution })) as RunResult;
+    const { run } = (await rpc("startReview", { sessionId, threadId: THREAD, focuses: [], instructions: "", execution })) as RunResult;
     const general = await harness.behavior.runCli(["comment", "--general", "No", "issues", "found."], { threadId: run.threadId! });
     expect(general).toMatchObject({ exitCode: 0 });
     const line = await harness.behavior.runCli(["comment", "src/a.ts", "--line", "1", "--severity", "nit", "Name", "it", "better."], { threadId: run.threadId! });

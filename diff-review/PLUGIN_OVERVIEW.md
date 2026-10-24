@@ -15,7 +15,8 @@ and answers each one. It is diffity's review loop on your own working tree, insi
   queued behind its current turn. The agent answers in each thread from its own chat, and the tab
   shows every answer as it arrives, or "No reply" with a link back to the thread.
 - AI review: an agent reviews the diff, with an optional focus such as security or tests, in a thread
-  of its own you can watch, and leaves its comments in the tab.
+  under the one being reviewed that you can watch, and leaves its comments in the tab. AI runs use
+  bb's Approve for me mode unless you choose Accept edits.
 - Mention @claude, @codex or @opencode in a comment and that agent answers in the comment thread.
 - Fix in a new thread: send the comments to a new thread in the same workspace, with the agent and
   model you pick, instead of the thread under review.

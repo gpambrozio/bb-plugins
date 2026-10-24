@@ -57,6 +57,13 @@ nothing the shell would change.
 
 If you end your turn without answering a thread, the tab marks it "No reply" and links back here.
 
+## Notices from Diff Review's threads
+
+Diff Review starts its AI reviews, answers to mentions and fixes as child threads of the thread under
+review, so that thread gets bb's `@thread:… completed: …` notice after each of their turns. A notice
+that opens with "Diff Review status report — no action needed" is a report: read it, and do nothing
+about it unless the user asks. Review comments reach you only as a message from the Review tab.
+
 ## Errors
 
 - "was not sent to this thread" — the comment went to another thread; leave it.

@@ -41,6 +41,16 @@ type Sdk = BbPluginApi["sdk"];
 export interface RunSettings extends ReviewSettings {
   aiProvider: string;
   aiModel: string;
+  aiPermissionMode: string;
+}
+
+/** The permission modes a run may start in: bb's "Approve for me" (`auto`) and "Accept edits". */
+export const RUN_PERMISSION_MODES = ["auto", "accept-edits"] as const;
+export type RunPermissionMode = (typeof RUN_PERMISSION_MODES)[number];
+
+/** The setting's mode, or `auto` when it holds anything else. */
+export function runPermissionMode(value: string): RunPermissionMode {
+  return (RUN_PERMISSION_MODES as readonly string[]).includes(value) ? (value as RunPermissionMode) : "auto";
 }
 
 /** The longest run summary kept, in characters. */
@@ -70,10 +80,15 @@ export class RunService {
    * model from the settings when that model exists, else the provider's default, at that model's
    * default reasoning. Null, with the reason, when the provider lists no models here.
    */
-  async defaults(threadId: string): Promise<{ execution: Execution | null; message: string | null }> {
+  async defaults(threadId: string): Promise<{ execution: Execution | null; message: string | null; permissionMode: RunPermissionMode }> {
+    const settings = await this.settings();
+    const permissionMode = runPermissionMode(settings.aiPermissionMode);
+    return { ...(await this.defaultExecution(threadId, settings)), permissionMode };
+  }
+
+  private async defaultExecution(threadId: string, settings: RunSettings): Promise<{ execution: Execution | null; message: string | null }> {
     const thread = await this.bb.sdk.threads.get({ threadId });
     if (thread.environmentId === null) return { execution: null, message: "This thread has no workspace yet." };
-    const settings = await this.settings();
     const providerId = settings.aiProvider.trim() || "claude-code";
     const options = await this.bb.sdk.providers.models({ environmentId: thread.environmentId, providerId });
     if (options.modelLoadError !== null) {
@@ -88,25 +103,25 @@ export class RunService {
     return { execution: { providerId, model: model.model, reasoningLevel: model.defaultReasoningEffort }, message: null };
   }
 
-  /** Starts an AI review of a session's view. */
-  async startReview(input: { sessionId: string; focuses: readonly string[]; instructions: string; execution: Execution }): Promise<Run> {
+  /** Starts an AI review of a session's view, as a child of `threadId`, the thread under review. */
+  async startReview(input: { sessionId: string; threadId: string; focuses: readonly string[]; instructions: string; execution: Execution }): Promise<Run> {
     const session = this.review.requireSession(input.sessionId);
     const target = targetFromKey(session.targetKey);
     const focus = input.focuses.length === 0 ? null : input.focuses.join(", ");
     const baseline = await this.fingerprint(session.environmentId);
     const prompt = reviewPrompt({ target, focus, instructions: input.instructions });
     const title = `Review: ${focus === null ? "changes" : focus}`;
-    return this.spawn({ sessionId: session.id, environmentId: session.environmentId, kind: "review", reviewThreadId: null, focus, execution: input.execution, title, prompt, baseline });
+    return this.spawn({ sessionId: session.id, environmentId: session.environmentId, parentThreadId: input.threadId, kind: "review", reviewThreadId: null, focus, execution: input.execution, title, prompt, baseline });
   }
 
   /** "Fix in a new thread": sends open comment threads to a new thread in the same workspace. */
-  async fixInNewThread(input: { sessionId: string; reviewThreadIds: readonly string[]; note: string; execution: Execution }): Promise<{ run: Run; count: number }> {
+  async fixInNewThread(input: { sessionId: string; threadId: string; reviewThreadIds: readonly string[]; note: string; execution: Execution }): Promise<{ run: Run; count: number }> {
     const session = this.review.requireSession(input.sessionId);
     const chosen = this.openThreads(session.id, input.reviewThreadIds);
     const target = targetFromKey(session.targetKey);
     const prompt = fixPrompt({ target, threads: chosen, note: input.note });
     const title = `Review fixes: ${chosen.length} comment${chosen.length === 1 ? "" : "s"}`;
-    const run = await this.spawn({ sessionId: session.id, environmentId: session.environmentId, kind: "fix", reviewThreadId: null, focus: null, execution: input.execution, title, prompt, baseline: null });
+    const run = await this.spawn({ sessionId: session.id, environmentId: session.environmentId, parentThreadId: input.threadId, kind: "fix", reviewThreadId: null, focus: null, execution: input.execution, title, prompt, baseline: null });
     if (run.threadId !== null) {
       this.store.recordSend(session.id, run.threadId, chosen.map((row) => row.id), input.note);
       this.review.publishSession(session.id);
@@ -118,15 +133,16 @@ export class RunService {
    * A user comment that @-mentions an agent: that agent answers in the thread. The run starts in the
    * background; a failure to start shows as a failed run.
    */
-  onUserComment(thread: ReviewThread, body: string): void {
+  onUserComment(thread: ReviewThread, body: string, viewerThreadId: string | null): void {
     const handle = mentionedAgent(body);
     if (handle === null) return;
-    void this.answerMention(thread.id, AGENT_HANDLES[handle]).catch((error: unknown) => {
+    void this.answerMention(thread.id, AGENT_HANDLES[handle], viewerThreadId).catch((error: unknown) => {
       this.bb.log.warn(`Could not answer the mention in ${thread.id}: ${error instanceof Error ? error.message : String(error)}`);
     });
   }
 
-  async answerMention(reviewThreadId: string, providerId: string): Promise<Run> {
+  /** `viewerThreadId`: the thread whose Review tab the comment was written in; the run becomes its child. */
+  async answerMention(reviewThreadId: string, providerId: string, viewerThreadId: string | null = null): Promise<Run> {
     const thread = this.review.requireThread(reviewThreadId);
     const session = this.review.requireSession(thread.sessionId);
     const prompt = mentionPrompt(targetFromKey(session.targetKey), thread);
@@ -150,6 +166,7 @@ export class RunService {
     const run = await this.spawn({
       sessionId: session.id,
       environmentId: session.environmentId,
+      parentThreadId: viewerThreadId,
       kind: "mention",
       reviewThreadId: thread.id,
       focus: null,
@@ -272,6 +289,8 @@ export class RunService {
   private async spawn(input: {
     sessionId: string;
     environmentId: string;
+    /** The thread under review; the run's thread is made its child when it works in the same workspace. */
+    parentThreadId: string | null;
     kind: Run["kind"];
     reviewThreadId: string | null;
     focus: string | null;
@@ -283,6 +302,8 @@ export class RunService {
     baseline: Fingerprint | null;
   }): Promise<Run> {
     const environment = await this.bb.sdk.environments.get({ environmentId: input.environmentId });
+    const parentThreadId = await this.parentIn(input.parentThreadId, input.environmentId);
+    const permissionMode = runPermissionMode((await this.settings()).aiPermissionMode);
     const id = newId();
     const { execution } = input;
     this.store.createRun({
@@ -296,6 +317,7 @@ export class RunService {
       model: execution.model === "" ? null : execution.model,
       status: "running",
       baseline: input.baseline === null ? null : JSON.stringify(input.baseline),
+      parentThreadId,
     });
     try {
       const thread = await this.bb.sdk.threads.spawn({
@@ -307,7 +329,8 @@ export class RunService {
         ...(execution.model === "" ? {} : { model: execution.model }),
         ...(input.reasoningFromProvider === true ? {} : { reasoningLevel: execution.reasoningLevel }),
         ...(execution.serviceTier === undefined ? {} : { serviceTier: execution.serviceTier }),
-        permissionMode: "accept-edits",
+        permissionMode,
+        ...(parentThreadId === null ? {} : { parentThreadId }),
         pluginMetadata: { [RUN_METADATA_KEY]: id },
       });
       this.store.setRunThread(id, thread.id);
@@ -316,6 +339,22 @@ export class RunService {
     }
     this.review.publishSession(input.sessionId);
     return publicRun(this.store.run(id)!);
+  }
+
+  /**
+   * The parent a run's thread gets: the thread under review, when it still works in the reviewed
+   * workspace; otherwise none (the run is still started, at the root of the sidebar).
+   */
+  private async parentIn(threadId: string | null, environmentId: string): Promise<string | null> {
+    if (threadId === null) return null;
+    try {
+      const thread = await this.bb.sdk.threads.get({ threadId });
+      if (thread.environmentId === environmentId) return thread.id;
+      this.bb.log.info(`Thread ${threadId} works in another workspace; its review run starts without a parent.`);
+    } catch (error) {
+      this.bb.log.warn(`Could not read thread ${threadId} to parent a review run: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    return null;
   }
 
   /** The workspace's uncommitted changes, one fingerprint per file. */

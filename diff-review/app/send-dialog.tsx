@@ -78,7 +78,7 @@ export function SendDialog({
         toast.success(result.delivery === "queued" ? `Queued ${what} behind the agent's current turn` : `Sent ${what} to the agent`);
       } else {
         if (defaults.execution === null) return;
-        const { run, count } = await rpc.call("fixInNewThread", { sessionId, reviewThreadIds: ids, note, execution: defaults.execution });
+        const { run, count } = await rpc.call("fixInNewThread", { sessionId, threadId, reviewThreadIds: ids, note, execution: defaults.execution });
         if (run.status === "failed") {
           toast.error(run.summary ?? "The new thread could not start.");
         } else {
@@ -111,7 +111,7 @@ export function SendDialog({
           </Button>
         </div>
         {fixer === "new" ? (
-          <ExecutionPicker environmentId={environmentId} execution={defaults.execution} onChange={defaults.setExecution} message={defaults.message} disabled={busy} />
+          <ExecutionPicker environmentId={environmentId} execution={defaults.execution} onChange={defaults.setExecution} message={defaults.message} permissionMode={defaults.permissionMode} disabled={busy} />
         ) : null}
         <div className="flex max-h-72 flex-col gap-1 overflow-y-auto">
           {threads.map((thread) => (

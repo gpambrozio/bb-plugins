@@ -43,7 +43,7 @@ export function AiReviewDialog({
     if (defaults.execution === null) return;
     setBusy(true);
     try {
-      const { run } = await rpc.call("startReview", { sessionId, focuses, instructions, execution: defaults.execution });
+      const { run } = await rpc.call("startReview", { sessionId, threadId, focuses, instructions, execution: defaults.execution });
       if (run.status === "failed") toast.error(run.summary ?? "The review could not start.");
       else toast.success("AI review started; its comments appear here as it goes.");
       onStarted(run);
@@ -76,7 +76,7 @@ export function AiReviewDialog({
             </div>
           </div>
           <Textarea value={instructions} onChange={(event) => setInstructions(event.target.value)} placeholder="Anything else to look at (optional)" maxLength={BODY_MAX_CHARS} rows={3} />
-          <ExecutionPicker environmentId={environmentId} execution={defaults.execution} onChange={defaults.setExecution} message={defaults.message} disabled={busy} />
+          <ExecutionPicker environmentId={environmentId} execution={defaults.execution} onChange={defaults.setExecution} message={defaults.message} permissionMode={defaults.permissionMode} disabled={busy} />
           <p className="text-xs text-muted-foreground">
             It is asked not to edit files, but bb cannot stop it; any file that changes while it runs is listed on the run.
           </p>
