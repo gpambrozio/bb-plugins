@@ -45,6 +45,10 @@ It is a bb take on [diffity](https://github.com/nilbuild/diffity)'s review loop,
   unless changed), in bb's *Approve for me* mode unless you choose *Accept edits* there. bb cannot make
   a thread read-only, so an AI review is only asked not to edit; when it ends, the run lists every file
   that changed in the workspace while it ran.
+- **Clear review.** Once a view has comments or runs, **Clear review** in the toolbar deletes every
+  comment thread in that view, yours and the AI's, open or closed, and closes its runs, archiving
+  their threads, so the tab starts fresh. It asks first, since it can't be undone; other views keep
+  their comments.
 - **The thread under review hears from its runs.** bb tells a thread when one of its child threads
   finishes a turn. Each run's last message opens with "Diff Review status report — no action
   needed", and the thread's agent is told these notices are reports, so it reads them without acting.

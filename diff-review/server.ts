@@ -83,6 +83,7 @@ export default async function plugin(bb: BbPluginApi) {
       await runs.close(runId);
       return { ok: true as const };
     },
+    clearReview: ({ sessionId }) => runs.clearReview(sessionId),
   });
 
   bb.cli.register(diffReviewCli(service, runs));

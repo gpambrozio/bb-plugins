@@ -187,16 +187,33 @@ export class RunService {
   async close(runId: string): Promise<void> {
     const run = this.store.run(runId);
     if (run === null) throw new ReviewError(`No run ${runId}.`, "unknown_run");
-    if (run.threadId !== null && run.status !== "closed") {
-      try {
-        await this.bb.sdk.threads.archive({ threadId: run.threadId });
-      } catch (error) {
-        // The user may have archived or deleted it already; the run closes either way.
-        this.bb.log.warn(`Could not archive ${run.threadId} for run ${run.id}: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    }
+    if (run.status !== "closed") await this.archive(run);
     this.store.closeRun(run.id);
     this.review.publishSession(run.sessionId);
+  }
+
+  /**
+   * Clears a session's review: every comment thread is deleted and every open run closed, its thread
+   * archived. The store goes first, so a run still working when its thread is archived finds its
+   * rights gone (a closed review run cannot comment, and no send is left to answer).
+   */
+  async clearReview(sessionId: string): Promise<{ deletedThreads: number; closedRuns: number }> {
+    const session = this.review.requireSession(sessionId);
+    const deletedThreads = this.store.threads(session.id).length;
+    const open = this.store.clearSession(session.id);
+    this.review.publishSession(session.id);
+    await Promise.all(open.map((run) => this.archive(run)));
+    return { deletedThreads, closedRuns: open.length };
+  }
+
+  private async archive(run: { id: string; threadId: string | null }): Promise<void> {
+    if (run.threadId === null) return;
+    try {
+      await this.bb.sdk.threads.archive({ threadId: run.threadId });
+    } catch (error) {
+      // The user may have archived or deleted it already; the run closes either way.
+      this.bb.log.warn(`Could not archive ${run.threadId} for run ${run.id}: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   /** A run thread's turn ended: the run is done (or failed), with the agent's last words as its summary. */

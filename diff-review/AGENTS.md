@@ -23,14 +23,14 @@ specific to `diff-review`.
 | `server/ignore.ts` | Gitignore-style ignore patterns, from the setting and the workspace's diffity ignore files. |
 | `server/prompt.ts` | The "Address review comments" message a send puts in the thread (adapted from diffity's prompts, MIT). |
 | `server/cli.ts` | `bb diff-review list|reply|resolve|dismiss|comment`; base64 text through `--text-base64-stdin`. |
-| `server/runs.ts` | `RunService`: AI runs — the pickers' defaults, starting a review, a mention's answer or a fix thread, a run's end (summary, files changed during a review), Close (archive), and a review run's comments, checked against the diff. |
+| `server/runs.ts` | `RunService`: AI runs — the pickers' defaults, starting a review, a mention's answer or a fix thread, a run's end (summary, files changed during a review), Close (archive), Clear review, and a review run's comments, checked against the diff. |
 | `server/run-prompts.ts` | The first message of each run's thread (adapted from diffity's `review.md` and `thread.md`, MIT). |
 | `server/tools.ts`, `server/tool-names.ts` | The `diff_review_*` agent tools; their names and the run-id metadata key `configure` reads. |
 | `shared/mentions.ts` | Which `@claude`, `@codex`, `@opencode` count (outside code; ported from diffity) and the provider each starts. |
 | `shared/types.ts` | The data model and zod schemas, the realtime channel and its signals. No SDK import, so the app may use it at run time. |
 | `shared/contract.ts` | The RPC contract. Imports the SDK root, so the app imports it as a type only. |
 | `shared/patch-lines.ts`, `shared/anchors.ts` | A patch's lines by side and number, and where a thread belongs in the current diff (anchored, moved, outdated). |
-| `app/review-panel.tsx` | The tab: the view picker, split/unified, *Only files with comments* (remembered in `localStorage` like split/unified), reload, whole-diff comments, the *Not on the current diff* list, the files, the send dialog. |
+| `app/review-panel.tsx` | The tab: the view picker, split/unified, *Only files with comments* (remembered in `localStorage` like split/unified), reload, whole-diff comments, the *Not on the current diff* list, the files, the send dialog, the Clear review confirm (`app/clear-dialog.tsx`). |
 | `app/file-diff.tsx` | One file: its header (with its thread count while the switch is off), whole-file threads, and Pierre's `PatchDiff` with thread annotations and the gutter "+". |
 | `app/patch-loader.ts` | Patches bb did not send with the file list, asked for as files come near the screen and fetched in batches, one request at a time. |
 | `app/header-action.tsx` | The Review button in the thread's title bar (`experimental_threadHeaderAction`), which opens the tab. |
@@ -79,6 +79,10 @@ nothing to the parent when a run ends, agents cannot start runs (only the tab's 
 *user's* @-mention do; an agent's comment never triggers a mention), and the parent's agent can only
 answer threads already sent to it. A notice still costs the parent a short turn. A run's row is written before its thread is
 spawned, so a thread bb refuses leaves a *failed* run that says why. **Close** archives the thread.
+**Clear review** deletes a session's threads and sends and closes its runs in one transaction, then
+archives the runs' threads; closing first means a run still working loses its rights at once (a
+closed review run cannot comment, and no send is left to answer). Closed run rows are kept, so
+`hasRunChildren` keeps telling the parent what late notices are.
 A run ends on its thread's `thread.idle` / `thread.failed`, keeping the agent's last message as the
 summary; it is never parsed for answers.
 

@@ -398,6 +398,22 @@ export class ReviewStore {
     this.db.prepare("UPDATE runs SET status = 'closed' WHERE id = ?").run(id);
   }
 
+  /**
+   * Clears a session's review: deletes its threads (their comments go with them) and sends, and closes
+   * its runs. Closed runs stay as rows, so `hasRunChildren` still knows their parents. Returns the runs
+   * that were still open, whose threads the caller archives.
+   */
+  clearSession(sessionId: string): StoredRun[] {
+    return this.db.transaction(() => {
+      const open = this.openRuns(sessionId);
+      // Threads first: they point at sends.
+      this.db.prepare("DELETE FROM review_threads WHERE session_id = ?").run(sessionId);
+      this.db.prepare("DELETE FROM sends WHERE session_id = ?").run(sessionId);
+      this.db.prepare("UPDATE runs SET status = 'closed' WHERE session_id = ?").run(sessionId);
+      return open;
+    })();
+  }
+
   private insertComment(input: NewComment, at: number): string {
     const id = newId();
     this.db
