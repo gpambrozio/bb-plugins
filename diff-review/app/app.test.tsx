@@ -714,6 +714,25 @@ describe("the Review tab", () => {
       expect(screen.queryByText("Why three?")?.closest("[data-thread-id]")).toBeFalsy();
     });
 
+    it("unfolds a folded file when its whole-file comment box opens, and keeps it unfolded", async () => {
+      const large = { ...VIEW.files[0]!, path: "src/large.ts", additions: 2501, patch: PATCH.replaceAll("src/a.ts", "src/large.ts") };
+      const first = renderWith(null, { threads: [], files: [VIEW.files[0]!, large] });
+      // src/large.ts starts folded (a large change); fold src/a.ts by hand.
+      const section = (path: string) => document.querySelector(`[data-file-path="${path}"]`) as HTMLElement;
+      await waitFor(() => expect(within(section("src/large.ts")).getByRole("button", { name: "Expand file" })).toBeTruthy());
+      fireEvent.click(within(section("src/a.ts")).getByRole("button", { name: "Collapse file" }));
+      expect(within(section("src/a.ts")).queryByPlaceholderText("A comment about the whole file")).toBeNull();
+
+      for (const path of ["src/large.ts", "src/a.ts"]) {
+        fireEvent.click(within(section(path)).getByRole("button", { name: "Comment on file" }));
+        // The box shows at once, no second click needed.
+        expect(within(section(path)).getByPlaceholderText("A comment about the whole file")).toBeTruthy();
+        expect(within(section(path)).getByRole("button", { name: "Collapse file" })).toBeTruthy();
+      }
+      cleanup();
+      expect(lastSaved(first).collapsed).toEqual({ "src/a.ts": false, "src/large.ts": false });
+    });
+
     it("comes back to this window's copy when the server's is older", async () => {
       renderWith(null);
       await screen.findByText("Why three?");

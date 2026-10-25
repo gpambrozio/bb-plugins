@@ -135,6 +135,14 @@ export function FileDiff({ file, threads, showThreadCount, diffStyle, stalePatch
     scrollRoot.scrollTop += alignAfterFold.current;
     alignAfterFold.current = 0;
   }, [collapsed, scrollRoot]);
+  // The whole-file comment box is inside the file's body: opening it unfolds the file (and keeps it so).
+  const openFileDraft = () => {
+    if (collapsed) {
+      viewState.setCollapsed(file.path, false);
+      setCollapsed(false);
+    }
+    fileDraft.open();
+  };
   const toggleCollapsed = () => {
     if (!collapsed && sectionRef.current !== null && scrollRoot !== null) alignAfterFold.current = scrollToAlign(sectionRef.current, scrollRoot);
     viewState.setCollapsed(file.path, !collapsed);
@@ -258,7 +266,7 @@ export function FileDiff({ file, threads, showThreadCount, diffStyle, stalePatch
         {file.patchTruncated ? <span className="shrink-0 text-xs text-warning-text">truncated</span> : null}
         {collapsed && changedLines > FOLD_ABOVE_LINES ? <span className="shrink-0 text-xs text-muted-foreground">folded: a large change</span> : null}
         {showThreadCount && threads.length > 0 ? <ThreadCount threads={threads} /> : null}
-        <Button type="button" variant="ghost" size="sm" className="ml-auto h-6 shrink-0 gap-1 px-1.5 text-xs" onClick={() => fileDraft.open()}>
+        <Button type="button" variant="ghost" size="sm" className="ml-auto h-6 shrink-0 gap-1 px-1.5 text-xs" onClick={openFileDraft}>
           <Icon name="MessageSquarePlus" className="size-3.5" />
           Comment on file
         </Button>
