@@ -453,6 +453,9 @@ export class RunService {
         model: execution.model === "" ? null : execution.model,
       });
       if (this.store.run(id)?.status === "closed") {
+        // Cancelled before bb was asked: no thread will ever take its comments, so they go back to
+        // whoever had them (Clear review already deleted them, which leaves nothing to undo).
+        if (grant !== null) this.store.dropSend(grant);
         this.review.publishSession(input.sessionId);
         return publicRun(this.store.run(id)!);
       }

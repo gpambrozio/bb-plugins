@@ -84,6 +84,15 @@ export const MIGRATIONS: string[] = [
      updated_at INTEGER NOT NULL,
      PRIMARY KEY (thread_id, session_id)
    )`,
+  // What each send replaced, per comment thread, so a failed send can be rolled back whatever order
+  // overlapping sends settle in.
+  `CREATE TABLE send_previous (
+     send_id TEXT NOT NULL REFERENCES sends(id) ON DELETE CASCADE,
+     thread_id TEXT NOT NULL REFERENCES review_threads(id) ON DELETE CASCADE,
+     previous_send_id TEXT,
+     previous_delivery TEXT,
+     PRIMARY KEY (send_id, thread_id)
+   )`,
 ];
 
 export interface Session {
@@ -169,8 +178,6 @@ export type StoredRun = Run & { baseline: string | null };
 export interface RecordedSend {
   id: string;
   createdAt: number;
-  /** What each thread pointed at before this send. */
-  previous: { threadId: string; sendId: string | null; delivery: DeliveryState | null }[];
 }
 
 /** Where a run's sends point before bb has given it a thread (`bindRun` moves them). */
@@ -304,39 +311,53 @@ export class ReviewStore {
   }
 
   /**
-   * Records a send and points each thread at it. `previous` is what each thread pointed at before, so
-   * `dropSend` can put it back if this send cannot be delivered.
+   * Records a send and points each thread at it, keeping what each thread pointed at before
+   * (`send_previous`) so `dropSend` can put it back if this send cannot be delivered.
    */
   recordSend(sessionId: string, bbThreadId: string, threadIds: readonly string[], note: string): RecordedSend {
     const id = newId();
     const createdAt = this.now();
-    const previous: RecordedSend["previous"] = [];
     this.db.transaction(() => {
       this.db.prepare("INSERT INTO sends (id, session_id, bb_thread_id, note, created_at) VALUES (?, ?, ?, ?, ?)").run(id, sessionId, bbThreadId, note, createdAt);
       const read = this.db.prepare<[string, string], { send_id: string | null; delivery: DeliveryState | null }>(
         "SELECT send_id, delivery FROM review_threads WHERE id = ? AND session_id = ?",
       );
+      const keep = this.db.prepare("INSERT INTO send_previous (send_id, thread_id, previous_send_id, previous_delivery) VALUES (?, ?, ?, ?)");
       const point = this.db.prepare("UPDATE review_threads SET send_id = ?, delivery = 'sent', updated_at = ? WHERE id = ? AND session_id = ?");
-      for (const threadId of threadIds) {
+      for (const threadId of new Set(threadIds)) {
         const row = read.get(threadId, sessionId);
         if (row === undefined) continue;
-        previous.push({ threadId, sendId: row.send_id, delivery: row.delivery });
+        keep.run(id, threadId, row.send_id, row.delivery);
         point.run(id, createdAt, threadId, sessionId);
       }
     })();
-    return { id, createdAt, previous };
+    return { id, createdAt };
   }
 
   /**
-   * Undoes `recordSend` when the message could not be delivered: each thread it still owns points
-   * back at the send it had before (an earlier delivery keeps its answer rights); a thread sent on
-   * since keeps its newer send.
+   * Undoes `recordSend` when the message could not be delivered (or its run was cancelled before it
+   * was). For each of its threads: if the thread still points at it, the thread goes back to what it
+   * pointed at before (an earlier delivery keeps its answer rights); if a later send owns the thread,
+   * that send's own "before" skips over this one, so whichever of overlapping sends fails last still
+   * restores a send that exists. A later send that succeeded keeps the thread. A send already gone
+   * (Clear review deleted it) is a no-op.
    */
-  dropSend(send: Pick<RecordedSend, "id" | "previous">): void {
+  dropSend(send: Pick<RecordedSend, "id">): void {
     this.db.transaction(() => {
+      const rows = this.db
+        .prepare<[string], { thread_id: string; previous_send_id: string | null; previous_delivery: DeliveryState | null }>(
+          "SELECT thread_id, previous_send_id, previous_delivery FROM send_previous WHERE send_id = ?",
+        )
+        .all(send.id);
       const restore = this.db.prepare("UPDATE review_threads SET send_id = ?, delivery = ? WHERE id = ? AND send_id = ?");
-      for (const row of send.previous) restore.run(row.sendId, row.delivery, row.threadId, send.id);
+      const skip = this.db.prepare("UPDATE send_previous SET previous_send_id = ?, previous_delivery = ? WHERE thread_id = ? AND previous_send_id = ?");
+      for (const row of rows) {
+        if (restore.run(row.previous_send_id, row.previous_delivery, row.thread_id, send.id).changes === 0) {
+          skip.run(row.previous_send_id, row.previous_delivery, row.thread_id, send.id);
+        }
+      }
       this.db.prepare("UPDATE review_threads SET send_id = NULL, delivery = NULL WHERE send_id = ?").run(send.id);
+      this.db.prepare("UPDATE send_previous SET previous_send_id = NULL, previous_delivery = NULL WHERE previous_send_id = ?").run(send.id);
       this.db.prepare("DELETE FROM sends WHERE id = ?").run(send.id);
     })();
   }

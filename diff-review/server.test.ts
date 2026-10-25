@@ -1070,6 +1070,103 @@ describe("AI runs", () => {
     expect(isError(await tool(harness, "diff_review_reply", { threadId: thread.id, text: "On it." }, THREAD))).toBe(false);
   });
 
+  describe("9: overlapping failed sends", () => {
+    /** Sends to thr_a and thr_b wait until the test settles them; sends to THREAD succeed. */
+    async function overlapping() {
+      const settle: Record<string, { resolve: () => void; reject: (error: Error) => void }> = {};
+      const context = await setup({ threads: { [THREAD]: { environmentId: ENV }, thr_a: { environmentId: ENV }, thr_b: { environmentId: ENV } } });
+      const { harness, rpc, view, comment } = context;
+      harness.sdk.stub("threads.send", (input: { threadId: string }) =>
+        input.threadId === THREAD
+          ? Promise.resolve({ ok: true as const, delivery: "sent" as const })
+          : new Promise((resolve, reject) => (settle[input.threadId] = { resolve: () => resolve({ ok: true as const, delivery: "sent" as const }), reject })),
+      );
+      const { sessionId } = await view();
+      const thread = await comment(sessionId, "Rename b");
+      await rpc("send", { sessionId, threadId: THREAD, reviewThreadIds: [thread.id], note: "" });
+      const toA = rpc("send", { sessionId, threadId: "thr_a", reviewThreadIds: [thread.id], note: "" });
+      const toB = rpc("send", { sessionId, threadId: "thr_b", reviewThreadIds: [thread.id], note: "" });
+      await vi.waitFor(() => expect(Object.keys(settle).sort()).toEqual(["thr_a", "thr_b"]));
+      const delivery = async () => (await sessionState(rpc, sessionId)).threads[0]!.delivery;
+      return { ...context, sessionId, thread, settle, toA, toB, delivery };
+    }
+
+    it("the earlier failing first, then the later: the thread goes back to its first, delivered send", async () => {
+      const { harness, settle, toA, toB, thread, delivery } = await overlapping();
+      settle.thr_a!.reject(new Error("a is archived"));
+      await expect(toA).rejects.toThrow("a is archived");
+      expect(await delivery()).toMatchObject({ state: "sent", threadId: "thr_b" });
+      settle.thr_b!.reject(new Error("b is archived"));
+      await expect(toB).rejects.toThrow("b is archived");
+      expect(await delivery()).toMatchObject({ state: "sent", threadId: THREAD });
+      expect(isError(await tool(harness, "diff_review_reply", { threadId: thread.id, text: "On it." }, THREAD))).toBe(false);
+    });
+
+    it("the later failing first, then the earlier: the same", async () => {
+      const { harness, settle, toA, toB, thread, delivery } = await overlapping();
+      settle.thr_b!.reject(new Error("b is archived"));
+      await expect(toB).rejects.toThrow("b is archived");
+      expect(await delivery()).toMatchObject({ state: "sent", threadId: "thr_a" });
+      settle.thr_a!.reject(new Error("a is archived"));
+      await expect(toA).rejects.toThrow("a is archived");
+      expect(await delivery()).toMatchObject({ state: "sent", threadId: THREAD });
+      expect(isError(await tool(harness, "diff_review_reply", { threadId: thread.id, text: "On it." }, THREAD))).toBe(false);
+    });
+
+    it("a later send that succeeds keeps the thread when an earlier one fails", async () => {
+      const { settle, toA, toB, delivery } = await overlapping();
+      settle.thr_b!.resolve();
+      await toB;
+      settle.thr_a!.reject(new Error("a is archived"));
+      await expect(toA).rejects.toThrow("a is archived");
+      expect(await delivery()).toMatchObject({ state: "sent", threadId: "thr_b" });
+    });
+  });
+
+  describe("10: a fixer closed while it is being set up", () => {
+    async function pendingFixer(opts: { sentBefore: boolean; sentMeanwhile?: boolean }) {
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      let armed = false;
+      const context = await setup({
+        threads: { [THREAD]: { environmentId: ENV }, thr_other: { environmentId: ENV } },
+        holdEnvironmentGet: () => (armed ? gate : Promise.resolve()),
+      });
+      const { harness, rpc, view, comment } = context;
+      const { sessionId } = await view();
+      const thread = await comment(sessionId, "Use a constant");
+      if (opts.sentBefore) await rpc("send", { sessionId, threadId: THREAD, reviewThreadIds: [thread.id], note: "" });
+      armed = true;
+      const fixing = rpc("fixInNewThread", { sessionId, threadId: THREAD, reviewThreadIds: [thread.id], note: "", execution });
+      await vi.waitFor(async () => expect((await sessionState(rpc, sessionId)).runs).toHaveLength(1));
+      armed = false;
+      if (opts.sentMeanwhile === true) await rpc("send", { sessionId, threadId: "thr_other", reviewThreadIds: [thread.id], note: "" });
+      const [run] = (await sessionState(rpc, sessionId)).runs;
+      await rpc("closeRun", { runId: run!.id });
+      release();
+      const { run: closed } = (await fixing) as { run: Run };
+      expect(closed.status).toBe("closed");
+      expect(harness.inspection.sdk.callsTo("threads.spawn")).toHaveLength(0);
+      return { ...context, sessionId, thread, row: (await sessionState(rpc, sessionId)).threads[0]! };
+    }
+
+    it("gives the comment back to the thread it was sent to before", async () => {
+      const { harness, thread, row } = await pendingFixer({ sentBefore: true });
+      expect(row.delivery).toMatchObject({ state: "sent", threadId: THREAD });
+      expect(isError(await tool(harness, "diff_review_reply", { threadId: thread.id, text: "On it." }, THREAD))).toBe(false);
+    });
+
+    it("leaves a comment never sent before unsent, so the send dialog offers it again", async () => {
+      const { row } = await pendingFixer({ sentBefore: false });
+      expect(row.delivery).toBeNull();
+    });
+
+    it("keeps a send made to another thread meanwhile", async () => {
+      const { row } = await pendingFixer({ sentBefore: true, sentMeanwhile: true });
+      expect(row.delivery).toMatchObject({ state: "sent", threadId: "thr_other" });
+    });
+  });
+
   it("8: a turn's end does not mark a send made while it was being closed out", async () => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => (release = resolve));

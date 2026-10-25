@@ -122,8 +122,11 @@ orderings; each has a test:
   alone proves nothing; any client may write it.
 - A question to the reviewer is skipped as already queued only while it waits behind a turn that has
   not started; once a turn took it, a new question gets its own.
-- A failed send restores each thread's previous send (`dropSend`); a turn end marks "no reply" only
-  the very sends it saw (`markNoReply` by send id).
+- A failed send, or a run's start cancelled before bb was asked, restores each thread's previous send
+  (`dropSend`). What each send replaced is kept per thread in `send_previous`, not in memory: a send
+  rolled back while a later one owns the thread splices itself out of that send's "before", so
+  overlapping sends roll back right in either order and never point a thread at a deleted send. A
+  turn end marks "no reply" only the very sends it saw (`markNoReply` by send id).
 - The workspace key hashes on-demand patches too, fetched up to `FINGERPRINT_MAX_FILES`; past that,
   or when bb does not answer, the key is new each time (reload rather than show a stale diff).
 
@@ -198,7 +201,7 @@ Move to `experimental_tab` when the plugin re-pins to an SDK that has it (and ra
 
 - `MIGRATIONS` is append-only; bb checks each applied statement's hash. 0.1.0 shipped indexes 0–6;
   0.2.0 added the `runs` table at 7–9, its `parent_thread_id` at 10 (an `ALTER`, since 7 was
-  already applied on installs of the branch) and `view_states` at 11.
+  already applied on installs of the branch), `view_states` at 11 and `send_previous` at 12.
 - The tab's kept state (drafts, file and thread folds, scroll) lives in the plugin's database, keyed by bb thread and
   session, not in `localStorage`: it must survive a restart and follow the user to another device (the
   owner uses bb remotely). Saves are debounced and flushed when the tab unmounts or the page hides; a
