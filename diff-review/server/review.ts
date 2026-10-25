@@ -14,16 +14,26 @@ import {
   targetKey,
   type RealtimeSignal,
   type ReviewThread,
+  type Run,
   type ReviewView,
   type Severity,
   type Side,
   type Target,
   type TargetRequest,
   type ThreadStatus,
+  type LoadReason,
+  type ViewState,
+  viewStateSchema,
 } from "../shared/types";
-import { ignorePatterns, loadDiff, loadPatches, resolveTarget, ReviewUnavailable, workspaceOf, workspaceRefs } from "./diff";
+import { ignorePatterns, loadDiff, loadPatches, resolveTarget, ReviewUnavailable, workspaceOf, workspaceRefs, workspaceState, type WorkspaceState } from "./diff";
 import { sendPrompt } from "./prompt";
-import type { ReviewStore } from "./store";
+import type { ReviewStore, StoredRun } from "./store";
+
+/** A run as the tab sees it, without the baseline only the server reads. */
+export function publicRun(run: StoredRun): Run {
+  const { baseline: _baseline, ...rest } = run;
+  return rest;
+}
 
 /** A failure the caller caused, worded for them. */
 export class ReviewError extends Error {
@@ -65,6 +75,12 @@ const PROVIDER_NAMES: Record<string, string> = {
 const MAX_RANGE_LINES = 2_000;
 
 export class ReviewService {
+  /** Each workspace's state at the end of its last turn, or when a tab first loaded it. */
+  private readonly workspaceStates = new Map<string, WorkspaceState>();
+
+  /** Told of every comment the user writes, after it is stored (for @-mentions); must not throw. */
+  onUserComment: (thread: ReviewThread, body: string, viewerThreadId: string | null) => void = () => undefined;
+
   constructor(
     private readonly bb: BbPluginApi,
     private readonly store: ReviewStore,
@@ -76,9 +92,11 @@ export class ReviewService {
    * was not opened on a chosen view), an empty uncommitted view gives way to the changes committed
    * since the base branch, when there are any; when both are empty, the uncommitted view stands.
    */
-  async view(threadId: string, request: TargetRequest, autoTarget = false): Promise<ReviewView> {
+  async view(threadId: string, request: TargetRequest, autoTarget = false, reason: LoadReason = "unknown", tab = "?"): Promise<ReviewView> {
     try {
       const environment = await workspaceOf(this.bb.sdk, threadId);
+      this.bb.log.debug(`Loading the ${request.kind} view of ${threadId}'s workspace ${environment.id} for tab ${tab} (${reason}).`);
+      await this.seedWorkspaceState(environment.id);
       const base = request.kind === "branch" || request.kind === "all" ? request.base : undefined;
       const refs = await workspaceRefs(this.bb.sdk, this.bb.log, environment, base);
       let target = resolveTarget(request, refs.defaultBase);
@@ -94,6 +112,7 @@ export class ReviewService {
         }
       }
       const session = this.store.session(environment.id, targetKey(target));
+      const threads = this.store.threads(session.id);
       return {
         ok: true,
         sessionId: session.id,
@@ -105,12 +124,41 @@ export class ReviewService {
         files: diff.files,
         ignoredPaths: diff.ignoredPaths,
         truncated: diff.truncated,
-        threads: this.store.threads(session.id),
+        threads,
+        runs: this.store.openRuns(session.id).map(publicRun),
+        viewState: this.viewState(threadId, session.id, threads),
       };
     } catch (error) {
       if (error instanceof ReviewUnavailable) return { ok: false, message: error.message };
       throw error;
     }
+  }
+
+  /**
+   * What `threadId`'s tab kept of a view, minus the reply and edit drafts whose thread or comment is
+   * gone (deleted, or cleared with the review). A stored copy that no longer parses counts as none.
+   */
+  private viewState(threadId: string, sessionId: string, threads: readonly ReviewThread[]): ViewState | null {
+    const parsed = viewStateSchema.safeParse(this.store.viewState(threadId, sessionId));
+    if (!parsed.success) return null;
+    const threadIds = new Set(threads.map((thread) => thread.id));
+    const commentIds = new Set(threads.flatMap((thread) => thread.comments.map((comment) => comment.id)));
+    const drafts = Object.fromEntries(
+      Object.entries(parsed.data.drafts).filter(([key]) => {
+        if (key.startsWith("reply:")) return threadIds.has(key.slice("reply:".length));
+        if (key.startsWith("edit:")) return commentIds.has(key.slice("edit:".length));
+        return true;
+      }),
+    );
+    // Folds of threads that are gone are dropped the same way.
+    const expandedThreads = Object.fromEntries(Object.entries(parsed.data.expandedThreads ?? {}).filter(([id]) => threadIds.has(id)));
+    return { ...parsed.data, drafts, expandedThreads };
+  }
+
+  /** Keeps what `threadId`'s tab holds of a session's view. */
+  saveViewState(threadId: string, sessionId: string, state: ViewState): void {
+    const session = this.requireSession(sessionId);
+    this.store.saveViewState(threadId, session.id, state);
   }
 
   /** Patches bb left to load on demand. */
@@ -119,23 +167,36 @@ export class ReviewService {
     return loadPatches(this.bb.sdk, environment, target, paths);
   }
 
-  threads(sessionId: string): ReviewThread[] {
+  /** A session's threads and its runs not yet closed. */
+  sessionState(sessionId: string): { threads: ReviewThread[]; runs: Run[] } {
     this.requireSession(sessionId);
-    return this.store.threads(sessionId);
+    return { threads: this.store.threads(sessionId), runs: this.store.openRuns(sessionId).map(publicRun) };
   }
 
-  createThread(input: NewThreadInput): ReviewThread {
+  /** `viewerThreadId`: the thread whose Review tab it was written in, when the tab says. */
+  createThread(input: NewThreadInput, viewerThreadId: string | null = null): ReviewThread {
     const session = this.requireSession(input.sessionId);
     const placed = normalisePlace(input);
     const thread = this.store.createThread({ ...input, ...placed, body: requireText(input.body, "The comment") });
     this.publish(session.environmentId, session.id);
+    this.onUserComment(thread, input.body, viewerThreadId);
     return thread;
   }
 
-  addUserComment(reviewThreadId: string, body: string): ReviewThread {
+  /** A thread an AI review run opened, already checked against the diff (`RunService.addComment`). */
+  createAgentThread(input: NewThreadInput, authorName: string): ReviewThread {
+    const session = this.requireSession(input.sessionId);
+    const thread = this.store.createThread({ ...input, ...normalisePlace(input) }, { type: "agent", name: authorName });
+    this.publish(session.environmentId, session.id);
+    return thread;
+  }
+
+  addUserComment(reviewThreadId: string, body: string, viewerThreadId: string | null = null): ReviewThread {
     const thread = this.requireThread(reviewThreadId);
     this.store.addComment({ threadId: thread.id, authorType: "user", authorName: "You", body: requireText(body, "The comment") });
-    return this.changed(thread.id);
+    const changed = this.changed(thread.id);
+    this.onUserComment(changed, body, viewerThreadId);
+    return changed;
   }
 
   editComment(commentId: string, body: string): ReviewThread {
@@ -191,14 +252,14 @@ export class ReviewService {
       this.publish(session.environmentId, session.id);
       return { delivery: result.delivery, count: chosen.length };
     } catch (error) {
-      this.store.dropSend(send.id);
+      this.store.dropSend(send);
       throw error;
     }
   }
 
-  /** The threads whose last send went to `callerThreadId`; with `all`, the closed ones too. */
+  /** The threads an agent's thread may answer (`agentScope`); with `all`, the closed ones too. */
   sentTo(callerThreadId: string, all: boolean): ReviewThread[] {
-    const rows = this.store.threadsSentTo(callerThreadId);
+    const rows = this.agentScope(callerThreadId);
     return all ? rows : rows.filter((row) => row.status === "open");
   }
 
@@ -208,10 +269,20 @@ export class ReviewService {
       throw new ReviewError("Run this inside the bb thread the comments were sent to.", "not_in_thread");
     }
     const body = requireText(text, action === "reply" ? "The reply" : action === "resolve" ? "The summary" : "The reason");
-    const thread = this.findSent(callerThreadId, idPrefix);
+    // Everything that awaits bb comes first. The rights are read after it, in the same step as the
+    // write: a send reassigned, or a run closed, while bb answered leaves the old caller refused and
+    // every row as it was.
     const authorName = await this.agentName(callerThreadId);
-    this.store.addComment({ threadId: thread.id, authorType: "agent", authorName, body });
-    if (action !== "reply") this.store.setStatus(thread.id, action === "resolve" ? "resolved" : "dismissed", true);
+    const turnStarted = await this.latestTurnStart(callerThreadId).catch(() => null);
+    const thread = this.findSent(callerThreadId, idPrefix);
+    this.store.answerAsAgent({
+      threadId: thread.id,
+      callerThreadId,
+      ackBefore: turnStarted,
+      authorName,
+      body,
+      status: action === "reply" ? null : action === "resolve" ? "resolved" : "dismissed",
+    });
     return this.changed(thread.id);
   }
 
@@ -225,23 +296,81 @@ export class ReviewService {
     const waiting = this.store.waitingOn(thread.id);
     if (waiting.length > 0) {
       const started = await this.latestTurnStart(thread.id);
-      const unanswered = waiting.filter((row) => started !== null && row.sentAt <= started);
-      this.store.markNoReply(unanswered.map((row) => row.threadId));
+      // Each row is marked only if its thread still points at the send seen here: one sent on while
+      // bb answered keeps its newer send.
+      const unanswered = this.store.markNoReply(waiting.filter((row) => started !== null && row.sentAt <= started));
       for (const sessionId of new Set(unanswered.map((row) => row.sessionId))) {
         const session = this.store.sessionById(sessionId);
         if (session !== null) this.publish(session.environmentId, session.id);
       }
     }
-    if (thread.environmentId !== null && this.store.sessionsOf(thread.environmentId).length > 0) {
+    if (thread.environmentId !== null && this.store.sessionsOf(thread.environmentId).length > 0 && (await this.workspaceChanged(thread.environmentId, thread.id))) {
       this.signal(thread.environmentId, { kind: "diff" });
     }
   }
 
-  private async latestTurnStart(threadId: string): Promise<number | null> {
+  /**
+   * Whether the workspace's diffs changed since the last turn that ended in it. Most turns change no
+   * file (a reviewer answering a question, the thread under review reading a run's notice), and a
+   * `diff` signal makes every open tab reload its whole view. Unknown or unreadable counts as changed.
+   * Two turns ending together cannot both signal for one change: the compare and the update below
+   * run in one step, after the state is read.
+   */
+  private async workspaceChanged(environmentId: string, threadId: string): Promise<boolean> {
+    let state: WorkspaceState;
+    try {
+      state = await workspaceState(this.bb.sdk, environmentId);
+    } catch (error) {
+      this.bb.log.warn(`Could not read the state of ${environmentId}; telling its tabs to reload: ${error instanceof Error ? error.message : String(error)}`);
+      this.workspaceStates.delete(environmentId);
+      return true;
+    }
+    const previous = this.workspaceStates.get(environmentId);
+    this.workspaceStates.set(environmentId, state);
+    if (previous?.key === state.key) {
+      this.bb.log.debug(`A turn of ${threadId} ended; ${environmentId} is unchanged (${state.summary}), so no reload.`);
+      return false;
+    }
+    this.bb.log.debug(
+      `A turn of ${threadId} ended; ${environmentId} ${previous === undefined ? "had no known state" : `changed from (${previous.summary})`} to (${state.summary}): telling its tabs to reload.`,
+    );
+    return true;
+  }
+
+  /**
+   * Records a workspace's state the first time a tab loads one of its views, before the diff is read,
+   * so the first turn to end after a plugin load does not reload every tab for nothing. A turn that
+   * changes files ends after it, with another key.
+   */
+  private async seedWorkspaceState(environmentId: string): Promise<void> {
+    if (this.workspaceStates.has(environmentId)) return;
+    try {
+      const state = await workspaceState(this.bb.sdk, environmentId);
+      if (!this.workspaceStates.has(environmentId)) this.workspaceStates.set(environmentId, state);
+    } catch (error) {
+      this.bb.log.debug(`No state recorded for ${environmentId}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  /** When the thread's latest own turn started (epoch ms), or null when bb has no record. */
+  async latestTurnStart(threadId: string): Promise<number | null> {
     const events = await this.bb.sdk.threads.events.list({ threadId, types: ["turn/started"], order: "desc", limit: "20" });
     // A sub-agent's turn carries the tool call that started it; only the thread's own turns count.
     const own = events.find((event) => event.type === "turn/started" && event.data.parentToolCallId === undefined);
     return own?.createdAt ?? null;
+  }
+
+  /**
+   * The comment threads an agent's thread may read and answer: those whose last send went to it, and,
+   * for an AI review run, every thread of the session it reviews.
+   */
+  agentScope(callerThreadId: string): ReviewThread[] {
+    // A run closed (Close, Clear review) loses every right, those from sends to it included.
+    if (this.store.isClosedRunThread(callerThreadId)) return [];
+    const byId = new Map(this.store.threadsSentTo(callerThreadId).map((row) => [row.id, row]));
+    const reviewed = new Set(this.store.runsOfThread(callerThreadId).filter((run) => run.kind === "review").map((run) => run.sessionId));
+    for (const sessionId of reviewed) for (const row of this.store.threads(sessionId)) byId.set(row.id, row);
+    return [...byId.values()].sort((a, b) => a.createdAt - b.createdAt);
   }
 
   private findSent(callerThreadId: string, idPrefix: string): ReviewThread {
@@ -249,7 +378,7 @@ export class ReviewService {
     if (!/^[0-9a-f]{4,}$/.test(prefix)) {
       throw new ReviewError(`"${idPrefix}" is not a comment thread id (at least four hex characters).`, "invalid_id");
     }
-    const matches = this.store.threadsSentTo(callerThreadId).filter((row) => row.id.startsWith(prefix));
+    const matches = this.agentScope(callerThreadId).filter((row) => row.id.startsWith(prefix));
     if (matches.length === 1) return matches[0]!;
     if (matches.length > 1) {
       throw new ReviewError(`"${idPrefix}" matches ${matches.length} threads (${matches.map((row) => row.id).join(", ")}); give more of the id.`, "ambiguous_id");
@@ -261,7 +390,8 @@ export class ReviewService {
     throw new ReviewError(`No comment thread ${idPrefix} was sent to this thread. Run \`bb diff-review list\` to see the ones that were.`, "unknown_thread");
   }
 
-  private async agentName(threadId: string): Promise<string> {
+  /** How an agent's comments are signed: its thread's provider. */
+  async agentName(threadId: string): Promise<string> {
     try {
       const thread = await this.bb.sdk.threads.get({ threadId });
       return PROVIDER_NAMES[thread.providerId] ?? thread.providerId;
@@ -278,6 +408,12 @@ export class ReviewService {
     return thread;
   }
 
+  /** Tells open tabs on a session's workspace that its threads or runs changed. */
+  publishSession(sessionId: string): void {
+    const session = this.store.sessionById(sessionId);
+    if (session !== null) this.publish(session.environmentId, session.id);
+  }
+
   private publish(environmentId: string, sessionId: string): void {
     this.signal(environmentId, { kind: "threads", sessionId });
   }
@@ -286,13 +422,13 @@ export class ReviewService {
     this.bb.realtime.publish(environmentChannel(environmentId), signal);
   }
 
-  private requireSession(id: string) {
+  requireSession(id: string) {
     const session = this.store.sessionById(id);
     if (session === null) throw new ReviewError(`No review session ${id}.`, "unknown_session");
     return session;
   }
 
-  private requireThread(id: string): ReviewThread {
+  requireThread(id: string): ReviewThread {
     const thread = this.store.thread(id);
     if (thread === null) throw new ReviewError(`No comment thread ${id}.`, "unknown_thread");
     return thread;

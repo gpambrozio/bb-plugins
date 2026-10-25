@@ -1,12 +1,24 @@
 /**
  * Which changed files the Review tab leaves out: generated files, lockfiles and the like. Patterns are
  * gitignore syntax, from the plugin's setting and from the workspace's own `.diffityignore` and
- * `.git/info/diffityignore`, the files diffity reads (`src-tauri/src/core/diffignore.rs`), so a
- * repository set up for diffity works unchanged.
+ * `.git/info/diffityignore` (in a linked worktree, the main repository's: `gitInfoParent` in
+ * `diff.ts`), the files diffity reads (`src-tauri/src/core/diffignore.rs`), so a repository set up for
+ * diffity works unchanged.
  */
 import ignore from "ignore";
 
-export const IGNORE_FILES = [".diffityignore", ".git/info/diffityignore"] as const;
+/** The ignore file in the workspace root, and the one in the repository's `info/`. */
+export const WORKSPACE_IGNORE_FILE = ".diffityignore";
+export const INFO_IGNORE_FILE = "info/diffityignore";
+
+/**
+ * The git dir a `.git` file points at (`gitdir: <path>`), as a linked worktree or a submodule has
+ * one; null when the text is not a gitfile.
+ */
+export function gitfileTarget(text: string): string | null {
+  const match = /^gitdir:[ \t]*(.+?)[ \t]*$/m.exec(text);
+  return match === null ? null : match[1]!;
+}
 
 /** Splits a setting or a file into patterns: one per line, blank lines and `#` comments dropped. */
 export function patternLines(text: string): string[] {

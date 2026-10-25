@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { ignoreMatcher, patternLines } from "./ignore";
+import { gitfileTarget, ignoreMatcher, patternLines } from "./ignore";
 
 describe("patternLines", () => {
   it("drops blank lines and comments", () => {
@@ -22,5 +22,14 @@ describe("ignoreMatcher", () => {
     expect(ignoreMatcher([])("anything")).toBe(false);
     expect(ignoreMatcher(["*"])("/abs/path")).toBe(false);
     expect(ignoreMatcher(["*"])("../up")).toBe(false);
+  });
+});
+
+describe("gitfileTarget", () => {
+  it("reads the git dir a .git file names, and nothing else", () => {
+    expect(gitfileTarget("gitdir: /main/.git/worktrees/repo\n")).toBe("/main/.git/worktrees/repo");
+    expect(gitfileTarget("gitdir:../.git/modules/lib  \r\n")).toBe("../.git/modules/lib");
+    expect(gitfileTarget("[core]\n\tbare = false\n")).toBeNull();
+    expect(gitfileTarget("")).toBeNull();
   });
 });

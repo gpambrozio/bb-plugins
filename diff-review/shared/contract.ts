@@ -9,10 +9,15 @@ import {
   ANCHOR_MAX_CHARS,
   BODY_MAX_CHARS,
   reviewThreadSchema,
+  executionSchema,
+  REVIEW_FOCUSES,
   reviewViewSchema,
+  runSchema,
   severitySchema,
   sideSchema,
   targetRequestSchema,
+  viewStateSchema,
+  loadReasonSchema,
   targetSchema,
   threadStatusSchema,
 } from "./types";
@@ -29,6 +34,9 @@ export const rpcContract = defineRpcContract({
         target: targetRequestSchema,
         /** The tab's first load: an empty uncommitted view may give way to the branch's commits. */
         autoTarget: z.boolean().optional(),
+        /** What made the tab load, and which open tab it is, for the debug log. */
+        reason: loadReasonSchema.optional(),
+        tab: z.string().max(16).optional(),
       })
       .strict(),
     output: reviewViewSchema,
@@ -39,12 +47,14 @@ export const rpcContract = defineRpcContract({
   },
   listThreads: {
     input: z.object({ sessionId: id }).strict(),
-    output: z.object({ threads: z.array(reviewThreadSchema) }).strict(),
+    output: z.object({ threads: z.array(reviewThreadSchema), runs: z.array(runSchema) }).strict(),
   },
   createThread: {
     input: z
       .object({
         sessionId: id,
+        /** The thread whose Review tab it was written in; a reviewer an @reviewer starts becomes its child. */
+        threadId: id.optional(),
         filePath: z.string().min(1).max(4096),
         side: sideSchema.nullable(),
         startLine: z.number().int().min(0),
@@ -57,7 +67,7 @@ export const rpcContract = defineRpcContract({
     output: threadResult,
   },
   addComment: {
-    input: z.object({ reviewThreadId: id, body }).strict(),
+    input: z.object({ reviewThreadId: id, body, threadId: id.optional() }).strict(),
     output: threadResult,
   },
   editComment: {
@@ -82,6 +92,50 @@ export const rpcContract = defineRpcContract({
       })
       .strict(),
     output: z.object({ delivery: z.enum(["sent", "queued"]), count: z.number() }).strict(),
+  },
+  runDefaults: {
+    input: z.object({ threadId: id }).strict(),
+    output: z
+      .object({ execution: executionSchema.nullable(), message: z.string().nullable(), permissionMode: z.enum(["auto", "accept-edits"]) })
+      .strict(),
+  },
+  startReview: {
+    input: z
+      .object({
+        sessionId: id,
+        /** The thread under review; the run's thread becomes its child. */
+        threadId: id,
+        focuses: z.array(z.string().min(1).max(64)).max(REVIEW_FOCUSES.length + 10),
+        instructions: z.string().max(BODY_MAX_CHARS),
+        execution: executionSchema,
+      })
+      .strict(),
+    output: z.object({ run: runSchema }).strict(),
+  },
+  fixInNewThread: {
+    input: z
+      .object({
+        sessionId: id,
+        /** The thread under review; the fix thread becomes its child. */
+        threadId: id,
+        reviewThreadIds: z.array(id).min(1).max(200),
+        note: z.string().max(BODY_MAX_CHARS),
+        execution: executionSchema,
+      })
+      .strict(),
+    output: z.object({ run: runSchema, count: z.number() }).strict(),
+  },
+  closeRun: {
+    input: z.object({ runId: id }).strict(),
+    output: z.object({ ok: z.literal(true) }).strict(),
+  },
+  saveViewState: {
+    input: z.object({ threadId: id, sessionId: id, state: viewStateSchema }).strict(),
+    output: z.object({ ok: z.literal(true) }).strict(),
+  },
+  clearReview: {
+    input: z.object({ sessionId: id }).strict(),
+    output: z.object({ deletedThreads: z.number().int().nonnegative(), closedRuns: z.number().int().nonnegative() }).strict(),
   },
 });
 

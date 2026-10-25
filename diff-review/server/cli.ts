@@ -10,8 +10,9 @@
  */
 import { PluginCliError, cliCommand, defineCli, type PluginCliRegistration } from "@get-bb/plugin-sdk";
 
-import { describeLocation, type ReviewThread } from "../shared/types";
+import { describeLocation, GENERAL_PATH, type ReviewThread } from "../shared/types";
 import { ReviewError, type AgentAction, type ReviewService } from "./review";
+import type { RunService } from "./runs";
 
 /** The longest text a command takes, in UTF-8 bytes; its base64 still fits bb's 16 KiB stdin line. */
 export const TEXT_MAX_BYTES = 12_000;
@@ -23,8 +24,10 @@ function reason(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-async function guarded<T>(work: () => Promise<T>): Promise<T> {
+/** Runs a command; a run's thread calling in before bb told the plugin which thread it is is bound first. */
+async function guarded<T>(work: () => Promise<T>, runs?: RunService, threadId?: string): Promise<T> {
   try {
+    await runs?.bindIfPending(threadId);
     return await work();
   } catch (error) {
     if (error instanceof PluginCliError) throw error;
@@ -95,7 +98,7 @@ const TEXT_OPTION = {
   placeholder: "base64",
 } as const;
 
-function answerCommand(service: ReviewService, action: AgentAction, summary: string, what: string) {
+function answerCommand(service: ReviewService, runs: RunService, action: AgentAction, summary: string, what: string) {
   return cliCommand({
     summary,
     description: `Run from the bb thread the comments were sent to. The ${what} is the words after the id, or --text-base64.`,
@@ -110,17 +113,58 @@ function answerCommand(service: ReviewService, action: AgentAction, summary: str
         const thread = await service.answer(ctx.threadId, input.positionals.id, action, text);
         const done = action === "reply" ? "Replied on" : action === "resolve" ? "Resolved" : "Dismissed";
         return { exitCode: 0, stdout: `${done} ${thread.id} (${describeLocation(thread)}).\n` };
-      }),
+      }, runs, ctx.threadId),
   });
 }
 
-export function diffReviewCli(service: ReviewService): PluginCliRegistration {
+function commentCommand(service: ReviewService, runs: RunService) {
+  return cliCommand({
+    summary: "Leave a review comment on the diff under review (AI review runs only)",
+    description:
+      "Run from an AI review run's thread. Comments on lines --line to --end-line of <file> on --side (new by default, old for removed lines), on the whole file with --line 0, or on the whole diff with --general. The comment is the words after the file, or --text-base64.",
+    positionals: [
+      { name: "file", description: "The file's path in the diff (leave out with --general)" },
+      { name: "text", description: "The comment", variadic: true },
+    ],
+    options: {
+      line: { type: "integer", min: 0, max: 10_000_000, description: "First line (0 for the whole file)", placeholder: "n" },
+      "end-line": { type: "integer", min: 1, max: 10_000_000, description: "Last line; defaults to --line", placeholder: "n" },
+      side: { type: "enum", values: ["new", "old"], description: "Which side the lines count on" },
+      severity: { type: "enum", values: ["must-fix", "suggestion", "nit", "question"], description: "How much it matters" },
+      general: { type: "boolean", description: "Comment on the whole diff instead of a file" },
+      "text-base64": TEXT_OPTION,
+    },
+    run: (input, ctx) =>
+      guarded(async () => {
+        if (ctx.threadId === undefined) throw new PluginCliError("Run this inside an AI review run's thread.", { code: "not_in_thread" });
+        const { file } = input.positionals;
+        const general = input.options.general === true;
+        if (!general && file === undefined) throw new PluginCliError("Give a file, or --general for the whole diff.", { code: "missing_required" });
+        // With --general there is no file, so the first word of the comment lands in its place.
+        const words = general && file !== undefined ? [file, ...input.positionals.text] : input.positionals.text;
+        const text = textOf(words, input.options["text-base64"]);
+        if (!general && input.options.line === undefined) throw new PluginCliError("Give --line (0 for the whole file).", { code: "missing_required" });
+        const startLine = general ? 0 : input.options.line!;
+        const thread = await runs.addComment(ctx.threadId, {
+          filePath: general ? GENERAL_PATH : file!,
+          side: startLine === 0 ? null : (input.options.side ?? "new"),
+          startLine,
+          endLine: input.options["end-line"] ?? startLine,
+          severity: input.options.severity ?? null,
+          body: text,
+        });
+        return { exitCode: 0, stdout: `Added ${thread.id} on ${describeLocation(thread)}.\n` };
+      }, runs, ctx.threadId),
+  });
+}
+
+export function diffReviewCli(service: ReviewService, runs: RunService): PluginCliRegistration {
   return defineCli({
     name: "diff-review",
     summary: "Answer the review comments sent to this thread",
     commands: {
       list: cliCommand({
-        summary: "List the open comment threads sent to this thread, with every comment",
+        summary: "List the open comment threads sent to this thread (or, in an AI review run, the review's), with every comment",
         options: {
           all: { type: "boolean", description: "Include threads already resolved or dismissed" },
           json: { type: "boolean", description: "Print the threads as JSON" },
@@ -138,11 +182,12 @@ export function diffReviewCli(service: ReviewService): PluginCliRegistration {
             let text = threads.map(formatThread).join("\n\n");
             if (text.length > LIST_MAX_CHARS) text = `${text.slice(0, LIST_MAX_CHARS)}\n… (cut short: the list is too long to print whole)`;
             return { exitCode: 0, stdout: `${text}\n` };
-          }),
+          }, runs, ctx.threadId),
       }),
-      reply: answerCommand(service, "reply", "Answer in a comment thread; it stays open", "reply"),
-      resolve: answerCommand(service, "resolve", "Resolve a comment thread with a one-line summary of what changed", "summary"),
-      dismiss: answerCommand(service, "dismiss", "Close a comment thread you will not act on, with the reason", "reason"),
+      reply: answerCommand(service, runs, "reply", "Answer in a comment thread; it stays open", "reply"),
+      resolve: answerCommand(service, runs, "resolve", "Resolve a comment thread with a one-line summary of what changed", "summary"),
+      dismiss: answerCommand(service, runs, "dismiss", "Close a comment thread you will not act on, with the reason", "reason"),
+      comment: commentCommand(service, runs),
     },
   });
 }

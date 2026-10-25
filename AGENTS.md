@@ -237,7 +237,10 @@ What a port only learns by running it:
   `environmentId`; `environments.get` gives `hostId` and `path`. An archived thread's environment is
   `destroyed`, with a null `path`. A thread in a worktree runs somewhere other than the project's
   checkout, so anything keyed on the checkout's path (Claude Code's project-scoped plugins, for one)
-  has to map the worktree back to its main checkout (`skills/host/resolve/repo-root.ts`).
+  has to map the worktree back to its main checkout (`skills/host/resolve/repo-root.ts`). In a
+  worktree `.git` is a file (`gitdir: …`), so `<path>/.git/info/…` fails with ENOTDIR; through
+  `files.read` alone, follow the gitfile and its git dir's `commondir`, as `git rev-parse --git-path`
+  does (`diff-review/server/diff.ts`, `gitInfoParent`).
 - **A `threads.get` row is not a `threads.list` row.** Only list rows carry `queuedWork`,
   `hasPendingInteraction` and the `activity` counts; a get row has `queuedMessageCount` and
   `activeBackgroundAgentCount` instead, and neither says whether an interaction is pending (read
@@ -369,6 +372,11 @@ read API: `navigator.clipboard.readText` needs focus everywhere, Chrome asks onc
 and the mobile app's web view allow it only within a click — so call it before awaiting anything in
 the click handler. bb's desktop app sets no permission handler on its main window, so reads work there
 without a prompt (read from its `app.asar`; `screen-sharing/AGENTS.md`).
+
+**`@pierre/diffs` redraws on identity.** A `PatchDiff` whose `lineAnnotations` (or `options`) is a new
+object re-renders the whole file's diff, so keep both stable across re-renders (memoize them, share
+unchanged data after a refetch, and never pass a fresh `[]`), or every refresh flickers every file
+(`diff-review/AGENTS.md`).
 
 **Icon names are bb's own set, not Lucide's.** `experimental_Icon` (and every `icon` field) knows about
 170 names — `Settings`, `Play`, `Spinner`, `Lock`, `ListTodo`, `MessageQuestion`, `Github`… but no

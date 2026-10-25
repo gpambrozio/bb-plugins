@@ -5,6 +5,35 @@ Notable changes to `diff-review`. The other plugins in this repository version s
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.2.0
+
+### Added
+
+- **AI review.** Ask an agent to review the diff, with an optional focus (security, performance,
+  correctness, naming, tests, types) and your own instructions. It runs in a thread of its own in the
+  same workspace, under the thread being reviewed, which you can watch and steer, and leaves its
+  comments in the Review tab as it goes, with a summary comment on the whole diff.
+- **Ask the reviewer in a comment.** Writing @reviewer (or @agent) in a comment or a reply asks the AI
+  reviewer of that view, which already knows the diff and its own comments, and its answer appears in
+  the same comment thread. When there is no reviewer yet, one starts and answers the next questions too.
+- **Fix in a new thread.** Send to agent can now start a new thread in the same workspace instead of
+  sending to the thread under review, with the provider and model you pick.
+- **The runs, listed in the tab**, with a link to each thread and Close, which archives it. An AI review
+  that ended while files in the workspace changed lists them, since bb cannot stop a review from
+  editing.
+- **Settings** for the provider and model AI runs start with (Claude Code and its default model unless
+  you change them; each run can pick another) and for how they run: *Approve for me* unless you choose
+  *Accept edits*.
+- **Runs appear under the thread they review**, and their reports to it say that nothing needs doing.
+- **Only files with comments.** A switch in the toolbar hides the files without comments, so you can go
+  through a review's findings file by file; the tab remembers it. With the switch off, each file's
+  header shows how many comment threads it has, open and closed.
+- **The tab remembers where you were.** Leaving it (another thread, a reload, a restart) no longer
+  loses unsent comments, replies or edits, which come back as typed with their box open, nor the files
+  and comment threads you folded or opened, nor the place you were scrolled to, kept separately for each thread and view.
+- **Clear review.** Deletes every comment thread in the view and closes its AI runs, archiving their
+  threads, so you can start over. It asks first, since it can't be undone.
+
 ## 0.1.0
 
 ### Added

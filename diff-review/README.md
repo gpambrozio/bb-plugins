@@ -20,7 +20,13 @@ It is a bb take on [diffity](https://github.com/nilbuild/diffity)'s review loop,
   for a range. **Comment on file** sits in each file's header, **Comment on the diff** in the toolbar.
   A comment can carry a severity (must fix, suggestion, nit, question) and is written in Markdown.
 - **Threads.** Reply, edit or delete your comments, resolve, reopen or dismiss a thread. Resolved and
-  dismissed threads fold to one line.
+  dismissed threads fold to one line (dismissing one folds it at once); click one to open it again,
+  and it stays as you left it. Each file's header shows how many comment threads it has, open
+  and closed, and **Only files with comments** in the toolbar hides the files without any, for going
+  through a review's findings; the tab remembers that switch.
+- **Nothing is lost by leaving the tab.** Each thread's tab keeps, per view, every comment, reply or
+  edit you have not sent yet (with its box open), the files you folded or unfolded, and where you were
+  scrolled, across switching threads, a reload or a restart, and on another device.
 - **Comments follow the code.** When the lines under a comment move, the comment moves with them.
   When they change or leave the view, the comment is listed at the top under *Not on the current diff*,
   with the code as it read when you commented.
@@ -29,8 +35,32 @@ It is a bb take on [diffity](https://github.com/nilbuild/diffity)'s review loop,
   `bb diff-review reply`, `resolve` or `dismiss`; its answers appear in the tab as they land. A thread
   shows *Sent · waiting*, *Agent answered*, or *No reply* (with a link to the thread) when the agent's
   turn ended without a word on it.
+- **AI review.** **AI review** in the toolbar starts an agent reviewing the diff, with an optional
+  focus (Security, Performance, Correctness, Naming, Tests, Types) and your own instructions. It works
+  in a thread of its own in the same workspace — open it to watch or steer — and its comments appear in
+  the tab as it leaves them.
+- **Ask the reviewer.** Write @reviewer (or @agent) in a comment or a reply, outside code, and the view's
+  AI reviewer answers in the comment thread. It is the latest AI review's thread, which already knows
+  the diff and its own comments; the question goes there as a follow-up. If the view has no reviewer
+  yet (or it was closed or cleared), one starts and takes the next questions too. It answers and
+  recommends; it does not edit. Provider names such as @claude start nothing.
+- **Fix in a new thread.** In **Send to agent**, choose *A new thread…* and an agent to have the fixes
+  made in a new thread in the same workspace instead of the thread under review.
+- **Runs.** Each AI run is a thread under the thread you are reviewing, in the same workspace, listed
+  under the toolbar too, with **Open thread** and **Close** (which archives the thread). They start
+  with the provider and model in Settings → Plugins → Diff Review (Claude Code and its default model
+  unless changed), in bb's *Approve for me* mode unless you choose *Accept edits* there. bb cannot make
+  a thread read-only, so an AI review is only asked not to edit; when it ends, the run lists every file
+  that changed in the workspace while it ran.
+- **Clear review.** Once a view has comments or runs, **Clear review** in the toolbar deletes every
+  comment thread in that view, yours and the AI's, open or closed, and closes its runs, archiving
+  their threads, so the tab starts fresh. It asks first, since it can't be undone; other views keep
+  their comments.
+- **The thread under review hears from its runs.** bb tells a thread when one of its child threads
+  finishes a turn. Each run's last message opens with "Diff Review status report — no action
+  needed", and the thread's agent is told these notices are reports, so it reads them without acting.
 - **Leave generated files out.** List gitignore patterns in Settings → Plugins → Diff Review, and
-  the workspace's own `.diffityignore` (and `.git/info/diffityignore`) is read too, as diffity does.
+  the workspace's own `.diffityignore` (and `.git/info/diffityignore`, the main repository's in a git worktree) is read too, as diffity does.
 
 Comments are stored by the plugin, per workspace and view, on the bb server; they stay when the tab or
 bb closes.
@@ -39,25 +69,27 @@ bb closes.
 
 - It does not comment inside bb's own diff panel (Mod+D): bb has no hook for that, so the Review tab
   draws its own diff with the same renderer.
-- No AI review runs, `@claude` mentions or fixing in a new thread yet (phase 2), no GitHub pull request
-  review ([#47](https://github.com/gpambrozio/bb-plugins/issues/47)), and no staged/unstaged split,
+- No GitHub pull request review ([#47](https://github.com/gpambrozio/bb-plugins/issues/47)), and no staged/unstaged split,
   arbitrary ranges, find, viewed marks or suggestion apply
   ([#48](https://github.com/gpambrozio/bb-plugins/issues/48)).
-- The agent may edit files the way it always can in its thread: Diff Review adds no permission of its own.
+- The agent may edit files the way it always can in its thread: Diff Review adds no permission of its
+  own. Its AI runs use *Approve for me* (or *Accept edits*, if you set it).
 
 ## Install
 
 Needs bb 0.46 or newer.
 
 ```bash
-bb plugin install 'git:github.com/gpambrozio/bb-plugins@^0.1.0' --plugin diff-review --tag-prefix diff-review/
+bb plugin install 'git:github.com/gpambrozio/bb-plugins@^0.2.0' --plugin diff-review --tag-prefix diff-review/
 ```
 
 ## For agents
 
 The plugin ships a `diff-review` skill that tells a thread's agent how to answer: `bb diff-review list`,
-then `reply`, `resolve` or `dismiss` with the text as base64 through `--text-base64-stdin`. Answers are
-accepted only from the thread the comments were sent to.
+then `reply`, `resolve` or `dismiss` with the text as base64 through `--text-base64-stdin`; an AI review
+also has `comment`. Answers are accepted only from the thread the comments were sent to (or, for an AI
+review, from its own thread). The threads AI runs start also get `diff_review_*` tools that do the same
+without the base64.
 
 ## Development
 

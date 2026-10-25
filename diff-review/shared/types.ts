@@ -43,6 +43,14 @@ export type DeliveryState = z.infer<typeof deliveryStateSchema>;
  * The view under review, as the Review tab asks for it. `base` may be left out for the branch views;
  * the server fills in the workspace's merge-base branch.
  */
+/**
+ * Why the tab loads its whole view, for the plugin's debug log: it opened, the user picked another
+ * view, a `diff` signal (the workspace changed), the realtime link came back, the reload button, or
+ * "Try again" after an error.
+ */
+export const loadReasonSchema = z.enum(["open", "view", "diff-signal", "reconnect", "manual", "retry", "unknown"]);
+export type LoadReason = z.infer<typeof loadReasonSchema>;
+
 export const targetRequestSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("uncommitted") }).strict(),
   z.object({ kind: z.literal("branch"), base: z.string().min(1).max(256).optional() }).strict(),
@@ -128,6 +136,101 @@ export type DiffFile = z.infer<typeof diffFileSchema>;
 export const commitSchema = z.object({ sha: z.string(), shortSha: z.string(), subject: z.string() }).strict();
 export type Commit = z.infer<typeof commitSchema>;
 
+/** diffity's review focus chips; a review run may also get free-form instructions. */
+export const REVIEW_FOCUSES = ["Security", "Performance", "Correctness", "Naming", "Tests", "Types"] as const;
+
+/** The reasoning levels bb's thread spawn takes. */
+export const reasoningLevelSchema = z.enum(["none", "low", "medium", "high", "xhigh", "max", "ultra", "ultracode"]);
+
+/** The provider, model and reasoning a spawned thread runs with, as bb's provider picker gives them. */
+export const executionSchema = z
+  .object({
+    providerId: z.string().min(1).max(128),
+    model: z.string().max(256),
+    reasoningLevel: reasoningLevelSchema,
+    serviceTier: z.string().max(128).optional(),
+  })
+  .strict();
+export type Execution = z.infer<typeof executionSchema>;
+
+/**
+ * An AI run the plugin started, in a visible thread of its own in the reviewed workspace: a `review`
+ * that leaves comments (and, as the view's reviewer, answers @reviewer questions), a `mention` from
+ * before @reviewer (a provider @-mention answering one thread), or a `fix` that
+ * got comments sent to a new thread.
+ */
+export const runKindSchema = z.enum(["review", "mention", "fix"]);
+export type RunKind = z.infer<typeof runKindSchema>;
+
+export const runStatusSchema = z.enum(["running", "done", "failed", "closed"]);
+export type RunStatus = z.infer<typeof runStatusSchema>;
+
+export const runSchema = z
+  .object({
+    id: z.string(),
+    sessionId: z.string(),
+    kind: runKindSchema,
+    /** The run's bb thread; null when it could not be started. */
+    threadId: z.string().nullable(),
+    /** The comment thread a mention run answers. */
+    reviewThreadId: z.string().nullable(),
+    /** A review run's focus, as the user picked it. */
+    focus: z.string().nullable(),
+    providerId: z.string(),
+    model: z.string().nullable(),
+    status: runStatusSchema,
+    /** The agent's last message when its turn ended, or why the run could not start. */
+    summary: z.string().nullable(),
+    /** Files that changed in the workspace while a review run ran; null before it ends. */
+    changedFiles: z.array(z.string()).nullable(),
+    createdAt: z.number(),
+    finishedAt: z.number().nullable(),
+  })
+  .strict();
+export type Run = z.infer<typeof runSchema>;
+
+/** Most unsent comments one tab keeps for a view, and most files whose fold it remembers. */
+export const VIEW_STATE_MAX_DRAFTS = 200;
+export const VIEW_STATE_MAX_FOLDS = 5_000;
+
+/**
+ * An unsent comment, kept as typed until it is sent or cancelled. Its key says what it belongs to:
+ * `general`, `file:<path>`, `line:<path>` (with `range`: one line draft per file, as the tab offers),
+ * `reply:<thread id>` or `edit:<comment id>`.
+ */
+export const draftSchema = z
+  .object({
+    body: z.string().max(BODY_MAX_CHARS),
+    severity: severitySchema.nullable(),
+    range: z.object({ side: sideSchema, startLine: z.number().int().positive(), endLine: z.number().int().positive() }).strict().nullable(),
+  })
+  .strict();
+export type Draft = z.infer<typeof draftSchema>;
+
+/**
+ * Where the tab was scrolled: `offset` pixels into the file `path` (the `index`th shown, the fallback
+ * when that file left the diff), or with a null `path`, `offset` pixels from the top.
+ */
+export const scrollAnchorSchema = z.object({ path: z.string().max(4096).nullable(), index: z.number().int().nonnegative(), offset: z.number() }).strict();
+export type ScrollAnchor = z.infer<typeof scrollAnchorSchema>;
+
+/** What one thread's tab keeps of one view across navigation and restarts. `savedAt` orders copies. */
+export const viewStateSchema = z
+  .object({
+    drafts: z.record(z.string().max(4200), draftSchema).refine((drafts) => Object.keys(drafts).length <= VIEW_STATE_MAX_DRAFTS, "Too many drafts."),
+    /** Files the user folded (true) or unfolded (false); the rest follow the default. */
+    collapsed: z.record(z.string().max(4096), z.boolean()).refine((folds) => Object.keys(folds).length <= VIEW_STATE_MAX_FOLDS, "Too many folds."),
+    /** Comment threads the user folded (false) or opened (true) by hand; absent in older copies. */
+    expandedThreads: z
+      .record(z.string().max(64), z.boolean())
+      .refine((threads) => Object.keys(threads).length <= VIEW_STATE_MAX_FOLDS, "Too many thread folds.")
+      .optional(),
+    scroll: scrollAnchorSchema.nullable(),
+    savedAt: z.number(),
+  })
+  .strict();
+export type ViewState = z.infer<typeof viewStateSchema>;
+
 export const reviewViewSchema = z.discriminatedUnion("ok", [
   z
     .object({
@@ -145,6 +248,10 @@ export const reviewViewSchema = z.discriminatedUnion("ok", [
       ignoredPaths: z.array(z.string()),
       truncated: z.boolean(),
       threads: z.array(reviewThreadSchema),
+      /** The session's AI runs not yet closed, newest first. */
+      runs: z.array(runSchema),
+      /** What this thread's tab kept of this view, or null the first time. */
+      viewState: viewStateSchema.nullable(),
     })
     .strict(),
   z.object({ ok: z.literal(false), message: z.string() }).strict(),
@@ -158,7 +265,7 @@ export function environmentChannel(environmentId: string): string {
 
 /** What a realtime signal on an environment channel says changed. */
 export const realtimeSignalSchema = z.discriminatedUnion("kind", [
-  /** A thread or comment in this session changed; re-read the threads. */
+  /** A thread, comment or run in this session changed; re-read them. */
   z.object({ kind: z.literal("threads"), sessionId: z.string() }).strict(),
   /** An agent's turn in this workspace ended; the files may have changed. */
   z.object({ kind: z.literal("diff") }).strict(),

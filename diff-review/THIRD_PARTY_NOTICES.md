@@ -8,6 +8,10 @@ Diff Review follows [diffity](https://github.com/nilbuild/diffity) (read at comm
 - `server/prompt.ts` adapts the prompts `src-tauri/prompts/review-feedback.md` and
   `src-tauri/prompts/resolve.md`: their writing rules, rejected-edit rules and per-thread
   instructions, with `bb diff-review` commands in place of diffity's MCP tools.
+- `server/run-prompts.ts` adapts `src-tauri/prompts/review.md` and `src-tauri/prompts/thread.md`, for
+  AI reviews and answers to @reviewer; `shared/types.ts` keeps diffity's review focus names.
+- `shared/mentions.ts` ports `src/lib/mentions.ts`: which mentions count, outside code (here
+  `@reviewer` and `@agent`).
 - `server/store.ts` follows the review tables of `src-tauri/src/core/store.rs` (sessions, threads with
   a file, side, line range, status, severity and anchor text, comments by the user or an agent), and
   the `__general__` / line 0 conventions for whole-diff and whole-file comments.
