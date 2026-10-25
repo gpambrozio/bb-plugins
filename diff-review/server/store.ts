@@ -1,0 +1,327 @@
+/**
+ * The plugin's own SQLite: review sessions, threads, comments and sends. The tables follow diffity's
+ * store (https://github.com/nilbuild/diffity, `src-tauri/src/core/store.rs`, MIT) — a session per
+ * workspace and view, threads with a file, side, line range, status, severity and anchor text, and
+ * comments by the user or an agent — plus `sends`, the ledger of which threads went to which bb thread.
+ *
+ * `MIGRATIONS` is append-only: bb records each statement's index as applied, so a shipped statement is
+ * never edited or reordered, only followed by new ones.
+ */
+import { randomBytes } from "node:crypto";
+
+import type Database from "better-sqlite3";
+
+import type { AuthorType, DeliveryState, ReviewComment, ReviewThread, Severity, Side, ThreadStatus } from "../shared/types";
+
+export const MIGRATIONS: string[] = [
+  `CREATE TABLE review_sessions (
+     id TEXT PRIMARY KEY,
+     environment_id TEXT NOT NULL,
+     target_key TEXT NOT NULL,
+     created_at INTEGER NOT NULL,
+     UNIQUE (environment_id, target_key)
+   )`,
+  `CREATE TABLE review_threads (
+     id TEXT PRIMARY KEY,
+     session_id TEXT NOT NULL REFERENCES review_sessions(id) ON DELETE CASCADE,
+     file_path TEXT NOT NULL,
+     side TEXT CHECK (side IN ('old', 'new')),
+     start_line INTEGER NOT NULL,
+     end_line INTEGER NOT NULL,
+     status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'resolved', 'dismissed')),
+     severity TEXT CHECK (severity IN ('must-fix', 'suggestion', 'nit', 'question')),
+     anchor_content TEXT,
+     send_id TEXT REFERENCES sends(id),
+     delivery TEXT CHECK (delivery IN ('sent', 'answered', 'no_reply')),
+     created_at INTEGER NOT NULL,
+     updated_at INTEGER NOT NULL
+   )`,
+  `CREATE INDEX review_threads_session ON review_threads(session_id)`,
+  `CREATE TABLE review_comments (
+     id TEXT PRIMARY KEY,
+     thread_id TEXT NOT NULL REFERENCES review_threads(id) ON DELETE CASCADE,
+     author_type TEXT NOT NULL CHECK (author_type IN ('user', 'agent')),
+     author_name TEXT NOT NULL,
+     body TEXT NOT NULL,
+     created_at INTEGER NOT NULL,
+     edited_at INTEGER
+   )`,
+  `CREATE INDEX review_comments_thread ON review_comments(thread_id)`,
+  `CREATE TABLE sends (
+     id TEXT PRIMARY KEY,
+     session_id TEXT NOT NULL REFERENCES review_sessions(id) ON DELETE CASCADE,
+     bb_thread_id TEXT NOT NULL,
+     note TEXT NOT NULL,
+     created_at INTEGER NOT NULL
+   )`,
+  `CREATE INDEX sends_bb_thread ON sends(bb_thread_id)`,
+];
+
+export interface Session {
+  id: string;
+  environmentId: string;
+  targetKey: string;
+}
+
+export interface NewThread {
+  sessionId: string;
+  filePath: string;
+  side: Side | null;
+  startLine: number;
+  endLine: number;
+  severity: Severity | null;
+  anchorContent: string | null;
+  body: string;
+}
+
+export interface NewComment {
+  threadId: string;
+  authorType: AuthorType;
+  authorName: string;
+  body: string;
+}
+
+interface ThreadRow {
+  id: string;
+  session_id: string;
+  file_path: string;
+  side: Side | null;
+  start_line: number;
+  end_line: number;
+  status: ThreadStatus;
+  severity: Severity | null;
+  anchor_content: string | null;
+  send_id: string | null;
+  delivery: DeliveryState | null;
+  created_at: number;
+  updated_at: number;
+  bb_thread_id: string | null;
+  sent_at: number | null;
+}
+
+interface CommentRow {
+  id: string;
+  thread_id: string;
+  author_type: AuthorType;
+  author_name: string;
+  body: string;
+  created_at: number;
+  edited_at: number | null;
+}
+
+/** Twelve hex characters: short enough for an agent to type, and found by any unique prefix. */
+export function newId(): string {
+  return randomBytes(6).toString("hex");
+}
+
+const THREAD_SELECT = `
+  SELECT t.*, s.bb_thread_id AS bb_thread_id, s.created_at AS sent_at
+  FROM review_threads t LEFT JOIN sends s ON s.id = t.send_id`;
+
+export class ReviewStore {
+  constructor(
+    private readonly db: Database.Database,
+    private readonly now: () => number = Date.now,
+  ) {
+    db.pragma("foreign_keys = ON");
+  }
+
+  /** The session for a workspace and view, made the first time it is asked for. */
+  session(environmentId: string, targetKey: string): Session {
+    const found = this.db
+      .prepare<[string, string], { id: string }>("SELECT id FROM review_sessions WHERE environment_id = ? AND target_key = ?")
+      .get(environmentId, targetKey);
+    if (found !== undefined) return { id: found.id, environmentId, targetKey };
+    const id = newId();
+    this.db
+      .prepare("INSERT INTO review_sessions (id, environment_id, target_key, created_at) VALUES (?, ?, ?, ?)")
+      .run(id, environmentId, targetKey, this.now());
+    return { id, environmentId, targetKey };
+  }
+
+  sessionById(id: string): Session | null {
+    const row = this.db
+      .prepare<[string], { id: string; environment_id: string; target_key: string }>("SELECT * FROM review_sessions WHERE id = ?")
+      .get(id);
+    return row === undefined ? null : { id: row.id, environmentId: row.environment_id, targetKey: row.target_key };
+  }
+
+  /** Every thread of a session with its comments, oldest first. */
+  threads(sessionId: string): ReviewThread[] {
+    const rows = this.db.prepare<[string], ThreadRow>(`${THREAD_SELECT} WHERE t.session_id = ? ORDER BY t.created_at, t.rowid`).all(sessionId);
+    return this.withComments(rows);
+  }
+
+  thread(id: string): ReviewThread | null {
+    const row = this.db.prepare<[string], ThreadRow>(`${THREAD_SELECT} WHERE t.id = ?`).get(id);
+    return row === undefined ? null : this.withComments([row])[0]!;
+  }
+
+  /** The threads whose last send went to `bbThreadId`, oldest first. */
+  threadsSentTo(bbThreadId: string): ReviewThread[] {
+    const rows = this.db.prepare<[string], ThreadRow>(`${THREAD_SELECT} WHERE s.bb_thread_id = ? ORDER BY t.created_at, t.rowid`).all(bbThreadId);
+    return this.withComments(rows);
+  }
+
+  createThread(input: NewThread): ReviewThread {
+    const id = newId();
+    const at = this.now();
+    this.db.transaction(() => {
+      this.db
+        .prepare(
+          `INSERT INTO review_threads (id, session_id, file_path, side, start_line, end_line, severity, anchor_content, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(id, input.sessionId, input.filePath, input.side, input.startLine, input.endLine, input.severity, input.anchorContent, at, at);
+      this.insertComment({ threadId: id, authorType: "user", authorName: "You", body: input.body }, at);
+    })();
+    return this.thread(id)!;
+  }
+
+  /** Adds a comment. An agent's comment answers the thread's send. */
+  addComment(input: NewComment): ReviewComment {
+    const at = this.now();
+    const id = this.db.transaction(() => {
+      const commentId = this.insertComment(input, at);
+      this.touch(input.threadId, at, input.authorType === "agent");
+      return commentId;
+    })();
+    return this.comment(id)!;
+  }
+
+  comment(id: string): (ReviewComment & { threadId: string }) | null {
+    const row = this.db.prepare<[string], CommentRow>("SELECT * FROM review_comments WHERE id = ?").get(id);
+    return row === undefined ? null : { ...toComment(row), threadId: row.thread_id };
+  }
+
+  editComment(id: string, body: string): void {
+    const at = this.now();
+    const row = this.comment(id);
+    if (row === null) return;
+    this.db.transaction(() => {
+      this.db.prepare("UPDATE review_comments SET body = ?, edited_at = ? WHERE id = ?").run(body, at, id);
+      this.touch(row.threadId, at, false);
+    })();
+  }
+
+  /** Deletes a comment, and its thread when it was the thread's last one. */
+  deleteComment(id: string): void {
+    const row = this.comment(id);
+    if (row === null) return;
+    this.db.transaction(() => {
+      this.db.prepare("DELETE FROM review_comments WHERE id = ?").run(id);
+      const left = this.db.prepare<[string], { n: number }>("SELECT count(*) AS n FROM review_comments WHERE thread_id = ?").get(row.threadId)!.n;
+      if (left === 0) this.db.prepare("DELETE FROM review_threads WHERE id = ?").run(row.threadId);
+      else this.touch(row.threadId, this.now(), false);
+    })();
+  }
+
+  /** Sets a thread's status; `answered` marks the change as the agent's answer to its send. */
+  setStatus(id: string, status: ThreadStatus, answered: boolean): void {
+    const at = this.now();
+    this.db.prepare("UPDATE review_threads SET status = ?, updated_at = ? WHERE id = ?").run(status, at, id);
+    if (answered) this.touch(id, at, true);
+  }
+
+  /** Records a send and points each thread at it. */
+  recordSend(sessionId: string, bbThreadId: string, threadIds: readonly string[], note: string): { id: string; createdAt: number } {
+    const id = newId();
+    const createdAt = this.now();
+    this.db.transaction(() => {
+      this.db.prepare("INSERT INTO sends (id, session_id, bb_thread_id, note, created_at) VALUES (?, ?, ?, ?, ?)").run(id, sessionId, bbThreadId, note, createdAt);
+      const point = this.db.prepare("UPDATE review_threads SET send_id = ?, delivery = 'sent', updated_at = ? WHERE id = ? AND session_id = ?");
+      for (const threadId of threadIds) point.run(id, createdAt, threadId, sessionId);
+    })();
+    return { id, createdAt };
+  }
+
+  /** Undoes `recordSend` when the message could not be delivered. */
+  dropSend(sendId: string): void {
+    this.db.transaction(() => {
+      this.db.prepare("UPDATE review_threads SET send_id = NULL, delivery = NULL WHERE send_id = ?").run(sendId);
+      this.db.prepare("DELETE FROM sends WHERE id = ?").run(sendId);
+    })();
+  }
+
+  /** The threads sent to `bbThreadId` still waiting for an answer, with when they were sent. */
+  waitingOn(bbThreadId: string): { threadId: string; sessionId: string; sentAt: number }[] {
+    return this.db
+      .prepare<[string], { id: string; session_id: string; sent_at: number }>(
+        `SELECT t.id, t.session_id, s.created_at AS sent_at FROM review_threads t JOIN sends s ON s.id = t.send_id
+         WHERE s.bb_thread_id = ? AND t.delivery = 'sent'`,
+      )
+      .all(bbThreadId)
+      .map((row) => ({ threadId: row.id, sessionId: row.session_id, sentAt: row.sent_at }));
+  }
+
+  markNoReply(threadIds: readonly string[]): void {
+    const mark = this.db.prepare("UPDATE review_threads SET delivery = 'no_reply' WHERE id = ? AND delivery = 'sent'");
+    this.db.transaction(() => {
+      for (const id of threadIds) mark.run(id);
+    })();
+  }
+
+  /** The sessions of a workspace. */
+  sessionsOf(environmentId: string): Session[] {
+    return this.db
+      .prepare<[string], { id: string; target_key: string }>("SELECT id, target_key FROM review_sessions WHERE environment_id = ?")
+      .all(environmentId)
+      .map((row) => ({ id: row.id, environmentId, targetKey: row.target_key }));
+  }
+
+  private insertComment(input: NewComment, at: number): string {
+    const id = newId();
+    this.db
+      .prepare("INSERT INTO review_comments (id, thread_id, author_type, author_name, body, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(id, input.threadId, input.authorType, input.authorName, input.body, at);
+    return id;
+  }
+
+  private touch(threadId: string, at: number, answered: boolean): void {
+    this.db.prepare("UPDATE review_threads SET updated_at = ? WHERE id = ?").run(at, threadId);
+    if (answered) this.db.prepare("UPDATE review_threads SET delivery = 'answered' WHERE id = ? AND send_id IS NOT NULL").run(threadId);
+  }
+
+  private withComments(rows: ThreadRow[]): ReviewThread[] {
+    if (rows.length === 0) return [];
+    const ids = rows.map((row) => row.id);
+    const comments = this.db
+      .prepare<string[], CommentRow>(`SELECT * FROM review_comments WHERE thread_id IN (${ids.map(() => "?").join(",")}) ORDER BY created_at, rowid`)
+      .all(...ids);
+    const byThread = new Map<string, ReviewComment[]>();
+    for (const row of comments) {
+      const list = byThread.get(row.thread_id) ?? [];
+      list.push(toComment(row));
+      byThread.set(row.thread_id, list);
+    }
+    return rows.map((row) => ({
+      id: row.id,
+      sessionId: row.session_id,
+      filePath: row.file_path,
+      side: row.side,
+      startLine: row.start_line,
+      endLine: row.end_line,
+      status: row.status,
+      severity: row.severity,
+      anchorContent: row.anchor_content,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      comments: byThread.get(row.id) ?? [],
+      delivery:
+        row.send_id === null || row.delivery === null || row.bb_thread_id === null || row.sent_at === null
+          ? null
+          : { state: row.delivery, sendId: row.send_id, threadId: row.bb_thread_id, sentAt: row.sent_at },
+    }));
+  }
+}
+
+function toComment(row: CommentRow): ReviewComment {
+  return {
+    id: row.id,
+    authorType: row.author_type,
+    authorName: row.author_name,
+    body: row.body,
+    createdAt: row.created_at,
+    editedAt: row.edited_at,
+  };
+}

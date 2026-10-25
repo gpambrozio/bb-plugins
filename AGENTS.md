@@ -141,6 +141,9 @@ moves the pin backwards. Re-pin with `npm install --save-exact -D @get-bb/plugin
 - **`~/.npm` on this machine has root-owned files**, so a plain `npm install` fails. Pass
   `--cache "$TMPDIR/npm-cache"` rather than fixing permissions from an agent; for `npx shadcn add`,
   set `npm_config_cache="$TMPDIR/npm-cache"` instead.
+- **npm 12 blocks install scripts**, so `better-sqlite3` (the fake host's `bb.storage.database()`) installs
+  without its native binding and tests that open the database fail with "Could not locate the bindings
+  file". Run `npx prebuild-install` inside `node_modules/better-sqlite3` once; npm 11, CI's, runs it.
 - **The scaffold has no test runner.** Add vitest per plugin (the Paseo tests are vitest and port
   directly) and a `"test": "vitest run"` script. The SDK ships harnesses:
   `@get-bb/plugin-sdk/testing` (`createFakePluginHost()` → `{ bb, harness }`, event and thread
