@@ -17,8 +17,6 @@
  * carries its run id in the plugin's metadata, which `bb.agents.configure` reads to give it the tools;
  * the tools check the caller against the store, so the metadata grants nothing by itself.
  */
-import { createHash } from "node:crypto";
-
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import { mentionsReviewer } from "../shared/mentions";
@@ -32,10 +30,10 @@ import {
   type Severity,
   type Side,
 } from "../shared/types";
-import { ignorePatterns, loadDiff, loadPatches, ReviewUnavailable } from "./diff";
+import { ignorePatterns, loadDiff, loadPatches, ReviewUnavailable, uncommittedFingerprint, type Fingerprint } from "./diff";
 import { fixPrompt, reviewerPrompt, reviewPrompt } from "./run-prompts";
 import { publicRun, ReviewError, targetFromKey, type ReviewService, type ReviewSettings } from "./review";
-import { newId, type ReviewStore } from "./store";
+import { newId, pendingRunThread, type RecordedSend, type ReviewStore } from "./store";
 import { RUN_METADATA_KEY } from "./tool-names";
 
 type Sdk = BbPluginApi["sdk"];
@@ -57,8 +55,6 @@ export function runPermissionMode(value: string): RunPermissionMode {
 
 /** The longest run summary kept, in characters. */
 const SUMMARY_MAX_CHARS = 4_000;
-/** The most files whose patches are fingerprinted one by one; past it, line counts stand in. */
-const FINGERPRINT_MAX_FILES = 500;
 
 export interface AgentCommentInput {
   filePath: string;
@@ -72,6 +68,15 @@ export interface AgentCommentInput {
 export class RunService {
   /** Each view's latest question to its reviewer: the next one waits for it, so two never race. */
   private readonly asking = new Map<string, Promise<unknown>>();
+  /**
+   * How many times each view was cleared. A start captures it before it awaits anything and gives up
+   * if it moved, so a run asked for before a Clear review never appears in the cleared view.
+   */
+  private readonly clears = new Map<string, number>();
+
+  private clearCount(sessionId: string): number {
+    return this.clears.get(sessionId) ?? 0;
+  }
 
   constructor(
     private readonly bb: BbPluginApi,
@@ -111,26 +116,48 @@ export class RunService {
   /** Starts an AI review of a session's view, as a child of `threadId`, the thread under review. */
   async startReview(input: { sessionId: string; threadId: string; focuses: readonly string[]; instructions: string; execution: Execution }): Promise<Run> {
     const session = this.review.requireSession(input.sessionId);
+    const clears = this.clearCount(session.id);
     const target = targetFromKey(session.targetKey);
     const focus = input.focuses.length === 0 ? null : input.focuses.join(", ");
-    const baseline = await this.fingerprint(session.environmentId);
     const prompt = reviewPrompt({ target, focus, instructions: input.instructions });
     const title = `Review: ${focus === null ? "changes" : focus}`;
-    return this.spawn({ sessionId: session.id, environmentId: session.environmentId, parentThreadId: input.threadId, kind: "review", reviewThreadId: null, focus, execution: input.execution, title, prompt, baseline });
+    return this.spawn({
+      sessionId: session.id,
+      environmentId: session.environmentId,
+      parentThreadId: input.threadId,
+      kind: "review",
+      reviewThreadId: null,
+      focus,
+      execution: input.execution,
+      title,
+      prompt,
+      baseline: () => this.fingerprint(session.environmentId),
+      clears,
+    });
   }
 
   /** "Fix in a new thread": sends open comment threads to a new thread in the same workspace. */
   async fixInNewThread(input: { sessionId: string; threadId: string; reviewThreadIds: readonly string[]; note: string; execution: Execution }): Promise<{ run: Run; count: number }> {
     const session = this.review.requireSession(input.sessionId);
+    const clears = this.clearCount(session.id);
     const chosen = this.openThreads(session.id, input.reviewThreadIds);
     const target = targetFromKey(session.targetKey);
     const prompt = fixPrompt({ target, threads: chosen, note: input.note });
     const title = `Review fixes: ${chosen.length} comment${chosen.length === 1 ? "" : "s"}`;
-    const run = await this.spawn({ sessionId: session.id, environmentId: session.environmentId, parentThreadId: input.threadId, kind: "fix", reviewThreadId: null, focus: null, execution: input.execution, title, prompt, baseline: null });
-    if (run.threadId !== null && run.status !== "closed") {
-      this.store.recordSend(session.id, run.threadId, chosen.map((row) => row.id), input.note);
-      this.review.publishSession(session.id);
-    }
+    const run = await this.spawn({
+      sessionId: session.id,
+      environmentId: session.environmentId,
+      parentThreadId: input.threadId,
+      kind: "fix",
+      reviewThreadId: null,
+      focus: null,
+      execution: input.execution,
+      title,
+      prompt,
+      baseline: async () => null,
+      grants: { reviewThreadIds: chosen.map((row) => row.id), note: input.note },
+      clears,
+    });
     return { run, count: chosen.length };
   }
 
@@ -164,17 +191,28 @@ export class RunService {
 
   /**
    * Queues the thread as a follow-up turn of the view's reviewer, or starts a reviewer when the view
-   * has none (never reviewed, closed, cleared, or its thread is gone). A thread already waiting on the
-   * reviewer is not sent again: the queued turn reads the thread as it is when it runs. Returns null
-   * when nothing was sent for that reason.
+   * has none (never reviewed, closed, cleared, or its thread is gone). A question still queued behind
+   * a turn the reviewer has not started yet is not queued again: that turn reads the thread as it is
+   * when it runs. Once the turn that took it has started (it may already have read the thread), a new
+   * question gets a turn of its own, and the earlier turn's answer does not count as the answer to it
+   * (`answerAsAgent`). Returns null when nothing was sent.
    */
   private async sendToReviewer(reviewThreadId: string, viewerThreadId: string | null): Promise<Run | null> {
+    const asked = this.review.requireThread(reviewThreadId);
+    const clears = this.clearCount(asked.sessionId);
+    const reviewer = this.store.reviewerRun(asked.sessionId);
+    let queuedAlready = false;
+    if (reviewer !== null && reviewer.threadId !== null && asked.delivery?.state === "sent" && asked.delivery.threadId === reviewer.threadId) {
+      const started = await this.review.latestTurnStart(reviewer.threadId).catch(() => null);
+      queuedAlready = started !== null && asked.delivery.sentAt > started;
+    }
+    // The await above may have seen a Clear review: the question is gone with the review.
+    if (this.clearCount(asked.sessionId) !== clears) return null;
+    if (queuedAlready) return null;
     const thread = this.review.requireThread(reviewThreadId);
     const session = this.review.requireSession(thread.sessionId);
     const target = targetFromKey(session.targetKey);
-    const reviewer = this.store.reviewerRun(session.id);
-    if (reviewer !== null && reviewer.threadId !== null) {
-      if (thread.delivery?.state === "sent" && thread.delivery.threadId === reviewer.threadId) return null;
+    if (reviewer !== null && reviewer.threadId !== null && this.store.run(reviewer.id)?.status !== "closed") {
       const send = this.store.recordSend(session.id, reviewer.threadId, [thread.id], "");
       try {
         await this.bb.sdk.threads.send({ threadId: reviewer.threadId, mode: "queue-if-active", input: [{ type: "text", text: reviewerPrompt(target, thread, true), mentions: [] }] });
@@ -183,39 +221,44 @@ export class RunService {
         return publicRun(this.store.run(reviewer.id)!);
       } catch (error) {
         // Its thread is gone (archived or deleted outside the tab): close that run and start anew.
-        this.store.dropSend(send.id);
+        this.store.dropSend(send);
         this.store.closeRun(reviewer.id);
         this.bb.log.info(`Reviewer run ${reviewer.id} could not take a follow-up (${error instanceof Error ? error.message : String(error)}); starting a new one.`);
+        if (this.clearCount(session.id) !== clears) return null;
+        this.review.requireThread(reviewThreadId);
       }
     }
-    const settings = await this.settings();
-    const run = await this.spawn({
+    return this.spawn({
       sessionId: session.id,
       environmentId: session.environmentId,
       parentThreadId: viewerThreadId,
       kind: "review",
       reviewThreadId: null,
       focus: null,
-      execution: { providerId: settings.aiProvider.trim() || "claude-code", model: settings.aiModel.trim(), reasoningLevel: "medium" },
+      execution: async () => {
+        const settings = await this.settings();
+        return { providerId: settings.aiProvider.trim() || "claude-code", model: settings.aiModel.trim(), reasoningLevel: "medium" };
+      },
       reasoningFromProvider: true,
       title: `Reviewer: ${describeLocation(thread)}`,
       prompt: reviewerPrompt(target, thread, false),
-      baseline: await this.fingerprint(session.environmentId),
+      baseline: () => this.fingerprint(session.environmentId),
+      grants: { reviewThreadIds: [thread.id], note: "" },
+      clears,
     });
-    if (run.threadId !== null && run.status !== "closed") {
-      this.store.recordSend(session.id, run.threadId, [thread.id], "");
-      this.review.publishSession(session.id);
-    }
-    return run;
   }
 
-  /** Closes a run: archives its thread and drops it from the tab. */
+  /**
+   * Closes a run: drops it from the tab and archives its thread. It is closed first, so it loses its
+   * rights (its sends' included) before the archive is even asked for.
+   */
   async close(runId: string): Promise<void> {
     const run = this.store.run(runId);
     if (run === null) throw new ReviewError(`No run ${runId}.`, "unknown_run");
-    if (run.status !== "closed") await this.archive(run);
+    const wasOpen = run.status !== "closed";
     this.store.closeRun(run.id);
     this.review.publishSession(run.sessionId);
+    if (wasOpen) await this.archive(run);
   }
 
   /**
@@ -225,6 +268,8 @@ export class RunService {
    */
   async clearReview(sessionId: string): Promise<{ deletedThreads: number; closedRuns: number }> {
     const session = this.review.requireSession(sessionId);
+    // Starts already asked for but not yet written as runs see this and give up.
+    this.clears.set(session.id, this.clearCount(session.id) + 1);
     const deletedThreads = this.store.threads(session.id).length;
     const open = this.store.clearSession(session.id);
     this.review.publishSession(session.id);
@@ -338,8 +383,21 @@ export class RunService {
   }
 
   /**
-   * Starts a run's thread. The run row is written first, with the id the thread carries in its
-   * metadata; a thread bb refuses to start leaves a failed run that says why.
+   * Starts a run's thread, in an order that leaves no gap a Clear review, a Close or the run's own
+   * first call could fall into:
+   *
+   * 1. Gives up if the view was cleared since the request came in (`clears`).
+   * 2. Writes the run's row, and the sends of the comment threads it may answer (`grants`), before
+   *    anything awaits bb. Until bb names its thread, those sends point at `pendingRunThread`.
+   * 3. Reads what the start needs (workspace, parent, settings, execution, baseline), then stops
+   *    there if the run was closed meanwhile.
+   * 4. Asks bb for the thread. The thread may call a tool, run the CLI or end a turn before bb's answer
+   *    arrives: `bindIfPending` then binds it by its metadata, which bb stamped as this plugin's.
+   *    Binding moves the run's sends to it, so its rights exist before its first prompt can be acted
+   *    on. A run closed while bb started it has its thread archived at once.
+   *
+   * A thread bb refuses to start, or a start that fails before that, leaves a failed run that says
+   * why, with its sends taken back.
    */
   private async spawn(input: {
     sessionId: string;
@@ -349,18 +407,22 @@ export class RunService {
     kind: Run["kind"];
     reviewThreadId: string | null;
     focus: string | null;
-    execution: Execution;
-    /** Leave the reasoning level to the provider's default (a mention has no picker). */
+    execution: Execution | (() => Promise<Execution>);
+    /** Leave the reasoning level to the provider's default (a question to the reviewer has no picker). */
     reasoningFromProvider?: boolean;
     title: string;
     prompt: string;
-    baseline: Fingerprint | null;
+    baseline: () => Promise<Fingerprint | null>;
+    /** Comment threads the run is sent, to answer. */
+    grants?: { reviewThreadIds: readonly string[]; note: string };
+    /** The view's clear count when the request came in. */
+    clears: number;
   }): Promise<Run> {
-    const environment = await this.bb.sdk.environments.get({ environmentId: input.environmentId });
-    const parentThreadId = await this.parentIn(input.parentThreadId, input.environmentId);
-    const permissionMode = runPermissionMode((await this.settings()).aiPermissionMode);
+    if (this.clearCount(input.sessionId) !== input.clears) {
+      throw new ReviewError("The review was cleared while this was being set up; nothing was started.", "cleared");
+    }
     const id = newId();
-    const { execution } = input;
+    const known = typeof input.execution === "function" ? null : input.execution;
     this.store.createRun({
       id,
       sessionId: input.sessionId,
@@ -368,13 +430,32 @@ export class RunService {
       bbThreadId: null,
       reviewThreadId: input.reviewThreadId,
       focus: input.focus,
-      providerId: execution.providerId,
-      model: execution.model === "" ? null : execution.model,
+      providerId: known?.providerId ?? "",
+      model: known === null || known.model === "" ? null : known.model,
       status: "running",
-      baseline: input.baseline === null ? null : JSON.stringify(input.baseline),
-      parentThreadId,
+      baseline: null,
+      parentThreadId: null,
     });
+    let grant: RecordedSend | null = null;
+    if (input.grants !== undefined) {
+      grant = this.store.recordSend(input.sessionId, pendingRunThread(id), input.grants.reviewThreadIds, input.grants.note);
+    }
     try {
+      const environment = await this.bb.sdk.environments.get({ environmentId: input.environmentId });
+      const parentThreadId = await this.parentIn(input.parentThreadId, input.environmentId);
+      const permissionMode = runPermissionMode((await this.settings()).aiPermissionMode);
+      const execution = known ?? (await (input.execution as () => Promise<Execution>)());
+      const baseline = await input.baseline();
+      this.store.prepareRun(id, {
+        parentThreadId,
+        baseline: baseline === null ? null : JSON.stringify(baseline),
+        providerId: execution.providerId,
+        model: execution.model === "" ? null : execution.model,
+      });
+      if (this.store.run(id)?.status === "closed") {
+        this.review.publishSession(input.sessionId);
+        return publicRun(this.store.run(id)!);
+      }
       const thread = await this.bb.sdk.threads.spawn({
         projectId: environment.projectId,
         title: input.title,
@@ -388,14 +469,38 @@ export class RunService {
         ...(parentThreadId === null ? {} : { parentThreadId }),
         pluginMetadata: { [RUN_METADATA_KEY]: id },
       });
-      this.store.setRunThread(id, thread.id);
+      // Already bound if the thread called in first; binding again is a no-op.
+      this.store.bindRun(id, thread.id);
       // Closed (Close, Clear review) while bb was starting it: that path had no thread to archive.
       if (this.store.run(id)?.status === "closed") await this.archive({ id, threadId: thread.id });
     } catch (error) {
+      if (grant !== null) this.store.dropSend(grant);
       this.store.finishRun(id, "failed", `Could not start the thread: ${error instanceof Error ? error.message : String(error)}`, null);
     }
     this.review.publishSession(input.sessionId);
     return publicRun(this.store.run(id)!);
+  }
+
+  /**
+   * The startup handshake for a thread that calls in (a tool, the CLI, a turn's end) before `spawn`
+   * has recorded it: if bb stamped it as started by this plugin (`originPluginId`, which bb sets at
+   * creation and nothing can change) and its metadata names a run still waiting for its thread, the
+   * thread is that run's from now on. The metadata alone proves nothing (any client can write it);
+   * the origin and a still-unbound run with that random id do.
+   */
+  async bindIfPending(threadId: string | undefined): Promise<void> {
+    if (threadId === undefined || !this.store.hasUnboundRuns() || this.store.isRunThread(threadId)) return;
+    try {
+      const thread = await this.bb.sdk.threads.get({ threadId });
+      if (thread.originPluginId !== this.bb.pluginId) return;
+      const metadata = await this.bb.sdk.threads.getPluginMetadata({ threadId });
+      const runId = metadata[RUN_METADATA_KEY];
+      if (typeof runId === "string" && /^[0-9a-f]{12}$/.test(runId) && this.store.bindRun(runId, threadId)) {
+        this.bb.log.debug(`Bound thread ${threadId} to run ${runId} before bb answered its start.`);
+      }
+    } catch (error) {
+      this.bb.log.debug(`Could not check whether ${threadId} is a run starting up: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   /**
@@ -416,25 +521,9 @@ export class RunService {
 
   /** The workspace's uncommitted changes, one fingerprint per file. */
   private async fingerprint(environmentId: string): Promise<Fingerprint> {
-    const result = await this.bb.sdk.environments.diffFiles({ environmentId, target: "uncommitted" });
-    if (result.outcome !== "available") return {};
-    const patches = new Map(result.initialPatches.map((patch) => [patch.path, patch.patch]));
-    const missing = result.files.filter((file) => !patches.has(file.path) && !file.binary && file.loadMode !== "too_large").map((file) => file.path);
-    for (let index = 0; index < Math.min(missing.length, FINGERPRINT_MAX_FILES); index += 50) {
-      const batch = await this.bb.sdk.environments.diffPatch({ environmentId, paths: missing.slice(index, index + 50), target: { type: "uncommitted" } });
-      if (batch.outcome === "available") for (const patch of batch.patches) patches.set(patch.path, patch.patch);
-    }
-    const prints: Fingerprint = {};
-    for (const file of result.files) {
-      const patch = patches.get(file.path);
-      prints[file.path] = `${file.changeKind}:${file.additions}:${file.deletions}:${patch === undefined ? "" : createHash("sha256").update(patch).digest("hex")}`;
-    }
-    return prints;
+    return (await uncommittedFingerprint(this.bb.sdk, environmentId)).prints;
   }
 }
-
-/** Path → a fingerprint of its uncommitted change. */
-export type Fingerprint = Record<string, string>;
 
 /** Files whose uncommitted change differs between two fingerprints, sorted. */
 export function changedFiles(before: Fingerprint, after: Fingerprint): string[] {

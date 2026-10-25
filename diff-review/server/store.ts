@@ -166,6 +166,18 @@ interface RunRow {
 /** A run as stored, with the baseline only the server reads. */
 export type StoredRun = Run & { baseline: string | null };
 
+export interface RecordedSend {
+  id: string;
+  createdAt: number;
+  /** What each thread pointed at before this send. */
+  previous: { threadId: string; sendId: string | null; delivery: DeliveryState | null }[];
+}
+
+/** Where a run's sends point before bb has given it a thread (`bindRun` moves them). */
+export function pendingRunThread(runId: string): string {
+  return `run:${runId}`;
+}
+
 interface CommentRow {
   id: string;
   thread_id: string;
@@ -291,42 +303,83 @@ export class ReviewStore {
     if (answered) this.touch(id, at, true);
   }
 
-  /** Records a send and points each thread at it. */
-  recordSend(sessionId: string, bbThreadId: string, threadIds: readonly string[], note: string): { id: string; createdAt: number } {
+  /**
+   * Records a send and points each thread at it. `previous` is what each thread pointed at before, so
+   * `dropSend` can put it back if this send cannot be delivered.
+   */
+  recordSend(sessionId: string, bbThreadId: string, threadIds: readonly string[], note: string): RecordedSend {
     const id = newId();
     const createdAt = this.now();
+    const previous: RecordedSend["previous"] = [];
     this.db.transaction(() => {
       this.db.prepare("INSERT INTO sends (id, session_id, bb_thread_id, note, created_at) VALUES (?, ?, ?, ?, ?)").run(id, sessionId, bbThreadId, note, createdAt);
+      const read = this.db.prepare<[string, string], { send_id: string | null; delivery: DeliveryState | null }>(
+        "SELECT send_id, delivery FROM review_threads WHERE id = ? AND session_id = ?",
+      );
       const point = this.db.prepare("UPDATE review_threads SET send_id = ?, delivery = 'sent', updated_at = ? WHERE id = ? AND session_id = ?");
-      for (const threadId of threadIds) point.run(id, createdAt, threadId, sessionId);
+      for (const threadId of threadIds) {
+        const row = read.get(threadId, sessionId);
+        if (row === undefined) continue;
+        previous.push({ threadId, sendId: row.send_id, delivery: row.delivery });
+        point.run(id, createdAt, threadId, sessionId);
+      }
     })();
-    return { id, createdAt };
+    return { id, createdAt, previous };
   }
 
-  /** Undoes `recordSend` when the message could not be delivered. */
-  dropSend(sendId: string): void {
+  /**
+   * Undoes `recordSend` when the message could not be delivered: each thread it still owns points
+   * back at the send it had before (an earlier delivery keeps its answer rights); a thread sent on
+   * since keeps its newer send.
+   */
+  dropSend(send: Pick<RecordedSend, "id" | "previous">): void {
     this.db.transaction(() => {
-      this.db.prepare("UPDATE review_threads SET send_id = NULL, delivery = NULL WHERE send_id = ?").run(sendId);
-      this.db.prepare("DELETE FROM sends WHERE id = ?").run(sendId);
+      const restore = this.db.prepare("UPDATE review_threads SET send_id = ?, delivery = ? WHERE id = ? AND send_id = ?");
+      for (const row of send.previous) restore.run(row.sendId, row.delivery, row.threadId, send.id);
+      this.db.prepare("UPDATE review_threads SET send_id = NULL, delivery = NULL WHERE send_id = ?").run(send.id);
+      this.db.prepare("DELETE FROM sends WHERE id = ?").run(send.id);
+    })();
+  }
+
+  /**
+   * An agent's answer in a thread, in one transaction: its comment, the new status if any, and, when
+   * the thread's current send went to that agent and was there when its turn started (`ackBefore`, or
+   * any time when unknown), that send marked answered. An answer from an earlier turn does not
+   * acknowledge a question queued after it, nor a send to another thread.
+   */
+  answerAsAgent(input: { threadId: string; callerThreadId: string; ackBefore: number | null; authorName: string; body: string; status: ThreadStatus | null }): void {
+    const at = this.now();
+    this.db.transaction(() => {
+      this.insertComment({ threadId: input.threadId, authorType: "agent", authorName: input.authorName, body: input.body }, at);
+      if (input.status !== null) this.db.prepare("UPDATE review_threads SET status = ? WHERE id = ?").run(input.status, input.threadId);
+      this.db.prepare("UPDATE review_threads SET updated_at = ? WHERE id = ?").run(at, input.threadId);
+      this.db
+        .prepare(
+          `UPDATE review_threads SET delivery = 'answered' WHERE id = ? AND send_id IN
+             (SELECT id FROM sends WHERE bb_thread_id = ? AND (? IS NULL OR created_at <= ?))`,
+        )
+        .run(input.threadId, input.callerThreadId, input.ackBefore, input.ackBefore);
     })();
   }
 
   /** The threads sent to `bbThreadId` still waiting for an answer, with when they were sent. */
-  waitingOn(bbThreadId: string): { threadId: string; sessionId: string; sentAt: number }[] {
+  waitingOn(bbThreadId: string): { threadId: string; sessionId: string; sendId: string; sentAt: number }[] {
     return this.db
-      .prepare<[string], { id: string; session_id: string; sent_at: number }>(
-        `SELECT t.id, t.session_id, s.created_at AS sent_at FROM review_threads t JOIN sends s ON s.id = t.send_id
+      .prepare<[string], { id: string; session_id: string; send_id: string; sent_at: number }>(
+        `SELECT t.id, t.session_id, t.send_id, s.created_at AS sent_at FROM review_threads t JOIN sends s ON s.id = t.send_id
          WHERE s.bb_thread_id = ? AND t.delivery = 'sent'`,
       )
       .all(bbThreadId)
-      .map((row) => ({ threadId: row.id, sessionId: row.session_id, sentAt: row.sent_at }));
+      .map((row) => ({ threadId: row.id, sessionId: row.session_id, sendId: row.send_id, sentAt: row.sent_at }));
   }
 
-  markNoReply(threadIds: readonly string[]): void {
-    const mark = this.db.prepare("UPDATE review_threads SET delivery = 'no_reply' WHERE id = ? AND delivery = 'sent'");
-    this.db.transaction(() => {
-      for (const id of threadIds) mark.run(id);
-    })();
+  /**
+   * Marks sends "no reply", each only while its thread still points at that very send and waits: a
+   * thread sent on since keeps its newer send. Returns the rows it changed.
+   */
+  markNoReply<Row extends { threadId: string; sendId: string }>(rows: readonly Row[]): Row[] {
+    const mark = this.db.prepare("UPDATE review_threads SET delivery = 'no_reply' WHERE id = ? AND send_id = ? AND delivery = 'sent'");
+    return this.db.transaction(() => rows.filter((row) => mark.run(row.threadId, row.sendId).changes > 0))();
   }
 
   /** The sessions of a workspace. */
@@ -386,9 +439,44 @@ export class ReviewStore {
     return row === undefined ? null : toRun(row);
   }
 
-  /** Records the thread a run was started in. */
-  setRunThread(id: string, bbThreadId: string): void {
-    this.db.prepare("UPDATE runs SET bb_thread_id = ? WHERE id = ?").run(bbThreadId, id);
+  /**
+   * Binds a run to the thread bb started for it, once: its row and the sends recorded for it while it
+   * had no thread now name that thread. Returns false when the run is unknown or already bound.
+   */
+  bindRun(id: string, bbThreadId: string): boolean {
+    return this.db.transaction(() => {
+      const bound = this.db.prepare("UPDATE runs SET bb_thread_id = ? WHERE id = ? AND bb_thread_id IS NULL").run(bbThreadId, id).changes > 0;
+      if (bound) this.db.prepare("UPDATE sends SET bb_thread_id = ? WHERE bb_thread_id = ?").run(bbThreadId, pendingRunThread(id));
+      return bound;
+    })();
+  }
+
+  /** Whether some run not yet closed is still waiting for bb to give it a thread. */
+  hasUnboundRuns(): boolean {
+    return this.db.prepare("SELECT 1 FROM runs WHERE bb_thread_id IS NULL AND status != 'closed' LIMIT 1").get() !== undefined;
+  }
+
+  /**
+   * Whether `bbThreadId` is the thread of AI runs that are all closed: it has lost every right, those
+   * from sends to it included. A thread that never was a run's (the one under review) is not.
+   */
+  isClosedRunThread(bbThreadId: string): boolean {
+    const row = this.db
+      .prepare<[string], { runs: number; open: number }>("SELECT count(*) AS runs, sum(status != 'closed') AS open FROM runs WHERE bb_thread_id = ?")
+      .get(bbThreadId)!;
+    return row.runs > 0 && (row.open ?? 0) === 0;
+  }
+
+  /** What a run's start learned after its row was written: its parent, baseline, provider and model. */
+  prepareRun(id: string, input: { parentThreadId: string | null; baseline: string | null; providerId: string; model: string | null }): void {
+    this.db
+      .prepare("UPDATE runs SET parent_thread_id = ?, baseline = ?, provider_id = ?, model = ? WHERE id = ?")
+      .run(input.parentThreadId, input.baseline, input.providerId, input.model, id);
+  }
+
+  /** Whether `bbThreadId` is any run's thread, closed ones included. */
+  isRunThread(bbThreadId: string): boolean {
+    return this.db.prepare("SELECT 1 FROM runs WHERE bb_thread_id = ? LIMIT 1").get(bbThreadId) !== undefined;
   }
 
   /** Marks a run running again (a follow-up was sent to its thread). */

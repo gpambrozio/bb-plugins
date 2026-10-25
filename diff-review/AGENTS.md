@@ -107,6 +107,26 @@ edit (it recommends changes instead), like any review run. A run's rights last u
 follow-up turns keep them; a turn that ends while a question is still queued behind it leaves the run
 running. Old `mention` runs stay readable but no new ones start.
 
+**Rights are read where they are used, after every await.** The review loop found each of these
+orderings; each has a test:
+- An agent's answer (`answer`) awaits bb (author, turn start) first, then reads its rights and writes
+  in one step (`answerAsAgent`). A send reassigned or a run closed meanwhile leaves it refused and every
+  row as it was. The answer marks a send answered only if that send went to this agent and existed when
+  its turn started, so an earlier turn's answer never acknowledges a question queued after it.
+- A closed run's thread has no rights at all (`isClosedRunThread`), its sends' included; Close and
+  Clear review close in the store before they ask bb to archive.
+- A run starts in order (`spawn`): the view's clear count is checked, then the run row and its sends
+  (to `pendingRunThread`) are written before anything awaits bb, then bb is asked. A thread calling in
+  (tool, CLI, turn end) before `threads.spawn` answers is bound by `bindIfPending`: bb stamped it as
+  this plugin's (`originPluginId`) and its metadata names a run still waiting for its thread. Metadata
+  alone proves nothing; any client may write it.
+- A question to the reviewer is skipped as already queued only while it waits behind a turn that has
+  not started; once a turn took it, a new question gets its own.
+- A failed send restores each thread's previous send (`dropSend`); a turn end marks "no reply" only
+  the very sends it saw (`markNoReply` by send id).
+- The workspace key hashes on-demand patches too, fetched up to `FINGERPRINT_MAX_FILES`; past that,
+  or when bb does not answer, the key is new each time (reload rather than show a stale diff).
+
 **Questions to the reviewer and fix runs are sends.** They record a send to the run's thread in the
 same ledger, so the agent's answers go through the same check as the thread under review's: only the
 thread a comment thread was last sent to may answer it. A review run may also act on every thread of

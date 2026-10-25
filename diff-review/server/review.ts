@@ -252,7 +252,7 @@ export class ReviewService {
       this.publish(session.environmentId, session.id);
       return { delivery: result.delivery, count: chosen.length };
     } catch (error) {
-      this.store.dropSend(send.id);
+      this.store.dropSend(send);
       throw error;
     }
   }
@@ -269,10 +269,20 @@ export class ReviewService {
       throw new ReviewError("Run this inside the bb thread the comments were sent to.", "not_in_thread");
     }
     const body = requireText(text, action === "reply" ? "The reply" : action === "resolve" ? "The summary" : "The reason");
-    const thread = this.findSent(callerThreadId, idPrefix);
+    // Everything that awaits bb comes first. The rights are read after it, in the same step as the
+    // write: a send reassigned, or a run closed, while bb answered leaves the old caller refused and
+    // every row as it was.
     const authorName = await this.agentName(callerThreadId);
-    this.store.addComment({ threadId: thread.id, authorType: "agent", authorName, body });
-    if (action !== "reply") this.store.setStatus(thread.id, action === "resolve" ? "resolved" : "dismissed", true);
+    const turnStarted = await this.latestTurnStart(callerThreadId).catch(() => null);
+    const thread = this.findSent(callerThreadId, idPrefix);
+    this.store.answerAsAgent({
+      threadId: thread.id,
+      callerThreadId,
+      ackBefore: turnStarted,
+      authorName,
+      body,
+      status: action === "reply" ? null : action === "resolve" ? "resolved" : "dismissed",
+    });
     return this.changed(thread.id);
   }
 
@@ -286,8 +296,9 @@ export class ReviewService {
     const waiting = this.store.waitingOn(thread.id);
     if (waiting.length > 0) {
       const started = await this.latestTurnStart(thread.id);
-      const unanswered = waiting.filter((row) => started !== null && row.sentAt <= started);
-      this.store.markNoReply(unanswered.map((row) => row.threadId));
+      // Each row is marked only if its thread still points at the send seen here: one sent on while
+      // bb answered keeps its newer send.
+      const unanswered = this.store.markNoReply(waiting.filter((row) => started !== null && row.sentAt <= started));
       for (const sessionId of new Set(unanswered.map((row) => row.sessionId))) {
         const session = this.store.sessionById(sessionId);
         if (session !== null) this.publish(session.environmentId, session.id);
@@ -341,7 +352,8 @@ export class ReviewService {
     }
   }
 
-  private async latestTurnStart(threadId: string): Promise<number | null> {
+  /** When the thread's latest own turn started (epoch ms), or null when bb has no record. */
+  async latestTurnStart(threadId: string): Promise<number | null> {
     const events = await this.bb.sdk.threads.events.list({ threadId, types: ["turn/started"], order: "desc", limit: "20" });
     // A sub-agent's turn carries the tool call that started it; only the thread's own turns count.
     const own = events.find((event) => event.type === "turn/started" && event.data.parentToolCallId === undefined);
@@ -353,6 +365,8 @@ export class ReviewService {
    * for an AI review run, every thread of the session it reviews.
    */
   agentScope(callerThreadId: string): ReviewThread[] {
+    // A run closed (Close, Clear review) loses every right, those from sends to it included.
+    if (this.store.isClosedRunThread(callerThreadId)) return [];
     const byId = new Map(this.store.threadsSentTo(callerThreadId).map((row) => [row.id, row]));
     const reviewed = new Set(this.store.runsOfThread(callerThreadId).filter((run) => run.kind === "review").map((run) => run.sessionId));
     for (const sessionId of reviewed) for (const row of this.store.threads(sessionId)) byId.set(row.id, row);

@@ -24,8 +24,10 @@ function reason(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-async function guarded<T>(work: () => Promise<T>): Promise<T> {
+/** Runs a command; a run's thread calling in before bb told the plugin which thread it is is bound first. */
+async function guarded<T>(work: () => Promise<T>, runs?: RunService, threadId?: string): Promise<T> {
   try {
+    await runs?.bindIfPending(threadId);
     return await work();
   } catch (error) {
     if (error instanceof PluginCliError) throw error;
@@ -96,7 +98,7 @@ const TEXT_OPTION = {
   placeholder: "base64",
 } as const;
 
-function answerCommand(service: ReviewService, action: AgentAction, summary: string, what: string) {
+function answerCommand(service: ReviewService, runs: RunService, action: AgentAction, summary: string, what: string) {
   return cliCommand({
     summary,
     description: `Run from the bb thread the comments were sent to. The ${what} is the words after the id, or --text-base64.`,
@@ -111,7 +113,7 @@ function answerCommand(service: ReviewService, action: AgentAction, summary: str
         const thread = await service.answer(ctx.threadId, input.positionals.id, action, text);
         const done = action === "reply" ? "Replied on" : action === "resolve" ? "Resolved" : "Dismissed";
         return { exitCode: 0, stdout: `${done} ${thread.id} (${describeLocation(thread)}).\n` };
-      }),
+      }, runs, ctx.threadId),
   });
 }
 
@@ -152,7 +154,7 @@ function commentCommand(service: ReviewService, runs: RunService) {
           body: text,
         });
         return { exitCode: 0, stdout: `Added ${thread.id} on ${describeLocation(thread)}.\n` };
-      }),
+      }, runs, ctx.threadId),
   });
 }
 
@@ -180,11 +182,11 @@ export function diffReviewCli(service: ReviewService, runs: RunService): PluginC
             let text = threads.map(formatThread).join("\n\n");
             if (text.length > LIST_MAX_CHARS) text = `${text.slice(0, LIST_MAX_CHARS)}\n… (cut short: the list is too long to print whole)`;
             return { exitCode: 0, stdout: `${text}\n` };
-          }),
+          }, runs, ctx.threadId),
       }),
-      reply: answerCommand(service, "reply", "Answer in a comment thread; it stays open", "reply"),
-      resolve: answerCommand(service, "resolve", "Resolve a comment thread with a one-line summary of what changed", "summary"),
-      dismiss: answerCommand(service, "dismiss", "Close a comment thread you will not act on, with the reason", "reason"),
+      reply: answerCommand(service, runs, "reply", "Answer in a comment thread; it stays open", "reply"),
+      resolve: answerCommand(service, runs, "resolve", "Resolve a comment thread with a one-line summary of what changed", "summary"),
+      dismiss: answerCommand(service, runs, "dismiss", "Close a comment thread you will not act on, with the reason", "reason"),
       comment: commentCommand(service, runs),
     },
   });

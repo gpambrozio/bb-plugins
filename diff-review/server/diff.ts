@@ -3,7 +3,7 @@
  * the machine that holds the workspace, remote hosts included, so nothing here needs a host entry. What
  * they cannot give — staged against unstaged, arbitrary ranges — is phase 4's.
  */
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { posix } from "node:path";
 
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
@@ -60,13 +60,46 @@ export async function workspaceRefs(sdk: Sdk, log: BbPluginApi["log"], environme
   };
 }
 
+/** The most files whose on-demand patches a fingerprint fetches one by one. */
+export const FINGERPRINT_MAX_FILES = 500;
+
+/** Path → a fingerprint of its uncommitted change. */
+export type Fingerprint = Record<string, string>;
+
+/**
+ * Each uncommitted file's change kind, line counts and patch hash. bb sends some patches up front and
+ * leaves the rest to load on demand; those are fetched too (in batches, up to `FINGERPRINT_MAX_FILES`),
+ * since an edit can keep a file's line counts. `complete` is false when a patch could not be had for a
+ * file that has one to show (past the limit, or bb did not answer), so equality is not proof there.
+ * Binary and too-large files show no patch, so their counts are all there is to compare.
+ */
+export async function uncommittedFingerprint(sdk: Sdk, environmentId: string): Promise<{ prints: Fingerprint; complete: boolean }> {
+  const result = await sdk.environments.diffFiles({ environmentId, target: "uncommitted" });
+  if (result.outcome !== "available") return { prints: {}, complete: false };
+  const patches = new Map(result.initialPatches.map((patch) => [patch.path, patch.patch]));
+  const missing = result.files.filter((file) => !patches.has(file.path) && !file.binary && file.loadMode !== "too_large").map((file) => file.path);
+  let complete = missing.length <= FINGERPRINT_MAX_FILES;
+  for (let index = 0; index < Math.min(missing.length, FINGERPRINT_MAX_FILES); index += 50) {
+    const batch = await sdk.environments.diffPatch({ environmentId, paths: missing.slice(index, index + 50), target: { type: "uncommitted" } });
+    if (batch.outcome === "available") for (const patch of batch.patches) patches.set(patch.path, patch.patch);
+    else complete = false;
+  }
+  const prints: Fingerprint = {};
+  for (const file of result.files) {
+    const patch = patches.get(file.path);
+    if (patch === undefined && !file.binary && file.loadMode !== "too_large") complete = false;
+    prints[file.path] = `${file.previousPath ?? ""}:${file.changeKind}:${file.additions}:${file.deletions}:${patch === undefined ? "" : createHash("sha256").update(patch).digest("hex")}`;
+  }
+  return { prints, complete };
+}
+
 /**
  * The state of a workspace's diffs: its checkout (HEAD), how it stands against its base, and its
- * uncommitted changes (each file's kind and line counts, and the hash of each patch bb sends up
- * front). Two equal keys mean no view of the workspace changed, give or take an edit to a large file
- * that kept its line counts (bb sends no patch for those up front). Only the named fields count:
- * anything else bb's answers carry (now or in a later bb) must not make an unchanged workspace look
- * changed. `summary` says the same in words, for the log.
+ * uncommitted changes (`uncommittedFingerprint`: every file's kind, line counts and patch content,
+ * on-demand patches included). Two equal keys mean no view of the workspace changed. When a patch
+ * could not be compared, the key is new every time, so the tabs reload rather than show a stale
+ * diff. Only the named fields count: anything else bb's answers carry (now or in a later bb) must not
+ * make an unchanged workspace look changed. `summary` says the same in words, for the log.
  */
 export interface WorkspaceState {
   key: string;
@@ -74,10 +107,7 @@ export interface WorkspaceState {
 }
 
 export async function workspaceState(sdk: Sdk, environmentId: string): Promise<WorkspaceState> {
-  const [status, uncommitted] = await Promise.all([
-    sdk.environments.status({ environmentId }),
-    sdk.environments.diffFiles({ environmentId, target: "uncommitted" }),
-  ]);
+  const [status, uncommitted] = await Promise.all([sdk.environments.status({ environmentId }), uncommittedFingerprint(sdk, environmentId)]);
   const parts: string[] = [];
   if (status.outcome === "available") {
     const { checkout, mergeBase } = status.workspace;
@@ -86,13 +116,10 @@ export async function workspaceState(sdk: Sdk, environmentId: string): Promise<W
     parts.push(mergeBase === null || mergeBase === undefined ? "no base" : `base ${mergeBase.baseRef} +${mergeBase.aheadCount}/-${mergeBase.behindCount}`);
   } else parts.push(`status ${status.outcome}`);
   const hash = createHash("sha256");
-  if (uncommitted.outcome === "available") {
-    const patches = new Map(uncommitted.initialPatches.map((patch) => [patch.path, patch.patch]));
-    for (const file of uncommitted.files) {
-      hash.update(`\n${file.path}\0${file.previousPath ?? ""}\0${file.changeKind}\0${file.additions}\0${file.deletions}\0${patches.get(file.path) ?? ""}`);
-    }
-    parts.push(`${uncommitted.files.length} uncommitted file(s) ${hash.digest("hex").slice(0, 12)}`);
-  } else parts.push(`uncommitted ${uncommitted.outcome}`);
+  const paths = Object.keys(uncommitted.prints).sort();
+  for (const path of paths) hash.update(`\n${path}\0${uncommitted.prints[path]}`);
+  parts.push(`${paths.length} uncommitted file(s) ${hash.digest("hex").slice(0, 12)}`);
+  if (!uncommitted.complete) parts.push(`not all compared (${randomUUID().slice(0, 8)})`);
   const summary = parts.join(", ");
   return { key: createHash("sha256").update(summary).digest("hex"), summary };
 }

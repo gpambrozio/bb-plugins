@@ -111,6 +111,8 @@ export default async function plugin(bb: BbPluginApi) {
   // its workspace that the files may have changed.
   const turnEnded = async (thread: { id: string; environmentId: string | null }, lastText: string | null, failed: boolean) => {
     try {
+      // A run's thread can end its first turn before bb has told the plugin which thread it is.
+      await runs.bindIfPending(thread.id);
       await service.turnEnded(thread);
       await runs.turnEnded(thread.id, lastText, failed);
     } catch (error) {

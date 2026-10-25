@@ -27,13 +27,20 @@ async function guarded(work: () => Promise<string>): Promise<PluginAgentToolResu
 }
 
 export function registerTools(bb: BbPluginApi, review: ReviewService, runs: RunService): void {
+  // A run's thread can call in before bb has told the plugin which thread it is: bind it first.
+  const forCaller = (threadId: string, work: () => Promise<string>) =>
+    guarded(async () => {
+      await runs.bindIfPending(threadId);
+      return work();
+    });
+
   bb.agents.registerTool({
     name: TOOL.threads,
     description: "List the Diff Review comment threads you may answer (for an AI review, every thread of the review), with every comment.",
     presentation: { label: { pending: "Reading review threads", completed: "Read review threads" } },
     parameters: z.object({ includeClosed: z.boolean().optional().describe("Include resolved and dismissed threads") }),
     execute: (args, ctx) =>
-      guarded(async () => {
+      forCaller(ctx.threadId, async () => {
         const threads = review.sentTo(ctx.threadId, args.includeClosed === true);
         return threads.length === 0 ? "No open review threads for this thread." : threads.map(formatThread).join("\n\n");
       }),
@@ -53,7 +60,7 @@ export function registerTools(bb: BbPluginApi, review: ReviewService, runs: RunS
       body: text.describe("Markdown"),
     }),
     execute: (args, ctx) =>
-      guarded(async () => {
+      forCaller(ctx.threadId, async () => {
         const thread = await runs.addComment(ctx.threadId, {
           filePath: args.file,
           side: args.startLine === 0 ? null : (args.side ?? "new"),
@@ -72,7 +79,7 @@ export function registerTools(bb: BbPluginApi, review: ReviewService, runs: RunS
     presentation: { label: { pending: "Adding a review summary", completed: "Added a review summary" } },
     parameters: z.object({ body: text.describe("Markdown") }),
     execute: (args, ctx) =>
-      guarded(async () => {
+      forCaller(ctx.threadId, async () => {
         const thread = await runs.addComment(ctx.threadId, { filePath: GENERAL_PATH, side: null, startLine: 0, endLine: 0, severity: null, body: args.body });
         return `Added ${thread.id} on the whole diff.`;
       }),
@@ -90,7 +97,7 @@ export function registerTools(bb: BbPluginApi, review: ReviewService, runs: RunS
       presentation: { label: { pending: tool.pending, completed: tool.completed } },
       parameters: z.object({ threadId: id, text: text.describe(tool.what) }),
       execute: (args, ctx) =>
-        guarded(async () => {
+        forCaller(ctx.threadId, async () => {
           const thread = await review.answer(ctx.threadId, args.threadId, tool.action, args.text);
           return `${tool.done} ${thread.id} (${describeLocation(thread)}).`;
         }),
