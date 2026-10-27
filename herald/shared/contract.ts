@@ -13,6 +13,7 @@ import {
   SpeechVoiceSchema,
   StoredConfigSchema,
 } from "./herald";
+import { ChoiceInputsSchema, ChoiceOptionSchema, CHOICES_BATCH_MAX } from "./thread-choice";
 
 export const rpcContract = defineRpcContract({
   /** Every thread waiting on the user that Herald knows why for; see `server/liveness.ts`. */
@@ -41,6 +42,20 @@ export const rpcContract = defineRpcContract({
   "config.set": {
     input: StoredConfigSchema.partial(),
     output: StoredConfigSchema,
+  },
+  /**
+   * What decides each thread's choice of what Herald announces — its own, and
+   * the nearest one above it — for the threads a thread menu shows. Threads bb
+   * does not know are left out.
+   */
+  "choices.list": {
+    input: z.object({ threadIds: z.array(z.string().min(1)).min(1).max(CHOICES_BATCH_MAX) }),
+    output: z.object({ threads: z.record(z.string(), ChoiceInputsSchema) }),
+  },
+  /** Sets a thread's own choice, or clears it with `default`; every open menu hears of it. */
+  "choices.set": {
+    input: z.object({ threadId: z.string().min(1), choice: ChoiceOptionSchema }),
+    output: ChoiceInputsSchema,
   },
   /**
    * A line from the app for `bb plugin logs herald`: the announcer says here

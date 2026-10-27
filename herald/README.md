@@ -17,6 +17,11 @@ of what was done — and the bb app speaks it.
 - A **Herald** tab in each thread's side panel lists what Herald said about that thread's past turns,
   newest first, with when and a Read again button — a way to find a turn by its sentence. The last 50
   are kept per thread. The megaphone in the thread's header opens it.
+- **Herald** in a thread's menu (the sidebar row's menu, right-click, or the thread's header) chooses what
+  Herald announces for that thread: *Announce*, *Questions only* (a question, a plan or a permission to
+  approve, but not a finished or failed turn), or *Silent*. *Default* follows the thread that started it
+  — so silencing a coordinator silences its workers — and otherwise Herald's settings. See
+  [Per-thread choice](#per-thread-choice).
 - *Mute here* silences announcements on the device you are on until the app reloads; *Test voice* says a
   sample sentence; the gear opens Herald's settings. Read again and Test voice speak even when muted —
   you pressed them.
@@ -37,7 +42,7 @@ What it adds:
 
 ## What you need
 
-- bb 0.47 or later. On bb 0.44 to 0.46, install with `@^0.2.0` instead of `@^0.3.0`.
+- bb 0.47 or later. On bb 0.44 to 0.46, install with `@^0.2.0` instead of `@^0.4.0`.
 - For the default voice, **bb running on a Mac**: its `say` voices render each sentence and the app plays
   the audio, so you hear the Mac's voices on every device. Otherwise each device's own browser voice is
   used.
@@ -49,7 +54,7 @@ What it adds:
 ## Install
 
 ```bash
-bb plugin install 'git:github.com/gpambrozio/bb-plugins@^0.3.0' --plugin herald --tag-prefix herald/
+bb plugin install 'git:github.com/gpambrozio/bb-plugins@^0.4.0' --plugin herald --tag-prefix herald/
 ```
 
 The page is **Herald** in the sidebar.
@@ -59,11 +64,12 @@ The page is **Herald** in the sidebar.
 On the plugin's settings page (Settings → Plugins → Herald):
 
 - **Speech** — the master switch; whether the desktop app, browser tabs and the mobile app speak; the
-  voice source (`say`, the Mac running bb, or `web`, this device's browser voice); the speech rate.
+  voice source (the voices of the Mac running bb, or this device's browser voice); the speech rate.
 - **Which events are announced** — questions, plans, permissions, finished turns, errors. A kind that is
   switched off is still listed on the page, without being spoken.
 - **Threads started by another thread** — off by default. A child thread reports to the thread that
-  started it, and you hear the parent's announcement rather than two. It is still listed.
+  started it, and you hear the parent's announcement rather than two. It is still listed. A choice made
+  on the child thread itself, from its menu, overrides this.
 - **Voices** — the Mac voice and the browser voice, and *Test voice*.
 - **Herald page** — how many recent sentences the page lists below the waiting threads: 20 by default,
   from 1 to 50.
@@ -71,6 +77,24 @@ On the plugin's settings page (Settings → Plugins → Herald):
   writes each sentence from the event, the request and the agent's reply, so you hear "Login fix is
   done; nothing is left for you" rather than the start of the reply. Which tool, and the prompt, are
   under **Model-written sentences** further down the same page. See below.
+
+## Per-thread choice
+
+**Herald** in bb's thread menu sets what Herald announces for one thread. It is stored on the thread, so
+every device and window sees the same choice.
+
+- **Announce** — every kind of event the settings above switch on.
+- **Questions only** — only what waits on you: a question, a plan or a permission to approve. A finished
+  or failed turn is listed, not spoken.
+- **Silent** — nothing is spoken. The thread is still listed on the Herald page.
+- **Default** — no choice of its own. A thread started by another thread follows the nearest thread above
+  it that has a choice (a worker follows its coordinator), as long as *Announce threads started by
+  another thread* is on; with it off, such a thread stays quiet, as before. Any other thread announces
+  as the settings say.
+
+A choice set on a thread itself always wins: a worker set to *Announce* is announced even under a Silent
+coordinator, and even with *Announce threads started by another thread* off. The per-kind switches still
+apply on top of every choice. *Mute here* is separate: it silences one device, for every thread.
 
 ## Model-written sentences
 

@@ -62,3 +62,12 @@ describe("customCommandSeed", () => {
     expect(customCommandSeed(stored({ sentenceTool: "custom" }), stored({ sentenceTool: "claude" }))).toBeNull();
   });
 });
+
+describe("the form's select labels", () => {
+  it("names every voice source and speech rate in words, with no value left showing raw", () => {
+    expect(Object.keys(SETTINGS.engine.experimental_optionLabels)).toEqual(SETTINGS.engine.options);
+    expect(Object.keys(SETTINGS.rate.experimental_optionLabels).sort()).toEqual([...SETTINGS.rate.options].sort());
+    expect(SETTINGS.engine.experimental_optionLabels.say).toBe("Voices of the Mac running bb");
+    expect(SETTINGS.rate.options.map((rate) => SETTINGS.rate.experimental_optionLabels[rate])).toEqual(["0.8×", "Normal", "1.2×", "1.5×"]);
+  });
+});

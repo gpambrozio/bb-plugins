@@ -5,6 +5,8 @@
  */
 import type { PluginBbSdk, PluginThreadEventPayloads } from "@get-bb/plugin-sdk";
 
+import type { ThreadChoice } from "../shared/thread-choice";
+
 /** The thread as every event carries it — the same DTO `GET /threads/:id` serves. */
 export type ThreadDto = PluginThreadEventPayloads["thread.idle"]["thread"];
 export type Interaction = PluginThreadEventPayloads["interaction.pending"]["interaction"];
@@ -58,4 +60,14 @@ export interface Log {
   info(message: string): void;
   warn(message: string): void;
   error(message: string): void;
+}
+
+/** Herald's per-thread choice, as bb stores it: plugin metadata on each thread, and each thread's ancestors. */
+export interface ThreadChoicesPort {
+  /** Each known thread with its ancestors, parent first; unknown ids are left out. At most `CHOICES_BATCH_MAX` ids. */
+  ancestors(threadIds: readonly string[]): Promise<Array<{ threadId: string; ancestorIds: string[] }>>;
+  /** The threads among these with a choice of their own. At most `CHOICES_BATCH_MAX` ids. */
+  ownChoices(threadIds: readonly string[]): Promise<Map<string, ThreadChoice>>;
+  /** Sets the thread's own choice, or clears it with null. */
+  setOwn(threadId: string, choice: ThreadChoice | null): Promise<void>;
 }

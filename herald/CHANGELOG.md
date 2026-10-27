@@ -5,6 +5,24 @@ Notable changes to `herald`. The other plugins in this repository version separa
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.4.0
+
+### Added
+
+- **Choose per thread what Herald announces**, from bb's own thread menu (the sidebar row's menu,
+  right-click, or the thread's header): *Announce*, *Questions only* (questions, plans and permissions,
+  but not finished or failed turns), or *Silent*. *Default* follows the thread that started it, if that
+  one has a choice, and otherwise Herald's settings, as before. A thread set to Silent or Questions only
+  is still listed on the Herald page; it is only not spoken.
+- The Herald page's waiting threads show **bb's own status icon** for each thread, the same one the
+  sidebar draws.
+
+### Changed
+
+- The *Voice source* and *Speech rate* settings say what each choice means — "Voices of the Mac running
+  bb" or "This device's browser voice"; "0.8×", "Normal", "1.2×", "1.5×" — instead of `say`, `web` and
+  bare numbers.
+
 ## 0.3.0
 
 ### Added

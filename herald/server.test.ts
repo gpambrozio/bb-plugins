@@ -13,6 +13,7 @@ import plugin, { ABANDONED_AFTER_MS } from "./server";
 import { announceDrained } from "./server/reload-signal";
 import type { AttentionEntry } from "./shared/herald";
 import { DEFAULT_STORED_CONFIG, ENTRIES_CHANNEL, TOOL_COMMANDS } from "./shared/herald";
+import { CHOICES_CHANNEL } from "./shared/thread-choice";
 
 /**
  * A "tool" that answers with whether the prompt carried the request: real process, no model. It
@@ -37,11 +38,66 @@ const USER_THREAD = makeThreadResponse({
 
 const OTHER_THREAD = makeThreadResponse({ id: "thr_other", projectId: "prj_shop", title: "Docs", latestAttentionAt: 2, lastReadAt: 1 });
 
+/** A thread `USER_THREAD` started, for the choices a worker inherits. */
+const WORKER_THREAD = makeThreadResponse({
+  id: "thr_worker",
+  projectId: "prj_shop",
+  parentThreadId: USER_THREAD.id,
+  title: "Worker",
+  latestAttentionAt: 2,
+  lastReadAt: 1,
+});
+
+const KNOWN_THREADS = [USER_THREAD, OTHER_THREAD, WORKER_THREAD];
+
+/**
+ * Plugin metadata on the known threads, kept the way bb keeps it, for the
+ * thread menu's choice: the batched read, the ancestors, and the update.
+ */
+function metadataStubs() {
+  const metadata = new Map<string, Record<string, unknown>>();
+  /** Set to make bb's ancestor read fail, as a lost connection would. */
+  const failures = { ancestors: false };
+  const ancestorsOf = (threadId: string) => {
+    const ids: string[] = [];
+    for (let at = KNOWN_THREADS.find((known) => known.id === threadId)?.parentThreadId ?? null; at !== null; ) {
+      ids.push(at);
+      at = KNOWN_THREADS.find((known) => known.id === at)?.parentThreadId ?? null;
+    }
+    return ids;
+  };
+  const stubs = {
+    experimental_listAncestors: async ({ threadIds }: { threadIds: readonly string[] }) => {
+      if (failures.ancestors) throw new Error("bb is away");
+      return {
+        threads: threadIds
+          .filter((id) => KNOWN_THREADS.some((known) => known.id === id))
+          .map((threadId) => ({ threadId, ancestorIds: ancestorsOf(threadId) })),
+      };
+    },
+    experimental_listPluginMetadata: async ({ threadIds }: { threadIds: readonly string[] }) => ({
+      threads: threadIds.flatMap((threadId) => {
+        const value = metadata.get(threadId);
+        return value === undefined ? [] : [{ threadId, metadata: value }];
+      }),
+    }),
+    updatePluginMetadata: async ({ threadId, set, remove }: { threadId: string; set?: Record<string, unknown>; remove?: string[] }) => {
+      const next = { ...metadata.get(threadId), ...set };
+      for (const key of remove ?? []) delete next[key];
+      if (Object.keys(next).length === 0) metadata.delete(threadId);
+      else metadata.set(threadId, next);
+      return next;
+    },
+  };
+  return { metadata, failures, stubs };
+}
+
 async function settle(): Promise<void> {
   for (let i = 0; i < 10; i += 1) await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 async function load(settings: Record<string, string | number | boolean> = {}) {
+  const { metadata, failures, stubs } = metadataStubs();
   const host = createFakePluginHost({
     pluginId: "herald",
     settings,
@@ -50,7 +106,8 @@ async function load(settings: Record<string, string | number | boolean> = {}) {
       environments: { get: async () => ({ id: "env_1", path: "/Users/me/shop" }) as never },
       threads: {
         get: async ({ threadId }: { threadId: string }) =>
-          [USER_THREAD, OTHER_THREAD].find((known) => known.id === threadId) ?? makeThreadResponse({ id: threadId }),
+          KNOWN_THREADS.find((known) => known.id === threadId) ?? makeThreadResponse({ id: threadId }),
+        ...stubs,
         promptHistory: async () =>
           [{ id: "m1", createdAt: 1, input: [{ type: "text", text: "Fix the login bug", mentions: [] }] }] as never,
         interactions: { list: async () => [], get: async () => ({ status: "pending" }) as never },
@@ -59,7 +116,7 @@ async function load(settings: Record<string, string | number | boolean> = {}) {
   });
   await plugin(host.bb);
   live.push(host);
-  return host;
+  return Object.assign(host, { metadata, failures });
 }
 
 /** Every host a test made: instances of one plugin share in-process channels, so each test disposes its own. */
@@ -123,6 +180,41 @@ describe("herald server", () => {
     await settle();
     const [entry] = entriesOf(await harness.callRpc("list", {}));
     expect(entry).toMatchObject({ reason: "question", headline: "Ship it?", summary: { status: "off" } });
+  });
+
+  it("stores a thread's choice in its own metadata, and tells every open menu", async () => {
+    const { harness, metadata } = await load();
+    expect(await harness.callRpc("choices.set", { threadId: USER_THREAD.id, choice: "questions" })).toEqual({ own: "questions", inherited: null });
+    expect(metadata.get(USER_THREAD.id)).toEqual({ announce: "questions" });
+    expect(harness.realtimeSignals.filter((signal) => signal.channel === CHOICES_CHANNEL)).toHaveLength(1);
+    expect(await harness.callRpc("choices.list", { threadIds: [USER_THREAD.id, WORKER_THREAD.id, "thr_unknown"] })).toEqual({
+      threads: {
+        [USER_THREAD.id]: { own: "questions", inherited: null },
+        [WORKER_THREAD.id]: { own: null, inherited: { choice: "questions", threadId: USER_THREAD.id, fromParent: true } },
+      },
+    });
+    await harness.callRpc("choices.set", { threadId: USER_THREAD.id, choice: "default" });
+    expect(metadata.has(USER_THREAD.id)).toBe(false);
+  });
+
+  it("tells every open menu about a saved choice even when reading it back fails", async () => {
+    const { harness, metadata, failures } = await load();
+    failures.ancestors = true;
+    await expect(harness.callRpc("choices.set", { threadId: USER_THREAD.id, choice: "silent" })).rejects.toThrow();
+    expect(metadata.get(USER_THREAD.id)).toEqual({ announce: "silent" });
+    expect(harness.realtimeSignals.filter((signal) => signal.channel === CHOICES_CHANNEL)).toHaveLength(1);
+  });
+
+  it("checks the thread's choice before it announces", async () => {
+    const { harness } = await load({ announceSubagents: true });
+    await harness.callRpc("choices.set", { threadId: USER_THREAD.id, choice: "silent" });
+    await harness.emitThreadEvent("thread.idle", { thread: USER_THREAD, lastAssistantText: "I fixed auth.ts." });
+    // The worker follows the thread that started it.
+    await harness.emitThreadEvent("thread.idle", { thread: WORKER_THREAD, lastAssistantText: "Tests pass." });
+    await harness.emitThreadEvent("thread.idle", { thread: OTHER_THREAD, lastAssistantText: "Docs updated." });
+    await settle();
+    const status = Object.fromEntries(entriesOf(await harness.callRpc("list", {})).map((entry) => [entry.threadId, entry.summary.status]));
+    expect(status).toEqual({ [USER_THREAD.id]: "off", [WORKER_THREAD.id]: "off", [OTHER_THREAD.id]: "ready" });
   });
 
   it("keeps the voices it is given, and falls back to defaults", async () => {
