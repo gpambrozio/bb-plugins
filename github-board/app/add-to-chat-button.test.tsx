@@ -185,7 +185,7 @@ describe("AddToChatButton", () => {
     );
   });
 
-  it("opens a thread that is not on screen beside the board and leaves the card pending for it", async () => {
+  it("opens a thread that is not on screen in place, with no split, and leaves the card pending for it", async () => {
     const view = renderButton({ scope: { kind: "thread", threadId: "thr_a" } });
 
     const menu = await openMenu(view);
@@ -193,7 +193,7 @@ describe("AddToChatButton", () => {
 
     await waitFor(() =>
       expect(view.inspection.navigateCalls).toEqual([
-        { method: "toThread", threadId: "thr_b", options: { split: true } },
+        { method: "toThread", threadId: "thr_b" },
       ]),
     );
     // thr_b is in gadgets, which overrides no issue template.

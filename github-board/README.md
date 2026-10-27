@@ -23,8 +23,7 @@ whatever is open on repositories you own, and what is assigned to you anywhere.
   without starting a thread or sending anything. It
   lists the chats on screen first (a split, a new-thread composer, a queued message being edited), then
   recent threads, those in the card's repository first. Picking a thread that is not on screen opens it
-  — beside the board where bb can split the window, in its place where it cannot — and adds the card
-  there. It never replaces what you typed.
+  in the board's place, as the sidebar does, and adds the card there. It never replaces what you typed.
 - A filter narrows the board to some repositories. It, and the detail panel's width, are remembered.
 
 ## What you need

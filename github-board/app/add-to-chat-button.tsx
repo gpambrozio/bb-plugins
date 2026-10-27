@@ -5,10 +5,9 @@
  *
  * Always there, as a menu: the chats on screen first, then recent threads,
  * the card's own projects' first. A chat on screen gets the card at once. A
- * thread that is not on screen is opened (beside the board where bb can split
- * the window, in its place where it cannot) and gets the card once its
- * composer appears, which the app overlay sees to (`pending-add.ts`). One such
- * card at a time: until it lands, the other threads are disabled with the
+ * thread that is not on screen is opened in the board's place, as the sidebar
+ * opens it, and gets the card once its composer appears, which the app
+ * overlay sees to (`pending-add.ts`). One such card at a time: until it lands, the other threads are disabled with the
  * reason, while the chats on screen still take a card at once.
  *
  * What goes in is the prompt Send to chat would use, for the picked chat's
@@ -193,7 +192,8 @@ export function AddToChatButton({
     const held = pendingAdds.request({ threadId: target.threadId, title: target.title, prompt });
     // The menu disables this while another card waits; this is the backstop.
     if (held === null) return;
-    navigate.toThread(target.threadId, { split: true });
+    // In place, as the sidebar opens it: a split per pick piled panes up beside the board.
+    navigate.toThread(target.threadId);
   };
 
   return (
