@@ -5,6 +5,14 @@ Notable changes to `github-board`. The other plugins in this repository version 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.5.1
+
+### Changed
+
+- **Add to chat** opens a thread that is not on screen in the board's place, as clicking it in the
+  sidebar does, with the card's prompt at the end of its draft, ready to send. It used to open each one
+  in a new split beside the board, so the window filled up with panes.
+
 ## 0.5.0
 
 ### Changed

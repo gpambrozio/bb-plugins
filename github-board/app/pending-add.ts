@@ -5,8 +5,8 @@
  *
  * One pending card per window: while one waits, another is refused, and the
  * board's menu says why, so no card is ever dropped unseen. The app-wide
- * overlay (`PendingAddToChat`) delivers it, because opening the thread may
- * navigate away from the board, which unmounts the detail panel that asked.
+ * overlay (`PendingAddToChat`) delivers it, because opening the thread
+ * navigates away from the board, which unmounts the detail panel that asked.
  * Nothing persists: a card still pending at a reload is dropped.
  */
 /** How long the overlay waits for the opened thread's composer before giving up. */

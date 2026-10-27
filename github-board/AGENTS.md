@@ -193,11 +193,12 @@ recently updated first. `chatTargets` in `app/add-to-chat.ts` makes that list.
   `useComposer()` or `useComposers()`. So picking such a thread puts the card in `pendingAdds`
   (`app/pending-add.ts`, one per window: while it waits, the menu disables the other threads with
   "Adding to <thread>…", and the store refuses a second request, so no card is dropped unseen; chats on
-  screen still take a card at once) and calls `useBbNavigate().toThread(id, { split: true })` — which is
-  why `engines.bb` is `>=0.46`: bb 0.45 ignores `split` and opens the thread in the board's place, and
-  SDK 0.6.34 made `experimental_useSidebarThreadActions`, which 0.4 used, internal. bb splits the focused
-  pane where it can and navigates to the thread where it cannot (compact viewport, splits off), which
-  unmounts the board; that is why `PendingAddToChat` (`app/pending-add-delivery.tsx`), in the app overlay, delivers
+  screen still take a card at once) and calls `useBbNavigate().toThread(id)` with no `split`: the
+  thread opens in the board's place, as the sidebar opens it. 0.5.0 passed `split: true`, and every
+  pick added another pane beside the board until the window was a pile of splits; keeping a thread
+  beside the board is the user's call, from the sidebar. `engines.bb` stays `>=0.46` because SDK
+  0.6.34 made `experimental_useSidebarThreadActions`, which 0.4 used, internal. Navigating unmounts the
+  board; that is why `PendingAddToChat` (`app/pending-add-delivery.tsx`), in the app overlay, delivers
   the card once a `thread`-scoped composer for that thread appears, and gives up with a toast after
   15 s. The deadline is checked again at delivery, so a late timer or a remounted overlay never writes
   an expired card. It subscribes to `useComposers()` only while a card is pending.
