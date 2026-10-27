@@ -16,6 +16,7 @@
  */
 import type { AttentionEntry, AttentionReason, HistoryItem } from "../shared/herald";
 import type { SentenceSettings } from "../shared/settings";
+import { choiceAllows, effectiveChoice, NO_CHOICE, type ChoiceInputs } from "../shared/thread-choice";
 import { fillTemplate, splitCommandLine } from "./command-line";
 import type { EventsPort, Interaction, Log, ThreadDto } from "./ports";
 import type { AttentionStore } from "./store";
@@ -34,6 +35,8 @@ export interface HookDeps {
   store: AttentionStore;
   readConfig: () => Promise<HeraldConfig>;
   events: EventsPort;
+  /** The thread's own choice from bb's thread menu, and the nearest one above it. */
+  choiceOf: (thread: ThreadDto) => Promise<ChoiceInputs>;
   /** Tells open clients the entries changed. */
   publish: () => void;
   /** Runs the tool with the prompt on stdin and resolves to its sentence; rejects on any failure. */
@@ -72,14 +75,17 @@ export const TURN_REPEAT_WINDOW_MS = 15_000;
 export const INTERRUPT_GRACE_MS = 10_000;
 
 /**
- * Whether an event is announced; otherwise it is only listed. A
- * thread another thread started reports to that thread — bb tells the parent
- * when it finishes, fails or is interrupted — so unless the user has asked for
- * subagents too, the parent's announcement is the one they hear.
+ * Whether an event is announced; otherwise it is only listed. The thread's
+ * choice from bb's thread menu comes first (`effectiveChoice`): Silent, or
+ * Questions only for a finished or failed turn, keeps it quiet. Without a
+ * choice of its own, a thread another thread started reports to that thread
+ * — bb tells the parent when it finishes, fails or is interrupted — so unless
+ * the user has asked for subagents too, the parent's announcement is the one
+ * they hear. Then the kind of event must be switched on.
  */
-export function isAnnounced(thread: ThreadDto, reason: AttentionReason, config: HeraldConfig): boolean {
-  if (thread.parentThreadId !== null && !config.announceSubagents) return false;
-  return config.announce[reason];
+export function isAnnounced(thread: ThreadDto, reason: AttentionReason, config: HeraldConfig, choice: ChoiceInputs): boolean {
+  const effective = effectiveChoice(choice, thread.parentThreadId !== null, config.announceSubagents);
+  return choiceAllows(effective.choice, reason) && config.announce[reason];
 }
 
 function reasonOf(error: unknown): string {
@@ -167,6 +173,7 @@ export function createHooks(deps: HookDeps): Hooks {
     headline: string;
     detail: string | null;
     config: HeraldConfig;
+    choice: ChoiceInputs;
     projectName: string | null;
     folder: string | null;
     lastUser: string | null;
@@ -175,7 +182,7 @@ export function createHooks(deps: HookDeps): Hooks {
   }
 
   function record(recording: Recording): void {
-    const { thread, reason, config } = recording;
+    const { thread, reason, config, choice } = recording;
     const base: Omit<AttentionEntry, "summary"> = {
       threadId: thread.id,
       projectId: thread.projectId,
@@ -191,9 +198,10 @@ export function createHooks(deps: HookDeps): Hooks {
       detail: recording.detail,
     };
     const fallback = fallbackSpeech(base);
-    // Switched off, or a subagent its parent speaks for: listed in the panel,
-    // with its sentence, never spoken.
-    if (!isAnnounced(thread, reason, config)) {
+    // Switched off, silenced from the thread menu, or a subagent its parent
+    // speaks for: listed in the panel, with its sentence, never spoken — and
+    // no tool is run to write it.
+    if (!isAnnounced(thread, reason, config, choice)) {
       deps.store.upsert({ ...base, summary: { status: "off", fallback } });
       deps.publish();
       remember(base, fallback);
@@ -289,6 +297,19 @@ export function createHooks(deps: HookDeps): Hooks {
     });
   }
 
+  /**
+   * The thread's choice, or none when bb cannot say: a lookup that fails
+   * announces as Herald's settings say rather than losing the announcement.
+   */
+  async function choiceOf(thread: ThreadDto): Promise<ChoiceInputs> {
+    try {
+      return await deps.choiceOf(thread);
+    } catch (error) {
+      deps.log.warn(`Could not read what ${thread.id} is set to announce; following Herald's settings: ${reasonOf(error)}`);
+      return NO_CHOICE;
+    }
+  }
+
   /** Runs a handler's async work; a failure is logged, never left to reject inside the bb server. */
   async function guarded(what: string, work: () => Promise<void>): Promise<void> {
     try {
@@ -322,9 +343,10 @@ export function createHooks(deps: HookDeps): Hooks {
         if (isRepeatIdle(thread.id)) return;
         const event = beginEvent(thread.id);
         const generation = generationOf(thread.id);
-        const [config, context] = await Promise.all([
+        const [config, context, choice] = await Promise.all([
           deps.readConfig(),
           deps.events.context(thread, { withRequest: true }),
+          choiceOf(thread),
         ]);
         if (generationOf(thread.id) !== generation || !isLatest(thread.id, event)) return;
         record({
@@ -335,6 +357,7 @@ export function createHooks(deps: HookDeps): Hooks {
           headline: "Finished",
           detail: firstWords(output, 60),
           config,
+          choice,
           projectName: context.projectName,
           folder: context.folder,
           lastUser: context.lastRequest,
@@ -348,10 +371,11 @@ export function createHooks(deps: HookDeps): Hooks {
       return guarded("thread.failed", async () => {
         const event = beginEvent(thread.id);
         const generation = generationOf(thread.id);
-        const [config, context, interrupted] = await Promise.all([
+        const [config, context, interrupted, choice] = await Promise.all([
           deps.readConfig(),
           deps.events.context(thread, { withRequest: true }),
           deps.events.interruptedRecently(thread.id, INTERRUPT_GRACE_MS),
+          choiceOf(thread),
         ]);
         if (interrupted) return;
         if (generationOf(thread.id) !== generation || !isLatest(thread.id, event)) return;
@@ -363,6 +387,7 @@ export function createHooks(deps: HookDeps): Hooks {
           headline: error?.trim() || "The turn failed",
           detail: null,
           config,
+          choice,
           projectName: context.projectName,
           folder: context.folder,
           lastUser: context.lastRequest,
@@ -377,9 +402,10 @@ export function createHooks(deps: HookDeps): Hooks {
         const described = describeInteraction(interaction);
         const event = beginEvent(thread.id);
         const generation = generationOf(thread.id);
-        const [config, context] = await Promise.all([
+        const [config, context, choice] = await Promise.all([
           deps.readConfig(),
           deps.events.context(thread, { withRequest: false }),
+          choiceOf(thread),
         ]);
         if (generationOf(thread.id) !== generation || !isLatest(thread.id, event)) return;
         record({
@@ -390,6 +416,7 @@ export function createHooks(deps: HookDeps): Hooks {
           headline: described.headline,
           detail: described.detail,
           config,
+          choice,
           projectName: context.projectName,
           folder: context.folder,
           lastUser: null,

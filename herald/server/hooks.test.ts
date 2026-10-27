@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { NO_CHOICE, type ChoiceInputs } from "../shared/thread-choice";
 import { createHooks, INTERRUPT_GRACE_MS, TURN_REPEAT_WINDOW_MS, type HeraldConfig, type HookDeps } from "./hooks";
 import type { EventsPort } from "./ports";
 import { AttentionStore } from "./store";
@@ -46,6 +47,7 @@ function setup(overrides: Partial<HookDeps> = {}, config: HeraldConfig = CONFIG)
     store,
     readConfig: async () => config,
     events,
+    choiceOf: async () => NO_CHOICE,
     publish,
     writeSentence: () => Promise.reject(new Error("no tool in these tests")),
     remember: remembered,
@@ -199,6 +201,59 @@ describe("createHooks", () => {
     const { hooks, store } = setup({}, { ...CONFIG, announceSubagents: true });
     await hooks.idle(thread({ parentThreadId: "parent" }), "Done.");
     expect(store.get("t1")?.summary.status).toBe("ready");
+  });
+
+  it("keeps a thread silenced from the thread menu quiet, and reads its choice on every event", async () => {
+    const choiceOf = vi.fn(async () => ({ own: "silent" as const, inherited: null }));
+    const { hooks, store } = setup({ choiceOf });
+    await hooks.idle(thread(), "Done.");
+    expect(store.get("t1")?.summary).toEqual({ status: "off", fallback: "Login fix finished. Done." });
+    expect(choiceOf).toHaveBeenCalledWith(expect.objectContaining({ id: "t1" }));
+  });
+
+  it("announces only what waits on the user for Questions only", async () => {
+    const { hooks, store } = setup({ choiceOf: async () => ({ own: "questions", inherited: null }) });
+    await hooks.idle(thread(), "Done.");
+    await hooks.failed(thread({ id: "t2" }), "Boom");
+    await hooks.interactionPending(thread({ id: "t3" }), question());
+    await hooks.interactionPending(thread({ id: "t4" }), commandApproval("rm -rf build"));
+    expect(store.get("t1")?.summary.status).toBe("off");
+    expect(store.get("t2")?.summary.status).toBe("off");
+    expect(store.get("t3")?.summary.status).toBe("ready");
+    expect(store.get("t4")?.summary.status).toBe("ready");
+  });
+
+  it("still applies the per-kind switches under a thread's choice", async () => {
+    const config = { ...CONFIG, announce: { ...CONFIG.announce, question: false } };
+    const { hooks, store } = setup({ choiceOf: async () => ({ own: "questions", inherited: null }) }, config);
+    await hooks.interactionPending(thread(), question());
+    expect(store.get("t1")?.summary.status).toBe("off");
+  });
+
+  it("makes a worker follow its coordinator's choice unless it has its own", async () => {
+    const silentCoordinator = { choice: "silent" as const, threadId: "coord", fromParent: true };
+    const choices: Record<string, ChoiceInputs> = {
+      w1: { own: null, inherited: silentCoordinator },
+      w2: { own: "announce", inherited: silentCoordinator },
+    };
+    const { hooks, store } = setup({ choiceOf: async (t) => choices[t.id] ?? NO_CHOICE }, { ...CONFIG, announceSubagents: true });
+    await hooks.idle(thread({ id: "w1", parentThreadId: "coord" }), "Done.");
+    await hooks.idle(thread({ id: "w2", parentThreadId: "coord" }), "Done.");
+    expect(store.get("w1")?.summary.status).toBe("off");
+    expect(store.get("w2")?.summary.status).toBe("ready");
+  });
+
+  it("announces a child thread chosen to Announce even with subagents off", async () => {
+    const { hooks, store } = setup({ choiceOf: async () => ({ own: "announce", inherited: null }) });
+    await hooks.idle(thread({ parentThreadId: "parent" }), "Done.");
+    expect(store.get("t1")?.summary.status).toBe("ready");
+  });
+
+  it("follows Herald's settings when the choice cannot be read, and says so", async () => {
+    const { hooks, store, log } = setup({ choiceOf: () => Promise.reject(new Error("bb is away")) });
+    await hooks.idle(thread(), "Done.");
+    expect(store.get("t1")?.summary.status).toBe("ready");
+    expect(log.lines).toContainEqual(expect.stringContaining("Could not read what t1 is set to announce"));
   });
 
   it("clears an entry when the thread moves on or goes away", async () => {

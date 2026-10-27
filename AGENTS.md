@@ -349,6 +349,15 @@ mounted once per window. Paseo contribution → bb slot:
 
 `app.slots.settingsSection` requires an `id` (letters, digits, `-`, `_`), unlike the Paseo settings screen.
 
+**A per-thread setting belongs in bb's thread menu** (`app.slots.experimental_threadAction`, bb 0.46): an
+action with `choices` is a submenu in every thread menu, and its `useData({ threadIds })` is one hook for
+the whole app with the rows on screen, so read their state in one batch. Store the value as the plugin's
+thread metadata (`bb.sdk.threads.updatePluginMetadata`; `experimental_listPluginMetadata` and
+`experimental_listAncestors` read up to 200 threads per call). bb's own push-notifications plugin reads
+it through `experimental_useRpcKeyedQuery`, which takes the RPC contract as a value — not possible in an
+app that imports the contract as a type (see *Dependencies*); `herald/app/thread-action.ts` keeps its own
+cache over `useRpc` instead.
+
 A hand-built new-thread dialog becomes `experimental_NewThreadComposer`: it resolves a request and the
 plugin spawns it. Mount it only once its `default*` seeds are known — changing one re-seeds every
 selection — and give it a `draftKey` per subject, since `initialPrompt` seeds only an empty draft.

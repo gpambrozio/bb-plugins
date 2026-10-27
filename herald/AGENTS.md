@@ -18,6 +18,7 @@ what still holds and says what bb changed. The repo root `AGENTS.md` covers what
 | `server/kv-backend.ts` | The store's rows in `bb.storage.kv`, one per thread. |
 | `server/history.ts` | Each thread's past sentences, one kv row per thread, capped; for the thread panel, and merged across threads for the page. |
 | `server/recent.ts` | The page's history: each merged sentence named by its thread and project, looked up when the page reads. |
+| `server/thread-choices.ts` | Each thread's choice from bb's thread menu: its own from Herald's thread metadata, and the nearest ancestor's, in one batched read each. |
 | `server/liveness.ts` | Asks bb whether each entry's thread still exists before the list goes out; gone ones are removed. |
 | `server/timeline.ts` | Pure text: what an interaction asks, the user's last prompt, the spoken sentence. |
 | `server/say.ts` | `say` on the bb server's Mac, driven for its voices: text in on stdin, a WAV out, bytes back. |
@@ -25,7 +26,8 @@ what still holds and says what bb changed. The repo root `AGENTS.md` covers what
 | `server/command-line.ts` | The user's command split into words without a shell, and the prompt template filled in. |
 | `server/ports.ts`, `server/bb-ports.ts` | The seams the logic is tested through, and their implementations over `bb.sdk`. |
 | `shared/herald.ts` | The entry shape and the stored configuration: the voices, the model-written sentence's tool, command and prompt, and the page's history length. No SDK import. |
-| `shared/settings.ts` | The host-rendered form, and the speech gate (`blockedMessage`) both halves agree on. |
+| `shared/settings.ts` | The host-rendered form (with its select labels), and the speech gate (`blockedMessage`) both halves agree on. |
+| `shared/thread-choice.ts` | The per-thread choice: its values and labels, the metadata key, and the rule (`effectiveChoice`, `choiceAllows`) both halves apply. No SDK import. |
 | `shared/contract.ts` | The RPC contract. The app imports it as a type only. |
 | `app/bridge.tsx` | The app-wide overlay: reads the list on every nudge and reconnect, and runs the announcer. |
 | `app/announcer.ts` | Speaks each new sentence; the mute on this device; reports what it did to the server log. |
@@ -37,6 +39,7 @@ what still holds and says what bb changed. The repo root `AGENTS.md` covers what
 | `app/rows.ts` | What the page lists: bb's unread and waiting-for-input joined with Herald's entries. |
 | `app/panel.tsx`, `app/banner.tsx` | The Herald page (its waiting threads, then recent sentences from every thread; and the count on its sidebar entry, `useWaitingBadge`), and the sentence above a thread's composer. |
 | `app/history-panel.tsx`, `app/header-action.tsx` | The Herald tab in a thread's side panel — the sentences of its past turns — and the header megaphone that opens it. |
+| `app/thread-action.ts` | *Herald* in bb's thread menu: reads the rows on screen in one batch, shows each one's choice and where it comes from, saves a pick. |
 | `app/settings-section.tsx`, `app/voice-picker.tsx` | The model-written sentence's tool, custom command (only under custom) and prompt; how many recent sentences the page lists; the voice lists and *Test voice*. |
 
 ## Where things run
@@ -183,10 +186,46 @@ There is no "canceled" reason any more: bb has no event for a turn the user stop
 
 ## Threads another thread started are their parent's to announce
 
-`isAnnounced` treats a thread with a `parentThreadId` like a switched-off kind unless *Announce threads
-started by another thread* is on: listed, with its sentence, nothing spoken. bb notifies a
-parent when its child completes, fails or is interrupted, so the parent's turn — and its sentence —
-covers it. bb's own push-notifications plugin skips a child's finished turn for the same reason.
+Without a choice of its own (below), a thread with a `parentThreadId` is treated like a switched-off kind
+unless *Announce threads started by another thread* is on: listed, with its sentence, nothing spoken. bb
+notifies a parent when its child completes, fails or is interrupted, so the parent's turn — and its
+sentence — covers it. bb's own push-notifications plugin skips a child's finished turn for the same reason.
+
+## Each thread's choice, from bb's thread menu
+
+*Herald* in every thread menu (`app.slots.experimental_threadAction`, bb 0.46+) offers **Announce**,
+**Questions only** and **Silent**, and **Default** to clear the thread's own. The choice is Herald's
+plugin metadata on the thread (`{ "announce": "silent" }`, `CHOICE_METADATA_KEY`), not kv: it travels with
+the thread, every client sees it, and bb deletes it with the thread. The server reads it **on every
+event**, before it records anything (`HookDeps.choiceOf`), so a pick applies to the very next event and
+an entry it silences is `off` — listed, never spoken, no tool run to write it.
+
+- **The rule is `effectiveChoice` in `shared/thread-choice.ts`, and both halves run it** — the server to
+  decide, the menu to show what applies. In order: the thread's own choice; else, for a child thread with
+  the subagent switch off, silent (as before); else the nearest ancestor's own choice (`listAncestors`
+  gives the chain, parent first); else announce. Then `choiceAllows` (Questions only lets `question`,
+  `plan` and `permission` through) and the per-kind switches, which apply under every choice.
+- **This differs from bb's push-notifications plugin on purpose.** There, an ancestor's level *caps* its
+  descendants even when they have their own; here a thread's own choice always wins (a worker set to
+  Announce is heard under a Silent coordinator), because issue #38 asked for "a worker inherits its
+  coordinator's choice unless it has its own". Push-notifications' *input-only* also keeps errors; Herald's
+  *Questions only* does not: it is what waits on the user.
+- **A failed read announces.** When bb cannot say (`listAncestors` or the metadata read throws), the
+  event is announced as the settings say, with a warning — Herald's job is to tell the user, and a
+  transient error should not swallow an announcement. This is the opposite of `stillPending`, which
+  fails closed because a stale question is worse than a missed sentence.
+- **Two bb calls per event** (`experimental_listAncestors`, `experimental_listPluginMetadata`), not
+  cached: a cache would need invalidating on every change, including an ancestor's from another window.
+  Events are not frequent enough for this to matter.
+- **The menu reads through Herald's server** (`choices.list`, `choices.set`), not `useSdk()` directly,
+  so the server can publish `CHOICES_CHANNEL` on a change: a thread's choice is also its descendants', so
+  every open menu in every window re-reads every row it shows. bb calls `useData` once for the app with
+  the thread ids on screen; it reads only ids it has not asked for, merges answers (a full re-read does
+  not drop rows read meanwhile), and drops a read that started before the latest change (`epoch`). bb's
+  own push-notifications plugin uses `experimental_useRpcKeyedQuery` for this, which needs the RPC
+  contract as a value in the app; Herald's app imports the contract as a type only (the SDK-root rule in
+  the repo `AGENTS.md`), so it keeps its own small cache instead.
+- **Archived threads get no item**; bb's own notification action does the same.
 
 ## Turn ends: repeats, silence, interruptions
 
@@ -407,4 +446,12 @@ cover, check by hand after `bb plugin reload herald`:
    appears under the select, filled in with the Claude command. Save a command that does not exist:
    the plain sentence is spoken and the log says why. Pick *claude* again: the field goes.
 7. With a thread waiting, Herald's sidebar entry carries the count, and its tooltip says "1 thread waiting
-   for you"; open the thread so nothing waits, and the badge goes.
+   for you"; open the thread so nothing waits, and the badge goes. Each waiting row starts with the same
+   status glyph as the thread's sidebar row.
+8. Open a thread's menu (its sidebar row's ⋯, or right-click): **Herald** shows *Announce*. Pick *Silent*
+   and let the thread finish a turn: it is listed as "Not announced" and nothing is spoken; the choice
+   shows in a second window too. Set a coordinator to *Questions only* with *Announce threads started by
+   another thread* on: a worker's menu says *Questions only*, "Following the thread that started this
+   one". Pick *Default* again and the thread announces as before.
+9. Settings → Plugins → Herald: *Voice source* and *Speech rate* list words ("Voices of the Mac running
+   bb", "Normal"), not `say` and `1`.

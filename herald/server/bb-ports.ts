@@ -8,7 +8,8 @@
  */
 import type { PluginBbSdk } from "@get-bb/plugin-sdk";
 
-import type { EventsPort, LivenessPort, Log, NamesPort } from "./ports";
+import { CHOICE_METADATA_KEY, ownChoiceOf, type ThreadChoice } from "../shared/thread-choice";
+import type { EventsPort, LivenessPort, Log, NamesPort, ThreadChoicesPort } from "./ports";
 import { lastPrompt } from "./timeline";
 
 /** How long a project's name or an environment's folder is trusted; both change rarely. */
@@ -132,5 +133,29 @@ export function bbNames(sdk: PluginBbSdk): NamesPort {
       }
     },
     projectName,
+  };
+}
+
+export function bbThreadChoices(sdk: PluginBbSdk): ThreadChoicesPort {
+  return {
+    async ancestors(threadIds) {
+      if (threadIds.length === 0) return [];
+      return (await sdk.threads.experimental_listAncestors({ threadIds })).threads;
+    },
+    async ownChoices(threadIds) {
+      const own = new Map<string, ThreadChoice>();
+      if (threadIds.length === 0) return own;
+      // `pluginId` is filled in by the plugin-bound SDK: these are Herald's own.
+      for (const { threadId, metadata } of (await sdk.threads.experimental_listPluginMetadata({ threadIds })).threads) {
+        const choice = ownChoiceOf(metadata);
+        if (choice !== null) own.set(threadId, choice);
+      }
+      return own;
+    },
+    async setOwn(threadId, choice) {
+      await sdk.threads.updatePluginMetadata(
+        choice === null ? { threadId, remove: [CHOICE_METADATA_KEY] } : { threadId, set: { [CHOICE_METADATA_KEY]: choice } },
+      );
+    },
   };
 }

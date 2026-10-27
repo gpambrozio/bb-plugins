@@ -5,6 +5,7 @@
  */
 import { describe, expect, it, vi } from "vitest";
 
+import { NO_CHOICE } from "../shared/thread-choice";
 import { createHooks, type HeraldConfig, type HookDeps } from "./hooks";
 import type { EventsPort } from "./ports";
 import { AttentionStore } from "./store";
@@ -39,7 +40,7 @@ function setup(write: HookDeps["writeSentence"], config: HeraldConfig = CONFIG) 
   const publish = vi.fn();
   const remembered = vi.fn();
   const log = recordingLog();
-  const hooks = createHooks({ store, readConfig: async () => config, events, publish, log, writeSentence: write, remember: remembered });
+  const hooks = createHooks({ store, readConfig: async () => config, events, choiceOf: async () => NO_CHOICE, publish, log, writeSentence: write, remember: remembered });
   return { hooks, store, publish, log, remembered };
 }
 
@@ -157,7 +158,7 @@ describe("hooks with a model-written sentence", () => {
       },
     };
     const store = new AttentionStore(null, recordingLog());
-    const hooks = createHooks({ store, readConfig: async () => CONFIG, events: longEvents, publish: vi.fn(), log: recordingLog(), writeSentence: w.write, remember: vi.fn() });
+    const hooks = createHooks({ store, readConfig: async () => CONFIG, events: longEvents, choiceOf: async () => NO_CHOICE, publish: vi.fn(), log: recordingLog(), writeSentence: w.write, remember: vi.fn() });
     await hooks.idle(thread(), "o".repeat(20_000));
     expect(w.calls[0]?.prompt.length).toBeLessThan(6_000);
   });
@@ -223,6 +224,24 @@ describe("hooks with a model-written sentence", () => {
     await hooks.idle(thread(), "Done.");
     expect(w.calls).toHaveLength(0);
     expect(store.get("t1")?.summary).toEqual({ status: "off", fallback: "Login fix finished. Done." });
+  });
+
+  it("never runs the tool for a thread silenced from the thread menu", async () => {
+    const w = heldWriter();
+    const store = new AttentionStore(null, recordingLog());
+    const hooks = createHooks({
+      store,
+      readConfig: async () => CONFIG,
+      events,
+      choiceOf: async () => ({ own: "silent", inherited: null }),
+      publish: vi.fn(),
+      log: recordingLog(),
+      writeSentence: w.write,
+      remember: vi.fn(),
+    });
+    await hooks.idle(thread(), "Done.");
+    expect(w.calls).toHaveLength(0);
+    expect(store.get("t1")?.summary.status).toBe("off");
   });
 
   it("keeps a sentence that lands after unload out of the store", async () => {

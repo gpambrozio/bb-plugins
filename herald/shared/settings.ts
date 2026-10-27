@@ -10,6 +10,20 @@ import type { PluginSettingDescriptor, PluginSettingsValues } from "@get-bb/plug
 
 import { DEFAULT_SENTENCE_PROMPT, RATE_OPTIONS, SPEECH_ENGINES, TOOL_COMMANDS, type SpeechEngine, type StoredConfig } from "./herald";
 
+/** What the form shows for each voice source, instead of its stored value. */
+export const ENGINE_LABELS: Record<SpeechEngine, string> = {
+  say: "Voices of the Mac running bb",
+  web: "This device's browser voice",
+};
+
+/** What the form shows for each speech rate. */
+export const RATE_LABELS: Record<(typeof RATE_OPTIONS)[number], string> = {
+  "0.8": "0.8×",
+  "1": "Normal",
+  "1.2": "1.2×",
+  "1.5": "1.5×",
+};
+
 export const SETTINGS = {
   speak: {
     type: "boolean",
@@ -40,8 +54,9 @@ export const SETTINGS = {
     type: "select",
     label: "Voice source",
     description:
-      "say: the voices of the Mac running bb, rendered there and played on this device. web: this device's own browser voice. say falls back to web when bb does not run on a Mac.",
+      "The voices of the Mac running bb are rendered there and played on this device; they fall back to this device's browser voice when bb does not run on a Mac.",
     options: [...SPEECH_ENGINES],
+    experimental_optionLabels: ENGINE_LABELS,
     default: "say",
   },
   rate: {
@@ -49,6 +64,7 @@ export const SETTINGS = {
     label: "Speech rate",
     description: "A multiplier on the voice's own pace.",
     options: [...RATE_OPTIONS],
+    experimental_optionLabels: RATE_LABELS,
     default: "1",
   },
   announceQuestions: {
@@ -85,7 +101,7 @@ export const SETTINGS = {
     type: "boolean",
     label: "Announce threads started by another thread",
     description:
-      "Off: a child thread reports to the thread that started it, and you hear the parent's announcement instead of two. It is still listed in the panel. On: both are announced.",
+      "Off: a child thread reports to the thread that started it, and you hear the parent's announcement instead of two. It is still listed in the panel. On: both are announced. Herald in a thread's menu overrides this for that thread.",
     default: false,
   },
   writeWithModel: {

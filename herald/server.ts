@@ -21,7 +21,8 @@ import {
   type StoredConfig,
 } from "./shared/herald";
 import { customCommandSeed, sentenceSettingsOf, SETTINGS } from "./shared/settings";
-import { bbEvents, bbLiveness, bbNames } from "./server/bb-ports";
+import { CHOICES_CHANNEL } from "./shared/thread-choice";
+import { bbEvents, bbLiveness, bbNames, bbThreadChoices } from "./server/bb-ports";
 import { SentenceHistory } from "./server/history";
 import { createHooks, type HeraldConfig } from "./server/hooks";
 import { kvBackend } from "./server/kv-backend";
@@ -31,6 +32,7 @@ import { withNames } from "./server/recent";
 import { announceDrained, onOtherDrained } from "./server/reload-signal";
 import { listSayVoices, renderWithSay, sayAvailable } from "./server/say";
 import { AttentionStore } from "./server/store";
+import { ThreadChoices } from "./server/thread-choices";
 import { SentenceWriter } from "./server/writer";
 
 export { rpcContract } from "./shared/contract";
@@ -85,19 +87,25 @@ export default async function plugin(bb: BbPluginApi) {
   let events: EventsPort | null = null;
   let liveness: Liveness | null = null;
   let names: NamesPort | null = null;
+  let choices: ThreadChoices | null = null;
   const eventsPort = () => (events ??= bbEvents(bb.sdk, bb.log));
   /** Saves are chained: two partial writes at once must both land. */
   let configWrites: Promise<unknown> = Promise.resolve();
   const livenessOf = () => (liveness ??= new Liveness(bbLiveness(bb.sdk), bb.log));
   const namesPort = () => (names ??= bbNames(bb.sdk));
+  const choicesOf = () => (choices ??= new ThreadChoices(bbThreadChoices(bb.sdk)));
 
-  function publish(): void {
+  function publishOn(channel: string, what: string): void {
     try {
-      bb.realtime.publish(ENTRIES_CHANNEL, { at: Date.now() });
+      bb.realtime.publish(channel, { at: Date.now() });
     } catch (error) {
       // After an unload the handle is stale; the clients re-read on reconnect anyway.
-      bb.log.warn(`Could not tell the app the entries changed: ${error instanceof Error ? error.message : String(error)}`);
+      bb.log.warn(`Could not tell the app ${what} changed: ${error instanceof Error ? error.message : String(error)}`);
     }
+  }
+
+  function publish(): void {
+    publishOn(ENTRIES_CHANNEL, "the entries");
   }
 
   /** The stored configuration, each part falling back to its default when unreadable. */
@@ -140,6 +148,8 @@ export default async function plugin(bb: BbPluginApi) {
       interruptedRecently: (threadId, withinMs) => eventsPort().interruptedRecently(threadId, withinMs),
       interactionPending: (threadId, interactionId) => eventsPort().interactionPending(threadId, interactionId),
     },
+    // Read per event, so a choice made in the thread menu applies to the next one.
+    choiceOf: (thread) => choicesOf().inputsOf(thread.id),
     publish,
     // The tool runs here, on the bb server's machine; see AGENTS.md.
     writeSentence: (command, prompt) => writer.write(command, prompt),
@@ -166,6 +176,14 @@ export default async function plugin(bb: BbPluginApi) {
     "history.recent": async () => {
       const { recentHistoryLimit } = await storedConfig();
       return { items: await withNames(await history.recent(recentHistoryLimit), namesPort(), bb.log) };
+    },
+    "choices.list": async ({ threadIds }) => ({ threads: Object.fromEntries(await choicesOf().inputs(threadIds)) }),
+    // A thread's choice also decides its descendants', so every open menu
+    // re-reads every row it shows rather than this one alone.
+    "choices.set": async ({ threadId, choice }) => {
+      const inputs = await choicesOf().set(threadId, choice);
+      publishOn(CHOICES_CHANNEL, "a thread's choice");
+      return inputs;
     },
     "config.get": () => storedConfig(),
     // Any part of the stored configuration; the rest is kept. When the tool

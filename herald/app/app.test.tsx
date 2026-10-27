@@ -19,6 +19,7 @@ import {
   type RecentHistoryItem,
   type StoredConfig,
 } from "../shared/herald";
+import { NO_CHOICE } from "../shared/thread-choice";
 import { HeraldBanner } from "./banner";
 import { HeraldBridge } from "./bridge";
 import { HeraldHeaderAction } from "./header-action";
@@ -87,6 +88,8 @@ function rpc(entries: () => AttentionEntry[], calls: { list: number }) {
     "history.recent": () => ({ items: [] as RecentHistoryItem[] }),
     "speech.voices": () => ({ available: true, voices: [{ name: "Zoe (Premium)", lang: "en_US" }] }),
     "speech.render": () => ({ mimeType: "audio/wav", base64: "" }),
+    "choices.list": () => ({ threads: {} }),
+    "choices.set": () => NO_CHOICE,
     log: () => null,
   };
 }
@@ -102,6 +105,19 @@ describe("Herald's app", () => {
     expect(app.appOverlays).toHaveLength(1);
     expect(app.composerCustomizations[0]?.banners?.map((banner) => banner.id)).toEqual(["summary"]);
     expect(app.settingsSections.map((section) => section.id)).toEqual(["summaries"]);
+    expect(app.threadActions.map((action) => action.id)).toEqual(["announcements"]);
+  });
+
+  it("draws bb's own status glyph on each waiting row", async () => {
+    const calls = { list: 0 };
+    renderSlot<object, RpcContract>({ component: HeraldBridge }, {}, { rpc: rpc(() => [entry({ eventId: "t1:idle:glyph" })], calls) });
+    const { container } = renderSlot<object, RpcContract>(
+      { component: HeraldPanel },
+      {},
+      { rpc: rpc(() => [], calls), sidebarThreads: { status: "ready", threads: [sidebarThread] } },
+    );
+    await screen.findByText("Login fix is done.");
+    expect(container.querySelector('[data-thread-status-glyph="unread-success"]')?.getAttribute("data-size")).toBe("compact");
   });
 
   it("draws the waiting count on the sidebar entry, and no badge when nothing waits", async () => {

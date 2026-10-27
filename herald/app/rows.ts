@@ -7,6 +7,8 @@
  * that Herald has no entry for (an event from before the plugin was watching,
  * say) is still listed, with what bb knows.
  */
+import type { PluginSidebarThreadIndicator } from "@get-bb/plugin-sdk/app";
+
 import type { AttentionEntry, AttentionReason } from "../shared/herald";
 
 /** The fields of bb's sidebar thread this join reads. */
@@ -19,7 +21,7 @@ export interface ThreadState {
   isArchived: boolean;
   isUnread: boolean;
   hasPendingInteraction: boolean;
-  indicator: string;
+  indicator: PluginSidebarThreadIndicator;
   latestAttentionAt: number;
 }
 
@@ -34,6 +36,8 @@ export interface Row {
   /** Epoch ms the row sorts by: the event, or when bb last flagged the thread. */
   at: number;
   entry: AttentionEntry | null;
+  /** bb's status for the thread, drawn with bb's own glyph; null while bb's list is loading. */
+  indicator: PluginSidebarThreadIndicator | null;
 }
 
 /**
@@ -90,6 +94,7 @@ export function joinRows(entries: readonly AttentionEntry[], threads: readonly T
       reason: entry.reason,
       at: Date.parse(entry.createdAt),
       entry,
+      indicator: thread?.indicator ?? null,
     });
   }
   for (const thread of threads ?? []) {
@@ -101,6 +106,7 @@ export function joinRows(entries: readonly AttentionEntry[], threads: readonly T
       reason: reasonFromBb(thread),
       at: thread.latestAttentionAt,
       entry: null,
+      indicator: thread.indicator,
     });
   }
   return [...rows.values()].sort((a, b) => b.at - a.at);

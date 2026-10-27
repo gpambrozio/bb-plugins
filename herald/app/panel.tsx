@@ -7,12 +7,14 @@
  * on the same nudges.
  */
 import {
+  experimental_ThreadStatusGlyph as ThreadStatusGlyph,
   experimental_useSidebarThreads,
   experimental_usePluginId,
   useBbNavigate,
   useRealtime,
   useRealtimeConnectionState,
   useRpc,
+  useSidebarThreadRowStatus,
   type ExperimentalBadge,
 } from "@get-bb/plugin-sdk/app";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode } from "react";
@@ -127,8 +129,24 @@ function Sentence({ entry }: { entry: AttentionEntry | null }): ReactNode {
   if (entry.summary.status === "pending") return <p className="text-sm italic text-muted-foreground">Writing the sentence…</p>;
   return (
     <p className="text-xs text-muted-foreground">
-      Not announced: this kind of event is switched off, or the thread that started this one speaks for it.
+      Not announced: this kind of event is switched off, Herald is set to Silent or Questions only for this thread, or the
+      thread that started this one speaks for it.
     </p>
+  );
+}
+
+/**
+ * The glyph bb's sidebar draws for the thread — unread, waiting for input,
+ * running — with a status another plugin set on its row. Nothing while bb's
+ * list is still loading.
+ */
+function StatusGlyph({ threadId, indicator }: { threadId: string; indicator: Row["indicator"] }) {
+  const rowStatus = useSidebarThreadRowStatus(threadId);
+  if (indicator === null) return null;
+  return (
+    <span className="inline-flex shrink-0 items-center">
+      <ThreadStatusGlyph indicator={indicator} rowStatus={rowStatus} size="compact" />
+    </span>
   );
 }
 
@@ -156,6 +174,7 @@ function RowCard({ row, now, onOpen }: { row: Row; now: number; onOpen: (threadI
       className="cursor-pointer space-y-2 rounded-lg border border-border bg-card p-3 hover:bg-state-hover focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
     >
       <div className="flex min-w-0 items-center gap-2">
+        <StatusGlyph threadId={row.threadId} indicator={row.indicator} />
         <span className={cn("inline-flex shrink-0 items-center gap-1 text-xs font-semibold", look.className)}>
           <Icon name={look.icon} className="size-3.5" aria-hidden />
           {look.label}
