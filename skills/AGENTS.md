@@ -22,7 +22,7 @@ specific to `skills`.
 | `shared/frontmatter.ts` | `SKILL.md` frontmatter. Used by the host and by the server (for bb's skills). |
 | `shared/contract.ts`, `shared/host-contract.ts` | App ⇄ server and server ⇄ host contracts. The app imports them as types only. |
 | `app/browser.tsx` | List, search, both detail screens, Add to chat — drawn by the panel and the composer popup. |
-| `app/panel.tsx`, `app/composer-button.tsx`, `app/composer-popup.tsx` | The thread-panel tab; the composer button with its count; the list in bb's composer popup, which the button and the composer command toggle. |
+| `app/panel.tsx`, `app/composer-button.tsx`, `app/composer-popup.tsx` | The thread-panel tab and its registration (`registerSkillsTab`); the composer button with its count; the list in bb's composer popup, which the button and the composer command toggle. |
 | `app/use-skills.ts`, `app/answer-channel.ts` | The two RPC reads; the list shared by every surface showing one thread's skills. |
 | `app/insert.ts` | Add to chat: the pill, where it goes in the draft, the text fallback, and which composers it may write to. |
 | `app/markdown.ts` | Defuses a body's images and raw HTML, by parsing it, before bb's `Markdown` draws it. |
@@ -53,6 +53,18 @@ environment. The server resolves `threads.get` → `environments.get` to `{ prov
 and calls the host entry there (`bb.hosts.experimental_client(...).call(method, input, { hostId })`).
 `bb.sdk.projects.files` reads only inside the workspace, so it cannot reach `~/.claude` and friends.
 The host entry spawns nothing and keeps no state; the worker stops on its own after five idle minutes.
+Both host methods only read files, so they are marked `experimental_retryable` (SDK 0.6.78): from bb
+0.47.1, a call whose answer has not come back within half its timeout — one lost while the daemon's
+socket reconnects — is cancelled and sent once more, instead of failing the Skills tab. Older bb
+ignores the key. Mark nothing retryable that writes or has side effects.
+
+**The Skills tab is an `experimental_tab`, with `threadPanelAction` as a fallback.** SDK 0.6.73
+replaced `app.slots.threadPanelAction` with `experimental_tab` (`context: { kind: "thread" }`,
+`availability: "action"`), and the typings dropped the old slot. bb 0.45 and 0.46 have no
+`experimental_tab`, so `registerSkillsTab` (`app/panel.tsx`) uses it only when `app.slots` has it and
+otherwise calls the old slot with the same id, title, icon and layout. That keeps `engines.bb` at
+`>=0.45`; both open by the id `skills`. Drop the fallback when the plugin needs bb 0.47 for something
+else.
 
 **Which directory: the environment's `path`.** A bb thread runs at its environment's root. An archived
 thread's environment is `destroyed` with no path, and the browser says so rather than showing an empty
@@ -71,7 +83,11 @@ they are listed (kind `bb`) after the provider's own. bb's list also finds Codex
 (`~/.codex/plugins`); rows with scope `plugin` and the thread's own provider are listed as kind
 `plugin`. Every other row of bb's list is another provider's root and is ignored — discovery reads the
 thread's provider in its own order. Their ids are `bb:<bb skill id>`, and their body comes from
-`bb.sdk.skills.getContent`.
+`bb.sdk.skills.getContent`. From bb 0.47.1 bb's list collapses registrations of one name with
+identical `SKILL.md` bytes, keeping bb's own scopes before a provider's and personal before project, so
+a `.bb/skills` copy identical to a `~/.bb/skills` one comes back once, as the personal one. The
+first-wins dedupe here already showed one of them, so only its source label can differ from bb 0.47.0.
+bb's scans now follow symlinked skill folders and `SKILL.md` files, as the resolvers here always have.
 
 **The reported list is bb's `/` menu.** Paseo asked the live session (`agent.commands()`); bb's
 equivalent is `bb.sdk.projects.commands({ projectId, environmentId, provider })`, the list behind the
@@ -126,7 +142,8 @@ that opened the popup, and the thread a side-panel tab belongs to. `composer.rep
 `{ kind: "command", trigger: "/", source, origin, argumentHint }` mention over `/name` at the start,
 then a space, then the rest of the draft; then `focus()`. That is exactly what bb's `/` menu inserts
 (`promptCommandResourceFromSuggestion`), so the message is the same `/name …` text it was, and a
-provider that reads skill pills (Pi) gets one. A command pill already at the start is replaced, not
+provider that reads skill pills gets one (Pi; and Codex from bb 0.47.1, as a structured skill input,
+which bb matches only on the exact `/name` range the pill covers). A command pill already at the start is replaced, not
 joined by a second — what bb's Plan and Goal rows and its bundled `automations` plugin do. `source` is
 `skill` for a discovered skill and the reported list's own for a reported entry; `origin` is
 `project` for a project or repository skill and `user` for the rest (as bb's own skill rows), and the
@@ -217,7 +234,9 @@ API works in every bb client) and react-query (each surface holds one small fetc
   is still listed.
 - **Disabled Codex skills appear** (`[[skills.config]]` in `~/.codex/config.toml` is not read), and
   **shadowed copies are hidden**, though Codex shows both copies of a name.
-- **When bb and the provider both have a skill of one name**, the provider's copy is listed; which one
-  the agent actually loads is not documented by either.
+- **When bb and the provider both have a skill of one name**, the provider's copy is listed. With
+  identical content that is the one the agent loads: from bb 0.47.1 bb no longer injects its copy into
+  a Claude Code session that already loads the same name and content natively. With different content,
+  which one the agent loads is still documented by neither.
 - **`user-invocable: false`** is read from scanned files only (such a skill gets no Add to chat); bb's
   rows are assumed invocable.

@@ -13,6 +13,7 @@ import {
   type ExperimentalComposerCommandRegistration,
   type JsonValue,
   type PluginAppBuilder,
+  type PluginAppSlots,
   type PluginCommandRegistration,
   useComposer,
 } from "@get-bb/plugin-sdk/app";
@@ -25,7 +26,8 @@ import type { SkillDocument, SkillEntry, SkillList } from "../shared/skills";
 
 import { SkillsComposerButton } from "./composer-button";
 import { SkillsPopup, toggleSkillsPopup } from "./composer-popup";
-import { SkillsPanel } from "./panel";
+import { SKILLS_ICON } from "./icons";
+import { SkillsPanel, registerSkillsTab } from "./panel";
 
 beforeEach(() => {
   // jsdom lays nothing out, so it has no scrolling to do.
@@ -100,7 +102,10 @@ function renderPanel(
 describe("registrations", () => {
   it("adds a thread panel, a thread-composer button with its popup, and commands", async () => {
     const app = await loadPluginApp(() => import("../app"));
-    expect(app.threadPanelActions.map((action) => action.id)).toEqual(["skills"]);
+    expect(app.tabs.map((tab) => [tab.id, tab.title, tab.context.kind, tab.availability, tab.icon, tab.layout])).toEqual([
+      ["skills", "Skills", "thread", "action", SKILLS_ICON, "padded"],
+    ]);
+    expect(app.tabs[0]?.component).toBe(SkillsPanel);
     expect(app.composerCustomizations).toEqual([
       expect.objectContaining({
         id: "skills",
@@ -157,6 +162,17 @@ describe("registrations", () => {
       },
     });
     expect(opened).toEqual([{ actionId: "skills" }]);
+  });
+});
+
+describe("the Skills tab on bb 0.45 and 0.46", () => {
+  it("registers through threadPanelAction when bb has no experimental_tab", () => {
+    // bb 0.46's slots, as SDK 0.6.37 types them: no `experimental_tab`.
+    const legacy: unknown[] = [];
+    registerSkillsTab({
+      threadPanelAction: (registration: unknown) => legacy.push(registration),
+    } as unknown as PluginAppSlots);
+    expect(legacy).toEqual([{ id: "skills", title: "Skills", icon: SKILLS_ICON, layout: "padded", component: SkillsPanel }]);
   });
 });
 

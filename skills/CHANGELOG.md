@@ -5,6 +5,19 @@ Notable changes to `skills`. The other plugins in this repository version separa
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.3.1
+
+### Fixed
+
+- **The Skills tab no longer fails when the connection to the machine running the thread drops for a
+  moment.** On bb 0.47.1 and newer, a skill list or a skill's text that went missing on the way back is
+  asked for again instead of showing an error. Older bb works as before.
+
+### Changed
+
+- **The Skills tab uses bb 0.47's new side-panel tabs.** It looks and opens the same, and it still works
+  on bb 0.45 and 0.46.
+
 ## 0.3.0
 
 ### Changed

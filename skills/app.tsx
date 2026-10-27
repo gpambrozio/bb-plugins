@@ -8,17 +8,10 @@ import { definePluginApp } from "@get-bb/plugin-sdk/app";
 
 import { SkillsComposerButton } from "./app/composer-button";
 import { SKILLS_POPUP_ID, SkillsPopup, toggleSkillsPopup } from "./app/composer-popup";
-import { SKILLS_ICON } from "./app/icons";
-import { PANEL_ACTION_ID, SkillsPanel } from "./app/panel";
+import { PANEL_ACTION_ID, registerSkillsTab } from "./app/panel";
 
 export default definePluginApp((app) => {
-  app.slots.threadPanelAction({
-    id: PANEL_ACTION_ID,
-    title: "Skills",
-    icon: SKILLS_ICON,
-    layout: "padded",
-    component: SkillsPanel,
-  });
+  registerSkillsTab(app.slots);
 
   app.composer.customize({
     id: "skills",
