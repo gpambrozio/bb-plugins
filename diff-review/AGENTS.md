@@ -65,7 +65,7 @@ Review tab started the run (for a reviewer an @reviewer starts, the tab the comm
 still works in the reviewed workspace; otherwise the run starts at the root. They are never hidden
 (the owner watches, steers and approves there, and hidden helpers bring the reload problems of issue
 #11). They run in the `aiPermissionMode` setting's mode, **`auto` ("Approve for me") by default**:
-`accept-edits` asked the owner to approve most of a review's commands. The provider and model come
+`accept-edits` asked the owner to approve most of a review's commands. A provider whose `capabilities.permissionModes` (from `providers.list`) lacks the configured mode runs in `full` instead (`spawnPermissionMode`): bb refuses the spawn otherwise, as it did for opencode, which has no `auto`. The provider and model come
 from the per-run picker, seeded from the settings (Claude Code unless changed); a reviewer an
 @reviewer starts runs the settings' provider and model, at the provider's default reasoning.
 

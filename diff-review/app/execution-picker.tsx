@@ -64,7 +64,7 @@ export function ExecutionPicker({
     <div className="flex flex-col gap-1">
       <span className="text-xs text-muted-foreground">
         Runs in a new thread under this one, in the same workspace, in {permissionMode === "auto" ? "Approve for me" : "Accept edits"} mode (set in Diff
-        Review's settings).
+        Review's settings), or in full mode with a provider that lacks it.
       </span>
       {execution === null ? (
         <span className="text-xs text-muted-foreground">Loading the providers…</span>

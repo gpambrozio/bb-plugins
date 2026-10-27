@@ -1,6 +1,7 @@
 import { fileURLToPath } from "node:url";
 
 import { createFakePluginHost, experimental_scanPublicSdkOnly, makePluginAgentConfigurationContext, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
+import type { ProviderInfo } from "@get-bb/plugin-sdk";
 import { describe, expect, it, vi } from "vitest";
 
 import plugin from "./server";
@@ -60,6 +61,8 @@ interface Setup {
   statusExtra?: () => Record<string, unknown>;
   /** Views (`uncommitted`, `branch_committed`, …) whose diff has no files. */
   emptyTargets?: string[];
+  /** The permission modes each provider supports, as `providers.list` reports them; every mode when unlisted. */
+  providerModes?: Record<string, ("auto" | "accept-edits" | "full")[]>;
 }
 
 async function setup(options: Setup = {}) {
@@ -164,6 +167,8 @@ async function setup(options: Setup = {}) {
         }),
       },
       providers: {
+        list: async () =>
+          Object.entries(options.providerModes ?? {}).map(([id, permissionModes]) => ({ id, capabilities: { permissionModes } }) as unknown as ProviderInfo),
         models: async () => ({
           modelLoadError: null,
           models: [
@@ -766,6 +771,16 @@ describe("AI runs", () => {
     await rpc("startReview", { sessionId, threadId: THREAD, focuses: [], instructions: "", execution });
     expect(harness.inspection.sdk.callsTo("threads.spawn")[0]![0]).toMatchObject({ permissionMode: "accept-edits" });
     expect(((await rpc("runDefaults", { threadId: THREAD })) as { permissionMode: string }).permissionMode).toBe("accept-edits");
+  });
+
+  it("starts a run in full mode when its provider does not support the configured mode", async () => {
+    const { harness, rpc, view } = await setup({ providerModes: { "acp-opencode": ["accept-edits", "full"], "claude-code": ["auto", "accept-edits", "full"] } });
+    const { sessionId } = await view();
+    await rpc("startReview", { sessionId, threadId: THREAD, focuses: [], instructions: "", execution: { ...execution, providerId: "acp-opencode" } });
+    expect(harness.inspection.sdk.callsTo("threads.spawn")[0]![0]).toMatchObject({ providerId: "acp-opencode", permissionMode: "full" });
+    // A provider that supports the configured mode keeps it.
+    await rpc("startReview", { sessionId, threadId: THREAD, focuses: [], instructions: "", execution });
+    expect(harness.inspection.sdk.callsTo("threads.spawn")[1]![0]).toMatchObject({ providerId: "claude-code", permissionMode: "auto" });
   });
 
   it("starts a run without a parent when the tab's thread works in another workspace", async () => {

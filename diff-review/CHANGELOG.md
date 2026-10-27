@@ -14,6 +14,10 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   wraps, and a long word or code block in a comment no longer makes the code scroll sideways.
 - **"Only files with comments" starts off in every thread.** Turning it on in one thread no longer
   turns it on in the next thread you open; each thread remembers its own choice.
+- **AI runs start with providers that lack the chosen permission mode.** An AI review, a question to
+  the reviewer or a fix in a new thread with opencode failed with "only supports accept-edits, full
+  permission mode". A provider that does not offer the mode set in the settings now runs in full
+  mode instead; the others keep the mode you set.
 
 ## 0.2.0
 

@@ -49,7 +49,7 @@ export default async function plugin(bb: BbPluginApi) {
       type: "select",
       label: "Permission mode for AI runs",
       description:
-        "How AI reviews, answers to @reviewer and fixes in a new thread run. Approve for me (bb's `auto`) has bb review their requests and asks you only for high-risk ones; Accept edits asks you for every command beyond editing files. A review is asked not to edit either way, and the tab lists any file that changed while it ran.",
+        "How AI reviews, answers to @reviewer and fixes in a new thread run. Approve for me (bb's `auto`) has bb review their requests and asks you only for high-risk ones; Accept edits asks you for every command beyond editing files. A provider without the chosen mode (opencode has no Approve for me) runs in full mode instead. A review is asked not to edit either way, and the tab lists any file that changed while it ran.",
       options: [...RUN_PERMISSION_MODES],
       experimental_optionLabels: { auto: "Approve for me", "accept-edits": "Accept edits" },
       default: "auto",
