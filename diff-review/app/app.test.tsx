@@ -10,7 +10,7 @@ import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ReviewThread, ReviewView, ViewState } from "../shared/types";
-import { ANNOTATION_FIT } from "./file-diff";
+import { ANNOTATION_FIT } from "./annotation-fit";
 import { ReviewHeaderAction } from "./header-action";
 import { ReviewPanel } from "./review-panel";
 import { forgetViewStates } from "./view-state";

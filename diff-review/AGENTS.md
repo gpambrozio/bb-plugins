@@ -44,7 +44,9 @@ specific to `diff-review`.
 
 `npm test` runs everything. The server tests drive `server.ts` on the SDK's fake plugin host with a
 real temporary SQLite; the app tests render the tab with a stand-in for `@pierre/diffs/react`, since
-jsdom cannot run its highlighter.
+jsdom cannot run its highlighter. `app/annotation-layout.test.ts` checks the comment boxes' layout with the real Pierre in
+Chromium (`playwright-core`, the page bundled by `esbuild` from `app/testing/`); it finds a local
+Chromium or Chrome (`CHROME_PATH` overrides) and is skipped without one, except in CI.
 
 **The fake host's SQLite needs better-sqlite3's native binding.** npm 12 blocks install scripts, so a
 fresh `npm install` there leaves it unbuilt and every server test fails with "Could not locate the

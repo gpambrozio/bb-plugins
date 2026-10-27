@@ -1226,7 +1226,7 @@ describe("the package", () => {
       /^@radix-ui\//,
       /^@pierre\/diffs(\/.*)?$/,
       /^(sonner|vaul|clsx|tailwind-merge|class-variance-authority|ignore|better-sqlite3)$/,
-      /^(vitest|vitest\/config|@testing-library\/react)$/,
+      /^(vitest|vitest\/config|@testing-library\/react|esbuild|playwright-core)$/,
     ];
     const scan = experimental_scanPublicSdkOnly(fileURLToPath(new URL(".", import.meta.url)), { allow });
     expect(scan.violations).toEqual([]);
