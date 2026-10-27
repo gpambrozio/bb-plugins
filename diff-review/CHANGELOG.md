@@ -5,6 +5,16 @@ Notable changes to `diff-review`. The other plugins in this repository version s
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.2.1
+
+### Fixed
+
+- **Comments fit the pane.** A comment on a line of a wide file no longer stretches past the edge of
+  the Review tab: comments, replies and the new-comment box are as wide as the visible diff, their text
+  wraps, and a long word or code block in a comment no longer makes the code scroll sideways.
+- **"Only files with comments" starts off in every thread.** Turning it on in one thread no longer
+  turns it on in the next thread you open; each thread remembers its own choice.
+
 ## 0.2.0
 
 ### Added

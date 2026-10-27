@@ -40,7 +40,8 @@ import { draftKeys, useDraft, useDraftKeys, useViewState, ViewStateProvider } fr
 export const PANEL_ACTION_ID = "review";
 
 const DIFF_STYLE_KEY = "diff-review:diff-style";
-const ONLY_COMMENTED_KEY = "diff-review:only-commented";
+/** "Only files with comments" is kept per bb thread: a thread that never set it starts with it off. */
+const onlyCommentedKey = (threadId: string) => `diff-review:only-commented:${threadId}`;
 
 function initialTarget(params: unknown): TargetRequest {
   const parsed = targetRequestSchema.safeParse((params as { target?: unknown } | null)?.target);
@@ -185,7 +186,7 @@ function ReadyPanel({
   const rpc = useRpc<RpcContract>();
   const actions = useActions();
   const [diffStyle, setDiffStyle] = useState<DiffStyle>(() => (stored(DIFF_STYLE_KEY) === "split" ? "split" : "unified"));
-  const [onlyCommented, setOnlyCommented] = useState(() => stored(ONLY_COMMENTED_KEY) === "true");
+  const [onlyCommented, setOnlyCommented] = useState(() => stored(onlyCommentedKey(threadId)) === "true");
   const viewState = useViewState();
   const generalDraft = useDraft(draftKeys.general);
   const [sending, setSending] = useState(false);
@@ -200,7 +201,7 @@ function ReadyPanel({
 
   const toggleOnlyCommented = (next: boolean) => {
     setOnlyCommented(next);
-    store(ONLY_COMMENTED_KEY, String(next));
+    store(onlyCommentedKey(threadId), String(next));
   };
 
   // Each file's threads keep their array while they are the same threads, so a reply re-renders

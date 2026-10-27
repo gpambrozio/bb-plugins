@@ -10,6 +10,7 @@ import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ReviewThread, ReviewView, ViewState } from "../shared/types";
+import { ANNOTATION_FIT } from "./file-diff";
 import { ReviewHeaderAction } from "./header-action";
 import { ReviewPanel } from "./review-panel";
 import { forgetViewStates } from "./view-state";
@@ -123,10 +124,10 @@ function withSecondFile(more: ReviewThread[] = []): Extract<ReviewView, { ok: tr
   return { ...VIEW, files: [...VIEW.files, second], threads: [...VIEW.threads, ...more] };
 }
 
-function render(rpc: Record<string, (input: never) => unknown> = {}) {
+function render(rpc: Record<string, (input: never) => unknown> = {}, threadId = "thr_1") {
   return renderSlot(
     { component: ReviewPanel },
-    { threadId: "thr_1", params: null },
+    { threadId, params: null },
     { rpc: { getReview: () => VIEW, ...rpc }, codeTheme: { mode: "dark", name: "pierre-dark" } },
   );
 }
@@ -163,6 +164,22 @@ describe("the Review tab", () => {
     expect(within(lost).getByText("This line is gone")).toBeTruthy();
     expect(within(lost).getByText("const d = 5;")).toBeTruthy();
     expect(screen.getByRole("button", { name: /Send to agent \(4\)/ })).toBeTruthy();
+  });
+
+  it("fits every comment box in the diff to the pane's width, so a long line in it never widens the code", async () => {
+    render();
+    fireEvent.click(await screen.findByText("gutter +"));
+    fireEvent.click(within(screen.getByTestId("patch")).getAllByRole("button", { name: "Reply" })[0]!);
+    const annotations = screen.getAllByTestId(/^annotation-/);
+    // An existing thread (with its reply box open) and the new comment's box.
+    expect(annotations.some((annotation) => annotation.querySelector("[data-thread-id] textarea") !== null)).toBe(true);
+    expect(annotations.some((annotation) => within(annotation).queryByText("New comment on lines 1–2 (new side)") !== null)).toBe(true);
+    for (const annotation of annotations) {
+      const box = annotation.firstElementChild as HTMLElement;
+      expect(box.dataset.annotationFit).toBe("");
+      expect(box.className).toBe(ANNOTATION_FIT);
+    }
+    expect(ANNOTATION_FIT.split(" ")).toEqual(["[contain:inline-size]", "[overflow-wrap:anywhere]", "[&_pre]:overflow-x-auto"]);
   });
 
   it("adds a comment on the lines the gutter picked, with their text as the anchor", async () => {
@@ -497,7 +514,7 @@ describe("the Review tab", () => {
     expect(counts[0]!.textContent).toBe("3 open·1 closed");
   });
 
-  it("shows only the files with comments when the switch is on, and remembers it", async () => {
+  it("shows only the files with comments when the switch is on, and remembers it per thread", async () => {
     render({ getReview: () => withSecondFile() });
     await screen.findByText("2 files · +3 −2 · 1 left out by the ignore patterns");
     expect(screen.getByText("src/b.ts")).toBeTruthy();
@@ -508,8 +525,14 @@ describe("the Review tab", () => {
     expect(screen.getByText("src/a.ts")).toBeTruthy();
     // With the switch on every file shown has comments, so the headers drop the count.
     expect(screen.queryByRole("img", { name: /comment thread/ })).toBeNull();
-    expect(window.localStorage.getItem("diff-review:only-commented")).toBe("true");
 
+    // Another thread, one that never set the switch, starts with it off.
+    cleanup();
+    render({ getReview: () => withSecondFile() }, "thr_2");
+    await screen.findByText("2 files · +3 −2 · 1 left out by the ignore patterns");
+    expect(screen.getByRole("switch", { name: "Only files with comments" }).getAttribute("aria-checked")).toBe("false");
+
+    // Back in the first thread, it is still on.
     cleanup();
     render({ getReview: () => withSecondFile() });
     await screen.findByText("1 of 2 files · +1 −1 · 1 left out by the ignore patterns");
@@ -517,11 +540,14 @@ describe("the Review tab", () => {
 
     fireEvent.click(screen.getByRole("switch", { name: "Only files with comments" }));
     await screen.findByText("2 files · +3 −2 · 1 left out by the ignore patterns");
-    expect(window.localStorage.getItem("diff-review:only-commented")).toBe("false");
+    cleanup();
+    render({ getReview: () => withSecondFile() });
+    await screen.findByText("2 files · +3 −2 · 1 left out by the ignore patterns");
+    expect(screen.getByRole("switch", { name: "Only files with comments" }).getAttribute("aria-checked")).toBe("false");
   });
 
   it("says so when the switch is on and no file has comments", async () => {
-    window.localStorage.setItem("diff-review:only-commented", "true");
+    window.localStorage.setItem("diff-review:only-commented:thr_1", "true");
     // A comment on the whole diff is on no file: it stays, and no file is shown.
     render({ getReview: () => ({ ...withSecondFile(), threads: VIEW.threads.filter((entry) => entry.filePath === "__general__") }) });
     await screen.findByText('No file in this view has comments. Turn off "Only files with comments" to see all 2 files.');

@@ -24,6 +24,16 @@ import { draftKeys, useDraft, useViewState } from "./view-state";
 
 export type DiffStyle = "split" | "unified";
 
+/**
+ * What every annotation (thread cards, the new comment's box) sits in. An annotation is a cell of
+ * Pierre's code grid, whose code column grows to its widest cell's min-content: one long word or code
+ * block in a comment widened the whole column past the pane, so the card ran off screen and the
+ * code scrolled sideways. `contain: inline-size` keeps the annotation's content out of that sizing,
+ * so it takes the column's width (the visible pane, as the code wraps), and its text wraps there; a
+ * code block in a comment scrolls inside its card.
+ */
+export const ANNOTATION_FIT = "[contain:inline-size] [overflow-wrap:anywhere] [&_pre]:overflow-x-auto";
+
 /** Files with more changed lines than this start folded, so one huge file does not stall the tab. */
 const FOLD_ABOVE_LINES = 2_000;
 
@@ -203,16 +213,19 @@ export function FileDiff({ file, threads, showThreadCount, diffStyle, stalePatch
 
   const renderAnnotation = (annotation: DiffLineAnnotation<Annotation>) => {
     const meta = annotation.metadata;
-    if (meta.kind === "threads") {
-      return (
-        <div className="flex flex-col gap-2 px-3 py-2">
-          {meta.threads.map(({ thread, placement }) => (
-            <ThreadCard key={thread.id} thread={thread} placement={placement} />
-          ))}
-        </div>
-      );
-    }
-    return lineDraftComposer(meta, null);
+    return (
+      <div className={ANNOTATION_FIT} data-annotation-fit="">
+        {meta.kind === "threads" ? (
+          <div className="flex flex-col gap-2 px-3 py-2">
+            {meta.threads.map(({ thread, placement }) => (
+              <ThreadCard key={thread.id} thread={thread} placement={placement} />
+            ))}
+          </div>
+        ) : (
+          lineDraftComposer(meta, null)
+        )}
+      </div>
+    );
   };
 
   /** The new comment on lines, in place under them, or above the diff with `note` saying why not. */
