@@ -53,18 +53,16 @@ describe("ThreadChoices", () => {
     expect(calls.ownChoices.map((batch) => batch.length)).toEqual([200, 200, 50]);
   });
 
-  it("stores a choice on the thread, clears it for Default, and answers with what applies now", async () => {
+  it("stores a choice on the thread, and clears it for Default", async () => {
     const { port, stored } = fakePort({ coord: null, w1: "coord" }, { coord: "questions" });
     const choices = new ThreadChoices(port);
-    expect(await choices.set("w1", "silent")).toEqual({
+    await choices.set("w1", "silent");
+    expect(stored.get("w1")).toBe("silent");
+    expect(await choices.inputsOf("w1")).toEqual({
       own: "silent",
       inherited: { choice: "questions", threadId: "coord", fromParent: true },
     });
-    expect(stored.get("w1")).toBe("silent");
-    expect(await choices.set("w1", "default")).toEqual({
-      own: null,
-      inherited: { choice: "questions", threadId: "coord", fromParent: true },
-    });
+    await choices.set("w1", "default");
     expect(stored.has("w1")).toBe(false);
   });
 

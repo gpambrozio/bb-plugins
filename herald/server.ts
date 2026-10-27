@@ -180,10 +180,12 @@ export default async function plugin(bb: BbPluginApi) {
     "choices.list": async ({ threadIds }) => ({ threads: Object.fromEntries(await choicesOf().inputs(threadIds)) }),
     // A thread's choice also decides its descendants', so every open menu
     // re-reads every row it shows rather than this one alone.
+    // They hear of it as soon as it is saved, before the read-back, which
+    // may fail on its own.
     "choices.set": async ({ threadId, choice }) => {
-      const inputs = await choicesOf().set(threadId, choice);
+      await choicesOf().set(threadId, choice);
       publishOn(CHOICES_CHANNEL, "a thread's choice");
-      return inputs;
+      return choicesOf().inputsOf(threadId);
     },
     "config.get": () => storedConfig(),
     // Any part of the stored configuration; the rest is kept. When the tool

@@ -37,9 +37,12 @@ export class ThreadChoices {
     return (await this.inputs([threadId])).get(threadId) ?? NO_CHOICE;
   }
 
-  /** Sets the thread's own choice, or clears it for `default`, and answers with its inputs now. */
-  async set(threadId: string, option: ChoiceOption): Promise<ChoiceInputs> {
+  /**
+   * Sets the thread's own choice, or clears it for `default`. Only the write:
+   * the caller tells the open menus once it lands, then reads the inputs back,
+   * so a read that fails cannot hide a change that was made.
+   */
+  async set(threadId: string, option: ChoiceOption): Promise<void> {
     await this.port.setOwn(threadId, option === "default" ? null : option);
-    return this.inputsOf(threadId);
   }
 }

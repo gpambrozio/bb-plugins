@@ -7,6 +7,7 @@
 import { act, cleanup, waitFor } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import type { PluginThreadAction, PluginThreadActionRegistration } from "@get-bb/plugin-sdk/app";
+import { useState } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { RpcContract } from "../shared/contract";
@@ -35,6 +36,12 @@ function server(initial: Record<string, ChoiceInputs>) {
   const stored = { ...initial };
   const calls = { list: [] as string[][], set: [] as Array<{ threadId: string; choice: ChoiceOption }> };
   let failing: string | null = null;
+  /**
+   * While holding, each `choices.list` answers with the choices as they were
+   * when it was called, but only once the test releases it.
+   */
+  let holding = false;
+  const held: Array<() => void> = [];
   const handlers = {
     list: () => ({ entries: [] }),
     "config.get": () => DEFAULT_STORED_CONFIG,
@@ -47,7 +54,9 @@ function server(initial: Record<string, ChoiceInputs>) {
     "choices.list": ({ threadIds }: { threadIds: string[] }) => {
       calls.list.push(threadIds);
       if (failing !== null) throw new Error(failing);
-      return { threads: Object.fromEntries(threadIds.flatMap((id) => (stored[id] === undefined ? [] : [[id, stored[id]]]))) };
+      const answer = { threads: Object.fromEntries(threadIds.flatMap((id) => (stored[id] === undefined ? [] : [[id, stored[id]]]))) };
+      if (!holding) return answer;
+      return new Promise<typeof answer>((resolve) => held.push(() => resolve(answer)));
     },
     "choices.set": (input: { threadId: string; choice: ChoiceOption }) => {
       calls.set.push(input);
@@ -56,15 +65,24 @@ function server(initial: Record<string, ChoiceInputs>) {
       return stored[input.threadId] as ChoiceInputs;
     },
   };
-  return { stored, calls, handlers, fail: (message: string | null) => (failing = message) };
+  return {
+    stored,
+    calls,
+    handlers,
+    held,
+    fail: (message: string | null) => (failing = message),
+    hold: (on: boolean) => (holding = on),
+  };
 }
 
 /** Renders the registration's `useData` as bb would, once for the app, and hands back what it returns. */
 function mount(handlers: ReturnType<typeof server>["handlers"], threadIds: string[], settings: Record<string, boolean> = {}) {
   const registration = THREAD_CHOICE_ACTION as PluginThreadActionRegistration<ThreadChoicesData>;
-  const seen: { data: ThreadChoicesData | null } = { data: null };
+  const seen: { data: ThreadChoicesData | null; show: (ids: string[]) => void } = { data: null, show: () => {} };
   function Probe() {
-    seen.data = registration.useData?.({ threadIds }) ?? null;
+    const [shown, show] = useState(threadIds);
+    seen.show = show;
+    seen.data = registration.useData?.({ threadIds: shown }) ?? null;
     return null;
   }
   const slot = renderSlot<object, RpcContract>({ component: Probe }, {}, { rpc: handlers, settings });
@@ -151,6 +169,47 @@ describe("Herald's thread menu action", () => {
     fake.stored.t1 = { own: "silent", inherited: null };
     await slot.emitRealtime(CHOICES_CHANNEL, { at: 1 });
     await waitFor(() => expect(item(target("t1"))).toMatchObject({ detail: "Silent" }));
+  });
+
+  it("drops a read that started before a change and answers after it", async () => {
+    const fake = server({ t1: NO_CHOICE });
+    const { slot, seen, item } = mount(fake.handlers, ["t1"]);
+    await waitFor(() => expect(seen.data?.inputs.size).toBe(1));
+    fake.hold(true);
+    // Another window's nudge starts a read that sees the old choice…
+    await slot.emitRealtime(CHOICES_CHANNEL, { at: 1 });
+    await waitFor(() => expect(fake.held).toHaveLength(1));
+    // …and the user picks Silent here before it answers.
+    let saved: Promise<void> | undefined;
+    act(() => {
+      saved = item(target("t1"))?.run({ value: "silent", requestRename: () => {} }) as Promise<void>;
+    });
+    await waitFor(() => expect(fake.held).toHaveLength(2));
+    await act(async () => {
+      fake.held[1]?.();
+      await saved;
+    });
+    expect(item(target("t1"))).toMatchObject({ detail: "Silent" });
+    await act(async () => fake.held[0]?.());
+    expect(item(target("t1"))).toMatchObject({ detail: "Silent" });
+  });
+
+  it("keeps a row read while a full read was under way", async () => {
+    const fake = server({ t1: NO_CHOICE, t2: { own: "questions", inherited: null } });
+    const { slot, seen, item } = mount(fake.handlers, ["t1"]);
+    await waitFor(() => expect(seen.data?.inputs.size).toBe(1));
+    fake.hold(true);
+    await slot.emitRealtime(CHOICES_CHANNEL, { at: 1 });
+    await waitFor(() => expect(fake.held).toHaveLength(1));
+    // A row scrolls into view: only it is read, and it answers first.
+    act(() => seen.show(["t1", "t2"]));
+    await waitFor(() => expect(fake.held).toHaveLength(2));
+    expect(fake.calls.list.at(-1)).toEqual(["t2"]);
+    await act(async () => fake.held[1]?.());
+    await waitFor(() => expect(item(target("t2"))).toMatchObject({ detail: "Questions only" }));
+    await act(async () => fake.held[0]?.());
+    expect(item(target("t2"))).toMatchObject({ detail: "Questions only" });
+    expect(item(target("t1"))).toMatchObject({ detail: "Announce" });
   });
 
   it("says when the choices cannot be read, and offers Retry", async () => {

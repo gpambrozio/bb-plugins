@@ -56,6 +56,8 @@ const KNOWN_THREADS = [USER_THREAD, OTHER_THREAD, WORKER_THREAD];
  */
 function metadataStubs() {
   const metadata = new Map<string, Record<string, unknown>>();
+  /** Set to make bb's ancestor read fail, as a lost connection would. */
+  const failures = { ancestors: false };
   const ancestorsOf = (threadId: string) => {
     const ids: string[] = [];
     for (let at = KNOWN_THREADS.find((known) => known.id === threadId)?.parentThreadId ?? null; at !== null; ) {
@@ -65,9 +67,14 @@ function metadataStubs() {
     return ids;
   };
   const stubs = {
-    experimental_listAncestors: async ({ threadIds }: { threadIds: readonly string[] }) => ({
-      threads: threadIds.filter((id) => KNOWN_THREADS.some((known) => known.id === id)).map((threadId) => ({ threadId, ancestorIds: ancestorsOf(threadId) })),
-    }),
+    experimental_listAncestors: async ({ threadIds }: { threadIds: readonly string[] }) => {
+      if (failures.ancestors) throw new Error("bb is away");
+      return {
+        threads: threadIds
+          .filter((id) => KNOWN_THREADS.some((known) => known.id === id))
+          .map((threadId) => ({ threadId, ancestorIds: ancestorsOf(threadId) })),
+      };
+    },
     experimental_listPluginMetadata: async ({ threadIds }: { threadIds: readonly string[] }) => ({
       threads: threadIds.flatMap((threadId) => {
         const value = metadata.get(threadId);
@@ -82,7 +89,7 @@ function metadataStubs() {
       return next;
     },
   };
-  return { metadata, stubs };
+  return { metadata, failures, stubs };
 }
 
 async function settle(): Promise<void> {
@@ -90,7 +97,7 @@ async function settle(): Promise<void> {
 }
 
 async function load(settings: Record<string, string | number | boolean> = {}) {
-  const { metadata, stubs } = metadataStubs();
+  const { metadata, failures, stubs } = metadataStubs();
   const host = createFakePluginHost({
     pluginId: "herald",
     settings,
@@ -109,7 +116,7 @@ async function load(settings: Record<string, string | number | boolean> = {}) {
   });
   await plugin(host.bb);
   live.push(host);
-  return Object.assign(host, { metadata });
+  return Object.assign(host, { metadata, failures });
 }
 
 /** Every host a test made: instances of one plugin share in-process channels, so each test disposes its own. */
@@ -188,6 +195,14 @@ describe("herald server", () => {
     });
     await harness.callRpc("choices.set", { threadId: USER_THREAD.id, choice: "default" });
     expect(metadata.has(USER_THREAD.id)).toBe(false);
+  });
+
+  it("tells every open menu about a saved choice even when reading it back fails", async () => {
+    const { harness, metadata, failures } = await load();
+    failures.ancestors = true;
+    await expect(harness.callRpc("choices.set", { threadId: USER_THREAD.id, choice: "silent" })).rejects.toThrow();
+    expect(metadata.get(USER_THREAD.id)).toEqual({ announce: "silent" });
+    expect(harness.realtimeSignals.filter((signal) => signal.channel === CHOICES_CHANNEL)).toHaveLength(1);
   });
 
   it("checks the thread's choice before it announces", async () => {
