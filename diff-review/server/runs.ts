@@ -53,6 +53,18 @@ export function runPermissionMode(value: string): RunPermissionMode {
   return (RUN_PERMISSION_MODES as readonly string[]).includes(value) ? (value as RunPermissionMode) : "auto";
 }
 
+/** The modes bb starts a thread in; a provider supports some of them (`capabilities.permissionModes`). */
+export type SpawnPermissionMode = RunPermissionMode | "full";
+
+/**
+ * The mode a run's thread starts in: the setting's, when its provider supports it (or bb did not say
+ * which it does); otherwise full. bb refuses a mode the provider lacks (opencode supports only Accept
+ * edits and full), and the owner chose a run in full mode over one that fails.
+ */
+export function spawnPermissionMode(configured: RunPermissionMode, supported: readonly string[] | null): SpawnPermissionMode {
+  return supported === null || supported.includes(configured) ? configured : "full";
+}
+
 /** The longest run summary kept, in characters. */
 const SUMMARY_MAX_CHARS = 4_000;
 
@@ -111,6 +123,17 @@ export class RunService {
       options.models[0];
     if (model === undefined) return { execution: null, message: `${providerId} lists no models here.` };
     return { execution: { providerId, model: model.model, reasoningLevel: model.defaultReasoningEffort }, message: null };
+  }
+
+  /** The permission modes a provider supports in an environment, as bb reports them; null when bb does not say. */
+  private async providerPermissionModes(environmentId: string, providerId: string): Promise<readonly string[] | null> {
+    try {
+      const providers = await this.bb.sdk.providers.list({ environmentId });
+      return providers.find((provider) => provider.id === providerId)?.capabilities.permissionModes ?? null;
+    } catch (error) {
+      this.bb.log.warn(`Could not read ${providerId}'s permission modes; starting in the configured one: ${error instanceof Error ? error.message : String(error)}`);
+      return null;
+    }
   }
 
   /** Starts an AI review of a session's view, as a child of `threadId`, the thread under review. */
@@ -443,8 +466,11 @@ export class RunService {
     try {
       const environment = await this.bb.sdk.environments.get({ environmentId: input.environmentId });
       const parentThreadId = await this.parentIn(input.parentThreadId, input.environmentId);
-      const permissionMode = runPermissionMode((await this.settings()).aiPermissionMode);
       const execution = known ?? (await (input.execution as () => Promise<Execution>)());
+      const permissionMode = spawnPermissionMode(
+        runPermissionMode((await this.settings()).aiPermissionMode),
+        await this.providerPermissionModes(input.environmentId, execution.providerId),
+      );
       const baseline = await input.baseline();
       this.store.prepareRun(id, {
         parentThreadId,

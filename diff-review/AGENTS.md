@@ -30,7 +30,7 @@ specific to `diff-review`.
 | `shared/types.ts` | The data model and zod schemas, the realtime channel and its signals. No SDK import, so the app may use it at run time. |
 | `shared/contract.ts` | The RPC contract. Imports the SDK root, so the app imports it as a type only. |
 | `shared/patch-lines.ts`, `shared/anchors.ts` | A patch's lines by side and number, and where a thread belongs in the current diff (anchored, moved, outdated). |
-| `app/review-panel.tsx` | The tab: the view picker, split/unified, *Only files with comments* (remembered in `localStorage` like split/unified), reload, whole-diff comments, the *Not on the current diff* list, the files, the send dialog, the Clear review confirm (`app/clear-dialog.tsx`). |
+| `app/review-panel.tsx` | The tab: the view picker, split/unified, *Only files with comments* (remembered in `localStorage` per bb thread, off until a thread turns it on; split/unified is one choice for all), reload, whole-diff comments, the *Not on the current diff* list, the files, the send dialog, the Clear review confirm (`app/clear-dialog.tsx`). |
 | `app/file-diff.tsx` | One file: its header (with its thread count while the switch is off), whole-file threads, and Pierre's `PatchDiff` with thread annotations and the gutter "+". |
 | `app/patch-loader.ts` | Patches bb did not send with the file list, asked for as files come near the screen and fetched in batches, one request at a time. |
 | `app/header-action.tsx` | The Review button in the thread's title bar (`experimental_threadHeaderAction`), which opens the tab. |
@@ -65,7 +65,7 @@ Review tab started the run (for a reviewer an @reviewer starts, the tab the comm
 still works in the reviewed workspace; otherwise the run starts at the root. They are never hidden
 (the owner watches, steers and approves there, and hidden helpers bring the reload problems of issue
 #11). They run in the `aiPermissionMode` setting's mode, **`auto` ("Approve for me") by default**:
-`accept-edits` asked the owner to approve most of a review's commands. The provider and model come
+`accept-edits` asked the owner to approve most of a review's commands. A provider whose `capabilities.permissionModes` (from `providers.list`) lacks the configured mode runs in `full` instead (`spawnPermissionMode`): bb refuses the spawn otherwise, as it did for opencode, which has no `auto`. The provider and model come
 from the per-run picker, seeded from the settings (Claude Code unless changed); a reviewer an
 @reviewer starts runs the settings' provider and model, at the provider's default reasoning.
 
