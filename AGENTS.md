@@ -9,7 +9,8 @@ by its own issue in this repository. Plugin code is full-trust and unsandboxed: 
 **inside the bb server's own process**, and the app half runs inside the bb app.
 
 The plugins pin **`@get-bb/plugin-sdk` 0.6.15**, 0.6.37 where a plugin needs bb 0.46 (`firstmate-crew`,
-`github-board`), or 0.6.79 where it needs bb 0.47 (`herald`, `launchd-jobs`, `screen-sharing`), and CI
+`github-board`), or 0.6.79 where it needs bb 0.47 (`herald`, `launchd-jobs`, `screen-sharing`) or a 0.47 API it can do
+without on older bb (`skills`, which keeps `engines.bb >=0.45`), and CI
 builds them all with **bb 0.47.1**. Re-pin a plugin only when it needs a newer API (see `engines`
 below). This file was
 written against bb 0.44.0 and SDK 0.5.29 and re-checked against the 0.45.0 changes; a point that names
@@ -335,7 +336,7 @@ mounted once per window. Paseo contribution → bb slot:
 | Paseo | bb |
 | --- | --- |
 | `addSurface` + `addSidebarItem` | `app.slots.navPanel` (own sidebar entry and route `/plugins/<id>/<path>/*`); a live count on the entry is its `experimental_useBadge` hook (bb 0.47, SDK 0.6.75), not a re-registration: bb calls it in the plugin's scope and draws `{ count?, text?, tone?, label }`, or nothing for null. bb 0.46 draws no `experimental_sidebarAccessory`, bb 0.47 ignores it with a warning, and bb 0.46 refuses `experimental_useBadge` as an unknown field, so a badge means `engines.bb >=0.47` (`launchd-jobs/app/health.tsx`). Test the hook by rendering a component that prints what it returns |
-| `addWorkspacePanel` (agent context) | `app.slots.experimental_tab({ context: { kind: "thread" }, availability: "action", icon, … })` (gets `threadId` and `params`; `icon` is required; `useBbNavigate().openThreadPanel({ actionId })` opens it by its id, `herald/app.tsx`). It replaced `app.slots.threadPanelAction` in SDK 0.6.73: bb 0.47 still loads a bundle that uses the old slot, but the 0.6.75 typings have no such slot, and bb 0.46 has no `experimental_tab` |
+| `addWorkspacePanel` (agent context) | `app.slots.experimental_tab({ context: { kind: "thread" }, availability: "action", icon, … })` (gets `threadId` and `params`; `icon` is required; `useBbNavigate().openThreadPanel({ actionId })` opens it by its id, `herald/app.tsx`). It replaced `app.slots.threadPanelAction` in SDK 0.6.73: bb 0.47 still loads a bundle that uses the old slot, but the 0.6.75 typings have no such slot, and bb 0.46 has no `experimental_tab`; to keep bb 0.45–0.46, call `experimental_tab` only when `app.slots` has it and the old slot otherwise (`skills/app/panel.tsx`) |
 | `addSettingsScreen` | host-rendered form from `bb.settings.define`, plus `app.slots.settingsSection` for anything custom |
 | `addCommandCenterItem` | `app.commands.register` — its `run` gets no navigation; hand it `useBbNavigate()` from an `app.slots.experimental_appOverlay` component that renders nothing (`github-board/app.tsx`) |
 | slash commands, composer pills | `app.composer.customize` (`actions` draws a component in the thread composer's toolbar; a pop-up over the composer is `experimental_popups`, opened with `useComposer().experimental_openPopup` — drawn *inside the composer's `<form>`*, so give every button `type="button"` and stop `mousedown` at its root, see `skills/AGENTS.md`), `app.composer.experimental_registerCommand` for a bindable key, a `{ kind: "command" }` mention through `composer.replace` for the pill bb's `/` menu inserts, `app.slots.pendingInteraction` |
