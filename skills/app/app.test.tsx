@@ -223,6 +223,29 @@ describe("the panel", () => {
     expect(screen.getByRole("button", { name: "Copy path" })).toBeTruthy();
   });
 
+  it("copies a skill's path through bb's clipboard", async () => {
+    const success = vi.spyOn(toast, "success").mockImplementation(() => 0);
+    const { inspection } = renderPanel();
+    fireEvent.click(await screen.findByText("tidy-imports"));
+    fireEvent.click(await screen.findByRole("button", { name: "Copy path" }));
+    await waitFor(() => expect(success).toHaveBeenCalledWith("Path copied"));
+    expect(inspection.experimental_clipboardWrites).toEqual([{ text: "/skills/tidy-imports/SKILL.md" }]);
+    success.mockRestore();
+  });
+
+  it("says to select the path when bb could not copy it", async () => {
+    const error = vi.spyOn(toast, "error").mockImplementation(() => 0);
+    renderSlot<{ threadId: string; params: JsonValue }, RpcContract>(
+      { component: SkillsPanel },
+      { threadId: "thr_example", params: null },
+      { rpc, experimental_copyToClipboard: async () => false },
+    );
+    fireEvent.click(await screen.findByText("tidy-imports"));
+    fireEvent.click(await screen.findByRole("button", { name: "Copy path" }));
+    await waitFor(() => expect(error).toHaveBeenCalledWith("Could not copy. Select the path and copy it instead."));
+    error.mockRestore();
+  });
+
   it("adds the command to the thread's draft without sending, then goes to the thread", async () => {
     const { inspection } = renderPanel({ composer: { text: "look at auth.ts" } });
     fireEvent.click(await screen.findByText("tidy-imports"));

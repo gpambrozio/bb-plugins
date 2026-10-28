@@ -66,6 +66,13 @@ otherwise calls the old slot with the same id, title, icon and layout. That keep
 `>=0.45`; both open by the id `skills`. Drop the fallback when the plugin needs bb 0.47 for something
 else.
 
+**Copy path goes through bb's clipboard writer, with the browser's as a fallback.**
+`experimental_copyToClipboard` (bb 0.46) writes the native clipboard in bb's desktop app and uses the
+mobile app's bridge, where `navigator.clipboard` can be refused. bb 0.45 has no such writer, and the
+SDK's shim throws for a member the app runtime lacks, so `copyText` (`app/clipboard.ts`) falls back to
+`navigator.clipboard` on a throw and reports `false` instead of rejecting; the toast says to select the
+path, which stays selectable text. Drop the fallback once `engines.bb` reaches 0.46.
+
 **Which directory: the environment's `path`.** A bb thread runs at its environment's root. An archived
 thread's environment is `destroyed` with no path, and the browser says so rather than showing an empty
 list.
@@ -216,8 +223,8 @@ Invoke (`client/invoke.ts`, the send and its re-entrancy guard, the arguments fi
 chat, not invoke*. The agents observation (`client/agents.ts`) and the pill registration loop — bb
 mounts the composer action itself, per composer. `agent.commands()` detection (`supportsCommands`,
 `available`): bb's command list is typed. Paseo's popover size caps and `detailLines` — bb's popup scrolls
-what it is given. `host-imports.test.ts`, `sdk-types.ts`, React Native, `copyText` (the browser's clipboard
-API works in every bb client) and react-query (each surface holds one small fetch).
+what it is given. `host-imports.test.ts`, `sdk-types.ts`, React Native, Paseo's `copyText` (bb has its own
+writer, see *Copy path*) and react-query (each surface holds one small fetch).
 
 ## Limitations
 
