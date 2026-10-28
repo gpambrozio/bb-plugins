@@ -26,6 +26,7 @@ import {
   viewStateSchema,
 } from "../shared/types";
 import { ignorePatterns, loadDiff, loadPatches, resolveTarget, ReviewUnavailable, workspaceOf, workspaceRefs, workspaceState, type WorkspaceState } from "./diff";
+import { GitReads } from "./git";
 import { sendPrompt } from "./prompt";
 import type { ReviewStore, StoredRun } from "./store";
 
@@ -77,6 +78,8 @@ const MAX_RANGE_LINES = 2_000;
 export class ReviewService {
   /** Each workspace's state at the end of its last turn, or when a tab first loaded it. */
   private readonly workspaceStates = new Map<string, WorkspaceState>();
+  /** bb's Git plugin, which every diff read goes through. */
+  readonly git: GitReads;
 
   /** Told of every comment the user writes, after it is stored (for @-mentions); must not throw. */
   onUserComment: (thread: ReviewThread, body: string, viewerThreadId: string | null) => void = () => undefined;
@@ -85,27 +88,36 @@ export class ReviewService {
     private readonly bb: BbPluginApi,
     private readonly store: ReviewStore,
     private readonly settings: () => Promise<ReviewSettings>,
-  ) {}
+  ) {
+    this.git = new GitReads(bb.sdk, (message) => new ReviewUnavailable(message));
+  }
 
   /**
    * The Review tab's whole view of a thread's diff. With `autoTarget` (the tab's first load, when it
    * was not opened on a chosen view), an empty uncommitted view gives way to the changes committed
    * since the base branch, when there are any; when both are empty, the uncommitted view stands.
    */
-  async view(threadId: string, request: TargetRequest, autoTarget = false, reason: LoadReason = "unknown", tab = "?"): Promise<ReviewView> {
+  async view(
+    threadId: string,
+    request: TargetRequest,
+    autoTarget = false,
+    reason: LoadReason = "unknown",
+    tab = "?",
+    ignoreWhitespace = false,
+  ): Promise<ReviewView> {
     try {
       const environment = await workspaceOf(this.bb.sdk, threadId);
       this.bb.log.debug(`Loading the ${request.kind} view of ${threadId}'s workspace ${environment.id} for tab ${tab} (${reason}).`);
       await this.seedWorkspaceState(environment.id);
       const base = request.kind === "branch" || request.kind === "all" ? request.base : undefined;
-      const refs = await workspaceRefs(this.bb.sdk, this.bb.log, environment, base);
+      const refs = await workspaceRefs(this.git, this.bb.log, environment, base);
       let target = resolveTarget(request, refs.defaultBase);
       const settings = await this.settings();
       const patterns = await ignorePatterns(this.bb.sdk, this.bb.log, environment, settings.ignorePatterns, settings.readIgnoreFiles);
-      let diff = await loadDiff(this.bb.sdk, environment, target, patterns);
+      let diff = await loadDiff(this.git, this.bb.log, environment, target, patterns, ignoreWhitespace);
       if (autoTarget && target.kind === "uncommitted" && diff.files.length === 0 && refs.defaultBase !== null) {
         const branch: Target = { kind: "branch", base: refs.defaultBase };
-        const committed = await loadDiff(this.bb.sdk, environment, branch, patterns);
+        const committed = await loadDiff(this.git, this.bb.log, environment, branch, patterns, ignoreWhitespace);
         if (committed.files.length > 0) {
           target = branch;
           diff = committed;
@@ -161,10 +173,10 @@ export class ReviewService {
     this.store.saveViewState(threadId, session.id, state);
   }
 
-  /** Patches bb left to load on demand. */
-  async patches(threadId: string, target: Target, paths: readonly string[]) {
+  /** Patches bb left to load on demand, at the revisions the view's file list gave. */
+  async patches(threadId: string, target: Target, files: readonly { path: string; revision: string }[], ignoreWhitespace = false) {
     const environment = await workspaceOf(this.bb.sdk, threadId);
-    return loadPatches(this.bb.sdk, environment, target, paths);
+    return loadPatches(this.git, environment, target, files, ignoreWhitespace);
   }
 
   /** A session's threads and its runs not yet closed. */
@@ -319,7 +331,7 @@ export class ReviewService {
   private async workspaceChanged(environmentId: string, threadId: string): Promise<boolean> {
     let state: WorkspaceState;
     try {
-      state = await workspaceState(this.bb.sdk, environmentId);
+      state = await workspaceState(this.git, environmentId);
     } catch (error) {
       this.bb.log.warn(`Could not read the state of ${environmentId}; telling its tabs to reload: ${error instanceof Error ? error.message : String(error)}`);
       this.workspaceStates.delete(environmentId);
@@ -345,7 +357,7 @@ export class ReviewService {
   private async seedWorkspaceState(environmentId: string): Promise<void> {
     if (this.workspaceStates.has(environmentId)) return;
     try {
-      const state = await workspaceState(this.bb.sdk, environmentId);
+      const state = await workspaceState(this.git, environmentId);
       if (!this.workspaceStates.has(environmentId)) this.workspaceStates.set(environmentId, state);
     } catch (error) {
       this.bb.log.debug(`No state recorded for ${environmentId}: ${error instanceof Error ? error.message : String(error)}`);

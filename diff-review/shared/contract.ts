@@ -37,12 +37,22 @@ export const rpcContract = defineRpcContract({
         /** What made the tab load, and which open tab it is, for the debug log. */
         reason: loadReasonSchema.optional(),
         tab: z.string().max(16).optional(),
+        /** Hide changes that are only whitespace. */
+        ignoreWhitespace: z.boolean().optional(),
       })
       .strict(),
     output: reviewViewSchema,
   },
   loadPatches: {
-    input: z.object({ threadId: id, target: targetSchema, paths: z.array(z.string().min(1).max(4096)).min(1).max(50) }).strict(),
+    input: z
+      .object({
+        threadId: id,
+        target: targetSchema,
+        /** Each file at the revision the view's file list gave. */
+        files: z.array(z.object({ path: z.string().min(1).max(4096), revision: z.string().min(1).max(1024) }).strict()).min(1).max(50),
+        ignoreWhitespace: z.boolean().optional(),
+      })
+      .strict(),
     output: z.object({ patches: z.array(z.object({ path: z.string(), patch: z.string(), truncated: z.boolean() }).strict()) }).strict(),
   },
   listThreads: {

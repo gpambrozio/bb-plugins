@@ -74,6 +74,72 @@ async function setup(options: Setup = {}) {
   // What bb would hold for spawned threads: their origin plugin and metadata.
   const spawnedMetadata: Record<string, Record<string, unknown>> = {};
   let spawned = 0;
+  // bb's Git plugin: on unless a test turns it off; Viewed marks by path; every call it got.
+  const git = { enabled: true, viewed: {} as Record<string, string>, calls: [] as { method: string; input: unknown }[] };
+  const revisionOf = (path: string) => (path === "big.txt" ? `rev-big-${workspace.bigVersion}` : `rev-${path}`);
+  const gitAnswer = (method: string, input: Record<string, unknown>): unknown => {
+    switch (method) {
+      case "workspaceStatus":
+        return {
+          outcome: "available" as const,
+          workspace: {
+            branch: { currentBranch: "feature", defaultBranch: "main" },
+            checkout: { kind: "branch" as const, branchName: "feature", headSha: workspace.head, ...options.statusExtra?.() },
+            mergeBase: {
+              aheadCount: 1,
+              baseRef: "origin/main",
+              behindCount: 0,
+              commits: [{ authorName: "a", authoredAt: 1, sha: "abcdef1234567", shortSha: "abcdef1", subject: "Add a" }],
+              deletions: 1,
+              files: [],
+              hasCommittedUnmergedChanges: true,
+              insertions: 1,
+              lineStatsComplete: true,
+              mergeBaseBranch: "main",
+            },
+            workingTree: { deletions: 1, files: [], hasUncommittedChanges: true, insertions: 1, lineStatsComplete: true, state: "dirty_uncommitted" as const },
+          },
+        };
+      case "files": {
+        const target = (input.target as { type: string }).type;
+        const empty = (options.emptyTargets ?? []).includes(target);
+        const entry = (path: string, changeKind: string, additions: number, deletions: number, loadMode: string, origin: string) => ({
+          path, previousPath: null, changeKind, additions, deletions, binary: false, loadMode, origin, revision: revisionOf(path),
+        });
+        return {
+          outcome: "available" as const,
+          files: empty ? [] : [
+            entry("src/a.ts", "modified", 1, 1, "auto", "tracked"),
+            entry("package-lock.json", "modified", 9, 9, "auto", "tracked"),
+            entry("big.txt", "added", 9000, 0, "on_demand", "untracked"),
+            ...(workspace.extraFile ? [entry("src/new.ts", "added", 3, 0, "auto", "untracked")] : []),
+          ],
+          initialPatches: empty ? [] : [{ path: "src/a.ts", patch: PATCH, truncated: false }],
+          mergeBaseRef: null,
+          shortstat: "",
+          truncated: false,
+        };
+      }
+      case "patches":
+        return Object.fromEntries(
+          (input.keys as string[]).map((key) => {
+            const [, , , path, revision] = JSON.parse(key) as [string, unknown, boolean, string, string];
+            // A revision that is no longer the file's is still answered, as bb's Git plugin does.
+            return [key, { outcome: "available" as const, patch: { path, patch: `patch of ${path}, version ${workspace.bigVersion} at ${revision}`, truncated: false } }];
+          }),
+        );
+      case "viewed":
+        return { files: ((input.paths as string[] | undefined) ?? []).filter((path) => git.viewed[path] !== undefined).map((path) => ({ path, revision: git.viewed[path]! })) };
+      case "markViewed":
+        git.viewed[input.path as string] = input.revision as string;
+        return { ok: true as const };
+      case "clearViewed":
+        delete git.viewed[input.path as string];
+        return { ok: true as const };
+      default:
+        throw new Error(`the fake Git plugin has no ${method}`);
+    }
+  };
   const { bb, harness } = createFakePluginHost({
     pluginId: "diff-review",
     // The skill bb imports from `skills/diff-review`, which `configure` names.
@@ -126,45 +192,16 @@ async function setup(options: Setup = {}) {
           await options.holdEnvironmentGet?.();
           return environment();
         },
-        status: async () => ({
-          outcome: "available" as const,
-          workspace: {
-            branch: { currentBranch: "feature", defaultBranch: "main" },
-            checkout: { kind: "branch" as const, branchName: "feature", headSha: workspace.head, ...options.statusExtra?.() },
-            mergeBase: {
-              aheadCount: 1,
-              baseRef: "origin/main",
-              behindCount: 0,
-              commits: [{ authorName: "a", authoredAt: 1, sha: "abcdef1234567", shortSha: "abcdef1", subject: "Add a" }],
-              deletions: 1,
-              files: [],
-              hasCommittedUnmergedChanges: true,
-              insertions: 1,
-              lineStatsComplete: true,
-              mergeBaseBranch: "main",
-            },
-            workingTree: { deletions: 1, files: [], hasUncommittedChanges: true, insertions: 1, lineStatsComplete: true, state: "dirty_uncommitted" as const },
-          },
-        }),
-        diffFiles: async (query: { target: string }) => ({
-          outcome: "available" as const,
-          files: (options.emptyTargets ?? []).includes(query.target) ? [] : [
-            { path: "src/a.ts", previousPath: null, changeKind: "modified" as const, additions: 1, deletions: 1, binary: false, loadMode: "auto" as const, origin: "tracked" as const },
-            { path: "package-lock.json", previousPath: null, changeKind: "modified" as const, additions: 9, deletions: 9, binary: false, loadMode: "auto" as const, origin: "tracked" as const },
-            { path: "big.txt", previousPath: null, changeKind: "added" as const, additions: 9000, deletions: 0, binary: false, loadMode: "on_demand" as const, origin: "untracked" as const },
-            ...(workspace.extraFile
-              ? [{ path: "src/new.ts", previousPath: null, changeKind: "added" as const, additions: 3, deletions: 0, binary: false, loadMode: "auto" as const, origin: "untracked" as const }]
-              : []),
-          ],
-          initialPatches: (options.emptyTargets ?? []).includes(query.target) ? [] : [{ path: "src/a.ts", patch: PATCH, truncated: false }],
-          mergeBaseRef: null,
-          shortstat: "",
-          truncated: false,
-        }),
-        diffPatch: async ({ paths }: { paths: string[] }) => ({
-          outcome: "available" as const,
-          patches: paths.map((path) => ({ path, patch: `patch of ${path}, version ${workspace.bigVersion}`, truncated: false })),
-        }),
+      },
+      plugins: {
+        list: async () => ({ plugins: [{ id: "bb--git", enabled: git.enabled }] }) as never,
+        // bb's Git plugin, as `bb.sdk.plugins.callRpc` reaches it; `git.calls` records each call.
+        callRpc: async ({ pluginId, method, input, outputSchema }: { pluginId: string; method: string; input?: unknown; outputSchema: { parse: (value: unknown) => unknown } }) => {
+          if (pluginId !== "bb--git") throw new Error(`no plugin ${pluginId}`);
+          git.calls.push({ method, input });
+          if (!git.enabled) throw new Error("Plugin RPC failed");
+          return outputSchema.parse(gitAnswer(method, input as Record<string, unknown>)) as never;
+        },
       },
       providers: {
         list: async () =>
@@ -208,7 +245,7 @@ async function setup(options: Setup = {}) {
       anchorContent: "const b = 3;",
       body,
     })) as { thread: ReviewThread }).thread;
-  return { bb, harness, rpc, view, comment, threads, turnStarts, workspace, reads };
+  return { bb, harness, rpc, view, comment, threads, turnStarts, workspace, reads, git };
 }
 
 describe("the Review tab's view", () => {
@@ -295,11 +332,45 @@ describe("the Review tab's view", () => {
     });
   });
 
-  it("loads on-demand patches", async () => {
-    const { rpc } = await setup();
-    expect(await rpc("loadPatches", { threadId: THREAD, target: { kind: "uncommitted" }, paths: ["big.txt"] })).toEqual({
-      patches: [{ path: "big.txt", patch: "patch of big.txt, version 1", truncated: false }],
+  it("loads on-demand patches at the revision the file list gave", async () => {
+    const { rpc, view, git } = await setup();
+    const big = (await view()).files.find((file) => file.path === "big.txt")!;
+    expect(big.revision).toBe("rev-big-1");
+    expect(await rpc("loadPatches", { threadId: THREAD, target: { kind: "uncommitted" }, files: [{ path: "big.txt", revision: big.revision }] })).toEqual({
+      patches: [{ path: "big.txt", patch: "patch of big.txt, version 1 at rev-big-1", truncated: false }],
     });
+    const call = git.calls.filter((entry) => entry.method === "patches").at(-1)!;
+    expect(call.input).toEqual({ keys: [JSON.stringify([ENV, { type: "uncommitted" }, false, "big.txt", "rev-big-1"])] });
+  });
+
+  it("reads every diff through bb's Git plugin, hiding whitespace when asked", async () => {
+    const { rpc, git } = await setup();
+    await rpc("getReview", { threadId: THREAD, target: { kind: "branch" }, ignoreWhitespace: true });
+    expect(git.calls.find((entry) => entry.method === "files" && (entry.input as { ignoreWhitespace: boolean }).ignoreWhitespace)?.input).toEqual({
+      environmentId: ENV,
+      target: { type: "branch_committed", mergeBaseBranch: "main" },
+      ignoreWhitespace: true,
+    });
+    await rpc("loadPatches", { threadId: THREAD, target: { kind: "commit", sha: "abcdef1" }, files: [{ path: "big.txt", revision: "r" }], ignoreWhitespace: true });
+    expect(git.calls.at(-1)!.input).toEqual({ keys: [JSON.stringify([ENV, { type: "commit", sha: "abcdef1" }, true, "big.txt", "r"])] });
+  });
+
+  it("says so when bb's Git plugin is turned off", async () => {
+    const { view, git } = await setup();
+    git.enabled = false;
+    const result = (await view()) as unknown as { ok: false; message: string };
+    expect(result).toEqual({ ok: false, message: expect.stringContaining("bb's Git plugin is turned off") });
+  });
+
+  it("shows bb's Viewed marks, and which files changed since they were viewed", async () => {
+    const { view, git } = await setup();
+    git.viewed["src/a.ts"] = "rev-src/a.ts";
+    git.viewed["big.txt"] = "rev-big-0";
+    expect((await view()).files.map((file) => [file.path, file.viewed])).toEqual([
+      ["src/a.ts", "yes"],
+      ["package-lock.json", "no"],
+      ["big.txt", "changed"],
+    ]);
   });
 });
 

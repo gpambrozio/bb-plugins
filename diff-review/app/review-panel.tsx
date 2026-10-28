@@ -11,7 +11,7 @@
  * A tab opened with `params: { target }` starts on that view; otherwise on the uncommitted changes, or,
  * when there are none, on the changes committed since the base branch.
  */
-import { useRpc, type PluginThreadPanelProps } from "@get-bb/plugin-sdk/app";
+import { useRpc, type ExperimentalThreadActionTabProps } from "@get-bb/plugin-sdk/app";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
@@ -36,10 +36,9 @@ import { ThreadCard } from "./thread-card";
 import { errorMessage, useReview, type ReadyView } from "./use-review";
 import { draftKeys, useDraft, useDraftKeys, useViewState, ViewStateProvider } from "./view-state";
 
-/** The `threadPanelAction` id; the palette command opens it by this. */
-export const PANEL_ACTION_ID = "review";
-
 const DIFF_STYLE_KEY = "diff-review:diff-style";
+/** "Hide whitespace" is one choice for every thread, like split/unified. */
+const WHITESPACE_KEY = "diff-review:ignore-whitespace";
 /** "Only files with comments" is kept per bb thread: a thread that never set it starts with it off. */
 const onlyCommentedKey = (threadId: string) => `diff-review:only-commented:${threadId}`;
 
@@ -109,12 +108,17 @@ function fromPicker(value: string): TargetRequest {
   return { kind: "uncommitted" };
 }
 
-export function ReviewPanel({ threadId, params }: PluginThreadPanelProps) {
+export function ReviewPanel({ threadId, params, environment }: ExperimentalThreadActionTabProps) {
   const [target, setTarget] = useState<TargetRequest>(() => initialTarget(params));
   // A tab opened without a view starts on the uncommitted changes, unless there are none and the
   // branch has commits: the first load decides, and the picker follows it.
   const [autoTarget] = useState(() => !hasTarget(params));
-  const review = useReview(threadId, target, autoTarget, setTarget);
+  const [ignoreWhitespace, setIgnoreWhitespace] = useState(() => stored(WHITESPACE_KEY) === "true");
+  const review = useReview(threadId, target, { environmentId: environment?.id ?? null, autoTarget, onTarget: setTarget, ignoreWhitespace });
+  const toggleWhitespace = (next: boolean) => {
+    setIgnoreWhitespace(next);
+    store(WHITESPACE_KEY, String(next));
+  };
   const { state } = review;
 
   const pick = (value: string) => setTarget(fromPicker(value));
@@ -148,6 +152,8 @@ export function ReviewPanel({ threadId, params }: PluginThreadPanelProps) {
         putPatches={review.putPatches}
         putRun={review.putRun}
         refreshThreads={review.refreshThreads}
+        ignoreWhitespace={ignoreWhitespace}
+        onIgnoreWhitespace={toggleWhitespace}
       />
       </ViewStateProvider>
     </ReviewActionsProvider>
@@ -170,6 +176,8 @@ function ReadyPanel({
   putPatches,
   putRun,
   refreshThreads,
+  ignoreWhitespace,
+  onIgnoreWhitespace,
 }: {
   threadId: string;
   view: ReadyView;
@@ -182,6 +190,8 @@ function ReadyPanel({
   putPatches(sessionId: string, loadId: number, patches: readonly { path: string; patch: string; truncated: boolean }[]): void;
   putRun(run: Run): void;
   refreshThreads(): Promise<void>;
+  ignoreWhitespace: boolean;
+  onIgnoreWhitespace(next: boolean): void;
 }) {
   const rpc = useRpc<RpcContract>();
   const actions = useActions();
@@ -227,7 +237,14 @@ function ReadyPanel({
   const loadPatches = useCallback(
     async (paths: string[]) => {
       try {
-        const { patches } = await rpc.call("loadPatches", { threadId, target: view.target, paths });
+        // Each file at the revision this load's file list gave, so bb answers for that version.
+        const revisions = new Map(view.files.map((file) => [file.path, file.revision]));
+        const files = paths.flatMap((path) => {
+          const revision = revisions.get(path);
+          return revision === undefined ? [] : [{ path, revision }];
+        });
+        if (files.length === 0) return [];
+        const { patches } = await rpc.call("loadPatches", { threadId, target: view.target, files, ...(ignoreWhitespace ? { ignoreWhitespace: true } : {}) });
         putPatches(view.sessionId, loadId, patches);
         return patches.map((patch) => patch.path);
       } catch (error) {
@@ -235,7 +252,7 @@ function ReadyPanel({
         throw error;
       }
     },
-    [rpc, threadId, view.target, view.sessionId, loadId, putPatches],
+    [rpc, threadId, view.target, view.files, view.sessionId, loadId, putPatches, ignoreWhitespace],
   );
   const patchLoader = usePatchLoader(loadPatches, `${view.sessionId}:${loadId}`);
   const [scrollRoot, setScrollRoot] = useState<HTMLDivElement | null>(null);
@@ -284,6 +301,10 @@ function ReadyPanel({
         <label className="flex cursor-pointer items-center gap-1.5 px-1 text-xs">
           <Switch checked={onlyCommented} onCheckedChange={toggleOnlyCommented} />
           Only files with comments
+        </label>
+        <label className="flex cursor-pointer items-center gap-1.5 px-1 text-xs">
+          <Switch checked={ignoreWhitespace} onCheckedChange={onIgnoreWhitespace} />
+          Hide whitespace
         </label>
         <Button type="button" variant="ghost" size="sm" onClick={onReload} disabled={refreshing} aria-label="Reload the diff">
           <Icon name={refreshing ? "Spinner" : "ArrowReloadHorizontal"} className="size-4" />

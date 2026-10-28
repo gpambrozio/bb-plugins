@@ -1,6 +1,6 @@
 // diff-review — the server entry.
 //
-// The Review tab's data (diffs from bb's environment APIs, threads and comments in the plugin's own
+// The Review tab's data (diffs from bb's Git plugin, threads and comments in the plugin's own
 // SQLite), "Send to agent" into the thread under review, AI runs in threads of their own (reviews,
 // questions to a view's reviewer with @reviewer, fixes in a new thread), and `bb diff-review` and the `diff_review_*` tools, which agents
 // answer each comment thread with. See AGENTS.md.
@@ -64,8 +64,9 @@ export default async function plugin(bb: BbPluginApi) {
   service.onUserComment = (thread, body, viewerThreadId) => runs.onUserComment(thread, body, viewerThreadId);
 
   bb.rpc.register(rpcContract, {
-    getReview: ({ threadId, target, autoTarget, reason, tab }) => service.view(threadId, target, autoTarget === true, reason, tab),
-    loadPatches: async ({ threadId, target, paths }) => ({ patches: await service.patches(threadId, target, paths) }),
+    getReview: ({ threadId, target, autoTarget, reason, tab, ignoreWhitespace }) =>
+      service.view(threadId, target, autoTarget === true, reason, tab, ignoreWhitespace === true),
+    loadPatches: async ({ threadId, target, files, ignoreWhitespace }) => ({ patches: await service.patches(threadId, target, files, ignoreWhitespace === true) }),
     listThreads: ({ sessionId }) => service.sessionState(sessionId),
     createThread: ({ threadId, ...input }) => ({ thread: service.createThread(input, threadId ?? null) }),
     addComment: ({ reviewThreadId, body, threadId }) => ({ thread: service.addUserComment(reviewThreadId, body, threadId ?? null) }),

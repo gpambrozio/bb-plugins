@@ -11,7 +11,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ReviewThread, ReviewView, ViewState } from "../shared/types";
 import { ANNOTATION_FIT } from "./annotation-fit";
-import { ReviewHeaderAction } from "./header-action";
 import { ReviewPanel } from "./review-panel";
 import { forgetViewStates } from "./view-state";
 
@@ -58,6 +57,8 @@ afterEach(() => {
   forgetViewStates();
 });
 
+const ENVIRONMENT = { id: "env_1" };
+
 const PATCH = ["--- a/src/a.ts", "+++ b/src/a.ts", "@@ -1,3 +1,3 @@", " const a = 1;", "-const b = 2;", "+const b = 3;", " const c = 4;", ""].join("\n");
 
 function thread(overrides: Partial<ReviewThread> & { id: string; body: string }): ReviewThread {
@@ -97,6 +98,8 @@ const VIEW: Extract<ReviewView, { ok: true }> = {
       binary: false,
       loadMode: "auto",
       untracked: false,
+      revision: "rev-a",
+      viewed: "no",
       patch: PATCH,
       patchTruncated: false,
     },
@@ -124,25 +127,82 @@ function withSecondFile(more: ReviewThread[] = []): Extract<ReviewView, { ok: tr
   return { ...VIEW, files: [...VIEW.files, second], threads: [...VIEW.threads, ...more] };
 }
 
-function render(rpc: Record<string, (input: never) => unknown> = {}, threadId = "thr_1") {
+function render(rpc: Record<string, (input: never) => unknown> = {}, threadId = "thr_1", options: { tabVisible?: boolean } = {}) {
   return renderSlot(
     { component: ReviewPanel },
-    { threadId, params: null },
-    { rpc: { getReview: () => VIEW, ...rpc }, codeTheme: { mode: "dark", name: "pierre-dark" } },
+    { threadId, environment: ENVIRONMENT, params: null },
+    { rpc: { getReview: () => VIEW, ...rpc }, codeTheme: { mode: "dark", name: "pierre-dark" }, ...options },
   );
 }
 
+const loadsOf = (slot: ReturnType<typeof render>) =>
+  slot.inspection.rpcCalls.filter((call) => call.method === "getReview").map((call) => call.input as { reason: string; ignoreWhitespace?: boolean });
+
 describe("the app", () => {
-  it("registers the Review tab, a title-bar button and a palette command", async () => {
+  it("registers the Review tab and a Review button in the thread's header", async () => {
     const app = await loadPluginApp(() => import("../app"));
-    expect(app.threadPanelActions.map((action) => [action.id, action.title, action.layout])).toEqual([["review", "Review", "flush"]]);
-    expect(app.threadHeaderActions.map((action) => [action.id, action.title])).toEqual([["review", "Review"]]);
+    expect(app.tabs.map((tab) => [tab.id, tab.context, tab.availability, tab.title, tab.layout])).toEqual([["review", { kind: "thread" }, "action", "Review", "flush"]]);
+    expect(app.threadHeaderActions).toEqual([]);
+    expect(app.threadActions.map((action) => [action.id, action.placement])).toEqual([["review", "header"]]);
   });
 
-  it("opens the Review tab from the title-bar button", () => {
-    const slot = renderSlot({ component: ReviewHeaderAction }, { threadId: "thr_1", projectId: "proj_1", isCompactViewport: false });
-    fireEvent.click(screen.getByRole("button", { name: "Review this thread's changes" }));
-    expect(slot.inspection.navigateCalls).toEqual([{ method: "openThreadPanel", options: { actionId: "review" } }]);
+  it("opens the Review tab through bb's panel controller from the header button", async () => {
+    const app = await loadPluginApp(() => import("../app"));
+    const calls: unknown[] = [];
+    const panel = { openTab: (options: unknown) => (calls.push(options), true), toggleTab: () => true, close: () => true };
+    const action = app.threadActions[0]!.item({ thread: { id: "thr_1" }, data: undefined, experimental_panel: panel } as never)!;
+    expect(action.label).toBe("Review");
+    await action.run({ requestRename: () => undefined });
+    expect(calls).toEqual([{ tab: { id: "review", context: { kind: "thread" }, availability: "action" } }]);
+  });
+});
+
+describe("keeping the Review tab current", () => {
+  it("reloads when bb's Git plugin sees the workspace change outside a turn", async () => {
+    let files = 1;
+    const slot = render({
+      workspaceStatus: () => ({ outcome: "available", workspace: { checkout: { kind: "branch", headSha: "abc" }, workingTree: { files: [], insertions: files, deletions: 0 }, mergeBase: null } }),
+    });
+    await screen.findByText("1 file · +1 −1 · 1 left out by the ignore patterns");
+    await waitFor(() => expect(slot.inspection.rpcCalls.some((call) => call.method === "workspaceStatus")).toBe(true));
+    expect(slot.inspection.rpcCalls.find((call) => call.method === "workspaceStatus")!.input).toEqual({ environmentId: "env_1" });
+
+    // The same status again (bb re-read it) is no change.
+    await slot.behavior.experimental_invalidateRpc(["status:env_1"], "bb--git");
+    await waitFor(() => expect(slot.inspection.rpcCalls.filter((call) => call.method === "workspaceStatus")).toHaveLength(2));
+    expect(loadsOf(slot).map((load) => load.reason)).toEqual(["open"]);
+
+    files = 2;
+    await slot.behavior.experimental_invalidateRpc(["status:env_1"], "bb--git");
+    await waitFor(() => expect(loadsOf(slot).map((load) => load.reason)).toEqual(["open", "workspace"]));
+  });
+
+  it("leaves a hidden tab alone: no reload on a signal, no status reads", async () => {
+    const slot = render({ workspaceStatus: () => ({ outcome: "available", workspace: {} }) }, "thr_1", { tabVisible: false });
+    await screen.findByText("1 file · +1 −1 · 1 left out by the ignore patterns");
+    await slot.behavior.emitRealtime("environment:env_1", { kind: "diff" });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(loadsOf(slot).map((load) => load.reason)).toEqual(["open"]);
+    expect(slot.inspection.rpcCalls.some((call) => call.method === "workspaceStatus")).toBe(false);
+  });
+
+  it("hears the workspace's signals from the first render, before the view has loaded", async () => {
+    let answer!: (view: unknown) => void;
+    let loads = 0;
+    const slot = render({ getReview: () => (++loads === 1 ? new Promise((resolve) => (answer = resolve)) : VIEW) });
+    await waitFor(() => expect(answer).toBeDefined());
+    // A signal during the first load runs one more load after it.
+    await slot.behavior.emitRealtime("environment:env_1", { kind: "diff" });
+    answer(VIEW);
+    await waitFor(() => expect(loadsOf(slot).map((load) => load.reason)).toEqual(["open", "diff-signal"]));
+  });
+
+  it("hides whitespace-only changes when asked, and remembers it", async () => {
+    const slot = render();
+    await screen.findByText("1 file · +1 −1 · 1 left out by the ignore patterns");
+    fireEvent.click(screen.getByRole("switch", { name: "Hide whitespace" }));
+    await waitFor(() => expect(loadsOf(slot).at(-1)).toMatchObject({ reason: "whitespace", ignoreWhitespace: true }));
+    expect(window.localStorage.getItem("diff-review:ignore-whitespace")).toBe("true");
   });
 });
 
@@ -283,16 +343,16 @@ describe("the Review tab", () => {
   });
 
   it("loads the patches bb did not send, in one batch, without a tap", async () => {
-    const unloaded = (path: string) => ({ ...VIEW.files[0]!, path, patch: null, loadMode: "on_demand" as const });
+    const unloaded = (path: string) => ({ ...VIEW.files[0]!, path, revision: `rev-${path}`, patch: null, loadMode: "on_demand" as const });
     const view = { ...VIEW, threads: [], files: [unloaded("src/a.ts"), unloaded("src/b.ts")] };
     const slot = renderSlot(
       { component: ReviewPanel },
-      { threadId: "thr_1", params: null },
+      { threadId: "thr_1", environment: ENVIRONMENT, params: null },
       {
         rpc: {
           getReview: () => view,
           loadPatches: (input: unknown) => ({
-            patches: (input as { paths: string[] }).paths.map((path) => ({ path, patch: PATCH, truncated: false })),
+            patches: (input as { files: { path: string }[] }).files.map(({ path }) => ({ path, patch: PATCH, truncated: false })),
           }),
         },
       },
@@ -300,7 +360,14 @@ describe("the Review tab", () => {
     await waitFor(() => expect(screen.getAllByTestId("patch")).toHaveLength(2));
     expect(screen.queryByRole("button", { name: "Load diff" })).toBeNull();
     expect(slot.inspection.rpcCalls.filter((call) => call.method === "loadPatches").map((call) => call.input)).toEqual([
-      { threadId: "thr_1", target: { kind: "uncommitted" }, paths: ["src/a.ts", "src/b.ts"] },
+      {
+        threadId: "thr_1",
+        target: { kind: "uncommitted" },
+        files: [
+          { path: "src/a.ts", revision: "rev-src/a.ts" },
+          { path: "src/b.ts", revision: "rev-src/b.ts" },
+        ],
+      },
     ]);
   });
 
@@ -311,7 +378,7 @@ describe("the Review tab", () => {
     let loads = 0;
     renderSlot(
       { component: ReviewPanel },
-      { threadId: "thr_1", params: null },
+      { threadId: "thr_1", environment: ENVIRONMENT, params: null },
       {
         rpc: {
           getReview: () => (++loads === 1 ? { ...VIEW, threads: [], files: [unloaded] } : { ...VIEW, threads: [] }),
@@ -340,7 +407,7 @@ describe("the Review tab", () => {
     let fail = true;
     renderSlot(
       { component: ReviewPanel },
-      { threadId: "thr_1", params: null },
+      { threadId: "thr_1", environment: ENVIRONMENT, params: null },
       {
         rpc: {
           getReview: () => view,
@@ -360,7 +427,7 @@ describe("the Review tab", () => {
 
   it("keeps a folded file's header at the top when it is folded while scrolled part-way through", async () => {
     const second = { ...VIEW.files[0]!, path: "src/b.ts" };
-    renderSlot({ component: ReviewPanel }, { threadId: "thr_1", params: null }, { rpc: { getReview: () => ({ ...VIEW, threads: [], files: [VIEW.files[0]!, second] }) } });
+    renderSlot({ component: ReviewPanel }, { threadId: "thr_1", environment: ENVIRONMENT, params: null }, { rpc: { getReview: () => ({ ...VIEW, threads: [], files: [VIEW.files[0]!, second] }) } });
     await waitFor(() => expect(screen.getAllByTestId("patch")).toHaveLength(2));
     const section = document.querySelector('[data-file-path="src/a.ts"]') as HTMLElement;
     const root = section.parentElement!;
@@ -382,7 +449,7 @@ describe("the Review tab", () => {
   it("opens on the branch's commits when the server finds nothing uncommitted, and asks only once", async () => {
     const slot = renderSlot(
       { component: ReviewPanel },
-      { threadId: "thr_1", params: null },
+      { threadId: "thr_1", environment: ENVIRONMENT, params: null },
       {
         rpc: {
           getReview: (input: unknown) => {
@@ -403,7 +470,7 @@ describe("the Review tab", () => {
   });
 
   it("never picks for a tab opened on a chosen view", async () => {
-    const slot = renderSlot({ component: ReviewPanel }, { threadId: "thr_1", params: { target: { kind: "uncommitted" } } }, { rpc: { getReview: () => VIEW } });
+    const slot = renderSlot({ component: ReviewPanel }, { threadId: "thr_1", environment: ENVIRONMENT, params: { target: { kind: "uncommitted" } } }, { rpc: { getReview: () => VIEW } });
     await screen.findByText("1 file · +1 −1 · 1 left out by the ignore patterns");
     expect(slot.inspection.rpcCalls[0]!.input).toEqual({ threadId: "thr_1", target: { kind: "uncommitted" }, reason: "open", tab: expect.any(String) });
   });
@@ -428,7 +495,7 @@ describe("the Review tab", () => {
   });
 
   it("reloads once when the connection comes back, and not on the first connection", async () => {
-    const slot = renderSlot({ component: ReviewPanel }, { threadId: "thr_1", params: null }, { rpc: { getReview: () => VIEW } });
+    const slot = renderSlot({ component: ReviewPanel }, { threadId: "thr_1", environment: ENVIRONMENT, params: null }, { rpc: { getReview: () => VIEW } });
     await screen.findByText("Why three?");
     await slot.behavior.setRealtimeConnectionState("reconnecting");
     await slot.behavior.setRealtimeConnectionState("connected");
@@ -453,7 +520,7 @@ describe("the Review tab", () => {
     };
     const slot = renderSlot(
       { component: ReviewPanel },
-      { threadId: "thr_1", params: null },
+      { threadId: "thr_1", environment: ENVIRONMENT, params: null },
       { rpc: { getReview: () => ({ ...VIEW, runs: [run] }), closeRun: () => ({ ok: true }) } },
     );
     const row = (await screen.findByText("AI review · Security")).closest("li")!;
@@ -561,7 +628,7 @@ describe("the Review tab", () => {
     let cleared = false;
     const slot = renderSlot(
       { component: ReviewPanel },
-      { threadId: "thr_1", params: null },
+      { threadId: "thr_1", environment: ENVIRONMENT, params: null },
       {
         rpc: {
           getReview: () => ({ ...VIEW, runs: [run] }),
@@ -824,7 +891,7 @@ describe("the Review tab", () => {
   });
 
   it("says why there is nothing to review", async () => {
-    renderSlot({ component: ReviewPanel }, { threadId: "thr_1", params: null }, { rpc: { getReview: () => ({ ok: false, message: "No workspace." }) } });
+    renderSlot({ component: ReviewPanel }, { threadId: "thr_1", environment: ENVIRONMENT, params: null }, { rpc: { getReview: () => ({ ok: false, message: "No workspace." }) } });
     await screen.findByText("No workspace.");
   });
 });

@@ -45,10 +45,11 @@ export type DeliveryState = z.infer<typeof deliveryStateSchema>;
  */
 /**
  * Why the tab loads its whole view, for the plugin's debug log: it opened, the user picked another
- * view, a `diff` signal (the workspace changed), the realtime link came back, the reload button, or
- * "Try again" after an error.
+ * view, a `diff` signal (the workspace changed by a turn's end), bb's Git plugin saw the workspace
+ * change (`workspace`), the realtime link came back, the reload button, "Try again" after an error,
+ * or a whitespace toggle.
  */
-export const loadReasonSchema = z.enum(["open", "view", "diff-signal", "reconnect", "manual", "retry", "unknown"]);
+export const loadReasonSchema = z.enum(["open", "view", "diff-signal", "workspace", "reconnect", "manual", "retry", "whitespace", "unknown"]);
 export type LoadReason = z.infer<typeof loadReasonSchema>;
 
 export const targetRequestSchema = z.discriminatedUnion("kind", [
@@ -115,6 +116,13 @@ export const reviewThreadSchema = z
   .strict();
 export type ReviewThread = z.infer<typeof reviewThreadSchema>;
 
+/**
+ * A file's Viewed mark, bb's own (shared with bb's diff panel): `yes` at the file's current
+ * revision, `changed` when it was marked at an earlier one ("changed since viewed"), `no` otherwise.
+ */
+export const viewedSchema = z.enum(["no", "yes", "changed"]);
+export type Viewed = z.infer<typeof viewedSchema>;
+
 export const diffFileSchema = z
   .object({
     path: z.string(),
@@ -126,6 +134,9 @@ export const diffFileSchema = z
     /** `on_demand`: the patch is fetched when the user asks; `too_large`: it is never shown. */
     loadMode: z.enum(["auto", "on_demand", "too_large"]),
     untracked: z.boolean(),
+    /** The file's content revision, as bb's Git plugin gives it; it changes when the file does. */
+    revision: z.string(),
+    viewed: viewedSchema,
     /** The unified patch for this file, when loaded. */
     patch: z.string().nullable(),
     patchTruncated: z.boolean(),

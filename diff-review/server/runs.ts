@@ -24,6 +24,7 @@ import { linesText, parsePatchLines } from "../shared/patch-lines";
 import {
   describeLocation,
   GENERAL_PATH,
+  reasoningLevelSchema,
   type Execution,
   type ReviewThread,
   type Run,
@@ -122,7 +123,7 @@ export class RunService {
       options.models.find((entry) => entry.isDefault) ??
       options.models[0];
     if (model === undefined) return { execution: null, message: `${providerId} lists no models here.` };
-    return { execution: { providerId, model: model.model, reasoningLevel: model.defaultReasoningEffort }, message: null };
+    return { execution: { providerId, model: model.model, reasoningLevel: reasoningLevel(model.defaultReasoningEffort) }, message: null };
   }
 
   /** The permission modes a provider supports in an environment, as bb reports them; null when bb does not say. */
@@ -376,7 +377,7 @@ export class RunService {
     const patterns = await ignorePatterns(this.bb.sdk, this.bb.log, environment, settings.ignorePatterns, settings.readIgnoreFiles);
     let diff;
     try {
-      diff = await loadDiff(this.bb.sdk, environment, target, patterns);
+      diff = await loadDiff(this.review.git, this.bb.log, environment, target, patterns);
     } catch (error) {
       if (error instanceof ReviewUnavailable) throw new ReviewError(error.message, "diff_unavailable");
       throw error;
@@ -387,7 +388,13 @@ export class RunService {
       throw new ReviewError(`${path} is not in the diff under review. Files in it: ${shown.join(", ")}${diff.files.length > shown.length ? ", …" : ""}.`, "file_not_in_diff");
     }
     if (file.patch !== null) return file.patch;
-    const [loaded] = await loadPatches(this.bb.sdk, environment, target, [path]);
+    let loaded;
+    try {
+      [loaded] = await loadPatches(this.review.git, environment, target, [file]);
+    } catch (error) {
+      if (error instanceof ReviewUnavailable) throw new ReviewError(error.message, "diff_unavailable");
+      throw error;
+    }
     if (loaded === undefined) throw new ReviewError(`bb gave no diff for ${path}.`, "file_not_in_diff");
     return loaded.patch;
   }
@@ -550,8 +557,17 @@ export class RunService {
 
   /** The workspace's uncommitted changes, one fingerprint per file. */
   private async fingerprint(environmentId: string): Promise<Fingerprint> {
-    return (await uncommittedFingerprint(this.bb.sdk, environmentId)).prints;
+    return (await uncommittedFingerprint(this.review.git, environmentId)).prints;
   }
+}
+
+/**
+ * A model's default reasoning as a level bb's spawn takes. Providers name their own efforts; one
+ * bb's spawn does not know runs at "medium".
+ */
+export function reasoningLevel(effort: string): Execution["reasoningLevel"] {
+  const parsed = reasoningLevelSchema.safeParse(effort);
+  return parsed.success ? parsed.data : "medium";
 }
 
 /** Files whose uncommitted change differs between two fingerprints, sorted. */
