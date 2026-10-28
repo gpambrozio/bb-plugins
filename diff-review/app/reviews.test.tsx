@@ -103,6 +103,23 @@ describe("the thread's Info row", () => {
     expect(slot.inspection.rpcCalls[0]!.input).toEqual({ environmentId: "env_1" });
   });
 
+  it("reads the counts again when the thread's workspace changes, dropping the old ones", async () => {
+    const counts: Record<string, { open: number; total: number }> = { none: { open: 0, total: 0 }, env_1: { open: 1, total: 2 }, env_2: { open: 3, total: 3 } };
+    const slot = renderSlot(
+      { component: ReviewInfoRow },
+      { threadId: "thr_1", projectId: "proj_1", environment: null },
+      { rpc: { reviewCounts: (input: unknown) => counts[(input as { environmentId?: string }).environmentId ?? "none"]! } },
+    );
+    await waitFor(() => expect(slot.inspection.rpcCalls).toHaveLength(1));
+    // The workspace comes ready: no review signal arrives, the row still reads its counts.
+    slot.rerender(<ReviewInfoRow threadId="thr_1" projectId="proj_1" environment={{ id: "env_1" } as never} />);
+    expect(await screen.findByText("1 open of 2 comment threads")).toBeTruthy();
+    slot.rerender(<ReviewInfoRow threadId="thr_1" projectId="proj_1" environment={{ id: "env_2" } as never} />);
+    expect(screen.queryByText("1 open of 2 comment threads")).toBeNull();
+    expect(await screen.findByText("3 open of 3 comment threads")).toBeTruthy();
+    expect(slot.inspection.rpcCalls.map((call) => call.input)).toEqual([{ environmentId: "none" }, { environmentId: "env_1" }, { environmentId: "env_2" }]);
+  });
+
   it("is absent for a workspace without review comments", async () => {
     const { container } = renderSlot(
       { component: ReviewInfoRow },

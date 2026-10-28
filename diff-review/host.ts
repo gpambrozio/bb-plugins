@@ -7,7 +7,7 @@
 import { experimental_defineHostEntry } from "@get-bb/plugin-sdk";
 
 import { hostContract } from "./shared/host-contract";
-import { createRunGit, diff, indexState } from "./host/git";
+import { createRunGit, diff, indexState, rangeCommits } from "./host/git";
 import { revert } from "./host/revert";
 
 const runGit = createRunGit();
@@ -17,6 +17,7 @@ export default experimental_defineHostEntry({
   handlers: {
     diff: ({ root, spec, ignoreWhitespace }) => diff(runGit, root, spec, ignoreWhitespace),
     indexState: async ({ root }) => ({ key: await indexState(runGit, root) }),
+    rangeCommits: ({ root, spec }) => rangeCommits(runGit, root, spec),
     revert: async (input) => {
       await revert(runGit, input);
       return { ok: true as const };

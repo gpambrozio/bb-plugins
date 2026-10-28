@@ -35,8 +35,17 @@ function fallback(commands: string): string {
   return `If a \`diff_review_*\` tool is not available in this session, use the \`${CLI}\` command instead (${commands}); the \`diff-review\` skill describes it. Text goes to it as one line of base64 through \`--text-base64-stdin\`.`;
 }
 
-/** How to read a view's diff with git, for the agent. */
-export function gitCommandFor(target: Target): string {
+/** The two commits a range view compares, as the host resolved them (`rangeCommits`). */
+export interface RangeCommits {
+  baseSha: string;
+  headSha: string;
+}
+
+/**
+ * How to read a view's diff with git, for the agent. A range names the commits the tab compares:
+ * `git diff a..b` would compare `a` itself, and a merged `a...b` shows nothing.
+ */
+export function gitCommandFor(target: Target, commits: RangeCommits | null = null): string {
   switch (target.kind) {
     case "uncommitted":
       return "`git diff HEAD`, plus the untracked files `git status --porcelain` lists";
@@ -51,7 +60,7 @@ export function gitCommandFor(target: Target): string {
     case "unstaged":
       return "`git diff`, plus the untracked files `git status --porcelain` lists";
     case "range":
-      return `\`git diff ${rangeText(target)}\``;
+      return commits === null ? `\`git diff ${rangeText(target)}\`` : `\`git diff ${commits.baseSha} ${commits.headSha}\` (the commits the tab compares for ${rangeText(target)})`;
     case "files":
       return "the files themselves (there is no diff)";
   }
@@ -59,17 +68,18 @@ export function gitCommandFor(target: Target): string {
 
 export interface ReviewPromptInput {
   target: Target;
+  commits?: RangeCommits | null;
   focus: string | null;
   instructions: string;
 }
 
-export function reviewPrompt({ target, focus, instructions }: ReviewPromptInput): string {
+export function reviewPrompt({ target, commits = null, focus, instructions }: ReviewPromptInput): string {
   const extra = instructions.trim() === "" ? "" : `\n## Instructions from the user\n\n${instructions.trim()}\n`;
   return `# Review
 
 You are reviewing a diff with Diff Review and leaving review comments with its tools. The user reads them in the Review tab, next to the code.
 
-- Diff under review: ${describeTarget(target)}, in this workspace — read it with ${gitCommandFor(target)}
+- Diff under review: ${describeTarget(target)}, in this workspace — read it with ${gitCommandFor(target, commits)}
 - Focus: ${focus ?? "none — apply every pass"}
 ${extra}
 ## Tools
@@ -171,7 +181,7 @@ function quote(body: string): string {
  * A question to the view's reviewer about one comment thread. `followUp`: sent as a new turn of the
  * reviewer's own thread, which already knows the diff; otherwise the first message of a new reviewer.
  */
-export function reviewerPrompt(target: Target, thread: ReviewThread, followUp: boolean): string {
+export function reviewerPrompt(target: Target, thread: ReviewThread, followUp: boolean, commits: RangeCommits | null = null): string {
   const comments = thread.comments
     .map((comment) => `**${comment.authorType === "user" ? "User" : `Agent (${comment.authorName})`}:**\n\n${quote(comment.body)}`)
     .join("\n\n");
@@ -179,7 +189,7 @@ export function reviewerPrompt(target: Target, thread: ReviewThread, followUp: b
     thread.startLine > 0 && thread.anchorContent !== null ? `\nCommented code, as it read then:\n\n\`\`\`\n${thread.anchorContent}\n\`\`\`\n` : "";
   const intro = followUp
     ? "The user asked you, the reviewer of this view, about a review thread (they wrote @reviewer or @agent). Use what you already know of the diff and your earlier comments."
-    : `You are the reviewer of a diff in Diff Review. The user asked about a review thread (they wrote @reviewer or @agent). Read the diff with ${gitCommandFor(target)} as you need it. Later questions about this view's threads will arrive here as new messages, so you stay its reviewer.`;
+    : `You are the reviewer of a diff in Diff Review. The user asked about a review thread (they wrote @reviewer or @agent). Read the diff with ${gitCommandFor(target, commits)} as you need it. Later questions about this view's threads will arrive here as new messages, so you stay its reviewer.`;
   return `# A question about a review thread
 
 ${intro}
@@ -233,10 +243,10 @@ ${sendPrompt(input)}`;
 }
 
 /** "Summarize": a summary of the change for a reviewer, left as a comment on the whole diff. */
-export function summaryPrompt(target: Target): string {
+export function summaryPrompt(target: Target, commits: RangeCommits | null = null): string {
   return `# Summarize the changes
 
-Summarize ${describeTarget(target)} in this workspace for a reviewer, with Diff Review. Read the diff with ${gitCommandFor(target)} (use \`git log\` for the range when commit messages add context), and enough of the surrounding code to understand the intent, not just the text of the hunks.
+Summarize ${describeTarget(target)} in this workspace for a reviewer, with Diff Review. Read the diff with ${gitCommandFor(target, commits)} (use \`git log\` for the range when commit messages add context), and enough of the surrounding code to understand the intent, not just the text of the hunks.
 
 Write the summary:
 
@@ -267,7 +277,7 @@ export interface ExplainPlace {
 }
 
 /** "Explain": a file or selected lines explained to a reviewer, left as a comment on them. */
-export function explainPrompt(target: Target, place: ExplainPlace): string {
+export function explainPrompt(target: Target, place: ExplainPlace, commits: RangeCommits | null = null): string {
   const file = "`" + place.filePath + "`";
   const lines = place.startLine === 0 ? null : place.startLine === place.endLine ? `line ${place.startLine}` : `lines ${place.startLine}-${place.endLine}`;
   const what = lines === null ? file : `${lines} of ${file} (${place.side === "old" ? "the old side: removed lines" : "the new side"})`;
@@ -279,7 +289,7 @@ export function explainPrompt(target: Target, place: ExplainPlace): string {
       : `with \`${TOOL.comment}\` on the same lines (file ${file}, startLine ${place.startLine}, endLine ${place.endLine}, side \`${place.side ?? "new"}\`)`;
   return `# Explain ${what}
 
-Explain ${what} to a reviewer who has not seen it before. The diff under review is ${describeTarget(target)} in this workspace (read it with ${gitCommandFor(target)}); ${lines === null ? "explain the file" : "explain those lines specifically, using the rest of the file only as supporting context"}.
+Explain ${what} to a reviewer who has not seen it before. The diff under review is ${describeTarget(target)} in this workspace (read it with ${gitCommandFor(target, commits)}); ${lines === null ? "explain the file" : "explain those lines specifically, using the rest of the file only as supporting context"}.
 ${code}
 Cover, in this order and only as far as it is useful:
 

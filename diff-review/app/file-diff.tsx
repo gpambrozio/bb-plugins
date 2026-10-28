@@ -467,7 +467,7 @@ export function LineDraftBox({
  * The unsent comments on a file that is not in the view any more (committed, reverted, or left out by
  * the ignore patterns since), so they can still be sent or cancelled.
  */
-export function OrphanDrafts({ path }: { path: string }) {
+export function OrphanDrafts({ path, note = "This file is not in this view any more." }: { path: string; note?: string }) {
   const actions = useActions();
   const lineDraft = useDraft(draftKeys.line(path));
   const fileDraft = useDraft(draftKeys.file(path));
@@ -478,7 +478,7 @@ export function OrphanDrafts({ path }: { path: string }) {
       <span className="truncate font-mono text-xs" title={path}>
         {path}
       </span>
-      {range === null ? null : <LineDraftBox filePath={path} range={range} draft={lineDraft} note="This file is not in this view any more." anchorContent={null} />}
+      {range === null ? null : <LineDraftBox filePath={path} range={range} draft={lineDraft} note={note} anchorContent={null} />}
       {fileDraft.active === null ? null : (
         <CommentComposer
           placeholder="A comment about the whole file"

@@ -265,7 +265,7 @@ describe("changing the workspace from the tab", () => {
       startLine: 2,
       endLine: 2,
       expected: "const b = 3;",
-      code: "const b = 4;",
+      code: "const b = 4;\n",
     });
     // The view reloads, since a file changed.
     await waitFor(() => expect(loadsOf(slot).map((load) => load.reason)).toContain("manual"));
@@ -384,6 +384,39 @@ describe("the Files view", () => {
     await slot.behavior.emitRealtime("environment:env_1", { kind: "diff" });
     await waitFor(() => expect(screen.getByTestId("file").getAttribute("data-contents")).toBe("export const x = 3;\n"));
     expect(slot.inspection.rpcCalls.filter((call) => call.method === "readFile")).toHaveLength(3);
+  });
+
+  it("lists a file whose only comments are unsent, and shows them when the file can no longer be read", async () => {
+    const drafts = {
+      "line:gone.ts": { body: "About these lines", severity: null, range: { side: "new" as const, startLine: 2, endLine: 3 } },
+      "file:gone.ts": { body: "About the file", severity: null, range: null },
+    };
+    render({
+      getReview: () => ({ ...FILES, threads: [], viewState: { drafts, collapsed: {}, scroll: null, savedAt: 1 } }),
+      readFile: () => {
+        throw new Error("No such file");
+      },
+      saveViewState: () => ({ ok: true }),
+    });
+    fireEvent.click(await screen.findByRole("button", { name: /gone\.ts.*unsent comment/ }));
+    expect(await screen.findByDisplayValue("About these lines")).toBeTruthy();
+    expect(screen.getByDisplayValue("About the file")).toBeTruthy();
+    expect(screen.getByText(/Could not open gone\.ts/)).toBeTruthy();
+  });
+
+  it("comments on the whole diff, and keeps that draft, in Any file too", async () => {
+    const slot = render({
+      getReview: () => ({ ...FILES, viewState: { drafts: { general: { body: "Saved thought", severity: null, range: null } }, collapsed: {}, scroll: null, savedAt: 1 } }),
+      createThread: (input: never) => ({ thread: thread({ id: "aaaaaa000022", body: (input as { body: string }).body, filePath: "__general__", startLine: 0, endLine: 0 }) }),
+      saveViewState: () => ({ ok: true }),
+    });
+    const composer = await screen.findByDisplayValue("Saved thought");
+    fireEvent.change(composer, { target: { value: "About the whole change" } });
+    fireEvent.click(screen.getByRole("button", { name: "Comment" }));
+    await waitFor(() => expect(slot.inspection.rpcCalls.find((call) => call.method === "createThread")?.input).toMatchObject({ filePath: "__general__", startLine: 0, body: "About the whole change" }));
+    await waitFor(() => expect(screen.queryByPlaceholderText("A comment about the whole change")).toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: "Comment on the diff" }));
+    expect(screen.getByPlaceholderText("A comment about the whole change")).toBeTruthy();
   });
 
   it("searches the workspace for a file", async () => {

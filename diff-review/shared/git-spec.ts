@@ -17,12 +17,10 @@ export const revisionSchema = z
   .regex(/^[A-Za-z0-9_./@{}~^+][A-Za-z0-9_./@{}~^+-]*$/, "Not a revision git takes")
   .refine((value) => !value.includes(".."), "A revision has no '..' in it");
 
-export const hostDiffSpecSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("staged") }).strict(),
-  z.object({ kind: z.literal("unstaged") }).strict(),
-  /** `symmetric`: `from...to` (the changes on `to` since it forked from `from`); otherwise `from..to`. */
-  z.object({ kind: z.literal("range"), from: revisionSchema, to: revisionSchema, symmetric: z.boolean() }).strict(),
-]);
+/** `symmetric`: `from...to` (the changes on `to` since it forked from `from`); otherwise `from..to`. */
+export const hostRangeSpecSchema = z.object({ kind: z.literal("range"), from: revisionSchema, to: revisionSchema, symmetric: z.boolean() }).strict();
+
+export const hostDiffSpecSchema = z.discriminatedUnion("kind", [z.object({ kind: z.literal("staged") }).strict(), z.object({ kind: z.literal("unstaged") }).strict(), hostRangeSpecSchema]);
 export type HostDiffSpec = z.infer<typeof hostDiffSpecSchema>;
 
 /** `a..b` or `a...b` as a range spec, or null when it is not one. An empty side is `HEAD`, as git takes it. */

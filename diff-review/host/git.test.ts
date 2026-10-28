@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import entry from "../host";
 import { parseRange } from "../shared/git-spec";
-import { createRunGit, diff, indexState, newFilePatch, parseNameStatus, parseNumstat, splitPatch, unquote } from "./git";
+import { createRunGit, diff, indexState, newFilePatch, parseNameStatus, parseNumstat, rangeCommits, splitPatch, unquote } from "./git";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -76,6 +76,26 @@ describe("the host's git diffs", () => {
     expect((await diff(run, root, { kind: "range", from: "main", to: "feature", symmetric: false }, false)).files).toEqual([]);
   });
 
+  it("names the commits a range's diff compares, for AI runs: where it forked, not what `git diff a...b` takes", async () => {
+    const root = repo();
+    const fork = git(root, "rev-parse", "HEAD");
+    git(root, "checkout", "-q", "-b", "feature");
+    writeFileSync(join(root, "b.txt"), "bee\n");
+    git(root, "add", ".");
+    git(root, "commit", "-q", "-m", "feature");
+    git(root, "checkout", "-q", "main");
+    writeFileSync(join(root, "a.txt"), "one\ntwo\nmain\n");
+    git(root, "commit", "-q", "-am", "main moves on");
+    git(root, "merge", "-q", "--no-ff", "-m", "merge", "feature");
+    const spec = { kind: "range" as const, from: "main", to: "feature", symmetric: true };
+    const merged = await diff(run, root, spec, false);
+    expect(await rangeCommits(run, root, spec)).toEqual({ baseSha: merged.baseSha, headSha: merged.headSha });
+    expect(merged.baseSha).toBe(fork);
+    // What the prompt used to say shows nothing once the branch is merged.
+    expect(git(root, "diff", "main...feature")).toBe("");
+    expect(git(root, "diff", merged.baseSha!, merged.headSha!)).toContain("+bee");
+  });
+
   it("keeps the patch of a file whose name has a space or is not ASCII, and shows an untracked symlink as a link", async () => {
     const root = repo();
     writeFileSync(join(root, "a b.txt"), "x\n");
@@ -106,6 +126,19 @@ describe("the host's git diffs", () => {
     expect(await indexState(run, root)).not.toBe(staged);
   });
 
+  it("leaves out a file whose only changes are whitespace when whitespace is hidden", async () => {
+    const root = repo();
+    writeFileSync(join(root, "b.txt"), "bee\n");
+    git(root, "add", "b.txt");
+    git(root, "commit", "-q", "-m", "second");
+    writeFileSync(join(root, "a.txt"), "one \ntwo\n");
+    writeFileSync(join(root, "b.txt"), "BEE\n");
+    const shown = await diff(run, root, { kind: "unstaged" }, false);
+    expect(shown.files.map((file) => file.path)).toEqual(["a.txt", "b.txt"]);
+    const hidden = await diff(run, root, { kind: "unstaged" }, true);
+    expect(hidden.files.map((file) => [file.path, file.patch !== null])).toEqual([["b.txt", true]]);
+  });
+
   it("refuses unknown revisions", async () => {
     const root = repo();
     await expect(diff(run, root, { kind: "range", from: "nope", to: "HEAD", symmetric: false }, false)).rejects.toThrow("Unknown revision 'nope'");
@@ -119,6 +152,9 @@ describe("the host's git diffs", () => {
     const result = await harness.experimental_call("diff", { root, spec: { kind: "staged" }, ignoreWhitespace: false });
     expect(result.files.map((file) => [file.path, file.deletions])).toEqual([["a.txt", 1]]);
     await expect(harness.experimental_call("diff", { root, spec: { kind: "range", from: "--output=/tmp/x", to: "HEAD", symmetric: false }, ignoreWhitespace: false })).rejects.toThrow();
+    const head = git(root, "rev-parse", "HEAD");
+    expect(await harness.experimental_call("rangeCommits", { root, spec: { kind: "range", from: "HEAD", to: "HEAD", symmetric: false } })).toEqual({ baseSha: head, headSha: head });
+    await expect(harness.experimental_call("rangeCommits", { root, spec: { kind: "range", from: "--output=/tmp/x", to: "HEAD", symmetric: false } })).rejects.toThrow();
     await harness.experimental_dispose();
   });
 });

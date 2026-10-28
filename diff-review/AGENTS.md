@@ -197,7 +197,13 @@ unchanged, so the plugin sets `theme` and `themeType` from `experimental_useCode
 unstaged and range views from the plugin's own host entry (`host.ts`, git in the checkout), files
 from `bb.sdk.files.*`, all on whichever machine holds the workspace, remote hosts included. Raw git a
 new feature needs goes in the host entry, which reads; a suggestion is written through
-`bb.sdk.files.write` with `expectedSha256`. **Revert is the host entry's** (`host/revert.ts`): bb's file
+`bb.sdk.files.write` with `expectedSha256`. **An AI run on a range view is told the two commits the tab
+compares** (`rangeCommits` on the host, the same `plan` as the diff), never `git diff a..b`: the tab
+diffs `a..b` from the merge base, and a merged `a...b` from where it forked, which a raw `git diff
+a...b` shows as empty. With Hide whitespace, git leaves a whitespace-only file out of the patch
+altogether, so the host view drops a listed file with no section. A suggestion block's `code` is the
+text between its fences as written; `suggestedLines` reads it, so a blank last line counts and an
+empty block (remove the lines) differs from one holding a blank line. **Revert is the host entry's** (`host/revert.ts`): bb's file
 reads and writes follow symlinks, so a revert through them wrote the old link text into the link's
 target, and `expectedSha256` taken after the reads guarded only the moment after them. The host reads
 the working file's bytes once and hashes them as bb does (`git hash-object --stdin --path`, attributes

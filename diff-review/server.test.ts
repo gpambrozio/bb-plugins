@@ -161,6 +161,7 @@ async function setup(options: Setup = {}) {
     experimental_callHostRpc: (call) => {
       hostCalls.push(call);
       if (call.method === "indexState") return { key: index.key };
+      if (call.method === "rangeCommits") return { baseSha: "fork1234", headSha: "head5678" };
       if (call.method === "revert") {
         if (options.hostRevertRefuses !== undefined) throw new Error(options.hostRevertRefuses);
         return { ok: true };
@@ -482,7 +483,7 @@ describe("changing the workspace from the tab", () => {
     const { rpc, view, files, harness } = await setup({ files: { "/work/repo/src/a.ts": "const a = 1;\nconst b = 3;\n" } });
     const { sessionId } = await view();
     const made = ((await rpc("createThread", { sessionId, filePath: "src/a.ts", side: "new", startLine: 2, endLine: 2, severity: null, anchorContent: "const b = 3;", body: suggestion("const b = 4;") })) as { thread: ReviewThread }).thread;
-    const applied = (await rpc("applySuggestion", { threadId: THREAD, reviewThreadId: made.id, commentId: made.comments[0]!.id, startLine: 2, endLine: 2, expected: "const b = 3;", code: "const b = 4;" })) as { thread: ReviewThread };
+    const applied = (await rpc("applySuggestion", { threadId: THREAD, reviewThreadId: made.id, commentId: made.comments[0]!.id, startLine: 2, endLine: 2, expected: "const b = 3;", code: "const b = 4;\n" })) as { thread: ReviewThread };
     expect(files["/work/repo/src/a.ts"]).toBe("const a = 1;\nconst b = 4;\n");
     expect(applied.thread.status).toBe("resolved");
     expect(harness.inspection.realtimeSignals.some((signal) => (signal.payload as { kind: string }).kind === "diff")).toBe(true);
@@ -494,7 +495,7 @@ describe("changing the workspace from the tab", () => {
     const made = ((await rpc("createThread", { sessionId, filePath: "src/a.ts", side: "new", startLine: 2, endLine: 2, severity: null, anchorContent: "const b = 3;", body: suggestion("const b = 4;") })) as { thread: ReviewThread }).thread;
     const ask = (code: string) => rpc("applySuggestion", { threadId: THREAD, reviewThreadId: made.id, commentId: made.comments[0]!.id, startLine: 2, endLine: 2, expected: "const b = 3;", code });
     await expect(ask("rm -rf")).rejects.toMatchObject({ code: "invalid" });
-    await expect(ask("const b = 4;")).rejects.toMatchObject({ code: "conflict", message: expect.stringContaining("changed since") });
+    await expect(ask("const b = 4;\n")).rejects.toMatchObject({ code: "conflict", message: expect.stringContaining("changed since") });
     expect(files["/work/repo/src/a.ts"]).toBe("const a = 1;\nconst b = 9;\n");
   });
 
@@ -506,7 +507,7 @@ describe("changing the workspace from the tab", () => {
     const { sessionId } = await view();
     const made = ((await rpc("createThread", { sessionId, filePath: "src/a.ts", side: "new", startLine: 2, endLine: 2, severity: null, anchorContent: "const b = 3;", body: suggestion("const b = 4;") })) as { thread: ReviewThread }).thread;
     await expect(
-      rpc("applySuggestion", { threadId: THREAD, reviewThreadId: made.id, commentId: made.comments[0]!.id, startLine: 2, endLine: 2, expected: "const b = 3;", code: "const b = 4;" }),
+      rpc("applySuggestion", { threadId: THREAD, reviewThreadId: made.id, commentId: made.comments[0]!.id, startLine: 2, endLine: 2, expected: "const b = 3;", code: "const b = 4;\n" }),
     ).rejects.toMatchObject({ code: "conflict" });
     expect(files["/work/repo/src/a.ts"]).toBe("the agent's edit\n");
     expect((await view()).threads[0]!.status).toBe("open");
@@ -993,6 +994,24 @@ describe("AI runs", () => {
     // Its final message, which bb posts to the parent, says it is a report.
     expect(spawn.prompt).toContain(`Start your final message with this line, exactly: "${REPORT_LINE}"`);
     expect((await view()).runs.map((row) => row.id)).toEqual([run.id]);
+  });
+
+  it("tells every run on a range view the commits the tab compares, read on the workspace's machine", async () => {
+    const { harness, rpc, view, comment, hostCalls } = await setup();
+    const { sessionId } = await view({ kind: "range", from: "main", to: "feature", symmetric: true });
+    // A question with no reviewer yet starts one, whose first message says how to read the diff.
+    await comment(sessionId, "@reviewer why?");
+    await vi.waitFor(() => expect(harness.inspection.sdk.callsTo("threads.spawn")).toHaveLength(1));
+    await rpc("startReview", { sessionId, threadId: THREAD, focuses: [], instructions: "", execution });
+    await rpc("startSummary", { sessionId, threadId: THREAD, execution });
+    await rpc("startExplain", { sessionId, threadId: THREAD, filePath: "src/a.ts", side: null, startLine: 0, endLine: 0, code: null });
+    const prompts = harness.inspection.sdk.callsTo("threads.spawn").map((call) => (call[0] as { prompt: string }).prompt);
+    expect(prompts).toHaveLength(4);
+    for (const prompt of prompts) {
+      expect(prompt).toContain("`git diff fork1234 head5678` (the commits the tab compares for main...feature)");
+      expect(prompt).not.toContain("`git diff main...feature`");
+    }
+    expect(hostCalls.filter((call) => call.method === "rangeCommits").map((call) => call.input)).toContainEqual({ root: "/work/repo", spec: { kind: "range", from: "main", to: "feature", symmetric: true } });
   });
 
   it("starts a summary that leaves its result as a comment on the whole diff, and is no reviewer", async () => {

@@ -223,6 +223,12 @@ export function newFilePatch(path: string, content: string): string {
   return [`diff --git a/${path} b/${path}`, "new file mode 100644", "--- /dev/null", `+++ b/${path}`, ...(lines.length === 0 ? [] : [`@@ -0,0 +1,${lines.length} @@`, ...body]), ""].join("\n");
 }
 
+/** The commits a range's diff compares, as `diff` takes them. */
+export async function rangeCommits(run: RunGit, root: string, spec: Extract<HostDiffSpec, { kind: "range" }>): Promise<{ baseSha: string; headSha: string }> {
+  const { baseSha, headSha } = await plan(run, root, spec);
+  return { baseSha: baseSha!, headSha: headSha! };
+}
+
 export async function diff(run: RunGit, root: string, spec: HostDiffSpec, ignoreWhitespace: boolean): Promise<HostDiff> {
   const { args, untracked, baseSha, headSha } = await plan(run, root, spec);
   const extra = ignoreWhitespace ? ["-w"] : [];
@@ -247,9 +253,9 @@ export async function diff(run: RunGit, root: string, spec: HostDiffSpec, ignore
     }
     const count = counts.get(entry.path) ?? { additions: 0, deletions: 0, binary: false };
     const section = sections.get(entry.path) ?? null;
-    // With whitespace hidden, a file whose only changes were whitespace has no patch left (a mode
-    // change still shows).
-    if (ignoreWhitespace && section !== null && !section.includes("\n@@") && !/^(old|new) mode /m.test(section) && !count.binary && entry.kind === "modified") continue;
+    // With whitespace hidden, a file whose only changes were whitespace has no patch left: git leaves
+    // it out of the diff altogether (git 2.54), or prints its header alone. A mode change still shows.
+    if (ignoreWhitespace && full !== null && entry.kind === "modified" && !count.binary && (section === null || (!section.includes("\n@@") && !/^(old|new) mode /m.test(section)))) continue;
     const tooLarge = full === null || (section !== null && (section.length > FILE_PATCH_MAX_BYTES || bytes + section.length > DIFF_MAX_BYTES));
     if (section !== null && !tooLarge) bytes += section.length;
     files.push({

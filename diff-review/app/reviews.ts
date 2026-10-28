@@ -11,8 +11,11 @@ import { REVIEWS_CHANNEL, targetKey, type ReviewSummary, type Target } from "../
 
 export { parseReviewSubPath, reviewSubPath } from "../shared/routes";
 
-/** Runs `read` now, on every review change and on a reconnect; the latest answer wins. */
-function useLiveRead<T>(read: () => Promise<T>, channel: string): { data: T | undefined; error: string | null } {
+/**
+ * Runs `read` now, on every review change and on a reconnect; the latest answer wins. A new `key`
+ * (what `read` asks about) drops the previous answer and reads again.
+ */
+function useLiveRead<T>(read: () => Promise<T>, channel: string, key = ""): { data: T | undefined; error: string | null } {
   const [state, setState] = useState<{ data: T | undefined; error: string | null }>({ data: undefined, error: null });
   const generation = useRef(0);
   const readRef = useRef(read);
@@ -24,7 +27,14 @@ function useLiveRead<T>(read: () => Promise<T>, channel: string): { data: T | un
       (error: unknown) => mine === generation.current && setState((previous) => ({ data: previous.data, error: error instanceof Error ? error.message : String(error) })),
     );
   }, []);
-  useEffect(() => refresh(), [refresh, channel]);
+  const shownKey = useRef(key);
+  useEffect(() => {
+    if (shownKey.current !== key) {
+      shownKey.current = key;
+      setState({ data: undefined, error: null });
+    }
+    refresh();
+  }, [refresh, channel, key]);
   useRealtime(channel, () => refresh());
   const connection = useRealtimeConnectionState();
   const last = useRef(connection);
@@ -43,7 +53,7 @@ export function useReviews() {
 /** Open and all comment threads in one workspace, or in every review with null. */
 export function useReviewCounts(environmentId: string | null) {
   const rpc = useRpc<RpcContract>();
-  return useLiveRead(() => rpc.call("reviewCounts", environmentId === null ? {} : { environmentId }), REVIEWS_CHANNEL);
+  return useLiveRead(() => rpc.call("reviewCounts", environmentId === null ? {} : { environmentId }), REVIEWS_CHANNEL, environmentId ?? "");
 }
 
 /** Whether a listed review is the one a subPath names. */

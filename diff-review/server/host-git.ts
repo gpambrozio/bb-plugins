@@ -14,6 +14,13 @@ export type HostRevert = (hostId: string, input: { root: string; path: string; r
 
 export type HostIndexState = (hostId: string, root: string) => Promise<string>;
 
+export type HostRangeCommits = (hostId: string, root: string, spec: Extract<HostDiffSpec, { kind: "range" }>) => Promise<{ baseSha: string; headSha: string }>;
+
+export function createHostRangeCommits(bb: BbPluginApi): HostRangeCommits {
+  const client = bb.hosts.experimental_client({ contract: hostContract });
+  return (hostId, root, spec) => client.call("rangeCommits", { root, spec }, { hostId });
+}
+
 export function createHostIndexState(bb: BbPluginApi): HostIndexState {
   const client = bb.hosts.experimental_client({ contract: hostContract });
   return async (hostId, root) => (await client.call("indexState", { root }, { hostId })).key;

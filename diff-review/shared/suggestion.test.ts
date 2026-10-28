@@ -7,11 +7,28 @@ describe("suggested changes", () => {
   it("splits a comment into text and suggestion blocks", () => {
     expect(bodyParts("Use a const:\n```suggestion\nconst b = 3;\n```\nThanks")).toEqual([
       { kind: "text", text: "Use a const:\n" },
-      { kind: "suggestion", code: "const b = 3;" },
+      { kind: "suggestion", code: "const b = 3;\n" },
       { kind: "text", text: "\nThanks" },
     ]);
     expect(bodyParts("plain")).toEqual([{ kind: "text", text: "plain" }]);
     expect(bodyParts("```suggestion\n```")).toEqual([{ kind: "suggestion", code: "" }]);
+  });
+
+  it("keeps every line between the fences, a blank last one included, and tells an empty block from a blank line", () => {
+    const [block] = bodyParts("```suggestion\nnew\n\n```").filter((part) => part.kind === "suggestion") as { code: string }[];
+    expect(replaceLines("a\nb\nc\n", 2, 2, "b", block!.code)).toBe("a\nnew\n\nc\n");
+    const blank = (bodyParts("```suggestion\n\n```")[0] as { code: string }).code;
+    expect(replaceLines("a\nb\nc\n", 2, 2, "b", blank)).toBe("a\n\nc\n");
+    const empty = (bodyParts("```suggestion\n```")[0] as { code: string }).code;
+    expect(replaceLines("a\nb\nc\n", 2, 2, "b", empty)).toBe("a\nc\n");
+    // Applied only when the lines read as suggested, the blank one too.
+    expect(suggestionState(block!.code, "new", "b")).toBe("outdated");
+    expect(suggestionState(block!.code, "new\n", "b")).toBe("applied");
+    expect(suggestionLines("b", block!.code)).toEqual([
+      { kind: "del", text: "b" },
+      { kind: "add", text: "new" },
+      { kind: "add", text: "" },
+    ]);
   });
 
   it("knows whether a suggestion can still be applied", () => {

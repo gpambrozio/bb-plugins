@@ -337,6 +337,31 @@ function ReadyPanel({
   const deletions = files.reduce((sum, file) => sum + file.deletions, 0);
   // "Any file": the workspace's files, not a diff.
   const browsing = view.target.kind === "files";
+  // Comments on the whole diff and its draft, in every view, "Any file" included.
+  const generalSection =
+    general.length > 0 || generalDraft.active !== null ? (
+      <section className="flex flex-col gap-2 border-b border-border px-3 py-2">
+        <h3 className="text-xs font-medium text-muted-foreground">About the whole diff</h3>
+        {general.map((thread) => (
+          <ThreadCard key={thread.id} thread={thread} />
+        ))}
+        {generalDraft.active !== null ? (
+          <CommentComposer
+            placeholder="A comment about the whole change"
+            submitLabel="Comment"
+            withSeverity
+            initialBody={generalDraft.latest().body}
+            initialSeverity={generalDraft.latest().severity}
+            onChange={generalDraft.change}
+            onSubmit={async ({ body, severity }) => {
+              await actions.create({ filePath: GENERAL_PATH, side: null, startLine: 0, endLine: 0, anchorContent: null, body, severity });
+              generalDraft.close();
+            }}
+            onCancel={generalDraft.close}
+          />
+        ) : null}
+      </section>
+    ) : null;
   const fileCount = onlyCommented ? `${files.length} of ${view.files.length} files` : `${files.length} file${files.length === 1 ? "" : "s"}`;
 
   // A place in the diff to bring into view: a find match, a "Go to" pick, the next comment.
@@ -581,13 +606,7 @@ function ReadyPanel({
 
       {browsing ? (
         <>
-          {general.length > 0 ? (
-            <section className="flex flex-col gap-2 border-b border-border px-3 py-2">
-              {general.map((thread) => (
-                <ThreadCard key={thread.id} thread={thread} />
-              ))}
-            </section>
-          ) : null}
+          {generalSection}
           <FilesView threadId={threadId} threads={view.threads} refreshKey={loadId} />
         </>
       ) : (
@@ -598,29 +617,7 @@ function ReadyPanel({
           {view.truncated ? " · bb cut this diff short" : ""}
         </p>
 
-        {general.length > 0 || generalDraft.active !== null ? (
-          <section className="flex flex-col gap-2 border-b border-border px-3 py-2">
-            <h3 className="text-xs font-medium text-muted-foreground">About the whole diff</h3>
-            {general.map((thread) => (
-              <ThreadCard key={thread.id} thread={thread} />
-            ))}
-            {generalDraft.active !== null ? (
-              <CommentComposer
-                placeholder="A comment about the whole change"
-                submitLabel="Comment"
-                withSeverity
-                initialBody={generalDraft.latest().body}
-                initialSeverity={generalDraft.latest().severity}
-                onChange={generalDraft.change}
-                onSubmit={async ({ body, severity }) => {
-                  await actions.create({ filePath: GENERAL_PATH, side: null, startLine: 0, endLine: 0, anchorContent: null, body, severity });
-                  generalDraft.close();
-                }}
-                onCancel={generalDraft.close}
-              />
-            ) : null}
-          </section>
-        ) : null}
+        {generalSection}
 
         {outdated.length > 0 ? (
           <section className="flex flex-col gap-2 border-b border-border px-3 py-2">

@@ -21,20 +21,37 @@ export function sameCode(a: string, b: string): boolean {
 }
 
 /**
+ * The lines a suggestion block puts in place of the thread's, from the text between its fences as
+ * written (`BodyPart`'s `code`): an empty block removes the lines, and every line inside the fences
+ * counts, a blank last one included.
+ */
+export function suggestedLines(code: string): string[] {
+  const normalized = code.replace(/\r\n/g, "\n");
+  return normalized === "" ? [] : normalized.replace(/\n$/, "").split("\n");
+}
+
+/** The lines of a thread's lines as text (each line, joined with "\n"), a blank last line included. */
+function textLines(text: string): string[] {
+  return text === "" ? [] : text.replace(/\r\n/g, "\n").split("\n");
+}
+
+/**
  * Whether `code` can still be applied over the thread's lines: `current` is what they read now
  * (undefined when the diff does not show them), `anchor` what they read when commented on.
  */
 export function suggestionState(code: string, current: string | undefined, anchor: string | null): SuggestionState {
   if (current === undefined) return "unknown";
-  if (sameCode(current, code)) return "applied";
+  const suggested = suggestedLines(code);
+  const now = textLines(current);
+  if (now.length === suggested.length && now.every((line, index) => line === suggested[index])) return "applied";
   if (anchor !== null && !sameCode(anchor, current)) return "outdated";
   return "ready";
 }
 
 /** Old against suggested lines, with the unchanged lines at either end kept as context. */
 export function suggestionLines(original: string, code: string): SuggestionLine[] {
-  const before = lines(original);
-  const after = lines(code);
+  const before = textLines(original);
+  const after = suggestedLines(code);
   let head = 0;
   while (head < before.length && head < after.length && before[head] === after[head]) head++;
   let tail = 0;
@@ -61,7 +78,11 @@ export function insertSuggestion(body: string, cursor: number, code: string): { 
 
 const SUGGESTION_BLOCK = /^```suggestion[^\n]*\n([\s\S]*?)^```[^\n]*$/gm;
 
-/** A comment body as Markdown text and suggestion blocks, in order. */
+/**
+ * A comment body as Markdown text and suggestion blocks, in order. A block's `code` is the text
+ * between its fences as written, ending with the newline before the closing fence unless empty; read
+ * its lines with `suggestedLines`.
+ */
 export type BodyPart = { kind: "text"; text: string } | { kind: "suggestion"; code: string };
 
 export function bodyParts(body: string): BodyPart[] {
@@ -70,7 +91,7 @@ export function bodyParts(body: string): BodyPart[] {
   for (const match of body.matchAll(SUGGESTION_BLOCK)) {
     const text = body.slice(last, match.index);
     if (text.trim() !== "") parts.push({ kind: "text", text });
-    parts.push({ kind: "suggestion", code: (match[1] ?? "").replace(/\n$/, "") });
+    parts.push({ kind: "suggestion", code: match[1] ?? "" });
     last = match.index + match[0].length;
   }
   const rest = body.slice(last);
@@ -107,6 +128,6 @@ export function replaceLines(content: string, start: number, end: number, expect
   const replaced = all.slice(start - 1, end);
   const eol = replaced.find((line) => line.eol !== "")?.eol ?? "\n";
   const last = replaced[replaced.length - 1]!.eol;
-  const added = lines(code).map((text, index, list) => ({ text, eol: index === list.length - 1 ? last : eol }));
+  const added = suggestedLines(code).map((text, index, list) => ({ text, eol: index === list.length - 1 ? last : eol }));
   return joinLines([...all.slice(0, start - 1), ...added, ...all.slice(end)]);
 }

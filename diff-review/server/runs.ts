@@ -32,9 +32,10 @@ import {
   type Run,
   type Severity,
   type Side,
+  type Target,
 } from "../shared/types";
 import { ignorePatterns, loadDiff, loadPatches, ReviewUnavailable, uncommittedFingerprint, type Fingerprint } from "./diff";
-import { explainPrompt, fixPrompt, reviewerPrompt, reviewPrompt, summaryPrompt } from "./run-prompts";
+import { explainPrompt, fixPrompt, reviewerPrompt, reviewPrompt, summaryPrompt, type RangeCommits } from "./run-prompts";
 import { publicRun, ReviewError, targetFromKey, type ReviewService, type ReviewSettings } from "./review";
 import { newId, pendingRunThread, type RecordedSend, type ReviewStore } from "./store";
 import { RUN_METADATA_KEY } from "./tool-names";
@@ -139,13 +140,18 @@ export class RunService {
     }
   }
 
+  /** For a range view, the commits its diff compares, so a run reads the diff the tab shows; null for other views. */
+  private async rangeCommits(environmentId: string, target: Target): Promise<RangeCommits | null> {
+    return target.kind === "range" ? this.review.rangeCommits(environmentId, target) : null;
+  }
+
   /** Starts an AI review of a session's view, as a child of `threadId`, the thread under review. */
   async startReview(input: { sessionId: string; threadId: string; focuses: readonly string[]; instructions: string; execution: Execution }): Promise<Run> {
     const session = this.review.requireSession(input.sessionId);
     const clears = this.clearCount(session.id);
     const target = targetFromKey(session.targetKey);
     const focus = input.focuses.length === 0 ? null : input.focuses.join(", ");
-    const prompt = reviewPrompt({ target, focus, instructions: input.instructions });
+    const prompt = reviewPrompt({ target, commits: await this.rangeCommits(session.environmentId, target), focus, instructions: input.instructions });
     const title = `Review: ${focus === null ? "changes" : focus}`;
     return this.spawn({
       sessionId: session.id,
@@ -166,6 +172,8 @@ export class RunService {
   async startSummary(input: { sessionId: string; threadId: string; execution: Execution }): Promise<Run> {
     const session = this.review.requireSession(input.sessionId);
     const clears = this.clearCount(session.id);
+    const target = targetFromKey(session.targetKey);
+    const commits = await this.rangeCommits(session.environmentId, target);
     return this.spawn({
       sessionId: session.id,
       environmentId: session.environmentId,
@@ -175,7 +183,7 @@ export class RunService {
       focus: null,
       execution: input.execution,
       title: "Summary of the changes",
-      prompt: summaryPrompt(targetFromKey(session.targetKey)),
+      prompt: summaryPrompt(target, commits),
       baseline: () => this.fingerprint(session.environmentId),
       clears,
     });
@@ -189,6 +197,8 @@ export class RunService {
     const session = this.review.requireSession(input.sessionId);
     const clears = this.clearCount(session.id);
     const place = { filePath: input.filePath, side: input.startLine === 0 ? null : (input.side ?? "new"), startLine: input.startLine, endLine: Math.max(input.endLine, input.startLine), code: input.code };
+    const target = targetFromKey(session.targetKey);
+    const commits = await this.rangeCommits(session.environmentId, target);
     const lines = place.startLine === 0 ? "" : place.startLine === place.endLine ? `:${place.startLine}` : `:${place.startLine}-${place.endLine}`;
     return this.spawn({
       sessionId: session.id,
@@ -203,7 +213,7 @@ export class RunService {
       },
       reasoningFromProvider: true,
       title: `Explain ${posix.basename(place.filePath)}${lines}`,
-      prompt: explainPrompt(targetFromKey(session.targetKey), place),
+      prompt: explainPrompt(target, place, commits),
       baseline: () => this.fingerprint(session.environmentId),
       clears,
     });
@@ -279,7 +289,9 @@ export class RunService {
       const started = await this.review.latestTurnStart(reviewer.threadId).catch(() => null);
       queuedAlready = started !== null && asked.delivery.sentAt > started;
     }
-    // The await above may have seen a Clear review: the question is gone with the review.
+    const askedSession = this.review.requireSession(asked.sessionId);
+    const commits = queuedAlready ? null : await this.rangeCommits(askedSession.environmentId, targetFromKey(askedSession.targetKey));
+    // The awaits above may have seen a Clear review: the question is gone with the review.
     if (this.clearCount(asked.sessionId) !== clears) return null;
     if (queuedAlready) return null;
     const thread = this.review.requireThread(reviewThreadId);
@@ -288,7 +300,7 @@ export class RunService {
     if (reviewer !== null && reviewer.threadId !== null && this.store.run(reviewer.id)?.status !== "closed") {
       const send = this.store.recordSend(session.id, reviewer.threadId, [thread.id], "");
       try {
-        await this.bb.sdk.threads.send({ threadId: reviewer.threadId, mode: "queue-if-active", input: [{ type: "text", text: reviewerPrompt(target, thread, true), mentions: [] }] });
+        await this.bb.sdk.threads.send({ threadId: reviewer.threadId, mode: "queue-if-active", input: [{ type: "text", text: reviewerPrompt(target, thread, true, commits), mentions: [] }] });
         this.store.restartRun(reviewer.id);
         this.review.publishSession(session.id);
         return publicRun(this.store.run(reviewer.id)!);
@@ -314,7 +326,7 @@ export class RunService {
       },
       reasoningFromProvider: true,
       title: `Reviewer: ${describeLocation(thread)}`,
-      prompt: reviewerPrompt(target, thread, false),
+      prompt: reviewerPrompt(target, thread, false, commits),
       baseline: () => this.fingerprint(session.environmentId),
       grants: { reviewThreadIds: [thread.id], note: "" },
       clears,

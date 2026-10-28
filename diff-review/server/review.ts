@@ -33,10 +33,10 @@ import {
   viewStateSchema,
 } from "../shared/types";
 import { gitTarget, ignorePatterns, loadDiff, type DiffSources, loadPatches, resolveTarget, ReviewUnavailable, workspaceOf, workspaceRefs, workspaceState, type WorkspaceState } from "./diff";
-import { parseRange } from "../shared/git-spec";
+import { parseRange, rangeText } from "../shared/git-spec";
 import { OPEN_CHANNEL, reviewRoute } from "../shared/routes";
 import { GitReads } from "./git";
-import { createHostGit, createHostIndexState, type HostGit, type HostIndexState } from "./host-git";
+import { createHostGit, createHostIndexState, createHostRangeCommits, type HostGit, type HostIndexState, type HostRangeCommits } from "./host-git";
 import { sendPrompt } from "./prompt";
 import type { ReviewStore, StoredRun } from "./store";
 
@@ -117,6 +117,7 @@ export class ReviewService {
   private stopEnvironmentEvents: (() => void) | null = null;
   private readonly checks = new Map<string, { timer: ReturnType<typeof setTimeout>; since: number }>();
   private readonly hostIndexState: HostIndexState;
+  private readonly hostRangeCommits: HostRangeCommits;
   /** bb's Git plugin, which every diff read goes through, but the host entry's views. */
   readonly git: GitReads;
   /** The plugin's host entry: git on the workspace's machine, for the staged, unstaged and range views. */
@@ -134,6 +135,21 @@ export class ReviewService {
     this.git = new GitReads(bb.sdk, (message) => new ReviewUnavailable(message));
     this.sources = { git: this.git, host: host ?? createHostGit(bb) };
     this.hostIndexState = createHostIndexState(bb);
+    this.hostRangeCommits = createHostRangeCommits(bb);
+  }
+
+  /**
+   * The two commits a range view compares, read on the workspace's machine as the view's diff resolves
+   * them, so an AI run is told the diff the tab shows.
+   */
+  async rangeCommits(environmentId: string, target: Extract<Target, { kind: "range" }>): Promise<{ baseSha: string; headSha: string }> {
+    const environment = await this.bb.sdk.environments.get({ environmentId });
+    if (environment.path === null) throw new ReviewUnavailable("This workspace has no checkout.");
+    try {
+      return await this.hostRangeCommits(environment.hostId, environment.path, { kind: "range", from: target.from, to: target.to, symmetric: target.symmetric });
+    } catch (error) {
+      throw new ReviewUnavailable(`Could not read the range ${rangeText(target)} on the workspace's machine: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   /**

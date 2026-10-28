@@ -19,11 +19,11 @@ import type { ReviewThread, WorkspaceFile } from "../shared/types";
 import { useActions } from "./actions";
 import { ANNOTATION_FIT } from "./annotation-fit";
 import { CommentComposer } from "./comment-composer";
-import { changedSince, currentLines, LineDraftBox, type LineRange } from "./file-diff";
+import { changedSince, currentLines, LineDraftBox, OrphanDrafts, type LineRange } from "./file-diff";
 import { COLOR_BLIND_SETTING, paletteStyle } from "./palette";
 import { ThreadCard } from "./thread-card";
 import { errorMessage } from "./use-review";
-import { draftKeys, useDraft } from "./view-state";
+import { draftKeys, useDraft, useDraftKeys } from "./view-state";
 
 type Annotation = { kind: "threads"; threads: { thread: ReviewThread; placement: Placement }[] } | { kind: "draft"; range: LineRange };
 
@@ -34,12 +34,15 @@ export function FilesView({ threadId, threads, refreshKey }: { threadId: string;
   const [results, setResults] = useState<{ paths: string[]; truncated: boolean } | null>(null);
   const [open, setOpen] = useState<string | null>(null);
 
-  // Files with comments come first; a search lists matches below them.
+  // Files with comments or an unsent one come first, so a draft is never hidden; a search lists
+  // matches below them.
+  const draftKeyList = useDraftKeys();
   const commented = useMemo(() => {
     const counts = new Map<string, number>();
     for (const thread of threads) if (thread.filePath !== "__general__") counts.set(thread.filePath, (counts.get(thread.filePath) ?? 0) + 1);
+    for (const key of draftKeyList) if (key.startsWith("file:") || key.startsWith("line:")) counts.set(key.slice("file:".length), counts.get(key.slice("file:".length)) ?? 0);
     return [...counts.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-  }, [threads]);
+  }, [threads, draftKeyList]);
 
   useEffect(() => {
     if (query.trim() === "") {
@@ -71,7 +74,7 @@ export function FilesView({ threadId, threads, refreshKey }: { threadId: string;
         />
         <ul className="flex max-h-48 flex-col overflow-y-auto" aria-label="Files">
           {commented.map(([path, count]) => (
-            <FileRow key={`c:${path}`} path={path} detail={`${count} comment thread${count === 1 ? "" : "s"}`} current={open === path} onOpen={setOpen} />
+            <FileRow key={`c:${path}`} path={path} detail={count === 0 ? "unsent comment" : `${count} comment thread${count === 1 ? "" : "s"}`} current={open === path} onOpen={setOpen} />
           ))}
           {results?.paths
             .filter((path) => !commented.some(([done]) => done === path))
@@ -168,7 +171,13 @@ function OpenFile({ threadId, path, threads, refreshKey }: { threadId: string; p
   const fileState = { revision: revision ?? "" };
 
   if (file === null) return <p className="px-3 py-2 text-xs text-muted-foreground">Loading {path}…</p>;
-  if ("error" in file) return <p className="px-3 py-2 text-xs text-destructive">Could not open {path}: {file.error}</p>;
+  if ("error" in file)
+    return (
+      <div className="flex flex-col gap-2 px-3 py-2">
+        <p className="text-xs text-destructive">Could not open {path}: {file.error}</p>
+        <OrphanDrafts path={path} note="This file could not be read." />
+      </div>
+    );
 
   return (
     <section className="flex flex-col" data-file-path={path}>
@@ -221,7 +230,10 @@ function OpenFile({ threadId, path, threads, refreshKey }: { threadId: string; p
         </div>
       ) : null}
       {content === null ? (
-        <p className="px-3 py-2 text-xs text-muted-foreground">{file.reason}</p>
+        <div className="flex flex-col gap-2 px-3 py-2">
+          <p className="text-xs text-muted-foreground">{file.reason}</p>
+          {draft === null ? null : <LineDraftBox filePath={path} fileRevision={revision} range={draft} draft={lineDraft} note="This file has no lines to show." anchorContent={null} />}
+        </div>
       ) : (
         <div style={palette}>
           <PierreFile<Annotation>

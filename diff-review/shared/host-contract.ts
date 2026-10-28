@@ -5,7 +5,7 @@
 import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
-import { hostDiffSpecSchema } from "./git-spec";
+import { hostDiffSpecSchema, hostRangeSpecSchema } from "./git-spec";
 
 const fileSchema = z
   .object({
@@ -57,6 +57,15 @@ export const hostContract = defineRpcContract({
       })
       .strict(),
     output: z.object({ ok: z.literal(true) }).strict(),
+  },
+  /**
+   * The two commits a range view compares, as `diff` resolves them (from the merge base, or for a
+   * merged `a...b` from where it forked), so an AI run reads the diff the tab shows.
+   */
+  rangeCommits: {
+    experimental_retryable: true,
+    input: z.object({ root: z.string().min(1).max(4096), spec: hostRangeSpecSchema }).strict(),
+    output: z.object({ baseSha: z.string(), headSha: z.string() }).strict(),
   },
   diff: {
     experimental_retryable: true,
