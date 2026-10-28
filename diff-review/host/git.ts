@@ -29,26 +29,33 @@ const UNTRACKED_MAX_BYTES = 512 * 1024;
 export class GitError extends Error {}
 
 /** `bytes`: stdout as latin1, one character per byte, so `Buffer.from(stdout, "latin1")` gives the bytes back. */
-export type RunGit = (root: string, args: readonly string[], options?: { maxBuffer?: number; allowFailure?: boolean; bytes?: boolean }) => Promise<{ stdout: string; ok: boolean }>;
+/** `input`: written to git's stdin. */
+export type RunGit = (
+  root: string,
+  args: readonly string[],
+  options?: { maxBuffer?: number; allowFailure?: boolean; bytes?: boolean; input?: Buffer },
+) => Promise<{ stdout: string; ok: boolean }>;
 
 /** Where git is: on PATH, else where macOS and Homebrew put it (a daemon's PATH may be bare). */
 const GIT_CANDIDATES = ["git", "/usr/bin/git", "/opt/homebrew/bin/git", "/usr/local/bin/git"];
 
 export function createRunGit(timeoutMs = 60_000): RunGit {
   let git: string | null = null;
-  const attempt = (file: string, root: string, args: readonly string[], maxBuffer: number, encoding: "utf8" | "latin1") =>
+  const attempt = (file: string, root: string, args: readonly string[], maxBuffer: number, encoding: "utf8" | "latin1", input: Buffer | undefined) =>
     new Promise<{ stdout: string; code: number | null; missing: boolean; stderr: string }>((resolve) => {
       // Paths as they are, not octal-quoted, whatever the user's git config says.
-      execFile(file, ["-C", root, "-c", "core.quotePath=false", ...args], { encoding, maxBuffer, timeout: timeoutMs, killSignal: "SIGKILL", env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", LC_ALL: "C" } }, (error, stdout, stderr) => {
+      const child = execFile(file, ["-C", root, "-c", "core.quotePath=false", ...args], { encoding, maxBuffer, timeout: timeoutMs, killSignal: "SIGKILL", env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", LC_ALL: "C" } }, (error, stdout, stderr) => {
         const code = error === null ? 0 : typeof (error as { code?: unknown }).code === "number" ? ((error as { code: number }).code) : null;
         const overflow = (error as { code?: unknown } | null)?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";
         resolve({ stdout, code: overflow ? -1 : code, missing: (error as { code?: unknown } | null)?.code === "ENOENT", stderr: overflow ? "output too large" : stderr });
       });
+      child.stdin?.on("error", () => undefined);
+      child.stdin?.end(input);
     });
   return async (root, args, options = {}) => {
     const maxBuffer = options.maxBuffer ?? DIFF_MAX_BYTES * 2;
     for (const candidate of git === null ? GIT_CANDIDATES : [git]) {
-      const result = await attempt(candidate, root, args, maxBuffer, options.bytes === true ? "latin1" : "utf8");
+      const result = await attempt(candidate, root, args, maxBuffer, options.bytes === true ? "latin1" : "utf8", options.input);
       if (result.missing) continue;
       git = candidate;
       if (result.code === 0) return { stdout: result.stdout, ok: true };
