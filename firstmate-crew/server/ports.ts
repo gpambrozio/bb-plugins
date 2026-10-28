@@ -86,6 +86,8 @@ export interface SpawnArgs {
   providerId?: string;
   model?: string;
   reasoningLevel?: string;
+  /** The provider's own agent options for the model, by option id (bb 0.46.1); absent sends none. */
+  sessionOptions?: Record<string, string | boolean>;
   /** Seeded into the plugin's own metadata namespace on the thread. */
   metadata: Record<string, string>;
   /** Created already pinned in the sidebar, in the same request (bb 0.45+). */

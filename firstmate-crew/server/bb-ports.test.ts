@@ -72,6 +72,16 @@ describe("bbThreads.spawn", () => {
     const levels = harness.callsTo("threads.spawn").map(([args]) => (args as { reasoningLevel?: string }).reasoningLevel);
     expect(levels).toEqual(["minimal", "high", undefined]);
   });
+
+  it("passes the agent options through, and none when there are none", async () => {
+    const { sdk, harness } = fakeSdk();
+    const threads = bbThreads(sdk);
+    const reuse = { kind: "reuse", environmentId: "env_1" } as const;
+    await threads.spawn({ projectId: "proj_web", title: "t", prompt: "p", environment: reuse, sessionOptions: { speed: "fast", web: true }, metadata: {} });
+    await threads.spawn({ projectId: "proj_web", title: "t", prompt: "p", environment: reuse, metadata: {} });
+    const options = harness.callsTo("threads.spawn").map(([args]) => (args as { sessionOptions?: unknown }).sessionOptions);
+    expect(options).toEqual([{ speed: "fast", web: true }, undefined]);
+  });
 });
 
 describe("bbThreads.workspacePath", () => {

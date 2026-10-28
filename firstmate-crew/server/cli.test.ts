@@ -153,6 +153,38 @@ describe("bb firstmate-crew crew spawn", () => {
     });
   });
 
+  describe("agent options", () => {
+    it("--option passes each <id>=<value> on, true and false as on and off", async () => {
+      const { cli, threads, dir } = await setup();
+      const argv = [...SPAWN, "--option", "speed=fast", "--option", "web_search=true", "--option", "plan=false", "--option", "note=a=b"];
+      const result = await cli.run(argv, { threadId: "thr_mate", cwd: dir });
+      expect(result.exitCode).toBe(0);
+      expect(threads.spawned[0]!.sessionOptions).toEqual({ speed: "fast", web_search: true, plan: false, note: "a=b" });
+    });
+
+    it("sends no options when none is given", async () => {
+      const { cli, threads, dir } = await setup();
+      await cli.run(SPAWN, { threadId: "thr_mate", cwd: dir });
+      expect(threads.spawned[0]!.sessionOptions).toBeUndefined();
+    });
+
+    it.each([["speed"], ["=fast"], ["speed="]])("refuses %j and spawns nothing", async (entry) => {
+      const { cli, threads, dir } = await setup();
+      const result = await cli.run([...SPAWN, "--option", entry], { threadId: "thr_mate", cwd: dir });
+      expect(result.exitCode).not.toBe(0);
+      expect(result.stderr).toContain("--option needs <id>=<value>");
+      expect(threads.spawned).toEqual([]);
+    });
+
+    it("refuses an id given twice", async () => {
+      const { cli, threads, dir } = await setup();
+      const result = await cli.run([...SPAWN, "--option", "speed=fast", "--option", "speed=slow"], { threadId: "thr_mate", cwd: dir });
+      expect(result.exitCode).not.toBe(0);
+      expect(result.stderr).toContain("--option speed is given twice");
+      expect(threads.spawned).toEqual([]);
+    });
+  });
+
   it("crew spawn --environment reuses that environment", async () => {
     const { cli, threads, dir } = await setup();
     const result = await cli.run([...SPAWN, "--environment", "env_old"], { threadId: "thr_mate", cwd: dir });

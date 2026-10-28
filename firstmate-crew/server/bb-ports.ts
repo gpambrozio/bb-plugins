@@ -170,6 +170,7 @@ export function bbThreads(sdk: PluginBbSdk): ThreadsPort {
         providerId: optional(args.providerId),
         model: optional(args.model),
         reasoningLevel: reasoningOf(args.reasoningLevel),
+        sessionOptions: args.sessionOptions,
         pluginMetadata: args.metadata,
         pinned: args.pinned,
       });
