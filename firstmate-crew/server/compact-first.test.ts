@@ -230,6 +230,27 @@ describe("sendCompactingIfDue", () => {
       expect(threads.callsTo("compact")).toEqual([]);
     });
 
+    it("sends as asked when a turn of bb's own ended while the message was assessing under the lock", async () => {
+      const { threads, store, mate, deps, whenLockRequested } = await setup();
+      // The under-lock assessment's context read is held; a message sent straight through bb runs a whole
+      // turn meanwhile, so the thread is at rest again, but one minute after a turn, not ninety.
+      let release: () => void = () => {};
+      whenLockRequested(() => (release = threads.hold("contextUsage")));
+      const underLockRead = async () => {
+        while (threads.callsTo("contextUsage").length < 2) await new Promise((resolve) => setTimeout(resolve, 0));
+      };
+
+      const sending = sendCompactingIfDue(deps, mate.id, "auto", (mode) => threads.send(mate.id, "hello", mode));
+      // The second context read is the one under the lock: by then it has read the last turn.
+      await underLockRead();
+      threads.runTurn(mate.id, NOW - MINUTE);
+      release();
+      await sending;
+
+      expect(threads.sent).toEqual([{ id: mate.id, text: "hello", mode: "auto" }]);
+      expect(await store.compactionMark(mate.id)).toBeNull();
+    });
+
     it("sends as asked to a first mate released while the message waited for the lock", async () => {
       const { threads, store, mate, deps, whenLockRequested } = await setup();
       const releasing = barrier();

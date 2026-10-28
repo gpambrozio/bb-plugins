@@ -8,8 +8,10 @@
  *
  * It holds the `mate` lock from its assessment to the send, as the check's compaction does, and assesses
  * again once it has the lock, so the check, a launch, an adoption, a release or another message that got
- * there first is respected: one idle stretch is compacted once. A first look without the lock keeps a
- * message to a thread that is not due from waiting on it. Never call it with the lock held.
+ * there first is respected: one idle stretch is compacted once. A turn sent straight to bb takes no lock,
+ * so the last finished turn is read once more after the assessment, as the check's compaction does, and a
+ * new one sends the message plainly. A first look without the lock keeps a message to a thread that is
+ * not due from waiting on it. Never call it with the lock held.
  *
  * The mark is written first, as for the check's compaction (`autocompact.ts`), so the check leaves the
  * thread alone until the compaction and the message's own turn have run; a mark that cannot be saved sends
@@ -39,6 +41,16 @@ async function dueOrNull(deps: CompactFirstDeps, threadId: string): Promise<Due 
   }
 }
 
+/** Whether the thread's last finished turn is still the one `due` was judged from; a failed read says no. */
+async function sameLastTurn(deps: CompactFirstDeps, threadId: string, due: Due): Promise<boolean> {
+  try {
+    return (await deps.threads.lastTurnEnd(threadId))?.seq === due.lastTurn.seq;
+  } catch (error) {
+    deps.log.warn(`Autocompact could not read ${threadId}'s last turn again before a message to it, so the message goes as it is: ${errorText(error)}`);
+    return false;
+  }
+}
+
 /** Sends through `send` with `mode`, or with `compact-first` when the thread is due for autocompact. */
 export async function sendCompactingIfDue<T>(
   deps: CompactFirstDeps,
@@ -60,6 +72,9 @@ async function sendUnderLock<T>(
   // Read again under the lock: whoever held it may have compacted, marked, released or adopted.
   const due = await dueOrNull(deps, threadId);
   if (due === null) return send(mode);
+  // The assessment read the last turn first and the rest state last; a turn sent straight to bb can have
+  // run in between. Read again, as the check's compaction does: a new turn starts a new idle stretch.
+  if (!(await sameLastTurn(deps, threadId, due))) return send(mode);
 
   const mark: CompactionMark = { afterSeq: due.lastTurn.seq, ok: true, at: deps.now() };
   try {

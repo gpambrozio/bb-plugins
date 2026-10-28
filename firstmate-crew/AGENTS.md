@@ -137,7 +137,8 @@ Do not break these; each was paid for.
   attempt leaves a mark naming that event's `seq`, written as accepted *before* the request goes to bb:
   a mark that cannot be saved stops the compaction, and a refusal only relaxes it afterwards, so failed
   bookkeeping errs on waiting. A message to a due thread (`compact-first.ts`) takes the `mate` lock too,
-  assesses again under it, and leaves the same mark before it asks bb to compact first; the check's
+  assesses again under it, reads the last finished turn once more (a turn sent straight to bb takes no
+  lock), and leaves the same mark before it asks bb to compact first; the check's
   compaction reads the mark again under the lock. So the check, another message, a launch, an adoption or
   a release that holds the lock first is respected, and one idle stretch is compacted once. Nothing that
   sends through `compact-first.ts` may hold the lock (restart sends directly). When `threads.context` carries bb's `compactionOfferAt` (bb 0.47,
