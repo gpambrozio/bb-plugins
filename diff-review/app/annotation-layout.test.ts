@@ -51,6 +51,10 @@ interface Layout {
   cardRight: number;
   preRight: number;
   preScrolls: boolean;
+  /** The previous/next comment arrows' box, against the card's top. */
+  arrowsRight: number;
+  arrowsTop: number;
+  cardTop: number;
 }
 
 describe.skipIf(executablePath === null)("comment boxes in the real diff", () => {
@@ -100,6 +104,9 @@ describe.skipIf(executablePath === null)("comment boxes in the real diff", () =>
         cardRight: document.querySelector("[data-card]")!.getBoundingClientRect().right,
         preRight: pre.getBoundingClientRect().right,
         preScrolls: pre.scrollWidth > pre.clientWidth,
+        arrowsRight: document.querySelector("[data-arrows]")!.getBoundingClientRect().right,
+        arrowsTop: document.querySelector("[data-arrows]")!.getBoundingClientRect().top,
+        cardTop: document.querySelector("[data-card]")!.getBoundingClientRect().top,
       };
     });
   }
@@ -111,6 +118,13 @@ describe.skipIf(executablePath === null)("comment boxes in the real diff", () =>
       expect(preRight).toBeLessThanOrEqual(cardRight);
       expect(preScrolls).toBe(true);
       for (const [scrollWidth, clientWidth] of scrollers) expect(scrollWidth).toBeLessThanOrEqual(clientWidth);
+    });
+
+    it(`keeps the previous/next arrows at the card's top right, past a long path, in the ${style} view`, async () => {
+      const { cardRight, cardTop, arrowsRight, arrowsTop } = await layout(style, true);
+      expect(arrowsRight).toBeLessThanOrEqual(cardRight);
+      expect(arrowsRight).toBeGreaterThan(cardRight - 40);
+      expect(arrowsTop - cardTop).toBeLessThan(24);
     });
 
     it(`overflows the pane in the ${style} view without the box, so the check above means something`, async () => {

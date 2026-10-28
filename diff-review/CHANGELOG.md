@@ -33,6 +33,8 @@ Needs bb 0.48 or newer.
 - **A Reviews page** in the sidebar lists every review with comments, across projects, with a count
   of the open ones on its entry, and shows the one you pick in full.
 - **The thread's Info tab** says how many review comments its workspace has open.
+- **Previous and next comment arrows** in the toolbar and on each comment thread, which move to the
+  open comment before or after (wrapping around at the ends) and put the cursor on it.
 - **Palette commands** for every action of the tab: reload, send, AI review, find, go to, the next or
   previous comment, the toolbar switches and more.
 - **`bb diff-review open`** opens a thread's review on a view and file from the command line.

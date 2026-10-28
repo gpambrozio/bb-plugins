@@ -35,6 +35,7 @@ import { RangeDialog } from "./range-dialog";
 import type { Reveal } from "./reveal";
 import { AiReviewDialog } from "./ai-review-dialog";
 import { ClearReviewDialog } from "./clear-dialog";
+import { CommentNavButtons, CommentNavContext, focusThread, stepTarget, type CommentNav } from "./comment-nav";
 import { CommentComposer } from "./comment-composer";
 import { FileDiff, noDiffReason, OrphanDrafts, placeFileThreads, type DiffStyle } from "./file-diff";
 import { usePatchLoader } from "./patch-loader";
@@ -402,12 +403,13 @@ function ReadyPanel({
     currentMatch.current = null;
   };
 
-  // The open comment threads in the order the tab shows them, for next/previous comment.
-  const commentStops = useMemo(() => {
-    const stops: { threadId: string; path: string; side: "old" | "new"; line: number }[] = [];
-    for (const thread of byFile.get(GENERAL_PATH) ?? []) if (thread.status === "open") stops.push({ threadId: thread.id, path: GENERAL_PATH, side: "new", line: 0 });
+  // The comment threads in the order the tab shows them, for next/previous comment; the open ones
+  // are its stops.
+  const commentOrder = useMemo(() => {
+    const stops: { threadId: string; open: boolean; path: string; side: "old" | "new"; line: number }[] = [];
+    for (const thread of byFile.get(GENERAL_PATH) ?? []) stops.push({ threadId: thread.id, open: thread.status === "open", path: GENERAL_PATH, side: "new", line: 0 });
     for (const file of files) {
-      const threads = (byFile.get(file.path) ?? []).filter((thread) => thread.status === "open");
+      const threads = byFile.get(file.path) ?? [];
       if (threads.length === 0) continue;
       const lines = file.patch === null ? null : parsePatchLines(file.patch);
       const placed = threads.map((thread) => {
@@ -416,20 +418,28 @@ function ReadyPanel({
         return { thread, line: placement.state === "outdated" ? 0 : placement.endLine };
       });
       placed.sort((a, b) => a.line - b.line);
-      for (const { thread, line } of placed) stops.push({ threadId: thread.id, path: file.path, side: thread.side ?? "new", line });
+      for (const { thread, line } of placed) stops.push({ threadId: thread.id, open: thread.status === "open", path: file.path, side: thread.side ?? "new", line });
     }
     return stops;
   }, [files, byFile]);
+  const commentStops = useMemo(() => commentOrder.filter((stop) => stop.open), [commentOrder]);
   const commentIndex = useRef(-1);
-  const stepComment = (delta: 1 | -1) => {
-    if (commentStops.length === 0) {
+  // From the palette and the toolbar, from the last step; from a thread's own arrows, from it.
+  const stepComment = (delta: 1 | -1, from: string | null = null) => {
+    const target = stepTarget(commentOrder, delta, from, commentIndex.current);
+    if (target === null) {
       toast.info("No open comments in this view.");
       return;
     }
-    commentIndex.current = (commentIndex.current + delta + commentStops.length) % commentStops.length;
+    commentIndex.current = commentStops.findIndex((stop) => stop.threadId === target);
     const stop = commentStops[commentIndex.current]!;
     if (stop.path === GENERAL_PATH) scrollRoot?.scrollTo?.({ top: 0 });
     else show({ path: stop.path, side: stop.side, line: stop.line });
+    focusThread(scrollRoot, target);
+  };
+  const commentNav: CommentNav = {
+    step: (delta, from) => stepComment(delta, from ?? null),
+    canStep: (from) => stepTarget(commentOrder, 1, from ?? null, commentIndex.current) !== null,
   };
 
   // "Go to": the files shown, the open comments and the views.
@@ -516,6 +526,7 @@ function ReadyPanel({
   });
 
   return (
+    <CommentNavContext.Provider value={browsing ? null : commentNav}>
     <div className="flex h-full min-h-0 flex-col bg-background text-foreground">
       <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2">
         <Select value={value} onValueChange={(next) => (next === PICK_RANGE ? setPickingRange(true) : onPick(next))}>
@@ -580,6 +591,7 @@ function ReadyPanel({
             Clear review
           </Button>
         ) : null}
+        {browsing ? null : <CommentNavButtons className="size-8" />}
         <Button type="button" size="sm" className="ml-auto gap-1" onClick={() => setSending(true)} disabled={open.length === 0}>
           <Icon name="Sent" className="size-4" />
           Send to agent{open.length === 0 ? "" : ` (${open.length})`}
@@ -685,5 +697,6 @@ function ReadyPanel({
       />
       <AiReviewDialog open={reviewing} onOpenChange={setReviewing} sessionId={view.sessionId} threadId={threadId} environmentId={view.environmentId} onStarted={putRun} />
     </div>
+    </CommentNavContext.Provider>
   );
 }

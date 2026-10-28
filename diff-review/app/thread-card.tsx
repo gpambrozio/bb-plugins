@@ -17,6 +17,7 @@ import { bodyParts } from "../shared/suggestion";
 import { describeLocation, type ReviewComment, type ReviewThread } from "../shared/types";
 import { useActions } from "./actions";
 import { CommentComposer } from "./comment-composer";
+import { CommentNavButtons } from "./comment-nav";
 import { ago, DELIVERY_LABELS, SEVERITY_LABELS, STATUS_LABELS } from "./labels";
 import { SuggestionBlock, SuggestionThreadContext, type SuggestionThread } from "./suggestion-block";
 import { draftKeys, useDraft, useViewState } from "./view-state";
@@ -164,14 +165,23 @@ export function ThreadCard({
 
   return (
     <SuggestionThreadContext.Provider value={{ thread, ...(current === undefined ? {} : { current }) }}>
-    <div className="flex flex-col gap-3 rounded-md border border-border bg-card p-3 font-sans text-foreground" data-thread-id={thread.id}>
+    <div
+      className="flex flex-col gap-3 rounded-md border border-border bg-card p-3 font-sans text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      data-thread-id={thread.id}
+      // The previous/next comment arrows move the keyboard focus here.
+      tabIndex={-1}
+    >
       <div className="flex items-start gap-2">
-        {header}
-        {closed ? (
-          <Button type="button" variant="ghost" size="sm" className="ml-auto h-6 px-1.5" aria-label="Fold" onClick={() => setExpanded(false)}>
-            <Icon name="ChevronUp" className="size-3.5" />
-          </Button>
-        ) : null}
+        {/* It may shrink and wrap, so a long path never pushes the arrows out of the card. */}
+        <div className="min-w-0 flex-1">{header}</div>
+        <span className="flex shrink-0 items-center gap-0.5">
+          <CommentNavButtons from={thread.id} className="size-6" />
+          {closed ? (
+            <Button type="button" variant="ghost" size="sm" className="h-6 px-1.5" aria-label="Fold" onClick={() => setExpanded(false)}>
+              <Icon name="ChevronUp" className="size-3.5" />
+            </Button>
+          ) : null}
+        </span>
       </div>
       {placement?.state === "outdated" && thread.anchorContent !== null ? (
         <pre className="max-h-32 overflow-auto rounded bg-muted px-2 py-1 font-mono text-xs text-muted-foreground">{thread.anchorContent}</pre>

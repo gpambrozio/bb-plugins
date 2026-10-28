@@ -246,6 +246,64 @@ describe("the palette's commands, find and Go to", () => {
   });
 });
 
+describe("the previous and next comment arrows", () => {
+  const focused = () => document.activeElement?.closest("[data-thread-id]")?.getAttribute("data-thread-id") ?? null;
+  const card = (id: string) => document.querySelector(`[data-thread-id="${id}"]`) as HTMLElement;
+  const toolbar = () => screen.getAllByRole("group", { name: "Comments" })[0]!;
+
+  it("steps through the open comments from the toolbar, in the tab's order, wrapping, and focuses each", async () => {
+    render();
+    await screen.findByTestId("patch");
+    // The whole-diff thread, the one no longer on the diff, then the line threads in line order.
+    fireEvent.click(within(toolbar()).getByRole("button", { name: "Next comment" }));
+    await waitFor(() => expect(focused()).toBe("aaaaaa000002"));
+    fireEvent.click(within(toolbar()).getByRole("button", { name: "Next comment" }));
+    await waitFor(() => expect(focused()).toBe("aaaaaa000003"));
+    fireEvent.click(within(toolbar()).getByRole("button", { name: "Next comment" }));
+    await waitFor(() => expect(focused()).toBe("aaaaaa000001"));
+    await waitFor(() => expect(screen.getByTestId("patch").getAttribute("data-selected")).toBe("additions:2"));
+    fireEvent.click(within(toolbar()).getByRole("button", { name: "Previous comment" }));
+    await waitFor(() => expect(focused()).toBe("aaaaaa000003"));
+    fireEvent.click(within(toolbar()).getByRole("button", { name: "Previous comment" }));
+    fireEvent.click(within(toolbar()).getByRole("button", { name: "Previous comment" }));
+    await waitFor(() => expect(focused()).toBe("aaaaaa000004"));
+  });
+
+  it("steps from a thread's own arrows, and the palette goes on from there", async () => {
+    render();
+    await screen.findByTestId("patch");
+    fireEvent.click(within(card("aaaaaa000001")).getByRole("button", { name: "Next comment" }));
+    await waitFor(() => expect(focused()).toBe("aaaaaa000004"));
+    fireEvent.click(within(card("aaaaaa000004")).getByRole("button", { name: "Next comment" }));
+    await waitFor(() => expect(focused()).toBe("aaaaaa000002"));
+    fireEvent.click(within(card("aaaaaa000002")).getByRole("button", { name: "Previous comment" }));
+    await waitFor(() => expect(focused()).toBe("aaaaaa000004"));
+    await act(async () => dispatchReviewCommand("thr_1", "next-comment"));
+    await waitFor(() => expect(focused()).toBe("aaaaaa000002"));
+  });
+
+  it("steps from a resolved thread to the open ones beside it, and is off with nothing to move to", async () => {
+    const resolved = thread({ id: "aaaaaa000005", body: "Done", startLine: 2, endLine: 2, status: "resolved" });
+    render({ getReview: () => ({ ...VIEW, threads: [VIEW.threads[1]!, resolved], viewState: { drafts: {}, collapsed: {}, expandedThreads: { aaaaaa000005: true }, scroll: null, savedAt: 1 } }) });
+    await screen.findByText("Done");
+    fireEvent.click(within(card("aaaaaa000005")).getByRole("button", { name: "Next comment" }));
+    await waitFor(() => expect(focused()).toBe("aaaaaa000002"));
+    // The only open thread has no other to move to; the toolbar still goes to it.
+    expect((within(card("aaaaaa000002")).getByRole("button", { name: "Next comment" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((within(toolbar()).getByRole("button", { name: "Next comment" }) as HTMLButtonElement).disabled).toBe(false);
+    cleanup();
+    render({ getReview: () => ({ ...VIEW, threads: [resolved] }) });
+    await screen.findByTestId("patch");
+    expect((within(toolbar()).getByRole("button", { name: "Previous comment" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("has no arrows in the Any file view, whose palette commands are off too", async () => {
+    render({ getReview: () => ({ ...VIEW, target: { kind: "files" }, files: [], viewable: false }) });
+    await screen.findByText("Add tests for this change");
+    expect(screen.queryByRole("button", { name: "Next comment" })).toBeNull();
+  });
+});
+
 describe("changing the workspace from the tab", () => {
   const suggesting = thread({ id: "aaaaaa000010", body: "Four is better:\n```suggestion\nconst b = 4;\n```", startLine: 2, endLine: 2 });
 

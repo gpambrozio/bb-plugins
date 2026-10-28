@@ -26,8 +26,10 @@ It is a bb take on [diffity](https://github.com/nilbuild/diffity)'s review loop,
   changed since you marked it says so. **Open** shows the file in bb's viewer at the version the view
   shows.
 - **Find and go to.** **Find** searches every file of the diff, folded ones too; **Go to** (from the
-  palette) jumps to a file, an open comment or another view as you type; *next / previous comment*
-  steps through the open ones. Every toolbar action is a palette command (*Diff Review: …*).
+  palette) jumps to a file, an open comment or another view as you type. The up and down arrows in
+  the toolbar, and at the top right of each comment thread, step to the previous or next open
+  comment (from the end they wrap around to the start), as *next / previous comment* in the palette
+  does. Every toolbar action is a palette command (*Diff Review: …*).
 - **Comments where you need them.** Hover a line and click **+**, or drag across lines and click **+**
   for a range. **Comment on file** sits in each file's header, **Comment on the diff** in the toolbar.
   A comment can carry a severity (must fix, suggestion, nit, question) and is written in Markdown.
