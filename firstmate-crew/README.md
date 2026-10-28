@@ -22,7 +22,7 @@ board, the dispatch command and the watch runner, and nothing else.
 
 ## What you need
 
-- bb 0.46 or newer. On bb 0.45, install with `@^0.4.0` instead of `@^0.6.0`.
+- bb 0.47 or newer. On bb 0.46, install with `@^0.6.0` instead of `@^0.7.0`; on bb 0.45, with `@^0.4.0`.
 - A capable model for the first mate. It spends its day reading records and deciding who does what, and a
   small model gets the commands wrong. Claude Sonnet or better, or a comparable Codex model, works.
 - `git` for the projects it works on, and, for the pull request watch, the `gh` command, logged in.
@@ -39,7 +39,7 @@ bb plugin install firstmate-crew@bb-community
 Straight from this repository, tracking compatible releases:
 
 ```bash
-bb plugin install 'git:github.com/gpambrozio/bb-plugins@^0.6.0' --plugin firstmate-crew --tag-prefix firstmate-crew/
+bb plugin install 'git:github.com/gpambrozio/bb-plugins@^0.7.0' --plugin firstmate-crew --tag-prefix firstmate-crew/
 ```
 
 Add `--yes` to skip the confirmation prompt, which a script needs. To hack on it, clone the repository,
@@ -153,7 +153,9 @@ mate as one note once the first mate is between turns. In chat the note is one l
 its **full note** chip expands the whole message in place, each run under its watch's name and time, with
 the plugin's tags left out. The home keeps the last 50 in `.firstmate/watch-notes/`. Printing nothing costs nothing. `pr-watch` comes
 built in: every five minutes it checks the pull requests on the backlog and tells the first mate when one
-is merged or closed, gets a review or comment, or has its checks go red or green. The Watches card lists
+is merged or closed, gets a review or comment, or has its checks go red or green. Watches find their
+commands, `gh` included, on the same PATH bb gives its own tools: your login shell's, plus Homebrew,
+`~/.local/bin`, mise, asdf and Volta. The Watches card lists
 each watch with its last run, and switches any of them off or on. `watches/README.md` in the home explains
 how to write one; the first mate adds none without your approval.
 
@@ -161,9 +163,15 @@ how to write one; the first mate adds none without your approval.
 
 - **Home directory**: where the first mate's records live. Default `~/FirstMate`. With a first mate aboard,
   the board and the watches stay with its own home; a new setting applies to the next launch or adoption.
-- **Crew provider**, **crew model** and **crew reasoning**: what workers are started with. Left empty, the
-  first mate chooses; a model is used only with a provider.
-- **Board refresh**: how often the open board reloads, in seconds. Default 10.
+- **Crew provider**, **crew model** and **crew reasoning**: what workers are started with. Left empty, or
+  reasoning on **Leave it to the first mate**, the first mate chooses; a model is used only with a
+  provider. For one worker the first mate can also pick a model's own agent options (such as a faster
+  mode), as `bb thread spawn --option` does.
+- **Board refresh**: how often an open board reloads, in seconds. Default 10. Anything bb reports (a
+  worker starting, finishing, failing, waiting on you, moving to or from the first mate) shows at once;
+  the refresh catches the rest, such as edits to the backlog. It runs once for every open board, in any
+  window, and stops when the last one closes. On bb 0.48 a board whose tab is hidden, or whose panel is
+  closed, does not reload until it is shown again.
 - **Autocompact**, once for the first mate and once for the crew: whether to compact the conversation on
   its own (default off), above how many thousand tokens of context (default 200, meaning 200,000
   tokens), and after how many idle minutes (default 60). See below.
@@ -177,11 +185,12 @@ of the thread, leaving it and its crew as they are.
 A provider keeps a conversation's start in a prompt cache for a while, and a turn after the cache has
 expired pays to send all of it again. Autocompact compacts a thread that has sat idle long enough with a
 large context, so the next turn starts from a summary instead, as bb's own `/compact` does. Switch it on
-separately for the first mate and for the crew, each with its own token threshold and idle time; how
-long a cache lasts depends on the provider, so the idle time is yours to choose.
+separately for the first mate and for the crew, each with its own token threshold and idle time.
 
-- A thread is compacted when its context holds more than the token threshold and its last turn ended at
-  least the idle time ago. It must be truly at rest: no turn running, no message queued, nothing waiting
+- A thread is compacted when its context holds more than the token threshold and it has been idle long
+  enough. When bb knows when the provider's cache for that conversation expires, that is long enough: bb
+  works it out for Claude Code and Pi once a context passes 100,000 tokens, with its "compact expired
+  cache" experiment on. Otherwise it is the idle time you set, counted from the end of the last turn. It must be truly at rest: no turn running, no message queued, nothing waiting
   on you (a permission, a question or a plan), no background agent still running, and its machine
   connected. Ended (archived) workers are left alone.
 - Once compacted, a thread is not compacted again until it has run another turn and sat idle again, so a
@@ -193,6 +202,11 @@ long a cache lasts depends on the provider, so the idle time is yours to choose.
 - Each compaction is written to the plugin's log (`bb plugin logs firstmate-crew`), with the thread, its
   tokens beforehand and how long it had been idle. A problem that lasts, such as bb not answering, is
   logged once, not every minute.
+- A message that reaches a thread when it is due — a watch note, your words from the board or `tell`, a
+  steer to a worker — has bb compact the thread first and deliver the message once it is done, in one
+  request, so the message does not pay for the whole expired context. If bb says it will not compact it
+  then, the message goes as it would have; if the request fails in a way that leaves it unclear whether bb
+  took it, FirstMate reports the failure rather than sending the message twice.
 - A compaction is a turn of its own. For a worker, bb reports it to the first mate like any of the
   worker's turns, so the first mate wakes briefly to a turn with nothing new in it.
 

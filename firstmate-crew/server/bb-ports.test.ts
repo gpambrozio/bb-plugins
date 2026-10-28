@@ -2,6 +2,7 @@ import { createFakeSdk, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { describe, expect, it } from "vitest";
 
 import { bbThreads } from "./bb-ports";
+import { CompactFirstRefused } from "./ports";
 
 const SERVER_HOST = "host_server";
 
@@ -71,6 +72,75 @@ describe("bbThreads.spawn", () => {
     }
     const levels = harness.callsTo("threads.spawn").map(([args]) => (args as { reasoningLevel?: string }).reasoningLevel);
     expect(levels).toEqual(["minimal", "high", undefined]);
+  });
+
+  it("passes the agent options through, and none when there are none", async () => {
+    const { sdk, harness } = fakeSdk();
+    const threads = bbThreads(sdk);
+    const reuse = { kind: "reuse", environmentId: "env_1" } as const;
+    await threads.spawn({ projectId: "proj_web", title: "t", prompt: "p", environment: reuse, sessionOptions: { speed: "fast", web: true }, metadata: {} });
+    await threads.spawn({ projectId: "proj_web", title: "t", prompt: "p", environment: reuse, metadata: {} });
+    const options = harness.callsTo("threads.spawn").map(([args]) => (args as { sessionOptions?: unknown }).sessionOptions);
+    expect(options).toEqual([{ speed: "fast", web: true }, undefined]);
+  });
+});
+
+describe("bbThreads.send", () => {
+  it("asks bb to compact first, queued as queue-if-active, for compact-first, and passes other modes as they are", async () => {
+    const { sdk, harness } = createFakeSdk({ pluginId: "firstmate-crew", overrides: { threads: { send: () => ({ delivery: "sent" }) } } });
+    const threads = bbThreads(sdk);
+    await threads.send("thr_1", "hi", "compact-first");
+    await threads.send("thr_1", "hi", "steer");
+    const sent = harness.callsTo("threads.send").map(([args]) => {
+      const { mode, compactFirst } = args as { mode: string; compactFirst?: boolean };
+      return { mode, compactFirst };
+    });
+    expect(sent).toEqual([
+      { mode: "queue-if-active", compactFirst: true },
+      { mode: "steer", compactFirst: undefined },
+    ]);
+  });
+});
+
+describe("bbThreads.send refusals", () => {
+  /** bb's client error: `HTTP <status>: <message>` with the status on it, as `BbHttpError` has. */
+  function httpError(status: number, message: string): Error {
+    return Object.assign(new Error(`HTTP ${status}: ${message}`), { name: "BbHttpError", status, code: "invalid_request" });
+  }
+
+  function failingSdk(error: unknown) {
+    return createFakeSdk({
+      pluginId: "firstmate-crew",
+      overrides: {
+        threads: {
+          send: () => {
+            throw error;
+          },
+        },
+      },
+    });
+  }
+
+  it.each([400, 409])("names a compact-first send bb answered with %i a refusal", async (status) => {
+    const { sdk } = failingSdk(httpError(status, "Context can only be compacted while the thread is idle or errored"));
+    const failure = await bbThreads(sdk).send("thr_1", "hi", "compact-first").catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(CompactFirstRefused);
+    expect((failure as Error).message).toContain("Context can only be compacted");
+  });
+
+  it.each([
+    ["a server error", httpError(500, "boom")],
+    ["a lost connection", new TypeError("fetch failed")],
+    ["a timeout", Object.assign(new Error("BB request timed out after 75 seconds."), { name: "BbRequestTimeoutError" })],
+  ])("passes %s on as it is, since bb may have accepted the send", async (_what, error) => {
+    const { sdk } = failingSdk(error);
+    await expect(bbThreads(sdk).send("thr_1", "hi", "compact-first")).rejects.toBe(error);
+  });
+
+  it("never names a refusal for a send that did not ask to compact first", async () => {
+    const error = httpError(409, "conflict");
+    const { sdk } = failingSdk(error);
+    await expect(bbThreads(sdk).send("thr_1", "hi", "auto")).rejects.toBe(error);
   });
 });
 
@@ -232,9 +302,16 @@ describe("bbThreads, autocompact's reads", () => {
   it("reads context usage, and none when bb has no figure", async () => {
     const { sdk, harness } = fakeSdk();
     harness.stub("threads.context", () => ({ usage: { usedTokens: 250_000, estimated: true, modelContextWindow: 1_000_000 } }));
-    expect(await bbThreads(sdk).contextUsage("thr_1")).toEqual({ usedTokens: 250_000, estimated: true });
+    expect(await bbThreads(sdk).contextUsage("thr_1")).toEqual({ usedTokens: 250_000, estimated: true, cacheExpiresAt: null });
 
     harness.stub("threads.context", () => ({ usage: null }));
     expect(await bbThreads(sdk).contextUsage("thr_1")).toBeNull();
+  });
+
+  it("reads when bb says the prompt cache expires, as epoch milliseconds", async () => {
+    const { sdk, harness } = fakeSdk();
+    const usage = { usedTokens: 250_000, estimated: false, modelContextWindow: 1_000_000, compactionOfferAt: "2026-10-28T12:00:00.000Z" };
+    harness.stub("threads.context", () => ({ usage }));
+    expect((await bbThreads(sdk).contextUsage("thr_1"))?.cacheExpiresAt).toBe(Date.UTC(2026, 9, 28, 12));
   });
 });

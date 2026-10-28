@@ -167,6 +167,28 @@ function crewPick(
   };
 }
 
+/**
+ * `--option <id>=<value>`, as `bb thread spawn` takes it: the provider's agent options for the model
+ * (`bb provider models` lists them), `true` or `false` for an on/off one. bb checks the ids and values
+ * against the model; here only the shape is checked, and an id given twice is refused rather than one
+ * value quietly winning.
+ */
+function sessionOptionsOf(values: readonly string[] | undefined): Pick<SpawnArgs, "sessionOptions"> {
+  if (values === undefined || values.length === 0) return {};
+  const options: Record<string, string | boolean> = {};
+  for (const entry of values) {
+    const split = entry.indexOf("=");
+    const id = split < 0 ? "" : entry.slice(0, split).trim();
+    const value = split < 0 ? "" : entry.slice(split + 1).trim();
+    if (id === "" || value === "") {
+      throw new PluginCliError(`--option needs <id>=<value>, not "${entry}".`, { code: "invalid_value" });
+    }
+    if (Object.hasOwn(options, id)) throw new PluginCliError(`--option ${id} is given twice.`, { code: "invalid_value" });
+    options[id] = value === "true" ? true : value === "false" ? false : value;
+  }
+  return { sessionOptions: options };
+}
+
 export function firstmateCli(deps: MateDeps): PluginCliRegistration {
   return defineCli({
     name: "firstmate-crew",
@@ -194,6 +216,13 @@ export function firstmateCli(deps: MateDeps): PluginCliRegistration {
             description: "Reasoning level, any the model lists (bb refuses one it does not); overrides the crew reasoning setting",
             placeholder: "level",
           },
+          option: {
+            type: "string",
+            repeatable: true,
+            description:
+              "An agent option the model lists (see bb provider models), as <id>=<value>; true or false for an on/off one. Repeatable",
+            placeholder: "id=value",
+          },
           json: { type: "boolean", description: "Print {\"threadId\": \"...\"} instead of the bare id" },
         },
         constraints: [
@@ -212,6 +241,7 @@ export function firstmateCli(deps: MateDeps): PluginCliRegistration {
             }
 
             const options = input.options;
+            const sessionOptions = sessionOptionsOf(options.option);
             const prompt = await readBrief(options["prompt-file"], ctx.cwd);
             const projectId = await resolveProject(deps, options.project);
             const settings = await deps.settings();
@@ -225,6 +255,7 @@ export function firstmateCli(deps: MateDeps): PluginCliRegistration {
               parentThreadId: mate.id,
               environment: environmentId === "" ? { kind: "worktree" } : { kind: "reuse", environmentId },
               ...crewPick(settings, { provider: options.provider, model: options.model, reasoning: options.reasoning }),
+              ...sessionOptions,
               metadata: {
                 [CREW_METADATA.role]: CREW_METADATA.crewRole,
                 [CREW_METADATA.task]: options.task,

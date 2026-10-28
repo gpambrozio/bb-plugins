@@ -67,7 +67,7 @@ async function harness(rules: Partial<AutoCompactRules> = {}, kv = memoryKv()): 
 function crewmate(h: Harness, idleMinutes: number, usedTokens: number, title = "Fix the bug") {
   const thread = h.threads.add({ title, parentThreadId: h.mateId });
   h.threads.runTurn(thread.id, NOW - idleMinutes * MINUTE);
-  h.threads.setUsage(thread.id, { usedTokens, estimated: false });
+  h.threads.setUsage(thread.id, { usedTokens, estimated: false, cacheExpiresAt: null });
   return thread;
 }
 
@@ -78,7 +78,7 @@ describe("checkAutoCompact", () => {
 
     const done = await checkAutoCompact(h.deps);
 
-    expect(done).toEqual({ threadId: thread.id, role: "crew", usage: { usedTokens: 250_000, estimated: false }, idleMinutes: 75, ok: true });
+    expect(done).toEqual({ threadId: thread.id, role: "crew", usage: { usedTokens: 250_000, estimated: false, cacheExpiresAt: null }, idleMinutes: 75, ok: true });
     expect(h.threads.callsTo("compact")).toEqual([[thread.id]]);
     expect(h.log.infos).toEqual([`Autocompact compacted crewmate ${thread.id} "Fix the bug": 250,000 tokens, idle 75 minutes.`]);
   });
@@ -86,7 +86,7 @@ describe("checkAutoCompact", () => {
   it("says when bb's figure is an estimate", async () => {
     const h = await harness({ crew: on() });
     const thread = crewmate(h, 75, 250_000);
-    h.threads.setUsage(thread.id, { usedTokens: 250_000, estimated: true });
+    h.threads.setUsage(thread.id, { usedTokens: 250_000, estimated: true, cacheExpiresAt: null });
 
     await checkAutoCompact(h.deps);
 
@@ -112,6 +112,33 @@ describe("checkAutoCompact", () => {
     expect((await checkAutoCompact(h.deps))?.threadId).toBe(thread.id);
   });
 
+  it("waits for bb's prompt-cache deadline instead of the idle time when bb gives one", async () => {
+    const h = await harness({ crew: on({ idleMinutes: 60 }) });
+    const early = crewmate(h, 10, 250_000, "Early");
+    h.threads.setUsage(early.id, { usedTokens: 250_000, estimated: false, cacheExpiresAt: NOW - 5 * MINUTE });
+    const late = crewmate(h, 90, 250_000, "Late");
+    h.threads.setUsage(late.id, { usedTokens: 250_000, estimated: false, cacheExpiresAt: NOW + MINUTE });
+
+    const done = await checkAutoCompact(h.deps);
+    expect(done?.threadId).toBe(early.id);
+    expect(h.log.infos).toEqual([
+      `Autocompact compacted crewmate ${early.id} "Early": 250,000 tokens, idle 10 minutes, past bb's prompt-cache deadline.`,
+    ]);
+
+    // The other one's cache is still warm, though it is long past the idle minutes.
+    expect(await checkAutoCompact(h.deps)).toBeNull();
+    h.setNow(NOW + MINUTE);
+    expect((await checkAutoCompact(h.deps))?.threadId).toBe(late.id);
+  });
+
+  it("keeps the token threshold when bb's deadline has passed", async () => {
+    const h = await harness({ crew: on({ minTokens: 200_000 }) });
+    const thread = crewmate(h, 10, 150_000);
+    h.threads.setUsage(thread.id, { usedTokens: 150_000, estimated: false, cacheExpiresAt: NOW - MINUTE });
+
+    expect(await checkAutoCompact(h.deps)).toBeNull();
+  });
+
   it("measures idle time from the end of the last turn, not an earlier one", async () => {
     const h = await harness({ crew: on({ idleMinutes: 60 }) });
     const thread = crewmate(h, 600, 250_000);
@@ -123,7 +150,7 @@ describe("checkAutoCompact", () => {
   it("leaves a thread that has never finished a turn", async () => {
     const h = await harness({ crew: on() });
     const thread = h.threads.add({ parentThreadId: h.mateId });
-    h.threads.setUsage(thread.id, { usedTokens: 250_000, estimated: false });
+    h.threads.setUsage(thread.id, { usedTokens: 250_000, estimated: false, cacheExpiresAt: null });
 
     expect(await checkAutoCompact(h.deps)).toBeNull();
   });
@@ -170,14 +197,14 @@ describe("checkAutoCompact", () => {
 
     const crewOnly = await harness({ crew: on() });
     crewOnly.threads.runTurn(crewOnly.mateId, NOW - 75 * MINUTE);
-    crewOnly.threads.setUsage(crewOnly.mateId, { usedTokens: 250_000, estimated: false });
+    crewOnly.threads.setUsage(crewOnly.mateId, { usedTokens: 250_000, estimated: false, cacheExpiresAt: null });
     expect(await checkAutoCompact(crewOnly.deps)).toBeNull();
   });
 
   it("compacts the first mate by its own rule, under the mate lock", async () => {
     const h = await harness({ mate: on({ minTokens: 100_000, idleMinutes: 30 }), crew: on() });
     h.threads.runTurn(h.mateId, NOW - 31 * MINUTE);
-    h.threads.setUsage(h.mateId, { usedTokens: 150_000, estimated: false });
+    h.threads.setUsage(h.mateId, { usedTokens: 150_000, estimated: false, cacheExpiresAt: null });
 
     const done = await checkAutoCompact(h.deps);
 
@@ -219,7 +246,7 @@ describe("checkAutoCompact", () => {
   it("does not compact a thread that woke between the check and the compaction", async () => {
     const h = await harness({ mate: on() });
     h.threads.runTurn(h.mateId, NOW - 75 * MINUTE);
-    h.threads.setUsage(h.mateId, { usedTokens: 250_000, estimated: false });
+    h.threads.setUsage(h.mateId, { usedTokens: 250_000, estimated: false, cacheExpiresAt: null });
     h.deps.withMateLock = (work) => {
       h.threads.setRest(h.mateId, { queuedMessages: 1 });
       return withMateLock(work);
@@ -399,7 +426,7 @@ describe("checkAutoCompact", () => {
     it("sends nothing when the service stops while the check waits for the mate lock", async () => {
       const h = await harness({ mate: on() });
       h.threads.runTurn(h.mateId, NOW - 75 * MINUTE);
-      h.threads.setUsage(h.mateId, { usedTokens: 250_000, estimated: false });
+      h.threads.setUsage(h.mateId, { usedTokens: 250_000, estimated: false, cacheExpiresAt: null });
       let unlock!: () => void;
       const held = withMateLock(() => new Promise<void>((resolve) => (unlock = resolve)));
 
@@ -417,7 +444,7 @@ describe("checkAutoCompact", () => {
     it("settles at once when stopped while something else holds the mate lock, and the abandoned wait sends nothing later", async () => {
       const h = await harness({ mate: on() });
       h.threads.runTurn(h.mateId, NOW - 75 * MINUTE);
-      h.threads.setUsage(h.mateId, { usedTokens: 250_000, estimated: false });
+      h.threads.setUsage(h.mateId, { usedTokens: 250_000, estimated: false, cacheExpiresAt: null });
       let unlock!: () => void;
       const held = withMateLock(() => new Promise<void>((resolve) => (unlock = resolve)));
 
@@ -458,7 +485,7 @@ describe("checkAutoCompact", () => {
     it("leaves a first mate released before the check took the lock", async () => {
       const h = await harness({ mate: on(), crew: on() });
       h.threads.runTurn(h.mateId, NOW - 75 * MINUTE);
-      h.threads.setUsage(h.mateId, { usedTokens: 250_000, estimated: false });
+      h.threads.setUsage(h.mateId, { usedTokens: 250_000, estimated: false, cacheExpiresAt: null });
       changeFirst(h, () => h.store.setMateThreadId(null));
 
       expect(await checkAutoCompact(h.deps)).toBeNull();
@@ -469,7 +496,7 @@ describe("checkAutoCompact", () => {
     it("leaves the old first mate and its crew alone when another was adopted first", async () => {
       const h = await harness({ mate: on(), crew: on() });
       h.threads.runTurn(h.mateId, NOW - 75 * MINUTE);
-      h.threads.setUsage(h.mateId, { usedTokens: 250_000, estimated: false });
+      h.threads.setUsage(h.mateId, { usedTokens: 250_000, estimated: false, cacheExpiresAt: null });
       crewmate(h, 75, 250_000);
       const adopted = h.threads.add({ title: "New first mate" });
       changeFirst(h, () => h.store.setMateThreadId(adopted.id));

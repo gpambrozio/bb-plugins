@@ -2,6 +2,7 @@
  * The built-in PR watch (`templates/watches/pr-watch`), run as the runner runs it — seeded into a
  * temporary home, executed by its `#!` line — against a stand-in `gh` that answers from a fixture file.
  */
+import { spawn } from "node:child_process";
 import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -120,6 +121,8 @@ async function setup() {
       timeoutMs: 20_000,
       maxOutputBytes: 64_000,
       maxErrorBytes: 4000,
+      // Node's own spawn keeps PATH to exactly these: bb's toolchain would add the machine's own gh.
+      spawn,
     });
   }
 

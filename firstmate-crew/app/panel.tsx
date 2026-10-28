@@ -12,6 +12,7 @@ import type { Fleet } from "../shared/types";
 import { Board } from "./board";
 import { CrewPanel } from "./crew-panel";
 import { reportError } from "./notify";
+import { useTabVisible } from "./tab-visible";
 import { useFleet } from "./use-fleet";
 
 function Notice({ title, children }: { title: string; children?: React.ReactNode }) {
@@ -84,14 +85,14 @@ function PanelBody({ fleet, threadId, reload }: { fleet: Fleet; threadId: string
 }
 
 export function Panel({ threadId }: { threadId: string }) {
-  const { fleet, error, reload } = useFleet();
+  const { fleet, error, reload } = useFleet(useTabVisible());
 
   if (fleet === null) {
     return <p className="text-sm text-muted-foreground">{error ?? "Loading…"}</p>;
   }
   return (
     <div className="flex flex-col gap-3">
-      {/* The last refresh failed: the board below is the last one that loaded, and the next poll tries again. */}
+      {/* The last refresh failed: the board below is the last one that loaded, and the next refresh tries again. */}
       {error === null ? null : (
         <p role="status" className="text-xs text-destructive">
           Could not refresh the board: {error}. Showing what was last loaded.

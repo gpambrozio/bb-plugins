@@ -34,8 +34,9 @@ async function load(options: { mateId?: string } = {}) {
   return { home, ...host };
 }
 
-function fleetSignals(harness: { realtimeSignals: { channel: string }[] }): number {
-  return harness.realtimeSignals.filter((signal) => signal.channel === "fleet").length;
+/** How many times the server told open boards to read the fleet again. */
+function fleetSignals(harness: { experimental_rpcInvalidations: (readonly string[] | null)[] }): number {
+  return harness.experimental_rpcInvalidations.filter((tags) => tags?.includes("fleet") === true).length;
 }
 
 describe("server wiring", () => {
@@ -87,6 +88,48 @@ describe("server wiring", () => {
     expect(fleetSignals(harness)).toBe(2);
   });
 
+  it("publishes the fleet when a thread moves under the first mate or off it", async () => {
+    const { harness } = await load({ mateId: "thr_mate" });
+    const moved = (parentThreadId: string | null, previousParentThreadId: string | null) =>
+      harness.emitThreadEvent("experimental_thread.parentChanged", {
+        thread: makeThreadResponse({ id: "thr_moved", parentThreadId }),
+        previousParentThreadId,
+      });
+    await moved("thr_else", null);
+    await moved(null, "thr_else");
+    expect(fleetSignals(harness)).toBe(0);
+
+    const onto = await moved("thr_mate", "thr_else");
+    const off = await moved(null, "thr_mate");
+    expect([...onto.errors, ...off.errors]).toEqual([]);
+    expect(fleetSignals(harness)).toBe(2);
+  });
+
+  it("refreshes a watched board every refreshSeconds, and stops when the last one leaves", async () => {
+    vi.useFakeTimers();
+    try {
+      const { harness } = await load();
+      await harness.setSettings({ refreshSeconds: 5 });
+      const before = fleetSignals(harness);
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(fleetSignals(harness)).toBe(before);
+
+      const unwatch = harness.experimental_watchRpc("fleet.load", { input: {} });
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(fleetSignals(harness)).toBe(before);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(fleetSignals(harness)).toBe(before + 1);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(fleetSignals(harness)).toBe(before + 3);
+
+      unwatch();
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(fleetSignals(harness)).toBe(before + 3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("publishes nothing while no first mate is stored", async () => {
     const { harness } = await load();
     await harness.emitThreadEvent("thread.idle", { thread: makeThreadResponse({ id: "thr_any" }), lastAssistantText: "done: x" });
@@ -130,7 +173,7 @@ describe("server wiring", () => {
       sdk.stub("threads.get", () => makeThreadResponse({ id: "thr_mate", status: "idle" }));
       sdk.stub("threads.list", () => []);
       sdk.stub("threads.events.list", events);
-      sdk.stub("threads.context", () => ({ usage: { usedTokens: 900_000, estimated: false } }));
+      sdk.stub("threads.context", () => ({ usage: { usedTokens: 900_000, estimated: false, modelContextWindow: 1_000_000 } }));
       sdk.stub("threads.interactions.list", () => []);
       sdk.stub("threads.compact", () => ({ ok: true }));
       return loaded;

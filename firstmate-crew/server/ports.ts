@@ -46,6 +46,12 @@ export interface ContextUsage {
   usedTokens: number;
   /** bb marks the figure as an estimate rather than the provider's own count. */
   estimated: boolean;
+  /**
+   * When the provider's prompt cache for the conversation expires, in epoch milliseconds, as bb works it
+   * out (bb 0.47's `compactionOfferAt`). Null when bb does not say: a provider that reports no cache
+   * lifetime, a context under bb's own 100,000-token floor, or bb's `compactExpiredCache` experiment off.
+   */
+  cacheExpiresAt: number | null;
 }
 
 /** Where a thread's work is, for telling the first mate which thread a request comes from. */
@@ -61,7 +67,22 @@ export interface ThreadOrigin {
  * can steer, queues otherwise), `steer` for the captain's note to a crewmate, `queue-if-active` for
  * watch output. None of them interrupts.
  */
-export type SendMode = "auto" | "steer" | "queue-if-active";
+/**
+ * How a message joins the thread's work. `compact-first` is bb 0.47's `compactFirst`: bb compacts the
+ * idle thread and then delivers the message, queued as `queue-if-active` (`server/compact-first.ts`).
+ */
+export type SendMode = "auto" | "steer" | "queue-if-active" | "compact-first";
+
+/**
+ * bb answered a `compact-first` send with a refusal, before it queued anything: nothing was compacted for
+ * it and nothing was delivered. Any other failure of such a send leaves both unknown.
+ */
+export class CompactFirstRefused extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "CompactFirstRefused";
+  }
+}
 
 /** Where a spawned thread works: a new worktree of its project, another thread's environment, or a plain directory. */
 export type SpawnEnvironment = { kind: "worktree" } | { kind: "reuse"; environmentId: string } | { kind: "path"; path: string };
@@ -86,6 +107,8 @@ export interface SpawnArgs {
   providerId?: string;
   model?: string;
   reasoningLevel?: string;
+  /** The provider's own agent options for the model, by option id (bb 0.46.1); absent sends none. */
+  sessionOptions?: Record<string, string | boolean>;
   /** Seeded into the plugin's own metadata namespace on the thread. */
   metadata: Record<string, string>;
   /** Created already pinned in the sidebar, in the same request (bb 0.45+). */

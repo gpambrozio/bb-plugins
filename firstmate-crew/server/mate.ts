@@ -12,11 +12,13 @@
 import { mkdir } from "node:fs/promises";
 
 import { CREW_METADATA } from "../shared/types";
+import { sendCompactingIfDue, type CompactFirstDeps } from "./compact-first";
 import { canonicalPath } from "./files";
 import { prepareHome, readOpening } from "./home";
+import type { Log } from "./log";
 import type { ProjectsPort, SpawnArgs, ThreadInfo, ThreadsPort } from "./ports";
 import { serialized } from "./serialize";
-import { homeConfig, homePath, type FirstmateSettings } from "./settings";
+import { autoCompactRules, homeConfig, homePath, type FirstmateSettings } from "./settings";
 import type { Store } from "./store";
 import { TEMPLATES, message } from "./templates";
 
@@ -29,6 +31,19 @@ export interface MateDeps {
   projects: ProjectsPort;
   store: Store;
   settings: () => Promise<FirstmateSettings>;
+  log: Log;
+}
+
+/** What a send to the first mate or a crewmate consults to compact first (`compact-first.ts`). */
+export function compactFirstDeps(deps: MateDeps): CompactFirstDeps {
+  return {
+    threads: deps.threads,
+    store: deps.store,
+    rules: async () => autoCompactRules(await deps.settings()),
+    now: Date.now,
+    log: deps.log,
+    withMateLock,
+  };
 }
 
 /**
@@ -239,8 +254,11 @@ export function commandText(command: MateCommand, args: string): Promise<string>
   return extra === "" ? message(plain) : message(withArgs, { args: extra });
 }
 
-/** Delivers the captain's words, joining the first mate's turn if it is mid-way through one. */
+/**
+ * Delivers the captain's words, joining the first mate's turn if it is mid-way through one, and compacting
+ * it first when autocompact would compact it now.
+ */
 export async function askMate(deps: MateDeps, text: string): Promise<void> {
   const mate = await requireMate(deps);
-  await deps.threads.send(mate.id, text, "auto");
+  await sendCompactingIfDue(compactFirstDeps(deps), mate.id, "auto", (mode) => deps.threads.send(mate.id, text, mode));
 }

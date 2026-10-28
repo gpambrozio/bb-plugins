@@ -1,11 +1,14 @@
 /**
- * The RPCs between the app and the server. The app imports the contract as a type
- * (`useRpc<typeof rpcContract>()`), the server registers handlers for it (`server.ts`).
+ * The RPCs between the app and the server. The server registers handlers for it (`server.ts`); the app
+ * calls through `useRpc<typeof rpcContract>()` and reads the fleet with `experimental_useRpcQuery`, which
+ * takes the contract as a value. So this module must not import the SDK at run time: bb provides the SDK
+ * root to the server bundle only, and a git install builds the app without it. `defineRpcContract` only
+ * returns its argument; `satisfies` gives the same checks.
  *
  * Methods that take nothing take `{}`; methods that answer nothing answer `null`. A refusal is the
  * handler's own sentence, which the panel shows as-is.
  */
-import { defineRpcContract } from "@get-bb/plugin-sdk";
+import type { PluginRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
 import { FleetSchema, SuggestionSchema, WatchNoteSchema, WatchSummarySchema } from "./types";
@@ -14,8 +17,11 @@ const Empty = z.object({});
 const Done = z.null();
 const ThreadRef = z.object({ threadId: z.string().min(1) });
 
-export const rpcContract = defineRpcContract({
-  "fleet.load": { input: Empty, output: FleetSchema },
+/** The tag `fleet.load` reads carry; invalidating it makes every open board read the fleet again. */
+export const FLEET_TAG = "fleet";
+
+export const rpcContract = {
+  "fleet.load": { input: Empty, output: FleetSchema, tags: () => [FLEET_TAG] },
   "mate.launch": {
     input: z.object({ providerId: z.string(), model: z.string(), reasoningLevel: z.string().optional() }),
     output: ThreadRef,
@@ -40,4 +46,4 @@ export const rpcContract = defineRpcContract({
   "charter.acknowledge": { input: Empty, output: Done },
   "watch.note": { input: z.object({ file: z.string().min(1) }), output: WatchNoteSchema },
   "watch.toggle": { input: z.object({ name: z.string().min(1), enabled: z.boolean() }), output: z.array(WatchSummarySchema) },
-});
+} satisfies PluginRpcContract;

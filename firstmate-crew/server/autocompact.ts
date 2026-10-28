@@ -3,12 +3,14 @@
  * context, so the next turn does not resend all of it after the provider's prompt cache has expired.
  * `server.ts` calls `checkAutoCompact` from its own service, once a minute.
  *
- * A thread is compacted when its rule is on, it is at rest (`isAtRest`), its last turn ended at least
- * `idleMinutes` ago (the `turn/completed` event's time in bb's event log, so a restart neither resets nor
- * fakes the clock), and its context holds more than `minTokens` tokens. Each attempt leaves a mark in the
- * store naming the turn that began the idle stretch, written before the request goes to bb, and a marked
- * thread is left alone until it has run a turn of its own since: compaction is itself a turn, so that
- * takes two turns after the mark when bb accepted the request, and one when it refused it. Stale or
+ * A thread is compacted when its rule is on, it is at rest (`isAtRest`), its context holds more than
+ * `minTokens` tokens, and it has been idle long enough: until its prompt cache expired when bb says when
+ * that is (`ContextUsage.cacheExpiresAt`), else `idleMinutes` after its last turn ended (the
+ * `turn/completed` event's time in bb's event log, so a restart neither resets nor fakes the clock). Each
+ * attempt leaves a mark in the store naming the turn that began the idle stretch, written before the
+ * request goes to bb, and a marked thread is left alone until it has run a turn of its own since:
+ * compaction is itself a turn, so that takes two turns after the mark when bb accepted the request, and
+ * one when it refused it. Stale or
  * estimated usage therefore cannot loop, and a mark that cannot be written stops the compaction.
  *
  * One check sends at most one compaction, so after a long stop the backlog is worked through one thread a
@@ -135,11 +137,16 @@ interface Candidate {
   rule: AutoCompactRule;
 }
 
-interface Due {
+export interface Due {
   lastTurn: TurnEnd;
   usage: ContextUsage;
   idleMinutes: number;
+  /** What said the thread had been idle long enough: bb's cache deadline, or the idle-minutes setting. */
+  deadline: "cache" | "setting";
 }
+
+/** What `assess` reads with. */
+type AssessDeps = Pick<AutoCompactDeps, "threads" | "store" | "now" | "signal">;
 
 /**
  * Nothing that would wake the thread is running or waiting: no turn, no queued message, no question,
@@ -156,14 +163,17 @@ export function isAtRest(state: RestState): boolean {
 }
 
 /** Whether the thread has run a turn of its own since its mark, so its new idle stretch may be compacted. */
-async function ranTurnSinceMark(deps: AutoCompactDeps, threadId: string, mark: CompactionMark): Promise<boolean> {
+async function ranTurnSinceMark(deps: AssessDeps, threadId: string, mark: CompactionMark): Promise<boolean> {
   // An accepted compaction runs a turn itself; the thread's own turn is the one after it.
   const needed = mark.ok ? 2 : 1;
   return (await deps.threads.turnsStartedAfter(threadId, mark.afterSeq, needed, deps.signal)) >= needed;
 }
 
-/** The thread's case for compaction now, or null when it has none. Cheapest reads first. */
-async function assess(deps: AutoCompactDeps, candidate: Candidate): Promise<Due | null> {
+/**
+ * The thread's case for compaction now, or null when it has none. Cheapest reads first; the context is
+ * read before the idle time is judged, because it may carry bb's own deadline.
+ */
+async function assess(deps: AssessDeps, candidate: Candidate): Promise<Due | null> {
   const { thread, rule } = candidate;
   const { threads, signal } = deps;
   if (thread.status !== "idle") return null;
@@ -171,13 +181,26 @@ async function assess(deps: AutoCompactDeps, candidate: Candidate): Promise<Due 
   if (mark !== null && !(await ranTurnSinceMark(deps, thread.id, mark))) return null;
   const lastTurn = await threads.lastTurnEnd(thread.id, signal);
   if (lastTurn === null) return null;
-  const idleMs = deps.now() - lastTurn.at;
-  if (idleMs < rule.idleMinutes * MINUTE_MS) return null;
   const usage = await threads.contextUsage(thread.id, signal);
   if (usage === null || usage.usedTokens <= rule.minTokens) return null;
+  const now = deps.now();
+  const deadline = usage.cacheExpiresAt ?? lastTurn.at + rule.idleMinutes * MINUTE_MS;
+  if (now < deadline) return null;
   const state = await threads.restState(thread.id, signal);
   if (state === null || !isAtRest(state)) return null;
-  return { lastTurn, usage, idleMinutes: Math.floor(idleMs / MINUTE_MS) };
+  return {
+    lastTurn,
+    usage,
+    idleMinutes: Math.floor((now - lastTurn.at) / MINUTE_MS),
+    deadline: usage.cacheExpiresAt === null ? "setting" : "cache",
+  };
+}
+
+/** The case for a compaction, for the log: its size, its idle time, and what said that was long enough. */
+export function dueText(due: Due): string {
+  const estimate = due.usage.estimated ? " (estimated)" : "";
+  const deadline = due.deadline === "cache" ? ", past bb's prompt-cache deadline" : "";
+  return `${due.usage.usedTokens.toLocaleString("en-US")} tokens${estimate}, idle ${due.idleMinutes} minutes${deadline}`;
 }
 
 function describe(candidate: Candidate): string {
@@ -207,6 +230,9 @@ async function compact(deps: AutoCompactDeps, candidate: Candidate, mateId: stri
   if (state === null || !stillAboard(candidate, mateId, storedMateId, state) || !isAtRest(state)) return null;
   const lastTurn = await threads.lastTurnEnd(id, signal);
   if (lastTurn?.seq !== due.lastTurn.seq) return null;
+  // A message sent meanwhile may have asked bb to compact first (`compact-first.ts`): its mark names
+  // this same idle stretch.
+  if ((await store.compactionMark(id))?.afterSeq === due.lastTurn.seq) return null;
 
   // Marked as accepted before it is sent, so a write that fails stops it, and a failure after it errs
   // on waiting for two turns.
@@ -230,10 +256,7 @@ async function compact(deps: AutoCompactDeps, candidate: Candidate, mateId: stri
     log.warn(`Autocompact could not compact ${describe(candidate)}: ${errorText(error)}. It is tried again after its next turn.`);
   }
   if (ok) {
-    const estimate = due.usage.estimated ? " (estimated)" : "";
-    log.info(
-      `Autocompact compacted ${describe(candidate)}: ${due.usage.usedTokens.toLocaleString("en-US")} tokens${estimate}, idle ${due.idleMinutes} minutes.`,
-    );
+    log.info(`Autocompact compacted ${describe(candidate)}: ${dueText(due)}.`);
   } else {
     try {
       await store.setCompactionMark(id, { ...mark, ok: false });
@@ -260,6 +283,29 @@ async function gather(deps: AutoCompactDeps, rules: AutoCompactRules): Promise<{
   if (rules.mate.enabled) candidates.push({ thread: mate, role: "mate", rule: rules.mate });
   if (rules.crew.enabled) candidates.push(...crew.map((thread) => ({ thread, role: "crew" as const, rule: rules.crew })));
   return { mateId: mate.id, candidates };
+}
+
+/** What `dueNow` reads with. */
+export type DueNowDeps = Pick<AutoCompactDeps, "threads" | "store" | "rules" | "now">;
+
+/**
+ * The thread's case for compaction right now, by the same rules the check applies, or null: it is not the
+ * first mate or one of its crew, its rule is off, or it is not due. For a message about to go to it
+ * (`server/compact-first.ts`).
+ */
+export async function dueNow(deps: DueNowDeps, threadId: string): Promise<Due | null> {
+  // The rules first: with autocompact off, nothing about the thread is read.
+  const rules = await deps.rules();
+  if (!rules.mate.enabled && !rules.crew.enabled) return null;
+  const mateId = await deps.store.mateThreadId();
+  if (mateId === null) return null;
+  const thread = await deps.threads.get(threadId);
+  if (thread === null) return null;
+  const role: AutoCompactRole | null = thread.id === mateId ? "mate" : thread.parentThreadId === mateId ? "crew" : null;
+  if (role === null) return null;
+  const rule = rules[role];
+  if (!rule.enabled) return null;
+  return assess({ ...deps, signal: new AbortController().signal }, { thread, role, rule });
 }
 
 /**

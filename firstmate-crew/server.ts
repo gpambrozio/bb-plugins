@@ -9,7 +9,7 @@ import { join } from "node:path";
 
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
-import { rpcContract } from "./shared/contract";
+import { FLEET_TAG, rpcContract } from "./shared/contract";
 import { STATE_DIR } from "./shared/types";
 import { AUTOCOMPACT_INTERVAL_MS, checkAutoCompact, FailureLog } from "./server/autocompact";
 import { bbProjects, bbThreads } from "./server/bb-ports";
@@ -33,16 +33,13 @@ import {
 } from "./server/mate";
 import type { ProjectsPort, ThreadsPort } from "./server/ports";
 import { serialized } from "./server/serialize";
-import { autoCompactRules, homeConfig, homePath, SETTINGS } from "./server/settings";
+import { autoCompactRules, DEFAULT_REFRESH_SECONDS, homeConfig, homePath, refreshMs, SETTINGS } from "./server/settings";
 import { createStore } from "./server/store";
 import { createDeliver } from "./server/watch-delivery";
 import { readWatchNote } from "./server/watch-notes";
 import { WatchRunner } from "./server/watches";
 
 export { rpcContract } from "./shared/contract";
-
-/** The channel the board listens on; any message means "load the fleet again". */
-const FLEET_CHANNEL = "fleet";
 
 function reason(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -84,6 +81,7 @@ export default async function plugin(bb: BbPluginApi) {
     },
     store,
     settings: () => settings.get(),
+    log: bb.log,
   };
 
   /** Crewmates' status lines, kept for the plugin's lifetime so the board's polls stay cheap. */
@@ -93,8 +91,9 @@ export default async function plugin(bb: BbPluginApi) {
   /** The first mate's own home while one is aboard, else the setting's (`activeHome`). */
   const currentHome = () => activeHome(deps);
 
+  /** Every open board reads the fleet again (bb's live reads, tag `fleet`). */
   function publishFleet(): void {
-    bb.realtime.publish(FLEET_CHANNEL, { at: Date.now() });
+    bb.rpc.experimental_invalidate([FLEET_TAG]);
   }
 
   // --- Watches -------------------------------------------------------------------------------------
@@ -130,6 +129,8 @@ export default async function plugin(bb: BbPluginApi) {
         store,
         home,
         log: bb.log,
+        rules: async () => autoCompactRules(await settings.get()),
+        withMateLock,
       }),
       root: home,
       stateFile: join(home, STATE_DIR, "watches.json"),
@@ -268,6 +269,14 @@ export default async function plugin(bb: BbPluginApi) {
   bb.events.on("thread.archived", ({ thread }) => publishOnFleetThread("thread.archived", thread));
   // A crewmate waiting on a permission or a question moves to Blocked now, not at the next poll.
   bb.events.on("interaction.pending", ({ thread }) => publishOnFleetThread("interaction.pending", thread));
+  // A thread moved under the first mate, or off it, joins or leaves the board now (bb 0.46.1).
+  bb.events.on("experimental_thread.parentChanged", ({ thread, previousParentThreadId }) =>
+    listen("experimental_thread.parentChanged", async () => {
+      const mateId = await store.mateThreadId();
+      if (mateId === null) return;
+      if (thread.parentThreadId === mateId || previousParentThreadId === mateId) publishFleet();
+    }),
+  );
   bb.events.on("thread.idle", ({ thread, lastAssistantText }) =>
     listen("thread.idle", async () => {
       const role = await roleOf(thread);
@@ -362,6 +371,25 @@ export default async function plugin(bb: BbPluginApi) {
       });
       return runner === null ? [] : runner.summaries();
     },
+  });
+
+  /**
+   * While any board is open, every `refreshSeconds` it reads the fleet again, for what no event reports (a
+   * backlog edit, a status line, a watch's last run). One wait on the server for every window, run by bb
+   * while the read is watched: it ends when the last board closes, or on bb 0.48 is hidden.
+   */
+  bb.rpc.experimental_whileWatched("fleet.load", async (_read, signal) => {
+    while (!signal.aborted) {
+      let wait: number;
+      try {
+        wait = refreshMs(await settings.get());
+      } catch (error) {
+        bb.log.warn(`The board refresh setting could not be read: ${reason(error)}`);
+        wait = DEFAULT_REFRESH_SECONDS * 1000;
+      }
+      await pause(wait, signal);
+      if (!signal.aborted) publishFleet();
+    }
   });
 
   bb.cli.register(firstmateCli(deps));

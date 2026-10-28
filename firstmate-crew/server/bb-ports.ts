@@ -7,7 +7,7 @@
 import type { PluginBbSdk } from "@get-bb/plugin-sdk";
 
 import { canonicalPath } from "./files";
-import type { ProjectsPort, SendMode, SpawnEnvironment, ThreadInfo, ThreadsPort } from "./ports";
+import { CompactFirstRefused, type ProjectsPort, type SendMode, type SpawnEnvironment, type ThreadInfo, type ThreadsPort } from "./ports";
 
 type SpawnRequest = Parameters<PluginBbSdk["threads"]["spawn"]>[0];
 type ReasoningLevel = NonNullable<SpawnRequest["reasoningLevel"]>;
@@ -116,6 +116,34 @@ function optional(value: string | undefined): string | undefined {
   return value === undefined || value === "" ? undefined : value;
 }
 
+/**
+ * The HTTP statuses bb refuses a `compactFirst` send with before it queues the message: 400 for a request
+ * that cannot compact first (`throwInvalidCompactFirst`), 409 for a provider without manual compaction or
+ * a thread that is not idle or errored (`compactThreadContext`). Read from bb 0.47.1's server.
+ */
+const COMPACT_FIRST_REFUSALS = new Set([400, 409]);
+
+/**
+ * Runs one send. A `compact-first` send that bb refused outright becomes `CompactFirstRefused`; every other
+ * failure, a lost connection or a timeout included, is passed on as it is, since bb may have accepted it.
+ */
+async function sending<T>(mode: SendMode, work: () => Promise<T>): Promise<T> {
+  try {
+    return await work();
+  } catch (error) {
+    const status = typeof error === "object" && error !== null && "status" in error ? error.status : undefined;
+    if (mode === "compact-first" && typeof status === "number" && COMPACT_FIRST_REFUSALS.has(status)) {
+      throw new CompactFirstRefused(error instanceof Error ? error.message : String(error), { cause: error });
+    }
+    throw error;
+  }
+}
+
+/** bb's send fields for a mode: `compact-first` is bb's `compactFirst`, which queues as `queue-if-active`. */
+function sendModeOf(mode: SendMode): { mode: "auto" | "steer" | "queue-if-active"; compactFirst?: true } {
+  return mode === "compact-first" ? { mode: "queue-if-active", compactFirst: true } : { mode };
+}
+
 export function bbThreads(sdk: PluginBbSdk): ThreadsPort {
   return {
     async get(id, signal) {
@@ -170,21 +198,24 @@ export function bbThreads(sdk: PluginBbSdk): ThreadsPort {
         providerId: optional(args.providerId),
         model: optional(args.model),
         reasoningLevel: reasoningOf(args.reasoningLevel),
+        sessionOptions: args.sessionOptions,
         pluginMetadata: args.metadata,
         pinned: args.pinned,
       });
       return toInfo(row);
     },
     async send(id, text, mode: SendMode) {
-      const result = await sdk.threads.send({ threadId: id, mode, input: [{ type: "text", text, mentions: [] }] });
+      const result = await sending(mode, () =>
+        sdk.threads.send({ threadId: id, ...sendModeOf(mode), input: [{ type: "text", text, mentions: [] }] }),
+      );
       return result.delivery;
     },
     async sendShortened(id, message, mode: SendMode) {
       // The chip is a path mention over the path's own text, the way bb's composer writes one.
       const shown = `${message.shown} · ${message.file.path}`;
-      const result = await sdk.threads.send({
+      const result = await sending(mode, () => sdk.threads.send({
         threadId: id,
-        mode,
+        ...sendModeOf(mode),
         input: [
           {
             type: "text",
@@ -205,7 +236,7 @@ export function bbThreads(sdk: PluginBbSdk): ThreadsPort {
           },
           { type: "text", text: message.hidden, mentions: [], visibility: "agent-only" },
         ],
-      });
+      }));
       return result.delivery;
     },
     async stop(id) {
@@ -250,7 +281,9 @@ export function bbThreads(sdk: PluginBbSdk): ThreadsPort {
     },
     async contextUsage(id, signal) {
       const { usage } = await sdk.threads.context({ threadId: id, signal });
-      return usage === null ? null : { usedTokens: usage.usedTokens, estimated: usage.estimated };
+      if (usage === null) return null;
+      const expires = usage.compactionOfferAt === undefined ? Number.NaN : Date.parse(usage.compactionOfferAt);
+      return { usedTokens: usage.usedTokens, estimated: usage.estimated, cacheExpiresAt: Number.isFinite(expires) ? expires : null };
     },
   };
 }

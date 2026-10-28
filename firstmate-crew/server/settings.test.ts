@@ -2,7 +2,18 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { autoCompactRules, defaultSettings, homeConfig, homePath, SETTINGS, type FirstmateSettings } from "./settings";
+import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
+
+import {
+  autoCompactRules,
+  defaultSettings,
+  homeConfig,
+  homePath,
+  refreshMs,
+  REASONING_OPTIONS,
+  SETTINGS,
+  type FirstmateSettings,
+} from "./settings";
 
 const settings = (overrides: Partial<FirstmateSettings> = {}): FirstmateSettings => ({ ...defaultSettings(), ...overrides });
 
@@ -22,6 +33,32 @@ describe("homePath", () => {
 
   it("refuses ~user, which it cannot expand", () => {
     expect(() => homePath("~someone/x")).toThrow("Home directory must be an absolute path or start with ~: ~someone/x");
+  });
+});
+
+describe("crew reasoning", () => {
+  it("labels every option, the default as the first mate's call", () => {
+    const labels = SETTINGS.crewReasoning.experimental_optionLabels;
+    expect(Object.keys(labels)).toEqual(REASONING_OPTIONS);
+    expect(labels.default).toBe("Leave it to the first mate");
+    expect(labels.xhigh).toBe("Extra high");
+  });
+
+  it("is a settings form bb accepts", () => {
+    const { bb } = createFakePluginHost({ pluginId: "firstmate-crew" });
+    expect(() => bb.settings.define(SETTINGS)).not.toThrow();
+  });
+});
+
+describe("refreshMs", () => {
+  it("is the setting in milliseconds", () => {
+    expect(refreshMs(settings({ refreshSeconds: 30 }))).toBe(30_000);
+  });
+
+  it("falls back to ten seconds for a value below one second or not a number", () => {
+    expect(refreshMs(settings({ refreshSeconds: 0 }))).toBe(10_000);
+    expect(refreshMs(settings({ refreshSeconds: 0.5 }))).toBe(10_000);
+    expect(refreshMs(settings({ refreshSeconds: Number.NaN }))).toBe(10_000);
   });
 });
 

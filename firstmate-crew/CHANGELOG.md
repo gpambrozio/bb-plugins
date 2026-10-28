@@ -5,6 +5,42 @@ Notable changes to `firstmate`. The other plugins in this repository version sep
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.7.0
+
+### Changed
+
+- **Needs bb 0.47 or newer.** On an older bb this version is not offered as an update, and FirstMate
+  stays on the version you have.
+- **The board keeps itself up to date through bb.** A worker that moves to or from the first mate now
+  appears on or leaves the board at once. The regular refresh runs once for all open boards, in every
+  window, and stops when the last one closes, and after a dropped connection the board catches up on its
+  own. On bb 0.48 a board you cannot see, because its panel is closed or another tab is showing, does not
+  reload until you look at it again.
+- **Autocompact waits as long as the provider's cache lasts, when bb knows.** bb can work out when a
+  conversation's prompt cache expires (for Claude Code and Pi, above 100,000 tokens, with bb's "compact
+  expired cache" experiment on). FirstMate then compacts at that moment instead of after your idle
+  minutes, which still apply everywhere else.
+- **A message to a thread that is due for autocompact compacts it first.** A watch note, your words from
+  the board or the command line, or a steer to a worker, reaching a thread that FirstMate would compact
+  right then, now has bb compact it and deliver the message once that is done, so the message does not
+  pay for the whole expired conversation. If bb says it will not compact it then, the message goes as
+  before; if the request fails in a way that leaves it unclear whether bb took it, you see the error
+  rather than the message arriving twice.
+- **Watches find their commands where bb finds its own:** your login shell's PATH, Homebrew,
+  `~/.local/bin`, mise, asdf and Volta, so the pull request watch finds `gh` however bb was started.
+- **Crew reasoning reads plainly in the settings:** "Leave it to the first mate", Low, Medium, High,
+  Extra high and Max.
+- The FirstMate tab has a ship for its icon.
+
+### Added
+
+- **The first mate links the exact message a worker reported in.** When it tells you what a worker
+  found, finished or failed at, its message carries a link that opens the worker's thread at that
+  message. It also rereads a single message rather than a worker's whole log. If you have edited your
+  charter, the board offers the new one to compare, as for any charter change.
+- **The first mate can start a worker with a model's own agent options**, such as a faster mode, the
+  ones bb's model picker offers for that model.
+
 ## 0.6.0
 
 ### Added

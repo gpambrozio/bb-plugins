@@ -14,7 +14,8 @@
 import { CREW_METADATA, type BacklogItem } from "../shared/types";
 import { metadataText } from "./fleet";
 import { readBacklog } from "./home";
-import { activeHome, askMate, resolveMate, type MateDeps } from "./mate";
+import { sendCompactingIfDue } from "./compact-first";
+import { activeHome, askMate, compactFirstDeps, resolveMate, type MateDeps } from "./mate";
 import type { ThreadInfo } from "./ports";
 import { TEMPLATES, message } from "./templates";
 
@@ -27,9 +28,10 @@ async function requireCrew(deps: MateDeps, threadId: string): Promise<ThreadInfo
   return thread;
 }
 
+/** Steers the crewmate's turn, or, when it is idle and autocompact would compact it now, compacts it first. */
 export async function steerCrew(deps: MateDeps, threadId: string, text: string): Promise<void> {
   await requireCrew(deps, threadId);
-  await deps.threads.send(threadId, text, "steer");
+  await sendCompactingIfDue(compactFirstDeps(deps), threadId, "steer", (mode) => deps.threads.send(threadId, text, mode));
 }
 
 export async function interruptCrew(deps: MateDeps, threadId: string): Promise<void> {

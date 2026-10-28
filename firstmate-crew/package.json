@@ -1,6 +1,6 @@
 {
   "name": "@gpambrozio/bb-plugin-firstmate-crew",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "license": "MIT",
   "author": "gpambrozio (https://github.com/gpambrozio)",
   "homepage": "https://github.com/gpambrozio/bb-plugins/tree/main/firstmate-crew#readme",
@@ -14,8 +14,8 @@
   },
   "type": "module",
   "engines": {
-    "bb": ">=0.46",
-    "bbPluginSdk": ">=0.6.37"
+    "bb": ">=0.47",
+    "bbPluginSdk": ">=0.6.75"
   },
   "scripts": {
     "test": "vitest run",
@@ -30,6 +30,7 @@
     "app.tsx",
     "app/",
     "components/",
+    "icons/",
     "lib/",
     "hooks/",
     "templates/",
@@ -43,19 +44,22 @@
     "name": "FirstMate Crew",
     "description": "Hand one agent your to-do list and it runs a crew of worker threads, each in its own git worktree, until the work lands.",
     "branding": {
-      "icon": "Ship"
+      "icon": "Ship",
+      "experimental_icons": {
+        "ship": "./icons/ship.svg"
+      }
     },
     "server": "./server.ts",
     "app": "./app.tsx"
   },
   "dependencies": {
+    "@get-bb/plugin-sdk": "0.6.94",
     "@radix-ui/react-checkbox": "^1.3.7",
     "@radix-ui/react-collapsible": "^1.1.20",
     "@radix-ui/react-slot": "^1.3.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@get-bb/plugin-sdk": "0.6.37",
     "@pierre/diffs": "^1.2.9",
     "@radix-ui/react-alert-dialog": "^1.1.19",
     "@radix-ui/react-context-menu": "^2.3.3",

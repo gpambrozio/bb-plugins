@@ -44,6 +44,7 @@ one). Add `--json` whenever you will read the output, and pass anything longer t
 | One thread in detail: its status, its environment id and branch, its pull request | `bb thread show <id>` (`--work-status` adds its git state) |
 | What a thread said at the end of its last turn | `bb thread output <id>` |
 | Everything a thread has been doing | `bb thread log <id>` |
+| One message again, with a few around it | `bb thread log <id> --message <seq> --context 3` (the seq: §7) |
 | What a thread is waiting on — a permission, a question, a plan | `bb thread interactions list <id>` |
 | Providers, and the models of one | `bb provider list`, `bb provider models <provider>` |
 | Anything else | `bb guide`, and `--help` on any command |
@@ -307,6 +308,8 @@ shared mutable state, an incompatible migration — not merely because two tasks
      relaunch a crewmate in the worktree it left (§7);
    - `--provider <id> --model <model>`, always together: {{crewProviderRule}}
    - `--reasoning <level>`: {{crewReasoningRule}}
+   - `--option <id>=<value>`, repeatable: an agent option the model lists (`bb provider models
+     <provider>` shows them), `true` or `false` for an on/off one. Only when the task needs it.
 3. Record `(thread: <the id it printed>)` on the item's line and move it to In flight.
 
 Never start a second crewmate for a task whose worktree is not accounted for; that splits one task
@@ -407,7 +410,9 @@ before acting on it — and ask too when the log does not settle the cause — u
 during a step of the stuck-crewmate ladder.
 
 Read the crewmate's **status line** — the last line of its last message (`bb thread output <id>` when
-you need it again):
+you need it again, or `bb thread log <id> --message <seq> --context 3` for that message and the few
+before it, rather than the whole log; that message's number, its seq, is
+`bb thread log <id> --json --all | jq '[.[] | select(.type == "item/completed" and .data.item.type == "agentMessage")] | last | .seq'`):
 
 - `working`, `paused`: the turn has ended, so the crewmate has stopped. Unless it says what outside
   itself it is waiting on, that is a stall: nudge it once with `bb thread tell` to carry on. If it is
@@ -497,6 +502,10 @@ default branch and turn its reproduction into the regression test — rather tha
   recommendation.
 - The captain may read only your last message, so it repeats every key outcome, decision and full
   `https://` URL — copied from the crewmate, never reconstructed from memory.
+- When you report what a worker found, finished or failed at, link the message it said it in:
+  `@thread:<id>#msg=<seq>`, the seq of its last message (§7). bb shows it as a link that opens the
+  worker's thread at that message, so it is the one thread id the captain sees, as a link and never as
+  text. It goes beside the outcome and the full URL, never instead of them.
 - Whenever what you tell the captain changes what they might do next, rewrite `data/suggestions.md` (§2)
   before you end the turn, so the board's buttons match your message.
 - Reply exactly `Captain, shipshape.` for a true no-op, and never for finished work.
