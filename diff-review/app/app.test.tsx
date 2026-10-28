@@ -24,6 +24,23 @@ const pierre = vi.hoisted(() => ({ renders: [] as { patch: string; annotations: 
 vi.mock("@pierre/diffs/react", async () => {
   const { useEffect } = await import("react");
   return {
+  File: (props: {
+    file: { name: string; contents: string };
+    lineAnnotations: { lineNumber: number; metadata: unknown }[];
+    renderAnnotation(annotation: unknown): ReactNode;
+    options: { onGutterUtilityClick(range: { start: number; end: number; side: string }): void };
+  }) => (
+    <div data-testid="file" data-name={props.file.name}>
+      <button type="button" onClick={() => props.options.onGutterUtilityClick({ start: 1, end: 1, side: "additions" })}>
+        file gutter +
+      </button>
+      {props.lineAnnotations.map((annotation) => (
+        <div key={annotation.lineNumber} data-testid={`file-annotation-${annotation.lineNumber}`}>
+          {props.renderAnnotation(annotation)}
+        </div>
+      ))}
+    </div>
+  ),
   PatchDiff: (props: {
     patch: string;
     lineAnnotations: { side: string; lineNumber: number; metadata: unknown }[];
@@ -303,6 +320,43 @@ describe("the staged, unstaged and range views", () => {
     render({ getReview: () => ({ ...VIEW, target: { kind: "staged" }, viewable: false }) });
     await screen.findByTestId("patch");
     expect(screen.queryByRole("checkbox", { name: "Viewed src/a.ts" })).toBeNull();
+  });
+});
+
+describe("the Files view", () => {
+  const FILES = { ...VIEW, target: { kind: "files" as const }, files: [], viewable: false, threads: [thread({ id: "aaaaaa000020", body: "Odd name", filePath: "src/util.ts", startLine: 1, endLine: 1, anchorContent: "export const x = 1;" })] };
+
+  it("lists files with comments, opens one with its threads, and comments on its lines", async () => {
+    const slot = render({
+      getReview: () => FILES,
+      readFile: () => ({ path: "src/util.ts", content: "export const x = 1;\n", reason: null, revision: "sha-1" }),
+      createThread: (input: never) => ({ thread: thread({ id: "aaaaaa000021", body: (input as { body: string }).body, filePath: "src/util.ts", startLine: 1, endLine: 1 }) }),
+    });
+    expect(screen.queryByRole("button", { name: "AI review" })).toBeNull();
+    fireEvent.click(await screen.findByRole("button", { name: /src\/util\.ts.*1 comment thread/ }));
+    expect(await screen.findByTestId("file")).toBeTruthy();
+    expect(within(screen.getByTestId("file-annotation-1")).getByText("Odd name")).toBeTruthy();
+    fireEvent.click(screen.getByText("file gutter +"));
+    fireEvent.change(screen.getByPlaceholderText(/^Leave a comment\. Markdown works/), { target: { value: "Rename x" } });
+    fireEvent.click(screen.getByRole("button", { name: "Comment" }));
+    await waitFor(() =>
+      expect(slot.inspection.rpcCalls.find((call) => call.method === "createThread")?.input).toMatchObject({
+        filePath: "src/util.ts",
+        side: "new",
+        startLine: 1,
+        endLine: 1,
+        anchorContent: "export const x = 1;",
+        body: "Rename x",
+        fileRevision: "sha-1",
+      }),
+    );
+  });
+
+  it("searches the workspace for a file", async () => {
+    const slot = render({ getReview: () => ({ ...FILES, threads: [] }), searchFiles: () => ({ paths: ["lib/a.ts"], truncated: false }) });
+    fireEvent.change(await screen.findByRole("textbox", { name: "Find a file" }), { target: { value: "a.ts" } });
+    expect(await screen.findByRole("button", { name: "lib/a.ts" })).toBeTruthy();
+    expect(slot.inspection.rpcCalls.find((call) => call.method === "searchFiles")!.input).toEqual({ threadId: "thr_1", query: "a.ts" });
   });
 });
 

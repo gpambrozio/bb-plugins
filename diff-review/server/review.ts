@@ -6,6 +6,8 @@
  * thread whose last send went to the thread it runs in, as its `bb` reports that (AGENTS.md, "A plugin
  * CLI command knows its caller" — the id is a claim, not an identity).
  */
+import { posix } from "node:path";
+
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import {
@@ -16,6 +18,7 @@ import {
   REVIEWS_CHANNEL,
   type RealtimeSignal,
   type ReviewSummary,
+  type WorkspaceFile,
   type ReviewThread,
   type Run,
   type ReviewView,
@@ -80,6 +83,12 @@ const PROVIDER_NAMES: Record<string, string> = {
   gemini: "Gemini",
 };
 
+/** The most paths the Files view's search lists, and the largest file it shows, in bytes. */
+const FILE_SEARCH_LIMIT = 200;
+const FILE_VIEW_MAX_BYTES = 1024 * 1024;
+
+type Environment = Awaited<ReturnType<BbPluginApi["sdk"]["environments"]["get"]>>;
+
 /** The longest range a thread may cover, in lines. */
 const MAX_RANGE_LINES = 2_000;
 
@@ -126,7 +135,10 @@ export class ReviewService {
       let target = resolveTarget(request, refs.defaultBase);
       const settings = await this.settings();
       const patterns = await ignorePatterns(this.bb.sdk, this.bb.log, environment, settings.ignorePatterns, settings.readIgnoreFiles);
-      let diff = await loadDiff(this.sources, this.bb.log, environment, target, patterns, ignoreWhitespace);
+      let diff =
+        target.kind === "files"
+          ? { files: [], ignoredPaths: [], truncated: false, mergeBaseRef: null, headRef: null, viewable: false }
+          : await loadDiff(this.sources, this.bb.log, environment, target, patterns, ignoreWhitespace);
       if (autoTarget && target.kind === "uncommitted" && diff.files.length === 0 && refs.defaultBase !== null) {
         const branch: Target = { kind: "branch", base: refs.defaultBase };
         const committed = await loadDiff(this.sources, this.bb.log, environment, branch, patterns, ignoreWhitespace);
@@ -532,6 +544,43 @@ export class ReviewService {
     return { target, route: reviewRoute(this.bb.pluginId, address), inDiff };
   }
 
+  /** The Files view's search: workspace files whose path matches `query`, best first. */
+  async searchFiles(threadId: string, query: string): Promise<{ paths: string[]; truncated: boolean }> {
+    const environment = await this.checkout(threadId);
+    const result = await this.bb.sdk.files.listPaths({ hostId: environment.hostId, path: environment.path, query, limit: FILE_SEARCH_LIMIT, includeFiles: true, includeDirectories: false });
+    const prefix = `${environment.path.replace(/\/$/, "")}/`;
+    return { paths: result.paths.map((entry) => (entry.path.startsWith(prefix) ? entry.path.slice(prefix.length) : entry.path)), truncated: result.truncated };
+  }
+
+  /** One workspace file as the Files view shows it: its text, or why there is none. */
+  async readWorkspaceFile(threadId: string, path: string): Promise<WorkspaceFile> {
+    const environment = await this.checkout(threadId);
+    const absolute = posix.join(environment.path, path);
+    if (!absolute.startsWith(`${environment.path.replace(/\/$/, "")}/`)) throw new ReviewError("That path is outside the workspace.", "invalid_place");
+    let file;
+    try {
+      file = await this.bb.sdk.files.read({ hostId: environment.hostId, path: absolute });
+    } catch (error) {
+      throw new ReviewError(`Could not read ${path}: ${error instanceof Error ? error.message : String(error)}`, "changed");
+    }
+    const bytes = file.contentEncoding === "base64" ? Buffer.from(file.content, "base64") : Buffer.from(file.content, "utf8");
+    if (bytes.byteLength > FILE_VIEW_MAX_BYTES) return { path, content: null, reason: "This file is too large to show here.", revision: file.sha256 };
+    if (bytes.includes(0)) return { path, content: null, reason: "Binary file; nothing to comment on.", revision: file.sha256 };
+    return { path, content: bytes.toString("utf8"), reason: null, revision: file.sha256 };
+  }
+
+  private async checkout(threadId: string): Promise<Environment & { path: string }> {
+    let environment;
+    try {
+      environment = await workspaceOf(this.bb.sdk, threadId);
+    } catch (error) {
+      if (error instanceof ReviewUnavailable) throw new ReviewError(error.message, "diff_unavailable");
+      throw error;
+    }
+    if (environment.path === null) throw new ReviewError("This workspace has no checkout.", "diff_unavailable");
+    return environment as Environment & { path: string };
+  }
+
   counts(environmentId: string | null): { open: number; total: number } {
     return this.store.threadCounts(environmentId);
   }
@@ -583,7 +632,7 @@ export function targetFromKey(key: string): Target {
   const value = rest.join(":");
   if (kind === "branch" || kind === "all") return { kind, base: value };
   if (kind === "commit") return { kind: "commit", sha: value };
-  if (kind === "staged" || kind === "unstaged") return { kind };
+  if (kind === "staged" || kind === "unstaged" || kind === "files") return { kind };
   if (kind === "range") {
     const range = parseRange(value);
     if (range !== null) return range;

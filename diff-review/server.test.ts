@@ -245,6 +245,12 @@ async function setup(options: Setup = {}) {
           writes.push(path);
           return { ok: true } as never;
         },
+        listPaths: async ({ path, query }: { path: string; query?: string }) => ({
+          paths: Object.keys(files)
+            .filter((file) => file.startsWith(`${path}/`) && (query === undefined || file.includes(query)))
+            .map((file) => ({ kind: "file", name: file.split("/").at(-1)!, path: file, positions: [], score: 1 })),
+          truncated: false,
+        }) as never,
         remove: async ({ path }: { path: string }) => {
           delete files[path];
           writes.push(`rm ${path}`);
@@ -511,6 +517,23 @@ describe("the staged, unstaged and range views", () => {
     const { harness } = await setup();
     const out = await harness.behavior.runCli(["open", "--range", "main...feature"], { threadId: THREAD });
     expect(out.stdout).toContain("the range main...feature");
+  });
+});
+
+describe("the Files view", () => {
+  it("searches the workspace's files and reads one, with its hash as its revision", async () => {
+    const { rpc } = await setup({ files: { "/work/repo/src/util.ts": "export const x = 1;\n", "/work/repo/bin.dat": "a\u0000b" } });
+    expect(await rpc("searchFiles", { threadId: THREAD, query: "util" })).toEqual({ paths: ["src/util.ts"], truncated: false });
+    expect(await rpc("readFile", { threadId: THREAD, path: "src/util.ts" })).toEqual({ path: "src/util.ts", content: "export const x = 1;\n", reason: null, revision: sha("export const x = 1;\n") });
+    expect(await rpc("readFile", { threadId: THREAD, path: "bin.dat" })).toMatchObject({ content: null, reason: "Binary file; nothing to comment on." });
+    await expect(rpc("readFile", { threadId: THREAD, path: "../etc/passwd" })).rejects.toMatchObject({ code: "invalid" });
+  });
+
+  it("keeps the Files view's comments in a review of their own, with no diff", async () => {
+    const { view } = await setup();
+    const files = await view({ kind: "files" });
+    expect(files).toMatchObject({ ok: true, target: { kind: "files" }, files: [], viewable: false });
+    expect(files.sessionId).not.toBe((await view()).sessionId);
   });
 });
 

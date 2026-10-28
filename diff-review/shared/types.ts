@@ -64,8 +64,12 @@ const hostTargets = [
   z.object({ kind: z.literal("range"), from: revisionSchema, to: revisionSchema, symmetric: z.boolean() }).strict(),
 ] as const;
 
+/** Any file of the working tree, diff or not: comments on the file's own lines (the Files view). */
+const filesTarget = z.object({ kind: z.literal("files") }).strict();
+
 export const targetRequestSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("uncommitted") }).strict(),
+  filesTarget,
   z.object({ kind: z.literal("branch"), base: z.string().min(1).max(256).optional() }).strict(),
   z.object({ kind: z.literal("all"), base: z.string().min(1).max(256).optional() }).strict(),
   z.object({ kind: z.literal("commit"), sha: z.string().regex(/^[0-9a-f]{7,64}$/i) }).strict(),
@@ -76,6 +80,7 @@ export type TargetRequest = z.infer<typeof targetRequestSchema>;
 /** A view with every part filled in; the key of a review session. */
 export const targetSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("uncommitted") }).strict(),
+  filesTarget,
   z.object({ kind: z.literal("branch"), base: z.string().min(1).max(256) }).strict(),
   z.object({ kind: z.literal("all"), base: z.string().min(1).max(256) }).strict(),
   z.object({ kind: z.literal("commit"), sha: z.string().regex(/^[0-9a-f]{7,64}$/i) }).strict(),
@@ -315,6 +320,19 @@ export const reviewSummarySchema = z
   .strict();
 export type ReviewSummary = z.infer<typeof reviewSummarySchema>;
 
+/** A workspace file as the Files view shows it. */
+export const workspaceFileSchema = z
+  .object({
+    path: z.string(),
+    /** Null for a binary or too-large file, with `reason` saying which. */
+    content: z.string().nullable(),
+    reason: z.string().nullable(),
+    /** The content's hash, as a thread on the file keeps it. */
+    revision: z.string(),
+  })
+  .strict();
+export type WorkspaceFile = z.infer<typeof workspaceFileSchema>;
+
 /** The realtime channel every review change is also told on, for the Reviews page and its badge. */
 export const REVIEWS_CHANNEL = "reviews";
 
@@ -345,6 +363,7 @@ export function targetKey(target: Target): string {
       return `commit:${target.sha.toLowerCase()}`;
     case "staged":
     case "unstaged":
+    case "files":
       return target.kind;
     case "range":
       return `range:${rangeText(target)}`;
@@ -368,6 +387,8 @@ export function describeTarget(target: Target): string {
       return "unstaged changes (the index against the working tree)";
     case "range":
       return `the range ${rangeText(target)}`;
+    case "files":
+      return "files of the working tree as they are now (comments on their own lines, not on a diff)";
   }
 }
 

@@ -105,6 +105,8 @@ export default async function plugin(bb: BbPluginApi) {
       await edits.revert(input);
       return { ok: true as const };
     },
+    searchFiles: ({ threadId, query }) => service.searchFiles(threadId, query),
+    readFile: ({ threadId, path }) => service.readWorkspaceFile(threadId, path),
     listReviews: async () => ({ reviews: await service.listReviews() }),
     reviewCounts: ({ environmentId }) => service.counts(environmentId ?? null),
     saveViewState: ({ threadId, sessionId, state }) => {

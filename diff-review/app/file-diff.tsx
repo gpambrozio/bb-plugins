@@ -36,7 +36,7 @@ type Annotation =
   | { kind: "threads"; threads: { thread: ReviewThread; placement: Placement }[] }
   | { kind: "draft"; side: Side; startLine: number; endLine: number };
 
-interface LineRange {
+export interface LineRange {
   side: Side;
   startLine: number;
   endLine: number;
@@ -409,7 +409,7 @@ function ThreadCount({ threads }: { threads: readonly ReviewThread[] }) {
 }
 
 /** A new comment on lines: what it is about, and its editor, bound to its draft. */
-function LineDraftBox({
+export function LineDraftBox({
   filePath,
   fileRevision = null,
   range,

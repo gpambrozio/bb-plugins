@@ -28,6 +28,7 @@ import { describeLocation, GENERAL_PATH, targetRequestSchema, type ReviewThread,
 import { ReviewActionsProvider, useActions } from "./actions";
 import { useReviewCommands } from "./commands";
 import { carryCurrent, findInFiles, type FindMatch } from "./find";
+import { FilesView } from "./files-view";
 import { FindBar } from "./find-bar";
 import { GoToDialog, type GoToEntry } from "./goto-dialog";
 import { RangeDialog } from "./range-dialog";
@@ -119,7 +120,7 @@ export function pickerValue(target: TargetRequest): string {
 export function fromPicker(value: string): TargetRequest {
   if (value.startsWith("commit:")) return { kind: "commit", sha: value.slice("commit:".length) };
   if (value.startsWith("range:")) return parseRange(value.slice("range:".length)) ?? { kind: "uncommitted" };
-  if (value === "branch" || value === "all" || value === "staged" || value === "unstaged") return { kind: value };
+  if (value === "branch" || value === "all" || value === "staged" || value === "unstaged" || value === "files") return { kind: value };
   return { kind: "uncommitted" };
 }
 
@@ -333,6 +334,8 @@ function ReadyPanel({
   const orphanPaths = [...draftPaths].filter((path) => !inView.has(path));
   const additions = files.reduce((sum, file) => sum + file.additions, 0);
   const deletions = files.reduce((sum, file) => sum + file.deletions, 0);
+  // "Any file": the workspace's files, not a diff.
+  const browsing = view.target.kind === "files";
   const fileCount = onlyCommented ? `${files.length} of ${view.files.length} files` : `${files.length} file${files.length === 1 ? "" : "s"}`;
 
   // A place in the diff to bring into view: a find match, a "Go to" pick, the next comment.
@@ -502,26 +505,31 @@ function ReadyPanel({
               </SelectItem>
             ))}
             {orphanCommit === null ? null : <SelectItem value={`commit:${orphanCommit.sha}`}>{targetLabel(orphanCommit)}</SelectItem>}
+            <SelectItem value="files">{targetLabel({ kind: "files" })}</SelectItem>
             <SelectItem value="staged">{targetLabel({ kind: "staged" })}</SelectItem>
             <SelectItem value="unstaged">{targetLabel({ kind: "unstaged" })}</SelectItem>
             {view.target.kind === "range" ? <SelectItem value={`range:${rangeText(view.target)}`}>{targetLabel(view.target)}</SelectItem> : null}
             <SelectItem value={PICK_RANGE}>A range…</SelectItem>
           </SelectContent>
         </Select>
-        <Button type="button" variant="ghost" size="sm" onClick={toggleStyle} aria-pressed={diffStyle === "split"}>
-          {diffStyle === "split" ? "Split" : "Unified"}
-        </Button>
-        <label className="flex cursor-pointer items-center gap-1.5 px-1 text-xs">
-          <Switch checked={onlyCommented} onCheckedChange={toggleOnlyCommented} />
-          Only files with comments
-        </label>
-        <label className="flex cursor-pointer items-center gap-1.5 px-1 text-xs">
-          <Switch checked={ignoreWhitespace} onCheckedChange={onIgnoreWhitespace} />
-          Hide whitespace
-        </label>
-        <Button type="button" variant="ghost" size="sm" onClick={openFind} aria-label="Find in the diff">
-          <Icon name="Search" className="size-4" />
-        </Button>
+        {browsing ? null : (
+          <>
+          <Button type="button" variant="ghost" size="sm" onClick={toggleStyle} aria-pressed={diffStyle === "split"}>
+            {diffStyle === "split" ? "Split" : "Unified"}
+          </Button>
+          <label className="flex cursor-pointer items-center gap-1.5 px-1 text-xs">
+            <Switch checked={onlyCommented} onCheckedChange={toggleOnlyCommented} />
+            Only files with comments
+          </label>
+          <label className="flex cursor-pointer items-center gap-1.5 px-1 text-xs">
+            <Switch checked={ignoreWhitespace} onCheckedChange={onIgnoreWhitespace} />
+            Hide whitespace
+          </label>
+          <Button type="button" variant="ghost" size="sm" onClick={openFind} aria-label="Find in the diff">
+            <Icon name="Search" className="size-4" />
+          </Button>
+          </>
+        )}
         <Button type="button" variant="ghost" size="sm" onClick={onReload} disabled={refreshing} aria-label="Reload the diff">
           <Icon name={refreshing ? "Spinner" : "ArrowReloadHorizontal"} className="size-4" />
         </Button>
@@ -529,10 +537,12 @@ function ReadyPanel({
           <Icon name="MessageSquarePlus" className="size-4" />
           Comment on the diff
         </Button>
-        <Button type="button" variant="ghost" size="sm" className="gap-1" onClick={() => setReviewing(true)}>
-          <Icon name="Bot" className="size-4" />
-          AI review
-        </Button>
+        {browsing ? null : (
+          <Button type="button" variant="ghost" size="sm" className="gap-1" onClick={() => setReviewing(true)}>
+            <Icon name="Bot" className="size-4" />
+            AI review
+          </Button>
+        )}
         {view.threads.length > 0 || view.runs.length > 0 ? (
           <Button type="button" variant="ghost" size="sm" className="gap-1" onClick={() => setClearing(true)}>
             <Icon name="Trash2" className="size-4" />
@@ -563,6 +573,18 @@ function ReadyPanel({
 
       <RunsList runs={view.runs} threads={view.threads} onClosed={putRun} />
 
+      {browsing ? (
+        <>
+          {general.length > 0 ? (
+            <section className="flex flex-col gap-2 border-b border-border px-3 py-2">
+              {general.map((thread) => (
+                <ThreadCard key={thread.id} thread={thread} />
+              ))}
+            </section>
+          ) : null}
+          <FilesView threadId={threadId} threads={view.threads} />
+        </>
+      ) : (
       <div ref={setScrollRoot} className="min-h-0 flex-1 overflow-y-auto">
         <p className="px-3 py-2 text-xs text-muted-foreground">
           {fileCount} · +{additions} −{deletions}
@@ -632,6 +654,7 @@ function ReadyPanel({
           />
         ))}
       </div>
+      )}
 
       <SendDialog
         open={sending}

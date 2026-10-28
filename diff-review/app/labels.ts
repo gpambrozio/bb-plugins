@@ -38,6 +38,8 @@ export function targetLabel(target: Target): string {
       return "Unstaged changes";
     case "range":
       return `Range ${rangeText(target)}`;
+    case "files":
+      return "Any file";
   }
 }
 

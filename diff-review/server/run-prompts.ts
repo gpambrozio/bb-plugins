@@ -52,6 +52,8 @@ export function gitCommandFor(target: Target): string {
       return "`git diff`, plus the untracked files `git status --porcelain` lists";
     case "range":
       return `\`git diff ${rangeText(target)}\``;
+    case "files":
+      return "the files themselves (there is no diff)";
   }
 }
 

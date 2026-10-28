@@ -9,6 +9,7 @@ import {
   ANCHOR_MAX_CHARS,
   BODY_MAX_CHARS,
   reviewSummarySchema,
+  workspaceFileSchema,
   reviewThreadSchema,
   executionSchema,
   REVIEW_FOCUSES,
@@ -204,6 +205,14 @@ export const rpcContract = defineRpcContract({
       })
       .strict(),
     output: z.object({ ok: z.literal(true) }).strict(),
+  },
+  searchFiles: {
+    input: z.object({ threadId: id, query: z.string().max(256) }).strict(),
+    output: z.object({ paths: z.array(z.string()), truncated: z.boolean() }).strict(),
+  },
+  readFile: {
+    input: z.object({ threadId: id, path: z.string().min(1).max(4096) }).strict(),
+    output: workspaceFileSchema,
   },
   listReviews: {
     input: z.object({}).strict(),
