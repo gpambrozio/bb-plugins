@@ -61,6 +61,8 @@ interface Setup {
   duringSpawn?: (threadId: string) => Promise<void>;
   /** More fields in bb's status answer, as a later bb may add (a time stamp, say). */
   statusExtra?: () => Record<string, unknown>;
+  /** The host entry's revert refuses with this message. */
+  hostRevertRefuses?: string;
   /** Called before a write lands: a string is what someone else wrote meanwhile (bb answers a conflict). */
   beforeWrite?: (path: string) => string | undefined;
   /** Files as committed at HEAD, by absolute path, for `files.read` with `ref`. */
@@ -155,6 +157,10 @@ async function setup(options: Setup = {}) {
     // The plugin's host entry: git on the workspace's machine, for staged, unstaged and ranges.
     experimental_callHostRpc: (call) => {
       hostCalls.push(call);
+      if (call.method === "revert") {
+        if (options.hostRevertRefuses !== undefined) throw new Error(options.hostRevertRefuses);
+        return { ok: true };
+      }
       if (call.method !== "diff") throw new Error(`no host method ${call.method}`);
       const { spec } = call.input as { spec: { kind: string } };
       if (spec.kind === "range" && (spec as { from: string }).from === "nope") throw new Error("Unknown revision 'nope'.");
@@ -492,22 +498,22 @@ describe("changing the workspace from the tab", () => {
     expect((await view()).threads[0]!.status).toBe("open");
   });
 
-  it("reverts a hunk, or a whole file back to HEAD, only at the revision the tab showed", async () => {
-    const { rpc, files, writes } = await setup({
-      files: { "/work/repo/src/a.ts": "const a = 1;\nconst b = 3;\n" },
-      headFiles: { "/work/repo/src/a.ts": "const a = 1;\nconst b = 2;\n" },
-    });
+  it("reverts on the workspace's machine, sending the reviewed revision and patch, never writing through bb's files", async () => {
+    const { rpc, hostCalls, writes } = await setup();
     await expect(rpc("revertChanges", { threadId: THREAD, path: "src/a.ts", revision: "stale", hunks: [0] })).rejects.toMatchObject({ code: "conflict" });
     await rpc("revertChanges", { threadId: THREAD, path: "src/a.ts", revision: "rev-src/a.ts", hunks: [0] });
-    expect(files["/work/repo/src/a.ts"]).toBe("const a = 1;\nconst b = 2;\n");
-    files["/work/repo/src/a.ts"] = "changed again\n";
-    await rpc("revertChanges", { threadId: THREAD, path: "src/a.ts", revision: "rev-src/a.ts", hunks: null });
-    expect(files["/work/repo/src/a.ts"]).toBe("const a = 1;\nconst b = 2;\n");
-    // A new file is removed.
-    files["/work/repo/big.txt"] = "x";
+    expect(hostCalls.at(-1)).toEqual({ method: "revert", hostId: "host_1", input: { root: "/work/repo", path: "src/a.ts", revision: "rev-src/a.ts", hunks: [0], patch: PATCH } });
     await rpc("revertChanges", { threadId: THREAD, path: "big.txt", revision: "rev-big-1", hunks: null });
-    expect(files["/work/repo/big.txt"]).toBeUndefined();
-    expect(writes).toEqual(["/work/repo/src/a.ts", "/work/repo/src/a.ts", "rm /work/repo/big.txt"]);
+    expect(hostCalls.at(-1)).toMatchObject({ method: "revert", input: { path: "big.txt", hunks: null, patch: null } });
+    expect(writes).toEqual([]);
+  });
+
+  it("passes the host's refusal on as a conflict", async () => {
+    const { rpc } = await setup({ hostRevertRefuses: "src/a.ts changed since the diff was loaded; reload and try again." });
+    await expect(rpc("revertChanges", { threadId: THREAD, path: "src/a.ts", revision: "rev-src/a.ts", hunks: null })).rejects.toMatchObject({
+      code: "conflict",
+      message: expect.stringContaining("changed since the diff was loaded"),
+    });
   });
 });
 

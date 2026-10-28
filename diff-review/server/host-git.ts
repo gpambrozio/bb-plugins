@@ -10,6 +10,15 @@ import { hostContract, type HostDiff } from "../shared/host-contract";
 
 export type HostGit = (hostId: string, root: string, spec: HostDiffSpec, ignoreWhitespace: boolean) => Promise<HostDiff>;
 
+export type HostRevert = (hostId: string, input: { root: string; path: string; revision: string; hunks: number[] | null; patch: string | null }) => Promise<void>;
+
+export function createHostRevert(bb: BbPluginApi): HostRevert {
+  const client = bb.hosts.experimental_client({ contract: hostContract });
+  return async (hostId, input) => {
+    await client.call("revert", input, { hostId });
+  };
+}
+
 export function createHostGit(bb: BbPluginApi): HostGit {
   const client = bb.hosts.experimental_client({ contract: hostContract });
   return (hostId, root, spec, ignoreWhitespace) => client.call("diff", { root, spec, ignoreWhitespace }, { hostId });

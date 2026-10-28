@@ -87,6 +87,16 @@ describe("reverting hunks", () => {
     expect(replaceLines("a\r\nb\nc", 3, 3, "c", "C\nD")).toBe("a\r\nb\nC\nD");
   });
 
+  it("puts back a removed line's own ending, CRLF or LF, in a partial revert", () => {
+    // Two hunks; only the first is reverted. Its old line ended with CRLF, its new one with LF.
+    const now = "a\nNEW\nc\nd\ne\nf\ng\nh\nTAIL\n";
+    const patch = ["@@ -1,3 +1,3 @@", " a", "-old\r", "+NEW", " c", "@@ -7,3 +7,3 @@", " g", " h", "-tail", "+TAIL", ""].join("\n");
+    expect(revertHunks(now, patch, [0])).toBe("a\nold\r\nc\nd\ne\nf\ng\nh\nTAIL\n");
+    // And an LF line comes back LF in a CRLF file.
+    const crlf = "a\r\nNEW\r\nc\r\n";
+    expect(revertHunks(crlf, ["@@ -1,3 +1,3 @@", " a\r", "-old", "+NEW\r", " c\r", ""].join("\n"), [0])).toBe("a\r\nold\nc\r\n");
+  });
+
   it("keeps the end-of-file newline as the old side had it", () => {
     const patch = ["@@ -1 +1 @@", "-a", "\\ No newline at end of file", "+b", ""].join("\n");
     expect(revertHunks("b\n", patch, [0])).toBe("a");

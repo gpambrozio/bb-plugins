@@ -27,17 +27,18 @@ const UNTRACKED_MAX_BYTES = 512 * 1024;
 
 export class GitError extends Error {}
 
-export type RunGit = (root: string, args: readonly string[], options?: { maxBuffer?: number; allowFailure?: boolean }) => Promise<{ stdout: string; ok: boolean }>;
+/** `bytes`: stdout as latin1, one character per byte, so `Buffer.from(stdout, "latin1")` gives the bytes back. */
+export type RunGit = (root: string, args: readonly string[], options?: { maxBuffer?: number; allowFailure?: boolean; bytes?: boolean }) => Promise<{ stdout: string; ok: boolean }>;
 
 /** Where git is: on PATH, else where macOS and Homebrew put it (a daemon's PATH may be bare). */
 const GIT_CANDIDATES = ["git", "/usr/bin/git", "/opt/homebrew/bin/git", "/usr/local/bin/git"];
 
 export function createRunGit(timeoutMs = 60_000): RunGit {
   let git: string | null = null;
-  const attempt = (file: string, root: string, args: readonly string[], maxBuffer: number) =>
+  const attempt = (file: string, root: string, args: readonly string[], maxBuffer: number, encoding: "utf8" | "latin1") =>
     new Promise<{ stdout: string; code: number | null; missing: boolean; stderr: string }>((resolve) => {
       // Paths as they are, not octal-quoted, whatever the user's git config says.
-      execFile(file, ["-C", root, "-c", "core.quotePath=false", ...args], { encoding: "utf8", maxBuffer, timeout: timeoutMs, killSignal: "SIGKILL", env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", LC_ALL: "C" } }, (error, stdout, stderr) => {
+      execFile(file, ["-C", root, "-c", "core.quotePath=false", ...args], { encoding, maxBuffer, timeout: timeoutMs, killSignal: "SIGKILL", env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", LC_ALL: "C" } }, (error, stdout, stderr) => {
         const code = error === null ? 0 : typeof (error as { code?: unknown }).code === "number" ? ((error as { code: number }).code) : null;
         const overflow = (error as { code?: unknown } | null)?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";
         resolve({ stdout, code: overflow ? -1 : code, missing: (error as { code?: unknown } | null)?.code === "ENOENT", stderr: overflow ? "output too large" : stderr });
@@ -46,7 +47,7 @@ export function createRunGit(timeoutMs = 60_000): RunGit {
   return async (root, args, options = {}) => {
     const maxBuffer = options.maxBuffer ?? DIFF_MAX_BYTES * 2;
     for (const candidate of git === null ? GIT_CANDIDATES : [git]) {
-      const result = await attempt(candidate, root, args, maxBuffer);
+      const result = await attempt(candidate, root, args, maxBuffer, options.bytes === true ? "latin1" : "utf8");
       if (result.missing) continue;
       git = candidate;
       if (result.code === 0) return { stdout: result.stdout, ok: true };

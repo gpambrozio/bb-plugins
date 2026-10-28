@@ -19,7 +19,7 @@ export interface PatchHunk {
   /** Whether the hunk has every line its header counts (a patch cut short has not). */
   complete: boolean;
   /** Its lines in order: unchanged (" "), removed ("-") and added ("+"). */
-  rows: { marker: " " | "-" | "+"; text: string }[];
+  rows: { marker: " " | "-" | "+"; text: string; crlf: boolean }[];
 }
 
 const HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
@@ -31,7 +31,9 @@ export function parseHunks(patch: string): PatchHunk[] {
   let newLeft = 0;
   let lastSide: "old" | "new" | "both" | null = null;
   for (const raw of patch.split("\n")) {
-    const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
+    // A line that ended with CRLF in its file keeps the CR in the patch; it is noted, not lost.
+    const crlf = raw.endsWith("\r");
+    const line = crlf ? raw.slice(0, -1) : raw;
     if (hunk !== null && line.startsWith("\\")) {
       if (lastSide === "old" || lastSide === "both") hunk.oldNoNewline = true;
       if (lastSide === "new" || lastSide === "both") hunk.newNoNewline = true;
@@ -43,7 +45,7 @@ export function parseHunks(patch: string): PatchHunk[] {
       if (marker === " " || (marker === undefined && line === "")) {
         hunk.oldLines.push(text);
         hunk.newLines.push(text);
-        hunk.rows.push({ marker: " ", text });
+        hunk.rows.push({ marker: " ", text, crlf });
         oldLeft--;
         newLeft--;
         lastSide = "both";
@@ -51,14 +53,14 @@ export function parseHunks(patch: string): PatchHunk[] {
       }
       if (marker === "-") {
         hunk.oldLines.push(text);
-        hunk.rows.push({ marker: "-", text });
+        hunk.rows.push({ marker: "-", text, crlf });
         oldLeft--;
         lastSide = "old";
         continue;
       }
       if (marker === "+") {
         hunk.newLines.push(text);
-        hunk.rows.push({ marker: "+", text });
+        hunk.rows.push({ marker: "+", text, crlf });
         newLeft--;
         lastSide = "new";
         continue;
@@ -104,10 +106,15 @@ export function revertHunks(content: string, patch: string, indexes: readonly nu
     for (const row of hunk.rows) {
       if (row.marker === " ") restored.push(current[next++]!);
       else if (row.marker === "+") next++;
-      else restored.push({ text: row.text, eol: (current[next] ?? current[next - 1])?.eol || restored.at(-1)?.eol || usual });
+      // A removed line put back gets the ending it had: CRLF when the patch shows its CR, else LF.
+      else restored.push({ text: row.text, eol: row.crlf ? "\r\n" : "\n" });
     }
     // A hunk that reaches the end of the file also says whether the file ends with a newline.
-    if (reachesEnd && restored.length > 0) restored[restored.length - 1] = { ...restored.at(-1)!, eol: hunk.oldNoNewline ? "" : (current.at(-1)?.eol || usual) };
+    if (reachesEnd && restored.length > 0) {
+      const last = restored.at(-1)!;
+      if (hunk.oldNoNewline) restored[restored.length - 1] = { ...last, eol: "" };
+      else if (last.eol === "") restored[restored.length - 1] = { ...last, eol: usual };
+    }
     lines.splice(at, hunk.newLines.length, ...restored);
   }
   return joinLines(lines);

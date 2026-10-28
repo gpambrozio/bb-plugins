@@ -1,19 +1,18 @@
 /**
  * The two things the Review tab changes in a workspace, both on the user's click: applying a comment's
- * suggested change, and reverting an uncommitted file or some of its hunks. Each reads the file through
- * bb on whichever machine holds the workspace, checks it still reads as the view showed it, and writes
- * it back only if nobody wrote it meanwhile (`expectedSha256`). Nothing here runs git; a revert needs
- * only the file's patch and its `HEAD` version, which bb reads at a revision.
+ * suggested change, read and written through bb with `expectedSha256` once its lines are checked to
+ * read as the view showed them; and reverting an uncommitted file or some of its hunks, done by the
+ * host entry against the revision the tab showed.
  */
 import { posix } from "node:path";
 
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
-import { revertHunks } from "../shared/revert";
 import { bodyParts, replaceLines } from "../shared/suggestion";
 import type { ReviewThread } from "../shared/types";
 import { ReviewUnavailable, workspaceOf } from "./diff";
 import type { GitReads } from "./git";
+import type { HostRevert } from "./host-git";
 import { ReviewError, targetFromKey } from "./review";
 import type { ReviewStore } from "./store";
 
@@ -75,6 +74,7 @@ export class WorkspaceEdits {
     private readonly sdk: Sdk,
     private readonly store: ReviewStore,
     private readonly git: GitReads,
+    private readonly hostRevert: HostRevert,
     /** Tells the workspace's tabs to reload, and the comment thread's that it changed. */
     private readonly changed: (environmentId: string, sessionId: string | null) => void,
   ) {}
@@ -108,47 +108,36 @@ export class WorkspaceEdits {
     });
   }
 
+  /**
+   * Reverts a file of the uncommitted view, or some of its hunks, on the workspace's machine (the host
+   * entry), which acts only while the file still is the revision the tab showed and refuses symlinks
+   * and submodules (`host/revert.ts`). The Git plugin's list is checked first, to refuse early.
+   */
   revert(input: RevertInput): Promise<void> {
     return guarded(async () => {
       const environment = await workspaceOf(this.sdk, input.threadId);
       if (environment.path === null) throw new ReviewError("This workspace has no checkout.", "diff_unavailable");
-      const root = environment.path;
       const files = await this.git.files(environment.id, { type: "uncommitted" }, false);
       if (files.outcome !== "available") throw new ReviewError("bb could not list the workspace's changes.", "diff_unavailable");
       const entry = files.files.find((row) => row.path === input.path);
       if (entry === undefined) throw new ReviewError(`${input.path} has no uncommitted change now.`, "changed");
       if (entry.revision !== input.revision) throw new ReviewError(`${input.path} changed since the diff was loaded; reload and try again.`, "changed");
-      const path = posix.join(root, entry.path);
+      if (entry.changeKind === "renamed" || entry.changeKind === "copied" || entry.changeKind === "type_changed") {
+        throw new ReviewError(`A ${entry.changeKind.replace("_", " ")} file cannot be reverted here; use bb's diff panel or git.`, "invalid_place");
+      }
+      let patch: string | null = null;
       if (input.hunks !== null) {
         if (entry.binary) throw new ReviewError("A binary file has no hunks; revert the whole file.", "invalid_place");
-        const shipped = files.initialPatches.find((patch) => patch.path === entry.path);
-        const patch = shipped ?? (await this.git.patches(environment.id, { type: "uncommitted" }, false, [entry])).patches[0];
-        if (patch === undefined) throw new ReviewError(`bb gave no diff for ${entry.path}.`, "diff_unavailable");
-        if (patch.truncated) throw new ReviewError(`${entry.path}'s diff is cut short, so its hunks cannot be reverted one by one; revert the whole file.`, "invalid_place");
-        const file = await this.sdk.files.read({ hostId: environment.hostId, rootPath: root, path });
-        const next = revertHunks(text(file, entry.path), patch.patch, input.hunks);
-        if (next === null) throw new ReviewError(`${entry.path} changed since the diff was loaded; reload and try again.`, "changed");
-        written(await this.sdk.files.write({ hostId: environment.hostId, rootPath: root, path, content: next, contentEncoding: "utf8", expectedSha256: file.sha256 }), entry.path);
-      } else if (entry.changeKind === "added") {
-        await this.sdk.files.remove({ hostId: environment.hostId, rootPath: root, path });
-      } else if (entry.changeKind === "modified" || entry.changeKind === "deleted") {
-        const committed = await this.sdk.files.read({ hostId: environment.hostId, rootPath: root, path, ref: "HEAD" });
-        const current = entry.changeKind === "deleted" ? null : await this.sdk.files.read({ hostId: environment.hostId, rootPath: root, path });
-        written(
-          await this.sdk.files.write({
-            hostId: environment.hostId,
-            rootPath: root,
-            path,
-            content: committed.content,
-            contentEncoding: committed.contentEncoding === "base64" ? "base64" : "utf8",
-            createParents: true,
-            expectedSha256: current === null ? null : current.sha256,
-          }),
-          entry.path,
-        );
-      } else {
-        // A type change (a file that became a symlink, say) would be written through the link.
-        throw new ReviewError(`A ${entry.changeKind.replace("_", " ")} file cannot be reverted here; use bb's diff panel or git.`, "invalid_place");
+        const shipped = files.initialPatches.find((row) => row.path === entry.path);
+        const loaded = shipped ?? (await this.git.patches(environment.id, { type: "uncommitted" }, false, [entry])).patches[0];
+        if (loaded === undefined) throw new ReviewError(`bb gave no diff for ${entry.path}.`, "diff_unavailable");
+        if (loaded.truncated) throw new ReviewError(`${entry.path}'s diff is cut short, so its hunks cannot be reverted one by one; revert the whole file.`, "invalid_place");
+        patch = loaded.patch;
+      }
+      try {
+        await this.hostRevert(environment.hostId, { root: environment.path, path: entry.path, revision: input.revision, hunks: input.hunks, patch });
+      } catch (error) {
+        throw new ReviewError(error instanceof Error ? error.message : String(error), "changed");
       }
       this.changed(environment.id, null);
     });

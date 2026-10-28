@@ -36,6 +36,22 @@ export const hostDiffSchema = z
 export type HostDiff = z.infer<typeof hostDiffSchema>;
 
 export const hostContract = defineRpcContract({
+  /**
+   * Reverts an uncommitted change in the checkout, only while the file still is the version the tab
+   * showed (`revision`, as bb's Git plugin lists it); see `host/revert.ts`.
+   */
+  revert: {
+    input: z
+      .object({
+        root: z.string().min(1).max(4096),
+        path: z.string().min(1).max(4096),
+        revision: z.string().min(1).max(1024),
+        hunks: z.array(z.number().int().min(0)).min(1).max(1000).nullable(),
+        patch: z.string().max(8 * 1024 * 1024).nullable(),
+      })
+      .strict(),
+    output: z.object({ ok: z.literal(true) }).strict(),
+  },
   diff: {
     experimental_retryable: true,
     input: z

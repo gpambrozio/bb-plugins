@@ -9,6 +9,7 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { rpcContract } from "./shared/contract";
 import { diffReviewCli } from "./server/cli";
 import { WorkspaceEdits } from "./server/edits";
+import { createHostRevert } from "./server/host-git";
 import { refusing } from "./server/refusal";
 import { ReviewService } from "./server/review";
 import { RUN_PERMISSION_MODES, RunService } from "./server/runs";
@@ -70,7 +71,7 @@ export default async function plugin(bb: BbPluginApi) {
   const service = new ReviewService(bb, store, () => settings.get());
   const runs = new RunService(bb, store, service, () => settings.get());
   service.onUserComment = (thread, body, viewerThreadId) => runs.onUserComment(thread, body, viewerThreadId);
-  const edits = new WorkspaceEdits(bb.sdk, store, service.git, (environmentId, sessionId) => service.workspaceEdited(environmentId, sessionId));
+  const edits = new WorkspaceEdits(bb.sdk, store, service.git, createHostRevert(bb), (environmentId, sessionId) => service.workspaceEdited(environmentId, sessionId));
 
   bb.rpc.register(rpcContract, refusing<typeof rpcContract>({
     getReview: ({ threadId, target, autoTarget, reason, tab, ignoreWhitespace }) =>
