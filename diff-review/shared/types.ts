@@ -10,6 +10,7 @@
 import { z } from "zod";
 
 import { rangeText, revisionSchema } from "./git-spec";
+import { pullDetailsSchema, pullRefSchema, pullText } from "./github";
 
 /** The file path of a thread about the whole diff rather than one file. */
 export const GENERAL_PATH = "__general__";
@@ -31,7 +32,8 @@ export const severitySchema = z.enum(["must-fix", "suggestion", "nit", "question
 export type Severity = z.infer<typeof severitySchema>;
 export const SEVERITIES: readonly Severity[] = severitySchema.options;
 
-export const authorTypeSchema = z.enum(["user", "agent"]);
+/** `github`: a comment read from the pull request's review threads on GitHub (the `pr` view). */
+export const authorTypeSchema = z.enum(["user", "agent", "github"]);
 export type AuthorType = z.infer<typeof authorTypeSchema>;
 
 /**
@@ -66,9 +68,13 @@ const hostTargets = [
 /** Any file of the working tree, diff or not: comments on the file's own lines (the Files view). */
 const filesTarget = z.object({ kind: z.literal("files") }).strict();
 
+/** A GitHub pull request, read only: its head fetched into a private ref and diffed against its base. */
+const pullTarget = pullRefSchema.extend({ kind: z.literal("pr") }).strict();
+
 export const targetRequestSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("uncommitted") }).strict(),
   filesTarget,
+  pullTarget,
   z.object({ kind: z.literal("branch"), base: z.string().min(1).max(256).optional() }).strict(),
   z.object({ kind: z.literal("all"), base: z.string().min(1).max(256).optional() }).strict(),
   z.object({ kind: z.literal("commit"), sha: z.string().regex(/^[0-9a-f]{7,64}$/i) }).strict(),
@@ -80,6 +86,7 @@ export type TargetRequest = z.infer<typeof targetRequestSchema>;
 export const targetSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("uncommitted") }).strict(),
   filesTarget,
+  pullTarget,
   z.object({ kind: z.literal("branch"), base: z.string().min(1).max(256) }).strict(),
   z.object({ kind: z.literal("all"), base: z.string().min(1).max(256) }).strict(),
   z.object({ kind: z.literal("commit"), sha: z.string().regex(/^[0-9a-f]{7,64}$/i) }).strict(),
@@ -139,6 +146,8 @@ export const reviewThreadSchema = z
     updatedAt: z.number(),
     comments: z.array(commentSchema),
     delivery: deliverySchema.nullable(),
+    /** The GitHub review thread this mirrors (the `pr` view), or null for the plugin's own. */
+    githubThreadId: z.string().nullable(),
   })
   .strict();
 export type ReviewThread = z.infer<typeof reviewThreadSchema>;
@@ -287,6 +296,10 @@ export const reviewViewSchema = z.discriminatedUnion("ok", [
       headRef: z.string().nullable(),
       /** Whether the view takes bb's Viewed marks (not for the staged, unstaged and range views). */
       viewable: z.boolean(),
+      /** The pull request the `pr` view reviews. */
+      pullRequest: pullDetailsSchema.nullable(),
+      /** The pull request of the workspace's branch, from bb's GitHub PR Status, to offer its review. */
+      branchPullRequest: pullRefSchema.extend({ title: z.string() }).strict().nullable(),
       files: z.array(diffFileSchema),
       /** Changed files left out by the ignore patterns. */
       ignoredPaths: z.array(z.string()),
@@ -382,6 +395,8 @@ export function targetKey(target: Target): string {
       return target.kind;
     case "range":
       return `range:${rangeText(target)}`;
+    case "pr":
+      return `pr:${pullText(target)}`;
   }
 }
 
@@ -404,6 +419,8 @@ export function describeTarget(target: Target): string {
       return `the range ${rangeText(target)}`;
     case "files":
       return "files of the working tree as they are now (comments on their own lines, not on a diff)";
+    case "pr":
+      return `pull request ${pullText(target)}`;
   }
 }
 

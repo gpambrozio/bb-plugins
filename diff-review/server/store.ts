@@ -99,6 +99,10 @@ export const MIGRATIONS: string[] = [
   // Summaries and explanations are review-kind runs (they read and comment, never edit) with a
   // purpose; the table's kind check predates them and SQLite cannot widen it in place.
   `ALTER TABLE runs ADD COLUMN purpose TEXT`,
+  // The `pr` view mirrors a pull request's GitHub review threads: the thread's GitHub id, and each
+  // comment's, read back from GitHub (stored as `user` rows, shown as `github`; never edited here).
+  `ALTER TABLE review_threads ADD COLUMN github_thread_id TEXT`,
+  `ALTER TABLE review_comments ADD COLUMN github_comment_id TEXT`,
 ];
 
 export interface Session {
@@ -130,6 +134,18 @@ export interface NewThread {
   fileRevision?: string | null;
 }
 
+/** A GitHub review thread as `syncGithubThreads` mirrors it. */
+export interface GithubThreadInput {
+  githubThreadId: string;
+  filePath: string;
+  side: Side | null;
+  startLine: number;
+  endLine: number;
+  status: ThreadStatus;
+  anchorContent: string | null;
+  comments: { githubCommentId: string; author: string; body: string; createdAt: number }[];
+}
+
 export interface NewComment {
   threadId: string;
   authorType: AuthorType;
@@ -148,6 +164,7 @@ interface ThreadRow {
   severity: Severity | null;
   anchor_content: string | null;
   file_revision: string | null;
+  github_thread_id: string | null;
   send_id: string | null;
   delivery: DeliveryState | null;
   created_at: number;
@@ -209,6 +226,7 @@ interface CommentRow {
   id: string;
   thread_id: string;
   author_type: AuthorType;
+  github_comment_id: string | null;
   author_name: string;
   body: string;
   created_at: number;
@@ -627,6 +645,68 @@ export class ReviewStore {
     })();
   }
 
+  /**
+   * Mirrors a pull request's GitHub review threads into a session: each by its GitHub id, inserted or
+   * updated (place, status), with its GitHub comments replaced by GitHub's (the plugin's own comments
+   * on it stay). A mirrored thread GitHub no longer has is deleted. One transaction; true when anything
+   * changed.
+   */
+  syncGithubThreads(sessionId: string, remote: readonly GithubThreadInput[]): boolean {
+    let changed = false;
+    this.db.transaction(() => {
+      const existing = new Map(
+        this.db
+          .prepare<[string], { id: string; github_thread_id: string; status: ThreadStatus; start_line: number; end_line: number; side: Side | null; anchor_content: string | null }>(
+            "SELECT id, github_thread_id, status, start_line, end_line, side, anchor_content FROM review_threads WHERE session_id = ? AND github_thread_id IS NOT NULL",
+          )
+          .all(sessionId)
+          .map((row) => [row.github_thread_id, row]),
+      );
+      const seen = new Set<string>();
+      for (const thread of remote) {
+        seen.add(thread.githubThreadId);
+        const at = this.now();
+        let id = existing.get(thread.githubThreadId)?.id;
+        const before = existing.get(thread.githubThreadId);
+        if (id === undefined) {
+          id = newId();
+          this.db
+            .prepare(
+              `INSERT INTO review_threads (id, session_id, file_path, side, start_line, end_line, status, severity, anchor_content, github_thread_id, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)`,
+            )
+            .run(id, sessionId, thread.filePath, thread.side, thread.startLine, thread.endLine, thread.status, thread.anchorContent, thread.githubThreadId, thread.comments[0]?.createdAt ?? at, at);
+          changed = true;
+        } else if (before !== undefined && (before.status !== thread.status || before.start_line !== thread.startLine || before.end_line !== thread.endLine || before.side !== thread.side)) {
+          this.db
+            .prepare("UPDATE review_threads SET status = ?, side = ?, start_line = ?, end_line = ?, anchor_content = COALESCE(?, anchor_content), updated_at = ? WHERE id = ?")
+            .run(thread.status, thread.side, thread.startLine, thread.endLine, thread.anchorContent, at, id);
+          changed = true;
+        }
+        const known = this.db
+          .prepare<[string], { github_comment_id: string; body: string }>("SELECT github_comment_id, body FROM review_comments WHERE thread_id = ? AND github_comment_id IS NOT NULL ORDER BY created_at, rowid")
+          .all(id);
+        const same = known.length === thread.comments.length && known.every((row, index) => row.github_comment_id === thread.comments[index]!.githubCommentId && row.body === thread.comments[index]!.body);
+        if (!same) {
+          this.db.prepare("DELETE FROM review_comments WHERE thread_id = ? AND github_comment_id IS NOT NULL").run(id);
+          for (const comment of thread.comments) {
+            this.db
+              .prepare("INSERT INTO review_comments (id, thread_id, author_type, author_name, body, created_at, github_comment_id) VALUES (?, ?, 'user', ?, ?, ?, ?)")
+              .run(newId(), id, comment.author, comment.body, comment.createdAt, comment.githubCommentId);
+          }
+          this.db.prepare("UPDATE review_threads SET updated_at = ? WHERE id = ?").run(at, id);
+          changed = true;
+        }
+      }
+      for (const [githubThreadId, row] of existing) {
+        if (seen.has(githubThreadId)) continue;
+        this.db.prepare("DELETE FROM review_threads WHERE id = ?").run(row.id);
+        changed = true;
+      }
+    })();
+    return changed;
+  }
+
   private insertComment(input: NewComment, at: number): string {
     const id = newId();
     this.db
@@ -663,6 +743,7 @@ export class ReviewStore {
       severity: row.severity,
       anchorContent: row.anchor_content,
       fileRevision: row.file_revision,
+      githubThreadId: row.github_thread_id,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       comments: byThread.get(row.id) ?? [],
@@ -696,7 +777,7 @@ function toRun(row: RunRow): StoredRun {
 function toComment(row: CommentRow): ReviewComment {
   return {
     id: row.id,
-    authorType: row.author_type,
+    authorType: row.github_comment_id === null ? row.author_type : "github",
     authorName: row.author_name,
     body: row.body,
     createdAt: row.created_at,

@@ -1,7 +1,8 @@
 /**
- * Git in a checkout on the host: the diffs bb's Git plugin does not give (staged, unstaged, ranges).
- * Every command runs `git` with fixed arguments and the revisions the contract allowed, with a timeout
- * and a capped output, and never writes to the repository.
+ * Git in a checkout on the host: the diffs bb's Git plugin does not give (staged, unstaged, ranges),
+ * and a pull request fetched for review. Every command runs `git` with fixed arguments and the
+ * revisions the contract allowed, with a timeout and a capped output. The only write is that fetch,
+ * into the plugin's own refs (`refs/diff-review/…`): no branch, index or working-tree file changes.
  *
  * The range rules are diffity's (`src-tauri/src/core/diff.rs` and `core/git.rs`,
  * https://github.com/nilbuild/diffity, MIT): `a..b` and `a...b` diff the merge base of a and b against
@@ -310,4 +311,15 @@ export async function indexState(run: RunGit, root: string): Promise<string> {
   const head = (await verify(run, root, "HEAD")) ?? EMPTY_TREE;
   const staged = await run(root, ["diff", "--no-ext-diff", "--cached", "--raw", "--no-abbrev", "-z", head]);
   return createHash("sha256").update(staged.stdout).digest("hex");
+}
+
+/** Fetches pull request `number` of `url` and its base branch into private refs; answers both commits. */
+export async function fetchPull(run: RunGit, root: string, url: string, number: number, baseRef: string): Promise<{ headSha: string; baseSha: string }> {
+  const head = `refs/diff-review/pull/${number}/head`;
+  const base = `refs/diff-review/pull/${number}/base`;
+  await run(root, ["fetch", "--no-tags", "--quiet", "--no-write-fetch-head", url, `+refs/pull/${number}/head:${head}`, `+refs/heads/${baseRef}:${base}`]);
+  const headSha = await verify(run, root, head);
+  const baseSha = await verify(run, root, base);
+  if (headSha === null || baseSha === null) throw new GitError(`The fetch of pull request #${number} left no commits to diff.`);
+  return { headSha, baseSha };
 }

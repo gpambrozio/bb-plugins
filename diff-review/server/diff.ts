@@ -138,6 +138,7 @@ export function gitTarget(target: Target): GitTarget {
     case "unstaged":
     case "range":
     case "files":
+    case "pr":
       throw new ReviewUnavailable(`bb's Git plugin has no ${target.kind} view.`);
     case "uncommitted":
       return { type: "uncommitted" };

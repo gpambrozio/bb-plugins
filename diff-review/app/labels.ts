@@ -40,6 +40,8 @@ export function targetLabel(target: Target): string {
       return `Range ${rangeText(target)}`;
     case "files":
       return "Any file";
+    case "pr":
+      return `Pull request #${target.number}`;
   }
 }
 

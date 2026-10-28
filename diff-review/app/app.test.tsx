@@ -107,6 +107,7 @@ function thread(overrides: Partial<ReviewThread> & { id: string; body: string })
     severity: null,
     anchorContent: "const b = 3;",
     fileRevision: null,
+    githubThreadId: null,
     createdAt: 1,
     updatedAt: 1,
     comments: [{ id: `c_${rest.id}`, authorType: "user", authorName: "You", body, createdAt: 1, editedAt: null }],
@@ -126,6 +127,8 @@ const VIEW: Extract<ReviewView, { ok: true }> = {
   mergeBaseRef: null,
   headRef: null,
   viewable: true,
+  pullRequest: null,
+  branchPullRequest: null,
   files: [
     {
       path: "src/a.ts",

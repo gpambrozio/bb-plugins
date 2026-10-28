@@ -63,6 +63,8 @@ export function gitCommandFor(target: Target, commits: RangeCommits | null = nul
       return commits === null ? `\`git diff ${rangeText(target)}\`` : `\`git diff ${commits.baseSha} ${commits.headSha}\` (the commits the tab compares for ${rangeText(target)})`;
     case "files":
       return "the files themselves (there is no diff)";
+    case "pr":
+      return `\`gh pr diff ${target.number} --repo ${target.owner}/${target.repo}\``;
   }
 }
 
