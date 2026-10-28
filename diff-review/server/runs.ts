@@ -428,7 +428,7 @@ export class RunService {
     const patterns = await ignorePatterns(this.bb.sdk, this.bb.log, environment, settings.ignorePatterns, settings.readIgnoreFiles);
     let diff;
     try {
-      diff = await loadDiff(this.review.git, this.bb.log, environment, target, patterns);
+      diff = await loadDiff(this.review.sources, this.bb.log, environment, target, patterns);
     } catch (error) {
       if (error instanceof ReviewUnavailable) throw new ReviewError(error.message, "diff_unavailable");
       throw error;

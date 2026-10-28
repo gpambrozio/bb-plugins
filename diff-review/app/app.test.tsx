@@ -4,14 +4,15 @@
  * highlighter jsdom does not have, so a stand-in renders each annotation through the tab's own
  * `renderAnnotation` and offers the gutter "+" as a button.
  */
-import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render as renderPlain, screen, waitFor, within } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ReviewThread, ReviewView, ViewState } from "../shared/types";
 import { ANNOTATION_FIT } from "./annotation-fit";
-import { ReviewPanel } from "./review-panel";
+import { RangeDialog } from "./range-dialog";
+import { fromPicker, pickerValue, ReviewPanel } from "./review-panel";
 import { dispatchReviewCommand, forgetReviewCommands } from "./commands";
 import { forgetViewStates } from "./view-state";
 
@@ -93,6 +94,8 @@ const VIEW: Extract<ReviewView, { ok: true }> = {
   currentBranch: "feature",
   commits: [],
   mergeBaseRef: null,
+  headRef: null,
+  viewable: true,
   files: [
     {
       path: "src/a.ts",
@@ -141,7 +144,7 @@ function render(rpc: Record<string, (input: never) => unknown> = {}, threadId = 
 }
 
 const loadsOf = (slot: ReturnType<typeof render>) =>
-  slot.inspection.rpcCalls.filter((call) => call.method === "getReview").map((call) => call.input as { reason: string; ignoreWhitespace?: boolean });
+  slot.inspection.rpcCalls.filter((call) => call.method === "getReview").map((call) => call.input as { reason: string; ignoreWhitespace?: boolean; target?: unknown });
 
 describe("the app", () => {
   it("registers the Review tab and a Review button in the thread's header", async () => {
@@ -274,6 +277,32 @@ describe("explanations", () => {
     await waitFor(() =>
       expect(slot.inspection.rpcCalls.find((call) => call.method === "startExplain")?.input).toMatchObject({ filePath: "src/a.ts", side: "new", startLine: 1, endLine: 2, code: "const a = 1;\nconst b = 3;" }),
     );
+  });
+});
+
+describe("the staged, unstaged and range views", () => {
+  it("picks a range in the range dialog, as git writes it", async () => {
+    const picked: unknown[] = [];
+    renderPlain(<RangeDialog open onOpenChange={() => undefined} initial="main...HEAD" onPick={(range) => picked.push(range)} />);
+    const input = await screen.findByRole("textbox", { name: "Range" });
+    expect((input as HTMLInputElement).value).toBe("main...HEAD");
+    fireEvent.change(input, { target: { value: "-x..y" } });
+    expect((screen.getByRole("button", { name: "Review" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(input, { target: { value: "v1..v2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Review" }));
+    expect(picked).toEqual([{ kind: "range", from: "v1", to: "v2", symmetric: false }]);
+  });
+
+  it("round-trips each view through the picker's values", () => {
+    for (const target of [{ kind: "staged" }, { kind: "unstaged" }, { kind: "range", from: "a", to: "b", symmetric: true }, { kind: "commit", sha: "abcdef1" }] as const) {
+      expect(fromPicker(pickerValue(target))).toEqual(target);
+    }
+  });
+
+  it("offers no Viewed marks where bb has none", async () => {
+    render({ getReview: () => ({ ...VIEW, target: { kind: "staged" }, viewable: false }) });
+    await screen.findByTestId("patch");
+    expect(screen.queryByRole("checkbox", { name: "Viewed src/a.ts" })).toBeNull();
   });
 });
 

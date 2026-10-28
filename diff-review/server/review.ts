@@ -12,6 +12,7 @@ import {
   environmentChannel,
   GENERAL_PATH,
   targetKey,
+  isHostTarget,
   REVIEWS_CHANNEL,
   type RealtimeSignal,
   type ReviewSummary,
@@ -27,9 +28,11 @@ import {
   type ViewState,
   viewStateSchema,
 } from "../shared/types";
-import { gitTarget, ignorePatterns, loadDiff, loadPatches, resolveTarget, ReviewUnavailable, workspaceOf, workspaceRefs, workspaceState, type WorkspaceState } from "./diff";
+import { gitTarget, ignorePatterns, loadDiff, type DiffSources, loadPatches, resolveTarget, ReviewUnavailable, workspaceOf, workspaceRefs, workspaceState, type WorkspaceState } from "./diff";
+import { parseRange } from "../shared/git-spec";
 import { OPEN_CHANNEL, reviewRoute } from "../shared/routes";
 import { GitReads } from "./git";
+import { createHostGit, type HostGit } from "./host-git";
 import { sendPrompt } from "./prompt";
 import type { ReviewStore, StoredRun } from "./store";
 
@@ -83,8 +86,10 @@ const MAX_RANGE_LINES = 2_000;
 export class ReviewService {
   /** Each workspace's state at the end of its last turn, or when a tab first loaded it. */
   private readonly workspaceStates = new Map<string, WorkspaceState>();
-  /** bb's Git plugin, which every diff read goes through. */
+  /** bb's Git plugin, which every diff read goes through, but the host entry's views. */
   readonly git: GitReads;
+  /** The plugin's host entry: git on the workspace's machine, for the staged, unstaged and range views. */
+  readonly sources: DiffSources;
 
   /** Told of every comment the user writes, after it is stored (for @-mentions); must not throw. */
   onUserComment: (thread: ReviewThread, body: string, viewerThreadId: string | null) => void = () => undefined;
@@ -93,8 +98,10 @@ export class ReviewService {
     private readonly bb: BbPluginApi,
     private readonly store: ReviewStore,
     private readonly settings: () => Promise<ReviewSettings>,
+    host?: HostGit,
   ) {
     this.git = new GitReads(bb.sdk, (message) => new ReviewUnavailable(message));
+    this.sources = { git: this.git, host: host ?? createHostGit(bb) };
   }
 
   /**
@@ -119,10 +126,10 @@ export class ReviewService {
       let target = resolveTarget(request, refs.defaultBase);
       const settings = await this.settings();
       const patterns = await ignorePatterns(this.bb.sdk, this.bb.log, environment, settings.ignorePatterns, settings.readIgnoreFiles);
-      let diff = await loadDiff(this.git, this.bb.log, environment, target, patterns, ignoreWhitespace);
+      let diff = await loadDiff(this.sources, this.bb.log, environment, target, patterns, ignoreWhitespace);
       if (autoTarget && target.kind === "uncommitted" && diff.files.length === 0 && refs.defaultBase !== null) {
         const branch: Target = { kind: "branch", base: refs.defaultBase };
-        const committed = await loadDiff(this.git, this.bb.log, environment, branch, patterns, ignoreWhitespace);
+        const committed = await loadDiff(this.sources, this.bb.log, environment, branch, patterns, ignoreWhitespace);
         if (committed.files.length > 0) {
           target = branch;
           diff = committed;
@@ -139,6 +146,8 @@ export class ReviewService {
         currentBranch: refs.currentBranch,
         commits: refs.commits,
         mergeBaseRef: diff.mergeBaseRef,
+        headRef: diff.headRef,
+        viewable: diff.viewable,
         files: diff.files,
         ignoredPaths: diff.ignoredPaths,
         truncated: diff.truncated,
@@ -190,6 +199,7 @@ export class ReviewService {
    * so bb's diff panel shows the same.
    */
   async setViewed(threadId: string, target: Target, path: string, revision: string, viewed: boolean): Promise<void> {
+    if (isHostTarget(target)) throw new ReviewError("bb's Viewed marks do not cover the staged, unstaged and range views.", "not_viewable");
     const environment = await workspaceOf(this.bb.sdk, threadId);
     if (viewed) await this.git.markViewed(environment.id, gitTarget(target), path, revision);
     else await this.git.clearViewed(environment.id, gitTarget(target), path);
@@ -511,8 +521,11 @@ export class ReviewService {
     const target = resolveTarget(request, refs.defaultBase);
     let inDiff: boolean | null = null;
     if (file !== null) {
-      const files = await this.git.files(environment.id, gitTarget(target), false);
-      inDiff = files.outcome === "available" ? files.files.some((entry) => entry.path === file) : null;
+      try {
+        inDiff = (await loadDiff(this.sources, this.bb.log, environment, target, [])).files.some((entry) => entry.path === file);
+      } catch {
+        inDiff = null;
+      }
     }
     const address = { threadId, target, file };
     this.bb.realtime.publish(OPEN_CHANNEL, address);
@@ -570,5 +583,10 @@ export function targetFromKey(key: string): Target {
   const value = rest.join(":");
   if (kind === "branch" || kind === "all") return { kind, base: value };
   if (kind === "commit") return { kind: "commit", sha: value };
+  if (kind === "staged" || kind === "unstaged") return { kind };
+  if (kind === "range") {
+    const range = parseRange(value);
+    if (range !== null) return range;
+  }
   throw new Error(`Unknown review session key: ${key}`);
 }

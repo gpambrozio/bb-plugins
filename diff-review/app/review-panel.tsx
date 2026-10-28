@@ -22,6 +22,7 @@ import { Switch } from "@/components/ui/switch";
 
 import type { RpcContract } from "../shared/contract";
 import { placeThread } from "../shared/anchors";
+import { parseRange, rangeText } from "../shared/git-spec";
 import { linesText, parsePatchLines } from "../shared/patch-lines";
 import { describeLocation, GENERAL_PATH, targetRequestSchema, type ReviewThread, type Run, type TargetRequest } from "../shared/types";
 import { ReviewActionsProvider, useActions } from "./actions";
@@ -29,6 +30,7 @@ import { useReviewCommands } from "./commands";
 import { carryCurrent, findInFiles, type FindMatch } from "./find";
 import { FindBar } from "./find-bar";
 import { GoToDialog, type GoToEntry } from "./goto-dialog";
+import { RangeDialog } from "./range-dialog";
 import type { Reveal } from "./reveal";
 import { AiReviewDialog } from "./ai-review-dialog";
 import { ClearReviewDialog } from "./clear-dialog";
@@ -105,13 +107,19 @@ export function shownFiles<File extends { path: string }>(
   return onlyCommented ? files.filter((file) => (byFile.get(file.path)?.length ?? 0) > 0 || hasDraft(file.path)) : files;
 }
 
-function pickerValue(target: TargetRequest): string {
-  return target.kind === "commit" ? `commit:${target.sha}` : target.kind;
+/** The picker item that opens the range dialog rather than a view. */
+const PICK_RANGE = "pick-range";
+
+export function pickerValue(target: TargetRequest): string {
+  if (target.kind === "commit") return `commit:${target.sha}`;
+  if (target.kind === "range") return `range:${rangeText(target)}`;
+  return target.kind;
 }
 
-function fromPicker(value: string): TargetRequest {
+export function fromPicker(value: string): TargetRequest {
   if (value.startsWith("commit:")) return { kind: "commit", sha: value.slice("commit:".length) };
-  if (value === "branch" || value === "all") return { kind: value };
+  if (value.startsWith("range:")) return parseRange(value.slice("range:".length)) ?? { kind: "uncommitted" };
+  if (value === "branch" || value === "all" || value === "staged" || value === "unstaged") return { kind: value };
   return { kind: "uncommitted" };
 }
 
@@ -185,7 +193,7 @@ export function ReviewBody({
         threadId={threadId}
         view={state.view}
         refreshing={state.refreshing}
-        pickerValue={pickerValue(state.view.target.kind === "commit" ? state.view.target : target)}
+        pickerValue={pickerValue(state.view.target.kind === "commit" || state.view.target.kind === "range" ? state.view.target : target)}
         onPick={pick}
         onReload={() => void review.reload("manual")}
         loadId={state.loadId}
@@ -397,6 +405,7 @@ function ReadyPanel({
 
   // "Go to": the files shown, the open comments and the views.
   const [goingTo, setGoingTo] = useState(false);
+  const [pickingRange, setPickingRange] = useState(false);
   const goToEntries = useMemo<GoToEntry[]>(() => {
     const entries: GoToEntry[] = files.map((file) => ({ key: `file:${file.path}`, group: "File", label: file.path, detail: `+${file.additions} −${file.deletions}`, go: () => show({ path: file.path, side: "new", line: 0 }) }));
     for (const stop of commentStops) {
@@ -415,6 +424,7 @@ function ReadyPanel({
       views.push({ value: "branch", label: targetLabel({ kind: "branch", base: view.defaultBase }) }, { value: "all", label: targetLabel({ kind: "all", base: view.defaultBase }) });
     }
     for (const commit of view.commits) views.push({ value: `commit:${commit.sha}`, label: `${commit.shortSha} ${commit.subject}` });
+    views.push({ value: "staged", label: targetLabel({ kind: "staged" }) }, { value: "unstaged", label: targetLabel({ kind: "unstaged" }) });
     for (const entry of views) entries.push({ key: `view:${entry.value}`, group: "View", label: entry.label, go: () => onPick(entry.value) });
     return entries;
   }, [files, commentStops, view.threads, view.defaultBase, view.commits, show, onPick, scrollRoot]);
@@ -474,7 +484,7 @@ function ReadyPanel({
   return (
     <div className="flex h-full min-h-0 flex-col bg-background text-foreground">
       <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2">
-        <Select value={value} onValueChange={onPick}>
+        <Select value={value} onValueChange={(next) => (next === PICK_RANGE ? setPickingRange(true) : onPick(next))}>
           <SelectTrigger className="h-8 w-56 text-xs" aria-label="What to review">
             <SelectValue />
           </SelectTrigger>
@@ -492,6 +502,10 @@ function ReadyPanel({
               </SelectItem>
             ))}
             {orphanCommit === null ? null : <SelectItem value={`commit:${orphanCommit.sha}`}>{targetLabel(orphanCommit)}</SelectItem>}
+            <SelectItem value="staged">{targetLabel({ kind: "staged" })}</SelectItem>
+            <SelectItem value="unstaged">{targetLabel({ kind: "unstaged" })}</SelectItem>
+            {view.target.kind === "range" ? <SelectItem value={`range:${rangeText(view.target)}`}>{targetLabel(view.target)}</SelectItem> : null}
+            <SelectItem value={PICK_RANGE}>A range…</SelectItem>
           </SelectContent>
         </Select>
         <Button type="button" variant="ghost" size="sm" onClick={toggleStyle} aria-pressed={diffStyle === "split"}>
@@ -637,6 +651,12 @@ function ReadyPanel({
         onCleared={() => void refreshThreads()}
       />
       <GoToDialog open={goingTo} onOpenChange={setGoingTo} entries={goToEntries} />
+      <RangeDialog
+        open={pickingRange}
+        onOpenChange={setPickingRange}
+        initial={view.target.kind === "range" ? rangeText(view.target) : view.defaultBase === null ? "" : `${view.defaultBase}...HEAD`}
+        onPick={(range) => onPick(`range:${rangeText(range)}`)}
+      />
       <AiReviewDialog open={reviewing} onOpenChange={setReviewing} sessionId={view.sessionId} threadId={threadId} environmentId={view.environmentId} onStarted={putRun} />
     </div>
   );

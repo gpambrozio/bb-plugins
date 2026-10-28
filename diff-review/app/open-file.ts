@@ -10,7 +10,7 @@ import type { DiffFile, Target } from "../shared/types";
 /** bb takes `HEAD` or a 4–40 character commit SHA as a preview's ref. */
 const REF = /^(HEAD|[0-9a-f]{4,40})$/i;
 
-export function fileRef(target: Target, file: Pick<DiffFile, "changeKind">, mergeBaseRef: string | null): { ref: string | null } | null {
+export function fileRef(target: Target, file: Pick<DiffFile, "changeKind">, mergeBaseRef: string | null, headRef: string | null = null): { ref: string | null } | null {
   const deleted = file.changeKind === "deleted";
   const base = mergeBaseRef !== null && REF.test(mergeBaseRef) ? mergeBaseRef : null;
   switch (target.kind) {
@@ -22,5 +22,15 @@ export function fileRef(target: Target, file: Pick<DiffFile, "changeKind">, merg
       return deleted ? (base === null ? null : { ref: base }) : { ref: "HEAD" };
     case "all":
       return deleted ? (base === null ? null : { ref: base }) : { ref: null };
+    case "staged":
+      // The index has no preview of its own; the working copy is the nearest, HEAD for a deletion.
+      return { ref: deleted ? "HEAD" : null };
+    case "unstaged":
+      return deleted ? null : { ref: null };
+    case "range": {
+      const head = headRef !== null && REF.test(headRef) ? headRef : null;
+      if (deleted) return base === null ? null : { ref: base };
+      return head === null ? null : { ref: head };
+    }
   }
 }

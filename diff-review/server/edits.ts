@@ -58,8 +58,8 @@ export class WorkspaceEdits {
     if (thread === null) throw new ReviewError(`No comment thread ${input.reviewThreadId}.`, "unknown_thread");
     const session = this.store.sessionById(thread.sessionId)!;
     const target = targetFromKey(session.targetKey);
-    if (target.kind !== "uncommitted" && target.kind !== "all") {
-      throw new ReviewError("A suggestion applies to the working copy; open the uncommitted or all-changes view to apply it.", "not_working_copy");
+    if (target.kind !== "uncommitted" && target.kind !== "all" && target.kind !== "unstaged") {
+      throw new ReviewError("A suggestion applies to the working copy; open the uncommitted, unstaged or all-changes view to apply it.", "not_working_copy");
     }
     if (thread.side !== "new" || thread.startLine === 0) throw new ReviewError("Only a suggestion on new lines can be applied.", "invalid_place");
     const comment = thread.comments.find((row) => row.id === input.commentId);

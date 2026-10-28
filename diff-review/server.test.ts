@@ -81,6 +81,7 @@ async function setup(options: Setup = {}) {
   // The workspace's files the host can read and write, by absolute path.
   const files: Record<string, string> = { ...options.files };
   const writes: string[] = [];
+  const hostCalls: { method: string; input: unknown; hostId: string }[] = [];
   // bb's Git plugin: on unless a test turns it off; Viewed marks by path; every call it got.
   const git = { enabled: true, viewed: {} as Record<string, string>, calls: [] as { method: string; input: unknown }[] };
   const revisionOf = (path: string) => (path === "big.txt" ? `rev-big-${workspace.bigVersion}` : `rev-${path}`);
@@ -149,6 +150,19 @@ async function setup(options: Setup = {}) {
   };
   const { bb, harness } = createFakePluginHost({
     pluginId: "diff-review",
+    // The plugin's host entry: git on the workspace's machine, for staged, unstaged and ranges.
+    experimental_callHostRpc: (call) => {
+      hostCalls.push(call);
+      if (call.method !== "diff") throw new Error(`no host method ${call.method}`);
+      const { spec } = call.input as { spec: { kind: string } };
+      if (spec.kind === "range" && (spec as { from: string }).from === "nope") throw new Error("Unknown revision 'nope'.");
+      return {
+        files: [{ path: "src/a.ts", previousPath: null, changeKind: "modified", additions: 1, deletions: 1, binary: false, untracked: false, patch: PATCH, tooLarge: false }],
+        truncated: false,
+        baseSha: spec.kind === "range" ? "base1234" : null,
+        headSha: spec.kind === "range" ? "head5678" : null,
+      };
+    },
     // The skill bb imports from `skills/diff-review`, which `configure` names.
     agentSkillIds: ["diff-review"],
     sdk: {
@@ -269,7 +283,7 @@ async function setup(options: Setup = {}) {
       anchorContent: "const b = 3;",
       body,
     })) as { thread: ReviewThread }).thread;
-  return { bb, harness, rpc, view, comment, threads, turnStarts, workspace, reads, git, files, writes };
+  return { bb, harness, rpc, view, comment, threads, turnStarts, workspace, reads, git, files, writes, hostCalls };
 }
 
 describe("the Review tab's view", () => {
@@ -464,6 +478,39 @@ describe("changing the workspace from the tab", () => {
     await rpc("revertChanges", { threadId: THREAD, path: "big.txt", revision: "rev-big-1", hunks: null });
     expect(files["/work/repo/big.txt"]).toBeUndefined();
     expect(writes).toEqual(["/work/repo/src/a.ts", "/work/repo/src/a.ts", "rm /work/repo/big.txt"]);
+  });
+});
+
+describe("the staged, unstaged and range views", () => {
+  it("reads them with git on the workspace's host, every patch with the list, without Viewed marks", async () => {
+    const { view, hostCalls, rpc, git } = await setup();
+    const staged = await view({ kind: "staged" });
+    expect(hostCalls.at(-1)).toMatchObject({ method: "diff", hostId: "host_1", input: { root: "/work/repo", spec: { kind: "staged" }, ignoreWhitespace: false } });
+    expect(staged).toMatchObject({ ok: true, target: { kind: "staged" }, viewable: false, headRef: null });
+    expect(staged.files.map((file) => [file.path, file.patch !== null, file.viewed, file.revision.startsWith("h:")])).toEqual([["src/a.ts", true, "no", true]]);
+    expect(git.calls.some((call) => call.method === "viewed")).toBe(false);
+    await expect(rpc("setViewed", { threadId: THREAD, target: { kind: "staged" }, path: "src/a.ts", revision: "x", viewed: true })).rejects.toMatchObject({ code: "invalid" });
+
+    const range = await view({ kind: "range", from: "main", to: "feature", symmetric: true });
+    expect(range).toMatchObject({ target: { kind: "range", from: "main", to: "feature", symmetric: true }, mergeBaseRef: "base1234", headRef: "head5678" });
+    // Each view is its own review.
+    expect(new Set([staged.sessionId, range.sessionId, (await view({ kind: "unstaged" })).sessionId]).size).toBe(3);
+  });
+
+  it("says why when git on the host refuses", async () => {
+    const { view } = await setup();
+    expect(await view({ kind: "range", from: "nope", to: "HEAD", symmetric: false })).toEqual({ ok: false, message: expect.stringContaining("Unknown revision 'nope'") });
+  });
+
+  it("refuses an option-like revision before it reaches git", async () => {
+    const { rpc } = await setup();
+    await expect(rpc("getReview", { threadId: THREAD, target: { kind: "range", from: "--output=x", to: "HEAD", symmetric: false } })).rejects.toThrow();
+  });
+
+  it("opens a range's review from the command line", async () => {
+    const { harness } = await setup();
+    const out = await harness.behavior.runCli(["open", "--range", "main...feature"], { threadId: THREAD });
+    expect(out.stdout).toContain("the range main...feature");
   });
 });
 

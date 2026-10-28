@@ -1,4 +1,5 @@
 /** The words the Review tab shows for the stored values. */
+import { rangeText } from "../shared/git-spec";
 import type { DeliveryState, Severity, Target, ThreadStatus } from "../shared/types";
 
 export const SEVERITY_LABELS: Record<Severity, string> = {
@@ -31,6 +32,12 @@ export function targetLabel(target: Target): string {
       return `All changes since ${target.base}`;
     case "commit":
       return `Commit ${target.sha.slice(0, 7)}`;
+    case "staged":
+      return "Staged changes";
+    case "unstaged":
+      return "Unstaged changes";
+    case "range":
+      return `Range ${rangeText(target)}`;
   }
 }
 

@@ -9,6 +9,7 @@
  * the rejected-edit rules are diffity's; the tools are this plugin's `diff_review_*` tools, with the
  * `bb diff-review` command as the way back when a tool is missing.
  */
+import { rangeText } from "../shared/git-spec";
 import { describeLocation, describeTarget, type ReviewThread, type Target } from "../shared/types";
 import { CLI, sendPrompt } from "./prompt";
 import { TOOL } from "./tool-names";
@@ -45,6 +46,12 @@ export function gitCommandFor(target: Target): string {
       return `\`git diff $(git merge-base ${target.base} HEAD)\`, plus the untracked files \`git status --porcelain\` lists`;
     case "commit":
       return `\`git show ${target.sha}\``;
+    case "staged":
+      return "`git diff --cached`";
+    case "unstaged":
+      return "`git diff`, plus the untracked files `git status --porcelain` lists";
+    case "range":
+      return `\`git diff ${rangeText(target)}\``;
   }
 }
 

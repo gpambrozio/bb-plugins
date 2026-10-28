@@ -1,0 +1,119 @@
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { experimental_createHostEntryHarness } from "@get-bb/plugin-sdk/testing/host";
+import { afterEach, describe, expect, it } from "vitest";
+
+import entry from "../host";
+import { parseRange } from "../shared/git-spec";
+import { createRunGit, diff, newFilePatch, parseNameStatus, parseNumstat, splitPatch } from "./git";
+
+const roots: string[] = [];
+afterEach(() => {
+  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
+
+function git(root: string, ...args: string[]): string {
+  return execFileSync("git", ["-C", root, ...args], { encoding: "utf8", env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@e", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@e" } }).trim();
+}
+
+/** A repository with `a.txt` committed on main. */
+function repo(): string {
+  const root = mkdtempSync(join(tmpdir(), "diff-review-host-"));
+  roots.push(root);
+  git(root, "init", "-q", "-b", "main");
+  writeFileSync(join(root, "a.txt"), "one\ntwo\n");
+  git(root, "add", ".");
+  git(root, "commit", "-q", "-m", "first");
+  return root;
+}
+
+const run = createRunGit();
+
+describe("the host's git diffs", () => {
+  it("tells staged from unstaged changes, with untracked files on the unstaged side", async () => {
+    const root = repo();
+    writeFileSync(join(root, "a.txt"), "one\nTWO\n");
+    git(root, "add", "a.txt");
+    writeFileSync(join(root, "a.txt"), "one\nTWO\nthree\n");
+    writeFileSync(join(root, "new.txt"), "fresh\n");
+
+    const staged = await diff(run, root, { kind: "staged" }, false);
+    expect(staged.files.map((file) => [file.path, file.changeKind, file.additions, file.deletions, file.untracked])).toEqual([["a.txt", "modified", 1, 1, false]]);
+    expect(staged.files[0]!.patch).toContain("+TWO");
+    expect(staged.files[0]!.patch).not.toContain("three");
+
+    const unstaged = await diff(run, root, { kind: "unstaged" }, false);
+    expect(unstaged.files.map((file) => [file.path, file.changeKind, file.additions, file.untracked])).toEqual([
+      ["a.txt", "modified", 1, false],
+      ["new.txt", "added", 1, true],
+    ]);
+    expect(unstaged.files[0]!.patch).toContain("+three");
+    expect(unstaged.files[1]!.patch).toBe(newFilePatch("new.txt", "fresh\n"));
+  });
+
+  it("diffs a range from the merge base, and a merged branch from where it forked", async () => {
+    const root = repo();
+    git(root, "checkout", "-q", "-b", "feature");
+    writeFileSync(join(root, "b.txt"), "bee\n");
+    git(root, "add", ".");
+    git(root, "commit", "-q", "-m", "feature");
+    git(root, "checkout", "-q", "main");
+    writeFileSync(join(root, "a.txt"), "one\ntwo\nmain\n");
+    git(root, "commit", "-q", "-am", "main moves on");
+
+    const range = await diff(run, root, { kind: "range", from: "main", to: "feature", symmetric: true }, false);
+    expect(range.files.map((file) => file.path)).toEqual(["b.txt"]);
+    expect(range.headSha).toBe(git(root, "rev-parse", "feature"));
+
+    git(root, "merge", "-q", "--no-ff", "-m", "merge", "feature");
+    // Merged: `main...feature` still shows what the branch changed.
+    const merged = await diff(run, root, { kind: "range", from: "main", to: "feature", symmetric: true }, false);
+    expect(merged.files.map((file) => file.path)).toEqual(["b.txt"]);
+    // `..` takes the merge base as it is: nothing left.
+    expect((await diff(run, root, { kind: "range", from: "main", to: "feature", symmetric: false }, false)).files).toEqual([]);
+  });
+
+  it("refuses unknown revisions", async () => {
+    const root = repo();
+    await expect(diff(run, root, { kind: "range", from: "nope", to: "HEAD", symmetric: false }, false)).rejects.toThrow("Unknown revision 'nope'");
+  });
+
+  it("runs through the host entry with the daemon's validation, which refuses option-like revisions", async () => {
+    const root = repo();
+    writeFileSync(join(root, "a.txt"), "one\n");
+    git(root, "add", ".");
+    const harness = experimental_createHostEntryHarness(entry);
+    const result = await harness.experimental_call("diff", { root, spec: { kind: "staged" }, ignoreWhitespace: false });
+    expect(result.files.map((file) => [file.path, file.deletions])).toEqual([["a.txt", 1]]);
+    await expect(harness.experimental_call("diff", { root, spec: { kind: "range", from: "--output=/tmp/x", to: "HEAD", symmetric: false }, ignoreWhitespace: false })).rejects.toThrow();
+    await harness.experimental_dispose();
+  });
+});
+
+describe("reading git's output", () => {
+  it("reads name-status and numstat with renames, and splits a patch by file", () => {
+    expect(parseNameStatus("M\0a.txt\0R100\0old.txt\0new.txt\0")).toEqual([
+      { kind: "modified", previousPath: null, path: "a.txt" },
+      { kind: "renamed", previousPath: "old.txt", path: "new.txt" },
+    ]);
+    expect(parseNumstat("1\t2\ta.txt\0-\t-\tbin.png\0" + "0\t0\t\0old.txt\0new.txt\0")).toEqual(
+      new Map([
+        ["a.txt", { additions: 1, deletions: 2, binary: false }],
+        ["bin.png", { additions: 0, deletions: 0, binary: true }],
+        ["new.txt", { additions: 0, deletions: 0, binary: false }],
+      ]),
+    );
+    const patch = "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-a\n+b\ndiff --git a/gone.txt b/gone.txt\ndeleted file mode 100644\n--- a/gone.txt\n+++ /dev/null\n@@ -1 +0,0 @@\n-x\n";
+    expect([...splitPatch(patch).keys()]).toEqual(["a.txt", "gone.txt"]);
+  });
+
+  it("reads a range the way git does", () => {
+    expect(parseRange("main...feature")).toEqual({ kind: "range", from: "main", to: "feature", symmetric: true });
+    expect(parseRange("v1..")).toEqual({ kind: "range", from: "v1", to: "HEAD", symmetric: false });
+    expect(parseRange("main")).toBeNull();
+    expect(parseRange("-x..y")).toBeNull();
+  });
+});

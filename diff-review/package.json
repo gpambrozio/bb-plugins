@@ -25,6 +25,8 @@
   "files": [
     "server.ts",
     "server/",
+    "host.ts",
+    "host/",
     "shared/",
     "app.tsx",
     "app/",
@@ -46,6 +48,7 @@
       "icon": "FileDiff"
     },
     "server": "./server.ts",
+    "host": "./host.ts",
     "app": "./app.tsx"
   },
   "dependencies": {

@@ -9,6 +9,8 @@
  */
 import { z } from "zod";
 
+import { rangeText, revisionSchema } from "./git-spec";
+
 /** The file path of a thread about the whole diff rather than one file. */
 export const GENERAL_PATH = "__general__";
 
@@ -52,11 +54,22 @@ export type DeliveryState = z.infer<typeof deliveryStateSchema>;
 export const loadReasonSchema = z.enum(["open", "view", "diff-signal", "workspace", "reconnect", "manual", "retry", "whitespace", "unknown"]);
 export type LoadReason = z.infer<typeof loadReasonSchema>;
 
+/**
+ * The views raw git gives on the workspace's host (`git-spec.ts`): staged, unstaged, and a range
+ * between two revisions (`from...to` when `symmetric`, else `from..to`).
+ */
+const hostTargets = [
+  z.object({ kind: z.literal("staged") }).strict(),
+  z.object({ kind: z.literal("unstaged") }).strict(),
+  z.object({ kind: z.literal("range"), from: revisionSchema, to: revisionSchema, symmetric: z.boolean() }).strict(),
+] as const;
+
 export const targetRequestSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("uncommitted") }).strict(),
   z.object({ kind: z.literal("branch"), base: z.string().min(1).max(256).optional() }).strict(),
   z.object({ kind: z.literal("all"), base: z.string().min(1).max(256).optional() }).strict(),
   z.object({ kind: z.literal("commit"), sha: z.string().regex(/^[0-9a-f]{7,64}$/i) }).strict(),
+  ...hostTargets,
 ]);
 export type TargetRequest = z.infer<typeof targetRequestSchema>;
 
@@ -66,8 +79,16 @@ export const targetSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("branch"), base: z.string().min(1).max(256) }).strict(),
   z.object({ kind: z.literal("all"), base: z.string().min(1).max(256) }).strict(),
   z.object({ kind: z.literal("commit"), sha: z.string().regex(/^[0-9a-f]{7,64}$/i) }).strict(),
+  ...hostTargets,
 ]);
 export type Target = z.infer<typeof targetSchema>;
+
+/** The views the plugin's host entry computes with git, rather than bb's Git plugin. */
+export type HostTarget = Extract<Target, { kind: "staged" | "unstaged" | "range" }>;
+
+export function isHostTarget(target: Target): target is HostTarget {
+  return target.kind === "staged" || target.kind === "unstaged" || target.kind === "range";
+}
 
 export const commentSchema = z
   .object({
@@ -258,6 +279,10 @@ export const reviewViewSchema = z.discriminatedUnion("ok", [
       commits: z.array(commitSchema),
       /** The commit a branch view compares against, which a deleted file is opened at. */
       mergeBaseRef: z.string().nullable(),
+      /** The commit a range view's new side is, which its files are opened at. */
+      headRef: z.string().nullable(),
+      /** Whether the view takes bb's Viewed marks (not for the staged, unstaged and range views). */
+      viewable: z.boolean(),
       files: z.array(diffFileSchema),
       /** Changed files left out by the ignore patterns. */
       ignoredPaths: z.array(z.string()),
@@ -318,6 +343,11 @@ export function targetKey(target: Target): string {
       return `all:${target.base}`;
     case "commit":
       return `commit:${target.sha.toLowerCase()}`;
+    case "staged":
+    case "unstaged":
+      return target.kind;
+    case "range":
+      return `range:${rangeText(target)}`;
   }
 }
 
@@ -332,6 +362,12 @@ export function describeTarget(target: Target): string {
       return `all changes since ${target.base}, committed and not`;
     case "commit":
       return `commit ${target.sha.slice(0, 7)}`;
+    case "staged":
+      return "staged changes (HEAD against the index)";
+    case "unstaged":
+      return "unstaged changes (the index against the working tree)";
+    case "range":
+      return `the range ${rangeText(target)}`;
   }
 }
 

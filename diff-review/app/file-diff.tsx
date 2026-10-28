@@ -310,10 +310,13 @@ export function FileDiff({ file, threads, showThreadCount, diffStyle, stalePatch
             changed since viewed
           </span>
         ) : null}
-        <label className="ml-auto flex shrink-0 cursor-pointer items-center gap-1 text-xs text-muted-foreground">
-          <Checkbox checked={file.viewed === "yes"} onCheckedChange={(checked) => toggleViewed(checked === true)} aria-label={`Viewed ${file.path}`} />
-          Viewed
-        </label>
+        <span className="ml-auto" />
+        {actions.viewable ? (
+          <label className="flex shrink-0 cursor-pointer items-center gap-1 text-xs text-muted-foreground">
+            <Checkbox checked={file.viewed === "yes"} onCheckedChange={(checked) => toggleViewed(checked === true)} aria-label={`Viewed ${file.path}`} />
+            Viewed
+          </label>
+        ) : null}
         {actions.canOpenFile(file) ? (
           <Button type="button" variant="ghost" size="sm" className="h-6 shrink-0 gap-1 px-1.5 text-xs" onClick={() => actions.openFile(file)} aria-label={`Open ${file.path}`}>
             <Icon name="ExternalLink" className="size-3.5" />

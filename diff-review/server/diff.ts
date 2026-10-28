@@ -7,7 +7,9 @@ import { posix } from "node:path";
 
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
-import type { Commit, DiffFile, Target, TargetRequest, Viewed } from "../shared/types";
+import type { HostDiffSpec } from "../shared/git-spec";
+import { isHostTarget, type Commit, type DiffFile, type HostTarget, type Target, type TargetRequest, type Viewed } from "../shared/types";
+import type { HostGit } from "./host-git";
 import { failureMessage, type GitReads, type GitStatus, type GitTarget } from "./git";
 import { gitfileTarget, ignoreMatcher, INFO_IGNORE_FILE, patternLines, WORKSPACE_IGNORE_FILE } from "./ignore";
 
@@ -123,15 +125,19 @@ export async function workspaceState(git: GitReads, environmentId: string): Prom
 
 /** Fills in the base a branch view left out. */
 export function resolveTarget(request: TargetRequest, defaultBase: string | null): Target {
-  if (request.kind === "uncommitted" || request.kind === "commit") return request;
+  if (request.kind !== "branch" && request.kind !== "all") return request;
   const base = request.base ?? defaultBase;
   if (base === null) throw new ReviewUnavailable("This workspace has no base branch to compare against; pick one.");
   return { kind: request.kind, base };
 }
 
-/** A view as the Git plugin names it. */
+/** A view as the Git plugin names it; the host entry's views (staged, unstaged, range) have none. */
 export function gitTarget(target: Target): GitTarget {
   switch (target.kind) {
+    case "staged":
+    case "unstaged":
+    case "range":
+      throw new ReviewUnavailable(`bb's Git plugin has no ${target.kind} view.`);
     case "uncommitted":
       return { type: "uncommitted" };
     case "branch":
@@ -205,6 +211,16 @@ export interface LoadedDiff {
   truncated: boolean;
   /** The commit a branch view compares against, which a file's old side is read at. */
   mergeBaseRef: string | null;
+  /** The commit a range view's new side is. */
+  headRef: string | null;
+  /** Whether the view takes bb's Viewed marks. */
+  viewable: boolean;
+}
+
+/** Where the diff of a view comes from: bb's Git plugin, or the plugin's host entry for the views only raw git gives. */
+export interface DiffSources {
+  git: GitReads;
+  host: HostGit;
 }
 
 /**
@@ -222,13 +238,15 @@ export function viewedState(revision: string, marked: string | undefined): Viewe
  * files show unmarked and the reason is logged.
  */
 export async function loadDiff(
-  git: GitReads,
+  sources: DiffSources,
   log: BbPluginApi["log"],
   environment: Environment,
   target: Target,
   patterns: readonly string[],
   ignoreWhitespace = false,
 ): Promise<LoadedDiff> {
+  if (isHostTarget(target)) return loadHostDiff(sources.host, environment, target, patterns, ignoreWhitespace);
+  const git = sources.git;
   const result = await git.files(environment.id, gitTarget(target), ignoreWhitespace);
   if (result.outcome !== "available") throw new ReviewUnavailable(failureMessage(result));
   const ignored = ignoreMatcher(patterns);
@@ -259,7 +277,42 @@ export async function loadDiff(
     };
   });
   const ignoredPaths = result.files.filter((file) => ignored(file.path)).map((file) => file.path);
-  return { files, ignoredPaths, truncated: result.truncated, mergeBaseRef: result.mergeBaseRef };
+  return { files, ignoredPaths, truncated: result.truncated, mergeBaseRef: result.mergeBaseRef, headRef: null, viewable: true };
+}
+
+/**
+ * A staged, unstaged or range view, from git on the workspace's host. Every patch comes with the list
+ * (none loads on demand); a file's revision is its patch's hash, so it still tells a comment's file
+ * changed. bb's Viewed marks do not cover these views.
+ */
+async function loadHostDiff(host: HostGit, environment: Environment, target: HostTarget, patterns: readonly string[], ignoreWhitespace: boolean): Promise<LoadedDiff> {
+  if (environment.path === null) throw new ReviewUnavailable("This workspace has no checkout.");
+  const spec: HostDiffSpec = target.kind === "range" ? { kind: "range", from: target.from, to: target.to, symmetric: target.symmetric } : { kind: target.kind };
+  let result;
+  try {
+    result = await host(environment.hostId, environment.path, spec, ignoreWhitespace);
+  } catch (error) {
+    throw new ReviewUnavailable(`Could not read the ${target.kind} view on the workspace's machine: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  const ignored = ignoreMatcher(patterns);
+  const files: DiffFile[] = result.files
+    .filter((file) => !ignored(file.path))
+    .map((file) => ({
+      path: file.path,
+      previousPath: file.previousPath,
+      changeKind: file.changeKind,
+      additions: file.additions,
+      deletions: file.deletions,
+      binary: file.binary,
+      loadMode: file.tooLarge ? "too_large" : "auto",
+      untracked: file.untracked,
+      revision: `h:${createHash("sha256").update(file.patch ?? `${file.changeKind}:${file.additions}:${file.deletions}`).digest("hex").slice(0, 24)}`,
+      viewed: "no",
+      patch: file.patch,
+      patchTruncated: false,
+    }));
+  const ignoredPaths = result.files.filter((file) => ignored(file.path)).map((file) => file.path);
+  return { files, ignoredPaths, truncated: result.truncated, mergeBaseRef: result.baseSha, headRef: result.headSha, viewable: false };
 }
 
 /** Patches for files bb left to load on demand, at the revisions the file list gave. */
@@ -270,6 +323,8 @@ export async function loadPatches(
   files: readonly { path: string; revision: string }[],
   ignoreWhitespace = false,
 ): Promise<{ path: string; patch: string; truncated: boolean }[]> {
+  // The host entry's views send every patch with the list.
+  if (isHostTarget(target)) return [];
   const result = await git.patches(environment.id, gitTarget(target), ignoreWhitespace, files);
   if (result.failure !== null && result.patches.length === 0) throw new ReviewUnavailable(result.failure);
   return result.patches;
