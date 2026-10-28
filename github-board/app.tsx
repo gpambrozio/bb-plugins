@@ -1,13 +1,16 @@
 // GitHub Board — the app entry.
 //
 // A sidebar page with the board (app/board-panel.tsx), the prompt-template
-// editor on the plugin's settings page, and two palette commands.
+// editor on the plugin's settings page, two palette commands, and the card a
+// thread was started on in its Info tab and on its sidebar row
+// (app/thread-card-slots.tsx).
 import { definePluginApp, useBbNavigate, type BbNavigate } from "@get-bb/plugin-sdk/app";
 
-import { BoardPanel, PANEL_PATH, PROMPTS_SUBPATH } from "./app/board-panel";
+import { BoardPanel, boardPageTitle, PANEL_PATH, PROMPTS_SUBPATH } from "./app/board-panel";
 import { PromptSettingsEditor } from "./app/prompt-settings";
 import { PendingAddToChat } from "./app/pending-add-delivery";
 import { BoardPatchListener } from "./app/state";
+import { registerThreadCard } from "./app/thread-card-slots";
 
 /**
  * A palette command gets no navigation of its own, so this app-wide overlay,
@@ -34,6 +37,7 @@ export default definePluginApp((app) => {
     icon: "Github",
     path: PANEL_PATH,
     component: BoardPanel,
+    experimental_usePageTitle: boardPageTitle,
   });
 
   app.slots.settingsSection({
@@ -44,6 +48,8 @@ export default definePluginApp((app) => {
   });
 
   app.slots.experimental_appOverlay({ id: "bridge", component: AppBridge });
+
+  registerThreadCard(app.slots);
 
   app.commands.register({
     id: "open-board",
