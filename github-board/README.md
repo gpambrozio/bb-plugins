@@ -25,21 +25,25 @@ whatever is open on repositories you own, and what is assigned to you anywhere.
   recent threads, those in the card's repository first. Picking a thread that is not on screen opens it
   in the board's place, as the sidebar does, and adds the card there. It never replaces what you typed.
 - A filter narrows the board to some repositories. It, and the detail panel's width, are remembered.
+- A thread started with Send to chat shows its card in the thread's **Info** tab — `owner/repo#123`,
+  which opens it on GitHub, and the title. On bb 0.48, with bb's thread row metadata experiment on and
+  Organize → Rows → Metadata enabled, the sidebar row shows it too.
 
 ## What you need
 
-- bb 0.46 or later. On bb 0.45, install with `@^0.4.0` instead of `@^0.5.0`; on bb 0.44, with `@^0.1.0`,
-  which has everything but Add to chat.
+- bb 0.47 or later. On bb 0.46, install with `@^0.5.0` instead of `@^0.6.0`; on bb 0.45, with
+  `@^0.4.0`; on bb 0.44, with `@^0.1.0`, which has everything but Add to chat.
 - The GitHub CLI, [`gh`](https://cli.github.com), installed and signed in (`gh auth login`) **on the
-  machine running the bb server**. The board uses that login; it stores no token of its own. Without it
-  the plugin shows as needing configuration.
+  machine running the bb server**. The board uses that login; it stores no token of its own. It finds
+  `gh` as bb finds its own tools: on the login shell's PATH, Homebrew, `~/.local/bin`, mise, asdf or
+  Volta. Without it the plugin shows as needing configuration.
 - For Send to chat to pick a project, a bb project whose checkout has the card's repository as a git
   remote — its `origin`, or (on the bb server's machine) any other remote, such as a fork's `upstream`.
 
 ## Install
 
 ```bash
-bb plugin install 'git:github.com/gpambrozio/bb-plugins@^0.5.0' --plugin github-board --tag-prefix github-board/
+bb plugin install 'git:github.com/gpambrozio/bb-plugins@^0.6.0' --plugin github-board --tag-prefix github-board/
 ```
 
 The board is **GitHub Board** in the sidebar. The palette has *GitHub Board: open the board* and
@@ -55,7 +59,8 @@ On the plugin's settings page:
   Placeholders: `{url}`, `{title}`, `{number}`, `{repository}`. Clear a field to go back to the
   default. The gear on the board opens the same editor.
 
-After installing or signing in to `gh` for the first time, run `bb plugin reload github-board`.
+After installing or signing in to `gh` for the first time, the board works on its next refresh; run
+`bb plugin reload github-board` to clear the "needs configuration" notice.
 
 ## Limitations
 
@@ -64,7 +69,8 @@ After installing or signing in to `gh` for the first time, run `bb plugin reload
   `origin` alone.
 - Pull request review comments (on the diff) are not shown; the conversation is.
 - A thread started from a card has no card row in its transcript, because bb has no way for a plugin to
-  add one. The card is in the prompt and in the thread's plugin metadata.
+  add one. The card is in the prompt, the thread's plugin metadata and its Info tab. A thread a card
+  was added to with Add to chat carries no card.
 
 ## Develop
 

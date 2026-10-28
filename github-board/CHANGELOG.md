@@ -5,6 +5,25 @@ Notable changes to `github-board`. The other plugins in this repository version 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.6.0
+
+### Added
+
+- **A thread started from a card shows that card in its Info tab**: the repository and number, which
+  open the card on GitHub, and its title. A thread a card was only added to shows nothing there.
+- **The card on the thread's sidebar row**, as the repository and number with the title on hover. bb
+  draws this only while its "thread row metadata" experiment is on and Organize → Rows → Metadata is
+  enabled, and needs bb 0.48 or newer; with either off, nothing changes.
+- The prompt template page is named **Prompt templates** in the window title, split panes and history.
+
+### Changed
+
+- **Needs bb 0.47 or newer.** On an older bb this version is not offered as an update, and GitHub Board
+  stays on the version you have.
+- The GitHub CLI is found the way bb finds its own tools, so a `gh` installed with mise, asdf, Volta or
+  into `~/.local/bin` works, and one installed after bb started is picked up on the board's next
+  refresh, without reloading the plugin.
+
 ## 0.5.1
 
 ### Changed

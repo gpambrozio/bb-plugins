@@ -2,8 +2,8 @@
  * The shapes the app and the server exchange outside the RPC contract's own
  * definition, and the realtime channels. Kept apart from `shared/contract.ts`
  * because the app needs these at run time, and the contract imports
- * `defineRpcContract` from the SDK root, which only the server bundle can
- * resolve — a git install has no SDK in `node_modules` to bundle.
+ * `defineRpcContract` from the SDK root, which bb provides to the server
+ * bundle only (see `app/imports.test.ts`).
  */
 import { z } from "zod";
 

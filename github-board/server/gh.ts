@@ -3,12 +3,9 @@
  * whichever machine this module runs on. `gh` exits non-zero on any GraphQL
  * error, which is the behaviour `server/github.ts` relies on.
  */
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { experimental_execHostFile } from "@get-bb/plugin-sdk/process";
 
 import type { GraphQLVariables } from "./github";
-
-const execFileAsync = promisify(execFile);
 
 /** gh search caps out well under this; the ceiling only guards a runaway page. */
 const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
@@ -34,11 +31,17 @@ export function ghGraphqlArgs(query: string, variables: GraphQLVariables = {}): 
   return args;
 }
 
+/** Whether a failed run means there was no `gh` to run at all. */
+export function isGhMissing(error: unknown): boolean {
+  if (error instanceof Error && error.cause !== undefined) return isGhMissing(error.cause);
+  return (
+    typeof error === "object" && error !== null && "code" in error && (error as { code?: unknown }).code === "ENOENT"
+  );
+}
+
 export function describeGhFailure(error: unknown): string {
-  if (typeof error === "object" && error !== null && "code" in error) {
-    if ((error as { code?: unknown }).code === "ENOENT") {
-      return "GitHub CLI (gh) is not installed or not on the bb server's PATH.";
-    }
+  if (isGhMissing(error)) {
+    return "GitHub CLI (gh) was not found on the machine running bb. Install it (`brew install gh`) and run `gh auth login`.";
   }
   const stderr =
     typeof error === "object" && error !== null && "stderr" in error
@@ -56,49 +59,36 @@ const GH_TIMEOUT_MS = 30_000;
 
 export type GhRunner = (args: readonly string[], signal?: AbortSignal) => Promise<string>;
 
+/** How a file is run: `experimental_execHostFile`'s shape, narrowed to what the board passes. */
+export type ExecFile = (
+  file: string,
+  args: readonly string[],
+  options: { encoding: "utf8"; maxBuffer: number; timeout: number; signal?: AbortSignal },
+) => Promise<{ stdout: string }>;
+
 /**
- * Runs the `gh` at `file`. `signal` kills the subprocess when it fires, for a
- * caller with a deadline of its own; every call is killed after 30 seconds
- * regardless.
+ * Runs `gh` through bb's host toolchain, which finds it the way bb finds its
+ * own tools: the login shell's PATH, `~/.local/bin`, mise and asdf shims,
+ * Volta and Homebrew. It is looked up on every call, and a miss refreshes
+ * that lookup in the background, so a `gh` installed after the plugin loaded
+ * is found without a reload. `signal` kills the subprocess when it fires, for
+ * a caller with a deadline of its own; every call is killed after 30 seconds
+ * regardless. A failure keeps the original error as its `cause`.
  */
-export function ghRunner(file: string): GhRunner {
+export function ghRunner(exec: ExecFile = experimental_execHostFile): GhRunner {
   return async (args, signal) => {
     try {
-      const { stdout } = await execFileAsync(file, [...args], {
+      const { stdout } = await exec("gh", [...args], {
+        encoding: "utf8",
         maxBuffer: MAX_OUTPUT_BYTES,
         timeout: GH_TIMEOUT_MS,
         ...(signal === undefined ? {} : { signal }),
       });
       return stdout;
     } catch (error) {
-      throw new Error(describeGhFailure(error));
+      throw new Error(describeGhFailure(error), { cause: error });
     }
   };
-}
-
-/**
- * Where `gh` is usually found. The bb server normally inherits the login
- * shell's PATH, but when that lookup fails it runs with whatever PATH it was
- * started with, which on macOS leaves Homebrew out — so the two Homebrew
- * locations are tried by path as well.
- */
-export const GH_CANDIDATES = ["gh", "/opt/homebrew/bin/gh", "/usr/local/bin/gh"] as const;
-
-/** The first candidate that answers `--version`, or null when none does. */
-export async function findGh(
-  candidates: readonly string[] = GH_CANDIDATES,
-  probe: (file: string) => Promise<unknown> = (file) =>
-    execFileAsync(file, ["--version"], { timeout: 5_000 }),
-): Promise<string | null> {
-  for (const candidate of candidates) {
-    try {
-      await probe(candidate);
-      return candidate;
-    } catch {
-      // Not there, or not runnable; try the next one.
-    }
-  }
-  return null;
 }
 
 /** One GraphQL request through `run`, answering its `data`. */

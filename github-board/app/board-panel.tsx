@@ -5,7 +5,7 @@
  * board; Send to chat opens the composer dialog.
  */
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { useBbNavigate, type PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
+import { useBbNavigate, type ExperimentalPageTitle, type PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
 
 import type { BoardColumn, BoardItem, ColumnId } from "../shared/board";
@@ -342,6 +342,14 @@ function PromptsPage() {
       </div>
     </div>
   );
+}
+
+/**
+ * The page's name after the panel's in a pane's title bar, the window title
+ * and history: the template editor names itself, the board keeps the panel's.
+ */
+export function boardPageTitle({ subPath }: PluginNavPanelProps): ExperimentalPageTitle | null {
+  return subPath === PROMPTS_SUBPATH ? { title: "Prompt templates" } : null;
 }
 
 export function BoardPanel({ subPath }: PluginNavPanelProps) {

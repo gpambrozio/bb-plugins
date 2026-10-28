@@ -23,7 +23,7 @@ import {
 import { workspaceTitle } from "./shared/launch";
 import { remoteIdsOf } from "./shared/remotes";
 import { DEFAULT_PROMPTS, normalizePrompts } from "./shared/settings";
-import { describeGhFailure, findGh, ghGraphql, ghRunner, ghToken, type GhRunner } from "./server/gh";
+import { describeGhFailure, ghGraphql, ghRunner, ghToken, isGhMissing } from "./server/gh";
 import type { GitHubApi } from "./server/github";
 import { buildProjectIndex, type ProjectIndex, type ProjectRecord } from "./server/projects";
 import { CACHE_TTL_MS, createBoardService } from "./server/service";
@@ -33,7 +33,7 @@ export type { RpcContract } from "./shared/contract";
 const execFileAsync = promisify(execFile);
 
 const GH_HINT =
-  "Install the GitHub CLI (`brew install gh`) and run `gh auth login` on the machine running bb, then `bb plugin reload github-board`.";
+  "Install the GitHub CLI (`brew install gh`) and run `gh auth login` on the machine running bb. The board finds it on its next refresh; `bb plugin reload github-board` clears this notice.";
 
 const DISPLAY_KEY = "display";
 const PROMPTS_KEY = "prompts";
@@ -64,40 +64,29 @@ export default async function plugin(bb: BbPluginApi) {
     },
   });
 
-  // `gh` is looked for once per load. A missing or signed-out `gh` marks the
-  // plugin as needing configuration rather than failing the load; the board
-  // then shows the same message on every column.
-  let gh: GhRunner | null = null;
-  let ghProblem: string | null = null;
-  const ghPath = await findGh();
-  if (ghPath === null) {
-    ghProblem = `GitHub CLI (gh) was not found. ${GH_HINT}`;
-  } else {
-    gh = ghRunner(ghPath);
-    try {
-      await gh(["auth", "status", "--hostname", "github.com"]);
-    } catch (error) {
-      const message = describeGhFailure(error);
-      if (/not authenticated|not logged in|gh auth login/i.test(message)) {
-        ghProblem = `GitHub CLI is not signed in. ${GH_HINT}`;
-      } else {
-        // Probably transient (the network); every call reports its own failure.
-        bb.log.warn(`gh auth status failed: ${message}`);
-      }
+  // `gh` is found through bb's host toolchain on every call, so one installed
+  // after the plugin loaded works without a reload. A check at load marks the
+  // plugin as needing configuration when `gh` is missing or signed out, rather
+  // than failing the load; that mark lasts until the next load, and every call
+  // meanwhile reports its own failure. Nothing is latched: a check run before
+  // the network was up must not keep the board failing until a reload.
+  const gh = ghRunner();
+  try {
+    await gh(["auth", "status", "--hostname", "github.com"]);
+  } catch (error) {
+    const message = describeGhFailure(error);
+    if (isGhMissing(error)) {
+      bb.status.needsConfiguration(`GitHub CLI (gh) was not found. ${GH_HINT}`);
+    } else if (/not authenticated|not logged in|gh auth login/i.test(message)) {
+      bb.status.needsConfiguration(`GitHub CLI is not signed in. ${GH_HINT}`);
+    } else {
+      // Probably transient (the network); every call reports its own failure.
+      bb.log.warn(`gh auth status failed: ${message}`);
     }
-  }
-  if (ghProblem !== null) bb.status.needsConfiguration(ghProblem);
-
-  // Only a missing `gh` stops calls. A failed sign-in check is not latched:
-  // a check run before the network was up must not keep the board failing
-  // until a reload, and a really signed-out `gh` reports that on every call.
-  function requireGh(): GhRunner {
-    if (gh === null) throw new Error(ghProblem ?? `GitHub CLI is unavailable. ${GH_HINT}`);
-    return gh;
   }
 
   const api: GitHubApi = {
-    graphql: (query, variables) => ghGraphql(requireGh(), query, variables),
+    graphql: (query, variables) => ghGraphql(gh, query, variables),
     warn: (message) => bb.log.warn(message),
   };
 
@@ -118,7 +107,7 @@ export default async function plugin(bb: BbPluginApi) {
 
   const service = createBoardService({
     api,
-    token: (signal) => ghToken(requireGh(), signal),
+    token: (signal) => ghToken(gh, signal),
     configuredLogin: async () => (await settings.get()).login,
     projectIndex,
     localHostId,

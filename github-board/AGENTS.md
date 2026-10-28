@@ -14,7 +14,7 @@ plugin here shares.
 | `server.ts` | Wiring: the login setting, finding `gh`, the project index, storage, realtime and the `send` spawn. |
 | `server/service.ts` | What each RPC does, and the per-load caches it shares; driven by fakes in its tests. |
 | `server/github.ts` | Every GitHub GraphQL query and how its answer is read, over an injected `GitHubApi`. |
-| `server/gh.ts` | `gh api graphql` as that `GitHubApi`: finding `gh`, argument spelling, failures, `gh auth token`. |
+| `server/gh.ts` | `gh api graphql` as that `GitHubApi`: running `gh` through bb's toolchain, argument spelling, failures, `gh auth token`. |
 | `server/image.ts` | The image fetch: redirects by hand, the token only to `github.com`, a timeout and a size cap. |
 | `server/projects.ts` | Which bb projects a repository belongs to, and which one a card opens on. |
 | `shared/contract.ts` | The RPC contract. The app imports it as a type only. |
@@ -23,8 +23,9 @@ plugin here shares.
 | `shared/settings.ts` | The default prompts, `normalizePrompts`, `templateFor` and `renderTemplate`. |
 | `shared/image-host.ts` | Which image URLs the server fetches, and which get the token; used by both halves. |
 | `shared/launch.ts`, `shared/remotes.ts` | A card's and a git remote's repository id (`<host>/<owner>/<name>`); a new thread's title. |
-| `app.tsx` | The nav panel, the settings section, and two palette commands. |
+| `app.tsx` | The nav panel and its page title, the settings section, two palette commands, and the thread card slots. |
 | `app/board-panel.tsx` | The page: toolbar, columns or tabs, the detail panel and the send dialog. |
+| `app/thread-card.ts`, `app/thread-card-slots.tsx` | A thread's card, read back from its plugin metadata, in its Info tab and on its sidebar row. |
 | `app/state.ts` | The board (with its module-scope copy), display prefs and prompts, each kept current by realtime. |
 | `app/board-logic.ts` | What the board draws: filter, issue folding, empty columns, pill wording. Pure and tested. |
 | `app/card.tsx`, `app/pills.tsx`, `app/label-menu.tsx` | A card, its pills, and its right-click label menu. |
@@ -40,13 +41,16 @@ plugin here shares.
 
 **`gh` runs from `server.ts`, on the bb server's machine**, with the user's own `gh` login — no
 `bb.host` entry and no token setting (owner's decision, issue #2). The board reads GitHub, not a
-checkout, so no particular machine is needed. `findGh` tries `gh` on the PATH and then the two
-Homebrew locations by path, because the server falls back to the PATH it was started with when the
-login-shell lookup fails. A missing or signed-out `gh` calls `bb.status.needsConfiguration`, which
-lasts until the next load — so the user reloads after fixing it, and the README says so. Only a
-missing `gh` stops calls; a failed sign-in check is not latched, because a check run before the
-network was up must not keep the board failing until a reload. Every call is killed after 30
-seconds.
+checkout, so no particular machine is needed. `gh` runs through `experimental_execHostFile` from
+`@get-bb/plugin-sdk/process` (SDK 0.6.94, bundled, so it needs no newer bb): bb's own resolver, which
+covers the login shell's PATH, Homebrew, `~/.local/bin`, mise and asdf shims and Volta, looks `gh` up on
+every call and refreshes after a miss. So a `gh` installed after the plugin loaded works without a
+reload, and nothing about a missing `gh` is latched. The SDK is therefore a real `dependency`, not a
+devDependency (repo `AGENTS.md`, *Dependencies*). A check at load (`gh auth status`) calls
+`bb.status.needsConfiguration` for a missing or signed-out `gh`; that notice lasts until the next load,
+so the README tells the user to reload to clear it, while the board itself recovers on its next
+refresh. A failed check for any other reason is only logged, because a check run before the network was
+up must not mark the plugin. Every call is killed after 30 seconds.
 
 The only other subprocess is `git -C <path> remote -v`, for project matching, and it runs only on
 project checkouts on the server's own machine (`primaryHostId`).
@@ -168,7 +172,8 @@ dismissal; Paseo's refusal to close while the prompt was edited is moot. Provide
 selectable model are the composer's to leave out.
 
 Dropped from Paseo: the transcript row (`board-item` timeline card) — bb has no API for a plugin to
-append a row to a thread's timeline; the card lives in the prompt and the thread's plugin metadata.
+append a row to a thread's timeline; the card lives in the prompt and the thread's plugin metadata,
+which *The card on a thread* below draws.
 Also dropped: opening the card in a browser tab beside the new thread (`openUrl` follows the user's
 in-app/external preference, so it could throw them out to a browser), and the host picker, which the
 composer's environment picker replaces.
@@ -196,8 +201,9 @@ recently updated first. `chatTargets` in `app/add-to-chat.ts` makes that list.
   screen still take a card at once) and calls `useBbNavigate().toThread(id)` with no `split`: the
   thread opens in the board's place, as the sidebar opens it. 0.5.0 passed `split: true`, and every
   pick added another pane beside the board until the window was a pile of splits; keeping a thread
-  beside the board is the user's call, from the sidebar. `engines.bb` stays `>=0.46` because SDK
-  0.6.34 made `experimental_useSidebarThreadActions`, which 0.4 used, internal. Navigating unmounts the
+  beside the board is the user's call, from the sidebar. (SDK 0.6.34 made
+  `experimental_useSidebarThreadActions`, which 0.4 used, internal; that set `engines.bb` to `>=0.46`,
+  and *The card on a thread* raised it to `>=0.47`.) Navigating unmounts the
   board; that is why `PendingAddToChat` (`app/pending-add-delivery.tsx`), in the app overlay, delivers
   the card once a `thread`-scoped composer for that thread appears, and gives up with a toast after
   15 s. The deadline is checked again at delivery, so a late timer or a remounted overlay never writes
@@ -225,6 +231,30 @@ recently updated first. `chatTargets` in `app/add-to-chat.ts` makes that list.
 - The SDK harness's `useComposers()` always reports exactly one composer, so several on screen are
   tested through `AddToChatControl` with fake handles.
 
+## The card on a thread
+
+`send` stores `{ card }` as the thread's plugin metadata; `app/thread-card-slots.tsx` reads it back.
+Add to chat writes no metadata, so only threads the board started have a card.
+
+- **Info tab row** (`experimental_threadInfoRow`, bb 0.47, group `thread`): one `getPluginMetadata`
+  per mounted Info tab, aborted on unmount; renders null without a card, and on a failed read (logged
+  to the console — the row is an extra). The reference links to GitHub through `UrlLink`, only for an
+  http or https URL (`isOpenableLink`).
+- **Sidebar row item** (`experimental_threadRowMetadata`, bb 0.48): bb's sidebar draws the metadata line
+  only while the `threadRowMetadata` experiment is on (off by default) and the user turns on Organize →
+  Rows → Metadata, and calls `useData` only while a list draws one — so with either off the plugin does
+  no work at all. `useThreadCards` runs once for the app: it reads only threads whose `originPluginId`
+  is this plugin's, each once (a card never changes after the spawn), 200 per
+  `experimental_listPluginMetadata` call. A failed batch is read again on the next list bb hands over,
+  not on a timer.
+- **The row item's slot is feature-checked** (`registerThreadCard`): bb 0.47's slots have no
+  `experimental_threadRowMetadata`, and raising `engines.bb` to 0.48 for an experiment-gated badge would
+  cost every 0.47 user the Info row. The Info row and `navPanel.experimental_usePageTitle` (the
+  template page names itself) are not checked: bb 0.46's collector throws on the unknown `navPanel` key,
+  so `engines.bb` is `>=0.47`.
+- The cards' parse (`cardFromMetadata`) reads only the four fields it draws, so a card written by
+  another version of the board, whose other fields differ, still shows.
+
 ## Storage
 
 | Where | What |
@@ -237,10 +267,11 @@ recently updated first. `chatTargets` in `app/add-to-chat.ts` makes that list.
 Each write publishes on its realtime channel (`shared/schemas.ts`) so every window follows. Display
 writes are serialised, so a filter toggle and a width commit cannot drop each other.
 
-`shared/contract.ts` imports `defineRpcContract` from the SDK root, which only the server bundle can
-resolve, so the app imports it as a type only; what the app needs at run time is in
-`shared/schemas.ts`. `app/imports.test.ts` enforces it — the failure otherwise shows only in a git
-install's production build.
+`shared/contract.ts` imports `defineRpcContract` from the SDK root, which bb provides to the server
+bundle only, so the app imports it as a type only; what the app needs at run time is in
+`shared/schemas.ts`. `app/imports.test.ts` enforces it. Since the SDK became a production dependency
+(0.6.0), a value import would no longer fail a git install's build — it would quietly bundle
+server-side SDK code into the app — so the test is the only guard.
 
 ## Layout notes
 
