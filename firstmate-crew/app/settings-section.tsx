@@ -24,7 +24,8 @@ type Asking = "restart" | "release" | null;
 export function SettingsSection() {
   const rpc = useRpc<typeof rpcContract>();
   const navigate = useBbNavigate();
-  const { fleet, error, reload } = useFleet();
+  // Not a tab: it is read whenever the settings page shows it.
+  const { fleet, error, reload } = useFleet(true);
   const initial = useDefaultPick();
   const [chosen, setChosen] = useState<ExperimentalProviderModelPickerValue | null>(null);
   const [busy, setBusy] = useState(false);

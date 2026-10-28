@@ -24,6 +24,19 @@ const TOKENS_PER_K = 1_000;
 
 export const REASONING_OPTIONS = ["default", "low", "medium", "high", "xhigh", "max"];
 
+/** What the settings form shows for each reasoning option (bb 0.46's `experimental_optionLabels`). */
+export const REASONING_LABELS: Record<(typeof REASONING_OPTIONS)[number], string> = {
+  default: "Leave it to the first mate",
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  xhigh: "Extra high",
+  max: "Max",
+};
+
+/** How often an open board reads the crew again when the setting is not a number above zero. */
+export const DEFAULT_REFRESH_SECONDS = 10;
+
 export const SETTINGS = {
   homeDirectory: {
     type: "string",
@@ -47,15 +60,16 @@ export const SETTINGS = {
   crewReasoning: {
     type: "select",
     label: "Crew reasoning",
-    description: "Reasoning effort for crewmates. Default leaves it to the first mate.",
+    description: "Reasoning effort for crewmates.",
     options: REASONING_OPTIONS,
+    experimental_optionLabels: REASONING_LABELS,
     default: "default",
   },
   refreshSeconds: {
     type: "number",
     label: "Board refresh (seconds)",
     description: "How often the board reloads the crew while it is open.",
-    default: 10,
+    default: DEFAULT_REFRESH_SECONDS,
   },
   mateAutoCompact: {
     type: "boolean",
@@ -127,6 +141,12 @@ export function homeConfig(settings: FirstmateSettings): HomeConfig {
     crewProvider: provider !== "" && model !== "" ? `${provider}/${model}` : "",
     crewReasoning: settings.crewReasoning === "default" ? "" : settings.crewReasoning,
   };
+}
+
+/** How long an open board waits between reads of the crew, in milliseconds. */
+export function refreshMs(settings: FirstmateSettings): number {
+  const seconds = settings.refreshSeconds;
+  return (Number.isFinite(seconds) && seconds >= 1 ? seconds : DEFAULT_REFRESH_SECONDS) * 1000;
 }
 
 /** When one kind of thread is compacted on its own: switched on, above `minTokens` tokens, `idleMinutes` after its last turn. */

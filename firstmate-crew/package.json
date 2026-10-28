@@ -30,6 +30,7 @@
     "app.tsx",
     "app/",
     "components/",
+    "icons/",
     "lib/",
     "hooks/",
     "templates/",
@@ -43,7 +44,10 @@
     "name": "FirstMate Crew",
     "description": "Hand one agent your to-do list and it runs a crew of worker threads, each in its own git worktree, until the work lands.",
     "branding": {
-      "icon": "Ship"
+      "icon": "Ship",
+      "experimental_icons": {
+        "ship": "./icons/ship.svg"
+      }
     },
     "server": "./server.ts",
     "app": "./app.tsx"
@@ -55,7 +59,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@get-bb/plugin-sdk": "0.6.37",
+    "@get-bb/plugin-sdk": "0.6.94",
     "@pierre/diffs": "^1.2.9",
     "@radix-ui/react-alert-dialog": "^1.1.19",
     "@radix-ui/react-context-menu": "^2.3.3",
