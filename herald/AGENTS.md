@@ -22,7 +22,7 @@ what still holds and says what bb changed. The repo root `AGENTS.md` covers what
 | `server/liveness.ts` | Asks bb whether each entry's thread still exists before the list goes out; gone ones are removed. |
 | `server/timeline.ts` | Pure text: what an interaction asks, the user's last prompt, the spoken sentence. |
 | `server/say.ts` | `say` on the bb server's Mac, driven for its voices: text in on stdin, a WAV out, bytes back. |
-| `server/writer.ts` | The optional sentence-writing tool, run as a child process: prompt in on stdin, one line out; the timeout, the cap, the empty folder. |
+| `server/writer.ts` | The optional sentence-writing tool, run as a child process through bb's host toolchain: prompt in on stdin, one line out; the timeout, the cap, the empty folder. |
 | `server/command-line.ts` | The user's command split into words without a shell, and the prompt template filled in. |
 | `server/ports.ts`, `server/bb-ports.ts` | The seams the logic is tested through, and their implementations over `bb.sdk`. |
 | `shared/herald.ts` | The entry shape and the stored configuration: the voices, the model-written sentence's tool, command and prompt, and the page's history length. No SDK import. |
@@ -38,8 +38,9 @@ what still holds and says what bb changed. The repo root `AGENTS.md` covers what
 | `app/speech.ts` | Every browser audio global, and which bb client this is. |
 | `app/rows.ts` | What the page lists: bb's unread and waiting-for-input joined with Herald's entries. |
 | `app/panel.tsx`, `app/banner.tsx` | The Herald page (its waiting threads, then recent sentences from every thread; and the count on its sidebar entry, `useWaitingBadge`), and the sentence above a thread's composer. |
-| `app/history-panel.tsx`, `app/header-action.tsx` | The Herald tab in a thread's side panel — the sentences of its past turns — and the header megaphone that opens it. |
-| `app/thread-action.ts` | *Herald* in bb's thread menu: reads the rows on screen in one batch, shows each one's choice and where it comes from, saves a pick. |
+| `app/history-panel.tsx`, `app/header-action.tsx` | The Herald tab in a thread's side panel — the sentences of its past turns — and the header button that opens it: a header thread action on bb 0.48, the older header slot's megaphone on 0.47. |
+| `app/thread-action.ts` | *Herald* in bb's thread menu: reads the rows on screen in one batch, shows each one's choice and where it comes from, saves a pick; and the same list for a sidebar selection (bb 0.48). |
+| `app/bb-features.ts` | Whether this bb's app is 0.48's (panel controller, header thread actions, tab visibility), read where a named import would break the build on 0.47. |
 | `app/settings-section.tsx`, `app/voice-picker.tsx` | The model-written sentence's tool, custom command (only under custom) and prompt; how many recent sentences the page lists; the voice lists and *Test voice*. |
 
 ## Where things run
@@ -77,6 +78,13 @@ no shell. What that buys, and what must stay true:
   it the CLI reported *Not logged in* on the machine this was built on. Every preset was checked by hand
   against its CLI's `--help`; only the Claude one has been run end to end here (Codex could not run inside
   the build sandbox, Gemini is not installed).
+- **bb's host toolchain finds the tool.** The child is started with `experimental_spawnHostProcess`
+  (`@get-bb/plugin-sdk/process`), which resolves the command and sets the child's PATH the way bb does
+  for its own tools — the login shell's PATH, `~/.local/bin`, mise and asdf shims, Volta, Homebrew — and
+  looks again after an ENOENT or exit 127. It replaced a hand-kept list of extra folders. The module is a
+  server subpath bundled from Herald's own SDK install, so **the SDK is a `dependency`, not a
+  devDependency** (a git install omits dev dependencies), and it works on bb 0.47 as well. It takes
+  Node's spawn options, so `detached` and the three pipes are as before.
 - **An empty working folder per run.** Each run gets its own `mkdtemp` folder under the temp directory,
   removed in a `finally`, so no project instructions, hooks or repository are in reach. One folder for
   the life of the plugin was the first version: macOS purges unused temp entries after a few days and a
@@ -217,7 +225,7 @@ an entry it silences is `off` — listed, never spoken, no tool run to write it.
 - **Two bb calls per event** (`experimental_listAncestors`, `experimental_listPluginMetadata`), not
   cached: a cache would need invalidating on every change, including an ancestor's from another window.
   Events are not frequent enough for this to matter.
-- **The menu reads through Herald's server** (`choices.list`, `choices.set`), not `useSdk()` directly,
+- **The menu reads through Herald's server** (`choices.list`, `choices.set`, `choices.setMany`), not `useSdk()` directly,
   so the server can publish `CHOICES_CHANNEL` on a change: a thread's choice is also its descendants', so
   every open menu in every window re-reads every row it shows. bb calls `useData` once for the app with
   the thread ids on screen; it reads only ids it has not asked for, merges answers (a full re-read does
@@ -226,6 +234,11 @@ an entry it silences is `off` — listed, never spoken, no tool run to write it.
   contract as a value in the app; Herald's app imports the contract as a type only (the SDK-root rule in
   the repo `AGENTS.md`), so it keeps its own small cache instead.
 - **Archived threads get no item**; bb's own notification action does the same.
+
+**A selection's menu** (`experimental_bulkItem`, bb 0.48, under the `sidebarMultiSelect` experiment) shows
+the same four choices for every selected thread, checked only when all have it as their own, and saves
+them with one `choices.setMany` per 200 threads. The server tries every thread, publishes once even when
+some failed, and then says how many were not saved. bb 0.47 drops `experimental_bulkItem` silently.
 
 ## Turn ends: repeats, silence, interruptions
 
@@ -403,10 +416,27 @@ newest first, from `server/history.ts` — appended by the hooks' `remember` whe
 (plain, off, or the model's; never a pending one taken back), one kv row per thread capped at
 `HISTORY_LIMIT` items with the headline cut at `HISTORY_HEADLINE_MAX` and the text at `MAX_SPEECH_CHARS`
 (fifty uncut error headlines passed kv's 256 KB row), kept on archive and deleted with the thread. It re-reads on the entries nudge, since a
-sentence landing is also an entries change. A megaphone in the thread header
-(`experimental_threadHeaderAction`, `app/header-action.tsx`) opens it through `useBbNavigate().openThreadPanel`;
-the host wants one 28px control there, so it is an icon button with its own accessible name. If bb gains a plugin-written timeline row, write the
+sentence landing is also an entries change. bb keeps a closed panel's tab mounted, so on bb 0.48 the tab
+asks `experimental_useTabVisible` and, while it is not showing, stops its 15 s clock and only notes a
+nudge, reading once when it shows again. If bb gains a plugin-written timeline row, write the
 sentence there at the end of the turn and this panel becomes a convenience.
+
+**The header button depends on the bb** (`app/header-action.tsx`, `registerHistoryOpener`). On bb 0.48 it
+is a header thread action (`experimental_threadAction` with `placement: "header"`): a labelled "Herald"
+button after the workspace's Open button, folded into the header's thread menu at compact width, whose
+`run` calls `experimental_panel.toggleTab`, so a second click closes the tab. bb 0.47 drops `placement`
+(the action would land in every thread menu) and has no panel controller, so there Herald registers the
+older header slot (`experimental_threadHeaderAction`, an icon button, one 28px control as that slot
+asks) opening the tab through `useBbNavigate().openThreadPanel`. **Never register both**: bb 0.48 still
+draws the old slot, so the header would show two. Both are gone from the 0.6.94 typings and reached
+through casts; `bb plugin build` on 0.48 warns about them, which is expected.
+
+**Telling bb 0.48 from 0.47 in the app** (`app/bb-features.ts`). A named import of a member the running
+bb lacks fails the build — bb's builder shims `@get-bb/plugin-sdk/app` with its own app's members, and a
+git install is built by the bb that runs it. A namespace member it lacks compiles to `undefined`, so
+`HAS_PANEL_CONTROLLER` reads `experimental_useTabVisible` through `import * as`. That member came with the
+panel controller (bb#6356) and header thread actions (bb#6388) in the same release. Use this for any
+other 0.48-only app member while `engines.bb` is `>=0.47`.
 
 The **Herald page lists the same rows across threads** below its waiting list: `SentenceHistory.recent`
 lists the `history:` keys (`kv.list(prefix)`), reads each row and merges them newest first, so there is

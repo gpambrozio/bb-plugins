@@ -58,6 +58,15 @@ export const rpcContract = defineRpcContract({
     output: ChoiceInputsSchema,
   },
   /**
+   * Sets the same choice on several threads at once — a selection in bb's
+   * sidebar — and tells every open menu once. Each thread is tried; a failure
+   * names how many were not saved.
+   */
+  "choices.setMany": {
+    input: z.object({ threadIds: z.array(z.string().min(1)).min(1).max(CHOICES_BATCH_MAX), choice: ChoiceOptionSchema }),
+    output: z.null(),
+  },
+  /**
    * A line from the app for `bb plugin logs herald`: the announcer says here
    * what it spoke and why it stayed quiet, since the app's console is out of
    * reach on most clients.

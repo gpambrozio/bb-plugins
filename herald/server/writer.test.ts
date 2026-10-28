@@ -1,5 +1,5 @@
 import { access, readdir, readFile, unlink } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -66,7 +66,9 @@ describe("SentenceWriter", () => {
     const cwd = await w.write(node(`require("fs").writeFileSync("seen","");process.stdout.write(process.cwd())`), "p");
     expect(cwd).not.toBe(process.cwd());
     expect(cwd).toContain("herald-writer-");
-    const onPath = node(`process.stdout.write(process.env.PATH.split(":").includes("/opt/homebrew/bin") ? "yes" : "no")`);
+    // bb's host toolchain adds the usual install folders the server's own PATH may lack.
+    const localBin = join(homedir(), ".local", "bin");
+    const onPath = node(`process.stdout.write(process.env.PATH.split(":").includes(${JSON.stringify(localBin)}) ? "yes" : "no")`);
     expect(await w.write(onPath, "p")).toBe("yes");
     await expect(access(cwd)).rejects.toThrow();
   });

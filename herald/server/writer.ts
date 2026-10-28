@@ -9,10 +9,11 @@
  * sentence, and nothing more. At most `MAX_IN_FLIGHT` processes run at once;
  * a request beyond that is refused at once.
  */
-import { spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { experimental_spawnHostProcess } from "@get-bb/plugin-sdk/process";
 
 import type { Log } from "./ports";
 import { plainText } from "./timeline";
@@ -34,9 +35,6 @@ export const MAX_SENTENCE_CHARS = 400;
 /** A tool that streams a file instead of answering is stopped here, not at the timeout. */
 export const MAX_OUTPUT_BYTES = 256 * 1024;
 
-/** Where the tools live when the bb server's PATH has none of them (see AGENTS.md: the server may lack Homebrew). */
-const EXTRA_PATH = ["/opt/homebrew/bin", "/usr/local/bin", join(homedir(), ".local", "bin")];
-
 export interface RunOptions {
   cwd: string;
   env: NodeJS.ProcessEnv;
@@ -52,16 +50,20 @@ export interface RunResult {
 
 /**
  * `command[0]` with `command.slice(1)` as its arguments, no shell, `input` on
- * stdin. The tool leads its own process group, and the group is killed on
- * every way out — the timeout, an abort, too much output, and the tool's own
- * exit — so a helper it started never outlives the run.
+ * stdin. bb's host toolchain finds the tool and sets the child's PATH — the
+ * login shell's, `~/.local/bin`, mise and asdf shims, Volta and Homebrew — so
+ * a tool the bb server's own PATH lacks is still found, and one installed
+ * after a miss is found on the next run. The tool leads its own process
+ * group, and the group is killed on every way out — the timeout, an abort,
+ * too much output, and the tool's own exit — so a helper it started never
+ * outlives the run.
  */
 export function runCommand(command: readonly string[], input: string, options: RunOptions): Promise<RunResult> {
   const [file, ...args] = command;
   if (file === undefined) return Promise.reject(new Error("The command is empty."));
   if (options.signal?.aborted) return Promise.reject(new Error("The run was aborted before it started."));
   return new Promise((resolve, reject) => {
-    const child = spawn(file, args, { cwd: options.cwd, env: options.env, stdio: ["pipe", "pipe", "pipe"], detached: true });
+    const child = experimental_spawnHostProcess(file, args, { cwd: options.cwd, env: options.env, stdio: ["pipe", "pipe", "pipe"], detached: true });
     let stdout = "";
     let stderr = "";
     let bytes = 0;
@@ -154,7 +156,7 @@ export class SentenceWriter {
       cwd = await mkdtemp(join(tmpdir(), "herald-writer-"));
       const result = await runCommand(command, prompt, {
         cwd,
-        env: { ...process.env, PATH: withExtraPath(process.env.PATH) },
+        env: process.env,
         timeoutMs: WRITE_TIMEOUT_MS,
         signal: this.controller.signal,
       });
@@ -178,10 +180,4 @@ export class SentenceWriter {
     this.controller.abort();
     return Promise.resolve();
   }
-}
-
-function withExtraPath(path: string | undefined): string {
-  const present = new Set((path ?? "").split(delimiter).filter((entry) => entry !== ""));
-  const extra = EXTRA_PATH.filter((entry) => !present.has(entry));
-  return [...present, ...extra].join(delimiter);
 }

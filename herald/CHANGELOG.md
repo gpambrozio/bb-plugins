@@ -5,6 +5,25 @@ Notable changes to `herald`. The other plugins in this repository version separa
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.5.0
+
+### Added
+
+- **Set what Herald announces for several threads at once.** On bb 0.48, select threads in the sidebar
+  and pick *Herald* in the selection's menu: Default, Announce, Questions only or Silent applies to every
+  selected thread. A choice is checked there only when all of them have it; archived threads are left
+  out. (bb's sidebar selection is an early-adopter feature.)
+
+### Changed
+
+- On bb 0.48, the thread header shows a **Herald** button instead of the megaphone icon. A second click
+  closes the Herald tab again, and on a narrow window the button moves into the header's menu with bb's
+  own. bb 0.47 keeps the megaphone.
+- On bb 0.48, the Herald tab stops updating while it is not showing, and catches up when you open it.
+- When a model writes the sentences, Herald now finds the tool wherever bb finds its own — including
+  tools installed with mise, asdf or Volta — and finds one you install after a failed attempt on the
+  next announcement.
+
 ## 0.4.0
 
 ### Added

@@ -66,6 +66,30 @@ describe("ThreadChoices", () => {
     expect(stored.has("w1")).toBe(false);
   });
 
+  it("stores one choice on several threads, each once", async () => {
+    const { port, stored } = fakePort({ a: null, b: null }, { b: "announce" });
+    const writes: string[] = [];
+    const counting: ThreadChoicesPort = { ...port, setOwn: (threadId, choice) => (writes.push(threadId), port.setOwn(threadId, choice)) };
+    await new ThreadChoices(counting).setMany(["a", "b", "a"], "silent");
+    expect(Object.fromEntries(stored)).toEqual({ a: "silent", b: "silent" });
+    expect(writes).toEqual(["a", "b"]);
+  });
+
+  it("tries every thread of a selection, then reports the ones that failed", async () => {
+    const { port, stored } = fakePort({ a: null, b: null, c: null });
+    const failing: ThreadChoicesPort = {
+      ...port,
+      setOwn: async (threadId, choice) => {
+        if (threadId === "b") throw new Error("thread not found");
+        await port.setOwn(threadId, choice);
+      },
+    };
+    await expect(new ThreadChoices(failing).setMany(["a", "b", "c"], "questions")).rejects.toThrow(
+      "1 of 3 threads were not saved; the first: b: thread not found",
+    );
+    expect(Object.fromEntries(stored)).toEqual({ a: "questions", c: "questions" });
+  });
+
   it("has no choice for a thread bb does not know", async () => {
     const { port } = fakePort({});
     expect(await new ThreadChoices(port).inputsOf("gone")).toEqual({ own: null, inherited: null });

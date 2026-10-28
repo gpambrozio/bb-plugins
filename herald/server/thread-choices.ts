@@ -45,4 +45,24 @@ export class ThreadChoices {
   async set(threadId: string, option: ChoiceOption): Promise<void> {
     await this.port.setOwn(threadId, option === "default" ? null : option);
   }
+
+  /**
+   * The same choice on each of these threads, one write each. Every thread is
+   * tried even after one fails, so a bad row does not cost the rest; then the
+   * failures, if any, are thrown together.
+   */
+  async setMany(threadIds: readonly string[], option: ChoiceOption): Promise<void> {
+    const unique = [...new Set(threadIds)];
+    const failures: string[] = [];
+    for (const threadId of unique) {
+      try {
+        await this.set(threadId, option);
+      } catch (error) {
+        failures.push(`${threadId}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    if (failures.length > 0) {
+      throw new Error(`${failures.length} of ${unique.length} threads were not saved; the first: ${failures[0]}`);
+    }
+  }
 }

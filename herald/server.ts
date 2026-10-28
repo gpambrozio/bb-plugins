@@ -187,6 +187,15 @@ export default async function plugin(bb: BbPluginApi) {
       publishOn(CHOICES_CHANNEL, "a thread's choice");
       return choicesOf().inputsOf(threadId);
     },
+    // Told once for the whole selection, and also when only some were saved.
+    "choices.setMany": async ({ threadIds, choice }) => {
+      try {
+        await choicesOf().setMany(threadIds, choice);
+      } finally {
+        publishOn(CHOICES_CHANNEL, "several threads' choice");
+      }
+      return null;
+    },
     "config.get": () => storedConfig(),
     // Any part of the stored configuration; the rest is kept. When the tool
     // becomes "custom" with nothing written yet, the command of the tool
