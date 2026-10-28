@@ -5,6 +5,14 @@ Notable changes to `herald`. The other plugins in this repository version separa
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.5.1
+
+### Changed
+
+- On bb 0.48, the megaphone is back in the thread header as a button of its own. 0.5.0 made it a
+  *Herald* button that bb merged with other plugins' header buttons (such as Diff Review's *Review*)
+  into one button with a menu. A second click still closes the Herald tab.
+
 ## 0.5.0
 
 ### Added

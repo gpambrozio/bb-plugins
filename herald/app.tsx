@@ -47,7 +47,7 @@ export default definePluginApp((app) => {
     availability: "action",
     component: HeraldHistoryPanel,
   });
-  // And a button in the thread header that opens it: "Herald" on bb 0.48, a megaphone before.
+  // And the megaphone in the thread header that opens it, a button of its own on every bb.
   registerHistoryOpener(app.slots, HAS_PANEL_CONTROLLER);
 
   // Announce, Questions only or Silent, per thread — or for every selected
