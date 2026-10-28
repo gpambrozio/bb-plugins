@@ -5,6 +5,7 @@
 import { definePluginApp, experimental_THREAD_INFO_ROW_GROUPS } from "@get-bb/plugin-sdk/app";
 
 import { dispatchReviewCommand, REVIEW_COMMANDS, type ReviewCommand } from "./app/commands";
+import { registerReviewHeader } from "./app/header-action";
 import { ReviewPanel } from "./app/review-panel";
 import { OpenReviewOverlay } from "./app/open-overlay";
 import { REVIEWS_PATH, ReviewsPage, ReviewsSidebar, useReviewsBadge, useReviewsPageTitle } from "./app/reviews-page";
@@ -21,23 +22,8 @@ export default definePluginApp((app) => {
     component: ReviewPanel,
   });
 
-  // A "Review" button in the thread's header, after bb's Open; it folds into the thread menu when
-  // the header is narrow.
-  app.slots.experimental_threadAction({
-    id: "review",
-    title: "Review",
-    icon: "FileDiff",
-    group: "diff-review",
-    placement: "header",
-    item: ({ experimental_panel }) => ({
-      label: "Review",
-      detail: "Review this thread's changes",
-      icon: "FileDiff",
-      run: () => {
-        openReviewTab(experimental_panel);
-      },
-    }),
-  });
+  // A Review button of its own in the thread's header (`app/header-action.tsx`).
+  registerReviewHeader(app);
 
   // Every review with comments, across projects, with the open ones counted on the sidebar entry.
   app.slots.navPanel({

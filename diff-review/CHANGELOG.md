@@ -40,8 +40,7 @@ Needs bb 0.48 or newer.
 
 ### Changed
 
-- The **Review** button sits after bb's Open button in the thread's header and folds into the thread
-  menu when the header is narrow.
+- A second click on the **Review** button in the thread's header closes the tab.
 - Diffs come from bb's Git plugin. If it is turned off, the tab says so instead of failing.
 - The tab hears about changes to the workspace made outside an agent's turn (your own edits, a `git`
   command) and reloads by itself, and a tab you are not looking at waits to reload until you open it.

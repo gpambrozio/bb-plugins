@@ -42,7 +42,8 @@ specific to `diff-review`.
 | `app/review-panel.tsx` | The tab: the view picker, split/unified, *Only files with comments* (remembered in `localStorage` per bb thread, off until a thread turns it on; split/unified is one choice for all), reload, whole-diff comments, the *Not on the current diff* list, the files, the send dialog, the Clear review confirm (`app/clear-dialog.tsx`). |
 | `app/file-diff.tsx` | One file: its header (with its thread count while the switch is off), whole-file threads, and Pierre's `PatchDiff` with thread annotations and the gutter "+". |
 | `app/patch-loader.ts` | Patches bb did not send with the file list, asked for as files come near the screen and fetched in batches, one request at a time. |
-| `app/tab.ts` | The tab's reference and `openReviewTab` through bb's panel controller; `app.tsx` registers the tab, the header thread action, the commands, the Reviews page, the Info row and the open overlay. |
+| `app/tab.ts` | The tab's reference and `openReviewTab` through bb's panel controller; `app.tsx` registers the tab, the header button, the commands, the Reviews page, the Info row and the open overlay. |
+| `app/header-action.tsx` | The header's Review icon button (the old header slot, see below) and the one-control registration, with its fallback. |
 | `app/commands.ts` | The palette commands' bus: a command opens the thread's tab and leaves its action for the tab that shows. |
 | `app/find.ts`, `app/find-bar.tsx`, `app/goto-dialog.tsx`, `app/reveal.ts` | Find across the diff (diffity's), Go to, and scrolling a place into view inside Pierre's open shadow root. |
 | `app/files-view.tsx` | The "Any file" view: workspace search, Pierre's `File` with the same annotations. |
@@ -238,12 +239,20 @@ another.
 bb's diff panel; a mark at an older revision is "changed since viewed". The host views and Any file
 have no marks (`viewable: false`).
 
-**The tab is an `experimental_tab`, the button a header thread action, both opened through the panel
-controller.** bb 0.48 retired `threadPanelAction`, `experimental_threadHeaderAction` and
-`ctx.openPanel` / `openThreadPanel` from the typings. The tab keeps the id `review` (saved tabs and
-their params carry over); the header action is `experimental_threadAction({ placement: "header" })`,
-whose `item` gets the panel controller (its `run` does not). A palette command opens the tab and
-hands its action to the tab through `app/commands.ts`. A hidden tab (`experimental_useTabVisible`)
+**The tab is an `experimental_tab`, the button the old `experimental_threadHeaderAction` slot, both
+opened through the panel controller.** bb 0.48 retired `threadPanelAction`,
+`experimental_threadHeaderAction` and `ctx.openPanel` / `openThreadPanel` from the typings. The tab
+keeps the id `review` (saved tabs and their params carry over). The header button is *not*
+`experimental_threadAction({ placement: "header" })`, the slot that replaced the old one: bb 0.48 draws
+every plugin's header thread actions as one shared split button (`ThreadDetailHeader.tsx`: the first
+action is the label, the rest sit in its dropdown), so with Herald installed Review became an entry in
+a "Herald" dropdown. The old slot, which bb 0.48 still mounts but no longer types, draws each plugin's
+component as its own control, inside the thread's panel controller, so the icon button toggles the tab
+with `experimental_useAppPanel().toggleTab`. `app/header-action.tsx` reaches the slot through an
+untyped cast and registers exactly one control: the old slot when `app.slots` has it, else a header
+thread action. **A future bb may drop the old slot**; the fallback then takes over by itself, back in
+the shared split button — check the header after every bb release. A palette command opens the tab
+and hands its action to the tab through `app/commands.ts`. A hidden tab (`experimental_useTabVisible`)
 defers reloads until it shows.
 
 **Summaries and explanations are review runs with a purpose.** The `runs` table's kind check predates

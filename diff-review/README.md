@@ -9,8 +9,8 @@ It is a bb take on [diffity](https://github.com/nilbuild/diffity)'s review loop,
 
 ## What you get
 
-- **A Review tab** in each thread's side panel, opened from the **Review** button in the thread's
-  header (after bb's Open; in the thread menu when the header is narrow), the side panel's tabs, or the
+- **A Review tab** in each thread's side panel, opened from the **Review** icon button in the thread's
+  header (which also closes it), the side panel's tabs, or the
   command palette (*Diff Review: review this thread's changes*). It shows the diff of the thread's
   workspace: the **uncommitted changes**, the **staged** or the **unstaged** ones, the changes
   **committed since** the base branch, **all changes since** the base branch, **one commit** of the

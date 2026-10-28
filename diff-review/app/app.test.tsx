@@ -164,18 +164,33 @@ const loadsOf = (slot: ReturnType<typeof render>) =>
   slot.inspection.rpcCalls.filter((call) => call.method === "getReview").map((call) => call.input as { reason: string; ignoreWhitespace?: boolean; target?: unknown });
 
 describe("the app", () => {
-  it("registers the Review tab and a Review button in the thread's header", async () => {
+  it("registers the Review tab and one Review button of its own in the thread's header", async () => {
     const app = await loadPluginApp(() => import("../app"));
     expect(app.tabs.map((tab) => [tab.id, tab.context, tab.availability, tab.title, tab.layout])).toEqual([["review", { kind: "thread" }, "action", "Review", "flush"]]);
-    expect(app.threadHeaderActions).toEqual([]);
-    expect(app.threadActions.map((action) => [action.id, action.placement])).toEqual([["review", "header"]]);
+    // bb 0.48 folds every plugin's header thread action into one shared split button; the old slot
+    // draws Review as its own control, so Review registers there and nowhere else.
+    expect(app.threadHeaderActions.map((action) => [action.id, action.title])).toEqual([["review", "Review"]]);
+    expect(app.threadActions).toEqual([]);
   });
 
-  it("opens the Review tab through bb's panel controller from the header button", async () => {
+  it("opens and closes the Review tab through bb's panel controller from the header button", async () => {
     const app = await loadPluginApp(() => import("../app"));
+    const slot = renderSlot(app.threadHeaderActions[0]!, { threadId: "thr_1", projectId: "proj_1", isCompactViewport: false }, { experimental_panel: { toggleTab: () => true } });
+    fireEvent.click(screen.getByRole("button", { name: "Review this thread's changes" }));
+    expect(slot.inspection.experimental_panelCalls).toEqual([{ method: "toggleTab", options: { tab: { id: "review", context: { kind: "thread" }, availability: "action" } } }]);
+  });
+
+  it("falls back to a header thread action on a bb without the old header slot, still one control", async () => {
+    const actions: { id: string; placement?: string; item(context: unknown): { label: string; run(context: unknown): unknown } | null }[] = [];
+    const definition = (await import("../app")).default as unknown as { setup(builder: unknown): void };
+    const slots = new Proxy({} as Record<string, unknown>, {
+      get: (_target, name) => (name === "experimental_threadAction" ? (action: (typeof actions)[number]) => actions.push(action) : name === "experimental_threadHeaderAction" ? undefined : () => undefined),
+    });
+    definition.setup({ slots, commands: { register: () => undefined }, composer: { customize: () => undefined } });
+    expect(actions.map((action) => [action.id, action.placement])).toEqual([["review", "header"]]);
     const calls: unknown[] = [];
     const panel = { openTab: (options: unknown) => (calls.push(options), true), toggleTab: () => true, close: () => true };
-    const action = app.threadActions[0]!.item({ thread: { id: "thr_1" }, data: undefined, experimental_panel: panel } as never)!;
+    const action = actions[0]!.item({ thread: { id: "thr_1" }, data: undefined, experimental_panel: panel })!;
     expect(action.label).toBe("Review");
     await action.run({ requestRename: () => undefined });
     expect(calls).toEqual([{ tab: { id: "review", context: { kind: "thread" }, availability: "action" } }]);
