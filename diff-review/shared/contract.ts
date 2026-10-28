@@ -3,6 +3,8 @@
  * (`useRpc<typeof rpcContract>()`); the schemas it needs at run time are in `types.ts`.
  */
 import { defineRpcContract } from "@get-bb/plugin-sdk";
+
+import { reviewEventSchema } from "./github";
 import { z } from "zod";
 
 import {
@@ -228,6 +230,29 @@ export const rpcContract = defineRpcContract({
       })
       .strict(),
     output: z.object({ ok: z.literal(true) }).strict(),
+  },
+  reviewPlan: {
+    input: z.object({ sessionId: id }).strict(),
+    output: z
+      .object({
+        lines: z.array(z.object({ reviewThreadId: z.string(), path: z.string(), line: z.number() }).strict()),
+        body: z.array(z.object({ reviewThreadId: z.string() }).strict()),
+        blocked: z.array(z.object({ reviewThreadId: z.string(), reason: z.string() }).strict()),
+      })
+      .strict(),
+  },
+  submitReview: {
+    input: z
+      .object({
+        sessionId: id,
+        event: reviewEventSchema,
+        body: z.string().max(BODY_MAX_CHARS),
+        /** The pull request's head as the view showed it; a newer one is refused. */
+        headSha: z.string().regex(/^[0-9a-f]{40}$/),
+        reviewThreadIds: z.array(id).max(500),
+      })
+      .strict(),
+    output: z.object({ url: z.string().nullable(), posted: z.number().int(), blocked: z.array(z.object({ reviewThreadId: z.string(), reason: z.string() }).strict()) }).strict(),
   },
   listReviews: {
     input: z.object({}).strict(),

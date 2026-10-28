@@ -5,7 +5,7 @@ import { createFakePluginHost, experimental_scanPublicSdkOnly, makePluginAgentCo
 import type { ProviderInfo } from "@get-bb/plugin-sdk";
 import { describe, expect, it, vi } from "vitest";
 
-import plugin from "./server";
+import plugin, { diffReviewPlugin } from "./server";
 import { REPORT_LINE } from "./server/run-prompts";
 import { TOOL_NAMES } from "./server/tool-names";
 import type { ReviewThread, ReviewView, Run } from "./shared/types";
@@ -65,6 +65,10 @@ interface Setup {
   statusExtra?: () => Record<string, unknown>;
   /** The host entry's revert refuses with this message. */
   hostRevertRefuses?: string;
+  /** The GitHub CLI, for the pull request view. */
+  gh?: (args: readonly string[], stdin?: string) => Promise<string>;
+  /** What bb's GitHub PR Status says the workspace's branch has. */
+  branchPull?: { url: string; title: string };
   /** Called before a write lands: a string is what someone else wrote meanwhile (bb answers a conflict). */
   beforeWrite?: (path: string) => string | undefined;
   /** Files as committed at HEAD, by absolute path, for `files.read` with `ref`. */
@@ -168,6 +172,7 @@ async function setup(options: Setup = {}) {
         if (options.hostRevertRefuses !== undefined) throw new Error(options.hostRevertRefuses);
         return { ok: true };
       }
+      if (call.method === "fetchPull") return { headSha: "h".repeat(40).replace(/h/g, "a"), baseSha: "b".repeat(40) };
       if (call.method !== "diff") throw new Error(`no host method ${call.method}`);
       const { spec } = call.input as { spec: { kind: string } };
       if (spec.kind === "range" && (spec as { from: string }).from === "nope") throw new Error("Unknown revision 'nope'.");
@@ -240,6 +245,9 @@ async function setup(options: Setup = {}) {
         list: async () => ({ plugins: [{ id: "bb--git", enabled: git.enabled }] }) as never,
         // bb's Git plugin, as `bb.sdk.plugins.callRpc` reaches it; `git.calls` records each call.
         callRpc: async ({ pluginId, method, input, outputSchema }: { pluginId: string; method: string; input?: unknown; outputSchema: { parse: (value: unknown) => unknown } }) => {
+          if (pluginId === "bb--github-pr-status" && options.branchPull !== undefined) {
+            return outputSchema.parse({ [(input as { keys: string[] }).keys[0]!]: { outcome: "available", pullRequest: options.branchPull } }) as never;
+          }
           if (pluginId !== "bb--git") throw new Error(`no plugin ${pluginId}`);
           git.calls.push({ method, input });
           if (!git.enabled) throw new Error("Plugin RPC failed");
@@ -305,7 +313,7 @@ async function setup(options: Setup = {}) {
       },
     },
   });
-  await plugin(bb);
+  await (options.gh === undefined ? plugin(bb) : diffReviewPlugin({ gh: options.gh })(bb));
   const rpc = harness.behavior.callRpc.bind(harness.behavior) as (method: string, input?: unknown) => Promise<unknown>;
   const view = async (target: unknown = { kind: "uncommitted" }) => (await rpc("getReview", { threadId: THREAD, target })) as Extract<ReviewView, { ok: true }>;
   const comment = async (sessionId: string, body = "Why 3?") =>
@@ -595,6 +603,111 @@ describe("the Files view", () => {
     const files = await view({ kind: "files" });
     expect(files).toMatchObject({ ok: true, target: { kind: "files" }, files: [], viewable: false });
     expect(files.sessionId).not.toBe((await view()).sessionId);
+  });
+});
+
+describe("reviewing a GitHub pull request", () => {
+  const HEAD = "a".repeat(40);
+  const PULL = { kind: "pr", owner: "o", repo: "r", number: 7 } as const;
+
+  /** A fake `gh api graphql --input -`: answers by the query, records every request. */
+  function fakeGitHub() {
+    const requests: { query: string; variables: Record<string, unknown> }[] = [];
+    const remote = {
+      head: HEAD,
+      threads: [
+        {
+          id: "PRRT_1", isResolved: false, isOutdated: false, path: "src/a.ts", line: 2, startLine: null, originalLine: 2, originalStartLine: null, diffSide: "RIGHT",
+          comments: { nodes: [{ id: "PRRC_1", body: "Why 3?", createdAt: "2026-10-01T00:00:00Z", author: { login: "octo" } }] },
+        },
+      ] as Record<string, unknown>[],
+    };
+    const gh = async (args: readonly string[], stdin?: string) => {
+      expect(args).toEqual(["api", "graphql", "--input", "-"]);
+      const request = JSON.parse(stdin!) as { query: string; variables: Record<string, unknown> };
+      requests.push(request);
+      const data = (value: unknown) => JSON.stringify({ data: value });
+      if (request.query.includes("reviewThreads")) return data({ repository: { pullRequest: { reviewThreads: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: remote.threads } } } });
+      if (request.query.startsWith("query")) {
+        return data({ repository: { pullRequest: { id: "PR_1", number: 7, title: "Add b", url: "https://github.com/o/r/pull/7", state: "OPEN", baseRefName: "main", headRefName: "feature", headRefOid: remote.head, baseRefOid: "b".repeat(40) } } });
+      }
+      if (request.query.includes("addPullRequestReview(")) return data({ addPullRequestReview: { pullRequestReview: { id: "PRR_1", url: "https://github.com/o/r/pull/7#review-1" } } });
+      if (request.query.includes("submitPullRequestReview")) return data({ submitPullRequestReview: { pullRequestReview: { id: "PRR_1", url: "https://github.com/o/r/pull/7#review-1" } } });
+      if (request.query.includes("resolveReviewThread")) {
+        remote.threads[0]!.isResolved = !request.query.includes("unresolve");
+        return data({});
+      }
+      if (request.query.includes("addPullRequestReviewThreadReply")) {
+        (remote.threads[0]!.comments as { nodes: unknown[] }).nodes.push({ id: "PRRC_2", body: (request.variables.input as { body: string }).body, createdAt: "2026-10-02T00:00:00Z", author: { login: "me" } });
+        return data({});
+      }
+      return data({});
+    };
+    return { gh, requests, remote };
+  }
+
+  it("fetches the pull request on the workspace's machine, diffs it, and mirrors its review threads", async () => {
+    const github = fakeGitHub();
+    const { view, hostCalls } = await setup({ gh: github.gh });
+    const result = await view(PULL);
+    expect(hostCalls.find((call) => call.method === "fetchPull")).toMatchObject({ hostId: "host_1", input: { root: "/work/repo", url: "https://github.com/o/r.git", number: 7, baseRef: "main" } });
+    expect(hostCalls.at(-1)).toMatchObject({ method: "diff", input: { spec: { kind: "range", from: "b".repeat(40), to: HEAD, symmetric: true } } });
+    expect(result.pullRequest).toMatchObject({ number: 7, title: "Add b", headSha: HEAD, syncError: null });
+    expect(result.threads).toMatchObject([
+      { githubThreadId: "PRRT_1", filePath: "src/a.ts", side: "new", startLine: 2, endLine: 2, status: "open", anchorContent: "const b = 3;", comments: [{ authorType: "github", authorName: "octo", body: "Why 3?" }] },
+    ]);
+    // Read again, nothing doubles.
+    expect((await view(PULL)).threads).toHaveLength(1);
+  });
+
+  it("replies on, resolves and reopens a GitHub thread on GitHub, and refuses to dismiss or edit it", async () => {
+    const github = fakeGitHub();
+    const { view, rpc } = await setup({ gh: github.gh });
+    const [mirror] = (await view(PULL)).threads;
+    const replied = (await rpc("addComment", { reviewThreadId: mirror!.id, body: "Because 3 > 2." })) as { thread: ReviewThread };
+    expect(github.requests.find((request) => request.query.includes("addPullRequestReviewThreadReply"))!.variables).toEqual({ input: { pullRequestReviewThreadId: "PRRT_1", body: "Because 3 > 2." } });
+    expect(replied.thread.comments.map((comment) => [comment.authorType, comment.body])).toEqual([["github", "Why 3?"], ["github", "Because 3 > 2."]]);
+    expect(((await rpc("setStatus", { reviewThreadId: mirror!.id, status: "resolved" })) as { thread: ReviewThread }).thread.status).toBe("resolved");
+    expect(((await rpc("setStatus", { reviewThreadId: mirror!.id, status: "open" })) as { thread: ReviewThread }).thread.status).toBe("open");
+    await expect(rpc("setStatus", { reviewThreadId: mirror!.id, status: "dismissed" })).rejects.toMatchObject({ code: "invalid" });
+    await expect(rpc("editComment", { commentId: mirror!.comments[0]!.id, body: "x" })).rejects.toMatchObject({ code: "forbidden" });
+  });
+
+  it("submits the user's comments as one review with the verdict, and drops the ones it posted", async () => {
+    const github = fakeGitHub();
+    const { view, rpc } = await setup({ gh: github.gh });
+    const { sessionId } = await view(PULL);
+    const line = ((await rpc("createThread", { sessionId, filePath: "src/a.ts", side: "new", startLine: 2, endLine: 2, severity: null, anchorContent: "const b = 3;", body: "Name it c." })) as { thread: ReviewThread }).thread;
+    await rpc("createThread", { sessionId, filePath: "__general__", side: null, startLine: 0, endLine: 0, severity: null, anchorContent: null, body: "Looks good overall." });
+    const gone = ((await rpc("createThread", { sessionId, filePath: "src/a.ts", side: "new", startLine: 1, endLine: 1, severity: null, anchorContent: "not there", body: "Lost" })) as { thread: ReviewThread }).thread;
+    const plan = (await rpc("reviewPlan", { sessionId })) as { lines: unknown[]; body: unknown[]; blocked: { reviewThreadId: string }[] };
+    expect(plan).toMatchObject({ lines: [{ reviewThreadId: line.id, path: "src/a.ts", line: 2 }], body: [{}], blocked: [{ reviewThreadId: gone.id }] });
+
+    const ids = (await view(PULL)).threads.filter((thread) => thread.githubThreadId === null).map((thread) => thread.id);
+    const result = (await rpc("submitReview", { sessionId, event: "APPROVE", body: "Thanks!", headSha: HEAD, reviewThreadIds: ids })) as { posted: number; url: string };
+    expect(result).toMatchObject({ posted: 2, url: "https://github.com/o/r/pull/7#review-1" });
+    const sent = github.requests.filter((request) => request.query.startsWith("mutation"));
+    expect(sent.map((request) => request.variables.input)).toEqual([
+      { pullRequestId: "PR_1", commitOID: HEAD },
+      { pullRequestReviewId: "PRR_1", path: "src/a.ts", body: "Name it c.", line: 2, side: "RIGHT" },
+      { pullRequestReviewId: "PRR_1", event: "APPROVE", body: "Thanks!\n\nLooks good overall." },
+    ]);
+    // The posted comments left the view; the one that could not be posted stays.
+    expect((await view(PULL)).threads.filter((thread) => thread.githubThreadId === null).map((thread) => thread.id)).toEqual([gone.id]);
+  });
+
+  it("refuses to submit once the pull request has new commits", async () => {
+    const github = fakeGitHub();
+    const { view, rpc } = await setup({ gh: github.gh });
+    const { sessionId } = await view(PULL);
+    github.remote.head = "c".repeat(40);
+    await expect(rpc("submitReview", { sessionId, event: "COMMENT", body: "x", headSha: HEAD, reviewThreadIds: [] })).rejects.toMatchObject({ code: "conflict", message: expect.stringContaining("new commits") });
+    expect(github.requests.some((request) => request.query.startsWith("mutation"))).toBe(false);
+  });
+
+  it("offers the review of the branch's pull request, from bb's GitHub PR Status", async () => {
+    const { view } = await setup({ branchPull: { url: "https://github.com/o/r/pull/7", title: "Add b" } });
+    expect((await view()).branchPullRequest).toEqual({ owner: "o", repo: "r", number: 7, title: "Add b" });
   });
 });
 

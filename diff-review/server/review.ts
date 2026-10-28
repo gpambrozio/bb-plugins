@@ -37,7 +37,10 @@ import { gitTarget, ignorePatterns, loadDiff, type DiffSources, loadPatches, res
 import { parseRange, rangeText } from "../shared/git-spec";
 import { OPEN_CHANNEL, reviewRoute } from "../shared/routes";
 import { GitReads } from "./git";
-import { createHostGit, createHostIndexState, createHostRangeCommits, type HostGit, type HostIndexState, type HostRangeCommits } from "./host-git";
+import { createGhRunner, GitHub, type GhRunner } from "./github";
+import { createHostFetchPull, createHostGit, createHostIndexState, createHostRangeCommits, type HostIndexState, type HostRangeCommits } from "./host-git";
+import { PullRequests, type ReviewPlan } from "./pull-requests";
+import { parsePullText, type PullRef, type ReviewEvent } from "../shared/github";
 import { sendPrompt } from "./prompt";
 import type { ReviewStore, ReviewSummaryRow, StoredRun } from "./store";
 
@@ -134,12 +137,13 @@ export class ReviewService {
     private readonly bb: BbPluginApi,
     private readonly store: ReviewStore,
     private readonly settings: () => Promise<ReviewSettings>,
-    host?: HostGit,
+    deps: { gh?: GhRunner } = {},
   ) {
     this.git = new GitReads(bb.sdk, (message) => new ReviewUnavailable(message));
-    this.sources = { git: this.git, host: host ?? createHostGit(bb) };
+    this.sources = { git: this.git, host: createHostGit(bb) };
     this.hostIndexState = createHostIndexState(bb);
     this.hostRangeCommits = createHostRangeCommits(bb);
+    this.prs = new PullRequests(bb, store, new GitHub(deps.gh ?? createGhRunner()), createHostFetchPull(bb), this.sources, (sessionId) => this.publishSession(sessionId));
   }
 
   /**
@@ -155,6 +159,9 @@ export class ReviewService {
       throw new ReviewUnavailable(`Could not read the range ${rangeText(target)} on the workspace's machine: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
+
+  /** GitHub pull request review: the `pr` view's diff, its mirrored review threads, Submit. */
+  readonly prs: PullRequests;
 
   /**
    * The Review tab's whole view of a thread's diff. With `autoTarget` (the tab's first load, when it
@@ -178,10 +185,14 @@ export class ReviewService {
       let target = resolveTarget(request, refs.defaultBase);
       const settings = await this.settings();
       const patterns = await ignorePatterns(this.bb.sdk, this.bb.log, environment, settings.ignorePatterns, settings.readIgnoreFiles);
+      let pull: Awaited<ReturnType<PullRequests["load"]>> | null = null;
+      if (target.kind === "pr") pull = await this.prs.load(environment, target, patterns, ignoreWhitespace);
       let diff =
-        target.kind === "files"
-          ? { files: [], ignoredPaths: [], truncated: false, mergeBaseRef: null, headRef: null, viewable: false }
-          : await loadDiff(this.sources, this.bb.log, environment, target, patterns, ignoreWhitespace);
+        pull !== null
+          ? pull.diff
+          : target.kind === "files"
+            ? { files: [], ignoredPaths: [], truncated: false, mergeBaseRef: null, headRef: null, viewable: false }
+            : await loadDiff(this.sources, this.bb.log, environment, target, patterns, ignoreWhitespace);
       if (autoTarget && target.kind === "uncommitted" && diff.files.length === 0 && refs.defaultBase !== null) {
         const branch: Target = { kind: "branch", base: refs.defaultBase };
         const committed = await loadDiff(this.sources, this.bb.log, environment, branch, patterns, ignoreWhitespace);
@@ -191,6 +202,12 @@ export class ReviewService {
         }
       }
       const session = this.store.session(environment.id, targetKey(target));
+      // A pull request's review threads are read from GitHub on every load.
+      const synced =
+        pull !== null && target.kind === "pr"
+          ? await this.prs.sync(session.id, target, { pullId: pull.pullId, headSha: pull.details.headSha, baseSha: pull.details.baseSha, files: diff.files })
+          : null;
+      const branchPullRequest = target.kind === "pr" ? null : await this.prs.branchPull(environment.id);
       const threads = this.store.threads(session.id);
       const files = await withThreadPatches(this.git, this.bb.log, environment, target, diff.files, threads, ignoreWhitespace);
       return {
@@ -204,6 +221,8 @@ export class ReviewService {
         mergeBaseRef: diff.mergeBaseRef,
         headRef: diff.headRef,
         viewable: diff.viewable,
+        pullRequest: pull === null || synced === null ? null : { ...pull.details, ...synced },
+        branchPullRequest,
         files,
         ignoredPaths: diff.ignoredPaths,
         truncated: diff.truncated,
@@ -849,11 +868,61 @@ export class ReviewService {
     return thread;
   }
 
+  /** The pull request a `pr` session reviews. */
+  private pullOf(sessionId: string): PullRef {
+    const target = targetFromKey(this.requireSession(sessionId).targetKey);
+    if (target.kind !== "pr") throw new ReviewError("That review is not of a pull request.", "not_a_pull_request");
+    return { owner: target.owner, repo: target.repo, number: target.number };
+  }
+
+  /**
+   * The user's reply in the tab: on a thread mirrored from GitHub it is posted there as the owner
+   * (and read back); otherwise it is the plugin's own comment.
+   */
+  async reply(reviewThreadId: string, body: string, viewerThreadId: string | null): Promise<ReviewThread> {
+    const thread = this.requireThread(reviewThreadId);
+    if (thread.githubThreadId === null) return this.addUserComment(reviewThreadId, body, viewerThreadId);
+    await github(() => this.prs.reply(thread, this.pullOf(thread.sessionId), requireText(body, "The reply")));
+    return this.requireThread(reviewThreadId);
+  }
+
+  /** The user's resolve, reopen or dismiss; a mirrored thread is resolved or reopened on GitHub, and has no dismiss. */
+  async changeStatus(reviewThreadId: string, status: ThreadStatus): Promise<ReviewThread> {
+    const thread = this.requireThread(reviewThreadId);
+    if (thread.githubThreadId === null) return this.setStatus(reviewThreadId, status);
+    if (status === "dismissed") throw new ReviewError("A GitHub review thread cannot be dismissed; resolve it instead.", "invalid_status");
+    await github(() => this.prs.setResolved(thread, this.pullOf(thread.sessionId), status === "resolved"));
+    return this.requireThread(reviewThreadId);
+  }
+
+  /** What Submit would post of a `pr` session: line comments, body sections and the ones it cannot. */
+  reviewPlan(sessionId: string): ReviewPlan {
+    this.pullOf(sessionId);
+    const plan = this.prs.plan(sessionId);
+    if (plan === null) throw new ReviewError("Load the pull request's view first.", "changed");
+    return plan;
+  }
+
+  submitReview(input: { sessionId: string; event: ReviewEvent; body: string; headSha: string; reviewThreadIds: readonly string[] }) {
+    const ref = this.pullOf(input.sessionId);
+    return github(() => this.prs.submit({ ...input, ref }));
+  }
+
   private requireUserComment(id: string) {
     const comment = this.store.comment(id);
     if (comment === null) throw new ReviewError(`No comment ${id}.`, "unknown_comment");
     if (comment.authorType !== "user") throw new ReviewError("Only your own comments can be changed.", "not_yours");
     return comment;
+  }
+}
+
+/** A GitHub call, its failure worded as a refusal the tab shows. */
+async function github<T>(work: () => Promise<T>): Promise<T> {
+  try {
+    return await work();
+  } catch (error) {
+    if (error instanceof ReviewError) throw error;
+    throw new ReviewError(error instanceof Error ? error.message : String(error), "github_failed");
   }
 }
 
@@ -884,6 +953,10 @@ export function targetFromKey(key: string): Target {
   if (kind === "range") {
     const range = parseRange(value);
     if (range !== null) return range;
+  }
+  if (kind === "pr") {
+    const pull = parsePullText(value);
+    if (pull !== null) return { kind: "pr", ...pull };
   }
   throw new Error(`Unknown review session key: ${key}`);
 }

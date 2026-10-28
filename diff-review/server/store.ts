@@ -683,17 +683,32 @@ export class ReviewStore {
             .run(thread.status, thread.side, thread.startLine, thread.endLine, thread.anchorContent, at, id);
           changed = true;
         }
-        const known = this.db
-          .prepare<[string], { github_comment_id: string; body: string }>("SELECT github_comment_id, body FROM review_comments WHERE thread_id = ? AND github_comment_id IS NOT NULL ORDER BY created_at, rowid")
-          .all(id);
-        const same = known.length === thread.comments.length && known.every((row, index) => row.github_comment_id === thread.comments[index]!.githubCommentId && row.body === thread.comments[index]!.body);
-        if (!same) {
-          this.db.prepare("DELETE FROM review_comments WHERE thread_id = ? AND github_comment_id IS NOT NULL").run(id);
-          for (const comment of thread.comments) {
+        // Each GitHub comment keeps its row (and id) across reads; only what changed is written.
+        const known = new Map(
+          this.db
+            .prepare<[string], { id: string; github_comment_id: string; body: string }>("SELECT id, github_comment_id, body FROM review_comments WHERE thread_id = ? AND github_comment_id IS NOT NULL")
+            .all(id)
+            .map((row) => [row.github_comment_id, row]),
+        );
+        let commentsChanged = false;
+        for (const comment of thread.comments) {
+          const row = known.get(comment.githubCommentId);
+          known.delete(comment.githubCommentId);
+          if (row === undefined) {
             this.db
               .prepare("INSERT INTO review_comments (id, thread_id, author_type, author_name, body, created_at, github_comment_id) VALUES (?, ?, 'user', ?, ?, ?, ?)")
               .run(newId(), id, comment.author, comment.body, comment.createdAt, comment.githubCommentId);
+            commentsChanged = true;
+          } else if (row.body !== comment.body) {
+            this.db.prepare("UPDATE review_comments SET body = ? WHERE id = ?").run(comment.body, row.id);
+            commentsChanged = true;
           }
+        }
+        for (const row of known.values()) {
+          this.db.prepare("DELETE FROM review_comments WHERE id = ?").run(row.id);
+          commentsChanged = true;
+        }
+        if (commentsChanged) {
           this.db.prepare("UPDATE review_threads SET updated_at = ? WHERE id = ?").run(at, id);
           changed = true;
         }
@@ -705,6 +720,17 @@ export class ReviewStore {
       }
     })();
     return changed;
+  }
+
+  /** Deletes comment threads (with their comments); a review submitted to GitHub takes them. */
+  deleteThreads(ids: readonly string[]): void {
+    if (ids.length === 0) return;
+    this.db.transaction(() => {
+      for (const id of ids) {
+        this.db.prepare("DELETE FROM send_previous WHERE thread_id = ?").run(id);
+        this.db.prepare("DELETE FROM review_threads WHERE id = ?").run(id);
+      }
+    })();
   }
 
   private insertComment(input: NewComment, at: number): string {
