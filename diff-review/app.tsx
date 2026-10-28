@@ -2,10 +2,12 @@
 //
 // A Review tab in each thread's side panel: the thread's diff with comment threads, sent to its
 // agent; a button in the thread's header and palette commands that open it. See AGENTS.md.
-import { definePluginApp } from "@get-bb/plugin-sdk/app";
+import { definePluginApp, experimental_THREAD_INFO_ROW_GROUPS } from "@get-bb/plugin-sdk/app";
 
 import { ReviewPanel } from "./app/review-panel";
+import { REVIEWS_PATH, ReviewsPage, ReviewsSidebar, useReviewsBadge, useReviewsPageTitle } from "./app/reviews-page";
 import { openReviewTab, REVIEW_TAB } from "./app/tab";
+import { ReviewInfoRow } from "./app/thread-info";
 
 export default definePluginApp((app) => {
   app.slots.experimental_tab({
@@ -34,6 +36,21 @@ export default definePluginApp((app) => {
       },
     }),
   });
+
+  // Every review with comments, across projects, with the open ones counted on the sidebar entry.
+  app.slots.navPanel({
+    id: "reviews",
+    title: "Reviews",
+    icon: "FileDiff",
+    path: REVIEWS_PATH,
+    component: ReviewsPage,
+    experimental_sidebar: ReviewsSidebar,
+    experimental_usePageTitle: useReviewsPageTitle,
+    experimental_useBadge: useReviewsBadge,
+  });
+
+  // "N open of M comment threads" in the thread's Info tab.
+  app.slots.experimental_threadInfoRow({ id: "review", group: experimental_THREAD_INFO_ROW_GROUPS.git, component: ReviewInfoRow });
 
   // No default key: bb owns the obvious ones (Mod+D is its own diff panel), and a default that
   // clashes is left unbound anyway. Settings binds it.

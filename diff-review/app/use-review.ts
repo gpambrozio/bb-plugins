@@ -13,7 +13,7 @@
  * demand stays on screen while a reload fetches it again (`stalePatches`), instead of flashing
  * "Loading the diff…".
  */
-import { experimental_useRpcQuery, experimental_useTabVisible, useRealtime, useRealtimeConnectionState, useRpc } from "@get-bb/plugin-sdk/app";
+import { experimental_useRpcQuery, useRealtime, useRealtimeConnectionState, useRpc } from "@get-bb/plugin-sdk/app";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { RpcContract } from "../shared/contract";
@@ -98,12 +98,13 @@ export interface ReviewOptions {
   /** Told the view the first load landed on, so the caller's picker follows; it is not loaded again. */
   onTarget?: (target: Target) => void;
   ignoreWhitespace?: boolean;
+  /** Whether the review shows (its tab selected in an open panel); a hidden one waits to reload. */
+  visible?: boolean;
 }
 
 export function useReview(threadId: string, target: TargetRequest, options: ReviewOptions = {}) {
-  const { autoTarget = false, onTarget, ignoreWhitespace = false } = options;
+  const { autoTarget = false, onTarget, ignoreWhitespace = false, visible = true } = options;
   const rpc = useRpc<RpcContract>();
-  const visible = experimental_useTabVisible();
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
   // A load a signal asked for while the tab was hidden, run when it shows.

@@ -273,6 +273,26 @@ export const reviewViewSchema = z.discriminatedUnion("ok", [
 ]);
 export type ReviewView = z.infer<typeof reviewViewSchema>;
 
+/** A review with comment threads, as the Reviews page lists it. */
+export const reviewSummarySchema = z
+  .object({
+    sessionId: z.string(),
+    environmentId: z.string(),
+    target: targetSchema,
+    openCount: z.number().int().nonnegative(),
+    totalCount: z.number().int().nonnegative(),
+    updatedAt: z.number(),
+    /** The bb thread the review opens in: the one whose tab last showed it, else one in its workspace. */
+    threadId: z.string(),
+    threadTitle: z.string(),
+    projectId: z.string(),
+  })
+  .strict();
+export type ReviewSummary = z.infer<typeof reviewSummarySchema>;
+
+/** The realtime channel every review change is also told on, for the Reviews page and its badge. */
+export const REVIEWS_CHANNEL = "reviews";
+
 /** The realtime channel for everything about one workspace's reviews. */
 export function environmentChannel(environmentId: string): string {
   return `environment:${environmentId}`;

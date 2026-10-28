@@ -8,6 +8,7 @@ import { z } from "zod";
 import {
   ANCHOR_MAX_CHARS,
   BODY_MAX_CHARS,
+  reviewSummarySchema,
   reviewThreadSchema,
   executionSchema,
   REVIEW_FOCUSES,
@@ -157,6 +158,15 @@ export const rpcContract = defineRpcContract({
   saveViewState: {
     input: z.object({ threadId: id, sessionId: id, state: viewStateSchema }).strict(),
     output: z.object({ ok: z.literal(true) }).strict(),
+  },
+  listReviews: {
+    input: z.object({}).strict(),
+    output: z.object({ reviews: z.array(reviewSummarySchema) }).strict(),
+  },
+  reviewCounts: {
+    /** One workspace's reviews, or every review when left out. */
+    input: z.object({ environmentId: id.optional() }).strict(),
+    output: z.object({ open: z.number().int().nonnegative(), total: z.number().int().nonnegative() }).strict(),
   },
   clearReview: {
     input: z.object({ sessionId: id }).strict(),

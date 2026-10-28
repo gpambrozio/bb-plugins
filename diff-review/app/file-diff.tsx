@@ -7,7 +7,7 @@
  * from removed to added lines keeps only its first line.
  */
 import { PatchDiff, type DiffLineAnnotation, type SelectedLineRange } from "@pierre/diffs/react";
-import { experimental_useCodeTheme } from "@get-bb/plugin-sdk/app";
+import { experimental_useCodeTheme, useSettings } from "@get-bb/plugin-sdk/app";
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -19,6 +19,7 @@ import { linesText, parsePatchLines } from "../shared/patch-lines";
 import { describeLocation, type DiffFile, type ReviewThread, type Side } from "../shared/types";
 import { useActions } from "./actions";
 import { ANNOTATION_FIT } from "./annotation-fit";
+import { COLOR_BLIND_SETTING, paletteStyle } from "./palette";
 import { useNearScreen, type PatchState } from "./patch-loader";
 import { CommentComposer } from "./comment-composer";
 import { ThreadCard } from "./thread-card";
@@ -120,6 +121,8 @@ export function threadCount(threads: readonly ReviewThread[]): { open: number; c
 export function FileDiff({ file, threads, showThreadCount, diffStyle, stalePatch = false, patchState, requestPatch, scrollRoot }: FileDiffProps) {
   const actions = useActions();
   const codeTheme = experimental_useCodeTheme();
+  const settings = useSettings();
+  const palette = useMemo(() => paletteStyle(settings.values?.[COLOR_BLIND_SETTING] === true, codeTheme.mode), [settings.values, codeTheme.mode]);
   const viewState = useViewState();
   const changedLines = file.additions + file.deletions;
   // Folded or unfolded by hand, a file stays so; otherwise a large change starts folded.
@@ -253,13 +256,15 @@ export function FileDiff({ file, threads, showThreadCount, diffStyle, stalePatch
   else if (file.patch === null) body = <p className="min-h-16 px-3 py-2 text-xs text-muted-foreground">Loading the diff…</p>;
   else
     body = (
-      <PatchDiff<Annotation, undefined>
-        patch={file.patch}
-        options={options}
-        lineAnnotations={annotations}
-        selectedLines={selected}
-        renderAnnotation={renderAnnotation}
-      />
+      <div style={palette} data-diff-palette={palette === undefined ? undefined : "colorblind"}>
+        <PatchDiff<Annotation, undefined>
+          patch={file.patch}
+          options={options}
+          lineAnnotations={annotations}
+          selectedLines={selected}
+          renderAnnotation={renderAnnotation}
+        />
+      </div>
     );
 
   return (

@@ -401,6 +401,26 @@ describe("the Review tab's view", () => {
   });
 });
 
+describe("the Reviews page", () => {
+  it("lists reviews with comment threads, each with the thread to open it in, and counts them", async () => {
+    const { rpc, view, comment, harness } = await setup();
+    const { sessionId } = await view();
+    expect(await rpc("listReviews", {})).toEqual({ reviews: [] });
+    const made = await comment(sessionId);
+    await comment(sessionId, "And this?");
+    await rpc("setStatus", { reviewThreadId: made.id, status: "resolved" });
+    // The tab keeps state for the review, which names the thread it opens in.
+    await rpc("saveViewState", { threadId: THREAD, sessionId, state: { drafts: {}, collapsed: {}, scroll: null, savedAt: 1 } });
+    expect(((await rpc("listReviews", {})) as { reviews: unknown[] }).reviews).toEqual([
+      expect.objectContaining({ sessionId, environmentId: ENV, target: { kind: "uncommitted" }, openCount: 1, totalCount: 2, threadId: THREAD, projectId: expect.any(String) }),
+    ]);
+    expect(await rpc("reviewCounts", {})).toEqual({ open: 1, total: 2 });
+    expect(await rpc("reviewCounts", { environmentId: ENV })).toEqual({ open: 1, total: 2 });
+    expect(await rpc("reviewCounts", { environmentId: "env_other" })).toEqual({ open: 0, total: 0 });
+    expect(harness.inspection.realtimeSignals.some((event) => event.channel === "reviews")).toBe(true);
+  });
+});
+
 describe("the tab's kept state", () => {
   const state = (drafts: Record<string, unknown> = {}) => ({
     drafts,
@@ -466,7 +486,7 @@ describe("comments", () => {
 
     const listed = (await rpc("listThreads", { sessionId })) as { threads: ReviewThread[] };
     expect(listed.threads.map((thread) => thread.id)).toEqual([line.id, file.thread.id, general.thread.id]);
-    expect(harness.inspection.realtimeSignals.at(-1)).toEqual({ channel: `environment:${ENV}`, payload: { kind: "threads", sessionId } });
+    expect(harness.inspection.realtimeSignals.filter((signal) => signal.channel === `environment:${ENV}`).at(-1)).toEqual({ channel: `environment:${ENV}`, payload: { kind: "threads", sessionId } });
   });
 
   it("refuses a range that ends before it starts, and an empty comment", async () => {
@@ -591,7 +611,7 @@ describe("sending to the agent and its answers", () => {
     [row] = ((await rpc("listThreads", { sessionId })) as { threads: ReviewThread[] }).threads;
     expect(row!.delivery!.state).toBe("no_reply");
     // The workspace did not change since the first turn's end, so only the threads are re-read.
-    expect(harness.inspection.realtimeSignals.at(-1)).toEqual({ channel: `environment:${ENV}`, payload: { kind: "threads", sessionId } });
+    expect(harness.inspection.realtimeSignals.filter((signal) => signal.channel === `environment:${ENV}`).at(-1)).toEqual({ channel: `environment:${ENV}`, payload: { kind: "threads", sessionId } });
   });
 
   it("tells the tabs to reload only when a turn ends with the workspace changed", async () => {

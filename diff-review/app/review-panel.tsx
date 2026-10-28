@@ -11,7 +11,7 @@
  * A tab opened with `params: { target }` starts on that view; otherwise on the uncommitted changes, or,
  * when there are none, on the changes committed since the base branch.
  */
-import { useRpc, type ExperimentalThreadActionTabProps } from "@get-bb/plugin-sdk/app";
+import { experimental_useTabVisible, useRpc, type ExperimentalThreadActionTabProps } from "@get-bb/plugin-sdk/app";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
@@ -108,13 +108,23 @@ function fromPicker(value: string): TargetRequest {
   return { kind: "uncommitted" };
 }
 
+/** The Review tab beside a thread. */
 export function ReviewPanel({ threadId, params, environment }: ExperimentalThreadActionTabProps) {
+  const visible = experimental_useTabVisible();
+  return <ReviewBody threadId={threadId} environmentId={environment?.id ?? null} params={params} visible={visible} />;
+}
+
+/**
+ * One thread's review: the Review tab's content, and the Reviews page's for the review it opens.
+ * `visible`: whether it shows; a hidden one leaves reloads until it shows again.
+ */
+export function ReviewBody({ threadId, environmentId, params, visible }: { threadId: string; environmentId: string | null; params: unknown; visible: boolean }) {
   const [target, setTarget] = useState<TargetRequest>(() => initialTarget(params));
   // A tab opened without a view starts on the uncommitted changes, unless there are none and the
   // branch has commits: the first load decides, and the picker follows it.
   const [autoTarget] = useState(() => !hasTarget(params));
   const [ignoreWhitespace, setIgnoreWhitespace] = useState(() => stored(WHITESPACE_KEY) === "true");
-  const review = useReview(threadId, target, { environmentId: environment?.id ?? null, autoTarget, onTarget: setTarget, ignoreWhitespace });
+  const review = useReview(threadId, target, { environmentId, autoTarget, onTarget: setTarget, ignoreWhitespace, visible });
   const toggleWhitespace = (next: boolean) => {
     setIgnoreWhitespace(next);
     store(WHITESPACE_KEY, String(next));

@@ -104,6 +104,16 @@ export interface Session {
   targetKey: string;
 }
 
+export interface ReviewSummaryRow {
+  sessionId: string;
+  environmentId: string;
+  targetKey: string;
+  openCount: number;
+  totalCount: number;
+  updatedAt: number;
+  viewerThreadId: string | null;
+}
+
 export interface NewThread {
   sessionId: string;
   filePath: string;
@@ -410,6 +420,38 @@ export class ReviewStore {
   }
 
   /** The sessions of a workspace. */
+  /**
+   * Every session with comment threads, newest activity first: its counts, and the bb thread whose
+   * Review tab opened it last (null when no tab kept state for it, as for a review only an agent wrote).
+   */
+  reviewSummaries(limit: number): ReviewSummaryRow[] {
+    return this.db
+      .prepare<[number], ReviewSummaryRow>(
+        `SELECT s.id AS sessionId, s.environment_id AS environmentId, s.target_key AS targetKey,
+                SUM(CASE WHEN t.status = 'open' THEN 1 ELSE 0 END) AS openCount,
+                COUNT(t.id) AS totalCount,
+                MAX(t.updated_at) AS updatedAt,
+                (SELECT v.thread_id FROM view_states v WHERE v.session_id = s.id ORDER BY v.updated_at DESC LIMIT 1) AS viewerThreadId
+         FROM review_sessions s JOIN review_threads t ON t.session_id = s.id
+         GROUP BY s.id
+         ORDER BY updatedAt DESC
+         LIMIT ?`,
+      )
+      .all(limit);
+  }
+
+  /** Open and all comment threads, in one workspace's sessions or in all of them. */
+  threadCounts(environmentId: string | null): { open: number; total: number } {
+    const row = this.db
+      .prepare<[string | null, string | null], { open: number | null; total: number }>(
+        `SELECT SUM(CASE WHEN t.status = 'open' THEN 1 ELSE 0 END) AS open, COUNT(t.id) AS total
+         FROM review_threads t JOIN review_sessions s ON s.id = t.session_id
+         WHERE ? IS NULL OR s.environment_id = ?`,
+      )
+      .get(environmentId, environmentId)!;
+    return { open: row.open ?? 0, total: row.total };
+  }
+
   sessionsOf(environmentId: string): Session[] {
     return this.db
       .prepare<[string], { id: string; target_key: string }>("SELECT id, target_key FROM review_sessions WHERE environment_id = ?")

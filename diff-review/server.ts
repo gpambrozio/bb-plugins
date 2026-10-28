@@ -32,6 +32,12 @@ export default async function plugin(bb: BbPluginApi) {
       description: "Also leave out what `.diffityignore` and `.git/info/diffityignore` in the workspace list, as diffity does.",
       default: true,
     },
+    colorBlindDiffs: {
+      type: "boolean",
+      label: "Colour-blind diff colours",
+      description: "Show added lines in blue and removed lines in orange, instead of green and red, in the Review tab.",
+      default: false,
+    },
     aiProvider: {
       type: "string",
       label: "Provider for AI runs",
@@ -89,6 +95,8 @@ export default async function plugin(bb: BbPluginApi) {
       return { ok: true as const };
     },
     clearReview: ({ sessionId }) => runs.clearReview(sessionId),
+    listReviews: async () => ({ reviews: await service.listReviews() }),
+    reviewCounts: ({ environmentId }) => service.counts(environmentId ?? null),
     saveViewState: ({ threadId, sessionId, state }) => {
       service.saveViewState(threadId, sessionId, state);
       return { ok: true as const };

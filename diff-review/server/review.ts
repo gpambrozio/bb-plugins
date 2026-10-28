@@ -12,7 +12,9 @@ import {
   environmentChannel,
   GENERAL_PATH,
   targetKey,
+  REVIEWS_CHANNEL,
   type RealtimeSignal,
+  type ReviewSummary,
   type ReviewThread,
   type Run,
   type ReviewView,
@@ -441,6 +443,54 @@ export class ReviewService {
 
   private publish(environmentId: string, sessionId: string): void {
     this.signal(environmentId, { kind: "threads", sessionId });
+    this.bb.realtime.publish(REVIEWS_CHANNEL, { kind: "threads", sessionId } satisfies RealtimeSignal);
+  }
+
+  /** The most reviews the Reviews page lists. */
+  static readonly LIST_LIMIT = 200;
+
+  /**
+   * The reviews with comment threads, newest first, each with a bb thread to open it in: the thread
+   * whose tab showed it last, or else a thread still working in its workspace. A review with neither
+   * (its workspace archived) is left out, since it can no longer be loaded.
+   */
+  async listReviews(): Promise<ReviewSummary[]> {
+    const rows = this.store.reviewSummaries(ReviewService.LIST_LIMIT);
+    const threads = new Map<string, Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["get"]>> | null>();
+    const threadOf = async (threadId: string) => {
+      if (!threads.has(threadId)) threads.set(threadId, await this.bb.sdk.threads.get({ threadId }).catch(() => null));
+      return threads.get(threadId) ?? null;
+    };
+    const fallback = new Map<string, string | null>();
+    const reviews: ReviewSummary[] = [];
+    for (const row of rows) {
+      let thread = row.viewerThreadId === null ? null : await threadOf(row.viewerThreadId);
+      if (thread === null || thread.archivedAt !== null || thread.environmentId !== row.environmentId) {
+        if (!fallback.has(row.environmentId)) {
+          const listed = await this.bb.sdk.threads.list({ environmentId: row.environmentId, archived: false, limit: 1 }).catch(() => []);
+          fallback.set(row.environmentId, listed[0]?.id ?? null);
+        }
+        const id = fallback.get(row.environmentId) ?? null;
+        thread = id === null ? null : await threadOf(id);
+      }
+      if (thread === null || thread.archivedAt !== null) continue;
+      reviews.push({
+        sessionId: row.sessionId,
+        environmentId: row.environmentId,
+        target: targetFromKey(row.targetKey),
+        openCount: row.openCount,
+        totalCount: row.totalCount,
+        updatedAt: row.updatedAt,
+        threadId: thread.id,
+        threadTitle: thread.title ?? thread.titleFallback ?? "Untitled thread",
+        projectId: thread.projectId,
+      });
+    }
+    return reviews;
+  }
+
+  counts(environmentId: string | null): { open: number; total: number } {
+    return this.store.threadCounts(environmentId);
   }
 
   private signal(environmentId: string, signal: RealtimeSignal): void {

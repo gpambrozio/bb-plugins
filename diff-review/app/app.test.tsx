@@ -286,6 +286,18 @@ describe("the Review tab", () => {
     expect(screen.getByTestId("patch")).toBeTruthy();
   });
 
+  it("draws added and removed lines in blue and orange with the colour-blind setting", async () => {
+    renderSlot(
+      { component: ReviewPanel },
+      { threadId: "thr_1", environment: ENVIRONMENT, params: null },
+      { rpc: { getReview: () => VIEW }, codeTheme: { mode: "dark", name: "pierre-dark" }, settings: { colorBlindDiffs: true } },
+    );
+    const wrapper = (await screen.findByTestId("patch")).parentElement!;
+    expect(wrapper.getAttribute("data-diff-palette")).toBe("colorblind");
+    expect(wrapper.style.getPropertyValue("--diffs-addition-color-override")).toBe("#58a6ff");
+    expect(wrapper.style.getPropertyValue("--diffs-deletion-color-override")).toBe("#f0883e");
+  });
+
   it("starts a file viewed at its current revision folded", async () => {
     render({ getReview: () => ({ ...VIEW, files: [{ ...VIEW.files[0]!, viewed: "yes" }] }) });
     await screen.findByRole("checkbox", { name: "Viewed src/a.ts" });
