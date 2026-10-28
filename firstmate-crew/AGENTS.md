@@ -11,14 +11,16 @@ the SDK surface, the dependency rules. This file covers only what is specific to
 against bb 0.44.0 and `@get-bb/plugin-sdk` 0.5.29; the pinned launch and the interruption notices
 (below) against bb 0.45.0 and SDK 0.6.15, which the plugin needs since 0.2.4; the board's one-request
 crew metadata read against bb 0.46.0 and SDK 0.6.37, which it needs since 0.5.0; autocompact (0.6.0)
-against bb 0.46.1's server and the same SDK.
+against bb 0.46.1's server and the same SDK; the board's live reads, the `experimental_tab`, compact-first
+sends and the host toolchain (0.7.0) against SDK 0.6.94, built with bb 0.47.1 (which it needs since 0.7.0)
+and 0.48.0.
 
 ## Orientation
 
 | File | What it owns |
 | --- | --- |
-| `server.ts` | Wiring only: settings, the RPCs, `bb firstmate-crew`, the watch and autocompact services, the thread events that publish `fleet` (created, active, idle, failed, archived, and a pending interaction). Every decision lives in `server/`. |
-| `shared/contract.ts`, `shared/types.ts` | The RPC contract (zod), the card and fleet shapes, the crew metadata keys, `STATE_DIR`. |
+| `server.ts` | Wiring only: settings, the RPCs, `bb firstmate-crew`, the watch and autocompact services, the thread events that invalidate the `fleet` tag (created, active, idle, failed, archived, a pending interaction, and a thread moving to or from the first mate), and the `fleet.load` producer that invalidates it every `refreshSeconds` while a board watches. Every decision lives in `server/`. |
+| `shared/contract.ts`, `shared/types.ts` | The RPC contract (zod), the card and fleet shapes, the crew metadata keys, `STATE_DIR`. The app imports the contract as a value (`experimental_useRpcQuery` takes it), so it imports nothing from the SDK at run time. |
 | `server/mate.ts` | Launch, adopt, release, restart, compact, `askMate`; the `mate` lock; the stored id. |
 | `server/crew.ts` | Steer, interrupt, end, relaunch, board note. |
 | `server/fleet.ts` | The first mate's children joined to backlog items on `task`; the seven columns; `ReportCache`. |
@@ -26,18 +28,19 @@ against bb 0.46.1's server and the same SDK.
 | `server/bb-ports.ts`, `server/ports.ts` | The narrow `ThreadsPort` and `ProjectsPort` over `bb.sdk`, so everything else is tested against fakes. Where the machine rule below lives. |
 | `server/store.ts` | `bb.storage.kv`: the first mate's thread id, the switched-off watches and autocompact's marks. Nothing else. |
 | `server/settings.ts` | `bb.settings.define`: home directory, crew provider/model/reasoning, board refresh, and autocompact's six (on, thousands of tokens, idle minutes, for the first mate and for the crew). The token thresholds are set in thousands (`*KTokens`, ×1,000 in `autoCompactRules`) because bb's number field shows no thousands separators. |
-| `server/autocompact.ts` | One autocompact check: which thread is at rest, idle long enough and over its threshold; the once-per-idle-stretch marks. |
+| `server/autocompact.ts` | One autocompact check: which thread is at rest, idle long enough (bb's cache deadline, else the idle minutes) and over its threshold; the once-per-idle-stretch marks; `dueNow` for one thread. |
+| `server/compact-first.ts` | A message to a thread autocompact would compact now goes with bb's `compactFirst`. |
 | `server/home.ts`, `charter.ts`, `charter-file.ts` | Preparing the home; rendering `AGENTS.md`; the charter following the plugin until edited. |
 | `server/backlog.ts`, `suggestions.ts`, `crew-report.ts` | Parsing `data/backlog.md`, `data/suggestions.md` and `data/suggestions-dismissed.md`, and a worker's closing status line. |
 | `server/files.ts` | Confinement to the home (through symlinks) and `replaceTextIfUnchanged`. |
-| `server/watch-schedule.ts`, `watch-files.ts`, `watch-run.ts`, `watches.ts`, `watch-delivery.ts`, `watch-notes.ts` | Crontab parsing, which files are watches, one script run, the runner and its queue, when the queue reaches the first mate, and the line the captain sees with the saved note behind it. |
+| `server/watch-schedule.ts`, `watch-files.ts`, `watch-run.ts`, `watches.ts`, `watch-delivery.ts`, `watch-notes.ts` | Crontab parsing, which files are watches, one script run (through bb's host toolchain), the runner and its queue, when the queue reaches the first mate, and the line the captain sees with the saved note behind it. |
 | `server/serialize.ts` | One-at-a-time per key. |
 | `server/log.ts` | The `Log` every server module logs through, wired to `bb.log` in `server.ts`. |
 | `server/templates.ts`, `templates.generated.ts` | Reading the templates; the generated module. See below. |
 | `server/testing/` | `createFakeSdk` and the other fakes. |
 | `skills/fm/` | The `/fm` skill bb puts in every thread: it pipes the user's request, base64, into `tell --message-base64-stdin`. Its test is `server/fm-skill.test.ts`, because bb copies the skill's folder into threads whole. |
 | `templates/` | **Everything the plugin writes into the home**, laid out as it lands there, plus `messages/` (what the plugin says to the first mate) and `parts/` (pieces inside other files). The first mate's behaviour is `templates/data/charter.md`. |
-| `app.tsx`, `app/` | The `threadPanelAction` "FirstMate" (`panel.tsx` branches on the thread), the board and cards, the settings section, the command palette entries, and the overlay that expands watch notes in chat. |
+| `app.tsx`, `app/` | The "FirstMate" action tab (`experimental_tab`; `panel.tsx` branches on the thread), the board and cards, the settings section, the command palette entries, and the overlay that expands watch notes in chat. `use-fleet.ts` is the board's one read. |
 | `components/ui/`, `lib/`, `hooks/` | Vendored shadcn components and helpers. |
 | `scripts/gen-templates.mjs` | Writes `server/templates.generated.ts` from `templates/`. |
 
@@ -48,7 +51,10 @@ Do not break these; each was paid for.
 - **The first mate is found only by `Store.mateThreadId()`.** Never by metadata, title or a list. Its
   `pluginMetadata {role: "first-mate"}` is for display, so a released first mate stays released.
 - **Sends never interrupt.** The captain's words go with mode `"auto"` (crew steer: `"steer"`); watch
-  output goes with `"queue-if-active"`, so a turn that started meanwhile holds it.
+  output goes with `"queue-if-active"`, so a turn that started meanwhile holds it. The one exception to
+  the mode is `"compact-first"` (`server/compact-first.ts`), which only a thread at rest and due for
+  autocompact gets: bb queues it as `queue-if-active` after the compaction, and a refusal sends the
+  message again with its own mode.
 - **One message to the first mate in flight at a time** from the app (the board's buttons, suggestions and
   the command palette share `app/send-gate.ts`), so a double press sends once.
 - **Restart and Compact are refused while the first mate is mid-turn** — they go only when the first mate
@@ -128,7 +134,11 @@ Do not break these; each was paid for.
   event in bb's log, never from when the plugin saw something, so a reload cannot reset it. Every
   attempt leaves a mark naming that event's `seq`, written as accepted *before* the request goes to bb:
   a mark that cannot be saved stops the compaction, and a refusal only relaxes it afterwards, so failed
-  bookkeeping errs on waiting. A marked thread is skipped until `turn/started` events after it show a
+  bookkeeping errs on waiting. A message to a due thread (`compact-first.ts`) leaves the same mark before
+  it asks bb to compact first, and the check's compaction reads the mark again under the lock, so the two
+  never both compact one idle stretch. When `threads.context` carries bb's `compactionOfferAt` (bb 0.47,
+  behind its `compactExpiredCache` experiment), that cache deadline replaces the idle minutes; the token
+  threshold and every at-rest rule stay. A marked thread is skipped until `turn/started` events after it show a
   turn of its own — two when bb accepted, because the compaction is itself a turn, one when it refused.
   Marks are one kv key per thread (`autoCompaction:<id>`), never one value that a large crew could push
   past 256 KB. Once a request is sent the check ends, whatever its bookkeeping does: one compaction per
@@ -188,6 +198,23 @@ Do not break these; each was paid for.
   setting names only where the next launch or adoption goes. So changing the setting mid-voyage cannot
   mix another home's backlog, charter or watches with this crew. With no first mate, the setting is
   the home.
+- **The board reads through bb's live queries.** `fleet.load` carries the `fleet` tag; the server
+  invalidates it on every event that changes the board and, through `experimental_whileWatched`, every
+  `refreshSeconds` while any board watches it, so one wait serves every window and stops when the last
+  board goes. bb owns retries and the re-read after a reconnect. The tab passes
+  `experimental_useTabVisible()` (bb 0.48) as the read's `enabled`, because bb keeps a closed panel's tab
+  mounted; the settings section is not a tab and is always enabled. bb builds the app against its own
+  list of `@get-bb/plugin-sdk/app` exports, and bb 0.47 refuses a named import of one it lacks, so
+  `app/tab-visible.ts` reads the hook through the namespace. The palette command opens the tab through
+  `ctx.experimental_panel` (bb 0.48) and falls back to bb 0.47's `openPanel`; bb 0.48's build warns about
+  that fallback, which is expected.
+- **Watches run through `@get-bb/plugin-sdk/process`.** `experimental_spawnHostProcess` gives a script the
+  PATH bb gives its own tools. It is a server subpath bundled from the plugin's own install, so the SDK is
+  a `dependency`, not a devDependency. It still runs each script in its own process group.
+- **The tab's icon is the plugin's own SVG** (`icons/ship.svg`, declared in `bb.branding.experimental_icons`
+  as `firstmate-crew/ship`): `experimental_tab` requires an icon, and bb's built-in set has no ship.
+  `bb.branding.icon` still names `Ship`, which bb draws as its generic bolt; changing it changes the
+  marketplace entry, so it waits for one.
 - **The board is a thread tab, not a nav panel.** The first mate is a normal thread in bb's own chat; the
   Files view was dropped because its workspace is the home, which bb's file panel already opens.
 - **End archives.** Immediate when the task is in the backlog's Done; otherwise a confirmation, because
