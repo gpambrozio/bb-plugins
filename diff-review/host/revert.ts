@@ -61,28 +61,61 @@ function inside(root: string, path: string): string {
 }
 
 /**
- * Throws unless every folder from the checkout to the file is a real folder inside the checkout (no
- * symlinked folder, nothing that leads out). With `create`, missing folders are made, one by one.
- * Synchronous, so it can run in the last step before a change.
+ * The checkout as Revert works on it: its real path, taken once before anything is awaited, and the
+ * folder's identity. Every path is built from that real path, and every check confirms it still is
+ * the same folder, so neither the checkout nor any folder above it can be swapped for a link mid-way.
  */
-function checkFolders(root: string, path: string, create: boolean): void {
-  const rootReal = realpathSync(root);
-  const parts = relative(root, dirname(join(root, path))).split(sep).filter((part) => part !== "");
-  let folder = root;
+interface Checkout {
+  real: string;
+  dev: number;
+  ino: number;
+}
+
+function checkoutOf(root: string): Checkout {
+  let real;
+  try {
+    real = realpathSync(root);
+  } catch {
+    throw new RevertRefused("The workspace's folder is gone.");
+  }
+  const info = lstatSync(real);
+  if (!info.isDirectory()) throw new RevertRefused("The workspace's folder is not a folder.");
+  return { real, dev: info.dev, ino: info.ino };
+}
+
+const MOVED = () => new RevertRefused("The workspace's folder moved or was replaced while reverting; nothing was changed.");
+
+/**
+ * Throws unless the checkout still is the folder it was and every folder from it to the file is a
+ * real folder inside it (no symlinked folder, nothing that leads out). A missing folder is refused,
+ * allowed (the walk stops there: the check before a restore makes it), or made, one by one.
+ * Synchronous, so it runs in the same step as the change it guards.
+ */
+function checkFolders(checkout: Checkout, path: string, missing: "refuse" | "allow" | "create"): void {
+  let top;
+  try {
+    top = lstatSync(checkout.real);
+  } catch {
+    throw MOVED();
+  }
+  if (top.isSymbolicLink() || !top.isDirectory() || top.dev !== checkout.dev || top.ino !== checkout.ino) throw MOVED();
+  const parts = relative(checkout.real, dirname(join(checkout.real, path))).split(sep).filter((part) => part !== "");
+  let folder = checkout.real;
   for (const part of parts) {
     folder = join(folder, part);
     let info;
     try {
       info = lstatSync(folder);
     } catch {
-      if (!create) throw CHANGED(path);
+      if (missing === "refuse") throw CHANGED(path);
+      if (missing === "allow") return;
       mkdirSync(folder, { mode: 0o755 });
       info = lstatSync(folder);
     }
     if (info.isSymbolicLink() || !info.isDirectory()) throw new RevertRefused(`${path} is inside a symlinked folder or one that is not a folder, which is not reverted here; use git.`);
   }
   const parentReal = realpathSync(folder);
-  if (parentReal !== rootReal && !parentReal.startsWith(`${rootReal}${sep}`)) throw new RevertRefused(`${path} is not a file of this workspace.`);
+  if (parentReal !== checkout.real && !parentReal.startsWith(`${checkout.real}${sep}`)) throw new RevertRefused(`${path} is not a file of this workspace.`);
 }
 
 /** The working copy's bytes and mode, or null when it is gone; a symlink's bytes are its target. */
@@ -141,7 +174,11 @@ function fileMode(mode: string): number {
  * temporary file of a random name created exclusively (never through a link or over a file that is
  * there), written and given its mode through its own descriptor, then renamed over the file.
  */
-function replace(root: string, path: string, absolute: string, snapshot: Snapshot, bytes: Buffer, mode: string, options: RevertOptions): void {
+function replace(checkout: Checkout, path: string, absolute: string, snapshot: Snapshot, bytes: Buffer, mode: string, options: RevertOptions): void {
+  // In the same synchronous step as everything below: no temporary file is made through a folder
+  // swapped during the reads before.
+  checkFolders(checkout, path, "refuse");
+  stillReviewed(absolute, path, snapshot);
   const temporary = options.temporaryName?.(absolute) ?? join(dirname(absolute), `.diff-review-${randomBytes(16).toString("hex")}.tmp`);
   let fd: number;
   try {
@@ -156,7 +193,7 @@ function replace(root: string, path: string, absolute: string, snapshot: Snapsho
     } finally {
       closeSync(fd);
     }
-    checkFolders(root, path, false);
+    checkFolders(checkout, path, "refuse");
     stillReviewed(absolute, path, snapshot);
     renameSync(temporary, absolute);
   } catch (error) {
@@ -179,16 +216,19 @@ export async function currentRevision(run: RunGit, root: string, path: string): 
 
 export async function revert(run: RunGit, request: RevertRequest, options: RevertOptions = {}): Promise<void> {
   const { root, path } = request;
-  const absolute = inside(root, path);
-  checkFolders(root, path, false);
-  const entry = await entryOf(run, root, path, absolute);
+  // The checkout's real path and identity, before anything is awaited; every path below is built on it.
+  const checkout = checkoutOf(root);
+  const absolute = inside(checkout.real, path);
+  // A deleted file's folders may be gone too; they are made when it is put back.
+  checkFolders(checkout, path, "allow");
+  const entry = await entryOf(run, checkout.real, path, absolute);
   if ([entry.oldMode, entry.newMode].some((mode) => mode === "120000" || mode === "160000")) {
     throw new RevertRefused(`${path} is a symlink or a submodule, which is not reverted here; use git.`);
   }
   // The bytes reviewed: read once, hashed as bb hashes them, and every later check is against them.
   const snapshot = entry.newMode === "000000" ? null : working(absolute);
   if (entry.newMode !== "000000" && (snapshot === null || snapshot.mode === "120000" || snapshot.mode === "040000")) throw CHANGED(path);
-  if ((await revisionOf(run, root, path, entry, snapshot)) !== request.revision) throw CHANGED(path);
+  if ((await revisionOf(run, checkout.real, path, entry, snapshot)) !== request.revision) throw CHANGED(path);
 
   if (request.hunks !== null) {
     if (snapshot === null || request.patch === null) throw new RevertRefused(`${path} has no hunks to revert; revert the whole file.`);
@@ -196,20 +236,20 @@ export async function revert(run: RunGit, request: RevertRequest, options: Rever
     if (!Buffer.from(text, "utf8").equals(snapshot.bytes)) throw new RevertRefused(`${path} is not UTF-8 text, so its hunks are not reverted here.`);
     const next = revertHunks(text, request.patch, request.hunks);
     if (next === null) throw CHANGED(path);
-    replace(root, path, absolute, snapshot, Buffer.from(next, "utf8"), snapshot.mode, options);
+    replace(checkout, path, absolute, snapshot, Buffer.from(next, "utf8"), snapshot.mode, options);
     return;
   }
   if (entry.oldMode === "000000") {
     // A new file: removed, if it still is the reviewed one.
-    checkFolders(root, path, false);
+    checkFolders(checkout, path, "refuse");
     stillReviewed(absolute, path, snapshot!);
     unlinkSync(absolute);
     return;
   }
-  const committed = Buffer.from((await run(root, ["cat-file", "blob", entry.oldBlob], { maxBuffer: 256 * 1024 * 1024, bytes: true })).stdout, "latin1");
+  const committed = Buffer.from((await run(checkout.real, ["cat-file", "blob", entry.oldBlob], { maxBuffer: 256 * 1024 * 1024, bytes: true })).stdout, "latin1");
   if (entry.newMode === "000000") {
     // A deleted file: put back, through real folders only, where nothing has been created since.
-    checkFolders(root, path, true);
+    checkFolders(checkout, path, "create");
     let fd;
     try {
       fd = openSync(absolute, "wx", fileMode(entry.oldMode));
@@ -223,5 +263,5 @@ export async function revert(run: RunGit, request: RevertRequest, options: Rever
     }
     return;
   }
-  replace(root, path, absolute, snapshot!, committed, entry.oldMode, options);
+  replace(checkout, path, absolute, snapshot!, committed, entry.oldMode, options);
 }

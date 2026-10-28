@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -150,6 +150,84 @@ describe("reverting on the host", () => {
     const revision = await currentRevision(run, root, "dir/a.txt");
     await expect(revert(run, { root, path: "dir/a.txt", revision, hunks: null, patch: null })).rejects.toThrow("symlinked folder");
     expect(readdirSync(outside)).toEqual([]);
+  });
+
+  /** A folder outside the checkout holding `a.txt` with the reviewed bytes, so only the folder checks stand in the way. */
+  function outsideWith(content: string): string {
+    const outside = mkdtempSync(join(tmpdir(), "diff-review-outside-"));
+    roots.push(outside);
+    writeFileSync(join(outside, "a.txt"), content);
+    return outside;
+  }
+
+  it("writes nothing outside when the checkout itself is swapped for a link during the git read", async () => {
+    const root = repo();
+    writeFileSync(join(root, "a.txt"), "reviewed\n");
+    const revision = await currentRevision(run, root, "a.txt");
+    const outside = outsideWith("reviewed\n");
+    const real = realpathSync(root);
+    const aside = `${real}-aside`;
+    roots.push(aside);
+    const swapping: RunGit = async (where, args, options) => {
+      const result = await run(where, args, options);
+      if (args[0] === "cat-file") {
+        renameSync(real, aside);
+        symlinkSync(outside, real);
+      }
+      return result;
+    };
+    const temporaries: string[] = [];
+    await expect(
+      revert(swapping, { root, path: "a.txt", revision, hunks: null, patch: null }, { temporaryName: (target) => (temporaries.push(target), join(dirname(target), ".probe.tmp")) }),
+    ).rejects.toThrow("moved or was replaced");
+    expect(readdirSync(outside)).toEqual(["a.txt"]);
+    expect(readFileSync(join(outside, "a.txt"), "utf8")).toBe("reviewed\n");
+    expect(temporaries).toEqual([]);
+    expect(readFileSync(join(aside, "a.txt"), "utf8")).toBe("reviewed\n");
+  });
+
+  it("makes no temporary file, and writes nothing, through a folder swapped for a link during the git read", async () => {
+    const root = mkdtempSync(join(tmpdir(), "diff-review-revert-"));
+    roots.push(root);
+    git(root, "init", "-q", "-b", "main");
+    mkdirSync(join(root, "dir"));
+    writeFileSync(join(root, "dir", "a.txt"), "committed\n");
+    git(root, "add", ".");
+    git(root, "commit", "-q", "-m", "first");
+    writeFileSync(join(root, "dir", "a.txt"), "reviewed\n");
+    const revision = await currentRevision(run, root, "dir/a.txt");
+    const outside = outsideWith("reviewed\n");
+    const swapping: RunGit = async (where, args, options) => {
+      const result = await run(where, args, options);
+      if (args[0] === "cat-file") {
+        renameSync(join(root, "dir"), join(root, "dir-aside"));
+        symlinkSync(outside, join(root, "dir"));
+      }
+      return result;
+    };
+    // Where a temporary file would have gone, as its folder resolves: never outside the checkout.
+    const temporaries: string[] = [];
+    await expect(
+      revert(swapping, { root, path: "dir/a.txt", revision, hunks: null, patch: null }, { temporaryName: (target) => (temporaries.push(realpathSync(dirname(target))), join(dirname(target), ".probe.tmp")) }),
+    ).rejects.toThrow("symlinked folder");
+    expect(temporaries).toEqual([]);
+    expect(readdirSync(outside)).toEqual(["a.txt"]);
+    expect(readFileSync(join(outside, "a.txt"), "utf8")).toBe("reviewed\n");
+  });
+
+  it("puts back a deleted file whose folder was deleted too", async () => {
+    const root = mkdtempSync(join(tmpdir(), "diff-review-revert-"));
+    roots.push(root);
+    git(root, "init", "-q", "-b", "main");
+    mkdirSync(join(root, "dir", "deeper"), { recursive: true });
+    writeFileSync(join(root, "dir", "deeper", "a.txt"), "committed\n");
+    git(root, "add", ".");
+    git(root, "commit", "-q", "-m", "first");
+    rmSync(join(root, "dir"), { recursive: true });
+    const revision = await currentRevision(run, root, "dir/deeper/a.txt");
+    await revert(run, { root, path: "dir/deeper/a.txt", revision, hunks: null, patch: null });
+    expect(readFileSync(join(root, "dir", "deeper", "a.txt"), "utf8")).toBe("committed\n");
+    expect(git(root, "status", "--porcelain")).toBe("");
   });
 
   it("does not write through a file or link already at the temporary file's name", async () => {

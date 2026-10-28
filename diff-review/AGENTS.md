@@ -201,12 +201,15 @@ reads and writes follow symlinks, so a revert through them wrote the old link te
 target, and `expectedSha256` taken after the reads guarded only the moment after them. The host reads
 the working file's bytes once and hashes them as bb does (`git hash-object --stdin --path`, attributes
 and line-ending rules applied), whatever blob git's diff reported, and refuses unless that revision
-(`oldMode:oldBlob:newMode:newBlob`) is the tab's. Every folder on the way must be a real folder inside
-the checkout (a symlinked folder led a restore outside it); symlinks and submodules are refused. The
-new bytes go into a random-named temporary file created with `wx` and written through its own
-descriptor (a predictable name was a planted-symlink target). Right before the rename or the removal,
-a synchronous step, with no await, checks the folders again and compares the file's bytes with the
-snapshot. A save landing in that same instant from another process is the one change it can still
+(`oldMode:oldBlob:newMode:newBlob`) is the tab's. It takes the checkout's real path and
+folder identity once, before anything is awaited, builds every path on it, and every check confirms the
+checkout is still that folder (a checkout swapped for a link during `cat-file` otherwise led the write
+outside it). Every folder on the way must be a real folder inside the checkout (a symlinked folder led a
+restore outside it); a deleted file's missing folders are made when it is put back. Symlinks and
+submodules are refused. The new bytes go into a random-named temporary file created with `wx` and
+written through its own descriptor (a predictable name was a planted-symlink target). The folder checks
+run in the same synchronous step, with no await, as the temporary file's creation, and again with the
+byte comparison right before the rename or the removal. A save landing in that same instant from another process is the one change it can still
 miss.
 
 **Diffs come from bb's Git plugin.** bb 0.48 moved every git read out of `bb.sdk.environments` into
