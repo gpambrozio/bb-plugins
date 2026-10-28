@@ -401,6 +401,13 @@ describe("the Review tab's view", () => {
   });
 });
 
+describe("refusals", () => {
+  it("answers a caller's mistake as bb's expected refusal, not a handler crash", async () => {
+    const { rpc } = await setup();
+    await expect(rpc("setStatus", { reviewThreadId: "nonexistent01", status: "resolved" })).rejects.toMatchObject({ code: "not_found", message: expect.stringContaining("nonexistent01") });
+  });
+});
+
 describe("the Reviews page", () => {
   it("lists reviews with comment threads, each with the thread to open it in, and counts them", async () => {
     const { rpc, view, comment, harness } = await setup();

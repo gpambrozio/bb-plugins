@@ -8,6 +8,7 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import { rpcContract } from "./shared/contract";
 import { diffReviewCli } from "./server/cli";
+import { refusing } from "./server/refusal";
 import { ReviewService } from "./server/review";
 import { RUN_PERMISSION_MODES, RunService } from "./server/runs";
 import { RUN_METADATA_KEY, TOOL_NAMES } from "./server/tool-names";
@@ -69,7 +70,7 @@ export default async function plugin(bb: BbPluginApi) {
   const runs = new RunService(bb, store, service, () => settings.get());
   service.onUserComment = (thread, body, viewerThreadId) => runs.onUserComment(thread, body, viewerThreadId);
 
-  bb.rpc.register(rpcContract, {
+  bb.rpc.register(rpcContract, refusing<typeof rpcContract>({
     getReview: ({ threadId, target, autoTarget, reason, tab, ignoreWhitespace }) =>
       service.view(threadId, target, autoTarget === true, reason, tab, ignoreWhitespace === true),
     loadPatches: async ({ threadId, target, files, ignoreWhitespace }) => ({ patches: await service.patches(threadId, target, files, ignoreWhitespace === true) }),
@@ -101,7 +102,7 @@ export default async function plugin(bb: BbPluginApi) {
       service.saveViewState(threadId, sessionId, state);
       return { ok: true as const };
     },
-  });
+  }));
 
   bb.cli.register(diffReviewCli(service, runs));
 
