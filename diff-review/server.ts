@@ -92,6 +92,8 @@ export default async function plugin(bb: BbPluginApi) {
     send: (input) => service.send(input),
     runDefaults: ({ threadId }) => runs.defaults(threadId),
     startReview: async (input) => ({ run: await runs.startReview(input) }),
+    startSummary: async (input) => ({ run: await runs.startSummary(input) }),
+    startExplain: async (input) => ({ run: await runs.startExplain(input) }),
     fixInNewThread: (input) => runs.fixInNewThread(input),
     closeRun: async ({ runId }) => {
       await runs.close(runId);

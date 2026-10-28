@@ -1,9 +1,9 @@
 /**
  * The messages AI runs get: a review, a question to the view's reviewer (`@reviewer` / `@agent`, as a
- * follow-up turn of the reviewer's thread or the first message of a new one), and a fix in a new
- * thread.
+ * follow-up turn of the reviewer's thread or the first message of a new one), a fix in a new thread,
+ * a summary of the change and an explanation of a file or lines.
  *
- * Adapted from diffity's `src-tauri/prompts/review.md` and `thread.md`
+ * Adapted from diffity's `src-tauri/prompts/review.md`, `thread.md`, `summarize.md` and `explain.md`
  * (https://github.com/nilbuild/diffity), Copyright (c) 2026 Kamran Ahmed, MIT License — see
  * THIRD_PARTY_NOTICES.md. The review steps, what to flag, the validation pass, the writing rules and
  * the rejected-edit rules are diffity's; the tools are this plugin's `diff_review_*` tools, with the
@@ -221,4 +221,72 @@ ${REPORT}
 The \`diff_review_*\` tools (\`${TOOL.threads}\`, \`${TOOL.reply}\`, \`${TOOL.resolve}\`, \`${TOOL.dismiss}\`) do the same as the commands below; use them when they are available.
 
 ${sendPrompt(input)}`;
+}
+
+/** "Summarize": a summary of the change for a reviewer, left as a comment on the whole diff. */
+export function summaryPrompt(target: Target): string {
+  return `# Summarize the changes
+
+Summarize ${describeTarget(target)} in this workspace for a reviewer, with Diff Review. Read the diff with ${gitCommandFor(target)} (use \`git log\` for the range when commit messages add context), and enough of the surrounding code to understand the intent, not just the text of the hunks.
+
+Write the summary:
+
+- **Overview**: one or two sentences: what this change does and why.
+- **Changes by area**: group files by area (backend, frontend, tests, config, docs, …). For each area, bullet the meaningful changes with file paths. Collapse mechanical changes (renames, formatting) into one line.
+- **Behaviour changes**: anything user-visible, API or contract changes, migrations, new config or dependencies.
+- **Worth a closer look**: risky or subtle spots a reviewer should focus on, with \`path:line\`.
+
+Be concise and factual; no filler, no praise.
+
+Post the summary, once, with \`${TOOL.generalComment}\` (a comment about the whole diff, no severity). ${fallback("`comment --general`")}
+
+**Do not edit files, and do not run commands that change the repository.** Do not leave other comments.
+
+Then finish with one sentence here saying the summary is in the Review tab.
+
+${REPORT}
+`;
+}
+
+export interface ExplainPlace {
+  filePath: string;
+  side: "old" | "new" | null;
+  startLine: number;
+  endLine: number;
+  /** The selected lines' text, when lines were selected. */
+  code: string | null;
+}
+
+/** "Explain": a file or selected lines explained to a reviewer, left as a comment on them. */
+export function explainPrompt(target: Target, place: ExplainPlace): string {
+  const file = "`" + place.filePath + "`";
+  const lines = place.startLine === 0 ? null : place.startLine === place.endLine ? `line ${place.startLine}` : `lines ${place.startLine}-${place.endLine}`;
+  const what = lines === null ? file : `${lines} of ${file} (${place.side === "old" ? "the old side: removed lines" : "the new side"})`;
+  const fence = "```";
+  const code = place.code === null ? "" : `\nThe selected code:\n\n${fence}\n${place.code}\n${fence}\n`;
+  const where =
+    lines === null
+      ? `with \`${TOOL.comment}\` on the whole file (file ${file}, startLine 0)`
+      : `with \`${TOOL.comment}\` on the same lines (file ${file}, startLine ${place.startLine}, endLine ${place.endLine}, side \`${place.side ?? "new"}\`)`;
+  return `# Explain ${what}
+
+Explain ${what} to a reviewer who has not seen it before. The diff under review is ${describeTarget(target)} in this workspace (read it with ${gitCommandFor(target)}); ${lines === null ? "explain the file" : "explain those lines specifically, using the rest of the file only as supporting context"}.
+${code}
+Cover, in this order and only as far as it is useful:
+
+1. **Purpose**: what it is for, in one or two sentences.
+2. **How it works**: the main pieces (types, functions, components) and the flow between them.
+3. **How it connects**: what it depends on, and who depends on it. Search for callers and importers; list the important call sites with \`path:line\`.
+4. **Things to watch**: non-obvious behaviour, invariants, side effects, error handling, or anything surprising a reviewer should know.
+
+Read the actual code before explaining; cite \`path:line\` for concrete claims. Be concise: short sections and bullet points over prose.
+
+Post the explanation, once, ${where}, with no severity. ${fallback("`comment`")}
+
+**Do not edit files, and do not run commands that change the repository.** Do not leave other comments.
+
+Then finish with one sentence here saying the explanation is in the Review tab.
+
+${REPORT}
+`;
 }

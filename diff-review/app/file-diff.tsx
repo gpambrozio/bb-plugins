@@ -320,6 +320,17 @@ export function FileDiff({ file, threads, showThreadCount, diffStyle, stalePatch
             Open
           </Button>
         ) : null}
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-6 shrink-0 gap-1 px-1.5 text-xs"
+          onClick={() => void actions.explain({ filePath: file.path, side: null, startLine: 0, endLine: 0, code: null }).catch(() => undefined)}
+          aria-label={`Explain ${file.path}`}
+        >
+          <Icon name="Bot" className="size-3.5" />
+          Explain
+        </Button>
         {actions.canRevert(file) ? (
           <Button type="button" variant="ghost" size="sm" className="h-6 shrink-0 gap-1 px-1.5 text-xs" onClick={() => setReverting(true)} aria-label={`Revert ${file.path}`}>
             <Icon name="RotateCcw" className="size-3.5" />
@@ -415,8 +426,21 @@ function LineDraftBox({
   const lines = range.startLine === range.endLine ? `line ${range.startLine}` : `lines ${range.startLine}–${range.endLine}`;
   return (
     <div className="flex flex-col gap-2 border-l-2 border-primary bg-card px-3 py-2 font-sans">
-      <span className="text-xs text-muted-foreground">
+      <span className="flex items-center gap-2 text-xs text-muted-foreground">
         New comment on {lines} ({range.side === "old" ? "removed" : "new"} side){note === null ? "" : `. ${note}`}
+        <Button
+          type="button"
+          variant="link"
+          size="sm"
+          className="h-auto p-0 text-xs"
+          onClick={() =>
+            void actions
+              .explain({ filePath, side: range.side, startLine: range.startLine, endLine: range.endLine, code: anchorContent })
+              .then(draft.close, () => undefined)
+          }
+        >
+          Ask AI to explain {range.startLine === range.endLine ? "this line" : "these lines"}
+        </Button>
       </span>
       <CommentComposer
         placeholder="Leave a comment. Markdown works; @reviewer (or @agent) asks this view's AI reviewer."

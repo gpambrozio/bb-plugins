@@ -8,7 +8,7 @@ import { createContext, useContext, useMemo, type ReactNode } from "react";
 import { toast } from "sonner";
 
 import type { RpcContract } from "../shared/contract";
-import type { DiffFile, ReviewThread, Severity, Side, Target, ThreadStatus } from "../shared/types";
+import type { DiffFile, ReviewThread, Run, Severity, Side, Target, ThreadStatus } from "../shared/types";
 import { fileRef } from "./open-file";
 import { errorMessage } from "./use-review";
 
@@ -45,6 +45,8 @@ export interface ReviewActions {
   applySuggestion(input: { reviewThreadId: string; commentId: string; startLine: number; endLine: number; expected: string; code: string }): Promise<void>;
   /** Reverts a file's uncommitted change, all of it (`hunks` null) or the hunks given. */
   revert(file: DiffFile, hunks: number[] | null): Promise<void>;
+  /** Asks an agent to explain a file (`startLine` 0) or lines of it; the answer lands as a comment there. */
+  explain(place: { filePath: string; side: Side | null; startLine: number; endLine: number; code: string | null }): Promise<void>;
 }
 
 const ActionsContext = createContext<ReviewActions | null>(null);
@@ -70,6 +72,7 @@ export function ReviewActionsProvider({
   view,
   putThread,
   putViewed,
+  putRun,
   refreshThreads,
   onEdited,
   children,
@@ -81,6 +84,7 @@ export function ReviewActionsProvider({
   view: { target: Target; environmentId: string; mergeBaseRef: string | null };
   putThread(thread: ReviewThread): void;
   putViewed(sessionId: string, path: string, viewed: DiffFile["viewed"]): void;
+  putRun(run: Run): void;
   refreshThreads(): Promise<void>;
   /** The tab changed files in the workspace; reload the view. */
   onEdited(): void;
@@ -131,6 +135,13 @@ export function ReviewActionsProvider({
           putThread((await rpc.call("applySuggestion", { threadId, ...input })).thread);
           onEdited();
         }),
+      explain: (place) =>
+        reported("Could not start the explanation", async () => {
+          const { run } = await rpc.call("startExplain", { sessionId, threadId, ...place });
+          putRun(run);
+          if (run.status === "failed") toast.error(run.summary ?? "The explanation could not start.");
+          else toast.success("Explanation started; it appears here as a comment.");
+        }),
       revert: (file, hunks) =>
         reported(`Could not revert ${file.path}`, async () => {
           await rpc.call("revertChanges", { threadId, path: file.path, revision: file.revision, hunks });
@@ -145,7 +156,7 @@ export function ReviewActionsProvider({
         });
       },
     }),
-    [rpc, navigate, sessionId, threadId, view.target, view.environmentId, view.mergeBaseRef, putThread, putViewed, refreshThreads, onEdited],
+    [rpc, navigate, sessionId, threadId, view.target, view.environmentId, view.mergeBaseRef, putThread, putViewed, putRun, refreshThreads, onEdited],
   );
   return <ActionsContext.Provider value={actions}>{children}</ActionsContext.Provider>;
 }

@@ -138,6 +138,25 @@ export const rpcContract = defineRpcContract({
       .strict(),
     output: z.object({ run: runSchema }).strict(),
   },
+  startSummary: {
+    input: z.object({ sessionId: id, threadId: id, execution: executionSchema }).strict(),
+    output: z.object({ run: runSchema }).strict(),
+  },
+  startExplain: {
+    input: z
+      .object({
+        sessionId: id,
+        threadId: id,
+        filePath: z.string().min(1).max(4096),
+        side: sideSchema.nullable(),
+        /** 0 explains the whole file. */
+        startLine: z.number().int().min(0),
+        endLine: z.number().int().min(0),
+        code: z.string().max(ANCHOR_MAX_CHARS).nullable(),
+      })
+      .strict(),
+    output: z.object({ run: runSchema }).strict(),
+  },
   fixInNewThread: {
     input: z
       .object({

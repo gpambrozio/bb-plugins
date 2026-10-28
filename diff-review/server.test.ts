@@ -766,6 +766,37 @@ describe("AI runs", () => {
     expect((await view()).runs.map((row) => row.id)).toEqual([run.id]);
   });
 
+  it("starts a summary that leaves its result as a comment on the whole diff, and is no reviewer", async () => {
+    const { harness, rpc, view, comment } = await setup();
+    const { sessionId } = await view();
+    const { run } = (await rpc("startSummary", { sessionId, threadId: THREAD, execution })) as RunResult;
+    expect(run).toMatchObject({ kind: "summary", status: "running", threadId: "thr_run_1" });
+    const spawn = harness.inspection.sdk.callsTo("threads.spawn")[0]![0] as Record<string, unknown>;
+    expect(spawn).toMatchObject({ title: "Summary of the changes", parentThreadId: THREAD, permissionMode: "auto" });
+    expect(spawn.prompt).toContain("diff_review_general_comment");
+    expect(spawn.prompt).toContain(REPORT_LINE);
+    await tool(harness, "diff_review_general_comment", { body: "**Overview**: b becomes 3." }, run.threadId!);
+    expect((await sessionState(rpc, sessionId)).threads.map((row) => row.comments[0]!.body)).toEqual(["**Overview**: b becomes 3."]);
+    // An @reviewer question starts a reviewer of its own: a summary is not the view's reviewer.
+    await comment(sessionId, "@reviewer why?");
+    await vi.waitFor(() => expect(harness.inspection.sdk.callsTo("threads.spawn")).toHaveLength(2));
+    expect((harness.inspection.sdk.callsTo("threads.spawn")[1]![0] as { prompt: string }).prompt).toContain("A question about a review thread");
+  });
+
+  it("starts an explanation of lines with the settings' agent, and lets it comment there", async () => {
+    const { harness, rpc, view } = await setup();
+    const { sessionId } = await view();
+    const { run } = (await rpc("startExplain", { sessionId, threadId: THREAD, filePath: "src/a.ts", side: "new", startLine: 2, endLine: 2, code: "const b = 3;" })) as RunResult;
+    expect(run).toMatchObject({ kind: "explain", focus: "src/a.ts:2", status: "running" });
+    const spawn = harness.inspection.sdk.callsTo("threads.spawn")[0]![0] as Record<string, unknown>;
+    expect(spawn).toMatchObject({ title: "Explain a.ts:2", providerId: "claude-code" });
+    expect(spawn.reasoningLevel).toBeUndefined();
+    expect(spawn.prompt).toContain("# Explain line 2 of `src/a.ts` (the new side)");
+    expect(spawn.prompt).toContain("const b = 3;");
+    const ok = await tool(harness, "diff_review_comment", { file: "src/a.ts", startLine: 2, body: "It sets b." }, run.threadId!);
+    expect(isError(ok)).toBe(false);
+  });
+
   it("gives the tools only to run threads, and the skill to every thread", async () => {
     const { harness } = await setup();
     const runThread = await harness.behavior.resolveAgentConfiguration(makePluginAgentConfigurationContext({ pluginMetadata: { diffReviewRunId: "0123456789ab" } }));

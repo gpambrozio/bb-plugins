@@ -26,6 +26,8 @@ export function runTitle(run: Run, threads: readonly ReviewThread[]): string {
   if (run.kind === "review") return run.focus === null ? "AI review" : `AI review · ${run.focus}`;
   // From before @reviewer: a provider @-mention started a run of its own.
   if (run.kind === "fix") return "Fixes in a new thread";
+  if (run.kind === "summary") return "Summary";
+  if (run.kind === "explain") return run.focus === null ? "Explanation" : `Explain · ${run.focus}`;
   const thread = threads.find((row) => row.id === run.reviewThreadId);
   return thread === undefined ? "Answer to a mention" : `Answer on ${describeLocation(thread)}`;
 }
@@ -65,7 +67,7 @@ function RunRow({ run, threads, onClosed }: { run: Run; threads: readonly Review
           </Button>
         </span>
       </div>
-      {run.kind === "review" && changed.length > 0 ? (
+      {(run.kind === "review" || run.kind === "summary" || run.kind === "explain") && changed.length > 0 ? (
         <p className="text-xs text-warning-text">
           Files changed in this workspace while it ran: {changed.join(", ")}
         </p>

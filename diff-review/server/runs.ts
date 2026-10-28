@@ -17,6 +17,8 @@
  * carries its run id in the plugin's metadata, which `bb.agents.configure` reads to give it the tools;
  * the tools check the caller against the store, so the metadata grants nothing by itself.
  */
+import { posix } from "node:path";
+
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import { mentionsReviewer } from "../shared/mentions";
@@ -32,7 +34,7 @@ import {
   type Side,
 } from "../shared/types";
 import { ignorePatterns, loadDiff, loadPatches, ReviewUnavailable, uncommittedFingerprint, type Fingerprint } from "./diff";
-import { fixPrompt, reviewerPrompt, reviewPrompt } from "./run-prompts";
+import { explainPrompt, fixPrompt, reviewerPrompt, reviewPrompt, summaryPrompt } from "./run-prompts";
 import { publicRun, ReviewError, targetFromKey, type ReviewService, type ReviewSettings } from "./review";
 import { newId, pendingRunThread, type RecordedSend, type ReviewStore } from "./store";
 import { RUN_METADATA_KEY } from "./tool-names";
@@ -155,6 +157,53 @@ export class RunService {
       execution: input.execution,
       title,
       prompt,
+      baseline: () => this.fingerprint(session.environmentId),
+      clears,
+    });
+  }
+
+  /** "Summarize": a run that leaves a summary of the view's change as a comment on the whole diff. */
+  async startSummary(input: { sessionId: string; threadId: string; execution: Execution }): Promise<Run> {
+    const session = this.review.requireSession(input.sessionId);
+    const clears = this.clearCount(session.id);
+    return this.spawn({
+      sessionId: session.id,
+      environmentId: session.environmentId,
+      parentThreadId: input.threadId,
+      kind: "summary",
+      reviewThreadId: null,
+      focus: null,
+      execution: input.execution,
+      title: "Summary of the changes",
+      prompt: summaryPrompt(targetFromKey(session.targetKey)),
+      baseline: () => this.fingerprint(session.environmentId),
+      clears,
+    });
+  }
+
+  /**
+   * "Explain": a run that explains a file (`startLine` 0) or lines of it and leaves the explanation as
+   * a comment there. It runs the settings' provider and model, as a reviewer an @reviewer starts does.
+   */
+  async startExplain(input: { sessionId: string; threadId: string; filePath: string; side: Side | null; startLine: number; endLine: number; code: string | null }): Promise<Run> {
+    const session = this.review.requireSession(input.sessionId);
+    const clears = this.clearCount(session.id);
+    const place = { filePath: input.filePath, side: input.startLine === 0 ? null : (input.side ?? "new"), startLine: input.startLine, endLine: Math.max(input.endLine, input.startLine), code: input.code };
+    const lines = place.startLine === 0 ? "" : place.startLine === place.endLine ? `:${place.startLine}` : `:${place.startLine}-${place.endLine}`;
+    return this.spawn({
+      sessionId: session.id,
+      environmentId: session.environmentId,
+      parentThreadId: input.threadId,
+      kind: "explain",
+      reviewThreadId: null,
+      focus: `${place.filePath}${lines}`,
+      execution: async () => {
+        const settings = await this.settings();
+        return { providerId: settings.aiProvider.trim() || "claude-code", model: settings.aiModel.trim(), reasoningLevel: "medium" };
+      },
+      reasoningFromProvider: true,
+      title: `Explain ${posix.basename(place.filePath)}${lines}`,
+      prompt: explainPrompt(targetFromKey(session.targetKey), place),
       baseline: () => this.fingerprint(session.environmentId),
       clears,
     });
@@ -323,7 +372,7 @@ export class RunService {
     for (const run of runs) {
       const summary = lastAssistantText === null ? null : lastAssistantText.slice(0, SUMMARY_MAX_CHARS);
       let changed: string[] | null = null;
-      if (run.kind === "review" && run.baseline !== null) {
+      if (readsOnly(run.kind) && run.baseline !== null) {
         const session = this.store.sessionById(run.sessionId);
         if (session !== null) changed = changedFiles(JSON.parse(run.baseline) as Fingerprint, await this.fingerprint(session.environmentId));
       }
@@ -338,8 +387,8 @@ export class RunService {
    * (as diffity's `add_comment` does).
    */
   async addComment(callerThreadId: string, input: AgentCommentInput): Promise<ReviewThread> {
-    const run = this.store.runsOfThread(callerThreadId).find((row) => row.kind === "review");
-    if (run === undefined) throw new ReviewError("Only an AI review run can add comments; answer the threads sent to you instead.", "not_a_review_run");
+    const run = this.store.runsOfThread(callerThreadId).find((row) => readsOnly(row.kind));
+    if (run === undefined) throw new ReviewError("Only an AI review, summary or explanation run can add comments; answer the threads sent to you instead.", "not_a_review_run");
     const session = this.review.requireSession(run.sessionId);
     const body = input.body.trim() === "" ? null : input.body;
     if (body === null) throw new ReviewError("The comment is empty.", "empty_text");
@@ -570,6 +619,11 @@ export class RunService {
 export function reasoningLevel(effort: string): Execution["reasoningLevel"] {
   const parsed = reasoningLevelSchema.safeParse(effort);
   return parsed.success ? parsed.data : "medium";
+}
+
+/** Runs that only read and comment: they are watched for edits, and may open comment threads. */
+export function readsOnly(kind: Run["kind"]): boolean {
+  return kind === "review" || kind === "summary" || kind === "explain";
 }
 
 /** Files whose uncommitted change differs between two fingerprints, sorted. */

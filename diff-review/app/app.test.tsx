@@ -257,6 +257,26 @@ describe("changing the workspace from the tab", () => {
   });
 });
 
+describe("explanations", () => {
+  const run = { id: "run_1", sessionId: "ses_1", kind: "explain", threadId: "thr_run", reviewThreadId: null, focus: "src/a.ts", providerId: "claude-code", model: null, status: "running", summary: null, changedFiles: null, createdAt: 1, finishedAt: null };
+
+  it("asks an agent to explain a file, and lists the run", async () => {
+    const slot = render({ startExplain: () => ({ run }) });
+    fireEvent.click(await screen.findByRole("button", { name: "Explain src/a.ts" }));
+    await waitFor(() => expect(slot.inspection.rpcCalls.find((call) => call.method === "startExplain")?.input).toEqual({ sessionId: "ses_1", threadId: "thr_1", filePath: "src/a.ts", side: null, startLine: 0, endLine: 0, code: null }));
+    expect(await screen.findByText("Explain · src/a.ts")).toBeTruthy();
+  });
+
+  it("asks it to explain the lines a new comment is on", async () => {
+    const slot = render({ startExplain: () => ({ run }) });
+    fireEvent.click(await screen.findByText("gutter +"));
+    fireEvent.click(screen.getByRole("button", { name: "Ask AI to explain these lines" }));
+    await waitFor(() =>
+      expect(slot.inspection.rpcCalls.find((call) => call.method === "startExplain")?.input).toMatchObject({ filePath: "src/a.ts", side: "new", startLine: 1, endLine: 2, code: "const a = 1;\nconst b = 3;" }),
+    );
+  });
+});
+
 describe("keeping the Review tab current", () => {
   it("reloads when bb's Git plugin sees the workspace change outside a turn", async () => {
     let files = 1;
@@ -703,6 +723,23 @@ describe("the Review tab", () => {
     fireEvent.click(screen.getByRole("button", { name: "Start review" }));
     await screen.findByText("AI review · Security");
     expect(slot.inspection.rpcCalls.find((call) => call.method === "startReview")!.input).toEqual({ sessionId: "ses_1", threadId: "thr_1", focuses: ["Security"], instructions: "", execution });
+  });
+
+  it("starts a summary from the AI review dialog", async () => {
+    const execution = { providerId: "claude-code", model: "big", reasoningLevel: "high" };
+    const slot = render({
+      runDefaults: () => ({ execution, message: null, permissionMode: "auto" }),
+      startSummary: () => ({
+        run: { id: "run3", sessionId: "ses_1", kind: "summary", threadId: "thr_sum", reviewThreadId: null, focus: null, providerId: "claude-code", model: "big", status: "running", summary: null, changedFiles: null, createdAt: 1, finishedAt: null },
+      }),
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "AI review" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Summarize" }));
+    expect(screen.queryByRole("button", { name: "Security" })).toBeNull();
+    await waitFor(() => expect((screen.getAllByRole("button", { name: "Summarize" }).at(-1) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getAllByRole("button", { name: "Summarize" }).at(-1)!);
+    await screen.findByText("Summary");
+    expect(slot.inspection.rpcCalls.find((call) => call.method === "startSummary")!.input).toEqual({ sessionId: "ses_1", threadId: "thr_1", execution });
   });
 
   it("sends to a new thread when asked", async () => {

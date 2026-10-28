@@ -169,10 +169,10 @@ export type Execution = z.infer<typeof executionSchema>;
 /**
  * An AI run the plugin started, in a visible thread of its own in the reviewed workspace: a `review`
  * that leaves comments (and, as the view's reviewer, answers @reviewer questions), a `mention` from
- * before @reviewer (a provider @-mention answering one thread), or a `fix` that
- * got comments sent to a new thread.
+ * before @reviewer (a provider @-mention answering one thread), a `fix` that got comments sent to a
+ * new thread, a `summary` of the change or an `explain`ed file or lines, each left as a comment.
  */
-export const runKindSchema = z.enum(["review", "mention", "fix"]);
+export const runKindSchema = z.enum(["review", "mention", "fix", "summary", "explain"]);
 export type RunKind = z.infer<typeof runKindSchema>;
 
 export const runStatusSchema = z.enum(["running", "done", "failed", "closed"]);

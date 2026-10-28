@@ -162,6 +162,7 @@ export function ReviewBody({ threadId, environmentId, params, visible }: { threa
       view={state.view}
       putThread={review.putThread}
       putViewed={review.putViewed}
+      putRun={review.putRun}
       refreshThreads={review.refreshThreads}
       onEdited={onEdited}
     >

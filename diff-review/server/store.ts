@@ -96,6 +96,9 @@ export const MIGRATIONS: string[] = [
   // The revision of the file a thread was made on, as bb's Git plugin gave it, to tell that the file
   // changed since.
   `ALTER TABLE review_threads ADD COLUMN file_revision TEXT`,
+  // Summaries and explanations are review-kind runs (they read and comment, never edit) with a
+  // purpose; the table's kind check predates them and SQLite cannot widen it in place.
+  `ALTER TABLE runs ADD COLUMN purpose TEXT`,
 ];
 
 export interface Session {
@@ -174,6 +177,7 @@ interface RunRow {
   id: string;
   session_id: string;
   kind: RunKind;
+  purpose: "summary" | "explain" | null;
   bb_thread_id: string | null;
   review_thread_id: string | null;
   focus: string | null;
@@ -463,12 +467,13 @@ export class ReviewStore {
     const id = input.id ?? newId();
     const at = this.now();
     const finished = input.status === "running" ? null : at;
+    const purpose = input.kind === "summary" || input.kind === "explain" ? input.kind : null;
     this.db
       .prepare(
-        `INSERT INTO runs (id, session_id, kind, bb_thread_id, review_thread_id, focus, provider_id, model, status, summary, baseline, created_at, finished_at, parent_thread_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO runs (id, session_id, kind, purpose, bb_thread_id, review_thread_id, focus, provider_id, model, status, summary, baseline, created_at, finished_at, parent_thread_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(id, input.sessionId, input.kind, input.bbThreadId, input.reviewThreadId, input.focus, input.providerId, input.model, input.status, input.summary ?? null, input.baseline ?? null, at, finished, input.parentThreadId ?? null);
+      .run(id, input.sessionId, purpose === null ? input.kind : "review", purpose, input.bbThreadId, input.reviewThreadId, input.focus, input.providerId, input.model, input.status, input.summary ?? null, input.baseline ?? null, at, finished, input.parentThreadId ?? null);
     return this.run(id)!;
   }
 
@@ -502,7 +507,7 @@ export class ReviewStore {
   reviewerRun(sessionId: string): StoredRun | null {
     const row = this.db
       .prepare<[string], RunRow>(
-        "SELECT * FROM runs WHERE session_id = ? AND kind = 'review' AND status != 'closed' AND bb_thread_id IS NOT NULL ORDER BY created_at DESC, rowid DESC LIMIT 1",
+        "SELECT * FROM runs WHERE session_id = ? AND kind = 'review' AND purpose IS NULL AND status != 'closed' AND bb_thread_id IS NOT NULL ORDER BY created_at DESC, rowid DESC LIMIT 1",
       )
       .get(sessionId);
     return row === undefined ? null : toRun(row);
@@ -656,7 +661,7 @@ function toRun(row: RunRow): StoredRun {
   return {
     id: row.id,
     sessionId: row.session_id,
-    kind: row.kind,
+    kind: row.purpose ?? row.kind,
     threadId: row.bb_thread_id,
     reviewThreadId: row.review_thread_id,
     focus: row.focus,
