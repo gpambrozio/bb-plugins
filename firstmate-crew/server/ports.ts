@@ -73,6 +73,17 @@ export interface ThreadOrigin {
  */
 export type SendMode = "auto" | "steer" | "queue-if-active" | "compact-first";
 
+/**
+ * bb answered a `compact-first` send with a refusal, before it queued anything: nothing was compacted for
+ * it and nothing was delivered. Any other failure of such a send leaves both unknown.
+ */
+export class CompactFirstRefused extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "CompactFirstRefused";
+  }
+}
+
 /** Where a spawned thread works: a new worktree of its project, another thread's environment, or a plain directory. */
 export type SpawnEnvironment = { kind: "worktree" } | { kind: "reuse"; environmentId: string } | { kind: "path"; path: string };
 

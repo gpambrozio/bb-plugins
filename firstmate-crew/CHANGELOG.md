@@ -23,7 +23,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **A message to a thread that is due for autocompact compacts it first.** A watch note, your words from
   the board or the command line, or a steer to a worker, reaching a thread that FirstMate would compact
   right then, now has bb compact it and deliver the message once that is done, so the message does not
-  pay for the whole expired conversation. If bb will not compact it then, the message goes as before.
+  pay for the whole expired conversation. If bb says it will not compact it then, the message goes as
+  before; if the request fails in a way that leaves it unclear whether bb took it, you see the error
+  rather than the message arriving twice.
 - **Watches find their commands where bb finds its own:** your login shell's PATH, Homebrew,
   `~/.local/bin`, mise, asdf and Volta, so the pull request watch finds `gh` however bb was started.
 - **Crew reasoning reads plainly in the settings:** "Leave it to the first mate", Low, Medium, High,

@@ -204,8 +204,9 @@ separately for the first mate and for the crew, each with its own token threshol
   logged once, not every minute.
 - A message that reaches a thread when it is due — a watch note, your words from the board or `tell`, a
   steer to a worker — has bb compact the thread first and deliver the message once it is done, in one
-  request, so the message does not pay for the whole expired context. If bb will not compact it then, the
-  message goes as it would have.
+  request, so the message does not pay for the whole expired context. If bb says it will not compact it
+  then, the message goes as it would have; if the request fails in a way that leaves it unclear whether bb
+  took it, FirstMate reports the failure rather than sending the message twice.
 - A compaction is a turn of its own. For a worker, bb reports it to the first mate like any of the
   worker's turns, so the first mate wakes briefly to a turn with nothing new in it.
 

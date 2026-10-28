@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { checkAutoCompact, FailureLog, type AutoCompactDeps } from "./autocompact";
 import { sendCompactingIfDue, type CompactFirstDeps } from "./compact-first";
 import { withMateLock } from "./mate";
-import type { SendMode } from "./ports";
+import { CompactFirstRefused, type SendMode } from "./ports";
 import { autoCompactRules, defaultSettings, type AutoCompactRules } from "./settings";
 import { createStore } from "./store";
 import { fakeLog, fakeThreads, memoryKv } from "./testing/fakes";
@@ -13,6 +13,13 @@ const NOW = 100 * 24 * 60 * MINUTE;
 const RULE = { ...autoCompactRules(defaultSettings()).mate, enabled: true, minTokens: 200_000, idleMinutes: 60 };
 const OFF = { ...RULE, enabled: false };
 
+/** A promise and the function that settles it, for holding one step of a race where a test wants it. */
+function barrier(): { reached: Promise<void>; open: () => void } {
+  let open!: () => void;
+  const reached = new Promise<void>((resolve) => (open = resolve));
+  return { reached, open };
+}
+
 async function setup(rules: AutoCompactRules = { mate: RULE, crew: OFF }, kv = memoryKv()) {
   const threads = fakeThreads();
   const store = createStore(kv);
@@ -21,9 +28,27 @@ async function setup(rules: AutoCompactRules = { mate: RULE, crew: OFF }, kv = m
   await store.setMateThreadId(mate.id);
   const lastTurn = threads.runTurn(mate.id, NOW - 90 * MINUTE);
   threads.setUsage(mate.id, { usedTokens: 250_000, estimated: false, cacheExpiresAt: null });
-  const deps: CompactFirstDeps = { threads, store, rules: async () => rules, now: () => NOW, log };
+  /** Called whenever someone asks for the mate lock, before they get it. */
+  let onLockRequest: () => void = () => {};
+  const lock = <T>(work: () => Promise<T>): Promise<T> => {
+    onLockRequest();
+    return withMateLock(work);
+  };
+  const deps: CompactFirstDeps = { threads, store, rules: async () => rules, now: () => NOW, log, withMateLock: lock };
   const send = (text: string) => (mode: SendMode) => threads.send(mate.id, text, mode);
-  return { threads, store, log, mate, lastTurn, deps, send, kv };
+  const check = (): AutoCompactDeps => ({ ...deps, failures: new FailureLog(log), signal: new AbortController().signal });
+  return {
+    threads,
+    store,
+    log,
+    mate,
+    lastTurn,
+    deps,
+    send,
+    kv,
+    check,
+    whenLockRequested: (listener: () => void) => (onLockRequest = listener),
+  };
 }
 
 describe("sendCompactingIfDue", () => {
@@ -56,18 +81,6 @@ describe("sendCompactingIfDue", () => {
     expect(off.threads.calls.map((call) => call.method)).toEqual(["send"]);
   });
 
-  it("sends the message as asked when bb refuses to compact, and relaxes the mark to one turn", async () => {
-    const { threads, store, log, mate, lastTurn, deps, send } = await setup();
-    threads.failNext("send", new Error("HTTP 409: Thread is not idle"));
-
-    await sendCompactingIfDue(deps, mate.id, "steer", send("steer it"));
-
-    expect(threads.callsTo("send").map(([, , mode]) => mode)).toEqual(["compact-first", "steer"]);
-    expect(threads.sent).toEqual([{ id: mate.id, text: "steer it", mode: "steer" }]);
-    expect(await store.compactionMark(mate.id)).toEqual({ afterSeq: lastTurn.seq, ok: false, at: NOW });
-    expect(log.warnings).toEqual([`bb would not compact ${mate.id} before a message to it, so the message goes as it is: HTTP 409: Thread is not idle`]);
-  });
-
   it("sends without compacting when its mark cannot be saved", async () => {
     const kv = memoryKv();
     const { threads, store, log, mate, deps, send } = await setup(undefined, kv);
@@ -83,28 +96,158 @@ describe("sendCompactingIfDue", () => {
   });
 
   it("leaves nothing for the next check to compact", async () => {
-    const { threads, store, log, mate, deps, send } = await setup();
+    const { threads, mate, deps, send, check } = await setup();
     await sendCompactingIfDue(deps, mate.id, "auto", send("hello"));
 
-    const check: AutoCompactDeps = { ...deps, store, withMateLock, failures: new FailureLog(log), signal: new AbortController().signal };
-    expect(await checkAutoCompact(check)).toBeNull();
+    expect(await checkAutoCompact(check())).toBeNull();
     expect(threads.callsTo("compact")).toEqual([]);
   });
 
-  it("stops a check that found the thread due before the message's mark landed", async () => {
-    const { threads, store, log, mate, lastTurn, deps } = await setup();
-    const check: AutoCompactDeps = {
-      ...deps,
-      // The message's mark is written while the check waits for the lock.
-      withMateLock: async (work) => {
-        await store.setCompactionMark(mate.id, { afterSeq: lastTurn.seq, ok: true, at: NOW });
-        return withMateLock(work);
-      },
-      failures: new FailureLog(log),
-      signal: new AbortController().signal,
-    };
+  describe("when bb fails the request", () => {
+    it("sends the message as asked after a refusal, which comes before bb accepts anything, and relaxes the mark", async () => {
+      const { threads, store, log, mate, lastTurn, deps } = await setup();
+      const accepted: SendMode[] = [];
+      const send = async (mode: SendMode) => {
+        if (mode === "compact-first") throw new CompactFirstRefused("HTTP 409: Context can only be compacted while the thread is idle or errored");
+        accepted.push(mode);
+      };
 
-    expect(await checkAutoCompact(check)).toBeNull();
-    expect(threads.callsTo("compact")).toEqual([]);
+      await sendCompactingIfDue(deps, mate.id, "steer", send);
+
+      expect(accepted).toEqual(["steer"]);
+      expect(threads.sent).toEqual([]);
+      expect(await store.compactionMark(mate.id)).toEqual({ afterSeq: lastTurn.seq, ok: false, at: NOW });
+      expect(log.warnings).toEqual([
+        `bb would not compact ${mate.id} before a message to it, so the message goes as it is: HTTP 409: Context can only be compacted while the thread is idle or errored`,
+      ]);
+    });
+
+    it("sends nothing again when the request failed after bb may have accepted it, and keeps the mark as accepted", async () => {
+      const { store, mate, lastTurn, deps } = await setup();
+      const accepted: SendMode[] = [];
+      const send = async (mode: SendMode) => {
+        accepted.push(mode);
+        // bb took it, and the answer was lost on the way back.
+        throw new TypeError("fetch failed");
+      };
+
+      await expect(sendCompactingIfDue(deps, mate.id, "auto", send)).rejects.toThrow("fetch failed");
+
+      expect(accepted).toEqual(["compact-first"]);
+      expect(await store.compactionMark(mate.id)).toEqual({ afterSeq: lastTurn.seq, ok: true, at: NOW });
+    });
+  });
+
+  describe("racing the check, other messages and a change of first mate", () => {
+    it("compacts first for one of two messages that arrive together, and sends the other as asked", async () => {
+      const { threads, mate, deps, whenLockRequested } = await setup();
+      // Both messages have had their first look before either goes on.
+      const bothLooked = barrier();
+      let requests = 0;
+      whenLockRequested(() => {
+        requests += 1;
+        if (requests === 2) bothLooked.open();
+      });
+      const held = barrier();
+      const sends: SendMode[] = [];
+      const send = (text: string) => async (mode: SendMode) => {
+        if (sends.push(mode) === 1) await held.reached;
+        return threads.send(mate.id, text, mode);
+      };
+
+      const first = sendCompactingIfDue(deps, mate.id, "auto", send("one"));
+      const second = sendCompactingIfDue(deps, mate.id, "auto", send("two"));
+      // Without the lock the second message never waits, and finishes while the first is held.
+      await Promise.race([bothLooked.reached, second]);
+      held.open();
+      await Promise.all([first, second]);
+
+      expect(threads.sent.map((sent) => sent.mode).sort()).toEqual(["auto", "compact-first"]);
+    });
+
+    it("leaves the stretch to the check that compacted it after the message had looked", async () => {
+      const kv = memoryKv();
+      const { threads, mate, deps, check, whenLockRequested } = await setup(undefined, kv);
+      // The check holds the lock with its mark write held until the message has had its first look.
+      const checkMarking = barrier();
+      const releaseMark = barrier();
+      const set = kv.set.bind(kv);
+      let held = false;
+      kv.set = async (key, value) => {
+        if (!held && key.startsWith("autoCompaction:")) {
+          held = true;
+          checkMarking.open();
+          await releaseMark.reached;
+        }
+        await set(key, value);
+      };
+      const checking = checkAutoCompact({ ...check(), withMateLock: (work) => withMateLock(work) });
+      await checkMarking.reached;
+
+      const messageWaiting = barrier();
+      whenLockRequested(() => messageWaiting.open());
+      const sending = sendCompactingIfDue(deps, mate.id, "auto", (mode) => threads.send(mate.id, "hello", mode));
+      await Promise.race([messageWaiting.reached, sending]);
+      releaseMark.open();
+      await Promise.all([checking, sending]);
+
+      expect(threads.callsTo("compact")).toEqual([[mate.id]]);
+      expect(threads.sent).toEqual([{ id: mate.id, text: "hello", mode: "auto" }]);
+    });
+
+    it("stops a check that assessed the stretch while a message was marking it", async () => {
+      const kv = memoryKv();
+      const { threads, mate, deps, check } = await setup(undefined, kv);
+      // The message's mark write is held until the check has assessed and asked for the lock.
+      const checkWaiting = barrier();
+      const releaseMark = barrier();
+      const set = kv.set.bind(kv);
+      let held = false;
+      kv.set = async (key, value) => {
+        if (!held && key.startsWith("autoCompaction:")) {
+          held = true;
+          await releaseMark.reached;
+        }
+        await set(key, value);
+      };
+      const lockedCheck: AutoCompactDeps = {
+        ...check(),
+        withMateLock: (work) => {
+          checkWaiting.open();
+          return withMateLock(work);
+        },
+      };
+
+      const sending = sendCompactingIfDue(deps, mate.id, "auto", (mode) => threads.send(mate.id, "hello", mode));
+      // Let the message reach its held mark write before the check starts.
+      while (!held) await new Promise((resolve) => setTimeout(resolve, 0));
+      const checking = checkAutoCompact(lockedCheck);
+      await Promise.race([checkWaiting.reached, checking]);
+      releaseMark.open();
+      await Promise.all([sending, checking]);
+
+      expect(threads.sent).toEqual([{ id: mate.id, text: "hello", mode: "compact-first" }]);
+      expect(threads.callsTo("compact")).toEqual([]);
+    });
+
+    it("sends as asked to a first mate released while the message waited for the lock", async () => {
+      const { threads, store, mate, deps, whenLockRequested } = await setup();
+      const releasing = barrier();
+      const messageWaiting = barrier();
+      whenLockRequested(() => messageWaiting.open());
+      // A release holds the lock until the message has had its first look and asked for it.
+      const release = withMateLock(async () => {
+        await releasing.reached;
+        await store.setMateThreadId(null);
+      });
+
+      const sending = sendCompactingIfDue(deps, mate.id, "auto", (mode) => threads.send(mate.id, "hello", mode));
+      await Promise.race([messageWaiting.reached, sending]);
+      releasing.open();
+      await Promise.all([release, sending]);
+
+      expect(threads.sent).toEqual([{ id: mate.id, text: "hello", mode: "auto" }]);
+      expect(await store.compactionMark(mate.id)).toBeNull();
+    });
   });
 });

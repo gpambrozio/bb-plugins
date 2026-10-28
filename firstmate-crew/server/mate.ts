@@ -42,6 +42,7 @@ export function compactFirstDeps(deps: MateDeps): CompactFirstDeps {
     rules: async () => autoCompactRules(await deps.settings()),
     now: Date.now,
     log: deps.log,
+    withMateLock,
   };
 }
 

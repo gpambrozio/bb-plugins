@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { withMateLock } from "./mate";
 import { autoCompactRules, defaultSettings } from "./settings";
 import { createDeliver } from "./watch-delivery";
 import { fakeLog, fakeThreads, memoryStore } from "./testing/fakes";
@@ -31,7 +32,7 @@ function setup(settings = defaultSettings()) {
   const store = memoryStore();
   const log = fakeLog();
   const rules = async () => autoCompactRules(settings);
-  return { threads, store, log, deliver: createDeliver({ threads, store, home, log, rules, now: () => AT }) };
+  return { threads, store, log, deliver: createDeliver({ threads, store, home, log, rules, withMateLock, now: () => AT }) };
 }
 
 describe("createDeliver", () => {

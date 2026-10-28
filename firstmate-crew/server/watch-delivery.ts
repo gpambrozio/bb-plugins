@@ -30,6 +30,8 @@ export interface DeliveryDeps {
   log: Log;
   /** Autocompact's rules, so a first mate due for it is compacted before the note. */
   rules: () => Promise<AutoCompactRules>;
+  /** The `mate` lock, held while a note compacts the first mate first (`compact-first.ts`). */
+  withMateLock: <T>(work: () => Promise<T>) => Promise<T>;
   now?: () => Date;
 }
 

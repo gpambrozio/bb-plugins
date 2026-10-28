@@ -53,8 +53,10 @@ Do not break these; each was paid for.
 - **Sends never interrupt.** The captain's words go with mode `"auto"` (crew steer: `"steer"`); watch
   output goes with `"queue-if-active"`, so a turn that started meanwhile holds it. The one exception to
   the mode is `"compact-first"` (`server/compact-first.ts`), which only a thread at rest and due for
-  autocompact gets: bb queues it as `queue-if-active` after the compaction, and a refusal sends the
-  message again with its own mode.
+  autocompact gets: bb queues it as `queue-if-active` after the compaction. Only bb's outright refusal
+  (HTTP 400 or 409, which it answers before queuing anything; `CompactFirstRefused` from the port) sends
+  the message again with its own mode. Any other failure — a lost answer, a timeout, a 5xx — may have
+  come after bb accepted it, so it is passed on and never resent.
 - **One message to the first mate in flight at a time** from the app (the board's buttons, suggestions and
   the command palette share `app/send-gate.ts`), so a double press sends once.
 - **Restart and Compact are refused while the first mate is mid-turn** — they go only when the first mate
@@ -134,9 +136,11 @@ Do not break these; each was paid for.
   event in bb's log, never from when the plugin saw something, so a reload cannot reset it. Every
   attempt leaves a mark naming that event's `seq`, written as accepted *before* the request goes to bb:
   a mark that cannot be saved stops the compaction, and a refusal only relaxes it afterwards, so failed
-  bookkeeping errs on waiting. A message to a due thread (`compact-first.ts`) leaves the same mark before
-  it asks bb to compact first, and the check's compaction reads the mark again under the lock, so the two
-  never both compact one idle stretch. When `threads.context` carries bb's `compactionOfferAt` (bb 0.47,
+  bookkeeping errs on waiting. A message to a due thread (`compact-first.ts`) takes the `mate` lock too,
+  assesses again under it, and leaves the same mark before it asks bb to compact first; the check's
+  compaction reads the mark again under the lock. So the check, another message, a launch, an adoption or
+  a release that holds the lock first is respected, and one idle stretch is compacted once. Nothing that
+  sends through `compact-first.ts` may hold the lock (restart sends directly). When `threads.context` carries bb's `compactionOfferAt` (bb 0.47,
   behind its `compactExpiredCache` experiment), that cache deadline replaces the idle minutes; the token
   threshold and every at-rest rule stay. A marked thread is skipped until `turn/started` events after it show a
   turn of its own — two when bb accepted, because the compaction is itself a turn, one when it refused.
@@ -204,13 +208,19 @@ Do not break these; each was paid for.
   board goes. bb owns retries and the re-read after a reconnect. The tab passes
   `experimental_useTabVisible()` (bb 0.48) as the read's `enabled`, because bb keeps a closed panel's tab
   mounted; the settings section is not a tab and is always enabled. bb builds the app against its own
-  list of `@get-bb/plugin-sdk/app` exports, and bb 0.47 refuses a named import of one it lacks, so
-  `app/tab-visible.ts` reads the hook through the namespace. The palette command opens the tab through
+  list of `@get-bb/plugin-sdk/app` exports: bb 0.47 refuses a named import of one it lacks and resolves a
+  namespace read of one to nothing. A git install keeps the bundle its bb built after bb is upgraded, so
+  `app/tab-visible.ts` reads the hook at run time from `globalThis.__bbPluginRuntime.pluginSdkApp`, the
+  object every bundle's shim reads the SDK's members from. `app/built-bundle.test.tsx` loads the
+  `dist/app.js` bb built (CI builds it before the tests) on a runtime that has the hook. The palette command opens the tab through
   `ctx.experimental_panel` (bb 0.48) and falls back to bb 0.47's `openPanel`; bb 0.48's build warns about
   that fallback, which is expected.
 - **Watches run through `@get-bb/plugin-sdk/process`.** `experimental_spawnHostProcess` gives a script the
   PATH bb gives its own tools. It is a server subpath bundled from the plugin's own install, so the SDK is
-  a `dependency`, not a devDependency. It still runs each script in its own process group.
+  a `dependency`, not a devDependency. It still runs each script in its own process group. The toolchain
+  reads the login shell only when asked or after a command it starts is not found, and bb 0.47 never
+  asks; a script whose own child is missing exits 1, which asks nothing. So `watch-run.ts` has it read
+  the login shell once per load, before the first script, and stops waiting if the plugin stops.
 - **The tab's icon is the plugin's own SVG** (`icons/ship.svg`, declared in `bb.branding.experimental_icons`
   as `firstmate-crew/ship`): `experimental_tab` requires an icon, and bb's built-in set has no ship.
   `bb.branding.icon` still names `Ship`, which bb draws as its generic bolt; changing it changes the

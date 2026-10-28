@@ -130,6 +130,7 @@ export default async function plugin(bb: BbPluginApi) {
         home,
         log: bb.log,
         rules: async () => autoCompactRules(await settings.get()),
+        withMateLock,
       }),
       root: home,
       stateFile: join(home, STATE_DIR, "watches.json"),

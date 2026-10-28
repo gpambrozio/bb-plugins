@@ -2,6 +2,7 @@ import { createFakeSdk, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { describe, expect, it } from "vitest";
 
 import { bbThreads } from "./bb-ports";
+import { CompactFirstRefused } from "./ports";
 
 const SERVER_HOST = "host_server";
 
@@ -98,6 +99,48 @@ describe("bbThreads.send", () => {
       { mode: "queue-if-active", compactFirst: true },
       { mode: "steer", compactFirst: undefined },
     ]);
+  });
+});
+
+describe("bbThreads.send refusals", () => {
+  /** bb's client error: `HTTP <status>: <message>` with the status on it, as `BbHttpError` has. */
+  function httpError(status: number, message: string): Error {
+    return Object.assign(new Error(`HTTP ${status}: ${message}`), { name: "BbHttpError", status, code: "invalid_request" });
+  }
+
+  function failingSdk(error: unknown) {
+    return createFakeSdk({
+      pluginId: "firstmate-crew",
+      overrides: {
+        threads: {
+          send: () => {
+            throw error;
+          },
+        },
+      },
+    });
+  }
+
+  it.each([400, 409])("names a compact-first send bb answered with %i a refusal", async (status) => {
+    const { sdk } = failingSdk(httpError(status, "Context can only be compacted while the thread is idle or errored"));
+    const failure = await bbThreads(sdk).send("thr_1", "hi", "compact-first").catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(CompactFirstRefused);
+    expect((failure as Error).message).toContain("Context can only be compacted");
+  });
+
+  it.each([
+    ["a server error", httpError(500, "boom")],
+    ["a lost connection", new TypeError("fetch failed")],
+    ["a timeout", Object.assign(new Error("BB request timed out after 75 seconds."), { name: "BbRequestTimeoutError" })],
+  ])("passes %s on as it is, since bb may have accepted the send", async (_what, error) => {
+    const { sdk } = failingSdk(error);
+    await expect(bbThreads(sdk).send("thr_1", "hi", "compact-first")).rejects.toBe(error);
+  });
+
+  it("never names a refusal for a send that did not ask to compact first", async () => {
+    const error = httpError(409, "conflict");
+    const { sdk } = failingSdk(error);
+    await expect(bbThreads(sdk).send("thr_1", "hi", "auto")).rejects.toBe(error);
   });
 });
 

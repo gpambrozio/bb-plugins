@@ -6,18 +6,37 @@
  * run a turn before the next check could compact it. Only then: the threshold still applies after an idle
  * stretch, never to every turn.
  *
- * The mark is written first, as for a compaction from the check (`autocompact.ts`), so the check leaves the
+ * It holds the `mate` lock from its assessment to the send, as the check's compaction does, and assesses
+ * again once it has the lock, so the check, a launch, an adoption, a release or another message that got
+ * there first is respected: one idle stretch is compacted once. A first look without the lock keeps a
+ * message to a thread that is not due from waiting on it. Never call it with the lock held.
+ *
+ * The mark is written first, as for the check's compaction (`autocompact.ts`), so the check leaves the
  * thread alone until the compaction and the message's own turn have run; a mark that cannot be saved sends
- * the message plainly. When bb refuses (the thread stopped being idle, or its provider cannot compact),
- * nothing was delivered: the message goes as it would have, and the mark is relaxed to one turn.
+ * the message plainly. When bb refuses outright (`CompactFirstRefused`: the thread stopped being idle, or
+ * its provider cannot compact) nothing was compacted or delivered, so the message goes as it would have and
+ * the mark is relaxed to one turn. Any other failure may have come after bb accepted the request: it is
+ * passed on, unsent again, with the mark kept as accepted.
  */
 import { dueNow, dueText, type Due, type DueNowDeps } from "./autocompact";
 import { errorText, type Log } from "./log";
-import type { SendMode } from "./ports";
+import { CompactFirstRefused, type SendMode } from "./ports";
 import type { CompactionMark } from "./store";
 
 export interface CompactFirstDeps extends DueNowDeps {
   log: Log;
+  /** The `mate` lock, which the check's compactions, launch, adoption and release also take. */
+  withMateLock: <T>(work: () => Promise<T>) => Promise<T>;
+}
+
+/** The thread's case for compaction now, or null; a failed read is logged and counts as none. */
+async function dueOrNull(deps: CompactFirstDeps, threadId: string): Promise<Due | null> {
+  try {
+    return await dueNow(deps, threadId);
+  } catch (error) {
+    deps.log.warn(`Autocompact could not tell whether ${threadId} is due before a message to it, so the message goes as it is: ${errorText(error)}`);
+    return null;
+  }
 }
 
 /** Sends through `send` with `mode`, or with `compact-first` when the thread is due for autocompact. */
@@ -27,14 +46,19 @@ export async function sendCompactingIfDue<T>(
   mode: SendMode,
   send: (mode: SendMode) => Promise<T>,
 ): Promise<T> {
+  if ((await dueOrNull(deps, threadId)) === null) return send(mode);
+  return deps.withMateLock(() => sendUnderLock(deps, threadId, mode, send));
+}
+
+async function sendUnderLock<T>(
+  deps: CompactFirstDeps,
+  threadId: string,
+  mode: SendMode,
+  send: (mode: SendMode) => Promise<T>,
+): Promise<T> {
   const { log, store } = deps;
-  let due: Due | null;
-  try {
-    due = await dueNow(deps, threadId);
-  } catch (error) {
-    log.warn(`Autocompact could not tell whether ${threadId} is due before a message to it, so the message goes as it is: ${errorText(error)}`);
-    return send(mode);
-  }
+  // Read again under the lock: whoever held it may have compacted, marked, released or adopted.
+  const due = await dueOrNull(deps, threadId);
   if (due === null) return send(mode);
 
   const mark: CompactionMark = { afterSeq: due.lastTurn.seq, ok: true, at: deps.now() };
@@ -49,6 +73,7 @@ export async function sendCompactingIfDue<T>(
   try {
     result = await send("compact-first");
   } catch (error) {
+    if (!(error instanceof CompactFirstRefused)) throw error;
     log.warn(`bb would not compact ${threadId} before a message to it, so the message goes as it is: ${errorText(error)}`);
     try {
       await store.setCompactionMark(threadId, { ...mark, ok: false });
