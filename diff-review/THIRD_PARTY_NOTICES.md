@@ -3,7 +3,7 @@
 ## diffity
 
 Diff Review follows [diffity](https://github.com/nilbuild/diffity) (read at commit `ce9de40`,
-2026-10-21) and adapts parts of it:
+2026-10-21, and `ebeb656` for the parts added in 0.3.0) and adapts parts of it:
 
 - `server/prompt.ts` adapts the prompts `src-tauri/prompts/review-feedback.md` and
   `src-tauri/prompts/resolve.md`: their writing rules, rejected-edit rules and per-thread
@@ -16,6 +16,14 @@ Diff Review follows [diffity](https://github.com/nilbuild/diffity) (read at comm
   a file, side, line range, status, severity and anchor text, comments by the user or an agent), and
   the `__general__` / line 0 conventions for whole-diff and whole-file comments.
 - `server/ignore.ts` reads the same ignore files as `src-tauri/src/core/diffignore.rs`.
+- `server/run-prompts.ts` also adapts `src-tauri/prompts/summarize.md` and `src-tauri/prompts/explain.md`,
+  for the Summarize and Explain runs.
+- `app/find.ts` adapts `src/lib/find.ts` (find across the diff).
+- `shared/suggestion.ts` adapts `src/features/suggestions/suggestion.ts`, and `app/suggestion-block.tsx`
+  follows `suggestion-block.tsx` (suggested changes).
+- `app/palette.ts` takes the colour-blind add/remove colours of `src/styles/app.css`.
+- `host/git.ts` follows the ref grammar of `src-tauri/src/core/diff.rs` and the merged-branch fork point
+  of `src-tauri/src/core/git.rs` (staged, unstaged and range views).
 
 diffity is licensed under the MIT License:
 

@@ -5,6 +5,46 @@ Notable changes to `diff-review`. The other plugins in this repository version s
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.3.0
+
+Needs bb 0.48 or newer.
+
+### Added
+
+- **More views.** Besides the uncommitted changes, the branch's commits and one commit, the view picker
+  now offers the **staged** and the **unstaged** changes, **a range** between two branches, tags or
+  commits (`main..feature`, or `main...feature`, which still shows a branch's changes after it was
+  merged), and **Any file**: search the workspace for any file, in the diff or not, and comment on its
+  lines. They work on a remote machine too.
+- **Viewed.** Each file has a Viewed box, shared with bb's own diff panel: marking a file folds it, and
+  a file that changed since you marked it says so.
+- **Find in the diff**, across every file, folded ones included, with the match count, previous and
+  next, and match case.
+- **Go to** a file, an open comment or a view, by typing part of its name.
+- **Suggested changes.** A comment can hold a suggestion block (the **Suggest a change** button starts
+  one with the commented lines); **Apply suggestion** writes it into the file and resolves the thread.
+- **Revert** a file's uncommitted change, or only some of its changes, after asking.
+- **Summarize** the change, from the AI review dialog, and **Explain** a file or the lines you
+  selected; each answer appears as a comment in the tab.
+- **Open** shows a file in bb's own viewer, at the version the view shows.
+- **Hide whitespace** in the toolbar.
+- **Colour-blind diff colours** (blue and orange instead of green and red), in the settings.
+- **A Reviews page** in the sidebar lists every review with comments, across projects, with a count
+  of the open ones on its entry, and shows the one you pick in full.
+- **The thread's Info tab** says how many review comments its workspace has open.
+- **Palette commands** for every action of the tab: reload, send, AI review, find, go to, the next or
+  previous comment, the toolbar switches and more.
+- **`bb diff-review open`** opens a thread's review on a view and file from the command line.
+- A comment notes when its file changed since it was made.
+
+### Changed
+
+- The **Review** button sits after bb's Open button in the thread's header and folds into the thread
+  menu when the header is narrow.
+- Diffs come from bb's Git plugin. If it is turned off, the tab says so instead of failing.
+- The tab hears about changes to the workspace made outside an agent's turn (your own edits, a `git`
+  command) and reloads by itself, and a tab you are not looking at waits to reload until you open it.
+
 ## 0.2.1
 
 ### Fixed
