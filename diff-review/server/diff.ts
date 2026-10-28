@@ -325,7 +325,7 @@ export async function loadPatches(
   ignoreWhitespace = false,
 ): Promise<{ path: string; patch: string; truncated: boolean }[]> {
   // The host entry's views send every patch with the list.
-  if (isHostTarget(target)) return [];
+  if (isHostTarget(target) || target.kind === "files") return [];
   const result = await git.patches(environment.id, gitTarget(target), ignoreWhitespace, files);
   if (result.failure !== null && result.patches.length === 0) throw new ReviewUnavailable(result.failure);
   return result.patches;

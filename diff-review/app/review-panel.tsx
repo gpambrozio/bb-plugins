@@ -443,6 +443,11 @@ function ReadyPanel({
 
   // The palette's commands for this thread land here while the tab shows.
   useReviewCommands(threadId, visible, (command) => {
+    // The Any file view has no diff to find in, review or filter.
+    if (browsing && ["ai-review", "find", "toggle-style", "toggle-only-commented", "toggle-whitespace", "next-comment", "previous-comment"].includes(command)) {
+      toast.info("That works on a diff; pick a view of changes first.");
+      return;
+    }
     switch (command) {
       case "reload":
         onReload();

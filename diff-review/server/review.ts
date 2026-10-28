@@ -211,7 +211,7 @@ export class ReviewService {
    * so bb's diff panel shows the same.
    */
   async setViewed(threadId: string, target: Target, path: string, revision: string, viewed: boolean): Promise<void> {
-    if (isHostTarget(target)) throw new ReviewError("bb's Viewed marks do not cover the staged, unstaged and range views.", "not_viewable");
+    if (isHostTarget(target) || target.kind === "files") throw new ReviewError("bb's Viewed marks do not cover the staged, unstaged, range and Any file views.", "not_viewable");
     const environment = await workspaceOf(this.bb.sdk, threadId);
     if (viewed) await this.git.markViewed(environment.id, gitTarget(target), path, revision);
     else await this.git.clearViewed(environment.id, gitTarget(target), path);

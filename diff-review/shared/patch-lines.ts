@@ -61,6 +61,14 @@ export function parsePatchLines(patch: string): PatchLines {
   return { old: oldLines, new: newLines };
 }
 
+/** A file's text as both sides of a patch, so threads are placed against a whole file as against a diff. */
+export function contentLines(content: string): PatchLines {
+  const lines = content.split("\n");
+  if (content.endsWith("\n")) lines.pop();
+  const map = new Map(lines.map((text, index) => [index + 1, text.endsWith("\r") ? text.slice(0, -1) : text]));
+  return { old: map, new: map };
+}
+
 /** The text of lines `start`..`end` on `side`, joined with newlines; null if any of them is not shown. */
 export function linesText(lines: PatchLines, side: Side, start: number, end: number): string | null {
   const map = side === "old" ? lines.old : lines.new;

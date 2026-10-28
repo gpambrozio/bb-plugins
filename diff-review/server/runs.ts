@@ -22,7 +22,7 @@ import { posix } from "node:path";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import { mentionsReviewer } from "../shared/mentions";
-import { linesText, parsePatchLines } from "../shared/patch-lines";
+import { contentLines, linesText, parsePatchLines, type PatchLines } from "../shared/patch-lines";
 import {
   describeLocation,
   GENERAL_PATH,
@@ -395,11 +395,10 @@ export class RunService {
     let anchorContent: string | null = null;
     let fileRevision: string | null = null;
     if (input.filePath !== GENERAL_PATH) {
-      const { patch, revision } = await this.patchOf(session.environmentId, session.targetKey, input.filePath);
+      const { lines, revision } = await this.linesOf(session.environmentId, session.targetKey, input.filePath);
       fileRevision = revision;
       if (input.startLine > 0) {
         const side = input.side ?? "new";
-        const lines = parsePatchLines(patch);
         const endLine = Math.max(input.endLine, input.startLine);
         anchorContent = linesText(lines, side, input.startLine, endLine);
         if (anchorContent === null) {
@@ -417,6 +416,30 @@ export class RunService {
       throw new ReviewError("This review run was closed; its comments are no longer taken.", "not_a_review_run");
     }
     return this.review.createAgentThread({ ...input, sessionId: session.id, anchorContent, body, fileRevision }, authorName);
+  }
+
+  /**
+   * The lines a comment on `path` may be on: the diff's, or in the Any file view the file's own (read
+   * through bb on the workspace's machine), with the revision the thread keeps.
+   */
+  private async linesOf(environmentId: string, targetKey: string, path: string): Promise<{ lines: PatchLines; revision: string }> {
+    if (targetFromKey(targetKey).kind !== "files") {
+      const { patch, revision } = await this.patchOf(environmentId, targetKey, path);
+      return { lines: parsePatchLines(patch), revision };
+    }
+    const environment = await this.bb.sdk.environments.get({ environmentId });
+    const absolute = environment.path === null ? null : posix.join(environment.path, path);
+    if (environment.path === null || absolute === null || !absolute.startsWith(`${environment.path.replace(/\/$/, "")}/`)) {
+      throw new ReviewError(`${path} is not a file of this workspace.`, "file_not_in_diff");
+    }
+    let file;
+    try {
+      file = await this.bb.sdk.files.read({ hostId: environment.hostId, path: absolute });
+    } catch (error) {
+      throw new ReviewError(`Could not read ${path}: ${error instanceof Error ? error.message : String(error)}`, "file_not_in_diff");
+    }
+    const content = file.contentEncoding === "base64" ? Buffer.from(file.content, "base64").toString("utf8") : file.content;
+    return { lines: contentLines(content), revision: file.sha256 };
   }
 
   private async patchOf(environmentId: string, targetKey: string, path: string): Promise<{ patch: string; revision: string }> {

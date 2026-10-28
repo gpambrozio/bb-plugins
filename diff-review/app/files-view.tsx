@@ -14,7 +14,7 @@ import { Icon } from "@/components/ui/icon";
 
 import { placeThread, type Placement } from "../shared/anchors";
 import type { RpcContract } from "../shared/contract";
-import { linesText, type PatchLines } from "../shared/patch-lines";
+import { contentLines, linesText } from "../shared/patch-lines";
 import type { ReviewThread, WorkspaceFile } from "../shared/types";
 import { useActions } from "./actions";
 import { ANNOTATION_FIT } from "./annotation-fit";
@@ -24,14 +24,6 @@ import { COLOR_BLIND_SETTING, paletteStyle } from "./palette";
 import { ThreadCard } from "./thread-card";
 import { errorMessage } from "./use-review";
 import { draftKeys, useDraft } from "./view-state";
-
-/** A file's text as both sides of a patch, so threads are placed against it as against a diff. */
-export function fileLines(content: string): PatchLines {
-  const lines = content.split("\n");
-  if (content.endsWith("\n")) lines.pop();
-  const map = new Map(lines.map((text, index) => [index + 1, text.endsWith("\r") ? text.slice(0, -1) : text]));
-  return { old: map, new: map };
-}
 
 type Annotation = { kind: "threads"; threads: { thread: ReviewThread; placement: Placement }[] } | { kind: "draft"; range: LineRange };
 
@@ -133,7 +125,7 @@ function OpenFile({ threadId, path, threads }: { threadId: string; path: string;
   }, [rpc, threadId, path]);
 
   const content = file !== null && "content" in file ? file.content : null;
-  const lines = useMemo(() => (content === null ? undefined : fileLines(content)), [content]);
+  const lines = useMemo(() => (content === null ? undefined : contentLines(content)), [content]);
   const placed = useMemo(() => threads.filter((thread) => thread.startLine > 0).map((thread) => ({ thread, placement: placeThread(thread, lines) })), [threads, lines]);
   const wholeFile = threads.filter((thread) => thread.startLine === 0);
   const lost = placed.filter(({ placement }) => placement.state === "outdated").map(({ thread }) => thread);
@@ -181,7 +173,18 @@ function OpenFile({ threadId, path, threads }: { threadId: string; path: string;
         <span className="min-w-0 truncate font-mono text-xs" title={path}>
           {path}
         </span>
-        <Button type="button" variant="ghost" size="sm" className="ml-auto h-6 shrink-0 gap-1 px-1.5 text-xs" onClick={() => fileDraft.open()}>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="ml-auto h-6 shrink-0 gap-1 px-1.5 text-xs"
+          onClick={() => void actions.explain({ filePath: path, side: null, startLine: 0, endLine: 0, code: null }).catch(() => undefined)}
+          aria-label={`Explain ${path}`}
+        >
+          <Icon name="Bot" className="size-3.5" />
+          Explain
+        </Button>
+        <Button type="button" variant="ghost" size="sm" className="h-6 shrink-0 gap-1 px-1.5 text-xs" onClick={() => fileDraft.open()}>
           <Icon name="MessageSquarePlus" className="size-3.5" />
           Comment on file
         </Button>

@@ -888,6 +888,17 @@ describe("AI runs", () => {
     expect(isError(ok)).toBe(false);
   });
 
+  it("lets an explanation in the Files view comment on the file's own lines", async () => {
+    const { rpc, view, harness } = await setup({ files: { "/work/repo/src/util.ts": "export const x = 1;\nexport const y = 2;\n" } });
+    const { sessionId } = await view({ kind: "files" });
+    const { run } = (await rpc("startExplain", { sessionId, threadId: THREAD, filePath: "src/util.ts", side: "new", startLine: 2, endLine: 2, code: "export const y = 2;" })) as RunResult;
+    const ok = await tool(harness, "diff_review_comment", { file: "src/util.ts", startLine: 2, body: "y is two." }, run.threadId!);
+    expect(isError(ok)).toBe(false);
+    const made = (await sessionState(rpc, sessionId)).threads[0]!;
+    expect(made).toMatchObject({ anchorContent: "export const y = 2;", fileRevision: sha("export const x = 1;\nexport const y = 2;\n") });
+    expect(isError(await tool(harness, "diff_review_comment", { file: "src/util.ts", startLine: 9, body: "x" }, run.threadId!))).toBe(true);
+  });
+
   it("gives the tools only to run threads, and the skill to every thread", async () => {
     const { harness } = await setup();
     const runThread = await harness.behavior.resolveAgentConfiguration(makePluginAgentConfigurationContext({ pluginMetadata: { diffReviewRunId: "0123456789ab" } }));

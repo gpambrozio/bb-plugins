@@ -70,6 +70,7 @@ export class WorkspaceEdits {
       throw new ReviewError("That comment belongs to another workspace's review.", "wrong_workspace");
     }
     const path = posix.join(environment.path, thread.filePath);
+    if (!path.startsWith(`${environment.path.replace(/\/$/, "")}/`)) throw new ReviewError("That comment's file is outside the workspace.", "invalid_place");
     const file = await this.sdk.files.read({ hostId: environment.hostId, path });
     const next = replaceLines(text(file), input.startLine, input.endLine, input.expected, input.code);
     if (next === null) throw new ReviewError(`Lines ${input.startLine}-${input.endLine} of ${thread.filePath} changed since the diff was loaded; reload and try again.`, "changed");
