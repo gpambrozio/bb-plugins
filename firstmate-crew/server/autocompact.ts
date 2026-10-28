@@ -6,10 +6,11 @@
  * A thread is compacted when its rule is on, it is at rest (`isAtRest`), its context holds more than
  * `minTokens` tokens, and it has been idle long enough: until its prompt cache expired when bb says when
  * that is (`ContextUsage.cacheExpiresAt`), else `idleMinutes` after its last turn ended (the
- * `turn/completed` event's time in bb's event log, so a restart neither resets nor fakes the clock). Each attempt leaves a mark in the
- * store naming the turn that began the idle stretch, written before the request goes to bb, and a marked
- * thread is left alone until it has run a turn of its own since: compaction is itself a turn, so that
- * takes two turns after the mark when bb accepted the request, and one when it refused it. Stale or
+ * `turn/completed` event's time in bb's event log, so a restart neither resets nor fakes the clock). Each
+ * attempt leaves a mark in the store naming the turn that began the idle stretch, written before the
+ * request goes to bb, and a marked thread is left alone until it has run a turn of its own since:
+ * compaction is itself a turn, so that takes two turns after the mark when bb accepted the request, and
+ * one when it refused it. Stale or
  * estimated usage therefore cannot loop, and a mark that cannot be written stops the compaction.
  *
  * One check sends at most one compaction, so after a long stop the backlog is worked through one thread a
