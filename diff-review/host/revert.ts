@@ -37,6 +37,27 @@ export interface RevertRequest {
 export interface RevertOptions {
   /** The temporary file's name beside `target`; random unless a test says otherwise. */
   temporaryName?: (target: string) => string;
+  /** Writes to a descriptor, as `fs.writeSync`; a test passes one that writes less than asked. */
+  write?: (fd: number, bytes: Buffer, offset: number, length: number) => number;
+}
+
+/**
+ * Writes all of `bytes` to `fd`: a write may take fewer bytes than asked (a full disk, a file-size
+ * limit), so it goes on from where the last one stopped, and refuses on an error or a write that
+ * takes nothing.
+ */
+export function writeAll(fd: number, bytes: Buffer, path: string, write: NonNullable<RevertOptions["write"]> = writeSync): void {
+  let offset = 0;
+  while (offset < bytes.length) {
+    let written: number;
+    try {
+      written = write(fd, bytes, offset, bytes.length - offset);
+    } catch (error) {
+      throw new RevertRefused(`Could not write ${path} (${error instanceof Error ? error.message : String(error)}); nothing was changed.`);
+    }
+    if (!(written > 0)) throw new RevertRefused(`Could not write ${path}: the disk took no more bytes; nothing was changed.`);
+    offset += written;
+  }
 }
 
 interface Entry {
@@ -188,7 +209,7 @@ function replace(checkout: Checkout, path: string, absolute: string, snapshot: S
   }
   try {
     try {
-      writeSync(fd, bytes);
+      writeAll(fd, bytes, path, options.write);
       fchmodSync(fd, fileMode(mode));
     } finally {
       closeSync(fd);
@@ -257,9 +278,19 @@ export async function revert(run: RunGit, request: RevertRequest, options: Rever
       throw CHANGED(path);
     }
     try {
-      writeSync(fd, committed);
-    } finally {
-      closeSync(fd);
+      try {
+        writeAll(fd, committed, path, options.write);
+      } finally {
+        closeSync(fd);
+      }
+    } catch (error) {
+      // The file this made is incomplete: it goes, and the file stays deleted as it was.
+      try {
+        unlinkSync(absolute);
+      } catch {
+        // Already gone.
+      }
+      throw error;
     }
     return;
   }

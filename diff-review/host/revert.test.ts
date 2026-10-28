@@ -1,8 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
+import { buildSync } from "esbuild";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createRunGit, type RunGit } from "./git";
@@ -243,6 +244,76 @@ describe("reverting on the host", () => {
     expect(readFileSync(victim, "utf8")).toBe("precious\n");
     expect(readFileSync(join(root, "a.txt"), "utf8")).toBe("reviewed\n");
     expect(readlinkSync(planted)).toBe(victim);
+  });
+
+  /**
+   * Runs Revert in a child process whose files may not grow past `limitBytes` (`ulimit -f`), so the
+   * kernel itself takes a short write and then refuses the rest.
+   */
+  async function revertUnderLimit(root: string, path: string, revision: string, limitBytes: number): Promise<string> {
+    const dir = mkdtempSync(join(tmpdir(), "diff-review-limit-"));
+    roots.push(dir);
+    const entry = join(dir, "entry.ts");
+    writeFileSync(
+      entry,
+      `import { createRunGit } from ${JSON.stringify(join(__dirname, "git.ts"))};
+import { revert } from ${JSON.stringify(join(__dirname, "revert.ts"))};
+const [root, path, revision] = process.argv.slice(2);
+revert(createRunGit(), { root, path, revision, hunks: null, patch: null }).then(() => console.log("reverted"), (error) => console.log("refused: " + error.message));
+`,
+    );
+    const bundle = join(dir, "entry.mjs");
+    buildSync({ entryPoints: [entry], bundle: true, platform: "node", format: "esm", outfile: bundle, logLevel: "silent" });
+    const blocks = Math.floor(limitBytes / 512);
+    return execFileSync("sh", ["-c", `ulimit -f ${blocks} && exec "$0" "$@"`, process.execPath, bundle, root, path, revision], { encoding: "utf8" }).trim();
+  }
+
+  const big = (fill: string) => `${fill.repeat(63)}\n`.repeat(256);
+
+  it("leaves the reviewed file as it is when the disk takes only part of its new content", async () => {
+    const root = repo();
+    writeFileSync(join(root, "big.txt"), big("c"));
+    git(root, "add", "big.txt");
+    git(root, "commit", "-q", "-m", "big");
+    writeFileSync(join(root, "big.txt"), big("w"));
+    const revision = await currentRevision(run, root, "big.txt");
+    const answer = await revertUnderLimit(root, "big.txt", revision, 4096);
+    expect(answer).toMatch(/^refused: Could not write big\.txt/);
+    expect(readFileSync(join(root, "big.txt"), "utf8")).toBe(big("w"));
+    expect(readdirSync(root).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+  });
+
+  it("leaves a deleted file deleted, with no partial file, when the disk takes only part of it", async () => {
+    const root = repo();
+    writeFileSync(join(root, "big.txt"), big("c"));
+    git(root, "add", "big.txt");
+    git(root, "commit", "-q", "-m", "big");
+    unlinkSync(join(root, "big.txt"));
+    const revision = await currentRevision(run, root, "big.txt");
+    expect(await revertUnderLimit(root, "big.txt", revision, 4096)).toMatch(/^refused: Could not write big\.txt/);
+    expect(existsSync(join(root, "big.txt"))).toBe(false);
+  });
+
+  it("writes on after a short write, and refuses, keeping the file, when a later write fails", async () => {
+    const root = repo();
+    writeFileSync(join(root, "big.txt"), big("c"));
+    git(root, "add", "big.txt");
+    git(root, "commit", "-q", "-m", "big");
+    writeFileSync(join(root, "big.txt"), big("w"));
+    // Each write takes at most 1000 bytes.
+    const short = (fd: number, bytes: Buffer, offset: number, length: number) => writeSync(fd, bytes, offset, Math.min(length, 1000));
+    await revert(run, { root, path: "big.txt", revision: await currentRevision(run, root, "big.txt"), hunks: null, patch: null }, { write: short });
+    expect(readFileSync(join(root, "big.txt"), "utf8")).toBe(big("c"));
+
+    writeFileSync(join(root, "big.txt"), big("w"));
+    let calls = 0;
+    const failing = (fd: number, bytes: Buffer, offset: number, length: number) => {
+      if (++calls > 2) throw Object.assign(new Error("ENOSPC: no space left on device"), { code: "ENOSPC" });
+      return writeSync(fd, bytes, offset, Math.min(length, 1000));
+    };
+    await expect(revert(run, { root, path: "big.txt", revision: await currentRevision(run, root, "big.txt"), hunks: null, patch: null }, { write: failing })).rejects.toThrow("ENOSPC");
+    expect(readFileSync(join(root, "big.txt"), "utf8")).toBe(big("w"));
+    expect(readdirSync(root).filter((name) => name.endsWith(".tmp"))).toEqual([]);
   });
 
   it("refuses a path outside the workspace", async () => {
