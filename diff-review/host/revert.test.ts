@@ -316,6 +316,81 @@ revert(createRunGit(), { root, path, revision, hunks: null, patch: null }).then(
     expect(readdirSync(root).filter((name) => name.endsWith(".tmp"))).toEqual([]);
   });
 
+  /** A write that takes one byte, then runs `then` and fails as a full disk does. */
+  function failingAfterOneByte(then: () => void) {
+    let calls = 0;
+    return (fd: number, bytes: Buffer, offset: number, length: number) => {
+      if (++calls === 1) return writeSync(fd, bytes, offset, Math.min(length, 1));
+      then();
+      throw Object.assign(new Error("ENOSPC: no space left on device"), { code: "ENOSPC" });
+    };
+  }
+
+  it("keeps another process's save of a deleted file when the restore fails", async () => {
+    const root = repo();
+    unlinkSync(join(root, "a.txt"));
+    const revision = await currentRevision(run, root, "a.txt");
+    // Mid-restore an editor saves the file atomically (a write elsewhere renamed into place).
+    const write = failingAfterOneByte(() => {
+      writeFileSync(join(root, ".editor-save"), "NEW WORK\n");
+      renameSync(join(root, ".editor-save"), join(root, "a.txt"));
+    });
+    await expect(revert(run, { root, path: "a.txt", revision, hunks: null, patch: null }, { write })).rejects.toThrow("ENOSPC");
+    expect(readFileSync(join(root, "a.txt"), "utf8")).toBe("NEW WORK\n");
+    expect(readdirSync(root).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+  });
+
+  it("deletes nothing outside when the checkout is retargeted during a failed restore", async () => {
+    const root = repo();
+    unlinkSync(join(root, "a.txt"));
+    const revision = await currentRevision(run, root, "a.txt");
+    const outside = outsideWith("precious\n");
+    const real = realpathSync(root);
+    roots.push(`${real}-aside`);
+    const write = failingAfterOneByte(() => {
+      renameSync(real, `${real}-aside`);
+      symlinkSync(outside, real);
+    });
+    await expect(revert(run, { root, path: "a.txt", revision, hunks: null, patch: null }, { write })).rejects.toThrow("ENOSPC");
+    expect(readdirSync(outside)).toEqual(["a.txt"]);
+    expect(readFileSync(join(outside, "a.txt"), "utf8")).toBe("precious\n");
+  });
+
+  it("deletes nothing outside when a folder is retargeted during a failed restore", async () => {
+    const root = mkdtempSync(join(tmpdir(), "diff-review-revert-"));
+    roots.push(root);
+    git(root, "init", "-q", "-b", "main");
+    mkdirSync(join(root, "dir"));
+    writeFileSync(join(root, "dir", "a.txt"), "committed\n");
+    git(root, "add", ".");
+    git(root, "commit", "-q", "-m", "first");
+    unlinkSync(join(root, "dir", "a.txt"));
+    const revision = await currentRevision(run, root, "dir/a.txt");
+    const outside = outsideWith("precious\n");
+    const write = failingAfterOneByte(() => {
+      renameSync(join(root, "dir"), join(root, "dir-aside"));
+      symlinkSync(outside, join(root, "dir"));
+    });
+    await expect(revert(run, { root, path: "dir/a.txt", revision, hunks: null, patch: null }, { write })).rejects.toThrow("ENOSPC");
+    expect(readdirSync(outside)).toEqual(["a.txt"]);
+    expect(readFileSync(join(outside, "a.txt"), "utf8")).toBe("precious\n");
+  });
+
+  it("never overwrites a file created where a deleted one is being put back", async () => {
+    const root = repo();
+    unlinkSync(join(root, "a.txt"));
+    const revision = await currentRevision(run, root, "a.txt");
+    // The restore's bytes are all written; before they are put in place, someone creates the file.
+    const write = (fd: number, bytes: Buffer, offset: number, length: number) => {
+      const written = writeSync(fd, bytes, offset, length);
+      writeFileSync(join(root, "a.txt"), "OTHER\n");
+      return written;
+    };
+    await expect(revert(run, { root, path: "a.txt", revision, hunks: null, patch: null }, { write })).rejects.toThrow("changed since");
+    expect(readFileSync(join(root, "a.txt"), "utf8")).toBe("OTHER\n");
+    expect(readdirSync(root).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+  });
+
   it("refuses a path outside the workspace", async () => {
     const root = repo();
     await expect(revert(run, { root, path: "../x", revision: "r", hunks: null, patch: null })).rejects.toThrow("not a file of this workspace");

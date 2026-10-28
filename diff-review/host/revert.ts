@@ -15,7 +15,7 @@
  * submodules are refused too.
  */
 import { createHash, randomBytes } from "node:crypto";
-import { closeSync, fchmodSync, lstatSync, mkdirSync, openSync, readFileSync, readlinkSync, realpathSync, renameSync, unlinkSync, writeSync } from "node:fs";
+import { closeSync, fchmodSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, readlinkSync, realpathSync, renameSync, unlinkSync, writeSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, sep } from "node:path";
 
 import { revertHunks } from "../shared/revert";
@@ -191,15 +191,26 @@ function fileMode(mode: string): number {
 }
 
 /**
- * Replaces the file with `bytes` if it still is the reviewed snapshot: the new bytes go into a
- * temporary file of a random name created exclusively (never through a link or over a file that is
- * there), written and given its mode through its own descriptor, then renamed over the file.
+ * Removes a temporary file this made, only while the checkout and its folders still are what they
+ * were: through a folder swapped since, the name could lead somewhere else, and then it is left.
  */
-function replace(checkout: Checkout, path: string, absolute: string, snapshot: Snapshot, bytes: Buffer, mode: string, options: RevertOptions): void {
-  // In the same synchronous step as everything below: no temporary file is made through a folder
-  // swapped during the reads before.
+function dropTemporary(checkout: Checkout, path: string, temporary: string): void {
+  try {
+    checkFolders(checkout, path, "refuse");
+    unlinkSync(temporary);
+  } catch {
+    // Gone already, or no longer safely reachable: left alone.
+  }
+}
+
+/**
+ * Writes `bytes` into a temporary file of a random name beside the file, created exclusively (never
+ * through a link or over a file that is there), written in full and given its mode through its own
+ * descriptor, in the same synchronous step as the folder check before it. On any failure only that
+ * temporary file is removed.
+ */
+function stage(checkout: Checkout, path: string, absolute: string, bytes: Buffer, mode: string, options: RevertOptions): string {
   checkFolders(checkout, path, "refuse");
-  stillReviewed(absolute, path, snapshot);
   const temporary = options.temporaryName?.(absolute) ?? join(dirname(absolute), `.diff-review-${randomBytes(16).toString("hex")}.tmp`);
   let fd: number;
   try {
@@ -214,19 +225,49 @@ function replace(checkout: Checkout, path: string, absolute: string, snapshot: S
     } finally {
       closeSync(fd);
     }
+  } catch (error) {
+    dropTemporary(checkout, path, temporary);
+    throw error;
+  }
+  return temporary;
+}
+
+/** Replaces the file with `bytes` if it still is the reviewed snapshot: staged, then renamed over it. */
+function replace(checkout: Checkout, path: string, absolute: string, snapshot: Snapshot, bytes: Buffer, mode: string, options: RevertOptions): void {
+  stillReviewed(absolute, path, snapshot);
+  const temporary = stage(checkout, path, absolute, bytes, mode, options);
+  try {
     checkFolders(checkout, path, "refuse");
     stillReviewed(absolute, path, snapshot);
     renameSync(temporary, absolute);
   } catch (error) {
-    try {
-      unlinkSync(temporary);
-    } catch {
-      // Already gone.
-    }
+    dropTemporary(checkout, path, temporary);
     throw error;
   }
 }
 
+/**
+ * Puts a deleted file back with `bytes`: staged in full, then hard-linked to its name, which fails
+ * when anything has been created there since, so nothing is ever overwritten and a failure only ever
+ * removes the temporary file. A file system without hard links is refused, not written another way.
+ */
+function restore(checkout: Checkout, path: string, absolute: string, bytes: Buffer, mode: string, options: RevertOptions): void {
+  checkFolders(checkout, path, "create");
+  const temporary = stage(checkout, path, absolute, bytes, mode, options);
+  try {
+    checkFolders(checkout, path, "refuse");
+    try {
+      linkSync(temporary, absolute);
+    } catch (error) {
+      if ((error as { code?: unknown }).code === "EEXIST") throw CHANGED(path);
+      throw new RevertRefused(`Could not put ${path} back (${error instanceof Error ? error.message : String(error)}); nothing was changed.`);
+    }
+  } catch (error) {
+    dropTemporary(checkout, path, temporary);
+    throw error;
+  }
+  dropTemporary(checkout, path, temporary);
+}
 
 /** The file's revision now, as bb's Git plugin lists it for the uncommitted view. */
 export async function currentRevision(run: RunGit, root: string, path: string): Promise<string> {
@@ -270,28 +311,7 @@ export async function revert(run: RunGit, request: RevertRequest, options: Rever
   const committed = Buffer.from((await run(checkout.real, ["cat-file", "blob", entry.oldBlob], { maxBuffer: 256 * 1024 * 1024, bytes: true })).stdout, "latin1");
   if (entry.newMode === "000000") {
     // A deleted file: put back, through real folders only, where nothing has been created since.
-    checkFolders(checkout, path, "create");
-    let fd;
-    try {
-      fd = openSync(absolute, "wx", fileMode(entry.oldMode));
-    } catch {
-      throw CHANGED(path);
-    }
-    try {
-      try {
-        writeAll(fd, committed, path, options.write);
-      } finally {
-        closeSync(fd);
-      }
-    } catch (error) {
-      // The file this made is incomplete: it goes, and the file stays deleted as it was.
-      try {
-        unlinkSync(absolute);
-      } catch {
-        // Already gone.
-      }
-      throw error;
-    }
+    restore(checkout, path, absolute, committed, entry.oldMode, options);
     return;
   }
   replace(checkout, path, absolute, snapshot!, committed, entry.oldMode, options);

@@ -209,8 +209,10 @@ restore outside it); a deleted file's missing folders are made when it is put ba
 submodules are refused. The new bytes go into a random-named temporary file created with `wx` and
 written through its own descriptor (a predictable name was a planted-symlink target), all of them:
 `writeAll` goes on after a short write and refuses on an error or no progress, so a full disk or a
-file-size limit never renames a truncated file over the original; a restore that fails removes the
-file it made. The folder checks
+file-size limit never renames a truncated file over the original. A deleted file is put back the
+same way, staged in full and then hard-linked to its name (`link` fails when anything is there now),
+so no failure path ever removes or overwrites the destination: cleanup only removes Revert's own
+temporary file, and only while the checkout and its folders still check out. The folder checks
 run in the same synchronous step, with no await, as the temporary file's creation, and again with the
 byte comparison right before the rename or the removal. A save landing in that same instant from another process is the one change it can still
 miss.
