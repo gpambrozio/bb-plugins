@@ -569,6 +569,7 @@ describe("the Review tab", () => {
       answered[0]!.comments.push({ id: "c_reply", authorType: "agent", authorName: "Claude Code", body: "Because b changed.", createdAt: 2, editedAt: null });
       const slot = render({ getReview: () => fresh(twoFiles), listThreads: () => ({ threads: fresh(answered), runs: [] }) });
       await waitFor(() => expect(screen.getAllByTestId("patch")).toHaveLength(2));
+      await waitFor(() => expect(pierre.mounts).toBe(2));
       const mounts = pierre.mounts;
       const before = { a: annotationsOf(PATCH), b: annotationsOf(PATCH_B) };
       expect(before.b.size).toBe(1);
@@ -594,6 +595,8 @@ describe("the Review tab", () => {
           ++loads === 1 ? { patches: [{ path: "src/big.ts", patch: BIG, truncated: false }] } : new Promise((resolve) => (answer = resolve)),
       });
       await waitFor(() => expect(screen.getAllByTestId("patch").map((node) => node.getAttribute("data-patch"))).toEqual([PATCH, BIG]));
+      // Both diffs drawn and mounted (a mount's effect can trail its render) before the baseline is taken.
+      await waitFor(() => expect(pierre.mounts).toBe(2));
       const mounts = pierre.mounts;
       const before = annotationsOf(PATCH);
 
