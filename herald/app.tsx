@@ -3,14 +3,16 @@
 // A sidebar page listing every thread waiting on you, a banner with the
 // sentence above a thread's composer, a thread panel with the sentences of
 // its past turns, a choice in bb's thread menu of what Herald announces for
-// that thread, a settings section for what the host form cannot hold, and an
-// app-wide overlay that keeps the list current and speaks each new sentence.
+// that thread or a selection of threads, a settings section for what the
+// host form cannot hold, and an app-wide overlay that keeps the list current
+// and speaks each new sentence.
 // See AGENTS.md.
 import { definePluginApp } from "@get-bb/plugin-sdk/app";
 
 import { HeraldBanner } from "./app/banner";
+import { HAS_PANEL_CONTROLLER } from "./app/bb-features";
 import { HeraldBridge } from "./app/bridge";
-import { HeraldHeaderAction, HISTORY_PANEL_ACTION_ID } from "./app/header-action";
+import { HISTORY_PANEL_ACTION_ID, registerHistoryOpener } from "./app/header-action";
 import { HeraldHistoryPanel } from "./app/history-panel";
 import { HERALD_ICONS } from "./app/icons";
 import { HeraldPanel, PANEL_PATH, useWaitingBadge } from "./app/panel";
@@ -45,10 +47,11 @@ export default definePluginApp((app) => {
     availability: "action",
     component: HeraldHistoryPanel,
   });
-  // And a megaphone in the thread header that opens it, beside bb's own actions.
-  app.slots.experimental_threadHeaderAction({ id: HISTORY_PANEL_ACTION_ID, title: "Herald", component: HeraldHeaderAction });
+  // And a button in the thread header that opens it: "Herald" on bb 0.48, a megaphone before.
+  registerHistoryOpener(app.slots, HAS_PANEL_CONTROLLER);
 
-  // Announce, Questions only or Silent, per thread, beside bb's own notification level.
+  // Announce, Questions only or Silent, per thread — or for every selected
+  // thread at once — beside bb's own notification level.
   app.slots.experimental_threadAction(THREAD_CHOICE_ACTION);
 
   app.slots.settingsSection({

@@ -2,7 +2,9 @@
  * "Herald" in bb's thread menu: per thread, Announce, Questions only, Silent,
  * or Default to follow the thread above it and Herald's settings. The choice
  * is stored on the thread by the server (`choices.set`), which also checks it
- * before it announces anything; the menu only shows and changes it.
+ * before it announces anything; the menu only shows and changes it. On bb
+ * 0.48 the same list is in the menu of a sidebar selection, and sets every
+ * selected thread at once (`choices.setMany`); bb 0.47 has no such menu.
  *
  * bb calls `useData` once for the whole app with the threads on screen, so
  * the choices are read in one batch for the rows not loaded yet, and read
@@ -16,6 +18,8 @@ import {
   useRpc,
   useSettings,
   type PluginThreadAction,
+  type PluginThreadActionBulkItemInput,
+  type PluginThreadActionChoices,
   type PluginThreadActionDataInput,
   type PluginThreadActionItemInput,
   type PluginThreadActionRegistration,
@@ -48,6 +52,8 @@ export interface ThreadChoicesData {
   /** Why the last read failed, until one succeeds. */
   error: string | null;
   setChoice(threadId: string, option: ChoiceOption): Promise<void>;
+  /** The same choice for every thread of a selection. */
+  setChoices(threadIds: readonly string[], option: ChoiceOption): Promise<void>;
   retry(): void;
 }
 
@@ -121,13 +127,22 @@ export function useThreadChoices({ threadIds }: PluginThreadActionDataInput): Th
     previous.current = connection;
   }, [connection, readAll]);
 
+  /** Shows the pick at once; the read after the save puts right what did not land. */
+  const showPicked = useCallback((threadIds: readonly string[], option: ChoiceOption) => {
+    epoch.current += 1;
+    setInputs((current) => {
+      const next = new Map(current);
+      for (const threadId of threadIds) {
+        const before = current.get(threadId) ?? NO_CHOICE;
+        next.set(threadId, { ...before, own: option === "default" ? null : option });
+      }
+      return next;
+    });
+  }, []);
+
   const setChoice = useCallback(
     async (threadId: string, option: ChoiceOption) => {
-      epoch.current += 1;
-      setInputs((current) => {
-        const before = current.get(threadId) ?? NO_CHOICE;
-        return new Map(current).set(threadId, { ...before, own: option === "default" ? null : option });
-      });
+      showPicked([threadId], option);
       try {
         await rpc.call("choices.set", { threadId, choice: option });
       } catch (cause) {
@@ -136,14 +151,29 @@ export function useThreadChoices({ threadIds }: PluginThreadActionDataInput): Th
       // Its workers may follow it; the server's nudge reaches the other windows.
       await read(shown.current, true);
     },
-    [rpc, read],
+    [rpc, read, showPicked],
+  );
+
+  const setChoices = useCallback(
+    async (threadIds: readonly string[], option: ChoiceOption) => {
+      showPicked(threadIds, option);
+      try {
+        for (let at = 0; at < threadIds.length; at += CHOICES_BATCH_MAX) {
+          await rpc.call("choices.setMany", { threadIds: threadIds.slice(at, at + CHOICES_BATCH_MAX), choice: option });
+        }
+      } catch (cause) {
+        toast.error(`Herald could not save the choice for every selected thread: ${errorText(cause)}`);
+      }
+      await read(shown.current, true);
+    },
+    [rpc, read, showPicked],
   );
 
   const subagents = values?.announceSubagents;
   const announceSubagents = typeof subagents === "boolean" ? subagents : SETTINGS.announceSubagents.default;
   return useMemo(
-    () => ({ inputs, announceSubagents, error, setChoice, retry: readAll }),
-    [inputs, announceSubagents, error, setChoice, readAll],
+    () => ({ inputs, announceSubagents, error, setChoice, setChoices, retry: readAll }),
+    [inputs, announceSubagents, error, setChoice, setChoices, readAll],
   );
 }
 
@@ -168,6 +198,35 @@ function hintOf(effective: EffectiveChoice): string | undefined {
   }
 }
 
+/** The list under "Herald": the four options, `selected` checked, and Retry while reads fail. */
+function choiceList(selected: ChoiceOption | null, heading: string, hint: string | undefined, error: string | null): PluginThreadActionChoices {
+  return {
+    heading,
+    ...(hint === undefined ? {} : { hint }),
+    items: [
+      ...CHOICE_OPTIONS.map((option) => ({
+        id: option,
+        label: CHOICE_LABELS[option],
+        ...(option === "default" ? {} : { icon: CHOICE_ICONS[option] }),
+        selected: selected === option,
+      })),
+      ...(error === null ? [] : [{ id: "retry", label: "Retry" }]),
+    ],
+  };
+}
+
+/** What a pick does: Retry reads again, and an option goes to `save`. */
+function runPick(data: ThreadChoicesData, save: (option: ChoiceOption) => Promise<void>): PluginThreadAction["run"] {
+  return async ({ value }) => {
+    if (value === "retry") {
+      data.retry();
+      return;
+    }
+    const option = ChoiceOptionSchema.safeParse(value);
+    if (option.success) await save(option.data);
+  };
+}
+
 export function threadChoiceItem({ thread, data }: PluginThreadActionItemInput<ThreadChoicesData>): PluginThreadAction | null {
   if (thread.archivedAt !== null) return null;
   const inputs = data.inputs.get(thread.id);
@@ -178,27 +237,39 @@ export function threadChoiceItem({ thread, data }: PluginThreadActionItemInput<T
     label: "Herald",
     ...(detail === undefined ? {} : { detail }),
     icon: effective === null ? HERALD_ICONS.megaphone : CHOICE_ICONS[effective.choice],
-    choices: {
-      heading: "What Herald announces",
-      ...(hint === undefined ? {} : { hint }),
-      items: [
-        ...CHOICE_OPTIONS.map((option) => ({
-          id: option,
-          label: CHOICE_LABELS[option],
-          ...(option === "default" ? {} : { icon: CHOICE_ICONS[option] }),
-          selected: inputs !== undefined && (inputs.own ?? "default") === option,
-        })),
-        ...(data.error === null ? [] : [{ id: "retry", label: "Retry" }]),
-      ],
-    },
-    run: async ({ value }) => {
-      if (value === "retry") {
-        data.retry();
-        return;
-      }
-      const option = ChoiceOptionSchema.safeParse(value);
-      if (option.success) await data.setChoice(thread.id, option.data);
-    },
+    choices: choiceList(inputs === undefined ? null : (inputs.own ?? "default"), "What Herald announces", hint, data.error),
+    run: runPick(data, (option) => data.setChoice(thread.id, option)),
+  };
+}
+
+/**
+ * "Herald" in the menu of a sidebar selection (bb 0.48): one pick for every
+ * selected thread. An option is checked only when every thread has it as its
+ * own, and the detail names what they announce only when they all agree.
+ * Archived threads are left out, as their own menus leave Herald out.
+ */
+export function threadChoiceBulkItem({ threads, data }: PluginThreadActionBulkItemInput<ThreadChoicesData>): PluginThreadAction | null {
+  const live = threads.filter((thread) => thread.archivedAt === null);
+  if (live.length === 0) return null;
+  const read = live.flatMap((thread) => {
+    const inputs = data.inputs.get(thread.id);
+    return inputs === undefined ? [] : [{ thread, inputs }];
+  });
+  const loaded = read.length === live.length;
+  const own = new Set(read.map(({ inputs }) => inputs.own ?? "default"));
+  const effective = new Set(
+    read.map(({ thread, inputs }) => effectiveChoice(inputs, thread.parentThreadId !== null, data.announceSubagents).choice),
+  );
+  const agreed = loaded && effective.size === 1 ? [...effective][0] : undefined;
+  const sharedPick = loaded && own.size === 1 ? ([...own][0] ?? null) : null;
+  const detail = agreed !== undefined ? CHOICE_LABELS[agreed] : loaded ? "Mixed" : data.error !== null ? "Unavailable" : undefined;
+  const hint = data.error ?? (live.length < threads.length ? "Archived threads are left out." : undefined);
+  return {
+    label: "Herald",
+    ...(detail === undefined ? {} : { detail }),
+    icon: agreed === undefined ? HERALD_ICONS.megaphone : CHOICE_ICONS[agreed],
+    choices: choiceList(sharedPick, `What Herald announces for ${live.length} threads`, hint, data.error),
+    run: runPick(data, (option) => data.setChoices(live.map((thread) => thread.id), option)),
   };
 }
 
@@ -210,4 +281,5 @@ export const THREAD_CHOICE_ACTION: PluginThreadActionRegistration<ThreadChoicesD
   order: 60,
   useData: useThreadChoices,
   item: threadChoiceItem,
+  experimental_bulkItem: threadChoiceBulkItem,
 };

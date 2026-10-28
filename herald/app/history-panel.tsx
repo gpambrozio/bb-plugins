@@ -4,15 +4,19 @@
  * plugin cannot write into the transcript, so this is the closest thing to a
  * sentence beside each turn. Re-read on every entries nudge — a sentence
  * landing is also a change to the entries.
+ *
+ * bb keeps a closed panel's tab mounted, so while the tab is not showing its
+ * clock stops and a nudge is only noted; the tab reads again when it shows.
  */
 import { useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
 
 import type { RpcContract } from "../shared/contract";
 import { ENTRIES_CHANNEL, type HistoryItem } from "../shared/herald";
+import { useTabVisible } from "./bb-features";
 import { HERALD_ICONS } from "./icons";
 import { lookOf, readAgain, relativeTime, useNow } from "./panel";
 import { canPlaySpeech } from "./speech";
@@ -26,7 +30,8 @@ export function HeraldHistoryPanel({ threadId }: { threadId: string; params: unk
   const rpc = useRpc<RpcContract>();
   const [items, setItems] = useState<HistoryItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const now = useNow();
+  const visible = useTabVisible();
+  const now = useNow(visible);
 
   const refresh = useCallback(() => {
     rpc.call("history.list", { threadId }).then(
@@ -38,8 +43,24 @@ export function HeraldHistoryPanel({ threadId }: { threadId: string; params: unk
     );
   }, [rpc, threadId]);
 
-  useEffect(refresh, [refresh]);
-  useRealtime(ENTRIES_CHANNEL, refresh);
+  // Read for each thread when it shows, and again after a nudge it missed
+  // while hidden. The thread changes the read, so a new one starts stale.
+  const stale = useRef(true);
+  useEffect(() => {
+    stale.current = true;
+  }, [refresh]);
+  useEffect(() => {
+    if (!visible || !stale.current) return;
+    stale.current = false;
+    refresh();
+  }, [visible, refresh]);
+  const shown = useRef(visible);
+  shown.current = visible;
+  const onNudge = useCallback(() => {
+    if (shown.current) refresh();
+    else stale.current = true;
+  }, [refresh]);
+  useRealtime(ENTRIES_CHANNEL, onNudge);
 
   if (items === null) return <p className="text-sm text-muted-foreground">{error ?? "Loading…"}</p>;
   if (items.length === 0) {

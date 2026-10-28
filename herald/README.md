@@ -16,12 +16,13 @@ of what was done — and the bb app speaks it.
   or not you have read the thread, and through your next turn — until the next event replaces it.
 - A **Herald** tab in each thread's side panel lists what Herald said about that thread's past turns,
   newest first, with when and a Read again button — a way to find a turn by its sentence. The last 50
-  are kept per thread. The megaphone in the thread's header opens it.
+  are kept per thread. The **Herald** button in the thread's header opens it, and closes it again (on bb
+  0.47, a megaphone that opens it).
 - **Herald** in a thread's menu (the sidebar row's menu, right-click, or the thread's header) chooses what
   Herald announces for that thread: *Announce*, *Questions only* (a question, a plan or a permission to
   approve, but not a finished or failed turn), or *Silent*. *Default* follows the thread that started it
-  — so silencing a coordinator silences its workers — and otherwise Herald's settings. See
-  [Per-thread choice](#per-thread-choice).
+  — so silencing a coordinator silences its workers — and otherwise Herald's settings. On bb 0.48, select
+  several threads in the sidebar to set them all at once. See [Per-thread choice](#per-thread-choice).
 - *Mute here* silences announcements on the device you are on until the app reloads; *Test voice* says a
   sample sentence; the gear opens Herald's settings. Read again and Test voice speak even when muted —
   you pressed them.
@@ -42,7 +43,7 @@ What it adds:
 
 ## What you need
 
-- bb 0.47 or later. On bb 0.44 to 0.46, install with `@^0.2.0` instead of `@^0.4.0`.
+- bb 0.47 or later. On bb 0.44 to 0.46, install with `@^0.2.0` instead of `@^0.5.0`.
 - For the default voice, **bb running on a Mac**: its `say` voices render each sentence and the app plays
   the audio, so you hear the Mac's voices on every device. Otherwise each device's own browser voice is
   used.
@@ -54,7 +55,7 @@ What it adds:
 ## Install
 
 ```bash
-bb plugin install 'git:github.com/gpambrozio/bb-plugins@^0.4.0' --plugin herald --tag-prefix herald/
+bb plugin install 'git:github.com/gpambrozio/bb-plugins@^0.5.0' --plugin herald --tag-prefix herald/
 ```
 
 The page is **Herald** in the sidebar.
@@ -96,10 +97,16 @@ A choice set on a thread itself always wins: a worker set to *Announce* is annou
 coordinator, and even with *Announce threads started by another thread* off. The per-kind switches still
 apply on top of every choice. *Mute here* is separate: it silences one device, for every thread.
 
+On bb 0.48, where the sidebar can select several threads, **Herald** is also in the menu of a selection
+and sets the same choice on every selected thread. A choice is checked there only when every selected
+thread has it as its own; archived threads are left out.
+
 ## Model-written sentences
 
 With the switch on, each announcement runs the tool you pick once, as a plain process on the Mac running
-bb, with the prompt on its standard input. The tool must be installed and logged in there. The tool, the
+bb, with the prompt on its standard input. The tool must be installed and logged in there. Herald looks
+for it where bb looks for its own tools — the login shell's PATH, `~/.local/bin`, mise and asdf shims,
+Volta and Homebrew — and finds one installed after a failed run on the next try. The tool, the
 custom command and the prompt sit together in the *Model-written sentences* section of Herald's settings
 page, below bb's own form. The presets:
 

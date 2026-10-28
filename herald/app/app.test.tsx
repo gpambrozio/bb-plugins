@@ -22,7 +22,7 @@ import {
 import { NO_CHOICE } from "../shared/thread-choice";
 import { HeraldBanner } from "./banner";
 import { HeraldBridge } from "./bridge";
-import { HeraldHeaderAction } from "./header-action";
+import { HeraldHeaderAction, HISTORY_HEADER_ACTION, HISTORY_TAB, registerHistoryOpener } from "./header-action";
 import { HeraldHistoryPanel } from "./history-panel";
 import { HeraldPanel, useWaitingBadge } from "./panel";
 import { HeraldSettingsSection } from "./settings-section";
@@ -90,6 +90,7 @@ function rpc(entries: () => AttentionEntry[], calls: { list: number }) {
     "speech.render": () => ({ mimeType: "audio/wav", base64: "" }),
     "choices.list": () => ({ threads: {} }),
     "choices.set": () => NO_CHOICE,
+    "choices.setMany": () => null,
     log: () => null,
   };
 }
@@ -101,11 +102,15 @@ describe("Herald's app", () => {
     expect(app.tabs.map((tab) => [tab.id, tab.context.kind, tab.availability, tab.icon])).toEqual([
       ["history", "thread", "action", "herald/megaphone"],
     ]);
-    expect(app.threadHeaderActions.map((action) => action.id)).toEqual(["history"]);
+    // bb 0.48's header button; the older header slot stays empty.
+    expect(app.threadHeaderActions).toEqual([]);
     expect(app.appOverlays).toHaveLength(1);
     expect(app.composerCustomizations[0]?.banners?.map((banner) => banner.id)).toEqual(["summary"]);
     expect(app.settingsSections.map((section) => section.id)).toEqual(["summaries"]);
-    expect(app.threadActions.map((action) => action.id)).toEqual(["announcements"]);
+    expect(app.threadActions.map((action) => [action.id, action.placement])).toEqual([
+      ["history", "header"],
+      ["announcements", undefined],
+    ]);
   });
 
   it("draws bb's own status glyph on each waiting row", async () => {
@@ -260,7 +265,39 @@ describe("Herald's app", () => {
     expect(screen.queryByText("Writing the sentence…")).toBeNull();
   });
 
-  it("opens the thread's Herald panel from a button in the thread header", async () => {
+  it("opens and closes the thread's Herald tab from a Herald button in the thread header (bb 0.48)", () => {
+    const calls: unknown[] = [];
+    const panel = {
+      openTab: () => false,
+      toggleTab: (options: unknown) => (calls.push(options), true),
+      close: () => false,
+    };
+    const action = HISTORY_HEADER_ACTION.item({
+      thread: {} as never,
+      data: undefined,
+      sdk: {} as never,
+      navigate: {} as never,
+      experimental_panel: panel,
+    });
+    expect(action).toMatchObject({ label: "Herald", icon: "herald/megaphone" });
+    expect(action?.choices).toBeUndefined();
+    void action?.run({ requestRename: () => {} });
+    expect(calls).toEqual([{ tab: { id: "history", context: { kind: "thread" }, availability: "action" } }]);
+    expect(HISTORY_TAB.tab.id).toBe("history");
+  });
+
+  it("keeps the megaphone in the older header slot where bb has no header thread actions (bb 0.47)", async () => {
+    const registered: Array<[string, string]> = [];
+    const slots = {
+      experimental_threadAction: (registration: { id: string }) => registered.push(["threadAction", registration.id]),
+      experimental_threadHeaderAction: (registration: { id: string }) => registered.push(["threadHeaderAction", registration.id]),
+    } as never;
+    registerHistoryOpener(slots, false);
+    expect(registered).toEqual([["threadHeaderAction", "history"]]);
+    registered.length = 0;
+    registerHistoryOpener(slots, true);
+    expect(registered).toEqual([["threadAction", "history"]]);
+
     const slot = renderSlot<{ threadId: string }, RpcContract>({ component: HeraldHeaderAction }, { threadId: "t1" }, {});
     fireEvent.click(screen.getByLabelText("Herald: this thread's sentences"));
     expect(slot.inspection.navigateCalls).toEqual([{ method: "openThreadPanel", options: { actionId: "history" } }]);

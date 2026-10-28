@@ -2,7 +2,8 @@
 /**
  * "Herald" in bb's thread menu: the rows on screen are read in one batch, each
  * row shows what applies to it and why, a pick is saved through the server,
- * and every row is read again when any choice changes.
+ * and every row is read again when any choice changes. The menu of a sidebar
+ * selection sets one pick for every selected thread.
  */
 import { act, cleanup, waitFor } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
@@ -31,10 +32,14 @@ function target(id: string, parentThreadId: string | null = null, archivedAt: nu
   };
 }
 
-/** The server's choices, as `choices.list` and `choices.set` see them, and every call made. */
+/** The server's choices, as `choices.list`, `choices.set` and `choices.setMany` see them, and every call made. */
 function server(initial: Record<string, ChoiceInputs>) {
   const stored = { ...initial };
-  const calls = { list: [] as string[][], set: [] as Array<{ threadId: string; choice: ChoiceOption }> };
+  const calls = {
+    list: [] as string[][],
+    set: [] as Array<{ threadId: string; choice: ChoiceOption }>,
+    setMany: [] as Array<{ threadIds: string[]; choice: ChoiceOption }>,
+  };
   let failing: string | null = null;
   /**
    * While holding, each `choices.list` answers with the choices as they were
@@ -64,6 +69,13 @@ function server(initial: Record<string, ChoiceInputs>) {
       stored[input.threadId] = { ...before, own: input.choice === "default" ? null : input.choice };
       return stored[input.threadId] as ChoiceInputs;
     },
+    "choices.setMany": (input: { threadIds: string[]; choice: ChoiceOption }) => {
+      calls.setMany.push(input);
+      for (const threadId of input.threadIds) {
+        stored[threadId] = { ...(stored[threadId] ?? NO_CHOICE), own: input.choice === "default" ? null : input.choice };
+      }
+      return null;
+    },
   };
   return {
     stored,
@@ -88,9 +100,20 @@ function mount(handlers: ReturnType<typeof server>["handlers"], threadIds: strin
   const slot = renderSlot<object, RpcContract>({ component: Probe }, {}, { rpc: handlers, settings });
   const item = (thread: ReturnType<typeof target>): PluginThreadAction | null => {
     if (seen.data === null) throw new Error("useData has not run");
-    return registration.item({ thread, data: seen.data, sdk: {} as never, navigate: {} as never });
+    return registration.item({ thread, data: seen.data, sdk: {} as never, navigate: {} as never, experimental_panel: {} as never });
   };
-  return { slot, seen, item };
+  const bulkItem = (threads: Array<ReturnType<typeof target>>): PluginThreadAction | null => {
+    if (seen.data === null) throw new Error("useData has not run");
+    if (registration.experimental_bulkItem === undefined) throw new Error("no bulk item");
+    return registration.experimental_bulkItem({
+      threads,
+      data: seen.data,
+      sdk: {} as never,
+      navigate: {} as never,
+      experimental_panel: {} as never,
+    });
+  };
+  return { slot, seen, item, bulkItem };
 }
 
 function picks(action: PluginThreadAction | null) {
@@ -98,11 +121,11 @@ function picks(action: PluginThreadAction | null) {
 }
 
 describe("Herald's thread menu action", () => {
-  it("joins bb's state group in every thread menu", async () => {
+  it("joins bb's state group in every thread menu, and the menu of a selection", async () => {
     const app = await loadPluginApp(() => import("../app"));
-    expect(app.threadActions.map((action) => [action.id, action.group, action.icon])).toEqual([
-      ["announcements", "1_state", "herald/megaphone"],
-    ]);
+    const action = app.threadActions.find((registered) => registered.id === "announcements");
+    expect([action?.group, action?.icon, action?.placement]).toEqual(["1_state", "herald/megaphone", undefined]);
+    expect(typeof action?.experimental_bulkItem).toBe("function");
   });
 
   it("reads the rows on screen in one batch, and shows each row's choice and where it comes from", async () => {
@@ -227,5 +250,65 @@ describe("Herald's thread menu action", () => {
     });
     await waitFor(() => expect(item(target("t1"))).toMatchObject({ detail: "Questions only" }));
     expect(seen.data?.error).toBeNull();
+  });
+
+  it("offers one pick for a selection, checked only when every thread has it as its own", async () => {
+    const fake = server({
+      a: { own: "silent", inherited: null },
+      b: { own: "silent", inherited: null },
+      c: NO_CHOICE,
+    });
+    const { seen, bulkItem } = mount(fake.handlers, ["a", "b", "c"]);
+    await waitFor(() => expect(seen.data?.inputs.size).toBe(3));
+
+    const same = bulkItem([target("a"), target("b")]);
+    expect(same).toMatchObject({ label: "Herald", detail: "Silent", icon: "herald/volume-off" });
+    expect(same?.choices?.heading).toBe("What Herald announces for 2 threads");
+    expect(picks(same)).toEqual([
+      ["Default", false],
+      ["Announce", false],
+      ["Questions only", false],
+      ["Silent", true],
+    ]);
+
+    const mixed = bulkItem([target("a"), target("c")]);
+    expect(mixed).toMatchObject({ detail: "Mixed", icon: "herald/megaphone" });
+    expect(picks(mixed)?.every(([, selected]) => selected === false)).toBe(true);
+  });
+
+  it("names what a selection announces when the threads agree without the same pick", async () => {
+    // One by its own choice, one by the plain default: both announce.
+    const fake = server({ a: { own: "announce", inherited: null }, b: NO_CHOICE });
+    const { seen, bulkItem } = mount(fake.handlers, ["a", "b"]);
+    await waitFor(() => expect(seen.data?.inputs.size).toBe(2));
+    const action = bulkItem([target("a"), target("b")]);
+    expect(action).toMatchObject({ detail: "Announce" });
+    expect(picks(action)?.every(([, selected]) => selected === false)).toBe(true);
+  });
+
+  it("saves a selection's pick in one call, leaving archived threads out, and reads every row again", async () => {
+    const fake = server({ a: NO_CHOICE, b: NO_CHOICE, gone: NO_CHOICE });
+    const { seen, bulkItem } = mount(fake.handlers, ["a", "b", "gone"]);
+    await waitFor(() => expect(seen.data?.inputs.size).toBe(3));
+    const selection = [target("a"), target("b"), target("gone", null, 1)];
+    expect(bulkItem(selection)?.choices?.hint).toBe("Archived threads are left out.");
+    await act(async () => {
+      await bulkItem(selection)?.run({ value: "questions", requestRename: () => {} });
+    });
+    expect(fake.calls.setMany).toEqual([{ threadIds: ["a", "b"], choice: "questions" }]);
+    expect(fake.calls.list.at(-1)).toEqual(["a", "b", "gone"]);
+    expect(bulkItem(selection)).toMatchObject({ detail: "Questions only" });
+    expect(bulkItem([target("gone", null, 1), target("gone2", null, 2)])).toBeNull();
+  });
+
+  it("saves a selection larger than one call takes in batches", async () => {
+    const ids = Array.from({ length: 250 }, (_, index) => `t${index}`);
+    const fake = server(Object.fromEntries(ids.map((id) => [id, NO_CHOICE])));
+    const { seen, bulkItem } = mount(fake.handlers, ids);
+    await waitFor(() => expect(seen.data?.inputs.size).toBe(250));
+    await act(async () => {
+      await bulkItem(ids.map((id) => target(id)))?.run({ value: "silent", requestRename: () => {} });
+    });
+    expect(fake.calls.setMany.map((call) => call.threadIds.length)).toEqual([200, 50]);
   });
 });

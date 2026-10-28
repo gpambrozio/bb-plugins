@@ -82,12 +82,19 @@ export function lookOf(reason: RowReason): ReasonLook {
   }
 }
 
-export function useNow(): number {
+/**
+ * The time, for "5 min ago", moved on every `TICK_MS`. A tab that is not
+ * showing passes `running: false` to stop the clock, and catches up when it
+ * shows again.
+ */
+export function useNow(running = true): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
+    if (!running) return;
+    setNow(Date.now());
     const timer = setInterval(() => setNow(Date.now()), TICK_MS);
     return () => clearInterval(timer);
-  }, []);
+  }, [running]);
   return now;
 }
 

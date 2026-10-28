@@ -56,8 +56,11 @@ const KNOWN_THREADS = [USER_THREAD, OTHER_THREAD, WORKER_THREAD];
  */
 function metadataStubs() {
   const metadata = new Map<string, Record<string, unknown>>();
-  /** Set to make bb's ancestor read fail, as a lost connection would. */
-  const failures = { ancestors: false };
+  /**
+   * Set `ancestors` to make bb's ancestor read fail, as a lost connection
+   * would; name threads in `updates` to make their metadata writes fail.
+   */
+  const failures = { ancestors: false, updates: new Set<string>() };
   const ancestorsOf = (threadId: string) => {
     const ids: string[] = [];
     for (let at = KNOWN_THREADS.find((known) => known.id === threadId)?.parentThreadId ?? null; at !== null; ) {
@@ -82,6 +85,7 @@ function metadataStubs() {
       }),
     }),
     updatePluginMetadata: async ({ threadId, set, remove }: { threadId: string; set?: Record<string, unknown>; remove?: string[] }) => {
+      if (failures.updates.has(threadId)) throw new Error("thread not found");
       const next = { ...metadata.get(threadId), ...set };
       for (const key of remove ?? []) delete next[key];
       if (Object.keys(next).length === 0) metadata.delete(threadId);
@@ -202,6 +206,28 @@ describe("herald server", () => {
     failures.ancestors = true;
     await expect(harness.callRpc("choices.set", { threadId: USER_THREAD.id, choice: "silent" })).rejects.toThrow();
     expect(metadata.get(USER_THREAD.id)).toEqual({ announce: "silent" });
+    expect(harness.realtimeSignals.filter((signal) => signal.channel === CHOICES_CHANNEL)).toHaveLength(1);
+  });
+
+  it("stores one choice on several threads, and tells every open menu once", async () => {
+    const { harness, metadata } = await load();
+    expect(await harness.callRpc("choices.setMany", { threadIds: [USER_THREAD.id, OTHER_THREAD.id], choice: "silent" })).toBeNull();
+    expect(metadata.get(USER_THREAD.id)).toEqual({ announce: "silent" });
+    expect(metadata.get(OTHER_THREAD.id)).toEqual({ announce: "silent" });
+    expect(harness.realtimeSignals.filter((signal) => signal.channel === CHOICES_CHANNEL)).toHaveLength(1);
+    await harness.callRpc("choices.setMany", { threadIds: [USER_THREAD.id, OTHER_THREAD.id], choice: "default" });
+    expect(metadata.size).toBe(0);
+  });
+
+  it("saves the rest of a selection when one thread fails, says so, and still tells the menus", async () => {
+    const { harness, metadata, failures } = await load();
+    failures.updates.add(USER_THREAD.id);
+    await expect(
+      harness.callRpc("choices.setMany", { threadIds: [USER_THREAD.id, OTHER_THREAD.id, WORKER_THREAD.id], choice: "questions" }),
+    ).rejects.toThrow(/1 of 3 threads were not saved/);
+    expect(metadata.has(USER_THREAD.id)).toBe(false);
+    expect(metadata.get(OTHER_THREAD.id)).toEqual({ announce: "questions" });
+    expect(metadata.get(WORKER_THREAD.id)).toEqual({ announce: "questions" });
     expect(harness.realtimeSignals.filter((signal) => signal.channel === CHOICES_CHANNEL)).toHaveLength(1);
   });
 
