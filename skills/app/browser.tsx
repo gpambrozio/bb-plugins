@@ -22,6 +22,7 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
 import { type ReportedSkill, type SkillEntry, type SkillList, SOURCE_KINDS } from "../shared/skills";
+import { copyText } from "./clipboard";
 import { discoveredCommand, reportedCommand, type SkillCommand } from "./insert";
 import { withoutImages } from "./markdown";
 import { type Loaded, useAddToChat, useSkillDocument } from "./use-skills";
@@ -116,10 +117,10 @@ function AddToChat({ threadId, command, onAdded }: { threadId: string; command: 
 function copyPath(path: string): void {
   // The path is selectable text too, so a client that denies programmatic
   // copying still leaves select-and-copy.
-  void navigator.clipboard.writeText(path).then(
-    () => toast.success("Path copied"),
-    () => toast.error("Could not copy. Select the path and copy it instead."),
-  );
+  void copyText(path).then((copied) => {
+    if (copied) toast.success("Path copied");
+    else toast.error("Could not copy. Select the path and copy it instead.");
+  });
 }
 
 function SkillDetail({

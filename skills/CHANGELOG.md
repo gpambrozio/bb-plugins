@@ -5,6 +5,14 @@ Notable changes to `skills`. The other plugins in this repository version separa
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.3.2
+
+### Fixed
+
+- **Copy path works in more places.** On bb 0.46 and newer it copies the way bb's own copy buttons do,
+  so it works in bb's desktop and mobile apps even where the page itself is not allowed to use the
+  clipboard. On bb 0.45 it copies as before.
+
 ## 0.3.1
 
 ### Fixed
