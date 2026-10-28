@@ -125,7 +125,20 @@ export function ReviewPanel({ threadId, params, environment }: ExperimentalThrea
  * One thread's review: the Review tab's content, and the Reviews page's for the review it opens.
  * `visible`: whether it shows; a hidden one leaves reloads until it shows again.
  */
-export function ReviewBody({ threadId, environmentId, params, visible }: { threadId: string; environmentId: string | null; params: unknown; visible: boolean }) {
+export function ReviewBody({
+  threadId,
+  environmentId,
+  params,
+  visible,
+  initialFile = null,
+}: {
+  threadId: string;
+  environmentId: string | null;
+  params: unknown;
+  visible: boolean;
+  /** A file to go to once the view has loaded (`bb diff-review open <file>`). */
+  initialFile?: string | null;
+}) {
   const [target, setTarget] = useState<TargetRequest>(() => initialTarget(params));
   // A tab opened without a view starts on the uncommitted changes, unless there are none and the
   // branch has commits: the first load decides, and the picker follows it.
@@ -183,6 +196,7 @@ export function ReviewBody({ threadId, environmentId, params, visible }: { threa
         ignoreWhitespace={ignoreWhitespace}
         onIgnoreWhitespace={toggleWhitespace}
         visible={visible}
+        initialFile={initialFile}
       />
       </ViewStateProvider>
     </ReviewActionsProvider>
@@ -208,6 +222,7 @@ function ReadyPanel({
   ignoreWhitespace,
   onIgnoreWhitespace,
   visible,
+  initialFile,
 }: {
   threadId: string;
   view: ReadyView;
@@ -223,6 +238,7 @@ function ReadyPanel({
   ignoreWhitespace: boolean;
   onIgnoreWhitespace(next: boolean): void;
   visible: boolean;
+  initialFile: string | null;
 }) {
   const rpc = useRpc<RpcContract>();
   const actions = useActions();
@@ -402,6 +418,15 @@ function ReadyPanel({
     for (const entry of views) entries.push({ key: `view:${entry.value}`, group: "View", label: entry.label, go: () => onPick(entry.value) });
     return entries;
   }, [files, commentStops, view.threads, view.defaultBase, view.commits, show, onPick, scrollRoot]);
+
+  // A file asked for when the review was opened, once.
+  const wentToFile = useRef(false);
+  useEffect(() => {
+    if (initialFile === null || wentToFile.current) return;
+    wentToFile.current = true;
+    if (view.files.some((file) => file.path === initialFile)) show({ path: initialFile, side: "new", line: 0 });
+    else toast.info(`${initialFile} is not in this view.`);
+  }, [initialFile, view.files, show]);
 
   // The palette's commands for this thread land here while the tab shows.
   useReviewCommands(threadId, visible, (command) => {

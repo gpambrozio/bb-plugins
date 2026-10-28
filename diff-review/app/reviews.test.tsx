@@ -30,7 +30,7 @@ const asReceived = (subPath: string) => subPath.split("/").map(encodeURIComponen
 
 describe("the Reviews page's addresses", () => {
   it("round-trips a review whose view names a branch with a slash", () => {
-    expect(parseReviewSubPath(asReceived(reviewSubPath(REVIEW)))).toEqual({ threadId: "thr_1", target: { kind: "branch", base: "feature/base" } });
+    expect(parseReviewSubPath(asReceived(reviewSubPath(REVIEW)))).toEqual({ threadId: "thr_1", target: { kind: "branch", base: "feature/base" }, file: null });
     expect(parseReviewSubPath("")).toBeNull();
     expect(parseReviewSubPath("thr_1/not-json")).toBeNull();
   });

@@ -467,6 +467,27 @@ describe("changing the workspace from the tab", () => {
   });
 });
 
+describe("bb diff-review open", () => {
+  it("asks the windows to open the thread's review on a view and file, and prints the page", async () => {
+    const { harness } = await setup();
+    const out = await harness.behavior.runCli(["open", "src/a.ts", "--view", "branch"], { threadId: THREAD });
+    expect(out.exitCode).toBe(0);
+    const target = { kind: "branch", base: "main" };
+    expect(harness.inspection.realtimeSignals.at(-1)).toEqual({ channel: "open-review", payload: { threadId: THREAD, target, file: "src/a.ts" } });
+    expect(out.stdout).toContain("Opening the review of committed changes since main for thr_review");
+    expect(out.stdout).toContain(`/plugins/diff-review/reviews/${THREAD}/`);
+    expect(out.stdout).not.toContain("is not in that view");
+  });
+
+  it("says when the file is not in the view, and refuses mixed-up options", async () => {
+    const { harness } = await setup();
+    expect((await harness.behavior.runCli(["open", "nope.ts"], { threadId: THREAD })).stdout).toContain("nope.ts is not in that view.");
+    expect((await harness.behavior.runCli(["open", "--commit", "zzz"], { threadId: THREAD })).exitCode).not.toBe(0);
+    expect((await harness.behavior.runCli(["open", "--base", "main"], { threadId: THREAD })).exitCode).not.toBe(0);
+    expect((await harness.behavior.runCli(["open"], {})).exitCode).not.toBe(0);
+  });
+});
+
 describe("refusals", () => {
   it("answers a caller's mistake as bb's expected refusal, not a handler crash", async () => {
     const { rpc } = await setup();

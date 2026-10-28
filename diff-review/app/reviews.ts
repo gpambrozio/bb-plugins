@@ -7,7 +7,9 @@ import { useRealtime, useRealtimeConnectionState, useRpc } from "@get-bb/plugin-
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { RpcContract } from "../shared/contract";
-import { REVIEWS_CHANNEL, targetKey, targetSchema, type ReviewSummary, type Target } from "../shared/types";
+import { REVIEWS_CHANNEL, targetKey, type ReviewSummary, type Target } from "../shared/types";
+
+export { parseReviewSubPath, reviewSubPath } from "../shared/routes";
 
 /** Runs `read` now, on every review change and on a reconnect; the latest answer wins. */
 function useLiveRead<T>(read: () => Promise<T>, channel: string): { data: T | undefined; error: string | null } {
@@ -42,27 +44,6 @@ export function useReviews() {
 export function useReviewCounts(environmentId: string | null) {
   const rpc = useRpc<RpcContract>();
   return useLiveRead(() => rpc.call("reviewCounts", environmentId === null ? {} : { environmentId }), REVIEWS_CHANNEL);
-}
-
-/**
- * Where the Reviews page shows one review: `<bb thread>/<view key>`. The view key may hold a `/` (a
- * branch name), so it is encoded once more: bb encodes each segment it is given and the page decodes
- * each segment once.
- */
-export function reviewSubPath(review: Pick<ReviewSummary, "threadId" | "target">): string {
-  return `${review.threadId}/${encodeURIComponent(JSON.stringify(review.target))}`;
-}
-
-/** The review a subPath names, or null for the page's list. `subPath` arrives percent-encoded per segment. */
-export function parseReviewSubPath(subPath: string): { threadId: string; target: Target } | null {
-  const [thread, view, ...rest] = subPath.split("/");
-  if (thread === undefined || view === undefined || rest.length > 0 || thread === "") return null;
-  try {
-    const target = targetSchema.safeParse(JSON.parse(decodeURIComponent(decodeURIComponent(view))));
-    return target.success ? { threadId: decodeURIComponent(thread), target: target.data } : null;
-  } catch {
-    return null;
-  }
 }
 
 /** Whether a listed review is the one a subPath names. */

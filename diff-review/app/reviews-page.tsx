@@ -11,9 +11,10 @@ import { Icon } from "@/components/ui/icon";
 import type { ReviewSummary } from "../shared/types";
 import { ago, targetLabel } from "./labels";
 import { ReviewBody } from "./review-panel";
+import { REVIEWS_PATH } from "../shared/routes";
 import { isReview, parseReviewSubPath, reviewSubPath, useReviewCounts, useReviews } from "./reviews";
 
-export const REVIEWS_PATH = "reviews";
+export { REVIEWS_PATH };
 
 function countText(review: ReviewSummary): string {
   return review.openCount === 0 ? `${review.totalCount} closed` : `${review.openCount} open of ${review.totalCount}`;
@@ -82,6 +83,7 @@ export function ReviewsPage({ subPath }: PluginNavPanelProps) {
           environmentId={review?.environmentId ?? null}
           params={{ target: selected.target }}
           visible
+          initialFile={selected.file}
         />
       </div>
     </div>

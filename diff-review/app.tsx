@@ -6,6 +6,7 @@ import { definePluginApp, experimental_THREAD_INFO_ROW_GROUPS } from "@get-bb/pl
 
 import { dispatchReviewCommand, REVIEW_COMMANDS, type ReviewCommand } from "./app/commands";
 import { ReviewPanel } from "./app/review-panel";
+import { OpenReviewOverlay } from "./app/open-overlay";
 import { REVIEWS_PATH, ReviewsPage, ReviewsSidebar, useReviewsBadge, useReviewsPageTitle } from "./app/reviews-page";
 import { openReviewTab, REVIEW_TAB } from "./app/tab";
 import { ReviewInfoRow } from "./app/thread-info";
@@ -49,6 +50,9 @@ export default definePluginApp((app) => {
     experimental_usePageTitle: useReviewsPageTitle,
     experimental_useBadge: useReviewsBadge,
   });
+
+  // `bb diff-review open` opens a review in the window that shows its thread.
+  app.slots.experimental_appOverlay({ id: "open-review", component: OpenReviewOverlay });
 
   // "N open of M comment threads" in the thread's Info tab.
   app.slots.experimental_threadInfoRow({ id: "review", group: experimental_THREAD_INFO_ROW_GROUPS.git, component: ReviewInfoRow });

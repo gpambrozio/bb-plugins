@@ -28,6 +28,7 @@ import {
   viewStateSchema,
 } from "../shared/types";
 import { gitTarget, ignorePatterns, loadDiff, loadPatches, resolveTarget, ReviewUnavailable, workspaceOf, workspaceRefs, workspaceState, type WorkspaceState } from "./diff";
+import { OPEN_CHANNEL, reviewRoute } from "../shared/routes";
 import { GitReads } from "./git";
 import { sendPrompt } from "./prompt";
 import type { ReviewStore, StoredRun } from "./store";
@@ -497,6 +498,25 @@ export class ReviewService {
       });
     }
     return reviews;
+  }
+
+  /**
+   * `bb diff-review open`: asks the windows showing `threadId` to open its review of `request`, at
+   * `file` when given, and returns where the review is and the Reviews page's route for it.
+   */
+  async requestOpen(threadId: string, request: TargetRequest, file: string | null): Promise<{ target: Target; route: string; inDiff: boolean | null }> {
+    const environment = await workspaceOf(this.bb.sdk, threadId);
+    const base = request.kind === "branch" || request.kind === "all" ? request.base : undefined;
+    const refs = await workspaceRefs(this.git, this.bb.log, environment, base);
+    const target = resolveTarget(request, refs.defaultBase);
+    let inDiff: boolean | null = null;
+    if (file !== null) {
+      const files = await this.git.files(environment.id, gitTarget(target), false);
+      inDiff = files.outcome === "available" ? files.files.some((entry) => entry.path === file) : null;
+    }
+    const address = { threadId, target, file };
+    this.bb.realtime.publish(OPEN_CHANNEL, address);
+    return { target, route: reviewRoute(this.bb.pluginId, address), inDiff };
   }
 
   counts(environmentId: string | null): { open: number; total: number } {
