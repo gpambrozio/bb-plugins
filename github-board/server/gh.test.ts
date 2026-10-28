@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { describeGhFailure, ghGraphql, ghGraphqlArgs, ghRunner, ghToken, isGhMissing, type ExecFile } from "./gh";
+import { describeGhFailure, GhError, ghGraphql, ghGraphqlArgs, ghRunner, ghToken, isGhMissing, type ExecFile } from "./gh";
 
 describe("ghGraphqlArgs", () => {
   it("sends strings raw, integers typed and lists as repeated fields", () => {
@@ -69,7 +69,7 @@ describe("ghRunner", () => {
     expect(calls[1]!.options).not.toHaveProperty("signal");
   });
 
-  it("describes a failure and keeps the original error as its cause", async () => {
+  it("describes a failure, says whether gh is missing, and drops the original error and its output", async () => {
     const missing = Object.assign(new Error("spawn gh ENOENT"), { code: "ENOENT" });
     const runMissing = ghRunner(async () => {
       throw missing;
@@ -78,9 +78,8 @@ describe("ghRunner", () => {
       () => null,
       (caught: unknown) => caught,
     );
-    expect(error).toBeInstanceOf(Error);
+    expect(error).toBeInstanceOf(GhError);
     expect((error as Error).message).toMatch(/was not found/);
-    expect((error as Error).cause).toBe(missing);
     expect(isGhMissing(error)).toBe(true);
 
     const signedOut = Object.assign(new Error("exit 1"), { code: 1, stderr: "run gh auth login" });
@@ -90,5 +89,15 @@ describe("ghRunner", () => {
     const second = await runSignedOut(["auth", "status"]).catch((caught: unknown) => caught);
     expect((second as Error).message).toMatch(/not authenticated/);
     expect(isGhMissing(second)).toBe(false);
+
+    // A failed `gh auth token` may have printed the token; nothing of the run survives but the message.
+    const leaky = Object.assign(new Error("exit 1"), { code: 1, stdout: "gho_secret", stderr: "boom" });
+    const third = await ghRunner(async () => {
+      throw leaky;
+    })(["auth", "token"]).catch((caught: unknown) => caught);
+    expect((third as Error).message).toBe("boom");
+    expect((third as Error).cause).toBeUndefined();
+    expect(JSON.stringify(third)).not.toContain("gho_secret");
+    expect(Object.values(third as object)).not.toContain("gho_secret");
   });
 });

@@ -31,9 +31,24 @@ export function ghGraphqlArgs(query: string, variables: GraphQLVariables = {}): 
   return args;
 }
 
+/**
+ * A failed `gh` run, described. It does not carry the original error: that
+ * holds the run's stdout, which for `gh auth token` is the token.
+ */
+export class GhError extends Error {
+  /** There was no `gh` to run at all. */
+  readonly missing: boolean;
+
+  constructor(message: string, missing: boolean) {
+    super(message);
+    this.name = "GhError";
+    this.missing = missing;
+  }
+}
+
 /** Whether a failed run means there was no `gh` to run at all. */
 export function isGhMissing(error: unknown): boolean {
-  if (error instanceof Error && error.cause !== undefined) return isGhMissing(error.cause);
+  if (error instanceof GhError) return error.missing;
   return (
     typeof error === "object" && error !== null && "code" in error && (error as { code?: unknown }).code === "ENOENT"
   );
@@ -73,7 +88,7 @@ export type ExecFile = (
  * that lookup in the background, so a `gh` installed after the plugin loaded
  * is found without a reload. `signal` kills the subprocess when it fires, for
  * a caller with a deadline of its own; every call is killed after 30 seconds
- * regardless. A failure keeps the original error as its `cause`.
+ * regardless. A failure is a `GhError`.
  */
 export function ghRunner(exec: ExecFile = experimental_execHostFile): GhRunner {
   return async (args, signal) => {
@@ -86,7 +101,7 @@ export function ghRunner(exec: ExecFile = experimental_execHostFile): GhRunner {
       });
       return stdout;
     } catch (error) {
-      throw new Error(describeGhFailure(error), { cause: error });
+      throw new GhError(describeGhFailure(error), isGhMissing(error));
     }
   };
 }
