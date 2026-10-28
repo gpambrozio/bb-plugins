@@ -361,32 +361,12 @@ describe("the Files view", () => {
 });
 
 describe("keeping the Review tab current", () => {
-  it("reloads when bb's Git plugin sees the workspace change outside a turn", async () => {
-    let files = 1;
-    const slot = render({
-      workspaceStatus: () => ({ outcome: "available", workspace: { checkout: { kind: "branch", headSha: "abc" }, workingTree: { files: [], insertions: files, deletions: 0 }, mergeBase: null } }),
-    });
-    await screen.findByText("1 file · +1 −1 · 1 left out by the ignore patterns");
-    await waitFor(() => expect(slot.inspection.rpcCalls.some((call) => call.method === "workspaceStatus")).toBe(true));
-    expect(slot.inspection.rpcCalls.find((call) => call.method === "workspaceStatus")!.input).toEqual({ environmentId: "env_1" });
-
-    // The same status again (bb re-read it) is no change.
-    await slot.behavior.experimental_invalidateRpc(["status:env_1"], "bb--git");
-    await waitFor(() => expect(slot.inspection.rpcCalls.filter((call) => call.method === "workspaceStatus")).toHaveLength(2));
-    expect(loadsOf(slot).map((load) => load.reason)).toEqual(["open"]);
-
-    files = 2;
-    await slot.behavior.experimental_invalidateRpc(["status:env_1"], "bb--git");
-    await waitFor(() => expect(loadsOf(slot).map((load) => load.reason)).toEqual(["open", "workspace"]));
-  });
-
-  it("leaves a hidden tab alone: no reload on a signal, no status reads", async () => {
-    const slot = render({ workspaceStatus: () => ({ outcome: "available", workspace: {} }) }, "thr_1", { tabVisible: false });
+  it("leaves a hidden tab alone: no reload on a signal", async () => {
+    const slot = render({}, "thr_1", { tabVisible: false });
     await screen.findByText("1 file · +1 −1 · 1 left out by the ignore patterns");
     await slot.behavior.emitRealtime("environment:env_1", { kind: "diff" });
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(loadsOf(slot).map((load) => load.reason)).toEqual(["open"]);
-    expect(slot.inspection.rpcCalls.some((call) => call.method === "workspaceStatus")).toBe(false);
   });
 
   it("hears the workspace's signals from the first render, before the view has loaded", async () => {

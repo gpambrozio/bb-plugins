@@ -3,8 +3,8 @@
  * A `threads` signal re-reads the session's threads; a `diff` signal (the workspace changed by the end
  * of an agent's turn) reloads the whole view. Signals are not replayed, so a reconnect reloads too.
  *
- * bb's Git plugin's workspace status is watched too, so a change made outside an agent's turn reloads
- * the view. While the tab is hidden (its panel closed, another tab chosen) bb keeps it mounted;
+ * The server also sends `diff` when bb sees the workspace change outside a turn and its content did
+ * (`ReviewService.watchChanges`). While the tab is hidden (its panel closed, another tab chosen) bb keeps it mounted;
  * reloads then wait until it shows again, and run once however many signals came.
  *
  * Every update lands in place: whatever came back unchanged keeps its old object, so React and
@@ -13,11 +13,10 @@
  * demand stays on screen while a reload fetches it again (`stalePatches`), instead of flashing
  * "Loading the diff…".
  */
-import { experimental_useRpcQuery, useRealtime, useRealtimeConnectionState, useRpc } from "@get-bb/plugin-sdk/app";
+import { useRealtime, useRealtimeConnectionState, useRpc } from "@get-bb/plugin-sdk/app";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { RpcContract } from "../shared/contract";
-import { GIT_PLUGIN_ID, gitStatusReadContract, statusKey } from "./git-status";
 import { environmentChannel, realtimeSignalSchema, type DiffFile, type LoadReason, type ReviewThread, type ReviewView, type Run, type Target, type TargetRequest, type Viewed } from "../shared/types";
 
 export type ReadyView = Extract<ReviewView, { ok: true }>;
@@ -88,7 +87,7 @@ export function errorMessage(error: unknown): string {
 }
 
 /** Reasons a load waits for while the tab is hidden: the workspace may have changed. */
-const DEFERRABLE: ReadonlySet<LoadReason> = new Set(["diff-signal", "workspace", "reconnect"]);
+const DEFERRABLE: ReadonlySet<LoadReason> = new Set(["diff-signal", "reconnect"]);
 
 export interface ReviewOptions {
   /** The thread's environment as bb gave the tab, so signals are heard from the first render. */
@@ -203,24 +202,6 @@ export function useReview(threadId: string, target: TargetRequest, options: Revi
 
   const sessionId = state.status === "ready" ? state.view.sessionId : null;
   const environmentId = options.environmentId ?? (state.status === "ready" ? state.view.environmentId : null);
-
-  // bb's Git plugin re-reads the status when bb sees the workspace change; a new answer after the
-  // first means the diff may have changed. Only while the tab shows: a hidden tab asks nothing.
-  const status = experimental_useRpcQuery({
-    pluginId: GIT_PLUGIN_ID,
-    contract: gitStatusReadContract,
-    method: "workspaceStatus",
-    input: { environmentId: environmentId ?? "none" },
-    enabled: environmentId !== null && visible,
-  });
-  const seenStatus = useRef<{ environmentId: string | null; key: string | null }>({ environmentId: null, key: null });
-  const currentStatus = status.data === undefined ? null : statusKey(status.data);
-  useEffect(() => {
-    if (currentStatus === null) return;
-    const seen = seenStatus.current;
-    seenStatus.current = { environmentId, key: currentStatus };
-    if (seen.environmentId === environmentId && seen.key !== null && seen.key !== currentStatus) void loadRef.current("workspace");
-  }, [environmentId, currentStatus]);
 
   const refreshThreads = useCallback(async () => {
     if (sessionId === null) return;

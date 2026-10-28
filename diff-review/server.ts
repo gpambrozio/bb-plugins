@@ -71,6 +71,7 @@ export default async function plugin(bb: BbPluginApi) {
   const service = new ReviewService(bb, store, () => settings.get());
   const runs = new RunService(bb, store, service, () => settings.get());
   service.onUserComment = (thread, body, viewerThreadId) => runs.onUserComment(thread, body, viewerThreadId);
+  bb.onDispose(() => service.dispose());
   const edits = new WorkspaceEdits(bb.sdk, store, service.git, createHostRevert(bb), (environmentId, sessionId) => service.workspaceEdited(environmentId, sessionId));
 
   bb.rpc.register(rpcContract, refusing<typeof rpcContract>({

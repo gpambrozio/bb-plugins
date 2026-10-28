@@ -9,6 +9,7 @@
  * its changes.
  */
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { lstat, readFile, readlink } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -289,4 +290,11 @@ async function untrackedFile(root: string, path: string, used: number, use: (byt
   use(patch.length);
   const lines = content === "" ? 0 : content.split("\n").length - (content.endsWith("\n") ? 1 : 0);
   return { ...base, additions: lines, binary: false, patch, tooLarge: false };
+}
+
+/** A fingerprint of the index against HEAD: its staged modes and blobs, path by path. */
+export async function indexState(run: RunGit, root: string): Promise<string> {
+  const head = (await verify(run, root, "HEAD")) ?? EMPTY_TREE;
+  const staged = await run(root, ["diff", "--no-ext-diff", "--cached", "--raw", "--no-abbrev", "-z", head]);
+  return createHash("sha256").update(staged.stdout).digest("hex");
 }

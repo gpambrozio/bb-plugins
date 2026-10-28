@@ -86,6 +86,9 @@ async function setup(options: Setup = {}) {
   const files: Record<string, string> = { ...options.files };
   const writes: string[] = [];
   const hostCalls: { method: string; input: unknown; hostId: string }[] = [];
+  const bbEvents: { event: string; callback: (event: unknown) => void }[] = [];
+  // What the host says is staged; a test changes it to play `git add`.
+  const index = { key: "index-1" };
   // bb's Git plugin: on unless a test turns it off; Viewed marks by path; every call it got.
   const git = { enabled: true, viewed: {} as Record<string, string>, calls: [] as { method: string; input: unknown }[] };
   const revisionOf = (path: string) => (path === "big.txt" ? `rev-big-${workspace.bigVersion}` : `rev-${path}`);
@@ -157,6 +160,7 @@ async function setup(options: Setup = {}) {
     // The plugin's host entry: git on the workspace's machine, for staged, unstaged and ranges.
     experimental_callHostRpc: (call) => {
       hostCalls.push(call);
+      if (call.method === "indexState") return { key: index.key };
       if (call.method === "revert") {
         if (options.hostRevertRefuses !== undefined) throw new Error(options.hostRevertRefuses);
         return { ok: true };
@@ -174,6 +178,13 @@ async function setup(options: Setup = {}) {
     // The skill bb imports from `skills/diff-review`, which `configure` names.
     agentSkillIds: ["diff-review"],
     sdk: {
+      // bb's own realtime events, which a test emits through `bbEvents`.
+      subscribe: ((args: { event: string; callback: (event: unknown) => void }) => {
+        bbEvents.push(args);
+        return () => {
+          bbEvents.splice(bbEvents.indexOf(args), 1);
+        };
+      }) as never,
       threads: {
         get: async ({ threadId }: { threadId: string }) => {
           await options.holdThreadGet?.(threadId);
@@ -305,7 +316,10 @@ async function setup(options: Setup = {}) {
       anchorContent: "const b = 3;",
       body,
     })) as { thread: ReviewThread }).thread;
-  return { bb, harness, rpc, view, comment, threads, turnStarts, workspace, reads, git, files, writes, hostCalls };
+  const emitEnvironmentChanged = (changes: string[] = ["work-status-changed"]) => {
+    for (const listener of bbEvents.filter((entry) => entry.event === "environment:changed")) listener.callback({ type: "changed", entity: "environment", id: ENV, changes });
+  };
+  return { bb, harness, rpc, view, comment, threads, turnStarts, workspace, reads, git, files, writes, hostCalls, emitEnvironmentChanged, index };
 }
 
 describe("the Review tab's view", () => {
@@ -585,6 +599,41 @@ describe("bb diff-review open", () => {
     expect((await harness.behavior.runCli(["open", "--commit", "zzz"], { threadId: THREAD })).exitCode).not.toBe(0);
     expect((await harness.behavior.runCli(["open", "--base", "main"], { threadId: THREAD })).exitCode).not.toBe(0);
     expect((await harness.behavior.runCli(["open"], {})).exitCode).not.toBe(0);
+  });
+});
+
+describe("changes made outside a turn", () => {
+  const diffSignals = (harness: Awaited<ReturnType<typeof setup>>["harness"]) =>
+    harness.inspection.realtimeSignals.filter((signal) => signal.channel === `environment:${ENV}` && (signal.payload as { kind: string }).kind === "diff").length;
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 600));
+
+  it("reloads the tabs when bb sees an edit that keeps every line count, and not again for nothing", async () => {
+    const { view, harness, workspace, emitEnvironmentChanged } = await setup();
+    await view();
+    // The same number of lines, other content: only the patch tells.
+    workspace.bigVersion = 2;
+    emitEnvironmentChanged();
+    emitEnvironmentChanged();
+    await settle();
+    expect(diffSignals(harness)).toBe(1);
+    // bb says something changed, but nothing did: no reload, so the check cannot loop.
+    emitEnvironmentChanged();
+    await settle();
+    expect(diffSignals(harness)).toBe(1);
+    // Changes bb sends that are not about files are ignored.
+    workspace.bigVersion = 3;
+    emitEnvironmentChanged(["metadata-changed"]);
+    await settle();
+    expect(diffSignals(harness)).toBe(1);
+  });
+
+  it("reloads a staged or unstaged view when only the index changes", async () => {
+    const { view, harness, emitEnvironmentChanged, index } = await setup();
+    await view({ kind: "staged" });
+    index.key = "index-2";
+    emitEnvironmentChanged();
+    await settle();
+    expect(diffSignals(harness)).toBe(1);
   });
 });
 

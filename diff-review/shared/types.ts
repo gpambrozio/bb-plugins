@@ -47,11 +47,10 @@ export type DeliveryState = z.infer<typeof deliveryStateSchema>;
  */
 /**
  * Why the tab loads its whole view, for the plugin's debug log: it opened, the user picked another
- * view, a `diff` signal (the workspace changed by a turn's end), bb's Git plugin saw the workspace
- * change (`workspace`), the realtime link came back, the reload button, "Try again" after an error,
- * or a whitespace toggle.
+ * view, a `diff` signal (the workspace changed, at a turn's end or outside one), the realtime link
+ * came back, the reload button, "Try again" after an error, or a whitespace toggle.
  */
-export const loadReasonSchema = z.enum(["open", "view", "diff-signal", "workspace", "reconnect", "manual", "retry", "whitespace", "unknown"]);
+export const loadReasonSchema = z.enum(["open", "view", "diff-signal", "reconnect", "manual", "retry", "whitespace", "unknown"]);
 export type LoadReason = z.infer<typeof loadReasonSchema>;
 
 /**

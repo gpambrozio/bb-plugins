@@ -36,6 +36,12 @@ export const hostDiffSchema = z
 export type HostDiff = z.infer<typeof hostDiffSchema>;
 
 export const hostContract = defineRpcContract({
+  /** A fingerprint of what is staged (`git diff --cached --raw`), to tell the staged and unstaged views changed. */
+  indexState: {
+    experimental_retryable: true,
+    input: z.object({ root: z.string().min(1).max(4096) }).strict(),
+    output: z.object({ key: z.string() }).strict(),
+  },
   /**
    * Reverts an uncommitted change in the checkout, only while the file still is the version the tab
    * showed (`revision`, as bb's Git plugin lists it); see `host/revert.ts`.

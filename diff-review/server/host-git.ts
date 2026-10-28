@@ -12,6 +12,13 @@ export type HostGit = (hostId: string, root: string, spec: HostDiffSpec, ignoreW
 
 export type HostRevert = (hostId: string, input: { root: string; path: string; revision: string; hunks: number[] | null; patch: string | null }) => Promise<void>;
 
+export type HostIndexState = (hostId: string, root: string) => Promise<string>;
+
+export function createHostIndexState(bb: BbPluginApi): HostIndexState {
+  const client = bb.hosts.experimental_client({ contract: hostContract });
+  return async (hostId, root) => (await client.call("indexState", { root }, { hostId })).key;
+}
+
 export function createHostRevert(bb: BbPluginApi): HostRevert {
   const client = bb.hosts.experimental_client({ contract: hostContract });
   return async (hostId, input) => {

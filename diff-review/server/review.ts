@@ -6,6 +6,7 @@
  * thread whose last send went to the thread it runs in, as its `bb` reports that (AGENTS.md, "A plugin
  * CLI command knows its caller" — the id is a claim, not an identity).
  */
+import { createHash } from "node:crypto";
 import { posix } from "node:path";
 
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
@@ -35,7 +36,7 @@ import { gitTarget, ignorePatterns, loadDiff, type DiffSources, loadPatches, res
 import { parseRange } from "../shared/git-spec";
 import { OPEN_CHANNEL, reviewRoute } from "../shared/routes";
 import { GitReads } from "./git";
-import { createHostGit, type HostGit } from "./host-git";
+import { createHostGit, createHostIndexState, type HostGit, type HostIndexState } from "./host-git";
 import { sendPrompt } from "./prompt";
 import type { ReviewStore, StoredRun } from "./store";
 
@@ -83,6 +84,11 @@ const PROVIDER_NAMES: Record<string, string> = {
   gemini: "Gemini",
 };
 
+/** bb's environment changes that may change a diff, and how they are coalesced (milliseconds). */
+const WORKSPACE_CHANGES: ReadonlySet<string> = new Set(["work-status-changed", "git-refs-changed", "status-changed"]);
+const CHANGE_DEBOUNCE_MS = 400;
+const CHANGE_MAX_WAIT_MS = 2_000;
+
 /** The most paths the Files view's search lists, and the largest file it shows, in bytes. */
 const FILE_SEARCH_LIMIT = 200;
 const FILE_VIEW_MAX_BYTES = 1024 * 1024;
@@ -95,6 +101,11 @@ const MAX_RANGE_LINES = 2_000;
 export class ReviewService {
   /** Each workspace's state at the end of its last turn, or when a tab first loaded it. */
   private readonly workspaceStates = new Map<string, WorkspaceState>();
+  /** Workspaces a tab has loaded, whose changes outside a turn are checked. */
+  private readonly watched = new Set<string>();
+  private stopEnvironmentEvents: (() => void) | null = null;
+  private readonly checks = new Map<string, { timer: ReturnType<typeof setTimeout>; since: number }>();
+  private readonly hostIndexState: HostIndexState;
   /** bb's Git plugin, which every diff read goes through, but the host entry's views. */
   readonly git: GitReads;
   /** The plugin's host entry: git on the workspace's machine, for the staged, unstaged and range views. */
@@ -111,6 +122,7 @@ export class ReviewService {
   ) {
     this.git = new GitReads(bb.sdk, (message) => new ReviewUnavailable(message));
     this.sources = { git: this.git, host: host ?? createHostGit(bb) };
+    this.hostIndexState = createHostIndexState(bb);
   }
 
   /**
@@ -354,7 +366,7 @@ export class ReviewService {
         if (session !== null) this.publish(session.environmentId, session.id);
       }
     }
-    if (thread.environmentId !== null && this.store.sessionsOf(thread.environmentId).length > 0 && (await this.workspaceChanged(thread.environmentId, thread.id))) {
+    if (thread.environmentId !== null && this.store.sessionsOf(thread.environmentId).length > 0 && (await this.workspaceChanged(thread.environmentId, `A turn of ${thread.id} ended`))) {
       this.signal(thread.environmentId, { kind: "diff" });
     }
   }
@@ -366,10 +378,25 @@ export class ReviewService {
    * Two turns ending together cannot both signal for one change: the compare and the update below
    * run in one step, after the state is read.
    */
-  private async workspaceChanged(environmentId: string, threadId: string): Promise<boolean> {
+  /**
+   * The workspace's state, and, when one of its reviews is of the staged or unstaged changes, what is
+   * staged: the uncommitted state alone does not change when a file is only staged.
+   */
+  private async currentState(environmentId: string): Promise<WorkspaceState> {
+    const state = await workspaceState(this.git, environmentId);
+    const indexed = this.store.sessionsOf(environmentId).some((session) => session.targetKey === "staged" || session.targetKey === "unstaged");
+    if (!indexed) return state;
+    const environment = await this.bb.sdk.environments.get({ environmentId });
+    if (environment.path === null) return state;
+    const index = await this.hostIndexState(environment.hostId, environment.path);
+    const summary = `${state.summary}, index ${index.slice(0, 12)}`;
+    return { key: createHash("sha256").update(`${state.key}\0${index}`).digest("hex"), summary };
+  }
+
+  private async workspaceChanged(environmentId: string, cause: string): Promise<boolean> {
     let state: WorkspaceState;
     try {
-      state = await workspaceState(this.git, environmentId);
+      state = await this.currentState(environmentId);
     } catch (error) {
       this.bb.log.warn(`Could not read the state of ${environmentId}; telling its tabs to reload: ${error instanceof Error ? error.message : String(error)}`);
       this.workspaceStates.delete(environmentId);
@@ -378,11 +405,11 @@ export class ReviewService {
     const previous = this.workspaceStates.get(environmentId);
     this.workspaceStates.set(environmentId, state);
     if (previous?.key === state.key) {
-      this.bb.log.debug(`A turn of ${threadId} ended; ${environmentId} is unchanged (${state.summary}), so no reload.`);
+      this.bb.log.debug(`${cause}; ${environmentId} is unchanged (${state.summary}), so no reload.`);
       return false;
     }
     this.bb.log.debug(
-      `A turn of ${threadId} ended; ${environmentId} ${previous === undefined ? "had no known state" : `changed from (${previous.summary})`} to (${state.summary}): telling its tabs to reload.`,
+      `${cause}; ${environmentId} ${previous === undefined ? "had no known state" : `changed from (${previous.summary})`} to (${state.summary}): telling its tabs to reload.`,
     );
     return true;
   }
@@ -393,13 +420,64 @@ export class ReviewService {
    * changes files ends after it, with another key.
    */
   private async seedWorkspaceState(environmentId: string): Promise<void> {
+    this.watchChanges(environmentId);
     if (this.workspaceStates.has(environmentId)) return;
     try {
-      const state = await workspaceState(this.git, environmentId);
+      const state = await this.currentState(environmentId);
       if (!this.workspaceStates.has(environmentId)) this.workspaceStates.set(environmentId, state);
     } catch (error) {
       this.bb.log.debug(`No state recorded for ${environmentId}: ${error instanceof Error ? error.message : String(error)}`);
     }
+  }
+
+  /**
+   * Watches bb's changes to a workspace a tab has loaded: an edit the user saves, a `git` command, a
+   * file staged, outside any agent's turn. bb sends many; they are coalesced per workspace, and the
+   * workspace's content-sensitive state (each file's patch, and the index when a staged or unstaged
+   * view is open) decides whether its tabs reload, as at a turn's end. Reading it changes nothing, so
+   * the check cannot set off another.
+   */
+  private watchChanges(environmentId: string): void {
+    this.watched.add(environmentId);
+    this.stopEnvironmentEvents ??= this.bb.sdk.subscribe({
+      event: "environment:changed",
+      callback: (event) => {
+        if (event.id === undefined || !this.watched.has(event.id)) return;
+        if (!event.changes.some((change) => WORKSPACE_CHANGES.has(change))) return;
+        this.scheduleCheck(event.id);
+      },
+    });
+  }
+
+  private scheduleCheck(environmentId: string): void {
+    const pending = this.checks.get(environmentId);
+    const now = Date.now();
+    if (pending !== undefined) {
+      clearTimeout(pending.timer);
+      if (now - pending.since >= CHANGE_MAX_WAIT_MS) {
+        this.checks.delete(environmentId);
+        void this.checkChanged(environmentId);
+        return;
+      }
+    }
+    const since = pending?.since ?? now;
+    const timer = setTimeout(() => {
+      this.checks.delete(environmentId);
+      void this.checkChanged(environmentId);
+    }, CHANGE_DEBOUNCE_MS);
+    this.checks.set(environmentId, { timer, since });
+  }
+
+  private async checkChanged(environmentId: string): Promise<void> {
+    if (await this.workspaceChanged(environmentId, "bb saw the workspace change")) this.signal(environmentId, { kind: "diff" });
+  }
+
+  /** Stops watching; the plugin is going away. */
+  dispose(): void {
+    this.stopEnvironmentEvents?.();
+    this.stopEnvironmentEvents = null;
+    for (const pending of this.checks.values()) clearTimeout(pending.timer);
+    this.checks.clear();
   }
 
   /** When the thread's latest own turn started (epoch ms), or null when bb has no record. */

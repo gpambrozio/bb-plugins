@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import entry from "../host";
 import { parseRange } from "../shared/git-spec";
-import { createRunGit, diff, newFilePatch, parseNameStatus, parseNumstat, splitPatch, unquote } from "./git";
+import { createRunGit, diff, indexState, newFilePatch, parseNameStatus, parseNumstat, splitPatch, unquote } from "./git";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -90,6 +90,20 @@ describe("the host's git diffs", () => {
     const link = (await diff(run, root, { kind: "unstaged" }, false)).files.find((file) => file.path === "link")!;
     expect(link.patch).toContain("new file mode 120000");
     expect(link.patch).toContain("+/etc/hosts");
+  });
+
+  it("fingerprints what is staged: it moves on `git add`, not on an unstaged edit", async () => {
+    const root = repo();
+    const before = await indexState(run, root);
+    writeFileSync(join(root, "a.txt"), "one\nTWO\n");
+    expect(await indexState(run, root)).toBe(before);
+    git(root, "add", "a.txt");
+    const staged = await indexState(run, root);
+    expect(staged).not.toBe(before);
+    // Same line counts, other content, staged again.
+    writeFileSync(join(root, "a.txt"), "one\nTOO\n");
+    git(root, "add", "a.txt");
+    expect(await indexState(run, root)).not.toBe(staged);
   });
 
   it("refuses unknown revisions", async () => {
