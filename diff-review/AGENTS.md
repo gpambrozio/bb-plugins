@@ -287,7 +287,10 @@ reply, resolve or reopen on a mirror goes to GitHub, then reads it back; dismiss
 **Submit** is the only path that posts a review (decision 5); an agent's `reply` on a mirror stays in
 the tab.
 - It posts exactly what the dialog showed: the plan carries each comment's text, the dialog sends it
-  back, and a comment changed since is refused before anything is posted.
+  back, and a comment changed since is refused before anything is posted. The dialog fixes the head
+  when it opens and sends that one; a load of new commits while it is open closes it (and the
+  verdict is chosen again on the next opening), so an approval is never carried to a commit it was
+  not made on.
 - It checks the pull request's head before the first request and again just before the last (the
   submit), deleting the pending review on a push. One request's time between that read and GitHub
   taking the submit is the race left.

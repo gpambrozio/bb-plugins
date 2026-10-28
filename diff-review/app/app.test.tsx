@@ -758,6 +758,35 @@ describe("a pull request's view", () => {
     );
   });
 
+  it("closes an open Submit dialog when the view loads new commits, never approving them unseen", async () => {
+    const B = "b".repeat(40);
+    let head = HEAD;
+    const slot = renderSlot(
+      { component: ReviewPanel },
+      { threadId: "thr_1", environment: ENVIRONMENT, params: null },
+      {
+        rpc: {
+          getReview: () => ({ ...PR_VIEW, pullRequest: { ...PR_VIEW.pullRequest, headSha: head } }),
+          reviewPlan: () => ({ lines: [{ reviewThreadId: "aaaaaa000031", path: "src/a.ts", line: 2, body: "Name it c." }], body: [], blocked: [] }),
+          submitReview: () => ({ url: null, posted: 1, blocked: [] }),
+        },
+      },
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Submit review…" }));
+    await screen.findByRole("checkbox", { name: "Include src/a.ts:2 (new side)" });
+    fireEvent.click(screen.getByRole("radio", { name: "Approve" }));
+    // A push, and the view reloads on head B while the dialog is open.
+    head = B;
+    await slot.behavior.emitRealtime("environment:env_1", { kind: "diff" });
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Submit: Approve" })).toBeNull());
+    expect(slot.inspection.rpcCalls.some((call) => call.method === "submitReview")).toBe(false);
+    // Opened again, it reviews and submits B.
+    fireEvent.click(screen.getByRole("button", { name: "Submit review…" }));
+    await screen.findByRole("checkbox", { name: "Include src/a.ts:2 (new side)" });
+    fireEvent.click(screen.getByRole("button", { name: "Submit: Comment" }));
+    await waitFor(() => expect(slot.inspection.rpcCalls.find((call) => call.method === "submitReview")?.input).toMatchObject({ event: "COMMENT", headSha: B }));
+  });
+
   it("reads a pull request's address in the dialog", () => {
     const picked: unknown[] = [];
     renderPlain(<PullDialog open onOpenChange={() => undefined} onPick={(ref) => picked.push(ref)} />);

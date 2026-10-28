@@ -49,9 +49,24 @@ export function SubmitReviewDialog({
   const [event, setEvent] = useState<ReviewEvent>("COMMENT");
   const [body, setBody] = useState("");
   const [busy, setBusy] = useState(false);
+  // The commit this dialog's review is of: fixed when it opens, with the comments it reads then.
+  const [approvedHead, setApprovedHead] = useState<string | null>(null);
+
+  // A view that loads new commits while the dialog is open closes it: what was approved was another commit.
+  useEffect(() => {
+    if (!open || approvedHead === null || headSha === approvedHead) return;
+    onOpenChange(false);
+    toast.info(`Pull request #${pullNumber} has new commits; open Submit review again to review them.`);
+  }, [open, approvedHead, headSha, onOpenChange, pullNumber]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      setApprovedHead(null);
+      return;
+    }
+    setApprovedHead(headSha);
+    // Each opening is a new review: the verdict is chosen again.
+    setEvent("COMMENT");
     setPlan(null);
     rpc.call("reviewPlan", { sessionId }).then(
       (next) => {
@@ -60,6 +75,7 @@ export function SubmitReviewDialog({
       },
       (error: unknown) => toast.error(`Could not read your comments: ${errorMessage(error)}`),
     );
+    // Not on `headSha`: the head is taken when the dialog opens, and a later one closes it (above).
   }, [open, rpc, sessionId]);
 
   const byId = new Map(threads.map((thread) => [thread.id, thread]));
@@ -102,7 +118,8 @@ export function SubmitReviewDialog({
         const text = approvedBody(id);
         return text === undefined ? [] : [{ reviewThreadId: id, body: text }];
       });
-      const result = await rpc.call("submitReview", { sessionId, event, body, headSha, items });
+      if (approvedHead === null) return;
+      const result = await rpc.call("submitReview", { sessionId, event, body, headSha: approvedHead, items });
       toast.success(`Review submitted to pull request #${pullNumber}${result.posted === 0 ? "" : ` with ${result.posted} comment${result.posted === 1 ? "" : "s"}`}.`, {
         ...(result.url === null ? {} : { action: { label: "Open on GitHub", onClick: () => navigate.openUrl(result.url!) } }),
       });
