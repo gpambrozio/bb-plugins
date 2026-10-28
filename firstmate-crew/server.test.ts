@@ -173,7 +173,7 @@ describe("server wiring", () => {
       sdk.stub("threads.get", () => makeThreadResponse({ id: "thr_mate", status: "idle" }));
       sdk.stub("threads.list", () => []);
       sdk.stub("threads.events.list", events);
-      sdk.stub("threads.context", () => ({ usage: { usedTokens: 900_000, estimated: false } }));
+      sdk.stub("threads.context", () => ({ usage: { usedTokens: 900_000, estimated: false, modelContextWindow: 1_000_000 } }));
       sdk.stub("threads.interactions.list", () => []);
       sdk.stub("threads.compact", () => ({ ok: true }));
       return loaded;

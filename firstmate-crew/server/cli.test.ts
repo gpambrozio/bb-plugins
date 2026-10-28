@@ -9,7 +9,7 @@ import { MESSAGE_MAX_BYTES, RELAY_PREFIX, firstmateCli } from "./cli";
 import type { MateDeps } from "./mate";
 import { defaultSettings, type FirstmateSettings } from "./settings";
 import { TEMPLATES, readTemplate } from "./templates";
-import { fakeProjects, fakeThreads, memoryStore } from "./testing/fakes";
+import { fakeLog, fakeProjects, fakeThreads, memoryStore } from "./testing/fakes";
 
 const tempDirs: string[] = [];
 afterEach(async () => {
@@ -29,7 +29,7 @@ async function setup(overrides: Partial<FirstmateSettings> = {}) {
     { id: "prj_app", name: "App", path: "/work/app" },
     { id: "prj_site", name: "Site", path: "/work/site" },
   ]);
-  const deps: MateDeps = { threads, projects, store, settings: async () => settings };
+  const deps: MateDeps = { threads, projects, store, settings: async () => settings, log: fakeLog() };
   const mate = threads.add({ id: "thr_mate", title: "First mate" });
   await store.setMateThreadId(mate.id);
   const cli = firstmateCli(deps);

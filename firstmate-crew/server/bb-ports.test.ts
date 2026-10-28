@@ -84,6 +84,23 @@ describe("bbThreads.spawn", () => {
   });
 });
 
+describe("bbThreads.send", () => {
+  it("asks bb to compact first, queued as queue-if-active, for compact-first, and passes other modes as they are", async () => {
+    const { sdk, harness } = createFakeSdk({ pluginId: "firstmate-crew", overrides: { threads: { send: () => ({ delivery: "sent" }) } } });
+    const threads = bbThreads(sdk);
+    await threads.send("thr_1", "hi", "compact-first");
+    await threads.send("thr_1", "hi", "steer");
+    const sent = harness.callsTo("threads.send").map(([args]) => {
+      const { mode, compactFirst } = args as { mode: string; compactFirst?: boolean };
+      return { mode, compactFirst };
+    });
+    expect(sent).toEqual([
+      { mode: "queue-if-active", compactFirst: true },
+      { mode: "steer", compactFirst: undefined },
+    ]);
+  });
+});
+
 describe("bbThreads.workspacePath", () => {
   function sdkWithEnvironment(environment: { hostId: string; path: string | null }) {
     return createFakeSdk({
@@ -242,9 +259,16 @@ describe("bbThreads, autocompact's reads", () => {
   it("reads context usage, and none when bb has no figure", async () => {
     const { sdk, harness } = fakeSdk();
     harness.stub("threads.context", () => ({ usage: { usedTokens: 250_000, estimated: true, modelContextWindow: 1_000_000 } }));
-    expect(await bbThreads(sdk).contextUsage("thr_1")).toEqual({ usedTokens: 250_000, estimated: true });
+    expect(await bbThreads(sdk).contextUsage("thr_1")).toEqual({ usedTokens: 250_000, estimated: true, cacheExpiresAt: null });
 
     harness.stub("threads.context", () => ({ usage: null }));
     expect(await bbThreads(sdk).contextUsage("thr_1")).toBeNull();
+  });
+
+  it("reads when bb says the prompt cache expires, as epoch milliseconds", async () => {
+    const { sdk, harness } = fakeSdk();
+    const usage = { usedTokens: 250_000, estimated: false, modelContextWindow: 1_000_000, compactionOfferAt: "2026-10-28T12:00:00.000Z" };
+    harness.stub("threads.context", () => ({ usage }));
+    expect((await bbThreads(sdk).contextUsage("thr_1"))?.cacheExpiresAt).toBe(Date.UTC(2026, 9, 28, 12));
   });
 });

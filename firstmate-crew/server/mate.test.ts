@@ -21,7 +21,7 @@ import {
 } from "./mate";
 import { defaultSettings, type FirstmateSettings } from "./settings";
 import { TEMPLATES, message } from "./templates";
-import { fakeProjects, fakeThreads, memoryStore } from "./testing/fakes";
+import { fakeLog, fakeProjects, fakeThreads, memoryStore } from "./testing/fakes";
 
 const tempDirs: string[] = [];
 afterEach(async () => {
@@ -50,7 +50,7 @@ async function setup(options: { projects?: { id: string; path: string }[] } = {}
   const projects = fakeProjects(options.projects?.map((project) => ({ ...project, path: project.path === "<home>" ? home : project.path })));
   const store = memoryStore();
   const settings: FirstmateSettings = { ...defaultSettings(), homeDirectory: home };
-  const deps: MateDeps = { threads, projects, store, settings: async () => settings };
+  const deps: MateDeps = { threads, projects, store, settings: async () => settings, log: fakeLog() };
   return { home, threads, projects, store, deps };
 }
 

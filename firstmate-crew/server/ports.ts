@@ -46,6 +46,12 @@ export interface ContextUsage {
   usedTokens: number;
   /** bb marks the figure as an estimate rather than the provider's own count. */
   estimated: boolean;
+  /**
+   * When the provider's prompt cache for the conversation expires, in epoch milliseconds, as bb works it
+   * out (bb 0.47's `compactionOfferAt`). Null when bb does not say: a provider that reports no cache
+   * lifetime, a context under bb's own 100,000-token floor, or bb's `compactExpiredCache` experiment off.
+   */
+  cacheExpiresAt: number | null;
 }
 
 /** Where a thread's work is, for telling the first mate which thread a request comes from. */
@@ -61,7 +67,11 @@ export interface ThreadOrigin {
  * can steer, queues otherwise), `steer` for the captain's note to a crewmate, `queue-if-active` for
  * watch output. None of them interrupts.
  */
-export type SendMode = "auto" | "steer" | "queue-if-active";
+/**
+ * How a message joins the thread's work. `compact-first` is bb 0.47's `compactFirst`: bb compacts the
+ * idle thread and then delivers the message, queued as `queue-if-active` (`server/compact-first.ts`).
+ */
+export type SendMode = "auto" | "steer" | "queue-if-active" | "compact-first";
 
 /** Where a spawned thread works: a new worktree of its project, another thread's environment, or a plain directory. */
 export type SpawnEnvironment = { kind: "worktree" } | { kind: "reuse"; environmentId: string } | { kind: "path"; path: string };

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { autoCompactRules, defaultSettings } from "./settings";
 import { createDeliver } from "./watch-delivery";
 import { fakeLog, fakeThreads, memoryStore } from "./testing/fakes";
 import type { OutgoingNote } from "./watches";
@@ -25,11 +26,12 @@ afterEach(async () => {
   await rm(home, { recursive: true, force: true });
 });
 
-function setup() {
+function setup(settings = defaultSettings()) {
   const threads = fakeThreads();
   const store = memoryStore();
   const log = fakeLog();
-  return { threads, store, log, deliver: createDeliver({ threads, store, home, log, now: () => AT }) };
+  const rules = async () => autoCompactRules(settings);
+  return { threads, store, log, deliver: createDeliver({ threads, store, home, log, rules, now: () => AT }) };
 }
 
 describe("createDeliver", () => {
@@ -65,6 +67,17 @@ describe("createDeliver", () => {
       ],
     ]);
     await expect(readFile(join(home, path), "utf8")).resolves.toBe("watch output");
+  });
+
+  it("has bb compact a first mate that autocompact would compact now before the note", async () => {
+    const { threads, store, deliver } = setup({ ...defaultSettings(), mateAutoCompact: true });
+    const mate = threads.add({ status: "idle" });
+    await store.setMateThreadId(mate.id);
+    threads.runTurn(mate.id, AT.getTime() - 120 * 60_000);
+    threads.setUsage(mate.id, { usedTokens: 500_000, estimated: false, cacheExpiresAt: null });
+
+    await expect(deliver(NOTE)).resolves.toBe("sent");
+    expect(threads.callsTo("sendShortened").map(([, , mode]) => mode)).toEqual(["compact-first"]);
   });
 
   it("sends the whole note as it is, and logs why, when it cannot be saved", async () => {

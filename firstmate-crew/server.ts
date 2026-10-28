@@ -81,6 +81,7 @@ export default async function plugin(bb: BbPluginApi) {
     },
     store,
     settings: () => settings.get(),
+    log: bb.log,
   };
 
   /** Crewmates' status lines, kept for the plugin's lifetime so the board's polls stay cheap. */
@@ -128,6 +129,7 @@ export default async function plugin(bb: BbPluginApi) {
         store,
         home,
         log: bb.log,
+        rules: async () => autoCompactRules(await settings.get()),
       }),
       root: home,
       stateFile: join(home, STATE_DIR, "watches.json"),

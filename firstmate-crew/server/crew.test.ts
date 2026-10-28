@@ -60,6 +60,17 @@ describe("crew actions", () => {
     expect(threads.sent).toEqual([{ id: "thr_w", text: "use the other API", mode: "steer" }]);
   });
 
+  it("compacts an idle crewmate first when autocompact would compact it now", async () => {
+    const { deps, threads, settings } = await setup();
+    settings.crewAutoCompact = true;
+    threads.set("thr_w", { status: "idle" });
+    threads.runTurn("thr_w", Date.now() - 120 * 60_000);
+    threads.setUsage("thr_w", { usedTokens: 500_000, estimated: false, cacheExpiresAt: null });
+
+    await steerCrew(deps, "thr_w", "use the other API");
+    expect(threads.sent).toEqual([{ id: "thr_w", text: "use the other API", mode: "compact-first" }]);
+  });
+
   it("interrupts by stopping the thread", async () => {
     const { deps, threads } = await setup();
     threads.setStatus("thr_w", "active");

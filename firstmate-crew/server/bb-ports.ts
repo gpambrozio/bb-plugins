@@ -116,6 +116,11 @@ function optional(value: string | undefined): string | undefined {
   return value === undefined || value === "" ? undefined : value;
 }
 
+/** bb's send fields for a mode: `compact-first` is bb's `compactFirst`, which queues as `queue-if-active`. */
+function sendModeOf(mode: SendMode): { mode: "auto" | "steer" | "queue-if-active"; compactFirst?: true } {
+  return mode === "compact-first" ? { mode: "queue-if-active", compactFirst: true } : { mode };
+}
+
 export function bbThreads(sdk: PluginBbSdk): ThreadsPort {
   return {
     async get(id, signal) {
@@ -177,7 +182,7 @@ export function bbThreads(sdk: PluginBbSdk): ThreadsPort {
       return toInfo(row);
     },
     async send(id, text, mode: SendMode) {
-      const result = await sdk.threads.send({ threadId: id, mode, input: [{ type: "text", text, mentions: [] }] });
+      const result = await sdk.threads.send({ threadId: id, ...sendModeOf(mode), input: [{ type: "text", text, mentions: [] }] });
       return result.delivery;
     },
     async sendShortened(id, message, mode: SendMode) {
@@ -185,7 +190,7 @@ export function bbThreads(sdk: PluginBbSdk): ThreadsPort {
       const shown = `${message.shown} · ${message.file.path}`;
       const result = await sdk.threads.send({
         threadId: id,
-        mode,
+        ...sendModeOf(mode),
         input: [
           {
             type: "text",
@@ -251,7 +256,9 @@ export function bbThreads(sdk: PluginBbSdk): ThreadsPort {
     },
     async contextUsage(id, signal) {
       const { usage } = await sdk.threads.context({ threadId: id, signal });
-      return usage === null ? null : { usedTokens: usage.usedTokens, estimated: usage.estimated };
+      if (usage === null) return null;
+      const expires = usage.compactionOfferAt === undefined ? Number.NaN : Date.parse(usage.compactionOfferAt);
+      return { usedTokens: usage.usedTokens, estimated: usage.estimated, cacheExpiresAt: Number.isFinite(expires) ? expires : null };
     },
   };
 }
