@@ -46,7 +46,8 @@ It is a bb take on [diffity](https://github.com/nilbuild/diffity)'s review loop,
   commented lines; **Apply suggestion** writes it into the file (in a view of the working copy) and
   resolves the thread.
 - **Revert…** in a file's header (uncommitted view) puts back the whole file, or only the changes you
-  pick, as last committed. It asks first.
+  pick, as last committed. It asks first, and it changes the file only if it is still the version you
+  were looking at; symlinks and submodules are left to git.
 - **Send to agent.** Pick open threads, add an overall note, and send them to the thread under review,
   queued behind its current turn if it is in one. The agent answers each thread with
   `bb diff-review reply`, `resolve` or `dismiss`; its answers appear in the tab as they land. A thread

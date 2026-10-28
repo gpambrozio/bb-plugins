@@ -30,7 +30,7 @@ vi.mock("@pierre/diffs/react", async () => {
     renderAnnotation(annotation: unknown): ReactNode;
     options: { onGutterUtilityClick(range: { start: number; end: number; side: string }): void };
   }) => (
-    <div data-testid="file" data-name={props.file.name}>
+    <div data-testid="file" data-name={props.file.name} data-contents={props.file.contents}>
       <button type="button" onClick={() => props.options.onGutterUtilityClick({ start: 1, end: 1, side: "additions" })}>
         file gutter +
       </button>
@@ -350,6 +350,25 @@ describe("the Files view", () => {
         fileRevision: "sha-1",
       }),
     );
+  });
+
+  it("reads the open file again on Reload and on a workspace change, keeping its draft", async () => {
+    let contents = "export const x = 1;\n";
+    const slot = render({ getReview: () => FILES, readFile: () => ({ path: "src/util.ts", content: contents, reason: null, revision: `sha-${contents.length}-${contents}` }) });
+    fireEvent.click(await screen.findByRole("button", { name: /src\/util\.ts.*1 comment thread/ }));
+    await waitFor(() => expect(screen.getByTestId("file").getAttribute("data-contents")).toBe("export const x = 1;\n"));
+    fireEvent.click(screen.getByText("file gutter +"));
+    fireEvent.change(screen.getByPlaceholderText(/^Leave a comment\. Markdown works/), { target: { value: "Half written" } });
+
+    contents = "export const x = 2;\n";
+    fireEvent.click(screen.getByRole("button", { name: "Reload the diff" }));
+    await waitFor(() => expect(screen.getByTestId("file").getAttribute("data-contents")).toBe("export const x = 2;\n"));
+    expect((screen.getByPlaceholderText(/^Leave a comment\. Markdown works/) as HTMLTextAreaElement).value).toBe("Half written");
+
+    contents = "export const x = 3;\n";
+    await slot.behavior.emitRealtime("environment:env_1", { kind: "diff" });
+    await waitFor(() => expect(screen.getByTestId("file").getAttribute("data-contents")).toBe("export const x = 3;\n"));
+    expect(slot.inspection.rpcCalls.filter((call) => call.method === "readFile")).toHaveLength(3);
   });
 
   it("searches the workspace for a file", async () => {

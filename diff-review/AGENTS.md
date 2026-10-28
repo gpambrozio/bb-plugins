@@ -17,11 +17,12 @@ specific to `diff-review`.
 | File | What it owns |
 | --- | --- |
 | `server.ts` | Wires the settings, the database and its migrations, the RPCs (through `refusing`), the CLI and the `thread.idle` / `thread.failed` listeners. |
-| `host.ts`, `host/git.ts` | The host entry: git on the machine that holds a workspace, for the staged, unstaged and range views (diffity's ref grammar and merged fork point). Reads only. |
+| `host.ts`, `host/git.ts` | The host entry: git on the machine that holds a workspace, for the staged, unstaged and range views (diffity's ref grammar and merged fork point) and the index's fingerprint. Reads only. |
+| `host/revert.ts` | Revert, on the workspace's machine: bb's Git plugin revision recomputed and checked, symlinks and submodules refused, the last check synchronous before the rename or removal. |
 | `shared/host-contract.ts`, `shared/git-spec.ts` | The host entry's contract (imports the SDK root: never from the app); the views it serves and the revision grammar (no SDK import). |
 | `server/git.ts` | bb's Git plugin (`bb--git`) through `bb.sdk.plugins.callRpc`: status, files, patches by revision, Viewed marks; a copy of the shapes read, and the "Git plugin is off" message. |
 | `server/host-git.ts` | The server's client of the host entry. |
-| `server/edits.ts` | Applying a suggestion and reverting a file or hunks: file reads and writes through bb, checked against what the tab showed (`expectedSha256`). |
+| `server/edits.ts` | Applying a suggestion (bb's file read and `expectedSha256` write, its lines checked against what the tab showed) and handing a revert to the host entry. |
 | `server/refusal.ts` | `ReviewError`s answered as `experimental_PluginRpcRefusal`, so a caller's mistake is not logged as a crash. |
 | `shared/routes.ts` | The Reviews page's addresses (`<thread>/<view>[/<file>]`), and `bb diff-review open`'s realtime request. |
 | `shared/suggestion.ts`, `shared/revert.ts` | Suggestion blocks (diffity's) and line replacement; reverting hunks from a file's patch. |
@@ -47,7 +48,6 @@ specific to `diff-review`.
 | `app/files-view.tsx` | The "Any file" view: workspace search, Pierre's `File` with the same annotations. |
 | `app/suggestion-block.tsx`, `app/revert-dialog.tsx`, `app/range-dialog.tsx` | A suggested change and Apply; Revert…; the range picker. |
 | `app/open-file.ts`, `app/palette.ts` | Which version Open previews; the colour-blind colours. |
-| `app/git-status.ts` | A zod-free client view of the Git plugin's `workspaceStatus`, watched to reload on changes outside a turn. |
 | `app/reviews.ts`, `app/reviews-page.tsx`, `app/thread-info.tsx`, `app/open-overlay.tsx` | The Reviews page (sidebar, title, badge), the thread Info row, and the overlay that answers `bb diff-review open`. |
 | `app/thread-card.tsx`, `app/comment-composer.tsx` | A thread and its comments; the box comments are written in. |
 | `app/view-state.tsx`, `app/scroll-memory.ts` | What the tab keeps per thread and view (unsent comments, folds, scroll place as file + offset) and its saving; restoring the scroll place while patches load. |
@@ -195,17 +195,28 @@ unchanged, so the plugin sets `theme` and `themeType` from `experimental_useCode
 **Which machine.** Nothing is server-Mac-only: the diffs come from bb's Git plugin, the staged,
 unstaged and range views from the plugin's own host entry (`host.ts`, git in the checkout), files
 from `bb.sdk.files.*`, all on whichever machine holds the workspace, remote hosts included. Raw git a
-new feature needs goes in the host entry, which only reads; writes (a suggestion, a revert) go
-through `bb.sdk.files.write` with `expectedSha256`, never through git.
+new feature needs goes in the host entry, which reads; a suggestion is written through
+`bb.sdk.files.write` with `expectedSha256`. **Revert is the host entry's** (`host/revert.ts`): bb's file
+reads and writes follow symlinks, so a revert through them wrote the old link text into the link's
+target, and `expectedSha256` taken after the reads guarded only the moment after them. The host
+recomputes the Git plugin's revision (`oldMode:oldBlob:newMode:newBlob`, the working copy hashed as
+git hashes a blob), refuses unless it is the tab's, refuses symlinks and submodules, and checks the
+blob again synchronously, with no await, just before the rename or the removal. A save landing in
+that same instant from another process is the one change it can still miss.
 
 **Diffs come from bb's Git plugin.** bb 0.48 moved every git read out of `bb.sdk.environments` into
 the bundled plugin `bb--git` (`server/git.ts` calls `workspaceStatus`, `files`, `patches`, `viewed`,
 `markViewed`, `clearViewed`). Patches are keyed by the revision `files` returned, so a load asks for
 the version it listed; the app sends `{ path, revision }`. A failed call asks `plugins.list` whether
 the plugin is off and says so. The contract is not published: the plugin keeps its own non-strict
-copy of the shapes it reads. The tab also watches `workspaceStatus` through a zod-free client view
-(`app/git-status.ts`, tag `status:<env>`) to reload on changes made outside a turn; that contract is
-internal and unversioned, so a failure there only loses the extra reloads.
+copy of the shapes it reads.
+
+**Changes outside a turn reload by content, not by counts.** bb's status lists paths, letters and
+line counts, so a same-size edit leaves it equal. The server subscribes to bb's `environment:changed`
+for the workspaces its tabs loaded (`watchChanges`), coalesces the events per workspace (400 ms, at
+most 2 s), and compares the same content-sensitive state a turn's end does (every uncommitted patch's
+hash), plus the index's fingerprint from the host entry when a staged or unstaged view is open; only
+a change sends `diff`. The check reads only, so it cannot set off another.
 
 **Viewed marks are bb's.** They live in the Git plugin per environment, view and revision, shared with
 bb's diff panel; a mark at an older revision is "changed since viewed". The host views and Any file

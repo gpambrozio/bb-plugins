@@ -23,7 +23,8 @@ Needs bb 0.48 or newer.
 - **Go to** a file, an open comment or a view, by typing part of its name.
 - **Suggested changes.** A comment can hold a suggestion block (the **Suggest a change** button starts
   one with the commented lines); **Apply suggestion** writes it into the file and resolves the thread.
-- **Revert** a file's uncommitted change, or only some of its changes, after asking.
+- **Revert** a file's uncommitted change, or only some of its changes, after asking. It changes the
+  file only if it is still the version you were looking at, and leaves symlinks and submodules alone.
 - **Summarize** the change, from the AI review dialog, and **Explain** a file or the lines you
   selected; each answer appears as a comment in the tab.
 - **Open** shows a file in bb's own viewer, at the version the view shows.

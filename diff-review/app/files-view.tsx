@@ -27,7 +27,8 @@ import { draftKeys, useDraft } from "./view-state";
 
 type Annotation = { kind: "threads"; threads: { thread: ReviewThread; placement: Placement }[] } | { kind: "draft"; range: LineRange };
 
-export function FilesView({ threadId, threads }: { threadId: string; threads: readonly ReviewThread[] }) {
+/** `refreshKey` changes with every load of the view (Reload, a workspace change): the open file is read again. */
+export function FilesView({ threadId, threads, refreshKey }: { threadId: string; threads: readonly ReviewThread[]; refreshKey: number }) {
   const rpc = useRpc<RpcContract>();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<{ paths: string[]; truncated: boolean } | null>(null);
@@ -79,7 +80,7 @@ export function FilesView({ threadId, threads }: { threadId: string; threads: re
           {results === null && commented.length === 0 ? <li className="px-2 py-1 text-xs text-muted-foreground">Search for a file to comment on it.</li> : null}
         </ul>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto">{open === null ? null : <OpenFile key={open} threadId={threadId} path={open} threads={threads.filter((thread) => thread.filePath === open)} />}</div>
+      <div className="min-h-0 flex-1 overflow-y-auto">{open === null ? null : <OpenFile key={open} threadId={threadId} path={open} refreshKey={refreshKey} threads={threads.filter((thread) => thread.filePath === open)} />}</div>
     </div>
   );
 }
@@ -100,7 +101,7 @@ function FileRow({ path, detail, current, onOpen }: { path: string; detail?: str
   );
 }
 
-function OpenFile({ threadId, path, threads }: { threadId: string; path: string; threads: readonly ReviewThread[] }) {
+function OpenFile({ threadId, path, threads, refreshKey }: { threadId: string; path: string; threads: readonly ReviewThread[]; refreshKey: number }) {
   const rpc = useRpc<RpcContract>();
   const actions = useActions();
   const codeTheme = experimental_useCodeTheme();
@@ -113,6 +114,8 @@ function OpenFile({ threadId, path, threads }: { threadId: string; path: string;
   const fileDraft = useDraft(draftKeys.file(path));
   const [selected, setSelected] = useState<SelectedLineRange | null>(null);
 
+  // Read on open and again on every load of the view; the text on screen stays until the new read
+  // lands, and drafts and the selection stay as they are.
   useEffect(() => {
     let live = true;
     rpc.call("readFile", { threadId, path }).then(
@@ -122,7 +125,7 @@ function OpenFile({ threadId, path, threads }: { threadId: string; path: string;
     return () => {
       live = false;
     };
-  }, [rpc, threadId, path]);
+  }, [rpc, threadId, path, refreshKey]);
 
   const content = file !== null && "content" in file ? file.content : null;
   const lines = useMemo(() => (content === null ? undefined : contentLines(content)), [content]);

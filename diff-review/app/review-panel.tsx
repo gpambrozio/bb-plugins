@@ -588,7 +588,7 @@ function ReadyPanel({
               ))}
             </section>
           ) : null}
-          <FilesView threadId={threadId} threads={view.threads} />
+          <FilesView threadId={threadId} threads={view.threads} refreshKey={loadId} />
         </>
       ) : (
       <div ref={setScrollRoot} className="min-h-0 flex-1 overflow-y-auto">
