@@ -94,6 +94,14 @@ It is a bb take on [diffity](https://github.com/nilbuild/diffity)'s review loop,
   **Info** tab says how many review comments its workspace has open.
 - **From the command line**, `bb diff-review open [file] [--view …]` opens a thread's review on a
   view, at a file, in the bb window that shows the thread, and prints the page's address.
+- **GitHub pull requests.** *Pull request #N* in the view picker (when the branch has one), *A pull
+  request…*, or `bb diff-review open <pull request address>` reviews a pull request here: its changes
+  are fetched into the workspace's repository (into refs of the plugin's own, never switching your
+  checkout), its review threads from GitHub sit on their lines, and a reply, Resolve or Reopen on one
+  goes to GitHub. **Submit review…** posts your own comments as one review with the verdict you pick;
+  a comment that cannot be posted says why. *A new thread…* in Send to agent fixes the pull request in
+  a new worktree that checks it out. This needs the GitHub CLI (`gh`), signed in, on the machine
+  running bb; it posts as that account, and only from Submit.
 
 Comments are stored by the plugin, per workspace and view, on the bb server; they stay when the tab or
 bb closes. The diffs come from bb's Git plugin (turned on by default), and the staged, unstaged and
@@ -103,7 +111,6 @@ range views from git itself, run on the machine that holds the workspace.
 
 - It does not comment inside bb's own diff panel (Mod+D): bb has no hook for that, so the Review tab
   draws its own diff with the same renderer.
-- No GitHub pull request review yet ([#64](https://github.com/gpambrozio/bb-plugins/issues/64)).
 - Viewed marks cover bb's own views; the staged, unstaged, range and Any file views have none.
 - The agent may edit files the way it always can in its thread: Diff Review adds no permission of its
   own. Its AI runs use *Approve for me* (or *Accept edits*, if you set it).

@@ -705,6 +705,24 @@ describe("reviewing a GitHub pull request", () => {
     expect(github.requests.some((request) => request.query.startsWith("mutation"))).toBe(false);
   });
 
+  it("fixes a pull request's comments in a new worktree that checks it out", async () => {
+    const github = fakeGitHub();
+    const { view, rpc, harness } = await setup({ gh: github.gh });
+    const { sessionId, threads } = await view(PULL);
+    const execution = { providerId: "claude-code", model: "big", reasoningLevel: "high" };
+    await rpc("fixInNewThread", { sessionId, threadId: THREAD, reviewThreadIds: [threads[0]!.id], note: "", execution });
+    const spawn = harness.inspection.sdk.callsTo("threads.spawn")[0]![0] as Record<string, unknown>;
+    expect(spawn).toMatchObject({ title: "PR #7 fixes: 1 comment", environment: { type: "host", hostId: "host_1", workspace: { type: "managed-worktree", baseBranch: { kind: "default" } } } });
+    expect(spawn.prompt).toContain("gh pr checkout 7 --repo o/r");
+  });
+
+  it("opens a pull request's review from the command line by its address", async () => {
+    const { harness } = await setup({ gh: fakeGitHub().gh });
+    const out = await harness.behavior.runCli(["open", "https://github.com/o/r/pull/7"], { threadId: THREAD });
+    expect(out.stdout).toContain("pull request o/r#7");
+    expect(harness.inspection.realtimeSignals.at(-1)).toEqual({ channel: "open-review", payload: { threadId: THREAD, target: PULL, file: null } });
+  });
+
   it("offers the review of the branch's pull request, from bb's GitHub PR Status", async () => {
     const { view } = await setup({ branchPull: { url: "https://github.com/o/r/pull/7", title: "Add b" } });
     expect((await view()).branchPullRequest).toEqual({ owner: "o", repo: "r", number: 7, title: "Add b" });

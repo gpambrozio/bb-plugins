@@ -235,11 +235,16 @@ export class RunService {
     const clears = this.clearCount(session.id);
     const chosen = this.openThreads(session.id, input.reviewThreadIds);
     const target = targetFromKey(session.targetKey);
-    const prompt = fixPrompt({ target, threads: chosen, note: input.note });
-    const title = `Review fixes: ${chosen.length} comment${chosen.length === 1 ? "" : "s"}`;
+    // A pull request is fixed in a worktree of its own that checks it out: the reviewed workspace
+    // is not the pull request's branch, and is never switched (decision 6).
+    const pull = target.kind === "pr" ? target : null;
+    const checkout = pull === null ? "" : `First check out the pull request in this worktree: \`gh pr checkout ${pull.number} --repo ${pull.owner}/${pull.repo}\`. Make the fixes on its branch, commit them, and push them when the user asks.\n\n`;
+    const prompt = `${checkout}${fixPrompt({ target, threads: chosen, note: input.note })}`;
+    const title = pull === null ? `Review fixes: ${chosen.length} comment${chosen.length === 1 ? "" : "s"}` : `PR #${pull.number} fixes: ${chosen.length} comment${chosen.length === 1 ? "" : "s"}`;
     const run = await this.spawn({
       sessionId: session.id,
       environmentId: session.environmentId,
+      newWorktree: pull !== null,
       parentThreadId: input.threadId,
       kind: "fix",
       reviewThreadId: null,
@@ -562,6 +567,8 @@ export class RunService {
     reviewThreadId: string | null;
     focus: string | null;
     execution: Execution | (() => Promise<Execution>);
+    /** Start the thread in a new managed worktree of the project instead of the reviewed workspace. */
+    newWorktree?: boolean;
     /** Leave the reasoning level to the provider's default (a question to the reviewer has no picker). */
     reasoningFromProvider?: boolean;
     title: string;
@@ -622,7 +629,10 @@ export class RunService {
         projectId: environment.projectId,
         title: input.title,
         prompt: input.prompt,
-        environment: { type: "reuse", environmentId: input.environmentId },
+        environment:
+          input.newWorktree === true
+            ? { type: "host", hostId: environment.hostId, workspace: { type: "managed-worktree", baseBranch: { kind: "default" } } }
+            : { type: "reuse", environmentId: input.environmentId },
         providerId: execution.providerId,
         ...(execution.model === "" ? {} : { model: execution.model }),
         ...(input.reasoningFromProvider === true ? {} : { reasoningLevel: execution.reasoningLevel }),

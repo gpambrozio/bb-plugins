@@ -12,6 +12,7 @@ import { PluginCliError, cliCommand, defineCli, type PluginCliRegistration } fro
 
 import { describeLocation, describeTarget, GENERAL_PATH, type ReviewThread, type TargetRequest } from "../shared/types";
 import { parseRange } from "../shared/git-spec";
+import { parsePullUrl } from "../shared/github";
 import { ReviewError, type AgentAction, type ReviewService } from "./review";
 import type { RunService } from "./runs";
 
@@ -216,9 +217,9 @@ export function viewRequest(view: string | undefined, base: string | undefined, 
 
 function openCommand(service: ReviewService) {
   return cliCommand({
-    summary: "Open a thread's review in bb, on a view and at a file",
+    summary: "Open a thread's review in bb, on a view and at a file, or a GitHub pull request's review",
     description:
-      "Opens the review of this thread's workspace (or --thread's) on the Reviews page, in the bb window that shows the thread, and prints the page's address. The view is the uncommitted changes unless --view says otherwise: staged, unstaged, branch (committed since --base, the workspace's base branch by default), all (everything since --base), commit with --commit <sha>, or range with --range a..b or a...b. A <file> goes to that file.",
+      "Opens the review of this thread's workspace (or --thread's) on the Reviews page, in the bb window that shows the thread, and prints the page's address. The view is the uncommitted changes unless --view says otherwise: staged, unstaged, branch (committed since --base, the workspace's base branch by default), all (everything since --base), commit with --commit <sha>, or range with --range a..b or a...b. A <file> goes to that file. A GitHub pull request's address in place of the file opens its review: fetched into this workspace's repository without switching the checkout, with its review threads from GitHub.",
     positionals: [{ name: "file", description: "A file of the view to go to, by its path in the diff" }],
     options: {
       view: { type: "enum", values: ["uncommitted", "staged", "unstaged", "branch", "all", "commit", "range"], description: "Which changes to review" },
@@ -231,8 +232,13 @@ function openCommand(service: ReviewService) {
       guarded(async () => {
         const threadId = input.options.thread ?? ctx.threadId;
         if (threadId === undefined) throw new PluginCliError("Run this inside a bb thread, or give --thread.", { code: "not_in_thread" });
-        const request = viewRequest(input.options.view, input.options.base, input.options.commit, input.options.range);
-        const file = input.positionals.file ?? null;
+        // A pull request's address in place of a file opens its review.
+        const pull = input.positionals.file === undefined ? null : parsePullUrl(input.positionals.file);
+        if (pull !== null && (input.options.view !== undefined || input.options.range !== undefined || input.options.commit !== undefined)) {
+          throw new PluginCliError("A pull request's address is a view of its own; leave out --view, --range and --commit.", { code: "unexpected_argument" });
+        }
+        const request = pull === null ? viewRequest(input.options.view, input.options.base, input.options.commit, input.options.range) : { kind: "pr" as const, ...pull };
+        const file = pull === null ? (input.positionals.file ?? null) : null;
         const opened = await service.requestOpen(threadId, request, file);
         const lines = [`Opening the review of ${describeTarget(opened.target)} for ${threadId} in the bb window that shows that thread.`];
         if (opened.inDiff === false) lines.push(`${file} is not in that view.`);

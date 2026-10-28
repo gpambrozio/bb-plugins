@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ReviewThread, ReviewView, ViewState } from "../shared/types";
 import { ANNOTATION_FIT } from "./annotation-fit";
+import { PullDialog } from "./pull-dialog";
 import { RangeDialog } from "./range-dialog";
 import { fromPicker, pickerValue, ReviewPanel } from "./review-panel";
 import { dispatchReviewCommand, forgetReviewCommands } from "./commands";
@@ -703,6 +704,59 @@ describe("the Files view", () => {
     fireEvent.change(await screen.findByRole("textbox", { name: "Find a file" }), { target: { value: "a.ts" } });
     expect(await screen.findByRole("button", { name: "lib/a.ts" })).toBeTruthy();
     expect(slot.inspection.rpcCalls.find((call) => call.method === "searchFiles")!.input).toEqual({ threadId: "thr_1", query: "a.ts" });
+  });
+});
+
+describe("a pull request's view", () => {
+  const HEAD = "a".repeat(40);
+  const PR_VIEW = {
+    ...VIEW,
+    target: { kind: "pr" as const, owner: "o", repo: "r", number: 7 },
+    viewable: false,
+    pullRequest: { number: 7, title: "Add b", url: "https://github.com/o/r/pull/7", state: "OPEN", baseRefName: "main", headRefName: "feature", headSha: HEAD, baseSha: "b".repeat(40), syncedAt: Date.now(), syncError: null },
+    threads: [
+      { ...thread({ id: "aaaaaa000030", body: "Why 3?", startLine: 2, endLine: 2 }), githubThreadId: "PRRT_1", comments: [{ id: "c1", authorType: "github" as const, authorName: "octo", body: "Why 3?", createdAt: 1, editedAt: null }] },
+      thread({ id: "aaaaaa000031", body: "Name it c.", startLine: 2, endLine: 2 }),
+    ],
+  };
+
+  it("shows the pull request, marks GitHub's threads, and submits a review with the verdict", async () => {
+    const opened: string[] = [];
+    const slot = renderSlot(
+      { component: ReviewPanel },
+      { threadId: "thr_1", environment: ENVIRONMENT, params: null },
+      {
+        rpc: {
+          getReview: () => PR_VIEW,
+          reviewPlan: () => ({ lines: [{ reviewThreadId: "aaaaaa000031", path: "src/a.ts", line: 2 }], body: [], blocked: [] }),
+          submitReview: () => ({ url: "https://github.com/o/r/pull/7#review-1", posted: 1, blocked: [] }),
+        },
+        openUrl: (url) => (opened.push(url), true),
+      },
+    );
+    expect(await screen.findByText("#7 Add b")).toBeTruthy();
+    const mirror = screen.getByText("octo").closest("[data-thread-id]") as HTMLElement;
+    expect(within(mirror).getByText("GitHub")).toBeTruthy();
+    expect(within(mirror).queryByRole("button", { name: "Dismiss" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Open on GitHub" }));
+    expect(opened).toEqual(["https://github.com/o/r/pull/7"]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Submit review…" }));
+    expect(await screen.findByRole("checkbox", { name: "Include src/a.ts:2 (new side)" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("radio", { name: "Approve" }));
+    fireEvent.click(screen.getByRole("button", { name: "Submit: Approve" }));
+    await waitFor(() =>
+      expect(slot.inspection.rpcCalls.find((call) => call.method === "submitReview")?.input).toEqual({ sessionId: "ses_1", event: "APPROVE", body: "", headSha: HEAD, reviewThreadIds: ["aaaaaa000031"] }),
+    );
+  });
+
+  it("reads a pull request's address in the dialog", () => {
+    const picked: unknown[] = [];
+    renderPlain(<PullDialog open onOpenChange={() => undefined} onPick={(ref) => picked.push(ref)} />);
+    fireEvent.change(screen.getByRole("textbox", { name: "Pull request" }), { target: { value: "https://github.com/o/r/pull/7/files" } });
+    fireEvent.click(screen.getByRole("button", { name: "Review" }));
+    expect(picked).toEqual([{ owner: "o", repo: "r", number: 7 }]);
+    expect(fromPicker(pickerValue({ kind: "pr", owner: "o", repo: "r", number: 7 }))).toEqual({ kind: "pr", owner: "o", repo: "r", number: 7 });
   });
 });
 

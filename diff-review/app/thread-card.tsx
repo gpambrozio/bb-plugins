@@ -47,7 +47,7 @@ function Comment({ comment }: { comment: ReviewComment }) {
   return (
     <div className="flex flex-col gap-1">
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <Icon name={own ? "UserRound" : "Bot"} className="size-3.5" />
+        <Icon name={own ? "UserRound" : comment.authorType === "github" ? "Github" : "Bot"} className="size-3.5" />
         <span className="font-medium text-foreground">{comment.authorName}</span>
         <span>{ago(comment.createdAt)}</span>
         {comment.editedAt === null ? null : <span>(edited)</span>}
@@ -139,6 +139,11 @@ export function ThreadCard({
         </Badge>
       )}
       {closed ? <Badge variant="outline" className="text-[11px]">{STATUS_LABELS[thread.status]}</Badge> : null}
+      {thread.githubThreadId === null ? null : (
+        <Badge variant="outline" className="text-[11px]" title="A review thread on GitHub: replies and resolving go there">
+          GitHub
+        </Badge>
+      )}
       {placement?.state === "moved" ? (
         <span className="text-xs text-muted-foreground">
           Moved from line {thread.startLine}
@@ -221,9 +226,11 @@ export function ThreadCard({
               <Button type="button" variant="ghost" size="sm" onClick={() => void actions.setStatus(thread.id, "resolved").catch(() => undefined)}>
                 Resolve
               </Button>
-              <Button type="button" variant="ghost" size="sm" onClick={dismiss}>
-                Dismiss
-              </Button>
+              {thread.githubThreadId === null ? (
+                <Button type="button" variant="ghost" size="sm" onClick={dismiss}>
+                  Dismiss
+                </Button>
+              ) : null}
             </>
           )}
           <span className="ml-auto font-mono text-[11px] text-muted-foreground">{thread.id}</span>

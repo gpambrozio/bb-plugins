@@ -22,6 +22,9 @@ Diff Review follows [diffity](https://github.com/nilbuild/diffity) (read at comm
 - `shared/suggestion.ts` adapts `src/features/suggestions/suggestion.ts`, and `app/suggestion-block.tsx`
   follows `suggestion-block.tsx` (suggested changes).
 - `app/palette.ts` takes the colour-blind add/remove colours of `src/styles/app.css`.
+- `server/github.ts` takes its GraphQL queries and mutations from `src-tauri/src/github/graphql.rs`, and
+  `server/pull-requests.ts` follows `build_review_plan` and the thread mapping of
+  `src-tauri/src/github/review.rs` and `service.rs` (pull request review).
 - `host/git.ts` follows the ref grammar of `src-tauri/src/core/diff.rs` and the merged-branch fork point
   of `src-tauri/src/core/git.rs` (staged, unstaged and range views).
 

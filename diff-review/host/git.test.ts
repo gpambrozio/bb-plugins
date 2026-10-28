@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import entry from "../host";
 import { parseRange } from "../shared/git-spec";
-import { createRunGit, diff, indexState, newFilePatch, parseNameStatus, parseNumstat, rangeCommits, splitPatch, unquote } from "./git";
+import { createRunGit, diff, fetchPull, indexState, newFilePatch, parseNameStatus, parseNumstat, rangeCommits, splitPatch, unquote } from "./git";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -137,6 +137,26 @@ describe("the host's git diffs", () => {
     expect(shown.files.map((file) => file.path)).toEqual(["a.txt", "b.txt"]);
     const hidden = await diff(run, root, { kind: "unstaged" }, true);
     expect(hidden.files.map((file) => [file.path, file.patch !== null])).toEqual([["b.txt", true]]);
+  });
+
+  it("fetches a pull request into the plugin's own refs, leaving branches and the checkout alone", async () => {
+    const upstream = repo();
+    git(upstream, "checkout", "-q", "-b", "pr");
+    writeFileSync(join(upstream, "c.txt"), "see\n");
+    git(upstream, "add", ".");
+    git(upstream, "commit", "-q", "-m", "pr");
+    git(upstream, "update-ref", "refs/pull/3/head", "pr");
+    git(upstream, "checkout", "-q", "main");
+    const local = repo();
+    writeFileSync(join(local, "a.txt"), "local edit\n");
+    const before = git(local, "status", "--porcelain");
+    const fetched = await fetchPull(run, local, upstream, 3, "main");
+    expect(fetched).toEqual({ headSha: git(upstream, "rev-parse", "pr"), baseSha: git(upstream, "rev-parse", "main") });
+    expect(git(local, "rev-parse", "refs/diff-review/pull/3/head")).toBe(fetched.headSha);
+    expect(git(local, "branch", "--format=%(refname:short)")).toBe("main");
+    expect(git(local, "status", "--porcelain")).toBe(before);
+    const pulled = await diff(run, local, { kind: "range", from: fetched.baseSha, to: fetched.headSha, symmetric: true }, false);
+    expect(pulled.files.map((file) => file.path)).toEqual(["c.txt"]);
   });
 
   it("refuses unknown revisions", async () => {

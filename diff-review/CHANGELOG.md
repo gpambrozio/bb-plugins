@@ -5,6 +5,25 @@ Notable changes to `diff-review`. The other plugins in this repository version s
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.4.0
+
+### Added
+
+- **Review a GitHub pull request.** Pick *Pull request #N* in the view picker (offered when the
+  workspace's branch has one) or *A pull request…* to paste any pull request's address, or run
+  `bb diff-review open <address>`. Its changes are fetched into the workspace's repository without
+  switching your checkout, and its review threads from GitHub appear on their lines, marked GitHub.
+- **Answer GitHub's threads from the tab.** A reply, Resolve or Reopen on one of them goes to GitHub;
+  **Sync with GitHub** reads them again.
+- **Submit a review.** Your own comments in the view go to GitHub as one review, with the verdict you
+  pick (Comment, Approve or Request changes) and a summary: line comments as review threads, comments
+  on a file or the whole change in the summary. A comment that cannot be posted says why. It posts
+  as the GitHub CLI's account on the machine running bb, and only from that button.
+- **Fix a pull request in a new thread.** In a pull request's view, *A new thread…* in Send to agent
+  starts it in a new worktree that checks out the pull request.
+
+Needs the GitHub CLI (`gh`), signed in, on the machine running bb.
+
 ## 0.3.0
 
 Needs bb 0.48 or newer.
