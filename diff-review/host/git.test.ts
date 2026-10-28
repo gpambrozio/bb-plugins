@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import entry from "../host";
 import { parseRange } from "../shared/git-spec";
-import { createRunGit, diff, newFilePatch, parseNameStatus, parseNumstat, splitPatch } from "./git";
+import { createRunGit, diff, newFilePatch, parseNameStatus, parseNumstat, splitPatch, unquote } from "./git";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -76,6 +76,22 @@ describe("the host's git diffs", () => {
     expect((await diff(run, root, { kind: "range", from: "main", to: "feature", symmetric: false }, false)).files).toEqual([]);
   });
 
+  it("keeps the patch of a file whose name has a space or is not ASCII, and shows an untracked symlink as a link", async () => {
+    const root = repo();
+    writeFileSync(join(root, "a b.txt"), "x\n");
+    writeFileSync(join(root, "é.txt"), "y\n");
+    git(root, "add", ".");
+    const staged = await diff(run, root, { kind: "staged" }, false);
+    expect(staged.files.map((file) => [file.path, file.patch !== null])).toEqual([
+      ["a b.txt", true],
+      ["é.txt", true],
+    ]);
+    symlinkSync("/etc/hosts", join(root, "link"));
+    const link = (await diff(run, root, { kind: "unstaged" }, false)).files.find((file) => file.path === "link")!;
+    expect(link.patch).toContain("new file mode 120000");
+    expect(link.patch).toContain("+/etc/hosts");
+  });
+
   it("refuses unknown revisions", async () => {
     const root = repo();
     await expect(diff(run, root, { kind: "range", from: "nope", to: "HEAD", symmetric: false }, false)).rejects.toThrow("Unknown revision 'nope'");
@@ -108,6 +124,12 @@ describe("reading git's output", () => {
     );
     const patch = "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-a\n+b\ndiff --git a/gone.txt b/gone.txt\ndeleted file mode 100644\n--- a/gone.txt\n+++ /dev/null\n@@ -1 +0,0 @@\n-x\n";
     expect([...splitPatch(patch).keys()]).toEqual(["a.txt", "gone.txt"]);
+  });
+
+  it("unquotes git's C-quoted paths, octal bytes included", () => {
+    expect(unquote('"b/\\303\\251.txt"')).toBe("b/é.txt");
+    expect(unquote('"a\\tb\\"c"')).toBe('a\tb"c');
+    expect(unquote("plain")).toBe("plain");
   });
 
   it("reads a range the way git does", () => {

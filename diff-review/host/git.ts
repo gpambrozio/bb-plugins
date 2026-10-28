@@ -9,7 +9,7 @@
  * its changes.
  */
 import { execFile } from "node:child_process";
-import { readFile, stat } from "node:fs/promises";
+import { lstat, readFile, readlink } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { HostDiffSpec } from "../shared/git-spec";
@@ -36,9 +36,11 @@ export function createRunGit(timeoutMs = 60_000): RunGit {
   let git: string | null = null;
   const attempt = (file: string, root: string, args: readonly string[], maxBuffer: number) =>
     new Promise<{ stdout: string; code: number | null; missing: boolean; stderr: string }>((resolve) => {
-      execFile(file, ["-C", root, ...args], { encoding: "utf8", maxBuffer, timeout: timeoutMs, killSignal: "SIGKILL", env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", LC_ALL: "C" } }, (error, stdout, stderr) => {
+      // Paths as they are, not octal-quoted, whatever the user's git config says.
+      execFile(file, ["-C", root, "-c", "core.quotePath=false", ...args], { encoding: "utf8", maxBuffer, timeout: timeoutMs, killSignal: "SIGKILL", env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", LC_ALL: "C" } }, (error, stdout, stderr) => {
         const code = error === null ? 0 : typeof (error as { code?: unknown }).code === "number" ? ((error as { code: number }).code) : null;
-        resolve({ stdout, code, missing: (error as { code?: unknown } | null)?.code === "ENOENT", stderr });
+        const overflow = (error as { code?: unknown } | null)?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";
+        resolve({ stdout, code: overflow ? -1 : code, missing: (error as { code?: unknown } | null)?.code === "ENOENT", stderr: overflow ? "output too large" : stderr });
       });
     });
   return async (root, args, options = {}) => {
@@ -49,7 +51,8 @@ export function createRunGit(timeoutMs = 60_000): RunGit {
       git = candidate;
       if (result.code === 0) return { stdout: result.stdout, ok: true };
       if (options.allowFailure === true) return { stdout: result.stdout, ok: false };
-      throw new GitError(`git ${args[0]} failed: ${result.stderr.trim().split("\n").at(-1) ?? `exit ${String(result.code)}`}`);
+      const last = result.stderr.trim().split("\n").at(-1) ?? "";
+      throw new GitError(`git ${args[0]} failed: ${last !== "" ? last : result.code === null ? "it timed out or was stopped" : `exit ${String(result.code)}`}`);
     }
     throw new GitError("git was not found on this machine.");
   };
@@ -159,24 +162,44 @@ export function splitPatch(patch: string): Map<string, string> {
   return sections;
 }
 
-function unquote(path: string): string {
-  if (!path.startsWith('"')) return path;
-  try {
-    return JSON.parse(path) as string;
-  } catch {
-    return path.slice(1, -1);
+/** A path git C-quoted (`"a\\tb"`, `"\\303\\251"`): escapes and octal bytes, decoded as UTF-8. */
+export function unquote(path: string): string {
+  if (!path.startsWith('"') || !path.endsWith('"')) return path;
+  const bytes: number[] = [];
+  const named: Record<string, number> = { a: 7, b: 8, t: 9, n: 10, v: 11, f: 12, r: 13, '"': 34, "\\": 92 };
+  const inner = path.slice(1, -1);
+  for (let index = 0; index < inner.length; index++) {
+    const char = inner[index]!;
+    if (char !== "\\") {
+      bytes.push(...Buffer.from(char, "utf8"));
+      continue;
+    }
+    const next = inner[index + 1] ?? "";
+    if (/[0-7]/.test(next)) {
+      bytes.push(parseInt(inner.slice(index + 1, index + 4), 8));
+      index += 3;
+    } else {
+      bytes.push(named[next] ?? next.charCodeAt(0));
+      index += 1;
+    }
   }
+  return Buffer.from(bytes).toString("utf8");
+}
+
+/** A `---`/`+++` path: git puts a tab after a name with a space in it. */
+function headerPath(raw: string): string {
+  return unquote(raw.endsWith("\t") ? raw.slice(0, -1) : raw);
 }
 
 function sectionPath(section: string): string | null {
-  const plus = /^\+\+\+ (?:b\/(.*)|("b\/.*"))$/m.exec(section);
-  if (plus !== null && plus[1] !== undefined) return plus[1];
-  if (plus !== null && plus[2] !== undefined) return unquote(plus[2]).slice(2);
+  const plus = /^\+\+\+ (?:b\/(.*)|("b\/.*"\t?))$/m.exec(section);
+  if (plus !== null && plus[1] !== undefined) return headerPath(plus[1]);
+  if (plus !== null && plus[2] !== undefined) return headerPath(plus[2]).slice(2);
   const rename = /^rename to (.*)$/m.exec(section) ?? /^copy to (.*)$/m.exec(section);
   if (rename !== null) return unquote(rename[1]!);
-  const minus = /^--- (?:a\/(.*)|("a\/.*"))$/m.exec(section);
-  if (minus !== null && minus[1] !== undefined) return minus[1];
-  if (minus !== null && minus[2] !== undefined) return unquote(minus[2]).slice(2);
+  const minus = /^--- (?:a\/(.*)|("a\/.*"\t?))$/m.exec(section);
+  if (minus !== null && minus[1] !== undefined) return headerPath(minus[1]);
+  if (minus !== null && minus[2] !== undefined) return headerPath(minus[2]).slice(2);
   const header = /^diff --git a\/(.*) b\/(.*)$/m.exec(section);
   return header === null ? null : header[2]!;
 }
@@ -197,10 +220,14 @@ export async function diff(run: RunGit, root: string, spec: HostDiffSpec, ignore
   const [names, numbers, full] = await Promise.all([
     run(root, [...BASE_ARGS, "--name-status", "-z", ...args]),
     run(root, [...BASE_ARGS, "--numstat", "-z", ...extra, ...args]),
-    run(root, [...BASE_ARGS, ...extra, ...args], { maxBuffer: DIFF_MAX_BYTES * 4 }),
+    // A diff too large to read whole (a vendored tree, a lockfile) lists its files without patches.
+    run(root, [...BASE_ARGS, ...extra, ...args], { maxBuffer: DIFF_MAX_BYTES * 4 }).catch((error: unknown) => {
+      if (error instanceof GitError && error.message.includes("output too large")) return null;
+      throw error;
+    }),
   ]);
   const counts = parseNumstat(numbers.stdout);
-  const sections = splitPatch(full.stdout);
+  const sections = full === null ? new Map<string, string>() : splitPatch(full.stdout);
   const files: HostDiffFile[] = [];
   let bytes = 0;
   let truncated = false;
@@ -211,10 +238,11 @@ export async function diff(run: RunGit, root: string, spec: HostDiffSpec, ignore
     }
     const count = counts.get(entry.path) ?? { additions: 0, deletions: 0, binary: false };
     const section = sections.get(entry.path) ?? null;
-    const tooLarge = section !== null && (section.length > FILE_PATCH_MAX_BYTES || bytes + section.length > DIFF_MAX_BYTES);
+    // With whitespace hidden, a file whose only changes were whitespace has no patch left (a mode
+    // change still shows).
+    if (ignoreWhitespace && section !== null && !section.includes("\n@@") && !/^(old|new) mode /m.test(section) && !count.binary && entry.kind === "modified") continue;
+    const tooLarge = full === null || (section !== null && (section.length > FILE_PATCH_MAX_BYTES || bytes + section.length > DIFF_MAX_BYTES));
     if (section !== null && !tooLarge) bytes += section.length;
-    // With whitespace hidden, a file whose only changes were whitespace has no patch left.
-    if (ignoreWhitespace && section !== null && !section.includes("\n@@") && !count.binary && entry.kind === "modified") continue;
     files.push({
       path: entry.path,
       previousPath: entry.previousPath,
@@ -242,7 +270,14 @@ export async function diff(run: RunGit, root: string, spec: HostDiffSpec, ignore
 
 async function untrackedFile(root: string, path: string, used: number, use: (bytes: number) => void): Promise<HostDiffFile> {
   const base = { path, previousPath: null, changeKind: "added" as const, deletions: 0, untracked: true };
-  const info = await stat(join(root, path)).catch(() => null);
+  // A symlink shows as git shows it, its target as the content; it is never followed.
+  const info = await lstat(join(root, path)).catch(() => null);
+  if (info !== null && info.isSymbolicLink()) {
+    const target = await readlink(join(root, path)).catch(() => "");
+    const patch = newFilePatch(path, target).replace("new file mode 100644", "new file mode 120000");
+    use(patch.length);
+    return { ...base, additions: 1, binary: false, patch, tooLarge: false };
+  }
   if (info === null || !info.isFile() || info.size > UNTRACKED_MAX_BYTES || used + info.size > DIFF_MAX_BYTES) {
     return { ...base, additions: 0, binary: false, patch: null, tooLarge: true };
   }

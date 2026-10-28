@@ -14,7 +14,7 @@ import { useActions } from "./actions";
 
 export function RevertDialog({ file, open, onOpenChange }: { file: DiffFile; open: boolean; onOpenChange(open: boolean): void }) {
   const actions = useActions();
-  const hunks = useMemo(() => (file.patch === null || file.binary ? [] : parseHunks(file.patch)), [file.patch, file.binary]);
+  const hunks = useMemo(() => (file.patch === null || file.binary || !actions.hunksRevertable ? [] : parseHunks(file.patch)), [file.patch, file.binary, actions.hunksRevertable]);
   const [chosen, setChosen] = useState<Set<number>>(new Set());
   const [busy, setBusy] = useState(false);
   useEffect(() => {
@@ -38,7 +38,10 @@ export function RevertDialog({ file, open, onOpenChange }: { file: DiffFile; ope
       <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle>Revert {file.path}?</DialogTitle>
-          <DialogDescription>This undoes uncommitted changes in the workspace. It cannot be undone here.</DialogDescription>
+          <DialogDescription>
+            This undoes uncommitted changes in the workspace. It cannot be undone here.
+            {actions.hunksRevertable ? "" : " With whitespace hidden, only the whole file can be reverted."}
+          </DialogDescription>
         </DialogHeader>
         {hunks.length > 1 && file.changeKind !== "added" ? (
           <ul className="flex max-h-72 flex-col gap-1 overflow-y-auto" aria-label="Changes">

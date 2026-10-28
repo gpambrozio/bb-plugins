@@ -182,6 +182,7 @@ export function ReviewBody({
       sessionId={state.view.sessionId}
       threadId={threadId}
       view={state.view}
+      ignoreWhitespace={ignoreWhitespace}
       putThread={review.putThread}
       putViewed={review.putViewed}
       putRun={review.putRun}

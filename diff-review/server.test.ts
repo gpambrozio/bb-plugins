@@ -61,6 +61,8 @@ interface Setup {
   duringSpawn?: (threadId: string) => Promise<void>;
   /** More fields in bb's status answer, as a later bb may add (a time stamp, say). */
   statusExtra?: () => Record<string, unknown>;
+  /** Called before a write lands: a string is what someone else wrote meanwhile (bb answers a conflict). */
+  beforeWrite?: (path: string) => string | undefined;
   /** Files as committed at HEAD, by absolute path, for `files.read` with `ref`. */
   headFiles?: Record<string, string>;
   /** Views (`uncommitted`, `branch_committed`, …) whose diff has no files. */
@@ -240,10 +242,18 @@ async function setup(options: Setup = {}) {
       files: {
         write: async ({ path, content, expectedSha256 }: { path: string; content: string; expectedSha256?: string | null }) => {
           const current = files[path];
-          if (expectedSha256 !== undefined && expectedSha256 !== null && (current === undefined || sha(current) !== expectedSha256)) throw new Error("sha256 mismatch");
+          // bb answers a write whose file changed since it was read with a conflict, not an error.
+          if (expectedSha256 !== undefined && expectedSha256 !== null && (current === undefined || sha(current) !== expectedSha256)) return { outcome: "conflict", currentSha256: current === undefined ? null : sha(current) } as never;
+          if (options.beforeWrite !== undefined) {
+            const raced = options.beforeWrite(path);
+            if (raced !== undefined) {
+              files[path] = raced;
+              return { outcome: "conflict", currentSha256: sha(raced) } as never;
+            }
+          }
           files[path] = content;
           writes.push(path);
-          return { ok: true } as never;
+          return { outcome: "written", sha256: sha(content) } as never;
         },
         listPaths: async ({ path, query }: { path: string; query?: string }) => ({
           paths: Object.keys(files)
@@ -466,6 +476,20 @@ describe("changing the workspace from the tab", () => {
     await expect(ask("rm -rf")).rejects.toMatchObject({ code: "invalid" });
     await expect(ask("const b = 4;")).rejects.toMatchObject({ code: "conflict", message: expect.stringContaining("changed since") });
     expect(files["/work/repo/src/a.ts"]).toBe("const a = 1;\nconst b = 9;\n");
+  });
+
+  it("refuses, and leaves the thread open, when the file was written between its read and the write", async () => {
+    const { rpc, view, files } = await setup({
+      files: { "/work/repo/src/a.ts": "const a = 1;\nconst b = 3;\n" },
+      beforeWrite: () => "the agent's edit\n",
+    });
+    const { sessionId } = await view();
+    const made = ((await rpc("createThread", { sessionId, filePath: "src/a.ts", side: "new", startLine: 2, endLine: 2, severity: null, anchorContent: "const b = 3;", body: suggestion("const b = 4;") })) as { thread: ReviewThread }).thread;
+    await expect(
+      rpc("applySuggestion", { threadId: THREAD, reviewThreadId: made.id, commentId: made.comments[0]!.id, startLine: 2, endLine: 2, expected: "const b = 3;", code: "const b = 4;" }),
+    ).rejects.toMatchObject({ code: "conflict" });
+    expect(files["/work/repo/src/a.ts"]).toBe("the agent's edit\n");
+    expect((await view()).threads[0]!.status).toBe("open");
   });
 
   it("reverts a hunk, or a whole file back to HEAD, only at the revision the tab showed", async () => {

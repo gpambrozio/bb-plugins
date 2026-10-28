@@ -43,6 +43,11 @@ export interface ReviewActions {
   viewable: boolean;
   /** Whether a file of this view can be reverted (the uncommitted view, a file not renamed or copied). */
   canRevert(file: DiffFile): boolean;
+  /**
+   * Whether its hunks can be picked one by one: not while whitespace is hidden, since the hunks shown
+   * then are not the file's.
+   */
+  hunksRevertable: boolean;
   /** Writes a comment's suggestion over the thread's lines as they read now, and resolves the thread. */
   applySuggestion(input: { reviewThreadId: string; commentId: string; startLine: number; endLine: number; expected: string; code: string }): Promise<void>;
   /** Reverts a file's uncommitted change, all of it (`hunks` null) or the hunks given. */
@@ -72,6 +77,7 @@ export function ReviewActionsProvider({
   sessionId,
   threadId,
   view,
+  ignoreWhitespace = false,
   putThread,
   putViewed,
   putRun,
@@ -84,6 +90,8 @@ export function ReviewActionsProvider({
   threadId: string;
   /** The view on screen: its target, workspace and merge base, for Viewed marks and Open. */
   view: { target: Target; environmentId: string; mergeBaseRef: string | null; headRef: string | null; viewable: boolean };
+  /** Whether the view hides whitespace-only changes. */
+  ignoreWhitespace?: boolean;
   putThread(thread: ReviewThread): void;
   putViewed(sessionId: string, path: string, viewed: DiffFile["viewed"]): void;
   putRun(run: Run): void;
@@ -132,7 +140,8 @@ export function ReviewActionsProvider({
       canOpenFile: (file) => fileRef(view.target, file, view.mergeBaseRef, view.headRef) !== null,
       canEditWorkingCopy: view.target.kind === "uncommitted" || view.target.kind === "all" || view.target.kind === "unstaged",
       viewable: view.viewable,
-      canRevert: (file) => view.target.kind === "uncommitted" && file.changeKind !== "renamed" && file.changeKind !== "copied",
+      canRevert: (file) => view.target.kind === "uncommitted" && file.changeKind !== "renamed" && file.changeKind !== "copied" && file.changeKind !== "type_changed",
+      hunksRevertable: !ignoreWhitespace,
       applySuggestion: (input) =>
         reported("Could not apply the suggestion", async () => {
           putThread((await rpc.call("applySuggestion", { threadId, ...input })).thread);
@@ -159,7 +168,7 @@ export function ReviewActionsProvider({
         });
       },
     }),
-    [rpc, navigate, sessionId, threadId, view.target, view.environmentId, view.mergeBaseRef, view.headRef, view.viewable, putThread, putViewed, putRun, refreshThreads, onEdited],
+    [rpc, navigate, sessionId, threadId, view.target, view.environmentId, view.mergeBaseRef, view.headRef, view.viewable, putThread, putViewed, putRun, refreshThreads, onEdited, ignoreWhitespace],
   );
   return <ActionsContext.Provider value={actions}>{children}</ActionsContext.Provider>;
 }

@@ -79,6 +79,14 @@ describe("reverting hunks", () => {
     expect(revertHunks(now, PATCH, [5])).toBeNull();
   });
 
+  it("keeps each line's own ending, and refuses a hunk cut short", () => {
+    const mixed = "one\r\nTWO\nthree\n";
+    const patch = ["@@ -1,3 +1,3 @@", " one", "-two", "+TWO", " three", ""].join("\n");
+    expect(revertHunks(mixed, patch, [0])).toBe("one\r\ntwo\nthree\n");
+    expect(revertHunks("one\nTWO\nthree\n", ["@@ -1,3 +1,3 @@", " one", "-two", "+TWO", ""].join("\n"), [0])).toBeNull();
+    expect(replaceLines("a\r\nb\nc", 3, 3, "c", "C\nD")).toBe("a\r\nb\nC\nD");
+  });
+
   it("keeps the end-of-file newline as the old side had it", () => {
     const patch = ["@@ -1 +1 @@", "-a", "\\ No newline at end of file", "+b", ""].join("\n");
     expect(revertHunks("b\n", patch, [0])).toBe("a");

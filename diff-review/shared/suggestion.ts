@@ -78,14 +78,35 @@ export function bodyParts(body: string): BodyPart[] {
   return parts;
 }
 
+/** A file's lines, each with the line ending it has ("" for a last line without one). */
+export function splitLines(content: string): { text: string; eol: string }[] {
+  const parts: { text: string; eol: string }[] = [];
+  const pattern = /\r?\n/g;
+  let from = 0;
+  for (let match = pattern.exec(content); match !== null; match = pattern.exec(content)) {
+    parts.push({ text: content.slice(from, match.index), eol: match[0] });
+    from = match.index + match[0].length;
+  }
+  if (from < content.length) parts.push({ text: content.slice(from), eol: "" });
+  return parts;
+}
+
+export function joinLines(lines: readonly { text: string; eol: string }[]): string {
+  return lines.map((line) => line.text + line.eol).join("");
+}
+
 /**
  * `content` with lines `start`..`end` (1-based) replaced by `code`, or null when those lines no
- * longer read `expected` (the file changed since the view was loaded).
+ * longer read `expected` (the file changed since the view was loaded). The new lines take the ending
+ * of the last line they replace, and every other line keeps its own.
  */
 export function replaceLines(content: string, start: number, end: number, expected: string, code: string): string | null {
-  const eol = content.includes("\r\n") ? "\r\n" : "\n";
-  const all = content.split(/\r?\n/);
+  const all = splitLines(content);
   if (start < 1 || end < start || end > all.length) return null;
-  if (!sameCode(all.slice(start - 1, end).join("\n"), expected)) return null;
-  return [...all.slice(0, start - 1), ...lines(code), ...all.slice(end)].join(eol);
+  if (!sameCode(all.slice(start - 1, end).map((line) => line.text).join("\n"), expected)) return null;
+  const replaced = all.slice(start - 1, end);
+  const eol = replaced.find((line) => line.eol !== "")?.eol ?? "\n";
+  const last = replaced[replaced.length - 1]!.eol;
+  const added = lines(code).map((text, index, list) => ({ text, eol: index === list.length - 1 ? last : eol }));
+  return joinLines([...all.slice(0, start - 1), ...added, ...all.slice(end)]);
 }
