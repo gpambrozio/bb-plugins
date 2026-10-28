@@ -38,9 +38,9 @@ what still holds and says what bb changed. The repo root `AGENTS.md` covers what
 | `app/speech.ts` | Every browser audio global, and which bb client this is. |
 | `app/rows.ts` | What the page lists: bb's unread and waiting-for-input joined with Herald's entries. |
 | `app/panel.tsx`, `app/banner.tsx` | The Herald page (its waiting threads, then recent sentences from every thread; and the count on its sidebar entry, `useWaitingBadge`), and the sentence above a thread's composer. |
-| `app/history-panel.tsx`, `app/header-action.tsx` | The Herald tab in a thread's side panel — the sentences of its past turns — and the header button that opens it: a header thread action on bb 0.48, the older header slot's megaphone on 0.47. |
+| `app/history-panel.tsx`, `app/header-action.tsx` | The Herald tab in a thread's side panel — the sentences of its past turns — and the header button that opens it: the older header slot's megaphone on every bb. |
 | `app/thread-action.ts` | *Herald* in bb's thread menu: reads the rows on screen in one batch, shows each one's choice and where it comes from, saves a pick; and the same list for a sidebar selection (bb 0.48). |
-| `app/bb-features.ts` | Whether this bb's app is 0.48's (panel controller, header thread actions, tab visibility), read where a named import would break the build on 0.47. |
+| `app/bb-features.ts` | Whether this bb's app is 0.48's (panel controller, tab visibility), read where a named import would break the build on 0.47. |
 | `app/settings-section.tsx`, `app/voice-picker.tsx` | The model-written sentence's tool, custom command (only under custom) and prompt; how many recent sentences the page lists; the voice lists and *Test voice*. |
 
 ## Where things run
@@ -421,21 +421,25 @@ asks `experimental_useTabVisible` and, while it is not showing, stops its 15 s c
 nudge, reading once when it shows again. If bb gains a plugin-written timeline row, write the
 sentence there at the end of the turn and this panel becomes a convenience.
 
-**The header button depends on the bb** (`app/header-action.tsx`, `registerHistoryOpener`). On bb 0.48 it
-is a header thread action (`experimental_threadAction` with `placement: "header"`): a labelled "Herald"
-button after the workspace's Open button, folded into the header's thread menu at compact width, whose
-`run` calls `experimental_panel.toggleTab`, so a second click closes the tab. bb 0.47 drops `placement`
-(the action would land in every thread menu) and has no panel controller, so there Herald registers the
-older header slot (`experimental_threadHeaderAction`, an icon button, one 28px control as that slot
-asks) opening the tab through `useBbNavigate().openThreadPanel`. **Never register both**: bb 0.48 still
-draws the old slot, so the header would show two. Both are gone from the 0.6.94 typings and reached
-through casts; `bb plugin build` on 0.48 warns about them, which is expected.
+**The header button is the older header slot on every bb** (`app/header-action.tsx`, `registerHistoryOpener`):
+`experimental_threadHeaderAction`, the megaphone as an icon button of its own, one 28px control as that
+slot asks. On bb 0.48 its component calls `experimental_useAppPanel().toggleTab`, so a second click closes
+the tab (bb's thread view wraps its header in the panel's provider); on bb 0.47, which has no panel
+controller, it opens the tab through `useBbNavigate().openThreadPanel`. **Do not move it to a header thread
+action** (`experimental_threadAction` with `placement: "header"`), as 0.5.0 did: bb 0.48 draws every
+plugin's header actions as *one* split button — the first as its main action, the others in its dropdown,
+whatever their `group`, which only sorts them (bb-app 0.48.0's thread header, and the SDK 0.6.94 doc of
+`PluginThreadActionPlacement`) — so Herald's button held Diff Review's Review, or sat behind bb's Commit, and
+the owner wants Herald a button of its own. bb 0.48 marks the old slot retired ("existing callers keep
+rendering and `bb plugin build` warns"), so **a future bb may drop it**; then the header thread action is
+the way back, sharing the split button. Never register both, or the header shows two. The slot and
+`openThreadPanel` are gone from the 0.6.94 typings and reached through casts; the build's warnings about them are expected.
 
 **Telling bb 0.48 from 0.47 in the app** (`app/bb-features.ts`). A named import of a member the running
 bb lacks fails the build — bb's builder shims `@get-bb/plugin-sdk/app` with its own app's members, and a
 git install is built by the bb that runs it. A namespace member it lacks compiles to `undefined`, so
-`HAS_PANEL_CONTROLLER` reads `experimental_useTabVisible` through `import * as`. That member came with the
-panel controller (bb#6356) and header thread actions (bb#6388) in the same release. Use this for any
+`HAS_PANEL_CONTROLLER` reads `experimental_useTabVisible` and `experimental_useAppPanel` through `import * as`.
+Those members came with the panel controller (bb#6356) and header thread actions (bb#6388) in the same release. Use this for any
 other 0.48-only app member while `engines.bb` is `>=0.47`.
 
 The **Herald page lists the same rows across threads** below its waiting list: `SentenceHistory.recent`

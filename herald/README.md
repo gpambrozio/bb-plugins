@@ -16,8 +16,8 @@ of what was done — and the bb app speaks it.
   or not you have read the thread, and through your next turn — until the next event replaces it.
 - A **Herald** tab in each thread's side panel lists what Herald said about that thread's past turns,
   newest first, with when and a Read again button — a way to find a turn by its sentence. The last 50
-  are kept per thread. The **Herald** button in the thread's header opens it, and closes it again (on bb
-  0.47, a megaphone that opens it).
+  are kept per thread. The megaphone button in the thread's header opens it, and closes it again (on bb
+  0.47 it only opens it).
 - **Herald** in a thread's menu (the sidebar row's menu, right-click, or the thread's header) chooses what
   Herald announces for that thread: *Announce*, *Questions only* (a question, a plan or a permission to
   approve, but not a finished or failed turn), or *Silent*. *Default* follows the thread that started it

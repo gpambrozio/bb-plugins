@@ -2,23 +2,20 @@
  * The thread header's way into the thread's Herald tab, the list of what
  * Herald said about its past turns.
  *
- * On bb 0.48 it is a header thread action: a labelled "Herald" button after
- * the workspace's Open button, folded into the header's thread menu at compact
- * width, that opens the tab — or closes it, when it is already showing —
- * through the panel controller. bb 0.47 has neither, and drops `placement`
- * (the button would land in every thread menu), so there it stays the
- * megaphone of the older header slot, which opens the tab by its id.
+ * It is the megaphone of the older header slot on every bb, an icon button of
+ * its own. bb 0.48's header thread actions (`placement: "header"`) would make
+ * it a labelled button, but bb draws every plugin's header actions as one
+ * split button — the first the main action, the rest in its dropdown — so
+ * Herald would share a control with Diff Review's Review or bb's Commit. On
+ * bb 0.48 the megaphone opens the tab, or closes it when it is already
+ * showing, through the panel controller; bb 0.47 has none, so there it opens
+ * the tab by its id.
  */
-import {
-  experimental_THREAD_ACTION_GROUPS,
-  useBbNavigate,
-  type ExperimentalOpenTabOptions,
-  type PluginAppSlots,
-  type PluginThreadActionRegistration,
-} from "@get-bb/plugin-sdk/app";
+import { useBbNavigate, type ExperimentalOpenTabOptions, type PluginAppSlots } from "@get-bb/plugin-sdk/app";
 
 import { Icon } from "@/components/ui/icon";
 
+import { useAppPanel } from "./bb-features";
 import { HERALD_ICONS } from "./icons";
 import { TipButton } from "./tip-button";
 
@@ -30,56 +27,41 @@ export const HISTORY_TAB: ExperimentalOpenTabOptions = {
   tab: { id: HISTORY_PANEL_ACTION_ID, context: { kind: "thread" }, availability: "action" },
 };
 
-/** bb 0.48's header button: "Herald", toggling the thread's Herald tab. */
-export const HISTORY_HEADER_ACTION: PluginThreadActionRegistration = {
-  id: "history",
-  title: "Herald",
-  icon: HERALD_ICONS.megaphone,
-  group: experimental_THREAD_ACTION_GROUPS.open,
-  placement: "header",
-  item: ({ experimental_panel }) => ({
-    label: "Herald",
-    icon: HERALD_ICONS.megaphone,
-    run: () => {
-      experimental_panel.toggleTab(HISTORY_TAB);
-    },
-  }),
-};
-
-/** bb 0.47's megaphone in the header slot. One 28px control, as the slot asks. */
-export function HeraldHeaderAction(_props: { threadId: string }) {
-  const navigate = useBbNavigate() as unknown as LegacyNavigate;
+/** The megaphone. One 28px control, as the header slot asks. */
+function MegaphoneButton({ onClick }: { onClick: () => void }) {
   return (
-    <TipButton
-      variant="ghost"
-      size="icon"
-      className="size-7"
-      label="Herald: this thread's sentences"
-      onClick={() => void navigate.openThreadPanel({ actionId: HISTORY_PANEL_ACTION_ID })}
-    >
+    <TipButton variant="ghost" size="icon" className="size-7" label="Herald: this thread's sentences" onClick={onClick}>
       <Icon name={HERALD_ICONS.megaphone} />
     </TipButton>
   );
 }
 
-/**
- * The header button that fits this bb: the header thread action where bb has
- * the panel controller (0.48), the older header slot otherwise. bb 0.48 still
- * draws that slot, so registering both would show two.
- */
-export function registerHistoryOpener(slots: PluginAppSlots, hasPanelController: boolean): void {
-  if (hasPanelController) {
-    slots.experimental_threadAction(HISTORY_HEADER_ACTION);
-  } else {
-    (slots as unknown as LegacySlots).experimental_threadHeaderAction({
-      id: HISTORY_PANEL_ACTION_ID,
-      title: "Herald",
-      component: HeraldHeaderAction,
-    });
-  }
+/** bb 0.48: the megaphone toggles the Herald tab of the thread whose header it is in. */
+export function HeraldHeaderToggle(_props: { threadId: string }) {
+  const panel = useAppPanel();
+  return <MegaphoneButton onClick={() => void panel.toggleTab(HISTORY_TAB)} />;
 }
 
-/** bb 0.47's header slot, gone from the SDK's types since 0.6.92. */
+/** bb 0.47: the megaphone opens the Herald tab by its id. */
+export function HeraldHeaderAction(_props: { threadId: string }) {
+  const navigate = useBbNavigate() as unknown as LegacyNavigate;
+  return <MegaphoneButton onClick={() => void navigate.openThreadPanel({ actionId: HISTORY_PANEL_ACTION_ID })} />;
+}
+
+/**
+ * The megaphone in the older header slot, which bb 0.48 still draws as its
+ * own button: toggling through the panel controller where bb has one (0.48),
+ * opening by id otherwise.
+ */
+export function registerHistoryOpener(slots: PluginAppSlots, hasPanelController: boolean): void {
+  (slots as unknown as LegacySlots).experimental_threadHeaderAction({
+    id: HISTORY_PANEL_ACTION_ID,
+    title: "Herald",
+    component: hasPanelController ? HeraldHeaderToggle : HeraldHeaderAction,
+  });
+}
+
+/** The older header slot, gone from the SDK's types since 0.6.92 and retired, still drawn, in bb 0.48. */
 interface LegacySlots {
   experimental_threadHeaderAction(registration: { id: string; title: string; component: typeof HeraldHeaderAction }): void;
 }
