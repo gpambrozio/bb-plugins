@@ -72,3 +72,56 @@ export function linesText(lines: PatchLines, side: Side, start: number, end: num
   }
   return parts.join("\n");
 }
+
+/** One row of a patch as a diff shows it: a removed, added or unchanged line, by the side it counts on. */
+export interface PatchRow {
+  /** `old` for a removed line; `new` for an added or unchanged one, numbered on the new side. */
+  side: Side;
+  line: number;
+  kind: "deletion" | "addition" | "context";
+  text: string;
+}
+
+/** Every hunk line of `patch` in the order a unified diff shows them (one file's patch). */
+export function patchRows(patch: string): PatchRow[] {
+  const rows: PatchRow[] = [];
+  let oldLine = 0;
+  let newLine = 0;
+  let oldLeft = 0;
+  let newLeft = 0;
+  for (const raw of patch.split("\n")) {
+    const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
+    if (oldLeft > 0 || newLeft > 0) {
+      const marker = line[0];
+      const text = line.slice(1);
+      if (marker === " " || (marker === undefined && line === "")) {
+        rows.push({ side: "new", line: newLine, kind: "context", text });
+        oldLine++;
+        newLine++;
+        oldLeft--;
+        newLeft--;
+        continue;
+      }
+      if (marker === "-") {
+        rows.push({ side: "old", line: oldLine++, kind: "deletion", text });
+        oldLeft--;
+        continue;
+      }
+      if (marker === "+") {
+        rows.push({ side: "new", line: newLine++, kind: "addition", text });
+        newLeft--;
+        continue;
+      }
+      if (marker === "\\") continue;
+      oldLeft = 0;
+      newLeft = 0;
+    }
+    const header = HUNK_HEADER.exec(line);
+    if (header === null) continue;
+    oldLine = Number(header[1]);
+    oldLeft = header[2] === undefined ? 1 : Number(header[2]);
+    newLine = Number(header[3]);
+    newLeft = header[4] === undefined ? 1 : Number(header[4]);
+  }
+  return rows;
+}

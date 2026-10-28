@@ -4,6 +4,7 @@
 // agent; a button in the thread's header and palette commands that open it. See AGENTS.md.
 import { definePluginApp, experimental_THREAD_INFO_ROW_GROUPS } from "@get-bb/plugin-sdk/app";
 
+import { dispatchReviewCommand, REVIEW_COMMANDS, type ReviewCommand } from "./app/commands";
 import { ReviewPanel } from "./app/review-panel";
 import { REVIEWS_PATH, ReviewsPage, ReviewsSidebar, useReviewsBadge, useReviewsPageTitle } from "./app/reviews-page";
 import { openReviewTab, REVIEW_TAB } from "./app/tab";
@@ -62,4 +63,18 @@ export default definePluginApp((app) => {
       openReviewTab(context.experimental_panel);
     },
   });
+
+  // One command per action of the tab: each opens the thread's Review tab and does it there.
+  for (const [id, title] of Object.entries(REVIEW_COMMANDS) as [ReviewCommand, string][]) {
+    app.commands.register({
+      id,
+      title: `Diff Review: ${title}`,
+      isAvailable: (context) => context.threadId !== null,
+      run: (context) => {
+        if (context.threadId === null) return;
+        openReviewTab(context.experimental_panel);
+        dispatchReviewCommand(context.threadId, id);
+      },
+    });
+  }
 });

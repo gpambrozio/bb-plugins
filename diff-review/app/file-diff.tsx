@@ -8,7 +8,7 @@
  */
 import { PatchDiff, type DiffLineAnnotation, type SelectedLineRange } from "@pierre/diffs/react";
 import { experimental_useCodeTheme, useSettings } from "@get-bb/plugin-sdk/app";
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -20,6 +20,7 @@ import { describeLocation, type DiffFile, type ReviewThread, type Side } from ".
 import { useActions } from "./actions";
 import { ANNOTATION_FIT } from "./annotation-fit";
 import { COLOR_BLIND_SETTING, paletteStyle } from "./palette";
+import { revealIn, type Reveal } from "./reveal";
 import { useNearScreen, type PatchState } from "./patch-loader";
 import { CommentComposer } from "./comment-composer";
 import { ThreadCard } from "./thread-card";
@@ -91,6 +92,8 @@ export interface FileDiffProps {
   requestPatch(path: string): void;
   /** The tab's scroll container, to tell when the file comes near the screen. */
   scrollRoot: Element | null;
+  /** A place in this file to bring into view (find, "Go to", next comment): it unfolds and selects the line. */
+  reveal?: Reveal | null;
 }
 
 /** Why a file shows no line diff, or null when it can. */
@@ -118,7 +121,7 @@ export function threadCount(threads: readonly ReviewThread[]): { open: number; c
   return { open, closed, label: `${threads.length} comment thread${threads.length === 1 ? "" : "s"}: ${parts.join(", ")}` };
 }
 
-export function FileDiff({ file, threads, showThreadCount, diffStyle, stalePatch = false, patchState, requestPatch, scrollRoot }: FileDiffProps) {
+export function FileDiff({ file, threads, showThreadCount, diffStyle, stalePatch = false, patchState, requestPatch, scrollRoot, reveal = null }: FileDiffProps) {
   const actions = useActions();
   const codeTheme = experimental_useCodeTheme();
   const settings = useSettings();
@@ -171,6 +174,23 @@ export function FileDiff({ file, threads, showThreadCount, diffStyle, stalePatch
   const draft: LineRange | null = lineDraft.active?.range ?? null;
   const fileDraft = useDraft(draftKeys.file(file.path));
   const [selected, setSelected] = useState<SelectedLineRange | null>(null);
+
+  // A place asked for: unfold, select the line, then scroll it into view once drawn (and again once
+  // a patch that was still loading arrives).
+  useLayoutEffect(() => {
+    if (reveal === null) return;
+    if (collapsed) {
+      viewState.setCollapsed(file.path, false);
+      setCollapsed(false);
+    }
+    if (reveal.line > 0) setSelected({ start: reveal.line, end: reveal.line, side: toPierreSide(reveal.side) });
+  }, [reveal?.seq]);
+  useEffect(() => {
+    if (reveal === null || sectionRef.current === null) return;
+    const section = sectionRef.current;
+    const frame = requestAnimationFrame(() => revealIn(section, reveal.side, reveal.line));
+    return () => cancelAnimationFrame(frame);
+  }, [reveal?.seq, file.patch === null]);
 
   const { lines, wholeFile, onLines, unplaced } = useMemo(() => placeFileThreads(file, threads), [file, threads]);
 

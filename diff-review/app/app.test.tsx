@@ -4,7 +4,7 @@
  * highlighter jsdom does not have, so a stand-in renders each annotation through the tab's own
  * `renderAnnotation` and offers the gutter "+" as a button.
  */
-import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ReviewThread, ReviewView, ViewState } from "../shared/types";
 import { ANNOTATION_FIT } from "./annotation-fit";
 import { ReviewPanel } from "./review-panel";
+import { dispatchReviewCommand, forgetReviewCommands } from "./commands";
 import { forgetViewStates } from "./view-state";
 
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn(), info: vi.fn() } }));
@@ -27,13 +28,14 @@ vi.mock("@pierre/diffs/react", async () => {
     lineAnnotations: { side: string; lineNumber: number; metadata: unknown }[];
     renderAnnotation(annotation: unknown): ReactNode;
     options: { onGutterUtilityClick(range: { start: number; end: number; side: string }): void };
+    selectedLines?: { start: number; side?: string } | null;
   }) => {
     pierre.renders.push({ patch: props.patch, annotations: props.lineAnnotations });
     useEffect(() => {
       pierre.mounts += 1;
     }, []);
     return (
-    <div data-testid="patch" data-patch={props.patch}>
+    <div data-testid="patch" data-patch={props.patch} data-selected={props.selectedLines === null || props.selectedLines === undefined ? "" : `${props.selectedLines.side}:${props.selectedLines.start}`}>
       <button type="button" onClick={() => props.options.onGutterUtilityClick({ start: 1, end: 2, side: "additions" })}>
         gutter +
       </button>
@@ -55,6 +57,7 @@ afterEach(() => {
   vi.clearAllMocks();
   window.localStorage.clear();
   forgetViewStates();
+  forgetReviewCommands();
 });
 
 const ENVIRONMENT = { id: "env_1" };
@@ -156,6 +159,55 @@ describe("the app", () => {
     expect(action.label).toBe("Review");
     await action.run({ requestRename: () => undefined });
     expect(calls).toEqual([{ tab: { id: "review", context: { kind: "thread" }, availability: "action" } }]);
+  });
+});
+
+describe("the palette's commands, find and Go to", () => {
+  it("registers a palette command per action, each opening the Review tab and acting there", async () => {
+    // loadPluginApp does not capture commands; run the definition against a stub builder instead.
+    const registered: { id: string; title: string; run(context: unknown): void }[] = [];
+    const definition = (await import("../app")).default as unknown as { setup(builder: unknown): void };
+    const slots = new Proxy({}, { get: () => () => undefined });
+    definition.setup({ slots, commands: { register: (command: (typeof registered)[number]) => registered.push(command) }, composer: { customize: () => undefined } });
+    expect(registered.map((command) => command.id)).toContain("find");
+    expect(registered.find((command) => command.id === "send")!.title).toBe("Diff Review: send comments to the agent");
+    const calls: unknown[] = [];
+    registered.find((command) => command.id === "go-to")!.run({ threadId: "thr_1", projectId: null, experimental_panel: { openTab: (options: unknown) => (calls.push(options), true) } });
+    expect(calls).toEqual([{ tab: { id: "review", context: { kind: "thread" }, availability: "action" } }]);
+  });
+
+  it("takes a command left for it before the tab showed, and opens what it names", async () => {
+    dispatchReviewCommand("thr_1", "go-to");
+    render();
+    expect(await screen.findByRole("dialog", { name: "Go to" })).toBeTruthy();
+    fireEvent.change(screen.getByRole("textbox", { name: "Filter" }), { target: { value: "file a.ts" } });
+    expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual(["Filesrc/a.ts+1 −1"]);
+    fireEvent.change(screen.getByRole("textbox", { name: "Filter" }), { target: { value: "comment three" } });
+    expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual(["CommentWhy three?src/a.ts:5 (new side)"]);
+  });
+
+  it("finds across the diff and selects each match's line", async () => {
+    render();
+    await screen.findByTestId("patch");
+    fireEvent.click(screen.getByRole("button", { name: "Find in the diff" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Find in the diff" }), { target: { value: "const b" } });
+    expect(await screen.findByText("1 of 2")).toBeTruthy();
+    await waitFor(() => expect(screen.getByTestId("patch").getAttribute("data-selected")).toBe("deletions:2"));
+    fireEvent.click(screen.getByRole("button", { name: "Next match" }));
+    expect(await screen.findByText("2 of 2")).toBeTruthy();
+    await waitFor(() => expect(screen.getByTestId("patch").getAttribute("data-selected")).toBe("additions:2"));
+  });
+
+  it("steps through the open comments from the palette", async () => {
+    render();
+    await screen.findByTestId("patch");
+    // The whole-diff thread comes first, then the file's: one no longer on the diff (at its header),
+    // then the line threads in line order.
+    await act(async () => dispatchReviewCommand("thr_1", "next-comment"));
+    await act(async () => dispatchReviewCommand("thr_1", "next-comment"));
+    expect(screen.getByTestId("patch").getAttribute("data-selected")).toBe("");
+    await act(async () => dispatchReviewCommand("thr_1", "next-comment"));
+    await waitFor(() => expect(screen.getByTestId("patch").getAttribute("data-selected")).toBe("additions:2"));
   });
 });
 

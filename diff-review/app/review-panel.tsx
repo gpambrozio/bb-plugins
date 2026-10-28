@@ -12,7 +12,7 @@
  * when there are none, on the changes committed since the base branch.
  */
 import { experimental_useTabVisible, useRpc, type ExperimentalThreadActionTabProps } from "@get-bb/plugin-sdk/app";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -21,12 +21,19 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 
 import type { RpcContract } from "../shared/contract";
-import { GENERAL_PATH, targetRequestSchema, type ReviewThread, type Run, type TargetRequest } from "../shared/types";
+import { placeThread } from "../shared/anchors";
+import { parsePatchLines } from "../shared/patch-lines";
+import { describeLocation, GENERAL_PATH, targetRequestSchema, type ReviewThread, type Run, type TargetRequest } from "../shared/types";
 import { ReviewActionsProvider, useActions } from "./actions";
+import { useReviewCommands } from "./commands";
+import { carryCurrent, findInFiles, type FindMatch } from "./find";
+import { FindBar } from "./find-bar";
+import { GoToDialog, type GoToEntry } from "./goto-dialog";
+import type { Reveal } from "./reveal";
 import { AiReviewDialog } from "./ai-review-dialog";
 import { ClearReviewDialog } from "./clear-dialog";
 import { CommentComposer } from "./comment-composer";
-import { FileDiff, OrphanDrafts, placeFileThreads, type DiffStyle } from "./file-diff";
+import { FileDiff, noDiffReason, OrphanDrafts, placeFileThreads, type DiffStyle } from "./file-diff";
 import { usePatchLoader } from "./patch-loader";
 import { targetLabel } from "./labels";
 import { RunsList } from "./runs-list";
@@ -171,6 +178,7 @@ export function ReviewBody({ threadId, environmentId, params, visible }: { threa
         refreshThreads={review.refreshThreads}
         ignoreWhitespace={ignoreWhitespace}
         onIgnoreWhitespace={toggleWhitespace}
+        visible={visible}
       />
       </ViewStateProvider>
     </ReviewActionsProvider>
@@ -195,6 +203,7 @@ function ReadyPanel({
   refreshThreads,
   ignoreWhitespace,
   onIgnoreWhitespace,
+  visible,
 }: {
   threadId: string;
   view: ReadyView;
@@ -209,6 +218,7 @@ function ReadyPanel({
   refreshThreads(): Promise<void>;
   ignoreWhitespace: boolean;
   onIgnoreWhitespace(next: boolean): void;
+  visible: boolean;
 }) {
   const rpc = useRpc<RpcContract>();
   const actions = useActions();
@@ -289,6 +299,141 @@ function ReadyPanel({
   const deletions = files.reduce((sum, file) => sum + file.deletions, 0);
   const fileCount = onlyCommented ? `${files.length} of ${view.files.length} files` : `${files.length} file${files.length === 1 ? "" : "s"}`;
 
+  // A place in the diff to bring into view: a find match, a "Go to" pick, the next comment.
+  const [reveal, setReveal] = useState<Reveal | null>(null);
+  const revealSeq = useRef(0);
+  const show = useCallback((place: Omit<Reveal, "seq">) => setReveal({ ...place, seq: ++revealSeq.current }), []);
+
+  // Find across the diff's loaded lines; files whose diff is not loaded yet are fetched while it is open.
+  const [find, setFind] = useState<{ open: boolean; query: string; caseSensitive: boolean; focus: number }>({ open: false, query: "", caseSensitive: false, focus: 0 });
+  const found = useMemo(() => (find.open ? findInFiles(files, find.query, find.caseSensitive) : { matches: [] as FindMatch[], truncated: false }), [files, find.open, find.query, find.caseSensitive]);
+  const [matchIndex, setMatchIndex] = useState(-1);
+  const currentMatch = useRef<FindMatch | null>(null);
+  const findLoading = find.open && find.query !== "" && files.some((file) => file.patch === null && noDiffReason(file) === null && patchLoader.states.get(file.path) !== "failed" && patchLoader.states.get(file.path) !== "missing");
+  useEffect(() => {
+    if (!find.open || find.query === "") return;
+    for (const file of files) if (file.patch === null && noDiffReason(file) === null && patchLoader.states.get(file.path) === undefined) patchLoader.request(file.path);
+  }, [find.open, find.query, files, patchLoader]);
+  // A new result keeps the match on screen when it is still there, else starts at the first.
+  useEffect(() => {
+    const carried = carryCurrent(currentMatch.current, found.matches);
+    const index = carried >= 0 ? carried : found.matches.length > 0 ? 0 : -1;
+    setMatchIndex(index);
+    const match = index >= 0 ? found.matches[index]! : null;
+    if (match !== null && (currentMatch.current === null || carried < 0)) show({ path: match.path, side: match.side, line: match.line });
+    currentMatch.current = match;
+  }, [found, show]);
+  const stepMatch = (delta: 1 | -1) => {
+    if (found.matches.length === 0) return;
+    const index = (matchIndex + delta + found.matches.length) % found.matches.length;
+    const match = found.matches[index]!;
+    setMatchIndex(index);
+    currentMatch.current = match;
+    show({ path: match.path, side: match.side, line: match.line });
+  };
+  const openFind = () => setFind((previous) => ({ ...previous, open: true, focus: previous.focus + 1 }));
+  const closeFind = () => {
+    setFind((previous) => ({ ...previous, open: false }));
+    currentMatch.current = null;
+  };
+
+  // The open comment threads in the order the tab shows them, for next/previous comment.
+  const commentStops = useMemo(() => {
+    const stops: { threadId: string; path: string; side: "old" | "new"; line: number }[] = [];
+    for (const thread of byFile.get(GENERAL_PATH) ?? []) if (thread.status === "open") stops.push({ threadId: thread.id, path: GENERAL_PATH, side: "new", line: 0 });
+    for (const file of files) {
+      const threads = (byFile.get(file.path) ?? []).filter((thread) => thread.status === "open");
+      if (threads.length === 0) continue;
+      const lines = file.patch === null ? null : parsePatchLines(file.patch);
+      const placed = threads.map((thread) => {
+        if (thread.startLine === 0 || lines === null || thread.side === null) return { thread, line: 0 };
+        const placement = placeThread(thread, lines);
+        return { thread, line: placement.state === "outdated" ? 0 : placement.endLine };
+      });
+      placed.sort((a, b) => a.line - b.line);
+      for (const { thread, line } of placed) stops.push({ threadId: thread.id, path: file.path, side: thread.side ?? "new", line });
+    }
+    return stops;
+  }, [files, byFile]);
+  const commentIndex = useRef(-1);
+  const stepComment = (delta: 1 | -1) => {
+    if (commentStops.length === 0) {
+      toast.info("No open comments in this view.");
+      return;
+    }
+    commentIndex.current = (commentIndex.current + delta + commentStops.length) % commentStops.length;
+    const stop = commentStops[commentIndex.current]!;
+    if (stop.path === GENERAL_PATH) scrollRoot?.scrollTo?.({ top: 0 });
+    else show({ path: stop.path, side: stop.side, line: stop.line });
+  };
+
+  // "Go to": the files shown, the open comments and the views.
+  const [goingTo, setGoingTo] = useState(false);
+  const goToEntries = useMemo<GoToEntry[]>(() => {
+    const entries: GoToEntry[] = files.map((file) => ({ key: `file:${file.path}`, group: "File", label: file.path, detail: `+${file.additions} −${file.deletions}`, go: () => show({ path: file.path, side: "new", line: 0 }) }));
+    for (const stop of commentStops) {
+      const thread = view.threads.find((row) => row.id === stop.threadId);
+      if (thread === undefined) continue;
+      entries.push({
+        key: `comment:${thread.id}`,
+        group: "Comment",
+        label: thread.comments[0]?.body.split("\n")[0]?.slice(0, 120) ?? "",
+        detail: describeLocation(thread),
+        go: () => (stop.path === GENERAL_PATH ? scrollRoot?.scrollTo?.({ top: 0 }) : show({ path: stop.path, side: stop.side, line: stop.line })),
+      });
+    }
+    const views: { value: string; label: string }[] = [{ value: "uncommitted", label: targetLabel({ kind: "uncommitted" }) }];
+    if (view.defaultBase !== null) {
+      views.push({ value: "branch", label: targetLabel({ kind: "branch", base: view.defaultBase }) }, { value: "all", label: targetLabel({ kind: "all", base: view.defaultBase }) });
+    }
+    for (const commit of view.commits) views.push({ value: `commit:${commit.sha}`, label: `${commit.shortSha} ${commit.subject}` });
+    for (const entry of views) entries.push({ key: `view:${entry.value}`, group: "View", label: entry.label, go: () => onPick(entry.value) });
+    return entries;
+  }, [files, commentStops, view.threads, view.defaultBase, view.commits, show, onPick, scrollRoot]);
+
+  // The palette's commands for this thread land here while the tab shows.
+  useReviewCommands(threadId, visible, (command) => {
+    switch (command) {
+      case "reload":
+        onReload();
+        return;
+      case "send":
+        if (open.length > 0) setSending(true);
+        else toast.info("No open comments to send.");
+        return;
+      case "ai-review":
+        setReviewing(true);
+        return;
+      case "comment-diff":
+        generalDraft.open();
+        return;
+      case "find":
+        openFind();
+        return;
+      case "go-to":
+        setGoingTo(true);
+        return;
+      case "next-comment":
+        stepComment(1);
+        return;
+      case "previous-comment":
+        stepComment(-1);
+        return;
+      case "toggle-style":
+        toggleStyle();
+        return;
+      case "toggle-only-commented":
+        toggleOnlyCommented(!onlyCommented);
+        return;
+      case "toggle-whitespace":
+        onIgnoreWhitespace(!ignoreWhitespace);
+        return;
+      case "clear":
+        if (view.threads.length > 0 || view.runs.length > 0) setClearing(true);
+        return;
+    }
+  });
+
   return (
     <div className="flex h-full min-h-0 flex-col bg-background text-foreground">
       <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2">
@@ -323,6 +468,9 @@ function ReadyPanel({
           <Switch checked={ignoreWhitespace} onCheckedChange={onIgnoreWhitespace} />
           Hide whitespace
         </label>
+        <Button type="button" variant="ghost" size="sm" onClick={openFind} aria-label="Find in the diff">
+          <Icon name="Search" className="size-4" />
+        </Button>
         <Button type="button" variant="ghost" size="sm" onClick={onReload} disabled={refreshing} aria-label="Reload the diff">
           <Icon name={refreshing ? "Spinner" : "ArrowReloadHorizontal"} className="size-4" />
         </Button>
@@ -345,6 +493,22 @@ function ReadyPanel({
           Send to agent{open.length === 0 ? "" : ` (${open.length})`}
         </Button>
       </div>
+
+      {find.open ? (
+        <FindBar
+          query={find.query}
+          onQuery={(query) => setFind((previous) => ({ ...previous, query }))}
+          caseSensitive={find.caseSensitive}
+          onCaseSensitive={(caseSensitive) => setFind((previous) => ({ ...previous, caseSensitive }))}
+          count={found.matches.length}
+          current={matchIndex}
+          truncated={found.truncated}
+          loading={findLoading}
+          onStep={stepMatch}
+          onClose={closeFind}
+          focusKey={find.focus}
+        />
+      ) : null}
 
       <RunsList runs={view.runs} threads={view.threads} onClosed={putRun} />
 
@@ -413,6 +577,7 @@ function ReadyPanel({
             patchState={patchLoader.states.get(file.path)}
             requestPatch={patchLoader.request}
             scrollRoot={scrollRoot}
+            reveal={reveal?.path === file.path ? reveal : null}
           />
         ))}
       </div>
@@ -434,6 +599,7 @@ function ReadyPanel({
         runCount={view.runs.length}
         onCleared={() => void refreshThreads()}
       />
+      <GoToDialog open={goingTo} onOpenChange={setGoingTo} entries={goToEntries} />
       <AiReviewDialog open={reviewing} onOpenChange={setReviewing} sessionId={view.sessionId} threadId={threadId} environmentId={view.environmentId} onStarted={putRun} />
     </div>
   );
