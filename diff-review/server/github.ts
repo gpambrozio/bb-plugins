@@ -75,6 +75,8 @@ export interface RemoteComment {
   body: string;
   author: string;
   createdAt: number;
+  /** The diff around the commented lines when the comment was made, ending with them. */
+  diffHunk: string | null;
 }
 
 export interface RemoteThread {
@@ -87,6 +89,8 @@ export interface RemoteThread {
   originalLine: number | null;
   originalStartLine: number | null;
   diffSide: "LEFT" | "RIGHT";
+  /** `FILE` for a comment on the whole file, which has no lines. */
+  subjectType: "LINE" | "FILE";
   comments: RemoteComment[];
 }
 
@@ -101,10 +105,10 @@ export interface DraftThread {
 
 const PULL_FIELDS = "id number title url state baseRefName headRefName headRefOid baseRefOid";
 const PULL_QUERY = `query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){${PULL_FIELDS}}}}`;
-const COMMENT_FIELDS = "id body createdAt author{login}";
-const THREADS_QUERY = `query($owner:String!,$name:String!,$number:Int!,$after:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$after){pageInfo{hasNextPage endCursor} nodes{id isResolved isOutdated path line startLine originalLine originalStartLine diffSide comments(first:100){nodes{${COMMENT_FIELDS}}}}}}}}`;
+const COMMENT_FIELDS = "id body createdAt diffHunk author{login}";
+const THREADS_QUERY = `query($owner:String!,$name:String!,$number:Int!,$after:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$after){pageInfo{hasNextPage endCursor} nodes{id isResolved isOutdated path line startLine originalLine originalStartLine diffSide subjectType comments(first:100){nodes{${COMMENT_FIELDS}}}}}}}}`;
 const ADD_REVIEW = "mutation($input:AddPullRequestReviewInput!){addPullRequestReview(input:$input){pullRequestReview{id url}}}";
-const ADD_THREAD = "mutation($input:AddPullRequestReviewThreadInput!){addPullRequestReviewThread(input:$input){thread{id}}}";
+const ADD_THREAD = "mutation($input:AddPullRequestReviewThreadInput!){addPullRequestReviewThread(input:$input){thread{id comments(first:1){nodes{id}}}}}";
 const SUBMIT_REVIEW = "mutation($input:SubmitPullRequestReviewInput!){submitPullRequestReview(input:$input){pullRequestReview{id url}}}";
 const DELETE_REVIEW = "mutation($input:DeletePullRequestReviewInput!){deletePullRequestReview(input:$input){pullRequestReview{id}}}";
 const REPLY = "mutation($input:AddPullRequestReviewThreadReplyInput!){addPullRequestReviewThreadReply(input:$input){comment{id}}}";
@@ -143,13 +147,26 @@ export class GitHub {
     for (let page = 0; page < MAX_THREAD_PAGES; page++) {
       const data = await this.graphql(THREADS_QUERY, { owner: ref.owner, name: ref.repo, number: ref.number, after });
       const connection = (data.repository as { pullRequest?: { reviewThreads?: unknown } } | null)?.pullRequest?.reviewThreads as
-        | { pageInfo: { hasNextPage: boolean; endCursor: string | null }; nodes: (Omit<RemoteThread, "comments"> & { comments: { nodes: { id: string; body: string; createdAt: string; author: { login: string } | null }[] } })[] }
+        | {
+            pageInfo: { hasNextPage: boolean; endCursor: string | null };
+            nodes: (Omit<RemoteThread, "comments" | "subjectType"> & {
+              subjectType?: string | null;
+              comments: { nodes: { id: string; body: string; createdAt: string; diffHunk?: string | null; author: { login: string } | null }[] };
+            })[];
+          }
         | undefined;
       if (connection === undefined) break;
       for (const node of connection.nodes) {
         threads.push({
           ...node,
-          comments: node.comments.nodes.map((comment) => ({ id: comment.id, body: comment.body, author: comment.author?.login ?? "ghost", createdAt: Date.parse(comment.createdAt) || 0 })),
+          subjectType: node.subjectType === "FILE" ? "FILE" : "LINE",
+          comments: node.comments.nodes.map((comment) => ({
+            id: comment.id,
+            body: comment.body,
+            author: comment.author?.login ?? "ghost",
+            createdAt: Date.parse(comment.createdAt) || 0,
+            diffHunk: comment.diffHunk ?? null,
+          })),
         });
       }
       if (!connection.pageInfo.hasNextPage || connection.pageInfo.endCursor === null) break;
@@ -168,16 +185,25 @@ export class GitHub {
 
   /**
    * One review, in diffity's order: a pending review on the head commit, a thread per line comment,
-   * then the submit with the verdict and body. A review that fails part-way is deleted, so no
-   * half-made pending review is left on the pull request.
+   * then the submit with the verdict and body. `beforeSubmit` runs just before that last request (the
+   * head check); a review that fails or is refused part-way is deleted, so no half-made pending
+   * review is left on the pull request. Answers each draft's new thread and first comment ids.
    */
-  async submitReview(pullId: string, headSha: string, event: ReviewEvent, body: string, drafts: readonly DraftThread[]): Promise<{ url: string | null }> {
+  async submitReview(
+    pullId: string,
+    headSha: string,
+    event: ReviewEvent,
+    body: string,
+    drafts: readonly DraftThread[],
+    beforeSubmit: () => Promise<void> = async () => undefined,
+  ): Promise<{ url: string | null; threads: { threadId: string; commentId: string | null }[] }> {
     const added = await this.graphql(ADD_REVIEW, { input: { pullRequestId: pullId, commitOID: headSha } });
     const review = (added.addPullRequestReview as { pullRequestReview?: { id: string; url: string } } | undefined)?.pullRequestReview;
     if (review === undefined) throw new GitHubError("GitHub did not start the review.");
     try {
+      const threads: { threadId: string; commentId: string | null }[] = [];
       for (const draft of drafts) {
-        await this.graphql(ADD_THREAD, {
+        const added = await this.graphql(ADD_THREAD, {
           input: {
             pullRequestReviewId: review.id,
             path: draft.path,
@@ -187,9 +213,13 @@ export class GitHub {
             ...(draft.startLine === undefined ? {} : { startLine: draft.startLine, startSide: draft.startSide ?? draft.side }),
           },
         });
+        const thread = (added.addPullRequestReviewThread as { thread?: { id: string; comments?: { nodes?: { id: string }[] } } } | undefined)?.thread;
+        if (thread === undefined) throw new GitHubError("GitHub did not add a review comment.");
+        threads.push({ threadId: thread.id, commentId: thread.comments?.nodes?.[0]?.id ?? null });
       }
+      await beforeSubmit();
       const submitted = await this.graphql(SUBMIT_REVIEW, { input: { pullRequestReviewId: review.id, event, ...(body.trim() === "" ? {} : { body }) } });
-      return { url: (submitted.submitPullRequestReview as { pullRequestReview?: { url?: string } } | undefined)?.pullRequestReview?.url ?? review.url };
+      return { url: (submitted.submitPullRequestReview as { pullRequestReview?: { url?: string } } | undefined)?.pullRequestReview?.url ?? review.url, threads };
     } catch (error) {
       await this.graphql(DELETE_REVIEW, { input: { pullRequestReviewId: review.id } }).catch(() => undefined);
       throw error;

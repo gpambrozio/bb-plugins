@@ -903,7 +903,7 @@ export class ReviewService {
     return plan;
   }
 
-  submitReview(input: { sessionId: string; event: ReviewEvent; body: string; headSha: string; reviewThreadIds: readonly string[] }) {
+  submitReview(input: { sessionId: string; event: ReviewEvent; body: string; headSha: string; items: readonly { reviewThreadId: string; body: string }[] }) {
     const ref = this.pullOf(input.sessionId);
     return github(() => this.prs.submit({ ...input, ref }));
   }

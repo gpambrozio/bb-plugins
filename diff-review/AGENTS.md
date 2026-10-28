@@ -267,17 +267,37 @@ and hands its action to the tab through `app/commands.ts`. A hidden tab (`experi
 defers reloads until it shows.
 
 **Pull requests are reviewed read only, and posted only by the user.** The `pr` view's diff comes
-from the host entry's `fetchPull` (the head and base into `refs/diff-review/pull/<n>/…` of the
-workspace's repository, never a branch, the index or the working tree; decision 6) and its `base...head`
-range. GitHub is read and written with `gh api graphql --input -` (the JSON body on stdin, so a
-mutation's `input` keeps its types; `-F` would send strings) on the **bb server's Mac**, where `gh`
-is signed in (decision 8); a remote workspace still fetches on its own machine. Review threads are
-mirrored into the session on every load by GitHub id (`github_thread_id`; GitHub's comments are
-`github_comment_id` rows, shown as `github`, never editable here). The user's reply, resolve or reopen
-on a mirror goes to GitHub, then reads it back; dismiss has no GitHub meaning. **Submit** is the only
-path that posts a review (decision 5): an agent's `reply` on a mirror stays in the tab. It refuses when
-the pull request's head moved since the view loaded, and deletes the local threads it posted (GitHub's
-copies come back with the next read). A fix run for a pull request starts in a new managed worktree
+from the host entry's `fetchPull` and its `base...head` range. It fetches the head and base into
+`refs/diff-review/pull/<owner>/<repo>/<n>/…` of the workspace's repository (never a branch, the index
+or the working tree; decision 6), named by the pull request's repository and fetched-and-resolved one
+at a time per repository (its git common dir, so linked worktrees share the queue): two views fetching
+`a/x#7` and `b/x#7` at once otherwise read each other's commits. GitHub is read and written with
+`gh api graphql --input -` (the JSON body on stdin, so a mutation's `input` keeps its types; `-F` would
+send strings) on the **bb server's Mac**, where `gh` is signed in (decision 8); a remote workspace still
+fetches on its own machine.
+
+Review threads are mirrored into the session on every load by GitHub id (`github_thread_id`; GitHub's
+comments are `github_comment_id` rows, shown as `github`, never editable here). A `FILE` thread is a
+whole-file one. A thread GitHub marks outdated, or with no current line, keeps its original lines and
+the text it was made on, from its first comment's `diffHunk`, so it is placed by that text or listed as
+not on the current diff; it is never pinned to whatever sits at its old line now. A mirror GitHub no
+longer has is deleted, unless it holds the plugin's own comments, which unlinks it instead. The user's
+reply, resolve or reopen on a mirror goes to GitHub, then reads it back; dismiss has no GitHub meaning.
+
+**Submit** is the only path that posts a review (decision 5); an agent's `reply` on a mirror stays in
+the tab.
+- It posts exactly what the dialog showed: the plan carries each comment's text, the dialog sends it
+  back, and a comment changed since is refused before anything is posted.
+- It checks the pull request's head before the first request and again just before the last (the
+  submit), deleting the pending review on a push. One request's time between that read and GitHub
+  taking the submit is the race left.
+- It deletes nothing. A line comment becomes the mirror of the thread it made: GitHub's copy of its
+  first comment takes that comment's place when unedited, and its replies, an agent's answers and
+  anything written during the submission stay, unposted. A whole-file or whole-diff comment, now in the
+  review's body, is resolved.
+
+An AI run's comments on a pull request are checked against its fetched range (`PullRequests.filesFor`,
+the view's last load or a fresh fetch). A fix run for a pull request starts in a new managed worktree
 told to `gh pr checkout`.
 
 **Summaries and explanations are review runs with a purpose.** The `runs` table's kind check predates
@@ -301,7 +321,8 @@ the branch has some, and the tab's picker adopts that view without loading it ag
   0.2.0 added the `runs` table at 7–9, its `parent_thread_id` at 10 (an `ALTER`, since 7 was
   already applied on installs of the branch), `view_states` at 11 and `send_previous` at 12; 0.3.0
   added `review_threads.file_revision` at 13 and `runs.purpose` at 14; 0.4.0 added
-  `review_threads.github_thread_id` at 15 and `review_comments.github_comment_id` at 16.
+  `review_threads.github_thread_id` at 15 and `review_comments.github_comment_id` at 16. `docs.test.ts`
+  keeps the README's install range on the package's minor version.
 - The tab's kept state (drafts, file and thread folds, scroll) lives in the plugin's database, keyed by bb thread and
   session, not in `localStorage`: it must survive a restart and follow the user to another device (the
   owner uses bb remotely). Saves are debounced and flushed when the tab unmounts or the page hides; a

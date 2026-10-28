@@ -235,8 +235,8 @@ export const rpcContract = defineRpcContract({
     input: z.object({ sessionId: id }).strict(),
     output: z
       .object({
-        lines: z.array(z.object({ reviewThreadId: z.string(), path: z.string(), line: z.number() }).strict()),
-        body: z.array(z.object({ reviewThreadId: z.string() }).strict()),
+        lines: z.array(z.object({ reviewThreadId: z.string(), path: z.string(), line: z.number(), body: z.string() }).strict()),
+        body: z.array(z.object({ reviewThreadId: z.string(), body: z.string() }).strict()),
         blocked: z.array(z.object({ reviewThreadId: z.string(), reason: z.string() }).strict()),
       })
       .strict(),
@@ -249,7 +249,8 @@ export const rpcContract = defineRpcContract({
         body: z.string().max(BODY_MAX_CHARS),
         /** The pull request's head as the view showed it; a newer one is refused. */
         headSha: z.string().regex(/^[0-9a-f]{40}$/),
-        reviewThreadIds: z.array(id).max(500),
+        /** The comments the user approved, each as the dialog showed its text; one changed since is refused. */
+        items: z.array(z.object({ reviewThreadId: id, body: z.string().max(BODY_MAX_CHARS) }).strict()).max(500),
       })
       .strict(),
     output: z.object({ url: z.string().nullable(), posted: z.number().int(), blocked: z.array(z.object({ reviewThreadId: z.string(), reason: z.string() }).strict()) }).strict(),

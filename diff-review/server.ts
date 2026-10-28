@@ -102,8 +102,8 @@ async function plugin(bb: BbPluginApi, deps: { gh?: GhRunner }) {
     reviewPlan: ({ sessionId }) => {
       const plan = service.reviewPlan(sessionId);
       return {
-        lines: plan.lines.map((entry) => ({ reviewThreadId: entry.reviewThreadId, path: entry.draft.path, line: entry.draft.line })),
-        body: plan.body.map((entry) => ({ reviewThreadId: entry.reviewThreadId })),
+        lines: plan.lines.map((entry) => ({ reviewThreadId: entry.reviewThreadId, path: entry.draft.path, line: entry.draft.line, body: entry.body })),
+        body: plan.body.map((entry) => ({ reviewThreadId: entry.reviewThreadId, body: entry.body })),
         blocked: plan.blocked,
       };
     },

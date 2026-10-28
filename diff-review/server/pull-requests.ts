@@ -43,10 +43,10 @@ export const BLOCKED = {
 } as const;
 
 export interface ReviewPlan {
-  /** Line comments, each a review thread on GitHub. */
-  lines: { reviewThreadId: string; draft: DraftThread }[];
+  /** Line comments, each a review thread on GitHub; `commentId` and `body` are the comment posted. */
+  lines: { reviewThreadId: string; commentId: string; body: string; draft: DraftThread }[];
   /** Whole-diff and whole-file comments, which go into the review's body. */
-  body: { reviewThreadId: string; text: string }[];
+  body: { reviewThreadId: string; commentId: string; body: string; text: string }[];
   blocked: { reviewThreadId: string; reason: string }[];
 }
 
@@ -68,7 +68,7 @@ export function reviewPlan(threads: readonly ReviewThread[], files: readonly Dif
       continue;
     }
     if (thread.filePath === GENERAL_PATH) {
-      plan.body.push({ reviewThreadId: thread.id, text: body });
+      plan.body.push({ reviewThreadId: thread.id, commentId: thread.comments[0]!.id, body, text: body });
       continue;
     }
     const file = byPath.get(thread.filePath);
@@ -77,7 +77,7 @@ export function reviewPlan(threads: readonly ReviewThread[], files: readonly Dif
       continue;
     }
     if (thread.startLine === 0 || thread.side === null) {
-      plan.body.push({ reviewThreadId: thread.id, text: `\`${thread.filePath}\`: ${body}` });
+      plan.body.push({ reviewThreadId: thread.id, commentId: thread.comments[0]!.id, body, text: `\`${thread.filePath}\`: ${body}` });
       continue;
     }
     const placement = file.patch === null ? { state: "outdated" as const } : placeThread(thread, parsePatchLines(file.patch));
@@ -89,6 +89,8 @@ export function reviewPlan(threads: readonly ReviewThread[], files: readonly Dif
     const multi = placement.startLine < placement.endLine;
     plan.lines.push({
       reviewThreadId: thread.id,
+      commentId: thread.comments[0]!.id,
+      body,
       draft: { path: thread.filePath, body, line: placement.endLine, side, ...(multi ? { startLine: placement.startLine, startSide: side } : {}) },
     });
   }
@@ -100,25 +102,54 @@ export function reviewBody(text: string, sections: readonly string[]): string {
   return [text.trim(), ...sections.map((section) => section.trim())].filter((part) => part !== "").join("\n\n");
 }
 
-/** A GitHub review thread as the view mirrors it, its lines' text read from the pull request's diff. */
-export function mirrorThread(remote: RemoteThread, files: readonly DiffFile[]): GithubThreadInput | null {
-  const line = remote.line ?? remote.originalLine;
-  if (line === null) return null;
-  const startLine = remote.startLine ?? remote.originalStartLine ?? line;
-  const side: Side = remote.diffSide === "LEFT" ? "old" : "new";
-  const patch = files.find((file) => file.path === remote.path)?.patch ?? null;
-  const anchorContent = patch === null ? null : linesText(parsePatchLines(patch), side, Math.min(startLine, line), line);
-  return {
-    githubThreadId: remote.id,
-    filePath: remote.path,
-    side,
-    startLine: Math.min(startLine, line),
-    endLine: line,
-    status: remote.isResolved ? "resolved" : "open",
-    anchorContent,
-    comments: remote.comments.map((comment) => ({ githubCommentId: comment.id, author: comment.author, body: comment.body, createdAt: comment.createdAt })),
-  };
+/**
+ * The commented lines' text as GitHub saw them: the last lines of the first comment's `diffHunk` on
+ * the comment's side (the hunk ends with the lines commented on).
+ */
+export function hunkAnchor(diffHunk: string | null, side: Side, count: number): string | null {
+  if (diffHunk === null || count < 1) return null;
+  const lines = diffHunk
+    .split("\n")
+    .filter((line) => !line.startsWith("@@") && !line.startsWith("\\"))
+    .filter((line) => (side === "old" ? !line.startsWith("+") : !line.startsWith("-")))
+    .map((line) => line.slice(1));
+  if (lines.length < count) return null;
+  return lines.slice(lines.length - count).join("\n");
 }
+
+/**
+ * A GitHub review thread as the view mirrors it. A comment on a whole file (`subjectType` FILE) is a
+ * whole-file thread. A thread GitHub marks outdated, or that has no current line, keeps its original
+ * lines and the text it was made on (from its `diffHunk`), so it is placed by that text or listed as
+ * not on the current diff, never pinned to whatever code sits at its old line number now.
+ */
+export function mirrorThread(remote: RemoteThread, files: readonly DiffFile[]): GithubThreadInput | null {
+  const status = remote.isResolved ? ("resolved" as const) : ("open" as const);
+  const comments = remote.comments.map((comment) => ({ githubCommentId: comment.id, author: comment.author, body: comment.body, createdAt: comment.createdAt }));
+  if (remote.subjectType === "FILE") {
+    return { githubThreadId: remote.id, filePath: remote.path, side: null, startLine: 0, endLine: 0, status, anchorContent: null, comments };
+  }
+  const side: Side = remote.diffSide === "LEFT" ? "old" : "new";
+  const current = !remote.isOutdated && remote.line !== null;
+  const line = current ? remote.line : remote.originalLine;
+  if (line === null) return null;
+  const rawStart = current ? (remote.startLine ?? line) : (remote.originalStartLine ?? line);
+  const startLine = Math.min(rawStart, line);
+  let anchorContent: string | null;
+  if (current) {
+    const patch = files.find((file) => file.path === remote.path)?.patch ?? null;
+    anchorContent = patch === null ? null : linesText(parsePatchLines(patch), side, startLine, line);
+  } else {
+    anchorContent = hunkAnchor(remote.comments[0]?.diffHunk ?? null, side, line - startLine + 1) ?? OUTDATED_ANCHOR;
+  }
+  return { githubThreadId: remote.id, filePath: remote.path, side, startLine, endLine: line, status, anchorContent, comments };
+}
+
+/**
+ * The anchor of an outdated thread whose original text GitHub did not give: no line reads it, so the
+ * thread is listed as not on the current diff.
+ */
+export const OUTDATED_ANCHOR = "\u0000diff-review: outdated on GitHub\u0000";
 
 const prStatusSchema = z.record(
   z.string(),
@@ -210,32 +241,79 @@ export class PullRequests {
    * at the commit the view showed; the comments that went into it are removed from the view, since
    * GitHub's copies come back with the next read.
    */
+  /**
+   * The files of a `pr` session's diff, as its view last loaded them, or fetched now when no tab has
+   * loaded it since the plugin started: what an AI run's comments are checked against.
+   */
+  async filesFor(sessionId: string, environment: Environment, ref: PullRef, patterns: readonly string[]): Promise<readonly DiffFile[]> {
+    const known = this.loaded.get(sessionId);
+    if (known !== undefined) return known.files;
+    const pull = await this.load(environment, ref, patterns, false);
+    this.loaded.set(sessionId, { pullId: pull.pullId, headSha: pull.details.headSha, baseSha: pull.details.baseSha, files: pull.diff.files });
+    return pull.diff.files;
+  }
+
   /** The plan for the session's comments, against the diff last loaded; null before a load. */
   plan(sessionId: string): ReviewPlan | null {
     const loaded = this.loaded.get(sessionId);
     return loaded === undefined ? null : reviewPlan(this.store.threads(sessionId), loaded.files);
   }
 
-  async submit(input: { sessionId: string; ref: PullRef; event: ReviewEvent; body: string; headSha: string; reviewThreadIds: readonly string[] }): Promise<{ url: string | null; posted: number; blocked: ReviewPlan["blocked"] }> {
+  /**
+   * Submits the comments the user approved in the dialog, exactly as the dialog showed them (`items`:
+   * each thread and its first comment's text), as one review with the verdict:
+   *
+   * - The pull request must still be at the commit the view showed, before anything is posted and
+   *   again just before the last request (the submit), when a push during the drafting deletes the
+   *   pending review and leaves every comment here. Between that last read and GitHub taking the
+   *   submit there is still one request's time in which a push can land.
+   * - A comment edited since the dialog read it is refused, not posted.
+   * - Nothing is deleted: a line comment becomes the mirror of the GitHub thread it made (its replies
+   *   and anything an agent wrote stay here, unposted); a whole-file or whole-diff one, now in the
+   *   review's body, is resolved.
+   */
+  async submit(input: {
+    sessionId: string;
+    ref: PullRef;
+    event: ReviewEvent;
+    body: string;
+    headSha: string;
+    items: readonly { reviewThreadId: string; body: string }[];
+  }): Promise<{ url: string | null; posted: number; blocked: ReviewPlan["blocked"] }> {
     const loaded = this.loaded.get(input.sessionId);
     if (loaded === undefined) throw new GitHubError("Load the pull request's view first.");
-    let meta;
-    try {
-      meta = await this.github.pull(input.ref);
-    } catch (error) {
+    const headNow = async () => {
+      try {
+        return (await this.github.pull(input.ref)).headRefOid;
+      } catch (error) {
+        throw new GitHubError(`Could not read the pull request from GitHub: ${failure(error)}`);
+      }
+    };
+    const moved = new GitHubError("The pull request has new commits since this view loaded; reload it, check your comments, and submit again.");
+    const meta = await this.github.pull(input.ref).catch((error: unknown) => {
       throw new GitHubError(`Could not read the pull request from GitHub: ${failure(error)}`);
+    });
+    if (meta.headRefOid !== input.headSha || loaded.headSha !== input.headSha) throw moved;
+    const approved = new Map(input.items.map((item) => [item.reviewThreadId, item.body]));
+    const plan = reviewPlan(this.store.threads(input.sessionId), loaded.files, new Set(approved.keys()));
+    for (const entry of [...plan.lines, ...plan.body]) {
+      if (approved.get(entry.reviewThreadId) !== entry.body) throw new GitHubError("A comment changed since you opened the dialog; open Submit review again to see it.");
     }
-    if (meta.headRefOid !== input.headSha || loaded.headSha !== input.headSha) {
-      throw new GitHubError("The pull request has new commits since this view loaded; reload it, check your comments, and submit again.");
-    }
-    const plan = reviewPlan(this.store.threads(input.sessionId), loaded.files, new Set(input.reviewThreadIds));
+    const missing = [...approved.keys()].filter((id) => ![...plan.lines, ...plan.body, ...plan.blocked].some((entry) => entry.reviewThreadId === id));
+    if (missing.length > 0) throw new GitHubError("A comment you chose is gone or closed; open Submit review again.");
     const body = reviewBody(input.body, plan.body.map((entry) => entry.text));
     if (input.event === "REQUEST_CHANGES" && body === "" && plan.lines.length === 0) throw new GitHubError("Requesting changes needs a comment or a review body.");
-    const result = await this.github.submitReview(meta.id, input.headSha, input.event, body, plan.lines.map((entry) => entry.draft));
-    const posted = [...plan.lines.map((entry) => entry.reviewThreadId), ...plan.body.map((entry) => entry.reviewThreadId)];
-    this.store.deleteThreads(posted);
+    const result = await this.github.submitReview(meta.id, input.headSha, input.event, body, plan.lines.map((entry) => entry.draft), async () => {
+      if ((await headNow()) !== input.headSha) throw moved;
+    });
+    plan.lines.forEach((entry, index) => {
+      const made = result.threads[index];
+      if (made === undefined) return;
+      this.store.linkGithubThread(entry.reviewThreadId, made.threadId, made.commentId === null ? null : { commentId: entry.commentId, body: entry.body, githubCommentId: made.commentId });
+    });
+    for (const entry of plan.body) this.store.setStatus(entry.reviewThreadId, "resolved", false);
     await this.sync(input.sessionId, input.ref);
     this.publish(input.sessionId);
-    return { url: result.url, posted: posted.length, blocked: plan.blocked };
+    return { url: result.url, posted: plan.lines.length + plan.body.length, blocked: plan.blocked };
   }
 }

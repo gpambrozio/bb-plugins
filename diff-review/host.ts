@@ -8,7 +8,7 @@
 import { experimental_defineHostEntry } from "@get-bb/plugin-sdk";
 
 import { hostContract } from "./shared/host-contract";
-import { createRunGit, diff, fetchPull, indexState, rangeCommits } from "./host/git";
+import { createRunGit, diff, fetchPull, githubRepository, indexState, rangeCommits } from "./host/git";
 import { revert } from "./host/revert";
 
 const runGit = createRunGit();
@@ -23,6 +23,6 @@ export default experimental_defineHostEntry({
       await revert(runGit, input);
       return { ok: true as const };
     },
-    fetchPull: ({ root, url, number, baseRef }) => fetchPull(runGit, root, url, number, baseRef),
+    fetchPull: ({ root, url, number, baseRef }) => fetchPull(runGit, root, { url, ...githubRepository(url), number, baseRef }),
   },
 });

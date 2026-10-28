@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import entry from "../host";
 import { parseRange } from "../shared/git-spec";
-import { createRunGit, diff, fetchPull, indexState, newFilePatch, parseNameStatus, parseNumstat, rangeCommits, splitPatch, unquote } from "./git";
+import { createRunGit, diff, fetchPull, indexState, newFilePatch, parseNameStatus, parseNumstat, rangeCommits, splitPatch, unquote, type RunGit } from "./git";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -150,13 +150,52 @@ describe("the host's git diffs", () => {
     const local = repo();
     writeFileSync(join(local, "a.txt"), "local edit\n");
     const before = git(local, "status", "--porcelain");
-    const fetched = await fetchPull(run, local, upstream, 3, "main");
+    const fetched = await fetchPull(run, local, { url: upstream, owner: "o", repo: "r", number: 3, baseRef: "main" });
     expect(fetched).toEqual({ headSha: git(upstream, "rev-parse", "pr"), baseSha: git(upstream, "rev-parse", "main") });
-    expect(git(local, "rev-parse", "refs/diff-review/pull/3/head")).toBe(fetched.headSha);
+    expect(git(local, "rev-parse", "refs/diff-review/pull/o/r/3/head")).toBe(fetched.headSha);
     expect(git(local, "branch", "--format=%(refname:short)")).toBe("main");
     expect(git(local, "status", "--porcelain")).toBe(before);
     const pulled = await diff(run, local, { kind: "range", from: fetched.baseSha, to: fetched.headSha, symmetric: true }, false);
     expect(pulled.files.map((file) => file.path)).toEqual(["c.txt"]);
+  });
+
+  it("keeps two repositories' pull request #7 apart when they are fetched at once, from worktrees too", async () => {
+    // Two upstreams, each with its own #7.
+    const upstream = (name: string) => {
+      const root = repo();
+      git(root, "checkout", "-q", "-b", "pr");
+      writeFileSync(join(root, `${name}.txt`), `${name}\n`);
+      git(root, "add", ".");
+      git(root, "commit", "-q", "-m", name);
+      git(root, "update-ref", "refs/pull/7/head", "pr");
+      return root;
+    };
+    const a = upstream("a");
+    const b = upstream("b");
+    const local = repo();
+    const worktree = join(local, "..", `${local.split("/").at(-1)}-wt`);
+    roots.push(worktree);
+    git(local, "worktree", "add", "-q", worktree);
+    // B's fetch is let through while A's has fetched but not yet read its refs.
+    let releaseA!: () => void;
+    const held = new Promise<void>((resolve) => (releaseA = resolve));
+    let fetchedA = false;
+    const interleaving: RunGit = async (where, args, options) => {
+      const result = await run(where, args, options);
+      if (args[0] === "fetch" && args.includes(a) && !fetchedA) {
+        fetchedA = true;
+        await held;
+      }
+      return result;
+    };
+    const first = fetchPull(interleaving, local, { url: a, owner: "ownerA", repo: "repo", number: 7, baseRef: "main" });
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const second = fetchPull(interleaving, worktree, { url: b, owner: "ownerB", repo: "repo", number: 7, baseRef: "main" });
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    releaseA();
+    const [gotA, gotB] = await Promise.all([first, second]);
+    expect(gotA.headSha).toBe(git(a, "rev-parse", "pr"));
+    expect(gotB.headSha).toBe(git(b, "rev-parse", "pr"));
   });
 
   it("refuses unknown revisions", async () => {

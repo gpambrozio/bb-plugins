@@ -450,7 +450,7 @@ export class RunService {
     let anchorContent: string | null = null;
     let fileRevision: string | null = null;
     if (input.filePath !== GENERAL_PATH) {
-      const { lines, revision } = await this.linesOf(session.environmentId, session.targetKey, input.filePath);
+      const { lines, revision } = await this.linesOf(session.id, session.environmentId, session.targetKey, input.filePath);
       fileRevision = revision;
       if (input.startLine > 0) {
         const side = input.side ?? "new";
@@ -477,9 +477,9 @@ export class RunService {
    * The lines a comment on `path` may be on: the diff's, or in the Any file view the file's own (read
    * through bb on the workspace's machine), with the revision the thread keeps.
    */
-  private async linesOf(environmentId: string, targetKey: string, path: string): Promise<{ lines: PatchLines; revision: string }> {
+  private async linesOf(sessionId: string, environmentId: string, targetKey: string, path: string): Promise<{ lines: PatchLines; revision: string }> {
     if (targetFromKey(targetKey).kind !== "files") {
-      const { patch, revision } = await this.patchOf(environmentId, targetKey, path);
+      const { patch, revision } = await this.patchOf(sessionId, environmentId, targetKey, path);
       return { lines: parsePatchLines(patch), revision };
     }
     const environment = await this.bb.sdk.environments.get({ environmentId });
@@ -497,7 +497,7 @@ export class RunService {
     return { lines: contentLines(content), revision: file.sha256 };
   }
 
-  private async patchOf(environmentId: string, targetKey: string, path: string): Promise<{ patch: string; revision: string }> {
+  private async patchOf(sessionId: string, environmentId: string, targetKey: string, path: string): Promise<{ patch: string; revision: string }> {
     // Reads the ignore files like a tab's load does; this line tells the two apart in the log.
     this.bb.log.debug(`Reading the diff of ${environmentId} to check a review comment on ${path}.`);
     const environment = await this.bb.sdk.environments.get({ environmentId });
@@ -506,7 +506,8 @@ export class RunService {
     const patterns = await ignorePatterns(this.bb.sdk, this.bb.log, environment, settings.ignorePatterns, settings.readIgnoreFiles);
     let diff;
     try {
-      diff = await loadDiff(this.review.sources, this.bb.log, environment, target, patterns);
+      // A pull request's diff is its fetched range, as its view loaded it (or loads it now).
+      diff = target.kind === "pr" ? { files: await this.review.prs.filesFor(sessionId, environment, target, patterns) } : await loadDiff(this.review.sources, this.bb.log, environment, target, patterns);
     } catch (error) {
       if (error instanceof ReviewUnavailable) throw new ReviewError(error.message, "diff_unavailable");
       throw error;

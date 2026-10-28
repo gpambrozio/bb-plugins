@@ -44,7 +44,7 @@ export function SubmitReviewDialog({
 }) {
   const rpc = useRpc<RpcContract>();
   const navigate = useBbNavigate();
-  const [plan, setPlan] = useState<{ lines: { reviewThreadId: string }[]; body: { reviewThreadId: string }[]; blocked: { reviewThreadId: string; reason: string }[] } | null>(null);
+  const [plan, setPlan] = useState<{ lines: { reviewThreadId: string; body: string }[]; body: { reviewThreadId: string; body: string }[]; blocked: { reviewThreadId: string; reason: string }[] } | null>(null);
   const [chosen, setChosen] = useState<Set<string>>(new Set());
   const [event, setEvent] = useState<ReviewEvent>("COMMENT");
   const [body, setBody] = useState("");
@@ -63,9 +63,12 @@ export function SubmitReviewDialog({
   }, [open, rpc, sessionId]);
 
   const byId = new Map(threads.map((thread) => [thread.id, thread]));
+  // What each comment says as this dialog read it: that text, and only that, is what Submit posts.
+  const approvedBody = (id: string) => [...(plan?.lines ?? []), ...(plan?.body ?? [])].find((entry) => entry.reviewThreadId === id)?.body;
   const row = (id: string, reason?: string) => {
     const thread = byId.get(id);
     if (thread === undefined) return null;
+    const shown = approvedBody(id) ?? thread.comments[0]?.body ?? "";
     return (
       <li key={id}>
         <label className="flex cursor-pointer items-start gap-2 rounded-md px-1 py-1 hover:bg-state-hover">
@@ -84,7 +87,7 @@ export function SubmitReviewDialog({
           />
           <span className="min-w-0 flex-1">
             <span className="block truncate text-xs text-muted-foreground">{describeLocation(thread)}</span>
-            <span className="block truncate text-sm">{thread.comments[0]?.body ?? ""}</span>
+            <span className="block truncate text-sm">{shown}</span>
             {reason === undefined ? null : <span className="block text-xs text-warning-text">{reason}</span>}
           </span>
         </label>
@@ -95,7 +98,11 @@ export function SubmitReviewDialog({
   const submit = async () => {
     setBusy(true);
     try {
-      const result = await rpc.call("submitReview", { sessionId, event, body, headSha, reviewThreadIds: [...chosen] });
+      const items = [...chosen].flatMap((id) => {
+        const text = approvedBody(id);
+        return text === undefined ? [] : [{ reviewThreadId: id, body: text }];
+      });
+      const result = await rpc.call("submitReview", { sessionId, event, body, headSha, items });
       toast.success(`Review submitted to pull request #${pullNumber}${result.posted === 0 ? "" : ` with ${result.posted} comment${result.posted === 1 ? "" : "s"}`}.`, {
         ...(result.url === null ? {} : { action: { label: "Open on GitHub", onClick: () => navigate.openUrl(result.url!) } }),
       });

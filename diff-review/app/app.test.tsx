@@ -728,7 +728,8 @@ describe("a pull request's view", () => {
       {
         rpc: {
           getReview: () => PR_VIEW,
-          reviewPlan: () => ({ lines: [{ reviewThreadId: "aaaaaa000031", path: "src/a.ts", line: 2 }], body: [], blocked: [] }),
+          // The dialog shows, and posts, the text as the plan read it, even if the view's copy is older.
+          reviewPlan: () => ({ lines: [{ reviewThreadId: "aaaaaa000031", path: "src/a.ts", line: 2, body: "Name it c, please." }], body: [], blocked: [] }),
           submitReview: () => ({ url: "https://github.com/o/r/pull/7#review-1", posted: 1, blocked: [] }),
         },
         openUrl: (url) => (opened.push(url), true),
@@ -743,10 +744,17 @@ describe("a pull request's view", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Submit review…" }));
     expect(await screen.findByRole("checkbox", { name: "Include src/a.ts:2 (new side)" })).toBeTruthy();
+    expect(screen.getByText("Name it c, please.")).toBeTruthy();
     fireEvent.click(screen.getByRole("radio", { name: "Approve" }));
     fireEvent.click(screen.getByRole("button", { name: "Submit: Approve" }));
     await waitFor(() =>
-      expect(slot.inspection.rpcCalls.find((call) => call.method === "submitReview")?.input).toEqual({ sessionId: "ses_1", event: "APPROVE", body: "", headSha: HEAD, reviewThreadIds: ["aaaaaa000031"] }),
+      expect(slot.inspection.rpcCalls.find((call) => call.method === "submitReview")?.input).toEqual({
+        sessionId: "ses_1",
+        event: "APPROVE",
+        body: "",
+        headSha: HEAD,
+        items: [{ reviewThreadId: "aaaaaa000031", body: "Name it c, please." }],
+      }),
     );
   });
 

@@ -120,7 +120,7 @@ range views from git itself, run on the machine that holds the workspace.
 Needs bb 0.48 or newer, with its Git plugin on (it is unless you turned it off).
 
 ```bash
-bb plugin install 'git:github.com/gpambrozio/bb-plugins@^0.3.0' --plugin diff-review --tag-prefix diff-review/
+bb plugin install 'git:github.com/gpambrozio/bb-plugins@^0.4.0' --plugin diff-review --tag-prefix diff-review/
 ```
 
 ## For agents

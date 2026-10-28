@@ -677,9 +677,9 @@ export class ReviewStore {
             )
             .run(id, sessionId, thread.filePath, thread.side, thread.startLine, thread.endLine, thread.status, thread.anchorContent, thread.githubThreadId, thread.comments[0]?.createdAt ?? at, at);
           changed = true;
-        } else if (before !== undefined && (before.status !== thread.status || before.start_line !== thread.startLine || before.end_line !== thread.endLine || before.side !== thread.side)) {
+        } else if (before !== undefined && (before.status !== thread.status || before.start_line !== thread.startLine || before.end_line !== thread.endLine || before.side !== thread.side || before.anchor_content !== thread.anchorContent)) {
           this.db
-            .prepare("UPDATE review_threads SET status = ?, side = ?, start_line = ?, end_line = ?, anchor_content = COALESCE(?, anchor_content), updated_at = ? WHERE id = ?")
+            .prepare("UPDATE review_threads SET status = ?, side = ?, start_line = ?, end_line = ?, anchor_content = ?, updated_at = ? WHERE id = ?")
             .run(thread.status, thread.side, thread.startLine, thread.endLine, thread.anchorContent, at, id);
           changed = true;
         }
@@ -713,22 +713,30 @@ export class ReviewStore {
           changed = true;
         }
       }
+      // A thread GitHub no longer has goes, unless it holds comments of the plugin's own (replies not
+      // posted, an agent's answer): then it stays, as the plugin's own thread.
       for (const [githubThreadId, row] of existing) {
         if (seen.has(githubThreadId)) continue;
-        this.db.prepare("DELETE FROM review_threads WHERE id = ?").run(row.id);
+        const own = this.db.prepare<[string], { n: number }>("SELECT count(*) AS n FROM review_comments WHERE thread_id = ? AND github_comment_id IS NULL").get(row.id)!.n;
+        if (own > 0) this.db.prepare("UPDATE review_threads SET github_thread_id = NULL WHERE id = ?").run(row.id);
+        else this.db.prepare("DELETE FROM review_threads WHERE id = ?").run(row.id);
         changed = true;
       }
     })();
     return changed;
   }
 
-  /** Deletes comment threads (with their comments); a review submitted to GitHub takes them. */
-  deleteThreads(ids: readonly string[]): void {
-    if (ids.length === 0) return;
+  /**
+   * A comment thread submitted to GitHub becomes the mirror of the review thread it made: it takes
+   * that thread's id, and its first comment the GitHub comment's when it still reads as posted (an
+   * edit made meanwhile stays the plugin's own). Its other comments, replies included, stay as they
+   * are.
+   */
+  linkGithubThread(threadId: string, githubThreadId: string, first: { commentId: string; body: string; githubCommentId: string } | null): void {
     this.db.transaction(() => {
-      for (const id of ids) {
-        this.db.prepare("DELETE FROM send_previous WHERE thread_id = ?").run(id);
-        this.db.prepare("DELETE FROM review_threads WHERE id = ?").run(id);
+      this.db.prepare("UPDATE review_threads SET github_thread_id = ?, updated_at = ? WHERE id = ?").run(githubThreadId, this.now(), threadId);
+      if (first !== null) {
+        this.db.prepare("UPDATE review_comments SET github_comment_id = ? WHERE id = ? AND thread_id = ? AND body = ?").run(first.githubCommentId, first.commentId, threadId, first.body);
       }
     })();
   }

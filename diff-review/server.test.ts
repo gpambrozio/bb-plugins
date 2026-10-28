@@ -7,6 +7,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import plugin, { diffReviewPlugin } from "./server";
 import { REPORT_LINE } from "./server/run-prompts";
+import { placeThread } from "./shared/anchors";
+import { parsePatchLines } from "./shared/patch-lines";
 import { TOOL_NAMES } from "./server/tool-names";
 import type { ReviewThread, ReviewView, Run } from "./shared/types";
 
@@ -615,6 +617,8 @@ describe("reviewing a GitHub pull request", () => {
     const requests: { query: string; variables: Record<string, unknown> }[] = [];
     const remote = {
       head: HEAD,
+      /** Runs as GitHub adds each review thread of a submission (a push, a reply landing meanwhile). */
+      onAddThread: async () => undefined as void,
       threads: [
         {
           id: "PRRT_1", isResolved: false, isOutdated: false, path: "src/a.ts", line: 2, startLine: null, originalLine: 2, originalStartLine: null, diffSide: "RIGHT",
@@ -633,12 +637,26 @@ describe("reviewing a GitHub pull request", () => {
       }
       if (request.query.includes("addPullRequestReview(")) return data({ addPullRequestReview: { pullRequestReview: { id: "PRR_1", url: "https://github.com/o/r/pull/7#review-1" } } });
       if (request.query.includes("submitPullRequestReview")) return data({ submitPullRequestReview: { pullRequestReview: { id: "PRR_1", url: "https://github.com/o/r/pull/7#review-1" } } });
+      if (request.query.includes("addPullRequestReviewThread(")) {
+        const input = request.variables.input as { path: string; body: string; line: number; side: string };
+        const id = `PRRT_new${remote.threads.length}`;
+        remote.threads.push({
+          id, isResolved: false, isOutdated: false, path: input.path, line: input.line, startLine: null, originalLine: input.line, originalStartLine: null, diffSide: input.side, subjectType: "LINE",
+          comments: { nodes: [{ id: `${id}_c1`, body: input.body, createdAt: "2026-10-03T00:00:00Z", author: { login: "me" } }] },
+        });
+        await remote.onAddThread();
+        return data({ addPullRequestReviewThread: { thread: { id, comments: { nodes: [{ id: `${id}_c1` }] } } } });
+      }
       if (request.query.includes("resolveReviewThread")) {
-        remote.threads[0]!.isResolved = !request.query.includes("unresolve");
+        const thread = remote.threads.find((entry) => entry.id === request.variables.id)!;
+        thread.isResolved = !request.query.includes("unresolve");
         return data({});
       }
       if (request.query.includes("addPullRequestReviewThreadReply")) {
-        (remote.threads[0]!.comments as { nodes: unknown[] }).nodes.push({ id: "PRRC_2", body: (request.variables.input as { body: string }).body, createdAt: "2026-10-02T00:00:00Z", author: { login: "me" } });
+        const input = request.variables.input as { pullRequestReviewThreadId: string; body: string };
+        const thread = remote.threads.find((entry) => entry.id === input.pullRequestReviewThreadId)!;
+        const nodes = (thread.comments as { nodes: unknown[] }).nodes;
+        nodes.push({ id: `${input.pullRequestReviewThreadId}_r${nodes.length}`, body: input.body, createdAt: "2026-10-02T00:00:00Z", author: { login: "me" } });
         return data({});
       }
       return data({});
@@ -673,18 +691,29 @@ describe("reviewing a GitHub pull request", () => {
     await expect(rpc("editComment", { commentId: mirror!.comments[0]!.id, body: "x" })).rejects.toMatchObject({ code: "forbidden" });
   });
 
-  it("submits the user's comments as one review with the verdict, and drops the ones it posted", async () => {
+  /** Submit as the dialog does: the plan's comments, with the text it showed. */
+  async function submitAll(rpc: (method: string, input?: unknown) => Promise<unknown>, sessionId: string, event: string, body: string) {
+    const plan = (await rpc("reviewPlan", { sessionId })) as { lines: { reviewThreadId: string; body: string }[]; body: { reviewThreadId: string; body: string }[] };
+    const items = [...plan.lines, ...plan.body].map((entry) => ({ reviewThreadId: entry.reviewThreadId, body: entry.body }));
+    return rpc("submitReview", { sessionId, event, body, headSha: HEAD, items }) as Promise<{ posted: number; url: string }>;
+  }
+
+  it("submits the user's comments as one review with the verdict, keeping every comment it did not post", async () => {
     const github = fakeGitHub();
     const { view, rpc } = await setup({ gh: github.gh });
     const { sessionId } = await view(PULL);
     const line = ((await rpc("createThread", { sessionId, filePath: "src/a.ts", side: "new", startLine: 2, endLine: 2, severity: null, anchorContent: "const b = 3;", body: "Name it c." })) as { thread: ReviewThread }).thread;
-    await rpc("createThread", { sessionId, filePath: "__general__", side: null, startLine: 0, endLine: 0, severity: null, anchorContent: null, body: "Looks good overall." });
+    await rpc("addComment", { reviewThreadId: line.id, body: "UNPOSTED USER FOLLOWUP" });
+    const general = ((await rpc("createThread", { sessionId, filePath: "__general__", side: null, startLine: 0, endLine: 0, severity: null, anchorContent: null, body: "Looks good overall." })) as { thread: ReviewThread }).thread;
     const gone = ((await rpc("createThread", { sessionId, filePath: "src/a.ts", side: "new", startLine: 1, endLine: 1, severity: null, anchorContent: "not there", body: "Lost" })) as { thread: ReviewThread }).thread;
     const plan = (await rpc("reviewPlan", { sessionId })) as { lines: unknown[]; body: unknown[]; blocked: { reviewThreadId: string }[] };
-    expect(plan).toMatchObject({ lines: [{ reviewThreadId: line.id, path: "src/a.ts", line: 2 }], body: [{}], blocked: [{ reviewThreadId: gone.id }] });
+    expect(plan).toMatchObject({ lines: [{ reviewThreadId: line.id, path: "src/a.ts", line: 2, body: "Name it c." }], body: [{ body: "Looks good overall." }], blocked: [{ reviewThreadId: gone.id }] });
+    // A reply lands while GitHub is taking the review.
+    github.remote.onAddThread = async () => {
+      await rpc("addComment", { reviewThreadId: line.id, body: "WRITTEN DURING SUBMIT" });
+    };
 
-    const ids = (await view(PULL)).threads.filter((thread) => thread.githubThreadId === null).map((thread) => thread.id);
-    const result = (await rpc("submitReview", { sessionId, event: "APPROVE", body: "Thanks!", headSha: HEAD, reviewThreadIds: ids })) as { posted: number; url: string };
+    const result = await submitAll(rpc, sessionId, "APPROVE", "Thanks!");
     expect(result).toMatchObject({ posted: 2, url: "https://github.com/o/r/pull/7#review-1" });
     const sent = github.requests.filter((request) => request.query.startsWith("mutation"));
     expect(sent.map((request) => request.variables.input)).toEqual([
@@ -692,8 +721,97 @@ describe("reviewing a GitHub pull request", () => {
       { pullRequestReviewId: "PRR_1", path: "src/a.ts", body: "Name it c.", line: 2, side: "RIGHT" },
       { pullRequestReviewId: "PRR_1", event: "APPROVE", body: "Thanks!\n\nLooks good overall." },
     ]);
-    // The posted comments left the view; the one that could not be posted stays.
-    expect((await view(PULL)).threads.filter((thread) => thread.githubThreadId === null).map((thread) => thread.id)).toEqual([gone.id]);
+    const threads = (await view(PULL)).threads;
+    // The line comment is now GitHub's thread; its first comment is GitHub's copy, the replies stay here.
+    const posted = threads.find((thread) => thread.id === line.id)!;
+    expect(posted.githubThreadId).toBe("PRRT_new1");
+    expect(posted.comments.map((comment) => [comment.authorType, comment.body])).toEqual([
+      ["github", "Name it c."],
+      ["user", "UNPOSTED USER FOLLOWUP"],
+      ["user", "WRITTEN DURING SUBMIT"],
+    ]);
+    expect(threads.filter((thread) => thread.githubThreadId === "PRRT_new1")).toHaveLength(1);
+    // The whole-diff comment went into the review's body: resolved, still here.
+    expect(threads.find((thread) => thread.id === general.id)).toMatchObject({ status: "resolved", githubThreadId: null });
+    expect(threads.find((thread) => thread.id === gone.id)).toMatchObject({ status: "open", githubThreadId: null });
+  });
+
+  it("refuses a comment edited since the dialog read it, posting nothing", async () => {
+    const github = fakeGitHub();
+    const { view, rpc } = await setup({ gh: github.gh });
+    const { sessionId } = await view(PULL);
+    const line = ((await rpc("createThread", { sessionId, filePath: "src/a.ts", side: "new", startLine: 2, endLine: 2, severity: null, anchorContent: "const b = 3;", body: "Approved text" })) as { thread: ReviewThread }).thread;
+    await rpc("editComment", { commentId: line.comments[0]!.id, body: "Edited after the dialog opened" });
+    await expect(rpc("submitReview", { sessionId, event: "COMMENT", body: "", headSha: HEAD, items: [{ reviewThreadId: line.id, body: "Approved text" }] })).rejects.toMatchObject({
+      code: "conflict",
+      message: expect.stringContaining("changed since you opened the dialog"),
+    });
+    expect(github.requests.some((request) => request.query.startsWith("mutation"))).toBe(false);
+  });
+
+  it("deletes the pending review and keeps every comment when the pull request gets a push during the submission", async () => {
+    const github = fakeGitHub();
+    const { view, rpc } = await setup({ gh: github.gh });
+    const { sessionId } = await view(PULL);
+    const line = ((await rpc("createThread", { sessionId, filePath: "src/a.ts", side: "new", startLine: 2, endLine: 2, severity: null, anchorContent: "const b = 3;", body: "Name it c." })) as { thread: ReviewThread }).thread;
+    github.remote.onAddThread = async () => {
+      github.remote.head = "c".repeat(40);
+    };
+    await expect(submitAll(rpc, sessionId, "APPROVE", "")).rejects.toMatchObject({ code: "conflict", message: expect.stringContaining("new commits") });
+    const mutations = github.requests.filter((request) => request.query.startsWith("mutation")).map((request) => request.query.match(/^mutation[^{]*\{(\w+)/)![1]);
+    expect(mutations).toEqual(["addPullRequestReview", "addPullRequestReviewThread", "deletePullRequestReview"]);
+    expect((await view(PULL)).threads.find((thread) => thread.id === line.id)).toMatchObject({ status: "open", githubThreadId: null });
+  });
+
+  it("lets an AI review and an explanation of the pull request comment on its files' lines", async () => {
+    const github = fakeGitHub();
+    const { view, rpc, harness } = await setup({ gh: github.gh });
+    const { sessionId } = await view(PULL);
+    const callTool = (name: string, input: unknown, threadId: string) => harness.behavior.callAgentTool(name, input, { threadId, projectId: "proj_1" });
+    const failed = (result: unknown) => typeof result !== "string" && (result as { isError?: boolean }).isError === true;
+    const execution = { providerId: "claude-code", model: "big", reasoningLevel: "high" };
+    const { run } = (await rpc("startReview", { sessionId, threadId: THREAD, focuses: [], instructions: "", execution })) as { run: { threadId: string } };
+    expect(failed(await callTool("diff_review_comment", { file: "src/a.ts", startLine: 2, body: "b must stay 2" }, run.threadId))).toBe(false);
+    expect(failed(await callTool("diff_review_comment", { file: "src/a.ts", startLine: 0, body: "About the file" }, run.threadId))).toBe(false);
+    expect(failed(await callTool("diff_review_comment", { file: "src/a.ts", startLine: 9, body: "Not shown" }, run.threadId))).toBe(true);
+    const explained = (await rpc("startExplain", { sessionId, threadId: THREAD, filePath: "src/a.ts", side: "new", startLine: 2, endLine: 2, code: "const b = 3;" })) as { run: { threadId: string } };
+    expect(failed(await callTool("diff_review_comment", { file: "src/a.ts", startLine: 2, body: "It sets b." }, explained.run.threadId))).toBe(false);
+    const mine = (await view(PULL)).threads.filter((thread) => thread.githubThreadId === null);
+    expect(mine.map((thread) => [thread.startLine, thread.comments[0]!.body])).toEqual([[2, "b must stay 2"], [0, "About the file"], [2, "It sets b."]]);
+  });
+
+  it("keeps an outdated GitHub thread's original text, so it is not pinned to other code, on first read and after a push", async () => {
+    const github = fakeGitHub();
+    github.remote.threads.push({
+      id: "PRRT_old", isResolved: false, isOutdated: true, path: "src/a.ts", line: null, startLine: null, originalLine: 1, originalStartLine: null, diffSide: "RIGHT", subjectType: "LINE",
+      comments: { nodes: [{ id: "PRRC_old", body: "Was z?", createdAt: "2026-10-01T00:00:00Z", diffHunk: "@@ -0,0 +1 @@\n+const z = 0;", author: { login: "octo" } }] },
+    });
+    const { view } = await setup({ gh: github.gh });
+    const first = (await view(PULL)).threads.find((thread) => thread.githubThreadId === "PRRT_old")!;
+    expect(first).toMatchObject({ startLine: 1, endLine: 1, anchorContent: "const z = 0;" });
+    // Line 1 now reads `const a = 1;`: the thread is not placed there.
+    expect(placeThread(first, parsePatchLines(PATCH)).state).toBe("outdated");
+
+    // A push makes the current thread outdated; the next read takes GitHub's original text.
+    Object.assign(github.remote.threads[0]!, { isOutdated: true, line: null });
+    (github.remote.threads[0]!.comments as { nodes: Record<string, unknown>[] }).nodes[0]!.diffHunk = "@@ -1,2 +1,2 @@\n const a = 1;\n+const b = 9;";
+    const after = (await view(PULL)).threads.find((thread) => thread.githubThreadId === "PRRT_1")!;
+    expect(after).toMatchObject({ startLine: 2, endLine: 2, anchorContent: "const b = 9;" });
+    expect(placeThread(after, parsePatchLines(PATCH)).state).toBe("outdated");
+  });
+
+  it("mirrors a GitHub comment on a whole file, and replies and resolves on GitHub", async () => {
+    const github = fakeGitHub();
+    github.remote.threads.push({
+      id: "PRRT_file", isResolved: false, isOutdated: false, path: "src/a.ts", line: null, startLine: null, originalLine: null, originalStartLine: null, diffSide: "RIGHT", subjectType: "FILE",
+      comments: { nodes: [{ id: "PRRC_file", body: "Split this file", createdAt: "2026-10-01T00:00:00Z", diffHunk: null, author: { login: "octo" } }] },
+    });
+    const { view, rpc } = await setup({ gh: github.gh });
+    const mirror = (await view(PULL)).threads.find((thread) => thread.githubThreadId === "PRRT_file")!;
+    expect(mirror).toMatchObject({ filePath: "src/a.ts", side: null, startLine: 0, endLine: 0, comments: [{ authorType: "github", body: "Split this file" }] });
+    await rpc("addComment", { reviewThreadId: mirror.id, body: "Will do." });
+    expect(github.requests.find((request) => request.query.includes("addPullRequestReviewThreadReply"))!.variables).toEqual({ input: { pullRequestReviewThreadId: "PRRT_file", body: "Will do." } });
+    expect(((await rpc("setStatus", { reviewThreadId: mirror.id, status: "resolved" })) as { thread: ReviewThread }).thread.status).toBe("resolved");
   });
 
   it("refuses to submit once the pull request has new commits", async () => {
@@ -701,7 +819,7 @@ describe("reviewing a GitHub pull request", () => {
     const { view, rpc } = await setup({ gh: github.gh });
     const { sessionId } = await view(PULL);
     github.remote.head = "c".repeat(40);
-    await expect(rpc("submitReview", { sessionId, event: "COMMENT", body: "x", headSha: HEAD, reviewThreadIds: [] })).rejects.toMatchObject({ code: "conflict", message: expect.stringContaining("new commits") });
+    await expect(rpc("submitReview", { sessionId, event: "COMMENT", body: "x", headSha: HEAD, items: [] })).rejects.toMatchObject({ code: "conflict", message: expect.stringContaining("new commits") });
     expect(github.requests.some((request) => request.query.startsWith("mutation"))).toBe(false);
   });
 

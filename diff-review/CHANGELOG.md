@@ -18,7 +18,11 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Submit a review.** Your own comments in the view go to GitHub as one review, with the verdict you
   pick (Comment, Approve or Request changes) and a summary: line comments as review threads, comments
   on a file or the whole change in the summary. A comment that cannot be posted says why. It posts
-  as the GitHub CLI's account on the machine running bb, and only from that button.
+  exactly the text the dialog showed, refuses if the pull request got new commits meanwhile, and
+  keeps your replies and the agent's answers in the tab. It posts as the GitHub CLI's account on the
+  machine running bb, and only from that button.
+- GitHub comments on a whole file show on the file, and comments GitHub marks outdated keep the code
+  they were made on instead of moving to whatever is at their old line now.
 - **Fix a pull request in a new thread.** In a pull request's view, *A new thread…* in Send to agent
   starts it in a new worktree that checks out the pull request.
 
