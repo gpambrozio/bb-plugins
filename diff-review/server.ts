@@ -67,6 +67,10 @@ export default async function plugin(bb: BbPluginApi) {
     getReview: ({ threadId, target, autoTarget, reason, tab, ignoreWhitespace }) =>
       service.view(threadId, target, autoTarget === true, reason, tab, ignoreWhitespace === true),
     loadPatches: async ({ threadId, target, files, ignoreWhitespace }) => ({ patches: await service.patches(threadId, target, files, ignoreWhitespace === true) }),
+    setViewed: async ({ threadId, target, path, revision, viewed }) => {
+      await service.setViewed(threadId, target, path, revision, viewed);
+      return { ok: true as const };
+    },
     listThreads: ({ sessionId }) => service.sessionState(sessionId),
     createThread: ({ threadId, ...input }) => ({ thread: service.createThread(input, threadId ?? null) }),
     addComment: ({ reviewThreadId, body, threadId }) => ({ thread: service.addUserComment(reviewThreadId, body, threadId ?? null) }),

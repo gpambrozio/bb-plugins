@@ -93,6 +93,9 @@ export const MIGRATIONS: string[] = [
      previous_delivery TEXT,
      PRIMARY KEY (send_id, thread_id)
    )`,
+  // The revision of the file a thread was made on, as bb's Git plugin gave it, to tell that the file
+  // changed since.
+  `ALTER TABLE review_threads ADD COLUMN file_revision TEXT`,
 ];
 
 export interface Session {
@@ -110,6 +113,8 @@ export interface NewThread {
   severity: Severity | null;
   anchorContent: string | null;
   body: string;
+  /** The file's revision in the diff the thread was made on; null for a whole-diff thread or when not known. */
+  fileRevision?: string | null;
 }
 
 export interface NewComment {
@@ -129,6 +134,7 @@ interface ThreadRow {
   status: ThreadStatus;
   severity: Severity | null;
   anchor_content: string | null;
+  file_revision: string | null;
   send_id: string | null;
   delivery: DeliveryState | null;
   created_at: number;
@@ -256,10 +262,10 @@ export class ReviewStore {
     this.db.transaction(() => {
       this.db
         .prepare(
-          `INSERT INTO review_threads (id, session_id, file_path, side, start_line, end_line, severity, anchor_content, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO review_threads (id, session_id, file_path, side, start_line, end_line, severity, anchor_content, file_revision, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
-        .run(id, input.sessionId, input.filePath, input.side, input.startLine, input.endLine, input.severity, input.anchorContent, at, at);
+        .run(id, input.sessionId, input.filePath, input.side, input.startLine, input.endLine, input.severity, input.anchorContent, input.fileRevision ?? null, at, at);
       this.insertComment({ threadId: id, authorType: author.type, authorName: author.name, body: input.body }, at);
     })();
     return this.thread(id)!;
@@ -592,6 +598,7 @@ export class ReviewStore {
       status: row.status,
       severity: row.severity,
       anchorContent: row.anchor_content,
+      fileRevision: row.file_revision,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       comments: byThread.get(row.id) ?? [],

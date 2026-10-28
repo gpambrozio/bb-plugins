@@ -72,9 +72,24 @@ export const rpcContract = defineRpcContract({
         severity: severitySchema.nullable(),
         anchorContent: z.string().max(ANCHOR_MAX_CHARS).nullable(),
         body,
+        /** The file's revision in the view it was written on. */
+        fileRevision: z.string().min(1).max(1024).nullable().optional(),
       })
       .strict(),
     output: threadResult,
+  },
+  setViewed: {
+    input: z
+      .object({
+        threadId: id,
+        target: targetSchema,
+        path: z.string().min(1).max(4096),
+        /** The file's revision as the view showed it; a mark is for that revision only. */
+        revision: z.string().min(1).max(1024),
+        viewed: z.boolean(),
+      })
+      .strict(),
+    output: z.object({ ok: z.literal(true) }).strict(),
   },
   addComment: {
     input: z.object({ reviewThreadId: id, body, threadId: id.optional() }).strict(),

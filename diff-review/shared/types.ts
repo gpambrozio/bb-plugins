@@ -108,6 +108,8 @@ export const reviewThreadSchema = z
     severity: severitySchema.nullable(),
     /** The commented lines' text when the thread was made, to find them again after edits. */
     anchorContent: z.string().nullable(),
+    /** The file's revision when the thread was made (bb's Git plugin's), or null when not known. */
+    fileRevision: z.string().nullable(),
     createdAt: z.number(),
     updatedAt: z.number(),
     comments: z.array(commentSchema),
@@ -254,6 +256,8 @@ export const reviewViewSchema = z.discriminatedUnion("ok", [
       currentBranch: z.string().nullable(),
       /** The branch's own commits since its merge base, newest first. */
       commits: z.array(commitSchema),
+      /** The commit a branch view compares against, which a deleted file is opened at. */
+      mergeBaseRef: z.string().nullable(),
       files: z.array(diffFileSchema),
       /** Changed files left out by the ignore patterns. */
       ignoredPaths: z.array(z.string()),

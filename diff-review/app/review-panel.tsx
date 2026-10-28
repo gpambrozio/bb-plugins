@@ -137,7 +137,14 @@ export function ReviewPanel({ threadId, params, environment }: ExperimentalThrea
   }
 
   return (
-    <ReviewActionsProvider sessionId={state.view.sessionId} threadId={threadId} putThread={review.putThread} refreshThreads={review.refreshThreads}>
+    <ReviewActionsProvider
+      sessionId={state.view.sessionId}
+      threadId={threadId}
+      view={state.view}
+      putThread={review.putThread}
+      putViewed={review.putViewed}
+      refreshThreads={review.refreshThreads}
+    >
       {/* Keyed by the view: each view of this thread has its own drafts, folds and place. */}
       <ViewStateProvider key={state.view.sessionId} threadId={threadId} sessionId={state.view.sessionId} saved={state.view.viewState}>
       <ReadyPanel

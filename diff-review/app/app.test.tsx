@@ -72,6 +72,7 @@ function thread(overrides: Partial<ReviewThread> & { id: string; body: string })
     status: "open",
     severity: null,
     anchorContent: "const b = 3;",
+    fileRevision: null,
     createdAt: 1,
     updatedAt: 1,
     comments: [{ id: `c_${rest.id}`, authorType: "user", authorName: "You", body, createdAt: 1, editedAt: null }],
@@ -88,6 +89,7 @@ const VIEW: Extract<ReviewView, { ok: true }> = {
   defaultBase: "main",
   currentBranch: "feature",
   commits: [],
+  mergeBaseRef: null,
   files: [
     {
       path: "src/a.ts",
@@ -260,7 +262,51 @@ describe("the Review tab", () => {
       anchorContent: "const a = 1;\nconst b = 3;",
       body: "Rename b",
       severity: null,
+      fileRevision: "rev-a",
     });
+  });
+
+  it("marks a file Viewed through bb's marks, folding it, and says when a viewed file changed", async () => {
+    const slot = render({ setViewed: () => ({ ok: true }) });
+    await screen.findByTestId("patch");
+    fireEvent.click(screen.getByRole("checkbox", { name: "Viewed src/a.ts" }));
+    await waitFor(() => expect(screen.queryByTestId("patch")).toBeNull());
+    expect(slot.inspection.rpcCalls.find((call) => call.method === "setViewed")!.input).toEqual({
+      threadId: "thr_1",
+      target: { kind: "uncommitted" },
+      path: "src/a.ts",
+      revision: "rev-a",
+      viewed: true,
+    });
+    cleanup();
+    forgetViewStates();
+
+    render({ getReview: () => ({ ...VIEW, files: [{ ...VIEW.files[0]!, viewed: "changed" }] }) });
+    expect(await screen.findByText("changed since viewed")).toBeTruthy();
+    expect(screen.getByTestId("patch")).toBeTruthy();
+  });
+
+  it("starts a file viewed at its current revision folded", async () => {
+    render({ getReview: () => ({ ...VIEW, files: [{ ...VIEW.files[0]!, viewed: "yes" }] }) });
+    await screen.findByRole("checkbox", { name: "Viewed src/a.ts" });
+    expect(screen.queryByTestId("patch")).toBeNull();
+  });
+
+  it("opens a file in bb's preview at the version the view shows", async () => {
+    const opened: unknown[] = [];
+    const slot = renderSlot(
+      { component: ReviewPanel },
+      { threadId: "thr_1", environment: ENVIRONMENT, params: null },
+      { rpc: { getReview: () => ({ ...VIEW, target: { kind: "commit", sha: "abcdef1" } }) }, openFilePreview: (options) => (opened.push(options), true) },
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Open src/a.ts" }));
+    expect(opened).toEqual([{ target: { kind: "workspace", environmentId: "env_1", path: "src/a.ts", experimental_ref: "abcdef1" }, location: null }]);
+    expect(slot).toBeTruthy();
+  });
+
+  it("notes a comment whose file changed since it was made", async () => {
+    render({ getReview: () => ({ ...VIEW, threads: [thread({ id: "aaaaaa000009", body: "Hm", fileRevision: "rev-old" })] }) });
+    expect(await screen.findByText("File changed since this comment")).toBeTruthy();
   });
 
   it("sends the open threads not already waiting on the agent, with the note", async () => {

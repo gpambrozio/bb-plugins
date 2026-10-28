@@ -11,6 +11,7 @@ import { experimental_useCodeTheme } from "@get-bb/plugin-sdk/app";
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Icon } from "@/components/ui/icon";
 
 import { placeThread, type Placement } from "../shared/anchors";
@@ -125,7 +126,8 @@ export function FileDiff({ file, threads, showThreadCount, diffStyle, stalePatch
   // A file with an unsent comment in it opens, so the comment shows.
   const [collapsed, setCollapsed] = useState(() => {
     if (viewState.draft(draftKeys.line(file.path)) !== undefined || viewState.draft(draftKeys.file(file.path)) !== undefined) return false;
-    return viewState.collapsed(file.path) ?? changedLines > FOLD_ABOVE_LINES;
+    // A file marked Viewed (in this tab or bb's diff panel) starts folded, as bb's panel shows it.
+    return viewState.collapsed(file.path) ?? (file.viewed === "yes" || changedLines > FOLD_ABOVE_LINES);
   });
   const sectionRef = useRef<HTMLElement>(null);
   // Folding a file scrolled part-way through would leave the scroll offset where it was, so the next
@@ -148,6 +150,11 @@ export function FileDiff({ file, threads, showThreadCount, diffStyle, stalePatch
     if (!collapsed && sectionRef.current !== null && scrollRoot !== null) alignAfterFold.current = scrollToAlign(sectionRef.current, scrollRoot);
     viewState.setCollapsed(file.path, !collapsed);
     setCollapsed(!collapsed);
+  };
+  // Marking a file Viewed folds it and clearing the mark unfolds it, as in bb's diff panel.
+  const toggleViewed = (viewed: boolean) => {
+    if (viewed !== collapsed) toggleCollapsed();
+    void actions.setViewed(file, viewed).catch(() => undefined);
   };
   const reason = noDiffReason(file);
   // The patch loads by itself once the file is near the screen; a folded file waits until unfolded.
@@ -209,7 +216,7 @@ export function FileDiff({ file, threads, showThreadCount, diffStyle, stalePatch
         {meta.kind === "threads" ? (
           <div className="flex flex-col gap-2 px-3 py-2">
             {meta.threads.map(({ thread, placement }) => (
-              <ThreadCard key={thread.id} thread={thread} placement={placement} />
+              <ThreadCard key={thread.id} thread={thread} placement={placement} fileChanged={changedSince(thread, file)} />
             ))}
           </div>
         ) : (
@@ -223,6 +230,7 @@ export function FileDiff({ file, threads, showThreadCount, diffStyle, stalePatch
   const lineDraftComposer = (meta: LineRange, note: string | null) => (
     <LineDraftBox
       filePath={file.path}
+      fileRevision={file.revision}
       range={meta}
       draft={lineDraft}
       note={note}
@@ -270,7 +278,22 @@ export function FileDiff({ file, threads, showThreadCount, diffStyle, stalePatch
         {file.patchTruncated ? <span className="shrink-0 text-xs text-warning-text">truncated</span> : null}
         {collapsed && changedLines > FOLD_ABOVE_LINES ? <span className="shrink-0 text-xs text-muted-foreground">folded: a large change</span> : null}
         {showThreadCount && threads.length > 0 ? <ThreadCount threads={threads} /> : null}
-        <Button type="button" variant="ghost" size="sm" className="ml-auto h-6 shrink-0 gap-1 px-1.5 text-xs" onClick={openFileDraft}>
+        {file.viewed === "changed" ? (
+          <span className="shrink-0 text-xs text-warning-text" title="You marked this file Viewed; it has changed since.">
+            changed since viewed
+          </span>
+        ) : null}
+        <label className="ml-auto flex shrink-0 cursor-pointer items-center gap-1 text-xs text-muted-foreground">
+          <Checkbox checked={file.viewed === "yes"} onCheckedChange={(checked) => toggleViewed(checked === true)} aria-label={`Viewed ${file.path}`} />
+          Viewed
+        </label>
+        {actions.canOpenFile(file) ? (
+          <Button type="button" variant="ghost" size="sm" className="h-6 shrink-0 gap-1 px-1.5 text-xs" onClick={() => actions.openFile(file)} aria-label={`Open ${file.path}`}>
+            <Icon name="ExternalLink" className="size-3.5" />
+            Open
+          </Button>
+        ) : null}
+        <Button type="button" variant="ghost" size="sm" className="h-6 shrink-0 gap-1 px-1.5 text-xs" onClick={openFileDraft}>
           <Icon name="MessageSquarePlus" className="size-3.5" />
           Comment on file
         </Button>
@@ -280,7 +303,7 @@ export function FileDiff({ file, threads, showThreadCount, diffStyle, stalePatch
           {wholeFile.length > 0 || unplaced.length > 0 || fileDraft.active !== null || draftAbove !== null ? (
             <div className="flex flex-col gap-2 px-3 py-2">
               {wholeFile.map((thread) => (
-                <ThreadCard key={thread.id} thread={thread} />
+                <ThreadCard key={thread.id} thread={thread} fileChanged={changedSince(thread, file)} />
               ))}
               {unplaced.map((thread) => (
                 <div key={thread.id} className="flex flex-col gap-1">
@@ -298,7 +321,7 @@ export function FileDiff({ file, threads, showThreadCount, diffStyle, stalePatch
                   initialSeverity={fileDraft.latest().severity}
                   onChange={fileDraft.change}
                   onSubmit={async ({ body: text, severity }) => {
-                    await actions.create({ filePath: file.path, side: null, startLine: 0, endLine: 0, anchorContent: null, body: text, severity });
+                    await actions.create({ filePath: file.path, side: null, startLine: 0, endLine: 0, anchorContent: null, body: text, severity, fileRevision: file.revision });
                     fileDraft.close();
                   }}
                   onCancel={fileDraft.close}
@@ -311,6 +334,11 @@ export function FileDiff({ file, threads, showThreadCount, diffStyle, stalePatch
       )}
     </section>
   );
+}
+
+/** Whether the file changed since the thread was made on it (by the revision bb's Git plugin gives). */
+export function changedSince(thread: Pick<ReviewThread, "fileRevision">, file: Pick<DiffFile, "revision">): boolean {
+  return thread.fileRevision !== null && thread.fileRevision !== file.revision;
 }
 
 function ThreadCount({ threads }: { threads: readonly ReviewThread[] }) {
@@ -328,12 +356,14 @@ function ThreadCount({ threads }: { threads: readonly ReviewThread[] }) {
 /** A new comment on lines: what it is about, and its editor, bound to its draft. */
 function LineDraftBox({
   filePath,
+  fileRevision = null,
   range,
   draft,
   note,
   anchorContent,
 }: {
   filePath: string;
+  fileRevision?: string | null;
   range: LineRange;
   draft: ReturnType<typeof useDraft>;
   note: string | null;
@@ -355,7 +385,7 @@ function LineDraftBox({
         initialSeverity={draft.latest().severity}
         onChange={draft.change}
         onSubmit={async ({ body, severity }) => {
-          await actions.create({ filePath, side: range.side, startLine: range.startLine, endLine: range.endLine, anchorContent, body, severity });
+          await actions.create({ filePath, side: range.side, startLine: range.startLine, endLine: range.endLine, anchorContent, body, severity, fileRevision });
           draft.close();
         }}
         onCancel={draft.close}

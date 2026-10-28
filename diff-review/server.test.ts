@@ -362,6 +362,33 @@ describe("the Review tab's view", () => {
     expect(result).toEqual({ ok: false, message: expect.stringContaining("bb's Git plugin is turned off") });
   });
 
+  it("marks and clears Viewed through bb's Git plugin, at the revision the tab showed", async () => {
+    const { rpc, view, git } = await setup();
+    await rpc("setViewed", { threadId: THREAD, target: { kind: "uncommitted" }, path: "src/a.ts", revision: "rev-src/a.ts", viewed: true });
+    expect(git.calls.at(-1)).toEqual({ method: "markViewed", input: { environmentId: ENV, target: { type: "uncommitted" }, path: "src/a.ts", revision: "rev-src/a.ts" } });
+    expect((await view()).files[0]!.viewed).toBe("yes");
+    await rpc("setViewed", { threadId: THREAD, target: { kind: "uncommitted" }, path: "src/a.ts", revision: "rev-src/a.ts", viewed: false });
+    expect((await view()).files[0]!.viewed).toBe("no");
+  });
+
+  it("keeps the revision of the file a comment was made on", async () => {
+    const { rpc, view } = await setup();
+    const { sessionId } = await view();
+    const made = (await rpc("createThread", {
+      sessionId,
+      filePath: "src/a.ts",
+      side: null,
+      startLine: 0,
+      endLine: 0,
+      severity: null,
+      anchorContent: null,
+      body: "About this file",
+      fileRevision: "rev-src/a.ts",
+    })) as { thread: ReviewThread };
+    expect(made.thread.fileRevision).toBe("rev-src/a.ts");
+    expect((await view()).threads[0]!.fileRevision).toBe("rev-src/a.ts");
+  });
+
   it("shows bb's Viewed marks, and which files changed since they were viewed", async () => {
     const { view, git } = await setup();
     git.viewed["src/a.ts"] = "rev-src/a.ts";

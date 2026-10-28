@@ -344,8 +344,10 @@ export class RunService {
     const body = input.body.trim() === "" ? null : input.body;
     if (body === null) throw new ReviewError("The comment is empty.", "empty_text");
     let anchorContent: string | null = null;
+    let fileRevision: string | null = null;
     if (input.filePath !== GENERAL_PATH) {
-      const patch = await this.patchOf(session.environmentId, session.targetKey, input.filePath);
+      const { patch, revision } = await this.patchOf(session.environmentId, session.targetKey, input.filePath);
+      fileRevision = revision;
       if (input.startLine > 0) {
         const side = input.side ?? "new";
         const lines = parsePatchLines(patch);
@@ -365,10 +367,10 @@ export class RunService {
     if (this.store.runsOfThread(callerThreadId).every((row) => row.id !== run.id)) {
       throw new ReviewError("This review run was closed; its comments are no longer taken.", "not_a_review_run");
     }
-    return this.review.createAgentThread({ ...input, sessionId: session.id, anchorContent, body }, authorName);
+    return this.review.createAgentThread({ ...input, sessionId: session.id, anchorContent, body, fileRevision }, authorName);
   }
 
-  private async patchOf(environmentId: string, targetKey: string, path: string): Promise<string> {
+  private async patchOf(environmentId: string, targetKey: string, path: string): Promise<{ patch: string; revision: string }> {
     // Reads the ignore files like a tab's load does; this line tells the two apart in the log.
     this.bb.log.debug(`Reading the diff of ${environmentId} to check a review comment on ${path}.`);
     const environment = await this.bb.sdk.environments.get({ environmentId });
@@ -387,7 +389,7 @@ export class RunService {
       const shown = diff.files.slice(0, 40).map((entry) => entry.path);
       throw new ReviewError(`${path} is not in the diff under review. Files in it: ${shown.join(", ")}${diff.files.length > shown.length ? ", …" : ""}.`, "file_not_in_diff");
     }
-    if (file.patch !== null) return file.patch;
+    if (file.patch !== null) return { patch: file.patch, revision: file.revision };
     let loaded;
     try {
       [loaded] = await loadPatches(this.review.git, environment, target, [file]);
@@ -396,7 +398,7 @@ export class RunService {
       throw error;
     }
     if (loaded === undefined) throw new ReviewError(`bb gave no diff for ${path}.`, "file_not_in_diff");
-    return loaded.patch;
+    return { patch: loaded.patch, revision: file.revision };
   }
 
   private openThreads(sessionId: string, ids: readonly string[]): ReviewThread[] {

@@ -25,7 +25,7 @@ import {
   type ViewState,
   viewStateSchema,
 } from "../shared/types";
-import { ignorePatterns, loadDiff, loadPatches, resolveTarget, ReviewUnavailable, workspaceOf, workspaceRefs, workspaceState, type WorkspaceState } from "./diff";
+import { gitTarget, ignorePatterns, loadDiff, loadPatches, resolveTarget, ReviewUnavailable, workspaceOf, workspaceRefs, workspaceState, type WorkspaceState } from "./diff";
 import { GitReads } from "./git";
 import { sendPrompt } from "./prompt";
 import type { ReviewStore, StoredRun } from "./store";
@@ -60,6 +60,8 @@ export interface NewThreadInput {
   severity: Severity | null;
   anchorContent: string | null;
   body: string;
+  /** The file's revision in the view the thread was made on. */
+  fileRevision?: string | null;
 }
 
 export type AgentAction = "reply" | "resolve" | "dismiss";
@@ -133,6 +135,7 @@ export class ReviewService {
         defaultBase: refs.defaultBase,
         currentBranch: refs.currentBranch,
         commits: refs.commits,
+        mergeBaseRef: diff.mergeBaseRef,
         files: diff.files,
         ignoredPaths: diff.ignoredPaths,
         truncated: diff.truncated,
@@ -177,6 +180,16 @@ export class ReviewService {
   async patches(threadId: string, target: Target, files: readonly { path: string; revision: string }[], ignoreWhitespace = false) {
     const environment = await workspaceOf(this.bb.sdk, threadId);
     return loadPatches(this.git, environment, target, files, ignoreWhitespace);
+  }
+
+  /**
+   * Marks a file Viewed at the revision the tab showed, or clears its mark. The marks are bb's own,
+   * so bb's diff panel shows the same.
+   */
+  async setViewed(threadId: string, target: Target, path: string, revision: string, viewed: boolean): Promise<void> {
+    const environment = await workspaceOf(this.bb.sdk, threadId);
+    if (viewed) await this.git.markViewed(environment.id, gitTarget(target), path, revision);
+    else await this.git.clearViewed(environment.id, gitTarget(target), path);
   }
 
   /** A session's threads and its runs not yet closed. */

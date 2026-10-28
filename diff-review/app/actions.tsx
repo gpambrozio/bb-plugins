@@ -8,7 +8,8 @@ import { createContext, useContext, useMemo, type ReactNode } from "react";
 import { toast } from "sonner";
 
 import type { RpcContract } from "../shared/contract";
-import type { ReviewThread, Severity, Side, ThreadStatus } from "../shared/types";
+import type { DiffFile, ReviewThread, Severity, Side, Target, ThreadStatus } from "../shared/types";
+import { fileRef } from "./open-file";
 import { errorMessage } from "./use-review";
 
 export interface NewThread {
@@ -19,6 +20,8 @@ export interface NewThread {
   anchorContent: string | null;
   body: string;
   severity: Severity | null;
+  /** The file's revision in the view, for a file or line thread. */
+  fileRevision?: string | null;
 }
 
 export interface ReviewActions {
@@ -28,6 +31,12 @@ export interface ReviewActions {
   remove(commentId: string): Promise<void>;
   setStatus(reviewThreadId: string, status: ThreadStatus): Promise<void>;
   openThread(threadId: string): void;
+  /** Marks a file Viewed (folding it) or clears its mark. */
+  setViewed(file: DiffFile, viewed: boolean): Promise<void>;
+  /** Opens the file in bb's preview, at the version the view shows; false when bb cannot. */
+  openFile(file: DiffFile, line?: number): boolean;
+  /** Whether `openFile` can open this file in this view. */
+  canOpenFile(file: DiffFile): boolean;
 }
 
 const ActionsContext = createContext<ReviewActions | null>(null);
@@ -50,14 +59,19 @@ async function reported<T>(what: string, work: () => Promise<T>): Promise<T> {
 export function ReviewActionsProvider({
   sessionId,
   threadId,
+  view,
   putThread,
+  putViewed,
   refreshThreads,
   children,
 }: {
   sessionId: string;
   /** The thread whose Review tab this is. */
   threadId: string;
+  /** The view on screen: its target, workspace and merge base, for Viewed marks and Open. */
+  view: { target: Target; environmentId: string; mergeBaseRef: string | null };
   putThread(thread: ReviewThread): void;
+  putViewed(sessionId: string, path: string, viewed: DiffFile["viewed"]): void;
   refreshThreads(): Promise<void>;
   children: ReactNode;
 }) {
@@ -87,8 +101,28 @@ export function ReviewActionsProvider({
           putThread((await rpc.call("setStatus", { reviewThreadId, status })).thread);
         }),
       openThread: (threadId) => navigate.toThread(threadId),
+      setViewed: (file, viewed) =>
+        reported(viewed ? "Could not mark the file viewed" : "Could not clear the Viewed mark", async () => {
+          const before = file.viewed;
+          putViewed(sessionId, file.path, viewed ? "yes" : "no");
+          try {
+            await rpc.call("setViewed", { threadId, target: view.target, path: file.path, revision: file.revision, viewed });
+          } catch (error) {
+            putViewed(sessionId, file.path, before);
+            throw error;
+          }
+        }),
+      canOpenFile: (file) => fileRef(view.target, file, view.mergeBaseRef) !== null,
+      openFile: (file, line) => {
+        const at = fileRef(view.target, file, view.mergeBaseRef);
+        if (at === null) return false;
+        return navigate.experimental_openFilePreview({
+          target: { kind: "workspace", environmentId: view.environmentId, path: file.path, ...(at.ref === null ? {} : { experimental_ref: at.ref }) },
+          location: line === undefined ? null : { kind: "line", line, column: null },
+        });
+      },
     }),
-    [rpc, navigate, sessionId, threadId, putThread, refreshThreads],
+    [rpc, navigate, sessionId, threadId, view.target, view.environmentId, view.mergeBaseRef, putThread, putViewed, refreshThreads],
   );
   return <ActionsContext.Provider value={actions}>{children}</ActionsContext.Provider>;
 }

@@ -77,7 +77,8 @@ function Comment({ comment }: { comment: ReviewComment }) {
   );
 }
 
-export function ThreadCard({ thread, placement }: { thread: ReviewThread; placement?: Placement }) {
+/** `fileChanged`: the file changed since the thread was made on it, though its lines may still be found. */
+export function ThreadCard({ thread, placement, fileChanged = false }: { thread: ReviewThread; placement?: Placement; fileChanged?: boolean }) {
   const actions = useActions();
   const viewState = useViewState();
   const closed = thread.status !== "open";
@@ -112,6 +113,7 @@ export function ThreadCard({ thread, placement }: { thread: ReviewThread; placem
         </span>
       ) : null}
       {placement?.state === "outdated" ? <span className="text-xs text-muted-foreground">{describeLocation(thread)}</span> : null}
+      {fileChanged && placement?.state !== "outdated" ? <span className="text-xs text-muted-foreground">File changed since this comment</span> : null}
       <Delivery thread={thread} />
     </div>
   );

@@ -18,7 +18,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { RpcContract } from "../shared/contract";
 import { GIT_PLUGIN_ID, gitStatusReadContract, statusKey } from "./git-status";
-import { environmentChannel, realtimeSignalSchema, type DiffFile, type LoadReason, type ReviewThread, type ReviewView, type Run, type Target, type TargetRequest } from "../shared/types";
+import { environmentChannel, realtimeSignalSchema, type DiffFile, type LoadReason, type ReviewThread, type ReviewView, type Run, type Target, type TargetRequest, type Viewed } from "../shared/types";
 
 export type ReadyView = Extract<ReviewView, { ok: true }>;
 
@@ -256,6 +256,15 @@ export function useReview(threadId: string, target: TargetRequest, options: Revi
     });
   }, []);
 
+  /** Sets a file's Viewed mark in place, as the tab just asked bb to. */
+  const putViewed = useCallback((sessionId: string, path: string, viewed: Viewed) => {
+    setState((previous) => {
+      if (previous.status !== "ready" || previous.view.sessionId !== sessionId) return previous;
+      const files = previous.view.files.map((file) => (file.path === path && file.viewed !== viewed ? { ...file, viewed } : file));
+      return { ...previous, view: { ...previous.view, files } };
+    });
+  }, []);
+
   /**
    * Fills in patches loaded on demand for the load `loadId` of session `sessionId`. An answer that
    * arrives after the view changed (another view, or a reload) is dropped: same paths, other diffs.
@@ -291,5 +300,5 @@ export function useReview(threadId: string, target: TargetRequest, options: Revi
     if (connection === "connected" && previous !== "connected") void loadRef.current("reconnect");
   }, [connection]);
 
-  return { state, reload: load, putThread, putRun, putPatches, refreshThreads };
+  return { state, reload: load, putThread, putRun, putPatches, putViewed, refreshThreads };
 }
