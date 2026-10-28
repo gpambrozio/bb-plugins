@@ -4,6 +4,7 @@
  * dismissed threads fold to one line.
  */
 import { Markdown } from "@get-bb/plugin-sdk/app";
+import { Fragment } from "react";
 import { useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
@@ -12,10 +13,12 @@ import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
 
 import type { Placement } from "../shared/anchors";
+import { bodyParts } from "../shared/suggestion";
 import { describeLocation, type ReviewComment, type ReviewThread } from "../shared/types";
 import { useActions } from "./actions";
 import { CommentComposer } from "./comment-composer";
 import { ago, DELIVERY_LABELS, SEVERITY_LABELS, STATUS_LABELS } from "./labels";
+import { SuggestionBlock, SuggestionThreadContext, type SuggestionThread } from "./suggestion-block";
 import { draftKeys, useDraft, useViewState } from "./view-state";
 
 function Delivery({ thread }: { thread: ReviewThread }) {
@@ -71,14 +74,40 @@ function Comment({ comment }: { comment: ReviewComment }) {
           onCancel={editDraft.close}
         />
       ) : (
-        <Markdown content={comment.body} className="text-sm" />
+        <CommentBody comment={comment} />
       )}
     </div>
   );
 }
 
-/** `fileChanged`: the file changed since the thread was made on it, though its lines may still be found. */
-export function ThreadCard({ thread, placement, fileChanged = false }: { thread: ReviewThread; placement?: Placement; fileChanged?: boolean }) {
+/** A comment's Markdown, with each ```suggestion block drawn as a suggested change. */
+function CommentBody({ comment }: { comment: ReviewComment }) {
+  const parts = bodyParts(comment.body);
+  if (parts.length === 1 && parts[0]!.kind === "text") return <Markdown content={comment.body} className="text-sm" />;
+  return (
+    <div className="flex flex-col gap-2">
+      {parts.map((part, index) => (
+        <Fragment key={index}>{part.kind === "text" ? <Markdown content={part.text} className="text-sm" /> : <SuggestionBlock code={part.code} commentId={comment.id} />}</Fragment>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * `fileChanged`: the file changed since the thread was made on it, though its lines may still be found.
+ * `current`: where the thread's lines are in the diff now and what they read, for its suggestions.
+ */
+export function ThreadCard({
+  thread,
+  placement,
+  fileChanged = false,
+  current,
+}: {
+  thread: ReviewThread;
+  placement?: Placement;
+  fileChanged?: boolean;
+  current?: SuggestionThread["current"];
+}) {
   const actions = useActions();
   const viewState = useViewState();
   const closed = thread.status !== "open";
@@ -134,6 +163,7 @@ export function ThreadCard({ thread, placement, fileChanged = false }: { thread:
   }
 
   return (
+    <SuggestionThreadContext.Provider value={{ thread, ...(current === undefined ? {} : { current }) }}>
     <div className="flex flex-col gap-3 rounded-md border border-border bg-card p-3 font-sans text-foreground" data-thread-id={thread.id}>
       <div className="flex items-start gap-2">
         {header}
@@ -184,5 +214,6 @@ export function ThreadCard({ thread, placement, fileChanged = false }: { thread:
         </div>
       )}
     </div>
+    </SuggestionThreadContext.Provider>
   );
 }

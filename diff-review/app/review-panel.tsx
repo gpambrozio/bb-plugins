@@ -22,7 +22,7 @@ import { Switch } from "@/components/ui/switch";
 
 import type { RpcContract } from "../shared/contract";
 import { placeThread } from "../shared/anchors";
-import { parsePatchLines } from "../shared/patch-lines";
+import { linesText, parsePatchLines } from "../shared/patch-lines";
 import { describeLocation, GENERAL_PATH, targetRequestSchema, type ReviewThread, type Run, type TargetRequest } from "../shared/types";
 import { ReviewActionsProvider, useActions } from "./actions";
 import { useReviewCommands } from "./commands";
@@ -139,6 +139,8 @@ export function ReviewBody({ threadId, environmentId, params, visible }: { threa
   const { state } = review;
 
   const pick = (value: string) => setTarget(fromPicker(value));
+  const reload = review.reload;
+  const onEdited = useCallback(() => void reload("manual"), [reload]);
 
   if (state.status === "loading") return <Centered>Loading the diff…</Centered>;
   if (state.status === "unavailable") return <Centered>{state.message}</Centered>;
@@ -161,6 +163,7 @@ export function ReviewBody({ threadId, environmentId, params, visible }: { threa
       putThread={review.putThread}
       putViewed={review.putViewed}
       refreshThreads={review.refreshThreads}
+      onEdited={onEdited}
     >
       {/* Keyed by the view: each view of this thread has its own drafts, folds and place. */}
       <ViewStateProvider key={state.view.sessionId} threadId={threadId} sessionId={state.view.sessionId} saved={state.view.viewState}>
@@ -259,6 +262,14 @@ function ReadyPanel({
   }, [view.files, view.threads, byFile]);
 
   const open = view.threads.filter((thread) => thread.status === "open");
+
+  // What an outdated thread's own lines read now, so its suggestion can say it was applied.
+  const originalLines = (thread: ReviewThread) => {
+    const patch = view.files.find((file) => file.path === thread.filePath)?.patch ?? null;
+    if (patch === null || thread.side === null || thread.startLine === 0) return undefined;
+    const text = linesText(parsePatchLines(patch), thread.side, thread.startLine, thread.endLine);
+    return text === null ? undefined : { startLine: thread.startLine, endLine: thread.endLine, text };
+  };
 
   // Patches bb did not send with the file list load as their files come near the screen.
   const loadPatches = useCallback(
@@ -547,7 +558,7 @@ function ReadyPanel({
           <section className="flex flex-col gap-2 border-b border-border px-3 py-2">
             <h3 className="text-xs font-medium text-muted-foreground">Not on the current diff (the code changed or left the view)</h3>
             {outdated.map((thread) => (
-              <ThreadCard key={thread.id} thread={thread} placement={{ state: "outdated" }} />
+              <ThreadCard key={thread.id} thread={thread} placement={{ state: "outdated" }} current={originalLines(thread)} />
             ))}
           </section>
         ) : null}

@@ -8,6 +8,7 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import { rpcContract } from "./shared/contract";
 import { diffReviewCli } from "./server/cli";
+import { WorkspaceEdits } from "./server/edits";
 import { refusing } from "./server/refusal";
 import { ReviewService } from "./server/review";
 import { RUN_PERMISSION_MODES, RunService } from "./server/runs";
@@ -69,6 +70,7 @@ export default async function plugin(bb: BbPluginApi) {
   const service = new ReviewService(bb, store, () => settings.get());
   const runs = new RunService(bb, store, service, () => settings.get());
   service.onUserComment = (thread, body, viewerThreadId) => runs.onUserComment(thread, body, viewerThreadId);
+  const edits = new WorkspaceEdits(bb.sdk, store, service.git, (environmentId, sessionId) => service.workspaceEdited(environmentId, sessionId));
 
   bb.rpc.register(rpcContract, refusing<typeof rpcContract>({
     getReview: ({ threadId, target, autoTarget, reason, tab, ignoreWhitespace }) =>
@@ -96,6 +98,11 @@ export default async function plugin(bb: BbPluginApi) {
       return { ok: true as const };
     },
     clearReview: ({ sessionId }) => runs.clearReview(sessionId),
+    applySuggestion: async (input) => ({ thread: await edits.applySuggestion(input) }),
+    revertChanges: async (input) => {
+      await edits.revert(input);
+      return { ok: true as const };
+    },
     listReviews: async () => ({ reviews: await service.listReviews() }),
     reviewCounts: ({ environmentId }) => service.counts(environmentId ?? null),
     saveViewState: ({ threadId, sessionId, state }) => {

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 import { createFakePluginHost, experimental_scanPublicSdkOnly, makePluginAgentConfigurationContext, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
@@ -10,6 +11,7 @@ import { TOOL_NAMES } from "./server/tool-names";
 import type { ReviewThread, ReviewView, Run } from "./shared/types";
 
 const ENV = "env_1";
+const sha = (content: string) => createHash("sha256").update(content).digest("hex");
 const THREAD = "thr_review";
 
 function environment(overrides: Record<string, unknown> = {}) {
@@ -59,6 +61,8 @@ interface Setup {
   duringSpawn?: (threadId: string) => Promise<void>;
   /** More fields in bb's status answer, as a later bb may add (a time stamp, say). */
   statusExtra?: () => Record<string, unknown>;
+  /** Files as committed at HEAD, by absolute path, for `files.read` with `ref`. */
+  headFiles?: Record<string, string>;
   /** Views (`uncommitted`, `branch_committed`, …) whose diff has no files. */
   emptyTargets?: string[];
   /** The permission modes each provider supports, as `providers.list` reports them; every mode when unlisted. */
@@ -74,6 +78,9 @@ async function setup(options: Setup = {}) {
   // What bb would hold for spawned threads: their origin plugin and metadata.
   const spawnedMetadata: Record<string, Record<string, unknown>> = {};
   let spawned = 0;
+  // The workspace's files the host can read and write, by absolute path.
+  const files: Record<string, string> = { ...options.files };
+  const writes: string[] = [];
   // bb's Git plugin: on unless a test turns it off; Viewed marks by path; every call it got.
   const git = { enabled: true, viewed: {} as Record<string, string>, calls: [] as { method: string; input: unknown }[] };
   const revisionOf = (path: string) => (path === "big.txt" ? `rev-big-${workspace.bigVersion}` : `rev-${path}`);
@@ -217,13 +224,30 @@ async function setup(options: Setup = {}) {
         }),
       },
       files: {
-        read: async ({ path }: { path: string }) => {
+        write: async ({ path, content, expectedSha256 }: { path: string; content: string; expectedSha256?: string | null }) => {
+          const current = files[path];
+          if (expectedSha256 !== undefined && expectedSha256 !== null && (current === undefined || sha(current) !== expectedSha256)) throw new Error("sha256 mismatch");
+          files[path] = content;
+          writes.push(path);
+          return { ok: true } as never;
+        },
+        remove: async ({ path }: { path: string }) => {
+          delete files[path];
+          writes.push(`rm ${path}`);
+          return { ok: true } as never;
+        },
+        read: async ({ path, ref }: { path: string; ref?: string }) => {
+          if (ref !== undefined) {
+            const committed = options.headFiles?.[path];
+            if (committed === undefined) throw new Error("ENOENT");
+            return { content: committed, contentEncoding: "utf8", sha256: sha(committed) };
+          }
           reads.push(path);
           if (path === "/work/repo/.diffityignore" && options.diffityignore !== undefined) {
             return { content: options.diffityignore, contentEncoding: "utf8", sha256: "x" };
           }
-          const content = options.files?.[path];
-          if (content !== undefined) return { content, contentEncoding: "utf8", sha256: "x" };
+          const content = files[path];
+          if (content !== undefined) return { content, contentEncoding: "utf8", sha256: sha(content) };
           if (path === "/work/repo/.git") throw new Error("EISDIR: illegal operation on a directory, read");
           throw new Error("ENOENT");
         },
@@ -245,7 +269,7 @@ async function setup(options: Setup = {}) {
       anchorContent: "const b = 3;",
       body,
     })) as { thread: ReviewThread }).thread;
-  return { bb, harness, rpc, view, comment, threads, turnStarts, workspace, reads, git };
+  return { bb, harness, rpc, view, comment, threads, turnStarts, workspace, reads, git, files, writes };
 }
 
 describe("the Review tab's view", () => {
@@ -398,6 +422,48 @@ describe("the Review tab's view", () => {
       ["package-lock.json", "no"],
       ["big.txt", "changed"],
     ]);
+  });
+});
+
+describe("changing the workspace from the tab", () => {
+  const suggestion = (code: string) => `Use three:\n\`\`\`suggestion\n${code}\n\`\`\``;
+
+  it("applies a comment's suggestion to the lines as the view shows them, and resolves the thread", async () => {
+    const { rpc, view, files, harness } = await setup({ files: { "/work/repo/src/a.ts": "const a = 1;\nconst b = 3;\n" } });
+    const { sessionId } = await view();
+    const made = ((await rpc("createThread", { sessionId, filePath: "src/a.ts", side: "new", startLine: 2, endLine: 2, severity: null, anchorContent: "const b = 3;", body: suggestion("const b = 4;") })) as { thread: ReviewThread }).thread;
+    const applied = (await rpc("applySuggestion", { threadId: THREAD, reviewThreadId: made.id, commentId: made.comments[0]!.id, startLine: 2, endLine: 2, expected: "const b = 3;", code: "const b = 4;" })) as { thread: ReviewThread };
+    expect(files["/work/repo/src/a.ts"]).toBe("const a = 1;\nconst b = 4;\n");
+    expect(applied.thread.status).toBe("resolved");
+    expect(harness.inspection.realtimeSignals.some((signal) => (signal.payload as { kind: string }).kind === "diff")).toBe(true);
+  });
+
+  it("refuses a suggestion the comment does not make, or lines that changed", async () => {
+    const { rpc, view, files } = await setup({ files: { "/work/repo/src/a.ts": "const a = 1;\nconst b = 9;\n" } });
+    const { sessionId } = await view();
+    const made = ((await rpc("createThread", { sessionId, filePath: "src/a.ts", side: "new", startLine: 2, endLine: 2, severity: null, anchorContent: "const b = 3;", body: suggestion("const b = 4;") })) as { thread: ReviewThread }).thread;
+    const ask = (code: string) => rpc("applySuggestion", { threadId: THREAD, reviewThreadId: made.id, commentId: made.comments[0]!.id, startLine: 2, endLine: 2, expected: "const b = 3;", code });
+    await expect(ask("rm -rf")).rejects.toMatchObject({ code: "invalid" });
+    await expect(ask("const b = 4;")).rejects.toMatchObject({ code: "conflict", message: expect.stringContaining("changed since") });
+    expect(files["/work/repo/src/a.ts"]).toBe("const a = 1;\nconst b = 9;\n");
+  });
+
+  it("reverts a hunk, or a whole file back to HEAD, only at the revision the tab showed", async () => {
+    const { rpc, files, writes } = await setup({
+      files: { "/work/repo/src/a.ts": "const a = 1;\nconst b = 3;\n" },
+      headFiles: { "/work/repo/src/a.ts": "const a = 1;\nconst b = 2;\n" },
+    });
+    await expect(rpc("revertChanges", { threadId: THREAD, path: "src/a.ts", revision: "stale", hunks: [0] })).rejects.toMatchObject({ code: "conflict" });
+    await rpc("revertChanges", { threadId: THREAD, path: "src/a.ts", revision: "rev-src/a.ts", hunks: [0] });
+    expect(files["/work/repo/src/a.ts"]).toBe("const a = 1;\nconst b = 2;\n");
+    files["/work/repo/src/a.ts"] = "changed again\n";
+    await rpc("revertChanges", { threadId: THREAD, path: "src/a.ts", revision: "rev-src/a.ts", hunks: null });
+    expect(files["/work/repo/src/a.ts"]).toBe("const a = 1;\nconst b = 2;\n");
+    // A new file is removed.
+    files["/work/repo/big.txt"] = "x";
+    await rpc("revertChanges", { threadId: THREAD, path: "big.txt", revision: "rev-big-1", hunks: null });
+    expect(files["/work/repo/big.txt"]).toBeUndefined();
+    expect(writes).toEqual(["/work/repo/src/a.ts", "/work/repo/src/a.ts", "rm /work/repo/big.txt"]);
   });
 });
 

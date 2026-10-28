@@ -15,12 +15,13 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Icon } from "@/components/ui/icon";
 
 import { placeThread, type Placement } from "../shared/anchors";
-import { linesText, parsePatchLines } from "../shared/patch-lines";
+import { linesText, parsePatchLines, type PatchLines } from "../shared/patch-lines";
 import { describeLocation, type DiffFile, type ReviewThread, type Side } from "../shared/types";
 import { useActions } from "./actions";
 import { ANNOTATION_FIT } from "./annotation-fit";
 import { COLOR_BLIND_SETTING, paletteStyle } from "./palette";
 import { revealIn, type Reveal } from "./reveal";
+import { RevertDialog } from "./revert-dialog";
 import { useNearScreen, type PatchState } from "./patch-loader";
 import { CommentComposer } from "./comment-composer";
 import { ThreadCard } from "./thread-card";
@@ -174,6 +175,7 @@ export function FileDiff({ file, threads, showThreadCount, diffStyle, stalePatch
   const draft: LineRange | null = lineDraft.active?.range ?? null;
   const fileDraft = useDraft(draftKeys.file(file.path));
   const [selected, setSelected] = useState<SelectedLineRange | null>(null);
+  const [reverting, setReverting] = useState(false);
 
   // A place asked for: unfold, select the line, then scroll it into view once drawn (and again once
   // a patch that was still loading arrives).
@@ -239,7 +241,7 @@ export function FileDiff({ file, threads, showThreadCount, diffStyle, stalePatch
         {meta.kind === "threads" ? (
           <div className="flex flex-col gap-2 px-3 py-2">
             {meta.threads.map(({ thread, placement }) => (
-              <ThreadCard key={thread.id} thread={thread} placement={placement} fileChanged={changedSince(thread, file)} />
+              <ThreadCard key={thread.id} thread={thread} placement={placement} fileChanged={changedSince(thread, file)} current={currentLines(thread, placement, lines)} />
             ))}
           </div>
         ) : (
@@ -318,11 +320,18 @@ export function FileDiff({ file, threads, showThreadCount, diffStyle, stalePatch
             Open
           </Button>
         ) : null}
+        {actions.canRevert(file) ? (
+          <Button type="button" variant="ghost" size="sm" className="h-6 shrink-0 gap-1 px-1.5 text-xs" onClick={() => setReverting(true)} aria-label={`Revert ${file.path}`}>
+            <Icon name="RotateCcw" className="size-3.5" />
+            Revert…
+          </Button>
+        ) : null}
         <Button type="button" variant="ghost" size="sm" className="h-6 shrink-0 gap-1 px-1.5 text-xs" onClick={openFileDraft}>
           <Icon name="MessageSquarePlus" className="size-3.5" />
           Comment on file
         </Button>
       </header>
+      {reverting ? <RevertDialog file={file} open={reverting} onOpenChange={setReverting} /> : null}
       {collapsed ? null : (
         <>
           {wholeFile.length > 0 || unplaced.length > 0 || fileDraft.active !== null || draftAbove !== null ? (
@@ -359,6 +368,13 @@ export function FileDiff({ file, threads, showThreadCount, diffStyle, stalePatch
       )}
     </section>
   );
+}
+
+/** Where a placed thread's lines are now and what they read, for its suggestions; undefined when not shown. */
+export function currentLines(thread: Pick<ReviewThread, "side">, placement: Placement, lines: PatchLines | undefined): { startLine: number; endLine: number; text: string } | undefined {
+  if (placement.state === "outdated" || placement.startLine === 0 || thread.side === null || lines === undefined) return undefined;
+  const text = linesText(lines, thread.side, placement.startLine, placement.endLine);
+  return text === null ? undefined : { startLine: placement.startLine, endLine: placement.endLine, text };
 }
 
 /** Whether the file changed since the thread was made on it (by the revision bb's Git plugin gives). */
@@ -406,6 +422,7 @@ function LineDraftBox({
         placeholder="Leave a comment. Markdown works; @reviewer (or @agent) asks this view's AI reviewer."
         submitLabel="Comment"
         withSeverity
+        suggestFrom={range.side === "new" && anchorContent !== null ? anchorContent : undefined}
         initialBody={draft.latest().body}
         initialSeverity={draft.latest().severity}
         onChange={draft.change}

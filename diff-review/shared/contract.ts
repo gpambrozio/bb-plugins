@@ -159,6 +159,33 @@ export const rpcContract = defineRpcContract({
     input: z.object({ threadId: id, sessionId: id, state: viewStateSchema }).strict(),
     output: z.object({ ok: z.literal(true) }).strict(),
   },
+  applySuggestion: {
+    input: z
+      .object({
+        threadId: id,
+        reviewThreadId: id,
+        commentId: id,
+        /** Where the thread's lines are in the view now, and what they read there. */
+        startLine: z.number().int().min(1),
+        endLine: z.number().int().min(1),
+        expected: z.string().max(ANCHOR_MAX_CHARS),
+        code: z.string().max(BODY_MAX_CHARS),
+      })
+      .strict(),
+    output: threadResult,
+  },
+  revertChanges: {
+    input: z
+      .object({
+        threadId: id,
+        path: z.string().min(1).max(4096),
+        revision: z.string().min(1).max(1024),
+        /** Hunk indexes in the file's patch, or null for the whole file. */
+        hunks: z.array(z.number().int().min(0)).min(1).max(1000).nullable(),
+      })
+      .strict(),
+    output: z.object({ ok: z.literal(true) }).strict(),
+  },
   listReviews: {
     input: z.object({}).strict(),
     output: z.object({ reviews: z.array(reviewSummarySchema) }).strict(),

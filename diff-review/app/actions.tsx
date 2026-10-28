@@ -37,6 +37,14 @@ export interface ReviewActions {
   openFile(file: DiffFile, line?: number): boolean;
   /** Whether `openFile` can open this file in this view. */
   canOpenFile(file: DiffFile): boolean;
+  /** Whether the view's new side is the working copy, so a suggestion can be applied there. */
+  canEditWorkingCopy: boolean;
+  /** Whether a file of this view can be reverted (the uncommitted view, a file not renamed or copied). */
+  canRevert(file: DiffFile): boolean;
+  /** Writes a comment's suggestion over the thread's lines as they read now, and resolves the thread. */
+  applySuggestion(input: { reviewThreadId: string; commentId: string; startLine: number; endLine: number; expected: string; code: string }): Promise<void>;
+  /** Reverts a file's uncommitted change, all of it (`hunks` null) or the hunks given. */
+  revert(file: DiffFile, hunks: number[] | null): Promise<void>;
 }
 
 const ActionsContext = createContext<ReviewActions | null>(null);
@@ -63,6 +71,7 @@ export function ReviewActionsProvider({
   putThread,
   putViewed,
   refreshThreads,
+  onEdited,
   children,
 }: {
   sessionId: string;
@@ -73,6 +82,8 @@ export function ReviewActionsProvider({
   putThread(thread: ReviewThread): void;
   putViewed(sessionId: string, path: string, viewed: DiffFile["viewed"]): void;
   refreshThreads(): Promise<void>;
+  /** The tab changed files in the workspace; reload the view. */
+  onEdited(): void;
   children: ReactNode;
 }) {
   const rpc = useRpc<RpcContract>();
@@ -113,6 +124,18 @@ export function ReviewActionsProvider({
           }
         }),
       canOpenFile: (file) => fileRef(view.target, file, view.mergeBaseRef) !== null,
+      canEditWorkingCopy: view.target.kind === "uncommitted" || view.target.kind === "all",
+      canRevert: (file) => view.target.kind === "uncommitted" && file.changeKind !== "renamed" && file.changeKind !== "copied",
+      applySuggestion: (input) =>
+        reported("Could not apply the suggestion", async () => {
+          putThread((await rpc.call("applySuggestion", { threadId, ...input })).thread);
+          onEdited();
+        }),
+      revert: (file, hunks) =>
+        reported(`Could not revert ${file.path}`, async () => {
+          await rpc.call("revertChanges", { threadId, path: file.path, revision: file.revision, hunks });
+          onEdited();
+        }),
       openFile: (file, line) => {
         const at = fileRef(view.target, file, view.mergeBaseRef);
         if (at === null) return false;
@@ -122,7 +145,7 @@ export function ReviewActionsProvider({
         });
       },
     }),
-    [rpc, navigate, sessionId, threadId, view.target, view.environmentId, view.mergeBaseRef, putThread, putViewed, refreshThreads],
+    [rpc, navigate, sessionId, threadId, view.target, view.environmentId, view.mergeBaseRef, putThread, putViewed, refreshThreads, onEdited],
   );
   return <ActionsContext.Provider value={actions}>{children}</ActionsContext.Provider>;
 }

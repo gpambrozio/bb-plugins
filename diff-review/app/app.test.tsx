@@ -211,6 +211,52 @@ describe("the palette's commands, find and Go to", () => {
   });
 });
 
+describe("changing the workspace from the tab", () => {
+  const suggesting = thread({ id: "aaaaaa000010", body: "Four is better:\n```suggestion\nconst b = 4;\n```", startLine: 2, endLine: 2 });
+
+  it("shows a suggested change and applies it to the working copy", async () => {
+    const slot = render({
+      getReview: () => ({ ...VIEW, threads: [suggesting] }),
+      applySuggestion: () => ({ thread: { ...suggesting, status: "resolved" } }),
+    });
+    expect(await screen.findByText("Suggested change")).toBeTruthy();
+    expect(screen.getByText("Four is better:")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Apply suggestion" }));
+    await waitFor(() => expect(slot.inspection.rpcCalls.some((call) => call.method === "applySuggestion")).toBe(true));
+    expect(slot.inspection.rpcCalls.find((call) => call.method === "applySuggestion")!.input).toEqual({
+      threadId: "thr_1",
+      reviewThreadId: "aaaaaa000010",
+      commentId: "c_aaaaaa000010",
+      startLine: 2,
+      endLine: 2,
+      expected: "const b = 3;",
+      code: "const b = 4;",
+    });
+    // The view reloads, since a file changed.
+    await waitFor(() => expect(loadsOf(slot).map((load) => load.reason)).toContain("manual"));
+  });
+
+  it("offers no Apply in a view whose new side is not the working copy", async () => {
+    render({ getReview: () => ({ ...VIEW, target: { kind: "commit", sha: "abcdef1" }, threads: [suggesting] }) });
+    expect(await screen.findByText("Suggested change")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Apply suggestion" })).toBeNull();
+  });
+
+  it("inserts a suggestion block seeded with the commented lines", async () => {
+    render({ getReview: () => ({ ...VIEW, threads: [] }) });
+    fireEvent.click(await screen.findByText("gutter +"));
+    fireEvent.click(screen.getByRole("button", { name: "Suggest a change" }));
+    expect((screen.getByPlaceholderText(/^Leave a comment\. Markdown works/) as HTMLTextAreaElement).value).toBe("```suggestion\nconst a = 1;\nconst b = 3;\n```");
+  });
+
+  it("reverts a file of the uncommitted view after asking", async () => {
+    const slot = render({ revertChanges: () => ({ ok: true }) });
+    fireEvent.click(await screen.findByRole("button", { name: "Revert src/a.ts" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Revert the whole file to its last commit" }));
+    await waitFor(() => expect(slot.inspection.rpcCalls.find((call) => call.method === "revertChanges")?.input).toEqual({ threadId: "thr_1", path: "src/a.ts", revision: "rev-a", hunks: null }));
+  });
+});
+
 describe("keeping the Review tab current", () => {
   it("reloads when bb's Git plugin sees the workspace change outside a turn", async () => {
     let files = 1;

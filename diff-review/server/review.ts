@@ -435,6 +435,16 @@ export class ReviewService {
     return thread;
   }
 
+  /**
+   * The tab changed files in a workspace (a suggestion applied, a revert): its tabs reload, and the
+   * next turn's end compares against the new state.
+   */
+  workspaceEdited(environmentId: string, sessionId: string | null): void {
+    this.workspaceStates.delete(environmentId);
+    this.signal(environmentId, { kind: "diff" });
+    if (sessionId !== null) this.publishSession(sessionId);
+  }
+
   /** Tells open tabs on a session's workspace that its threads or runs changed. */
   publishSession(sessionId: string): void {
     const session = this.store.sessionById(sessionId);
