@@ -729,7 +729,7 @@ describe("a pull request's view", () => {
         rpc: {
           getReview: () => PR_VIEW,
           // The dialog shows, and posts, the text as the plan read it, even if the view's copy is older.
-          reviewPlan: () => ({ lines: [{ reviewThreadId: "aaaaaa000031", path: "src/a.ts", line: 2, body: "Name it c, please." }], body: [], blocked: [] }),
+          reviewPlan: () => ({ lines: [{ reviewThreadId: "aaaaaa000031", location: "src/a.ts:2 (new side)", path: "src/a.ts", line: 2, body: "Name it c, please." }], body: [], blocked: [] }),
           submitReview: () => ({ url: "https://github.com/o/r/pull/7#review-1", posted: 1, blocked: [] }),
         },
         openUrl: (url) => (opened.push(url), true),
@@ -758,6 +758,34 @@ describe("a pull request's view", () => {
     );
   });
 
+  it("shows every comment Submit would post, one the tab has not loaded yet included", async () => {
+    const slot = renderSlot(
+      { component: ReviewPanel },
+      { threadId: "thr_1", environment: ENVIRONMENT, params: null },
+      {
+        rpc: {
+          getReview: () => PR_VIEW,
+          // aaaaaa000099 was written in another window since the tab loaded: the plan has it, the tab does not.
+          reviewPlan: () => ({
+            lines: [{ reviewThreadId: "aaaaaa000031", location: "src/a.ts:2 (new side)", path: "src/a.ts", line: 2, body: "Name it c." }],
+            body: [{ reviewThreadId: "aaaaaa000099", location: "the whole diff", body: "Written elsewhere." }],
+            blocked: [{ reviewThreadId: "aaaaaa000098", location: "src/gone.ts:4 (new side)", reason: "Its file is not in the pull request." }],
+          }),
+          submitReview: () => ({ url: null, posted: 2, blocked: [] }),
+        },
+      },
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Submit review…" }));
+    const unseen = await screen.findByRole("checkbox", { name: "Include the whole diff" });
+    expect(unseen.getAttribute("data-state")).toBe("checked");
+    expect(screen.getByText("Written elsewhere.")).toBeTruthy();
+    expect(screen.getByText("Its file is not in the pull request.")).toBeTruthy();
+    // Unticked, it is not posted.
+    fireEvent.click(unseen);
+    fireEvent.click(screen.getByRole("button", { name: "Submit: Comment" }));
+    await waitFor(() => expect(slot.inspection.rpcCalls.find((call) => call.method === "submitReview")?.input).toMatchObject({ items: [{ reviewThreadId: "aaaaaa000031", body: "Name it c." }] }));
+  });
+
   it("closes an open Submit dialog when the view loads new commits, never approving them unseen", async () => {
     const B = "b".repeat(40);
     let head = HEAD;
@@ -767,7 +795,7 @@ describe("a pull request's view", () => {
       {
         rpc: {
           getReview: () => ({ ...PR_VIEW, pullRequest: { ...PR_VIEW.pullRequest, headSha: head } }),
-          reviewPlan: () => ({ lines: [{ reviewThreadId: "aaaaaa000031", path: "src/a.ts", line: 2, body: "Name it c." }], body: [], blocked: [] }),
+          reviewPlan: () => ({ lines: [{ reviewThreadId: "aaaaaa000031", location: "src/a.ts:2 (new side)", path: "src/a.ts", line: 2, body: "Name it c." }], body: [], blocked: [] }),
           submitReview: () => ({ url: null, posted: 1, blocked: [] }),
         },
       },

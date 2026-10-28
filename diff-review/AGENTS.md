@@ -283,6 +283,10 @@ the text it was made on, from its first comment's `diffHunk`, so it is placed by
 not on the current diff; it is never pinned to whatever sits at its old line now. A mirror GitHub no
 longer has is deleted, unless it holds the plugin's own comments, which unlinks it instead. The user's
 reply, resolve or reopen on a mirror goes to GitHub, then reads it back; dismiss has no GitHub meaning.
+A reply that mentions `@reviewer` or `@agent` is the exception: it stays the plugin's own comment and
+asks the reviewer, since on GitHub it would notify the accounts of those names (the sync keeps a
+mirror's own comments). The Submit dialog draws every row from the plan it read, each entry with its
+`location`, never from the tab's threads, which may lag behind it: whatever Submit posts is on screen.
 
 **Submit** is the only path that posts a review (decision 5); an agent's `reply` on a mirror stays in
 the tab.

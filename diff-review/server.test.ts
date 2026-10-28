@@ -691,6 +691,21 @@ describe("reviewing a GitHub pull request", () => {
     await expect(rpc("editComment", { commentId: mirror!.comments[0]!.id, body: "x" })).rejects.toMatchObject({ code: "forbidden" });
   });
 
+  it("keeps a reply that asks the reviewer on a GitHub thread in the tab, and asks the reviewer", async () => {
+    const github = fakeGitHub();
+    const { view, rpc, harness } = await setup({ gh: github.gh });
+    const [mirror] = (await view(PULL)).threads;
+    const asked = (await rpc("addComment", { reviewThreadId: mirror!.id, body: "@reviewer is 3 right?" })) as { thread: ReviewThread };
+    // Not posted: on GitHub it would notify the accounts named reviewer or agent.
+    expect(github.requests.some((request) => request.query.includes("addPullRequestReviewThreadReply"))).toBe(false);
+    expect(asked.thread.comments.map((comment) => [comment.authorType, comment.body])).toEqual([["github", "Why 3?"], ["user", "@reviewer is 3 right?"]]);
+    await vi.waitFor(() => expect(harness.inspection.sdk.callsTo("threads.spawn")).toHaveLength(1));
+    expect((harness.inspection.sdk.callsTo("threads.spawn")[0]![0] as { prompt: string }).prompt).toContain(`- Thread: \`${mirror!.id}\``);
+    // Read again from GitHub, the thread keeps the question.
+    const again = (await view(PULL)).threads.find((thread) => thread.id === mirror!.id)!;
+    expect(again.comments.map((comment) => comment.body)).toEqual(["Why 3?", "@reviewer is 3 right?"]);
+  });
+
   /** Submit as the dialog does: the plan's comments, with the text it showed. */
   async function submitAll(rpc: (method: string, input?: unknown) => Promise<unknown>, sessionId: string, event: string, body: string) {
     const plan = (await rpc("reviewPlan", { sessionId })) as { lines: { reviewThreadId: string; body: string }[]; body: { reviewThreadId: string; body: string }[] };
@@ -707,7 +722,11 @@ describe("reviewing a GitHub pull request", () => {
     const general = ((await rpc("createThread", { sessionId, filePath: "__general__", side: null, startLine: 0, endLine: 0, severity: null, anchorContent: null, body: "Looks good overall." })) as { thread: ReviewThread }).thread;
     const gone = ((await rpc("createThread", { sessionId, filePath: "src/a.ts", side: "new", startLine: 1, endLine: 1, severity: null, anchorContent: "not there", body: "Lost" })) as { thread: ReviewThread }).thread;
     const plan = (await rpc("reviewPlan", { sessionId })) as { lines: unknown[]; body: unknown[]; blocked: { reviewThreadId: string }[] };
-    expect(plan).toMatchObject({ lines: [{ reviewThreadId: line.id, path: "src/a.ts", line: 2, body: "Name it c." }], body: [{ body: "Looks good overall." }], blocked: [{ reviewThreadId: gone.id }] });
+    expect(plan).toMatchObject({
+      lines: [{ reviewThreadId: line.id, location: "src/a.ts:2 (new side)", path: "src/a.ts", line: 2, body: "Name it c." }],
+      body: [{ reviewThreadId: general.id, location: "the whole diff", body: "Looks good overall." }],
+      blocked: [{ reviewThreadId: gone.id, location: "src/a.ts:1 (new side)" }],
+    });
     // A reply lands while GitHub is taking the review.
     github.remote.onAddThread = async () => {
       await rpc("addComment", { reviewThreadId: line.id, body: "WRITTEN DURING SUBMIT" });

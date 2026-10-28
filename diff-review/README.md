@@ -98,7 +98,7 @@ It is a bb take on [diffity](https://github.com/nilbuild/diffity)'s review loop,
   request…*, or `bb diff-review open <pull request address>` reviews a pull request here: its changes
   are fetched into the workspace's repository (into refs of the plugin's own, never switching your
   checkout), its review threads from GitHub sit on their lines, and a reply, Resolve or Reopen on one
-  goes to GitHub. **Submit review…** posts your own comments as one review with the verdict you pick;
+  goes to GitHub (a reply that asks @reviewer or @agent stays in the tab and asks the AI reviewer). **Submit review…** posts your own comments as one review with the verdict you pick;
   a comment that cannot be posted says why. *A new thread…* in Send to agent fixes the pull request in
   a new worktree that checks it out. This needs the GitHub CLI (`gh`), signed in, on the machine
   running bb; it posts as that account, and only from Submit.

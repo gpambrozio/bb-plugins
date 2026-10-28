@@ -14,7 +14,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `bb diff-review open <address>`. Its changes are fetched into the workspace's repository without
   switching your checkout, and its review threads from GitHub appear on their lines, marked GitHub.
 - **Answer GitHub's threads from the tab.** A reply, Resolve or Reopen on one of them goes to GitHub;
-  **Sync with GitHub** reads them again.
+  **Sync with GitHub** reads them again. A reply that asks @reviewer or @agent stays in the tab and
+  asks the view's AI reviewer instead of going to GitHub.
 - **Submit a review.** Your own comments in the view go to GitHub as one review, with the verdict you
   pick (Comment, Approve or Request changes) and a summary: line comments as review threads, comments
   on a file or the whole change in the summary. A comment that cannot be posted says why. It posts

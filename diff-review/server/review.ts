@@ -35,6 +35,7 @@ import {
 } from "../shared/types";
 import { gitTarget, ignorePatterns, loadDiff, type DiffSources, loadPatches, resolveTarget, ReviewUnavailable, withThreadPatches, workspaceOf, workspaceRefs, workspaceState, type WorkspaceState } from "./diff";
 import { parseRange, rangeText } from "../shared/git-spec";
+import { mentionsReviewer } from "../shared/mentions";
 import { OPEN_CHANNEL, reviewRoute } from "../shared/routes";
 import { GitReads } from "./git";
 import { createGhRunner, GitHub, type GhRunner } from "./github";
@@ -877,11 +878,13 @@ export class ReviewService {
 
   /**
    * The user's reply in the tab: on a thread mirrored from GitHub it is posted there as the owner
-   * (and read back); otherwise it is the plugin's own comment.
+   * (and read back); otherwise it is the plugin's own comment. A reply that asks the view's reviewer
+   * (`@reviewer`, `@agent`) stays in the tab even on a mirrored thread, as the plugin's own comment:
+   * the question is for the AI reviewer, and on GitHub it would notify the accounts of those names.
    */
   async reply(reviewThreadId: string, body: string, viewerThreadId: string | null): Promise<ReviewThread> {
     const thread = this.requireThread(reviewThreadId);
-    if (thread.githubThreadId === null) return this.addUserComment(reviewThreadId, body, viewerThreadId);
+    if (thread.githubThreadId === null || mentionsReviewer(body)) return this.addUserComment(reviewThreadId, body, viewerThreadId);
     await github(() => this.prs.reply(thread, this.pullOf(thread.sessionId), requireText(body, "The reply")));
     return this.requireThread(reviewThreadId);
   }

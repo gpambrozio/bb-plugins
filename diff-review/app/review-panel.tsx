@@ -821,7 +821,6 @@ function ReadyPanel({
           sessionId={view.sessionId}
           headSha={view.pullRequest.headSha}
           pullNumber={view.pullRequest.number}
-          threads={view.threads}
           onSubmitted={onReload}
         />
       )}

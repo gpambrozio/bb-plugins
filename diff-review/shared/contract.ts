@@ -235,9 +235,10 @@ export const rpcContract = defineRpcContract({
     input: z.object({ sessionId: id }).strict(),
     output: z
       .object({
-        lines: z.array(z.object({ reviewThreadId: z.string(), path: z.string(), line: z.number(), body: z.string() }).strict()),
-        body: z.array(z.object({ reviewThreadId: z.string(), body: z.string() }).strict()),
-        blocked: z.array(z.object({ reviewThreadId: z.string(), reason: z.string() }).strict()),
+        // `location` says where each comment is, so the dialog shows every one it would post.
+        lines: z.array(z.object({ reviewThreadId: z.string(), location: z.string(), path: z.string(), line: z.number(), body: z.string() }).strict()),
+        body: z.array(z.object({ reviewThreadId: z.string(), location: z.string(), body: z.string() }).strict()),
+        blocked: z.array(z.object({ reviewThreadId: z.string(), location: z.string(), reason: z.string() }).strict()),
       })
       .strict(),
   },

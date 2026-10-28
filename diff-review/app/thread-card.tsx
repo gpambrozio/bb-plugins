@@ -202,7 +202,11 @@ export function ThreadCard({
       ))}
       {replying ? (
         <CommentComposer
-          placeholder="Reply (@reviewer or @agent asks this view's AI reviewer)"
+          placeholder={
+            thread.githubThreadId === null
+              ? "Reply (@reviewer or @agent asks this view's AI reviewer)"
+              : "Reply on GitHub (with @reviewer or @agent it stays here and asks this view's AI reviewer)"
+          }
           submitLabel="Reply"
           initialBody={replyDraft.latest().body}
           onChange={replyDraft.change}

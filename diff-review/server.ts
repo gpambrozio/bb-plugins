@@ -7,6 +7,7 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import { rpcContract } from "./shared/contract";
+import { describeLocation } from "./shared/types";
 import { diffReviewCli } from "./server/cli";
 import { WorkspaceEdits } from "./server/edits";
 import { createHostRevert } from "./server/host-git";
@@ -101,10 +102,11 @@ async function plugin(bb: BbPluginApi, deps: { gh?: GhRunner }) {
     setStatus: async ({ reviewThreadId, status }) => ({ thread: await service.changeStatus(reviewThreadId, status) }),
     reviewPlan: ({ sessionId }) => {
       const plan = service.reviewPlan(sessionId);
+      const location = (reviewThreadId: string) => describeLocation(service.requireThread(reviewThreadId));
       return {
-        lines: plan.lines.map((entry) => ({ reviewThreadId: entry.reviewThreadId, path: entry.draft.path, line: entry.draft.line, body: entry.body })),
-        body: plan.body.map((entry) => ({ reviewThreadId: entry.reviewThreadId, body: entry.body })),
-        blocked: plan.blocked,
+        lines: plan.lines.map((entry) => ({ reviewThreadId: entry.reviewThreadId, location: location(entry.reviewThreadId), path: entry.draft.path, line: entry.draft.line, body: entry.body })),
+        body: plan.body.map((entry) => ({ reviewThreadId: entry.reviewThreadId, location: location(entry.reviewThreadId), body: entry.body })),
+        blocked: plan.blocked.map((entry) => ({ ...entry, location: location(entry.reviewThreadId) })),
       };
     },
     submitReview: (input) => service.submitReview(input),

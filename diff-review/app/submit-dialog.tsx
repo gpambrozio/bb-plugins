@@ -15,7 +15,7 @@ import { Textarea } from "@/components/ui/textarea";
 
 import type { RpcContract } from "../shared/contract";
 import type { ReviewEvent } from "../shared/github";
-import { BODY_MAX_CHARS, describeLocation, type ReviewThread } from "../shared/types";
+import { BODY_MAX_CHARS } from "../shared/types";
 import { errorMessage } from "./use-review";
 
 
@@ -31,7 +31,6 @@ export function SubmitReviewDialog({
   sessionId,
   headSha,
   pullNumber,
-  threads,
   onSubmitted,
 }: {
   open: boolean;
@@ -39,12 +38,15 @@ export function SubmitReviewDialog({
   sessionId: string;
   headSha: string;
   pullNumber: number;
-  threads: readonly ReviewThread[];
   onSubmitted(): void;
 }) {
   const rpc = useRpc<RpcContract>();
   const navigate = useBbNavigate();
-  const [plan, setPlan] = useState<{ lines: { reviewThreadId: string; body: string }[]; body: { reviewThreadId: string; body: string }[]; blocked: { reviewThreadId: string; reason: string }[] } | null>(null);
+  const [plan, setPlan] = useState<{
+    lines: { reviewThreadId: string; location: string; body: string }[];
+    body: { reviewThreadId: string; location: string; body: string }[];
+    blocked: { reviewThreadId: string; location: string; reason: string }[];
+  } | null>(null);
   const [chosen, setChosen] = useState<Set<string>>(new Set());
   const [event, setEvent] = useState<ReviewEvent>("COMMENT");
   const [body, setBody] = useState("");
@@ -78,38 +80,34 @@ export function SubmitReviewDialog({
     // Not on `headSha`: the head is taken when the dialog opens, and a later one closes it (above).
   }, [open, rpc, sessionId]);
 
-  const byId = new Map(threads.map((thread) => [thread.id, thread]));
   // What each comment says as this dialog read it: that text, and only that, is what Submit posts.
+  // Every row is drawn from the plan alone, never from the tab's threads, which may not have caught
+  // up with it: each comment Submit would post is on screen.
   const approvedBody = (id: string) => [...(plan?.lines ?? []), ...(plan?.body ?? [])].find((entry) => entry.reviewThreadId === id)?.body;
-  const row = (id: string, reason?: string) => {
-    const thread = byId.get(id);
-    if (thread === undefined) return null;
-    const shown = approvedBody(id) ?? thread.comments[0]?.body ?? "";
-    return (
-      <li key={id}>
-        <label className="flex cursor-pointer items-start gap-2 rounded-md px-1 py-1 hover:bg-state-hover">
-          <Checkbox
-            checked={reason === undefined && chosen.has(id)}
-            disabled={reason !== undefined}
-            onCheckedChange={(checked) =>
-              setChosen((previous) => {
-                const next = new Set(previous);
-                if (checked === true) next.add(id);
-                else next.delete(id);
-                return next;
-              })
-            }
-            aria-label={`Include ${describeLocation(thread)}`}
-          />
-          <span className="min-w-0 flex-1">
-            <span className="block truncate text-xs text-muted-foreground">{describeLocation(thread)}</span>
-            <span className="block truncate text-sm">{shown}</span>
-            {reason === undefined ? null : <span className="block text-xs text-warning-text">{reason}</span>}
-          </span>
-        </label>
-      </li>
-    );
-  };
+  const row = ({ reviewThreadId: id, location, body: shown, reason }: { reviewThreadId: string; location: string; body: string; reason?: string }) => (
+    <li key={id}>
+      <label className="flex cursor-pointer items-start gap-2 rounded-md px-1 py-1 hover:bg-state-hover">
+        <Checkbox
+          checked={reason === undefined && chosen.has(id)}
+          disabled={reason !== undefined}
+          onCheckedChange={(checked) =>
+            setChosen((previous) => {
+              const next = new Set(previous);
+              if (checked === true) next.add(id);
+              else next.delete(id);
+              return next;
+            })
+          }
+          aria-label={`Include ${location}`}
+        />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-xs text-muted-foreground">{location}</span>
+          {shown === "" ? null : <span className="block truncate text-sm">{shown}</span>}
+          {reason === undefined ? null : <span className="block text-xs text-warning-text">{reason}</span>}
+        </span>
+      </label>
+    </li>
+  );
 
   const submit = async () => {
     setBusy(true);
@@ -154,8 +152,8 @@ export function SubmitReviewDialog({
           <p className="text-xs text-muted-foreground">You have no open comments here; the review carries only its summary.</p>
         ) : (
           <ul className="flex max-h-64 flex-col gap-1 overflow-y-auto" aria-label="Your comments">
-            {[...plan.lines, ...plan.body].map((entry) => row(entry.reviewThreadId))}
-            {plan.blocked.map((entry) => row(entry.reviewThreadId, entry.reason))}
+            {[...plan.lines, ...plan.body].map((entry) => row(entry))}
+            {plan.blocked.map((entry) => row({ ...entry, body: "" }))}
           </ul>
         )}
         <DialogFooter>
