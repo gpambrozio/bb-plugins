@@ -46,7 +46,7 @@ specific to `diff-review`.
 | `app/header-action.tsx` | The header's Review icon button (the old header slot, see below) and the one-control registration, with its fallback. |
 | `app/commands.ts` | The palette commands' bus: a command opens the thread's tab and leaves its action for the tab that shows. |
 | `app/find.ts`, `app/find-bar.tsx`, `app/goto-dialog.tsx`, `app/reveal.ts` | Find across the diff (diffity's), Go to, and scrolling a place into view inside Pierre's open shadow root. |
-| `app/comment-nav.tsx` | Previous/next comment: the toolbar's and each thread's arrows and the palette's commands share one step (open threads in the tab's order, wrapping), which scrolls to the thread and focuses its card. |
+| `app/comment-nav.tsx` | Previous/next comment: the toolbar's and each thread's arrows, the palette's commands and Go to share one list of stops, each at the place its card is drawn (the top sections — whole diff, then "Not on the current diff" — then each file's whole-file threads under its header and its line threads by line), wrapping at the ends; a step brings that place into view and focuses the card. |
 | `app/files-view.tsx` | The "Any file" view: workspace search, Pierre's `File` with the same annotations. |
 | `app/suggestion-block.tsx`, `app/revert-dialog.tsx`, `app/range-dialog.tsx` | A suggested change and Apply; Revert…; the range picker. |
 | `app/open-file.ts`, `app/palette.ts` | Which version Open previews; the colour-blind colours. |

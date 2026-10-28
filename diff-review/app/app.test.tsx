@@ -297,6 +297,51 @@ describe("the previous and next comment arrows", () => {
     expect((within(toolbar()).getByRole("button", { name: "Previous comment" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it("lands on a thread where it is drawn: no longer on the diff, or on a file that left the view, in the section at the top", async () => {
+    // Where each step scrolls: the thread card, or the file section, it was asked of.
+    const scrolled: string[] = [];
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (this: Element) {
+      scrolled.push(this.closest("[data-thread-id]")?.getAttribute("data-thread-id") ?? this.closest("[data-file-path]")?.getAttribute("data-file-path") ?? this.tagName);
+    };
+    try {
+      const gone = thread({ id: "aaaaaa000006", body: "On a file not in this view", filePath: "src/gone.ts" });
+      const wholeFile = thread({ id: "aaaaaa000007", body: "About the whole file", side: null, startLine: 0, endLine: 0, anchorContent: null });
+      render({ getReview: () => ({ ...VIEW, threads: [...VIEW.threads, gone, wholeFile] }) });
+      await screen.findByTestId("patch");
+      const top = screen.getByText("Not on the current diff (the code changed or left the view)").closest("section")!;
+      // The tab's order: the whole diff's, the top section's (as drawn there), then the file's: its
+      // whole-file thread under its header, then its line threads by line.
+      const order = ["aaaaaa000002", ...Array.from(top.querySelectorAll("[data-thread-id]")).map((card) => card.getAttribute("data-thread-id")), "aaaaaa000007", "aaaaaa000001", "aaaaaa000004"];
+      expect(order).toEqual(["aaaaaa000002", "aaaaaa000006", "aaaaaa000003", "aaaaaa000007", "aaaaaa000001", "aaaaaa000004"]);
+      const step = async (press: () => void, id: string) => {
+        scrolled.length = 0;
+        press();
+        await waitFor(() => expect(focused()).toBe(id));
+        // Past the reveal's frame: nothing scrolls anywhere but the thread's own place.
+        await act(async () => new Promise((resolve) => setTimeout(resolve, 50)));
+        return [...scrolled];
+      };
+      const next = () => fireEvent.click(within(toolbar()).getByRole("button", { name: "Next comment" }));
+      await step(next, "aaaaaa000002");
+      expect(await step(next, "aaaaaa000006")).toEqual(["aaaaaa000006"]);
+      expect(await step(next, "aaaaaa000003")).toEqual(["aaaaaa000003"]);
+      // A whole-file thread: its file's header, the card right under it.
+      expect(await step(next, "aaaaaa000007")).toEqual(["src/a.ts"]);
+      // A line thread: its line, in its file's section.
+      expect(await step(next, "aaaaaa000001")).not.toContain("aaaaaa000003");
+      // A thread's own arrows step from where it is drawn; the palette shares the same stops.
+      expect(await step(() => fireEvent.click(within(card("aaaaaa000007")).getByRole("button", { name: "Previous comment" })), "aaaaaa000003")).toEqual(["aaaaaa000003"]);
+      expect(await step(() => dispatchReviewCommand("thr_1", "previous-comment"), "aaaaaa000006")).toEqual(["aaaaaa000006"]);
+      // Go to lands there too.
+      dispatchReviewCommand("thr_1", "go-to");
+      fireEvent.change(await screen.findByRole("textbox", { name: "Filter" }), { target: { value: "comment line is gone" } });
+      expect(await step(() => fireEvent.click(within(screen.getAllByRole("option")[0]!).getByRole("button")), "aaaaaa000003")).toEqual(["aaaaaa000003"]);
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
+  });
+
   it("has no arrows in the Any file view, whose palette commands are off too", async () => {
     render({ getReview: () => ({ ...VIEW, target: { kind: "files" }, files: [], viewable: false }) });
     await screen.findByText("Add tests for this change");

@@ -1,14 +1,21 @@
 /**
  * Moving between the open comment threads: the up and down arrows in the tab's toolbar and on each
- * thread, and the palette's next/previous comment. The order is the tab's own (whole-diff threads, then
- * each file's by line); a step wraps around at either end, as the palette's always has. It scrolls
- * the thread's line into view and moves the keyboard focus to the thread.
+ * thread, the palette's next/previous comment and Go to. The order is the tab's own, each thread where
+ * its card is drawn (the whole diff's and the "Not on the current diff" ones at the top, then each
+ * file's whole-file threads and its line threads by line); a step wraps around at either end, as the
+ * palette's always has. It brings that place into view and moves the keyboard focus to the thread.
  */
 import { createContext, useContext } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+
+/**
+ * Where a thread's card is drawn: in the sections at the top of the tab (the whole diff's, and "Not on
+ * the current diff"), under a file's header (whole-file, or waiting for its patch), or at a line.
+ */
+export type CommentPlace = { kind: "top" } | { kind: "file"; path: string } | { kind: "line"; path: string; side: "old" | "new"; line: number };
 
 /** A thread in the tab's order; only open ones are stepped to. */
 export interface CommentOrderEntry {
@@ -75,15 +82,18 @@ export function CommentNavButtons({ from, className = "size-7" }: { from?: strin
 
 /**
  * Moves the keyboard focus to a thread once it is drawn: a file's diff may still be mounting or
- * loading its patch when the step scrolls to it, so this looks again for a short while.
+ * loading its patch when the step scrolls to it, so this looks again for a short while. With
+ * `scroll`, the card itself is scrolled into view (a card in the top sections, which no line reveal
+ * brings there); otherwise the reveal of its file or line has scrolled, and focusing does not.
  */
-export function focusThread(root: ParentNode | null, threadId: string, frames = 30): void {
+export function focusThread(root: ParentNode | null, threadId: string, options: { scroll: boolean }, frames = 30): void {
   if (root === null) return;
   // Thread ids are hex, safe in a selector as they are.
   const card = root.querySelector<HTMLElement>(`[data-thread-id="${threadId}"]`);
   if (card !== null) {
-    card.focus();
+    if (options.scroll && typeof card.scrollIntoView === "function") card.scrollIntoView({ block: "nearest" });
+    card.focus({ preventScroll: true });
     return;
   }
-  if (frames > 0) requestAnimationFrame(() => focusThread(root, threadId, frames - 1));
+  if (frames > 0) requestAnimationFrame(() => focusThread(root, threadId, options, frames - 1));
 }

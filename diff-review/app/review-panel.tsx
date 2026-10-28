@@ -21,7 +21,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 
 import type { RpcContract } from "../shared/contract";
-import { placeThread } from "../shared/anchors";
 import { parseRange, rangeText } from "../shared/git-spec";
 import { linesText, parsePatchLines } from "../shared/patch-lines";
 import { describeLocation, GENERAL_PATH, targetRequestSchema, type ReviewThread, type Run, type TargetRequest } from "../shared/types";
@@ -35,7 +34,7 @@ import { RangeDialog } from "./range-dialog";
 import type { Reveal } from "./reveal";
 import { AiReviewDialog } from "./ai-review-dialog";
 import { ClearReviewDialog } from "./clear-dialog";
-import { CommentNavButtons, CommentNavContext, focusThread, stepTarget, type CommentNav } from "./comment-nav";
+import { CommentNavButtons, CommentNavContext, focusThread, stepTarget, type CommentNav, type CommentPlace } from "./comment-nav";
 import { CommentComposer } from "./comment-composer";
 import { FileDiff, noDiffReason, OrphanDrafts, placeFileThreads, type DiffStyle } from "./file-diff";
 import { usePatchLoader } from "./patch-loader";
@@ -403,25 +402,36 @@ function ReadyPanel({
     currentMatch.current = null;
   };
 
-  // The comment threads in the order the tab shows them, for next/previous comment; the open ones
-  // are its stops.
+  // The comment threads in the order the tab draws them, each with where its card is: the whole
+  // diff's and the "Not on the current diff" ones in the sections at the top, a file's whole-file and
+  // not yet placed ones under its header, then its line threads by line. The open ones are the stops
+  // of next/previous comment and of Go to.
   const commentOrder = useMemo(() => {
-    const stops: { threadId: string; open: boolean; path: string; side: "old" | "new"; line: number }[] = [];
-    for (const thread of byFile.get(GENERAL_PATH) ?? []) stops.push({ threadId: thread.id, open: thread.status === "open", path: GENERAL_PATH, side: "new", line: 0 });
+    const stops: { threadId: string; open: boolean; place: CommentPlace }[] = [];
+    const push = (thread: ReviewThread, place: CommentPlace) => stops.push({ threadId: thread.id, open: thread.status === "open", place });
+    for (const thread of general) push(thread, { kind: "top" });
+    for (const thread of outdated) push(thread, { kind: "top" });
     for (const file of files) {
       const threads = byFile.get(file.path) ?? [];
       if (threads.length === 0) continue;
-      const lines = file.patch === null ? null : parsePatchLines(file.patch);
-      const placed = threads.map((thread) => {
-        if (thread.startLine === 0 || lines === null || thread.side === null) return { thread, line: 0 };
-        const placement = placeThread(thread, lines);
-        return { thread, line: placement.state === "outdated" ? 0 : placement.endLine };
-      });
-      placed.sort((a, b) => a.line - b.line);
-      for (const { thread, line } of placed) stops.push({ threadId: thread.id, open: thread.status === "open", path: file.path, side: thread.side ?? "new", line });
+      const placed = placeFileThreads(file, threads);
+      for (const thread of [...placed.wholeFile, ...placed.unplaced]) push(thread, { kind: "file", path: file.path });
+      const onLines = placed.onLines.map(({ thread, placement }) => ({ thread, line: placement.state === "outdated" ? 0 : placement.endLine }));
+      onLines.sort((a, b) => a.line - b.line);
+      for (const { thread, line } of onLines) push(thread, { kind: "line", path: file.path, side: thread.side ?? "new", line });
     }
     return stops;
-  }, [files, byFile]);
+  }, [general, outdated, files, byFile]);
+  // Brings a thread's place into view and focuses its card: a card in the top sections is scrolled to
+  // itself, one in a file after its file or line is revealed (which unfolds the file).
+  const goToComment = useCallback(
+    (threadId: string, place: CommentPlace) => {
+      if (place.kind === "file") show({ path: place.path, side: "new", line: 0 });
+      else if (place.kind === "line") show({ path: place.path, side: place.side, line: place.line });
+      focusThread(scrollRoot, threadId, { scroll: place.kind === "top" });
+    },
+    [show, scrollRoot],
+  );
   const commentStops = useMemo(() => commentOrder.filter((stop) => stop.open), [commentOrder]);
   const commentIndex = useRef(-1);
   // From the palette and the toolbar, from the last step; from a thread's own arrows, from it.
@@ -432,10 +442,7 @@ function ReadyPanel({
       return;
     }
     commentIndex.current = commentStops.findIndex((stop) => stop.threadId === target);
-    const stop = commentStops[commentIndex.current]!;
-    if (stop.path === GENERAL_PATH) scrollRoot?.scrollTo?.({ top: 0 });
-    else show({ path: stop.path, side: stop.side, line: stop.line });
-    focusThread(scrollRoot, target);
+    goToComment(target, commentStops[commentIndex.current]!.place);
   };
   const commentNav: CommentNav = {
     step: (delta, from) => stepComment(delta, from ?? null),
@@ -455,7 +462,8 @@ function ReadyPanel({
         group: "Comment",
         label: thread.comments[0]?.body.split("\n")[0]?.slice(0, 120) ?? "",
         detail: describeLocation(thread),
-        go: () => (stop.path === GENERAL_PATH ? scrollRoot?.scrollTo?.({ top: 0 }) : show({ path: stop.path, side: stop.side, line: stop.line })),
+        go: () => goToComment(stop.threadId, stop.place),
+        focus: () => focusThread(scrollRoot, stop.threadId, { scroll: false }),
       });
     }
     const views: { value: string; label: string }[] = [{ value: "uncommitted", label: targetLabel({ kind: "uncommitted" }) }];
@@ -466,7 +474,7 @@ function ReadyPanel({
     views.push({ value: "staged", label: targetLabel({ kind: "staged" }) }, { value: "unstaged", label: targetLabel({ kind: "unstaged" }) });
     for (const entry of views) entries.push({ key: `view:${entry.value}`, group: "View", label: entry.label, go: () => onPick(entry.value) });
     return entries;
-  }, [files, commentStops, view.threads, view.defaultBase, view.commits, show, onPick, scrollRoot]);
+  }, [files, commentStops, view.threads, view.defaultBase, view.commits, show, onPick, goToComment, scrollRoot]);
 
   // A file asked for when the review was opened, once.
   const wentToFile = useRef(false);

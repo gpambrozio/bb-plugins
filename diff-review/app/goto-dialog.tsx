@@ -3,7 +3,7 @@
  * filtered as you type; Enter or a click goes there. It stands in for diffity's ⌘P (files) and ⌘K
  * (comments, commits): bb keeps Mod+P and Mod+K for its own quick open and search.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
@@ -13,6 +13,8 @@ export interface GoToEntry {
   label: string;
   detail?: string;
   go(): void;
+  /** Where the focus goes after the dialog closes (a comment's card). */
+  focus?(): void;
 }
 
 /** Entries whose label or detail holds every word of `query`, case-insensitive, in their order. */
@@ -34,14 +36,23 @@ export function GoToDialog({ open, onOpenChange, entries }: { open: boolean; onO
     setActive(0);
   }, [open]);
   const shown = useMemo(() => filterEntries(entries, query).slice(0, 200), [entries, query]);
+  // A pick's `focus` runs once the closing dialog has put the focus back, which would undo it sooner.
+  const picked = useRef<GoToEntry | null>(null);
   const go = (entry: GoToEntry | undefined) => {
     if (entry === undefined) return;
+    picked.current = entry;
     onOpenChange(false);
     entry.go();
   };
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+      <DialogContent
+        className="max-w-lg"
+        onAfterCloseAutoFocus={() => {
+          picked.current?.focus?.();
+          picked.current = null;
+        }}
+      >
         <DialogHeader>
           <DialogTitle>Go to</DialogTitle>
           <DialogDescription>A file, an open comment or a view of this review.</DialogDescription>
