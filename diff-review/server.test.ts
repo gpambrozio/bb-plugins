@@ -606,10 +606,12 @@ describe("changes made outside a turn", () => {
   const diffSignals = (harness: Awaited<ReturnType<typeof setup>>["harness"]) =>
     harness.inspection.realtimeSignals.filter((signal) => signal.channel === `environment:${ENV}` && (signal.payload as { kind: string }).kind === "diff").length;
   const settle = () => new Promise((resolve) => setTimeout(resolve, 600));
+  const watch = (rpc: (method: string, input?: unknown) => Promise<unknown>, active: boolean, view = "uncommitted", tab = "tab1") => rpc("watchWorkspace", { threadId: THREAD, tab, view, active });
 
-  it("reloads the tabs when bb sees an edit that keeps every line count, and not again for nothing", async () => {
-    const { view, harness, workspace, emitEnvironmentChanged } = await setup();
+  it("reloads a showing tab when bb sees an edit that keeps every line count, and not again for nothing", async () => {
+    const { view, rpc, harness, workspace, emitEnvironmentChanged } = await setup();
     await view();
+    await watch(rpc, true);
     // The same number of lines, other content: only the patch tells.
     workspace.bigVersion = 2;
     emitEnvironmentChanged();
@@ -627,13 +629,70 @@ describe("changes made outside a turn", () => {
     expect(diffSignals(harness)).toBe(1);
   });
 
-  it("reloads a staged or unstaged view when only the index changes", async () => {
-    const { view, harness, emitEnvironmentChanged, index } = await setup();
+  it("reloads a showing staged or unstaged view when only the index changes", async () => {
+    const { view, rpc, harness, emitEnvironmentChanged, index } = await setup();
     await view({ kind: "staged" });
+    await watch(rpc, true, "staged");
     index.key = "index-2";
     emitEnvironmentChanged();
     await settle();
     expect(diffSignals(harness)).toBe(1);
+  });
+
+  it("reads nothing for a workspace no tab shows, and checks it once when a tab shows it again", async () => {
+    const { view, rpc, harness, workspace, git, hostCalls, emitEnvironmentChanged } = await setup();
+    await view({ kind: "staged" });
+    await watch(rpc, true, "staged");
+    await watch(rpc, false, "staged");
+    const reads = () => git.calls.length + hostCalls.filter((call) => call.method === "indexState").length;
+    const before = reads();
+    workspace.bigVersion = 2;
+    emitEnvironmentChanged();
+    emitEnvironmentChanged();
+    await settle();
+    expect(reads()).toBe(before);
+    expect(diffSignals(harness)).toBe(0);
+    // Shown again: one check, which finds the change.
+    await watch(rpc, true, "uncommitted", "tab2");
+    await settle();
+    expect(diffSignals(harness)).toBe(1);
+    // A staged view visited once does not keep the index scanned once no tab shows one.
+    await watch(rpc, false, "uncommitted", "tab2");
+    await watch(rpc, true, "uncommitted", "tab3");
+    const indexReads = hostCalls.filter((call) => call.method === "indexState").length;
+    workspace.bigVersion = 3;
+    emitEnvironmentChanged();
+    await settle();
+    expect(hostCalls.filter((call) => call.method === "indexState").length).toBe(indexReads);
+  });
+
+  it("does no work for a workspace that was loaded but that no tab shows", async () => {
+    const { view, harness, workspace, git, emitEnvironmentChanged } = await setup();
+    await view();
+    const before = git.calls.length;
+    workspace.bigVersion = 2;
+    emitEnvironmentChanged();
+    await settle();
+    expect(git.calls.length).toBe(before);
+    expect(diffSignals(harness)).toBe(0);
+  });
+
+  it("lets a lease lapse when its tab stops renewing it", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const { view, rpc, git, emitEnvironmentChanged } = await setup();
+      await view();
+      await watch(rpc, true);
+      vi.setSystemTime(Date.now() + 91_000);
+      const before = git.calls.length;
+      emitEnvironmentChanged();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      vi.useRealTimers();
+      await settle();
+      expect(git.calls.length).toBe(before);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

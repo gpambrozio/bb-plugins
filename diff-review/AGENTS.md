@@ -198,11 +198,16 @@ from `bb.sdk.files.*`, all on whichever machine holds the workspace, remote host
 new feature needs goes in the host entry, which reads; a suggestion is written through
 `bb.sdk.files.write` with `expectedSha256`. **Revert is the host entry's** (`host/revert.ts`): bb's file
 reads and writes follow symlinks, so a revert through them wrote the old link text into the link's
-target, and `expectedSha256` taken after the reads guarded only the moment after them. The host
-recomputes the Git plugin's revision (`oldMode:oldBlob:newMode:newBlob`, the working copy hashed as
-git hashes a blob), refuses unless it is the tab's, refuses symlinks and submodules, and checks the
-blob again synchronously, with no await, just before the rename or the removal. A save landing in
-that same instant from another process is the one change it can still miss.
+target, and `expectedSha256` taken after the reads guarded only the moment after them. The host reads
+the working file's bytes once and hashes them as bb does (`git hash-object --stdin --path`, attributes
+and line-ending rules applied), whatever blob git's diff reported, and refuses unless that revision
+(`oldMode:oldBlob:newMode:newBlob`) is the tab's. Every folder on the way must be a real folder inside
+the checkout (a symlinked folder led a restore outside it); symlinks and submodules are refused. The
+new bytes go into a random-named temporary file created with `wx` and written through its own
+descriptor (a predictable name was a planted-symlink target). Right before the rename or the removal,
+a synchronous step, with no await, checks the folders again and compares the file's bytes with the
+snapshot. A save landing in that same instant from another process is the one change it can still
+miss.
 
 **Diffs come from bb's Git plugin.** bb 0.48 moved every git read out of `bb.sdk.environments` into
 the bundled plugin `bb--git` (`server/git.ts` calls `workspaceStatus`, `files`, `patches`, `viewed`,
@@ -211,12 +216,15 @@ the version it listed; the app sends `{ path, revision }`. A failed call asks `p
 the plugin is off and says so. The contract is not published: the plugin keeps its own non-strict
 copy of the shapes it reads.
 
-**Changes outside a turn reload by content, not by counts.** bb's status lists paths, letters and
-line counts, so a same-size edit leaves it equal. The server subscribes to bb's `environment:changed`
-for the workspaces its tabs loaded (`watchChanges`), coalesces the events per workspace (400 ms, at
-most 2 s), and compares the same content-sensitive state a turn's end does (every uncommitted patch's
-hash), plus the index's fingerprint from the host entry when a staged or unstaged view is open; only
-a change sends `diff`. The check reads only, so it cannot set off another.
+**Changes outside a turn reload by content, not by counts, and only for tabs that show.** bb's status
+lists paths, letters and line counts, so a same-size edit leaves it equal. A showing tab holds a lease
+on its workspace (`watchWorkspace`, renewed every 30 s, lapsing after 90 s, given back when it hides or
+closes). The server subscribes to bb's `environment:changed`; for a workspace with a lease it coalesces
+the events (400 ms, at most 2 s) and compares the same content-sensitive state a turn's end does (every
+uncommitted patch's hash), plus the index's fingerprint from the host entry when a leased view is
+staged or unstaged; only a change sends `diff`. For a workspace no tab shows, an event only marks it,
+and the first lease taken after that has it checked once. The check reads only, so it cannot set off
+another.
 
 **Viewed marks are bb's.** They live in the Git plugin per environment, view and revision, shared with
 bb's diff panel; a mark at an older revision is "changed since viewed". The host views and Any file

@@ -86,6 +86,9 @@ export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** How often a showing tab renews its watch; the server lets one lapse after 90 seconds. */
+const LEASE_RENEW_MS = 30_000;
+
 /** Reasons a load waits for while the tab is hidden: the workspace may have changed. */
 const DEFERRABLE: ReadonlySet<LoadReason> = new Set(["diff-signal", "reconnect"]);
 
@@ -201,6 +204,20 @@ export function useReview(threadId: string, target: TargetRequest, options: Revi
   }, [visible]);
 
   const sessionId = state.status === "ready" ? state.view.sessionId : null;
+  const viewKind = state.status === "ready" ? state.view.target.kind : null;
+
+  // While the tab shows, it holds the server's watch on its workspace (bb's changes outside a turn are
+  // checked), renewed before it lapses and given back when the tab hides or closes.
+  useEffect(() => {
+    if (!visible || sessionId === null || viewKind === null) return;
+    const lease = (active: boolean) => void rpc.call("watchWorkspace", { threadId, tab, view: viewKind, active }).catch(() => undefined);
+    lease(true);
+    const renew = setInterval(() => lease(true), LEASE_RENEW_MS);
+    return () => {
+      clearInterval(renew);
+      lease(false);
+    };
+  }, [visible, sessionId, viewKind, rpc, threadId, tab]);
   const environmentId = options.environmentId ?? (state.status === "ready" ? state.view.environmentId : null);
 
   const refreshThreads = useCallback(async () => {

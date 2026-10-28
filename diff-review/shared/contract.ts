@@ -214,6 +214,20 @@ export const rpcContract = defineRpcContract({
     input: z.object({ threadId: id, path: z.string().min(1).max(4096) }).strict(),
     output: workspaceFileSchema,
   },
+  watchWorkspace: {
+    input: z
+      .object({
+        threadId: id,
+        /** Which open tab this is. */
+        tab: z.string().min(1).max(16),
+        /** The kind of view it shows: a staged or unstaged one needs the index watched too. */
+        view: z.string().min(1).max(32),
+        /** True while the tab shows, renewed; false when it hides or closes. */
+        active: z.boolean(),
+      })
+      .strict(),
+    output: z.object({ ok: z.literal(true) }).strict(),
+  },
   listReviews: {
     input: z.object({}).strict(),
     output: z.object({ reviews: z.array(reviewSummarySchema) }).strict(),

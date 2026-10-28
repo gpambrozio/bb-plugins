@@ -109,6 +109,10 @@ export default async function plugin(bb: BbPluginApi) {
     },
     searchFiles: ({ threadId, query }) => service.searchFiles(threadId, query),
     readFile: ({ threadId, path }) => service.readWorkspaceFile(threadId, path),
+    watchWorkspace: async ({ threadId, tab, view, active }) => {
+      await service.watch(threadId, tab, view as never, active);
+      return { ok: true as const };
+    },
     listReviews: async () => ({ reviews: await service.listReviews() }),
     reviewCounts: ({ environmentId }) => service.counts(environmentId ?? null),
     saveViewState: ({ threadId, sessionId, state }) => {

@@ -380,6 +380,18 @@ describe("the Files view", () => {
 });
 
 describe("keeping the Review tab current", () => {
+  it("holds the workspace's watch while it shows, and gives it back when it goes", async () => {
+    const leases = () => slot.inspection.rpcCalls.filter((call) => call.method === "watchWorkspace").map((call) => (call.input as { active: boolean; view: string }));
+    const slot = render({ watchWorkspace: () => ({ ok: true }) });
+    await waitFor(() => expect(leases()).toEqual([{ threadId: "thr_1", tab: expect.any(String), view: "uncommitted", active: true }]));
+    slot.lifecycle.unmount();
+    await waitFor(() => expect(leases().at(-1)).toMatchObject({ active: false }));
+    cleanup();
+    const hidden = render({ watchWorkspace: () => ({ ok: true }) }, "thr_1", { tabVisible: false });
+    await screen.findByText("1 file · +1 −1 · 1 left out by the ignore patterns");
+    expect(hidden.inspection.rpcCalls.some((call) => call.method === "watchWorkspace")).toBe(false);
+  });
+
   it("leaves a hidden tab alone: no reload on a signal", async () => {
     const slot = render({}, "thr_1", { tabVisible: false });
     await screen.findByText("1 file · +1 −1 · 1 left out by the ignore patterns");

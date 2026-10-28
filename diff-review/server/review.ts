@@ -88,6 +88,9 @@ const PROVIDER_NAMES: Record<string, string> = {
 const WORKSPACE_CHANGES: ReadonlySet<string> = new Set(["work-status-changed", "git-refs-changed", "status-changed"]);
 const CHANGE_DEBOUNCE_MS = 400;
 const CHANGE_MAX_WAIT_MS = 2_000;
+/** How long a tab's watch lasts unless renewed; tabs renew every `LEASE_RENEW_MS` while they show. */
+export const LEASE_MS = 90_000;
+export const LEASE_RENEW_MS = 30_000;
 
 /** The most paths the Files view's search lists, and the largest file it shows, in bytes. */
 const FILE_SEARCH_LIMIT = 200;
@@ -102,7 +105,15 @@ export class ReviewService {
   /** Each workspace's state at the end of its last turn, or when a tab first loaded it. */
   private readonly workspaceStates = new Map<string, WorkspaceState>();
   /** Workspaces a tab has loaded, whose changes outside a turn are checked. */
-  private readonly watched = new Set<string>();
+  /**
+   * The tabs showing each workspace's reviews right now, each a lease that lapses unless renewed
+   * (`LEASE_MS`), and whether it shows a staged or unstaged view (which needs the index too).
+   */
+  private readonly leases = new Map<string, Map<string, { expiresAt: number; index: boolean }>>();
+  /** Workspaces a tab has watched, whose changes while no tab shows them are only marked. */
+  private readonly known = new Set<string>();
+  /** Workspaces bb changed while no tab showed them: checked once when one shows again. */
+  private readonly dirty = new Set<string>();
   private stopEnvironmentEvents: (() => void) | null = null;
   private readonly checks = new Map<string, { timer: ReturnType<typeof setTimeout>; since: number }>();
   private readonly hostIndexState: HostIndexState;
@@ -384,7 +395,7 @@ export class ReviewService {
    */
   private async currentState(environmentId: string): Promise<WorkspaceState> {
     const state = await workspaceState(this.git, environmentId);
-    const indexed = this.store.sessionsOf(environmentId).some((session) => session.targetKey === "staged" || session.targetKey === "unstaged");
+    const indexed = [...this.activeLeases(environmentId)].some((lease) => lease.index);
     if (!indexed) return state;
     const environment = await this.bb.sdk.environments.get({ environmentId });
     if (environment.path === null) return state;
@@ -420,7 +431,6 @@ export class ReviewService {
    * changes files ends after it, with another key.
    */
   private async seedWorkspaceState(environmentId: string): Promise<void> {
-    this.watchChanges(environmentId);
     if (this.workspaceStates.has(environmentId)) return;
     try {
       const state = await this.currentState(environmentId);
@@ -430,23 +440,59 @@ export class ReviewService {
     }
   }
 
+  /** The leases on a workspace not lapsed yet; lapsed ones are dropped. */
+  private activeLeases(environmentId: string): Iterable<{ expiresAt: number; index: boolean }> {
+    const tabs = this.leases.get(environmentId);
+    if (tabs === undefined) return [];
+    const now = Date.now();
+    for (const [tab, lease] of tabs) if (lease.expiresAt <= now) tabs.delete(tab);
+    if (tabs.size === 0) this.leases.delete(environmentId);
+    return tabs.values();
+  }
+
+  private shown(environmentId: string): boolean {
+    for (const _lease of this.activeLeases(environmentId)) return true;
+    return false;
+  }
+
   /**
-   * Watches bb's changes to a workspace a tab has loaded: an edit the user saves, a `git` command, a
-   * file staged, outside any agent's turn. bb sends many; they are coalesced per workspace, and the
-   * workspace's content-sensitive state (each file's patch, and the index when a staged or unstaged
-   * view is open) decides whether its tabs reload, as at a turn's end. Reading it changes nothing, so
-   * the check cannot set off another.
+   * A tab showing a view of `threadId`'s workspace takes (`active`) or gives back a lease, renewed while
+   * it shows. While a workspace has one, bb's changes made outside any agent's turn (an edit the user
+   * saves, a `git` command, a file staged) are checked: coalesced per workspace, the workspace's
+   * content-sensitive state (each file's patch, and the index when a leased view is staged or
+   * unstaged) decides whether its tabs reload, as at a turn's end, and reading it changes nothing, so
+   * the check cannot set off another. With none, a change only marks the workspace, and the first tab
+   * to show it again has it checked once.
    */
-  private watchChanges(environmentId: string): void {
-    this.watched.add(environmentId);
+  async watch(threadId: string, tab: string, view: Target["kind"], active: boolean): Promise<void> {
+    let environment;
+    try {
+      environment = await workspaceOf(this.bb.sdk, threadId);
+    } catch (error) {
+      // A workspace gone or never there has nothing to watch.
+      if (error instanceof ReviewUnavailable) return;
+      throw error;
+    }
+    const tabs = this.leases.get(environment.id) ?? new Map<string, { expiresAt: number; index: boolean }>();
+    if (!active) {
+      tabs.delete(tab);
+      if (tabs.size === 0) this.leases.delete(environment.id);
+      return;
+    }
+    const wasShown = this.shown(environment.id);
+    tabs.set(tab, { expiresAt: Date.now() + LEASE_MS, index: view === "staged" || view === "unstaged" });
+    this.leases.set(environment.id, tabs);
+    this.known.add(environment.id);
     this.stopEnvironmentEvents ??= this.bb.sdk.subscribe({
       event: "environment:changed",
       callback: (event) => {
-        if (event.id === undefined || !this.watched.has(event.id)) return;
+        if (event.id === undefined || !this.known.has(event.id)) return;
         if (!event.changes.some((change) => WORKSPACE_CHANGES.has(change))) return;
-        this.scheduleCheck(event.id);
+        if (this.shown(event.id)) this.scheduleCheck(event.id);
+        else this.dirty.add(event.id);
       },
     });
+    if (!wasShown && this.dirty.delete(environment.id)) this.scheduleCheck(environment.id);
   }
 
   private scheduleCheck(environmentId: string): void {
