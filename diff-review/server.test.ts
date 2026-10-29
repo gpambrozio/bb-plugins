@@ -735,6 +735,20 @@ describe("the Reviews page", () => {
     expect(await rpc("reviewCounts", { environmentId: "env_other" })).toEqual({ open: 0, total: 0 });
     expect(harness.inspection.realtimeSignals.some((event) => event.channel === "reviews")).toBe(true);
   });
+
+  it("counts for the badge only the reviews it lists: one whose workspace is archived is in neither", async () => {
+    const { rpc, view, comment, harness } = await setup();
+    const { sessionId } = await view();
+    await comment(sessionId);
+    await comment(sessionId, "And this?");
+    await rpc("saveViewState", { threadId: THREAD, sessionId, state: { drafts: {}, collapsed: {}, scroll: null, savedAt: 1 } });
+    expect(await rpc("reviewCounts", {})).toEqual({ open: 2, total: 2 });
+    // The thread is archived, its worktree with it, and no other thread works there.
+    harness.sdk.stub("threads.get", async ({ threadId }: { threadId: string }) => makeThreadResponse({ id: threadId, environmentId: ENV, archivedAt: 1 }));
+    harness.sdk.stub("threads.list", async () => []);
+    expect(await rpc("listReviews", {})).toEqual({ reviews: [] });
+    expect(await rpc("reviewCounts", {})).toEqual({ open: 0, total: 0 });
+  });
 });
 
 describe("the tab's kept state", () => {

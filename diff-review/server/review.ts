@@ -722,8 +722,15 @@ export class ReviewService {
     return environment as Environment & { path: string };
   }
 
-  counts(environmentId: string | null): { open: number; total: number } {
-    return this.store.threadCounts(environmentId);
+  /**
+   * Open and all comment threads: in one workspace's reviews, or with null in the reviews the Reviews
+   * page lists, for its sidebar badge. The two must agree, so a review the page leaves out (its
+   * workspace archived, so it can no longer be opened) is not counted either.
+   */
+  async counts(environmentId: string | null): Promise<{ open: number; total: number }> {
+    if (environmentId !== null) return this.store.threadCounts(environmentId);
+    const reviews = await this.listReviews();
+    return { open: reviews.reduce((sum, review) => sum + review.openCount, 0), total: reviews.reduce((sum, review) => sum + review.totalCount, 0) };
   }
 
   private signal(environmentId: string, signal: RealtimeSignal): void {

@@ -86,7 +86,8 @@ It is a bb take on [diffity](https://github.com/nilbuild/diffity)'s review loop,
   the workspace's own `.diffityignore` (and `.git/info/diffityignore`, the main repository's in a git worktree) is read too, as diffity does.
 
 - **The Reviews page** in bb's sidebar lists every review with comments, across projects, newest
-  first, with the number of open comment threads on its entry; pick one to see it in full. A thread's
+  first, with the number of open comment threads on its entry (in the reviews it lists: a review whose
+  workspace was archived is in neither); pick one to see it in full. A thread's
   **Info** tab says how many review comments its workspace has open.
 - **From the command line**, `bb diff-review open [file] [--view …]` opens a thread's review on a
   view, at a file, in the bb window that shows the thread, and prints the page's address.
