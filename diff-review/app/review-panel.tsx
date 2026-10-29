@@ -408,15 +408,21 @@ function ReadyPanel({
     },
     [scrollRoot],
   );
-  // So does the user scrolling or clicking in the diff while a step waits for its diff.
+  // A jump that brings no file into view (a comment in the top sections) ends the previous jump's
+  // reveal too: a file still loading its diff reveals itself again when the diff arrives, which would
+  // pull the view back to it.
+  const expireJumps = useCallback(() => {
+    setAwaitedComment(null);
+    setReveal(null);
+  }, []);
+  // So does the user scrolling or clicking in the diff.
   useEffect(() => {
-    if (scrollRoot === null || awaitedComment === null) return;
-    const takeOver = () => setAwaitedComment(null);
-    for (const type of TAKE_OVER) scrollRoot.addEventListener(type, takeOver, { passive: true });
+    if (scrollRoot === null) return;
+    for (const type of TAKE_OVER) scrollRoot.addEventListener(type, expireJumps, { passive: true });
     return () => {
-      for (const type of TAKE_OVER) scrollRoot.removeEventListener(type, takeOver);
+      for (const type of TAKE_OVER) scrollRoot.removeEventListener(type, expireJumps);
     };
-  }, [scrollRoot, awaitedComment]);
+  }, [scrollRoot, expireJumps]);
 
   // Find across the diff's loaded lines; files whose diff is not loaded yet are fetched while it is open.
   const [find, setFind] = useState<{ open: boolean; query: string; caseSensitive: boolean; focus: number }>({ open: false, query: "", caseSensitive: false, focus: 0 });
@@ -493,15 +499,16 @@ function ReadyPanel({
       if (place.kind === "pending") {
         if (patchLoader.states.get(place.path) === undefined) patchLoader.request(place.path);
         cancelFocus(scrollRoot);
+        expireJumps();
         setAwaitedComment(threadId);
         return;
       }
-      setAwaitedComment(null);
       if (place.kind === "file") show({ path: place.path, side: "new", line: 0 });
       else if (place.kind === "line") show({ path: place.path, side: place.side, line: place.line });
+      else expireJumps();
       focusThread(scrollRoot, threadId);
     },
-    [show, scrollRoot, patchLoader.states, patchLoader.request],
+    [show, expireJumps, scrollRoot, patchLoader.states, patchLoader.request],
   );
   useEffect(() => {
     if (awaitedComment === null) return;
