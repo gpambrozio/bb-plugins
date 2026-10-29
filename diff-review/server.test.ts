@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 import { createFakePluginHost, experimental_scanPublicSdkOnly, makePluginAgentConfigurationContext, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
@@ -10,6 +11,7 @@ import { TOOL_NAMES } from "./server/tool-names";
 import type { ReviewThread, ReviewView, Run } from "./shared/types";
 
 const ENV = "env_1";
+const sha = (content: string) => createHash("sha256").update(content).digest("hex");
 const THREAD = "thr_review";
 
 function environment(overrides: Record<string, unknown> = {}) {
@@ -52,6 +54,8 @@ interface Setup {
   /** Awaited before answering `threads.get` for that thread, or `threads.spawn`: a test holds bb mid-call. */
   holdThreadGet?: (threadId: string) => Promise<void>;
   holdSpawn?: () => Promise<void>;
+  /** Awaited before answering `providers.list` (a run's start looks up the provider's modes). */
+  holdProviders?: () => Promise<void>;
   /** Awaited before answering `environments.get` and `threads.events.list`. */
   holdEnvironmentGet?: () => Promise<void>;
   holdEvents?: (threadId: string) => Promise<void>;
@@ -59,6 +63,12 @@ interface Setup {
   duringSpawn?: (threadId: string) => Promise<void>;
   /** More fields in bb's status answer, as a later bb may add (a time stamp, say). */
   statusExtra?: () => Record<string, unknown>;
+  /** The host entry's revert refuses with this message. */
+  hostRevertRefuses?: string;
+  /** Called before a write lands: a string is what someone else wrote meanwhile (bb answers a conflict). */
+  beforeWrite?: (path: string) => string | undefined;
+  /** Files as committed at HEAD, by absolute path, for `files.read` with `ref`. */
+  headFiles?: Record<string, string>;
   /** Views (`uncommitted`, `branch_committed`, …) whose diff has no files. */
   emptyTargets?: string[];
   /** The permission modes each provider supports, as `providers.list` reports them; every mode when unlisted. */
@@ -74,11 +84,110 @@ async function setup(options: Setup = {}) {
   // What bb would hold for spawned threads: their origin plugin and metadata.
   const spawnedMetadata: Record<string, Record<string, unknown>> = {};
   let spawned = 0;
+  // The workspace's files the host can read and write, by absolute path.
+  const files: Record<string, string> = { ...options.files };
+  const writes: string[] = [];
+  const hostCalls: { method: string; input: unknown; hostId: string }[] = [];
+  const bbEvents: { event: string; callback: (event: unknown) => void }[] = [];
+  // What the host says is staged; a test changes it to play `git add`.
+  const index = { key: "index-1" };
+  // bb's Git plugin: on unless a test turns it off; Viewed marks by path; every call it got.
+  const git = { enabled: true, viewed: {} as Record<string, string>, calls: [] as { method: string; input: unknown }[] };
+  const revisionOf = (path: string) => (path === "big.txt" ? `rev-big-${workspace.bigVersion}` : `rev-${path}`);
+  const gitAnswer = (method: string, input: Record<string, unknown>): unknown => {
+    switch (method) {
+      case "workspaceStatus":
+        return {
+          outcome: "available" as const,
+          workspace: {
+            branch: { currentBranch: "feature", defaultBranch: "main" },
+            checkout: { kind: "branch" as const, branchName: "feature", headSha: workspace.head, ...options.statusExtra?.() },
+            mergeBase: {
+              aheadCount: 1,
+              baseRef: "origin/main",
+              behindCount: 0,
+              commits: [{ authorName: "a", authoredAt: 1, sha: "abcdef1234567", shortSha: "abcdef1", subject: "Add a" }],
+              deletions: 1,
+              files: [],
+              hasCommittedUnmergedChanges: true,
+              insertions: 1,
+              lineStatsComplete: true,
+              mergeBaseBranch: "main",
+            },
+            workingTree: { deletions: 1, files: [], hasUncommittedChanges: true, insertions: 1, lineStatsComplete: true, state: "dirty_uncommitted" as const },
+          },
+        };
+      case "files": {
+        const target = (input.target as { type: string }).type;
+        const empty = (options.emptyTargets ?? []).includes(target);
+        const entry = (path: string, changeKind: string, additions: number, deletions: number, loadMode: string, origin: string) => ({
+          path, previousPath: null, changeKind, additions, deletions, binary: false, loadMode, origin, revision: revisionOf(path),
+        });
+        return {
+          outcome: "available" as const,
+          files: empty ? [] : [
+            entry("src/a.ts", "modified", 1, 1, "auto", "tracked"),
+            entry("package-lock.json", "modified", 9, 9, "auto", "tracked"),
+            entry("big.txt", "added", 9000, 0, "on_demand", "untracked"),
+            ...(workspace.extraFile ? [entry("src/new.ts", "added", 3, 0, "auto", "untracked")] : []),
+          ],
+          initialPatches: empty ? [] : [{ path: "src/a.ts", patch: PATCH, truncated: false }],
+          mergeBaseRef: null,
+          shortstat: "",
+          truncated: false,
+        };
+      }
+      case "patches":
+        return Object.fromEntries(
+          (input.keys as string[]).map((key) => {
+            const [, , , path, revision] = JSON.parse(key) as [string, unknown, boolean, string, string];
+            // A revision that is no longer the file's is still answered, as bb's Git plugin does.
+            return [key, { outcome: "available" as const, patch: { path, patch: `patch of ${path}, version ${workspace.bigVersion} at ${revision}`, truncated: false } }];
+          }),
+        );
+      case "viewed":
+        return { files: ((input.paths as string[] | undefined) ?? []).filter((path) => git.viewed[path] !== undefined).map((path) => ({ path, revision: git.viewed[path]! })) };
+      case "markViewed":
+        git.viewed[input.path as string] = input.revision as string;
+        return { ok: true as const };
+      case "clearViewed":
+        delete git.viewed[input.path as string];
+        return { ok: true as const };
+      default:
+        throw new Error(`the fake Git plugin has no ${method}`);
+    }
+  };
   const { bb, harness } = createFakePluginHost({
     pluginId: "diff-review",
+    // The plugin's host entry: git on the workspace's machine, for staged, unstaged and ranges.
+    experimental_callHostRpc: (call) => {
+      hostCalls.push(call);
+      if (call.method === "indexState") return { key: index.key };
+      if (call.method === "rangeCommits") return { baseSha: "fork1234", headSha: "head5678" };
+      if (call.method === "revert") {
+        if (options.hostRevertRefuses !== undefined) throw new Error(options.hostRevertRefuses);
+        return { ok: true };
+      }
+      if (call.method !== "diff") throw new Error(`no host method ${call.method}`);
+      const { spec } = call.input as { spec: { kind: string } };
+      if (spec.kind === "range" && (spec as { from: string }).from === "nope") throw new Error("Unknown revision 'nope'.");
+      return {
+        files: [{ path: "src/a.ts", previousPath: null, changeKind: "modified", additions: 1, deletions: 1, binary: false, untracked: false, patch: PATCH, tooLarge: false }],
+        truncated: false,
+        baseSha: spec.kind === "range" ? "base1234" : null,
+        headSha: spec.kind === "range" ? "head5678" : null,
+      };
+    },
     // The skill bb imports from `skills/diff-review`, which `configure` names.
     agentSkillIds: ["diff-review"],
     sdk: {
+      // bb's own realtime events, which a test emits through `bbEvents`.
+      subscribe: ((args: { event: string; callback: (event: unknown) => void }) => {
+        bbEvents.push(args);
+        return () => {
+          bbEvents.splice(bbEvents.indexOf(args), 1);
+        };
+      }) as never,
       threads: {
         get: async ({ threadId }: { threadId: string }) => {
           await options.holdThreadGet?.(threadId);
@@ -126,49 +235,21 @@ async function setup(options: Setup = {}) {
           await options.holdEnvironmentGet?.();
           return environment();
         },
-        status: async () => ({
-          outcome: "available" as const,
-          workspace: {
-            branch: { currentBranch: "feature", defaultBranch: "main" },
-            checkout: { kind: "branch" as const, branchName: "feature", headSha: workspace.head, ...options.statusExtra?.() },
-            mergeBase: {
-              aheadCount: 1,
-              baseRef: "origin/main",
-              behindCount: 0,
-              commits: [{ authorName: "a", authoredAt: 1, sha: "abcdef1234567", shortSha: "abcdef1", subject: "Add a" }],
-              deletions: 1,
-              files: [],
-              hasCommittedUnmergedChanges: true,
-              insertions: 1,
-              lineStatsComplete: true,
-              mergeBaseBranch: "main",
-            },
-            workingTree: { deletions: 1, files: [], hasUncommittedChanges: true, insertions: 1, lineStatsComplete: true, state: "dirty_uncommitted" as const },
-          },
-        }),
-        diffFiles: async (query: { target: string }) => ({
-          outcome: "available" as const,
-          files: (options.emptyTargets ?? []).includes(query.target) ? [] : [
-            { path: "src/a.ts", previousPath: null, changeKind: "modified" as const, additions: 1, deletions: 1, binary: false, loadMode: "auto" as const, origin: "tracked" as const },
-            { path: "package-lock.json", previousPath: null, changeKind: "modified" as const, additions: 9, deletions: 9, binary: false, loadMode: "auto" as const, origin: "tracked" as const },
-            { path: "big.txt", previousPath: null, changeKind: "added" as const, additions: 9000, deletions: 0, binary: false, loadMode: "on_demand" as const, origin: "untracked" as const },
-            ...(workspace.extraFile
-              ? [{ path: "src/new.ts", previousPath: null, changeKind: "added" as const, additions: 3, deletions: 0, binary: false, loadMode: "auto" as const, origin: "untracked" as const }]
-              : []),
-          ],
-          initialPatches: (options.emptyTargets ?? []).includes(query.target) ? [] : [{ path: "src/a.ts", patch: PATCH, truncated: false }],
-          mergeBaseRef: null,
-          shortstat: "",
-          truncated: false,
-        }),
-        diffPatch: async ({ paths }: { paths: string[] }) => ({
-          outcome: "available" as const,
-          patches: paths.map((path) => ({ path, patch: `patch of ${path}, version ${workspace.bigVersion}`, truncated: false })),
-        }),
+      },
+      plugins: {
+        list: async () => ({ plugins: [{ id: "bb--git", enabled: git.enabled }] }) as never,
+        // bb's Git plugin, as `bb.sdk.plugins.callRpc` reaches it; `git.calls` records each call.
+        callRpc: async ({ pluginId, method, input, outputSchema }: { pluginId: string; method: string; input?: unknown; outputSchema: { parse: (value: unknown) => unknown } }) => {
+          if (pluginId !== "bb--git") throw new Error(`no plugin ${pluginId}`);
+          git.calls.push({ method, input });
+          if (!git.enabled) throw new Error("Plugin RPC failed");
+          return outputSchema.parse(gitAnswer(method, input as Record<string, unknown>)) as never;
+        },
       },
       providers: {
         list: async () =>
-          Object.entries(options.providerModes ?? {}).map(([id, permissionModes]) => ({ id, capabilities: { permissionModes } }) as unknown as ProviderInfo),
+          (await options.holdProviders?.(),
+          Object.entries(options.providerModes ?? {})).map(([id, permissionModes]) => ({ id, capabilities: { permissionModes } }) as unknown as ProviderInfo),
         models: async () => ({
           modelLoadError: null,
           models: [
@@ -180,13 +261,44 @@ async function setup(options: Setup = {}) {
         }),
       },
       files: {
-        read: async ({ path }: { path: string }) => {
+        write: async ({ path, content, expectedSha256 }: { path: string; content: string; expectedSha256?: string | null }) => {
+          const current = files[path];
+          // bb answers a write whose file changed since it was read with a conflict, not an error.
+          if (expectedSha256 !== undefined && expectedSha256 !== null && (current === undefined || sha(current) !== expectedSha256)) return { outcome: "conflict", currentSha256: current === undefined ? null : sha(current) } as never;
+          if (options.beforeWrite !== undefined) {
+            const raced = options.beforeWrite(path);
+            if (raced !== undefined) {
+              files[path] = raced;
+              return { outcome: "conflict", currentSha256: sha(raced) } as never;
+            }
+          }
+          files[path] = content;
+          writes.push(path);
+          return { outcome: "written", sha256: sha(content) } as never;
+        },
+        listPaths: async ({ path, query }: { path: string; query?: string }) => ({
+          paths: Object.keys(files)
+            .filter((file) => file.startsWith(`${path}/`) && (query === undefined || file.includes(query)))
+            .map((file) => ({ kind: "file", name: file.split("/").at(-1)!, path: file, positions: [], score: 1 })),
+          truncated: false,
+        }) as never,
+        remove: async ({ path }: { path: string }) => {
+          delete files[path];
+          writes.push(`rm ${path}`);
+          return { ok: true } as never;
+        },
+        read: async ({ path, ref }: { path: string; ref?: string }) => {
+          if (ref !== undefined) {
+            const committed = options.headFiles?.[path];
+            if (committed === undefined) throw new Error("ENOENT");
+            return { content: committed, contentEncoding: "utf8", sha256: sha(committed) };
+          }
           reads.push(path);
           if (path === "/work/repo/.diffityignore" && options.diffityignore !== undefined) {
             return { content: options.diffityignore, contentEncoding: "utf8", sha256: "x" };
           }
-          const content = options.files?.[path];
-          if (content !== undefined) return { content, contentEncoding: "utf8", sha256: "x" };
+          const content = files[path];
+          if (content !== undefined) return { content, contentEncoding: "utf8", sha256: sha(content) };
           if (path === "/work/repo/.git") throw new Error("EISDIR: illegal operation on a directory, read");
           throw new Error("ENOENT");
         },
@@ -208,7 +320,10 @@ async function setup(options: Setup = {}) {
       anchorContent: "const b = 3;",
       body,
     })) as { thread: ReviewThread }).thread;
-  return { bb, harness, rpc, view, comment, threads, turnStarts, workspace, reads };
+  const emitEnvironmentChanged = (changes: string[] = ["work-status-changed"]) => {
+    for (const listener of bbEvents.filter((entry) => entry.event === "environment:changed")) listener.callback({ type: "changed", entity: "environment", id: ENV, changes });
+  };
+  return { bb, harness, rpc, view, comment, threads, turnStarts, workspace, reads, git, files, writes, hostCalls, emitEnvironmentChanged, index };
 }
 
 describe("the Review tab's view", () => {
@@ -295,11 +410,523 @@ describe("the Review tab's view", () => {
     });
   });
 
-  it("loads on-demand patches", async () => {
-    const { rpc } = await setup();
-    expect(await rpc("loadPatches", { threadId: THREAD, target: { kind: "uncommitted" }, paths: ["big.txt"] })).toEqual({
-      patches: [{ path: "big.txt", patch: "patch of big.txt, version 1", truncated: false }],
+  it("loads on-demand patches at the revision the file list gave", async () => {
+    const { rpc, view, git } = await setup();
+    const big = (await view()).files.find((file) => file.path === "big.txt")!;
+    expect(big.revision).toBe("rev-big-1");
+    expect(await rpc("loadPatches", { threadId: THREAD, target: { kind: "uncommitted" }, files: [{ path: "big.txt", revision: big.revision }] })).toEqual({
+      patches: [{ path: "big.txt", patch: "patch of big.txt, version 1 at rev-big-1", truncated: false }],
     });
+    const call = git.calls.filter((entry) => entry.method === "patches").at(-1)!;
+    expect(call.input).toEqual({ keys: [JSON.stringify([ENV, { type: "uncommitted" }, false, "big.txt", "rev-big-1"])] });
+  });
+
+  it("sends the patches of files with a line thread with the view, so where each thread is drawn is known from the start", async () => {
+    const { rpc, view, git } = await setup();
+    const { sessionId } = await view();
+    await rpc("createThread", { sessionId, filePath: "big.txt", side: "new", startLine: 5, endLine: 5, severity: null, anchorContent: "x", body: "On a line" });
+    await rpc("createThread", { sessionId, filePath: "package-lock.json", side: null, startLine: 0, endLine: 0, severity: null, anchorContent: null, body: "On the file" });
+    git.calls.length = 0;
+    const files = (await view()).files;
+    expect(files.find((file) => file.path === "big.txt")!.patch).toBe("patch of big.txt, version 1 at rev-big-1");
+    // A whole-file thread is drawn under its file's header whatever its patch, which still loads on demand.
+    expect(files.find((file) => file.path === "package-lock.json")!.patch).toBeNull();
+    expect(git.calls.filter((entry) => entry.method === "patches").map((entry) => entry.input)).toEqual([{ keys: [JSON.stringify([ENV, { type: "uncommitted" }, false, "big.txt", "rev-big-1"])] }]);
+  });
+
+  it("reads every diff through bb's Git plugin, hiding whitespace when asked", async () => {
+    const { rpc, git } = await setup();
+    await rpc("getReview", { threadId: THREAD, target: { kind: "branch" }, ignoreWhitespace: true });
+    expect(git.calls.find((entry) => entry.method === "files" && (entry.input as { ignoreWhitespace: boolean }).ignoreWhitespace)?.input).toEqual({
+      environmentId: ENV,
+      target: { type: "branch_committed", mergeBaseBranch: "main" },
+      ignoreWhitespace: true,
+    });
+    await rpc("loadPatches", { threadId: THREAD, target: { kind: "commit", sha: "abcdef1" }, files: [{ path: "big.txt", revision: "r" }], ignoreWhitespace: true });
+    expect(git.calls.at(-1)!.input).toEqual({ keys: [JSON.stringify([ENV, { type: "commit", sha: "abcdef1" }, true, "big.txt", "r"])] });
+  });
+
+  it("says so when bb's Git plugin is turned off", async () => {
+    const { view, git } = await setup();
+    git.enabled = false;
+    const result = (await view()) as unknown as { ok: false; message: string };
+    expect(result).toEqual({ ok: false, message: expect.stringContaining("bb's Git plugin is turned off") });
+  });
+
+  it("marks and clears Viewed through bb's Git plugin, at the revision the tab showed", async () => {
+    const { rpc, view, git } = await setup();
+    await rpc("setViewed", { threadId: THREAD, target: { kind: "uncommitted" }, path: "src/a.ts", revision: "rev-src/a.ts", viewed: true });
+    expect(git.calls.at(-1)).toEqual({ method: "markViewed", input: { environmentId: ENV, target: { type: "uncommitted" }, path: "src/a.ts", revision: "rev-src/a.ts" } });
+    expect((await view()).files[0]!.viewed).toBe("yes");
+    await rpc("setViewed", { threadId: THREAD, target: { kind: "uncommitted" }, path: "src/a.ts", revision: "rev-src/a.ts", viewed: false });
+    expect((await view()).files[0]!.viewed).toBe("no");
+  });
+
+  it("keeps the revision of the file a comment was made on", async () => {
+    const { rpc, view } = await setup();
+    const { sessionId } = await view();
+    const made = (await rpc("createThread", {
+      sessionId,
+      filePath: "src/a.ts",
+      side: null,
+      startLine: 0,
+      endLine: 0,
+      severity: null,
+      anchorContent: null,
+      body: "About this file",
+      fileRevision: "rev-src/a.ts",
+    })) as { thread: ReviewThread };
+    expect(made.thread.fileRevision).toBe("rev-src/a.ts");
+    expect((await view()).threads[0]!.fileRevision).toBe("rev-src/a.ts");
+  });
+
+  it("shows bb's Viewed marks, and which files changed since they were viewed", async () => {
+    const { view, git } = await setup();
+    git.viewed["src/a.ts"] = "rev-src/a.ts";
+    git.viewed["big.txt"] = "rev-big-0";
+    expect((await view()).files.map((file) => [file.path, file.viewed])).toEqual([
+      ["src/a.ts", "yes"],
+      ["package-lock.json", "no"],
+      ["big.txt", "changed"],
+    ]);
+  });
+});
+
+describe("changing the workspace from the tab", () => {
+  const suggestion = (code: string) => `Use three:\n\`\`\`suggestion\n${code}\n\`\`\``;
+
+  it("applies a comment's suggestion to the lines as the view shows them, and resolves the thread", async () => {
+    const { rpc, view, files, harness } = await setup({ files: { "/work/repo/src/a.ts": "const a = 1;\nconst b = 3;\n" } });
+    const { sessionId } = await view();
+    const made = ((await rpc("createThread", { sessionId, filePath: "src/a.ts", side: "new", startLine: 2, endLine: 2, severity: null, anchorContent: "const b = 3;", body: suggestion("const b = 4;") })) as { thread: ReviewThread }).thread;
+    const applied = (await rpc("applySuggestion", { threadId: THREAD, reviewThreadId: made.id, commentId: made.comments[0]!.id, startLine: 2, endLine: 2, expected: "const b = 3;", code: "const b = 4;\n" })) as { thread: ReviewThread };
+    expect(files["/work/repo/src/a.ts"]).toBe("const a = 1;\nconst b = 4;\n");
+    expect(applied.thread.status).toBe("resolved");
+    expect(harness.inspection.realtimeSignals.some((signal) => (signal.payload as { kind: string }).kind === "diff")).toBe(true);
+  });
+
+  it("refuses a suggestion the comment does not make, or lines that changed", async () => {
+    const { rpc, view, files } = await setup({ files: { "/work/repo/src/a.ts": "const a = 1;\nconst b = 9;\n" } });
+    const { sessionId } = await view();
+    const made = ((await rpc("createThread", { sessionId, filePath: "src/a.ts", side: "new", startLine: 2, endLine: 2, severity: null, anchorContent: "const b = 3;", body: suggestion("const b = 4;") })) as { thread: ReviewThread }).thread;
+    const ask = (code: string) => rpc("applySuggestion", { threadId: THREAD, reviewThreadId: made.id, commentId: made.comments[0]!.id, startLine: 2, endLine: 2, expected: "const b = 3;", code });
+    await expect(ask("rm -rf")).rejects.toMatchObject({ code: "invalid" });
+    await expect(ask("const b = 4;\n")).rejects.toMatchObject({ code: "conflict", message: expect.stringContaining("changed since") });
+    expect(files["/work/repo/src/a.ts"]).toBe("const a = 1;\nconst b = 9;\n");
+  });
+
+  it("refuses, and leaves the thread open, when the file was written between its read and the write", async () => {
+    const { rpc, view, files } = await setup({
+      files: { "/work/repo/src/a.ts": "const a = 1;\nconst b = 3;\n" },
+      beforeWrite: () => "the agent's edit\n",
+    });
+    const { sessionId } = await view();
+    const made = ((await rpc("createThread", { sessionId, filePath: "src/a.ts", side: "new", startLine: 2, endLine: 2, severity: null, anchorContent: "const b = 3;", body: suggestion("const b = 4;") })) as { thread: ReviewThread }).thread;
+    await expect(
+      rpc("applySuggestion", { threadId: THREAD, reviewThreadId: made.id, commentId: made.comments[0]!.id, startLine: 2, endLine: 2, expected: "const b = 3;", code: "const b = 4;\n" }),
+    ).rejects.toMatchObject({ code: "conflict" });
+    expect(files["/work/repo/src/a.ts"]).toBe("the agent's edit\n");
+    expect((await view()).threads[0]!.status).toBe("open");
+  });
+
+  it("reverts on the workspace's machine, sending the reviewed revision and patch, never writing through bb's files", async () => {
+    const { rpc, hostCalls, writes } = await setup();
+    await expect(rpc("revertChanges", { threadId: THREAD, path: "src/a.ts", revision: "stale", hunks: [0] })).rejects.toMatchObject({ code: "conflict" });
+    await rpc("revertChanges", { threadId: THREAD, path: "src/a.ts", revision: "rev-src/a.ts", hunks: [0] });
+    expect(hostCalls.at(-1)).toEqual({ method: "revert", hostId: "host_1", input: { root: "/work/repo", path: "src/a.ts", revision: "rev-src/a.ts", hunks: [0], patch: PATCH } });
+    await rpc("revertChanges", { threadId: THREAD, path: "big.txt", revision: "rev-big-1", hunks: null });
+    expect(hostCalls.at(-1)).toMatchObject({ method: "revert", input: { path: "big.txt", hunks: null, patch: null } });
+    expect(writes).toEqual([]);
+  });
+
+  it("passes the host's refusal on as a conflict", async () => {
+    const { rpc } = await setup({ hostRevertRefuses: "src/a.ts changed since the diff was loaded; reload and try again." });
+    await expect(rpc("revertChanges", { threadId: THREAD, path: "src/a.ts", revision: "rev-src/a.ts", hunks: null })).rejects.toMatchObject({
+      code: "conflict",
+      message: expect.stringContaining("changed since the diff was loaded"),
+    });
+  });
+});
+
+describe("the staged, unstaged and range views", () => {
+  it("reads them with git on the workspace's host, every patch with the list, without Viewed marks", async () => {
+    const { view, hostCalls, rpc, git } = await setup();
+    const staged = await view({ kind: "staged" });
+    expect(hostCalls.at(-1)).toMatchObject({ method: "diff", hostId: "host_1", input: { root: "/work/repo", spec: { kind: "staged" }, ignoreWhitespace: false } });
+    expect(staged).toMatchObject({ ok: true, target: { kind: "staged" }, viewable: false, headRef: null });
+    expect(staged.files.map((file) => [file.path, file.patch !== null, file.viewed, file.revision.startsWith("h:")])).toEqual([["src/a.ts", true, "no", true]]);
+    expect(git.calls.some((call) => call.method === "viewed")).toBe(false);
+    await expect(rpc("setViewed", { threadId: THREAD, target: { kind: "staged" }, path: "src/a.ts", revision: "x", viewed: true })).rejects.toMatchObject({ code: "invalid" });
+
+    const range = await view({ kind: "range", from: "main", to: "feature", symmetric: true });
+    expect(range).toMatchObject({ target: { kind: "range", from: "main", to: "feature", symmetric: true }, mergeBaseRef: "base1234", headRef: "head5678" });
+    // Each view is its own review.
+    expect(new Set([staged.sessionId, range.sessionId, (await view({ kind: "unstaged" })).sessionId]).size).toBe(3);
+  });
+
+  it("says why when git on the host refuses", async () => {
+    const { view } = await setup();
+    expect(await view({ kind: "range", from: "nope", to: "HEAD", symmetric: false })).toEqual({ ok: false, message: expect.stringContaining("Unknown revision 'nope'") });
+  });
+
+  it("refuses an option-like revision before it reaches git", async () => {
+    const { rpc } = await setup();
+    await expect(rpc("getReview", { threadId: THREAD, target: { kind: "range", from: "--output=x", to: "HEAD", symmetric: false } })).rejects.toThrow();
+  });
+
+  it("opens a range's review from the command line", async () => {
+    const { harness } = await setup();
+    const out = await harness.behavior.runCli(["open", "--range", "main...feature"], { threadId: THREAD });
+    expect(out.stdout).toContain("the range main...feature");
+  });
+});
+
+describe("the Files view", () => {
+  it("searches the workspace's files and reads one, with its hash as its revision", async () => {
+    const { rpc } = await setup({ files: { "/work/repo/src/util.ts": "export const x = 1;\n", "/work/repo/bin.dat": "a\u0000b" } });
+    expect(await rpc("searchFiles", { threadId: THREAD, query: "util" })).toEqual({ paths: ["src/util.ts"], truncated: false });
+    expect(await rpc("readFile", { threadId: THREAD, path: "src/util.ts" })).toEqual({ path: "src/util.ts", content: "export const x = 1;\n", reason: null, revision: sha("export const x = 1;\n") });
+    expect(await rpc("readFile", { threadId: THREAD, path: "bin.dat" })).toMatchObject({ content: null, reason: "Binary file; nothing to comment on." });
+    await expect(rpc("readFile", { threadId: THREAD, path: "../etc/passwd" })).rejects.toMatchObject({ code: "invalid" });
+  });
+
+  it("keeps the Files view's comments in a review of their own, with no diff", async () => {
+    const { view } = await setup();
+    const files = await view({ kind: "files" });
+    expect(files).toMatchObject({ ok: true, target: { kind: "files" }, files: [], viewable: false });
+    expect(files.sessionId).not.toBe((await view()).sessionId);
+  });
+});
+
+describe("bb diff-review open", () => {
+  it("asks the windows to open the thread's review on a view and file, and prints the page", async () => {
+    const { harness } = await setup();
+    const out = await harness.behavior.runCli(["open", "src/a.ts", "--view", "branch"], { threadId: THREAD });
+    expect(out.exitCode).toBe(0);
+    const target = { kind: "branch", base: "main" };
+    expect(harness.inspection.realtimeSignals.at(-1)).toEqual({ channel: "open-review", payload: { threadId: THREAD, target, file: "src/a.ts" } });
+    expect(out.stdout).toContain("Opening the review of committed changes since main for thr_review");
+    expect(out.stdout).toContain(`/plugins/diff-review/reviews/${THREAD}/`);
+    expect(out.stdout).not.toContain("is not in that view");
+  });
+
+  it("says when the file is not in the view, and refuses mixed-up options", async () => {
+    const { harness } = await setup();
+    expect((await harness.behavior.runCli(["open", "nope.ts"], { threadId: THREAD })).stdout).toContain("nope.ts is not in that view.");
+    expect((await harness.behavior.runCli(["open", "--commit", "zzz"], { threadId: THREAD })).exitCode).not.toBe(0);
+    expect((await harness.behavior.runCli(["open", "--base", "main"], { threadId: THREAD })).exitCode).not.toBe(0);
+    expect((await harness.behavior.runCli(["open"], {})).exitCode).not.toBe(0);
+  });
+});
+
+describe("changes made outside a turn", () => {
+  const diffSignals = (harness: Awaited<ReturnType<typeof setup>>["harness"]) =>
+    harness.inspection.realtimeSignals.filter((signal) => signal.channel === `environment:${ENV}` && (signal.payload as { kind: string }).kind === "diff").length;
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 600));
+  const watch = (rpc: (method: string, input?: unknown) => Promise<unknown>, active: boolean, view = "uncommitted", tab = "tab1") => rpc("watchWorkspace", { threadId: THREAD, tab, view, active });
+
+  it("reloads a showing tab when bb sees an edit that keeps every line count, and not again for nothing", async () => {
+    const { view, rpc, harness, workspace, emitEnvironmentChanged } = await setup();
+    await view();
+    await watch(rpc, true);
+    // The same number of lines, other content: only the patch tells.
+    workspace.bigVersion = 2;
+    emitEnvironmentChanged();
+    emitEnvironmentChanged();
+    await settle();
+    expect(diffSignals(harness)).toBe(1);
+    // bb says something changed, but nothing did: no reload, so the check cannot loop.
+    emitEnvironmentChanged();
+    await settle();
+    expect(diffSignals(harness)).toBe(1);
+    // Changes bb sends that are not about files are ignored.
+    workspace.bigVersion = 3;
+    emitEnvironmentChanged(["metadata-changed"]);
+    await settle();
+    expect(diffSignals(harness)).toBe(1);
+  });
+
+  it("reloads a showing staged or unstaged view when only the index changes", async () => {
+    const { view, rpc, harness, emitEnvironmentChanged, index } = await setup();
+    await view({ kind: "staged" });
+    await watch(rpc, true, "staged");
+    index.key = "index-2";
+    emitEnvironmentChanged();
+    await settle();
+    expect(diffSignals(harness)).toBe(1);
+  });
+
+  it("reads nothing for a workspace no tab shows, and checks it once when a tab shows it again", async () => {
+    const { view, rpc, harness, workspace, git, hostCalls, emitEnvironmentChanged } = await setup();
+    await view({ kind: "staged" });
+    await watch(rpc, true, "staged");
+    await watch(rpc, false, "staged");
+    const reads = () => git.calls.length + hostCalls.filter((call) => call.method === "indexState").length;
+    const before = reads();
+    workspace.bigVersion = 2;
+    emitEnvironmentChanged();
+    emitEnvironmentChanged();
+    await settle();
+    expect(reads()).toBe(before);
+    expect(diffSignals(harness)).toBe(0);
+    // Shown again: one check, which finds the change.
+    await watch(rpc, true, "uncommitted", "tab2");
+    await settle();
+    expect(diffSignals(harness)).toBe(1);
+    // A staged view visited once does not keep the index scanned once no tab shows one.
+    await watch(rpc, false, "uncommitted", "tab2");
+    await watch(rpc, true, "uncommitted", "tab3");
+    const indexReads = hostCalls.filter((call) => call.method === "indexState").length;
+    workspace.bigVersion = 3;
+    emitEnvironmentChanged();
+    await settle();
+    expect(hostCalls.filter((call) => call.method === "indexState").length).toBe(indexReads);
+  });
+
+  it("does no work for a workspace that was loaded but that no tab shows", async () => {
+    const { view, harness, workspace, git, emitEnvironmentChanged } = await setup();
+    await view();
+    const before = git.calls.length;
+    workspace.bigVersion = 2;
+    emitEnvironmentChanged();
+    await settle();
+    expect(git.calls.length).toBe(before);
+    expect(diffSignals(harness)).toBe(0);
+  });
+
+  it("lets a lease lapse when its tab stops renewing it", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const { view, rpc, git, emitEnvironmentChanged } = await setup();
+      await view();
+      await watch(rpc, true);
+      vi.setSystemTime(Date.now() + 91_000);
+      const before = git.calls.length;
+      emitEnvironmentChanged();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      vi.useRealTimers();
+      await settle();
+      expect(git.calls.length).toBe(before);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("refusals", () => {
+  it("answers a caller's mistake as bb's expected refusal, not a handler crash", async () => {
+    const { rpc } = await setup();
+    await expect(rpc("setStatus", { reviewThreadId: "nonexistent01", status: "resolved" })).rejects.toMatchObject({ code: "not_found", message: expect.stringContaining("nonexistent01") });
+  });
+});
+
+describe("the Reviews page", () => {
+  it("lists reviews with comment threads, each with the thread to open it in, and counts them", async () => {
+    const { rpc, view, comment, harness } = await setup();
+    const { sessionId } = await view();
+    expect(await rpc("listReviews", {})).toEqual({ reviews: [] });
+    const made = await comment(sessionId);
+    await comment(sessionId, "And this?");
+    await rpc("setStatus", { reviewThreadId: made.id, status: "resolved" });
+    // The tab keeps state for the review, which names the thread it opens in.
+    await rpc("saveViewState", { threadId: THREAD, sessionId, state: { drafts: {}, collapsed: {}, scroll: null, savedAt: 1 } });
+    expect(((await rpc("listReviews", {})) as { reviews: unknown[] }).reviews).toEqual([
+      expect.objectContaining({ sessionId, environmentId: ENV, target: { kind: "uncommitted" }, openCount: 1, totalCount: 2, threadId: THREAD, projectId: expect.any(String) }),
+    ]);
+    expect(await rpc("reviewCounts", {})).toEqual({ open: 1, total: 2 });
+    expect(await rpc("reviewCounts", { environmentId: ENV })).toEqual({ open: 1, total: 2 });
+    expect(await rpc("reviewCounts", { environmentId: "env_other" })).toEqual({ open: 0, total: 0 });
+    expect(harness.inspection.realtimeSignals.some((event) => event.channel === "reviews")).toBe(true);
+  });
+
+  it("counts for the badge only the reviews it lists: one whose workspace is archived is in neither", async () => {
+    const { rpc, view, comment, harness } = await setup();
+    const { sessionId } = await view();
+    await comment(sessionId);
+    await comment(sessionId, "And this?");
+    await rpc("saveViewState", { threadId: THREAD, sessionId, state: { drafts: {}, collapsed: {}, scroll: null, savedAt: 1 } });
+    expect(await rpc("reviewCounts", {})).toEqual({ open: 2, total: 2 });
+    // The thread is archived, its worktree with it, and no other thread works there.
+    harness.sdk.stub("threads.get", async ({ threadId }: { threadId: string }) => makeThreadResponse({ id: threadId, environmentId: ENV, archivedAt: 1 }));
+    harness.sdk.stub("threads.list", async () => []);
+    expect(await rpc("listReviews", {})).toEqual({ reviews: [] });
+    expect(await rpc("reviewCounts", {})).toEqual({ open: 0, total: 0 });
+  });
+  /** A review with two open comment threads, whose tab `THREAD` showed. */
+  async function reviewed() {
+    const context = await setup();
+    const { sessionId } = await context.view();
+    await context.comment(sessionId);
+    await context.comment(sessionId, "And this?");
+    await context.rpc("saveViewState", { threadId: THREAD, sessionId, state: { drafts: {}, collapsed: {}, scroll: null, savedAt: 1 } });
+    return { ...context, sessionId };
+  }
+  const archived = (harness: Awaited<ReturnType<typeof setup>>["harness"], archivedAt: number | null = 1) => {
+    harness.sdk.stub("threads.get", async ({ threadId }: { threadId: string }) => makeThreadResponse({ id: threadId, environmentId: ENV, archivedAt }));
+    harness.sdk.stub("threads.list", async () => []);
+  };
+
+  it("finds the reviews no live thread can open and whose workspace is gone, and deletes only those it is asked to", async () => {
+    const { rpc, harness, sessionId } = await reviewed();
+    expect(await rpc("orphanReviews", {})).toEqual({ reviews: [] });
+    // Every thread archived, but the workspace is still there: not an orphan.
+    archived(harness);
+    expect(await rpc("orphanReviews", {})).toEqual({ reviews: [] });
+    // A workspace bb cannot answer for is not taken for gone.
+    harness.sdk.stub("environments.get", async () => {
+      throw new Error("bb is busy");
+    });
+    expect(await rpc("orphanReviews", {})).toEqual({ reviews: [] });
+    harness.sdk.stub("environments.get", async () => environment({ status: "destroyed", path: null }) as never);
+    expect(await rpc("orphanReviews", {})).toEqual({
+      reviews: [{ sessionId, environmentId: ENV, target: { kind: "uncommitted" }, openCount: 2, totalCount: 2, updatedAt: expect.any(Number) }],
+    });
+
+    // Only a review it offered goes.
+    expect(await rpc("deleteOrphanReviews", { sessionIds: ["0123456789ab"] })).toEqual({ deleted: 0, deletedThreads: 0 });
+    expect(((await rpc("orphanReviews", {})) as { reviews: unknown[] }).reviews).toHaveLength(1);
+    expect(await rpc("deleteOrphanReviews", { sessionIds: [sessionId] })).toEqual({ deleted: 1, deletedThreads: 2 });
+    expect(await rpc("orphanReviews", {})).toEqual({ reviews: [] });
+    await expect(rpc("listThreads", { sessionId })).rejects.toThrow(`No review session ${sessionId}`);
+    expect(harness.inspection.realtimeSignals.filter((event) => event.channel === "reviews").at(-1)!.payload).toEqual({ kind: "threads", sessionId });
+  });
+
+  /** A gate a fake bb call waits at: `reached` resolves when the call gets there, `open()` lets it on. */
+  function gate() {
+    let arrive = () => undefined as void;
+    let open = () => undefined as void;
+    const reached = new Promise<void>((resolve) => (arrive = resolve));
+    const opened = new Promise<void>((resolve) => (open = resolve));
+    return { reached, open, wait: () => (arrive(), opened) };
+  }
+  const execution = { providerId: "claude-code", model: "big", reasoningLevel: "high" };
+  /** The review's workspace destroyed and every thread archived, but those `live` names (in `env_fix`). */
+  const retire = (harness: Awaited<ReturnType<typeof setup>>["harness"], live: readonly string[] = [], hold?: { threadId: string; wait(): Promise<void> }) => {
+    harness.sdk.stub("threads.get", async ({ threadId }: { threadId: string }) => {
+      if (hold?.threadId === threadId) await hold.wait();
+      return makeThreadResponse({ id: threadId, environmentId: live.includes(threadId) ? "env_fix" : ENV, archivedAt: live.includes(threadId) ? null : 1 });
+    });
+    harness.sdk.stub("threads.list", async () => []);
+    harness.sdk.stub("environments.get", async () => environment({ status: "destroyed", path: null }) as never);
+  };
+  const recordArchives = (harness: Awaited<ReturnType<typeof setup>>["harness"]) => {
+    const archived: string[] = [];
+    harness.sdk.stub("threads.archive", async ({ threadId }: { threadId: string }) => (archived.push(threadId), { ok: true as const }));
+    return archived;
+  };
+  const threadIdsOf = async (rpc: Awaited<ReturnType<typeof setup>>["rpc"], sessionId: string) =>
+    ((await rpc("listThreads", { sessionId })) as { threads: { id: string }[] }).threads.map((thread) => thread.id);
+
+  it("keeps a review whose fixer is still live, in another workspace, and archives nothing", async () => {
+    const { rpc, harness, sessionId } = await reviewed();
+    const fixed = (await rpc("fixInNewThread", { sessionId, threadId: THREAD, reviewThreadIds: await threadIdsOf(rpc, sessionId), note: "", execution })) as { run: { threadId: string } };
+    expect(fixed.run.threadId).toBe("thr_run_1");
+    const archived = recordArchives(harness);
+    retire(harness, ["thr_run_1"]);
+    expect(await rpc("orphanReviews", {})).toEqual({ reviews: [] });
+    expect(await rpc("deleteOrphanReviews", { sessionIds: [sessionId] })).toEqual({ deleted: 0, deletedThreads: 0 });
+    // Once the fixer is archived as well, nothing of the review is live: it is an orphan.
+    retire(harness);
+    expect(await rpc("deleteOrphanReviews", { sessionIds: [sessionId] })).toEqual({ deleted: 1, deletedThreads: 2 });
+    expect(archived).toEqual([]);
+  });
+
+  for (const held of ["provider lookup", "spawn"] as const) {
+    it(`keeps a review whose run is still starting (held at its ${held}), and the run starts as asked`, async () => {
+      const hold = gate();
+      const context = await setup(held === "spawn" ? { holdSpawn: hold.wait } : { holdProviders: hold.wait });
+      const { sessionId } = await context.view();
+      await context.comment(sessionId);
+      await context.rpc("saveViewState", { threadId: THREAD, sessionId, state: { drafts: {}, collapsed: {}, scroll: null, savedAt: 1 } });
+      const ids = await threadIdsOf(context.rpc, sessionId);
+      const starting = context.rpc("fixInNewThread", { sessionId, threadId: THREAD, reviewThreadIds: ids, note: "", execution });
+      await hold.reached;
+      const archived = recordArchives(context.harness);
+      retire(context.harness);
+      expect(await context.rpc("orphanReviews", {})).toEqual({ reviews: [] });
+      expect(await context.rpc("deleteOrphanReviews", { sessionIds: [sessionId] })).toEqual({ deleted: 0, deletedThreads: 0 });
+      hold.open();
+      expect(((await starting) as { run: { status: string; threadId: string } }).run).toMatchObject({ status: "running", threadId: "thr_run_1" });
+      expect(archived).toEqual([]);
+    });
+  }
+
+  it("keeps a review that started a run while the delete was checking it", async () => {
+    const { rpc, harness, sessionId } = await reviewed();
+    const ids = await threadIdsOf(rpc, sessionId);
+    // An earlier fixer, archived since: it alone would not keep the review.
+    await rpc("fixInNewThread", { sessionId, threadId: THREAD, reviewThreadIds: ids, note: "", execution });
+    const hold = gate();
+    retire(harness, [], { threadId: "thr_run_1", wait: hold.wait });
+    const deleting = rpc("deleteOrphanReviews", { sessionIds: [sessionId] });
+    // The check is asking about the old fixer when a new fix starts.
+    await hold.reached;
+    const starting = rpc("fixInNewThread", { sessionId, threadId: THREAD, reviewThreadIds: ids, note: "", execution });
+    hold.open();
+    expect(await deleting).toEqual({ deleted: 0, deletedThreads: 0 });
+    expect(((await starting) as { run: { threadId: string } }).run.threadId).toBe("thr_run_2");
+  });
+
+  it("checks each review right before its own delete: a worker brought back while another review is checked keeps its review", async () => {
+    const { rpc, harness, view, comment } = await setup();
+    const older = (await view()).sessionId;
+    await comment(older);
+    const newer = (await view({ kind: "branch", base: "main" })).sessionId;
+    await rpc("createThread", { sessionId: newer, threadId: THREAD, filePath: "__general__", side: null, startLine: 0, endLine: 0, severity: null, anchorContent: null, body: "Overall?" });
+    for (const sessionId of [older, newer]) await rpc("saveViewState", { threadId: THREAD, sessionId, state: { drafts: {}, collapsed: {}, scroll: null, savedAt: 1 } });
+    // Each review's fixer: thr_run_1 for the older one, thr_run_2 for the newer.
+    for (const sessionId of [older, newer]) await rpc("fixInNewThread", { sessionId, threadId: THREAD, reviewThreadIds: await threadIdsOf(rpc, sessionId), note: "", execution });
+    const live = new Set<string>();
+    const hold = gate();
+    let holding = false;
+    harness.sdk.stub("threads.get", async ({ threadId }: { threadId: string }) => {
+      if (holding && threadId === "thr_run_1") await hold.wait();
+      return makeThreadResponse({ id: threadId, environmentId: live.has(threadId) ? "env_fix" : ENV, archivedAt: live.has(threadId) ? null : 1 });
+    });
+    harness.sdk.stub("threads.list", async () => []);
+    harness.sdk.stub("environments.get", async () => environment({ status: "destroyed", path: null }) as never);
+    const archived = recordArchives(harness);
+    expect(((await rpc("orphanReviews", {})) as { reviews: unknown[] }).reviews).toHaveLength(2);
+    // Deleting both: while the older review's fixer is being asked about, the newer one's comes back.
+    holding = true;
+    const deleting = rpc("deleteOrphanReviews", { sessionIds: [older, newer] });
+    await hold.reached;
+    live.add("thr_run_2");
+    hold.open();
+    expect(await deleting).toEqual({ deleted: 1, deletedThreads: 1 });
+    expect(((await rpc("listThreads", { sessionId: newer })) as { threads: unknown[] }).threads).toHaveLength(1);
+    await expect(rpc("listThreads", { sessionId: older })).rejects.toThrow(`No review session ${older}`);
+    expect(archived).toEqual([]);
+  });
+
+  it("counts a start that failed before it had a thread as no worker: its review can be deleted", async () => {
+    for (const failure of ["before spawn", "spawn refused"] as const) {
+      const context = await setup(failure === "spawn refused" ? { spawnFails: true } : {});
+      const { sessionId } = await context.view();
+      await context.comment(sessionId);
+      await context.rpc("saveViewState", { threadId: THREAD, sessionId, state: { drafts: {}, collapsed: {}, scroll: null, savedAt: 1 } });
+      if (failure === "before spawn") {
+        context.harness.sdk.stub("environments.get", async () => {
+          throw new Error("bb is restarting");
+        });
+      }
+      const { run } = (await context.rpc("fixInNewThread", { sessionId, threadId: THREAD, reviewThreadIds: await threadIdsOf(context.rpc, sessionId), note: "", execution })) as { run: { status: string; threadId: string | null } };
+      expect(run, failure).toMatchObject({ status: "failed", threadId: null });
+      retire(context.harness);
+      expect(((await context.rpc("orphanReviews", {})) as { reviews: unknown[] }).reviews, failure).toHaveLength(1);
+      expect(await context.rpc("deleteOrphanReviews", { sessionIds: [sessionId] }), failure).toEqual({ deleted: 1, deletedThreads: 1 });
+    }
+  });
+
+  it("keeps a review that a thread can open again by the time the delete is confirmed", async () => {
+    const { rpc, harness, sessionId } = await reviewed();
+    archived(harness);
+    harness.sdk.stub("environments.get", async () => environment({ status: "destroyed", path: null }) as never);
+    expect(((await rpc("orphanReviews", {})) as { reviews: unknown[] }).reviews).toHaveLength(1);
+    // The thread is brought back from the archive before the user confirms.
+    archived(harness, null);
+    expect(await rpc("deleteOrphanReviews", { sessionIds: [sessionId] })).toEqual({ deleted: 0, deletedThreads: 0 });
+    expect(((await rpc("listReviews", {})) as { reviews: unknown[] }).reviews).toHaveLength(1);
   });
 });
 
@@ -368,7 +995,7 @@ describe("comments", () => {
 
     const listed = (await rpc("listThreads", { sessionId })) as { threads: ReviewThread[] };
     expect(listed.threads.map((thread) => thread.id)).toEqual([line.id, file.thread.id, general.thread.id]);
-    expect(harness.inspection.realtimeSignals.at(-1)).toEqual({ channel: `environment:${ENV}`, payload: { kind: "threads", sessionId } });
+    expect(harness.inspection.realtimeSignals.filter((signal) => signal.channel === `environment:${ENV}`).at(-1)).toEqual({ channel: `environment:${ENV}`, payload: { kind: "threads", sessionId } });
   });
 
   it("refuses a range that ends before it starts, and an empty comment", async () => {
@@ -493,7 +1120,7 @@ describe("sending to the agent and its answers", () => {
     [row] = ((await rpc("listThreads", { sessionId })) as { threads: ReviewThread[] }).threads;
     expect(row!.delivery!.state).toBe("no_reply");
     // The workspace did not change since the first turn's end, so only the threads are re-read.
-    expect(harness.inspection.realtimeSignals.at(-1)).toEqual({ channel: `environment:${ENV}`, payload: { kind: "threads", sessionId } });
+    expect(harness.inspection.realtimeSignals.filter((signal) => signal.channel === `environment:${ENV}`).at(-1)).toEqual({ channel: `environment:${ENV}`, payload: { kind: "threads", sessionId } });
   });
 
   it("tells the tabs to reload only when a turn ends with the workspace changed", async () => {
@@ -573,6 +1200,66 @@ describe("AI runs", () => {
     // Its final message, which bb posts to the parent, says it is a report.
     expect(spawn.prompt).toContain(`Start your final message with this line, exactly: "${REPORT_LINE}"`);
     expect((await view()).runs.map((row) => row.id)).toEqual([run.id]);
+  });
+
+  it("tells every run on a range view the commits the tab compares, read on the workspace's machine", async () => {
+    const { harness, rpc, view, comment, hostCalls } = await setup();
+    const { sessionId } = await view({ kind: "range", from: "main", to: "feature", symmetric: true });
+    // A question with no reviewer yet starts one, whose first message says how to read the diff.
+    await comment(sessionId, "@reviewer why?");
+    await vi.waitFor(() => expect(harness.inspection.sdk.callsTo("threads.spawn")).toHaveLength(1));
+    await rpc("startReview", { sessionId, threadId: THREAD, focuses: [], instructions: "", execution });
+    await rpc("startSummary", { sessionId, threadId: THREAD, execution });
+    await rpc("startExplain", { sessionId, threadId: THREAD, filePath: "src/a.ts", side: null, startLine: 0, endLine: 0, code: null });
+    const prompts = harness.inspection.sdk.callsTo("threads.spawn").map((call) => (call[0] as { prompt: string }).prompt);
+    expect(prompts).toHaveLength(4);
+    for (const prompt of prompts) {
+      expect(prompt).toContain("`git diff fork1234 head5678` (the commits the tab compares for main...feature)");
+      expect(prompt).not.toContain("`git diff main...feature`");
+    }
+    expect(hostCalls.filter((call) => call.method === "rangeCommits").map((call) => call.input)).toContainEqual({ root: "/work/repo", spec: { kind: "range", from: "main", to: "feature", symmetric: true } });
+  });
+
+  it("starts a summary that leaves its result as a comment on the whole diff, and is no reviewer", async () => {
+    const { harness, rpc, view, comment } = await setup();
+    const { sessionId } = await view();
+    const { run } = (await rpc("startSummary", { sessionId, threadId: THREAD, execution })) as RunResult;
+    expect(run).toMatchObject({ kind: "summary", status: "running", threadId: "thr_run_1" });
+    const spawn = harness.inspection.sdk.callsTo("threads.spawn")[0]![0] as Record<string, unknown>;
+    expect(spawn).toMatchObject({ title: "Summary of the changes", parentThreadId: THREAD, permissionMode: "auto" });
+    expect(spawn.prompt).toContain("diff_review_general_comment");
+    expect(spawn.prompt).toContain(REPORT_LINE);
+    await tool(harness, "diff_review_general_comment", { body: "**Overview**: b becomes 3." }, run.threadId!);
+    expect((await sessionState(rpc, sessionId)).threads.map((row) => row.comments[0]!.body)).toEqual(["**Overview**: b becomes 3."]);
+    // An @reviewer question starts a reviewer of its own: a summary is not the view's reviewer.
+    await comment(sessionId, "@reviewer why?");
+    await vi.waitFor(() => expect(harness.inspection.sdk.callsTo("threads.spawn")).toHaveLength(2));
+    expect((harness.inspection.sdk.callsTo("threads.spawn")[1]![0] as { prompt: string }).prompt).toContain("A question about a review thread");
+  });
+
+  it("starts an explanation of lines with the settings' agent, and lets it comment there", async () => {
+    const { harness, rpc, view } = await setup();
+    const { sessionId } = await view();
+    const { run } = (await rpc("startExplain", { sessionId, threadId: THREAD, filePath: "src/a.ts", side: "new", startLine: 2, endLine: 2, code: "const b = 3;" })) as RunResult;
+    expect(run).toMatchObject({ kind: "explain", focus: "src/a.ts:2", status: "running" });
+    const spawn = harness.inspection.sdk.callsTo("threads.spawn")[0]![0] as Record<string, unknown>;
+    expect(spawn).toMatchObject({ title: "Explain a.ts:2", providerId: "claude-code" });
+    expect(spawn.reasoningLevel).toBeUndefined();
+    expect(spawn.prompt).toContain("# Explain line 2 of `src/a.ts` (the new side)");
+    expect(spawn.prompt).toContain("const b = 3;");
+    const ok = await tool(harness, "diff_review_comment", { file: "src/a.ts", startLine: 2, body: "It sets b." }, run.threadId!);
+    expect(isError(ok)).toBe(false);
+  });
+
+  it("lets an explanation in the Files view comment on the file's own lines", async () => {
+    const { rpc, view, harness } = await setup({ files: { "/work/repo/src/util.ts": "export const x = 1;\nexport const y = 2;\n" } });
+    const { sessionId } = await view({ kind: "files" });
+    const { run } = (await rpc("startExplain", { sessionId, threadId: THREAD, filePath: "src/util.ts", side: "new", startLine: 2, endLine: 2, code: "export const y = 2;" })) as RunResult;
+    const ok = await tool(harness, "diff_review_comment", { file: "src/util.ts", startLine: 2, body: "y is two." }, run.threadId!);
+    expect(isError(ok)).toBe(false);
+    const made = (await sessionState(rpc, sessionId)).threads[0]!;
+    expect(made).toMatchObject({ anchorContent: "export const y = 2;", fileRevision: sha("export const x = 1;\nexport const y = 2;\n") });
+    expect(isError(await tool(harness, "diff_review_comment", { file: "src/util.ts", startLine: 9, body: "x" }, run.threadId!))).toBe(true);
   });
 
   it("gives the tools only to run threads, and the skill to every thread", async () => {

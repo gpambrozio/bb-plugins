@@ -2,12 +2,13 @@
  * The box a comment is written in: a new thread (with an optional severity), a reply, or an edit.
  * ⌘/Ctrl+Enter submits and Escape cancels, as in diffity.
  */
-import { useState, type KeyboardEvent } from "react";
+import { useRef, useState, type KeyboardEvent } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 
+import { insertSuggestion } from "../shared/suggestion";
 import { BODY_MAX_CHARS, SEVERITIES, type Severity } from "../shared/types";
 import { SEVERITY_LABELS } from "./labels";
 
@@ -25,6 +26,7 @@ export function CommentComposer({
   initialSeverity = null,
   withSeverity = false,
   autoFocus = true,
+  suggestFrom,
   onChange,
   onSubmit,
   onCancel,
@@ -35,6 +37,8 @@ export function CommentComposer({
   initialSeverity?: Severity | null;
   withSeverity?: boolean;
   autoFocus?: boolean;
+  /** The commented lines' text: offers "Suggest a change", which inserts a suggestion block seeded with it. */
+  suggestFrom?: string;
   /** Told of every edit, for a parent that keeps the draft (across a remount, a reload, a restart). */
   onChange?(value: ComposerSubmit): void;
   onSubmit(value: ComposerSubmit): Promise<void>;
@@ -44,6 +48,23 @@ export function CommentComposer({
   const [severity, setSeverity] = useState<string>(initialSeverity ?? NO_SEVERITY);
   const [busy, setBusy] = useState(false);
   const empty = body.trim() === "";
+  const textarea = useRef<HTMLTextAreaElement>(null);
+
+  const change = (next: string, nextSeverity: string = severity) => {
+    setBody(next);
+    onChange?.({ body: next, severity: nextSeverity === NO_SEVERITY ? null : (nextSeverity as Severity) });
+  };
+
+  const suggest = () => {
+    if (suggestFrom === undefined) return;
+    const cursor = textarea.current?.selectionStart ?? body.length;
+    const next = insertSuggestion(body, cursor, suggestFrom);
+    change(next.body);
+    requestAnimationFrame(() => {
+      textarea.current?.focus();
+      textarea.current?.setSelectionRange(next.cursor, next.cursor + suggestFrom.replace(/\r\n/g, "\n").length);
+    });
+  };
 
   const submit = async () => {
     if (empty || busy) return;
@@ -70,11 +91,9 @@ export function CommentComposer({
   return (
     <div className="flex flex-col gap-2">
       <Textarea
+        ref={textarea}
         value={body}
-        onChange={(event) => {
-          setBody(event.target.value);
-          onChange?.({ body: event.target.value, severity: severity === NO_SEVERITY ? null : (severity as Severity) });
-        }}
+        onChange={(event) => change(event.target.value)}
         onKeyDown={onKeyDown}
         placeholder={placeholder}
         maxLength={BODY_MAX_CHARS}
@@ -106,6 +125,11 @@ export function CommentComposer({
             </SelectContent>
           </Select>
         ) : null}
+        {suggestFrom === undefined ? null : (
+          <Button type="button" variant="ghost" size="sm" onClick={suggest} disabled={busy}>
+            Suggest a change
+          </Button>
+        )}
         <div className="ml-auto flex items-center gap-2">
           {onCancel === undefined ? null : (
             <Button type="button" variant="ghost" size="sm" onClick={onCancel} disabled={busy}>

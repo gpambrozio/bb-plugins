@@ -10,14 +10,15 @@
  */
 import { PluginCliError, cliCommand, defineCli, type PluginCliRegistration } from "@get-bb/plugin-sdk";
 
-import { describeLocation, GENERAL_PATH, type ReviewThread } from "../shared/types";
+import { describeLocation, describeTarget, GENERAL_PATH, type ReviewThread, type TargetRequest } from "../shared/types";
+import { parseRange } from "../shared/git-spec";
 import { ReviewError, type AgentAction, type ReviewService } from "./review";
 import type { RunService } from "./runs";
 
 /** The longest text a command takes, in UTF-8 bytes; its base64 still fits bb's 16 KiB stdin line. */
 export const TEXT_MAX_BYTES = 12_000;
 
-/** Output stays well under bb's 1 MiB cap for a plugin command. */
+/** Output stays well under bb's cap for a plugin command's output. */
 const LIST_MAX_CHARS = 500_000;
 
 function reason(error: unknown): string {
@@ -188,6 +189,55 @@ export function diffReviewCli(service: ReviewService, runs: RunService): PluginC
       resolve: answerCommand(service, runs, "resolve", "Resolve a comment thread with a one-line summary of what changed", "summary"),
       dismiss: answerCommand(service, runs, "dismiss", "Close a comment thread you will not act on, with the reason", "reason"),
       comment: commentCommand(service, runs),
+      open: openCommand(service),
     },
+  });
+}
+
+/** `--view` and its partners as the view to open. */
+export function viewRequest(view: string | undefined, base: string | undefined, commit: string | undefined, range?: string): TargetRequest {
+  if (range !== undefined || view === "range") {
+    if (view !== undefined && view !== "range") throw new PluginCliError("--range opens a range's view; leave out --view or give --view range.", { code: "unexpected_argument" });
+    const spec = range === undefined ? null : parseRange(range);
+    if (spec === null) throw new PluginCliError("--range takes two revisions as a..b or a...b.", { code: range === undefined ? "missing_required" : "invalid_value" });
+    return spec;
+  }
+  if (view === "staged" || view === "unstaged") return { kind: view };
+  if (commit !== undefined) {
+    if (view !== undefined && view !== "commit") throw new PluginCliError("--commit opens a commit's view; leave out --view or give --view commit.", { code: "unexpected_argument" });
+    if (!/^[0-9a-f]{7,64}$/i.test(commit)) throw new PluginCliError("--commit takes a commit's SHA (7 hex digits or more).", { code: "invalid_value" });
+    return { kind: "commit", sha: commit };
+  }
+  if (view === "commit") throw new PluginCliError("--view commit needs --commit <sha>.", { code: "missing_required" });
+  if (view === "branch" || view === "all") return base === undefined ? { kind: view } : { kind: view, base };
+  if (base !== undefined) throw new PluginCliError("--base goes with --view branch or --view all.", { code: "unexpected_argument" });
+  return { kind: "uncommitted" };
+}
+
+function openCommand(service: ReviewService) {
+  return cliCommand({
+    summary: "Open a thread's review in bb, on a view and at a file",
+    description:
+      "Opens the review of this thread's workspace (or --thread's) on the Reviews page, in the bb window that shows the thread, and prints the page's address. The view is the uncommitted changes unless --view says otherwise: staged, unstaged, branch (committed since --base, the workspace's base branch by default), all (everything since --base), commit with --commit <sha>, or range with --range a..b or a...b. A <file> goes to that file.",
+    positionals: [{ name: "file", description: "A file of the view to go to, by its path in the diff" }],
+    options: {
+      view: { type: "enum", values: ["uncommitted", "staged", "unstaged", "branch", "all", "commit", "range"], description: "Which changes to review" },
+      range: { type: "string", description: "Two revisions to compare, as a..b or a...b", placeholder: "a...b" },
+      base: { type: "string", description: "The branch the branch views compare against", placeholder: "branch" },
+      commit: { type: "string", description: "The commit to review", placeholder: "sha" },
+      thread: { type: "string", description: "The bb thread whose review to open; this thread by default", placeholder: "id" },
+    },
+    run: (input, ctx) =>
+      guarded(async () => {
+        const threadId = input.options.thread ?? ctx.threadId;
+        if (threadId === undefined) throw new PluginCliError("Run this inside a bb thread, or give --thread.", { code: "not_in_thread" });
+        const request = viewRequest(input.options.view, input.options.base, input.options.commit, input.options.range);
+        const file = input.positionals.file ?? null;
+        const opened = await service.requestOpen(threadId, request, file);
+        const lines = [`Opening the review of ${describeTarget(opened.target)} for ${threadId} in the bb window that shows that thread.`];
+        if (opened.inDiff === false) lines.push(`${file} is not in that view.`);
+        lines.push(`The page, in any bb window: ${opened.route}`);
+        return { exitCode: 0, stdout: `${lines.join("\n")}\n` };
+      }),
   });
 }

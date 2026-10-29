@@ -16,15 +16,24 @@ specific to `diff-review`.
 
 | File | What it owns |
 | --- | --- |
-| `server.ts` | Wires the settings, the database and its migrations, the RPCs, the CLI and the `thread.idle` / `thread.failed` listeners. |
+| `server.ts` | Wires the settings, the database and its migrations, the RPCs (through `refusing`), the CLI and the `thread.idle` / `thread.failed` listeners. |
+| `host.ts`, `host/git.ts` | The host entry: git on the machine that holds a workspace, for the staged, unstaged and range views (diffity's ref grammar and merged fork point) and the index's fingerprint. Reads only. |
+| `host/revert.ts` | Revert, on the workspace's machine: bb's Git plugin revision recomputed and checked, symlinks and submodules refused, the last check synchronous before the rename or removal. |
+| `shared/host-contract.ts`, `shared/git-spec.ts` | The host entry's contract (imports the SDK root: never from the app); the views it serves and the revision grammar (no SDK import). |
+| `server/git.ts` | bb's Git plugin (`bb--git`) through `bb.sdk.plugins.callRpc`: status, files, patches by revision, Viewed marks; a copy of the shapes read, and the "Git plugin is off" message. |
+| `server/host-git.ts` | The server's client of the host entry. |
+| `server/edits.ts` | Applying a suggestion (bb's file read and `expectedSha256` write, its lines checked against what the tab showed) and handing a revert to the host entry. |
+| `server/refusal.ts` | `ReviewError`s answered as `experimental_PluginRpcRefusal`, so a caller's mistake is not logged as a crash. |
+| `shared/routes.ts` | The Reviews page's addresses (`<thread>/<view>[/<file>]`), and `bb diff-review open`'s realtime request. |
+| `shared/suggestion.ts`, `shared/revert.ts` | Suggestion blocks (diffity's) and line replacement; reverting hunks from a file's patch. |
 | `server/review.ts` | `ReviewService`: everything the tab, the CLI and the thread events do to reviews — the view, threads and comments, sends, the agent's answers and who may give them, closing out a send after a turn. |
 | `server/store.ts` | The SQLite tables (sessions, threads, comments, sends, runs, view states), their append-only `MIGRATIONS`, and every query. |
-| `server/diff.ts` | The workspace a thread runs in, its refs (base branch, the branch's commits), and the diff from `bb.sdk.environments.diffFiles` / `diffPatch`, minus ignored files. |
+| `server/diff.ts` | The workspace a thread runs in, its refs (base branch, the branch's commits), and the diff from bb's Git plugin or, for the host views, the host entry, minus ignored files, with each file's revision and Viewed mark. |
 | `server/ignore.ts` | Gitignore-style ignore patterns, from the setting and the workspace's diffity ignore files. |
 | `server/prompt.ts` | The "Address review comments" message a send puts in the thread (adapted from diffity's prompts, MIT). |
-| `server/cli.ts` | `bb diff-review list|reply|resolve|dismiss|comment`; base64 text through `--text-base64-stdin`. |
+| `server/cli.ts` | `bb diff-review list|reply|resolve|dismiss|comment|open`; base64 text through `--text-base64-stdin`. |
 | `server/runs.ts` | `RunService`: AI runs — the pickers' defaults, starting a review, questions to the view's reviewer (follow-up turn or a new reviewer), a fix thread, a run's end (summary, files changed during a review), Close (archive), Clear review, and a review run's comments, checked against the diff. |
-| `server/run-prompts.ts` | The first message of each run's thread (adapted from diffity's `review.md` and `thread.md`, MIT). |
+| `server/run-prompts.ts` | The first message of each run's thread (adapted from diffity's `review.md`, `thread.md`, `summarize.md` and `explain.md`, MIT). |
 | `server/tools.ts`, `server/tool-names.ts` | The `diff_review_*` agent tools; their names and the run-id metadata key `configure` reads. |
 | `shared/mentions.ts` | Whether a comment says `@reviewer` or `@agent` (outside code; diffity's rules, ported). |
 | `shared/types.ts` | The data model and zod schemas, the realtime channel and its signals. No SDK import, so the app may use it at run time. |
@@ -33,9 +42,18 @@ specific to `diff-review`.
 | `app/review-panel.tsx` | The tab: the view picker, split/unified, *Only files with comments* (remembered in `localStorage` per bb thread, off until a thread turns it on; split/unified is one choice for all), reload, whole-diff comments, the *Not on the current diff* list, the files, the send dialog, the Clear review confirm (`app/clear-dialog.tsx`). |
 | `app/file-diff.tsx` | One file: its header (with its thread count while the switch is off), whole-file threads, and Pierre's `PatchDiff` with thread annotations and the gutter "+". |
 | `app/patch-loader.ts` | Patches bb did not send with the file list, asked for as files come near the screen and fetched in batches, one request at a time. |
-| `app/header-action.tsx` | The Review button in the thread's title bar (`experimental_threadHeaderAction`), which opens the tab. |
+| `app/tab.ts` | The tab's reference and `openReviewTab` through bb's panel controller; `app.tsx` registers the tab, the header button, the commands, the Reviews page, the Info row and the open overlay. |
+| `app/header-action.tsx` | The header's Review icon button (the old header slot, see below) and the one-control registration, with its fallback. |
+| `app/commands.ts` | The palette commands' bus: a command opens the thread's tab and leaves its action for the tab that shows. |
+| `app/find.ts`, `app/find-bar.tsx`, `app/goto-dialog.tsx`, `app/reveal.ts` | Find across the diff (diffity's), Go to, and scrolling a place into view inside Pierre's open shadow root. |
+| `app/comment-nav.tsx` | Previous/next comment: the toolbar's and each thread's arrows, the palette's commands and Go to share one list of stops, each at the place its card is drawn (the top sections — whole diff, then "Not on the current diff" — then each file's whole-file threads under its header and its line threads by line), wrapping at the ends; a step brings that place into view, marks the card as the current one (a programmatic focus shows no ring after a click) and focuses it. A line thread whose file's patch has not loaded is a `pending` stop: a step to it waits for the patch. A folded thread's one-line button carries the same `data-thread-id` and current marker as a card, so it is a place to land too. Only the latest focus job on a scroll area may scroll or focus (`focusThread`): an older one waiting for a late card gives up, as does one the user takes over with a wheel, touch or click (not a key, which may be the very shortcut that started it). Every jump goes through `show`, which also drops a step still waiting for its file's diff (`awaitedComment`), so that diff arriving later lands nowhere. A jump that reveals no file (a comment in the top sections, or one waiting for its diff) and the same take-over also drop the last `reveal`: a file reveals itself again when its diff arrives, and would pull the view back to it. |
+| `app/files-view.tsx` | The "Any file" view: workspace search, Pierre's `File` with the same annotations. |
+| `app/suggestion-block.tsx`, `app/revert-dialog.tsx`, `app/range-dialog.tsx` | A suggested change and Apply; Revert…; the range picker. |
+| `app/open-file.ts`, `app/palette.ts` | Which version Open previews; the colour-blind colours. |
+| `app/reviews.ts`, `app/reviews-page.tsx`, `app/thread-info.tsx`, `app/open-overlay.tsx` | The Reviews page (sidebar, title, badge), the thread Info row, and the overlay that answers `bb diff-review open`. The badge counts exactly the reviews the page lists (`counts(null)` sums `listReviews`), so a review whose workspace is archived, which the page leaves out because it can no longer be loaded, is not counted; the store keeps it. The badge's every refresh costs what the page's does (a `threads.get` per listed review). `app/orphans.tsx`: the reviews the page leaves out *and* whose workspace bb says is destroyed (`orphanReviews`), counted under the list with Delete…, which confirms first. Deletion is only ever the user's: `deleteOrphanReviews` checks each id again and deletes only those still orphans that the page offered (`deleteSession`, which takes every table's rows; open runs close and their threads are archived). A workspace bb cannot be asked about is not taken for gone. A review keeps any run (not closed) that still has a worker, in any workspace: one still starting (running, no thread yet; a start that failed before it had a thread is no worker), or a thread not archived (a fixer in a worktree of its own), so the delete never cancels live work. The delete checks each review afresh right before its own delete (`orphanCheck`, workers asked last), never from one scan of them all, and skips it when its runs changed while it was checked (no await between that check and `deleteSession`). A start whose run row is gone when bb is asked, or when bb answers, refuses and archives the thread it got. |
 | `app/thread-card.tsx`, `app/comment-composer.tsx` | A thread and its comments; the box comments are written in. |
-| `app/view-state.tsx`, `app/scroll-memory.ts` | What the tab keeps per thread and view (unsent comments, folds, scroll place as file + offset) and its saving; restoring the scroll place while patches load. |
+| `app/view-memory.ts` | The view picked in a thread's Review tab, kept in `localStorage` per bb thread with the `params` target the tab was opened on: bb mounts the tab anew whenever its thread is opened, so without it the picker went back to the default. A tab opened on another view starts there; a kept view the server can no longer read (`unavailable`) is forgotten and the tab starts over on the default. The first load's own pick is not kept. |
+| `app/view-state.tsx`, `app/scroll-memory.ts` | What the tab keeps per thread and view (unsent comments, folds, scroll place as file + offset) and its saving; restoring the scroll place while patches load (`app/scroll-within.ts`'s hold). |
 | `app/send-dialog.tsx` | Picking threads and a note for **Send to agent**, to this thread or a new one. |
 | `app/ai-review-dialog.tsx`, `app/execution-picker.tsx` | The AI review dialog (focus chips, instructions); bb's provider/model picker, seeded from the settings. |
 | `app/runs-list.tsx` | The session's runs under the toolbar: status, files a review changed, Open thread, Close. |
@@ -173,15 +191,81 @@ key (`uncommitted`, `branch:<base>`, `all:<base>`, `commit:<sha>`), as diffity k
 and ref. Two threads sharing a workspace share its comments; each sends from its own tab.
 
 **The plugin draws its own diff.** bb's diff panel and `experimental_Diff` have no annotation or
-line-click hooks (still none in bb 0.47), so the tab renders `PatchDiff` from the host-shimmed
+line-click hooks (still none in bb 0.48, which added only "Add to chat"), so the tab renders `PatchDiff` from the host-shimmed
 `@pierre/diffs` (a type-only devDependency at the host's version). bb's shim passes options through
 unchanged, so the plugin sets `theme` and `themeType` from `experimental_useCodeTheme()` itself.
 
-**Which machine.** Phase 1 has no server-Mac-only part: diffs come from `bb.sdk.environments.*` and
-the ignore files from `bb.sdk.files.read` on the environment's host, both of which run on whichever
-machine holds the workspace, remote hosts included. What needs raw git — staged against unstaged,
-arbitrary `a..b` ranges, a pull request's head — will run on the **bb server's Mac only** until phase 4
-adds a `bb.host` git entry (decision 8 of the plan). Say so in each feature that adds raw git.
+**Which machine.** Nothing is server-Mac-only: the diffs come from bb's Git plugin, the staged,
+unstaged and range views from the plugin's own host entry (`host.ts`, git in the checkout), files
+from `bb.sdk.files.*`, all on whichever machine holds the workspace, remote hosts included. Raw git a
+new feature needs goes in the host entry, which reads; a suggestion is written through
+`bb.sdk.files.write` with `expectedSha256`. **An AI run on a range view is told the two commits the tab
+compares** (`rangeCommits` on the host, the same `plan` as the diff), never `git diff a..b`: the tab
+diffs `a..b` from the merge base, and a merged `a...b` from where it forked, which a raw `git diff
+a...b` shows as empty. With Hide whitespace, git leaves a whitespace-only file out of the patch
+altogether, so the host view drops a listed file with no section. A suggestion block's `code` is the
+text between its fences as written; `suggestedLines` reads it, so a blank last line counts and an
+empty block (remove the lines) differs from one holding a blank line. A thread's lines as text (`linesText`: joined with "\n", no terminator) always hold one line at least, so "" is one blank line, and *Suggest a change* puts that text between the fences whole: a blank last line stays in the seeded block. **Revert is the host entry's** (`host/revert.ts`): bb's file
+reads and writes follow symlinks, so a revert through them wrote the old link text into the link's
+target, and `expectedSha256` taken after the reads guarded only the moment after them. The host reads
+the working file's bytes once and hashes them as bb does (`git hash-object --stdin --path`, attributes
+and line-ending rules applied), whatever blob git's diff reported, and refuses unless that revision
+(`oldMode:oldBlob:newMode:newBlob`) is the tab's. It takes the checkout's real path and
+folder identity once, before anything is awaited, builds every path on it, and every check confirms the
+checkout is still that folder (a checkout swapped for a link during `cat-file` otherwise led the write
+outside it). Every folder on the way must be a real folder inside the checkout (a symlinked folder led a
+restore outside it); a deleted file's missing folders are made when it is put back. Symlinks and
+submodules are refused. The new bytes go into a random-named temporary file created with `wx` and
+written through its own descriptor (a predictable name was a planted-symlink target), all of them:
+`writeAll` goes on after a short write and refuses on an error or no progress, so a full disk or a
+file-size limit never renames a truncated file over the original. A deleted file is put back the
+same way, staged in full and then hard-linked to its name (`link` fails when anything is there now),
+so no failure path ever removes or overwrites the destination: cleanup only removes Revert's own
+temporary file, and only while the checkout and its folders still check out. The folder checks
+run in the same synchronous step, with no await, as the temporary file's creation, and again with the
+byte comparison right before the rename or the removal. A save landing in that same instant from another process is the one change it can still
+miss.
+
+**Diffs come from bb's Git plugin.** bb 0.48 moved every git read out of `bb.sdk.environments` into
+the bundled plugin `bb--git` (`server/git.ts` calls `workspaceStatus`, `files`, `patches`, `viewed`,
+`markViewed`, `clearViewed`). Patches are keyed by the revision `files` returned, so a load asks for
+the version it listed; the app sends `{ path, revision }`. A failed call asks `plugins.list` whether
+the plugin is off and says so. The contract is not published: the plugin keeps its own non-strict
+copy of the shapes it reads.
+
+**Changes outside a turn reload by content, not by counts, and only for tabs that show.** bb's status
+lists paths, letters and line counts, so a same-size edit leaves it equal. A showing tab holds a lease
+on its workspace (`watchWorkspace`, renewed every 30 s, lapsing after 90 s, given back when it hides or
+closes). The server subscribes to bb's `environment:changed`; for a workspace with a lease it coalesces
+the events (400 ms, at most 2 s) and compares the same content-sensitive state a turn's end does (every
+uncommitted patch's hash), plus the index's fingerprint from the host entry when a leased view is
+staged or unstaged; only a change sends `diff`. For a workspace no tab shows, an event only marks it,
+and the first lease taken after that has it checked once. The check reads only, so it cannot set off
+another.
+
+**Viewed marks are bb's.** They live in the Git plugin per environment, view and revision, shared with
+bb's diff panel; a mark at an older revision is "changed since viewed". The host views and Any file
+have no marks (`viewable: false`).
+
+**The tab is an `experimental_tab`, the button the old `experimental_threadHeaderAction` slot, both
+opened through the panel controller.** bb 0.48 retired `threadPanelAction`,
+`experimental_threadHeaderAction` and `ctx.openPanel` / `openThreadPanel` from the typings. The tab
+keeps the id `review` (saved tabs and their params carry over). The header button is *not*
+`experimental_threadAction({ placement: "header" })`, the slot that replaced the old one: bb 0.48 draws
+every plugin's header thread actions as one shared split button (`ThreadDetailHeader.tsx`: the first
+action is the label, the rest sit in its dropdown), so with Herald installed Review became an entry in
+a "Herald" dropdown. The old slot, which bb 0.48 still mounts but no longer types, draws each plugin's
+component as its own control, inside the thread's panel controller, so the icon button toggles the tab
+with `experimental_useAppPanel().toggleTab`. `app/header-action.tsx` reaches the slot through an
+untyped cast and registers exactly one control: the old slot when `app.slots` has it, else a header
+thread action. **A future bb may drop the old slot**; the fallback then takes over by itself, back in
+the shared split button — check the header after every bb release. A palette command opens the tab
+and hands its action to the tab through `app/commands.ts`. A hidden tab (`experimental_useTabVisible`)
+defers reloads until it shows.
+
+**Summaries and explanations are review runs with a purpose.** The `runs` table's kind check predates
+them and SQLite cannot widen it, so they are stored as `kind = 'review'` with `purpose` set; they read
+and comment like a review (watched for edits) but are never the view's reviewer.
 
 **Diffs load without a tap.** bb's `diffFiles` may send no patches up front (it sent none for a
 42-file working tree), so every file without one asks for it when it comes within a screen of the
@@ -194,16 +278,12 @@ line diff. Never put a "Load diff" button back.
 the branch has some, and the tab's picker adopts that view without loading it again. No later load
 (a reload, a realtime signal, a reconnect, the user's pick) sends it, so a choice is never overridden.
 
-**The tab is a `threadPanelAction`.** It is the only tab surface bb 0.46 has. bb 0.47 drops it from
-the SDK typings in favour of `app.slots.experimental_tab({ context: { kind: "thread" }, availability:
-"action", icon, … })` and keeps loading it through an adapter, keeping saved tabs and their params.
-Move to `experimental_tab` when the plugin re-pins to an SDK that has it (and raise `engines.bb`).
-
 ## Invariants
 
 - `MIGRATIONS` is append-only; bb checks each applied statement's hash. 0.1.0 shipped indexes 0–6;
   0.2.0 added the `runs` table at 7–9, its `parent_thread_id` at 10 (an `ALTER`, since 7 was
-  already applied on installs of the branch), `view_states` at 11 and `send_previous` at 12.
+  already applied on installs of the branch), `view_states` at 11 and `send_previous` at 12; 0.3.0
+  added `review_threads.file_revision` at 13 and `runs.purpose` at 14.
 - The tab's kept state (drafts, file and thread folds, scroll) lives in the plugin's database, keyed by bb thread and
   session, not in `localStorage`: it must survive a restart and follow the user to another device (the
   owner uses bb remotely). Saves are debounced and flushed when the tab unmounts or the page hides; a
@@ -213,11 +293,26 @@ Move to `experimental_tab` when the plugin re-pins to an SDK that has it (and ra
   opens, the comment filter shows it, a line draft whose lines left the diff sits above the diff, and
   drafts on files no longer in the view are listed apart. Reopening an editor keeps its draft.
 - Patches loaded on demand land only on the session and load that asked for them.
+- Where a line thread is drawn (at its line, or under *Not on the current diff*) depends on its file's
+  patch, and bb sends most patches only on demand (all 79 files of a real branch view came without
+  one). So `getReview` sends the patches of files with a line thread (`withThreadPatches`, up to
+  `THREAD_PATCH_MAX_FILES`), and the tab asks at once, wherever the file is, for any commented file
+  still without one (a thread an AI review added since). Without that, threads moved to the top as
+  files were scrolled into view, and next/previous stepped to places that changed under them. A step to
+  a thread whose file's patch is still loading waits for it and lands where the thread turns out to be.
+- Scroll the tab's own area only (`app/scroll-within.ts`), never `scrollIntoView`: it scrolls every
+  ancestor that can scroll, bb's clipping containers included, and pushed the tab's toolbar out of
+  sight in a real panel (the Chromium test shows it). A place it scrolls to is held while the layout
+  settles (`holdWithin`): lazily loaded files keep drawing around it, and Chromium's own scroll
+  anchoring picks a node inside the file above when that file is partly in view, so its diff drawing
+  pushed a comment just stepped to out of sight. The hold ends when the user scrolls, clicks or types
+  in the area, when another scroll starts one, or once nothing has moved the place for a few seconds;
+  the scroll memory's restore is the same kind of hold, so a step right after the tab opens wins.
 - Updates land in place. Pierre redraws a file's whole diff whenever its `lineAnnotations` array is a
   new object, so unchanged threads, runs and files keep their objects across a refresh or reload
   (`shareById`, `mergeView`, `groupByFile`, and `NO_THREADS` rather than a fresh `[]`), and a reply
-  redraws only its own file. A reload keeps an on-demand patch on screen while it is fetched again
-  (`stalePatches`). The patch loader resets during render, not in an effect: an effect ran after the
+  redraws only its own file. A reload keeps a patch that was loaded on demand (an `auto` file's too:
+  bb sends some of those up front, not all) on screen while it is fetched again (`stalePatches`). The patch loader resets during render, not in an effect: an effect ran after the
   files' own effects had asked for their patches and wiped those asks.
 - A turn's end sends the `diff` signal (every tab reloads its whole view) only when the workspace's
   state (`workspaceState`: HEAD, base, uncommitted files and up-front patches, from named fields only)
@@ -240,7 +335,9 @@ Move to `experimental_tab` when the plugin re-pins to an SDK that has it (and ra
 
 ## Roadmap
 
-- **Phase 3:** GitHub pull request review — https://github.com/gpambrozio/bb-plugins/issues/47.
-- **Phase 4:** polish (Reviews page, staged/unstaged and ranges through a host entry, find, viewed
-  marks on bb 0.47's `experimental_diffViewed`, suggestions, palette commands) —
-  https://github.com/gpambrozio/bb-plugins/issues/48.
+The open work is https://github.com/gpambrozio/bb-plugins/issues/64 (it merged #47 and #48).
+
+- **Phase 3:** GitHub pull request review (fetch `pull/N/head` through the host entry, sync review
+  threads, submit a review with `gh` as the owner, a worktree thread for fixes).
+- Not taken: bb's tagged live reads in place of the realtime channel (no user-visible gain), and
+  diffity's chaptered guide (the Community `guided-review` plugin covers it).

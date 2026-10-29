@@ -6,13 +6,21 @@
  * thread whose last send went to the thread it runs in, as its `bb` reports that (AGENTS.md, "A plugin
  * CLI command knows its caller" — the id is a claim, not an identity).
  */
+import { createHash } from "node:crypto";
+import { posix } from "node:path";
+
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import {
   environmentChannel,
   GENERAL_PATH,
   targetKey,
+  isHostTarget,
+  REVIEWS_CHANNEL,
   type RealtimeSignal,
+  type OrphanReview,
+  type ReviewSummary,
+  type WorkspaceFile,
   type ReviewThread,
   type Run,
   type ReviewView,
@@ -25,9 +33,16 @@ import {
   type ViewState,
   viewStateSchema,
 } from "../shared/types";
-import { ignorePatterns, loadDiff, loadPatches, resolveTarget, ReviewUnavailable, workspaceOf, workspaceRefs, workspaceState, type WorkspaceState } from "./diff";
+import { gitTarget, ignorePatterns, loadDiff, type DiffSources, loadPatches, resolveTarget, ReviewUnavailable, withThreadPatches, workspaceOf, workspaceRefs, workspaceState, type WorkspaceState } from "./diff";
+import { parseRange, rangeText } from "../shared/git-spec";
+import { OPEN_CHANNEL, reviewRoute } from "../shared/routes";
+import { GitReads } from "./git";
+import { createHostGit, createHostIndexState, createHostRangeCommits, type HostGit, type HostIndexState, type HostRangeCommits } from "./host-git";
 import { sendPrompt } from "./prompt";
-import type { ReviewStore, StoredRun } from "./store";
+import type { ReviewStore, ReviewSummaryRow, StoredRun } from "./store";
+
+/** A bb thread as `threads.get` answers. */
+type BbThread = Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["get"]>>;
 
 /** A run as the tab sees it, without the baseline only the server reads. */
 export function publicRun(run: StoredRun): Run {
@@ -59,6 +74,8 @@ export interface NewThreadInput {
   severity: Severity | null;
   anchorContent: string | null;
   body: string;
+  /** The file's revision in the view the thread was made on. */
+  fileRevision?: string | null;
 }
 
 export type AgentAction = "reply" | "resolve" | "dismiss";
@@ -71,12 +88,44 @@ const PROVIDER_NAMES: Record<string, string> = {
   gemini: "Gemini",
 };
 
+/** bb's environment changes that may change a diff, and how they are coalesced (milliseconds). */
+const WORKSPACE_CHANGES: ReadonlySet<string> = new Set(["work-status-changed", "git-refs-changed", "status-changed"]);
+const CHANGE_DEBOUNCE_MS = 400;
+const CHANGE_MAX_WAIT_MS = 2_000;
+/** How long a tab's watch lasts unless renewed; tabs renew every `LEASE_RENEW_MS` while they show. */
+export const LEASE_MS = 90_000;
+export const LEASE_RENEW_MS = 30_000;
+
+/** The most paths the Files view's search lists, and the largest file it shows, in bytes. */
+const FILE_SEARCH_LIMIT = 200;
+const FILE_VIEW_MAX_BYTES = 1024 * 1024;
+
+type Environment = Awaited<ReturnType<BbPluginApi["sdk"]["environments"]["get"]>>;
+
 /** The longest range a thread may cover, in lines. */
 const MAX_RANGE_LINES = 2_000;
 
 export class ReviewService {
   /** Each workspace's state at the end of its last turn, or when a tab first loaded it. */
   private readonly workspaceStates = new Map<string, WorkspaceState>();
+  /** Workspaces a tab has loaded, whose changes outside a turn are checked. */
+  /**
+   * The tabs showing each workspace's reviews right now, each a lease that lapses unless renewed
+   * (`LEASE_MS`), and whether it shows a staged or unstaged view (which needs the index too).
+   */
+  private readonly leases = new Map<string, Map<string, { expiresAt: number; index: boolean }>>();
+  /** Workspaces a tab has watched, whose changes while no tab shows them are only marked. */
+  private readonly known = new Set<string>();
+  /** Workspaces bb changed while no tab showed them: checked once when one shows again. */
+  private readonly dirty = new Set<string>();
+  private stopEnvironmentEvents: (() => void) | null = null;
+  private readonly checks = new Map<string, { timer: ReturnType<typeof setTimeout>; since: number }>();
+  private readonly hostIndexState: HostIndexState;
+  private readonly hostRangeCommits: HostRangeCommits;
+  /** bb's Git plugin, which every diff read goes through, but the host entry's views. */
+  readonly git: GitReads;
+  /** The plugin's host entry: git on the workspace's machine, for the staged, unstaged and range views. */
+  readonly sources: DiffSources;
 
   /** Told of every comment the user writes, after it is stored (for @-mentions); must not throw. */
   onUserComment: (thread: ReviewThread, body: string, viewerThreadId: string | null) => void = () => undefined;
@@ -85,27 +134,57 @@ export class ReviewService {
     private readonly bb: BbPluginApi,
     private readonly store: ReviewStore,
     private readonly settings: () => Promise<ReviewSettings>,
-  ) {}
+    host?: HostGit,
+  ) {
+    this.git = new GitReads(bb.sdk, (message) => new ReviewUnavailable(message));
+    this.sources = { git: this.git, host: host ?? createHostGit(bb) };
+    this.hostIndexState = createHostIndexState(bb);
+    this.hostRangeCommits = createHostRangeCommits(bb);
+  }
+
+  /**
+   * The two commits a range view compares, read on the workspace's machine as the view's diff resolves
+   * them, so an AI run is told the diff the tab shows.
+   */
+  async rangeCommits(environmentId: string, target: Extract<Target, { kind: "range" }>): Promise<{ baseSha: string; headSha: string }> {
+    const environment = await this.bb.sdk.environments.get({ environmentId });
+    if (environment.path === null) throw new ReviewUnavailable("This workspace has no checkout.");
+    try {
+      return await this.hostRangeCommits(environment.hostId, environment.path, { kind: "range", from: target.from, to: target.to, symmetric: target.symmetric });
+    } catch (error) {
+      throw new ReviewUnavailable(`Could not read the range ${rangeText(target)} on the workspace's machine: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
 
   /**
    * The Review tab's whole view of a thread's diff. With `autoTarget` (the tab's first load, when it
    * was not opened on a chosen view), an empty uncommitted view gives way to the changes committed
    * since the base branch, when there are any; when both are empty, the uncommitted view stands.
    */
-  async view(threadId: string, request: TargetRequest, autoTarget = false, reason: LoadReason = "unknown", tab = "?"): Promise<ReviewView> {
+  async view(
+    threadId: string,
+    request: TargetRequest,
+    autoTarget = false,
+    reason: LoadReason = "unknown",
+    tab = "?",
+    ignoreWhitespace = false,
+  ): Promise<ReviewView> {
     try {
       const environment = await workspaceOf(this.bb.sdk, threadId);
       this.bb.log.debug(`Loading the ${request.kind} view of ${threadId}'s workspace ${environment.id} for tab ${tab} (${reason}).`);
       await this.seedWorkspaceState(environment.id);
       const base = request.kind === "branch" || request.kind === "all" ? request.base : undefined;
-      const refs = await workspaceRefs(this.bb.sdk, this.bb.log, environment, base);
+      const refs = await workspaceRefs(this.git, this.bb.log, environment, base);
       let target = resolveTarget(request, refs.defaultBase);
       const settings = await this.settings();
       const patterns = await ignorePatterns(this.bb.sdk, this.bb.log, environment, settings.ignorePatterns, settings.readIgnoreFiles);
-      let diff = await loadDiff(this.bb.sdk, environment, target, patterns);
+      let diff =
+        target.kind === "files"
+          ? { files: [], ignoredPaths: [], truncated: false, mergeBaseRef: null, headRef: null, viewable: false }
+          : await loadDiff(this.sources, this.bb.log, environment, target, patterns, ignoreWhitespace);
       if (autoTarget && target.kind === "uncommitted" && diff.files.length === 0 && refs.defaultBase !== null) {
         const branch: Target = { kind: "branch", base: refs.defaultBase };
-        const committed = await loadDiff(this.bb.sdk, environment, branch, patterns);
+        const committed = await loadDiff(this.sources, this.bb.log, environment, branch, patterns, ignoreWhitespace);
         if (committed.files.length > 0) {
           target = branch;
           diff = committed;
@@ -113,6 +192,7 @@ export class ReviewService {
       }
       const session = this.store.session(environment.id, targetKey(target));
       const threads = this.store.threads(session.id);
+      const files = await withThreadPatches(this.git, this.bb.log, environment, target, diff.files, threads, ignoreWhitespace);
       return {
         ok: true,
         sessionId: session.id,
@@ -121,7 +201,10 @@ export class ReviewService {
         defaultBase: refs.defaultBase,
         currentBranch: refs.currentBranch,
         commits: refs.commits,
-        files: diff.files,
+        mergeBaseRef: diff.mergeBaseRef,
+        headRef: diff.headRef,
+        viewable: diff.viewable,
+        files,
         ignoredPaths: diff.ignoredPaths,
         truncated: diff.truncated,
         threads,
@@ -161,10 +244,21 @@ export class ReviewService {
     this.store.saveViewState(threadId, session.id, state);
   }
 
-  /** Patches bb left to load on demand. */
-  async patches(threadId: string, target: Target, paths: readonly string[]) {
+  /** Patches bb left to load on demand, at the revisions the view's file list gave. */
+  async patches(threadId: string, target: Target, files: readonly { path: string; revision: string }[], ignoreWhitespace = false) {
     const environment = await workspaceOf(this.bb.sdk, threadId);
-    return loadPatches(this.bb.sdk, environment, target, paths);
+    return loadPatches(this.git, environment, target, files, ignoreWhitespace);
+  }
+
+  /**
+   * Marks a file Viewed at the revision the tab showed, or clears its mark. The marks are bb's own,
+   * so bb's diff panel shows the same.
+   */
+  async setViewed(threadId: string, target: Target, path: string, revision: string, viewed: boolean): Promise<void> {
+    if (isHostTarget(target) || target.kind === "files") throw new ReviewError("bb's Viewed marks do not cover the staged, unstaged, range and Any file views.", "not_viewable");
+    const environment = await workspaceOf(this.bb.sdk, threadId);
+    if (viewed) await this.git.markViewed(environment.id, gitTarget(target), path, revision);
+    else await this.git.clearViewed(environment.id, gitTarget(target), path);
   }
 
   /** A session's threads and its runs not yet closed. */
@@ -304,7 +398,7 @@ export class ReviewService {
         if (session !== null) this.publish(session.environmentId, session.id);
       }
     }
-    if (thread.environmentId !== null && this.store.sessionsOf(thread.environmentId).length > 0 && (await this.workspaceChanged(thread.environmentId, thread.id))) {
+    if (thread.environmentId !== null && this.store.sessionsOf(thread.environmentId).length > 0 && (await this.workspaceChanged(thread.environmentId, `A turn of ${thread.id} ended`))) {
       this.signal(thread.environmentId, { kind: "diff" });
     }
   }
@@ -316,10 +410,25 @@ export class ReviewService {
    * Two turns ending together cannot both signal for one change: the compare and the update below
    * run in one step, after the state is read.
    */
-  private async workspaceChanged(environmentId: string, threadId: string): Promise<boolean> {
+  /**
+   * The workspace's state, and, when one of its reviews is of the staged or unstaged changes, what is
+   * staged: the uncommitted state alone does not change when a file is only staged.
+   */
+  private async currentState(environmentId: string): Promise<WorkspaceState> {
+    const state = await workspaceState(this.git, environmentId);
+    const indexed = [...this.activeLeases(environmentId)].some((lease) => lease.index);
+    if (!indexed) return state;
+    const environment = await this.bb.sdk.environments.get({ environmentId });
+    if (environment.path === null) return state;
+    const index = await this.hostIndexState(environment.hostId, environment.path);
+    const summary = `${state.summary}, index ${index.slice(0, 12)}`;
+    return { key: createHash("sha256").update(`${state.key}\0${index}`).digest("hex"), summary };
+  }
+
+  private async workspaceChanged(environmentId: string, cause: string): Promise<boolean> {
     let state: WorkspaceState;
     try {
-      state = await workspaceState(this.bb.sdk, environmentId);
+      state = await this.currentState(environmentId);
     } catch (error) {
       this.bb.log.warn(`Could not read the state of ${environmentId}; telling its tabs to reload: ${error instanceof Error ? error.message : String(error)}`);
       this.workspaceStates.delete(environmentId);
@@ -328,11 +437,11 @@ export class ReviewService {
     const previous = this.workspaceStates.get(environmentId);
     this.workspaceStates.set(environmentId, state);
     if (previous?.key === state.key) {
-      this.bb.log.debug(`A turn of ${threadId} ended; ${environmentId} is unchanged (${state.summary}), so no reload.`);
+      this.bb.log.debug(`${cause}; ${environmentId} is unchanged (${state.summary}), so no reload.`);
       return false;
     }
     this.bb.log.debug(
-      `A turn of ${threadId} ended; ${environmentId} ${previous === undefined ? "had no known state" : `changed from (${previous.summary})`} to (${state.summary}): telling its tabs to reload.`,
+      `${cause}; ${environmentId} ${previous === undefined ? "had no known state" : `changed from (${previous.summary})`} to (${state.summary}): telling its tabs to reload.`,
     );
     return true;
   }
@@ -345,11 +454,97 @@ export class ReviewService {
   private async seedWorkspaceState(environmentId: string): Promise<void> {
     if (this.workspaceStates.has(environmentId)) return;
     try {
-      const state = await workspaceState(this.bb.sdk, environmentId);
+      const state = await this.currentState(environmentId);
       if (!this.workspaceStates.has(environmentId)) this.workspaceStates.set(environmentId, state);
     } catch (error) {
       this.bb.log.debug(`No state recorded for ${environmentId}: ${error instanceof Error ? error.message : String(error)}`);
     }
+  }
+
+  /** The leases on a workspace not lapsed yet; lapsed ones are dropped. */
+  private activeLeases(environmentId: string): Iterable<{ expiresAt: number; index: boolean }> {
+    const tabs = this.leases.get(environmentId);
+    if (tabs === undefined) return [];
+    const now = Date.now();
+    for (const [tab, lease] of tabs) if (lease.expiresAt <= now) tabs.delete(tab);
+    if (tabs.size === 0) this.leases.delete(environmentId);
+    return tabs.values();
+  }
+
+  private shown(environmentId: string): boolean {
+    for (const _lease of this.activeLeases(environmentId)) return true;
+    return false;
+  }
+
+  /**
+   * A tab showing a view of `threadId`'s workspace takes (`active`) or gives back a lease, renewed while
+   * it shows. While a workspace has one, bb's changes made outside any agent's turn (an edit the user
+   * saves, a `git` command, a file staged) are checked: coalesced per workspace, the workspace's
+   * content-sensitive state (each file's patch, and the index when a leased view is staged or
+   * unstaged) decides whether its tabs reload, as at a turn's end, and reading it changes nothing, so
+   * the check cannot set off another. With none, a change only marks the workspace, and the first tab
+   * to show it again has it checked once.
+   */
+  async watch(threadId: string, tab: string, view: Target["kind"], active: boolean): Promise<void> {
+    let environment;
+    try {
+      environment = await workspaceOf(this.bb.sdk, threadId);
+    } catch (error) {
+      // A workspace gone or never there has nothing to watch.
+      if (error instanceof ReviewUnavailable) return;
+      throw error;
+    }
+    const tabs = this.leases.get(environment.id) ?? new Map<string, { expiresAt: number; index: boolean }>();
+    if (!active) {
+      tabs.delete(tab);
+      if (tabs.size === 0) this.leases.delete(environment.id);
+      return;
+    }
+    const wasShown = this.shown(environment.id);
+    tabs.set(tab, { expiresAt: Date.now() + LEASE_MS, index: view === "staged" || view === "unstaged" });
+    this.leases.set(environment.id, tabs);
+    this.known.add(environment.id);
+    this.stopEnvironmentEvents ??= this.bb.sdk.subscribe({
+      event: "environment:changed",
+      callback: (event) => {
+        if (event.id === undefined || !this.known.has(event.id)) return;
+        if (!event.changes.some((change) => WORKSPACE_CHANGES.has(change))) return;
+        if (this.shown(event.id)) this.scheduleCheck(event.id);
+        else this.dirty.add(event.id);
+      },
+    });
+    if (!wasShown && this.dirty.delete(environment.id)) this.scheduleCheck(environment.id);
+  }
+
+  private scheduleCheck(environmentId: string): void {
+    const pending = this.checks.get(environmentId);
+    const now = Date.now();
+    if (pending !== undefined) {
+      clearTimeout(pending.timer);
+      if (now - pending.since >= CHANGE_MAX_WAIT_MS) {
+        this.checks.delete(environmentId);
+        void this.checkChanged(environmentId);
+        return;
+      }
+    }
+    const since = pending?.since ?? now;
+    const timer = setTimeout(() => {
+      this.checks.delete(environmentId);
+      void this.checkChanged(environmentId);
+    }, CHANGE_DEBOUNCE_MS);
+    this.checks.set(environmentId, { timer, since });
+  }
+
+  private async checkChanged(environmentId: string): Promise<void> {
+    if (await this.workspaceChanged(environmentId, "bb saw the workspace change")) this.signal(environmentId, { kind: "diff" });
+  }
+
+  /** Stops watching; the plugin is going away. */
+  dispose(): void {
+    this.stopEnvironmentEvents?.();
+    this.stopEnvironmentEvents = null;
+    for (const pending of this.checks.values()) clearTimeout(pending.timer);
+    this.checks.clear();
   }
 
   /** When the thread's latest own turn started (epoch ms), or null when bb has no record. */
@@ -408,14 +603,234 @@ export class ReviewService {
     return thread;
   }
 
+  /**
+   * The tab changed files in a workspace (a suggestion applied, a revert): its tabs reload, and the
+   * next turn's end compares against the new state.
+   */
+  workspaceEdited(environmentId: string, sessionId: string | null): void {
+    this.workspaceStates.delete(environmentId);
+    this.signal(environmentId, { kind: "diff" });
+    if (sessionId !== null) this.publishSession(sessionId);
+  }
+
   /** Tells open tabs on a session's workspace that its threads or runs changed. */
   publishSession(sessionId: string): void {
     const session = this.store.sessionById(sessionId);
     if (session !== null) this.publish(session.environmentId, session.id);
   }
 
-  private publish(environmentId: string, sessionId: string): void {
+  /** Tells open tabs on a workspace, and the Reviews page, that one of its sessions changed (or went). */
+  publish(environmentId: string, sessionId: string): void {
     this.signal(environmentId, { kind: "threads", sessionId });
+    this.bb.realtime.publish(REVIEWS_CHANNEL, { kind: "threads", sessionId } satisfies RealtimeSignal);
+  }
+
+  /** The most reviews the Reviews page lists. */
+  static readonly LIST_LIMIT = 200;
+
+  /**
+   * The reviews with comment threads, newest first, each with a bb thread to open it in: the thread
+   * whose tab showed it last, or else a thread still working in its workspace. A review with neither
+   * (its workspace archived) is left out, since it can no longer be loaded (`orphanReviews`).
+   */
+  async listReviews(): Promise<ReviewSummary[]> {
+    const rows = this.store.reviewSummaries(ReviewService.LIST_LIMIT);
+    const openerOf = this.openers();
+    const reviews: ReviewSummary[] = [];
+    for (const row of rows) {
+      const thread = await openerOf(row);
+      if (thread === null) continue;
+      reviews.push({
+        sessionId: row.sessionId,
+        environmentId: row.environmentId,
+        target: targetFromKey(row.targetKey),
+        openCount: row.openCount,
+        totalCount: row.totalCount,
+        updatedAt: row.updatedAt,
+        threadId: thread.id,
+        threadTitle: thread.title ?? thread.titleFallback ?? "Untitled thread",
+        projectId: thread.projectId,
+      });
+    }
+    return reviews;
+  }
+
+  /**
+   * The reviews no live bb thread can open: no thread to open them in (`openers`) and their workspace
+   * gone (bb says it is destroyed). The Reviews page leaves them out and offers to delete them; nothing
+   * deletes them unasked. A workspace bb cannot be asked about is not taken for gone.
+   */
+  async orphanReviews(): Promise<OrphanReview[]> {
+    return (await this.orphanCandidates()).map(({ orphan }) => orphan);
+  }
+
+  private async orphanCandidates(): Promise<{ orphan: OrphanReview; runs: StoredRun[] }[]> {
+    const openerOf = this.openers();
+    const gone = new Map<string, boolean>();
+    const orphans: { orphan: OrphanReview; runs: StoredRun[] }[] = [];
+    for (const row of this.store.reviewSummaries()) {
+      const checked = await this.checkOrphan(row, openerOf, gone);
+      if (checked !== null) orphans.push(checked);
+    }
+    return orphans;
+  }
+
+  /**
+   * Whether one review is an orphan now, asked afresh (nothing shared with the checks of other
+   * reviews), for the delete to check right before it deletes it: the review, with the runs (not
+   * closed) it was checked with, or null.
+   */
+  async orphanCheck(sessionId: string): Promise<{ orphan: OrphanReview; runs: StoredRun[] } | null> {
+    const row = this.store.reviewSummaries(1, sessionId)[0];
+    return row === undefined ? null : this.checkOrphan(row, this.openers(), new Map());
+  }
+
+  /**
+   * A review is an orphan when no thread can open it (`openers`), its workspace is gone, and none of
+   * its runs still has a worker, in any workspace (a fixer in a worktree of its own, a run still
+   * starting). The workers are asked last, closest to a delete.
+   */
+  private async checkOrphan(row: ReviewSummaryRow, openerOf: (row: ReviewSummaryRow) => Promise<BbThread | null>, gone: Map<string, boolean>): Promise<{ orphan: OrphanReview; runs: StoredRun[] } | null> {
+    if ((await openerOf(row)) !== null) return null;
+    if (!gone.has(row.environmentId)) gone.set(row.environmentId, await this.workspaceGone(row.environmentId));
+    if (gone.get(row.environmentId) !== true) return null;
+    const runs = this.store.openRuns(row.sessionId);
+    if (await this.hasLiveWorker(runs)) return null;
+    return {
+      orphan: { sessionId: row.sessionId, environmentId: row.environmentId, target: targetFromKey(row.targetKey), openCount: row.openCount, totalCount: row.totalCount, updatedAt: row.updatedAt },
+      runs,
+    };
+  }
+
+  /**
+   * Whether any of these runs still has a worker: one still starting (running, no thread yet), or a
+   * thread that is not archived, wherever it works. A thread bb cannot be asked about counts as live;
+   * a start that failed before it got a thread never had a worker.
+   */
+  private async hasLiveWorker(runs: readonly StoredRun[]): Promise<boolean> {
+    for (const run of runs) {
+      if (run.threadId === null) {
+        if (run.status === "running") return true;
+        continue;
+      }
+      try {
+        if ((await this.bb.sdk.threads.get({ threadId: run.threadId })).archivedAt === null) return true;
+      } catch (error) {
+        this.bb.log.debug(`Could not read run ${run.id}'s thread ${run.threadId}, so its review stays: ${error instanceof Error ? error.message : String(error)}`);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private async workspaceGone(environmentId: string): Promise<boolean> {
+    try {
+      const environment = await this.bb.sdk.environments.get({ environmentId });
+      return environment.status === "destroyed" || environment.path === null;
+    } catch (error) {
+      this.bb.log.debug(`Could not read workspace ${environmentId}, so its reviews stay: ${error instanceof Error ? error.message : String(error)}`);
+      return false;
+    }
+  }
+
+  /** `threads.get`, each thread asked once per call; null when bb cannot give it. */
+  private threadLookup(): (threadId: string) => Promise<BbThread | null> {
+    const threads = new Map<string, BbThread | null>();
+    return async (threadId) => {
+      if (!threads.has(threadId)) threads.set(threadId, await this.bb.sdk.threads.get({ threadId }).catch(() => null));
+      return threads.get(threadId) ?? null;
+    };
+  }
+
+  /**
+   * Finds the bb thread a review opens in, or null: the thread whose tab showed it last, while it is
+   * not archived and still works in the review's workspace, or else one still working there. Lookups
+   * are shared across the rows of one call.
+   */
+  private openers(threadOf = this.threadLookup()): (row: ReviewSummaryRow) => Promise<BbThread | null> {
+    const fallback = new Map<string, string | null>();
+    return async (row) => {
+      let thread = row.viewerThreadId === null ? null : await threadOf(row.viewerThreadId);
+      if (thread === null || thread.archivedAt !== null || thread.environmentId !== row.environmentId) {
+        if (!fallback.has(row.environmentId)) {
+          const listed = await this.bb.sdk.threads.list({ environmentId: row.environmentId, archived: false, limit: 1 }).catch(() => []);
+          fallback.set(row.environmentId, listed[0]?.id ?? null);
+        }
+        const id = fallback.get(row.environmentId) ?? null;
+        thread = id === null ? null : await threadOf(id);
+      }
+      return thread === null || thread.archivedAt !== null ? null : thread;
+    };
+  }
+
+  /**
+   * `bb diff-review open`: asks the windows showing `threadId` to open its review of `request`, at
+   * `file` when given, and returns where the review is and the Reviews page's route for it.
+   */
+  async requestOpen(threadId: string, request: TargetRequest, file: string | null): Promise<{ target: Target; route: string; inDiff: boolean | null }> {
+    const environment = await workspaceOf(this.bb.sdk, threadId);
+    const base = request.kind === "branch" || request.kind === "all" ? request.base : undefined;
+    const refs = await workspaceRefs(this.git, this.bb.log, environment, base);
+    const target = resolveTarget(request, refs.defaultBase);
+    let inDiff: boolean | null = null;
+    if (file !== null) {
+      try {
+        inDiff = (await loadDiff(this.sources, this.bb.log, environment, target, [])).files.some((entry) => entry.path === file);
+      } catch {
+        inDiff = null;
+      }
+    }
+    const address = { threadId, target, file };
+    this.bb.realtime.publish(OPEN_CHANNEL, address);
+    return { target, route: reviewRoute(this.bb.pluginId, address), inDiff };
+  }
+
+  /** The Files view's search: workspace files whose path matches `query`, best first. */
+  async searchFiles(threadId: string, query: string): Promise<{ paths: string[]; truncated: boolean }> {
+    const environment = await this.checkout(threadId);
+    const result = await this.bb.sdk.files.listPaths({ hostId: environment.hostId, path: environment.path, query, limit: FILE_SEARCH_LIMIT, includeFiles: true, includeDirectories: false });
+    const prefix = `${environment.path.replace(/\/$/, "")}/`;
+    return { paths: result.paths.map((entry) => (entry.path.startsWith(prefix) ? entry.path.slice(prefix.length) : entry.path)), truncated: result.truncated };
+  }
+
+  /** One workspace file as the Files view shows it: its text, or why there is none. */
+  async readWorkspaceFile(threadId: string, path: string): Promise<WorkspaceFile> {
+    const environment = await this.checkout(threadId);
+    const absolute = posix.join(environment.path, path);
+    if (!absolute.startsWith(`${environment.path.replace(/\/$/, "")}/`)) throw new ReviewError("That path is outside the workspace.", "invalid_place");
+    let file;
+    try {
+      file = await this.bb.sdk.files.read({ hostId: environment.hostId, path: absolute });
+    } catch (error) {
+      throw new ReviewError(`Could not read ${path}: ${error instanceof Error ? error.message : String(error)}`, "changed");
+    }
+    const bytes = file.contentEncoding === "base64" ? Buffer.from(file.content, "base64") : Buffer.from(file.content, "utf8");
+    if (bytes.byteLength > FILE_VIEW_MAX_BYTES) return { path, content: null, reason: "This file is too large to show here.", revision: file.sha256 };
+    if (bytes.includes(0)) return { path, content: null, reason: "Binary file; nothing to comment on.", revision: file.sha256 };
+    return { path, content: bytes.toString("utf8"), reason: null, revision: file.sha256 };
+  }
+
+  private async checkout(threadId: string): Promise<Environment & { path: string }> {
+    let environment;
+    try {
+      environment = await workspaceOf(this.bb.sdk, threadId);
+    } catch (error) {
+      if (error instanceof ReviewUnavailable) throw new ReviewError(error.message, "diff_unavailable");
+      throw error;
+    }
+    if (environment.path === null) throw new ReviewError("This workspace has no checkout.", "diff_unavailable");
+    return environment as Environment & { path: string };
+  }
+
+  /**
+   * Open and all comment threads: in one workspace's reviews, or with null in the reviews the Reviews
+   * page lists, for its sidebar badge. The two must agree, so a review the page leaves out (its
+   * workspace archived, so it can no longer be opened) is not counted either.
+   */
+  async counts(environmentId: string | null): Promise<{ open: number; total: number }> {
+    if (environmentId !== null) return this.store.threadCounts(environmentId);
+    const reviews = await this.listReviews();
+    return { open: reviews.reduce((sum, review) => sum + review.openCount, 0), total: reviews.reduce((sum, review) => sum + review.totalCount, 0) };
   }
 
   private signal(environmentId: string, signal: RealtimeSignal): void {
@@ -465,5 +880,10 @@ export function targetFromKey(key: string): Target {
   const value = rest.join(":");
   if (kind === "branch" || kind === "all") return { kind, base: value };
   if (kind === "commit") return { kind: "commit", sha: value };
+  if (kind === "staged" || kind === "unstaged" || kind === "files") return { kind };
+  if (kind === "range") {
+    const range = parseRange(value);
+    if (range !== null) return range;
+  }
   throw new Error(`Unknown review session key: ${key}`);
 }

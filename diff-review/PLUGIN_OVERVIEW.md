@@ -3,46 +3,49 @@ and answers each one. It is diffity's review loop on your own working tree, insi
 
 ## What you get
 
-- A Review tab in each thread's side panel, one click away in the thread's title bar, with the diff of
-  the thread's workspace: its uncommitted changes, the changes committed since the base branch, all
-  changes since the base branch, or one of the branch's commits. Split or unified, in bb's code theme,
-  loading as you scroll.
+- A Review tab in each thread's side panel, one click away in the thread's header, with the diff of
+  the thread's workspace: its uncommitted, staged or unstaged changes, the changes committed since the
+  base branch, all changes since the base branch, one of the branch's commits, or a range such as
+  main...feature. Split or unified, in bb's code theme, loading as you scroll, with Hide whitespace
+  and an optional colour-blind palette.
+- Any file: search the workspace for a file, in the diff or not, and comment on its lines.
 - Comments on a line, a range of lines, a whole file or the whole diff, in Markdown, with an optional
-  severity: must fix, suggestion, nit or question. Reply, edit, resolve, reopen or dismiss. Each file
-  shows its comment count, and one switch narrows the diff to the files with comments. Clear review
-  deletes a view's comments and closes its AI runs, to start over.
-- Comments that follow the code as it moves. A comment whose code changed or left the view is listed
-  apart, with the code as it read when you made it.
+  severity: must fix, suggestion, nit or question. Reply, edit, resolve, reopen or dismiss. Comments
+  follow the code as it moves; one whose code changed is listed apart, with the code as it read then.
+- Suggested changes you apply with one click, and Revert for a file's uncommitted change or some of
+  its hunks.
+- Viewed marks per file, shared with bb's own diff panel, that say when a file changed since you
+  viewed it. Find across the diff, Go to a file or comment, and a palette command for every action.
 - Send to agent: pick open comment threads, add a note, and send them to the thread under review,
   queued behind its current turn. The agent answers in each thread from its own chat, and the tab
   shows every answer as it arrives, or "No reply" with a link back to the thread.
-- AI review: an agent reviews the diff, with an optional focus such as security or tests, in a thread
-  under the one being reviewed that you can watch, and leaves its comments in the tab. AI runs use
-  bb's Approve for me mode unless you choose Accept edits.
-- Write @reviewer in a comment and the view's AI reviewer, which already knows the diff, answers in the
-  comment thread.
-- Fix in a new thread: send the comments to a new thread in the same workspace, with the agent and
-  model you pick, instead of the thread under review.
+- AI review, Summarize and Explain: an agent reviews or summarizes the diff, or explains a file or
+  lines, in a thread under the one being reviewed that you can watch, and leaves its comments in the
+  tab. Write @reviewer in a comment and the view's AI reviewer answers in the thread. Fix in a new
+  thread sends the comments to a new thread with the agent you pick.
+- A Reviews page listing every review with comments across projects, with the open count on its
+  sidebar entry, and the count in each thread's Info tab.
 - Ignore patterns for lockfiles and generated files, in the plugin's settings and in the workspace's
   own .diffityignore.
 
 ## How it works
 
-The diff comes from bb itself, from the machine the thread's workspace is on. Comments are stored by
-the plugin on your bb server, per workspace and per view, so they survive closing the tab or bb. The
-agent answers through a bb diff-review command the plugin teaches it with a skill, and only the thread
-the comments were sent to can answer them.
+The diff comes from bb's Git plugin, and the staged, unstaged and range views from git itself, both
+on the machine the thread's workspace is on. Comments are stored by the plugin on your bb server, per
+workspace and per view, so they survive closing the tab or bb. The agent answers through a
+bb diff-review command the plugin teaches it with a skill, and only the thread the comments were sent
+to can answer them.
 
 ## What it costs
 
-Nothing beyond bb: no account, no service and nothing else to install. Fixes, reviews and answers
-are made by agents in bb threads, on your own provider plans; AI runs start with Claude Code unless
-you pick another provider.
+Nothing beyond bb 0.48 or newer: no account, no service and nothing else to install. Fixes, reviews
+and answers are made by agents in bb threads, on your own provider plans; AI runs start with Claude
+Code unless you pick another provider.
 
 ## Limits
 
 - The Review tab draws its own diff; bb's built-in diff panel has no comment hook.
-- bb cannot make a thread read-only, so an AI review is only asked not to edit files; the tab lists any
+- bb cannot make a thread read-only, so an AI run is only asked not to edit files; the tab lists any
   file that changed while it ran.
-- GitHub pull request review, staged versus unstaged changes, viewed marks and applying suggestions are
-  planned, not built.
+- It needs bb's Git plugin, which is on unless you turned it off.
+- GitHub pull request review is planned, not built.

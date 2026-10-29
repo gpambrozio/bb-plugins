@@ -8,16 +8,15 @@ six Paseo plugins in [`gpambrozio/paseo-plugins`](https://github.com/gpambrozio/
 by its own issue in this repository. Plugin code is full-trust and unsandboxed: the server half runs
 **inside the bb server's own process**, and the app half runs inside the bb app.
 
-The plugins pin **`@get-bb/plugin-sdk` 0.6.15**, 0.6.37 where a plugin needs bb 0.46 (`firstmate-crew`,
-`github-board`), or 0.6.79 where it needs bb 0.47 (`herald`, `launchd-jobs`, `screen-sharing`) or a 0.47 API it can do
-without on older bb (`skills`, which keeps `engines.bb >=0.45`), and CI
-builds them all with **bb 0.47.1**. Re-pin a plugin only when it needs a newer API (see `engines`
-below). This file was
-written against bb 0.44.0 and SDK 0.5.29 and re-checked against the 0.45.0 changes; a point that names
-bb 0.44 was observed there and still holds in 0.45 unless it says otherwise. The 0.47 points (SDK
-0.6.75) name the version. When the two
-disagree with this file, the installed SDK wins — its declarations are the contract, and `bb guide
-plugins` is the prose. Fix this file when you find the drift.
+Each plugin pins `@get-bb/plugin-sdk` exactly, at the oldest SDK whose API it uses; its
+`package.json` (`devDependencies` and `engines`) is the record, not this file. CI builds every plugin
+with one bb, the one that ships the newest pin (`BB_VERSION` in `.github/actions/setup-bb/action.yml`):
+a newer bb builds a plugin pinned to an older SDK. Re-pin a plugin only when it needs a newer API (see
+`engines` below), and move CI's bb when the newest pin moves. This file was written against bb 0.44.0
+and SDK 0.5.29 and re-checked at each release since; a point that names a bb version was observed
+there and still holds unless it says otherwise. When the two disagree with this file, the installed
+SDK wins — its declarations are the contract, and `bb guide plugins` is the prose. Fix this file when
+you find the drift.
 
 ## Porting, not transliterating
 
@@ -199,7 +198,7 @@ not a subprocess's. The surface a port uses most:
 | Settings | `bb.settings.define({...})` → `get()`, `experimental_set()`, `onChange()`; the host renders the form; `secret: true` never reaches the app |
 | Storage | `bb.storage.kv` (JSON, 256 KB per value) or `bb.storage.database()` (own SQLite) with append-only `bb.storage.migrate` |
 | bb itself | `bb.sdk` — threads (`spawn`, `send`, `list`, `timeline`, `stop`, `archive`, `delete`, plugin metadata), projects, environments, hosts, files, terminals, providers, skills |
-| A CLI | `bb.cli.register` / `defineCli` — one registration per plugin; output capped at 1 MiB |
+| A CLI | `bb.cli.register` / `defineCli` — one registration per plugin; output capped at 32 MiB (1 MiB before bb 0.48) |
 | Agent tools and instructions | `bb.agents.registerTool`, `bb.agents.configure`, `bb.agents.contributeInstructions` — apply from the next provider session start, never mid-session |
 | Cleanup | `bb.onDispose(fn)` (LIFO); dispose every service, listener and resource |
 
@@ -255,7 +254,15 @@ What a port only learns by running it:
   clear it; tell the user to `bb plugin reload <id>`.
 - **The server's PATH may lack Homebrew.** The server takes the login shell's PATH, but keeps the one
   it was started with when that lookup fails; try `/opt/homebrew/bin` and `/usr/local/bin` by path
-  for a tool such as `gh`, as bb's built-in GitHub plugin does.
+  for a tool such as `gh`, as bb's built-in GitHub plugin does. bb 0.48's `@get-bb/plugin-sdk/process`
+  (`experimental_execHostFile` and friends) is the resolver bb itself uses (login-shell PATH, mise,
+  asdf, Volta, Homebrew); it is a server subpath, so the SDK becomes a real dependency.
+- **bb 0.48 moved every git read into its bundled Git plugin.** `bb.sdk.environments.status` / `diff*`
+  left the typings and run as adapters over `bb.sdk.plugins.callRpc({ pluginId: "bb--git", … })`
+  (`workspaceStatus`, `files`, `patches` keyed by path and revision, `fileSide`, `branches`, `viewed`
+  / `markViewed` / `clearViewed`). The plugin is on by default and the user can turn it off; call it
+  directly and say so when it is off (`diff-review/server/git.ts`). Its contract is not published:
+  keep a copy of the shapes you read.
 
 **Settings are writable from the server** (`experimental_set`), unlike Paseo, where only the
 client could write a settings document. That erases the Paseo split between "settings document"
@@ -336,14 +343,15 @@ mounted once per window. Paseo contribution → bb slot:
 | Paseo | bb |
 | --- | --- |
 | `addSurface` + `addSidebarItem` | `app.slots.navPanel` (own sidebar entry and route `/plugins/<id>/<path>/*`); a live count on the entry is its `experimental_useBadge` hook (bb 0.47, SDK 0.6.75), not a re-registration: bb calls it in the plugin's scope and draws `{ count?, text?, tone?, label }`, or nothing for null. bb 0.46 draws no `experimental_sidebarAccessory`, bb 0.47 ignores it with a warning, and bb 0.46 refuses `experimental_useBadge` as an unknown field, so a badge means `engines.bb >=0.47` (`launchd-jobs/app/health.tsx`). Test the hook by rendering a component that prints what it returns |
-| `addWorkspacePanel` (agent context) | `app.slots.experimental_tab({ context: { kind: "thread" }, availability: "action", icon, … })` (gets `threadId` and `params`; `icon` is required; `useBbNavigate().openThreadPanel({ actionId })` opens it by its id, `herald/app.tsx`). It replaced `app.slots.threadPanelAction` in SDK 0.6.73: bb 0.47 still loads a bundle that uses the old slot, but the 0.6.75 typings have no such slot, and bb 0.46 has no `experimental_tab`; to keep bb 0.45–0.46, call `experimental_tab` only when `app.slots` has it and the old slot otherwise (`skills/app/panel.tsx`) |
+| `addWorkspacePanel` (agent context) | `app.slots.experimental_tab({ context: { kind: "thread" }, availability: "action", icon, … })` (gets `threadId`, `params` and, from bb 0.48, `environment`; `icon` is required). Open it through the panel controller (bb 0.48, SDK 0.6.88): `experimental_useAppPanel().openTab({ tab: { id, context: { kind: "thread" }, availability: "action" }, params? })` in a component, `ctx.experimental_panel` in a command or a thread action's `item` (`diff-review/app/tab.ts`); `useBbNavigate().openThreadPanel` and `ctx.openPanel` are retired from the typings and only run through adapters. `experimental_useTabVisible()` says whether the tab shows. It replaced `app.slots.threadPanelAction` in SDK 0.6.73: bb 0.47 still loads a bundle that uses the old slot, but the 0.6.75 typings have no such slot, and bb 0.46 has no `experimental_tab`; to keep bb 0.45–0.46, call `experimental_tab` only when `app.slots` has it and the old slot otherwise (`skills/app/panel.tsx`) |
 | `addSettingsScreen` | host-rendered form from `bb.settings.define`, plus `app.slots.settingsSection` for anything custom |
 | `addCommandCenterItem` | `app.commands.register` — its `run` gets no navigation; hand it `useBbNavigate()` from an `app.slots.experimental_appOverlay` component that renders nothing (`github-board/app.tsx`) |
 | slash commands, composer pills | `app.composer.customize` (`actions` draws a component in the thread composer's toolbar; a pop-up over the composer is `experimental_popups`, opened with `useComposer().experimental_openPopup` — drawn *inside the composer's `<form>`*, so give every button `type="button"` and stop `mousedown` at its root, see `skills/AGENTS.md`), `app.composer.experimental_registerCommand` for a bindable key, a `{ kind: "command" }` mention through `composer.replace` for the pill bb's `/` menu inserts, `app.slots.pendingInteraction` |
 | `addTimelineRenderer` | `app.slots.experimental_timelineRenderer` (kind `<pluginId>/<name>`), or `messageDirective` — but only for rows a provider bridge or `bb.ui.requestInput` writes. **A plugin cannot append a row to a thread's timeline** (no `timeline.append`); put the context in the prompt and `pluginMetadata` instead |
 | `useRpc(contract)` | `useRpc<typeof rpcContract>().call(method, input)`, the contract imported *as a type* from `./server` |
 | `usePaseo()` | `useSdk()` — prefer it over a plugin RPC for anything that only reads or changes bb state |
-| `navigation.openAgent`, `openExternalUrl` | `useBbNavigate()` — `toThread`, `toProject`, `toPluginPanel`, `openThreadPanel`, `openUrl` (follows the user's in-app/external browser preference; there is no "open a browser tab here") |
+| `navigation.openAgent`, `openExternalUrl` | `useBbNavigate()` — `toThread`, `toProject`, `toPluginPanel`, `openUrl` (follows the user's in-app/external browser preference; there is no "open a browser tab here"), `experimental_openFilePreview` (a workspace file, at `experimental_ref` `HEAD` or a SHA from bb 0.48); a thread's panel tab opens through the panel controller (above) |
+| a button in the thread's title bar | `app.slots.experimental_threadAction({ …, placement: "header", item })` (bb 0.48, SDK 0.6.92): an outline button after Open that folds into the thread menu when narrow; `item` gets `experimental_panel`, `run` does not. It replaced `experimental_threadHeaderAction`, which bb 0.48 still mounts but no longer types. bb 0.48 draws *every* plugin's header thread actions as one split button (the first is its label, the others are in its dropdown), so a plugin that wants a button of its own registers the old slot, through a cast, when `app.slots` has it, and the header thread action otherwise (`diff-review/app/header-action.tsx`) |
 | `theme.colors` tokens | Tailwind semantic classes (`bg-background`, `text-muted-foreground`, `border-border`, `bg-card`, `text-destructive`, `border-warning`/`text-warning-text`, `text-success`, `bg-state-hover`) |
 | host UI kit | shadcn components vendored into `components/ui/` (`npx shadcn add @bb/<name>`), plus host `Markdown`, `ThreadChat`, `ThreadTitle`, `UrlLink` |
 
@@ -402,6 +410,15 @@ bb's own light/dark choice: Tailwind's `dark:` variant compiles to `prefers-colo
 operating system's. The app also has a compact viewport (`isCompactViewport` on some slots); check a
 narrow window too. A throwing slot collapses to a "plugin crashed" chip instead of taking the app down,
 so a blank area is a crash to look for in the console, not a layout bug.
+
+**Scroll your own scroll area, not with `scrollIntoView`.** It scrolls every ancestor that can scroll,
+bb's containers around a tab or panel included (an `overflow: hidden` one too), so a tab's toolbar
+slides out of sight. Set the scroll container's `scrollTop` from the two boxes instead
+(`diff-review/app/scroll-within.ts`), and `focus({ preventScroll: true })`. A programmatic `focus()`
+after a mouse click shows no `focus-visible` ring, so mark a place you moved to some other way. Content
+that grows above the place afterwards (a lazily loaded file) still pushes it away: Chromium's scroll
+anchoring keeps a node in view still, and when the growing element is in view, that node is inside it.
+Hold the place yourself until the layout settles or the user takes over (`holdWithin`, same file).
 
 ## Dependencies — the opposite of the Paseo repo
 

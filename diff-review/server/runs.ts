@@ -17,23 +17,27 @@
  * carries its run id in the plugin's metadata, which `bb.agents.configure` reads to give it the tools;
  * the tools check the caller against the store, so the metadata grants nothing by itself.
  */
+import { posix } from "node:path";
+
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import { mentionsReviewer } from "../shared/mentions";
-import { linesText, parsePatchLines } from "../shared/patch-lines";
+import { contentLines, linesText, parsePatchLines, type PatchLines } from "../shared/patch-lines";
 import {
   describeLocation,
   GENERAL_PATH,
+  reasoningLevelSchema,
   type Execution,
   type ReviewThread,
   type Run,
   type Severity,
   type Side,
+  type Target,
 } from "../shared/types";
 import { ignorePatterns, loadDiff, loadPatches, ReviewUnavailable, uncommittedFingerprint, type Fingerprint } from "./diff";
-import { fixPrompt, reviewerPrompt, reviewPrompt } from "./run-prompts";
+import { explainPrompt, fixPrompt, reviewerPrompt, reviewPrompt, summaryPrompt, type RangeCommits } from "./run-prompts";
 import { publicRun, ReviewError, targetFromKey, type ReviewService, type ReviewSettings } from "./review";
-import { newId, pendingRunThread, type RecordedSend, type ReviewStore } from "./store";
+import { newId, pendingRunThread, type RecordedSend, type ReviewStore, type StoredRun } from "./store";
 import { RUN_METADATA_KEY } from "./tool-names";
 
 type Sdk = BbPluginApi["sdk"];
@@ -76,6 +80,16 @@ export interface AgentCommentInput {
   severity: Severity | null;
   body: string;
 }
+
+/** Whether two reads of a session's runs (not closed) found the same runs, each with the same thread and status. */
+function sameRuns(before: readonly StoredRun[], now: readonly StoredRun[]): boolean {
+  const key = (run: StoredRun) => `${run.id} ${run.threadId ?? ""} ${run.status}`;
+  const seen = new Set(before.map(key));
+  return before.length === now.length && now.every((run) => seen.has(key(run)));
+}
+
+/** A run's row went (its review was deleted) while it was being started. */
+class RunGone extends Error {}
 
 export class RunService {
   /** Each view's latest question to its reviewer: the next one waits for it, so two never race. */
@@ -122,7 +136,7 @@ export class RunService {
       options.models.find((entry) => entry.isDefault) ??
       options.models[0];
     if (model === undefined) return { execution: null, message: `${providerId} lists no models here.` };
-    return { execution: { providerId, model: model.model, reasoningLevel: model.defaultReasoningEffort }, message: null };
+    return { execution: { providerId, model: model.model, reasoningLevel: reasoningLevel(model.defaultReasoningEffort) }, message: null };
   }
 
   /** The permission modes a provider supports in an environment, as bb reports them; null when bb does not say. */
@@ -136,13 +150,18 @@ export class RunService {
     }
   }
 
+  /** For a range view, the commits its diff compares, so a run reads the diff the tab shows; null for other views. */
+  private async rangeCommits(environmentId: string, target: Target): Promise<RangeCommits | null> {
+    return target.kind === "range" ? this.review.rangeCommits(environmentId, target) : null;
+  }
+
   /** Starts an AI review of a session's view, as a child of `threadId`, the thread under review. */
   async startReview(input: { sessionId: string; threadId: string; focuses: readonly string[]; instructions: string; execution: Execution }): Promise<Run> {
     const session = this.review.requireSession(input.sessionId);
     const clears = this.clearCount(session.id);
     const target = targetFromKey(session.targetKey);
     const focus = input.focuses.length === 0 ? null : input.focuses.join(", ");
-    const prompt = reviewPrompt({ target, focus, instructions: input.instructions });
+    const prompt = reviewPrompt({ target, commits: await this.rangeCommits(session.environmentId, target), focus, instructions: input.instructions });
     const title = `Review: ${focus === null ? "changes" : focus}`;
     return this.spawn({
       sessionId: session.id,
@@ -154,6 +173,57 @@ export class RunService {
       execution: input.execution,
       title,
       prompt,
+      baseline: () => this.fingerprint(session.environmentId),
+      clears,
+    });
+  }
+
+  /** "Summarize": a run that leaves a summary of the view's change as a comment on the whole diff. */
+  async startSummary(input: { sessionId: string; threadId: string; execution: Execution }): Promise<Run> {
+    const session = this.review.requireSession(input.sessionId);
+    const clears = this.clearCount(session.id);
+    const target = targetFromKey(session.targetKey);
+    const commits = await this.rangeCommits(session.environmentId, target);
+    return this.spawn({
+      sessionId: session.id,
+      environmentId: session.environmentId,
+      parentThreadId: input.threadId,
+      kind: "summary",
+      reviewThreadId: null,
+      focus: null,
+      execution: input.execution,
+      title: "Summary of the changes",
+      prompt: summaryPrompt(target, commits),
+      baseline: () => this.fingerprint(session.environmentId),
+      clears,
+    });
+  }
+
+  /**
+   * "Explain": a run that explains a file (`startLine` 0) or lines of it and leaves the explanation as
+   * a comment there. It runs the settings' provider and model, as a reviewer an @reviewer starts does.
+   */
+  async startExplain(input: { sessionId: string; threadId: string; filePath: string; side: Side | null; startLine: number; endLine: number; code: string | null }): Promise<Run> {
+    const session = this.review.requireSession(input.sessionId);
+    const clears = this.clearCount(session.id);
+    const place = { filePath: input.filePath, side: input.startLine === 0 ? null : (input.side ?? "new"), startLine: input.startLine, endLine: Math.max(input.endLine, input.startLine), code: input.code };
+    const target = targetFromKey(session.targetKey);
+    const commits = await this.rangeCommits(session.environmentId, target);
+    const lines = place.startLine === 0 ? "" : place.startLine === place.endLine ? `:${place.startLine}` : `:${place.startLine}-${place.endLine}`;
+    return this.spawn({
+      sessionId: session.id,
+      environmentId: session.environmentId,
+      parentThreadId: input.threadId,
+      kind: "explain",
+      reviewThreadId: null,
+      focus: `${place.filePath}${lines}`,
+      execution: async () => {
+        const settings = await this.settings();
+        return { providerId: settings.aiProvider.trim() || "claude-code", model: settings.aiModel.trim(), reasoningLevel: "medium" };
+      },
+      reasoningFromProvider: true,
+      title: `Explain ${posix.basename(place.filePath)}${lines}`,
+      prompt: explainPrompt(target, place, commits),
       baseline: () => this.fingerprint(session.environmentId),
       clears,
     });
@@ -229,7 +299,9 @@ export class RunService {
       const started = await this.review.latestTurnStart(reviewer.threadId).catch(() => null);
       queuedAlready = started !== null && asked.delivery.sentAt > started;
     }
-    // The await above may have seen a Clear review: the question is gone with the review.
+    const askedSession = this.review.requireSession(asked.sessionId);
+    const commits = queuedAlready ? null : await this.rangeCommits(askedSession.environmentId, targetFromKey(askedSession.targetKey));
+    // The awaits above may have seen a Clear review: the question is gone with the review.
     if (this.clearCount(asked.sessionId) !== clears) return null;
     if (queuedAlready) return null;
     const thread = this.review.requireThread(reviewThreadId);
@@ -238,7 +310,7 @@ export class RunService {
     if (reviewer !== null && reviewer.threadId !== null && this.store.run(reviewer.id)?.status !== "closed") {
       const send = this.store.recordSend(session.id, reviewer.threadId, [thread.id], "");
       try {
-        await this.bb.sdk.threads.send({ threadId: reviewer.threadId, mode: "queue-if-active", input: [{ type: "text", text: reviewerPrompt(target, thread, true), mentions: [] }] });
+        await this.bb.sdk.threads.send({ threadId: reviewer.threadId, mode: "queue-if-active", input: [{ type: "text", text: reviewerPrompt(target, thread, true, commits), mentions: [] }] });
         this.store.restartRun(reviewer.id);
         this.review.publishSession(session.id);
         return publicRun(this.store.run(reviewer.id)!);
@@ -264,7 +336,7 @@ export class RunService {
       },
       reasoningFromProvider: true,
       title: `Reviewer: ${describeLocation(thread)}`,
-      prompt: reviewerPrompt(target, thread, false),
+      prompt: reviewerPrompt(target, thread, false, commits),
       baseline: () => this.fingerprint(session.environmentId),
       grants: { reviewThreadIds: [thread.id], note: "" },
       clears,
@@ -300,6 +372,34 @@ export class RunService {
     return { deletedThreads, closedRuns: open.length };
   }
 
+  /**
+   * Deletes the orphan reviews the user confirmed (`sessionIds`, from `orphanReviews`), with everything
+   * of them, one at a time in the order asked. Each is checked afresh right before its own delete
+   * (`orphanCheck`), so one a live thread can open by now, or with a worker live again, stays; so does
+   * one whose runs changed while it was being checked. Nothing live is cancelled: an orphan's runs all
+   * lost their threads, or never had one.
+   */
+  async deleteOrphanReviews(sessionIds: readonly string[]): Promise<{ deleted: number; deletedThreads: number }> {
+    let deleted = 0;
+    let deletedThreads = 0;
+    for (const sessionId of new Set(sessionIds)) {
+      // Each review is checked afresh right before its own delete, not with the others up front.
+      const checked = await this.review.orphanCheck(sessionId);
+      if (checked === null) continue;
+      // No await between here and the delete: a run that started, got a thread or changed meanwhile keeps the review.
+      if (!sameRuns(checked.runs, this.store.openRuns(sessionId))) continue;
+      const { orphan } = checked;
+      // Starts already asked for but not yet written as runs see this and give up.
+      this.clears.set(orphan.sessionId, this.clearCount(orphan.sessionId) + 1);
+      this.store.deleteSession(orphan.sessionId);
+      deleted += 1;
+      deletedThreads += orphan.totalCount;
+      this.review.publish(orphan.environmentId, orphan.sessionId);
+    }
+    this.bb.log.info(`Deleted ${deleted} review(s) no live thread could open, with ${deletedThreads} comment thread(s).`);
+    return { deleted, deletedThreads };
+  }
+
   private async archive(run: { id: string; threadId: string | null }): Promise<void> {
     if (run.threadId === null) return;
     try {
@@ -322,7 +422,7 @@ export class RunService {
     for (const run of runs) {
       const summary = lastAssistantText === null ? null : lastAssistantText.slice(0, SUMMARY_MAX_CHARS);
       let changed: string[] | null = null;
-      if (run.kind === "review" && run.baseline !== null) {
+      if (readsOnly(run.kind) && run.baseline !== null) {
         const session = this.store.sessionById(run.sessionId);
         if (session !== null) changed = changedFiles(JSON.parse(run.baseline) as Fingerprint, await this.fingerprint(session.environmentId));
       }
@@ -337,17 +437,18 @@ export class RunService {
    * (as diffity's `add_comment` does).
    */
   async addComment(callerThreadId: string, input: AgentCommentInput): Promise<ReviewThread> {
-    const run = this.store.runsOfThread(callerThreadId).find((row) => row.kind === "review");
-    if (run === undefined) throw new ReviewError("Only an AI review run can add comments; answer the threads sent to you instead.", "not_a_review_run");
+    const run = this.store.runsOfThread(callerThreadId).find((row) => readsOnly(row.kind));
+    if (run === undefined) throw new ReviewError("Only an AI review, summary or explanation run can add comments; answer the threads sent to you instead.", "not_a_review_run");
     const session = this.review.requireSession(run.sessionId);
     const body = input.body.trim() === "" ? null : input.body;
     if (body === null) throw new ReviewError("The comment is empty.", "empty_text");
     let anchorContent: string | null = null;
+    let fileRevision: string | null = null;
     if (input.filePath !== GENERAL_PATH) {
-      const patch = await this.patchOf(session.environmentId, session.targetKey, input.filePath);
+      const { lines, revision } = await this.linesOf(session.environmentId, session.targetKey, input.filePath);
+      fileRevision = revision;
       if (input.startLine > 0) {
         const side = input.side ?? "new";
-        const lines = parsePatchLines(patch);
         const endLine = Math.max(input.endLine, input.startLine);
         anchorContent = linesText(lines, side, input.startLine, endLine);
         if (anchorContent === null) {
@@ -364,10 +465,34 @@ export class RunService {
     if (this.store.runsOfThread(callerThreadId).every((row) => row.id !== run.id)) {
       throw new ReviewError("This review run was closed; its comments are no longer taken.", "not_a_review_run");
     }
-    return this.review.createAgentThread({ ...input, sessionId: session.id, anchorContent, body }, authorName);
+    return this.review.createAgentThread({ ...input, sessionId: session.id, anchorContent, body, fileRevision }, authorName);
   }
 
-  private async patchOf(environmentId: string, targetKey: string, path: string): Promise<string> {
+  /**
+   * The lines a comment on `path` may be on: the diff's, or in the Any file view the file's own (read
+   * through bb on the workspace's machine), with the revision the thread keeps.
+   */
+  private async linesOf(environmentId: string, targetKey: string, path: string): Promise<{ lines: PatchLines; revision: string }> {
+    if (targetFromKey(targetKey).kind !== "files") {
+      const { patch, revision } = await this.patchOf(environmentId, targetKey, path);
+      return { lines: parsePatchLines(patch), revision };
+    }
+    const environment = await this.bb.sdk.environments.get({ environmentId });
+    const absolute = environment.path === null ? null : posix.join(environment.path, path);
+    if (environment.path === null || absolute === null || !absolute.startsWith(`${environment.path.replace(/\/$/, "")}/`)) {
+      throw new ReviewError(`${path} is not a file of this workspace.`, "file_not_in_diff");
+    }
+    let file;
+    try {
+      file = await this.bb.sdk.files.read({ hostId: environment.hostId, path: absolute });
+    } catch (error) {
+      throw new ReviewError(`Could not read ${path}: ${error instanceof Error ? error.message : String(error)}`, "file_not_in_diff");
+    }
+    const content = file.contentEncoding === "base64" ? Buffer.from(file.content, "base64").toString("utf8") : file.content;
+    return { lines: contentLines(content), revision: file.sha256 };
+  }
+
+  private async patchOf(environmentId: string, targetKey: string, path: string): Promise<{ patch: string; revision: string }> {
     // Reads the ignore files like a tab's load does; this line tells the two apart in the log.
     this.bb.log.debug(`Reading the diff of ${environmentId} to check a review comment on ${path}.`);
     const environment = await this.bb.sdk.environments.get({ environmentId });
@@ -376,7 +501,7 @@ export class RunService {
     const patterns = await ignorePatterns(this.bb.sdk, this.bb.log, environment, settings.ignorePatterns, settings.readIgnoreFiles);
     let diff;
     try {
-      diff = await loadDiff(this.bb.sdk, environment, target, patterns);
+      diff = await loadDiff(this.review.sources, this.bb.log, environment, target, patterns);
     } catch (error) {
       if (error instanceof ReviewUnavailable) throw new ReviewError(error.message, "diff_unavailable");
       throw error;
@@ -386,10 +511,16 @@ export class RunService {
       const shown = diff.files.slice(0, 40).map((entry) => entry.path);
       throw new ReviewError(`${path} is not in the diff under review. Files in it: ${shown.join(", ")}${diff.files.length > shown.length ? ", …" : ""}.`, "file_not_in_diff");
     }
-    if (file.patch !== null) return file.patch;
-    const [loaded] = await loadPatches(this.bb.sdk, environment, target, [path]);
+    if (file.patch !== null) return { patch: file.patch, revision: file.revision };
+    let loaded;
+    try {
+      [loaded] = await loadPatches(this.review.git, environment, target, [file]);
+    } catch (error) {
+      if (error instanceof ReviewUnavailable) throw new ReviewError(error.message, "diff_unavailable");
+      throw error;
+    }
     if (loaded === undefined) throw new ReviewError(`bb gave no diff for ${path}.`, "file_not_in_diff");
-    return loaded.patch;
+    return { patch: loaded.patch, revision: file.revision };
   }
 
   private openThreads(sessionId: string, ids: readonly string[]): ReviewThread[] {
@@ -478,12 +609,14 @@ export class RunService {
         providerId: execution.providerId,
         model: execution.model === "" ? null : execution.model,
       });
-      if (this.store.run(id)?.status === "closed") {
+      const before = this.store.run(id);
+      if (before === null) throw new RunGone();
+      if (before.status === "closed") {
         // Cancelled before bb was asked: no thread will ever take its comments, so they go back to
         // whoever had them (Clear review already deleted them, which leaves nothing to undo).
         if (grant !== null) this.store.dropSend(grant);
         this.review.publishSession(input.sessionId);
-        return publicRun(this.store.run(id)!);
+        return publicRun(before);
       }
       const thread = await this.bb.sdk.threads.spawn({
         projectId: environment.projectId,
@@ -500,9 +633,15 @@ export class RunService {
       });
       // Already bound if the thread called in first; binding again is a no-op.
       this.store.bindRun(id, thread.id);
-      // Closed (Close, Clear review) while bb was starting it: that path had no thread to archive.
-      if (this.store.run(id)?.status === "closed") await this.archive({ id, threadId: thread.id });
+      // Closed (Close, Clear review) or deleted with its review while bb was starting it: that path
+      // had no thread to archive.
+      const after = this.store.run(id);
+      if (after === null || after.status === "closed") await this.archive({ id, threadId: thread.id });
+      if (after === null) throw new RunGone();
     } catch (error) {
+      if (error instanceof RunGone || this.store.run(id) === null) {
+        throw new ReviewError("The review was deleted while this was being started; nothing was kept.", "cleared");
+      }
       if (grant !== null) this.store.dropSend(grant);
       this.store.finishRun(id, "failed", `Could not start the thread: ${error instanceof Error ? error.message : String(error)}`, null);
     }
@@ -550,8 +689,22 @@ export class RunService {
 
   /** The workspace's uncommitted changes, one fingerprint per file. */
   private async fingerprint(environmentId: string): Promise<Fingerprint> {
-    return (await uncommittedFingerprint(this.bb.sdk, environmentId)).prints;
+    return (await uncommittedFingerprint(this.review.git, environmentId)).prints;
   }
+}
+
+/**
+ * A model's default reasoning as a level bb's spawn takes. Providers name their own efforts; one
+ * bb's spawn does not know runs at "medium".
+ */
+export function reasoningLevel(effort: string): Execution["reasoningLevel"] {
+  const parsed = reasoningLevelSchema.safeParse(effort);
+  return parsed.success ? parsed.data : "medium";
+}
+
+/** Runs that only read and comment: they are watched for edits, and may open comment threads. */
+export function readsOnly(kind: Run["kind"]): boolean {
+  return kind === "review" || kind === "summary" || kind === "explain";
 }
 
 /** Files whose uncommitted change differs between two fingerprints, sorted. */

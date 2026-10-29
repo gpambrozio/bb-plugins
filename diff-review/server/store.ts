@@ -93,12 +93,28 @@ export const MIGRATIONS: string[] = [
      previous_delivery TEXT,
      PRIMARY KEY (send_id, thread_id)
    )`,
+  // The revision of the file a thread was made on, as bb's Git plugin gave it, to tell that the file
+  // changed since.
+  `ALTER TABLE review_threads ADD COLUMN file_revision TEXT`,
+  // Summaries and explanations are review-kind runs (they read and comment, never edit) with a
+  // purpose; the table's kind check predates them and SQLite cannot widen it in place.
+  `ALTER TABLE runs ADD COLUMN purpose TEXT`,
 ];
 
 export interface Session {
   id: string;
   environmentId: string;
   targetKey: string;
+}
+
+export interface ReviewSummaryRow {
+  sessionId: string;
+  environmentId: string;
+  targetKey: string;
+  openCount: number;
+  totalCount: number;
+  updatedAt: number;
+  viewerThreadId: string | null;
 }
 
 export interface NewThread {
@@ -110,6 +126,8 @@ export interface NewThread {
   severity: Severity | null;
   anchorContent: string | null;
   body: string;
+  /** The file's revision in the diff the thread was made on; null for a whole-diff thread or when not known. */
+  fileRevision?: string | null;
 }
 
 export interface NewComment {
@@ -129,6 +147,7 @@ interface ThreadRow {
   status: ThreadStatus;
   severity: Severity | null;
   anchor_content: string | null;
+  file_revision: string | null;
   send_id: string | null;
   delivery: DeliveryState | null;
   created_at: number;
@@ -158,6 +177,7 @@ interface RunRow {
   id: string;
   session_id: string;
   kind: RunKind;
+  purpose: "summary" | "explain" | null;
   bb_thread_id: string | null;
   review_thread_id: string | null;
   focus: string | null;
@@ -256,10 +276,10 @@ export class ReviewStore {
     this.db.transaction(() => {
       this.db
         .prepare(
-          `INSERT INTO review_threads (id, session_id, file_path, side, start_line, end_line, severity, anchor_content, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO review_threads (id, session_id, file_path, side, start_line, end_line, severity, anchor_content, file_revision, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
-        .run(id, input.sessionId, input.filePath, input.side, input.startLine, input.endLine, input.severity, input.anchorContent, at, at);
+        .run(id, input.sessionId, input.filePath, input.side, input.startLine, input.endLine, input.severity, input.anchorContent, input.fileRevision ?? null, at, at);
       this.insertComment({ threadId: id, authorType: author.type, authorName: author.name, body: input.body }, at);
     })();
     return this.thread(id)!;
@@ -404,6 +424,41 @@ export class ReviewStore {
   }
 
   /** The sessions of a workspace. */
+  /**
+   * Every session with comment threads (or only `sessionId`), newest activity first (at most `limit`,
+   * all by default): its
+   * counts, and the bb thread whose Review tab opened it last (null when no tab kept state for it, as
+   * for a review only an agent wrote).
+   */
+  reviewSummaries(limit = -1, sessionId: string | null = null): ReviewSummaryRow[] {
+    return this.db
+      .prepare<[string | null, string | null, number], ReviewSummaryRow>(
+        `SELECT s.id AS sessionId, s.environment_id AS environmentId, s.target_key AS targetKey,
+                SUM(CASE WHEN t.status = 'open' THEN 1 ELSE 0 END) AS openCount,
+                COUNT(t.id) AS totalCount,
+                MAX(t.updated_at) AS updatedAt,
+                (SELECT v.thread_id FROM view_states v WHERE v.session_id = s.id ORDER BY v.updated_at DESC LIMIT 1) AS viewerThreadId
+         FROM review_sessions s JOIN review_threads t ON t.session_id = s.id
+         WHERE ? IS NULL OR s.id = ?
+         GROUP BY s.id
+         ORDER BY updatedAt DESC
+         LIMIT ?`,
+      )
+      .all(sessionId, sessionId, limit);
+  }
+
+  /** Open and all comment threads, in one workspace's sessions or in all of them. */
+  threadCounts(environmentId: string | null): { open: number; total: number } {
+    const row = this.db
+      .prepare<[string | null, string | null], { open: number | null; total: number }>(
+        `SELECT SUM(CASE WHEN t.status = 'open' THEN 1 ELSE 0 END) AS open, COUNT(t.id) AS total
+         FROM review_threads t JOIN review_sessions s ON s.id = t.session_id
+         WHERE ? IS NULL OR s.environment_id = ?`,
+      )
+      .get(environmentId, environmentId)!;
+    return { open: row.open ?? 0, total: row.total };
+  }
+
   sessionsOf(environmentId: string): Session[] {
     return this.db
       .prepare<[string], { id: string; target_key: string }>("SELECT id, target_key FROM review_sessions WHERE environment_id = ?")
@@ -415,12 +470,13 @@ export class ReviewStore {
     const id = input.id ?? newId();
     const at = this.now();
     const finished = input.status === "running" ? null : at;
+    const purpose = input.kind === "summary" || input.kind === "explain" ? input.kind : null;
     this.db
       .prepare(
-        `INSERT INTO runs (id, session_id, kind, bb_thread_id, review_thread_id, focus, provider_id, model, status, summary, baseline, created_at, finished_at, parent_thread_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO runs (id, session_id, kind, purpose, bb_thread_id, review_thread_id, focus, provider_id, model, status, summary, baseline, created_at, finished_at, parent_thread_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(id, input.sessionId, input.kind, input.bbThreadId, input.reviewThreadId, input.focus, input.providerId, input.model, input.status, input.summary ?? null, input.baseline ?? null, at, finished, input.parentThreadId ?? null);
+      .run(id, input.sessionId, purpose === null ? input.kind : "review", purpose, input.bbThreadId, input.reviewThreadId, input.focus, input.providerId, input.model, input.status, input.summary ?? null, input.baseline ?? null, at, finished, input.parentThreadId ?? null);
     return this.run(id)!;
   }
 
@@ -454,7 +510,7 @@ export class ReviewStore {
   reviewerRun(sessionId: string): StoredRun | null {
     const row = this.db
       .prepare<[string], RunRow>(
-        "SELECT * FROM runs WHERE session_id = ? AND kind = 'review' AND status != 'closed' AND bb_thread_id IS NOT NULL ORDER BY created_at DESC, rowid DESC LIMIT 1",
+        "SELECT * FROM runs WHERE session_id = ? AND kind = 'review' AND purpose IS NULL AND status != 'closed' AND bb_thread_id IS NOT NULL ORDER BY created_at DESC, rowid DESC LIMIT 1",
       )
       .get(sessionId);
     return row === undefined ? null : toRun(row);
@@ -557,6 +613,20 @@ export class ReviewStore {
     })();
   }
 
+  /**
+   * Deletes a session and everything of it: threads and their comments, sends, runs and each tab's
+   * kept state. Returns the runs that were still open, whose threads the caller archives.
+   */
+  deleteSession(sessionId: string): StoredRun[] {
+    return this.db.transaction(() => {
+      const open = this.openRuns(sessionId);
+      // Threads first: they point at sends, which the session's delete takes with it.
+      this.db.prepare("DELETE FROM review_threads WHERE session_id = ?").run(sessionId);
+      this.db.prepare("DELETE FROM review_sessions WHERE id = ?").run(sessionId);
+      return open;
+    })();
+  }
+
   private insertComment(input: NewComment, at: number): string {
     const id = newId();
     this.db
@@ -592,6 +662,7 @@ export class ReviewStore {
       status: row.status,
       severity: row.severity,
       anchorContent: row.anchor_content,
+      fileRevision: row.file_revision,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       comments: byThread.get(row.id) ?? [],
@@ -607,7 +678,7 @@ function toRun(row: RunRow): StoredRun {
   return {
     id: row.id,
     sessionId: row.session_id,
-    kind: row.kind,
+    kind: row.purpose ?? row.kind,
     threadId: row.bb_thread_id,
     reviewThreadId: row.review_thread_id,
     focus: row.focus,

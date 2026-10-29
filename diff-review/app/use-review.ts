@@ -3,6 +3,10 @@
  * A `threads` signal re-reads the session's threads; a `diff` signal (the workspace changed by the end
  * of an agent's turn) reloads the whole view. Signals are not replayed, so a reconnect reloads too.
  *
+ * The server also sends `diff` when bb sees the workspace change outside a turn and its content did
+ * (`ReviewService.watchChanges`). While the tab is hidden (its panel closed, another tab chosen) bb keeps it mounted;
+ * reloads then wait until it shows again, and run once however many signals came.
+ *
  * Every update lands in place: whatever came back unchanged keeps its old object, so React and
  * Pierre (which redraws a file's diff whenever its annotations array is a new one) leave it alone,
  * and only the thread an agent answered or the file that changed is drawn again. A patch loaded on
@@ -13,7 +17,7 @@ import { useRealtime, useRealtimeConnectionState, useRpc } from "@get-bb/plugin-
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { RpcContract } from "../shared/contract";
-import { environmentChannel, realtimeSignalSchema, type DiffFile, type LoadReason, type ReviewThread, type ReviewView, type Run, type Target, type TargetRequest } from "../shared/types";
+import { environmentChannel, realtimeSignalSchema, type DiffFile, type LoadReason, type ReviewThread, type ReviewView, type Run, type Target, type TargetRequest, type Viewed } from "../shared/types";
 
 export type ReadyView = Extract<ReviewView, { ok: true }>;
 
@@ -48,8 +52,8 @@ export function shareById<T extends { id: string }>(previous: readonly T[], next
 
 /**
  * A reloaded view merged into the one on screen: unchanged files, threads and runs keep their objects.
- * An on-demand file whose patch the new load did not send keeps showing the patch it had, marked
- * stale, until the loader fetches it again.
+ * A file whose patch the new load did not send (bb sends only some up front, "auto" files included)
+ * keeps showing the patch it had, marked stale, until the loader fetches it again.
  */
 export function mergeView(previous: ReadyView, previousStale: ReadonlySet<string>, next: ReadyView): { view: ReadyView; stale: ReadonlySet<string> } {
   const before = new Map(previous.files.map((file) => [file.path, file]));
@@ -58,7 +62,7 @@ export function mergeView(previous: ReadyView, previousStale: ReadonlySet<string
     const old = before.get(file.path);
     if (old === undefined) return file;
     if (!previousStale.has(file.path) && same(old, file)) return old;
-    if (file.patch === null && old.patch !== null && file.loadMode === "on_demand") {
+    if (file.patch === null && old.patch !== null && !file.binary && file.loadMode !== "too_large") {
       stale.add(file.path);
       return { ...file, patch: old.patch, patchTruncated: old.patchTruncated };
     }
@@ -82,13 +86,31 @@ export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/**
- * `autoTarget`: let the first load replace an empty uncommitted view with the branch's commits (the
- * server decides). `onTarget` is then told the view it landed on, so the caller's picker follows; that
- * view is not loaded a second time.
- */
-export function useReview(threadId: string, target: TargetRequest, autoTarget = false, onTarget?: (target: Target) => void) {
+/** How often a showing tab renews its watch; the server lets one lapse after 90 seconds. */
+const LEASE_RENEW_MS = 30_000;
+
+/** Reasons a load waits for while the tab is hidden: the workspace may have changed. */
+const DEFERRABLE: ReadonlySet<LoadReason> = new Set(["diff-signal", "reconnect"]);
+
+export interface ReviewOptions {
+  /** The thread's environment as bb gave the tab, so signals are heard from the first render. */
+  environmentId?: string | null;
+  /** Let the first load replace an empty uncommitted view with the branch's commits (the server decides). */
+  autoTarget?: boolean;
+  /** Told the view the first load landed on, so the caller's picker follows; it is not loaded again. */
+  onTarget?: (target: Target) => void;
+  ignoreWhitespace?: boolean;
+  /** Whether the review shows (its tab selected in an open panel); a hidden one waits to reload. */
+  visible?: boolean;
+}
+
+export function useReview(threadId: string, target: TargetRequest, options: ReviewOptions = {}) {
+  const { autoTarget = false, onTarget, ignoreWhitespace = false, visible = true } = options;
   const rpc = useRpc<RpcContract>();
+  const visibleRef = useRef(visible);
+  visibleRef.current = visible;
+  // A load a signal asked for while the tab was hidden, run when it shows.
+  const deferred = useRef<LoadReason | null>(null);
   const [state, setState] = useState<ReviewState>({ status: "loading" });
   // Loads can overlap (a signal during a load); only the latest one lands.
   const generation = useRef(0);
@@ -111,7 +133,11 @@ export function useReview(threadId: string, target: TargetRequest, autoTarget = 
   const loadRef = useRef<(reason: LoadReason) => Promise<void>>(async () => undefined);
 
   const load = useCallback(async (reason: LoadReason) => {
-    if (inFlight.current && (reason === "diff-signal" || reason === "reconnect")) {
+    if (DEFERRABLE.has(reason) && !visibleRef.current) {
+      deferred.current = reason;
+      return;
+    }
+    if (inFlight.current && DEFERRABLE.has(reason)) {
       queued.current = reason;
       return;
     }
@@ -121,7 +147,14 @@ export function useReview(threadId: string, target: TargetRequest, autoTarget = 
     autoPending.current = false;
     setState((previous) => (previous.status === "ready" ? { ...previous, refreshing: true } : { status: "loading" }));
     try {
-      const view = await rpc.call("getReview", { threadId, target: JSON.parse(targetJson) as TargetRequest, reason, tab, ...(auto ? { autoTarget: true } : {}) });
+      const view = await rpc.call("getReview", {
+        threadId,
+        target: JSON.parse(targetJson) as TargetRequest,
+        reason,
+        tab,
+        ...(auto ? { autoTarget: true } : {}),
+        ...(ignoreWhitespace ? { ignoreWhitespace: true } : {}),
+      });
       if (mine !== generation.current) return;
       setState((previous) => {
         if (!view.ok) return { status: "unavailable", message: view.message };
@@ -146,21 +179,46 @@ export function useReview(threadId: string, target: TargetRequest, autoTarget = 
         if (next !== null) void loadRef.current(next);
       }
     }
-  }, [rpc, threadId, targetJson, tab]);
+  }, [rpc, threadId, targetJson, tab, ignoreWhitespace]);
   loadRef.current = load;
 
   const firstLoad = useRef(true);
+  const lastWhitespace = useRef(ignoreWhitespace);
   useEffect(() => {
-    if (adopted.current === targetJson) {
+    const whitespace = lastWhitespace.current !== ignoreWhitespace;
+    lastWhitespace.current = ignoreWhitespace;
+    if (adopted.current === targetJson && !whitespace) {
       adopted.current = null;
       return;
     }
-    void load(firstLoad.current ? "open" : "view");
+    void load(firstLoad.current ? "open" : whitespace ? "whitespace" : "view");
     firstLoad.current = false;
-  }, [load, targetJson]);
+  }, [load, targetJson, ignoreWhitespace]);
+
+  // A reload asked for while the tab was hidden runs once it shows.
+  useEffect(() => {
+    if (!visible || deferred.current === null) return;
+    const reason = deferred.current;
+    deferred.current = null;
+    void loadRef.current(reason);
+  }, [visible]);
 
   const sessionId = state.status === "ready" ? state.view.sessionId : null;
-  const environmentId = state.status === "ready" ? state.view.environmentId : null;
+  const viewKind = state.status === "ready" ? state.view.target.kind : null;
+
+  // While the tab shows, it holds the server's watch on its workspace (bb's changes outside a turn are
+  // checked), renewed before it lapses and given back when the tab hides or closes.
+  useEffect(() => {
+    if (!visible || sessionId === null || viewKind === null) return;
+    const lease = (active: boolean) => void rpc.call("watchWorkspace", { threadId, tab, view: viewKind, active }).catch(() => undefined);
+    lease(true);
+    const renew = setInterval(() => lease(true), LEASE_RENEW_MS);
+    return () => {
+      clearInterval(renew);
+      lease(false);
+    };
+  }, [visible, sessionId, viewKind, rpc, threadId, tab]);
+  const environmentId = options.environmentId ?? (state.status === "ready" ? state.view.environmentId : null);
 
   const refreshThreads = useCallback(async () => {
     if (sessionId === null) return;
@@ -194,6 +252,15 @@ export function useReview(threadId: string, target: TargetRequest, autoTarget = 
       const others = previous.view.runs.filter((row) => row.id !== run.id);
       const runs = run.status === "closed" ? others : [run, ...others];
       return { ...previous, view: { ...previous.view, runs } };
+    });
+  }, []);
+
+  /** Sets a file's Viewed mark in place, as the tab just asked bb to. */
+  const putViewed = useCallback((sessionId: string, path: string, viewed: Viewed) => {
+    setState((previous) => {
+      if (previous.status !== "ready" || previous.view.sessionId !== sessionId) return previous;
+      const files = previous.view.files.map((file) => (file.path === path && file.viewed !== viewed ? { ...file, viewed } : file));
+      return { ...previous, view: { ...previous.view, files } };
     });
   }, []);
 
@@ -232,5 +299,5 @@ export function useReview(threadId: string, target: TargetRequest, autoTarget = 
     if (connection === "connected" && previous !== "connected") void loadRef.current("reconnect");
   }, [connection]);
 
-  return { state, reload: load, putThread, putRun, putPatches, refreshThreads };
+  return { state, reload: load, putThread, putRun, putPatches, putViewed, refreshThreads };
 }

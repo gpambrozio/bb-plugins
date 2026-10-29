@@ -1,6 +1,6 @@
 // diff-review — the server entry.
 //
-// The Review tab's data (diffs from bb's environment APIs, threads and comments in the plugin's own
+// The Review tab's data (diffs from bb's Git plugin, threads and comments in the plugin's own
 // SQLite), "Send to agent" into the thread under review, AI runs in threads of their own (reviews,
 // questions to a view's reviewer with @reviewer, fixes in a new thread), and `bb diff-review` and the `diff_review_*` tools, which agents
 // answer each comment thread with. See AGENTS.md.
@@ -8,6 +8,9 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import { rpcContract } from "./shared/contract";
 import { diffReviewCli } from "./server/cli";
+import { WorkspaceEdits } from "./server/edits";
+import { createHostRevert } from "./server/host-git";
+import { refusing } from "./server/refusal";
 import { ReviewService } from "./server/review";
 import { RUN_PERMISSION_MODES, RunService } from "./server/runs";
 import { RUN_METADATA_KEY, TOOL_NAMES } from "./server/tool-names";
@@ -31,6 +34,12 @@ export default async function plugin(bb: BbPluginApi) {
       label: "Read the workspace's .diffityignore",
       description: "Also leave out what `.diffityignore` and `.git/info/diffityignore` in the workspace list, as diffity does.",
       default: true,
+    },
+    colorBlindDiffs: {
+      type: "boolean",
+      label: "Colour-blind diff colours",
+      description: "Show added lines in blue and removed lines in orange, instead of green and red, in the Review tab.",
+      default: false,
     },
     aiProvider: {
       type: "string",
@@ -62,10 +71,17 @@ export default async function plugin(bb: BbPluginApi) {
   const service = new ReviewService(bb, store, () => settings.get());
   const runs = new RunService(bb, store, service, () => settings.get());
   service.onUserComment = (thread, body, viewerThreadId) => runs.onUserComment(thread, body, viewerThreadId);
+  bb.onDispose(() => service.dispose());
+  const edits = new WorkspaceEdits(bb.sdk, store, service.git, createHostRevert(bb), (environmentId, sessionId) => service.workspaceEdited(environmentId, sessionId));
 
-  bb.rpc.register(rpcContract, {
-    getReview: ({ threadId, target, autoTarget, reason, tab }) => service.view(threadId, target, autoTarget === true, reason, tab),
-    loadPatches: async ({ threadId, target, paths }) => ({ patches: await service.patches(threadId, target, paths) }),
+  bb.rpc.register(rpcContract, refusing<typeof rpcContract>({
+    getReview: ({ threadId, target, autoTarget, reason, tab, ignoreWhitespace }) =>
+      service.view(threadId, target, autoTarget === true, reason, tab, ignoreWhitespace === true),
+    loadPatches: async ({ threadId, target, files, ignoreWhitespace }) => ({ patches: await service.patches(threadId, target, files, ignoreWhitespace === true) }),
+    setViewed: async ({ threadId, target, path, revision, viewed }) => {
+      await service.setViewed(threadId, target, path, revision, viewed);
+      return { ok: true as const };
+    },
     listThreads: ({ sessionId }) => service.sessionState(sessionId),
     createThread: ({ threadId, ...input }) => ({ thread: service.createThread(input, threadId ?? null) }),
     addComment: ({ reviewThreadId, body, threadId }) => ({ thread: service.addUserComment(reviewThreadId, body, threadId ?? null) }),
@@ -78,17 +94,34 @@ export default async function plugin(bb: BbPluginApi) {
     send: (input) => service.send(input),
     runDefaults: ({ threadId }) => runs.defaults(threadId),
     startReview: async (input) => ({ run: await runs.startReview(input) }),
+    startSummary: async (input) => ({ run: await runs.startSummary(input) }),
+    startExplain: async (input) => ({ run: await runs.startExplain(input) }),
     fixInNewThread: (input) => runs.fixInNewThread(input),
     closeRun: async ({ runId }) => {
       await runs.close(runId);
       return { ok: true as const };
     },
     clearReview: ({ sessionId }) => runs.clearReview(sessionId),
+    orphanReviews: async () => ({ reviews: await service.orphanReviews() }),
+    deleteOrphanReviews: ({ sessionIds }) => runs.deleteOrphanReviews(sessionIds),
+    applySuggestion: async (input) => ({ thread: await edits.applySuggestion(input) }),
+    revertChanges: async (input) => {
+      await edits.revert(input);
+      return { ok: true as const };
+    },
+    searchFiles: ({ threadId, query }) => service.searchFiles(threadId, query),
+    readFile: ({ threadId, path }) => service.readWorkspaceFile(threadId, path),
+    watchWorkspace: async ({ threadId, tab, view, active }) => {
+      await service.watch(threadId, tab, view as never, active);
+      return { ok: true as const };
+    },
+    listReviews: async () => ({ reviews: await service.listReviews() }),
+    reviewCounts: ({ environmentId }) => service.counts(environmentId ?? null),
     saveViewState: ({ threadId, sessionId, state }) => {
       service.saveViewState(threadId, sessionId, state);
       return { ok: true as const };
     },
-  });
+  }));
 
   bb.cli.register(diffReviewCli(service, runs));
 

@@ -4,15 +4,16 @@
  * highlighter jsdom does not have, so a stand-in renders each annotation through the tab's own
  * `renderAnnotation` and offers the gutter "+" as a button.
  */
-import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render as renderPlain, screen, waitFor, within } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ReviewThread, ReviewView, ViewState } from "../shared/types";
 import { ANNOTATION_FIT } from "./annotation-fit";
-import { ReviewHeaderAction } from "./header-action";
-import { ReviewPanel } from "./review-panel";
+import { RangeDialog } from "./range-dialog";
+import { fromPicker, pickerValue, ReviewPanel } from "./review-panel";
+import { dispatchReviewCommand, forgetReviewCommands } from "./commands";
 import { forgetViewStates } from "./view-state";
 
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn(), info: vi.fn() } }));
@@ -23,18 +24,36 @@ const pierre = vi.hoisted(() => ({ renders: [] as { patch: string; annotations: 
 vi.mock("@pierre/diffs/react", async () => {
   const { useEffect } = await import("react");
   return {
+  File: (props: {
+    file: { name: string; contents: string };
+    lineAnnotations: { lineNumber: number; metadata: unknown }[];
+    renderAnnotation(annotation: unknown): ReactNode;
+    options: { onGutterUtilityClick(range: { start: number; end: number; side: string }): void };
+  }) => (
+    <div data-testid="file" data-name={props.file.name} data-contents={props.file.contents}>
+      <button type="button" onClick={() => props.options.onGutterUtilityClick({ start: 1, end: 1, side: "additions" })}>
+        file gutter +
+      </button>
+      {props.lineAnnotations.map((annotation) => (
+        <div key={annotation.lineNumber} data-testid={`file-annotation-${annotation.lineNumber}`}>
+          {props.renderAnnotation(annotation)}
+        </div>
+      ))}
+    </div>
+  ),
   PatchDiff: (props: {
     patch: string;
     lineAnnotations: { side: string; lineNumber: number; metadata: unknown }[];
     renderAnnotation(annotation: unknown): ReactNode;
     options: { onGutterUtilityClick(range: { start: number; end: number; side: string }): void };
+    selectedLines?: { start: number; side?: string } | null;
   }) => {
     pierre.renders.push({ patch: props.patch, annotations: props.lineAnnotations });
     useEffect(() => {
       pierre.mounts += 1;
     }, []);
     return (
-    <div data-testid="patch" data-patch={props.patch}>
+    <div data-testid="patch" data-patch={props.patch} data-selected={props.selectedLines === null || props.selectedLines === undefined ? "" : `${props.selectedLines.side}:${props.selectedLines.start}`}>
       <button type="button" onClick={() => props.options.onGutterUtilityClick({ start: 1, end: 2, side: "additions" })}>
         gutter +
       </button>
@@ -49,14 +68,30 @@ vi.mock("@pierre/diffs/react", async () => {
   };
 });
 
+/**
+ * Where the tab scrolled its own area to, in order: a thread card's id, or a file section's path. jsdom
+ * lays nothing out, so the scroll itself is a no-op here (`scroll-within.test.ts` checks its sums).
+ */
+const scrolls = vi.hoisted(() => [] as string[]);
+vi.mock("./scroll-within", async (original) => ({
+  ...(await original<typeof import("./scroll-within")>()),
+  scrollWithin: (_root: Element, element: Element) => {
+    scrolls.push(element.closest("[data-thread-id]")?.getAttribute("data-thread-id") ?? element.closest("[data-file-path]")?.getAttribute("data-file-path") ?? element.tagName);
+  },
+}));
+
 afterEach(() => {
   cleanup();
+  scrolls.length = 0;
   pierre.renders.length = 0;
   pierre.mounts = 0;
   vi.clearAllMocks();
   window.localStorage.clear();
   forgetViewStates();
+  forgetReviewCommands();
 });
+
+const ENVIRONMENT = { id: "env_1" };
 
 const PATCH = ["--- a/src/a.ts", "+++ b/src/a.ts", "@@ -1,3 +1,3 @@", " const a = 1;", "-const b = 2;", "+const b = 3;", " const c = 4;", ""].join("\n");
 
@@ -71,6 +106,7 @@ function thread(overrides: Partial<ReviewThread> & { id: string; body: string })
     status: "open",
     severity: null,
     anchorContent: "const b = 3;",
+    fileRevision: null,
     createdAt: 1,
     updatedAt: 1,
     comments: [{ id: `c_${rest.id}`, authorType: "user", authorName: "You", body, createdAt: 1, editedAt: null }],
@@ -87,6 +123,9 @@ const VIEW: Extract<ReviewView, { ok: true }> = {
   defaultBase: "main",
   currentBranch: "feature",
   commits: [],
+  mergeBaseRef: null,
+  headRef: null,
+  viewable: true,
   files: [
     {
       path: "src/a.ts",
@@ -97,6 +136,8 @@ const VIEW: Extract<ReviewView, { ok: true }> = {
       binary: false,
       loadMode: "auto",
       untracked: false,
+      revision: "rev-a",
+      viewed: "no",
       patch: PATCH,
       patchTruncated: false,
     },
@@ -124,25 +165,582 @@ function withSecondFile(more: ReviewThread[] = []): Extract<ReviewView, { ok: tr
   return { ...VIEW, files: [...VIEW.files, second], threads: [...VIEW.threads, ...more] };
 }
 
-function render(rpc: Record<string, (input: never) => unknown> = {}, threadId = "thr_1") {
+function render(rpc: Record<string, (input: never) => unknown> = {}, threadId = "thr_1", options: { tabVisible?: boolean } = {}) {
   return renderSlot(
     { component: ReviewPanel },
-    { threadId, params: null },
-    { rpc: { getReview: () => VIEW, ...rpc }, codeTheme: { mode: "dark", name: "pierre-dark" } },
+    { threadId, environment: ENVIRONMENT, params: null },
+    { rpc: { getReview: () => VIEW, ...rpc }, codeTheme: { mode: "dark", name: "pierre-dark" }, ...options },
   );
 }
 
+const loadsOf = (slot: ReturnType<typeof render>) =>
+  slot.inspection.rpcCalls.filter((call) => call.method === "getReview").map((call) => call.input as { reason: string; ignoreWhitespace?: boolean; target?: unknown });
+
 describe("the app", () => {
-  it("registers the Review tab, a title-bar button and a palette command", async () => {
+  it("registers the Review tab and one Review button of its own in the thread's header", async () => {
     const app = await loadPluginApp(() => import("../app"));
-    expect(app.threadPanelActions.map((action) => [action.id, action.title, action.layout])).toEqual([["review", "Review", "flush"]]);
+    expect(app.tabs.map((tab) => [tab.id, tab.context, tab.availability, tab.title, tab.layout])).toEqual([["review", { kind: "thread" }, "action", "Review", "flush"]]);
+    // bb 0.48 folds every plugin's header thread action into one shared split button; the old slot
+    // draws Review as its own control, so Review registers there and nowhere else.
     expect(app.threadHeaderActions.map((action) => [action.id, action.title])).toEqual([["review", "Review"]]);
+    expect(app.threadActions).toEqual([]);
   });
 
-  it("opens the Review tab from the title-bar button", () => {
-    const slot = renderSlot({ component: ReviewHeaderAction }, { threadId: "thr_1", projectId: "proj_1", isCompactViewport: false });
+  it("opens and closes the Review tab through bb's panel controller from the header button", async () => {
+    const app = await loadPluginApp(() => import("../app"));
+    const slot = renderSlot(app.threadHeaderActions[0]!, { threadId: "thr_1", projectId: "proj_1", isCompactViewport: false }, { experimental_panel: { toggleTab: () => true } });
     fireEvent.click(screen.getByRole("button", { name: "Review this thread's changes" }));
-    expect(slot.inspection.navigateCalls).toEqual([{ method: "openThreadPanel", options: { actionId: "review" } }]);
+    expect(slot.inspection.experimental_panelCalls).toEqual([{ method: "toggleTab", options: { tab: { id: "review", context: { kind: "thread" }, availability: "action" } } }]);
+  });
+
+  it("falls back to a header thread action on a bb without the old header slot, still one control", async () => {
+    const actions: { id: string; placement?: string; item(context: unknown): { label: string; run(context: unknown): unknown } | null }[] = [];
+    const definition = (await import("../app")).default as unknown as { setup(builder: unknown): void };
+    const slots = new Proxy({} as Record<string, unknown>, {
+      get: (_target, name) => (name === "experimental_threadAction" ? (action: (typeof actions)[number]) => actions.push(action) : name === "experimental_threadHeaderAction" ? undefined : () => undefined),
+    });
+    definition.setup({ slots, commands: { register: () => undefined }, composer: { customize: () => undefined } });
+    expect(actions.map((action) => [action.id, action.placement])).toEqual([["review", "header"]]);
+    const calls: unknown[] = [];
+    const panel = { openTab: (options: unknown) => (calls.push(options), true), toggleTab: () => true, close: () => true };
+    const action = actions[0]!.item({ thread: { id: "thr_1" }, data: undefined, experimental_panel: panel })!;
+    expect(action.label).toBe("Review");
+    await action.run({ requestRename: () => undefined });
+    expect(calls).toEqual([{ tab: { id: "review", context: { kind: "thread" }, availability: "action" } }]);
+  });
+});
+
+describe("the palette's commands, find and Go to", () => {
+  it("registers a palette command per action, each opening the Review tab and acting there", async () => {
+    // loadPluginApp does not capture commands; run the definition against a stub builder instead.
+    const registered: { id: string; title: string; run(context: unknown): void }[] = [];
+    const definition = (await import("../app")).default as unknown as { setup(builder: unknown): void };
+    const slots = new Proxy({}, { get: () => () => undefined });
+    definition.setup({ slots, commands: { register: (command: (typeof registered)[number]) => registered.push(command) }, composer: { customize: () => undefined } });
+    expect(registered.map((command) => command.id)).toContain("find");
+    expect(registered.find((command) => command.id === "send")!.title).toBe("Diff Review: send comments to the agent");
+    const calls: unknown[] = [];
+    registered.find((command) => command.id === "go-to")!.run({ threadId: "thr_1", projectId: null, experimental_panel: { openTab: (options: unknown) => (calls.push(options), true) } });
+    expect(calls).toEqual([{ tab: { id: "review", context: { kind: "thread" }, availability: "action" } }]);
+  });
+
+  it("takes a command left for it before the tab showed, and opens what it names", async () => {
+    dispatchReviewCommand("thr_1", "go-to");
+    render();
+    expect(await screen.findByRole("dialog", { name: "Go to" })).toBeTruthy();
+    fireEvent.change(screen.getByRole("textbox", { name: "Filter" }), { target: { value: "file a.ts" } });
+    expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual(["Filesrc/a.ts+1 −1"]);
+    fireEvent.change(screen.getByRole("textbox", { name: "Filter" }), { target: { value: "comment three" } });
+    expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual(["CommentWhy three?src/a.ts:5 (new side)"]);
+  });
+
+  it("finds across the diff and selects each match's line", async () => {
+    render();
+    await screen.findByTestId("patch");
+    fireEvent.click(screen.getByRole("button", { name: "Find in the diff" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Find in the diff" }), { target: { value: "const b" } });
+    expect(await screen.findByText("1 of 2")).toBeTruthy();
+    await waitFor(() => expect(screen.getByTestId("patch").getAttribute("data-selected")).toBe("deletions:2"));
+    fireEvent.click(screen.getByRole("button", { name: "Next match" }));
+    expect(await screen.findByText("2 of 2")).toBeTruthy();
+    await waitFor(() => expect(screen.getByTestId("patch").getAttribute("data-selected")).toBe("additions:2"));
+  });
+
+  it("steps through the open comments from the palette", async () => {
+    render();
+    await screen.findByTestId("patch");
+    // The whole-diff thread comes first, then the file's: one no longer on the diff (at its header),
+    // then the line threads in line order.
+    await act(async () => dispatchReviewCommand("thr_1", "next-comment"));
+    await act(async () => dispatchReviewCommand("thr_1", "next-comment"));
+    expect(screen.getByTestId("patch").getAttribute("data-selected")).toBe("");
+    await act(async () => dispatchReviewCommand("thr_1", "next-comment"));
+    await waitFor(() => expect(screen.getByTestId("patch").getAttribute("data-selected")).toBe("additions:2"));
+  });
+});
+
+describe("the previous and next comment arrows", () => {
+  const focused = () => document.activeElement?.closest("[data-thread-id]")?.getAttribute("data-thread-id") ?? null;
+  const card = (id: string) => document.querySelector(`[data-thread-id="${id}"]`) as HTMLElement;
+  const toolbar = () => screen.getAllByRole("group", { name: "Comments" })[0]!;
+
+  it("steps through the open comments from the toolbar, in the tab's order, wrapping, and focuses each", async () => {
+    render();
+    await screen.findByTestId("patch");
+    // The whole-diff thread, the one no longer on the diff, then the line threads in line order.
+    fireEvent.click(within(toolbar()).getByRole("button", { name: "Next comment" }));
+    await waitFor(() => expect(focused()).toBe("aaaaaa000002"));
+    fireEvent.click(within(toolbar()).getByRole("button", { name: "Next comment" }));
+    await waitFor(() => expect(focused()).toBe("aaaaaa000003"));
+    fireEvent.click(within(toolbar()).getByRole("button", { name: "Next comment" }));
+    await waitFor(() => expect(focused()).toBe("aaaaaa000001"));
+    await waitFor(() => expect(screen.getByTestId("patch").getAttribute("data-selected")).toBe("additions:2"));
+    fireEvent.click(within(toolbar()).getByRole("button", { name: "Previous comment" }));
+    await waitFor(() => expect(focused()).toBe("aaaaaa000003"));
+    fireEvent.click(within(toolbar()).getByRole("button", { name: "Previous comment" }));
+    fireEvent.click(within(toolbar()).getByRole("button", { name: "Previous comment" }));
+    await waitFor(() => expect(focused()).toBe("aaaaaa000004"));
+  });
+
+  it("steps from a thread's own arrows, and the palette goes on from there", async () => {
+    render();
+    await screen.findByTestId("patch");
+    fireEvent.click(within(card("aaaaaa000001")).getByRole("button", { name: "Next comment" }));
+    await waitFor(() => expect(focused()).toBe("aaaaaa000004"));
+    fireEvent.click(within(card("aaaaaa000004")).getByRole("button", { name: "Next comment" }));
+    await waitFor(() => expect(focused()).toBe("aaaaaa000002"));
+    fireEvent.click(within(card("aaaaaa000002")).getByRole("button", { name: "Previous comment" }));
+    await waitFor(() => expect(focused()).toBe("aaaaaa000004"));
+    await act(async () => dispatchReviewCommand("thr_1", "next-comment"));
+    await waitFor(() => expect(focused()).toBe("aaaaaa000002"));
+  });
+
+  it("steps from a resolved thread to the open ones beside it, and is off with nothing to move to", async () => {
+    const resolved = thread({ id: "aaaaaa000005", body: "Done", startLine: 2, endLine: 2, status: "resolved" });
+    render({ getReview: () => ({ ...VIEW, threads: [VIEW.threads[1]!, resolved], viewState: { drafts: {}, collapsed: {}, expandedThreads: { aaaaaa000005: true }, scroll: null, savedAt: 1 } }) });
+    await screen.findByText("Done");
+    fireEvent.click(within(card("aaaaaa000005")).getByRole("button", { name: "Next comment" }));
+    await waitFor(() => expect(focused()).toBe("aaaaaa000002"));
+    // The only open thread has no other to move to; the toolbar still goes to it.
+    expect((within(card("aaaaaa000002")).getByRole("button", { name: "Next comment" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((within(toolbar()).getByRole("button", { name: "Next comment" }) as HTMLButtonElement).disabled).toBe(false);
+    cleanup();
+    render({ getReview: () => ({ ...VIEW, threads: [resolved] }) });
+    await screen.findByTestId("patch");
+    expect((within(toolbar()).getByRole("button", { name: "Previous comment" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  /** No step may scroll bb's containers around the tab: `scrollIntoView` would, so nothing calls it. */
+  const forbidScrollIntoView = () => {
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = () => {
+      throw new Error("scrollIntoView scrolls bb's own containers too");
+    };
+    return () => {
+      Element.prototype.scrollIntoView = original;
+    };
+  };
+
+  /** Presses, waits for `id` to be focused and marked the current comment, and gives where it scrolled. */
+  const step = async (press: () => void, id: string) => {
+    scrolls.length = 0;
+    press();
+    await waitFor(() => expect(focused()).toBe(id));
+    expect(document.querySelectorAll("[data-current-comment]")).toHaveLength(1);
+    expect(card(id).hasAttribute("data-current-comment")).toBe(true);
+    // Past the reveal's frame: nothing scrolls anywhere but the thread's own place.
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 50)));
+    return [...scrolls];
+  };
+  const next = () => fireEvent.click(within(toolbar()).getByRole("button", { name: "Next comment" }));
+
+  it("lands on a thread where it is drawn: no longer on the diff, or on a file that left the view, in the section at the top", async () => {
+    const restore = forbidScrollIntoView();
+    try {
+      const gone = thread({ id: "aaaaaa000006", body: "On a file not in this view", filePath: "src/gone.ts" });
+      const wholeFile = thread({ id: "aaaaaa000007", body: "About the whole file", side: null, startLine: 0, endLine: 0, anchorContent: null });
+      render({ getReview: () => ({ ...VIEW, threads: [...VIEW.threads, gone, wholeFile] }) });
+      await screen.findByTestId("patch");
+      const top = screen.getByText("Not on the current diff (the code changed or left the view)").closest("section")!;
+      // The tab's order: the whole diff's, the top section's (as drawn there), then the file's: its
+      // whole-file thread under its header, then its line threads by line.
+      const order = ["aaaaaa000002", ...Array.from(top.querySelectorAll("[data-thread-id]")).map((card) => card.getAttribute("data-thread-id")), "aaaaaa000007", "aaaaaa000001", "aaaaaa000004"];
+      expect(order).toEqual(["aaaaaa000002", "aaaaaa000006", "aaaaaa000003", "aaaaaa000007", "aaaaaa000001", "aaaaaa000004"]);
+      await step(next, "aaaaaa000002");
+      expect(await step(next, "aaaaaa000006")).toEqual(["aaaaaa000006"]);
+      expect(await step(next, "aaaaaa000003")).toEqual(["aaaaaa000003"]);
+      // A whole-file thread: its file's header, then the card right under it.
+      expect(await step(next, "aaaaaa000007")).toEqual(["src/a.ts", "aaaaaa000007"]);
+      // A line thread: its line, in its file's section, then its card.
+      expect(await step(next, "aaaaaa000001")).toEqual(["src/a.ts", "aaaaaa000001"]);
+      // A thread's own arrows step from where it is drawn; the palette shares the same stops.
+      expect(await step(() => fireEvent.click(within(card("aaaaaa000007")).getByRole("button", { name: "Previous comment" })), "aaaaaa000003")).toEqual(["aaaaaa000003"]);
+      expect(await step(() => dispatchReviewCommand("thr_1", "previous-comment"), "aaaaaa000006")).toEqual(["aaaaaa000006"]);
+      // Go to lands there too.
+      dispatchReviewCommand("thr_1", "go-to");
+      fireEvent.change(await screen.findByRole("textbox", { name: "Filter" }), { target: { value: "comment line is gone" } });
+      expect(await step(() => fireEvent.click(within(screen.getAllByRole("option")[0]!).getByRole("button")), "aaaaaa000003")).toContain("aaaaaa000003");
+    } finally {
+      restore();
+    }
+  });
+
+  it("lands on an open thread left folded: the whole diff's, one not on the diff, and one on a line", async () => {
+    const folded = { aaaaaa000002: false, aaaaaa000003: false, aaaaaa000001: false };
+    render({ getReview: () => ({ ...VIEW, viewState: { drafts: {}, collapsed: {}, expandedThreads: folded, scroll: null, savedAt: 1 } }) });
+    await screen.findByTestId("patch");
+    for (const id of Object.keys(folded)) expect(card(id).tagName).toBe("BUTTON");
+    expect(await step(next, "aaaaaa000002")).toEqual(["aaaaaa000002"]);
+    expect(await step(next, "aaaaaa000003")).toEqual(["aaaaaa000003"]);
+    expect(await step(next, "aaaaaa000001")).toEqual(["src/a.ts", "aaaaaa000001"]);
+    // Still folded, as the user left them.
+    expect(card("aaaaaa000001").tagName).toBe("BUTTON");
+  });
+
+  it("drops a step still waiting for its file's diff once another jump lands, so the diff arriving later moves nothing", async () => {
+    const original = globalThis.IntersectionObserver;
+    globalThis.IntersectionObserver = class {
+      observe() {}
+      disconnect() {}
+    } as unknown as typeof IntersectionObserver;
+    try {
+      const lazy = { ...VIEW.files[0]!, path: "src/lazy.ts", revision: "rev-lazy", patch: null, loadMode: "auto" as const };
+      const waiting = thread({ id: "aaaaaa000008", body: "On a file whose diff is loading", filePath: "src/lazy.ts" });
+      const answers: ((value: unknown) => void)[] = [];
+      render({ getReview: () => ({ ...VIEW, files: [VIEW.files[0]!, lazy], threads: [...VIEW.threads, waiting] }), loadPatches: () => new Promise((resolve) => answers.push(resolve)) });
+      await screen.findByText("On a file whose diff is loading");
+      await waitFor(() => expect(answers).toHaveLength(1));
+      const goTo = async (filter: string) => {
+        await act(async () => dispatchReviewCommand("thr_1", "go-to"));
+        fireEvent.change(await screen.findByRole("textbox", { name: "Filter" }), { target: { value: filter } });
+        fireEvent.click(within(screen.getAllByRole("option")[0]!).getByRole("button"));
+        await waitFor(() => expect(screen.queryByRole("dialog", { name: "Go to" })).toBeNull());
+      };
+      // A: the comment whose diff is held; it waits.
+      await goTo("comment diff is loading");
+      // B: another file, which lands at once.
+      scrolls.length = 0;
+      await goTo("file a.ts");
+      await act(async () => new Promise((resolve) => setTimeout(resolve, 50)));
+      expect(scrolls).toEqual(["src/a.ts"]);
+      // A's diff arrives: nothing goes back to A.
+      await act(async () => answers[0]!({ patches: [{ path: "src/lazy.ts", patch: PATCH.replaceAll("src/a.ts", "src/lazy.ts"), truncated: false }] }));
+      await act(async () => new Promise((resolve) => setTimeout(resolve, 100)));
+      expect(scrolls).toEqual(["src/a.ts"]);
+      expect(focused()).not.toBe("aaaaaa000008");
+    } finally {
+      globalThis.IntersectionObserver = original;
+    }
+  });
+
+  it("keeps a comment at the top in view when the file a jump before it went to gets its diff", async () => {
+    const original = globalThis.IntersectionObserver;
+    globalThis.IntersectionObserver = class {
+      observe() {}
+      disconnect() {}
+    } as unknown as typeof IntersectionObserver;
+    try {
+      const lazy = { ...VIEW.files[0]!, path: "src/lazy.ts", revision: "rev-lazy", patch: null, loadMode: "auto" as const };
+      // A line comment there, so its diff loads at once (and is held here).
+      const onLazy = thread({ id: "aaaaaa000008", body: "On the lazy file", filePath: "src/lazy.ts" });
+      const answers: ((value: unknown) => void)[] = [];
+      render({ getReview: () => ({ ...VIEW, files: [VIEW.files[0]!, lazy], threads: [...VIEW.threads, onLazy] }), loadPatches: () => new Promise((resolve) => answers.push(resolve)) });
+      await screen.findByText("On the lazy file");
+      await waitFor(() => expect(answers).toHaveLength(1));
+      const goTo = async (filter: string) => {
+        await act(async () => dispatchReviewCommand("thr_1", "go-to"));
+        fireEvent.change(await screen.findByRole("textbox", { name: "Filter" }), { target: { value: filter } });
+        fireEvent.click(within(screen.getAllByRole("option")[0]!).getByRole("button"));
+        await waitFor(() => expect(screen.queryByRole("dialog", { name: "Go to" })).toBeNull());
+        await act(async () => new Promise((resolve) => setTimeout(resolve, 50)));
+      };
+      // A: the file whose diff is still loading.
+      await goTo("file lazy.ts");
+      // B: the whole diff's comment, at the top.
+      scrolls.length = 0;
+      await goTo("comment add tests");
+      await waitFor(() => expect(focused()).toBe("aaaaaa000002"));
+      expect(scrolls).toEqual(["aaaaaa000002"]);
+      // A's diff arrives: the view stays on B.
+      await act(async () => answers[0]!({ patches: [{ path: "src/lazy.ts", patch: PATCH.replaceAll("src/a.ts", "src/lazy.ts"), truncated: false }] }));
+      await act(async () => new Promise((resolve) => setTimeout(resolve, 100)));
+      expect(scrolls).toEqual(["aaaaaa000002"]);
+      expect(focused()).toBe("aaaaaa000002");
+    } finally {
+      globalThis.IntersectionObserver = original;
+    }
+  });
+
+  it("knows where a thread on a file whose diff loads later is drawn before stepping there, and keeps it through a reload", async () => {
+    // As in a real panel: files far down never come near the screen, so nothing but the tab itself
+    // asks for their diffs.
+    const original = globalThis.IntersectionObserver;
+    globalThis.IntersectionObserver = class {
+      observe() {}
+      disconnect() {}
+    } as unknown as typeof IntersectionObserver;
+    const restore = forbidScrollIntoView();
+    try {
+      const lazy = (path: string) => ({ ...VIEW.files[0]!, path, revision: `rev-${path}`, patch: null, loadMode: "auto" as const });
+      const patchOf = (path: string) => PATCH.replaceAll("src/a.ts", path);
+      // Its lines are gone from src/lazy.ts's diff: it belongs at the top, which only its diff tells.
+      const gone = thread({ id: "aaaaaa000008", body: "Gone once the diff loads", filePath: "src/lazy.ts", startLine: 7, endLine: 7, anchorContent: "const z = 0;" });
+      // Its line is in src/later.ts's diff.
+      const placed = thread({ id: "aaaaaa000009", body: "On a line of a file far down", filePath: "src/later.ts" });
+      const view = { ...VIEW, files: [VIEW.files[0]!, lazy("src/lazy.ts"), lazy("src/later.ts")], threads: [...VIEW.threads, gone, placed] };
+      const answers: ((value: unknown) => void)[] = [];
+      const slot = render({ getReview: () => structuredClone(view), loadPatches: () => new Promise((resolve) => answers.push(resolve)) });
+      await screen.findByText("Gone once the diff loads");
+      // The commented files' diffs load at once, without scrolling to them.
+      await waitFor(() => expect(answers).toHaveLength(1));
+      expect((slot.inspection.rpcCalls.find((call) => call.method === "loadPatches")!.input as { files: { path: string }[] }).files.map((file) => file.path)).toEqual(["src/lazy.ts", "src/later.ts"]);
+
+      // The stops before them; then a step to the one whose diff has not loaded waits for it: no jump
+      // to its file's header, where its card waits meanwhile.
+      await step(next, "aaaaaa000002");
+      await step(next, "aaaaaa000003");
+      await step(next, "aaaaaa000001");
+      await step(next, "aaaaaa000004");
+      scrolls.length = 0;
+      next();
+      await act(async () => new Promise((resolve) => setTimeout(resolve, 50)));
+      expect(scrolls).toEqual([]);
+      expect(focused()).toBe("aaaaaa000004");
+
+      // The diffs arrive: the thread turns out to be off the diff, and the step lands on it at the top.
+      const loaded = { patches: [{ path: "src/lazy.ts", patch: patchOf("src/lazy.ts"), truncated: false }, { path: "src/later.ts", patch: patchOf("src/later.ts"), truncated: false }] };
+      await act(async () => answers[0]!(loaded));
+      await waitFor(() => expect(focused()).toBe("aaaaaa000008"));
+      await act(async () => new Promise((resolve) => setTimeout(resolve, 50)));
+      const top = () => screen.getByText("Not on the current diff (the code changed or left the view)").closest("section")!;
+      expect(within(top()).getByText("Gone once the diff loads")).toBeTruthy();
+      expect(scrolls).toEqual(["aaaaaa000008"]);
+      // From there on in the tab's order, which has it at the top now: src/a.ts's line threads, then src/later.ts's.
+      expect(await step(next, "aaaaaa000001")).toEqual(["src/a.ts", "aaaaaa000001"]);
+      await step(next, "aaaaaa000004");
+      expect(await step(next, "aaaaaa000009")).toEqual(["src/later.ts", "aaaaaa000009"]);
+
+      // The workspace changes and the view reloads, without the patches bb leaves to load: the diffs
+      // already loaded stay, so the thread stays at the top and the stops stay where they were.
+      await slot.behavior.emitRealtime("environment:env_1", { kind: "diff" });
+      await waitFor(() => expect(slot.inspection.rpcCalls.filter((call) => call.method === "getReview")).toHaveLength(2));
+      await act(async () => new Promise((resolve) => setTimeout(resolve, 50)));
+      expect(within(top()).getByText("Gone once the diff loads")).toBeTruthy();
+      expect(await step(() => dispatchReviewCommand("thr_1", "previous-comment"), "aaaaaa000004")).toEqual(["src/a.ts", "aaaaaa000004"]);
+      expect(await step(next, "aaaaaa000009")).toEqual(["src/later.ts", "aaaaaa000009"]);
+      expect(await step(() => fireEvent.click(within(card("aaaaaa000009")).getByRole("button", { name: "Next comment" })), "aaaaaa000002")).toEqual(["aaaaaa000002"]);
+    } finally {
+      restore();
+      globalThis.IntersectionObserver = original;
+    }
+  });
+
+  it("has no arrows in the Any file view, whose palette commands are off too", async () => {
+    render({ getReview: () => ({ ...VIEW, target: { kind: "files" }, files: [], viewable: false }) });
+    await screen.findByText("Add tests for this change");
+    expect(screen.queryByRole("button", { name: "Next comment" })).toBeNull();
+  });
+});
+
+describe("changing the workspace from the tab", () => {
+  const suggesting = thread({ id: "aaaaaa000010", body: "Four is better:\n```suggestion\nconst b = 4;\n```", startLine: 2, endLine: 2 });
+
+  it("shows a suggested change and applies it to the working copy", async () => {
+    const slot = render({
+      getReview: () => ({ ...VIEW, threads: [suggesting] }),
+      applySuggestion: () => ({ thread: { ...suggesting, status: "resolved" } }),
+    });
+    expect(await screen.findByText("Suggested change")).toBeTruthy();
+    expect(screen.getByText("Four is better:")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Apply suggestion" }));
+    await waitFor(() => expect(slot.inspection.rpcCalls.some((call) => call.method === "applySuggestion")).toBe(true));
+    expect(slot.inspection.rpcCalls.find((call) => call.method === "applySuggestion")!.input).toEqual({
+      threadId: "thr_1",
+      reviewThreadId: "aaaaaa000010",
+      commentId: "c_aaaaaa000010",
+      startLine: 2,
+      endLine: 2,
+      expected: "const b = 3;",
+      code: "const b = 4;\n",
+    });
+    // The view reloads, since a file changed.
+    await waitFor(() => expect(loadsOf(slot).map((load) => load.reason)).toContain("manual"));
+  });
+
+  it("offers no Apply in a view whose new side is not the working copy", async () => {
+    render({ getReview: () => ({ ...VIEW, target: { kind: "commit", sha: "abcdef1" }, threads: [suggesting] }) });
+    expect(await screen.findByText("Suggested change")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Apply suggestion" })).toBeNull();
+  });
+
+  it("inserts a suggestion block seeded with the commented lines", async () => {
+    render({ getReview: () => ({ ...VIEW, threads: [] }) });
+    fireEvent.click(await screen.findByText("gutter +"));
+    fireEvent.click(screen.getByRole("button", { name: "Suggest a change" }));
+    expect((screen.getByPlaceholderText(/^Leave a comment\. Markdown works/) as HTMLTextAreaElement).value).toBe("```suggestion\nconst a = 1;\nconst b = 3;\n```");
+  });
+
+  it("reverts a file of the uncommitted view after asking", async () => {
+    const slot = render({ revertChanges: () => ({ ok: true }) });
+    fireEvent.click(await screen.findByRole("button", { name: "Revert src/a.ts" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Revert the whole file to its last commit" }));
+    await waitFor(() => expect(slot.inspection.rpcCalls.find((call) => call.method === "revertChanges")?.input).toEqual({ threadId: "thr_1", path: "src/a.ts", revision: "rev-a", hunks: null }));
+  });
+});
+
+describe("explanations", () => {
+  const run = { id: "run_1", sessionId: "ses_1", kind: "explain", threadId: "thr_run", reviewThreadId: null, focus: "src/a.ts", providerId: "claude-code", model: null, status: "running", summary: null, changedFiles: null, createdAt: 1, finishedAt: null };
+
+  it("asks an agent to explain a file, and lists the run", async () => {
+    const slot = render({ startExplain: () => ({ run }) });
+    fireEvent.click(await screen.findByRole("button", { name: "Explain src/a.ts" }));
+    await waitFor(() => expect(slot.inspection.rpcCalls.find((call) => call.method === "startExplain")?.input).toEqual({ sessionId: "ses_1", threadId: "thr_1", filePath: "src/a.ts", side: null, startLine: 0, endLine: 0, code: null }));
+    expect(await screen.findByText("Explain · src/a.ts")).toBeTruthy();
+  });
+
+  it("asks it to explain the lines a new comment is on", async () => {
+    const slot = render({ startExplain: () => ({ run }) });
+    fireEvent.click(await screen.findByText("gutter +"));
+    fireEvent.click(screen.getByRole("button", { name: "Ask AI to explain these lines" }));
+    await waitFor(() =>
+      expect(slot.inspection.rpcCalls.find((call) => call.method === "startExplain")?.input).toMatchObject({ filePath: "src/a.ts", side: "new", startLine: 1, endLine: 2, code: "const a = 1;\nconst b = 3;" }),
+    );
+  });
+});
+
+describe("the staged, unstaged and range views", () => {
+  it("picks a range in the range dialog, as git writes it", async () => {
+    const picked: unknown[] = [];
+    renderPlain(<RangeDialog open onOpenChange={() => undefined} initial="main...HEAD" onPick={(range) => picked.push(range)} />);
+    const input = await screen.findByRole("textbox", { name: "Range" });
+    expect((input as HTMLInputElement).value).toBe("main...HEAD");
+    fireEvent.change(input, { target: { value: "-x..y" } });
+    expect((screen.getByRole("button", { name: "Review" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(input, { target: { value: "v1..v2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Review" }));
+    expect(picked).toEqual([{ kind: "range", from: "v1", to: "v2", symmetric: false }]);
+  });
+
+  it("round-trips each view through the picker's values", () => {
+    for (const target of [{ kind: "staged" }, { kind: "unstaged" }, { kind: "range", from: "a", to: "b", symmetric: true }, { kind: "commit", sha: "abcdef1" }] as const) {
+      expect(fromPicker(pickerValue(target))).toEqual(target);
+    }
+  });
+
+  it("offers no Viewed marks where bb has none", async () => {
+    render({ getReview: () => ({ ...VIEW, target: { kind: "staged" }, viewable: false }) });
+    await screen.findByTestId("patch");
+    expect(screen.queryByRole("checkbox", { name: "Viewed src/a.ts" })).toBeNull();
+  });
+});
+
+describe("the Files view", () => {
+  const FILES = { ...VIEW, target: { kind: "files" as const }, files: [], viewable: false, threads: [thread({ id: "aaaaaa000020", body: "Odd name", filePath: "src/util.ts", startLine: 1, endLine: 1, anchorContent: "export const x = 1;" })] };
+
+  it("lists files with comments, opens one with its threads, and comments on its lines", async () => {
+    const slot = render({
+      getReview: () => FILES,
+      readFile: () => ({ path: "src/util.ts", content: "export const x = 1;\n", reason: null, revision: "sha-1" }),
+      createThread: (input: never) => ({ thread: thread({ id: "aaaaaa000021", body: (input as { body: string }).body, filePath: "src/util.ts", startLine: 1, endLine: 1 }) }),
+    });
+    expect(screen.queryByRole("button", { name: "AI review" })).toBeNull();
+    fireEvent.click(await screen.findByRole("button", { name: /src\/util\.ts.*1 comment thread/ }));
+    expect(await screen.findByTestId("file")).toBeTruthy();
+    expect(within(screen.getByTestId("file-annotation-1")).getByText("Odd name")).toBeTruthy();
+    fireEvent.click(screen.getByText("file gutter +"));
+    fireEvent.change(screen.getByPlaceholderText(/^Leave a comment\. Markdown works/), { target: { value: "Rename x" } });
+    fireEvent.click(screen.getByRole("button", { name: "Comment" }));
+    await waitFor(() =>
+      expect(slot.inspection.rpcCalls.find((call) => call.method === "createThread")?.input).toMatchObject({
+        filePath: "src/util.ts",
+        side: "new",
+        startLine: 1,
+        endLine: 1,
+        anchorContent: "export const x = 1;",
+        body: "Rename x",
+        fileRevision: "sha-1",
+      }),
+    );
+  });
+
+  it("reads the open file again on Reload and on a workspace change, keeping its draft", async () => {
+    let contents = "export const x = 1;\n";
+    const slot = render({ getReview: () => FILES, readFile: () => ({ path: "src/util.ts", content: contents, reason: null, revision: `sha-${contents.length}-${contents}` }) });
+    fireEvent.click(await screen.findByRole("button", { name: /src\/util\.ts.*1 comment thread/ }));
+    await waitFor(() => expect(screen.getByTestId("file").getAttribute("data-contents")).toBe("export const x = 1;\n"));
+    fireEvent.click(screen.getByText("file gutter +"));
+    fireEvent.change(screen.getByPlaceholderText(/^Leave a comment\. Markdown works/), { target: { value: "Half written" } });
+
+    contents = "export const x = 2;\n";
+    fireEvent.click(screen.getByRole("button", { name: "Reload the diff" }));
+    await waitFor(() => expect(screen.getByTestId("file").getAttribute("data-contents")).toBe("export const x = 2;\n"));
+    expect((screen.getByPlaceholderText(/^Leave a comment\. Markdown works/) as HTMLTextAreaElement).value).toBe("Half written");
+
+    contents = "export const x = 3;\n";
+    await slot.behavior.emitRealtime("environment:env_1", { kind: "diff" });
+    await waitFor(() => expect(screen.getByTestId("file").getAttribute("data-contents")).toBe("export const x = 3;\n"));
+    expect(slot.inspection.rpcCalls.filter((call) => call.method === "readFile")).toHaveLength(3);
+  });
+
+  it("lists a file whose only comments are unsent, and shows them when the file can no longer be read", async () => {
+    const drafts = {
+      "line:gone.ts": { body: "About these lines", severity: null, range: { side: "new" as const, startLine: 2, endLine: 3 } },
+      "file:gone.ts": { body: "About the file", severity: null, range: null },
+    };
+    render({
+      getReview: () => ({ ...FILES, threads: [], viewState: { drafts, collapsed: {}, scroll: null, savedAt: 1 } }),
+      readFile: () => {
+        throw new Error("No such file");
+      },
+      saveViewState: () => ({ ok: true }),
+    });
+    fireEvent.click(await screen.findByRole("button", { name: /gone\.ts.*unsent comment/ }));
+    expect(await screen.findByDisplayValue("About these lines")).toBeTruthy();
+    expect(screen.getByDisplayValue("About the file")).toBeTruthy();
+    expect(screen.getByText(/Could not open gone\.ts/)).toBeTruthy();
+  });
+
+  it("comments on the whole diff, and keeps that draft, in Any file too", async () => {
+    const slot = render({
+      getReview: () => ({ ...FILES, viewState: { drafts: { general: { body: "Saved thought", severity: null, range: null } }, collapsed: {}, scroll: null, savedAt: 1 } }),
+      createThread: (input: never) => ({ thread: thread({ id: "aaaaaa000022", body: (input as { body: string }).body, filePath: "__general__", startLine: 0, endLine: 0 }) }),
+      saveViewState: () => ({ ok: true }),
+    });
+    const composer = await screen.findByDisplayValue("Saved thought");
+    fireEvent.change(composer, { target: { value: "About the whole change" } });
+    fireEvent.click(screen.getByRole("button", { name: "Comment" }));
+    await waitFor(() => expect(slot.inspection.rpcCalls.find((call) => call.method === "createThread")?.input).toMatchObject({ filePath: "__general__", startLine: 0, body: "About the whole change" }));
+    await waitFor(() => expect(screen.queryByPlaceholderText("A comment about the whole change")).toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: "Comment on the diff" }));
+    expect(screen.getByPlaceholderText("A comment about the whole change")).toBeTruthy();
+  });
+
+  it("searches the workspace for a file", async () => {
+    const slot = render({ getReview: () => ({ ...FILES, threads: [] }), searchFiles: () => ({ paths: ["lib/a.ts"], truncated: false }) });
+    fireEvent.change(await screen.findByRole("textbox", { name: "Find a file" }), { target: { value: "a.ts" } });
+    expect(await screen.findByRole("button", { name: "lib/a.ts" })).toBeTruthy();
+    expect(slot.inspection.rpcCalls.find((call) => call.method === "searchFiles")!.input).toEqual({ threadId: "thr_1", query: "a.ts" });
+  });
+});
+
+describe("keeping the Review tab current", () => {
+  it("holds the workspace's watch while it shows, and gives it back when it goes", async () => {
+    const leases = () => slot.inspection.rpcCalls.filter((call) => call.method === "watchWorkspace").map((call) => (call.input as { active: boolean; view: string }));
+    const slot = render({ watchWorkspace: () => ({ ok: true }) });
+    await waitFor(() => expect(leases()).toEqual([{ threadId: "thr_1", tab: expect.any(String), view: "uncommitted", active: true }]));
+    slot.lifecycle.unmount();
+    await waitFor(() => expect(leases().at(-1)).toMatchObject({ active: false }));
+    cleanup();
+    const hidden = render({ watchWorkspace: () => ({ ok: true }) }, "thr_1", { tabVisible: false });
+    await screen.findByText("1 file · +1 −1 · 1 left out by the ignore patterns");
+    expect(hidden.inspection.rpcCalls.some((call) => call.method === "watchWorkspace")).toBe(false);
+  });
+
+  it("leaves a hidden tab alone: no reload on a signal", async () => {
+    const slot = render({}, "thr_1", { tabVisible: false });
+    await screen.findByText("1 file · +1 −1 · 1 left out by the ignore patterns");
+    await slot.behavior.emitRealtime("environment:env_1", { kind: "diff" });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(loadsOf(slot).map((load) => load.reason)).toEqual(["open"]);
+  });
+
+  it("hears the workspace's signals from the first render, before the view has loaded", async () => {
+    let answer!: (view: unknown) => void;
+    let loads = 0;
+    const slot = render({ getReview: () => (++loads === 1 ? new Promise((resolve) => (answer = resolve)) : VIEW) });
+    await waitFor(() => expect(answer).toBeDefined());
+    // A signal during the first load runs one more load after it.
+    await slot.behavior.emitRealtime("environment:env_1", { kind: "diff" });
+    answer(VIEW);
+    await waitFor(() => expect(loadsOf(slot).map((load) => load.reason)).toEqual(["open", "diff-signal"]));
+  });
+
+  it("hides whitespace-only changes when asked, and remembers it", async () => {
+    const slot = render();
+    await screen.findByText("1 file · +1 −1 · 1 left out by the ignore patterns");
+    fireEvent.click(screen.getByRole("switch", { name: "Hide whitespace" }));
+    await waitFor(() => expect(loadsOf(slot).at(-1)).toMatchObject({ reason: "whitespace", ignoreWhitespace: true }));
+    expect(window.localStorage.getItem("diff-review:ignore-whitespace")).toBe("true");
   });
 });
 
@@ -200,7 +798,63 @@ describe("the Review tab", () => {
       anchorContent: "const a = 1;\nconst b = 3;",
       body: "Rename b",
       severity: null,
+      fileRevision: "rev-a",
     });
+  });
+
+  it("marks a file Viewed through bb's marks, folding it, and says when a viewed file changed", async () => {
+    const slot = render({ setViewed: () => ({ ok: true }) });
+    await screen.findByTestId("patch");
+    fireEvent.click(screen.getByRole("checkbox", { name: "Viewed src/a.ts" }));
+    await waitFor(() => expect(screen.queryByTestId("patch")).toBeNull());
+    expect(slot.inspection.rpcCalls.find((call) => call.method === "setViewed")!.input).toEqual({
+      threadId: "thr_1",
+      target: { kind: "uncommitted" },
+      path: "src/a.ts",
+      revision: "rev-a",
+      viewed: true,
+    });
+    cleanup();
+    forgetViewStates();
+
+    render({ getReview: () => ({ ...VIEW, files: [{ ...VIEW.files[0]!, viewed: "changed" }] }) });
+    expect(await screen.findByText("changed since viewed")).toBeTruthy();
+    expect(screen.getByTestId("patch")).toBeTruthy();
+  });
+
+  it("draws added and removed lines in blue and orange with the colour-blind setting", async () => {
+    renderSlot(
+      { component: ReviewPanel },
+      { threadId: "thr_1", environment: ENVIRONMENT, params: null },
+      { rpc: { getReview: () => VIEW }, codeTheme: { mode: "dark", name: "pierre-dark" }, settings: { colorBlindDiffs: true } },
+    );
+    const wrapper = (await screen.findByTestId("patch")).parentElement!;
+    expect(wrapper.getAttribute("data-diff-palette")).toBe("colorblind");
+    expect(wrapper.style.getPropertyValue("--diffs-addition-color-override")).toBe("#58a6ff");
+    expect(wrapper.style.getPropertyValue("--diffs-deletion-color-override")).toBe("#f0883e");
+  });
+
+  it("starts a file viewed at its current revision folded", async () => {
+    render({ getReview: () => ({ ...VIEW, files: [{ ...VIEW.files[0]!, viewed: "yes" }] }) });
+    await screen.findByRole("checkbox", { name: "Viewed src/a.ts" });
+    expect(screen.queryByTestId("patch")).toBeNull();
+  });
+
+  it("opens a file in bb's preview at the version the view shows", async () => {
+    const opened: unknown[] = [];
+    const slot = renderSlot(
+      { component: ReviewPanel },
+      { threadId: "thr_1", environment: ENVIRONMENT, params: null },
+      { rpc: { getReview: () => ({ ...VIEW, target: { kind: "commit", sha: "abcdef1" } }) }, openFilePreview: (options) => (opened.push(options), true) },
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Open src/a.ts" }));
+    expect(opened).toEqual([{ target: { kind: "workspace", environmentId: "env_1", path: "src/a.ts", experimental_ref: "abcdef1" }, location: null }]);
+    expect(slot).toBeTruthy();
+  });
+
+  it("notes a comment whose file changed since it was made", async () => {
+    render({ getReview: () => ({ ...VIEW, threads: [thread({ id: "aaaaaa000009", body: "Hm", fileRevision: "rev-old" })] }) });
+    expect(await screen.findByText("File changed since this comment")).toBeTruthy();
   });
 
   it("sends the open threads not already waiting on the agent, with the note", async () => {
@@ -239,6 +893,7 @@ describe("the Review tab", () => {
       answered[0]!.comments.push({ id: "c_reply", authorType: "agent", authorName: "Claude Code", body: "Because b changed.", createdAt: 2, editedAt: null });
       const slot = render({ getReview: () => fresh(twoFiles), listThreads: () => ({ threads: fresh(answered), runs: [] }) });
       await waitFor(() => expect(screen.getAllByTestId("patch")).toHaveLength(2));
+      await waitFor(() => expect(pierre.mounts).toBe(2));
       const mounts = pierre.mounts;
       const before = { a: annotationsOf(PATCH), b: annotationsOf(PATCH_B) };
       expect(before.b.size).toBe(1);
@@ -264,6 +919,8 @@ describe("the Review tab", () => {
           ++loads === 1 ? { patches: [{ path: "src/big.ts", patch: BIG, truncated: false }] } : new Promise((resolve) => (answer = resolve)),
       });
       await waitFor(() => expect(screen.getAllByTestId("patch").map((node) => node.getAttribute("data-patch"))).toEqual([PATCH, BIG]));
+      // Both diffs drawn and mounted (a mount's effect can trail its render) before the baseline is taken.
+      await waitFor(() => expect(pierre.mounts).toBe(2));
       const mounts = pierre.mounts;
       const before = annotationsOf(PATCH);
 
@@ -283,16 +940,16 @@ describe("the Review tab", () => {
   });
 
   it("loads the patches bb did not send, in one batch, without a tap", async () => {
-    const unloaded = (path: string) => ({ ...VIEW.files[0]!, path, patch: null, loadMode: "on_demand" as const });
+    const unloaded = (path: string) => ({ ...VIEW.files[0]!, path, revision: `rev-${path}`, patch: null, loadMode: "on_demand" as const });
     const view = { ...VIEW, threads: [], files: [unloaded("src/a.ts"), unloaded("src/b.ts")] };
     const slot = renderSlot(
       { component: ReviewPanel },
-      { threadId: "thr_1", params: null },
+      { threadId: "thr_1", environment: ENVIRONMENT, params: null },
       {
         rpc: {
           getReview: () => view,
           loadPatches: (input: unknown) => ({
-            patches: (input as { paths: string[] }).paths.map((path) => ({ path, patch: PATCH, truncated: false })),
+            patches: (input as { files: { path: string }[] }).files.map(({ path }) => ({ path, patch: PATCH, truncated: false })),
           }),
         },
       },
@@ -300,7 +957,14 @@ describe("the Review tab", () => {
     await waitFor(() => expect(screen.getAllByTestId("patch")).toHaveLength(2));
     expect(screen.queryByRole("button", { name: "Load diff" })).toBeNull();
     expect(slot.inspection.rpcCalls.filter((call) => call.method === "loadPatches").map((call) => call.input)).toEqual([
-      { threadId: "thr_1", target: { kind: "uncommitted" }, paths: ["src/a.ts", "src/b.ts"] },
+      {
+        threadId: "thr_1",
+        target: { kind: "uncommitted" },
+        files: [
+          { path: "src/a.ts", revision: "rev-src/a.ts" },
+          { path: "src/b.ts", revision: "rev-src/b.ts" },
+        ],
+      },
     ]);
   });
 
@@ -311,7 +975,7 @@ describe("the Review tab", () => {
     let loads = 0;
     renderSlot(
       { component: ReviewPanel },
-      { threadId: "thr_1", params: null },
+      { threadId: "thr_1", environment: ENVIRONMENT, params: null },
       {
         rpc: {
           getReview: () => (++loads === 1 ? { ...VIEW, threads: [], files: [unloaded] } : { ...VIEW, threads: [] }),
@@ -340,7 +1004,7 @@ describe("the Review tab", () => {
     let fail = true;
     renderSlot(
       { component: ReviewPanel },
-      { threadId: "thr_1", params: null },
+      { threadId: "thr_1", environment: ENVIRONMENT, params: null },
       {
         rpc: {
           getReview: () => view,
@@ -360,7 +1024,7 @@ describe("the Review tab", () => {
 
   it("keeps a folded file's header at the top when it is folded while scrolled part-way through", async () => {
     const second = { ...VIEW.files[0]!, path: "src/b.ts" };
-    renderSlot({ component: ReviewPanel }, { threadId: "thr_1", params: null }, { rpc: { getReview: () => ({ ...VIEW, threads: [], files: [VIEW.files[0]!, second] }) } });
+    renderSlot({ component: ReviewPanel }, { threadId: "thr_1", environment: ENVIRONMENT, params: null }, { rpc: { getReview: () => ({ ...VIEW, threads: [], files: [VIEW.files[0]!, second] }) } });
     await waitFor(() => expect(screen.getAllByTestId("patch")).toHaveLength(2));
     const section = document.querySelector('[data-file-path="src/a.ts"]') as HTMLElement;
     const root = section.parentElement!;
@@ -382,7 +1046,7 @@ describe("the Review tab", () => {
   it("opens on the branch's commits when the server finds nothing uncommitted, and asks only once", async () => {
     const slot = renderSlot(
       { component: ReviewPanel },
-      { threadId: "thr_1", params: null },
+      { threadId: "thr_1", environment: ENVIRONMENT, params: null },
       {
         rpc: {
           getReview: (input: unknown) => {
@@ -402,8 +1066,57 @@ describe("the Review tab", () => {
     ]);
   });
 
+  describe("the view picked in the tab", () => {
+    /** The tab answering with the view each load asks for. */
+    const echo = (input: unknown) => ({ ...VIEW, target: (input as { target: unknown }).target });
+    const pickView = async (label: string) => {
+      await act(async () => dispatchReviewCommand("thr_1", "go-to"));
+      fireEvent.change(await screen.findByRole("textbox", { name: "Filter" }), { target: { value: label } });
+      const option = screen.getAllByRole("option").find((entry) => entry.textContent === `View${label}`)!;
+      fireEvent.click(within(option).getByRole("button"));
+    };
+
+    it("comes back when the thread is opened again, and is that thread's only", async () => {
+      const first = render({ getReview: echo });
+      await screen.findByText("Why three?");
+      await pickView("Staged changes");
+      await waitFor(() => expect(loadsOf(first).at(-1)!.target).toEqual({ kind: "staged" }));
+      // Another thread opened in the panel, then this one again: bb mounts the tab anew each time.
+      first.lifecycle.unmount();
+      const other = render({ getReview: echo }, "thr_2");
+      await screen.findByText("Why three?");
+      expect(other.inspection.rpcCalls[0]!.input).toEqual({ threadId: "thr_2", target: { kind: "uncommitted" }, reason: "open", tab: expect.any(String), autoTarget: true });
+      other.lifecycle.unmount();
+      const again = render({ getReview: echo });
+      await screen.findByText("Why three?");
+      expect(again.inspection.rpcCalls[0]!.input).toEqual({ threadId: "thr_1", target: { kind: "staged" }, reason: "open", tab: expect.any(String) });
+      expect(screen.getByText("Staged changes")).toBeTruthy();
+    });
+
+    it("gives way to the default view once it is gone", async () => {
+      window.localStorage.setItem("diff-review:view:thr_1", JSON.stringify({ opened: null, target: { kind: "range", from: "main", to: "deleted-branch", symmetric: true } }));
+      const slot = render({
+        getReview: (input: unknown) =>
+          (input as { target: { kind: string } }).target.kind === "range" ? { ok: false, message: "Could not read the range main...deleted-branch on the workspace's machine." } : echo(input),
+      });
+      await screen.findByText("Why three?");
+      expect(loadsOf(slot).map(({ target, reason, ...rest }) => ({ target, reason, auto: "autoTarget" in rest }))).toEqual([
+        { target: { kind: "range", from: "main", to: "deleted-branch", symmetric: true }, reason: "open", auto: false },
+        { target: { kind: "uncommitted" }, reason: "open", auto: true },
+      ]);
+      expect(window.localStorage.getItem("diff-review:view:thr_1")).toBeNull();
+    });
+
+    it("does not override a tab opened on another view", async () => {
+      window.localStorage.setItem("diff-review:view:thr_1", JSON.stringify({ opened: null, target: { kind: "staged" } }));
+      const slot = renderSlot({ component: ReviewPanel }, { threadId: "thr_1", environment: ENVIRONMENT, params: { target: { kind: "unstaged" } } }, { rpc: { getReview: echo } });
+      await screen.findByText("Why three?");
+      expect(loadsOf(slot)[0]!.target).toEqual({ kind: "unstaged" });
+    });
+  });
+
   it("never picks for a tab opened on a chosen view", async () => {
-    const slot = renderSlot({ component: ReviewPanel }, { threadId: "thr_1", params: { target: { kind: "uncommitted" } } }, { rpc: { getReview: () => VIEW } });
+    const slot = renderSlot({ component: ReviewPanel }, { threadId: "thr_1", environment: ENVIRONMENT, params: { target: { kind: "uncommitted" } } }, { rpc: { getReview: () => VIEW } });
     await screen.findByText("1 file · +1 −1 · 1 left out by the ignore patterns");
     expect(slot.inspection.rpcCalls[0]!.input).toEqual({ threadId: "thr_1", target: { kind: "uncommitted" }, reason: "open", tab: expect.any(String) });
   });
@@ -428,7 +1141,7 @@ describe("the Review tab", () => {
   });
 
   it("reloads once when the connection comes back, and not on the first connection", async () => {
-    const slot = renderSlot({ component: ReviewPanel }, { threadId: "thr_1", params: null }, { rpc: { getReview: () => VIEW } });
+    const slot = renderSlot({ component: ReviewPanel }, { threadId: "thr_1", environment: ENVIRONMENT, params: null }, { rpc: { getReview: () => VIEW } });
     await screen.findByText("Why three?");
     await slot.behavior.setRealtimeConnectionState("reconnecting");
     await slot.behavior.setRealtimeConnectionState("connected");
@@ -453,7 +1166,7 @@ describe("the Review tab", () => {
     };
     const slot = renderSlot(
       { component: ReviewPanel },
-      { threadId: "thr_1", params: null },
+      { threadId: "thr_1", environment: ENVIRONMENT, params: null },
       { rpc: { getReview: () => ({ ...VIEW, runs: [run] }), closeRun: () => ({ ok: true }) } },
     );
     const row = (await screen.findByText("AI review · Security")).closest("li")!;
@@ -480,6 +1193,23 @@ describe("the Review tab", () => {
     fireEvent.click(screen.getByRole("button", { name: "Start review" }));
     await screen.findByText("AI review · Security");
     expect(slot.inspection.rpcCalls.find((call) => call.method === "startReview")!.input).toEqual({ sessionId: "ses_1", threadId: "thr_1", focuses: ["Security"], instructions: "", execution });
+  });
+
+  it("starts a summary from the AI review dialog", async () => {
+    const execution = { providerId: "claude-code", model: "big", reasoningLevel: "high" };
+    const slot = render({
+      runDefaults: () => ({ execution, message: null, permissionMode: "auto" }),
+      startSummary: () => ({
+        run: { id: "run3", sessionId: "ses_1", kind: "summary", threadId: "thr_sum", reviewThreadId: null, focus: null, providerId: "claude-code", model: "big", status: "running", summary: null, changedFiles: null, createdAt: 1, finishedAt: null },
+      }),
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "AI review" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Summarize" }));
+    expect(screen.queryByRole("button", { name: "Security" })).toBeNull();
+    await waitFor(() => expect((screen.getAllByRole("button", { name: "Summarize" }).at(-1) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getAllByRole("button", { name: "Summarize" }).at(-1)!);
+    await screen.findByText("Summary");
+    expect(slot.inspection.rpcCalls.find((call) => call.method === "startSummary")!.input).toEqual({ sessionId: "ses_1", threadId: "thr_1", execution });
   });
 
   it("sends to a new thread when asked", async () => {
@@ -561,7 +1291,7 @@ describe("the Review tab", () => {
     let cleared = false;
     const slot = renderSlot(
       { component: ReviewPanel },
-      { threadId: "thr_1", params: null },
+      { threadId: "thr_1", environment: ENVIRONMENT, params: null },
       {
         rpc: {
           getReview: () => ({ ...VIEW, runs: [run] }),
@@ -716,7 +1446,9 @@ describe("the Review tab", () => {
       fireEvent.click(within(card).getByRole("button", { name: "Dismiss" }));
       // The one-line folded form: a button with the first comment, no Reply.
       const folded = await screen.findByRole("button", { name: /Why three\?/ });
-      expect(screen.queryByText("Why three?")?.closest("[data-thread-id]")).toBeFalsy();
+      // Folded, it is still the thread's place for the previous/next comment arrows.
+      expect(screen.getByText("Why three?").closest("[data-thread-id]")).toBe(folded);
+      expect(within(folded).queryByRole("button", { name: "Reply" })).toBeNull();
       expect(first.inspection.rpcCalls.find((call) => call.method === "setStatus")!.input).toEqual({ reviewThreadId: "aaaaaa000001", status: "dismissed" });
 
       fireEvent.click(folded);
@@ -736,8 +1468,8 @@ describe("the Review tab", () => {
       cleanup();
       forgetViewStates();
       renderWith(lastSaved(second), { threads });
-      await screen.findByRole("button", { name: /Why three\?/ });
-      expect(screen.queryByText("Why three?")?.closest("[data-thread-id]")).toBeFalsy();
+      const refolded = await screen.findByRole("button", { name: /Why three\?/ });
+      expect(screen.getByText("Why three?").closest("[data-thread-id]")).toBe(refolded);
     });
 
     it("unfolds a folded file when its whole-file comment box opens, and keeps it unfolded", async () => {
@@ -824,7 +1556,7 @@ describe("the Review tab", () => {
   });
 
   it("says why there is nothing to review", async () => {
-    renderSlot({ component: ReviewPanel }, { threadId: "thr_1", params: null }, { rpc: { getReview: () => ({ ok: false, message: "No workspace." }) } });
+    renderSlot({ component: ReviewPanel }, { threadId: "thr_1", environment: ENVIRONMENT, params: null }, { rpc: { getReview: () => ({ ok: false, message: "No workspace." }) } });
     await screen.findByText("No workspace.");
   });
 });

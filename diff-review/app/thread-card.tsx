@@ -4,6 +4,7 @@
  * dismissed threads fold to one line.
  */
 import { Markdown } from "@get-bb/plugin-sdk/app";
+import { Fragment } from "react";
 import { useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
@@ -12,10 +13,13 @@ import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
 
 import type { Placement } from "../shared/anchors";
+import { bodyParts } from "../shared/suggestion";
 import { describeLocation, type ReviewComment, type ReviewThread } from "../shared/types";
 import { useActions } from "./actions";
 import { CommentComposer } from "./comment-composer";
+import { CommentNavButtons, useIsCurrentComment } from "./comment-nav";
 import { ago, DELIVERY_LABELS, SEVERITY_LABELS, STATUS_LABELS } from "./labels";
+import { SuggestionBlock, SuggestionThreadContext, type SuggestionThread } from "./suggestion-block";
 import { draftKeys, useDraft, useViewState } from "./view-state";
 
 function Delivery({ thread }: { thread: ReviewThread }) {
@@ -71,13 +75,40 @@ function Comment({ comment }: { comment: ReviewComment }) {
           onCancel={editDraft.close}
         />
       ) : (
-        <Markdown content={comment.body} className="text-sm" />
+        <CommentBody comment={comment} />
       )}
     </div>
   );
 }
 
-export function ThreadCard({ thread, placement }: { thread: ReviewThread; placement?: Placement }) {
+/** A comment's Markdown, with each ```suggestion block drawn as a suggested change. */
+function CommentBody({ comment }: { comment: ReviewComment }) {
+  const parts = bodyParts(comment.body);
+  if (parts.length === 1 && parts[0]!.kind === "text") return <Markdown content={comment.body} className="text-sm" />;
+  return (
+    <div className="flex flex-col gap-2">
+      {parts.map((part, index) => (
+        <Fragment key={index}>{part.kind === "text" ? <Markdown content={part.text} className="text-sm" /> : <SuggestionBlock code={part.code} commentId={comment.id} />}</Fragment>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * `fileChanged`: the file changed since the thread was made on it, though its lines may still be found.
+ * `current`: where the thread's lines are in the diff now and what they read, for its suggestions.
+ */
+export function ThreadCard({
+  thread,
+  placement,
+  fileChanged = false,
+  current,
+}: {
+  thread: ReviewThread;
+  placement?: Placement;
+  fileChanged?: boolean;
+  current?: SuggestionThread["current"];
+}) {
   const actions = useActions();
   const viewState = useViewState();
   const closed = thread.status !== "open";
@@ -97,6 +128,8 @@ export function ThreadCard({ thread, placement }: { thread: ReviewThread; placem
       .then(() => setExpanded(false))
       .catch(() => undefined);
   const first = thread.comments[0];
+  // The thread the previous/next comment arrows went to last.
+  const isCurrent = useIsCurrentComment(thread.id);
 
   const header = (
     <div className="flex flex-wrap items-center gap-2">
@@ -112,15 +145,19 @@ export function ThreadCard({ thread, placement }: { thread: ReviewThread; placem
         </span>
       ) : null}
       {placement?.state === "outdated" ? <span className="text-xs text-muted-foreground">{describeLocation(thread)}</span> : null}
+      {fileChanged && placement?.state !== "outdated" ? <span className="text-xs text-muted-foreground">File changed since this comment</span> : null}
       <Delivery thread={thread} />
     </div>
   );
 
   if (!expanded) {
+    // Folded, it is still a stop of the previous/next comment arrows and Go to: they land on this line.
     return (
       <button
         type="button"
-        className="flex w-full items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-left text-xs text-muted-foreground hover:bg-state-hover"
+        className={`flex w-full items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-left text-xs text-muted-foreground hover:bg-state-hover ${isCurrent ? "ring-2 ring-ring" : ""}`}
+        data-thread-id={thread.id}
+        data-current-comment={isCurrent ? "" : undefined}
         onClick={() => setExpanded(true)}
       >
         <Icon name="ChevronRight" className="size-3.5" />
@@ -132,14 +169,25 @@ export function ThreadCard({ thread, placement }: { thread: ReviewThread; placem
   }
 
   return (
-    <div className="flex flex-col gap-3 rounded-md border border-border bg-card p-3 font-sans text-foreground" data-thread-id={thread.id}>
+    <SuggestionThreadContext.Provider value={{ thread, ...(current === undefined ? {} : { current }) }}>
+    <div
+      className={`flex flex-col gap-3 rounded-md border border-border bg-card p-3 font-sans text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring ${isCurrent ? "ring-2 ring-ring" : ""}`}
+      data-thread-id={thread.id}
+      data-current-comment={isCurrent ? "" : undefined}
+      // The previous/next comment arrows move the keyboard focus here.
+      tabIndex={-1}
+    >
       <div className="flex items-start gap-2">
-        {header}
-        {closed ? (
-          <Button type="button" variant="ghost" size="sm" className="ml-auto h-6 px-1.5" aria-label="Fold" onClick={() => setExpanded(false)}>
-            <Icon name="ChevronUp" className="size-3.5" />
-          </Button>
-        ) : null}
+        {/* It may shrink and wrap, so a long path never pushes the arrows out of the card. */}
+        <div className="min-w-0 flex-1">{header}</div>
+        <span className="flex shrink-0 items-center gap-0.5">
+          <CommentNavButtons from={thread.id} className="size-6" />
+          {closed ? (
+            <Button type="button" variant="ghost" size="sm" className="h-6 px-1.5" aria-label="Fold" onClick={() => setExpanded(false)}>
+              <Icon name="ChevronUp" className="size-3.5" />
+            </Button>
+          ) : null}
+        </span>
       </div>
       {placement?.state === "outdated" && thread.anchorContent !== null ? (
         <pre className="max-h-32 overflow-auto rounded bg-muted px-2 py-1 font-mono text-xs text-muted-foreground">{thread.anchorContent}</pre>
@@ -182,5 +230,6 @@ export function ThreadCard({ thread, placement }: { thread: ReviewThread; placem
         </div>
       )}
     </div>
+    </SuggestionThreadContext.Provider>
   );
 }

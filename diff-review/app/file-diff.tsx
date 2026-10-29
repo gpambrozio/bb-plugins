@@ -7,17 +7,21 @@
  * from removed to added lines keeps only its first line.
  */
 import { PatchDiff, type DiffLineAnnotation, type SelectedLineRange } from "@pierre/diffs/react";
-import { experimental_useCodeTheme } from "@get-bb/plugin-sdk/app";
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { experimental_useCodeTheme, useSettings } from "@get-bb/plugin-sdk/app";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Icon } from "@/components/ui/icon";
 
 import { placeThread, type Placement } from "../shared/anchors";
-import { linesText, parsePatchLines } from "../shared/patch-lines";
+import { linesText, parsePatchLines, type PatchLines } from "../shared/patch-lines";
 import { describeLocation, type DiffFile, type ReviewThread, type Side } from "../shared/types";
 import { useActions } from "./actions";
 import { ANNOTATION_FIT } from "./annotation-fit";
+import { COLOR_BLIND_SETTING, paletteStyle } from "./palette";
+import { revealIn, type Reveal } from "./reveal";
+import { RevertDialog } from "./revert-dialog";
 import { useNearScreen, type PatchState } from "./patch-loader";
 import { CommentComposer } from "./comment-composer";
 import { ThreadCard } from "./thread-card";
@@ -32,7 +36,7 @@ type Annotation =
   | { kind: "threads"; threads: { thread: ReviewThread; placement: Placement }[] }
   | { kind: "draft"; side: Side; startLine: number; endLine: number };
 
-interface LineRange {
+export interface LineRange {
   side: Side;
   startLine: number;
   endLine: number;
@@ -89,6 +93,8 @@ export interface FileDiffProps {
   requestPatch(path: string): void;
   /** The tab's scroll container, to tell when the file comes near the screen. */
   scrollRoot: Element | null;
+  /** A place in this file to bring into view (find, "Go to", next comment): it unfolds and selects the line. */
+  reveal?: Reveal | null;
 }
 
 /** Why a file shows no line diff, or null when it can. */
@@ -116,16 +122,19 @@ export function threadCount(threads: readonly ReviewThread[]): { open: number; c
   return { open, closed, label: `${threads.length} comment thread${threads.length === 1 ? "" : "s"}: ${parts.join(", ")}` };
 }
 
-export function FileDiff({ file, threads, showThreadCount, diffStyle, stalePatch = false, patchState, requestPatch, scrollRoot }: FileDiffProps) {
+export function FileDiff({ file, threads, showThreadCount, diffStyle, stalePatch = false, patchState, requestPatch, scrollRoot, reveal = null }: FileDiffProps) {
   const actions = useActions();
   const codeTheme = experimental_useCodeTheme();
+  const settings = useSettings();
+  const palette = useMemo(() => paletteStyle(settings.values?.[COLOR_BLIND_SETTING] === true, codeTheme.mode), [settings.values, codeTheme.mode]);
   const viewState = useViewState();
   const changedLines = file.additions + file.deletions;
   // Folded or unfolded by hand, a file stays so; otherwise a large change starts folded.
   // A file with an unsent comment in it opens, so the comment shows.
   const [collapsed, setCollapsed] = useState(() => {
     if (viewState.draft(draftKeys.line(file.path)) !== undefined || viewState.draft(draftKeys.file(file.path)) !== undefined) return false;
-    return viewState.collapsed(file.path) ?? changedLines > FOLD_ABOVE_LINES;
+    // A file marked Viewed (in this tab or bb's diff panel) starts folded, as bb's panel shows it.
+    return viewState.collapsed(file.path) ?? (file.viewed === "yes" || changedLines > FOLD_ABOVE_LINES);
   });
   const sectionRef = useRef<HTMLElement>(null);
   // Folding a file scrolled part-way through would leave the scroll offset where it was, so the next
@@ -149,6 +158,11 @@ export function FileDiff({ file, threads, showThreadCount, diffStyle, stalePatch
     viewState.setCollapsed(file.path, !collapsed);
     setCollapsed(!collapsed);
   };
+  // Marking a file Viewed folds it and clearing the mark unfolds it, as in bb's diff panel.
+  const toggleViewed = (viewed: boolean) => {
+    if (viewed !== collapsed) toggleCollapsed();
+    void actions.setViewed(file, viewed).catch(() => undefined);
+  };
   const reason = noDiffReason(file);
   // The patch loads by itself once the file is near the screen; a folded file waits until unfolded.
   // A stale patch (the previous load's, still shown) is fetched again the same way.
@@ -161,6 +175,24 @@ export function FileDiff({ file, threads, showThreadCount, diffStyle, stalePatch
   const draft: LineRange | null = lineDraft.active?.range ?? null;
   const fileDraft = useDraft(draftKeys.file(file.path));
   const [selected, setSelected] = useState<SelectedLineRange | null>(null);
+  const [reverting, setReverting] = useState(false);
+
+  // A place asked for: unfold, select the line, then scroll it into view once drawn (and again once
+  // a patch that was still loading arrives).
+  useLayoutEffect(() => {
+    if (reveal === null) return;
+    if (collapsed) {
+      viewState.setCollapsed(file.path, false);
+      setCollapsed(false);
+    }
+    if (reveal.line > 0) setSelected({ start: reveal.line, end: reveal.line, side: toPierreSide(reveal.side) });
+  }, [reveal?.seq]);
+  useEffect(() => {
+    if (reveal === null || sectionRef.current === null || scrollRoot === null) return;
+    const section = sectionRef.current;
+    const frame = requestAnimationFrame(() => revealIn(scrollRoot, section, reveal.side, reveal.line));
+    return () => cancelAnimationFrame(frame);
+  }, [reveal?.seq, file.patch === null]);
 
   const { lines, wholeFile, onLines, unplaced } = useMemo(() => placeFileThreads(file, threads), [file, threads]);
 
@@ -209,7 +241,7 @@ export function FileDiff({ file, threads, showThreadCount, diffStyle, stalePatch
         {meta.kind === "threads" ? (
           <div className="flex flex-col gap-2 px-3 py-2">
             {meta.threads.map(({ thread, placement }) => (
-              <ThreadCard key={thread.id} thread={thread} placement={placement} />
+              <ThreadCard key={thread.id} thread={thread} placement={placement} fileChanged={changedSince(thread, file)} current={currentLines(thread, placement, lines)} />
             ))}
           </div>
         ) : (
@@ -223,6 +255,7 @@ export function FileDiff({ file, threads, showThreadCount, diffStyle, stalePatch
   const lineDraftComposer = (meta: LineRange, note: string | null) => (
     <LineDraftBox
       filePath={file.path}
+      fileRevision={file.revision}
       range={meta}
       draft={lineDraft}
       note={note}
@@ -245,13 +278,15 @@ export function FileDiff({ file, threads, showThreadCount, diffStyle, stalePatch
   else if (file.patch === null) body = <p className="min-h-16 px-3 py-2 text-xs text-muted-foreground">Loading the diff…</p>;
   else
     body = (
-      <PatchDiff<Annotation, undefined>
-        patch={file.patch}
-        options={options}
-        lineAnnotations={annotations}
-        selectedLines={selected}
-        renderAnnotation={renderAnnotation}
-      />
+      <div style={palette} data-diff-palette={palette === undefined ? undefined : "colorblind"}>
+        <PatchDiff<Annotation, undefined>
+          patch={file.patch}
+          options={options}
+          lineAnnotations={annotations}
+          selectedLines={selected}
+          renderAnnotation={renderAnnotation}
+        />
+      </div>
     );
 
   return (
@@ -270,17 +305,53 @@ export function FileDiff({ file, threads, showThreadCount, diffStyle, stalePatch
         {file.patchTruncated ? <span className="shrink-0 text-xs text-warning-text">truncated</span> : null}
         {collapsed && changedLines > FOLD_ABOVE_LINES ? <span className="shrink-0 text-xs text-muted-foreground">folded: a large change</span> : null}
         {showThreadCount && threads.length > 0 ? <ThreadCount threads={threads} /> : null}
-        <Button type="button" variant="ghost" size="sm" className="ml-auto h-6 shrink-0 gap-1 px-1.5 text-xs" onClick={openFileDraft}>
+        {file.viewed === "changed" ? (
+          <span className="shrink-0 text-xs text-warning-text" title="You marked this file Viewed; it has changed since.">
+            changed since viewed
+          </span>
+        ) : null}
+        <span className="ml-auto" />
+        {actions.viewable ? (
+          <label className="flex shrink-0 cursor-pointer items-center gap-1 text-xs text-muted-foreground">
+            <Checkbox checked={file.viewed === "yes"} onCheckedChange={(checked) => toggleViewed(checked === true)} aria-label={`Viewed ${file.path}`} />
+            Viewed
+          </label>
+        ) : null}
+        {actions.canOpenFile(file) ? (
+          <Button type="button" variant="ghost" size="sm" className="h-6 shrink-0 gap-1 px-1.5 text-xs" onClick={() => actions.openFile(file)} aria-label={`Open ${file.path}`}>
+            <Icon name="ExternalLink" className="size-3.5" />
+            Open
+          </Button>
+        ) : null}
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-6 shrink-0 gap-1 px-1.5 text-xs"
+          onClick={() => void actions.explain({ filePath: file.path, side: null, startLine: 0, endLine: 0, code: null }).catch(() => undefined)}
+          aria-label={`Explain ${file.path}`}
+        >
+          <Icon name="Bot" className="size-3.5" />
+          Explain
+        </Button>
+        {actions.canRevert(file) ? (
+          <Button type="button" variant="ghost" size="sm" className="h-6 shrink-0 gap-1 px-1.5 text-xs" onClick={() => setReverting(true)} aria-label={`Revert ${file.path}`}>
+            <Icon name="RotateCcw" className="size-3.5" />
+            Revert…
+          </Button>
+        ) : null}
+        <Button type="button" variant="ghost" size="sm" className="h-6 shrink-0 gap-1 px-1.5 text-xs" onClick={openFileDraft}>
           <Icon name="MessageSquarePlus" className="size-3.5" />
           Comment on file
         </Button>
       </header>
+      {reverting ? <RevertDialog file={file} open={reverting} onOpenChange={setReverting} /> : null}
       {collapsed ? null : (
         <>
           {wholeFile.length > 0 || unplaced.length > 0 || fileDraft.active !== null || draftAbove !== null ? (
             <div className="flex flex-col gap-2 px-3 py-2">
               {wholeFile.map((thread) => (
-                <ThreadCard key={thread.id} thread={thread} />
+                <ThreadCard key={thread.id} thread={thread} fileChanged={changedSince(thread, file)} />
               ))}
               {unplaced.map((thread) => (
                 <div key={thread.id} className="flex flex-col gap-1">
@@ -298,7 +369,7 @@ export function FileDiff({ file, threads, showThreadCount, diffStyle, stalePatch
                   initialSeverity={fileDraft.latest().severity}
                   onChange={fileDraft.change}
                   onSubmit={async ({ body: text, severity }) => {
-                    await actions.create({ filePath: file.path, side: null, startLine: 0, endLine: 0, anchorContent: null, body: text, severity });
+                    await actions.create({ filePath: file.path, side: null, startLine: 0, endLine: 0, anchorContent: null, body: text, severity, fileRevision: file.revision });
                     fileDraft.close();
                   }}
                   onCancel={fileDraft.close}
@@ -311,6 +382,18 @@ export function FileDiff({ file, threads, showThreadCount, diffStyle, stalePatch
       )}
     </section>
   );
+}
+
+/** Where a placed thread's lines are now and what they read, for its suggestions; undefined when not shown. */
+export function currentLines(thread: Pick<ReviewThread, "side">, placement: Placement, lines: PatchLines | undefined): { startLine: number; endLine: number; text: string } | undefined {
+  if (placement.state === "outdated" || placement.startLine === 0 || thread.side === null || lines === undefined) return undefined;
+  const text = linesText(lines, thread.side, placement.startLine, placement.endLine);
+  return text === null ? undefined : { startLine: placement.startLine, endLine: placement.endLine, text };
+}
+
+/** Whether the file changed since the thread was made on it (by the revision bb's Git plugin gives). */
+export function changedSince(thread: Pick<ReviewThread, "fileRevision">, file: Pick<DiffFile, "revision">): boolean {
+  return thread.fileRevision !== null && thread.fileRevision !== file.revision;
 }
 
 function ThreadCount({ threads }: { threads: readonly ReviewThread[] }) {
@@ -326,14 +409,16 @@ function ThreadCount({ threads }: { threads: readonly ReviewThread[] }) {
 }
 
 /** A new comment on lines: what it is about, and its editor, bound to its draft. */
-function LineDraftBox({
+export function LineDraftBox({
   filePath,
+  fileRevision = null,
   range,
   draft,
   note,
   anchorContent,
 }: {
   filePath: string;
+  fileRevision?: string | null;
   range: LineRange;
   draft: ReturnType<typeof useDraft>;
   note: string | null;
@@ -344,18 +429,32 @@ function LineDraftBox({
   const lines = range.startLine === range.endLine ? `line ${range.startLine}` : `lines ${range.startLine}–${range.endLine}`;
   return (
     <div className="flex flex-col gap-2 border-l-2 border-primary bg-card px-3 py-2 font-sans">
-      <span className="text-xs text-muted-foreground">
+      <span className="flex items-center gap-2 text-xs text-muted-foreground">
         New comment on {lines} ({range.side === "old" ? "removed" : "new"} side){note === null ? "" : `. ${note}`}
+        <Button
+          type="button"
+          variant="link"
+          size="sm"
+          className="h-auto p-0 text-xs"
+          onClick={() =>
+            void actions
+              .explain({ filePath, side: range.side, startLine: range.startLine, endLine: range.endLine, code: anchorContent })
+              .then(draft.close, () => undefined)
+          }
+        >
+          Ask AI to explain {range.startLine === range.endLine ? "this line" : "these lines"}
+        </Button>
       </span>
       <CommentComposer
         placeholder="Leave a comment. Markdown works; @reviewer (or @agent) asks this view's AI reviewer."
         submitLabel="Comment"
         withSeverity
+        suggestFrom={range.side === "new" && anchorContent !== null ? anchorContent : undefined}
         initialBody={draft.latest().body}
         initialSeverity={draft.latest().severity}
         onChange={draft.change}
         onSubmit={async ({ body, severity }) => {
-          await actions.create({ filePath, side: range.side, startLine: range.startLine, endLine: range.endLine, anchorContent, body, severity });
+          await actions.create({ filePath, side: range.side, startLine: range.startLine, endLine: range.endLine, anchorContent, body, severity, fileRevision });
           draft.close();
         }}
         onCancel={draft.close}
@@ -368,7 +467,7 @@ function LineDraftBox({
  * The unsent comments on a file that is not in the view any more (committed, reverted, or left out by
  * the ignore patterns since), so they can still be sent or cancelled.
  */
-export function OrphanDrafts({ path }: { path: string }) {
+export function OrphanDrafts({ path, note = "This file is not in this view any more." }: { path: string; note?: string }) {
   const actions = useActions();
   const lineDraft = useDraft(draftKeys.line(path));
   const fileDraft = useDraft(draftKeys.file(path));
@@ -379,7 +478,7 @@ export function OrphanDrafts({ path }: { path: string }) {
       <span className="truncate font-mono text-xs" title={path}>
         {path}
       </span>
-      {range === null ? null : <LineDraftBox filePath={path} range={range} draft={lineDraft} note="This file is not in this view any more." anchorContent={null} />}
+      {range === null ? null : <LineDraftBox filePath={path} range={range} draft={lineDraft} note={note} anchorContent={null} />}
       {fileDraft.active === null ? null : (
         <CommentComposer
           placeholder="A comment about the whole file"

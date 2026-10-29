@@ -1,23 +1,47 @@
 // diff-review — the app entry.
 //
 // A Review tab in each thread's side panel: the thread's diff with comment threads, sent to its
-// agent; a button in the thread's title bar and a palette command that open it. See AGENTS.md.
-import { definePluginApp } from "@get-bb/plugin-sdk/app";
+// agent; a button in the thread's header and palette commands that open it. See AGENTS.md.
+import { definePluginApp, experimental_THREAD_INFO_ROW_GROUPS } from "@get-bb/plugin-sdk/app";
 
-import { ReviewHeaderAction } from "./app/header-action";
-import { PANEL_ACTION_ID, ReviewPanel } from "./app/review-panel";
+import { dispatchReviewCommand, REVIEW_COMMANDS, type ReviewCommand } from "./app/commands";
+import { registerReviewHeader } from "./app/header-action";
+import { ReviewPanel } from "./app/review-panel";
+import { OpenReviewOverlay } from "./app/open-overlay";
+import { REVIEWS_PATH, ReviewsPage, ReviewsSidebar, useReviewsBadge, useReviewsPageTitle } from "./app/reviews-page";
+import { openReviewTab, REVIEW_TAB } from "./app/tab";
+import { ReviewInfoRow } from "./app/thread-info";
 
 export default definePluginApp((app) => {
-  app.slots.threadPanelAction({
-    id: PANEL_ACTION_ID,
+  app.slots.experimental_tab({
+    ...REVIEW_TAB,
     title: "Review",
     icon: "FileDiff",
+    tooltip: "Review this thread's changes",
     layout: "flush",
     component: ReviewPanel,
   });
 
-  // And a button in the thread's title bar that opens it, beside bb's own actions.
-  app.slots.experimental_threadHeaderAction({ id: PANEL_ACTION_ID, title: "Review", component: ReviewHeaderAction });
+  // A Review button of its own in the thread's header (`app/header-action.tsx`).
+  registerReviewHeader(app);
+
+  // Every review with comments, across projects, with the open ones counted on the sidebar entry.
+  app.slots.navPanel({
+    id: "reviews",
+    title: "Reviews",
+    icon: "FileDiff",
+    path: REVIEWS_PATH,
+    component: ReviewsPage,
+    experimental_sidebar: ReviewsSidebar,
+    experimental_usePageTitle: useReviewsPageTitle,
+    experimental_useBadge: useReviewsBadge,
+  });
+
+  // `bb diff-review open` opens a review in the window that shows its thread.
+  app.slots.experimental_appOverlay({ id: "open-review", component: OpenReviewOverlay });
+
+  // "N open of M comment threads" in the thread's Info tab.
+  app.slots.experimental_threadInfoRow({ id: "review", group: experimental_THREAD_INFO_ROW_GROUPS.git, component: ReviewInfoRow });
 
   // No default key: bb owns the obvious ones (Mod+D is its own diff panel), and a default that
   // clashes is left unbound anyway. Settings binds it.
@@ -26,7 +50,21 @@ export default definePluginApp((app) => {
     title: "Diff Review: review this thread's changes",
     isAvailable: (context) => context.threadId !== null,
     run: (context) => {
-      context.openPanel({ actionId: PANEL_ACTION_ID });
+      openReviewTab(context.experimental_panel);
     },
   });
+
+  // One command per action of the tab: each opens the thread's Review tab and does it there.
+  for (const [id, title] of Object.entries(REVIEW_COMMANDS) as [ReviewCommand, string][]) {
+    app.commands.register({
+      id,
+      title: `Diff Review: ${title}`,
+      isAvailable: (context) => context.threadId !== null,
+      run: (context) => {
+        if (context.threadId === null) return;
+        openReviewTab(context.experimental_panel);
+        dispatchReviewCommand(context.threadId, id);
+      },
+    });
+  }
 });

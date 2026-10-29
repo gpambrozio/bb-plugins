@@ -1,6 +1,6 @@
 {
   "name": "@gpambrozio/bb-plugin-diff-review",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "license": "MIT",
   "author": "gpambrozio (https://github.com/gpambrozio)",
   "homepage": "https://github.com/gpambrozio/bb-plugins/tree/main/diff-review#readme",
@@ -14,8 +14,8 @@
   },
   "type": "module",
   "engines": {
-    "bb": ">=0.46",
-    "bbPluginSdk": ">=0.6.37"
+    "bb": ">=0.48",
+    "bbPluginSdk": ">=0.6.94"
   },
   "scripts": {
     "test": "vitest run",
@@ -25,6 +25,8 @@
   "files": [
     "server.ts",
     "server/",
+    "host.ts",
+    "host/",
     "shared/",
     "app.tsx",
     "app/",
@@ -46,6 +48,7 @@
       "icon": "FileDiff"
     },
     "server": "./server.ts",
+    "host": "./host.ts",
     "app": "./app.tsx"
   },
   "dependencies": {
@@ -55,7 +58,7 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
-    "@get-bb/plugin-sdk": "0.6.37",
+    "@get-bb/plugin-sdk": "0.6.94",
     "@pierre/diffs": "1.5.1",
     "@radix-ui/react-alert-dialog": "^1.1.19",
     "@radix-ui/react-context-menu": "^2.3.3",

@@ -1,14 +1,16 @@
 /**
- * The diff under review, from bb's own environment APIs (`bb.sdk.environments.*`). Those run git on
- * the machine that holds the workspace, remote hosts included, so nothing here needs a host entry. What
- * they cannot give — staged against unstaged, arbitrary ranges — is phase 4's.
+ * The diff under review, from bb's Git plugin (`server/git.ts`), which runs git on the machine that
+ * holds the workspace, remote hosts included, so nothing here needs a host entry.
  */
 import { createHash, randomUUID } from "node:crypto";
 import { posix } from "node:path";
 
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
-import type { Commit, DiffFile, Target, TargetRequest } from "../shared/types";
+import type { HostDiffSpec } from "../shared/git-spec";
+import { isHostTarget, type Commit, type DiffFile, type HostTarget, type Target, type TargetRequest, type Viewed } from "../shared/types";
+import type { HostGit } from "./host-git";
+import { failureMessage, type GitReads, type GitStatus, type GitTarget } from "./git";
 import { gitfileTarget, ignoreMatcher, INFO_IGNORE_FILE, patternLines, WORKSPACE_IGNORE_FILE } from "./ignore";
 
 type Sdk = BbPluginApi["sdk"];
@@ -39,15 +41,13 @@ export interface WorkspaceRefs {
  * The diff does not depend on them, so when bb cannot give a status the environment's own record
  * stands in, without the commit list, and the reason is logged.
  */
-export async function workspaceRefs(sdk: Sdk, log: BbPluginApi["log"], environment: Environment, base: string | undefined): Promise<WorkspaceRefs> {
+export async function workspaceRefs(git: GitReads, log: BbPluginApi["log"], environment: Environment, base: string | undefined): Promise<WorkspaceRefs> {
   const fallback = { defaultBase: environment.mergeBaseBranch ?? environment.defaultBranch, currentBranch: environment.branchName, commits: [] };
-  let status: Awaited<ReturnType<Sdk["environments"]["status"]>>;
+  let status: GitStatus;
   try {
-    status = await sdk.environments.status({
-      environmentId: environment.id,
-      ...(base === undefined ? {} : { mergeBaseBranch: base }),
-    });
+    status = await git.status(environment.id, base);
   } catch (error) {
+    if (error instanceof ReviewUnavailable) throw error;
     log.warn(`No git status for ${environment.id}: ${error instanceof Error ? error.message : String(error)}`);
     return fallback;
   }
@@ -73,17 +73,16 @@ export type Fingerprint = Record<string, string>;
  * file that has one to show (past the limit, or bb did not answer), so equality is not proof there.
  * Binary and too-large files show no patch, so their counts are all there is to compare.
  */
-export async function uncommittedFingerprint(sdk: Sdk, environmentId: string): Promise<{ prints: Fingerprint; complete: boolean }> {
-  const result = await sdk.environments.diffFiles({ environmentId, target: "uncommitted" });
+export async function uncommittedFingerprint(git: GitReads, environmentId: string): Promise<{ prints: Fingerprint; complete: boolean }> {
+  const target: GitTarget = { type: "uncommitted" };
+  const result = await git.files(environmentId, target, false);
   if (result.outcome !== "available") return { prints: {}, complete: false };
   const patches = new Map(result.initialPatches.map((patch) => [patch.path, patch.patch]));
-  const missing = result.files.filter((file) => !patches.has(file.path) && !file.binary && file.loadMode !== "too_large").map((file) => file.path);
+  const missing = result.files.filter((file) => !patches.has(file.path) && !file.binary && file.loadMode !== "too_large");
   let complete = missing.length <= FINGERPRINT_MAX_FILES;
-  for (let index = 0; index < Math.min(missing.length, FINGERPRINT_MAX_FILES); index += 50) {
-    const batch = await sdk.environments.diffPatch({ environmentId, paths: missing.slice(index, index + 50), target: { type: "uncommitted" } });
-    if (batch.outcome === "available") for (const patch of batch.patches) patches.set(patch.path, patch.patch);
-    else complete = false;
-  }
+  const fetched = await git.patches(environmentId, target, false, missing.slice(0, FINGERPRINT_MAX_FILES));
+  for (const patch of fetched.patches) patches.set(patch.path, patch.patch);
+  if (fetched.failure !== null) complete = false;
   const prints: Fingerprint = {};
   for (const file of result.files) {
     const patch = patches.get(file.path);
@@ -106,8 +105,8 @@ export interface WorkspaceState {
   summary: string;
 }
 
-export async function workspaceState(sdk: Sdk, environmentId: string): Promise<WorkspaceState> {
-  const [status, uncommitted] = await Promise.all([sdk.environments.status({ environmentId }), uncommittedFingerprint(sdk, environmentId)]);
+export async function workspaceState(git: GitReads, environmentId: string): Promise<WorkspaceState> {
+  const [status, uncommitted] = await Promise.all([git.status(environmentId), uncommittedFingerprint(git, environmentId)]);
   const parts: string[] = [];
   if (status.outcome === "available") {
     const { checkout, mergeBase } = status.workspace;
@@ -126,40 +125,29 @@ export async function workspaceState(sdk: Sdk, environmentId: string): Promise<W
 
 /** Fills in the base a branch view left out. */
 export function resolveTarget(request: TargetRequest, defaultBase: string | null): Target {
-  if (request.kind === "uncommitted" || request.kind === "commit") return request;
+  if (request.kind !== "branch" && request.kind !== "all") return request;
   const base = request.base ?? defaultBase;
   if (base === null) throw new ReviewUnavailable("This workspace has no base branch to compare against; pick one.");
   return { kind: request.kind, base };
 }
 
-function diffQuery(target: Target) {
+/** A view as the Git plugin names it; the host entry's views (staged, unstaged, range) have none. */
+export function gitTarget(target: Target): GitTarget {
   switch (target.kind) {
+    case "staged":
+    case "unstaged":
+    case "range":
+    case "files":
+      throw new ReviewUnavailable(`bb's Git plugin has no ${target.kind} view.`);
     case "uncommitted":
-      return { target: "uncommitted" as const };
+      return { type: "uncommitted" };
     case "branch":
-      return { target: "branch_committed" as const, mergeBaseBranch: target.base };
+      return { type: "branch_committed", mergeBaseBranch: target.base };
     case "all":
-      return { target: "all" as const, mergeBaseBranch: target.base };
+      return { type: "all", mergeBaseBranch: target.base };
     case "commit":
-      return { target: "commit" as const, sha: target.sha };
+      return { type: "commit", sha: target.sha };
   }
-}
-
-function patchTarget(target: Target) {
-  switch (target.kind) {
-    case "uncommitted":
-      return { type: "uncommitted" as const };
-    case "branch":
-      return { type: "branch_committed" as const, mergeBaseBranch: target.base };
-    case "all":
-      return { type: "all" as const, mergeBaseBranch: target.base };
-    case "commit":
-      return { type: "commit" as const, sha: target.sha };
-  }
-}
-
-function failureMessage(result: { outcome: "not_applicable"; message: string } | { outcome: "unavailable"; failure: { message: string } }): string {
-  return result.outcome === "not_applicable" ? result.message : result.failure.message;
 }
 
 async function readText(sdk: Sdk, hostId: string, path: string): Promise<string> {
@@ -222,23 +210,59 @@ export interface LoadedDiff {
   files: DiffFile[];
   ignoredPaths: string[];
   truncated: boolean;
+  /** The commit a branch view compares against, which a file's old side is read at. */
+  mergeBaseRef: string | null;
+  /** The commit a range view's new side is. */
+  headRef: string | null;
+  /** Whether the view takes bb's Viewed marks. */
+  viewable: boolean;
 }
 
-/** The changed files of a view with the patches bb sends up front, minus the ignored ones. */
-export async function loadDiff(sdk: Sdk, environment: Environment, target: Target, patterns: readonly string[]): Promise<LoadedDiff> {
-  const result = await sdk.environments.diffFiles({ environmentId: environment.id, ...diffQuery(target) });
+/** Where the diff of a view comes from: bb's Git plugin, or the plugin's host entry for the views only raw git gives. */
+export interface DiffSources {
+  git: GitReads;
+  host: HostGit;
+}
+
+/**
+ * Whether a file is marked Viewed: `yes` at its current revision, `changed` when it was marked at an
+ * earlier one (bb's own diff panel then shows it unmarked), `no` otherwise.
+ */
+export function viewedState(revision: string, marked: string | undefined): Viewed {
+  if (marked === undefined) return "no";
+  return marked === revision ? "yes" : "changed";
+}
+
+/**
+ * The changed files of a view with the patches bb sends up front, minus the ignored ones, and each
+ * file's Viewed mark. Marks are bb's own (shared with its diff panel); when they cannot be read the
+ * files show unmarked and the reason is logged.
+ */
+export async function loadDiff(
+  sources: DiffSources,
+  log: BbPluginApi["log"],
+  environment: Environment,
+  target: Target,
+  patterns: readonly string[],
+  ignoreWhitespace = false,
+): Promise<LoadedDiff> {
+  if (isHostTarget(target)) return loadHostDiff(sources.host, environment, target, patterns, ignoreWhitespace);
+  const git = sources.git;
+  const result = await git.files(environment.id, gitTarget(target), ignoreWhitespace);
   if (result.outcome !== "available") throw new ReviewUnavailable(failureMessage(result));
   const ignored = ignoreMatcher(patterns);
   const patches = new Map(result.initialPatches.map((patch) => [patch.path, patch]));
-  const files: DiffFile[] = [];
-  const ignoredPaths: string[] = [];
-  for (const file of result.files) {
-    if (ignored(file.path)) {
-      ignoredPaths.push(file.path);
-      continue;
-    }
+  const shown = result.files.filter((file) => !ignored(file.path));
+  let marks = new Map<string, string>();
+  try {
+    if (shown.length > 0) marks = await git.viewed(environment.id, gitTarget(target), shown.map((file) => file.path));
+  } catch (error) {
+    if (error instanceof ReviewUnavailable) throw error;
+    log.warn(`No Viewed marks for ${environment.id}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  const files: DiffFile[] = shown.map((file) => {
     const patch = patches.get(file.path);
-    files.push({
+    return {
       path: file.path,
       previousPath: file.previousPath,
       changeKind: file.changeKind,
@@ -247,21 +271,98 @@ export async function loadDiff(sdk: Sdk, environment: Environment, target: Targe
       binary: file.binary,
       loadMode: file.loadMode,
       untracked: file.origin === "untracked",
+      revision: file.revision,
+      viewed: viewedState(file.revision, marks.get(file.path)),
       patch: patch?.patch ?? null,
       patchTruncated: patch?.truncated ?? false,
-    });
-  }
-  return { files, ignoredPaths, truncated: result.truncated };
+    };
+  });
+  const ignoredPaths = result.files.filter((file) => ignored(file.path)).map((file) => file.path);
+  return { files, ignoredPaths, truncated: result.truncated, mergeBaseRef: result.mergeBaseRef, headRef: null, viewable: true };
 }
 
-/** Patches for files bb left to load on demand. */
+/**
+ * A staged, unstaged or range view, from git on the workspace's host. Every patch comes with the list
+ * (none loads on demand); a file's revision is its patch's hash, so it still tells a comment's file
+ * changed. bb's Viewed marks do not cover these views.
+ */
+async function loadHostDiff(host: HostGit, environment: Environment, target: HostTarget, patterns: readonly string[], ignoreWhitespace: boolean): Promise<LoadedDiff> {
+  if (environment.path === null) throw new ReviewUnavailable("This workspace has no checkout.");
+  const spec: HostDiffSpec = target.kind === "range" ? { kind: "range", from: target.from, to: target.to, symmetric: target.symmetric } : { kind: target.kind };
+  let result;
+  try {
+    result = await host(environment.hostId, environment.path, spec, ignoreWhitespace);
+  } catch (error) {
+    throw new ReviewUnavailable(`Could not read the ${target.kind} view on the workspace's machine: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  const ignored = ignoreMatcher(patterns);
+  const files: DiffFile[] = result.files
+    .filter((file) => !ignored(file.path))
+    .map((file) => ({
+      path: file.path,
+      previousPath: file.previousPath,
+      changeKind: file.changeKind,
+      additions: file.additions,
+      deletions: file.deletions,
+      binary: file.binary,
+      loadMode: file.tooLarge ? "too_large" : "auto",
+      untracked: file.untracked,
+      revision: `h:${createHash("sha256").update(file.patch ?? `${file.changeKind}:${file.additions}:${file.deletions}`).digest("hex").slice(0, 24)}`,
+      viewed: "no",
+      patch: file.patch,
+      patchTruncated: false,
+    }));
+  const ignoredPaths = result.files.filter((file) => ignored(file.path)).map((file) => file.path);
+  return { files, ignoredPaths, truncated: result.truncated, mergeBaseRef: result.baseSha, headRef: result.headSha, viewable: false };
+}
+
+/** Patches for files bb left to load on demand, at the revisions the file list gave. */
 export async function loadPatches(
-  sdk: Sdk,
+  git: GitReads,
   environment: Environment,
   target: Target,
-  paths: readonly string[],
+  files: readonly { path: string; revision: string }[],
+  ignoreWhitespace = false,
 ): Promise<{ path: string; patch: string; truncated: boolean }[]> {
-  const result = await sdk.environments.diffPatch({ environmentId: environment.id, paths: [...paths], target: patchTarget(target) });
-  if (result.outcome !== "available") throw new ReviewUnavailable(failureMessage(result));
+  // The host entry's views send every patch with the list.
+  if (isHostTarget(target) || target.kind === "files") return [];
+  const result = await git.patches(environment.id, gitTarget(target), ignoreWhitespace, files);
+  if (result.failure !== null && result.patches.length === 0) throw new ReviewUnavailable(result.failure);
   return result.patches;
+}
+
+/** The most files whose patches a view's load fetches for their comment threads (the rest load on demand). */
+export const THREAD_PATCH_MAX_FILES = 100;
+
+/**
+ * `files` with the patches of those that have a line thread filled in, where bb left them to load on
+ * demand. Where such a thread is drawn (at its line, or under "Not on the current diff") depends on its
+ * file's patch, so the tab knows it from its first render rather than moving threads, and the
+ * previous/next comment stops, as files load. A patch that cannot be had is left to load on demand.
+ */
+export async function withThreadPatches(
+  git: GitReads,
+  log: BbPluginApi["log"],
+  environment: Environment,
+  target: Target,
+  files: readonly DiffFile[],
+  threads: readonly { filePath: string; startLine: number }[],
+  ignoreWhitespace = false,
+): Promise<DiffFile[]> {
+  if (isHostTarget(target) || target.kind === "files") return [...files];
+  const commented = new Set(threads.filter((thread) => thread.startLine > 0).map((thread) => thread.filePath));
+  const missing = files.filter((file) => file.patch === null && commented.has(file.path) && !file.binary && file.loadMode !== "too_large").slice(0, THREAD_PATCH_MAX_FILES);
+  if (missing.length === 0) return [...files];
+  let patches: { path: string; patch: string; truncated: boolean }[];
+  try {
+    patches = await loadPatches(git, environment, target, missing.map((file) => ({ path: file.path, revision: file.revision })), ignoreWhitespace);
+  } catch (error) {
+    log.warn(`The patches of ${missing.length} commented file(s) in ${environment.id} are left to load on demand: ${error instanceof Error ? error.message : String(error)}`);
+    return [...files];
+  }
+  const byPath = new Map(patches.map((patch) => [patch.path, patch]));
+  return files.map((file) => {
+    const patch = byPath.get(file.path);
+    return patch === undefined ? file : { ...file, patch: patch.patch, patchTruncated: patch.truncated };
+  });
 }
