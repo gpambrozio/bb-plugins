@@ -13,6 +13,7 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   workspace's branch has one) or *A pull request…* to paste any pull request's address, or run
   `bb diff-review open <address>`. Its changes are fetched into the workspace's repository without
   switching your checkout, and its review threads from GitHub appear on their lines, marked GitHub.
+  The thread's tab comes back on it until the pull request is closed or merged.
 - **Answer GitHub's threads from the tab.** A reply, Resolve or Reopen on one of them goes to GitHub;
   **Sync with GitHub** reads them again. A reply that asks @reviewer or @agent stays in the tab and
   asks the view's AI reviewer instead of going to GitHub.

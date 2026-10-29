@@ -758,6 +758,30 @@ describe("a pull request's view", () => {
     );
   });
 
+  it("is the view a thread's tab comes back on until the pull request is closed or merged", async () => {
+    const PR = { kind: "pr", owner: "o", repo: "r", number: 7 };
+    let state = "OPEN";
+    const getReview = (input: unknown) => {
+      const { target } = input as { target: { kind: string } };
+      return target.kind === "pr" ? { ...PR_VIEW, pullRequest: { ...PR_VIEW.pullRequest, state } } : { ...VIEW, target };
+    };
+    window.localStorage.setItem("diff-review:view:thr_1", JSON.stringify({ opened: null, target: PR }));
+    const open = renderSlot({ component: ReviewPanel }, { threadId: "thr_1", environment: ENVIRONMENT, params: null }, { rpc: { getReview } });
+    expect(await screen.findByText("#7 Add b")).toBeTruthy();
+    expect(open.inspection.rpcCalls.filter((call) => call.method === "getReview").map((call) => (call.input as { target: unknown }).target)).toEqual([PR]);
+    open.lifecycle.unmount();
+
+    state = "MERGED";
+    const merged = renderSlot({ component: ReviewPanel }, { threadId: "thr_1", environment: ENVIRONMENT, params: null }, { rpc: { getReview } });
+    await waitFor(() => expect(merged.inspection.rpcCalls.filter((call) => call.method === "getReview")).toHaveLength(2));
+    expect(merged.inspection.rpcCalls.filter((call) => call.method === "getReview").map((call) => call.input)).toEqual([
+      { threadId: "thr_1", target: PR, reason: "open", tab: expect.any(String) },
+      { threadId: "thr_1", target: { kind: "uncommitted" }, reason: "open", tab: expect.any(String), autoTarget: true },
+    ]);
+    expect(await screen.findByText("Why three?")).toBeTruthy();
+    expect(window.localStorage.getItem("diff-review:view:thr_1")).toBeNull();
+  });
+
   it("shows every comment Submit would post, one the tab has not loaded yet included", async () => {
     const slot = renderSlot(
       { component: ReviewPanel },

@@ -127,6 +127,11 @@ export function fromPicker(value: string): TargetRequest {
   return { kind: "uncommitted" };
 }
 
+/** Whether a kept view that loaded is not one to come back to: a pull request closed or merged since. */
+export function keptViewGone(view: ReadyView): boolean {
+  return view.target.kind === "pr" && view.pullRequest !== null && view.pullRequest.state !== "OPEN";
+}
+
 /** The Review tab beside a thread; it keeps the view picked in it per thread. */
 export function ReviewPanel({ threadId, params, environment }: ExperimentalThreadActionTabProps) {
   const visible = experimental_useTabVisible();
@@ -192,12 +197,13 @@ export function ReviewBody({
     if (keepViews) keepView(threadId, params, next);
   };
   // The kept view's first answer says whether it is still there: the server cannot read it (a range
-  // whose branch was deleted). An error may pass, so the view stays.
+  // whose branch was deleted), or it is not one to come back to (`keptViewGone`). An error may pass,
+  // so the view stays.
   const checkedKept = useRef(!start.restored);
   useEffect(() => {
     if (checkedKept.current || state.status === "loading") return;
     checkedKept.current = true;
-    if (state.status === "unavailable") onKeptViewGone?.();
+    if (state.status === "unavailable" || (state.status === "ready" && keptViewGone(state.view))) onKeptViewGone?.();
   }, [state, onKeptViewGone]);
   const reload = review.reload;
   const onEdited = useCallback(() => void reload("manual"), [reload]);
