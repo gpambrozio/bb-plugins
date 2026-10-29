@@ -103,7 +103,8 @@ export function CommentNavButtons({ from, className = "size-7" }: { from?: strin
  * Moves the keyboard focus to a thread once it is drawn: a file's diff may still be mounting when the
  * step asks, so this looks again on the next frames. Once the card is there it waits two more frames,
  * past the reveal of its file or line (which scrolls in a frame of its own), then scrolls the tab's
- * own area, as little as shows the card, and focuses it without scrolling anything else.
+ * own area, as little as shows the card (and holds it there while the files around it finish loading),
+ * and focuses it without scrolling anything else.
  */
 export function focusThread(root: HTMLElement | null, threadId: string, frames = 30): void {
   if (root === null) return;

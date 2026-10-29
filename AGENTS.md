@@ -415,7 +415,10 @@ so a blank area is a crash to look for in the console, not a layout bug.
 bb's containers around a tab or panel included (an `overflow: hidden` one too), so a tab's toolbar
 slides out of sight. Set the scroll container's `scrollTop` from the two boxes instead
 (`diff-review/app/scroll-within.ts`), and `focus({ preventScroll: true })`. A programmatic `focus()`
-after a mouse click shows no `focus-visible` ring, so mark a place you moved to some other way.
+after a mouse click shows no `focus-visible` ring, so mark a place you moved to some other way. Content
+that grows above the place afterwards (a lazily loaded file) still pushes it away: Chromium's scroll
+anchoring keeps a node in view still, and when the growing element is in view, that node is inside it.
+Hold the place yourself until the layout settles or the user takes over (`holdWithin`, same file).
 
 ## Dependencies — the opposite of the Paseo repo
 

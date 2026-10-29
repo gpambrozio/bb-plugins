@@ -52,7 +52,7 @@ specific to `diff-review`.
 | `app/open-file.ts`, `app/palette.ts` | Which version Open previews; the colour-blind colours. |
 | `app/reviews.ts`, `app/reviews-page.tsx`, `app/thread-info.tsx`, `app/open-overlay.tsx` | The Reviews page (sidebar, title, badge), the thread Info row, and the overlay that answers `bb diff-review open`. |
 | `app/thread-card.tsx`, `app/comment-composer.tsx` | A thread and its comments; the box comments are written in. |
-| `app/view-state.tsx`, `app/scroll-memory.ts` | What the tab keeps per thread and view (unsent comments, folds, scroll place as file + offset) and its saving; restoring the scroll place while patches load. |
+| `app/view-state.tsx`, `app/scroll-memory.ts` | What the tab keeps per thread and view (unsent comments, folds, scroll place as file + offset) and its saving; restoring the scroll place while patches load (`app/scroll-within.ts`'s hold). |
 | `app/send-dialog.tsx` | Picking threads and a note for **Send to agent**, to this thread or a new one. |
 | `app/ai-review-dialog.tsx`, `app/execution-picker.tsx` | The AI review dialog (focus chips, instructions); bb's provider/model picker, seeded from the settings. |
 | `app/runs-list.tsx` | The session's runs under the toolbar: status, files a review changed, Open thread, Close. |
@@ -301,7 +301,12 @@ the branch has some, and the tab's picker adopts that view without loading it ag
   a thread whose file's patch is still loading waits for it and lands where the thread turns out to be.
 - Scroll the tab's own area only (`app/scroll-within.ts`), never `scrollIntoView`: it scrolls every
   ancestor that can scroll, bb's clipping containers included, and pushed the tab's toolbar out of
-  sight in a real panel (the Chromium test shows it).
+  sight in a real panel (the Chromium test shows it). A place it scrolls to is held while the layout
+  settles (`holdWithin`): lazily loaded files keep drawing around it, and Chromium's own scroll
+  anchoring picks a node inside the file above when that file is partly in view, so its diff drawing
+  pushed a comment just stepped to out of sight. The hold ends when the user scrolls, clicks or types
+  in the area, when another scroll starts one, or once nothing has moved the place for a few seconds;
+  the scroll memory's restore is the same kind of hold, so a step right after the tab opens wins.
 - Updates land in place. Pierre redraws a file's whole diff whenever its `lineAnnotations` array is a
   new object, so unchanged threads, runs and files keep their objects across a refresh or reload
   (`shareById`, `mergeView`, `groupByFile`, and `NO_THREADS` rather than a fresh `[]`), and a reply

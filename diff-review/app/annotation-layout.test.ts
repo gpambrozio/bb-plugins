@@ -151,6 +151,56 @@ describe.skipIf(executablePath === null)("comment boxes in the real diff", () =>
     expect(toolbarTop).toBeLessThan(32);
   });
 
+  /**
+   * Lands on the comment in file 6 with file 5 still partly in view above it, then draws file 5's
+   * diff 800px tall a little later, as a lazily loaded file does. Where the comment is against the
+   * top of the tab's area, before and after.
+   */
+  async function landThenExpandAbove(how: "scrollWithin" | "scrollTop", { wheel = false } = {}) {
+    await page.goto(pathToFileURL(join(dir, "scroll.html")).href);
+    await page.waitForSelector("[data-card]");
+    const before = await page.evaluate((how) => {
+      const root = document.querySelector<HTMLElement>("[data-scroll]")!;
+      const card = document.querySelector<HTMLElement>("[data-card]")!;
+      const above = document.querySelector<HTMLElement>('[data-file="5"]')!;
+      // File 5's last 60px at the top, the comment under it.
+      const place = above.getBoundingClientRect().bottom - root.getBoundingClientRect().top - 60;
+      if (how === "scrollWithin") {
+        root.scrollTop += place;
+        window.scrollWithin(root, card, "nearest");
+      } else root.scrollTop += place;
+      return card.getBoundingClientRect().top - root.getBoundingClientRect().top;
+    }, how);
+    if (wheel) {
+      await page.mouse.move(400, 300);
+      await page.mouse.wheel(0, 1);
+    }
+    await page.waitForTimeout(300);
+    await page.evaluate(() => window.expand(5, 800));
+    await page.waitForTimeout(300);
+    const after = await page.evaluate(() => document.querySelector("[data-card]")!.getBoundingClientRect().top - document.querySelector("[data-scroll]")!.getBoundingClientRect().top);
+    return { before, after };
+  }
+
+  it("keeps a comment it scrolled to in place while a file above it draws its diff", async () => {
+    const { before, after } = await landThenExpandAbove("scrollWithin");
+    expect(before).toBeGreaterThan(0);
+    // In full view: the tab's area is 328px tall, the comment 60px.
+    expect(before + 60).toBeLessThanOrEqual(328);
+    expect(Math.abs(after - before)).toBeLessThan(1);
+  });
+
+  it("would let the file above push the comment out of view, so the check above means something", async () => {
+    const { before, after } = await landThenExpandAbove("scrollTop");
+    // File 5's body grows from 135px to 800px: the comment goes down as far, out of the 328px view.
+    expect(after - before).toBeGreaterThan(600);
+  });
+
+  it("lets go of the comment once the user scrolls", async () => {
+    const { before, after } = await landThenExpandAbove("scrollWithin", { wheel: true });
+    expect(after - before).toBeGreaterThan(600);
+  });
+
   for (const style of ["unified", "split"] as const) {
     it(`fits the pane in the ${style} view, wrapping the text and scrolling the code block inside the card`, async () => {
       const { scrollers, paneRight, cardRight, preRight, preScrolls } = await layout(style, true);

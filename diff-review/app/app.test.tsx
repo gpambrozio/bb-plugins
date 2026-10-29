@@ -73,7 +73,8 @@ vi.mock("@pierre/diffs/react", async () => {
  * lays nothing out, so the scroll itself is a no-op here (`scroll-within.test.ts` checks its sums).
  */
 const scrolls = vi.hoisted(() => [] as string[]);
-vi.mock("./scroll-within", () => ({
+vi.mock("./scroll-within", async (original) => ({
+  ...(await original<typeof import("./scroll-within")>()),
   scrollWithin: (_root: Element, element: Element) => {
     scrolls.push(element.closest("[data-thread-id]")?.getAttribute("data-thread-id") ?? element.closest("[data-file-path]")?.getAttribute("data-file-path") ?? element.tagName);
   },
