@@ -52,6 +52,7 @@ specific to `diff-review`.
 | `app/open-file.ts`, `app/palette.ts` | Which version Open previews; the colour-blind colours. |
 | `app/reviews.ts`, `app/reviews-page.tsx`, `app/thread-info.tsx`, `app/open-overlay.tsx` | The Reviews page (sidebar, title, badge), the thread Info row, and the overlay that answers `bb diff-review open`. |
 | `app/thread-card.tsx`, `app/comment-composer.tsx` | A thread and its comments; the box comments are written in. |
+| `app/view-memory.ts` | The view picked in a thread's Review tab, kept in `localStorage` per bb thread with the `params` target the tab was opened on: bb mounts the tab anew whenever its thread is opened, so without it the picker went back to the default. A tab opened on another view starts there; a kept view the server can no longer read (`unavailable`) is forgotten and the tab starts over on the default. The first load's own pick is not kept. |
 | `app/view-state.tsx`, `app/scroll-memory.ts` | What the tab keeps per thread and view (unsent comments, folds, scroll place as file + offset) and its saving; restoring the scroll place while patches load (`app/scroll-within.ts`'s hold). |
 | `app/send-dialog.tsx` | Picking threads and a note for **Send to agent**, to this thread or a new one. |
 | `app/ai-review-dialog.tsx`, `app/execution-picker.tsx` | The AI review dialog (focus chips, instructions); bb's provider/model picker, seeded from the settings. |

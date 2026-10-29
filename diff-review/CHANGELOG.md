@@ -15,7 +15,8 @@ Needs bb 0.48 or newer.
   now offers the **staged** and the **unstaged** changes, **a range** between two branches, tags or
   commits (`main..feature`, or `main...feature`, which still shows a branch's changes after it was
   merged), and **Any file**: search the workspace for any file, in the diff or not, and comment on its
-  lines. They work on a remote machine too.
+  lines. They work on a remote machine too. Each thread's Review tab comes back on the view you
+  picked in it, unless that view is gone (a range whose branch was deleted, say).
 - **Viewed.** Each file has a Viewed box, shared with bb's own diff panel: marking a file folds it, and
   a file that changed since you marked it says so.
 - **Find in the diff**, across every file, folded ones included, with the match count, previous and

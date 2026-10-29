@@ -980,6 +980,55 @@ describe("the Review tab", () => {
     ]);
   });
 
+  describe("the view picked in the tab", () => {
+    /** The tab answering with the view each load asks for. */
+    const echo = (input: unknown) => ({ ...VIEW, target: (input as { target: unknown }).target });
+    const pickView = async (label: string) => {
+      await act(async () => dispatchReviewCommand("thr_1", "go-to"));
+      fireEvent.change(await screen.findByRole("textbox", { name: "Filter" }), { target: { value: label } });
+      const option = screen.getAllByRole("option").find((entry) => entry.textContent === `View${label}`)!;
+      fireEvent.click(within(option).getByRole("button"));
+    };
+
+    it("comes back when the thread is opened again, and is that thread's only", async () => {
+      const first = render({ getReview: echo });
+      await screen.findByText("Why three?");
+      await pickView("Staged changes");
+      await waitFor(() => expect(loadsOf(first).at(-1)!.target).toEqual({ kind: "staged" }));
+      // Another thread opened in the panel, then this one again: bb mounts the tab anew each time.
+      first.lifecycle.unmount();
+      const other = render({ getReview: echo }, "thr_2");
+      await screen.findByText("Why three?");
+      expect(other.inspection.rpcCalls[0]!.input).toEqual({ threadId: "thr_2", target: { kind: "uncommitted" }, reason: "open", tab: expect.any(String), autoTarget: true });
+      other.lifecycle.unmount();
+      const again = render({ getReview: echo });
+      await screen.findByText("Why three?");
+      expect(again.inspection.rpcCalls[0]!.input).toEqual({ threadId: "thr_1", target: { kind: "staged" }, reason: "open", tab: expect.any(String) });
+      expect(screen.getByText("Staged changes")).toBeTruthy();
+    });
+
+    it("gives way to the default view once it is gone", async () => {
+      window.localStorage.setItem("diff-review:view:thr_1", JSON.stringify({ opened: null, target: { kind: "range", from: "main", to: "deleted-branch", symmetric: true } }));
+      const slot = render({
+        getReview: (input: unknown) =>
+          (input as { target: { kind: string } }).target.kind === "range" ? { ok: false, message: "Could not read the range main...deleted-branch on the workspace's machine." } : echo(input),
+      });
+      await screen.findByText("Why three?");
+      expect(loadsOf(slot).map(({ target, reason, ...rest }) => ({ target, reason, auto: "autoTarget" in rest }))).toEqual([
+        { target: { kind: "range", from: "main", to: "deleted-branch", symmetric: true }, reason: "open", auto: false },
+        { target: { kind: "uncommitted" }, reason: "open", auto: true },
+      ]);
+      expect(window.localStorage.getItem("diff-review:view:thr_1")).toBeNull();
+    });
+
+    it("does not override a tab opened on another view", async () => {
+      window.localStorage.setItem("diff-review:view:thr_1", JSON.stringify({ opened: null, target: { kind: "staged" } }));
+      const slot = renderSlot({ component: ReviewPanel }, { threadId: "thr_1", environment: ENVIRONMENT, params: { target: { kind: "unstaged" } } }, { rpc: { getReview: echo } });
+      await screen.findByText("Why three?");
+      expect(loadsOf(slot)[0]!.target).toEqual({ kind: "unstaged" });
+    });
+  });
+
   it("never picks for a tab opened on a chosen view", async () => {
     const slot = renderSlot({ component: ReviewPanel }, { threadId: "thr_1", environment: ENVIRONMENT, params: { target: { kind: "uncommitted" } } }, { rpc: { getReview: () => VIEW } });
     await screen.findByText("1 file · +1 −1 · 1 left out by the ignore patterns");

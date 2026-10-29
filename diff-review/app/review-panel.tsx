@@ -9,7 +9,8 @@
  * Unsent comments, folds and the scroll position are kept per thread and view (`view-state.tsx`).
  *
  * A tab opened with `params: { target }` starts on that view; otherwise on the uncommitted changes, or,
- * when there are none, on the changes committed since the base branch.
+ * when there are none, on the changes committed since the base branch. A view picked in the tab is
+ * kept per thread (`view-memory.ts`), so coming back to the thread shows it again, unless it is gone.
  */
 import { experimental_useTabVisible, useRpc, type ExperimentalThreadActionTabProps } from "@get-bb/plugin-sdk/app";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -23,7 +24,7 @@ import { Switch } from "@/components/ui/switch";
 import type { RpcContract } from "../shared/contract";
 import { parseRange, rangeText } from "../shared/git-spec";
 import { linesText, parsePatchLines } from "../shared/patch-lines";
-import { describeLocation, GENERAL_PATH, targetRequestSchema, type ReviewThread, type Run, type TargetRequest } from "../shared/types";
+import { describeLocation, GENERAL_PATH, type ReviewThread, type Run, type TargetRequest } from "../shared/types";
 import { ReviewActionsProvider, useActions } from "./actions";
 import { useReviewCommands } from "./commands";
 import { carryCurrent, findInFiles, type FindMatch } from "./find";
@@ -44,6 +45,7 @@ import { useScrollMemory } from "./scroll-memory";
 import { SendDialog } from "./send-dialog";
 import { ThreadCard } from "./thread-card";
 import { errorMessage, useReview, type ReadyView } from "./use-review";
+import { forgetView, keepView, startingView } from "./view-memory";
 import { draftKeys, useDraft, useDraftKeys, useViewState, ViewStateProvider } from "./view-state";
 
 const DIFF_STYLE_KEY = "diff-review:diff-style";
@@ -51,15 +53,6 @@ const DIFF_STYLE_KEY = "diff-review:diff-style";
 const WHITESPACE_KEY = "diff-review:ignore-whitespace";
 /** "Only files with comments" is kept per bb thread: a thread that never set it starts with it off. */
 const onlyCommentedKey = (threadId: string) => `diff-review:only-commented:${threadId}`;
-
-function initialTarget(params: unknown): TargetRequest {
-  const parsed = targetRequestSchema.safeParse((params as { target?: unknown } | null)?.target);
-  return parsed.success ? parsed.data : { kind: "uncommitted" };
-}
-
-function hasTarget(params: unknown): boolean {
-  return targetRequestSchema.safeParse((params as { target?: unknown } | null)?.target).success;
-}
 
 function stored(key: string): string | null {
   try {
@@ -124,10 +117,26 @@ export function fromPicker(value: string): TargetRequest {
   return { kind: "uncommitted" };
 }
 
-/** The Review tab beside a thread. */
+/** The Review tab beside a thread; it keeps the view picked in it per thread. */
 export function ReviewPanel({ threadId, params, environment }: ExperimentalThreadActionTabProps) {
   const visible = experimental_useTabVisible();
-  return <ReviewBody threadId={threadId} environmentId={environment?.id ?? null} params={params} visible={visible} />;
+  // A kept view that turned out gone is forgotten, and the tab starts over on the default one.
+  const [start, setStart] = useState(0);
+  const onKeptViewGone = useCallback(() => {
+    forgetView(threadId);
+    setStart((count) => count + 1);
+  }, [threadId]);
+  return (
+    <ReviewBody
+      key={`${threadId} ${start}`}
+      threadId={threadId}
+      environmentId={environment?.id ?? null}
+      params={params}
+      visible={visible}
+      keepViews
+      onKeptViewGone={onKeptViewGone}
+    />
+  );
 }
 
 /**
@@ -140,6 +149,8 @@ export function ReviewBody({
   params,
   visible,
   initialFile = null,
+  keepViews = false,
+  onKeptViewGone,
 }: {
   threadId: string;
   environmentId: string | null;
@@ -147,11 +158,16 @@ export function ReviewBody({
   visible: boolean;
   /** A file to go to once the view has loaded (`bb diff-review open <file>`). */
   initialFile?: string | null;
+  /** Keep the view picked here for the thread, and start on the one kept (the Review tab). */
+  keepViews?: boolean;
+  /** The kept view this started on cannot be loaded any more. */
+  onKeptViewGone?: () => void;
 }) {
-  const [target, setTarget] = useState<TargetRequest>(() => initialTarget(params));
+  const [start] = useState(() => startingView(params, keepViews ? threadId : null));
+  const [target, setTarget] = useState<TargetRequest>(start.target);
   // A tab opened without a view starts on the uncommitted changes, unless there are none and the
   // branch has commits: the first load decides, and the picker follows it.
-  const [autoTarget] = useState(() => !hasTarget(params));
+  const autoTarget = start.auto;
   const [ignoreWhitespace, setIgnoreWhitespace] = useState(() => stored(WHITESPACE_KEY) === "true");
   const review = useReview(threadId, target, { environmentId, autoTarget, onTarget: setTarget, ignoreWhitespace, visible });
   const toggleWhitespace = (next: boolean) => {
@@ -160,7 +176,19 @@ export function ReviewBody({
   };
   const { state } = review;
 
-  const pick = (value: string) => setTarget(fromPicker(value));
+  const pick = (value: string) => {
+    const next = fromPicker(value);
+    setTarget(next);
+    if (keepViews) keepView(threadId, params, next);
+  };
+  // The kept view's first answer says whether it is still there: the server cannot read it (a range
+  // whose branch was deleted). An error may pass, so the view stays.
+  const checkedKept = useRef(!start.restored);
+  useEffect(() => {
+    if (checkedKept.current || state.status === "loading") return;
+    checkedKept.current = true;
+    if (state.status === "unavailable") onKeptViewGone?.();
+  }, [state, onKeptViewGone]);
   const reload = review.reload;
   const onEdited = useCallback(() => void reload("manual"), [reload]);
 
