@@ -87,7 +87,10 @@ It is a bb take on [diffity](https://github.com/nilbuild/diffity)'s review loop,
 
 - **The Reviews page** in bb's sidebar lists every review with comments, across projects, newest
   first, with the number of open comment threads on its entry (in the reviews it lists: a review whose
-  workspace was archived is in neither); pick one to see it in full. A thread's
+  workspace was archived is in neither); pick one to see it in full. Under the list, the page says how
+  many reviews no thread can open any more (every thread of their workspace archived and the workspace
+  gone) and offers **Delete…**, which removes them and all their comments after you confirm. Nothing
+  is deleted otherwise. A thread's
   **Info** tab says how many review comments its workspace has open.
 - **From the command line**, `bb diff-review open [file] [--view …]` opens a thread's review on a
   view, at a file, in the bb window that shows the thread, and prints the page's address.

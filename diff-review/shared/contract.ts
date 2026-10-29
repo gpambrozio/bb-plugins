@@ -8,6 +8,7 @@ import { z } from "zod";
 import {
   ANCHOR_MAX_CHARS,
   BODY_MAX_CHARS,
+  orphanReviewSchema,
   reviewSummarySchema,
   workspaceFileSchema,
   reviewThreadSchema,
@@ -240,6 +241,16 @@ export const rpcContract = defineRpcContract({
   clearReview: {
     input: z.object({ sessionId: id }).strict(),
     output: z.object({ deletedThreads: z.number().int().nonnegative(), closedRuns: z.number().int().nonnegative() }).strict(),
+  },
+  /** The reviews no live thread can open, which the Reviews page leaves out. */
+  orphanReviews: {
+    input: z.object({}).strict(),
+    output: z.object({ reviews: z.array(orphanReviewSchema) }).strict(),
+  },
+  /** Deletes those of `sessionIds` that are still orphan reviews, with everything of them. */
+  deleteOrphanReviews: {
+    input: z.object({ sessionIds: z.array(id).min(1).max(1000) }).strict(),
+    output: z.object({ deleted: z.number().int().nonnegative(), deletedThreads: z.number().int().nonnegative() }).strict(),
   },
 });
 

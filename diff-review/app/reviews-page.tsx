@@ -2,6 +2,7 @@
  * The Reviews page: every review with comment threads, across projects, newest first, in the page's
  * own sidebar, and the one picked shown in full beside it (the same view as the thread's Review tab).
  * Its sidebar entry counts the open comment threads, and the window title names the open review.
+ * Reviews no live thread can open are not listed; the page says how many and offers to delete them.
  */
 import { useBbNavigate, type ExperimentalBadge, type ExperimentalPageTitle, type PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 
@@ -10,6 +11,7 @@ import { Icon } from "@/components/ui/icon";
 
 import type { ReviewSummary } from "../shared/types";
 import { ago, targetLabel } from "./labels";
+import { OrphanReviews } from "./orphans";
 import { ReviewBody } from "./review-panel";
 import { REVIEWS_PATH } from "../shared/routes";
 import { isReview, parseReviewSubPath, reviewSubPath, useReviewCounts, useReviews } from "./reviews";
@@ -63,6 +65,7 @@ export function ReviewsPage({ subPath }: PluginNavPanelProps) {
       <div className="mx-auto flex h-full w-full max-w-3xl flex-col">
         <h2 className="px-3 pt-3 text-sm font-medium">Reviews</h2>
         <ReviewList subPath={subPath} compact={false} />
+        <OrphanReviews />
       </div>
     );
   }

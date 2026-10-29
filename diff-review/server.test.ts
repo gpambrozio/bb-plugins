@@ -749,6 +749,55 @@ describe("the Reviews page", () => {
     expect(await rpc("listReviews", {})).toEqual({ reviews: [] });
     expect(await rpc("reviewCounts", {})).toEqual({ open: 0, total: 0 });
   });
+  /** A review with two open comment threads, whose tab `THREAD` showed. */
+  async function reviewed() {
+    const context = await setup();
+    const { sessionId } = await context.view();
+    await context.comment(sessionId);
+    await context.comment(sessionId, "And this?");
+    await context.rpc("saveViewState", { threadId: THREAD, sessionId, state: { drafts: {}, collapsed: {}, scroll: null, savedAt: 1 } });
+    return { ...context, sessionId };
+  }
+  const archived = (harness: Awaited<ReturnType<typeof setup>>["harness"], archivedAt: number | null = 1) => {
+    harness.sdk.stub("threads.get", async ({ threadId }: { threadId: string }) => makeThreadResponse({ id: threadId, environmentId: ENV, archivedAt }));
+    harness.sdk.stub("threads.list", async () => []);
+  };
+
+  it("finds the reviews no live thread can open and whose workspace is gone, and deletes only those it is asked to", async () => {
+    const { rpc, harness, sessionId } = await reviewed();
+    expect(await rpc("orphanReviews", {})).toEqual({ reviews: [] });
+    // Every thread archived, but the workspace is still there: not an orphan.
+    archived(harness);
+    expect(await rpc("orphanReviews", {})).toEqual({ reviews: [] });
+    // A workspace bb cannot answer for is not taken for gone.
+    harness.sdk.stub("environments.get", async () => {
+      throw new Error("bb is busy");
+    });
+    expect(await rpc("orphanReviews", {})).toEqual({ reviews: [] });
+    harness.sdk.stub("environments.get", async () => environment({ status: "destroyed", path: null }) as never);
+    expect(await rpc("orphanReviews", {})).toEqual({
+      reviews: [{ sessionId, environmentId: ENV, target: { kind: "uncommitted" }, openCount: 2, totalCount: 2, updatedAt: expect.any(Number) }],
+    });
+
+    // Only a review it offered goes.
+    expect(await rpc("deleteOrphanReviews", { sessionIds: ["0123456789ab"] })).toEqual({ deleted: 0, deletedThreads: 0 });
+    expect(((await rpc("orphanReviews", {})) as { reviews: unknown[] }).reviews).toHaveLength(1);
+    expect(await rpc("deleteOrphanReviews", { sessionIds: [sessionId] })).toEqual({ deleted: 1, deletedThreads: 2 });
+    expect(await rpc("orphanReviews", {})).toEqual({ reviews: [] });
+    await expect(rpc("listThreads", { sessionId })).rejects.toThrow(`No review session ${sessionId}`);
+    expect(harness.inspection.realtimeSignals.filter((event) => event.channel === "reviews").at(-1)!.payload).toEqual({ kind: "threads", sessionId });
+  });
+
+  it("keeps a review that a thread can open again by the time the delete is confirmed", async () => {
+    const { rpc, harness, sessionId } = await reviewed();
+    archived(harness);
+    harness.sdk.stub("environments.get", async () => environment({ status: "destroyed", path: null }) as never);
+    expect(((await rpc("orphanReviews", {})) as { reviews: unknown[] }).reviews).toHaveLength(1);
+    // The thread is brought back from the archive before the user confirms.
+    archived(harness, null);
+    expect(await rpc("deleteOrphanReviews", { sessionIds: [sessionId] })).toEqual({ deleted: 0, deletedThreads: 0 });
+    expect(((await rpc("listReviews", {})) as { reviews: unknown[] }).reviews).toHaveLength(1);
+  });
 });
 
 describe("the tab's kept state", () => {

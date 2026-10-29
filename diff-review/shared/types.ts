@@ -319,6 +319,22 @@ export const reviewSummarySchema = z
   .strict();
 export type ReviewSummary = z.infer<typeof reviewSummarySchema>;
 
+/**
+ * A review no live bb thread can open (every thread of its workspace archived, the workspace itself
+ * gone), which the Reviews page leaves out and offers to delete.
+ */
+export const orphanReviewSchema = z
+  .object({
+    sessionId: z.string(),
+    environmentId: z.string(),
+    target: targetSchema,
+    openCount: z.number().int().nonnegative(),
+    totalCount: z.number().int().nonnegative(),
+    updatedAt: z.number(),
+  })
+  .strict();
+export type OrphanReview = z.infer<typeof orphanReviewSchema>;
+
 /** A workspace file as the Files view shows it. */
 export const workspaceFileSchema = z
   .object({

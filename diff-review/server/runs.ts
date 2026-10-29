@@ -37,7 +37,7 @@ import {
 import { ignorePatterns, loadDiff, loadPatches, ReviewUnavailable, uncommittedFingerprint, type Fingerprint } from "./diff";
 import { explainPrompt, fixPrompt, reviewerPrompt, reviewPrompt, summaryPrompt, type RangeCommits } from "./run-prompts";
 import { publicRun, ReviewError, targetFromKey, type ReviewService, type ReviewSettings } from "./review";
-import { newId, pendingRunThread, type RecordedSend, type ReviewStore } from "./store";
+import { newId, pendingRunThread, type RecordedSend, type ReviewStore, type StoredRun } from "./store";
 import { RUN_METADATA_KEY } from "./tool-names";
 
 type Sdk = BbPluginApi["sdk"];
@@ -360,6 +360,28 @@ export class RunService {
     this.review.publishSession(session.id);
     await Promise.all(open.map((run) => this.archive(run)));
     return { deletedThreads, closedRuns: open.length };
+  }
+
+  /**
+   * Deletes the orphan reviews the user confirmed (`sessionIds`, from `orphanReviews`), with everything
+   * of them. Each is checked again first, so one a live thread can open by now, or one not offered, stays.
+   * Their open runs close as in `clearReview`, and their threads are archived.
+   */
+  async deleteOrphanReviews(sessionIds: readonly string[]): Promise<{ deleted: number; deletedThreads: number }> {
+    const asked = new Set(sessionIds);
+    const orphans = (await this.review.orphanReviews()).filter((orphan) => asked.has(orphan.sessionId));
+    const open: StoredRun[] = [];
+    let deletedThreads = 0;
+    for (const orphan of orphans) {
+      // Starts already asked for but not yet written as runs see this and give up.
+      this.clears.set(orphan.sessionId, this.clearCount(orphan.sessionId) + 1);
+      open.push(...this.store.deleteSession(orphan.sessionId));
+      deletedThreads += orphan.totalCount;
+      this.review.publish(orphan.environmentId, orphan.sessionId);
+    }
+    this.bb.log.info(`Deleted ${orphans.length} review(s) no live thread could open, with ${deletedThreads} comment thread(s).`);
+    await Promise.all(open.map((run) => this.archive(run)));
+    return { deleted: orphans.length, deletedThreads };
   }
 
   private async archive(run: { id: string; threadId: string | null }): Promise<void> {

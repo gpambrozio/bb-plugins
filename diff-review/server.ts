@@ -102,6 +102,8 @@ export default async function plugin(bb: BbPluginApi) {
       return { ok: true as const };
     },
     clearReview: ({ sessionId }) => runs.clearReview(sessionId),
+    orphanReviews: async () => ({ reviews: await service.orphanReviews() }),
+    deleteOrphanReviews: ({ sessionIds }) => runs.deleteOrphanReviews(sessionIds),
     applySuggestion: async (input) => ({ thread: await edits.applySuggestion(input) }),
     revertChanges: async (input) => {
       await edits.revert(input);

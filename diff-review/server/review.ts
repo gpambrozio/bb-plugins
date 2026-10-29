@@ -18,6 +18,7 @@ import {
   isHostTarget,
   REVIEWS_CHANNEL,
   type RealtimeSignal,
+  type OrphanReview,
   type ReviewSummary,
   type WorkspaceFile,
   type ReviewThread,
@@ -38,7 +39,10 @@ import { OPEN_CHANNEL, reviewRoute } from "../shared/routes";
 import { GitReads } from "./git";
 import { createHostGit, createHostIndexState, createHostRangeCommits, type HostGit, type HostIndexState, type HostRangeCommits } from "./host-git";
 import { sendPrompt } from "./prompt";
-import type { ReviewStore, StoredRun } from "./store";
+import type { ReviewStore, ReviewSummaryRow, StoredRun } from "./store";
+
+/** A bb thread as `threads.get` answers. */
+type BbThread = Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["get"]>>;
 
 /** A run as the tab sees it, without the baseline only the server reads. */
 export function publicRun(run: StoredRun): Run {
@@ -615,7 +619,8 @@ export class ReviewService {
     if (session !== null) this.publish(session.environmentId, session.id);
   }
 
-  private publish(environmentId: string, sessionId: string): void {
+  /** Tells open tabs on a workspace, and the Reviews page, that one of its sessions changed (or went). */
+  publish(environmentId: string, sessionId: string): void {
     this.signal(environmentId, { kind: "threads", sessionId });
     this.bb.realtime.publish(REVIEWS_CHANNEL, { kind: "threads", sessionId } satisfies RealtimeSignal);
   }
@@ -626,28 +631,15 @@ export class ReviewService {
   /**
    * The reviews with comment threads, newest first, each with a bb thread to open it in: the thread
    * whose tab showed it last, or else a thread still working in its workspace. A review with neither
-   * (its workspace archived) is left out, since it can no longer be loaded.
+   * (its workspace archived) is left out, since it can no longer be loaded (`orphanReviews`).
    */
   async listReviews(): Promise<ReviewSummary[]> {
     const rows = this.store.reviewSummaries(ReviewService.LIST_LIMIT);
-    const threads = new Map<string, Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["get"]>> | null>();
-    const threadOf = async (threadId: string) => {
-      if (!threads.has(threadId)) threads.set(threadId, await this.bb.sdk.threads.get({ threadId }).catch(() => null));
-      return threads.get(threadId) ?? null;
-    };
-    const fallback = new Map<string, string | null>();
+    const openerOf = this.openers();
     const reviews: ReviewSummary[] = [];
     for (const row of rows) {
-      let thread = row.viewerThreadId === null ? null : await threadOf(row.viewerThreadId);
-      if (thread === null || thread.archivedAt !== null || thread.environmentId !== row.environmentId) {
-        if (!fallback.has(row.environmentId)) {
-          const listed = await this.bb.sdk.threads.list({ environmentId: row.environmentId, archived: false, limit: 1 }).catch(() => []);
-          fallback.set(row.environmentId, listed[0]?.id ?? null);
-        }
-        const id = fallback.get(row.environmentId) ?? null;
-        thread = id === null ? null : await threadOf(id);
-      }
-      if (thread === null || thread.archivedAt !== null) continue;
+      const thread = await openerOf(row);
+      if (thread === null) continue;
       reviews.push({
         sessionId: row.sessionId,
         environmentId: row.environmentId,
@@ -661,6 +653,60 @@ export class ReviewService {
       });
     }
     return reviews;
+  }
+
+  /**
+   * The reviews no live bb thread can open: no thread to open them in (`openers`) and their workspace
+   * gone (bb says it is destroyed). The Reviews page leaves them out and offers to delete them; nothing
+   * deletes them unasked. A workspace bb cannot be asked about is not taken for gone.
+   */
+  async orphanReviews(): Promise<OrphanReview[]> {
+    const openerOf = this.openers();
+    const gone = new Map<string, boolean>();
+    const orphans: OrphanReview[] = [];
+    for (const row of this.store.reviewSummaries()) {
+      if ((await openerOf(row)) !== null) continue;
+      if (!gone.has(row.environmentId)) gone.set(row.environmentId, await this.workspaceGone(row.environmentId));
+      if (gone.get(row.environmentId) !== true) continue;
+      orphans.push({ sessionId: row.sessionId, environmentId: row.environmentId, target: targetFromKey(row.targetKey), openCount: row.openCount, totalCount: row.totalCount, updatedAt: row.updatedAt });
+    }
+    return orphans;
+  }
+
+  private async workspaceGone(environmentId: string): Promise<boolean> {
+    try {
+      const environment = await this.bb.sdk.environments.get({ environmentId });
+      return environment.status === "destroyed" || environment.path === null;
+    } catch (error) {
+      this.bb.log.debug(`Could not read workspace ${environmentId}, so its reviews stay: ${error instanceof Error ? error.message : String(error)}`);
+      return false;
+    }
+  }
+
+  /**
+   * Finds the bb thread a review opens in, or null: the thread whose tab showed it last, while it is
+   * not archived and still works in the review's workspace, or else one still working there. Lookups
+   * are shared across the rows of one call.
+   */
+  private openers(): (row: ReviewSummaryRow) => Promise<BbThread | null> {
+    const threads = new Map<string, BbThread | null>();
+    const threadOf = async (threadId: string) => {
+      if (!threads.has(threadId)) threads.set(threadId, await this.bb.sdk.threads.get({ threadId }).catch(() => null));
+      return threads.get(threadId) ?? null;
+    };
+    const fallback = new Map<string, string | null>();
+    return async (row) => {
+      let thread = row.viewerThreadId === null ? null : await threadOf(row.viewerThreadId);
+      if (thread === null || thread.archivedAt !== null || thread.environmentId !== row.environmentId) {
+        if (!fallback.has(row.environmentId)) {
+          const listed = await this.bb.sdk.threads.list({ environmentId: row.environmentId, archived: false, limit: 1 }).catch(() => []);
+          fallback.set(row.environmentId, listed[0]?.id ?? null);
+        }
+        const id = fallback.get(row.environmentId) ?? null;
+        thread = id === null ? null : await threadOf(id);
+      }
+      return thread === null || thread.archivedAt !== null ? null : thread;
+    };
   }
 
   /**

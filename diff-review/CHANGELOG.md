@@ -33,7 +33,8 @@ Needs bb 0.48 or newer.
 - **Colour-blind diff colours** (blue and orange instead of green and red), in the settings.
 - **A Reviews page** in the sidebar lists every review with comments, across projects, with a count
   of the open ones on its entry, and shows the one you pick in full. The count covers the reviews the
-  page lists, so comments left in a workspace that has since been archived no longer add to it.
+  page lists, so comments left in a workspace that has since been archived no longer add to it. The
+  page says how many such reviews there are and deletes them, with their comments, when you confirm.
 - **The thread's Info tab** says how many review comments its workspace has open.
 - **Previous and next comment arrows** in the toolbar and on each comment thread, which move to the
   open comment before or after (wrapping around at the ends), highlight it and put the cursor on it.

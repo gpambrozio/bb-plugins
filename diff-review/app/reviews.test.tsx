@@ -49,6 +49,39 @@ describe("the Reviews page", () => {
     expect(await screen.findByText(/No reviews yet/)).toBeTruthy();
   });
 
+  it("says how many reviews no thread can open, and deletes them only once confirmed", async () => {
+    const orphan = (sessionId: string, openCount: number, totalCount: number) => ({ sessionId, environmentId: `env_${sessionId}`, target: { kind: "branch" as const, base: "origin/main" }, openCount, totalCount, updatedAt: 1 });
+    let orphans = [orphan("ses_a", 4, 4), orphan("ses_b", 2, 2), orphan("ses_c", 1, 2)];
+    const slot = renderSlot(
+      { component: ReviewsPage },
+      { subPath: "" },
+      {
+        rpc: {
+          listReviews: () => ({ reviews: [REVIEW] }),
+          orphanReviews: () => ({ reviews: orphans }),
+          deleteOrphanReviews: () => {
+            orphans = [];
+            return { deleted: 3, deletedThreads: 8 };
+          },
+        },
+      },
+    );
+    expect(await screen.findByText(/Not listed: 3 reviews with 8 comment threads \(7 open\), in workspaces that are gone/)).toBeTruthy();
+    const deletes = () => slot.inspection.rpcCalls.filter((call) => call.method === "deleteOrphanReviews");
+    fireEvent.click(screen.getByRole("button", { name: "Delete…" }));
+    expect(await screen.findByText(/This deletes 3 reviews with 8 comment threads \(7 open\)/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(deletes()).toEqual([]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete…" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete reviews" }));
+    await waitFor(() => expect(deletes().map((call) => call.input)).toEqual([{ sessionIds: ["ses_a", "ses_b", "ses_c"] }]));
+    // The server tells the page; the notice goes once none are left.
+    await slot.behavior.emitRealtime("reviews", { kind: "threads", sessionId: "ses_a" });
+    await waitFor(() => expect(screen.queryByText(/Not listed/)).toBeNull());
+  });
+
   it("shows the review a subPath names, as the thread's Review tab does", async () => {
     const slot = renderSlot(
       { component: ReviewsPage },

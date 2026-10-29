@@ -1,6 +1,6 @@
 /**
  * The reviews across projects and their counts, for the Reviews page, its sidebar badge and a
- * thread's Info row. Each re-reads when any review's threads change (`REVIEWS_CHANNEL`) and when the
+ * thread's Info row, and the ones no live thread can open, which the page offers to delete. Each re-reads when any review's threads change (`REVIEWS_CHANNEL`) and when the
  * realtime link comes back, since signals sent while it was down are lost.
  */
 import { useRealtime, useRealtimeConnectionState, useRpc } from "@get-bb/plugin-sdk/app";
@@ -48,6 +48,12 @@ function useLiveRead<T>(read: () => Promise<T>, channel: string, key = ""): { da
 export function useReviews() {
   const rpc = useRpc<RpcContract>();
   return useLiveRead(async () => (await rpc.call("listReviews", {})).reviews, REVIEWS_CHANNEL);
+}
+
+/** The reviews no live thread can open (their threads archived, their workspaces gone). */
+export function useOrphanReviews() {
+  const rpc = useRpc<RpcContract>();
+  return useLiveRead(async () => (await rpc.call("orphanReviews", {})).reviews, REVIEWS_CHANNEL);
 }
 
 /** Open and all comment threads in one workspace, or in every review with null. */

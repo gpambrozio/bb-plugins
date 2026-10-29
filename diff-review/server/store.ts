@@ -425,10 +425,11 @@ export class ReviewStore {
 
   /** The sessions of a workspace. */
   /**
-   * Every session with comment threads, newest activity first: its counts, and the bb thread whose
-   * Review tab opened it last (null when no tab kept state for it, as for a review only an agent wrote).
+   * Every session with comment threads, newest activity first (at most `limit`, all by default): its
+   * counts, and the bb thread whose Review tab opened it last (null when no tab kept state for it, as
+   * for a review only an agent wrote).
    */
-  reviewSummaries(limit: number): ReviewSummaryRow[] {
+  reviewSummaries(limit = -1): ReviewSummaryRow[] {
     return this.db
       .prepare<[number], ReviewSummaryRow>(
         `SELECT s.id AS sessionId, s.environment_id AS environmentId, s.target_key AS targetKey,
@@ -606,6 +607,20 @@ export class ReviewStore {
       this.db.prepare("DELETE FROM review_threads WHERE session_id = ?").run(sessionId);
       this.db.prepare("DELETE FROM sends WHERE session_id = ?").run(sessionId);
       this.db.prepare("UPDATE runs SET status = 'closed' WHERE session_id = ?").run(sessionId);
+      return open;
+    })();
+  }
+
+  /**
+   * Deletes a session and everything of it: threads and their comments, sends, runs and each tab's
+   * kept state. Returns the runs that were still open, whose threads the caller archives.
+   */
+  deleteSession(sessionId: string): StoredRun[] {
+    return this.db.transaction(() => {
+      const open = this.openRuns(sessionId);
+      // Threads first: they point at sends, which the session's delete takes with it.
+      this.db.prepare("DELETE FROM review_threads WHERE session_id = ?").run(sessionId);
+      this.db.prepare("DELETE FROM review_sessions WHERE id = ?").run(sessionId);
       return open;
     })();
   }
