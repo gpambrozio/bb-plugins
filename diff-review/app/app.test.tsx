@@ -68,8 +68,20 @@ vi.mock("@pierre/diffs/react", async () => {
   };
 });
 
+/**
+ * Where the tab scrolled its own area to, in order: a thread card's id, or a file section's path. jsdom
+ * lays nothing out, so the scroll itself is a no-op here (`scroll-within.test.ts` checks its sums).
+ */
+const scrolls = vi.hoisted(() => [] as string[]);
+vi.mock("./scroll-within", () => ({
+  scrollWithin: (_root: Element, element: Element) => {
+    scrolls.push(element.closest("[data-thread-id]")?.getAttribute("data-thread-id") ?? element.closest("[data-file-path]")?.getAttribute("data-file-path") ?? element.tagName);
+  },
+}));
+
 afterEach(() => {
   cleanup();
+  scrolls.length = 0;
   pierre.renders.length = 0;
   pierre.mounts = 0;
   vi.clearAllMocks();
@@ -297,13 +309,32 @@ describe("the previous and next comment arrows", () => {
     expect((within(toolbar()).getByRole("button", { name: "Previous comment" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("lands on a thread where it is drawn: no longer on the diff, or on a file that left the view, in the section at the top", async () => {
-    // Where each step scrolls: the thread card, or the file section, it was asked of.
-    const scrolled: string[] = [];
+  /** No step may scroll bb's containers around the tab: `scrollIntoView` would, so nothing calls it. */
+  const forbidScrollIntoView = () => {
     const original = Element.prototype.scrollIntoView;
-    Element.prototype.scrollIntoView = function (this: Element) {
-      scrolled.push(this.closest("[data-thread-id]")?.getAttribute("data-thread-id") ?? this.closest("[data-file-path]")?.getAttribute("data-file-path") ?? this.tagName);
+    Element.prototype.scrollIntoView = () => {
+      throw new Error("scrollIntoView scrolls bb's own containers too");
     };
+    return () => {
+      Element.prototype.scrollIntoView = original;
+    };
+  };
+
+  /** Presses, waits for `id` to be focused and marked the current comment, and gives where it scrolled. */
+  const step = async (press: () => void, id: string) => {
+    scrolls.length = 0;
+    press();
+    await waitFor(() => expect(focused()).toBe(id));
+    expect(document.querySelectorAll("[data-current-comment]")).toHaveLength(1);
+    expect(card(id).hasAttribute("data-current-comment")).toBe(true);
+    // Past the reveal's frame: nothing scrolls anywhere but the thread's own place.
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 50)));
+    return [...scrolls];
+  };
+  const next = () => fireEvent.click(within(toolbar()).getByRole("button", { name: "Next comment" }));
+
+  it("lands on a thread where it is drawn: no longer on the diff, or on a file that left the view, in the section at the top", async () => {
+    const restore = forbidScrollIntoView();
     try {
       const gone = thread({ id: "aaaaaa000006", body: "On a file not in this view", filePath: "src/gone.ts" });
       const wholeFile = thread({ id: "aaaaaa000007", body: "About the whole file", side: null, startLine: 0, endLine: 0, anchorContent: null });
@@ -314,31 +345,86 @@ describe("the previous and next comment arrows", () => {
       // whole-file thread under its header, then its line threads by line.
       const order = ["aaaaaa000002", ...Array.from(top.querySelectorAll("[data-thread-id]")).map((card) => card.getAttribute("data-thread-id")), "aaaaaa000007", "aaaaaa000001", "aaaaaa000004"];
       expect(order).toEqual(["aaaaaa000002", "aaaaaa000006", "aaaaaa000003", "aaaaaa000007", "aaaaaa000001", "aaaaaa000004"]);
-      const step = async (press: () => void, id: string) => {
-        scrolled.length = 0;
-        press();
-        await waitFor(() => expect(focused()).toBe(id));
-        // Past the reveal's frame: nothing scrolls anywhere but the thread's own place.
-        await act(async () => new Promise((resolve) => setTimeout(resolve, 50)));
-        return [...scrolled];
-      };
-      const next = () => fireEvent.click(within(toolbar()).getByRole("button", { name: "Next comment" }));
       await step(next, "aaaaaa000002");
       expect(await step(next, "aaaaaa000006")).toEqual(["aaaaaa000006"]);
       expect(await step(next, "aaaaaa000003")).toEqual(["aaaaaa000003"]);
-      // A whole-file thread: its file's header, the card right under it.
-      expect(await step(next, "aaaaaa000007")).toEqual(["src/a.ts"]);
-      // A line thread: its line, in its file's section.
-      expect(await step(next, "aaaaaa000001")).not.toContain("aaaaaa000003");
+      // A whole-file thread: its file's header, then the card right under it.
+      expect(await step(next, "aaaaaa000007")).toEqual(["src/a.ts", "aaaaaa000007"]);
+      // A line thread: its line, in its file's section, then its card.
+      expect(await step(next, "aaaaaa000001")).toEqual(["src/a.ts", "aaaaaa000001"]);
       // A thread's own arrows step from where it is drawn; the palette shares the same stops.
       expect(await step(() => fireEvent.click(within(card("aaaaaa000007")).getByRole("button", { name: "Previous comment" })), "aaaaaa000003")).toEqual(["aaaaaa000003"]);
       expect(await step(() => dispatchReviewCommand("thr_1", "previous-comment"), "aaaaaa000006")).toEqual(["aaaaaa000006"]);
       // Go to lands there too.
       dispatchReviewCommand("thr_1", "go-to");
       fireEvent.change(await screen.findByRole("textbox", { name: "Filter" }), { target: { value: "comment line is gone" } });
-      expect(await step(() => fireEvent.click(within(screen.getAllByRole("option")[0]!).getByRole("button")), "aaaaaa000003")).toEqual(["aaaaaa000003"]);
+      expect(await step(() => fireEvent.click(within(screen.getAllByRole("option")[0]!).getByRole("button")), "aaaaaa000003")).toContain("aaaaaa000003");
     } finally {
-      Element.prototype.scrollIntoView = original;
+      restore();
+    }
+  });
+
+  it("knows where a thread on a file whose diff loads later is drawn before stepping there, and keeps it through a reload", async () => {
+    // As in a real panel: files far down never come near the screen, so nothing but the tab itself
+    // asks for their diffs.
+    const original = globalThis.IntersectionObserver;
+    globalThis.IntersectionObserver = class {
+      observe() {}
+      disconnect() {}
+    } as unknown as typeof IntersectionObserver;
+    const restore = forbidScrollIntoView();
+    try {
+      const lazy = (path: string) => ({ ...VIEW.files[0]!, path, revision: `rev-${path}`, patch: null, loadMode: "auto" as const });
+      const patchOf = (path: string) => PATCH.replaceAll("src/a.ts", path);
+      // Its lines are gone from src/lazy.ts's diff: it belongs at the top, which only its diff tells.
+      const gone = thread({ id: "aaaaaa000008", body: "Gone once the diff loads", filePath: "src/lazy.ts", startLine: 7, endLine: 7, anchorContent: "const z = 0;" });
+      // Its line is in src/later.ts's diff.
+      const placed = thread({ id: "aaaaaa000009", body: "On a line of a file far down", filePath: "src/later.ts" });
+      const view = { ...VIEW, files: [VIEW.files[0]!, lazy("src/lazy.ts"), lazy("src/later.ts")], threads: [...VIEW.threads, gone, placed] };
+      const answers: ((value: unknown) => void)[] = [];
+      const slot = render({ getReview: () => structuredClone(view), loadPatches: () => new Promise((resolve) => answers.push(resolve)) });
+      await screen.findByText("Gone once the diff loads");
+      // The commented files' diffs load at once, without scrolling to them.
+      await waitFor(() => expect(answers).toHaveLength(1));
+      expect((slot.inspection.rpcCalls.find((call) => call.method === "loadPatches")!.input as { files: { path: string }[] }).files.map((file) => file.path)).toEqual(["src/lazy.ts", "src/later.ts"]);
+
+      // The stops before them; then a step to the one whose diff has not loaded waits for it: no jump
+      // to its file's header, where its card waits meanwhile.
+      await step(next, "aaaaaa000002");
+      await step(next, "aaaaaa000003");
+      await step(next, "aaaaaa000001");
+      await step(next, "aaaaaa000004");
+      scrolls.length = 0;
+      next();
+      await act(async () => new Promise((resolve) => setTimeout(resolve, 50)));
+      expect(scrolls).toEqual([]);
+      expect(focused()).toBe("aaaaaa000004");
+
+      // The diffs arrive: the thread turns out to be off the diff, and the step lands on it at the top.
+      const loaded = { patches: [{ path: "src/lazy.ts", patch: patchOf("src/lazy.ts"), truncated: false }, { path: "src/later.ts", patch: patchOf("src/later.ts"), truncated: false }] };
+      await act(async () => answers[0]!(loaded));
+      await waitFor(() => expect(focused()).toBe("aaaaaa000008"));
+      await act(async () => new Promise((resolve) => setTimeout(resolve, 50)));
+      const top = () => screen.getByText("Not on the current diff (the code changed or left the view)").closest("section")!;
+      expect(within(top()).getByText("Gone once the diff loads")).toBeTruthy();
+      expect(scrolls).toEqual(["aaaaaa000008"]);
+      // From there on in the tab's order, which has it at the top now: src/a.ts's line threads, then src/later.ts's.
+      expect(await step(next, "aaaaaa000001")).toEqual(["src/a.ts", "aaaaaa000001"]);
+      await step(next, "aaaaaa000004");
+      expect(await step(next, "aaaaaa000009")).toEqual(["src/later.ts", "aaaaaa000009"]);
+
+      // The workspace changes and the view reloads, without the patches bb leaves to load: the diffs
+      // already loaded stay, so the thread stays at the top and the stops stay where they were.
+      await slot.behavior.emitRealtime("environment:env_1", { kind: "diff" });
+      await waitFor(() => expect(slot.inspection.rpcCalls.filter((call) => call.method === "getReview")).toHaveLength(2));
+      await act(async () => new Promise((resolve) => setTimeout(resolve, 50)));
+      expect(within(top()).getByText("Gone once the diff loads")).toBeTruthy();
+      expect(await step(() => dispatchReviewCommand("thr_1", "previous-comment"), "aaaaaa000004")).toEqual(["src/a.ts", "aaaaaa000004"]);
+      expect(await step(next, "aaaaaa000009")).toEqual(["src/later.ts", "aaaaaa000009"]);
+      expect(await step(() => fireEvent.click(within(card("aaaaaa000009")).getByRole("button", { name: "Next comment" })), "aaaaaa000002")).toEqual(["aaaaaa000002"]);
+    } finally {
+      restore();
+      globalThis.IntersectionObserver = original;
     }
   });
 

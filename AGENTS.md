@@ -411,6 +411,12 @@ operating system's. The app also has a compact viewport (`isCompactViewport` on 
 narrow window too. A throwing slot collapses to a "plugin crashed" chip instead of taking the app down,
 so a blank area is a crash to look for in the console, not a layout bug.
 
+**Scroll your own scroll area, not with `scrollIntoView`.** It scrolls every ancestor that can scroll,
+bb's containers around a tab or panel included (an `overflow: hidden` one too), so a tab's toolbar
+slides out of sight. Set the scroll container's `scrollTop` from the two boxes instead
+(`diff-review/app/scroll-within.ts`), and `focus({ preventScroll: true })`. A programmatic `focus()`
+after a mouse click shows no `focus-visible` ring, so mark a place you moved to some other way.
+
 ## Dependencies — the opposite of the Paseo repo
 
 - **Anything the bundle includes goes in `dependencies`** — zod, radix primitives, any library.

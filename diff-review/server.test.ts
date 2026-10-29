@@ -418,6 +418,19 @@ describe("the Review tab's view", () => {
     expect(call.input).toEqual({ keys: [JSON.stringify([ENV, { type: "uncommitted" }, false, "big.txt", "rev-big-1"])] });
   });
 
+  it("sends the patches of files with a line thread with the view, so where each thread is drawn is known from the start", async () => {
+    const { rpc, view, git } = await setup();
+    const { sessionId } = await view();
+    await rpc("createThread", { sessionId, filePath: "big.txt", side: "new", startLine: 5, endLine: 5, severity: null, anchorContent: "x", body: "On a line" });
+    await rpc("createThread", { sessionId, filePath: "package-lock.json", side: null, startLine: 0, endLine: 0, severity: null, anchorContent: null, body: "On the file" });
+    git.calls.length = 0;
+    const files = (await view()).files;
+    expect(files.find((file) => file.path === "big.txt")!.patch).toBe("patch of big.txt, version 1 at rev-big-1");
+    // A whole-file thread is drawn under its file's header whatever its patch, which still loads on demand.
+    expect(files.find((file) => file.path === "package-lock.json")!.patch).toBeNull();
+    expect(git.calls.filter((entry) => entry.method === "patches").map((entry) => entry.input)).toEqual([{ keys: [JSON.stringify([ENV, { type: "uncommitted" }, false, "big.txt", "rev-big-1"])] }]);
+  });
+
   it("reads every diff through bb's Git plugin, hiding whitespace when asked", async () => {
     const { rpc, git } = await setup();
     await rpc("getReview", { threadId: THREAD, target: { kind: "branch" }, ignoreWhitespace: true });

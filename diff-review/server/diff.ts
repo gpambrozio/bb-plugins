@@ -330,3 +330,39 @@ export async function loadPatches(
   if (result.failure !== null && result.patches.length === 0) throw new ReviewUnavailable(result.failure);
   return result.patches;
 }
+
+/** The most files whose patches a view's load fetches for their comment threads (the rest load on demand). */
+export const THREAD_PATCH_MAX_FILES = 100;
+
+/**
+ * `files` with the patches of those that have a line thread filled in, where bb left them to load on
+ * demand. Where such a thread is drawn (at its line, or under "Not on the current diff") depends on its
+ * file's patch, so the tab knows it from its first render rather than moving threads, and the
+ * previous/next comment stops, as files load. A patch that cannot be had is left to load on demand.
+ */
+export async function withThreadPatches(
+  git: GitReads,
+  log: BbPluginApi["log"],
+  environment: Environment,
+  target: Target,
+  files: readonly DiffFile[],
+  threads: readonly { filePath: string; startLine: number }[],
+  ignoreWhitespace = false,
+): Promise<DiffFile[]> {
+  if (isHostTarget(target) || target.kind === "files") return [...files];
+  const commented = new Set(threads.filter((thread) => thread.startLine > 0).map((thread) => thread.filePath));
+  const missing = files.filter((file) => file.patch === null && commented.has(file.path) && !file.binary && file.loadMode !== "too_large").slice(0, THREAD_PATCH_MAX_FILES);
+  if (missing.length === 0) return [...files];
+  let patches: { path: string; patch: string; truncated: boolean }[];
+  try {
+    patches = await loadPatches(git, environment, target, missing.map((file) => ({ path: file.path, revision: file.revision })), ignoreWhitespace);
+  } catch (error) {
+    log.warn(`The patches of ${missing.length} commented file(s) in ${environment.id} are left to load on demand: ${error instanceof Error ? error.message : String(error)}`);
+    return [...files];
+  }
+  const byPath = new Map(patches.map((patch) => [patch.path, patch]));
+  return files.map((file) => {
+    const patch = byPath.get(file.path);
+    return patch === undefined ? file : { ...file, patch: patch.patch, patchTruncated: patch.truncated };
+  });
+}

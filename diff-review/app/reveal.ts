@@ -4,6 +4,7 @@
  * number on its side) and `data-line-type`; a removed line is `change-deletion`, on the old side.
  */
 import type { Side } from "../shared/types";
+import { scrollWithin } from "./scroll-within";
 
 /** A place to show: a file's line, or with `line` 0 its header. `seq` makes each ask a new one. */
 export interface Reveal {
@@ -23,13 +24,9 @@ function lineElement(section: Element, side: Side, line: number): Element | null
   return section.querySelector(selector);
 }
 
-function scrollTo(element: Element, block: ScrollLogicalPosition): void {
-  if (typeof element.scrollIntoView === "function") element.scrollIntoView({ block });
-}
-
-/** Scrolls the line into the middle of the view, or the file's header to the top when not drawn. */
-export function revealIn(section: Element, side: Side, line: number): void {
+/** Scrolls the line into the middle of `root`, or the file's header to its top when not drawn. */
+export function revealIn(root: Element, section: Element, side: Side, line: number): void {
   const row = line > 0 ? lineElement(section, side, line) : null;
-  if (row !== null) scrollTo(row, "center");
-  else scrollTo(section, "start");
+  if (row !== null) scrollWithin(root, row, "center");
+  else scrollWithin(root, section, "start");
 }

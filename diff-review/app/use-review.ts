@@ -52,8 +52,8 @@ export function shareById<T extends { id: string }>(previous: readonly T[], next
 
 /**
  * A reloaded view merged into the one on screen: unchanged files, threads and runs keep their objects.
- * An on-demand file whose patch the new load did not send keeps showing the patch it had, marked
- * stale, until the loader fetches it again.
+ * A file whose patch the new load did not send (bb sends only some up front, "auto" files included)
+ * keeps showing the patch it had, marked stale, until the loader fetches it again.
  */
 export function mergeView(previous: ReadyView, previousStale: ReadonlySet<string>, next: ReadyView): { view: ReadyView; stale: ReadonlySet<string> } {
   const before = new Map(previous.files.map((file) => [file.path, file]));
@@ -62,7 +62,7 @@ export function mergeView(previous: ReadyView, previousStale: ReadonlySet<string
     const old = before.get(file.path);
     if (old === undefined) return file;
     if (!previousStale.has(file.path) && same(old, file)) return old;
-    if (file.patch === null && old.patch !== null && file.loadMode === "on_demand") {
+    if (file.patch === null && old.patch !== null && !file.binary && file.loadMode !== "too_large") {
       stale.add(file.path);
       return { ...file, patch: old.patch, patchTruncated: old.patchTruncated };
     }

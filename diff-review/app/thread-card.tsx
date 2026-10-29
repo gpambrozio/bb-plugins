@@ -17,7 +17,7 @@ import { bodyParts } from "../shared/suggestion";
 import { describeLocation, type ReviewComment, type ReviewThread } from "../shared/types";
 import { useActions } from "./actions";
 import { CommentComposer } from "./comment-composer";
-import { CommentNavButtons } from "./comment-nav";
+import { CommentNavButtons, useIsCurrentComment } from "./comment-nav";
 import { ago, DELIVERY_LABELS, SEVERITY_LABELS, STATUS_LABELS } from "./labels";
 import { SuggestionBlock, SuggestionThreadContext, type SuggestionThread } from "./suggestion-block";
 import { draftKeys, useDraft, useViewState } from "./view-state";
@@ -128,6 +128,8 @@ export function ThreadCard({
       .then(() => setExpanded(false))
       .catch(() => undefined);
   const first = thread.comments[0];
+  // The thread the previous/next comment arrows went to last.
+  const isCurrent = useIsCurrentComment(thread.id);
 
   const header = (
     <div className="flex flex-wrap items-center gap-2">
@@ -166,8 +168,9 @@ export function ThreadCard({
   return (
     <SuggestionThreadContext.Provider value={{ thread, ...(current === undefined ? {} : { current }) }}>
     <div
-      className="flex flex-col gap-3 rounded-md border border-border bg-card p-3 font-sans text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className={`flex flex-col gap-3 rounded-md border border-border bg-card p-3 font-sans text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring ${isCurrent ? "ring-2 ring-ring" : ""}`}
       data-thread-id={thread.id}
+      data-current-comment={isCurrent ? "" : undefined}
       // The previous/next comment arrows move the keyboard focus here.
       tabIndex={-1}
     >

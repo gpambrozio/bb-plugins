@@ -1,7 +1,8 @@
 /**
  * The comment boxes' layout in a real browser, with the real `@pierre/diffs`: jsdom has no layout,
  * and the app tests stand in for Pierre. A comment with a long word and a long code block must fit
- * the visible pane, in unified and split views, and never make the code scroll sideways.
+ * the visible pane, in unified and split views, and never make the code scroll sideways. Scrolling to
+ * a place must move the tab's own scroll area only, never bb's containers around it.
  *
  * It needs a Chromium: `CHROME_PATH`, a Playwright download, or an installed Chrome (GitHub's Ubuntu
  * runners have one). Without one it is skipped, except in CI, where it fails.
@@ -79,6 +80,13 @@ describe.skipIf(executablePath === null)("comment boxes in the real diff", () =>
         return `.${name.replace(/[^\w-]/g, "\\$&")} { ${rule} }`;
       })
       .join("\n");
+    await build({
+      entryPoints: [fileURLToPath(new URL("./testing/scroll-page.ts", import.meta.url))],
+      bundle: true,
+      outfile: join(dir, "scroll.js"),
+      logLevel: "error",
+    });
+    writeFileSync(join(dir, "scroll.html"), `<!doctype html><body style="margin: 0"><script src="scroll.js"></script></body>`);
     writeFileSync(join(dir, "page.html"), `<!doctype html><style>body { margin: 8px; font-family: sans-serif; }\n${css}</style><div id="root"></div><script src="page.js"></script>`);
     browser = await chromium.launch({ executablePath: executablePath! });
     page = await browser.newPage({ viewport: { width: 800, height: 600 } });
@@ -110,6 +118,38 @@ describe.skipIf(executablePath === null)("comment boxes in the real diff", () =>
       };
     });
   }
+
+  /** Scrolls to the last file one way or the other; where bb's container, the toolbar and the tab's area end up. */
+  async function scrollToLastFile(how: "scrollIntoView" | "scrollWithin") {
+    await page.goto(pathToFileURL(join(dir, "scroll.html")).href);
+    await page.waitForSelector("[data-scroll] section");
+    return page.evaluate((how) => {
+      const root = document.querySelector<HTMLElement>("[data-scroll]")!;
+      const last = Array.from(root.querySelectorAll("section")).at(-1)!;
+      if (how === "scrollIntoView") last.scrollIntoView({ block: "start" });
+      else window.scrollWithin(root, last, "start");
+      const bb = document.querySelector<HTMLElement>("[data-bb]")!;
+      return {
+        bbScrollTop: bb.scrollTop,
+        toolbarTop: document.querySelector("[data-toolbar]")!.getBoundingClientRect().top - bb.getBoundingClientRect().top,
+        rootScrollTop: root.scrollTop,
+        rootMax: root.scrollHeight - root.clientHeight,
+      };
+    }, how);
+  }
+
+  it("scrolls only the tab's own area to a file, so the toolbar stays in sight", async () => {
+    const { bbScrollTop, toolbarTop, rootScrollTop, rootMax } = await scrollToLastFile("scrollWithin");
+    expect(bbScrollTop).toBe(0);
+    expect(toolbarTop).toBe(32);
+    expect(rootScrollTop).toBe(rootMax);
+  });
+
+  it("would scroll bb's clipping container with scrollIntoView, hiding the toolbar, so the check above means something", async () => {
+    const { bbScrollTop, toolbarTop } = await scrollToLastFile("scrollIntoView");
+    expect(bbScrollTop).toBeGreaterThan(0);
+    expect(toolbarTop).toBeLessThan(32);
+  });
 
   for (const style of ["unified", "split"] as const) {
     it(`fits the pane in the ${style} view, wrapping the text and scrolling the code block inside the card`, async () => {

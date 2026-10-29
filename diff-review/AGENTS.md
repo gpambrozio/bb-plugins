@@ -46,7 +46,7 @@ specific to `diff-review`.
 | `app/header-action.tsx` | The header's Review icon button (the old header slot, see below) and the one-control registration, with its fallback. |
 | `app/commands.ts` | The palette commands' bus: a command opens the thread's tab and leaves its action for the tab that shows. |
 | `app/find.ts`, `app/find-bar.tsx`, `app/goto-dialog.tsx`, `app/reveal.ts` | Find across the diff (diffity's), Go to, and scrolling a place into view inside Pierre's open shadow root. |
-| `app/comment-nav.tsx` | Previous/next comment: the toolbar's and each thread's arrows, the palette's commands and Go to share one list of stops, each at the place its card is drawn (the top sections — whole diff, then "Not on the current diff" — then each file's whole-file threads under its header and its line threads by line), wrapping at the ends; a step brings that place into view and focuses the card. |
+| `app/comment-nav.tsx` | Previous/next comment: the toolbar's and each thread's arrows, the palette's commands and Go to share one list of stops, each at the place its card is drawn (the top sections — whole diff, then "Not on the current diff" — then each file's whole-file threads under its header and its line threads by line), wrapping at the ends; a step brings that place into view, marks the card as the current one (a programmatic focus shows no ring after a click) and focuses it. A line thread whose file's patch has not loaded is a `pending` stop: a step to it waits for the patch. |
 | `app/files-view.tsx` | The "Any file" view: workspace search, Pierre's `File` with the same annotations. |
 | `app/suggestion-block.tsx`, `app/revert-dialog.tsx`, `app/range-dialog.tsx` | A suggested change and Apply; Revert…; the range picker. |
 | `app/open-file.ts`, `app/palette.ts` | Which version Open previews; the colour-blind colours. |
@@ -292,11 +292,21 @@ the branch has some, and the tab's picker adopts that view without loading it ag
   opens, the comment filter shows it, a line draft whose lines left the diff sits above the diff, and
   drafts on files no longer in the view are listed apart. Reopening an editor keeps its draft.
 - Patches loaded on demand land only on the session and load that asked for them.
+- Where a line thread is drawn (at its line, or under *Not on the current diff*) depends on its file's
+  patch, and bb sends most patches only on demand (all 79 files of a real branch view came without
+  one). So `getReview` sends the patches of files with a line thread (`withThreadPatches`, up to
+  `THREAD_PATCH_MAX_FILES`), and the tab asks at once, wherever the file is, for any commented file
+  still without one (a thread an AI review added since). Without that, threads moved to the top as
+  files were scrolled into view, and next/previous stepped to places that changed under them. A step to
+  a thread whose file's patch is still loading waits for it and lands where the thread turns out to be.
+- Scroll the tab's own area only (`app/scroll-within.ts`), never `scrollIntoView`: it scrolls every
+  ancestor that can scroll, bb's clipping containers included, and pushed the tab's toolbar out of
+  sight in a real panel (the Chromium test shows it).
 - Updates land in place. Pierre redraws a file's whole diff whenever its `lineAnnotations` array is a
   new object, so unchanged threads, runs and files keep their objects across a refresh or reload
   (`shareById`, `mergeView`, `groupByFile`, and `NO_THREADS` rather than a fresh `[]`), and a reply
-  redraws only its own file. A reload keeps an on-demand patch on screen while it is fetched again
-  (`stalePatches`). The patch loader resets during render, not in an effect: an effect ran after the
+  redraws only its own file. A reload keeps a patch that was loaded on demand (an `auto` file's too:
+  bb sends some of those up front, not all) on screen while it is fetched again (`stalePatches`). The patch loader resets during render, not in an effect: an effect ran after the
   files' own effects had asked for their patches and wiped those asks.
 - A turn's end sends the `diff` signal (every tab reloads its whole view) only when the workspace's
   state (`workspaceState`: HEAD, base, uncommitted files and up-front patches, from named fields only)

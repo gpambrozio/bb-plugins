@@ -403,9 +403,10 @@ function ReadyPanel({
   };
 
   // The comment threads in the order the tab draws them, each with where its card is: the whole
-  // diff's and the "Not on the current diff" ones in the sections at the top, a file's whole-file and
-  // not yet placed ones under its header, then its line threads by line. The open ones are the stops
-  // of next/previous comment and of Go to.
+  // diff's and the "Not on the current diff" ones in the sections at the top, a file's whole-file ones
+  // under its header, then its line threads by line. A line thread whose file's diff has not loaded
+  // has no place yet (pending, waiting under its file's header). The open ones are the stops of
+  // next/previous comment and of Go to.
   const commentOrder = useMemo(() => {
     const stops: { threadId: string; open: boolean; place: CommentPlace }[] = [];
     const push = (thread: ReviewThread, place: CommentPlace) => stops.push({ threadId: thread.id, open: thread.status === "open", place });
@@ -415,38 +416,75 @@ function ReadyPanel({
       const threads = byFile.get(file.path) ?? [];
       if (threads.length === 0) continue;
       const placed = placeFileThreads(file, threads);
-      for (const thread of [...placed.wholeFile, ...placed.unplaced]) push(thread, { kind: "file", path: file.path });
+      for (const thread of placed.wholeFile) push(thread, { kind: "file", path: file.path });
+      for (const thread of placed.unplaced) push(thread, { kind: "pending", path: file.path });
       const onLines = placed.onLines.map(({ thread, placement }) => ({ thread, line: placement.state === "outdated" ? 0 : placement.endLine }));
       onLines.sort((a, b) => a.line - b.line);
       for (const { thread, line } of onLines) push(thread, { kind: "line", path: file.path, side: thread.side ?? "new", line });
     }
     return stops;
   }, [general, outdated, files, byFile]);
-  // Brings a thread's place into view and focuses its card: a card in the top sections is scrolled to
-  // itself, one in a file after its file or line is revealed (which unfolds the file).
+
+  // A line thread's place hangs on its file's diff, so a commented file loads it at once, wherever it
+  // is; the server sends most of them with the view, this covers threads added since (an AI review's).
+  useEffect(() => {
+    for (const file of files) {
+      if (file.patch !== null || noDiffReason(file) !== null || patchLoader.states.get(file.path) !== undefined) continue;
+      if ((byFile.get(file.path) ?? []).some((thread) => thread.startLine > 0)) patchLoader.request(file.path);
+    }
+  }, [files, byFile, patchLoader.states, patchLoader.request]);
+
+  // The thread the last step went to (marked on screen), and one a step is waiting on: its file's
+  // diff is loading, and it lands once its place is known (or under the file's header if the diff
+  // cannot be had).
+  const [currentComment, setCurrentComment] = useState<string | null>(null);
+  const [awaitedComment, setAwaitedComment] = useState<string | null>(null);
+  // Brings a thread's place into view, then focuses its card: a line or a file is revealed first (which
+  // unfolds the file); a card at the top needs no reveal. Steps between two places drop a wait.
   const goToComment = useCallback(
     (threadId: string, place: CommentPlace) => {
+      setCurrentComment(threadId);
+      if (place.kind === "pending") {
+        if (patchLoader.states.get(place.path) === undefined) patchLoader.request(place.path);
+        setAwaitedComment(threadId);
+        return;
+      }
+      setAwaitedComment(null);
       if (place.kind === "file") show({ path: place.path, side: "new", line: 0 });
       else if (place.kind === "line") show({ path: place.path, side: place.side, line: place.line });
-      focusThread(scrollRoot, threadId, { scroll: place.kind === "top" });
+      focusThread(scrollRoot, threadId);
     },
-    [show, scrollRoot],
+    [show, scrollRoot, patchLoader.states, patchLoader.request],
   );
+  useEffect(() => {
+    if (awaitedComment === null) return;
+    const stop = commentOrder.find((entry) => entry.threadId === awaitedComment);
+    if (stop === undefined || !stop.open) {
+      setAwaitedComment(null);
+      return;
+    }
+    if (stop.place.kind !== "pending") goToComment(stop.threadId, stop.place);
+    else {
+      const state = patchLoader.states.get(stop.place.path);
+      if (state === "failed" || state === "missing") goToComment(stop.threadId, { kind: "file", path: stop.place.path });
+    }
+  }, [awaitedComment, commentOrder, patchLoader.states, goToComment]);
   const commentStops = useMemo(() => commentOrder.filter((stop) => stop.open), [commentOrder]);
-  const commentIndex = useRef(-1);
-  // From the palette and the toolbar, from the last step; from a thread's own arrows, from it.
+  // From the palette and the toolbar, from the thread the last step went to (wherever it is drawn
+  // now); from a thread's own arrows, from it.
   const stepComment = (delta: 1 | -1, from: string | null = null) => {
-    const target = stepTarget(commentOrder, delta, from, commentIndex.current);
+    const start = from ?? (commentOrder.some((stop) => stop.threadId === currentComment) ? currentComment : null);
+    const target = stepTarget(commentOrder, delta, start);
     if (target === null) {
       toast.info("No open comments in this view.");
       return;
     }
-    commentIndex.current = commentStops.findIndex((stop) => stop.threadId === target);
-    goToComment(target, commentStops[commentIndex.current]!.place);
+    goToComment(target, commentStops.find((stop) => stop.threadId === target)!.place);
   };
   const commentNav: CommentNav = {
     step: (delta, from) => stepComment(delta, from ?? null),
-    canStep: (from) => stepTarget(commentOrder, 1, from ?? null, commentIndex.current) !== null,
+    canStep: (from) => stepTarget(commentOrder, 1, from ?? null) !== null,
+    current: currentComment,
   };
 
   // "Go to": the files shown, the open comments and the views.
@@ -463,7 +501,8 @@ function ReadyPanel({
         label: thread.comments[0]?.body.split("\n")[0]?.slice(0, 120) ?? "",
         detail: describeLocation(thread),
         go: () => goToComment(stop.threadId, stop.place),
-        focus: () => focusThread(scrollRoot, stop.threadId, { scroll: false }),
+        // A thread still waiting for its file's diff is focused once it lands.
+        ...(stop.place.kind === "pending" ? {} : { focus: () => focusThread(scrollRoot, stop.threadId) }),
       });
     }
     const views: { value: string; label: string }[] = [{ value: "uncommitted", label: targetLabel({ kind: "uncommitted" }) }];

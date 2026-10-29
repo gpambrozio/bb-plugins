@@ -32,7 +32,7 @@ import {
   type ViewState,
   viewStateSchema,
 } from "../shared/types";
-import { gitTarget, ignorePatterns, loadDiff, type DiffSources, loadPatches, resolveTarget, ReviewUnavailable, workspaceOf, workspaceRefs, workspaceState, type WorkspaceState } from "./diff";
+import { gitTarget, ignorePatterns, loadDiff, type DiffSources, loadPatches, resolveTarget, ReviewUnavailable, withThreadPatches, workspaceOf, workspaceRefs, workspaceState, type WorkspaceState } from "./diff";
 import { parseRange, rangeText } from "../shared/git-spec";
 import { OPEN_CHANNEL, reviewRoute } from "../shared/routes";
 import { GitReads } from "./git";
@@ -188,6 +188,7 @@ export class ReviewService {
       }
       const session = this.store.session(environment.id, targetKey(target));
       const threads = this.store.threads(session.id);
+      const files = await withThreadPatches(this.git, this.bb.log, environment, target, diff.files, threads, ignoreWhitespace);
       return {
         ok: true,
         sessionId: session.id,
@@ -199,7 +200,7 @@ export class ReviewService {
         mergeBaseRef: diff.mergeBaseRef,
         headRef: diff.headRef,
         viewable: diff.viewable,
-        files: diff.files,
+        files,
         ignoredPaths: diff.ignoredPaths,
         truncated: diff.truncated,
         threads,

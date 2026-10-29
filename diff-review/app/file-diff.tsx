@@ -188,9 +188,9 @@ export function FileDiff({ file, threads, showThreadCount, diffStyle, stalePatch
     if (reveal.line > 0) setSelected({ start: reveal.line, end: reveal.line, side: toPierreSide(reveal.side) });
   }, [reveal?.seq]);
   useEffect(() => {
-    if (reveal === null || sectionRef.current === null) return;
+    if (reveal === null || sectionRef.current === null || scrollRoot === null) return;
     const section = sectionRef.current;
-    const frame = requestAnimationFrame(() => revealIn(section, reveal.side, reveal.line));
+    const frame = requestAnimationFrame(() => revealIn(scrollRoot, section, reveal.side, reveal.line));
     return () => cancelAnimationFrame(frame);
   }, [reveal?.seq, file.patch === null]);
 
