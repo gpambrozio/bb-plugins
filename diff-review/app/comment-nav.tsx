@@ -106,7 +106,12 @@ let focusJobCount = 0;
  * The user taking over the scroll area ends a focus job still waiting for its card. Not `keydown`: a
  * key the palette binds to the next comment starts a job while its own event is still on its way.
  */
-const TAKE_OVER = ["wheel", "touchstart", "pointerdown"] as const;
+export const TAKE_OVER = ["wheel", "touchstart", "pointerdown"] as const;
+
+/** Ends the focus job waiting on `root`, if any: another jump took its place. */
+export function cancelFocus(root: HTMLElement | null): void {
+  if (root !== null) focusJobs.delete(root);
+}
 
 /**
  * Moves the keyboard focus to a thread once it is drawn: a file's diff may still be mounting when the

@@ -35,7 +35,7 @@ import { RangeDialog } from "./range-dialog";
 import type { Reveal } from "./reveal";
 import { AiReviewDialog } from "./ai-review-dialog";
 import { ClearReviewDialog } from "./clear-dialog";
-import { CommentNavButtons, CommentNavContext, focusThread, stepTarget, type CommentNav, type CommentPlace } from "./comment-nav";
+import { cancelFocus, CommentNavButtons, CommentNavContext, focusThread, stepTarget, TAKE_OVER, type CommentNav, type CommentPlace } from "./comment-nav";
 import { CommentComposer } from "./comment-composer";
 import { FileDiff, noDiffReason, OrphanDrafts, placeFileThreads, type DiffStyle } from "./file-diff";
 import { usePatchLoader } from "./patch-loader";
@@ -395,7 +395,28 @@ function ReadyPanel({
   // A place in the diff to bring into view: a find match, a "Go to" pick, the next comment.
   const [reveal, setReveal] = useState<Reveal | null>(null);
   const revealSeq = useRef(0);
-  const show = useCallback((place: Omit<Reveal, "seq">) => setReveal({ ...place, seq: ++revealSeq.current }), []);
+  // A step to a thread whose file's diff is loading waits for it (`goToComment`) and lands once its
+  // place is known (or under the file's header if the diff cannot be had).
+  const [awaitedComment, setAwaitedComment] = useState<string | null>(null);
+  // Every jump (find, Go to, a step) replaces the one before: a step still waiting for its diff, or
+  // for its card to be drawn, gives up, so it never pulls the view back when it would have landed.
+  const show = useCallback(
+    (place: Omit<Reveal, "seq">) => {
+      setAwaitedComment(null);
+      cancelFocus(scrollRoot);
+      setReveal({ ...place, seq: ++revealSeq.current });
+    },
+    [scrollRoot],
+  );
+  // So does the user scrolling or clicking in the diff while a step waits for its diff.
+  useEffect(() => {
+    if (scrollRoot === null || awaitedComment === null) return;
+    const takeOver = () => setAwaitedComment(null);
+    for (const type of TAKE_OVER) scrollRoot.addEventListener(type, takeOver, { passive: true });
+    return () => {
+      for (const type of TAKE_OVER) scrollRoot.removeEventListener(type, takeOver);
+    };
+  }, [scrollRoot, awaitedComment]);
 
   // Find across the diff's loaded lines; files whose diff is not loaded yet are fetched while it is open.
   const [find, setFind] = useState<{ open: boolean; query: string; caseSensitive: boolean; focus: number }>({ open: false, query: "", caseSensitive: false, focus: 0 });
@@ -462,11 +483,8 @@ function ReadyPanel({
     }
   }, [files, byFile, patchLoader.states, patchLoader.request]);
 
-  // The thread the last step went to (marked on screen), and one a step is waiting on: its file's
-  // diff is loading, and it lands once its place is known (or under the file's header if the diff
-  // cannot be had).
+  // The thread the last step went to (marked on screen); the one a step waits on is `awaitedComment`.
   const [currentComment, setCurrentComment] = useState<string | null>(null);
-  const [awaitedComment, setAwaitedComment] = useState<string | null>(null);
   // Brings a thread's place into view, then focuses its card: a line or a file is revealed first (which
   // unfolds the file); a card at the top needs no reveal. Steps between two places drop a wait.
   const goToComment = useCallback(
@@ -474,6 +492,7 @@ function ReadyPanel({
       setCurrentComment(threadId);
       if (place.kind === "pending") {
         if (patchLoader.states.get(place.path) === undefined) patchLoader.request(place.path);
+        cancelFocus(scrollRoot);
         setAwaitedComment(threadId);
         return;
       }

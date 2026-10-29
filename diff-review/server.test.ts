@@ -867,6 +867,57 @@ describe("the Reviews page", () => {
     expect(((await starting) as { run: { threadId: string } }).run.threadId).toBe("thr_run_2");
   });
 
+  it("checks each review right before its own delete: a worker brought back while another review is checked keeps its review", async () => {
+    const { rpc, harness, view, comment } = await setup();
+    const older = (await view()).sessionId;
+    await comment(older);
+    const newer = (await view({ kind: "branch", base: "main" })).sessionId;
+    await rpc("createThread", { sessionId: newer, threadId: THREAD, filePath: "__general__", side: null, startLine: 0, endLine: 0, severity: null, anchorContent: null, body: "Overall?" });
+    for (const sessionId of [older, newer]) await rpc("saveViewState", { threadId: THREAD, sessionId, state: { drafts: {}, collapsed: {}, scroll: null, savedAt: 1 } });
+    // Each review's fixer: thr_run_1 for the older one, thr_run_2 for the newer.
+    for (const sessionId of [older, newer]) await rpc("fixInNewThread", { sessionId, threadId: THREAD, reviewThreadIds: await threadIdsOf(rpc, sessionId), note: "", execution });
+    const live = new Set<string>();
+    const hold = gate();
+    let holding = false;
+    harness.sdk.stub("threads.get", async ({ threadId }: { threadId: string }) => {
+      if (holding && threadId === "thr_run_1") await hold.wait();
+      return makeThreadResponse({ id: threadId, environmentId: live.has(threadId) ? "env_fix" : ENV, archivedAt: live.has(threadId) ? null : 1 });
+    });
+    harness.sdk.stub("threads.list", async () => []);
+    harness.sdk.stub("environments.get", async () => environment({ status: "destroyed", path: null }) as never);
+    const archived = recordArchives(harness);
+    expect(((await rpc("orphanReviews", {})) as { reviews: unknown[] }).reviews).toHaveLength(2);
+    // Deleting both: while the older review's fixer is being asked about, the newer one's comes back.
+    holding = true;
+    const deleting = rpc("deleteOrphanReviews", { sessionIds: [older, newer] });
+    await hold.reached;
+    live.add("thr_run_2");
+    hold.open();
+    expect(await deleting).toEqual({ deleted: 1, deletedThreads: 1 });
+    expect(((await rpc("listThreads", { sessionId: newer })) as { threads: unknown[] }).threads).toHaveLength(1);
+    await expect(rpc("listThreads", { sessionId: older })).rejects.toThrow(`No review session ${older}`);
+    expect(archived).toEqual([]);
+  });
+
+  it("counts a start that failed before it had a thread as no worker: its review can be deleted", async () => {
+    for (const failure of ["before spawn", "spawn refused"] as const) {
+      const context = await setup(failure === "spawn refused" ? { spawnFails: true } : {});
+      const { sessionId } = await context.view();
+      await context.comment(sessionId);
+      await context.rpc("saveViewState", { threadId: THREAD, sessionId, state: { drafts: {}, collapsed: {}, scroll: null, savedAt: 1 } });
+      if (failure === "before spawn") {
+        context.harness.sdk.stub("environments.get", async () => {
+          throw new Error("bb is restarting");
+        });
+      }
+      const { run } = (await context.rpc("fixInNewThread", { sessionId, threadId: THREAD, reviewThreadIds: await threadIdsOf(context.rpc, sessionId), note: "", execution })) as { run: { status: string; threadId: string | null } };
+      expect(run, failure).toMatchObject({ status: "failed", threadId: null });
+      retire(context.harness);
+      expect(((await context.rpc("orphanReviews", {})) as { reviews: unknown[] }).reviews, failure).toHaveLength(1);
+      expect(await context.rpc("deleteOrphanReviews", { sessionIds: [sessionId] }), failure).toEqual({ deleted: 1, deletedThreads: 1 });
+    }
+  });
+
   it("keeps a review that a thread can open again by the time the delete is confirmed", async () => {
     const { rpc, harness, sessionId } = await reviewed();
     archived(harness);

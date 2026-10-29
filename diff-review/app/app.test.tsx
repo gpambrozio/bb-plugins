@@ -377,6 +377,42 @@ describe("the previous and next comment arrows", () => {
     expect(card("aaaaaa000001").tagName).toBe("BUTTON");
   });
 
+  it("drops a step still waiting for its file's diff once another jump lands, so the diff arriving later moves nothing", async () => {
+    const original = globalThis.IntersectionObserver;
+    globalThis.IntersectionObserver = class {
+      observe() {}
+      disconnect() {}
+    } as unknown as typeof IntersectionObserver;
+    try {
+      const lazy = { ...VIEW.files[0]!, path: "src/lazy.ts", revision: "rev-lazy", patch: null, loadMode: "auto" as const };
+      const waiting = thread({ id: "aaaaaa000008", body: "On a file whose diff is loading", filePath: "src/lazy.ts" });
+      const answers: ((value: unknown) => void)[] = [];
+      render({ getReview: () => ({ ...VIEW, files: [VIEW.files[0]!, lazy], threads: [...VIEW.threads, waiting] }), loadPatches: () => new Promise((resolve) => answers.push(resolve)) });
+      await screen.findByText("On a file whose diff is loading");
+      await waitFor(() => expect(answers).toHaveLength(1));
+      const goTo = async (filter: string) => {
+        await act(async () => dispatchReviewCommand("thr_1", "go-to"));
+        fireEvent.change(await screen.findByRole("textbox", { name: "Filter" }), { target: { value: filter } });
+        fireEvent.click(within(screen.getAllByRole("option")[0]!).getByRole("button"));
+        await waitFor(() => expect(screen.queryByRole("dialog", { name: "Go to" })).toBeNull());
+      };
+      // A: the comment whose diff is held; it waits.
+      await goTo("comment diff is loading");
+      // B: another file, which lands at once.
+      scrolls.length = 0;
+      await goTo("file a.ts");
+      await act(async () => new Promise((resolve) => setTimeout(resolve, 50)));
+      expect(scrolls).toEqual(["src/a.ts"]);
+      // A's diff arrives: nothing goes back to A.
+      await act(async () => answers[0]!({ patches: [{ path: "src/lazy.ts", patch: PATCH.replaceAll("src/a.ts", "src/lazy.ts"), truncated: false }] }));
+      await act(async () => new Promise((resolve) => setTimeout(resolve, 100)));
+      expect(scrolls).toEqual(["src/a.ts"]);
+      expect(focused()).not.toBe("aaaaaa000008");
+    } finally {
+      globalThis.IntersectionObserver = original;
+    }
+  });
+
   it("knows where a thread on a file whose diff loads later is drawn before stepping there, and keeps it through a reload", async () => {
     // As in a real panel: files far down never come near the screen, so nothing but the tab itself
     // asks for their diffs.

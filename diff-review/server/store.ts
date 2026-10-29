@@ -425,24 +425,26 @@ export class ReviewStore {
 
   /** The sessions of a workspace. */
   /**
-   * Every session with comment threads, newest activity first (at most `limit`, all by default): its
+   * Every session with comment threads (or only `sessionId`), newest activity first (at most `limit`,
+   * all by default): its
    * counts, and the bb thread whose Review tab opened it last (null when no tab kept state for it, as
    * for a review only an agent wrote).
    */
-  reviewSummaries(limit = -1): ReviewSummaryRow[] {
+  reviewSummaries(limit = -1, sessionId: string | null = null): ReviewSummaryRow[] {
     return this.db
-      .prepare<[number], ReviewSummaryRow>(
+      .prepare<[string | null, string | null, number], ReviewSummaryRow>(
         `SELECT s.id AS sessionId, s.environment_id AS environmentId, s.target_key AS targetKey,
                 SUM(CASE WHEN t.status = 'open' THEN 1 ELSE 0 END) AS openCount,
                 COUNT(t.id) AS totalCount,
                 MAX(t.updated_at) AS updatedAt,
                 (SELECT v.thread_id FROM view_states v WHERE v.session_id = s.id ORDER BY v.updated_at DESC LIMIT 1) AS viewerThreadId
          FROM review_sessions s JOIN review_threads t ON t.session_id = s.id
+         WHERE ? IS NULL OR s.id = ?
          GROUP BY s.id
          ORDER BY updatedAt DESC
          LIMIT ?`,
       )
-      .all(limit);
+      .all(sessionId, sessionId, limit);
   }
 
   /** Open and all comment threads, in one workspace's sessions or in all of them. */

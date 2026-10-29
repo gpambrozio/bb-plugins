@@ -664,37 +664,55 @@ export class ReviewService {
     return (await this.orphanCandidates()).map(({ orphan }) => orphan);
   }
 
-  /**
-   * The orphan reviews, each with the runs (not closed) it was checked with: a review keeps a worker
-   * that is still live, in any workspace (a fixer in a worktree of its own, a run still starting), so
-   * it is not an orphan. A run the deleter sees that is not among these started after the check.
-   */
-  async orphanCandidates(): Promise<{ orphan: OrphanReview; runIds: string[] }[]> {
-    const threadOf = this.threadLookup();
-    const openerOf = this.openers(threadOf);
+  private async orphanCandidates(): Promise<{ orphan: OrphanReview; runs: StoredRun[] }[]> {
+    const openerOf = this.openers();
     const gone = new Map<string, boolean>();
-    const orphans: { orphan: OrphanReview; runIds: string[] }[] = [];
+    const orphans: { orphan: OrphanReview; runs: StoredRun[] }[] = [];
     for (const row of this.store.reviewSummaries()) {
-      if ((await openerOf(row)) !== null) continue;
-      if (!gone.has(row.environmentId)) gone.set(row.environmentId, await this.workspaceGone(row.environmentId));
-      if (gone.get(row.environmentId) !== true) continue;
-      const runs = this.store.openRuns(row.sessionId);
-      if (await this.hasLiveWorker(runs)) continue;
-      orphans.push({
-        orphan: { sessionId: row.sessionId, environmentId: row.environmentId, target: targetFromKey(row.targetKey), openCount: row.openCount, totalCount: row.totalCount, updatedAt: row.updatedAt },
-        runIds: runs.map((run) => run.id),
-      });
+      const checked = await this.checkOrphan(row, openerOf, gone);
+      if (checked !== null) orphans.push(checked);
     }
     return orphans;
   }
 
   /**
-   * Whether any of these runs still has a worker: one still starting (no thread yet), or a thread that
-   * is not archived, wherever it works. A thread bb cannot be asked about counts as live.
+   * Whether one review is an orphan now, asked afresh (nothing shared with the checks of other
+   * reviews), for the delete to check right before it deletes it: the review, with the runs (not
+   * closed) it was checked with, or null.
+   */
+  async orphanCheck(sessionId: string): Promise<{ orphan: OrphanReview; runs: StoredRun[] } | null> {
+    const row = this.store.reviewSummaries(1, sessionId)[0];
+    return row === undefined ? null : this.checkOrphan(row, this.openers(), new Map());
+  }
+
+  /**
+   * A review is an orphan when no thread can open it (`openers`), its workspace is gone, and none of
+   * its runs still has a worker, in any workspace (a fixer in a worktree of its own, a run still
+   * starting). The workers are asked last, closest to a delete.
+   */
+  private async checkOrphan(row: ReviewSummaryRow, openerOf: (row: ReviewSummaryRow) => Promise<BbThread | null>, gone: Map<string, boolean>): Promise<{ orphan: OrphanReview; runs: StoredRun[] } | null> {
+    if ((await openerOf(row)) !== null) return null;
+    if (!gone.has(row.environmentId)) gone.set(row.environmentId, await this.workspaceGone(row.environmentId));
+    if (gone.get(row.environmentId) !== true) return null;
+    const runs = this.store.openRuns(row.sessionId);
+    if (await this.hasLiveWorker(runs)) return null;
+    return {
+      orphan: { sessionId: row.sessionId, environmentId: row.environmentId, target: targetFromKey(row.targetKey), openCount: row.openCount, totalCount: row.totalCount, updatedAt: row.updatedAt },
+      runs,
+    };
+  }
+
+  /**
+   * Whether any of these runs still has a worker: one still starting (running, no thread yet), or a
+   * thread that is not archived, wherever it works. A thread bb cannot be asked about counts as live;
+   * a start that failed before it got a thread never had a worker.
    */
   private async hasLiveWorker(runs: readonly StoredRun[]): Promise<boolean> {
     for (const run of runs) {
-      if (run.threadId === null) return true;
+      if (run.threadId === null) {
+        if (run.status === "running") return true;
+        continue;
+      }
       try {
         if ((await this.bb.sdk.threads.get({ threadId: run.threadId })).archivedAt === null) return true;
       } catch (error) {

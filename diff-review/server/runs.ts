@@ -81,6 +81,13 @@ export interface AgentCommentInput {
   body: string;
 }
 
+/** Whether two reads of a session's runs (not closed) found the same runs, each with the same thread and status. */
+function sameRuns(before: readonly StoredRun[], now: readonly StoredRun[]): boolean {
+  const key = (run: StoredRun) => `${run.id} ${run.threadId ?? ""} ${run.status}`;
+  const seen = new Set(before.map(key));
+  return before.length === now.length && now.every((run) => seen.has(key(run)));
+}
+
 /** A run's row went (its review was deleted) while it was being started. */
 class RunGone extends Error {}
 
@@ -367,19 +374,21 @@ export class RunService {
 
   /**
    * Deletes the orphan reviews the user confirmed (`sessionIds`, from `orphanReviews`), with everything
-   * of them. Each is checked again first, so one a live thread can open by now, one with a live worker
-   * (`orphanCandidates`), or one not offered, stays; so does one that started a run while it was
-   * being checked. Nothing live is cancelled: an orphan's runs all lost their threads already.
+   * of them, one at a time in the order asked. Each is checked afresh right before its own delete
+   * (`orphanCheck`), so one a live thread can open by now, or with a worker live again, stays; so does
+   * one whose runs changed while it was being checked. Nothing live is cancelled: an orphan's runs all
+   * lost their threads, or never had one.
    */
   async deleteOrphanReviews(sessionIds: readonly string[]): Promise<{ deleted: number; deletedThreads: number }> {
-    const asked = new Set(sessionIds);
-    const candidates = (await this.review.orphanCandidates()).filter(({ orphan }) => asked.has(orphan.sessionId));
     let deleted = 0;
     let deletedThreads = 0;
-    for (const { orphan, runIds } of candidates) {
-      // No await between this check and the delete: a run started during the check above stays.
-      const checked = new Set(runIds);
-      if (this.store.openRuns(orphan.sessionId).some((run) => !checked.has(run.id))) continue;
+    for (const sessionId of new Set(sessionIds)) {
+      // Each review is checked afresh right before its own delete, not with the others up front.
+      const checked = await this.review.orphanCheck(sessionId);
+      if (checked === null) continue;
+      // No await between here and the delete: a run that started, got a thread or changed meanwhile keeps the review.
+      if (!sameRuns(checked.runs, this.store.openRuns(sessionId))) continue;
+      const { orphan } = checked;
       // Starts already asked for but not yet written as runs see this and give up.
       this.clears.set(orphan.sessionId, this.clearCount(orphan.sessionId) + 1);
       this.store.deleteSession(orphan.sessionId);
