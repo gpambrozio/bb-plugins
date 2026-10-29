@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import { parseHunks, revertHunks } from "./revert";
-import { bodyParts, insertSuggestion, replaceLines, suggestionLines, suggestionState } from "./suggestion";
+import { linesText, parsePatchLines } from "./patch-lines";
+import { bodyParts, insertSuggestion, replaceLines, suggestedLines as suggestedLinesOf, suggestionLines, suggestionState } from "./suggestion";
 
 describe("suggested changes", () => {
   it("splits a comment into text and suggestion blocks", () => {
@@ -48,7 +49,53 @@ describe("suggested changes", () => {
   });
 
   it("inserts a block seeded with the lines, on lines of its own", () => {
-    expect(insertSuggestion("Try", 3, "x\n")).toEqual({ body: "Try\n```suggestion\nx\n```", cursor: 18 });
+    expect(insertSuggestion("Try", 3, "x")).toEqual({ body: "Try\n```suggestion\nx\n```", cursor: 18 });
+    // The lines are joined with "\n": a trailing one is a blank last line, and it stays.
+    expect(insertSuggestion("Try", 3, "x\n")).toEqual({ body: "Try\n```suggestion\nx\n\n```", cursor: 18 });
+  });
+
+  describe("from the selected lines to the file, blank lines included", () => {
+    /** A new file's patch with these lines, as the tab parses it. */
+    const selection = (fileLines: readonly string[], start: number, end: number) => {
+      const patch = ["diff --git a/a.ts b/a.ts", "--- /dev/null", "+++ b/a.ts", `@@ -0,0 +1,${fileLines.length} @@`, ...fileLines.map((line) => `+${line}`), ""].join("\n");
+      return linesText(parsePatchLines(patch), "new", start, end)!;
+    };
+    /** The composer's Suggest a change on `text`, then the block as the comment reads it. */
+    const seeded = (text: string) => (bodyParts(insertSuggestion("", 0, text).body)[0] as { code: string }).code;
+    const edited = (body: string) => (bodyParts(body)[0] as { code: string }).code;
+
+    it("keeps a blank last selected line in the block, shows no change untouched, and applies an edit around it", () => {
+      const file = ["const a = 1;", "", "const b = 2;"];
+      const text = selection(file, 1, 2);
+      expect(text).toBe("const a = 1;\n");
+      const code = seeded(text);
+      expect(suggestionLines(text, code).every((line) => line.kind === "context")).toBe(true);
+      expect(suggestionState(code, text, text)).toBe("applied");
+      const change = edited("```suggestion\nconst a = 10;\n\n```");
+      expect(suggestionState(change, text, text)).toBe("ready");
+      expect(suggestionLines(text, change)).toEqual([
+        { kind: "del", text: "const a = 1;" },
+        { kind: "add", text: "const a = 10;" },
+        { kind: "context", text: "" },
+      ]);
+      expect(replaceLines(`${file.join("\n")}\n`, 1, 2, text, change)).toBe("const a = 10;\n\nconst b = 2;\n");
+    });
+
+    it("treats one blank selected line as a line: kept untouched, removed by an empty block", () => {
+      const file = ["a", "", "b"];
+      const text = selection(file, 2, 2);
+      expect(text).toBe("");
+      const code = seeded(text);
+      expect(suggestedLinesOf(code)).toEqual([""]);
+      expect(suggestionState(code, text, text)).toBe("applied");
+      expect(suggestionLines(text, code)).toEqual([{ kind: "context", text: "" }]);
+      // An empty block removes the blank line: it is ready, not already applied.
+      const removal = edited("```suggestion\n```");
+      expect(suggestionState(removal, text, text)).toBe("ready");
+      expect(suggestionLines(text, removal)).toEqual([{ kind: "del", text: "" }]);
+      expect(replaceLines("a\n\nb\n", 2, 2, text, removal)).toBe("a\nb\n");
+      expect(replaceLines("a\n\nb\n", 2, 2, text, code)).toBe("a\n\nb\n");
+    });
   });
 
   it("replaces the lines only while they read as the view showed them", () => {

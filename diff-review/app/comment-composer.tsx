@@ -62,7 +62,7 @@ export function CommentComposer({
     change(next.body);
     requestAnimationFrame(() => {
       textarea.current?.focus();
-      textarea.current?.setSelectionRange(next.cursor, next.cursor + suggestFrom.replace(/\n$/, "").length);
+      textarea.current?.setSelectionRange(next.cursor, next.cursor + suggestFrom.replace(/\r\n/g, "\n").length);
     });
   };
 

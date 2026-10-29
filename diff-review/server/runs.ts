@@ -81,6 +81,9 @@ export interface AgentCommentInput {
   body: string;
 }
 
+/** A run's row went (its review was deleted) while it was being started. */
+class RunGone extends Error {}
+
 export class RunService {
   /** Each view's latest question to its reviewer: the next one waits for it, so two never race. */
   private readonly asking = new Map<string, Promise<unknown>>();
@@ -364,24 +367,28 @@ export class RunService {
 
   /**
    * Deletes the orphan reviews the user confirmed (`sessionIds`, from `orphanReviews`), with everything
-   * of them. Each is checked again first, so one a live thread can open by now, or one not offered, stays.
-   * Their open runs close as in `clearReview`, and their threads are archived.
+   * of them. Each is checked again first, so one a live thread can open by now, one with a live worker
+   * (`orphanCandidates`), or one not offered, stays; so does one that started a run while it was
+   * being checked. Nothing live is cancelled: an orphan's runs all lost their threads already.
    */
   async deleteOrphanReviews(sessionIds: readonly string[]): Promise<{ deleted: number; deletedThreads: number }> {
     const asked = new Set(sessionIds);
-    const orphans = (await this.review.orphanReviews()).filter((orphan) => asked.has(orphan.sessionId));
-    const open: StoredRun[] = [];
+    const candidates = (await this.review.orphanCandidates()).filter(({ orphan }) => asked.has(orphan.sessionId));
+    let deleted = 0;
     let deletedThreads = 0;
-    for (const orphan of orphans) {
+    for (const { orphan, runIds } of candidates) {
+      // No await between this check and the delete: a run started during the check above stays.
+      const checked = new Set(runIds);
+      if (this.store.openRuns(orphan.sessionId).some((run) => !checked.has(run.id))) continue;
       // Starts already asked for but not yet written as runs see this and give up.
       this.clears.set(orphan.sessionId, this.clearCount(orphan.sessionId) + 1);
-      open.push(...this.store.deleteSession(orphan.sessionId));
+      this.store.deleteSession(orphan.sessionId);
+      deleted += 1;
       deletedThreads += orphan.totalCount;
       this.review.publish(orphan.environmentId, orphan.sessionId);
     }
-    this.bb.log.info(`Deleted ${orphans.length} review(s) no live thread could open, with ${deletedThreads} comment thread(s).`);
-    await Promise.all(open.map((run) => this.archive(run)));
-    return { deleted: orphans.length, deletedThreads };
+    this.bb.log.info(`Deleted ${deleted} review(s) no live thread could open, with ${deletedThreads} comment thread(s).`);
+    return { deleted, deletedThreads };
   }
 
   private async archive(run: { id: string; threadId: string | null }): Promise<void> {
@@ -593,12 +600,14 @@ export class RunService {
         providerId: execution.providerId,
         model: execution.model === "" ? null : execution.model,
       });
-      if (this.store.run(id)?.status === "closed") {
+      const before = this.store.run(id);
+      if (before === null) throw new RunGone();
+      if (before.status === "closed") {
         // Cancelled before bb was asked: no thread will ever take its comments, so they go back to
         // whoever had them (Clear review already deleted them, which leaves nothing to undo).
         if (grant !== null) this.store.dropSend(grant);
         this.review.publishSession(input.sessionId);
-        return publicRun(this.store.run(id)!);
+        return publicRun(before);
       }
       const thread = await this.bb.sdk.threads.spawn({
         projectId: environment.projectId,
@@ -615,9 +624,15 @@ export class RunService {
       });
       // Already bound if the thread called in first; binding again is a no-op.
       this.store.bindRun(id, thread.id);
-      // Closed (Close, Clear review) while bb was starting it: that path had no thread to archive.
-      if (this.store.run(id)?.status === "closed") await this.archive({ id, threadId: thread.id });
+      // Closed (Close, Clear review) or deleted with its review while bb was starting it: that path
+      // had no thread to archive.
+      const after = this.store.run(id);
+      if (after === null || after.status === "closed") await this.archive({ id, threadId: thread.id });
+      if (after === null) throw new RunGone();
     } catch (error) {
+      if (error instanceof RunGone || this.store.run(id) === null) {
+        throw new ReviewError("The review was deleted while this was being started; nothing was kept.", "cleared");
+      }
       if (grant !== null) this.store.dropSend(grant);
       this.store.finishRun(id, "failed", `Could not start the thread: ${error instanceof Error ? error.message : String(error)}`, null);
     }

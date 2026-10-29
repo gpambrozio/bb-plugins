@@ -661,16 +661,48 @@ export class ReviewService {
    * deletes them unasked. A workspace bb cannot be asked about is not taken for gone.
    */
   async orphanReviews(): Promise<OrphanReview[]> {
-    const openerOf = this.openers();
+    return (await this.orphanCandidates()).map(({ orphan }) => orphan);
+  }
+
+  /**
+   * The orphan reviews, each with the runs (not closed) it was checked with: a review keeps a worker
+   * that is still live, in any workspace (a fixer in a worktree of its own, a run still starting), so
+   * it is not an orphan. A run the deleter sees that is not among these started after the check.
+   */
+  async orphanCandidates(): Promise<{ orphan: OrphanReview; runIds: string[] }[]> {
+    const threadOf = this.threadLookup();
+    const openerOf = this.openers(threadOf);
     const gone = new Map<string, boolean>();
-    const orphans: OrphanReview[] = [];
+    const orphans: { orphan: OrphanReview; runIds: string[] }[] = [];
     for (const row of this.store.reviewSummaries()) {
       if ((await openerOf(row)) !== null) continue;
       if (!gone.has(row.environmentId)) gone.set(row.environmentId, await this.workspaceGone(row.environmentId));
       if (gone.get(row.environmentId) !== true) continue;
-      orphans.push({ sessionId: row.sessionId, environmentId: row.environmentId, target: targetFromKey(row.targetKey), openCount: row.openCount, totalCount: row.totalCount, updatedAt: row.updatedAt });
+      const runs = this.store.openRuns(row.sessionId);
+      if (await this.hasLiveWorker(runs)) continue;
+      orphans.push({
+        orphan: { sessionId: row.sessionId, environmentId: row.environmentId, target: targetFromKey(row.targetKey), openCount: row.openCount, totalCount: row.totalCount, updatedAt: row.updatedAt },
+        runIds: runs.map((run) => run.id),
+      });
     }
     return orphans;
+  }
+
+  /**
+   * Whether any of these runs still has a worker: one still starting (no thread yet), or a thread that
+   * is not archived, wherever it works. A thread bb cannot be asked about counts as live.
+   */
+  private async hasLiveWorker(runs: readonly StoredRun[]): Promise<boolean> {
+    for (const run of runs) {
+      if (run.threadId === null) return true;
+      try {
+        if ((await this.bb.sdk.threads.get({ threadId: run.threadId })).archivedAt === null) return true;
+      } catch (error) {
+        this.bb.log.debug(`Could not read run ${run.id}'s thread ${run.threadId}, so its review stays: ${error instanceof Error ? error.message : String(error)}`);
+        return true;
+      }
+    }
+    return false;
   }
 
   private async workspaceGone(environmentId: string): Promise<boolean> {
@@ -683,17 +715,21 @@ export class ReviewService {
     }
   }
 
+  /** `threads.get`, each thread asked once per call; null when bb cannot give it. */
+  private threadLookup(): (threadId: string) => Promise<BbThread | null> {
+    const threads = new Map<string, BbThread | null>();
+    return async (threadId) => {
+      if (!threads.has(threadId)) threads.set(threadId, await this.bb.sdk.threads.get({ threadId }).catch(() => null));
+      return threads.get(threadId) ?? null;
+    };
+  }
+
   /**
    * Finds the bb thread a review opens in, or null: the thread whose tab showed it last, while it is
    * not archived and still works in the review's workspace, or else one still working there. Lookups
    * are shared across the rows of one call.
    */
-  private openers(): (row: ReviewSummaryRow) => Promise<BbThread | null> {
-    const threads = new Map<string, BbThread | null>();
-    const threadOf = async (threadId: string) => {
-      if (!threads.has(threadId)) threads.set(threadId, await this.bb.sdk.threads.get({ threadId }).catch(() => null));
-      return threads.get(threadId) ?? null;
-    };
+  private openers(threadOf = this.threadLookup()): (row: ReviewSummaryRow) => Promise<BbThread | null> {
     const fallback = new Map<string, string | null>();
     return async (row) => {
       let thread = row.viewerThreadId === null ? null : await threadOf(row.viewerThreadId);

@@ -99,26 +99,52 @@ export function CommentNavButtons({ from, className = "size-7" }: { from?: strin
   );
 }
 
+/** The latest focus job on each scroll area; an older one gives up once a newer one starts. */
+const focusJobs = new WeakMap<HTMLElement, number>();
+let focusJobCount = 0;
+/**
+ * The user taking over the scroll area ends a focus job still waiting for its card. Not `keydown`: a
+ * key the palette binds to the next comment starts a job while its own event is still on its way.
+ */
+const TAKE_OVER = ["wheel", "touchstart", "pointerdown"] as const;
+
 /**
  * Moves the keyboard focus to a thread once it is drawn: a file's diff may still be mounting when the
  * step asks, so this looks again on the next frames. Once the card is there it waits two more frames,
  * past the reveal of its file or line (which scrolls in a frame of its own), then scrolls the tab's
  * own area, as little as shows the card (and holds it there while the files around it finish loading),
- * and focuses it without scrolling anything else.
+ * and focuses it without scrolling anything else. A newer step, or the user scrolling or clicking in
+ * the area, cancels a job still waiting, so a card that mounts late never pulls the view back to it.
  */
 export function focusThread(root: HTMLElement | null, threadId: string, frames = 30): void {
   if (root === null) return;
-  // Thread ids are hex, safe in a selector as they are.
-  const card = root.querySelector<HTMLElement>(`[data-thread-id="${threadId}"]`);
-  if (card === null) {
-    if (frames > 0) requestAnimationFrame(() => focusThread(root, threadId, frames - 1));
-    return;
-  }
-  requestAnimationFrame(() =>
-    requestAnimationFrame(() => {
-      if (!card.isConnected) return;
-      scrollWithin(root, card, "nearest");
-      card.focus({ preventScroll: true });
-    }),
-  );
+  const job = ++focusJobCount;
+  focusJobs.set(root, job);
+  const current = () => focusJobs.get(root) === job;
+  const takeOver = () => {
+    if (current()) focusJobs.delete(root);
+  };
+  for (const type of TAKE_OVER) root.addEventListener(type, takeOver, { passive: true });
+  const done = () => {
+    for (const type of TAKE_OVER) root.removeEventListener(type, takeOver);
+  };
+  const look = (left: number) => {
+    if (!current()) return done();
+    // Thread ids are hex, safe in a selector as they are.
+    const card = root.querySelector<HTMLElement>(`[data-thread-id="${threadId}"]`);
+    if (card === null) {
+      if (left > 0) requestAnimationFrame(() => look(left - 1));
+      else done();
+      return;
+    }
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        done();
+        if (!current() || !card.isConnected) return;
+        scrollWithin(root, card, "nearest");
+        card.focus({ preventScroll: true });
+      }),
+    );
+  };
+  look(frames);
 }

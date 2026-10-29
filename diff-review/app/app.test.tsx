@@ -365,6 +365,18 @@ describe("the previous and next comment arrows", () => {
     }
   });
 
+  it("lands on an open thread left folded: the whole diff's, one not on the diff, and one on a line", async () => {
+    const folded = { aaaaaa000002: false, aaaaaa000003: false, aaaaaa000001: false };
+    render({ getReview: () => ({ ...VIEW, viewState: { drafts: {}, collapsed: {}, expandedThreads: folded, scroll: null, savedAt: 1 } }) });
+    await screen.findByTestId("patch");
+    for (const id of Object.keys(folded)) expect(card(id).tagName).toBe("BUTTON");
+    expect(await step(next, "aaaaaa000002")).toEqual(["aaaaaa000002"]);
+    expect(await step(next, "aaaaaa000003")).toEqual(["aaaaaa000003"]);
+    expect(await step(next, "aaaaaa000001")).toEqual(["src/a.ts", "aaaaaa000001"]);
+    // Still folded, as the user left them.
+    expect(card("aaaaaa000001").tagName).toBe("BUTTON");
+  });
+
   it("knows where a thread on a file whose diff loads later is drawn before stepping there, and keeps it through a reload", async () => {
     // As in a real panel: files far down never come near the screen, so nothing but the tab itself
     // asks for their diffs.
@@ -1360,7 +1372,9 @@ describe("the Review tab", () => {
       fireEvent.click(within(card).getByRole("button", { name: "Dismiss" }));
       // The one-line folded form: a button with the first comment, no Reply.
       const folded = await screen.findByRole("button", { name: /Why three\?/ });
-      expect(screen.queryByText("Why three?")?.closest("[data-thread-id]")).toBeFalsy();
+      // Folded, it is still the thread's place for the previous/next comment arrows.
+      expect(screen.getByText("Why three?").closest("[data-thread-id]")).toBe(folded);
+      expect(within(folded).queryByRole("button", { name: "Reply" })).toBeNull();
       expect(first.inspection.rpcCalls.find((call) => call.method === "setStatus")!.input).toEqual({ reviewThreadId: "aaaaaa000001", status: "dismissed" });
 
       fireEvent.click(folded);
@@ -1380,8 +1394,8 @@ describe("the Review tab", () => {
       cleanup();
       forgetViewStates();
       renderWith(lastSaved(second), { threads });
-      await screen.findByRole("button", { name: /Why three\?/ });
-      expect(screen.queryByText("Why three?")?.closest("[data-thread-id]")).toBeFalsy();
+      const refolded = await screen.findByRole("button", { name: /Why three\?/ });
+      expect(screen.getByText("Why three?").closest("[data-thread-id]")).toBe(refolded);
     });
 
     it("unfolds a folded file when its whole-file comment box opens, and keeps it unfolded", async () => {

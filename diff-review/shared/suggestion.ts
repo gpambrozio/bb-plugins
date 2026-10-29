@@ -30,9 +30,12 @@ export function suggestedLines(code: string): string[] {
   return normalized === "" ? [] : normalized.replace(/\n$/, "").split("\n");
 }
 
-/** The lines of a thread's lines as text (each line, joined with "\n"), a blank last line included. */
+/**
+ * The lines of a thread's lines as text (each line, joined with "\n"), a blank last line included.
+ * There is always one at least: "" is one blank line, not none (an empty suggestion block is none).
+ */
 function textLines(text: string): string[] {
-  return text === "" ? [] : text.replace(/\r\n/g, "\n").split("\n");
+  return text.replace(/\r\n/g, "\n").split("\n");
 }
 
 /**
@@ -65,14 +68,18 @@ export function suggestionLines(original: string, code: string): SuggestionLine[
   ];
 }
 
-/** `body` with a suggestion block seeded with `code` added on lines of its own at `cursor`. */
+/**
+ * `body` with a suggestion block seeded with `code` added on lines of its own at `cursor`. `code` is
+ * the thread's lines as text (joined with "\n", as `textLines` reads them), so all of it goes between
+ * the fences: a blank last line, or one blank line (""), stays a line of the block.
+ */
 export function insertSuggestion(body: string, cursor: number, code: string): { body: string; cursor: number } {
   const before = body.slice(0, cursor);
   const after = body.slice(cursor);
   const lead = before === "" || before.endsWith("\n") ? "" : "\n";
   const trail = after === "" || after.startsWith("\n") ? "" : "\n";
   const open = `${lead}\`\`\`suggestion\n`;
-  const block = `${open}${code.replace(/\n$/, "")}\n\`\`\`${trail}`;
+  const block = `${open}${code.replace(/\r\n/g, "\n")}\n\`\`\`${trail}`;
   return { body: `${before}${block}${after}`, cursor: before.length + open.length };
 }
 

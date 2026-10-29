@@ -23,7 +23,8 @@ Needs bb 0.48 or newer.
   next, and match case.
 - **Go to** a file, an open comment or a view, by typing part of its name.
 - **Suggested changes.** A comment can hold a suggestion block (the **Suggest a change** button starts
-  one with the commented lines); **Apply suggestion** writes it into the file and resolves the thread.
+  one with the commented lines, blank ones included); **Apply suggestion** writes it into the file and
+  resolves the thread.
 - **Revert** a file's uncommitted change, or only some of its changes, after asking. It changes the
   file only if it is still the version you were looking at, and leaves symlinks and submodules alone.
 - **Summarize** the change, from the AI review dialog, and **Explain** a file or the lines you
@@ -35,12 +36,14 @@ Needs bb 0.48 or newer.
   of the open ones on its entry, and shows the one you pick in full. The count covers the reviews the
   page lists, so comments left in a workspace that has since been archived no longer add to it. The
   page says how many such reviews there are and deletes them, with their comments, when you confirm.
+  A review with an AI thread still at work, in any workspace, is not one of them and is kept.
 - **The thread's Info tab** says how many review comments its workspace has open.
 - **Previous and next comment arrows** in the toolbar and on each comment thread, which move to the
   open comment before or after (wrapping around at the ends), highlight it and put the cursor on it.
   Comments on files far down a large diff show in their real place from the start, instead of moving
   to "Not on the current diff" as you scroll, and the comment you moved to stays in view while the
-  files above it finish loading.
+  files above it finish loading. A folded comment is a stop too, and a newer jump is never undone by
+  an older one whose comment showed up late.
 - **Palette commands** for every action of the tab: reload, send, AI review, find, go to, the next or
   previous comment, the toolbar switches and more.
 - **`bb diff-review open`** opens a thread's review on a view and file from the command line.

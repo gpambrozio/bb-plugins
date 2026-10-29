@@ -54,6 +54,8 @@ interface Setup {
   /** Awaited before answering `threads.get` for that thread, or `threads.spawn`: a test holds bb mid-call. */
   holdThreadGet?: (threadId: string) => Promise<void>;
   holdSpawn?: () => Promise<void>;
+  /** Awaited before answering `providers.list` (a run's start looks up the provider's modes). */
+  holdProviders?: () => Promise<void>;
   /** Awaited before answering `environments.get` and `threads.events.list`. */
   holdEnvironmentGet?: () => Promise<void>;
   holdEvents?: (threadId: string) => Promise<void>;
@@ -246,7 +248,8 @@ async function setup(options: Setup = {}) {
       },
       providers: {
         list: async () =>
-          Object.entries(options.providerModes ?? {}).map(([id, permissionModes]) => ({ id, capabilities: { permissionModes } }) as unknown as ProviderInfo),
+          (await options.holdProviders?.(),
+          Object.entries(options.providerModes ?? {})).map(([id, permissionModes]) => ({ id, capabilities: { permissionModes } }) as unknown as ProviderInfo),
         models: async () => ({
           modelLoadError: null,
           models: [
@@ -786,6 +789,82 @@ describe("the Reviews page", () => {
     expect(await rpc("orphanReviews", {})).toEqual({ reviews: [] });
     await expect(rpc("listThreads", { sessionId })).rejects.toThrow(`No review session ${sessionId}`);
     expect(harness.inspection.realtimeSignals.filter((event) => event.channel === "reviews").at(-1)!.payload).toEqual({ kind: "threads", sessionId });
+  });
+
+  /** A gate a fake bb call waits at: `reached` resolves when the call gets there, `open()` lets it on. */
+  function gate() {
+    let arrive = () => undefined as void;
+    let open = () => undefined as void;
+    const reached = new Promise<void>((resolve) => (arrive = resolve));
+    const opened = new Promise<void>((resolve) => (open = resolve));
+    return { reached, open, wait: () => (arrive(), opened) };
+  }
+  const execution = { providerId: "claude-code", model: "big", reasoningLevel: "high" };
+  /** The review's workspace destroyed and every thread archived, but those `live` names (in `env_fix`). */
+  const retire = (harness: Awaited<ReturnType<typeof setup>>["harness"], live: readonly string[] = [], hold?: { threadId: string; wait(): Promise<void> }) => {
+    harness.sdk.stub("threads.get", async ({ threadId }: { threadId: string }) => {
+      if (hold?.threadId === threadId) await hold.wait();
+      return makeThreadResponse({ id: threadId, environmentId: live.includes(threadId) ? "env_fix" : ENV, archivedAt: live.includes(threadId) ? null : 1 });
+    });
+    harness.sdk.stub("threads.list", async () => []);
+    harness.sdk.stub("environments.get", async () => environment({ status: "destroyed", path: null }) as never);
+  };
+  const recordArchives = (harness: Awaited<ReturnType<typeof setup>>["harness"]) => {
+    const archived: string[] = [];
+    harness.sdk.stub("threads.archive", async ({ threadId }: { threadId: string }) => (archived.push(threadId), { ok: true as const }));
+    return archived;
+  };
+  const threadIdsOf = async (rpc: Awaited<ReturnType<typeof setup>>["rpc"], sessionId: string) =>
+    ((await rpc("listThreads", { sessionId })) as { threads: { id: string }[] }).threads.map((thread) => thread.id);
+
+  it("keeps a review whose fixer is still live, in another workspace, and archives nothing", async () => {
+    const { rpc, harness, sessionId } = await reviewed();
+    const fixed = (await rpc("fixInNewThread", { sessionId, threadId: THREAD, reviewThreadIds: await threadIdsOf(rpc, sessionId), note: "", execution })) as { run: { threadId: string } };
+    expect(fixed.run.threadId).toBe("thr_run_1");
+    const archived = recordArchives(harness);
+    retire(harness, ["thr_run_1"]);
+    expect(await rpc("orphanReviews", {})).toEqual({ reviews: [] });
+    expect(await rpc("deleteOrphanReviews", { sessionIds: [sessionId] })).toEqual({ deleted: 0, deletedThreads: 0 });
+    // Once the fixer is archived as well, nothing of the review is live: it is an orphan.
+    retire(harness);
+    expect(await rpc("deleteOrphanReviews", { sessionIds: [sessionId] })).toEqual({ deleted: 1, deletedThreads: 2 });
+    expect(archived).toEqual([]);
+  });
+
+  for (const held of ["provider lookup", "spawn"] as const) {
+    it(`keeps a review whose run is still starting (held at its ${held}), and the run starts as asked`, async () => {
+      const hold = gate();
+      const context = await setup(held === "spawn" ? { holdSpawn: hold.wait } : { holdProviders: hold.wait });
+      const { sessionId } = await context.view();
+      await context.comment(sessionId);
+      await context.rpc("saveViewState", { threadId: THREAD, sessionId, state: { drafts: {}, collapsed: {}, scroll: null, savedAt: 1 } });
+      const ids = await threadIdsOf(context.rpc, sessionId);
+      const starting = context.rpc("fixInNewThread", { sessionId, threadId: THREAD, reviewThreadIds: ids, note: "", execution });
+      await hold.reached;
+      const archived = recordArchives(context.harness);
+      retire(context.harness);
+      expect(await context.rpc("orphanReviews", {})).toEqual({ reviews: [] });
+      expect(await context.rpc("deleteOrphanReviews", { sessionIds: [sessionId] })).toEqual({ deleted: 0, deletedThreads: 0 });
+      hold.open();
+      expect(((await starting) as { run: { status: string; threadId: string } }).run).toMatchObject({ status: "running", threadId: "thr_run_1" });
+      expect(archived).toEqual([]);
+    });
+  }
+
+  it("keeps a review that started a run while the delete was checking it", async () => {
+    const { rpc, harness, sessionId } = await reviewed();
+    const ids = await threadIdsOf(rpc, sessionId);
+    // An earlier fixer, archived since: it alone would not keep the review.
+    await rpc("fixInNewThread", { sessionId, threadId: THREAD, reviewThreadIds: ids, note: "", execution });
+    const hold = gate();
+    retire(harness, [], { threadId: "thr_run_1", wait: hold.wait });
+    const deleting = rpc("deleteOrphanReviews", { sessionIds: [sessionId] });
+    // The check is asking about the old fixer when a new fix starts.
+    await hold.reached;
+    const starting = rpc("fixInNewThread", { sessionId, threadId: THREAD, reviewThreadIds: ids, note: "", execution });
+    hold.open();
+    expect(await deleting).toEqual({ deleted: 0, deletedThreads: 0 });
+    expect(((await starting) as { run: { threadId: string } }).run.threadId).toBe("thr_run_2");
   });
 
   it("keeps a review that a thread can open again by the time the delete is confirmed", async () => {

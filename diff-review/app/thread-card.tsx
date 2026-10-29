@@ -151,10 +151,13 @@ export function ThreadCard({
   );
 
   if (!expanded) {
+    // Folded, it is still a stop of the previous/next comment arrows and Go to: they land on this line.
     return (
       <button
         type="button"
-        className="flex w-full items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-left text-xs text-muted-foreground hover:bg-state-hover"
+        className={`flex w-full items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-left text-xs text-muted-foreground hover:bg-state-hover ${isCurrent ? "ring-2 ring-ring" : ""}`}
+        data-thread-id={thread.id}
+        data-current-comment={isCurrent ? "" : undefined}
         onClick={() => setExpanded(true)}
       >
         <Icon name="ChevronRight" className="size-3.5" />
