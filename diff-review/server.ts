@@ -7,10 +7,12 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import { rpcContract } from "./shared/contract";
+import { describeLocation } from "./shared/types";
 import { diffReviewCli } from "./server/cli";
 import { WorkspaceEdits } from "./server/edits";
 import { createHostRevert } from "./server/host-git";
 import { refusing } from "./server/refusal";
+import type { GhRunner } from "./server/github";
 import { ReviewService } from "./server/review";
 import { RUN_PERMISSION_MODES, RunService } from "./server/runs";
 import { RUN_METADATA_KEY, TOOL_NAMES } from "./server/tool-names";
@@ -19,7 +21,14 @@ import { MIGRATIONS, ReviewStore } from "./server/store";
 
 export { rpcContract };
 
-export default async function plugin(bb: BbPluginApi) {
+/** The plugin, with `gh` replaced for tests; bb loads the default export, which runs the real one. */
+export function diffReviewPlugin(deps: { gh?: GhRunner } = {}) {
+  return (bb: BbPluginApi) => plugin(bb, deps);
+}
+
+export default diffReviewPlugin();
+
+async function plugin(bb: BbPluginApi, deps: { gh?: GhRunner }) {
   const settings = bb.settings.define({
     ignorePatterns: {
       type: "string",
@@ -68,7 +77,7 @@ export default async function plugin(bb: BbPluginApi) {
   const db = bb.storage.database();
   bb.storage.migrate(db, MIGRATIONS);
   const store = new ReviewStore(db);
-  const service = new ReviewService(bb, store, () => settings.get());
+  const service = new ReviewService(bb, store, () => settings.get(), deps);
   const runs = new RunService(bb, store, service, () => settings.get());
   service.onUserComment = (thread, body, viewerThreadId) => runs.onUserComment(thread, body, viewerThreadId);
   bb.onDispose(() => service.dispose());
@@ -84,13 +93,23 @@ export default async function plugin(bb: BbPluginApi) {
     },
     listThreads: ({ sessionId }) => service.sessionState(sessionId),
     createThread: ({ threadId, ...input }) => ({ thread: service.createThread(input, threadId ?? null) }),
-    addComment: ({ reviewThreadId, body, threadId }) => ({ thread: service.addUserComment(reviewThreadId, body, threadId ?? null) }),
+    addComment: async ({ reviewThreadId, body, threadId }) => ({ thread: await service.reply(reviewThreadId, body, threadId ?? null) }),
     editComment: ({ commentId, body }) => ({ thread: service.editComment(commentId, body) }),
     deleteComment: ({ commentId }) => {
       service.deleteComment(commentId);
       return { ok: true as const };
     },
-    setStatus: ({ reviewThreadId, status }) => ({ thread: service.setStatus(reviewThreadId, status) }),
+    setStatus: async ({ reviewThreadId, status }) => ({ thread: await service.changeStatus(reviewThreadId, status) }),
+    reviewPlan: ({ sessionId }) => {
+      const plan = service.reviewPlan(sessionId);
+      const location = (reviewThreadId: string) => describeLocation(service.requireThread(reviewThreadId));
+      return {
+        lines: plan.lines.map((entry) => ({ reviewThreadId: entry.reviewThreadId, location: location(entry.reviewThreadId), path: entry.draft.path, line: entry.draft.line, body: entry.body })),
+        body: plan.body.map((entry) => ({ reviewThreadId: entry.reviewThreadId, location: location(entry.reviewThreadId), body: entry.body })),
+        blocked: plan.blocked.map((entry) => ({ ...entry, location: location(entry.reviewThreadId) })),
+      };
+    },
+    submitReview: (input) => service.submitReview(input),
     send: (input) => service.send(input),
     runDefaults: ({ threadId }) => runs.defaults(threadId),
     startReview: async (input) => ({ run: await runs.startReview(input) }),

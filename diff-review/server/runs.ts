@@ -235,11 +235,16 @@ export class RunService {
     const clears = this.clearCount(session.id);
     const chosen = this.openThreads(session.id, input.reviewThreadIds);
     const target = targetFromKey(session.targetKey);
-    const prompt = fixPrompt({ target, threads: chosen, note: input.note });
-    const title = `Review fixes: ${chosen.length} comment${chosen.length === 1 ? "" : "s"}`;
+    // A pull request is fixed in a worktree of its own that checks it out: the reviewed workspace
+    // is not the pull request's branch, and is never switched (decision 6).
+    const pull = target.kind === "pr" ? target : null;
+    const checkout = pull === null ? "" : `First check out the pull request in this worktree: \`gh pr checkout ${pull.number} --repo ${pull.owner}/${pull.repo}\`. Make the fixes on its branch, commit them, and push them when the user asks.\n\n`;
+    const prompt = `${checkout}${fixPrompt({ target, threads: chosen, note: input.note })}`;
+    const title = pull === null ? `Review fixes: ${chosen.length} comment${chosen.length === 1 ? "" : "s"}` : `PR #${pull.number} fixes: ${chosen.length} comment${chosen.length === 1 ? "" : "s"}`;
     const run = await this.spawn({
       sessionId: session.id,
       environmentId: session.environmentId,
+      newWorktree: pull !== null,
       parentThreadId: input.threadId,
       kind: "fix",
       reviewThreadId: null,
@@ -445,7 +450,7 @@ export class RunService {
     let anchorContent: string | null = null;
     let fileRevision: string | null = null;
     if (input.filePath !== GENERAL_PATH) {
-      const { lines, revision } = await this.linesOf(session.environmentId, session.targetKey, input.filePath);
+      const { lines, revision } = await this.linesOf(session.id, session.environmentId, session.targetKey, input.filePath);
       fileRevision = revision;
       if (input.startLine > 0) {
         const side = input.side ?? "new";
@@ -472,9 +477,9 @@ export class RunService {
    * The lines a comment on `path` may be on: the diff's, or in the Any file view the file's own (read
    * through bb on the workspace's machine), with the revision the thread keeps.
    */
-  private async linesOf(environmentId: string, targetKey: string, path: string): Promise<{ lines: PatchLines; revision: string }> {
+  private async linesOf(sessionId: string, environmentId: string, targetKey: string, path: string): Promise<{ lines: PatchLines; revision: string }> {
     if (targetFromKey(targetKey).kind !== "files") {
-      const { patch, revision } = await this.patchOf(environmentId, targetKey, path);
+      const { patch, revision } = await this.patchOf(sessionId, environmentId, targetKey, path);
       return { lines: parsePatchLines(patch), revision };
     }
     const environment = await this.bb.sdk.environments.get({ environmentId });
@@ -492,7 +497,7 @@ export class RunService {
     return { lines: contentLines(content), revision: file.sha256 };
   }
 
-  private async patchOf(environmentId: string, targetKey: string, path: string): Promise<{ patch: string; revision: string }> {
+  private async patchOf(sessionId: string, environmentId: string, targetKey: string, path: string): Promise<{ patch: string; revision: string }> {
     // Reads the ignore files like a tab's load does; this line tells the two apart in the log.
     this.bb.log.debug(`Reading the diff of ${environmentId} to check a review comment on ${path}.`);
     const environment = await this.bb.sdk.environments.get({ environmentId });
@@ -501,7 +506,8 @@ export class RunService {
     const patterns = await ignorePatterns(this.bb.sdk, this.bb.log, environment, settings.ignorePatterns, settings.readIgnoreFiles);
     let diff;
     try {
-      diff = await loadDiff(this.review.sources, this.bb.log, environment, target, patterns);
+      // A pull request's diff is its fetched range, as its view loaded it (or loads it now).
+      diff = target.kind === "pr" ? { files: await this.review.prs.filesFor(sessionId, environment, target, patterns) } : await loadDiff(this.review.sources, this.bb.log, environment, target, patterns);
     } catch (error) {
       if (error instanceof ReviewUnavailable) throw new ReviewError(error.message, "diff_unavailable");
       throw error;
@@ -562,6 +568,8 @@ export class RunService {
     reviewThreadId: string | null;
     focus: string | null;
     execution: Execution | (() => Promise<Execution>);
+    /** Start the thread in a new managed worktree of the project instead of the reviewed workspace. */
+    newWorktree?: boolean;
     /** Leave the reasoning level to the provider's default (a question to the reviewer has no picker). */
     reasoningFromProvider?: boolean;
     title: string;
@@ -622,7 +630,10 @@ export class RunService {
         projectId: environment.projectId,
         title: input.title,
         prompt: input.prompt,
-        environment: { type: "reuse", environmentId: input.environmentId },
+        environment:
+          input.newWorktree === true
+            ? { type: "host", hostId: environment.hostId, workspace: { type: "managed-worktree", baseBranch: { kind: "default" } } }
+            : { type: "reuse", environmentId: input.environmentId },
         providerId: execution.providerId,
         ...(execution.model === "" ? {} : { model: execution.model }),
         ...(input.reasoningFromProvider === true ? {} : { reasoningLevel: execution.reasoningLevel }),

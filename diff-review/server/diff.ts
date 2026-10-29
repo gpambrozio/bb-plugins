@@ -138,6 +138,7 @@ export function gitTarget(target: Target): GitTarget {
     case "unstaged":
     case "range":
     case "files":
+    case "pr":
       throw new ReviewUnavailable(`bb's Git plugin has no ${target.kind} view.`);
     case "uncommitted":
       return { type: "uncommitted" };
@@ -349,7 +350,8 @@ export async function withThreadPatches(
   threads: readonly { filePath: string; startLine: number }[],
   ignoreWhitespace = false,
 ): Promise<DiffFile[]> {
-  if (isHostTarget(target) || target.kind === "files") return [...files];
+  // A pull request's view sends every patch with its list.
+  if (isHostTarget(target) || target.kind === "files" || target.kind === "pr") return [...files];
   const commented = new Set(threads.filter((thread) => thread.startLine > 0).map((thread) => thread.filePath));
   const missing = files.filter((file) => file.patch === null && commented.has(file.path) && !file.binary && file.loadMode !== "too_large").slice(0, THREAD_PATCH_MAX_FILES);
   if (missing.length === 0) return [...files];

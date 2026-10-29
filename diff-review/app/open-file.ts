@@ -29,6 +29,7 @@ export function fileRef(target: Target, file: Pick<DiffFile, "changeKind">, merg
       return deleted ? null : { ref: null };
     case "files":
       return { ref: null };
+    case "pr":
     case "range": {
       const head = headRef !== null && REF.test(headRef) ? headRef : null;
       if (deleted) return base === null ? null : { ref: base };

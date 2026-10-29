@@ -12,7 +12,7 @@ type RefusalCode = experimental_PluginRpcRefusal["code"];
 
 const NOT_FOUND = new Set(["unknown_thread", "unknown_session", "unknown_run", "unknown_comment"]);
 const FORBIDDEN = new Set(["not_yours", "not_sent_here", "not_a_review_run", "not_in_thread", "wrong_workspace"]);
-const CONFLICT = new Set(["not_open", "cleared", "nothing_to_send", "diff_unavailable", "changed", "not_working_copy"]);
+const CONFLICT = new Set(["not_open", "cleared", "nothing_to_send", "diff_unavailable", "changed", "not_working_copy", "github_failed"]);
 
 export function refusalCode(code: string): RefusalCode {
   if (NOT_FOUND.has(code)) return "not_found";

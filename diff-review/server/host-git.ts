@@ -32,8 +32,14 @@ export function createHostRevert(bb: BbPluginApi): HostRevert {
     await client.call("revert", input, { hostId });
   };
 }
+export type HostFetchPull = (hostId: string, input: { root: string; url: string; number: number; baseRef: string }) => Promise<{ headSha: string; baseSha: string }>;
 
 export function createHostGit(bb: BbPluginApi): HostGit {
   const client = bb.hosts.experimental_client({ contract: hostContract });
   return (hostId, root, spec, ignoreWhitespace) => client.call("diff", { root, spec, ignoreWhitespace }, { hostId });
+}
+
+export function createHostFetchPull(bb: BbPluginApi): HostFetchPull {
+  const client = bb.hosts.experimental_client({ contract: hostContract });
+  return (hostId, input) => client.call("fetchPull", input, { hostId });
 }

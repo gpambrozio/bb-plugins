@@ -17,12 +17,13 @@ specific to `diff-review`.
 | File | What it owns |
 | --- | --- |
 | `server.ts` | Wires the settings, the database and its migrations, the RPCs (through `refusing`), the CLI and the `thread.idle` / `thread.failed` listeners. |
-| `host.ts`, `host/git.ts` | The host entry: git on the machine that holds a workspace, for the staged, unstaged and range views (diffity's ref grammar and merged fork point) and the index's fingerprint. Reads only. |
+| `host.ts`, `host/git.ts` | The host entry: git on the machine that holds a workspace, for the staged, unstaged and range views (diffity's ref grammar and merged fork point) the index's fingerprint, and a pull request fetched into private refs. |
 | `host/revert.ts` | Revert, on the workspace's machine: bb's Git plugin revision recomputed and checked, symlinks and submodules refused, the last check synchronous before the rename or removal. |
 | `shared/host-contract.ts`, `shared/git-spec.ts` | The host entry's contract (imports the SDK root: never from the app); the views it serves and the revision grammar (no SDK import). |
 | `server/git.ts` | bb's Git plugin (`bb--git`) through `bb.sdk.plugins.callRpc`: status, files, patches by revision, Viewed marks; a copy of the shapes read, and the "Git plugin is off" message. |
 | `server/host-git.ts` | The server's client of the host entry. |
 | `server/edits.ts` | Applying a suggestion (bb's file read and `expectedSha256` write, its lines checked against what the tab showed) and handing a revert to the host entry. |
+| `server/github.ts`, `server/pull-requests.ts` | `gh api graphql` (diffity's queries) and the `pr` view: load (host fetch, range diff), mirror review threads, reply / resolve on GitHub, the review plan and Submit. |
 | `server/refusal.ts` | `ReviewError`s answered as `experimental_PluginRpcRefusal`, so a caller's mistake is not logged as a crash. |
 | `shared/routes.ts` | The Reviews page's addresses (`<thread>/<view>[/<file>]`), and `bb diff-review open`'s realtime request. |
 | `shared/suggestion.ts`, `shared/revert.ts` | Suggestion blocks (diffity's) and line replacement; reverting hunks from a file's patch. |
@@ -50,9 +51,10 @@ specific to `diff-review`.
 | `app/files-view.tsx` | The "Any file" view: workspace search, Pierre's `File` with the same annotations. |
 | `app/suggestion-block.tsx`, `app/revert-dialog.tsx`, `app/range-dialog.tsx` | A suggested change and Apply; Revert…; the range picker. |
 | `app/open-file.ts`, `app/palette.ts` | Which version Open previews; the colour-blind colours. |
+| `app/pull-bar.tsx`, `app/pull-dialog.tsx`, `app/submit-dialog.tsx` | A pull request's bar (Sync, Open on GitHub, Submit), picking one by address, and the Submit dialog with the verdict. |
 | `app/reviews.ts`, `app/reviews-page.tsx`, `app/thread-info.tsx`, `app/open-overlay.tsx` | The Reviews page (sidebar, title, badge), the thread Info row, and the overlay that answers `bb diff-review open`. The badge counts exactly the reviews the page lists (`counts(null)` sums `listReviews`), so a review whose workspace is archived, which the page leaves out because it can no longer be loaded, is not counted; the store keeps it. The badge's every refresh costs what the page's does (a `threads.get` per listed review). `app/orphans.tsx`: the reviews the page leaves out *and* whose workspace bb says is destroyed (`orphanReviews`), counted under the list with Delete…, which confirms first. Deletion is only ever the user's: `deleteOrphanReviews` checks each id again and deletes only those still orphans that the page offered (`deleteSession`, which takes every table's rows; open runs close and their threads are archived). A workspace bb cannot be asked about is not taken for gone. A review keeps any run (not closed) that still has a worker, in any workspace: one still starting (running, no thread yet; a start that failed before it had a thread is no worker), or a thread not archived (a fixer in a worktree of its own), so the delete never cancels live work. The delete checks each review afresh right before its own delete (`orphanCheck`, workers asked last), never from one scan of them all, and skips it when its runs changed while it was checked (no await between that check and `deleteSession`). A start whose run row is gone when bb is asked, or when bb answers, refuses and archives the thread it got. |
 | `app/thread-card.tsx`, `app/comment-composer.tsx` | A thread and its comments; the box comments are written in. |
-| `app/view-memory.ts` | The view picked in a thread's Review tab, kept in `localStorage` per bb thread with the `params` target the tab was opened on: bb mounts the tab anew whenever its thread is opened, so without it the picker went back to the default. A tab opened on another view starts there; a kept view the server can no longer read (`unavailable`) is forgotten and the tab starts over on the default. The first load's own pick is not kept. |
+| `app/view-memory.ts` | The view picked in a thread's Review tab, kept in `localStorage` per bb thread with the `params` target the tab was opened on: bb mounts the tab anew whenever its thread is opened, so without it the picker went back to the default. A tab opened on another view starts there; a kept view the server can no longer read (`unavailable`), or a pull request's that is no longer open (`keptViewGone`), is forgotten and the tab starts over on the default. The first load's own pick is not kept. |
 | `app/view-state.tsx`, `app/scroll-memory.ts` | What the tab keeps per thread and view (unsent comments, folds, scroll place as file + offset) and its saving; restoring the scroll place while patches load (`app/scroll-within.ts`'s hold). |
 | `app/send-dialog.tsx` | Picking threads and a note for **Send to agent**, to this thread or a new one. |
 | `app/ai-review-dialog.tsx`, `app/execution-picker.tsx` | The AI review dialog (focus chips, instructions); bb's provider/model picker, seeded from the settings. |
@@ -198,7 +200,8 @@ unchanged, so the plugin sets `theme` and `themeType` from `experimental_useCode
 **Which machine.** Nothing is server-Mac-only: the diffs come from bb's Git plugin, the staged,
 unstaged and range views from the plugin's own host entry (`host.ts`, git in the checkout), files
 from `bb.sdk.files.*`, all on whichever machine holds the workspace, remote hosts included. Raw git a
-new feature needs goes in the host entry, which reads; a suggestion is written through
+new feature needs goes in the host entry, which reads (but for Revert, below, and fetching a pull
+request into the plugin's own refs); a suggestion is written through
 `bb.sdk.files.write` with `expectedSha256`. **An AI run on a range view is told the two commits the tab
 compares** (`rangeCommits` on the host, the same `plan` as the diff), never `git diff a..b`: the tab
 diffs `a..b` from the merge base, and a merged `a...b` from where it forked, which a raw `git diff
@@ -263,6 +266,47 @@ the shared split button — check the header after every bb release. A palette c
 and hands its action to the tab through `app/commands.ts`. A hidden tab (`experimental_useTabVisible`)
 defers reloads until it shows.
 
+**Pull requests are reviewed read only, and posted only by the user.** The `pr` view's diff comes
+from the host entry's `fetchPull` and its `base...head` range. It fetches the head and base into
+`refs/diff-review/pull/<owner>/<repo>/<n>/…` of the workspace's repository (never a branch, the index
+or the working tree; decision 6), named by the pull request's repository and fetched-and-resolved one
+at a time per repository (its git common dir, so linked worktrees share the queue): two views fetching
+`a/x#7` and `b/x#7` at once otherwise read each other's commits. GitHub is read and written with
+`gh api graphql --input -` (the JSON body on stdin, so a mutation's `input` keeps its types; `-F` would
+send strings) on the **bb server's Mac**, where `gh` is signed in (decision 8); a remote workspace still
+fetches on its own machine.
+
+Review threads are mirrored into the session on every load by GitHub id (`github_thread_id`; GitHub's
+comments are `github_comment_id` rows, shown as `github`, never editable here). A `FILE` thread is a
+whole-file one. A thread GitHub marks outdated, or with no current line, keeps its original lines and
+the text it was made on, from its first comment's `diffHunk`, so it is placed by that text or listed as
+not on the current diff; it is never pinned to whatever sits at its old line now. A mirror GitHub no
+longer has is deleted, unless it holds the plugin's own comments, which unlinks it instead. The user's
+reply, resolve or reopen on a mirror goes to GitHub, then reads it back; dismiss has no GitHub meaning.
+A reply that mentions `@reviewer` or `@agent` is the exception: it stays the plugin's own comment and
+asks the reviewer, since on GitHub it would notify the accounts of those names (the sync keeps a
+mirror's own comments). The Submit dialog draws every row from the plan it read, each entry with its
+`location`, never from the tab's threads, which may lag behind it: whatever Submit posts is on screen.
+
+**Submit** is the only path that posts a review (decision 5); an agent's `reply` on a mirror stays in
+the tab.
+- It posts exactly what the dialog showed: the plan carries each comment's text, the dialog sends it
+  back, and a comment changed since is refused before anything is posted. The dialog fixes the head
+  when it opens and sends that one; a load of new commits while it is open closes it (and the
+  verdict is chosen again on the next opening), so an approval is never carried to a commit it was
+  not made on.
+- It checks the pull request's head before the first request and again just before the last (the
+  submit), deleting the pending review on a push. One request's time between that read and GitHub
+  taking the submit is the race left.
+- It deletes nothing. A line comment becomes the mirror of the thread it made: GitHub's copy of its
+  first comment takes that comment's place when unedited, and its replies, an agent's answers and
+  anything written during the submission stay, unposted. A whole-file or whole-diff comment, now in the
+  review's body, is resolved.
+
+An AI run's comments on a pull request are checked against its fetched range (`PullRequests.filesFor`,
+the view's last load or a fresh fetch). A fix run for a pull request starts in a new managed worktree
+told to `gh pr checkout`.
+
 **Summaries and explanations are review runs with a purpose.** The `runs` table's kind check predates
 them and SQLite cannot widen it, so they are stored as `kind = 'review'` with `purpose` set; they read
 and comment like a review (watched for edits) but are never the view's reviewer.
@@ -283,7 +327,9 @@ the branch has some, and the tab's picker adopts that view without loading it ag
 - `MIGRATIONS` is append-only; bb checks each applied statement's hash. 0.1.0 shipped indexes 0–6;
   0.2.0 added the `runs` table at 7–9, its `parent_thread_id` at 10 (an `ALTER`, since 7 was
   already applied on installs of the branch), `view_states` at 11 and `send_previous` at 12; 0.3.0
-  added `review_threads.file_revision` at 13 and `runs.purpose` at 14.
+  added `review_threads.file_revision` at 13 and `runs.purpose` at 14; 0.4.0 added
+  `review_threads.github_thread_id` at 15 and `review_comments.github_comment_id` at 16. `docs.test.ts`
+  keeps the README's install range on the package's minor version.
 - The tab's kept state (drafts, file and thread folds, scroll) lives in the plugin's database, keyed by bb thread and
   session, not in `localStorage`: it must survive a restart and follow the user to another device (the
   owner uses bb remotely). Saves are debounced and flushed when the tab unmounts or the page hides; a
@@ -335,9 +381,7 @@ the branch has some, and the tab's picker adopts that view without loading it ag
 
 ## Roadmap
 
-The open work is https://github.com/gpambrozio/bb-plugins/issues/64 (it merged #47 and #48).
+https://github.com/gpambrozio/bb-plugins/issues/64 (which merged #47 and #48) is done.
 
-- **Phase 3:** GitHub pull request review (fetch `pull/N/head` through the host entry, sync review
-  threads, submit a review with `gh` as the owner, a worktree thread for fixes).
 - Not taken: bb's tagged live reads in place of the realtime channel (no user-visible gain), and
   diffity's chaptered guide (the Community `guided-review` plugin covers it).

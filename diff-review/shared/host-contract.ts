@@ -5,7 +5,7 @@
 import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
-import { hostDiffSpecSchema, hostRangeSpecSchema } from "./git-spec";
+import { hostDiffSpecSchema, hostRangeSpecSchema, revisionSchema } from "./git-spec";
 
 const fileSchema = z
   .object({
@@ -78,6 +78,22 @@ export const hostContract = defineRpcContract({
       })
       .strict(),
     output: hostDiffSchema,
+  },
+  /**
+   * Fetches a GitHub pull request's head and its base branch into private refs
+   * (`refs/diff-review/pull/<n>/head` and `/base`), without touching any branch, the index or the
+   * working tree, and answers the two commits.
+   */
+  fetchPull: {
+    input: z
+      .object({
+        root: z.string().min(1).max(4096),
+        url: z.string().regex(/^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\.git$/),
+        number: z.number().int().positive(),
+        baseRef: revisionSchema,
+      })
+      .strict(),
+    output: z.object({ headSha: z.string(), baseSha: z.string() }).strict(),
   },
 });
 

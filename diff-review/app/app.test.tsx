@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ReviewThread, ReviewView, ViewState } from "../shared/types";
 import { ANNOTATION_FIT } from "./annotation-fit";
+import { PullDialog } from "./pull-dialog";
 import { RangeDialog } from "./range-dialog";
 import { fromPicker, pickerValue, ReviewPanel } from "./review-panel";
 import { dispatchReviewCommand, forgetReviewCommands } from "./commands";
@@ -107,6 +108,7 @@ function thread(overrides: Partial<ReviewThread> & { id: string; body: string })
     severity: null,
     anchorContent: "const b = 3;",
     fileRevision: null,
+    githubThreadId: null,
     createdAt: 1,
     updatedAt: 1,
     comments: [{ id: `c_${rest.id}`, authorType: "user", authorName: "You", body, createdAt: 1, editedAt: null }],
@@ -126,6 +128,8 @@ const VIEW: Extract<ReviewView, { ok: true }> = {
   mergeBaseRef: null,
   headRef: null,
   viewable: true,
+  pullRequest: null,
+  branchPullRequest: null,
   files: [
     {
       path: "src/a.ts",
@@ -700,6 +704,148 @@ describe("the Files view", () => {
     fireEvent.change(await screen.findByRole("textbox", { name: "Find a file" }), { target: { value: "a.ts" } });
     expect(await screen.findByRole("button", { name: "lib/a.ts" })).toBeTruthy();
     expect(slot.inspection.rpcCalls.find((call) => call.method === "searchFiles")!.input).toEqual({ threadId: "thr_1", query: "a.ts" });
+  });
+});
+
+describe("a pull request's view", () => {
+  const HEAD = "a".repeat(40);
+  const PR_VIEW = {
+    ...VIEW,
+    target: { kind: "pr" as const, owner: "o", repo: "r", number: 7 },
+    viewable: false,
+    pullRequest: { number: 7, title: "Add b", url: "https://github.com/o/r/pull/7", state: "OPEN", baseRefName: "main", headRefName: "feature", headSha: HEAD, baseSha: "b".repeat(40), syncedAt: Date.now(), syncError: null },
+    threads: [
+      { ...thread({ id: "aaaaaa000030", body: "Why 3?", startLine: 2, endLine: 2 }), githubThreadId: "PRRT_1", comments: [{ id: "c1", authorType: "github" as const, authorName: "octo", body: "Why 3?", createdAt: 1, editedAt: null }] },
+      thread({ id: "aaaaaa000031", body: "Name it c.", startLine: 2, endLine: 2 }),
+    ],
+  };
+
+  it("shows the pull request, marks GitHub's threads, and submits a review with the verdict", async () => {
+    const opened: string[] = [];
+    const slot = renderSlot(
+      { component: ReviewPanel },
+      { threadId: "thr_1", environment: ENVIRONMENT, params: null },
+      {
+        rpc: {
+          getReview: () => PR_VIEW,
+          // The dialog shows, and posts, the text as the plan read it, even if the view's copy is older.
+          reviewPlan: () => ({ lines: [{ reviewThreadId: "aaaaaa000031", location: "src/a.ts:2 (new side)", path: "src/a.ts", line: 2, body: "Name it c, please." }], body: [], blocked: [] }),
+          submitReview: () => ({ url: "https://github.com/o/r/pull/7#review-1", posted: 1, blocked: [] }),
+        },
+        openUrl: (url) => (opened.push(url), true),
+      },
+    );
+    expect(await screen.findByText("#7 Add b")).toBeTruthy();
+    const mirror = screen.getByText("octo").closest("[data-thread-id]") as HTMLElement;
+    expect(within(mirror).getByText("GitHub")).toBeTruthy();
+    expect(within(mirror).queryByRole("button", { name: "Dismiss" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Open on GitHub" }));
+    expect(opened).toEqual(["https://github.com/o/r/pull/7"]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Submit review…" }));
+    expect(await screen.findByRole("checkbox", { name: "Include src/a.ts:2 (new side)" })).toBeTruthy();
+    expect(screen.getByText("Name it c, please.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("radio", { name: "Approve" }));
+    fireEvent.click(screen.getByRole("button", { name: "Submit: Approve" }));
+    await waitFor(() =>
+      expect(slot.inspection.rpcCalls.find((call) => call.method === "submitReview")?.input).toEqual({
+        sessionId: "ses_1",
+        event: "APPROVE",
+        body: "",
+        headSha: HEAD,
+        items: [{ reviewThreadId: "aaaaaa000031", body: "Name it c, please." }],
+      }),
+    );
+  });
+
+  it("is the view a thread's tab comes back on until the pull request is closed or merged", async () => {
+    const PR = { kind: "pr", owner: "o", repo: "r", number: 7 };
+    let state = "OPEN";
+    const getReview = (input: unknown) => {
+      const { target } = input as { target: { kind: string } };
+      return target.kind === "pr" ? { ...PR_VIEW, pullRequest: { ...PR_VIEW.pullRequest, state } } : { ...VIEW, target };
+    };
+    window.localStorage.setItem("diff-review:view:thr_1", JSON.stringify({ opened: null, target: PR }));
+    const open = renderSlot({ component: ReviewPanel }, { threadId: "thr_1", environment: ENVIRONMENT, params: null }, { rpc: { getReview } });
+    expect(await screen.findByText("#7 Add b")).toBeTruthy();
+    expect(open.inspection.rpcCalls.filter((call) => call.method === "getReview").map((call) => (call.input as { target: unknown }).target)).toEqual([PR]);
+    open.lifecycle.unmount();
+
+    state = "MERGED";
+    const merged = renderSlot({ component: ReviewPanel }, { threadId: "thr_1", environment: ENVIRONMENT, params: null }, { rpc: { getReview } });
+    await waitFor(() => expect(merged.inspection.rpcCalls.filter((call) => call.method === "getReview")).toHaveLength(2));
+    expect(merged.inspection.rpcCalls.filter((call) => call.method === "getReview").map((call) => call.input)).toEqual([
+      { threadId: "thr_1", target: PR, reason: "open", tab: expect.any(String) },
+      { threadId: "thr_1", target: { kind: "uncommitted" }, reason: "open", tab: expect.any(String), autoTarget: true },
+    ]);
+    expect(await screen.findByText("Why three?")).toBeTruthy();
+    expect(window.localStorage.getItem("diff-review:view:thr_1")).toBeNull();
+  });
+
+  it("shows every comment Submit would post, one the tab has not loaded yet included", async () => {
+    const slot = renderSlot(
+      { component: ReviewPanel },
+      { threadId: "thr_1", environment: ENVIRONMENT, params: null },
+      {
+        rpc: {
+          getReview: () => PR_VIEW,
+          // aaaaaa000099 was written in another window since the tab loaded: the plan has it, the tab does not.
+          reviewPlan: () => ({
+            lines: [{ reviewThreadId: "aaaaaa000031", location: "src/a.ts:2 (new side)", path: "src/a.ts", line: 2, body: "Name it c." }],
+            body: [{ reviewThreadId: "aaaaaa000099", location: "the whole diff", body: "Written elsewhere." }],
+            blocked: [{ reviewThreadId: "aaaaaa000098", location: "src/gone.ts:4 (new side)", reason: "Its file is not in the pull request." }],
+          }),
+          submitReview: () => ({ url: null, posted: 2, blocked: [] }),
+        },
+      },
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Submit review…" }));
+    const unseen = await screen.findByRole("checkbox", { name: "Include the whole diff" });
+    expect(unseen.getAttribute("data-state")).toBe("checked");
+    expect(screen.getByText("Written elsewhere.")).toBeTruthy();
+    expect(screen.getByText("Its file is not in the pull request.")).toBeTruthy();
+    // Unticked, it is not posted.
+    fireEvent.click(unseen);
+    fireEvent.click(screen.getByRole("button", { name: "Submit: Comment" }));
+    await waitFor(() => expect(slot.inspection.rpcCalls.find((call) => call.method === "submitReview")?.input).toMatchObject({ items: [{ reviewThreadId: "aaaaaa000031", body: "Name it c." }] }));
+  });
+
+  it("closes an open Submit dialog when the view loads new commits, never approving them unseen", async () => {
+    const B = "b".repeat(40);
+    let head = HEAD;
+    const slot = renderSlot(
+      { component: ReviewPanel },
+      { threadId: "thr_1", environment: ENVIRONMENT, params: null },
+      {
+        rpc: {
+          getReview: () => ({ ...PR_VIEW, pullRequest: { ...PR_VIEW.pullRequest, headSha: head } }),
+          reviewPlan: () => ({ lines: [{ reviewThreadId: "aaaaaa000031", location: "src/a.ts:2 (new side)", path: "src/a.ts", line: 2, body: "Name it c." }], body: [], blocked: [] }),
+          submitReview: () => ({ url: null, posted: 1, blocked: [] }),
+        },
+      },
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Submit review…" }));
+    await screen.findByRole("checkbox", { name: "Include src/a.ts:2 (new side)" });
+    fireEvent.click(screen.getByRole("radio", { name: "Approve" }));
+    // A push, and the view reloads on head B while the dialog is open.
+    head = B;
+    await slot.behavior.emitRealtime("environment:env_1", { kind: "diff" });
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Submit: Approve" })).toBeNull());
+    expect(slot.inspection.rpcCalls.some((call) => call.method === "submitReview")).toBe(false);
+    // Opened again, it reviews and submits B.
+    fireEvent.click(screen.getByRole("button", { name: "Submit review…" }));
+    await screen.findByRole("checkbox", { name: "Include src/a.ts:2 (new side)" });
+    fireEvent.click(screen.getByRole("button", { name: "Submit: Comment" }));
+    await waitFor(() => expect(slot.inspection.rpcCalls.find((call) => call.method === "submitReview")?.input).toMatchObject({ event: "COMMENT", headSha: B }));
+  });
+
+  it("reads a pull request's address in the dialog", () => {
+    const picked: unknown[] = [];
+    renderPlain(<PullDialog open onOpenChange={() => undefined} onPick={(ref) => picked.push(ref)} />);
+    fireEvent.change(screen.getByRole("textbox", { name: "Pull request" }), { target: { value: "https://github.com/o/r/pull/7/files" } });
+    fireEvent.click(screen.getByRole("button", { name: "Review" }));
+    expect(picked).toEqual([{ owner: "o", repo: "r", number: 7 }]);
+    expect(fromPicker(pickerValue({ kind: "pr", owner: "o", repo: "r", number: 7 }))).toEqual({ kind: "pr", owner: "o", repo: "r", number: 7 });
   });
 });
 

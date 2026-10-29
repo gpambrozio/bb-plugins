@@ -23,6 +23,7 @@ import { Switch } from "@/components/ui/switch";
 
 import type { RpcContract } from "../shared/contract";
 import { parseRange, rangeText } from "../shared/git-spec";
+import { parsePullText, pullText } from "../shared/github";
 import { linesText, parsePatchLines } from "../shared/patch-lines";
 import { describeLocation, GENERAL_PATH, type ReviewThread, type Run, type TargetRequest } from "../shared/types";
 import { ReviewActionsProvider, useActions } from "./actions";
@@ -31,7 +32,10 @@ import { carryCurrent, findInFiles, type FindMatch } from "./find";
 import { FilesView } from "./files-view";
 import { FindBar } from "./find-bar";
 import { GoToDialog, type GoToEntry } from "./goto-dialog";
+import { PullBar } from "./pull-bar";
+import { PullDialog } from "./pull-dialog";
 import { RangeDialog } from "./range-dialog";
+import { SubmitReviewDialog } from "./submit-dialog";
 import type { Reveal } from "./reveal";
 import { AiReviewDialog } from "./ai-review-dialog";
 import { ClearReviewDialog } from "./clear-dialog";
@@ -101,20 +105,31 @@ export function shownFiles<File extends { path: string }>(
   return onlyCommented ? files.filter((file) => (byFile.get(file.path)?.length ?? 0) > 0 || hasDraft(file.path)) : files;
 }
 
-/** The picker item that opens the range dialog rather than a view. */
+/** The picker items that open the range and pull request dialogs rather than a view. */
 const PICK_RANGE = "pick-range";
+const PICK_PULL = "pick-pull";
 
 export function pickerValue(target: TargetRequest): string {
   if (target.kind === "commit") return `commit:${target.sha}`;
   if (target.kind === "range") return `range:${rangeText(target)}`;
+  if (target.kind === "pr") return `pr:${pullText(target)}`;
   return target.kind;
 }
 
 export function fromPicker(value: string): TargetRequest {
   if (value.startsWith("commit:")) return { kind: "commit", sha: value.slice("commit:".length) };
   if (value.startsWith("range:")) return parseRange(value.slice("range:".length)) ?? { kind: "uncommitted" };
+  if (value.startsWith("pr:")) {
+    const pull = parsePullText(value.slice("pr:".length));
+    return pull === null ? { kind: "uncommitted" } : { kind: "pr", ...pull };
+  }
   if (value === "branch" || value === "all" || value === "staged" || value === "unstaged" || value === "files") return { kind: value };
   return { kind: "uncommitted" };
+}
+
+/** Whether a kept view that loaded is not one to come back to: a pull request closed or merged since. */
+export function keptViewGone(view: ReadyView): boolean {
+  return view.target.kind === "pr" && view.pullRequest !== null && view.pullRequest.state !== "OPEN";
 }
 
 /** The Review tab beside a thread; it keeps the view picked in it per thread. */
@@ -182,12 +197,13 @@ export function ReviewBody({
     if (keepViews) keepView(threadId, params, next);
   };
   // The kept view's first answer says whether it is still there: the server cannot read it (a range
-  // whose branch was deleted). An error may pass, so the view stays.
+  // whose branch was deleted), or it is not one to come back to (`keptViewGone`). An error may pass,
+  // so the view stays.
   const checkedKept = useRef(!start.restored);
   useEffect(() => {
     if (checkedKept.current || state.status === "loading") return;
     checkedKept.current = true;
-    if (state.status === "unavailable") onKeptViewGone?.();
+    if (state.status === "unavailable" || (state.status === "ready" && keptViewGone(state.view))) onKeptViewGone?.();
   }, [state, onKeptViewGone]);
   const reload = review.reload;
   const onEdited = useCallback(() => void reload("manual"), [reload]);
@@ -223,7 +239,7 @@ export function ReviewBody({
         threadId={threadId}
         view={state.view}
         refreshing={state.refreshing}
-        pickerValue={pickerValue(state.view.target.kind === "commit" || state.view.target.kind === "range" ? state.view.target : target)}
+        pickerValue={pickerValue(state.view.target.kind === "commit" || state.view.target.kind === "range" || state.view.target.kind === "pr" ? state.view.target : target)}
         onPick={pick}
         onReload={() => void review.reload("manual")}
         loadId={state.loadId}
@@ -544,6 +560,8 @@ function ReadyPanel({
   // "Go to": the files shown, the open comments and the views.
   const [goingTo, setGoingTo] = useState(false);
   const [pickingRange, setPickingRange] = useState(false);
+  const [pickingPull, setPickingPull] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const goToEntries = useMemo<GoToEntry[]>(() => {
     const entries: GoToEntry[] = files.map((file) => ({ key: `file:${file.path}`, group: "File", label: file.path, detail: `+${file.additions} −${file.deletions}`, go: () => show({ path: file.path, side: "new", line: 0 }) }));
     for (const stop of commentStops) {
@@ -630,7 +648,7 @@ function ReadyPanel({
     <CommentNavContext.Provider value={browsing ? null : commentNav}>
     <div className="flex h-full min-h-0 flex-col bg-background text-foreground">
       <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2">
-        <Select value={value} onValueChange={(next) => (next === PICK_RANGE ? setPickingRange(true) : onPick(next))}>
+        <Select value={value} onValueChange={(next) => (next === PICK_RANGE ? setPickingRange(true) : next === PICK_PULL ? setPickingPull(true) : onPick(next))}>
           <SelectTrigger className="h-8 w-56 text-xs" aria-label="What to review">
             <SelectValue />
           </SelectTrigger>
@@ -653,6 +671,13 @@ function ReadyPanel({
             <SelectItem value="unstaged">{targetLabel({ kind: "unstaged" })}</SelectItem>
             {view.target.kind === "range" ? <SelectItem value={`range:${rangeText(view.target)}`}>{targetLabel(view.target)}</SelectItem> : null}
             <SelectItem value={PICK_RANGE}>A range…</SelectItem>
+            {view.branchPullRequest === null ? null : (
+              <SelectItem value={`pr:${pullText(view.branchPullRequest)}`}>
+                Pull request #{view.branchPullRequest.number}: {view.branchPullRequest.title}
+              </SelectItem>
+            )}
+            {view.target.kind === "pr" ? <SelectItem value={`pr:${pullText(view.target)}`}>{view.pullRequest === null ? targetLabel(view.target) : `Pull request #${view.pullRequest.number}: ${view.pullRequest.title}`}</SelectItem> : null}
+            <SelectItem value={PICK_PULL}>A pull request…</SelectItem>
           </SelectContent>
         </Select>
         {browsing ? null : (
@@ -698,6 +723,10 @@ function ReadyPanel({
           Send to agent{open.length === 0 ? "" : ` (${open.length})`}
         </Button>
       </div>
+
+      {view.pullRequest === null ? null : (
+        <PullBar pull={view.pullRequest} onSubmit={() => setSubmitting(true)} onSync={onReload} refreshing={refreshing} />
+      )}
 
       {find.open ? (
         <FindBar
@@ -790,6 +819,17 @@ function ReadyPanel({
         onCleared={() => void refreshThreads()}
       />
       <GoToDialog open={goingTo} onOpenChange={setGoingTo} entries={goToEntries} />
+      <PullDialog open={pickingPull} onOpenChange={setPickingPull} onPick={(pull) => onPick(`pr:${pullText(pull)}`)} />
+      {view.pullRequest === null ? null : (
+        <SubmitReviewDialog
+          open={submitting}
+          onOpenChange={setSubmitting}
+          sessionId={view.sessionId}
+          headSha={view.pullRequest.headSha}
+          pullNumber={view.pullRequest.number}
+          onSubmitted={onReload}
+        />
+      )}
       <RangeDialog
         open={pickingRange}
         onOpenChange={setPickingRange}

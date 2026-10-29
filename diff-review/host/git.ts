@@ -1,7 +1,8 @@
 /**
- * Git in a checkout on the host: the diffs bb's Git plugin does not give (staged, unstaged, ranges).
- * Every command runs `git` with fixed arguments and the revisions the contract allowed, with a timeout
- * and a capped output, and never writes to the repository.
+ * Git in a checkout on the host: the diffs bb's Git plugin does not give (staged, unstaged, ranges),
+ * and a pull request fetched for review. Every command runs `git` with fixed arguments and the
+ * revisions the contract allowed, with a timeout and a capped output. The only write is that fetch,
+ * into the plugin's own refs (`refs/diff-review/…`): no branch, index or working-tree file changes.
  *
  * The range rules are diffity's (`src-tauri/src/core/diff.rs` and `core/git.rs`,
  * https://github.com/nilbuild/diffity, MIT): `a..b` and `a...b` diff the merge base of a and b against
@@ -306,8 +307,47 @@ async function untrackedFile(root: string, path: string, used: number, use: (byt
 }
 
 /** A fingerprint of the index against HEAD: its staged modes and blobs, path by path. */
+/** The owner and repository of a `https://github.com/<owner>/<repo>.git` address. */
+export function githubRepository(url: string): { owner: string; repo: string } {
+  const match = /^https:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?$/.exec(url);
+  if (match === null) throw new GitError(`Not a GitHub repository address: ${url}`);
+  return { owner: match[1]!, repo: match[2]! };
+}
+
 export async function indexState(run: RunGit, root: string): Promise<string> {
   const head = (await verify(run, root, "HEAD")) ?? EMPTY_TREE;
   const staged = await run(root, ["diff", "--no-ext-diff", "--cached", "--raw", "--no-abbrev", "-z", head]);
   return createHash("sha256").update(staged.stdout).digest("hex");
+}
+
+/** Fetches and resolves in turn per repository: worktrees of one repository share its refs. */
+const fetching = new Map<string, Promise<unknown>>();
+
+/**
+ * Fetches pull request `number` of `url` and its base branch into the plugin's own refs, named by the
+ * pull request's repository (`refs/diff-review/pull/<owner>/<repo>/<n>/head` and `/base`), and answers
+ * both commits. Fetching and resolving run one at a time per repository, so two views fetching at once
+ * (another repository's #7, or the same one from a linked worktree) cannot read each other's refs.
+ */
+export async function fetchPull(
+  run: RunGit,
+  root: string,
+  pull: { url: string; owner: string; repo: string; number: number; baseRef: string },
+): Promise<{ headSha: string; baseSha: string }> {
+  const { url, number, baseRef } = pull;
+  const prefix = `refs/diff-review/pull/${pull.owner}/${pull.repo}/${number}`;
+  const common = (await run(root, ["rev-parse", "--path-format=absolute", "--git-common-dir"], { allowFailure: true })).stdout.trim() || root;
+  const previous = fetching.get(common) ?? Promise.resolve();
+  const mine = previous.catch(() => undefined).then(async () => {
+    await run(root, ["fetch", "--no-tags", "--quiet", "--no-write-fetch-head", url, `+refs/pull/${number}/head:${prefix}/head`, `+refs/heads/${baseRef}:${prefix}/base`]);
+    const headSha = await verify(run, root, `${prefix}/head`);
+    const baseSha = await verify(run, root, `${prefix}/base`);
+    if (headSha === null || baseSha === null) throw new GitError(`The fetch of pull request #${number} left no commits to diff.`);
+    return { headSha, baseSha };
+  });
+  fetching.set(common, mine);
+  void mine.finally(() => {
+    if (fetching.get(common) === mine) fetching.delete(common);
+  }).catch(() => undefined);
+  return mine;
 }

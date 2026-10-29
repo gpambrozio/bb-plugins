@@ -23,7 +23,10 @@ comments were sent to, and the user sees them in the tab, next to the code.
 - `bb diff-review open [file] [--view uncommitted|staged|unstaged|branch|all|commit|range]
   [--base <branch>] [--commit <sha>] [--range a...b] [--thread <id>]` — when the user asks to see a
   review: opens this thread's (or `--thread`'s) review on that view, at that file, in the bb window
-  that shows the thread, and prints the page's address to give the user.
+  that shows the thread, and prints the page's address to give the user. A GitHub pull request's
+  address in place of the file opens that pull request's review.
+- Comments marked GitHub come from a pull request's review threads. You never post to GitHub: answer
+  them with `reply` like any other (your answer stays in the tab), and the user posts what they choose.
 
 An id may be shortened to any unique prefix of four or more characters.
 
