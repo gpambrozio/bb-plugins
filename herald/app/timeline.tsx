@@ -10,6 +10,7 @@ import { useRpc, type ExperimentalMessageMetadataProps, type PluginAppSlots } fr
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
 
 import { Icon } from "@/components/ui/icon";
+import { cn } from "@/lib/utils";
 
 import type { RpcContract } from "../shared/contract";
 import type { AttentionReason, PlacedSentence } from "../shared/herald";
@@ -28,6 +29,12 @@ const LABELS: Record<AttentionReason, string> = {
   finished: "Finished",
   error: "Error",
 };
+
+/**
+ * The frame bb 0.48.1 draws around a composer banner (its `card` chrome),
+ * so the card looks as the banner did. Theme tokens, so light and dark follow.
+ */
+const BANNER_FRAME = "rounded-lg border border-border bg-surface-raised-solid";
 
 /** Registers the sentences above messages where this bb has the slot; says whether it did. */
 export function registerTimelineSentences(slots: PluginAppSlots): boolean {
@@ -58,9 +65,10 @@ export function TimelineSentencesAbove({ message }: ExperimentalMessageMetadataP
   const sentences = useSentencesOf(message);
   if (sentences.length === 0) return null;
   // bb's metadata row is small, muted and aligned to the message's side; the
-  // card takes the whole line and sets its own size and colour.
+  // card takes the whole line, sets its own size and colour, and leaves 10 px
+  // before the message it belongs to.
   return (
-    <div className="flex min-w-0 basis-full flex-col gap-1.5" data-herald-sentences="">
+    <div className="mb-[10px] flex min-w-0 basis-full flex-col gap-1.5" data-herald-sentences="">
       {sentences.map((sentence) => (
         <SentenceCard key={sentence.eventId} sentence={sentence} />
       ))}
@@ -70,7 +78,7 @@ export function TimelineSentencesAbove({ message }: ExperimentalMessageMetadataP
 
 function SentenceCard({ sentence }: { sentence: PlacedSentence }) {
   return (
-    <div className="flex items-start gap-2 rounded-lg border border-border bg-card px-3 py-2 text-left text-sm text-foreground">
+    <div className={cn(BANNER_FRAME, "flex items-start gap-2 px-3 py-2 text-left text-sm text-foreground")}>
       <Icon name={HERALD_ICONS.megaphone} className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
       <div className="min-w-0 flex-1">
         <p className="text-xs font-semibold text-muted-foreground">Herald · {LABELS[sentence.reason]}</p>

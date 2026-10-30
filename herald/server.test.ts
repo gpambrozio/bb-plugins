@@ -152,7 +152,7 @@ async function settle(): Promise<void> {
   for (let i = 0; i < 10; i += 1) await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-/** The top-level messages of every thread's timeline, as `threads.timeline` serves them; one page. */
+/** The top-level messages of every thread's timeline, as `threads.timeline` serves them; one page, one turn. */
 let timelineMessages: Array<{ id: string; createdAt: number; role: "user" | "assistant"; initiator: "user" | null }> = [];
 
 async function load(settings: Record<string, string | number | boolean> = {}) {
@@ -174,7 +174,12 @@ async function load(settings: Record<string, string | number | boolean> = {}) {
         interactions: { list: async () => [], get: async () => ({ status: "pending" }) as never },
         timeline: async () =>
           ({
-            rows: timelineMessages.map((message) => ({ kind: "conversation", ...message })),
+            rows: timelineMessages.map((message) => ({
+              kind: "conversation",
+              ...message,
+              turnId: "turn_1",
+              turnRequest: message.role === "user" ? { isGrouped: false, kind: "message", status: "accepted" } : null,
+            })),
             timelinePage: { olderCursor: null },
           }) as never,
       },

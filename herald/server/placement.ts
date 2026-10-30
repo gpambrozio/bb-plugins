@@ -1,32 +1,39 @@
 /**
  * Which message each past sentence belongs to in its thread's timeline: the
- * message that led to its event — the turn's final answer for a finished
- * turn, the answer (or prompt) before a question, plan, permission or error.
- * bb's message metadata (`experimental_messageMetadata`, bb 0.48.1) draws
- * above a message and never below one, so the sentence's card sits just above
- * that message. It exists when the event does, so a sentence shows as soon as
- * it is written.
+ * message of its own turn that led to its event — the turn's final answer for
+ * a finished turn, the answer before a question, plan, permission or error
+ * (or the turn's prompt when it has none). bb's message metadata
+ * (`experimental_messageMetadata`, bb 0.48.1) draws above a message and never
+ * below one, so the sentence's card sits just above that message. It exists
+ * when the event does, so a sentence shows as soon as it is written.
+ *
+ * Every top-level row carries its turn's id, a prompt the turn it started or
+ * steered. The event's turn is that of the latest row at or before it that is
+ * not a prompt (its work, its answers, its failure, its "Worked for" row): a
+ * prompt the person sent meanwhile may already belong to the next turn, and
+ * one bb has not delivered (queued) belongs to none. The message is chosen
+ * among that turn's delivered top-level messages only.
  *
  * Only the messages at the timeline's top level count: a finished turn folds
  * its work, and the messages in it, into one "Worked for" row — its
  * intermediate answers, and a message another thread or bb sent into it while
- * it ran (a child's report steering its parent). So the message is the last
- * top-level one at or before the event, unless the event happened inside a
- * turn that started after that message: then its messages are folded, and the
- * sentence goes to the first message after the turn's start, its final answer.
+ * it ran (a child's report steering its parent). A running turn is flat. So
+ * the message is the turn's last one at or before the event; but when the
+ * turn has folded and that is a prompt (the answers before the event are in
+ * the fold), it is the turn's final answer.
  *
- * A place is settled, and saved with the sentence, when the message is the
- * person's own prompt (those stay at the top level, even one sent mid-turn),
- * or when no turn ran from before the page was read until after (nothing will
- * fold any more); otherwise it is used for now and looked for again on the
- * next read, which the end of the turn brings (`SENTENCES_CHANNEL`).
+ * A place is settled, and saved with the sentence, once its turn can no
+ * longer change: when no turn ran from before the page was read until after,
+ * or when a later turn has started. Otherwise it is used for now and looked
+ * for again on the next read, which the end of the turn brings
+ * (`SENTENCES_CHANNEL`).
  *
  * The timeline is read newest page first, back past the oldest sentence still
  * to place, and at most `PLACEMENT_PAGES_MAX` pages: a sentence older than
  * that is given up on, once, rather than read for on every visit.
  */
 import type { HistoryItem, PlacedSentence, PlacedSentences } from "../shared/herald";
-import type { Log, TimelineMessage, TimelinePort, TimelineTurn } from "./ports";
+import type { Log, TimelineMark, TimelineMessage, TimelinePort } from "./ports";
 
 /** bb's pages hold twenty turns each; sixty turns back is past where anyone scrolls to find a sentence. */
 export const PLACEMENT_PAGES_MAX = 3;
@@ -85,13 +92,13 @@ async function place(
   const runningBefore = await port.running(threadId);
   const oldest = Math.min(...open.map(timeOf));
   const messages: TimelineMessage[] = [];
-  const turns: TimelineTurn[] = [];
+  const marks: TimelineMark[] = [];
   let cursor: Awaited<ReturnType<TimelinePort["page"]>>["older"] = null;
   let whole = false;
   for (let pages = 0; pages < PLACEMENT_PAGES_MAX; pages += 1) {
     const page = await port.page(threadId, cursor, signal);
     messages.push(...page.messages);
-    turns.push(...page.turns);
+    marks.push(...page.marks);
     cursor = page.older;
     if (cursor === null) {
       whole = true;
@@ -103,47 +110,64 @@ async function place(
   messages.sort((a, b) => a.createdAt - b.createdAt);
   // Every message from `reach` on has been read, so a sentence from then on can be placed.
   const reach = whole ? -Infinity : (messages[0]?.createdAt ?? Infinity);
-  let settles: boolean | null = null;
+  const delivered = messages.filter((message) => !message.undelivered);
+  const latestTurn = latestTurnOf(delivered, marks);
+  let idle: boolean | null = null;
   for (const item of open) {
     const at = timeOf(item);
     if (at < reach) {
       settled.set(item.eventId, null);
       continue;
     }
-    const found = messageOf(at, messages, turns);
+    const found = messageOf(at, delivered, marks);
     if (found === undefined) continue;
-    const { message, inRunningTurn } = found;
-    // Inside a turn still running, its final answer is yet to come: even a prompt is only for now.
-    if (inRunningTurn) {
-      unsettled.set(item.eventId, message.id);
-      continue;
-    }
-    if (message.initiator === "user") {
-      settled.set(item.eventId, message.id);
-      continue;
-    }
-    settles ??= !runningBefore && !(await port.running(threadId));
-    if (settles) settled.set(item.eventId, message.id);
-    else unsettled.set(item.eventId, message.id);
+    // A turn that is over keeps its rows; the running one still folds and grows.
+    idle ??= !runningBefore && !(await port.running(threadId));
+    if (idle || (found.turnId !== null && found.turnId !== latestTurn)) settled.set(item.eventId, found.message.id);
+    else unsettled.set(item.eventId, found.message.id);
   }
 }
 
+/** The turn of the newest delivered row: the one that runs, when one does. */
+function latestTurnOf(delivered: readonly TimelineMessage[], marks: readonly TimelineMark[]): string | null {
+  let latest: { turnId: string; at: number } | null = null;
+  for (const { turnId, at } of [
+    ...delivered.flatMap((message) => (message.turnId === null ? [] : [{ turnId: message.turnId, at: message.createdAt }])),
+    ...marks.map((mark) => ({ turnId: mark.turnId, at: mark.startedAt })),
+  ]) {
+    if (latest === null || at >= latest.at) latest = { turnId, at };
+  }
+  return latest?.turnId ?? null;
+}
+
 /**
- * The top-level message an event at `at` belongs to (`messages` oldest
- * first), and whether the event lies in a turn row still running.
+ * The message an event at `at` belongs to (`delivered` oldest first), and
+ * its turn; undefined when nothing is known before the event.
  */
 function messageOf(
   at: number,
-  messages: readonly TimelineMessage[],
-  turns: readonly TimelineTurn[],
-): { message: TimelineMessage; inRunningTurn: boolean } | undefined {
-  // At the event's own millisecond counts as before it: that message led to it.
-  const before = messages.filter((message) => message.createdAt <= at).at(-1);
-  const folded = turns.find(
-    (turn) => turn.startedAt <= at && (turn.completedAt === null || at <= turn.completedAt) && turn.startedAt > (before?.createdAt ?? -Infinity),
-  );
-  const message = folded === undefined ? before : (messages.find((candidate) => candidate.createdAt >= folded.startedAt) ?? before);
-  return message === undefined ? undefined : { message, inRunningTurn: folded !== undefined && folded.completedAt === null };
+  delivered: readonly TimelineMessage[],
+  marks: readonly TimelineMark[],
+): { message: TimelineMessage; turnId: string | null } | undefined {
+  // At the event's own millisecond counts as before it: that row led to it.
+  const ownRows = [
+    ...marks.map((mark) => ({ turnId: mark.turnId, at: mark.startedAt })),
+    ...delivered.flatMap((message) => (message.role === "assistant" && message.turnId !== null ? [{ turnId: message.turnId, at: message.createdAt }] : [])),
+  ].filter((row) => row.at <= at);
+  const turnId = ownRows.sort((a, b) => a.at - b.at).at(-1)?.turnId ?? null;
+  if (turnId === null) {
+    // Nothing of a turn before the event: the prompt that led to it, if any.
+    const prompt = delivered.filter((message) => message.role === "user" && message.createdAt <= at).at(-1);
+    return prompt === undefined ? undefined : { message: prompt, turnId: prompt.turnId };
+  }
+  const inTurn = delivered.filter((message) => message.turnId === turnId);
+  const before = inTurn.filter((message) => message.createdAt <= at).at(-1);
+  const folded = marks.some((mark) => mark.folded && mark.turnId === turnId);
+  const finalAnswer = inTurn.filter((message) => message.role === "assistant").at(-1);
+  if (folded && (before === undefined || before.role === "user") && finalAnswer !== undefined) return { message: finalAnswer, turnId };
+  // A turn whose prompt carries no turn id (a thread's first): the prompt before the event.
+  const message = before ?? inTurn[0] ?? delivered.filter((candidate) => candidate.role === "user" && candidate.createdAt <= at).at(-1);
+  return message === undefined ? undefined : { message, turnId };
 }
 
 function timeOf(item: HistoryItem): number {

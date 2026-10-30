@@ -102,13 +102,18 @@ export interface TimelineMessage {
   role: "user" | "assistant";
   /** Who sent a `user` row: the person, or another thread or bb itself (a child's report, say); null for an answer. */
   initiator: "user" | "agent" | "system" | null;
+  /** The turn it belongs to; a prompt carries the turn it started or steered. */
+  turnId: string | null;
+  /** A `user` row bb has not delivered yet (a queued prompt, or one it refused): it led to nothing. */
+  undelivered: boolean;
 }
 
-/** A finished turn's "Worked for" row, which holds the turn's work and its folded messages; or a running turn's. */
-export interface TimelineTurn {
+/** Any other top-level row of a turn — its work, a system row, a finished turn's "Worked for" — by when it started. */
+export interface TimelineMark {
+  turnId: string;
   startedAt: number;
-  /** Null while it runs. */
-  completedAt: number | null;
+  /** A finished turn's "Worked for" row, which folds the turn's work and its intermediate messages. */
+  folded: boolean;
 }
 
 /** Where the next older page of a thread's timeline starts. */
@@ -127,7 +132,7 @@ export interface TimelinePort {
     threadId: string,
     older: TimelineCursor | null,
     signal?: AbortSignal,
-  ): Promise<{ messages: TimelineMessage[]; turns: TimelineTurn[]; older: TimelineCursor | null }>;
+  ): Promise<{ messages: TimelineMessage[]; marks: TimelineMark[]; older: TimelineCursor | null }>;
   /** Whether a turn may still be running: its messages can fold into its "Worked for" row when it ends. */
   running(threadId: string): Promise<boolean>;
 }

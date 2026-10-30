@@ -570,8 +570,10 @@ bb desktop-v0.48.1 and a 0.48.2 nightly); there is nothing below a message, and 
 slot (the guide's "Timeline entry content") is only for rows a provider plugin writes. The owner asked
 for each sentence under the message that led to it, and chose, given that, **a card just above that
 message**: the turn's final answer for a finished turn, the answer (or the prompt) before a question,
-plan, permission or error. It is styled as the composer banner was — `Herald · <kind>`, the sentence,
-*Read again* — and the banner is not registered where the card is, since the newest sentence's card shows
+plan, permission or error. It is styled as the composer banner was — bb 0.48.1's banner `card` chrome
+(`rounded-lg border border-border bg-surface-raised-solid`, theme tokens for light and dark), then
+`Herald · <kind>`, the sentence and *Read again*, with 10 px below it — and the banner is not
+registered where the card is, since the newest sentence's card shows
 as soon as it is written. What must stay true:
 
 - **The server places, the app only matches ids** (`server/placement.ts`, RPC `history.placed`). It
@@ -581,21 +583,29 @@ as soon as it is written. What must stay true:
   (`messageId: null`), once. A sentence's time is its history `createdAt`, taken as the event is
   recorded; the message at the same millisecond counts as before it. The rows' ids are the ids message
   metadata receives.
-- **Only top-level rows count.** A finished turn folds its work and the messages in it into one
-  "Worked for" row (`kind: "turn"`, with `startedAt`, `completedAt` and `children`), whose messages
-  metadata reaches only when expanded: its intermediate answers, and a message another thread or bb
-  sent into it while it ran (an accepted steer whose initiator is `agent` or `system`, such as a child's
-  report reaching its running parent, is groupable in bb 0.48.1). So the message is the last top-level
-  one at or before the event, unless the event lies inside a turn row that started after it — a
-  question in a finished turn, whose answer before it is folded — and then the first top-level message
-  from that turn's start, its final answer.
-- **A place is kept** with the sentence (`SentenceHistory.place`, never moved once set) only when it
-  cannot change, and never for an event inside a turn row still running (its final answer is yet to
-  come): the person's own prompt (`initiator: "user"`, which stays top-level even mid-turn), or
-  any message when the thread was idle or failed both before the page was read and after it
+- **Each sentence belongs to its own turn.** Every top-level row carries its turn's id (`turnId`): a
+  prompt the turn it started or steered, an answer, a work or system row, and a finished turn's "Worked
+  for" row (`kind: "turn"`). The event's turn is the turn of the latest row at or before it that is not
+  a prompt — a prompt sent meanwhile may already belong to the next turn — and the message is chosen
+  among that turn's top-level messages only, so a sentence never lands on another turn. A prompt bb has
+  not delivered (`turnRequest.status` other than `accepted`: queued behind the running turn, or
+  refused) led to nothing and is never a candidate (review pass 1 of the rework).
+- **Only top-level rows count.** bb 0.48.1's projection is **flat while a turn runs** (its prompt,
+  answers and work rows, no "Worked for" row) and **folds a finished turn**: its work and the messages
+  in it go into one "Worked for" row, whose messages metadata reaches only when expanded — its
+  intermediate answers, and a message another thread or bb sent into it while it ran (an accepted steer
+  whose initiator is `agent` or `system`, such as a child's report reaching its running parent, is
+  groupable). So the message is the turn's last one at or before the event; but when the turn has
+  folded and that is a prompt (the answers before the event are in the fold), it is the turn's final
+  answer. A turn with no answer at all keeps its sentences on its prompt; a thread's first prompt can
+  carry no turn id, and then the prompt before the event stands in.
+- **A place is kept** with the sentence (`SentenceHistory.place`, never moved once set) only once its
+  turn is over: when the thread was idle or failed both before the page was read and after it
   (`TimelinePort.running`, asked twice: a page read while a turn ran can hold an answer that turn folds
-  as it ends, and a turn can start while the page is read). Any other place is drawn but looked for
-  again on the next read. A sentence replaced for the same event starts with no place.
+  as it ends, and a turn can start while the page is read), or when a later turn has started (the
+  newest row belongs to another turn). Even a prompt is only for now while its turn runs: an early
+  question or permission sits on it until the turn's final answer exists. Any other place is drawn but
+  looked for again on the next read. A sentence replaced for the same event starts with no place.
 - **When a thread reads** (`app/timeline-store.ts`): when its first message shows, when the server
   publishes `SENTENCES_CHANNEL` with its id — once a remembered sentence is saved (which is how the
   newest card appears), and at every `thread.idle` and `thread.failed`, since a turn that ends folds
@@ -610,9 +620,8 @@ as soon as it is written. What must stay true:
   nothing here either. A sentence still being written has no card; the Herald page says *Writing the
   sentence…* meanwhile.
 - **Known limits.** A message edited away or hidden by a context clear takes its cards with it. A
-  question in a turn split by a prompt the person sent mid-turn lands on that prompt, the first
-  top-level message after the folded part. A prompt sent in the moment between an event and its
-  recording is taken as the event's message.
+  sentence's time is taken as its event is recorded, a moment after the event, so an answer written in
+  that moment counts as before it.
 
 **The header button is the older header slot on every bb** (`app/header-action.tsx`, `registerHistoryOpener`):
 `experimental_threadHeaderAction`, the megaphone as an icon button of its own, one 28px control as that
