@@ -71,6 +71,8 @@ interface Setup {
   gh?: (args: readonly string[], stdin?: string) => Promise<string>;
   /** What bb's GitHub PR Status says the workspace's branch has. */
   branchPull?: { url: string; title: string };
+  /** Awaited before the Git plugin answers a `patches` call, with the call's signal. */
+  holdPatches?: (signal: AbortSignal | undefined) => Promise<void>;
   /** Called before a write lands: a string is what someone else wrote meanwhile (bb answers a conflict). */
   beforeWrite?: (path: string) => string | undefined;
   /** Files as committed at HEAD, by absolute path, for `files.read` with `ref`. */
@@ -97,8 +99,15 @@ async function setup(options: Setup = {}) {
   const bbEvents: { event: string; callback: (event: unknown) => void }[] = [];
   // What the host says is staged; a test changes it to play `git add`.
   const index = { key: "index-1" };
-  // bb's Git plugin: on unless a test turns it off; Viewed marks by path; every call it got.
-  const git = { enabled: true, viewed: {} as Record<string, string>, calls: [] as { method: string; input: unknown }[] };
+  // bb's Git plugin: on unless a test turns it off; Viewed marks by path; every call it got, and
+  // whether bb's plugin list was asked about it. `prStatusSignals`: what each PR status read was given.
+  const git = {
+    enabled: true,
+    viewed: {} as Record<string, string>,
+    calls: [] as { method: string; input: unknown; signal?: AbortSignal }[],
+    listed: 0,
+    prStatusSignals: [] as (AbortSignal | undefined)[],
+  };
   const revisionOf = (path: string) => (path === "big.txt" ? `rev-big-${workspace.bigVersion}` : `rev-${path}`);
   const gitAnswer = (method: string, input: Record<string, unknown>): unknown => {
     switch (method) {
@@ -244,14 +253,19 @@ async function setup(options: Setup = {}) {
         },
       },
       plugins: {
-        list: async () => ({ plugins: [{ id: "bb--git", enabled: git.enabled }] }) as never,
+        list: async () => {
+          git.listed += 1;
+          return { plugins: [{ id: "bb--git", enabled: git.enabled }] } as never;
+        },
         // bb's Git plugin, as `bb.sdk.plugins.callRpc` reaches it; `git.calls` records each call.
-        callRpc: async ({ pluginId, method, input, outputSchema }: { pluginId: string; method: string; input?: unknown; outputSchema: { parse: (value: unknown) => unknown } }) => {
+        callRpc: async ({ pluginId, method, input, outputSchema, signal }: { pluginId: string; method: string; input?: unknown; outputSchema: { parse: (value: unknown) => unknown }; signal?: AbortSignal }) => {
+          if (pluginId === "bb--github-pr-status") git.prStatusSignals.push(signal);
           if (pluginId === "bb--github-pr-status" && options.branchPull !== undefined) {
             return outputSchema.parse({ [(input as { keys: string[] }).keys[0]!]: { outcome: "available", pullRequest: options.branchPull } }) as never;
           }
           if (pluginId !== "bb--git") throw new Error(`no plugin ${pluginId}`);
-          git.calls.push({ method, input });
+          git.calls.push({ method, input, ...(signal === undefined ? {} : { signal }) });
+          if (method === "patches") await options.holdPatches?.(signal);
           if (!git.enabled) throw new Error("Plugin RPC failed");
           return outputSchema.parse(gitAnswer(method, input as Record<string, unknown>)) as never;
         },
@@ -863,6 +877,69 @@ describe("reviewing a GitHub pull request", () => {
   it("offers the review of the branch's pull request, from bb's GitHub PR Status", async () => {
     const { view } = await setup({ branchPull: { url: "https://github.com/o/r/pull/7", title: "Add b" } });
     expect((await view()).branchPullRequest).toEqual({ owner: "o", repo: "r", number: 7, title: "Add b" });
+  });
+});
+
+describe("a caller that stops waiting", () => {
+  // A call whose signal fires rejects (bb's `callRpc` stops waiting, though bb 0.48.1's Git plugin finishes
+  // its own work); this one answers nothing until then. These tests cover this plugin's side only.
+  const abandoned = (signal: AbortSignal | undefined) =>
+    new Promise<void>((_resolve, reject) => {
+      if (signal?.aborted === true) reject(signal.reason);
+      signal?.addEventListener("abort", () => reject(signal.reason));
+    });
+
+  it("abandons on-demand patches when the tab stops waiting, without asking whether Git is off", async () => {
+    let hold = false;
+    const { harness, view, git } = await setup({ holdPatches: (signal) => (hold ? abandoned(signal) : Promise.resolve()) });
+    const big = (await view()).files.find((file) => file.path === "big.txt")!;
+    hold = true;
+    const caller = new AbortController();
+    const loading = harness.behavior.callRpc(
+      "loadPatches",
+      { threadId: THREAD, target: { kind: "uncommitted" }, files: [{ path: "big.txt", revision: big.revision }] },
+      { signal: caller.signal },
+    );
+    await vi.waitFor(() => expect(git.calls.at(-1)?.method).toBe("patches"));
+    const listed = git.listed;
+    caller.abort();
+    await expect(loading).rejects.toThrow();
+    expect(git.calls.at(-1)!.signal?.aborted).toBe(true);
+    expect(git.listed).toBe(listed);
+  });
+
+  it("hands the view's PR status read and commented files' patches the caller's signal", async () => {
+    const { rpc, harness, view, git } = await setup({ branchPull: { url: "https://github.com/o/r/pull/7", title: "Add b" } });
+    const { sessionId } = await view();
+    await rpc("createThread", { sessionId, filePath: "big.txt", side: "new", startLine: 5, endLine: 5, severity: null, anchorContent: "x", body: "On a line" });
+    git.calls.length = 0;
+    git.prStatusSignals.length = 0;
+    const caller = new AbortController();
+    await harness.behavior.callRpc("getReview", { threadId: THREAD, target: { kind: "uncommitted" } }, { signal: caller.signal });
+    caller.abort();
+    expect(git.prStatusSignals.map((signal) => signal?.aborted)).toEqual([true]);
+    expect(git.calls.filter((entry) => entry.method === "patches").map((entry) => entry.signal?.aborted)).toEqual([true]);
+    // The diff itself is read whatever the caller does, so an abandoned load never leaves a view half written.
+    expect(git.calls.filter((entry) => entry.method === "files").every((entry) => entry.signal === undefined)).toBe(true);
+  });
+
+  it("leaves the commented files' patches to load on demand when the caller leaves mid-view, without a warning", async () => {
+    let caller: AbortController | null = null;
+    const { rpc, harness, view, git } = await setup({
+      // The tab goes while the view's patches are on their way.
+      holdPatches: (signal) => {
+        if (caller === null) return Promise.resolve();
+        caller.abort();
+        return abandoned(signal);
+      },
+    });
+    const { sessionId } = await view();
+    await rpc("createThread", { sessionId, filePath: "big.txt", side: "new", startLine: 5, endLine: 5, severity: null, anchorContent: "x", body: "On a line" });
+    caller = new AbortController();
+    const result = (await harness.behavior.callRpc("getReview", { threadId: THREAD, target: { kind: "uncommitted" } }, { signal: caller.signal })) as Extract<ReviewView, { ok: true }>;
+    expect(result.files.find((file) => file.path === "big.txt")!.patch).toBeNull();
+    expect(harness.inspection.logEntries.filter((entry) => entry.message.includes("left to load on demand"))).toEqual([]);
+    expect(git.calls.at(-1)!.method).toBe("patches");
   });
 });
 

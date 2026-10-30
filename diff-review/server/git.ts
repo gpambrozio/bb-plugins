@@ -126,11 +126,14 @@ export class GitReads {
   /**
    * One call to the Git plugin. A call that fails asks bb whether the plugin is there and on, since a
    * turned-off plugin's error says only that the call failed; otherwise the call's own error stands.
+   * `signal` abandons the wait for the call, which rejects; bb 0.48.1's Git plugin ignores it, so work
+   * already started there runs to the end. A call abandoned that way is not worth asking about.
    */
-  private async call<T>(method: string, input: Record<string, unknown>, outputSchema: z.ZodType<T>): Promise<T> {
+  private async call<T>(method: string, input: Record<string, unknown>, outputSchema: z.ZodType<T>, signal?: AbortSignal): Promise<T> {
     try {
-      return await this.sdk.plugins.callRpc({ pluginId: GIT_PLUGIN_ID, method, input: input as never, outputSchema });
+      return await this.sdk.plugins.callRpc({ pluginId: GIT_PLUGIN_ID, method, input: input as never, outputSchema, ...(signal === undefined ? {} : { signal }) });
     } catch (error) {
+      if (signal?.aborted === true) throw error;
       if (await this.pluginOff()) throw this.unavailableError(GIT_PLUGIN_OFF_MESSAGE);
       throw error;
     }
@@ -156,20 +159,22 @@ export class GitReads {
 
   /**
    * Patches for files at the revisions `files` gave, in batches of `GIT_PATCHES_MAX_KEYS`. A file the
-   * plugin could not give is left out; `failure` says why the first one failed.
+   * plugin could not give is left out; `failure` says why the first one failed. `signal` abandons the
+   * wait for the batch in flight (the Git plugin still finishes it) and sends no further batch.
    */
   async patches(
     environmentId: string,
     target: GitTarget,
     ignoreWhitespace: boolean,
     files: readonly { path: string; revision: string }[],
+    signal?: AbortSignal,
   ): Promise<{ patches: GitPatch[]; failure: string | null }> {
     const patches: GitPatch[] = [];
     let failure: string | null = null;
     for (let index = 0; index < files.length; index += GIT_PATCHES_MAX_KEYS) {
       const batch = files.slice(index, index + GIT_PATCHES_MAX_KEYS);
       const keys = batch.map((file) => gitPatchKey(environmentId, target, ignoreWhitespace, file.path, file.revision));
-      const rows = await this.call("patches", { keys }, patchRowsSchema);
+      const rows = await this.call("patches", { keys }, patchRowsSchema, signal);
       for (const key of keys) {
         const row = rows[key];
         if (row === undefined) continue;

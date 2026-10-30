@@ -52,13 +52,28 @@ so the README tells the user to reload to clear it, while the board itself recov
 refresh. A failed check for any other reason is only logged, because a check run before the network was
 up must not mark the plugin. Every call is killed after 30 seconds.
 
+**A load nobody waits for is killed.** `loadBoard`, `loadItem`, `loadComments` and `loadImage` hand the
+RPC handler's `experimental_signal` (bb 0.48.1; absent before, so it stays optional) to the service,
+which binds it to every `gh` run of that load (`boundTo`) and, for an image, to the fetch alongside
+its 20-second timeout. bb aborts it when the plugin copy is reloaded, disabled or removed, or the
+caller's HTTP request disconnects (a window closing mid-load); the app's `useRpc().call` takes no
+signal, so the app cannot abort one itself. **A load whose signal fired never caches its cut-short result**
+(`signal.throwIfAborted()` before the board, body and comments cache writes): a killed checks or
+branch-status request is caught as a pill-only failure, so the board it leaves looks whole but is not.
+A sub-read that completed before the signal fired (the viewer's login, `gh`'s token) may still be
+kept, since it is whole; an image reaches its cache only once its whole body arrived, as an aborted
+fetch rejects. The bound `warn` is silent once the signal has fired. No load is
+shared between callers, so one caller leaving never ends another's; a shared in-flight load would need
+its own controller, aborted only when its last caller leaves.
+
 The only other subprocess is `git -C <path> remote -v`, for project matching, and it runs only on
 project checkouts on the server's own machine (`primaryHostId`).
 
 ## The `GitHubApi` seam
 
 `server/github.ts` never spawns anything. Each function takes a `GitHubApi` — `graphql(query,
-variables)` answering `data`, and `warn(message)` for the plugin log. Its contract: **any GraphQL
+variables)` answering `data`, and `warn(message)` for the plugin log. `graphql` also takes a signal,
+which the functions never pass: the service hands them an api already bound to its caller's. Its contract: **any GraphQL
 error rejects the whole request**, as `gh api graphql` does by exiting non-zero. An HTTP transport would
 have to throw on a non-empty `errors` too, or the invariants below stop holding.
 

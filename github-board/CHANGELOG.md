@@ -5,6 +5,16 @@ Notable changes to `github-board`. The other plugins in this repository version 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.6.1
+
+### Changed
+
+- **GitHub requests nobody is waiting for any more are stopped** instead of running to the end: those
+  of a board, card, comment or image load when the plugin is reloaded, turned off or removed, or when
+  the window that asked closes before the answer arrives. A load cut short is not remembered, so the
+  next look loads it afresh. This needs bb 0.48.1 or newer; on an older bb the requests finish as
+  before.
+
 ## 0.6.0
 
 ### Added

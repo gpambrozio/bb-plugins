@@ -147,7 +147,9 @@ moves the pin backwards. Re-pin with `npm install --save-exact -D @get-bb/plugin
 - **The scaffold has no test runner.** Add vitest per plugin (the Paseo tests are vitest and port
   directly) and a `"test": "vitest run"` script. The SDK ships harnesses:
   `@get-bb/plugin-sdk/testing` (`createFakePluginHost()` → `{ bb, harness }`, event and thread
-  fixtures, `experimental_scanPublicSdkOnly` for the import boundary),
+  fixtures, `experimental_scanPublicSdkOnly` for the import boundary, `experimental_makePanelController`
+  for a full panel controller mock — SDK 0.6.104 added required `getTabs`, `selectTab` and `closeTab`;
+  `harness.behavior.callRpc(method, input, { signal })` aborts a handler's `experimental_signal`),
   `@get-bb/plugin-sdk/testing/app` (`loadPluginApp`, `renderSlot`; needs jsdom and Testing Library),
   and `@get-bb/plugin-sdk/testing/host`. `loadPluginApp` captures slots and composer customizations
   but not `app.commands` registrations; run the definition's `setup` against a stub builder to test
@@ -189,7 +191,7 @@ not a subprocess's. The surface a port uses most:
 
 | Need | API |
 | --- | --- |
-| Client ⇄ server calls | `bb.rpc.register(contract, handlers)`; input *and* output are zod-validated, results must be plain JSON |
+| Client ⇄ server calls | `bb.rpc.register(contract, handlers)`; input *and* output are zod-validated, results must be plain JSON. A handler's second argument is its context: `experimental_caller`, and from bb 0.48.1 (SDK 0.6.96) `experimental_signal`, which aborts when the caller's HTTP request disconnects or this copy of the plugin is reloaded, disabled or removed. It is typed as always there but missing on older bb, so read `ctx?.experimental_signal` and pass it down to `gh`, `callRpc` and `fetch` (`github-board/server/service.ts`). A load it cut short must not fill a cache. `callRpc`'s `signal` ends only the caller's wait: bb 0.48.1's Git `patches` and PR Status `pullRequests` handlers ignore theirs and finish (`diff-review/AGENTS.md`). The app's `useRpc().call` takes no signal. A contract's `invalidates` is retired (bb 0.48.1 warns at build): give reads `tags` and call `bb.rpc.experimental_invalidate(tags)` where the data changes (`firstmate-crew/shared/contract.ts`) |
 | Push to the app | `bb.realtime.publish(channel, payload)` — broadcast, not persisted; the app re-fetches on reconnect |
 | Long-running work | `bb.background.service(name, { start(signal) })` — sleeps must wake on abort or reload reports "degraded" |
 | Cron | `bb.background.schedule(name, "m h dom mon dow", fn)` — server-local time, only while loaded |
@@ -198,7 +200,8 @@ not a subprocess's. The surface a port uses most:
 | Settings | `bb.settings.define({...})` → `get()`, `experimental_set()`, `onChange()`; the host renders the form; `secret: true` never reaches the app |
 | Storage | `bb.storage.kv` (JSON, 256 KB per value) or `bb.storage.database()` (own SQLite) with append-only `bb.storage.migrate` |
 | bb itself | `bb.sdk` — threads (`spawn`, `send`, `list`, `timeline`, `stop`, `archive`, `delete`, plugin metadata), projects, environments, hosts, files, terminals, providers, skills |
-| A CLI | `bb.cli.register` / `defineCli` — one registration per plugin; output capped at 32 MiB (1 MiB before bb 0.48) |
+| A CLI | `bb.cli.register` / `defineCli` — one registration per plugin; output capped at 32 MiB (1 MiB before bb 0.48); `ctx.signal` aborts when the caller goes and, from bb 0.48.1, when this copy of the plugin is disposed |
+| Notify the user | bb's bundled `push-notifications` plugin (bb 0.48.1): `bb.sdk.plugins.callRpc({ pluginId: "push-notifications", method: "notifications.send", input: { title, body?, threadId? } })` answers `{ ok, channels }`; `bb push-notifications send --title … [--thread …]` from a shell. The user can turn the plugin off, so a failed call is expected |
 | Agent tools and instructions | `bb.agents.registerTool`, `bb.agents.configure`, `bb.agents.contributeInstructions` — apply from the next provider session start, never mid-session |
 | Cleanup | `bb.onDispose(fn)` (LIFO); dispose every service, listener and resource |
 
@@ -343,6 +346,7 @@ mounted once per window. Paseo contribution → bb slot:
 | Paseo | bb |
 | --- | --- |
 | `addSurface` + `addSidebarItem` | `app.slots.navPanel` (own sidebar entry and route `/plugins/<id>/<path>/*`); a live count on the entry is its `experimental_useBadge` hook (bb 0.47, SDK 0.6.75), not a re-registration: bb calls it in the plugin's scope and draws `{ count?, text?, tone?, label }`, or nothing for null. bb 0.46 draws no `experimental_sidebarAccessory`, bb 0.47 ignores it with a warning, and bb 0.46 refuses `experimental_useBadge` as an unknown field, so a badge means `engines.bb >=0.47` (`launchd-jobs/app/health.tsx`). Test the hook by rendering a component that prints what it returns |
+| a row in a thread's Info tab | `app.slots.experimental_threadInfoRow` (`github-board/app/thread-card-slots.tsx`). bb 0.48.1 adds a **thread context card** at a thread pane's upper right, with `app.slots.experimental_threadContextCardRow` / `experimental_threadContextCardSection` and the host `experimental_ThreadContextCardRow` (icon, label, trailing count, optional action). It shows only with the `threadContextCard` experiment on, which bb keeps out of the early-adopter set, so no plugin here registers one yet |
 | `addWorkspacePanel` (agent context) | `app.slots.experimental_tab({ context: { kind: "thread" }, availability: "action", icon, … })` (gets `threadId`, `params` and, from bb 0.48, `environment`; `icon` is required). Open it through the panel controller (bb 0.48, SDK 0.6.88): `experimental_useAppPanel().openTab({ tab: { id, context: { kind: "thread" }, availability: "action" }, params? })` in a component, `ctx.experimental_panel` in a command or a thread action's `item` (`diff-review/app/tab.ts`); `useBbNavigate().openThreadPanel` and `ctx.openPanel` are retired from the typings and only run through adapters. `experimental_useTabVisible()` says whether the tab shows. It replaced `app.slots.threadPanelAction` in SDK 0.6.73: bb 0.47 still loads a bundle that uses the old slot, but the 0.6.75 typings have no such slot, and bb 0.46 has no `experimental_tab`; to keep bb 0.45–0.46, call `experimental_tab` only when `app.slots` has it and the old slot otherwise (`skills/app/panel.tsx`) |
 | `addSettingsScreen` | host-rendered form from `bb.settings.define`, plus `app.slots.settingsSection` for anything custom |
 | `addCommandCenterItem` | `app.commands.register` — its `run` gets no navigation; hand it `useBbNavigate()` from an `app.slots.experimental_appOverlay` component that renders nothing (`github-board/app.tsx`) |

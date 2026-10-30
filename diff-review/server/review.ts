@@ -168,6 +168,10 @@ export class ReviewService {
    * The Review tab's whole view of a thread's diff. With `autoTarget` (the tab's first load, when it
    * was not opened on a chosen view), an empty uncommitted view gives way to the changes committed
    * since the base branch, when there are any; when both are empty, the uncommitted view stands.
+   *
+   * `signal` (the caller's) abandons the wait for the PR status read and the commented files'
+   * patches, the reads that only fill the view in; what bb's plugins already started still finishes. The diff and the session are read and written whatever it says, so an
+   * abandoned load never leaves them half done.
    */
   async view(
     threadId: string,
@@ -176,6 +180,7 @@ export class ReviewService {
     reason: LoadReason = "unknown",
     tab = "?",
     ignoreWhitespace = false,
+    signal?: AbortSignal,
   ): Promise<ReviewView> {
     try {
       const environment = await workspaceOf(this.bb.sdk, threadId);
@@ -208,9 +213,9 @@ export class ReviewService {
         pull !== null && target.kind === "pr"
           ? await this.prs.sync(session.id, target, { pullId: pull.pullId, headSha: pull.details.headSha, baseSha: pull.details.baseSha, files: diff.files })
           : null;
-      const branchPullRequest = target.kind === "pr" ? null : await this.prs.branchPull(environment.id);
+      const branchPullRequest = target.kind === "pr" ? null : await this.prs.branchPull(environment.id, signal);
       const threads = this.store.threads(session.id);
-      const files = await withThreadPatches(this.git, this.bb.log, environment, target, diff.files, threads, ignoreWhitespace);
+      const files = await withThreadPatches(this.git, this.bb.log, environment, target, diff.files, threads, ignoreWhitespace, signal);
       return {
         ok: true,
         sessionId: session.id,
@@ -264,10 +269,10 @@ export class ReviewService {
     this.store.saveViewState(threadId, session.id, state);
   }
 
-  /** Patches bb left to load on demand, at the revisions the view's file list gave. */
-  async patches(threadId: string, target: Target, files: readonly { path: string; revision: string }[], ignoreWhitespace = false) {
+  /** Patches bb left to load on demand, at the revisions the view's file list gave; `signal` abandons them. */
+  async patches(threadId: string, target: Target, files: readonly { path: string; revision: string }[], ignoreWhitespace = false, signal?: AbortSignal) {
     const environment = await workspaceOf(this.bb.sdk, threadId);
-    return loadPatches(this.git, environment, target, files, ignoreWhitespace);
+    return loadPatches(this.git, environment, target, files, ignoreWhitespace, signal);
   }
 
   /**

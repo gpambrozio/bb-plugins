@@ -7,7 +7,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
-import type { BbPluginApi } from "@get-bb/plugin-sdk";
+import type { BbPluginApi, ExperimentalPluginRpcHandlerContext } from "@get-bb/plugin-sdk";
 
 import type { PromptSettings } from "./shared/board";
 import { rpcContract } from "./shared/contract";
@@ -42,6 +42,14 @@ const LAUNCH_KEY = "launch";
 const DEFAULT_DISPLAY: DisplayPrefs = { hiddenRepositories: [], detailWidthFraction: null };
 
 type SpawnArgs = Parameters<BbPluginApi["sdk"]["threads"]["spawn"]>[0];
+
+/**
+ * The RPC caller's signal. Typed as always there, but bb before 0.48.1 passes
+ * a context without it.
+ */
+function callerSignal(ctx: ExperimentalPluginRpcHandlerContext | undefined): AbortSignal | undefined {
+  return ctx?.experimental_signal;
+}
 
 /** Every remote of the checkout at `path`; nothing for a directory that is not one, or is gone. */
 async function localRemotes(path: string): Promise<string[]> {
@@ -86,7 +94,7 @@ export default async function plugin(bb: BbPluginApi) {
   }
 
   const api: GitHubApi = {
-    graphql: (query, variables) => ghGraphql(gh, query, variables),
+    graphql: (query, variables, signal) => ghGraphql(gh, query, variables, signal),
     warn: (message) => bb.log.warn(message),
   };
 
@@ -132,10 +140,12 @@ export default async function plugin(bb: BbPluginApi) {
   }
 
   bb.rpc.register(rpcContract, {
-    loadBoard: (input) => service.loadBoard(input),
-    loadItem: (input) => service.loadItem(input),
-    loadComments: (input) => service.loadComments(input),
-    loadImage: (input) => service.loadImage(input),
+    // bb 0.48.1 aborts `experimental_signal` when the caller stops waiting or
+    // this copy of the plugin goes; older bb passes none, and the load runs on.
+    loadBoard: (input, ctx) => service.loadBoard(input, callerSignal(ctx)),
+    loadItem: (input, ctx) => service.loadItem(input, callerSignal(ctx)),
+    loadComments: (input, ctx) => service.loadComments(input, callerSignal(ctx)),
+    loadImage: (input, ctx) => service.loadImage(input, callerSignal(ctx)),
     listLabels: (input) => service.listLabels(input),
     toggleLabel: async (input) => {
       const result = await service.toggleLabel(input);

@@ -5,6 +5,17 @@ Notable changes to `diff-review`. The other plugins in this repository version s
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.4.1
+
+### Changed
+
+- **Diff Review stops waiting for reads nobody needs any more**: the changes of files loaded on
+  demand, those of commented files, and the check for the branch's pull request, when the plugin is
+  reloaded, turned off or removed, or when the window that asked closes before the answer arrives. It
+  then asks for no more of those changes. A read bb's own Git or GitHub PR Status plugin has already
+  started still runs to the end there, as bb 0.48.1 does not stop it. This needs bb 0.48.1 or newer;
+  on bb 0.48.0 Diff Review waits for every read as before.
+
 ## 0.4.0
 
 ### Added

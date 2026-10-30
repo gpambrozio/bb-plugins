@@ -324,10 +324,11 @@ export async function loadPatches(
   target: Target,
   files: readonly { path: string; revision: string }[],
   ignoreWhitespace = false,
+  signal?: AbortSignal,
 ): Promise<{ path: string; patch: string; truncated: boolean }[]> {
   // The host entry's views send every patch with the list.
   if (isHostTarget(target) || target.kind === "files") return [];
-  const result = await git.patches(environment.id, gitTarget(target), ignoreWhitespace, files);
+  const result = await git.patches(environment.id, gitTarget(target), ignoreWhitespace, files, signal);
   if (result.failure !== null && result.patches.length === 0) throw new ReviewUnavailable(result.failure);
   return result.patches;
 }
@@ -349,6 +350,7 @@ export async function withThreadPatches(
   files: readonly DiffFile[],
   threads: readonly { filePath: string; startLine: number }[],
   ignoreWhitespace = false,
+  signal?: AbortSignal,
 ): Promise<DiffFile[]> {
   // A pull request's view sends every patch with its list.
   if (isHostTarget(target) || target.kind === "files" || target.kind === "pr") return [...files];
@@ -357,8 +359,10 @@ export async function withThreadPatches(
   if (missing.length === 0) return [...files];
   let patches: { path: string; patch: string; truncated: boolean }[];
   try {
-    patches = await loadPatches(git, environment, target, missing.map((file) => ({ path: file.path, revision: file.revision })), ignoreWhitespace);
+    patches = await loadPatches(git, environment, target, missing.map((file) => ({ path: file.path, revision: file.revision })), ignoreWhitespace, signal);
   } catch (error) {
+    // Abandoned with its caller: nobody is left to see the files, and nothing went wrong.
+    if (signal?.aborted === true) return [...files];
     log.warn(`The patches of ${missing.length} commented file(s) in ${environment.id} are left to load on demand: ${error instanceof Error ? error.message : String(error)}`);
     return [...files];
   }

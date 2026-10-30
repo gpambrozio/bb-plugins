@@ -28,6 +28,21 @@ describe("ghGraphql", () => {
     const data = await ghGraphql(async () => JSON.stringify({ data: { viewer: { login: "x" } } }), "q");
     expect(data).toEqual({ viewer: { login: "x" } });
   });
+
+  it("hands the caller's signal to the run", async () => {
+    const { signal } = new AbortController();
+    const seen: (AbortSignal | undefined)[] = [];
+    await ghGraphql(
+      async (_args, runSignal) => {
+        seen.push(runSignal);
+        return JSON.stringify({ data: {} });
+      },
+      "q",
+      {},
+      signal,
+    );
+    expect(seen).toEqual([signal]);
+  });
 });
 
 describe("ghToken", () => {

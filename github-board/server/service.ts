@@ -7,6 +7,14 @@
  * Everything outside — GitHub, the token, the login setting, bb's projects,
  * the clock — comes in through `BoardServiceDeps`, so the tests drive it with
  * fakes.
+ *
+ * The loads take the RPC caller's signal (bb 0.48.1 aborts it when the caller
+ * stops waiting or the plugin reloads; older bb has none). It kills the load's
+ * `gh` runs, and a load whose signal fired never caches its cut-short result
+ * (a sub-read that completed first, such as the viewer's login, may stay): a
+ * pill-only request killed half-way is caught and logged like any other
+ * failure, so the board it leaves behind is short of pills without saying so. No load here is shared
+ * between callers, so one caller leaving never ends another's.
  */
 import type {
   Board,
@@ -83,11 +91,11 @@ export function createBoardService(deps: BoardServiceDeps) {
    * `@me` is never sent to a search: the login setting when there is one,
    * otherwise the account `gh` is signed in as.
    */
-  async function resolveLogin(): Promise<string> {
+  async function resolveLogin(api: GitHubApi): Promise<string> {
     const configured = (await deps.configuredLogin()).trim();
     if (configured !== "" && configured !== "@me") return configured;
     if (viewer !== null && deps.now() - viewer.storedAt < LOGIN_TTL_MS) return viewer.login;
-    const login = await resolveViewerLogin(deps.api);
+    const login = await resolveViewerLogin(api);
     viewer = { login, storedAt: deps.now() };
     return login;
   }
@@ -138,6 +146,20 @@ export function createBoardService(deps: BoardServiceDeps) {
     };
   }
 
+  /**
+   * `deps.api` with every request bound to `signal`. A pill-only failure is not
+   * logged once the signal has fired: it is the kill, not GitHub.
+   */
+  function boundTo(signal: AbortSignal | undefined): GitHubApi {
+    if (signal === undefined) return deps.api;
+    return {
+      graphql: (query, variables) => deps.api.graphql(query, variables, signal),
+      warn: (message) => {
+        if (!signal.aborted) deps.api.warn(message);
+      },
+    };
+  }
+
   async function token(signal: AbortSignal): Promise<string> {
     if (fresh(cachedToken)) return cachedToken.value;
     const value = await deps.token(signal);
@@ -146,8 +168,12 @@ export function createBoardService(deps: BoardServiceDeps) {
   }
 
   return {
-    async loadBoard({ limit, force }: { limit: number; force: boolean }): Promise<Board> {
-      const login = await resolveLogin();
+    async loadBoard(
+      { limit, force }: { limit: number; force: boolean },
+      signal?: AbortSignal,
+    ): Promise<Board> {
+      const api = boundTo(signal);
+      const login = await resolveLogin(api);
       const key = `${login}\u0000${limit}`;
       // Recent edits are applied after the *last* await — project matching
       // included — so an edit that lands while this load runs wins over what
@@ -166,8 +192,9 @@ export function createBoardService(deps: BoardServiceDeps) {
         }
       }
 
-      const loaded = await loadColumns(deps.api, login, limit);
+      const loaded = await loadColumns(api, login, limit);
       const projects = await repositoryProjects(loaded);
+      signal?.throwIfAborted();
       const columns = settle(loaded);
       const fetchedAt = new Date(deps.now()).toISOString();
 
@@ -179,32 +206,37 @@ export function createBoardService(deps: BoardServiceDeps) {
       return { login, columns, fetchedAt, repositoryProjects: projects };
     },
 
-    async loadItem({ id, force }: { id: string; force: boolean }): Promise<ItemDetails> {
+    async loadItem({ id, force }: { id: string; force: boolean }, signal?: AbortSignal): Promise<ItemDetails> {
       const hit = cachedDetails.get(id);
       if (!force && fresh(hit)) return hit.value;
-      const value = await fetchItemDetails(deps.api, id);
+      const value = await fetchItemDetails(boundTo(signal), id);
+      signal?.throwIfAborted();
       cachedDetails.set(id, { value, storedAt: deps.now() });
       return value;
     },
 
-    async loadComments({
-      id,
-      force,
-    }: {
-      id: string;
-      force: boolean;
-    }): Promise<{ comments: ItemComment[]; truncated: boolean }> {
+    async loadComments(
+      {
+        id,
+        force,
+      }: {
+        id: string;
+        force: boolean;
+      },
+      signal?: AbortSignal,
+    ): Promise<{ comments: ItemComment[]; truncated: boolean }> {
       const hit = cachedComments.get(id);
       if (!force && fresh(hit)) return hit.value;
-      const value = await fetchComments(deps.api, id);
+      const value = await fetchComments(boundTo(signal), id);
+      signal?.throwIfAborted();
       cachedComments.set(id, { value, storedAt: deps.now() });
       return value;
     },
 
-    async loadImage({ url }: { url: string }): Promise<{ dataUrl: string }> {
+    async loadImage({ url }: { url: string }, signal?: AbortSignal): Promise<{ dataUrl: string }> {
       const hit = cachedImages.get(url);
       if (hit !== undefined) return { dataUrl: hit };
-      const dataUrl = await fetchGitHubImage(url, token);
+      const dataUrl = await fetchGitHubImage(url, token, signal);
       cachedImages.set(url, dataUrl);
       if (cachedImages.size > IMAGE_CACHE_ENTRIES) {
         const oldest = cachedImages.keys().next().value;

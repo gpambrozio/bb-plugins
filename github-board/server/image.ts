@@ -27,6 +27,7 @@ const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 export async function fetchGitHubImage(
   url: string,
   token: (signal: AbortSignal) => Promise<string>,
+  caller?: AbortSignal,
 ): Promise<string> {
   const first = gitHubImageUrl(url);
   if (first === null) {
@@ -34,8 +35,11 @@ export async function fetchGitHubImage(
   }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), IMAGE_TIMEOUT_MS);
+  // The caller leaving ends the fetch the way the timeout does: the token's
+  // `gh` run, every hop and the body.
+  const signal = caller === undefined ? controller.signal : AbortSignal.any([controller.signal, caller]);
   try {
-    const response = await follow(first, token, controller.signal);
+    const response = await follow(first, token, signal);
     return await readImage(response);
   } catch (error) {
     if (controller.signal.aborted) {

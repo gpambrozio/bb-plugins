@@ -236,6 +236,20 @@ the version it listed; the app sends `{ path, revision }`. A failed call asks `p
 the plugin is off and says so. The contract is not published: the plugin keeps its own non-strict
 copy of the shapes it reads.
 
+**Reads nobody waits for are abandoned, but only reads that fill a view in.** `loadPatches` and
+`getReview` hand the RPC handler's `experimental_signal` (bb 0.48.1; absent on 0.48.0, so it stays
+optional) to the Git plugin's `patches` calls and to the GitHub PR Status read (`branchPull`), through
+`callRpc`'s `signal`. That ends this plugin's wait and the patch batches not yet sent, not the work
+already started: in bb 0.48.1 the Git plugin's `patches` and PR Status's `pullRequests` handlers ignore
+their request signal, so a host read under way runs to the end. Stopping it needs bb to pass the signal
+on, and PR Status to keep a lookup another caller shares. bb aborts it when this plugin copy is reloaded, disabled or removed, or the
+caller's HTTP request disconnects (a window closing mid-load); the app's `useRpc().call` takes no
+signal, so the app cannot abort one itself. A call abandoned that way does not ask `plugins.list` whether Git is off, and the
+commented files' patches it cut short are left to load on demand without a warning. The rest of
+`getReview` (status, files, the session and the GitHub sync) runs whatever the signal says, because it
+writes the session; cutting it short half way would leave a session half written. `refusing` passes
+the handler's context through.
+
 **Changes outside a turn reload by content, not by counts, and only for tabs that show.** bb's status
 lists paths, letters and line counts, so a same-size edit leaves it equal. A showing tab holds a lease
 on its workspace (`watchWorkspace`, renewed every 30 s, lapsing after 90 s, given back when it hides or

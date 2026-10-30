@@ -4,7 +4,7 @@
 // SQLite), "Send to agent" into the thread under review, AI runs in threads of their own (reviews,
 // questions to a view's reviewer with @reviewer, fixes in a new thread), and `bb diff-review` and the `diff_review_*` tools, which agents
 // answer each comment thread with. See AGENTS.md.
-import type { BbPluginApi } from "@get-bb/plugin-sdk";
+import type { BbPluginApi, ExperimentalPluginRpcHandlerContext } from "@get-bb/plugin-sdk";
 
 import { rpcContract } from "./shared/contract";
 import { describeLocation } from "./shared/types";
@@ -27,6 +27,16 @@ export function diffReviewPlugin(deps: { gh?: GhRunner } = {}) {
 }
 
 export default diffReviewPlugin();
+
+/**
+ * The RPC caller's signal, which bb 0.48.1 aborts when the caller's request disconnects (its window
+ * closed mid-load) or this copy of the plugin goes. It ends this plugin's waits on bb's Git and PR
+ * Status plugins, not the work those have started. Typed as always there, but bb 0.48.0 passes a
+ * context without it, and the reads then run to the end as before.
+ */
+function callerSignal(ctx: ExperimentalPluginRpcHandlerContext | undefined): AbortSignal | undefined {
+  return ctx?.experimental_signal;
+}
 
 async function plugin(bb: BbPluginApi, deps: { gh?: GhRunner }) {
   const settings = bb.settings.define({
@@ -84,9 +94,11 @@ async function plugin(bb: BbPluginApi, deps: { gh?: GhRunner }) {
   const edits = new WorkspaceEdits(bb.sdk, store, service.git, createHostRevert(bb), (environmentId, sessionId) => service.workspaceEdited(environmentId, sessionId));
 
   bb.rpc.register(rpcContract, refusing<typeof rpcContract>({
-    getReview: ({ threadId, target, autoTarget, reason, tab, ignoreWhitespace }) =>
-      service.view(threadId, target, autoTarget === true, reason, tab, ignoreWhitespace === true),
-    loadPatches: async ({ threadId, target, files, ignoreWhitespace }) => ({ patches: await service.patches(threadId, target, files, ignoreWhitespace === true) }),
+    getReview: ({ threadId, target, autoTarget, reason, tab, ignoreWhitespace }, ctx) =>
+      service.view(threadId, target, autoTarget === true, reason, tab, ignoreWhitespace === true, callerSignal(ctx)),
+    loadPatches: async ({ threadId, target, files, ignoreWhitespace }, ctx) => ({
+      patches: await service.patches(threadId, target, files, ignoreWhitespace === true, callerSignal(ctx)),
+    }),
     setViewed: async ({ threadId, target, path, revision, viewed }) => {
       await service.setViewed(threadId, target, path, revision, viewed);
       return { ok: true as const };

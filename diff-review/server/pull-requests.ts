@@ -173,10 +173,19 @@ export class PullRequests {
     private readonly publish: (sessionId: string) => void,
   ) {}
 
-  /** The pull request of a workspace's branch, from bb's GitHub PR Status plugin; null when it has none or cannot say. */
-  async branchPull(environmentId: string): Promise<(PullRef & { title: string }) | null> {
+  /**
+   * The pull request of a workspace's branch, from bb's GitHub PR Status plugin; null when it has none
+   * or cannot say, and when `signal` abandoned the wait (bb 0.48.1's PR Status finishes its lookup anyway).
+   */
+  async branchPull(environmentId: string, signal?: AbortSignal): Promise<(PullRef & { title: string }) | null> {
     try {
-      const rows = await this.bb.sdk.plugins.callRpc({ pluginId: PR_STATUS_PLUGIN_ID, method: "pullRequests", input: { keys: [environmentId] }, outputSchema: prStatusSchema });
+      const rows = await this.bb.sdk.plugins.callRpc({
+        pluginId: PR_STATUS_PLUGIN_ID,
+        method: "pullRequests",
+        input: { keys: [environmentId] },
+        outputSchema: prStatusSchema,
+        ...(signal === undefined ? {} : { signal }),
+      });
       const row = rows[environmentId];
       if (row?.outcome !== "available" || row.pullRequest === undefined) return null;
       const ref = parsePullUrl(row.pullRequest.url);
