@@ -357,6 +357,17 @@ describe("herald server", () => {
     }
   });
 
+  it("says nothing, lists nothing and remembers nothing for a finished turn the tool answered with nothing", async () => {
+    const { harness } = await load({ writeWithModel: true });
+    await harness.callRpc("config.set", { sentenceTool: "custom", sentenceCommand: `"${process.execPath}" -e "process.exit(0)"` });
+    await harness.emitThreadEvent("thread.idle", { thread: USER_THREAD, lastAssistantText: "Captain, shipshape." });
+    await vi.waitFor(async () => {
+      expect(entriesOf(await harness.callRpc("list", {}))).toEqual([]);
+      expect(harness.realtimeSignals.filter((signal) => signal.channel === ENTRIES_CHANNEL)).toHaveLength(2);
+    });
+    expect(await harness.callRpc("history.list", { threadId: "thr_user" })).toEqual({ items: [] });
+  });
+
   it("drops, unspoken, a sentence the instance before it was still writing — a question answered meanwhile included", async () => {
     const host = await load({ writeWithModel: true });
     await host.harness.callRpc("config.set", { sentenceTool: "custom", sentenceCommand: SLOW_TOOL });

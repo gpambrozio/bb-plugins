@@ -138,8 +138,8 @@ function Sentence({ entry }: { entry: AttentionEntry | null }): ReactNode {
   if (entry.summary.status === "pending") return <p className="text-sm italic text-muted-foreground">Writing the sentence…</p>;
   return (
     <p className="text-xs text-muted-foreground">
-      Not announced: this kind of event is switched off, Herald is set to Silent or Questions only for this thread, or the
-      thread that started this one speaks for it.
+      Not announced: this kind of event is switched off, Herald is set to Silent or Questions only for this thread, the
+      thread that started this one speaks for it, or the sentence tool replied with nothing.
     </p>
   );
 }

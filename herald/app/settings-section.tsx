@@ -125,6 +125,11 @@ function ModelSentence({ config, onSave }: { config: StoredConfig; onSave: (next
         <p className="text-xs text-muted-foreground">
           Placeholders: {"{{thread}}, {{project}}, {{folder}}, {{event}}, {{headline}}, {{detail}}, {{request}}"} and {"{{output}}"}.
         </p>
+        <p className="text-xs text-muted-foreground">
+          A reply with nothing in it keeps the event quiet: a finished turn is then not spoken, listed or notified; a question, plan,
+          permission or error is still listed and notified (with the plain sentence), but not spoken. For example: &ldquo;If the agent&apos;s
+          last output only acknowledges, such as &lsquo;Captain, shipshape.&rsquo;, reply with nothing.&rdquo;
+        </p>
         <TextField
           label="Sentence prompt"
           stored={config.sentencePrompt}

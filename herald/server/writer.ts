@@ -6,7 +6,8 @@
  * nothing to find and put away: `dispose` kills whatever is still running.
  *
  * Fail closed, never queue: a tool that is slow or missing costs the plain
- * sentence, and nothing more. At most `MAX_IN_FLIGHT` processes run at once;
+ * sentence, and nothing more. A tool that runs and answers nothing has
+ * chosen silence, which is not a failure (`WrittenSentence`). At most `MAX_IN_FLIGHT` processes run at once;
  * a request beyond that is refused at once.
  */
 import { mkdtemp, rm } from "node:fs/promises";
@@ -112,11 +113,20 @@ function killGroup(pid: number | undefined, fallback: () => void): void {
 }
 
 /**
+ * What a tool that ran to the end gave: one line to speak, or nothing at
+ * all. A prompt may ask the model to reply with nothing to keep an event
+ * quiet ("Captain, shipshape."); that is an answer, not a failure, and a
+ * failure is a rejection, never `silent`.
+ */
+export type WrittenSentence = { kind: "sentence"; text: string } | { kind: "silent" };
+
+/**
  * The reply as one spoken line: the last paragraph (a tool may print
  * progress before its answer), markdown and wrapping quotes gone, cut to
- * `MAX_SENTENCE_CHARS`.
+ * `MAX_SENTENCE_CHARS`. A reply that is empty once cleaned — blank, or only
+ * quotes or markdown — is `silent`.
  */
-export function cleanSentence(raw: string): string {
+export function cleanSentence(raw: string): WrittenSentence {
   const paragraphs = raw
     .split(/\n\s*\n/)
     .map((paragraph) => paragraph.trim())
@@ -124,9 +134,9 @@ export function cleanSentence(raw: string): string {
   const last = paragraphs[paragraphs.length - 1] ?? "";
   let line = plainText(last);
   line = line.replace(/^["'“”‘’]+/, "").replace(/["'“”‘’]+$/, "").trim();
-  if (line === "") throw new Error("The tool's reply was empty.");
+  if (line === "") return { kind: "silent" };
   if (line.length > MAX_SENTENCE_CHARS) line = `${line.slice(0, MAX_SENTENCE_CHARS - 1).trimEnd()}…`;
-  return line;
+  return { kind: "sentence", text: line };
 }
 
 export class SentenceWriter {
@@ -137,9 +147,10 @@ export class SentenceWriter {
   constructor(private readonly log: Log) {}
 
   /**
-   * Runs `command` with `prompt` on stdin and returns the cleaned sentence.
-   * Rejects when the writer is busy or disposed, the tool is missing, fails,
-   * answers nothing, or outlives `WRITE_TIMEOUT_MS`.
+   * Runs `command` with `prompt` on stdin and returns the cleaned sentence,
+   * or `silent` when the tool exits 0 with nothing to say. Rejects when the
+   * writer is busy or disposed, the tool is missing, fails, or outlives
+   * `WRITE_TIMEOUT_MS`.
    *
    * Each run gets an empty folder of its own under the temp directory, made
    * for it and removed after it, so a tool that reads its working directory
@@ -147,7 +158,7 @@ export class SentenceWriter {
    * for the life of the plugin was tried first; macOS purges unused temp
    * entries after a few days, and a bb server runs for weeks.)
    */
-  async write(command: readonly string[], prompt: string): Promise<string> {
+  async write(command: readonly string[], prompt: string): Promise<WrittenSentence> {
     if (this.disposed) throw new Error("The sentence writer is closed.");
     if (this.inFlight >= MAX_IN_FLIGHT) throw new Error(`The sentence writer is busy (${MAX_IN_FLIGHT} already running).`);
     this.inFlight += 1;

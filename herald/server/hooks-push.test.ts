@@ -12,6 +12,7 @@ import type { EventsPort, PushPort, ThreadDto } from "./ports";
 import { OUTBOX_PREFIX, PushTakeover, RELEASE_QUIET_MS, SEND_RETRY_MS, type PushSubject } from "./push";
 import { AttentionStore } from "./store";
 import { commandApproval, planApproval, question, recordingLog, settle, thread } from "./testing/fixtures";
+import type { WrittenSentence } from "./writer";
 
 const CONFIG: HeraldConfig = {
   announce: { question: true, plan: true, permission: true, finished: true, error: true },
@@ -85,10 +86,16 @@ function setup(options: { config?: HeraldConfig; choice?: ChoiceInputs; write?: 
 }
 
 function heldWriter() {
-  const releases: Array<(text: string) => void> = [];
-  const write: HookDeps["writeSentence"] = () => new Promise<string>((resolve) => releases.push(resolve));
-  /** Releases the `index`th run, the last one by default. */
-  return { write, release: (text: string, index = releases.length - 1) => releases[index]?.(text) };
+  const runs: Array<{ resolve: (written: WrittenSentence) => void; reject: (error: Error) => void }> = [];
+  const write: HookDeps["writeSentence"] = () => new Promise<WrittenSentence>((resolve, reject) => runs.push({ resolve, reject }));
+  /** Each answers the `index`th run, the last one by default. */
+  return {
+    write,
+    release: (text: string, index = runs.length - 1) => runs[index]?.resolve({ kind: "sentence", text }),
+    /** The tool ran and replied with nothing. */
+    silence: (index = runs.length - 1) => runs[index]?.resolve({ kind: "silent" }),
+    fail: (index = runs.length - 1) => runs[index]?.reject(new Error("my-llm exited with 1")),
+  };
 }
 
 /**
@@ -243,6 +250,102 @@ describe("hooks with push notifications", () => {
     w.release("Late.");
     await settle();
     expect(push.sent).toHaveLength(1);
+  });
+
+  describe("when the tool replies with nothing", () => {
+    const MODEL: HeraldConfig = { ...CONFIG, sentence: { command: "my-llm", prompt: "x" } };
+    type Fire = (hooks: ReturnType<typeof setup>["hooks"]) => Promise<void>;
+    const WAITING: Array<{ name: string; fire: Fire; plain: string }> = [
+      { name: "question", fire: (hooks) => hooks.interactionPending(thread(), question()), plain: "Login fix has a question: Which DB? Options: Postgres / SQLite." },
+      { name: "plan", fire: (hooks) => hooks.interactionPending(thread(), planApproval("1. Add a test.")), plain: "" },
+      { name: "permission", fire: (hooks) => hooks.interactionPending(thread(), commandApproval("npm test")), plain: "" },
+      { name: "error", fire: (hooks) => hooks.failed(thread(), "Rate limited"), plain: "" },
+    ];
+
+    it("sends nothing for a finished turn, though bb was muted for it, and the decision still drains on unload", async () => {
+      const w = heldWriter();
+      const { hooks, push, store } = setup({ config: MODEL, write: w.write });
+      await hooks.idle(thread(), "Captain, shipshape.");
+      await settle();
+      w.silence();
+      await settle();
+      expect(push.decisions.map((d) => d.reason)).toEqual(["finished"]);
+      expect(push.sent).toEqual([]);
+      expect(store.get("t1")).toBeNull();
+      await hooks.dispose();
+      expect(push.sent).toEqual([]);
+    });
+
+    it("sends the plain sentence for every event that waits on the user", async () => {
+      for (const { name, fire, plain } of WAITING) {
+        const w = heldWriter();
+        const { hooks, push, store } = setup({ config: MODEL, write: w.write });
+        await fire(hooks);
+        await settle();
+        const pending = store.get("t1")?.summary;
+        const fallback = pending?.status === "pending" ? pending.fallback : "none";
+        if (plain !== "") expect(fallback, name).toBe(plain);
+        w.silence();
+        await settle();
+        expect(push.sent.map((s) => s.sentence), name).toEqual([fallback]);
+        expect(store.get("t1")?.summary, name).toEqual({ status: "off", fallback });
+      }
+    });
+
+    it("sends nothing for an event that waits on the user when Herald owes nothing (push off, or bb never muted)", async () => {
+      const w = heldWriter();
+      const { hooks, push } = setup({ config: MODEL, write: w.write });
+      push.owes = false;
+      await hooks.interactionPending(thread(), question());
+      w.silence();
+      await settle();
+      expect(push.sent).toEqual([]);
+    });
+
+    it("sends the plain sentence for a finished turn whose tool failed rather than replied with nothing", async () => {
+      const w = heldWriter();
+      const { hooks, push } = setup({ config: MODEL, write: w.write });
+      await hooks.idle(thread(), "Done.");
+      await settle();
+      w.fail();
+      await settle();
+      expect(push.sent.map((s) => s.sentence)).toEqual(["Login fix finished. Done."]);
+    });
+
+    it("sends the plain sentence on unload for a finished turn whose tool had not answered yet", async () => {
+      const w = heldWriter();
+      const { hooks, push } = setup({ config: MODEL, write: w.write });
+      await hooks.idle(thread(), "Done.");
+      await settle();
+      await hooks.dispose();
+      expect(push.sent.map((s) => s.sentence)).toEqual(["Login fix finished. Done."]);
+      w.silence();
+      await settle();
+      expect(push.sent).toHaveLength(1);
+    });
+
+    it("with the real takeover: a quiet finished turn is notified by no one and leaves nothing to retry; a quiet question goes out plain", async () => {
+      const real = realPush(new Set(), { value: false });
+      const w = heldWriter();
+      const { hooks } = setup({ config: MODEL, write: w.write, push: real.push });
+      hooks.active(thread());
+      await settle();
+      expect(real.own.get("t1")).toBe("muted");
+      await hooks.idle(thread(), "Captain, shipshape.");
+      await settle();
+      w.silence();
+      await settle();
+      expect(real.sent).toEqual([]);
+      expect([...real.rows.keys()].filter((key) => key.startsWith(OUTBOX_PREFIX))).toEqual([]);
+
+      hooks.active(thread());
+      await hooks.interactionPending(thread(), question());
+      await settle();
+      w.silence();
+      await settle();
+      expect(real.sent).toEqual([{ threadId: "t1", body: "Login fix has a question: Which DB? Options: Postgres / SQLite." }]);
+      expect([...real.rows.keys()].filter((key) => key.startsWith(OUTBOX_PREFIX))).toEqual([]);
+    });
   });
 
   it("settles an event a newer one replaced without taking a level", async () => {

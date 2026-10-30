@@ -3,7 +3,7 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { cleanSentence, runCommand, SentenceWriter, WRITE_TIMEOUT_MS } from "./writer";
+import { cleanSentence, runCommand, SentenceWriter, WRITE_TIMEOUT_MS, type WrittenSentence } from "./writer";
 import { recordingLog } from "./testing/fixtures";
 
 /** A command that is a small Node program: real processes, no shell. */
@@ -13,6 +13,12 @@ function node(script: string): string[] {
 
 const ECHO_UPPER = node(`let s="";process.stdin.on("data",c=>s+=c).on("end",()=>process.stdout.write(s.toUpperCase()))`);
 const SLEEP = node(`setTimeout(()=>{},60000)`);
+
+/** The sentence a run wrote; fails the test when it chose silence. */
+function textOf(written: WrittenSentence): string {
+  if (written.kind !== "sentence") throw new Error("expected a sentence, got silence");
+  return written.text;
+}
 
 describe("runCommand", () => {
   it("feeds the input on stdin and returns what the process wrote", async () => {
@@ -40,12 +46,20 @@ describe("runCommand", () => {
 
 describe("cleanSentence", () => {
   it("keeps the last paragraph as one plain line without wrapping quotes", () => {
-    expect(cleanSentence('Thinking...\n\n"**Login fix** is done; nothing is left for you."\n')).toBe("Login fix is done; nothing is left for you.");
+    expect(cleanSentence('Thinking...\n\n"**Login fix** is done; nothing is left for you."\n')).toEqual({
+      kind: "sentence",
+      text: "Login fix is done; nothing is left for you.",
+    });
   });
 
-  it("cuts a reply that runs on, and refuses one with nothing in it", () => {
-    expect(cleanSentence("word ".repeat(200)).length).toBeLessThanOrEqual(400);
-    expect(() => cleanSentence("  \n ")).toThrow(/empty/);
+  it("cuts a reply that runs on", () => {
+    expect(textOf(cleanSentence("word ".repeat(200))).length).toBeLessThanOrEqual(400);
+  });
+
+  it("takes a reply with nothing in it as the tool's choice of silence", () => {
+    for (const empty of ["", "  \n ", '""', "“ ”", "**", "Thinking...\n\n  ''  \n"]) {
+      expect(cleanSentence(empty), JSON.stringify(empty)).toEqual({ kind: "silent" });
+    }
   });
 });
 
@@ -63,21 +77,21 @@ describe("SentenceWriter", () => {
 
   it("runs the command in a folder of its own under the temp directory, with the usual tool paths", async () => {
     const w = writer();
-    const cwd = await w.write(node(`require("fs").writeFileSync("seen","");process.stdout.write(process.cwd())`), "p");
+    const cwd = textOf(await w.write(node(`require("fs").writeFileSync("seen","");process.stdout.write(process.cwd())`), "p"));
     expect(cwd).not.toBe(process.cwd());
     expect(cwd).toContain("herald-writer-");
     // bb's host toolchain adds the usual install folders the server's own PATH may lack.
     const localBin = join(homedir(), ".local", "bin");
     const onPath = node(`process.stdout.write(process.env.PATH.split(":").includes(${JSON.stringify(localBin)}) ? "yes" : "no")`);
-    expect(await w.write(onPath, "p")).toBe("yes");
+    expect(textOf(await w.write(onPath, "p"))).toBe("yes");
     await expect(access(cwd)).rejects.toThrow();
   });
 
   it("gives every run a fresh empty folder and removes it afterwards", async () => {
     const w = writer();
     const script = node(`process.stdout.write(process.cwd())`);
-    const first = await w.write(script, "p");
-    const second = await w.write(script, "p");
+    const first = textOf(await w.write(script, "p"));
+    const second = textOf(await w.write(script, "p"));
     expect(first).not.toBe(second);
     await expect(access(first)).rejects.toThrow();
     await expect(access(second)).rejects.toThrow();
@@ -118,7 +132,7 @@ describe("SentenceWriter", () => {
 
   it("survives a tool that closes its stdin before reading the prompt", async () => {
     const ignoresInput = node(`process.stdin.destroy();setTimeout(()=>process.stdout.write("fine"),50)`);
-    expect(await writer().write(ignoresInput, "x".repeat(200_000))).toBe("fine");
+    expect(textOf(await writer().write(ignoresInput, "x".repeat(200_000)))).toBe("fine");
   });
 
   it("falls back on a tool that prints progress and then fails", async () => {
@@ -127,7 +141,15 @@ describe("SentenceWriter", () => {
   });
 
   it("returns the cleaned reply", async () => {
-    expect(await writer().write(ECHO_UPPER, "login fix is done.")).toBe("LOGIN FIX IS DONE.");
+    expect(await writer().write(ECHO_UPPER, "login fix is done.")).toEqual({ kind: "sentence", text: "LOGIN FIX IS DONE." });
+  });
+
+  it("returns silence for a tool that exits 0 with nothing to say", async () => {
+    expect(await writer().write(node(`process.stdout.write("\\n  \\n")`), "p")).toEqual({ kind: "silent" });
+  });
+
+  it("fails, not silence, for a tool that exits non-zero with nothing to say", async () => {
+    await expect(writer().write(node(`process.exit(1)`), "p")).rejects.toThrow(/exited with 1/);
   });
 
   it("refuses a third run while two are still going, rather than queueing", async () => {
