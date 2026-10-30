@@ -228,12 +228,20 @@ FirstMate marks such a turn read as soon as it ends, so bb sends no notification
 - Only the first mate's own thread, and only while that reply is still its latest turn: not when another
   turn has started or a message is waiting for it, and never while it waits on your answer to a question
   or an approval.
+- Only when you had read everything before it. bb marks a whole thread read at once, so a shipshape that
+  follows a reply you have not read yet notifies as usual, and that reply keeps its unread mark.
 - No notification level changes, so your workers and every other turn of the first mate notify as bb's
   settings say.
 - A shipshape turn no longer leaves an unread mark on the first mate in the sidebar.
 - It relies on how bb's Push Notifications sends: it waits about two seconds after a turn ends and skips a
   turn you have read by then. That is not something bb promises. If bb changes it, or FirstMate cannot mark
   the turn read in time, you get the notification as before; a failure is written to the plugin's log.
+- FirstMate looks at the first mate twice before marking it read, and leaves it if anything changed in
+  between. bb cannot mark only one turn read, so a new turn that ends in the few milliseconds between that
+  last look and the mark would be marked read too. A turn takes seconds, so this is unlikely, not
+  impossible.
+- After autocompact compacts the first mate, the next shipshape may still notify: the compaction is a turn
+  of its own, and it counts as read only once you have opened the thread since.
 
 ## Limitations
 

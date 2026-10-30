@@ -256,6 +256,20 @@ export function bbThreads(sdk: PluginBbSdk): ThreadsPort {
     async markRead(id) {
       await sdk.threads.markRead({ threadId: id });
     },
+    async readState(id) {
+      const row = await nullIfNotFound(sdk.threads.get({ threadId: id }));
+      if (row === null || row.archivedAt !== null || row.deletedAt !== null) return null;
+      return { lastReadAt: row.lastReadAt, latestAttentionAt: row.latestAttentionAt };
+    },
+    async recentTurnEvents(id, limit) {
+      const rows = await sdk.threads.events.list({
+        threadId: id,
+        types: ["turn/started", "turn/completed"],
+        order: "desc",
+        limit: String(limit),
+      });
+      return rows.map((row) => ({ type: row.type === "turn/started" ? "started" : "completed", seq: row.seq, at: row.createdAt }));
+    },
     async restState(id, signal) {
       const row = await nullIfNotFound(sdk.threads.get({ threadId: id, signal }));
       if (row === null || row.archivedAt !== null || row.deletedAt !== null) return null;

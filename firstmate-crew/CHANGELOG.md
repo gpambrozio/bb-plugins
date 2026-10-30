@@ -11,9 +11,10 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - **No notification when the first mate only says "Captain, shipshape."** A new setting, off by default.
   When the first mate's whole reply is "Captain, shipshape.", its way of saying there was nothing to do,
-  FirstMate marks the turn read, so bb does not notify you of it and it leaves no unread mark. Every other
-  turn notifies as before, and your workers' notifications are not touched. If FirstMate cannot mark the
-  turn read in time, you get the notification as you would have.
+  FirstMate marks the turn read, so bb does not notify you of it and it leaves no unread mark. It does so
+  only when you had read everything before it, so a reply you have not seen yet is never marked read with
+  it. Every other turn notifies as before, and your workers' notifications are not touched. If FirstMate
+  cannot mark the turn read in time, you get the notification as you would have.
 
 ## 0.8.0
 

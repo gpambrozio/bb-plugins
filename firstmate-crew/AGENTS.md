@@ -172,11 +172,20 @@ Do not break these; each was paid for.
   charter's words), the plugin marks the thread read (`threads.markRead`) at once, from the `thread.idle`
   listener, beside the watch flush. It relies on bb 0.48.1's sender, which waits two seconds after a turn
   ends (its coalescing window) and drops a finished turn the captain has read by then — internals, not a
-  contract: re-check after a bb upgrade. It marks only the stored first mate, only when its rest state
-  (idle, nothing queued, no pending interaction, machine connected) and latest text still show that
-  no-op as the latest turn, so a question, an approval or a newer reply is never marked read. Every
-  failure is logged and leaves bb's notification to go out; a late mark does the same. A shipshape turn
-  leaves no unread mark in the sidebar either; the README says so.
+  contract: re-check after a bb upgrade. `markRead` writes the whole thread's `lastReadAt`, so the plugin
+  marks only when nothing before the no-op is unread, and only the no-op is the latest turn
+  (`safeToMark`): the stored first mate, idle, nothing queued, no pending interaction, its latest text
+  still the no-op, its latest turn events this turn's `turn/completed` and `turn/started`, and bb's read
+  watermark (`lastReadAt`) at or after the previous `turn/completed`. An unread reply before it, inside
+  bb's coalescing window or not, keeps its notification and its unread mark. It looks twice and marks only
+  if both looks pass and agree (latest turn `seq`, `latestAttentionAt`, `lastReadAt`). bb has no read mark
+  conditioned on a turn, so a new turn that calls for attention in the milliseconds between the second
+  look and the mark landing is marked read too: an accepted gap, since a turn takes seconds. Runtime
+  status adds nothing for an idle thread (bb 0.48.1 reports a disconnected host only for an active one),
+  and a read mark needs no host, so connectivity is not checked. A compaction is a turn of its own, so the
+  first shipshape after autocompact usually notifies (its `previous` is the compaction, which the captain
+  has not opened). Every failure is logged and leaves bb's notification to go out; a late mark does the
+  same. A shipshape turn leaves no unread mark in the sidebar either; the README says so.
 - **Nothing throws into the server's event loop.** Services and listeners catch and log per tick;
   everything is released in `bb.onDispose`.
 - **Server code logs only through the injected `Log` (`server/log.ts`), wired to `bb.log`**, never

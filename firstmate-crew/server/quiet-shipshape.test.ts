@@ -46,10 +46,14 @@ describe("isNoOpReply", () => {
 });
 
 describe("quietShipshape", () => {
+  /** The previous turn ended at 1,000; the captain read it at 1,500; the no-op turn ended at 5,000. */
   async function setup(options: { enabled?: boolean } = {}) {
     const threads = fakeThreads();
     threads.add({ id: MATE, status: "idle" });
+    threads.runTurn(MATE, 1_000);
+    threads.runTurn(MATE, 5_000);
     threads.setText(MATE, SHIPSHAPE);
+    threads.setReadState(MATE, { lastReadAt: 1_500, latestAttentionAt: 5_000 });
     const store = memoryStore();
     await store.setMateThreadId(MATE);
     const log = fakeLog();
@@ -58,10 +62,20 @@ describe("quietShipshape", () => {
     return { threads, store, log, state, run: (threadId: string, text: string | null) => quietShipshape(deps, threadId, text) };
   }
 
-  it("marks the first mate's no-op turn read, so bb's sender skips it", async () => {
+  it("marks the first mate's no-op turn read when everything before it was read, so bb's sender skips it", async () => {
     const { threads, run } = await setup();
     expect(await run(MATE, SHIPSHAPE)).toBe(true);
     expect(threads.callsTo("markRead")).toEqual([[MATE]]);
+  });
+
+  it("marks a no-op that is the thread's first turn, with nothing before it to lose", async () => {
+    const threads = fakeThreads();
+    threads.add({ id: MATE, status: "idle" });
+    threads.runTurn(MATE, 5_000);
+    threads.setText(MATE, SHIPSHAPE);
+    const store = memoryStore();
+    await store.setMateThreadId(MATE);
+    expect(await quietShipshape({ threads, store, enabled: async () => true, log: fakeLog() }, MATE, SHIPSHAPE)).toBe(true);
   });
 
   it("leaves every other reply, and a turn with no text, to bb", async () => {
@@ -82,12 +96,38 @@ describe("quietShipshape", () => {
   it("touches only the first mate's own thread", async () => {
     const { threads, store, run } = await setup();
     threads.add({ id: "thr_crew", parentThreadId: MATE, status: "idle" });
+    threads.runTurn("thr_crew", 5_000);
     threads.setText("thr_crew", SHIPSHAPE);
     expect(await run("thr_crew", SHIPSHAPE)).toBe(false);
 
     await store.setMateThreadId(null);
     expect(await run(MATE, SHIPSHAPE)).toBe(false);
     expect(threads.callsTo("markRead")).toEqual([]);
+  });
+
+  describe("an unread reply before the no-op", () => {
+    it("is not marked read with it inside bb's two-second window, where bb would notify of both as one", async () => {
+      const { threads, run } = await setup();
+      threads.runTurn(MATE, 5_500);
+      threads.setReadState(MATE, { lastReadAt: 1_500, latestAttentionAt: 5_500 });
+      expect(await run(MATE, SHIPSHAPE)).toBe(false);
+      expect(threads.callsTo("markRead")).toEqual([]);
+    });
+
+    it("is not marked read with it outside that window either, where its unread mark would go", async () => {
+      const { threads, run } = await setup();
+      threads.runTurn(MATE, 60_000);
+      threads.setReadState(MATE, { lastReadAt: 1_500, latestAttentionAt: 60_000 });
+      expect(await run(MATE, SHIPSHAPE)).toBe(false);
+      expect(threads.callsTo("markRead")).toEqual([]);
+    });
+
+    it("is not marked read when the thread was never read", async () => {
+      const { threads, run } = await setup();
+      threads.setReadState(MATE, { lastReadAt: null, latestAttentionAt: 5_000 });
+      expect(await run(MATE, SHIPSHAPE)).toBe(false);
+      expect(threads.callsTo("markRead")).toEqual([]);
+    });
   });
 
   it("never marks read a turn with a question or an approval waiting", async () => {
@@ -105,19 +145,66 @@ describe("quietShipshape", () => {
 
     // Another turn has started.
     threads.setRest(MATE, { queuedMessages: 0 });
+    threads.startTurn(MATE, 6_000);
+    expect(await run(MATE, SHIPSHAPE)).toBe(false);
     threads.setStatus(MATE, "active");
     expect(await run(MATE, SHIPSHAPE)).toBe(false);
+    expect(threads.callsTo("markRead")).toEqual([]);
+  });
 
-    // Another turn has already ended with something to say.
-    threads.setStatus(MATE, "idle");
+  it("leaves it when another turn ended with something to say", async () => {
+    const { threads, run } = await setup();
+    threads.runTurn(MATE, 6_000);
+    threads.setReadState(MATE, { lastReadAt: 5_500, latestAttentionAt: 6_000 });
     threads.setText(MATE, "PR ready for review, captain.");
     expect(await run(MATE, SHIPSHAPE)).toBe(false);
-
-    // Its machine is not connected.
-    threads.setText(MATE, SHIPSHAPE);
-    threads.setRest(MATE, { runtimeStatus: "waiting-for-host" });
-    expect(await run(MATE, SHIPSHAPE)).toBe(false);
     expect(threads.callsTo("markRead")).toEqual([]);
+  });
+
+  describe("looks again right before the mark", () => {
+    /**
+     * Runs `change` as the second look begins: the reads of one look start together and each reads after a
+     * tick, so the first look sees none of it and the second all of it.
+     */
+    function betweenLooks(threads: ReturnType<typeof fakeThreads>, change: () => void): void {
+      const readState = threads.readState.bind(threads);
+      let looks = 0;
+      threads.readState = (id) => {
+        if (++looks === 2) change();
+        return readState(id);
+      };
+    }
+
+    it("and abstains when a turn ends with a reply between the two looks", async () => {
+      const { threads, run } = await setup();
+      betweenLooks(threads, () => {
+        threads.runTurn(MATE, 6_000);
+        threads.setText(MATE, "PR ready for review, captain.");
+        threads.setReadState(MATE, { lastReadAt: 1_500, latestAttentionAt: 6_000 });
+      });
+      expect(await run(MATE, SHIPSHAPE)).toBe(false);
+      expect(threads.callsTo("readState")).toHaveLength(2);
+      expect(threads.callsTo("markRead")).toEqual([]);
+    });
+
+    it("and abstains when the thread calls for attention between the two looks, whatever else it shows", async () => {
+      const { threads, run } = await setup();
+      betweenLooks(threads, () => threads.setReadState(MATE, { lastReadAt: 1_500, latestAttentionAt: 5_200 }));
+      expect(await run(MATE, SHIPSHAPE)).toBe(false);
+      expect(threads.callsTo("readState")).toHaveLength(2);
+      expect(threads.callsTo("markRead")).toEqual([]);
+    });
+
+    it("and abstains when another no-op turn ends between the two looks", async () => {
+      const { threads, run } = await setup();
+      betweenLooks(threads, () => {
+        threads.runTurn(MATE, 6_000);
+        threads.setReadState(MATE, { lastReadAt: 5_500, latestAttentionAt: 6_000 });
+      });
+      expect(await run(MATE, SHIPSHAPE)).toBe(false);
+      expect(threads.callsTo("readState")).toHaveLength(2);
+      expect(threads.callsTo("markRead")).toEqual([]);
+    });
   });
 
   it("leaves a first mate bb no longer has", async () => {
@@ -136,7 +223,7 @@ describe("quietShipshape", () => {
 
   it("logs a failed read and marks nothing", async () => {
     const { threads, log, run } = await setup();
-    threads.failNext("restState", new Error("bb is down"));
+    threads.failNext("recentTurnEvents", new Error("bb is down"));
     expect(await run(MATE, SHIPSHAPE)).toBe(false);
     expect(threads.callsTo("markRead")).toEqual([]);
     expect(log.warnings).toHaveLength(1);

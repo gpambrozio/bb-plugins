@@ -158,9 +158,15 @@ describe("server wiring", () => {
       const loaded = await load({ mateId: "thr_mate" });
       await loaded.harness.setSettings(settings);
       const { sdk } = loaded.harness;
-      sdk.stub("threads.get", () => makeThreadResponse({ id: "thr_mate", status: "idle" }));
+      // The previous turn ended at 1,000 and was read at 1,500; the no-op turn ended at 5,000.
+      sdk.stub("threads.get", () => makeThreadResponse({ id: "thr_mate", status: "idle", lastReadAt: 1_500, latestAttentionAt: 5_000 }));
       sdk.stub("threads.interactions.list", () => []);
       sdk.stub("threads.output", () => ({ output: "Captain, shipshape." }));
+      sdk.stub("threads.events.list", () => [
+        { seq: 4, createdAt: 5_000, type: "turn/completed" },
+        { seq: 3, createdAt: 4_000, type: "turn/started" },
+        { seq: 2, createdAt: 1_000, type: "turn/completed" },
+      ]);
       sdk.stub("threads.markRead", () => makeThreadResponse({ id: "thr_mate" }));
       return loaded;
     }
