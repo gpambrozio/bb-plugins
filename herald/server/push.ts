@@ -190,6 +190,11 @@ export class PushTakeover {
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   /** Sends under way, which an unload waits for so none fails unrecorded. */
   private readonly sending = new Set<Promise<void>>();
+  /** Threads archived or deleted while loaded: never taken over again. */
+  private readonly forgotten = new Set<string>();
+  /** Outbox rows this instance has scheduled or is sending, so a re-scan does not take them twice. */
+  private readonly scheduledSends = new Set<string>();
+  private readonly attempting = new Set<string>();
   /** The latest give-back asked for, per thread; an older one is dropped. */
   private readonly giveBackTokens = new Map<string, number>();
   private tokenCounter = 0;
@@ -205,7 +210,21 @@ export class PushTakeover {
    */
   setReady(): Promise<void> {
     this.ready = true;
+    this.rescanOutboxLater();
     return this.resumeOutbox();
+  }
+
+  /**
+   * The instance before may still be finishing an event after it signalled
+   * it was done — bb drains its handlers after Herald's own unload — and
+   * store a send that failed then; so the outbox is read again every
+   * `RETRY_MS` while this instance is loaded.
+   */
+  private rescanOutboxLater(): void {
+    if (this.closed) return;
+    this.setTimer(RETRY_MS, () => {
+      void this.resumeOutbox().finally(() => this.rescanOutboxLater());
+    });
   }
 
   /** The switch was turned on: a failure before it is forgotten, and bb is asked afresh. */
@@ -255,7 +274,7 @@ export class PushTakeover {
    * only brings the level in line). Never rejects: when bb cannot be read,
    * Herald sends if it holds a mute on the thread or on a thread above it.
    */
-  decide(threadId: string, choiceOf: () => Promise<ThreadChoice>, event: PushEvent | null): Promise<boolean> {
+  decide(threadId: string, choiceOf: () => Promise<ThreadChoice>, event: PushEvent | null, takeOver = true): Promise<boolean> {
     return this.enqueue(async () => {
       const known: { ancestorIds: string[] | null } = { ancestorIds: null };
       try {
@@ -264,7 +283,8 @@ export class PushTakeover {
         if (!(await this.deps.enabled()) && (await this.deps.kv.list(PUSH_RECORD_PREFIX)).length === 0) return false;
         const state = await this.read(threadId, known);
         if (state === null) return false;
-        if (this.ready && !this.closed) await this.sync(state, choiceOf);
+        // An event a newer one replaced only settles what it is owed: it takes no level.
+        if (takeOver && this.ready && !this.closed) await this.sync(state, choiceOf);
         return event !== null && this.owes(state, event);
       } catch (error) {
         this.deps.log.warn(`Could not read or change bb's notification level for ${threadId}: ${reasonOf(error)}`);
@@ -295,6 +315,7 @@ export class PushTakeover {
 
   /** The thread was archived (its level goes back, for an unarchive) or deleted (nothing is left to give back). */
   forget(threadId: string, giveBack: boolean): Promise<void> {
+    this.forgotten.add(threadId);
     if (giveBack) {
       this.scheduleGiveBack(threadId, "thread");
       return Promise.resolve();
@@ -443,20 +464,26 @@ export class PushTakeover {
    * too.
    */
   private owes(state: LevelState, event: PushEvent): boolean {
-    const atFlush = (id: string): OwnLevel => {
-      const record = state.records.get(id);
-      if (record === undefined) return state.own.get(id) ?? "inherit";
-      const inForce = record.releasedAt === undefined || record.releasedAt > event.at;
-      return inForce ? "muted" : record.previous;
-    };
+    const atFlush = (id: string): OwnLevel => (this.inForce(state, id, event.at) !== undefined ? "muted" : (state.own.get(id) ?? "inherit"));
     const read = resolveLevel(state.threadId, state.ancestorIds, atFlush, state.defaults);
-    const wouldHave = resolveLevel(state.threadId, state.ancestorIds, this.withoutHerald(state), state.defaults);
+    const wouldHave = resolveLevel(state.threadId, state.ancestorIds, this.withoutHerald(state, event.at), state.defaults);
     return !levelAllows(read, event.reason) && levelAllows(wouldHave, event.reason);
   }
 
-  /** Each thread's own level, with every record of Herald's replaced by the level it replaced. */
-  private withoutHerald(state: LevelState): (id: string) => OwnLevel {
-    return (id) => state.records.get(id)?.previous ?? state.own.get(id) ?? "inherit";
+  /**
+   * The thread's record if its mute was in force at some moment after `at`:
+   * held, or given back after it. A record given back before `at` says
+   * nothing about the event: the thread's level since is whatever bb reports
+   * now — its own, or another writer's — not what Herald once replaced.
+   */
+  private inForce(state: LevelState, id: string, at: number): PushRecord | undefined {
+    const record = state.records.get(id);
+    return record !== undefined && (record.releasedAt === undefined || record.releasedAt > at) ? record : undefined;
+  }
+
+  /** Each thread's own level, with every mute of Herald's in force after `at` replaced by the level it replaced. */
+  private withoutHerald(state: LevelState, at: number): (id: string) => OwnLevel {
+    return (id) => this.inForce(state, id, at)?.previous ?? state.own.get(id) ?? "inherit";
   }
 
   /** Takes the thread over, or asks for its level back, as its choice and the switch say. */
@@ -476,12 +503,12 @@ export class PushTakeover {
       this.retries.delete(threadId);
       return;
     }
-    if (!wanted) return;
+    if (!wanted || this.forgotten.has(threadId)) return;
     const own = state.own.get(threadId) ?? "inherit";
     // Muted already, by its own level or an ancestor's Herald did not set:
     // there is nothing bb would say for Herald to say instead.
     if (own === "muted") return;
-    if (resolveLevel(threadId, state.ancestorIds, this.withoutHerald(state), state.defaults) === "muted") return;
+    if (resolveLevel(threadId, state.ancestorIds, this.withoutHerald(state, this.now()), state.defaults) === "muted") return;
     // Checked again after the awaits above: a switch, a failure or an unload meanwhile wins.
     if (this.epoch !== epoch || this.closed) return;
     // The record first: a mute that lands with no record would never be given back.
@@ -594,6 +621,15 @@ export class PushTakeover {
   }
 
   private async attempt(item: Outgoing): Promise<void> {
+    if (item.id !== null) this.attempting.add(item.id);
+    try {
+      await this.attemptOnce(item);
+    } finally {
+      if (item.id !== null) this.attempting.delete(item.id);
+    }
+  }
+
+  private async attemptOnce(item: Outgoing): Promise<void> {
     const { subject, sentence } = item;
     let news: boolean;
     try {
@@ -636,8 +672,11 @@ export class PushTakeover {
   }
 
   private scheduleSend(item: Outgoing): void {
-    if (this.closed) return;
+    if (this.closed || item.id === null) return;
+    const id = item.id;
+    this.scheduledSends.add(id);
     this.setTimer(Math.max(0, item.dueAt - this.now()), () => {
+      this.scheduledSends.delete(id);
       if (!this.closed) void this.track(this.attempt(item));
     });
   }
@@ -646,7 +685,9 @@ export class PushTakeover {
   private async resumeOutbox(): Promise<void> {
     try {
       for (const key of await this.deps.kv.list(OUTBOX_PREFIX)) {
-        const item = outgoingOf(key.slice(OUTBOX_PREFIX.length), await this.deps.kv.get<unknown>(key));
+        const id = key.slice(OUTBOX_PREFIX.length);
+        if (this.scheduledSends.has(id) || this.attempting.has(id)) continue;
+        const item = outgoingOf(id, await this.deps.kv.get<unknown>(key));
         if (item === null) await this.deps.kv.delete(key);
         else this.scheduleSend(item);
       }

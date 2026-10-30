@@ -41,7 +41,8 @@ export interface HeraldConfig {
  */
 export interface PushHooks {
   saw(threadId: string, at: number): void;
-  decide(threadId: string, choiceOf: () => Promise<ThreadChoice>, event: PushEvent | null): Promise<boolean>;
+  /** `takeOver` false: settle what the event is owed, and change no level. */
+  decide(threadId: string, choiceOf: () => Promise<ThreadChoice>, event: PushEvent | null, takeOver?: boolean): Promise<boolean>;
   send(subject: PushSubject, sentence: string): Promise<void>;
 }
 
@@ -80,6 +81,14 @@ const PROMPT_PART_MAX = 1000;
 function cut(text: string | null, max: number): string | null {
   return text !== null && text.length > max ? `${text.slice(0, max)}…` : text;
 }
+
+/**
+ * How long an unload waits for event handlers still looking things up, and
+ * for the notifications they send: bb drains a plugin's handlers only after
+ * its unload hook, so what finishes later is the next instance's to find in
+ * the outbox.
+ */
+export const DISPOSE_DRAIN_MS = 5_000;
 
 /** A second `thread.idle` for the same turn inside this window is a repeat, not a new turn. */
 export const TURN_REPEAT_WINDOW_MS = 15_000;
@@ -170,14 +179,41 @@ export function createHooks(deps: HookDeps): Hooks {
   }
 
   /** Whether Herald notifies this event itself; false without the push hooks. */
-  function decidePush(thread: ThreadDto, event: PushEvent, config: HeraldConfig, choice: ChoiceInputs): Promise<boolean> {
+  function decidePush(thread: ThreadDto, event: PushEvent, config: HeraldConfig, choice: ChoiceInputs, takeOver = true): Promise<boolean> {
     if (deps.push === undefined) return Promise.resolve(false);
     const effective = choiceFor(thread, config, choice);
-    return deps.push.decide(thread.id, () => Promise.resolve(effective), event);
+    return deps.push.decide(thread.id, () => Promise.resolve(effective), event, takeOver);
+  }
+
+  /** Handlers still running, and notifications being decided or sent: an unload waits for both. */
+  const handlersRunning = new Set<Promise<void>>();
+  const pushesRunning = new Set<Promise<void>>();
+
+  function tracked(set: Set<Promise<void>>, work: Promise<void>): Promise<void> {
+    set.add(work);
+    void work.finally(() => set.delete(work));
+    return work;
   }
 
   function pushWhen(owes: Promise<boolean>, subject: PushSubject, sentence: string): void {
-    void owes.then((yes) => (yes ? deps.push?.send(subject, sentence) : undefined));
+    void tracked(
+      pushesRunning,
+      owes.then(async (yes) => {
+        if (yes) await deps.push?.send(subject, sentence);
+      }),
+    );
+  }
+
+  /** Waits for every promise in the set, new ones included, for at most `until`. */
+  async function drain(set: Set<Promise<void>>, until: number): Promise<void> {
+    while (set.size > 0) {
+      // The wall clock, not `deps.now`, which a test may hold still.
+      const left = until - Date.now();
+      if (left <= 0) return;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([Promise.all([...set]), new Promise((resolve) => (timer = setTimeout(resolve, left)))]);
+      clearTimeout(timer);
+    }
   }
 
   function sendOwed(eventId: string, sentence: string): void {
@@ -254,7 +290,8 @@ export function createHooks(deps: HookDeps): Hooks {
       return;
     }
     const base = baseOf(recording);
-    pushWhen(decidePush(recording.thread, { reason: recording.reason, at: recording.at }, recording.config, recording.choice), base, fallbackSpeech(base));
+    // Settled only: an event a newer one replaced takes no level, so it cannot re-take a thread given back meanwhile.
+    pushWhen(decidePush(recording.thread, { reason: recording.reason, at: recording.at }, recording.config, recording.choice, false), base, fallbackSpeech(base));
   }
 
   function baseOf(recording: Recording): Omit<AttentionEntry, "summary"> {
@@ -403,12 +440,17 @@ export function createHooks(deps: HookDeps): Hooks {
   }
 
   /** Runs a handler's async work; a failure is logged, never left to reject inside the bb server. */
-  async function guarded(what: string, work: () => Promise<void>): Promise<void> {
-    try {
-      await work();
-    } catch (error) {
-      deps.log.error(`Handling ${what} failed: ${reasonOf(error)}`);
-    }
+  function guarded(what: string, work: () => Promise<void>): Promise<void> {
+    return tracked(
+      handlersRunning,
+      (async () => {
+        try {
+          await work();
+        } catch (error) {
+          deps.log.error(`Handling ${what} failed: ${reasonOf(error)}`);
+        }
+      })(),
+    );
   }
 
   /**
@@ -551,11 +593,12 @@ export function createHooks(deps: HookDeps): Hooks {
 
     async dispose() {
       disposed = true;
-      const owed = [...owedPushes.values()];
-      owedPushes.clear();
-      await Promise.all(owed.map(async ({ owes, subject, fallback }) => {
-        if (await owes) await deps.push?.send(subject, fallback);
-      }));
+      // Handlers still looking things up finish first: their events settle
+      // what they are owed (`admit`), within the instance's own unload.
+      const until = Date.now() + DISPOSE_DRAIN_MS;
+      await drain(handlersRunning, until);
+      for (const [eventId, { fallback }] of [...owedPushes]) sendOwed(eventId, fallback);
+      await drain(pushesRunning, until);
     },
   };
 }

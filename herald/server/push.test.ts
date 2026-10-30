@@ -354,6 +354,41 @@ describe("PushTakeover", () => {
       expect(bb.own.get("t1")).toBe("muted");
     });
 
+    it("lets a worker it gave back keep an explicit All under a coordinator it still holds", async () => {
+      bb.parents.set("worker", "t1");
+      await decide("t1", "announce", null);
+      await decide("worker", "announce", null);
+      await decide("worker", "silent", null);
+      await quiet();
+      expect(bb.own.has("worker")).toBe(false);
+      // Children muted by default, this worker exempted with its own All.
+      bb.defaultsValue = { defaultLevel: "all", childLevel: "muted" };
+      bb.own.set("worker", "all");
+      expect(await decide("worker", "silent", "question")).toBe(true);
+    });
+
+    it("respects a Muted set on a worker after it gave the worker back", async () => {
+      bb.parents.set("worker", "t1");
+      await decide("t1", "announce", null);
+      await decide("worker", "announce", null);
+      await decide("worker", "silent", null);
+      await quiet();
+      bb.own.set("worker", "muted");
+      expect(await decide("worker", "silent", "question")).toBe(false);
+    });
+
+    it("never takes an archived thread over again, and a decision that only settles takes no level", async () => {
+      await decide("t1", "announce", null);
+      await push.forget("t1", true);
+      await quiet();
+      expect(bb.own.has("t1")).toBe(false);
+      // A stale event's lookup comes back after the archive's give-back.
+      await decide("t1", "announce", "question");
+      expect(bb.own.has("t1")).toBe(false);
+      expect(await push.decide("t2", choice("announce"), event("t2", "question"), false)).toBe(false);
+      expect(bb.own.has("t2")).toBe(false);
+    });
+
     it("gives an archived thread back and forgets a deleted one", async () => {
       await decide("t1", "announce", null);
       await decide("t2", "announce", null);
@@ -603,6 +638,20 @@ describe("PushTakeover", () => {
       expect(bb.sent.map((sent) => sent.body)).toEqual(["Login fix finished."]);
       expect([...kv.rows.keys()].some((key) => key.startsWith(OUTBOX_PREFIX))).toBe(false);
       await next.close();
+    });
+
+    it("picks up a failed send the instance before stored after this one's first look at the outbox", async () => {
+      const old = new PushTakeover({ port: bb, kv, enabled: async () => true, facts: async () => facts, interactionPending: async () => true, log });
+      await old.setReady();
+      await old.close();
+      // The replacement is ready and has read an empty outbox.
+      // The old instance's late event then fails to send.
+      bb.sendError = new Error("relay down");
+      await old.send(subject(), "Login fix finished.");
+      expect([...kv.rows.keys()].some((key) => key.startsWith(OUTBOX_PREFIX))).toBe(true);
+      bb.sendError = null;
+      await vi.advanceTimersByTimeAsync(RETRY_MS + SEND_RETRY_MS[0]);
+      expect(bb.sent.map((sent) => sent.body)).toEqual(["Login fix finished."]);
     });
 
     it("gives up a send after its last try, with an error", async () => {

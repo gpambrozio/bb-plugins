@@ -9,7 +9,7 @@ import type { AttentionReason } from "../shared/herald";
 import { NO_CHOICE, type ChoiceInputs, type ThreadChoice } from "../shared/thread-choice";
 import { createHooks, type HeraldConfig, type HookDeps, type PushHooks } from "./hooks";
 import type { EventsPort, PushPort, ThreadDto } from "./ports";
-import { PushTakeover, type PushSubject } from "./push";
+import { OUTBOX_PREFIX, PushTakeover, SEND_RETRY_MS, type PushSubject } from "./push";
 import { AttentionStore } from "./store";
 import { commandApproval, planApproval, question, recordingLog, settle, thread } from "./testing/fixtures";
 
@@ -36,6 +36,8 @@ const events: EventsPort = {
 
 interface FakePush extends PushHooks {
   seen: string[];
+  /** The `takeOver` of each decision, in order. */
+  takeOvers: boolean[];
   decisions: Array<{ threadId: string; choice: ThreadChoice; reason: AttentionReason | null }>;
   sent: Array<{ subject: PushSubject; sentence: string }>;
   owes: boolean;
@@ -44,13 +46,15 @@ interface FakePush extends PushHooks {
 function fakePush(): FakePush {
   const fake: FakePush = {
     seen: [],
+    takeOvers: [],
     decisions: [],
     sent: [],
     owes: true,
     saw(threadId) {
       fake.seen.push(threadId);
     },
-    async decide(threadId, choiceOf, event) {
+    async decide(threadId, choiceOf, event, takeOver = true) {
+      fake.takeOvers.push(takeOver);
       fake.decisions.push({ threadId, choice: await choiceOf(), reason: event?.reason ?? null });
       return event !== null && fake.owes;
     },
@@ -90,7 +94,7 @@ function heldWriter() {
  * The real takeover over a bb whose every thread is at its default level,
  * with interactions answered by id; what it sends is recorded.
  */
-function realPush(answeredIds: Set<string>, pendingFails: { value: boolean }) {
+function realPush(answeredIds: Set<string>, pendingFails: { value: boolean }, shared: { rows?: Map<string, unknown>; sendFails?: { value: boolean } } = {}) {
   const own = new Map<string, string>();
   const sent: Array<{ threadId: string; body: string }> = [];
   const port: PushPort = {
@@ -100,9 +104,12 @@ function realPush(answeredIds: Set<string>, pendingFails: { value: boolean }) {
     ownLevels: async (ids) => new Map(ids.flatMap((id) => (own.has(id) ? [[id, own.get(id) as "muted"]] : []))),
     setOwnLevel: async (id, level) => void (level === "inherit" ? own.delete(id) : own.set(id, level)),
     defaults: async () => ({ defaultLevel: "all", childLevel: "input-only" }),
-    send: async ({ threadId, body }) => void sent.push({ threadId, body }),
+    send: async ({ threadId, body }) => {
+      if (shared.sendFails?.value === true) throw new Error("relay down");
+      sent.push({ threadId, body });
+    },
   };
-  const rows = new Map<string, unknown>();
+  const rows = shared.rows ?? new Map<string, unknown>();
   const push = new PushTakeover({
     port,
     kv: {
@@ -119,8 +126,8 @@ function realPush(answeredIds: Set<string>, pendingFails: { value: boolean }) {
     },
     log: recordingLog(),
   });
-  push.setReady();
-  return { push, sent, own };
+  void push.setReady();
+  return { push, sent, own, rows };
 }
 
 const failed = (hooks: ReturnType<typeof setup>["hooks"], t: ThreadDto) => hooks.failed(t, "Out of credits");
@@ -228,6 +235,18 @@ describe("hooks with push notifications", () => {
     expect(push.sent).toHaveLength(1);
   });
 
+  it("settles an event a newer one replaced without taking a level", async () => {
+    const { hooks, push } = setup();
+    let release: () => void = () => {};
+    holdNextContext = new Promise((resolve) => (release = resolve));
+    const first = hooks.interactionPending(thread(), question({ id: "qa" }));
+    await hooks.interactionPending(thread(), question({ id: "qb" }));
+    release();
+    await first;
+    await settle();
+    expect(push.takeOvers).toEqual([true, false]);
+  });
+
   it("hears of each event before its lookups", async () => {
     const { hooks, push } = setup();
     void hooks.idle(thread(), "Done.");
@@ -291,6 +310,38 @@ describe("hooks with push notifications", () => {
       // The banner keeps the newer question; the notification goes for the one still waiting.
       expect(store.get("t1")?.requestId).toBe("qb");
       expect(real.sent.map((sent) => sent.body)).toEqual(["Login fix has a question: Which DB? Options: Postgres / SQLite."]);
+    });
+
+    it("finishes an event still being looked up when Herald unloads, and leaves its failed send to the next instance", async () => {
+      const rows = new Map<string, unknown>();
+      const sendFails = { value: false };
+      const old = realPush(new Set(), { value: false }, { rows, sendFails });
+      const { hooks } = setup({ push: old.push });
+      hooks.active(thread());
+      await settle();
+      let release: () => void = () => {};
+      holdNextContext = new Promise((resolve) => (release = resolve));
+      const pending = hooks.interactionPending(thread(), question());
+      sendFails.value = true;
+      const disposing = hooks.dispose();
+      await settle();
+      release();
+      await pending;
+      await disposing;
+      // Stored within the unload itself, before Herald says it is done.
+      expect([...rows.keys()].some((key) => key.startsWith(OUTBOX_PREFIX))).toBe(true);
+      await old.push.close();
+      // The next instance finds it, and sends it once bb can.
+      vi.useFakeTimers();
+      try {
+        sendFails.value = false;
+        const next = realPush(new Set(), { value: false }, { rows, sendFails });
+        await vi.advanceTimersByTimeAsync(SEND_RETRY_MS[0]);
+        expect(next.sent.map((sent) => sent.body)).toEqual(["Login fix has a question: Which DB? Options: Postgres / SQLite."]);
+        await next.push.close();
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 });

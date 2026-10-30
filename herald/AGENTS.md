@@ -287,7 +287,9 @@ a level. `server/push.ts` holds the logic; what must stay true:
   yet, and `owes` does not try: a record's mute counts as holding an event back if it was in force at
   *any* moment after the event — held now, however late it was set, or given back after the event
   (`releasedAt`, kept `RELEASE_LOG_MS`, ten minutes, for decisions that run late). A re-take replaces a
-  given-back record with a held one, which counts too. The cost is a rare second notification — a mute
+  given-back record with a held one, which counts too. A record given back *before* the event says
+  nothing about it: the thread's level since is what bb reports now (an explicit All, another writer's
+  Muted), never the `previous` Herald once replaced (review pass 3). The cost is a rare second notification — a mute
   set while bb was already sending (the first event of a thread Herald takes over without having seen
   it start a turn), a give-back while bb was still reading — never a lost one. Review pass 2 found the
   earlier 2.5-second cutoff lost a question when bb's reads were slow; do not bring a deadline back.
@@ -302,13 +304,18 @@ a level. `server/push.ts` holds the logic; what must stay true:
   `thread_not_found`) stops new takeovers and gives every level back, and is itself stored under
   `outbox:` and tried again (`SEND_RETRY_MS`) while still news, then given up with an error.
   Notifications already owed keep going out: bb discarded them under the mute, and a give-back does not
-  make bb send an old event. Unloading waits for sends under way and leaves the outbox in storage; the
-  next instance takes it up when it becomes ready. `push.status` names threads still muted by Herald
+  make bb send an old event. Unloading first lets event handlers still looking things up finish and
+  their notifications go out (`hooks.dispose()`, at most `DISPOSE_DRAIN_MS`), waits for sends under way,
+  and leaves the outbox in storage; the next instance takes it up when it becomes ready and reads it
+  again every `RETRY_MS`, since bb drains a plugin's handlers only after its unload hook and a late one
+  can still store a failed send. `push.status` names threads still muted by Herald
   while it retries a give-back.
 - **Obligations belong to the event, not the banner.** Every event whose lookups finish gets its
   notification decided, even one a newer event or turn has replaced for the banner (`admit`): an earlier
   question still waits when a later one was answered, and bb was muted for both. Such an event goes
-  with the plain sentence. With model-written sentences, the notification goes out with the event's own
+  with the plain sentence, and only settles (`takeOver` false): it changes no level, so it cannot
+  re-take a thread given back meanwhile. A thread archived or deleted while loaded is never taken over
+  again (`forgotten`). With model-written sentences, the notification goes out with the event's own
   sentence when it lands (or the plain one if the tool fails or Herald unloads), whatever happened to
   the entry meanwhile. `send` judges news itself and notifies when it cannot read whether a question was
   answered.
