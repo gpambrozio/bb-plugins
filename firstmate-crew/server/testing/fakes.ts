@@ -10,6 +10,7 @@ import type { Log } from "../log";
 import type {
   ContextUsage,
   ProjectsPort,
+  ReadState,
   RestState,
   SendMode,
   ShortenedMessage,
@@ -18,6 +19,7 @@ import type {
   ThreadOrigin,
   ThreadsPort,
   TurnEnd,
+  TurnEvent,
 } from "../ports";
 import { createStore, type Store } from "../store";
 
@@ -45,6 +47,7 @@ export class FakeThreads implements ThreadsPort {
   /** Each thread's turn events, in the order bb would number them. */
   private readonly turnEvents = new Map<string, { type: "started" | "completed"; seq: number; at: number }[]>();
   private readonly usages = new Map<string, ContextUsage>();
+  private readonly reads = new Map<string, ReadState>();
   /** What `restState` adds to a thread's status; absent fields are at rest. */
   private readonly rest = new Map<string, Partial<Omit<RestState, "status" | "parentThreadId">>>();
   private nextSeq = 1;
@@ -109,6 +112,18 @@ export class FakeThreads implements ThreadsPort {
     events.push(end);
     this.turnEvents.set(id, events);
     return { seq: end.seq, at: end.at };
+  }
+
+  /** Starts a turn in the thread's event log, without ending it. */
+  startTurn(id: string, at: number): void {
+    const events = this.turnEvents.get(id) ?? [];
+    events.push({ type: "started", seq: this.nextSeq++, at });
+    this.turnEvents.set(id, events);
+  }
+
+  /** How far the captain has read the thread; never set, it is unread with no attention. */
+  setReadState(id: string, state: ReadState): void {
+    this.reads.set(id, { ...state });
   }
 
   /** Sets what keeps a thread awake beyond its status: a queue, an interaction, background agents, its machine. */
@@ -280,6 +295,31 @@ export class FakeThreads implements ThreadsPort {
     await tick();
     this.throwIfFailing("compact");
     this.require(id);
+  }
+
+  async markRead(id: string): Promise<void> {
+    this.record("markRead", id);
+    await this.settle("markRead", undefined);
+    this.throwIfFailing("markRead");
+  }
+
+  async readState(id: string): Promise<ReadState | null> {
+    this.record("readState", id);
+    await this.settle("readState", undefined);
+    this.throwIfFailing("readState");
+    const thread = this.threads.get(id);
+    if (thread === undefined || thread.archivedAt !== null) return null;
+    return { ...(this.reads.get(id) ?? { lastReadAt: null, latestAttentionAt: 0 }) };
+  }
+
+  async recentTurnEvents(id: string, limit: number): Promise<TurnEvent[]> {
+    this.record("recentTurnEvents", id, limit);
+    await this.settle("recentTurnEvents", undefined);
+    this.throwIfFailing("recentTurnEvents");
+    return [...(this.turnEvents.get(id) ?? [])]
+      .reverse()
+      .slice(0, limit)
+      .map((event) => ({ ...event }));
   }
 
   async restState(id: string, signal?: AbortSignal): Promise<RestState | null> {

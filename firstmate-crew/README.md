@@ -180,6 +180,8 @@ how to write one; the first mate adds none without your approval.
   the refresh catches the rest, such as edits to the backlog. It runs once for every open board, in any
   window, and stops when the last one closes. On bb 0.48 a board whose tab is hidden, or whose panel is
   closed, does not reload until it is shown again.
+- **First mate: no notification for "Captain, shipshape."** (default off): the first mate's no-op replies
+  stop notifying you. See below.
 - **Autocompact**, once for the first mate and once for the crew: whether to compact the conversation on
   its own (default off), above how many thousand tokens of context (default 200, meaning 200,000
   tokens), and after how many idle minutes (default 60). See below.
@@ -217,6 +219,33 @@ separately for the first mate and for the crew, each with its own token threshol
   took it, FirstMate reports the failure rather than sending the message twice.
 - A compaction is a turn of its own. For a worker, bb reports it to the first mate like any of the
   worker's turns, so the first mate wakes briefly to a turn with nothing new in it.
+
+## Quiet shipshape
+
+When there was nothing to do, the first mate replies exactly "Captain, shipshape.", and bb notifies you of
+that turn like any other. Switch on **First mate: no notification for "Captain, shipshape."** and
+FirstMate marks such a turn read as soon as it ends, so bb sends no notification for it.
+
+- Only a reply that is "Captain, shipshape." and nothing else counts, in any case, with or without the
+  comma and the full stop. Anything more notifies as usual.
+- Only the first mate's own thread, and only while that reply is still its latest turn: not when another
+  turn has started or a message is waiting for it, and never while it waits on your answer to a question
+  or an approval.
+- Only when you had read everything before it. bb marks a whole thread read at once, so a shipshape that
+  follows a reply you have not read yet notifies as usual, and that reply keeps its unread mark.
+- No notification level changes, so your workers and every other turn of the first mate notify as bb's
+  settings say.
+- A shipshape turn no longer leaves an unread mark on the first mate in the sidebar.
+- It relies on how bb's Push Notifications sends: it waits about two seconds after a turn ends and skips a
+  turn you have read by then. That is not something bb promises. If bb changes it, or FirstMate cannot mark
+  the turn read in time, you get the notification as before; a failure is written to the plugin's log.
+- FirstMate looks at the first mate twice before marking it read, and leaves it if anything changed in
+  between. bb cannot mark only one turn read, so anything new that calls for your attention while that
+  last look and the mark are still on their way — a reply, a question or an approval, or an error the
+  moment a turn starts — would be marked read too, and not notify. That interval is normally short and
+  a new turn usually takes seconds, so this is unlikely, not impossible.
+- After autocompact compacts the first mate, the next shipshape may still notify: the compaction is a turn
+  of its own, and it counts as read only once you have opened the thread since.
 
 ## Limitations
 

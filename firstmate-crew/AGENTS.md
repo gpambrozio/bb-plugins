@@ -13,7 +13,8 @@ against bb 0.44.0 and `@get-bb/plugin-sdk` 0.5.29; the pinned launch and the int
 crew metadata read against bb 0.46.0 and SDK 0.6.37, which it needs since 0.5.0; autocompact (0.6.0)
 against bb 0.46.1's server and the same SDK; the board's live reads, the `experimental_tab`, compact-first
 sends and the host toolchain (0.7.0) against SDK 0.6.94, built with bb 0.47.1 (which it needs since 0.7.0)
-and 0.48.0; the Notify parent guard (0.8.0) against bb 0.48.1, with the same SDK.
+and 0.48.0; the Notify parent guard (0.8.0) against bb 0.48.1, with the same SDK; quiet shipshape (0.9.0)
+against bb 0.48.1's bundled push-notifications plugin, read from its build (not staged live).
 
 ## Orientation
 
@@ -27,7 +28,8 @@ and 0.48.0; the Notify parent guard (0.8.0) against bb 0.48.1, with the same SDK
 | `server/cli.ts` | `bb firstmate-crew crew spawn` and `bb firstmate-crew tell` (words or `--message-base64`, always under the relay line). |
 | `server/bb-ports.ts`, `server/ports.ts` | The narrow `ThreadsPort` and `ProjectsPort` over `bb.sdk`, so everything else is tested against fakes. Where the machine rule below lives. |
 | `server/store.ts` | `bb.storage.kv`: the first mate's thread id, the switched-off watches and autocompact's marks. Nothing else. |
-| `server/settings.ts` | `bb.settings.define`: home directory, crew provider/model/reasoning, board refresh, and autocompact's six (on, thousands of tokens, idle minutes, for the first mate and for the crew). The token thresholds are set in thousands (`*KTokens`, ×1,000 in `autoCompactRules`) because bb's number field shows no thousands separators. |
+| `server/settings.ts` | `bb.settings.define`: home directory, crew provider/model/reasoning, board refresh, quiet shipshape, and autocompact's six (on, thousands of tokens, idle minutes, for the first mate and for the crew). The token thresholds are set in thousands (`*KTokens`, ×1,000 in `autoCompactRules`) because bb's number field shows no thousands separators. |
+| `server/quiet-shipshape.ts` | `mateQuietShipshape`: the no-op rule (`isNoOpReply`) and marking the first mate's no-op turn read. |
 | `server/autocompact.ts` | One autocompact check: which thread is at rest, idle long enough (bb's cache deadline, else the idle minutes) and over its threshold; the once-per-idle-stretch marks; `dueNow` for one thread. |
 | `server/compact-first.ts` | A message to a thread autocompact would compact now goes with bb's `compactFirst`. |
 | `server/home.ts`, `charter.ts`, `charter-file.ts` | Preparing the home; rendering `AGENTS.md`; the charter following the plugin until edited. |
@@ -163,6 +165,28 @@ Do not break these; each was paid for.
   and sends nothing more. A failure is logged once until it changes or clears (`FailureLog`); past its
   1,000 threads it admits no new ones and logs one summary, rather than evicting and logging again. Only the first mate and its live children are candidates; marks of anything else are
   dropped.
+- **Quiet shipshape changes no notification level** (`server/quiet-shipshape.ts`, opt-in). bb's
+  push-notifications plugin caps every thread by each ancestor's own level, even a child set to `all`, so
+  quieting the first mate by level would quiet its whole crew too. Instead, when the first mate's turn
+  ends with exactly the charter's `Captain, shipshape.` (`isNoOpReply`, kept narrow; a test reads the
+  charter's words), the plugin marks the thread read (`threads.markRead`) at once, from the `thread.idle`
+  listener, beside the watch flush. It relies on bb 0.48.1's sender, which waits two seconds after a turn
+  ends (its coalescing window) and drops a finished turn the captain has read by then — internals, not a
+  contract: re-check after a bb upgrade. `markRead` writes the whole thread's `lastReadAt`, so the plugin
+  marks only when nothing before the no-op is unread, and only the no-op is the latest turn
+  (`safeToMark`): the stored first mate, idle, nothing queued, no pending interaction, its latest text
+  still the no-op, its latest turn events this turn's `turn/completed` and `turn/started`, and bb's read
+  watermark (`lastReadAt`) at or after the previous `turn/completed`. An unread reply before it, inside
+  bb's coalescing window or not, keeps its notification and its unread mark. It looks twice and marks only
+  if both looks pass and agree (latest turn `seq`, `latestAttentionAt`, `lastReadAt`). bb has no read mark
+  conditioned on a turn, so any new attention (a reply, a question or an approval, or an error as soon as
+  a turn starts) arriving while the second look's reads and the mark request are in flight is marked read
+  too: an accepted gap, normally short but not bounded, and a reply usually takes seconds. Runtime
+  status adds nothing for an idle thread (bb 0.48.1 reports a disconnected host only for an active one),
+  and a read mark needs no host, so connectivity is not checked. A compaction is a turn of its own, so the
+  first shipshape after autocompact usually notifies (its `previous` is the compaction, which the captain
+  has not opened). Every failure is logged and leaves bb's notification to go out; a late mark does the
+  same. A shipshape turn leaves no unread mark in the sidebar either; the README says so.
 - **Nothing throws into the server's event loop.** Services and listeners catch and log per tick;
   everything is released in `bb.onDispose`.
 - **Server code logs only through the injected `Log` (`server/log.ts`), wired to `bb.log`**, never

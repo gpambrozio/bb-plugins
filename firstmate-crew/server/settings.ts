@@ -71,6 +71,13 @@ export const SETTINGS = {
     description: "How often the board reloads the crew while it is open.",
     default: DEFAULT_REFRESH_SECONDS,
   },
+  mateQuietShipshape: {
+    type: "boolean",
+    label: "First mate: no notification for \"Captain, shipshape.\"",
+    description:
+      "When the first mate's whole reply is \"Captain, shipshape.\", meaning there was nothing to do, FirstMate marks the turn read so bb does not notify you of it. Every other turn notifies as bb's settings say. Workers are not affected.",
+    default: false,
+  },
   mateAutoCompact: {
     type: "boolean",
     label: "First mate: compact when idle",

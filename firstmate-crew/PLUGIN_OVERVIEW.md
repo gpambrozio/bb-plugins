@@ -6,11 +6,12 @@ You tell the first mate what you want done; it sends each task to a worker, a bb
 - **A board of the crew.** A FirstMate tab on the first mate's thread sorts every worker into Queued, Working, Blocked, Parked, Done, Failed and Idle, with its last word on what it is doing and a link to its pull request.
 - **Control from each card.** Steer a worker with a word, interrupt its turn, relaunch it in the same worktree, or end it. Ending a worker whose task is not done asks first.
 - **Answers on held cards.** A card waiting on your call carries a button for each answer the first mate expects, and a box to type your own; either goes straight to the first mate.
-- **Where things stand, on demand.** Bearings gives the state of everything. It is a button on the board and an entry in the command palette.
+- **Where things stand, on demand.** Bearings gives the state of everything, from the board or the command palette.
 - **Next steps as buttons.** The first mate offers what you will probably want next; pressing one sends it as if you had typed it.
 - **/fm from any thread.** Type `/fm` and a request in any thread, say `/fm run a review loop on this`, and the first mate gets it word for word with that thread's id, project and branch, so it knows which work you mean.
 - **Autocompact, if you want it.** Switch it on for the first mate, the crew or both, and a conversation that has sat idle long enough with a large context is compacted, so the next turn does not resend all of it. You set the token threshold and the idle time.
-- **Compact and Restart on the board.** Compact frees room in the first mate's conversation. Restart starts it afresh on the same thread; its records and the workers already running carry over. A gear beside them opens the plugin's settings.
+- **Compact and Restart on the board.** Compact frees room in the first mate's conversation. Restart starts it afresh on the same thread; its records and the workers carry over.
+- **Quiet shipshape, if you want it.** No notification when the first mate's whole reply is "Captain, shipshape."
 
 ## How it works
 

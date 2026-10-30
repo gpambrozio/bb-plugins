@@ -32,6 +32,7 @@ import {
   type MateDeps,
 } from "./server/mate";
 import type { ProjectsPort, ThreadsPort } from "./server/ports";
+import { quietShipshape } from "./server/quiet-shipshape";
 import { serialized } from "./server/serialize";
 import { autoCompactRules, DEFAULT_REFRESH_SECONDS, homeConfig, homePath, refreshMs, SETTINGS } from "./server/settings";
 import { createStore } from "./server/store";
@@ -284,8 +285,15 @@ export default async function plugin(bb: BbPluginApi) {
       // The turn's closing text is in hand, so the board's next load needs no fetch for it.
       if (role === "crew") reportCache().remember(thread.id, thread.updatedAt, lastAssistantText);
       publishFleet();
+      if (role !== "mate") return;
+      // At once, alongside the flush: bb's push sender looks at whether the turn was read two seconds after it ended.
+      const quieting = quietShipshape(
+        { threads: deps.threads, store, enabled: async () => (await settings.get()).mateQuietShipshape, log: bb.log },
+        thread.id,
+        lastAssistantText,
+      );
       // The first mate's turn has ended: whatever the watches queued meanwhile can go now.
-      if (role === "mate") await runner?.flush();
+      await Promise.all([quieting, runner?.flush()]);
     }),
   );
 

@@ -347,3 +347,43 @@ describe("bbThreads, autocompact's reads", () => {
     expect((await bbThreads(sdk).contextUsage("thr_1"))?.cacheExpiresAt).toBe(Date.UTC(2026, 9, 28, 12));
   });
 });
+
+describe("bbThreads read state and turn events", () => {
+  it("reads the latest turn events newest first, and the read watermark", async () => {
+    const { sdk, harness } = createFakeSdk({
+      pluginId: "firstmate-crew",
+      overrides: {
+        threads: {
+          get: () => makeThreadResponse({ id: "thr_mate", lastReadAt: 1_500, latestAttentionAt: 5_000 }),
+          events: {
+            list: () =>
+              [
+                { seq: 4, createdAt: 5_000, type: "turn/completed" },
+                { seq: 3, createdAt: 4_000, type: "turn/started" },
+              ] as never,
+          },
+        },
+      },
+    });
+    const threads = bbThreads(sdk);
+    expect(await threads.recentTurnEvents("thr_mate", 3)).toEqual([
+      { type: "completed", seq: 4, at: 5_000 },
+      { type: "started", seq: 3, at: 4_000 },
+    ]);
+    expect(harness.callsTo("threads.events.list")[0]?.[0]).toMatchObject({
+      threadId: "thr_mate",
+      types: ["turn/started", "turn/completed"],
+      order: "desc",
+      limit: "3",
+    });
+    expect(await threads.readState("thr_mate")).toEqual({ lastReadAt: 1_500, latestAttentionAt: 5_000 });
+  });
+
+  it("reads no watermark for an archived thread", async () => {
+    const { sdk } = createFakeSdk({
+      pluginId: "firstmate-crew",
+      overrides: { threads: { get: () => makeThreadResponse({ id: "thr_mate", archivedAt: 9 }) } },
+    });
+    expect(await bbThreads(sdk).readState("thr_mate")).toBeNull();
+  });
+});

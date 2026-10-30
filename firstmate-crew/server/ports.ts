@@ -37,6 +37,19 @@ export interface RestState {
   backgroundAgents: number;
 }
 
+/** How far the captain has read a thread, in epoch milliseconds: bb's read watermark and its latest call for attention. */
+export interface ReadState {
+  lastReadAt: number | null;
+  latestAttentionAt: number;
+}
+
+/** One `turn/started` or `turn/completed` event in a thread's log. `at` is epoch milliseconds. */
+export interface TurnEvent {
+  type: "started" | "completed";
+  seq: number;
+  at: number;
+}
+
 /** Where a thread's event log stands at the end of a turn. `at` is epoch milliseconds. */
 export interface TurnEnd {
   seq: number;
@@ -147,6 +160,12 @@ export interface ThreadsPort {
   clearContext(id: string): Promise<void>;
   /** Asks bb for the same structured `/compact` turn its composer sends. */
   compact(id: string): Promise<void>;
+  /** Marks the whole thread read up to now, as opening it in bb does. */
+  markRead(id: string): Promise<void>;
+  /** Null when the thread is missing, deleted or archived. */
+  readState(id: string): Promise<ReadState | null>;
+  /** The thread's latest `turn/started` and `turn/completed` events, newest first, at most `limit`. */
+  recentTurnEvents(id: string, limit: number): Promise<TurnEvent[]>;
   /** Null when the thread is missing, deleted or archived. */
   restState(id: string, signal?: AbortSignal): Promise<RestState | null>;
   /** The thread's latest `turn/completed` event, or null when no turn has ended yet. */
