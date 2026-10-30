@@ -238,6 +238,8 @@ export default async function plugin(bb: BbPluginApi) {
     // Given back, so an unarchived thread notifies as it did before Herald.
     void push.forget(thread.id, true);
   });
+  // Archiving gave its level back and kept Herald off it; unarchived, it may be taken over again.
+  bb.events.on("thread.unarchived", ({ thread }) => push.unarchived(thread.id));
   bb.events.on("thread.deleted", ({ thread }) => {
     hooks.gone(thread);
     void push.forget(thread.id, false);

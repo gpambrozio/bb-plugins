@@ -389,6 +389,16 @@ describe("PushTakeover", () => {
       expect(bb.own.has("t2")).toBe(false);
     });
 
+    it("takes an unarchived thread over again", async () => {
+      await decide("t1", "announce", null);
+      await push.forget("t1", true);
+      await quiet();
+      expect(bb.own.has("t1")).toBe(false);
+      push.unarchived("t1");
+      await decide("t1", "announce", null);
+      expect(bb.own.get("t1")).toBe("muted");
+    });
+
     it("gives an archived thread back and forgets a deleted one", async () => {
       await decide("t1", "announce", null);
       await decide("t2", "announce", null);

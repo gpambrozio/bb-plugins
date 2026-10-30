@@ -555,6 +555,20 @@ describe("herald server", () => {
       expect(host.push.levels.size).toBe(0);
     });
 
+    it("gives an archived thread back, and takes it over again once unarchived", async () => {
+      const { harness, push } = await loadPushing();
+      await harness.emitThreadEvent("thread.active", { thread: USER_THREAD });
+      await settle();
+      expect(push.levels.get(USER_THREAD.id)).toBe("muted");
+      await harness.emitThreadEvent("thread.archived", { thread: USER_THREAD });
+      await settle();
+      expect(push.levels.has(USER_THREAD.id)).toBe(false);
+      await harness.emitThreadEvent("thread.unarchived", { thread: USER_THREAD });
+      await harness.emitThreadEvent("thread.active", { thread: USER_THREAD });
+      await settle();
+      expect(push.levels.get(USER_THREAD.id)).toBe("muted");
+    });
+
     it("gives every level back when Herald unloads", async () => {
       const { harness, push } = await loadPushing();
       await harness.emitThreadEvent("thread.active", { thread: USER_THREAD });

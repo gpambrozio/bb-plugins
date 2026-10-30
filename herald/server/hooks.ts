@@ -41,6 +41,8 @@ export interface HeraldConfig {
  */
 export interface PushHooks {
   saw(threadId: string, at: number): void;
+  /** Stores an event Herald could not finish looking up before it unloads, for the next instance to decide. */
+  handOver(subject: PushSubject, sentence: string, event: PushEvent): Promise<void>;
   /** `takeOver` false: settle what the event is owed, and change no level. */
   decide(threadId: string, choiceOf: () => Promise<ThreadChoice>, event: PushEvent | null, takeOver?: boolean): Promise<boolean>;
   send(subject: PushSubject, sentence: string): Promise<void>;
@@ -178,6 +180,34 @@ export function createHooks(deps: HookDeps): Hooks {
     return at;
   }
 
+  /**
+   * Every event still being looked up, with what its notification would say
+   * with nothing looked up: registered as it arrives, so an unload whose
+   * drain runs out can hand it to the next instance while storage still
+   * works. A handed-over event sends nothing itself when its lookup returns.
+   */
+  const arrivals = new Map<number, { subject: PushSubject; fallback: string; event: PushEvent; handedOver: boolean }>();
+  let arrivalCounter = 0;
+
+  function arrive(thread: ThreadDto, at: number, what: { reason: AttentionReason; headline: string; detail: string | null; requestId: string | null }): number {
+    arrivalCounter += 1;
+    const subject = {
+      threadId: thread.id,
+      threadTitle: thread.title ?? thread.titleFallback,
+      projectName: null,
+      reason: what.reason,
+      requestId: what.requestId,
+      createdAt: new Date(at).toISOString(),
+    };
+    const fallback = fallbackSpeech({ ...subject, headline: what.headline, detail: what.detail });
+    arrivals.set(arrivalCounter, { subject, fallback, event: { reason: what.reason, at }, handedOver: false });
+    return arrivalCounter;
+  }
+
+  function handedOver(token: number): boolean {
+    return arrivals.get(token)?.handedOver === true;
+  }
+
   /** Whether Herald notifies this event itself; false without the push hooks. */
   function decidePush(thread: ThreadDto, event: PushEvent, config: HeraldConfig, choice: ChoiceInputs, takeOver = true): Promise<boolean> {
     if (deps.push === undefined) return Promise.resolve(false);
@@ -275,6 +305,8 @@ export function createHooks(deps: HookDeps): Hooks {
     output: string | null;
     /** When the event arrived, before any lookup. */
     at: number;
+    /** Its arrival (`arrive`). */
+    token: number;
   }
 
   /**
@@ -289,6 +321,7 @@ export function createHooks(deps: HookDeps): Hooks {
       record(recording);
       return;
     }
+    if (handedOver(recording.token)) return;
     const base = baseOf(recording);
     // Settled only: an event a newer one replaced takes no level, so it cannot re-take a thread given back meanwhile.
     pushWhen(decidePush(recording.thread, { reason: recording.reason, at: recording.at }, recording.config, recording.choice, false), base, fallbackSpeech(base));
@@ -319,7 +352,7 @@ export function createHooks(deps: HookDeps): Hooks {
     // Decided whatever is spoken: a mute of Herald's can suppress what bb
     // would have notified about an event Herald does not announce, and then
     // Herald notifies it with the plain sentence.
-    const owes = decidePush(thread, { reason, at: recording.at }, config, choice);
+    const owes = handedOver(recording.token) ? Promise.resolve(false) : decidePush(thread, { reason, at: recording.at }, config, choice);
     // Switched off, silenced from the thread menu, or a subagent its parent
     // speaks for: listed in the panel, with its sentence, never spoken — and
     // no tool is run to write it.
@@ -492,92 +525,110 @@ export function createHooks(deps: HookDeps): Hooks {
         // a silent end does not stand in for the turn end that follows it.
         if (output === "") return;
         if (isRepeatIdle(thread.id)) return;
-        const event = beginEvent(thread.id);
-        const generation = generationOf(thread.id);
-        const [config, context, choice] = await Promise.all([
-          deps.readConfig(),
-          deps.events.context(thread, { withRequest: true }),
-          choiceOf(thread),
-        ]);
-        const stale = generationOf(thread.id) !== generation || !isLatest(thread.id, event);
-        admit(stale, {
-          thread,
-          reason: "finished",
-          eventId: `${thread.id}:idle:${now().getTime()}`,
-          requestId: null,
-          headline: "Finished",
-          detail: firstWords(output, 60),
-          config,
-          choice,
-          projectName: context.projectName,
-          folder: context.folder,
-          lastUser: context.lastRequest,
-          output,
-          at,
-        });
+        const token = arrive(thread, at, { reason: "finished", headline: "Finished", detail: firstWords(output, 60), requestId: null });
+        try {
+          const event = beginEvent(thread.id);
+          const generation = generationOf(thread.id);
+          const [config, context, choice] = await Promise.all([
+            deps.readConfig(),
+            deps.events.context(thread, { withRequest: true }),
+            choiceOf(thread),
+          ]);
+          const stale = generationOf(thread.id) !== generation || !isLatest(thread.id, event);
+          admit(stale, {
+            thread,
+            reason: "finished",
+            eventId: `${thread.id}:idle:${now().getTime()}`,
+            requestId: null,
+            headline: "Finished",
+            detail: firstWords(output, 60),
+            config,
+            choice,
+            projectName: context.projectName,
+            folder: context.folder,
+            lastUser: context.lastRequest,
+            output,
+            at,
+            token,
+          });
+        } finally {
+          arrivals.delete(token);
+        }
       });
     },
 
     failed(thread, error) {
       if (thread.visibility === "hidden") return Promise.resolve();
       const at = sawEvent(thread);
+      const token = arrive(thread, at, { reason: "error", headline: error?.trim() || "The turn failed", detail: null, requestId: null });
       return guarded("thread.failed", async () => {
-        const event = beginEvent(thread.id);
-        const generation = generationOf(thread.id);
-        const [config, context, interrupted, choice] = await Promise.all([
-          deps.readConfig(),
-          deps.events.context(thread, { withRequest: true }),
-          deps.events.interruptedRecently(thread.id, INTERRUPT_GRACE_MS),
-          choiceOf(thread),
-        ]);
-        if (interrupted) return;
-        const stale = generationOf(thread.id) !== generation || !isLatest(thread.id, event);
-        admit(stale, {
-          thread,
-          reason: "error",
-          eventId: `${thread.id}:failed:${now().getTime()}`,
-          requestId: null,
-          headline: error?.trim() || "The turn failed",
-          detail: null,
-          config,
-          choice,
-          projectName: context.projectName,
-          folder: context.folder,
-          lastUser: context.lastRequest,
-          output: null,
-          at,
-        });
+        try {
+          const event = beginEvent(thread.id);
+          const generation = generationOf(thread.id);
+          const [config, context, interrupted, choice] = await Promise.all([
+            deps.readConfig(),
+            deps.events.context(thread, { withRequest: true }),
+            deps.events.interruptedRecently(thread.id, INTERRUPT_GRACE_MS),
+            choiceOf(thread),
+          ]);
+          if (interrupted) return;
+          const stale = generationOf(thread.id) !== generation || !isLatest(thread.id, event);
+          admit(stale, {
+            thread,
+            reason: "error",
+            eventId: `${thread.id}:failed:${now().getTime()}`,
+            requestId: null,
+            headline: error?.trim() || "The turn failed",
+            detail: null,
+            config,
+            choice,
+            projectName: context.projectName,
+            folder: context.folder,
+            lastUser: context.lastRequest,
+            output: null,
+            at,
+            token,
+          });
+        } finally {
+          arrivals.delete(token);
+        }
       });
     },
 
     interactionPending(thread, interaction) {
       if (thread.visibility === "hidden" || interaction.status !== "pending") return Promise.resolve();
       const at = sawEvent(thread);
+      const described = describeInteraction(interaction);
+      const token = arrive(thread, at, { reason: described.reason, headline: described.headline, detail: described.detail, requestId: interaction.id });
       return guarded("interaction.pending", async () => {
-        const described = describeInteraction(interaction);
-        const event = beginEvent(thread.id);
-        const generation = generationOf(thread.id);
-        const [config, context, choice] = await Promise.all([
-          deps.readConfig(),
-          deps.events.context(thread, { withRequest: false }),
-          choiceOf(thread),
-        ]);
-        const stale = generationOf(thread.id) !== generation || !isLatest(thread.id, event);
-        admit(stale, {
-          thread,
-          reason: described.reason,
-          eventId: `${thread.id}:interaction:${interaction.id}`,
-          requestId: interaction.id,
-          headline: described.headline,
-          detail: described.detail,
-          config,
-          choice,
-          projectName: context.projectName,
-          folder: context.folder,
-          lastUser: null,
-          output: null,
-          at,
-        });
+        try {
+          const event = beginEvent(thread.id);
+          const generation = generationOf(thread.id);
+          const [config, context, choice] = await Promise.all([
+            deps.readConfig(),
+            deps.events.context(thread, { withRequest: false }),
+            choiceOf(thread),
+          ]);
+          const stale = generationOf(thread.id) !== generation || !isLatest(thread.id, event);
+          admit(stale, {
+            thread,
+            reason: described.reason,
+            eventId: `${thread.id}:interaction:${interaction.id}`,
+            requestId: interaction.id,
+            headline: described.headline,
+            detail: described.detail,
+            config,
+            choice,
+            projectName: context.projectName,
+            folder: context.folder,
+            lastUser: null,
+            output: null,
+            at,
+            token,
+          });
+        } finally {
+          arrivals.delete(token);
+        }
       });
     },
 
@@ -597,6 +648,11 @@ export function createHooks(deps: HookDeps): Hooks {
       // what they are owed (`admit`), within the instance's own unload.
       const until = Date.now() + DISPOSE_DRAIN_MS;
       await drain(handlersRunning, until);
+      // Lookups still out: past this point bb may stop this instance's
+      // storage and calls, so each such event is stored for the next one.
+      const unfinished = [...arrivals.values()].filter((arrival) => !arrival.handedOver);
+      for (const arrival of unfinished) arrival.handedOver = true;
+      await Promise.all(unfinished.map((arrival) => deps.push?.handOver(arrival.subject, arrival.fallback, arrival.event)));
       for (const [eventId, { fallback }] of [...owedPushes]) sendOwed(eventId, fallback);
       await drain(pushesRunning, until);
     },

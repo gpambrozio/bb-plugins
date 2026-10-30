@@ -308,14 +308,19 @@ a level. `server/push.ts` holds the logic; what must stay true:
   their notifications go out (`hooks.dispose()`, at most `DISPOSE_DRAIN_MS`), waits for sends under way,
   and leaves the outbox in storage; the next instance takes it up when it becomes ready and reads it
   again every `RETRY_MS`, since bb drains a plugin's handlers only after its unload hook and a late one
-  can still store a failed send. `push.status` names threads still muted by Herald
+  can still store a failed send. A lookup can outlast both drains, after which bb has invalidated the
+  old instance's storage and calls, so every event registers its plain-sentence notification as it
+  arrives (`arrive`, before any lookup); when Herald's drain runs out, each one still out is stored in
+  the outbox *undecided* (`handOver`, with the event's kind and time) while storage still works, and
+  sends nothing itself when its lookup returns. The next instance decides it from the records (settle
+  only, no level change) and sends it, or drops it when Herald held no mute for it (review pass 4). `push.status` names threads still muted by Herald
   while it retries a give-back.
 - **Obligations belong to the event, not the banner.** Every event whose lookups finish gets its
   notification decided, even one a newer event or turn has replaced for the banner (`admit`): an earlier
   question still waits when a later one was answered, and bb was muted for both. Such an event goes
   with the plain sentence, and only settles (`takeOver` false): it changes no level, so it cannot
-  re-take a thread given back meanwhile. A thread archived or deleted while loaded is never taken over
-  again (`forgotten`). With model-written sentences, the notification goes out with the event's own
+  re-take a thread given back meanwhile. A thread archived or deleted while loaded is not taken over
+  again (`forgotten`) until bb says it was unarchived (`thread.unarchived`). With model-written sentences, the notification goes out with the event's own
   sentence when it lands (or the plain one if the tool fails or Herald unloads), whatever happened to
   the entry meanwhile. `send` judges news itself and notifies when it cannot read whether a question was
   answered.

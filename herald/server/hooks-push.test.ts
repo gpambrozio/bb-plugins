@@ -7,9 +7,9 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { AttentionReason } from "../shared/herald";
 import { NO_CHOICE, type ChoiceInputs, type ThreadChoice } from "../shared/thread-choice";
-import { createHooks, type HeraldConfig, type HookDeps, type PushHooks } from "./hooks";
+import { createHooks, DISPOSE_DRAIN_MS, type HeraldConfig, type HookDeps, type PushHooks } from "./hooks";
 import type { EventsPort, PushPort, ThreadDto } from "./ports";
-import { OUTBOX_PREFIX, PushTakeover, SEND_RETRY_MS, type PushSubject } from "./push";
+import { OUTBOX_PREFIX, PushTakeover, RELEASE_QUIET_MS, SEND_RETRY_MS, type PushSubject } from "./push";
 import { AttentionStore } from "./store";
 import { commandApproval, planApproval, question, recordingLog, settle, thread } from "./testing/fixtures";
 
@@ -38,6 +38,7 @@ interface FakePush extends PushHooks {
   seen: string[];
   /** The `takeOver` of each decision, in order. */
   takeOvers: boolean[];
+  handedOver: Array<{ subject: PushSubject; sentence: string }>;
   decisions: Array<{ threadId: string; choice: ThreadChoice; reason: AttentionReason | null }>;
   sent: Array<{ subject: PushSubject; sentence: string }>;
   owes: boolean;
@@ -47,11 +48,15 @@ function fakePush(): FakePush {
   const fake: FakePush = {
     seen: [],
     takeOvers: [],
+    handedOver: [],
     decisions: [],
     sent: [],
     owes: true,
     saw(threadId) {
       fake.seen.push(threadId);
+    },
+    async handOver(subject, sentence) {
+      fake.handedOver.push({ subject, sentence });
     },
     async decide(threadId, choiceOf, event, takeOver = true) {
       fake.takeOvers.push(takeOver);
@@ -94,8 +99,16 @@ function heldWriter() {
  * The real takeover over a bb whose every thread is at its default level,
  * with interactions answered by id; what it sends is recorded.
  */
-function realPush(answeredIds: Set<string>, pendingFails: { value: boolean }, shared: { rows?: Map<string, unknown>; sendFails?: { value: boolean } } = {}) {
-  const own = new Map<string, string>();
+function realPush(
+  answeredIds: Set<string>,
+  pendingFails: { value: boolean },
+  shared: { rows?: Map<string, unknown>; sendFails?: { value: boolean }; own?: Map<string, string>; invalid?: { value: boolean } } = {},
+) {
+  const own = shared.own ?? new Map<string, string>();
+  /** bb has invalidated this instance's handles: every call it makes fails. */
+  const live = () => {
+    if (shared.invalid?.value === true) throw new Error("plugin instance disposed");
+  };
   const sent: Array<{ threadId: string; body: string }> = [];
   const port: PushPort = {
     unavailable: async () => null,
@@ -105,6 +118,7 @@ function realPush(answeredIds: Set<string>, pendingFails: { value: boolean }, sh
     setOwnLevel: async (id, level) => void (level === "inherit" ? own.delete(id) : own.set(id, level)),
     defaults: async () => ({ defaultLevel: "all", childLevel: "input-only" }),
     send: async ({ threadId, body }) => {
+      live();
       if (shared.sendFails?.value === true) throw new Error("relay down");
       sent.push({ threadId, body });
     },
@@ -113,10 +127,10 @@ function realPush(answeredIds: Set<string>, pendingFails: { value: boolean }, sh
   const push = new PushTakeover({
     port,
     kv: {
-      get: async <T>(key: string) => rows.get(key) as T | undefined,
-      set: async (key: string, value: unknown) => void rows.set(key, value),
-      delete: async (key: string) => void rows.delete(key),
-      list: async (prefix?: string) => [...rows.keys()].filter((key) => prefix === undefined || key.startsWith(prefix)),
+      get: async <T>(key: string) => (live(), rows.get(key) as T | undefined),
+      set: async (key: string, value: unknown) => (live(), void rows.set(key, value)),
+      delete: async (key: string) => (live(), void rows.delete(key)),
+      list: async (prefix?: string) => (live(), [...rows.keys()].filter((key) => prefix === undefined || key.startsWith(prefix))),
     },
     enabled: async () => true,
     facts: async () => ({ kind: "open", status: "active", lastReadAt: 0, latestAttentionAt: 1 }),
@@ -338,6 +352,72 @@ describe("hooks with push notifications", () => {
         const next = realPush(new Set(), { value: false }, { rows, sendFails });
         await vi.advanceTimersByTimeAsync(SEND_RETRY_MS[0]);
         expect(next.sent.map((sent) => sent.body)).toEqual(["Login fix has a question: Which DB? Options: Postgres / SQLite."]);
+        await next.push.close();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("hands an event whose lookup outlasts both unload drains to the next instance, which sends it", async () => {
+      vi.useFakeTimers();
+      try {
+        const rows = new Map<string, unknown>();
+        const own = new Map<string, string>();
+        const invalid = { value: false };
+        const old = realPush(new Set(), { value: false }, { rows, own, invalid });
+        const { hooks } = setup({ push: old.push });
+        hooks.active(thread());
+        await vi.advanceTimersByTimeAsync(0);
+        expect(own.get("t1")).toBe("muted");
+        let release: () => void = () => {};
+        holdNextContext = new Promise((resolve) => (release = resolve));
+        const pending = hooks.interactionPending(thread(), question());
+        // Herald's drain runs out with the lookup still out; then it gives the level back.
+        const disposing = hooks.dispose();
+        await vi.advanceTimersByTimeAsync(DISPOSE_DRAIN_MS + 1);
+        await disposing;
+        const closing = old.push.close();
+        await vi.advanceTimersByTimeAsync(RELEASE_QUIET_MS + 1);
+        await closing;
+        expect(own.has("t1")).toBe(false);
+        // bb's own drain runs out too, and the old instance's handles stop working.
+        await vi.advanceTimersByTimeAsync(5_000);
+        invalid.value = true;
+        release();
+        await pending;
+        await vi.advanceTimersByTimeAsync(0);
+        expect(old.sent).toEqual([]);
+        // The next instance finds the event, decides it from the records, and sends it.
+        const next = realPush(new Set(), { value: false }, { rows, own });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(next.sent).toEqual([{ threadId: "t1", body: "Login fix has a question: Which DB? Options: Postgres / SQLite." }]);
+        expect([...rows.keys()].some((key) => key.startsWith(OUTBOX_PREFIX))).toBe(false);
+        await next.push.close();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("leaves a handed-over event alone in the next instance when Herald held no mute for it", async () => {
+      vi.useFakeTimers();
+      try {
+        const rows = new Map<string, unknown>();
+        const old = realPush(new Set(), { value: false }, { rows });
+        const { hooks } = setup({ push: old.push, config: { ...CONFIG, push: false } });
+        let release: () => void = () => {};
+        holdNextContext = new Promise((resolve) => (release = resolve));
+        const pending = hooks.interactionPending(thread(), question());
+        const disposing = hooks.dispose();
+        await vi.advanceTimersByTimeAsync(DISPOSE_DRAIN_MS + 1);
+        await disposing;
+        await old.push.close();
+        release();
+        await pending;
+        const next = realPush(new Set(), { value: false }, { rows });
+        await vi.advanceTimersByTimeAsync(0);
+        // bb was never muted for it: bb's own notification stands.
+        expect(next.sent).toEqual([]);
+        expect([...rows.keys()].some((key) => key.startsWith(OUTBOX_PREFIX))).toBe(false);
         await next.push.close();
       } finally {
         vi.useRealTimers();
