@@ -5,6 +5,17 @@ Notable changes to `firstmate`. The other plugins in this repository version sep
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.8.0
+
+### Changed
+
+- **Every worker is started with bb's Notify parent on Auto,** relaunches included, so a different
+  default in your project or in bb cannot keep a worker's finished turns from the first mate.
+- **A worker whose Notify parent you set to When stuck or Off is flagged on its card.** bb now offers
+  the setting in every thread's menu, and either choice means the first mate is no longer told when that
+  worker finishes. FirstMate does not change it back; the first mate's charter now tells it to check on
+  such a worker itself and to tell you when it is waiting on one.
+
 ## 0.7.0
 
 ### Changed

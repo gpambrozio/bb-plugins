@@ -1,5 +1,5 @@
 /** Words and small pure helpers the board shares. */
-import type { BacklogItem, ColumnId, CrewState, ThreadStatus, WatchResult, WatchSummary } from "../shared/types";
+import type { BacklogItem, ColumnId, CrewState, ParentNotifications, ThreadStatus, WatchResult, WatchSummary } from "../shared/types";
 
 export const COLUMN_TITLES: Readonly<Record<ColumnId, string>> = {
   queued: "Queued",
@@ -29,6 +29,21 @@ export const STATUS_WORDS: Readonly<Record<ThreadStatus, string>> = {
   stopping: "stopping",
   error: "errored",
 };
+
+/**
+ * What a crewmate's Notify parent setting costs the first mate, or null for `auto`, which tells it
+ * everything. The captain may have chosen it, so the board says so and changes nothing.
+ */
+export function parentNotificationsWarning(value: ParentNotifications): string | null {
+  switch (value) {
+    case "auto":
+      return null;
+    case "stuck":
+      return "Notify parent is When stuck: the first mate isn't told when this worker finishes a turn.";
+    case "off":
+      return "Notify parent is Off: the first mate isn't told anything about this worker.";
+  }
+}
 
 /** Whether the thread is in the middle of a turn, so it can be interrupted. */
 export function isRunning(status: ThreadStatus): boolean {

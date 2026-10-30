@@ -19,7 +19,7 @@ import { cn } from "../lib/utils";
 import type { rpcContract } from "../server";
 import type { BacklogAction, BacklogItem, ColumnId, FleetCard } from "../shared/types";
 import { ConfirmDialog } from "./confirm-dialog";
-import { STATE_WORDS, STATUS_WORDS, answerText, isRunning, relativeTime, shortUrl } from "./format";
+import { STATE_WORDS, STATUS_WORDS, answerText, isRunning, parentNotificationsWarning, relativeTime, shortUrl } from "./format";
 import { reportError } from "./notify";
 import { useMateSender } from "./use-mate-sender";
 
@@ -108,6 +108,7 @@ export function Card({
     else run("Asked the first mate to relaunch it.", () => rpc.call("crew.relaunch", { threadId: crew.threadId, note: text }));
   }
 
+  const muted = crew === null ? null : parentNotificationsWarning(crew.parentNotifications);
   const facts = [card.project, card.kind, card.taskId, backlog?.blockedBy ? `after ${backlog.blockedBy}` : null].filter(
     (fact): fact is string => fact !== null && fact !== "",
   );
@@ -146,6 +147,7 @@ export function Card({
           Waiting on {crew.pendingInteractions === 1 ? "an answer" : `${crew.pendingInteractions} answers`}
         </div>
       ) : null}
+      {muted === null ? null : <div className="text-xs text-warning-text">{muted}</div>}
       {card.url === null ? null : (
         <UrlLink href={card.url} className="truncate text-xs text-primary underline">
           {shortUrl(card.url)}

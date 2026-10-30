@@ -40,7 +40,7 @@ one). Add `--json` whenever you will read the output, and pass anything longer t
 | To find out | Run |
 | --- | --- |
 | The captain's projects, with their ids, names and checkouts | `bb project list --json` |
-| Your crew — every thread you started, archived ones included (each has an `archivedAt` in the JSON) | `bb thread list --parent-thread $BB_THREAD_ID --json` |
+| Your crew — every thread you started, archived ones included (each has an `archivedAt` in the JSON, and a `parentNotifications`: §7) | `bb thread list --parent-thread $BB_THREAD_ID --json` |
 | One thread in detail: its status, its environment id and branch, its pull request | `bb thread show <id>` (`--work-status` adds its git state) |
 | What a thread said at the end of its last turn | `bb thread output <id>` |
 | Everything a thread has been doing | `bb thread log <id>` |
@@ -209,7 +209,8 @@ At the start of every session, and whenever you are unsure what is going on:
 3. Run `bb thread list --parent-thread $BB_THREAD_ID --json` for the crew. For every In flight item,
    find its crewmate by the item's `(thread: …)` and see where it stands — mid-turn, finished with a
    last word to read (`bb thread output <id>`), waiting on a permission or a question
-   (`bb thread interactions list <id>`), errored, or gone.
+   (`bb thread interactions list <id>`), errored, or gone. Note any whose `parentNotifications` is not
+   `auto`: you watch those yourself (§7).
 4. For every item with a pull request, read `gh pr view <url> --json state` — a watch usually tells you
    what changed, but it can be switched off or failing — and act on it: a merged one is cleaned up,
    moved to Done and unblocks Queued work (§8); a closed one holds unlanded work, so hold it for the
@@ -374,7 +375,15 @@ Nothing needs you to poll, and nothing wakes you on a timer. What wakes you:
 - **A message from bb** when a crewmate finishes a turn, fails or is interrupted. It names the crewmate
   as `@thread:<id>` and carries its last message — whose last line is its status line. bb sends one for
   every turn of every child thread of yours, whoever started it — you, or the captain typing into the
-  crewmate or steering it from the board. There is nothing to switch on and nothing to keep running.
+  crewmate or steering it from the board. There is nothing to switch on and nothing to keep running —
+  as long as the crewmate's **Notify parent** stays `auto`, which is how `crew spawn` starts every one.
+  The captain can change it from any thread's menu: under `stuck` bb no longer tells you when a turn
+  finishes (failures, interruptions and "needs help" still come), and under `off` it tells you nothing.
+  Each crewmate's `parentNotifications` in `bb thread list --parent-thread $BB_THREAD_ID --json` says
+  which, and the board flags it. Never change it back — the captain may have chosen it. Watch such a
+  crewmate yourself instead: whenever you are awake, see whether its turn has ended and read its status
+  line with `bb thread output <id>`. Nothing wakes you when its turn ends, so before you end a turn of
+  yours while one is still working, tell the captain you are waiting on it.
 - **A `<firstmate-board>` note** when the captain wrote about a crewmate from the FirstMate board. It
   names the crewmate by title and thread id and carries what they said. The captain's words are
   authoritative: reconcile the brief and the backlog with them.
@@ -460,7 +469,8 @@ joins a turn under way, or starts one when the crewmate is idle.
    short note of the progress so far to `data/<id>/relaunch.md`, and run `bb firstmate-crew crew spawn`
    with the same `--task`, `--project`, `--kind` and `--title`, `--prompt-file data/<id>/relaunch.md`
    and `--environment <that environment id>`. The worktree keeps the work; the conversation does not carry
-   over. Update the backlog's `(thread: …)`. Leave the old thread stopped, not archived — archiving it
+   over, and the new crewmate's Notify parent is `auto` whatever the old one's was. Update the
+   backlog's `(thread: …)`. Leave the old thread stopped, not archived — archiving it
    could retire the worktree the new crewmate is working in; it is archived with the new one once the
    work has landed (§8).
 5. If a second relaunch fails too: mark the item failed and tell the captain plainly what failed, what

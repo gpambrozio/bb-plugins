@@ -112,6 +112,11 @@ Press **FirstMate** on the first mate's thread. Each card is a worker, a backlog
   **Answer** box and press Send: the first mate gets your words with the task's id and title in front, so
   it knows what they answer. Buttons the first mate adds to a card that is not waiting on you work the
   same way.
+- **Notify parent.** FirstMate starts every worker with bb's Notify parent on Auto, so the first mate
+  hears about each turn it finishes. bb lets you change that from any thread's menu; a card whose worker
+  is set to When stuck or Off says so, because the first mate then isn't told when that worker finishes
+  (or anything at all). FirstMate leaves your choice alone: the first mate checks on such a worker itself
+  whenever it is awake, and tells you when it is waiting on one. A relaunched worker starts on Auto again.
 
 The sections are stacked and foldable, empty ones are hidden, and the arrows on each section's header
 move it up or down; this browser remembers the folds and the order. On a worker's own thread the

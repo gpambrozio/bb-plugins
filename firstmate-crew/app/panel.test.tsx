@@ -53,6 +53,7 @@ const FLEET: Fleet = {
         title: "Fix login",
         status: "idle",
         pendingInteractions: 0,
+        parentNotifications: "auto",
         projectId: "proj_web",
         environmentId: "env_w",
         updatedAt: 0,

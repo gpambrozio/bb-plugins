@@ -8,7 +8,7 @@ import { renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { toast } from "sonner";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { BacklogItem, FleetCard } from "../shared/types";
+import type { BacklogItem, CrewSummary, FleetCard } from "../shared/types";
 import { Card } from "./card";
 import { answerText } from "./format";
 
@@ -173,5 +173,46 @@ describe("Answer box", () => {
     fireEvent.change(answerBox(), { target: { value: "   " } });
     fireEvent.submit(answerBox().form as HTMLFormElement);
     expect(view.rpcCalls).toEqual([]);
+  });
+});
+
+describe("Notify parent", () => {
+  function crewCard(parentNotifications: CrewSummary["parentNotifications"]): FleetCard {
+    return {
+      ...cardOf(backlog({ hold: null, actions: [], section: "in-flight" })),
+      column: "working",
+      crew: {
+        threadId: "thr_worker",
+        title: "Choose the database",
+        status: "active",
+        pendingInteractions: 0,
+        parentNotifications,
+        projectId: "proj_web",
+        environmentId: "env_w",
+        updatedAt: 0,
+        task: "pick-db",
+        kind: null,
+        project: "web",
+      },
+    };
+  }
+
+  function renderCrewCard(parentNotifications: CrewSummary["parentNotifications"]) {
+    return renderSlot({ component: Card }, { card: crewCard(parentNotifications), onChanged: () => {} });
+  }
+
+  it("says nothing for a worker that tells the first mate everything", () => {
+    renderCrewCard("auto");
+    expect(screen.queryByText(/Notify parent/)).toBeNull();
+  });
+
+  it("flags a worker whose finished turns the first mate isn't told about", () => {
+    renderCrewCard("stuck");
+    expect(screen.getByText("Notify parent is When stuck: the first mate isn't told when this worker finishes a turn.")).toBeTruthy();
+  });
+
+  it("flags a worker the first mate hears nothing from", () => {
+    renderCrewCard("off");
+    expect(screen.getByText("Notify parent is Off: the first mate isn't told anything about this worker.")).toBeTruthy();
   });
 });

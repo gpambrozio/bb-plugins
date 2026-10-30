@@ -58,6 +58,7 @@ export class FakeThreads implements ThreadsPort {
       title: null,
       status: "idle",
       parentThreadId: null,
+      parentNotifications: "auto",
       projectId: "prj_default",
       environmentId: null,
       updatedAt: this.clock++,
@@ -224,6 +225,8 @@ export class FakeThreads implements ThreadsPort {
       title: args.title,
       status: "starting",
       parentThreadId: args.parentThreadId ?? null,
+      // bb's own default when a spawn names none.
+      parentNotifications: args.parentNotifications ?? "auto",
       projectId: args.projectId,
       environmentId: args.environment.kind === "reuse" ? args.environment.environmentId : `env_${this.nextId}`,
     });

@@ -253,6 +253,8 @@ export function firstmateCli(deps: MateDeps): PluginCliRegistration {
               title: titleOf(options.title, options.task, prompt),
               prompt,
               parentThreadId: mate.id,
+              // Explicit, so a project's or bb's default cannot keep a crewmate's turns from the first mate.
+              parentNotifications: "auto",
               environment: environmentId === "" ? { kind: "worktree" } : { kind: "reuse", environmentId },
               ...crewPick(settings, { provider: options.provider, model: options.model, reasoning: options.reasoning }),
               ...sessionOptions,
