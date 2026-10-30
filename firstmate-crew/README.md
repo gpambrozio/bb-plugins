@@ -237,9 +237,10 @@ FirstMate marks such a turn read as soon as it ends, so bb sends no notification
   turn you have read by then. That is not something bb promises. If bb changes it, or FirstMate cannot mark
   the turn read in time, you get the notification as before; a failure is written to the plugin's log.
 - FirstMate looks at the first mate twice before marking it read, and leaves it if anything changed in
-  between. bb cannot mark only one turn read, so a new turn that ends in the few milliseconds between that
-  last look and the mark would be marked read too. A turn takes seconds, so this is unlikely, not
-  impossible.
+  between. bb cannot mark only one turn read, so anything new that calls for your attention while that
+  last look and the mark are still on their way — a reply, a question or an approval, or an error the
+  moment a turn starts — would be marked read too, and not notify. That interval is normally short and
+  a new turn usually takes seconds, so this is unlikely, not impossible.
 - After autocompact compacts the first mate, the next shipshape may still notify: the compaction is a turn
   of its own, and it counts as read only once you have opened the thread since.
 

@@ -87,9 +87,10 @@ function unchanged(first: Snapshot, second: Snapshot): boolean {
 /**
  * A thread finished a turn with this closing text. Marks it read when the setting is on, the thread is the
  * stored first mate, the reply is the no-op, and `safeToMark` holds on two looks taken one after the other
- * that found nothing changed between them. bb has no read mark conditioned on a turn, so a turn that starts
- * and calls for attention in the milliseconds between the second look and the mark landing would be marked
- * read too; a turn takes seconds to reach that. Answers whether it marked. A failed read or mark is logged
+ * that found nothing changed between them. bb has no read mark conditioned on a turn, so any new attention
+ * that arrives while the second look's reads and the mark request are in flight — a reply, a question or
+ * an approval, or an error as soon as a turn starts — is marked read too. That interval is normally short,
+ * not bounded; a reply usually takes seconds. Answers whether it marked. A failed read or mark is logged
  * and leaves bb's notification to go out.
  */
 export async function quietShipshape(deps: QuietShipshapeDeps, threadId: string, text: string | null): Promise<boolean> {

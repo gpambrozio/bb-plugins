@@ -179,8 +179,9 @@ Do not break these; each was paid for.
   watermark (`lastReadAt`) at or after the previous `turn/completed`. An unread reply before it, inside
   bb's coalescing window or not, keeps its notification and its unread mark. It looks twice and marks only
   if both looks pass and agree (latest turn `seq`, `latestAttentionAt`, `lastReadAt`). bb has no read mark
-  conditioned on a turn, so a new turn that calls for attention in the milliseconds between the second
-  look and the mark landing is marked read too: an accepted gap, since a turn takes seconds. Runtime
+  conditioned on a turn, so any new attention (a reply, a question or an approval, or an error as soon as
+  a turn starts) arriving while the second look's reads and the mark request are in flight is marked read
+  too: an accepted gap, normally short but not bounded, and a reply usually takes seconds. Runtime
   status adds nothing for an idle thread (bb 0.48.1 reports a disconnected host only for an active one),
   and a read mark needs no host, so connectivity is not checked. A compaction is a turn of its own, so the
   first shipshape after autocompact usually notifies (its `previous` is the compaction, which the captain
