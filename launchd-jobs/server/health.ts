@@ -19,6 +19,12 @@ export interface HealthDeps {
   loadWatched(): Promise<string[]>;
   saveWatched(hostIds: string[]): Promise<void>;
   publish(health: Health): void;
+  /**
+   * Handed every count, changed or not (the failure push keeps its own record
+   * against it), with the Macs that were asked but did not answer: their
+   * entries are only what this instance last saw, which after a reload is nothing.
+   */
+  checked(failing: readonly FailingEntry[], unanswered: readonly string[]): void;
   now(): number;
   warn(message: string): void;
 }
@@ -66,10 +72,12 @@ export function createHealthMonitor(deps: HealthDeps) {
     }
     const targets = [...new Set([...(primary === null ? [] : [primary]), ...set])].filter((hostId) => known.has(hostId)).sort();
     const failing: FailingEntry[] = [];
+    const unanswered: string[] = [];
     for (const hostId of targets) {
       const host = known.get(hostId);
       // A Mac that is asleep keeps whatever it last reported.
       if (host === undefined || !host.connected) {
+        unanswered.push(hostId);
         failing.push(...current.failing.filter((entry) => entry.hostId === hostId));
         continue;
       }
@@ -78,19 +86,21 @@ export function createHealthMonitor(deps: HealthDeps) {
         const health = await deps.hostHealth(hostId);
         lastWarning.delete(hostId);
         if (health.supported) await noteJobCount(hostId, health.jobCount);
-        failing.push(...health.failing.map((job) => ({ hostId, hostName, id: job.id, name: job.name })));
+        failing.push(...health.failing.map((job) => ({ hostId, hostName, id: job.id, name: job.name, exitCode: job.exitCode })));
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         if (lastWarning.get(hostId) !== message) {
           lastWarning.set(hostId, message);
           deps.warn(`could not check job health on ${hostName}: ${message}`);
         }
+        unanswered.push(hostId);
         failing.push(...current.failing.filter((entry) => entry.hostId === hostId));
       }
     }
     const changed = !sameFailing(current.failing, failing);
     current = { failing, checkedAt: deps.now() };
     if (changed) deps.publish(current);
+    deps.checked(failing, unanswered);
     return current;
   }
 

@@ -15,8 +15,9 @@ specific to `launchd-jobs`.
 | `host/jobs.ts` | Every `launchctl` and `plutil` call, the plist writer, the runner, logs, history, names, acknowledgements. |
 | `host/follow.ts` | Follow mode: a native watch on a job's log directory, with an expiry. |
 | `host/run-command.ts` | Every external command: `execFile` with a timeout, SIGKILL and a capped output buffer. |
-| `server.ts` | Forwards each app call to the chosen Mac's host entry; relays log changes; runs the health poll. |
+| `server.ts` | Forwards each app call to the chosen Mac's host entry; relays log changes; runs the health poll; defines the one setting. |
 | `server/health.ts` | The failing count: which Macs are asked, and when it is published. |
+| `server/failure-push.ts` | The opt-in push notification when a job starts failing, and the record of which failures it has accounted for. |
 | `shared/cron.ts` | cron ⇄ `StartCalendarInterval`, and the sentences. In the app and host bundles. |
 | `shared/jobs.ts`, `shared/channels.ts` | Zod shapes and realtime channels; no SDK import, so the app may use them at run time. |
 | `shared/contract.ts`, `shared/host-contract.ts` | The app ⇄ server and server ⇄ host contracts. The app imports them as types only. |
@@ -231,6 +232,34 @@ when it changes; the app reads it on mount and after a reconnect.
 - **Acknowledgement is per run.** Opening a failing job's detail acknowledges its latest run; the
   next failure alerts again. A job whose latest run succeeded loses its entry. Entries for jobs that
   no longer exist are pruned on every write; delete drops its own.
+
+## The push when a job starts failing
+
+One setting, `notifyOnFailure` (off by default), sends a push notification through bb's built-in Push
+notifications plugin (`bb.sdk.plugins.callRpc` → `push-notifications` / `notifications.send`, bb
+0.48.1) when a job joins the failing set: title "<name> failed on <Mac>", body the run's exit code.
+
+- **Every count is observed, on or off.** `server/health.ts` hands each count to `checked`, changed or
+  not, and `server/failure-push.ts` stores the `hostId/id` of every failing job in kv
+  `notified-failures`. A job notifies only when it is failing now, absent from that set, and the
+  setting is on. So nothing repeats while a job stays failing; a job that recovers or is acknowledged
+  leaves the set and notifies on its next failure; and turning the setting on, a reload or a bb
+  restart sends nothing for a job already failing — the set was kept while the setting was off. With no
+  stored set at all (the first count after install) the count is only recorded.
+- Publishing only on change is not enough: a job that recovered while bb was down must leave the set
+  on the first count after load, even when that count publishes nothing.
+- **Recorded before sending**, so a send cut short by a reload is lost rather than repeated. The set is
+  re-read from kv on every count (once a minute) instead of cached, since a reload's new instance loads
+  before the old one is disposed; `dispose` stops the old one from sending or writing. Counts are
+  handled one at a time.
+- **Feature-detected, not an engine bump.** On bb before 0.48.1, or with Push notifications turned off,
+  the call throws; that is logged once (until a send succeeds again), the failure is still recorded so
+  it is not retried every minute, and the count is never affected. `engines.bb` stays `>=0.47`.
+- **A Mac that did not answer keeps its record.** The count carries an asleep or erroring Mac's entries
+  from what this instance last saw, which after a reload is nothing, so `checked` also names the Macs
+  asked that did not answer and their stored keys are kept. A Mac removed from bb, or no longer asked,
+  leaves the set with its failures.
+- The fake host in `server.test.ts` stands in for Push notifications; never send a real one from a test.
 
 ## Checking against reality
 

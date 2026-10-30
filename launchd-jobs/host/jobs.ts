@@ -1113,7 +1113,7 @@ export function createJobs(deps: JobsDeps) {
           const last = (await readRuns(runsPath(dir, slug)))[0];
           if (last === undefined || last.exitCode === 0) return null;
           if (ackOf(slug, dir) === last.startedAt) return null;
-          return { id: slug, name: nameOf(slug, dir) };
+          return { id: slug, name: nameOf(slug, dir), exitCode: last.exitCode };
         }),
       );
       return { supported: true, jobCount: slugs.length, failing: checked.filter((entry) => entry !== null) };

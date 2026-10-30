@@ -4,12 +4,15 @@
 // the plists are the store, on whichever Mac the panel is looking at. This file
 // forwards each call to that Mac's host entry (host.ts), keeps the failing
 // count the sidebar shows (server/health.ts), and relays log changes to the
-// app while a log is being followed. See AGENTS.md.
+// app while a log is being followed, and sends the opt-in push notification
+// when a job starts failing (server/failure-push.ts). See AGENTS.md.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
+import { z } from "zod";
 
 import { HEALTH_CHANGED, LOG_CHANGED, type Health } from "./shared/channels";
 import { rpcContract } from "./shared/contract";
 import { hostContract, hostSignals } from "./shared/host-contract";
+import { createFailurePush } from "./server/failure-push";
 import { createHealthMonitor } from "./server/health";
 
 export type { RpcContract } from "./shared/contract";
@@ -17,6 +20,13 @@ export type { RpcContract } from "./shared/contract";
 /** How often the failing count is re-taken. */
 const HEALTH_POLL_MS = 60_000;
 const WATCHED_HOSTS_KEY = "watched-hosts";
+/** The `hostId/id` of every failing job the push has already accounted for. */
+const NOTIFIED_FAILURES_KEY = "notified-failures";
+
+/** bb's built-in Push notifications plugin, and its send method (bb 0.48.1). */
+const PUSH_PLUGIN_ID = "push-notifications";
+const PUSH_SEND_METHOD = "notifications.send";
+const PushSentSchema = z.object({ ok: z.literal(true), channels: z.array(z.string()) });
 
 /** Resolves after `ms`, or as soon as `signal` aborts. */
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
@@ -34,6 +44,34 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
 
 export default async function plugin(bb: BbPluginApi) {
   const host = bb.hosts.experimental_client({ contract: hostContract, experimental_signals: hostSignals });
+
+  const settings = bb.settings.define({
+    notifyOnFailure: {
+      type: "boolean",
+      label: "Push a notification when a job starts failing",
+      description:
+        "One notification when a job's latest run fails, and nothing more until it runs successfully again or you open it. Sent through bb's Push notifications (bb 0.48.1 or newer); jobs already failing when you turn this on are not announced.",
+      default: false,
+    },
+  });
+
+  const failurePush = createFailurePush({
+    enabled: async () => (await settings.get()).notifyOnFailure,
+    load: async () => (await bb.storage.kv.get<string[]>(NOTIFIED_FAILURES_KEY)) ?? undefined,
+    save: (keys) => bb.storage.kv.set(NOTIFIED_FAILURES_KEY, keys),
+    // Feature-detected: on a bb before 0.48.1, or with Push notifications off, this throws and is logged once.
+    send: async ({ title, body }) => {
+      const sent = await bb.sdk.plugins.callRpc({
+        pluginId: PUSH_PLUGIN_ID,
+        method: PUSH_SEND_METHOD,
+        input: { title, body },
+        outputSchema: PushSentSchema,
+      });
+      if (sent.channels.length === 0) bb.log.debug(`no notification channel is on for "${title}"`);
+    },
+    warn: (message) => bb.log.warn(message),
+  });
+  bb.onDispose(() => failurePush.dispose());
 
   async function knownHosts(): Promise<Map<string, { name: string; connected: boolean }>> {
     const hosts = await bb.sdk.hosts.list();
@@ -54,6 +92,7 @@ export default async function plugin(bb: BbPluginApi) {
     loadWatched: async () => (await bb.storage.kv.get<string[]>(WATCHED_HOSTS_KEY)) ?? [],
     saveWatched: (hostIds) => bb.storage.kv.set(WATCHED_HOSTS_KEY, hostIds),
     publish: (value: Health) => bb.realtime.publish(HEALTH_CHANGED, value),
+    checked: (failing, unanswered) => void failurePush.observe(failing, unanswered),
     now: () => Date.now(),
     warn: (message) => bb.log.warn(message),
   });

@@ -17,6 +17,13 @@ with how long each took and how it exited, and the tail of its log.
   the job.
 - When a job's most recent run failed, the sidebar entry carries **a count of the failing jobs**, with
   their names in its tooltip. Opening the job clears it from the count, until it fails again.
+- **A push notification when a job starts failing**, if you turn it on in the plugin's settings (*Push a
+  notification when a job starts failing*; off by default). It names the job, its Mac and the exit code
+  — "Backup failed on Mac mini" — and arrives once: nothing more while the job keeps failing, and a new
+  one after it has run successfully again, or after you opened it, and then fails. Jobs already failing
+  when you turn it on are not announced, and reloading the plugin or restarting bb does not repeat any.
+  It goes through bb's own Push notifications, so it reaches the web, desktop and mobile channels you
+  have turned on there.
 - With more than one Mac connected to bb, a picker at the top chooses whose jobs you see. It starts on
   the Mac running the bb server.
 
@@ -25,13 +32,15 @@ source of truth, and the page reads them back every time.
 
 ## What you need
 
-- bb 0.47 or later. On bb 0.44 to 0.46, install with `@^0.1.0` instead of `@^0.2.0`.
+- bb 0.47 or later. On bb 0.44 to 0.46, install with `@^0.1.0` instead of `@^0.3.0`.
+- For the push notification, bb 0.48.1 or later with Push notifications turned on. Without them the
+  setting does nothing and the plugin logs it once; everything else works.
 - macOS, on the Mac whose jobs you manage. On any other machine the page says the plugin is macOS only.
 
 ## Install
 
 ```bash
-bb plugin install 'git:github.com/gpambrozio/bb-plugins@^0.2.0' --plugin launchd-jobs --tag-prefix launchd-jobs/
+bb plugin install 'git:github.com/gpambrozio/bb-plugins@^0.3.0' --plugin launchd-jobs --tag-prefix launchd-jobs/
 ```
 
 The page is **Scheduled jobs** in the sidebar; the palette has *Scheduled jobs: open launchd jobs*.
@@ -107,7 +116,8 @@ delete the plists by hand and run `launchctl bootout gui/$UID/<label>` for each.
   scheduling — shown as **Not loaded** — is not counted, because finding that out means asking launchd
   about every job once a minute.
 - The count covers the Mac running the bb server, and any other Mac once you have opened its jobs here
-  and it has some. It is checked about once a minute, so it can be a minute behind.
+  and it has some. It is checked about once a minute, so it can be a minute behind, and so can the push
+  notification.
 - What launchd reports — whether a job is running, its process id, its spawn count — comes from
   `launchctl print`, whose output is prose. If a macOS release rewords it, those facts go blank until the
   plugin is updated; the run history and the log do not depend on it.

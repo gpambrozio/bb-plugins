@@ -5,6 +5,17 @@ Notable changes to `launchd-jobs`. The other plugins in this repository version 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.3.0
+
+### Added
+
+- **A push notification when a job starts failing**, off until you turn it on in the plugin's settings.
+  It names the job, its Mac and how the run ended, and comes once per failure: nothing more while the
+  job keeps failing, and again only after it has run successfully or you have opened it. Jobs already
+  failing when you turn it on are not announced, and reloading the plugin or restarting bb repeats
+  nothing. It needs bb 0.48.1 or newer with Push notifications on; on an older bb the setting does
+  nothing, and everything else still works on bb 0.47.
+
 ## 0.2.0
 
 ### Added
