@@ -223,7 +223,7 @@ describe("herald server", () => {
       interaction: {
         createdAt: 1,
         id: "int_1",
-        payload: { kind: "user_question", questions: [{ id: "q", prompt: "Ship it?", allowFreeText: true, multiSelect: false }] },
+        payload: { kind: "user_question", questions: [{ id: "q", prompt: "Ship it?", allowFreeText: true, multiSelect: false, required: true }] },
         providerId: "claude-code",
         providerRequestId: "r",
         providerThreadId: "p",
@@ -376,7 +376,7 @@ describe("herald server", () => {
       interaction: {
         createdAt: 1,
         id: "int_1",
-        payload: { kind: "user_question", questions: [{ id: "q", prompt: "Ship it?", allowFreeText: true, multiSelect: false }] },
+        payload: { kind: "user_question", questions: [{ id: "q", prompt: "Ship it?", allowFreeText: true, multiSelect: false, required: true }] },
         providerId: "claude-code",
         providerRequestId: "r",
         providerThreadId: "p",

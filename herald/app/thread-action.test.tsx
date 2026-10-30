@@ -29,6 +29,7 @@ function target(id: string, parentThreadId: string | null = null, archivedAt: nu
     isUnread: false,
     status: "idle" as const,
     environment: null,
+    parentNotifications: "auto" as const,
   };
 }
 

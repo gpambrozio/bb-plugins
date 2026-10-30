@@ -29,6 +29,7 @@ export function question(overrides: { id?: string; questions?: number } = {}): I
     prompt: `Another question ${index + 2}?`,
     allowFreeText: false,
     multiSelect: false,
+    required: true,
   }));
   return {
     ...interactionBase,
@@ -41,6 +42,7 @@ export function question(overrides: { id?: string; questions?: number } = {}): I
           prompt: "Which DB?",
           allowFreeText: false,
           multiSelect: false,
+          required: true,
           options: [
             { label: "Postgres", value: "pg" },
             { label: "SQLite", value: "sqlite" },
