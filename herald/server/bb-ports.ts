@@ -7,9 +7,21 @@
  * `bb.sdk` is for use once the plugin is loaded.
  */
 import type { PluginBbSdk } from "@get-bb/plugin-sdk";
+import { z } from "zod";
 
+import {
+  BB_LEVEL_DEFAULTS,
+  NotificationLevelSchema,
+  OwnLevelSchema,
+  PUSH_LEVEL_SET_METHOD,
+  PUSH_LEVELS_LIST_METHOD,
+  PUSH_PLUGIN_ID,
+  PUSH_SEND_METHOD,
+  type LevelDefaults,
+  type OwnLevel,
+} from "../shared/push";
 import { CHOICE_METADATA_KEY, ownChoiceOf, type ThreadChoice } from "../shared/thread-choice";
-import type { EventsPort, LivenessPort, Log, NamesPort, ThreadChoicesPort } from "./ports";
+import type { EventsPort, LivenessPort, Log, NamesPort, PushPort, ThreadChoicesPort } from "./ports";
 import { lastPrompt } from "./timeline";
 
 /** How long a project's name or an environment's folder is trusted; both change rarely. */
@@ -156,6 +168,86 @@ export function bbThreadChoices(sdk: PluginBbSdk): ThreadChoicesPort {
       await sdk.threads.updatePluginMetadata(
         choice === null ? { threadId, remove: [CHOICE_METADATA_KEY] } : { threadId, set: { [CHOICE_METADATA_KEY]: choice } },
       );
+    },
+  };
+}
+
+/** How long bb's notification defaults are trusted; they change only in its settings. */
+const DEFAULTS_TTL_MS = 30_000;
+
+const PushOwnLevelsSchema = z.object({
+  threads: z.record(z.string(), z.object({ own: OwnLevelSchema }).passthrough()),
+});
+const PushSentSchema = z.object({ ok: z.literal(true), channels: z.array(z.string()) }).passthrough();
+
+/**
+ * bb's push-notifications plugin, through `bb.sdk.plugins`. Its RPC contract is
+ * not published as a package, so the shapes read here are kept in
+ * `shared/push.ts`, as of bb 0.48.1.
+ */
+export function bbPush(sdk: PluginBbSdk, log: Log): PushPort {
+  let defaults: { at: number; value: LevelDefaults } | null = null;
+  return {
+    async unavailable() {
+      // A member an older bb lacks; read it loosely so a bb before 0.48.1 says so instead of throwing.
+      const plugins = sdk.plugins as Partial<Pick<PluginBbSdk["plugins"], "experimental_discoverRpc">>;
+      if (typeof plugins.experimental_discoverRpc !== "function") {
+        return "This bb cannot send a notification for a plugin; that needs bb 0.48.1 or later.";
+      }
+      const methods = await plugins.experimental_discoverRpc({ pluginId: PUSH_PLUGIN_ID, method: PUSH_SEND_METHOD });
+      return methods.some((method) => method.pluginId === PUSH_PLUGIN_ID && method.method === PUSH_SEND_METHOD)
+        ? null
+        : "bb's Push notifications plugin is off, or this bb cannot send a notification for a plugin (that needs bb 0.48.1).";
+    },
+    async ancestors(threadId) {
+      const { threads } = await sdk.threads.experimental_listAncestors({ threadIds: [threadId] });
+      return threads.find((thread) => thread.threadId === threadId)?.ancestorIds ?? null;
+    },
+    async ownLevels(threadIds) {
+      const { threads } = await sdk.plugins.callRpc({
+        pluginId: PUSH_PLUGIN_ID,
+        method: PUSH_LEVELS_LIST_METHOD,
+        input: { threadIds: [...threadIds] },
+        outputSchema: PushOwnLevelsSchema,
+      });
+      const own = new Map<string, OwnLevel>();
+      for (const [threadId, row] of Object.entries(threads)) if (row.own !== "inherit") own.set(threadId, row.own);
+      return own;
+    },
+    async setOwnLevel(threadId, level) {
+      await sdk.plugins.callRpc({
+        pluginId: PUSH_PLUGIN_ID,
+        method: PUSH_LEVEL_SET_METHOD,
+        input: { threadId, level },
+        outputSchema: z.unknown(),
+      });
+    },
+    async defaults() {
+      if (defaults !== null && Date.now() - defaults.at < DEFAULTS_TTL_MS) return defaults.value;
+      let value = BB_LEVEL_DEFAULTS;
+      try {
+        const { values } = await sdk.plugins.getSettings({ pluginId: PUSH_PLUGIN_ID });
+        const defaultLevel = NotificationLevelSchema.safeParse(values.defaultLevel);
+        const childLevel = OwnLevelSchema.safeParse(values.childLevel);
+        value = {
+          defaultLevel: defaultLevel.success ? defaultLevel.data : BB_LEVEL_DEFAULTS.defaultLevel,
+          childLevel: childLevel.success ? childLevel.data : BB_LEVEL_DEFAULTS.childLevel,
+        };
+      } catch (error) {
+        log.warn(`Could not read bb's notification defaults; using bb's own: ${reasonOf(error)}`);
+      }
+      defaults = { at: Date.now(), value };
+      return value;
+    },
+    async send({ title, body, threadId }) {
+      const { channels } = await sdk.plugins.callRpc({
+        pluginId: PUSH_PLUGIN_ID,
+        method: PUSH_SEND_METHOD,
+        input: { title, body, threadId },
+        outputSchema: PushSentSchema,
+      });
+      // No channel on is not a failure: bb's own notification would have reached nothing either.
+      if (channels.length === 0) log.info(`The notification for ${threadId} reached no channel: none is on in bb's Push notifications.`);
     },
   };
 }

@@ -14,6 +14,7 @@ import {
   useRealtime,
   useRealtimeConnectionState,
   useRpc,
+  useSettings,
   useSidebarThreadRowStatus,
   type ExperimentalBadge,
 } from "@get-bb/plugin-sdk/app";
@@ -26,6 +27,7 @@ import { cn } from "@/lib/utils";
 
 import type { RpcContract } from "../shared/contract";
 import { ENTRIES_CHANNEL, speechText, type AttentionEntry, type RecentHistoryItem } from "../shared/herald";
+import type { PushStatus } from "../shared/push";
 import { getAnnouncer, isMutedHere, onMuteChange, setMutedHere } from "./announcer";
 import { useEntries } from "./entries";
 import { HERALD_ICONS } from "./icons";
@@ -336,6 +338,30 @@ function RecentHistory({ now, onOpen }: { now: number; onOpen: (threadId: string
   );
 }
 
+/**
+ * Why Herald's push notifications are not going out although the switch is
+ * on, or null. Read again when the switch changes, on every entries nudge (an
+ * event is when a send can fail) and on reconnect.
+ */
+function usePushProblem(): string | null {
+  const rpc = useRpc<RpcContract>();
+  const connection = useRealtimeConnectionState();
+  const switchedOn = useSettings().values?.pushSentences === true;
+  const [status, setStatus] = useState<PushStatus | null>(null);
+  const refresh = useCallback(() => {
+    rpc.call("push.status", {}).then(setStatus, () => setStatus(null));
+  }, [rpc]);
+  useEffect(refresh, [refresh, switchedOn]);
+  useRealtime(ENTRIES_CHANNEL, refresh);
+  const previous = useRef(connection);
+  useEffect(() => {
+    if (previous.current === "reconnecting" && connection === "connected") refresh();
+    previous.current = connection;
+  }, [connection, refresh]);
+  if (!switchedOn || status === null) return null;
+  return status.state === "unavailable" || status.state === "failed" ? status.message : null;
+}
+
 function hintFor(): string | null {
   if (!canPlaySpeech()) return "This device can neither play audio nor speak, so summaries can only be read here.";
   switch (speechPlatform()) {
@@ -357,6 +383,7 @@ export function HeraldPanel() {
   const [testing, setTesting] = useState(false);
   const playable = canPlaySpeech();
   const hint = hintFor();
+  const pushProblem = usePushProblem();
 
   async function onTest() {
     const announcer = getAnnouncer();
@@ -405,6 +432,11 @@ export function HeraldPanel() {
         </TipButton>
       </div>
       {hint === null ? null : <p className="px-3 pt-2 text-xs text-muted-foreground">{hint}</p>}
+      {pushProblem === null ? null : (
+        <p role="status" className="mx-3 mt-2 rounded-md border border-warning p-2 text-xs text-warning-text">
+          Herald's push notifications are not on: {pushProblem}
+        </p>
+      )}
       {error === null ? null : (
         <p className="mx-3 mt-2 rounded-md border border-destructive p-2 text-xs text-destructive">{error}</p>
       )}

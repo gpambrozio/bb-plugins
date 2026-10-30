@@ -21,13 +21,14 @@ import {
   type StoredConfig,
 } from "./shared/herald";
 import { customCommandSeed, sentenceSettingsOf, SETTINGS } from "./shared/settings";
-import { CHOICES_CHANNEL } from "./shared/thread-choice";
-import { bbEvents, bbLiveness, bbNames, bbThreadChoices } from "./server/bb-ports";
+import { CHOICES_CHANNEL, effectiveChoice } from "./shared/thread-choice";
+import { bbEvents, bbLiveness, bbNames, bbPush, bbThreadChoices } from "./server/bb-ports";
 import { SentenceHistory } from "./server/history";
 import { createHooks, type HeraldConfig } from "./server/hooks";
 import { kvBackend } from "./server/kv-backend";
 import { Liveness } from "./server/liveness";
-import type { EventsPort, NamesPort } from "./server/ports";
+import type { EventsPort, LivenessPort, NamesPort, PushPort } from "./server/ports";
+import { PushTakeover } from "./server/push";
 import { withNames } from "./server/recent";
 import { announceDrained, onOtherDrained } from "./server/reload-signal";
 import { listSayVoices, renderWithSay, sayAvailable } from "./server/say";
@@ -47,6 +48,10 @@ const CONFIG_KEY = "config";
  */
 export const ABANDONED_AFTER_MS = 60_000;
 
+function reasonText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 export default async function plugin(bb: BbPluginApi) {
   const settings = bb.settings.define(SETTINGS);
   const store = new AttentionStore(kvBackend(bb.storage.kv), bb.log);
@@ -65,7 +70,18 @@ export default async function plugin(bb: BbPluginApi) {
   const dropAbandoned = () => {
     if (store.dropPending(hooks.inFlightEventIds())) publish();
   };
-  const abandonedTimer = setTimeout(dropAbandoned, ABANDONED_AFTER_MS);
+  // Levels too wait for the earlier instance: it gives every thread's bb
+  // notification level back as it unloads, and a mute set meanwhile would be
+  // undone under this one. A cold start waits the same minute.
+  const settledFromBefore = () => {
+    dropAbandoned();
+    push.setReady();
+    void settings
+      .get()
+      .then((values) => (values.pushSentences ? undefined : push.restoreAll()))
+      .catch((error: unknown) => bb.log.error(`Could not check Herald's push notifications at load: ${reasonText(error)}`));
+  };
+  const abandonedTimer = setTimeout(settledFromBefore, ABANDONED_AFTER_MS);
   const stopListening = onOtherDrained(bb.pluginId, instance, () => {
     store
       .reconcile()
@@ -73,7 +89,7 @@ export default async function plugin(bb: BbPluginApi) {
         // Only a read that succeeded stands in for the timer; a failed one
         // leaves it to drop what the old instance left, a minute on.
         clearTimeout(abandonedTimer);
-        dropAbandoned();
+        settledFromBefore();
         publish();
       })
       .catch((error: unknown) => {
@@ -88,10 +104,14 @@ export default async function plugin(bb: BbPluginApi) {
   let liveness: Liveness | null = null;
   let names: NamesPort | null = null;
   let choices: ThreadChoices | null = null;
+  let facts: LivenessPort | null = null;
+  let pushPort: PushPort | null = null;
   const eventsPort = () => (events ??= bbEvents(bb.sdk, bb.log));
+  const factsPort = () => (facts ??= bbLiveness(bb.sdk));
+  const pushPortOf = () => (pushPort ??= bbPush(bb.sdk, bb.log));
   /** Saves are chained: two partial writes at once must both land. */
   let configWrites: Promise<unknown> = Promise.resolve();
-  const livenessOf = () => (liveness ??= new Liveness(bbLiveness(bb.sdk), bb.log));
+  const livenessOf = () => (liveness ??= new Liveness(factsPort(), bb.log));
   const namesPort = () => (names ??= bbNames(bb.sdk));
   const choicesOf = () => (choices ??= new ThreadChoices(bbThreadChoices(bb.sdk)));
 
@@ -136,7 +156,57 @@ export default async function plugin(bb: BbPluginApi) {
       },
       announceSubagents: values.announceSubagents,
       sentence: sentenceSettingsOf(values.writeWithModel, stored),
+      push: values.pushSentences,
     };
+  }
+
+  // Every port is reached on first use, from a handler: bb.sdk is not for the factory body.
+  const push = new PushTakeover({
+    port: {
+      unavailable: () => pushPortOf().unavailable(),
+      ancestors: (threadId) => pushPortOf().ancestors(threadId),
+      ownLevels: (threadIds) => pushPortOf().ownLevels(threadIds),
+      setOwnLevel: (threadId, level) => pushPortOf().setOwnLevel(threadId, level),
+      defaults: () => pushPortOf().defaults(),
+      send: (notification) => pushPortOf().send(notification),
+    },
+    kv: bb.storage.kv,
+    enabled: async () => (await settings.get()).pushSentences,
+    facts: (threadId) => factsPort().facts(threadId),
+    interactionPending: (threadId, interactionId) => eventsPort().interactionPending(threadId, interactionId),
+    log: bb.log,
+  });
+  settings.onChange((next, prev) => {
+    if (next.pushSentences === prev.pushSentences) return;
+    // On, nothing is swept: each thread is taken over as Herald next handles it.
+    if (next.pushSentences) push.switchedOn();
+    else void push.restoreAll();
+  });
+
+  /**
+   * A thread's choice changed from its menu: its bb level follows now rather
+   * than at its next event. One thread at a time, and only with the switch on
+   * — a selection can name 200. Threads that inherit the choice follow at
+   * their next event.
+   */
+  function syncPushOf(threadIds: readonly string[]): void {
+    void (async () => {
+      if (!(await settings.get()).pushSentences) return;
+      for (const threadId of threadIds) {
+        await push.decide(
+          threadId,
+          async () => {
+            const [config, inputs, ancestors] = await Promise.all([
+              readConfig(),
+              choicesOf().inputsOf(threadId),
+              pushPortOf().ancestors(threadId),
+            ]);
+            return effectiveChoice(inputs, (ancestors ?? []).length > 0, config.announceSubagents).choice;
+          },
+          null,
+        );
+      }
+    })().catch((error: unknown) => bb.log.error(`Could not bring bb's notification levels in line with a new choice: ${reasonText(error)}`));
   }
 
   const hooks = createHooks({
@@ -154,6 +224,7 @@ export default async function plugin(bb: BbPluginApi) {
     // The tool runs here, on the bb server's machine; see AGENTS.md.
     writeSentence: (command, prompt) => writer.write(command, prompt),
     remember: (threadId, item) => history.append(threadId, item),
+    push,
     log: bb.log,
   });
 
@@ -161,9 +232,14 @@ export default async function plugin(bb: BbPluginApi) {
   bb.events.on("thread.idle", ({ thread, lastAssistantText }) => hooks.idle(thread, lastAssistantText));
   bb.events.on("thread.failed", ({ thread, error }) => hooks.failed(thread, error));
   bb.events.on("interaction.pending", ({ thread, interaction }) => hooks.interactionPending(thread, interaction));
-  bb.events.on("thread.archived", ({ thread }) => hooks.gone(thread));
+  bb.events.on("thread.archived", ({ thread }) => {
+    hooks.gone(thread);
+    // Given back, so an unarchived thread notifies as it did before Herald.
+    void push.forget(thread.id, true);
+  });
   bb.events.on("thread.deleted", ({ thread }) => {
     hooks.gone(thread);
+    void push.forget(thread.id, false);
     // Archived threads keep their history; a deleted one is gone for good.
     // An archived thread has no entry left for `gone` to publish about, so
     // the Herald page hears of its sentences going from here.
@@ -185,6 +261,7 @@ export default async function plugin(bb: BbPluginApi) {
     "choices.set": async ({ threadId, choice }) => {
       await choicesOf().set(threadId, choice);
       publishOn(CHOICES_CHANNEL, "a thread's choice");
+      syncPushOf([threadId]);
       return choicesOf().inputsOf(threadId);
     },
     // Told once for the whole selection, and also when only some were saved.
@@ -193,9 +270,11 @@ export default async function plugin(bb: BbPluginApi) {
         await choicesOf().setMany(threadIds, choice);
       } finally {
         publishOn(CHOICES_CHANNEL, "several threads' choice");
+        syncPushOf(threadIds);
       }
       return null;
     },
+    "push.status": () => push.status(),
     "config.get": () => storedConfig(),
     // Any part of the stored configuration; the rest is kept. When the tool
     // becomes "custom" with nothing written yet, the command of the tool
@@ -236,8 +315,13 @@ export default async function plugin(bb: BbPluginApi) {
     clearTimeout(abandonedTimer);
     // Hooks first, so a tool killed next cannot land a sentence; the store
     // then freezes with the entry still pending, for the next load to settle.
-    hooks.dispose();
+    const owedPushes = hooks.dispose();
     await writer.dispose();
+    // A sentence that will not come goes out as the plain one; then every
+    // level Herald muted is given back — bb has no separate hook for a
+    // disable or a removal, and a reload takes them over again lazily.
+    await owedPushes;
+    await push.restoreAll();
     await store.shutdown();
     await history.flush();
     announceDrained(bb.pluginId, instance);

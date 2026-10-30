@@ -31,8 +31,8 @@ of what was done — and the bb app speaks it.
 ## What Herald adds to bb's push notifications
 
 bb's built-in Push notifications plugin already tells you when a thread finishes, fails or waits for
-input, with the thread's own last words as the text. Herald does not replace it, and can run beside it.
-What it adds:
+input, with the thread's own last words as the text. By default Herald runs beside it and changes
+nothing there. What it adds:
 
 - **A sentence written for the ear** — which piece of work it is about, what kind of event, and the
   question, the command or the start of the reply, kept short — instead of the first characters of the
@@ -40,6 +40,48 @@ What it adds:
 - **Speech**, on the desktop app, in a browser tab, and in the mobile app while it is open.
 - **One list of everything waiting on you**, with the reason and the sentence for each, which stays until
   you have read or answered the thread.
+
+### Herald's sentences as your push notifications
+
+Switch on **Send Herald's sentences as push notifications instead of bb's** (off by default) and the
+notifications on your phone, desktop and browser carry Herald's sentence instead of the agent's last
+words, for every thread Herald announces:
+
+- **Which threads.** Every thread whose Herald choice is *Announce* or *Questions only* — the thread's
+  own, or with *Default* the one it follows through the thread that started it and Herald's settings. A
+  *Silent* thread keeps bb's own notifications.
+- **How.** The first time Herald handles such a thread (a turn starting, or an event), it sets bb's
+  notification level for the thread to *Muted* and remembers the level it had. From then on Herald sends
+  the notifications that mute holds back — the same events bb would have notified at the level it
+  remembered, each once — through bb's own Push notifications plugin. The title is the thread's name and
+  its project (when both fit in bb's 80 characters); the text is Herald's sentence, cut at a word to bb's
+  180. Tapping or clicking it opens that thread, on the phone, the desktop app and in a browser.
+- **Questions only, and the per-kind switches.** These decide what Herald *speaks*; which events
+  *notify* still follows bb's level. A Questions-only thread still notifies a failed turn, and a
+  finished turn when bb's level for it is *All activity*; an event Herald does not speak goes out with
+  the plain sentence. That way turning this on never loses a notification bb would have sent. A worker
+  thread that Herald does not announce, under a coordinator it muted, still gets its questions and
+  errors notified by Herald, because bb's mute on a thread also mutes the threads it started.
+- **bb's Notifications menu shows such a thread as Muted.** Pick another level there and Herald leaves it
+  alone; at the thread's next event it takes the thread over again and notifies at the level you
+  picked. A thread you muted yourself, or that another plugin muted, is never taken over.
+- **Giving the level back.** Herald puts the remembered level back when you switch this off, when the
+  thread's choice becomes *Silent*, when the thread is archived, when Herald is disabled, removed or
+  reloaded (bb has one hook for all of them; a reload takes the threads over again as they next run),
+  and when a notification fails to send. It never overwrites a level someone changed after Herald
+  muted it.
+- **When it cannot.** It needs bb 0.48.1 or newer with bb's Push notifications plugin on. Otherwise
+  Herald changes no level, bb sends its own notifications, and the Herald page says why. After a failed
+  send, Herald gives every level back, says so on the page, and stays off until you switch the setting
+  off and on again or Herald reloads.
+- **With FirstMate Crew.** FirstMate Crew can send the first mate's own notifications for its thread
+  too. If you turn on both, set the first mate's thread to *Silent* in Herald's thread menu, so one of
+  them notifies for it, not both.
+
+What differs from bb's own: a turn that ends without any text (a compaction, say) is not notified, as
+Herald does not announce it; bb's notifications arrive about two seconds after an event, Herald's as
+soon as its sentence is ready — up to 45 seconds later with *Write each sentence with a model* on; and
+the first event of a thread Herald takes over may notify twice, once from bb.
 
 ## What you need
 
@@ -78,6 +120,8 @@ On the plugin's settings page (Settings → Plugins → Herald):
   writes each sentence from the event, the request and the agent's reply, so you hear "Login fix is
   done; nothing is left for you" rather than the start of the reply. Which tool, and the prompt, are
   under **Model-written sentences** further down the same page. See below.
+- **Send Herald's sentences as push notifications instead of bb's** — off by default. See
+  [Herald's sentences as your push notifications](#heralds-sentences-as-your-push-notifications).
 
 ## Per-thread choice
 

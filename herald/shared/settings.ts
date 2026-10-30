@@ -111,6 +111,13 @@ export const SETTINGS = {
       "Off: the plain sentence built from the event. On: a command-line tool runs once per announcement on the Mac running bb and writes the sentence from a prompt that includes the agent's own output — which can carry instructions, so the tool runs with no tools or read-only. Which tool, and the prompt, are under Model-written sentences further down this page. The plain sentence is used whenever the tool fails or takes longer than 45 seconds.",
     default: false,
   },
+  pushSentences: {
+    type: "boolean",
+    label: "Send Herald's sentences as push notifications instead of bb's",
+    description:
+      "For every thread Herald announces (not Silent in its menu), Herald sets bb's own notifications for the thread to Muted and sends the same notifications itself, with its sentence in place of the agent's last words. Which events notify still follows bb's level for the thread, so a Questions-only thread's finished turns notify too when bb's level says so, with the plain sentence. bb's Notifications menu shows such threads as Muted; pick another level there and Herald notifies at that one. Turning this off, setting a thread to Silent, or a failed send gives bb its notifications back. Needs bb 0.48.1 with its Push notifications plugin on; otherwise nothing changes, and the Herald page says why.",
+    default: false,
+  },
 } satisfies Record<string, PluginSettingDescriptor>;
 
 export type HeraldSettings = PluginSettingsValues<typeof SETTINGS>;

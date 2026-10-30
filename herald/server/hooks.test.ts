@@ -10,6 +10,7 @@ const CONFIG: HeraldConfig = {
   announce: { question: true, plan: true, permission: true, finished: true, error: true },
   announceSubagents: false,
   sentence: null,
+  push: false,
 };
 
 interface FakeEvents extends EventsPort {

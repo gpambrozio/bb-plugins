@@ -24,7 +24,11 @@ know which thread to go back to without watching the sidebar.
 ## Beside bb's push notifications
 
 bb's own push notifications tell you a thread finished, failed or waits for input, with its last words.
-Herald adds a sentence to be heard, speech on every client, and one list of what is waiting. The two can run together.
+Herald adds a sentence to be heard, speech on every client, and one list of what is waiting. The two can
+run together. Or switch on Send Herald's sentences as push notifications: for every thread Herald
+announces, it mutes bb's notifications for that thread and sends the same ones itself, with its sentence
+as the text; a tap opens the thread. Turning it off, or setting a thread to Silent, gives bb its
+notifications back. Off by default; needs bb 0.48.1 with its Push notifications plugin on.
 
 ## What it needs
 

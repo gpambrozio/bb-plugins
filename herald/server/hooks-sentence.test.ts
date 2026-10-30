@@ -15,6 +15,7 @@ const CONFIG: HeraldConfig = {
   announce: { question: true, plan: true, permission: true, finished: true, error: true },
   announceSubagents: false,
   sentence: { command: "my-llm --fast", prompt: "Thread: {{thread}}\nEvent: {{event}}\nRequest: {{request}}\nOutput: {{output}}" },
+  push: false,
 };
 
 let answered = false;
