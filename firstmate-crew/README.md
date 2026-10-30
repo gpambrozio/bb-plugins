@@ -177,9 +177,8 @@ how to write one; the first mate adds none without your approval.
   the refresh catches the rest, such as edits to the backlog. It runs once for every open board, in any
   window, and stops when the last one closes. On bb 0.48 a board whose tab is hidden, or whose panel is
   closed, does not reload until it is shown again.
-- **First mate: notify through FirstMate** (default off): FirstMate sends the notification for each
-  finished turn of the first mate itself, and skips the ones that only say "Captain, shipshape.". See
-  below.
+- **First mate: no notification for "Captain, shipshape."** (default off): the first mate's no-op replies
+  stop notifying you. See below.
 - **Autocompact**, once for the first mate and once for the crew: whether to compact the conversation on
   its own (default off), above how many thousand tokens of context (default 200, meaning 200,000
   tokens), and after how many idle minutes (default 60). See below.
@@ -218,31 +217,23 @@ separately for the first mate and for the crew, each with its own token threshol
 - A compaction is a turn of its own. For a worker, bb reports it to the first mate like any of the
   worker's turns, so the first mate wakes briefly to a turn with nothing new in it.
 
-## Notifications
+## Quiet shipshape
 
-bb notifies you when a thread finishes a turn, needs your answer or stops on an error. For the first mate
-that includes every "Captain, shipshape.", the reply it gives when there was nothing to do. Switch on
-**First mate: notify through FirstMate** and FirstMate sends the first mate's finished-turn notifications
-itself, leaving those out. It needs bb 0.48.1 or newer with bb's Push Notifications plugin on.
+When there was nothing to do, the first mate replies exactly "Captain, shipshape.", and bb notifies you of
+that turn like any other. Switch on **First mate: no notification for "Captain, shipshape."** and
+FirstMate marks such a turn read as soon as it ends, so bb sends no notification for it.
 
-- While it is on, the first mate's notification level in bb is **Needs input only**: bb still notifies you
-  when the first mate asks a question, needs an approval or hits an error, as before. FirstMate sends the
-  rest: one notification per finished turn, with the reply's first line as its title and the next lines
-  below it. Tapping it opens the first mate's chat. A thread the reply mentions shows by its title.
-- Left out: a reply that is only "Captain, shipshape." (in any case, with or without the comma and the
-  full stop), a turn that ended with no text, and a turn you read in the first mate's chat before the
-  notification went, as bb does for its own.
-- Only the first mate's level changes; your workers' stay as they are. FirstMate remembers the level the
-  first mate had and puts it back when you switch the setting off, or when you release the first mate
-  or launch or adopt another, which then gets the setting instead. If you choose another level for the
-  first mate in bb meanwhile, FirstMate leaves your choice alone and sends nothing more, since bb then
-  notifies you itself.
-- You are never left without notifications. On an older bb, or with Push Notifications off, FirstMate
-  changes nothing. If a notification fails to send, FirstMate gives the first mate its own level back
-  and stops sending until you switch the setting off and on again, or bb restarts. Either way the board
-  says so, and the plugin's log has the reason.
-- Switch the setting off before you disable or remove FirstMate: a plugin that is not running cannot put
-  the level back, and the first mate would stay at Needs input only.
+- Only a reply that is "Captain, shipshape." and nothing else counts, in any case, with or without the
+  comma and the full stop. Anything more notifies as usual.
+- Only the first mate's own thread, and only while that reply is still its latest turn: not when another
+  turn has started or a message is waiting for it, and never while it waits on your answer to a question
+  or an approval.
+- No notification level changes, so your workers and every other turn of the first mate notify as bb's
+  settings say.
+- A shipshape turn no longer leaves an unread mark on the first mate in the sidebar.
+- It relies on how bb's Push Notifications sends: it waits about two seconds after a turn ends and skips a
+  turn you have read by then. That is not something bb promises. If bb changes it, or FirstMate cannot mark
+  the turn read in time, you get the notification as before; a failure is written to the plugin's log.
 
 ## Limitations
 

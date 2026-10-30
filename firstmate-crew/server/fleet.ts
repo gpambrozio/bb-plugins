@@ -237,7 +237,7 @@ export type FleetDeps = MateDeps & {
  * The home's files and the watches are read one by one: one that cannot be read is logged with the home
  * and shown as empty, so the rest of the board still loads.
  */
-export async function loadFleet(deps: FleetDeps): Promise<Omit<Fleet, "notifications">> {
+export async function loadFleet(deps: FleetDeps): Promise<Fleet> {
   const home = await activeHome(deps);
   const [storedMateId, mate, homeReady, backlog, suggestions, charter, watches] = await Promise.all([
     deps.store.mateThreadId(),

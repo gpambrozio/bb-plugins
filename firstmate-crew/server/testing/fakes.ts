@@ -9,15 +9,12 @@ import type { PluginKvStorage } from "@get-bb/plugin-sdk";
 import type { Log } from "../log";
 import type {
   ContextUsage,
-  NotificationLevel,
-  NotificationsPort,
   ProjectsPort,
   RestState,
   SendMode,
   ShortenedMessage,
   SpawnArgs,
   ThreadInfo,
-  ThreadAttention,
   ThreadOrigin,
   ThreadsPort,
   TurnEnd,
@@ -285,6 +282,12 @@ export class FakeThreads implements ThreadsPort {
     this.require(id);
   }
 
+  async markRead(id: string): Promise<void> {
+    this.record("markRead", id);
+    await tick();
+    this.throwIfFailing("markRead");
+  }
+
   async restState(id: string, signal?: AbortSignal): Promise<RestState | null> {
     this.record("restState", id);
     await this.settle("restState", signal);
@@ -401,67 +404,6 @@ export class FakeProjects implements ProjectsPort {
 
 export function fakeProjects(existing: { id: string; path: string; name?: string }[] = []): FakeProjects {
   return new FakeProjects(existing);
-}
-
-type NotificationMethod = keyof NotificationsPort;
-
-/** bb's push-notifications plugin: per-thread levels, read state and the notifications sent, in memory. */
-export class FakeNotifications implements NotificationsPort {
-  /** Whether the plugin offers `notifications.send`. */
-  available = true;
-  readonly levels = new Map<string, NotificationLevel>();
-  readonly attentions = new Map<string, ThreadAttention>();
-  readonly sent: { title: string; body: string; threadId: string }[] = [];
-  /** Every `setOwnLevel`, in order. */
-  readonly levelChanges: { threadId: string; level: NotificationLevel }[] = [];
-  private readonly failures = new Map<NotificationMethod, Error>();
-
-  /** Every call to `method` rejects with this error until `recover`. */
-  fail(method: NotificationMethod, error: Error): void {
-    this.failures.set(method, error);
-  }
-
-  recover(method: NotificationMethod): void {
-    this.failures.delete(method);
-  }
-
-  async canSend(): Promise<boolean> {
-    await tick();
-    this.throwIfFailing("canSend");
-    return this.available;
-  }
-
-  async ownLevel(threadId: string): Promise<NotificationLevel> {
-    await tick();
-    this.throwIfFailing("ownLevel");
-    return this.levels.get(threadId) ?? "inherit";
-  }
-
-  async setOwnLevel(threadId: string, level: NotificationLevel): Promise<void> {
-    await tick();
-    this.throwIfFailing("setOwnLevel");
-    this.levelChanges.push({ threadId, level });
-    if (level === "inherit") this.levels.delete(threadId);
-    else this.levels.set(threadId, level);
-  }
-
-  async send(notification: { title: string; body: string; threadId: string }): Promise<string[]> {
-    await tick();
-    this.throwIfFailing("send");
-    this.sent.push({ ...notification });
-    return ["desktop"];
-  }
-
-  async attention(threadId: string): Promise<ThreadAttention | null> {
-    await tick();
-    this.throwIfFailing("attention");
-    return this.attentions.get(threadId) ?? { lastReadAt: null, latestAttentionAt: 0 };
-  }
-
-  private throwIfFailing(method: NotificationMethod): void {
-    const error = this.failures.get(method);
-    if (error !== undefined) throw error;
-  }
 }
 
 /** `PluginKvStorage` over a Map, with values copied through JSON as bb's would be. */

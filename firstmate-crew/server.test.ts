@@ -40,12 +40,12 @@ function fleetSignals(harness: { experimental_rpcInvalidations: (readonly string
 }
 
 describe("server wiring", () => {
-  it("registers every method of the contract, the CLI, the watch service, autocompact and notifications", async () => {
+  it("registers every method of the contract, the CLI, the watch service and autocompact", async () => {
     const { harness } = await load();
     expect([...harness.registrations.rpcMethods].sort()).toEqual(Object.keys(rpcContract).sort());
     expect(harness.registrations.rpcMethods).toHaveLength(19);
     expect(harness.registrations.cli?.name).toBe("firstmate-crew");
-    expect(harness.registrations.services.map((service) => service.name)).toEqual(["watches", "autocompact", "notifications"]);
+    expect(harness.registrations.services.map((service) => service.name)).toEqual(["watches", "autocompact"]);
   });
 
   it("loads a fleet with no first mate without asking bb anything", async () => {
@@ -153,88 +153,37 @@ describe("server wiring", () => {
     expect(harness.sdk.callsTo("threads.output")).toEqual([]);
   });
 
-  describe("the first mate's notifications", () => {
-    /** bb 0.48.1's push-notifications plugin, as `bb.sdk.plugins` reaches it: levels in a map. */
-    function pushPlugin(harness: Awaited<ReturnType<typeof load>>["harness"]) {
-      const levels = new Map<string, string>();
-      harness.sdk.stub("plugins.experimental_discoverRpc", () => [
-        { pluginId: "push-notifications", method: "notifications.send", displayName: "Push", inputSchema: {}, outputSchema: {}, methodDescription: null, registrationDescription: null },
-      ]);
-      type Input = { threadIds: string[] } & { threadId: string; level: string };
-      harness.sdk.stub("plugins.callRpc", (({ method, input }: { method: string; input: Input }) => {
-        if (method === "threadNotifications.list") {
-          const listed = input.threadIds.flatMap((id) => {
-            const own = levels.get(id);
-            return own === undefined ? [] : [[id, { own, ancestorCap: null }] as const];
-          });
-          return { threads: Object.fromEntries(listed) };
-        }
-        if (method === "threadNotifications.set") {
-          levels.set(input.threadId, input.level);
-          return { own: input.level, ancestorCap: null };
-        }
-        if (method === "notifications.send") return { ok: true, channels: ["desktop"] };
-        throw new Error(`unexpected ${method}`);
-      }) as never);
-      harness.sdk.stub("threads.get", () => makeThreadResponse({ id: "thr_mate", status: "idle", lastReadAt: null, latestAttentionAt: 0 }));
-      return levels;
+  describe("no notification for the first mate's shipshape", () => {
+    async function idleMate(settings: { mateQuietShipshape: boolean }) {
+      const loaded = await load({ mateId: "thr_mate" });
+      await loaded.harness.setSettings(settings);
+      const { sdk } = loaded.harness;
+      sdk.stub("threads.get", () => makeThreadResponse({ id: "thr_mate", status: "idle" }));
+      sdk.stub("threads.interactions.list", () => []);
+      sdk.stub("threads.output", () => ({ output: "Captain, shipshape." }));
+      sdk.stub("threads.markRead", () => makeThreadResponse({ id: "thr_mate" }));
+      return loaded;
     }
 
-    function sends(harness: Awaited<ReturnType<typeof load>>["harness"]): unknown[] {
-      return harness.sdk
-        .callsTo("plugins.callRpc")
-        .map(([args]) => args as { method: string; input: unknown })
-        .filter((args) => args.method === "notifications.send")
-        .map((args) => args.input);
-    }
-
-    it("asks bb nothing for a finished turn while the setting is off", async () => {
-      const { harness } = await load({ mateId: "thr_mate" });
-      await harness.emitThreadEvent("thread.idle", { thread: makeThreadResponse({ id: "thr_mate" }), lastAssistantText: "Done." });
-      await new Promise((resolve) => setTimeout(resolve, 20));
-      expect(harness.sdk.calls.filter((call) => call.path.startsWith("plugins."))).toEqual([]);
+    it("marks the first mate's shipshape turn read when the setting is on", async () => {
+      const { harness } = await idleMate({ mateQuietShipshape: true });
+      const { errors } = await harness.emitThreadEvent("thread.idle", {
+        thread: makeThreadResponse({ id: "thr_mate" }),
+        lastAssistantText: "Captain, shipshape.",
+      });
+      expect(errors).toEqual([]);
+      expect(harness.sdk.callsTo("threads.markRead")).toEqual([[{ threadId: "thr_mate" }]]);
     });
 
-    it("takes the first mate's level when switched on, sends its reply after a turn, and gives the level back when off", async () => {
-      vi.useFakeTimers();
-      try {
-        const { harness } = await load({ mateId: "thr_mate" });
-        const levels = pushPlugin(harness);
-        await harness.setSettings({ mateNotifications: true });
-        await vi.advanceTimersByTimeAsync(10);
-        expect(levels.get("thr_mate")).toBe("input-only");
-
-        await harness.emitThreadEvent("thread.idle", { thread: makeThreadResponse({ id: "thr_mate" }), lastAssistantText: "Captain, shipshape." });
-        await harness.emitThreadEvent("thread.idle", {
-          thread: makeThreadResponse({ id: "thr_mate" }),
-          lastAssistantText: "PR ready for review, captain: https://github.com/you/web/pull/42\n\n(risk: low)",
-        });
-        await vi.advanceTimersByTimeAsync(1_000);
-        expect(sends(harness)).toEqual([]);
-        await vi.advanceTimersByTimeAsync(1_010);
-        expect(sends(harness)).toEqual([
-          { title: "PR ready for review, captain: https://github.com/you/web/pull/42", body: "(risk: low)", threadId: "thr_mate" },
-        ]);
-
-        await harness.setSettings({ mateNotifications: false });
-        await vi.advanceTimersByTimeAsync(10);
-        expect(levels.get("thr_mate")).toBe("inherit");
-      } finally {
-        vi.useRealTimers();
-      }
-    });
-
-    it("shows on the board why it is not sending on a bb without the push plugin's send", async () => {
-      const { harness } = await load({ mateId: "thr_mate" });
-      harness.sdk.stub("plugins.experimental_discoverRpc", () => []);
-      harness.sdk.stub("threads.get", () => makeThreadResponse({ id: "thr_mate", status: "idle" }));
-      harness.sdk.stub("threads.list", () => []);
-      harness.sdk.stub("threads.getPluginMetadata", () => ({}));
-      await harness.setSettings({ mateNotifications: true });
-      await new Promise((resolve) => setTimeout(resolve, 20));
-      const fleet = (await harness.callRpc("fleet.load", {})) as Fleet;
-      expect(fleet.notifications).toMatch(/bb's own notifications for the first mate are unchanged/u);
-      expect(harness.sdk.callsTo("plugins.callRpc")).toEqual([]);
+    it("marks nothing while the setting is off, nor for a crewmate's turn", async () => {
+      const { harness } = await idleMate({ mateQuietShipshape: false });
+      await harness.emitThreadEvent("thread.idle", { thread: makeThreadResponse({ id: "thr_mate" }), lastAssistantText: "Captain, shipshape." });
+      await harness.setSettings({ mateQuietShipshape: true });
+      await harness.emitThreadEvent("thread.idle", {
+        thread: makeThreadResponse({ id: "thr_crew", parentThreadId: "thr_mate" }),
+        lastAssistantText: "Captain, shipshape.",
+      });
+      expect(harness.sdk.callsTo("threads.markRead")).toEqual([]);
     });
   });
 

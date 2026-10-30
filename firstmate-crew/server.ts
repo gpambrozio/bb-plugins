@@ -12,7 +12,7 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { FLEET_TAG, rpcContract } from "./shared/contract";
 import { STATE_DIR } from "./shared/types";
 import { AUTOCOMPACT_INTERVAL_MS, checkAutoCompact, FailureLog } from "./server/autocompact";
-import { bbNotifications, bbProjects, bbThreads } from "./server/bb-ports";
+import { bbProjects, bbThreads } from "./server/bb-ports";
 import { acknowledgeCharter, NEW_CHARTER_FILE, writeNewCharter } from "./server/charter-file";
 import { firstmateCli } from "./server/cli";
 import { endCrew, interruptCrew, noteCrew, relaunchCrew, steerCrew } from "./server/crew";
@@ -31,8 +31,8 @@ import {
   withMateLock,
   type MateDeps,
 } from "./server/mate";
-import { MateNotifier } from "./server/mate-notify";
-import type { NotificationsPort, ProjectsPort, ThreadsPort } from "./server/ports";
+import type { ProjectsPort, ThreadsPort } from "./server/ports";
+import { quietShipshape } from "./server/quiet-shipshape";
 import { serialized } from "./server/serialize";
 import { autoCompactRules, DEFAULT_REFRESH_SECONDS, homeConfig, homePath, refreshMs, SETTINGS } from "./server/settings";
 import { createStore } from "./server/store";
@@ -84,24 +84,6 @@ export default async function plugin(bb: BbPluginApi) {
     settings: () => settings.get(),
     log: bb.log,
   };
-
-  let notifications: NotificationsPort | null = null;
-  /**
-   * The first mate's turn notifications, when the captain has FirstMate send them (`server/mate-notify.ts`).
-   * Getters, as in `deps`: bb.sdk is reached only once loaded.
-   */
-  const notifier = new MateNotifier({
-    get notifications() {
-      return (notifications ??= bbNotifications(bb.sdk));
-    },
-    get threads() {
-      return deps.threads;
-    },
-    store,
-    enabled: async () => (await settings.get()).mateNotifications,
-    log: bb.log,
-    now: Date.now,
-  });
 
   /** Crewmates' status lines, kept for the plugin's lifetime so the board's polls stay cheap. */
   let reports: ReportCache | null = null;
@@ -250,28 +232,7 @@ export default async function plugin(bb: BbPluginApi) {
     },
   });
 
-  // --- The first mate's notifications ------------------------------------------------------------
-
-  /** On load, the first mate's level is brought in step with the setting; it is left as it is on dispose. */
-  bb.background.service("notifications", {
-    async start(signal) {
-      await notifier.sync().catch((error: unknown) => bb.log.error(`FirstMate's notifications could not be set up: ${reason(error)}`));
-      await untilAborted(signal);
-    },
-  });
-
-  /** After a launch, adoption or release: the level moves with the first mate. */
-  function syncNotifications(): void {
-    void notifier.sync().catch((error: unknown) => bb.log.error(`FirstMate's notifications could not follow the first mate: ${reason(error)}`));
-  }
-
   settings.onChange((next, prev) => {
-    if (next.mateNotifications !== prev.mateNotifications) {
-      void notifier
-        .settingChanged()
-        .catch((error: unknown) => bb.log.error(`FirstMate's notifications could not follow the setting: ${reason(error)}`))
-        .then(publishFleet);
-    }
     if (next.homeDirectory === prev.homeDirectory) return;
     // With a first mate aboard the runner stays in its home; with none it follows the setting.
     if (watching) void syncRunner();
@@ -325,46 +286,42 @@ export default async function plugin(bb: BbPluginApi) {
       if (role === "crew") reportCache().remember(thread.id, thread.updatedAt, lastAssistantText);
       publishFleet();
       if (role !== "mate") return;
-      // Sent or skipped on its own time (`MateNotifier.turnEnded` waits before it sends); a failure shows on the board.
-      const notice = notifier.notice();
-      void notifier.turnEnded(thread.id, lastAssistantText).then(() => {
-        if (notifier.notice() !== notice) publishFleet();
-      });
+      // At once, alongside the flush: bb's push sender looks at whether the turn was read two seconds after it ended.
+      const quieting = quietShipshape(
+        { threads: deps.threads, store, enabled: async () => (await settings.get()).mateQuietShipshape, log: bb.log },
+        thread.id,
+        lastAssistantText,
+      );
       // The first mate's turn has ended: whatever the watches queued meanwhile can go now.
-      await runner?.flush();
+      await Promise.all([quieting, runner?.flush()]);
     }),
   );
 
   // --- RPCs and the CLI ----------------------------------------------------------------------------
 
   bb.rpc.register(rpcContract, {
-    "fleet.load": async () => ({
-      ...(await loadFleet({
+    "fleet.load": () =>
+      loadFleet({
         ...deps,
         reports: reportCache(),
         watches: () => (runner === null ? Promise.resolve([]) : runner.summaries()),
         log: bb.log,
-      })),
-      notifications: notifier.notice(),
-    }),
+      }),
     "mate.launch": async (pick) => {
       const mate = await launchMate(deps, pick);
       void syncRunner();
-      syncNotifications();
       publishFleet();
       return { threadId: mate.id };
     },
     "mate.adopt": async ({ threadId }) => {
       await adoptMate(deps, threadId);
       void syncRunner();
-      syncNotifications();
       publishFleet();
       return null;
     },
     "mate.release": async () => {
       await releaseMate(deps);
       void syncRunner();
-      syncNotifications();
       publishFleet();
       return null;
     },
@@ -448,6 +405,6 @@ export default async function plugin(bb: BbPluginApi) {
   // Waits for the runner to drain, so a reload's new instance cannot read the state file mid-save.
   bb.onDispose(async () => {
     watching = false;
-    await Promise.all([syncRunner(), notifier.stop()]);
+    await syncRunner();
   });
 }

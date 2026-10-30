@@ -5,18 +5,9 @@
  * Call it from handlers and services, not the plugin factory body — `bb.sdk` is for use once loaded.
  */
 import type { PluginBbSdk } from "@get-bb/plugin-sdk";
-import { z } from "zod";
 
 import { canonicalPath } from "./files";
-import {
-  CompactFirstRefused,
-  type NotificationsPort,
-  type ProjectsPort,
-  type SendMode,
-  type SpawnEnvironment,
-  type ThreadInfo,
-  type ThreadsPort,
-} from "./ports";
+import { CompactFirstRefused, type ProjectsPort, type SendMode, type SpawnEnvironment, type ThreadInfo, type ThreadsPort } from "./ports";
 
 type SpawnRequest = Parameters<PluginBbSdk["threads"]["spawn"]>[0];
 type ReasoningLevel = NonNullable<SpawnRequest["reasoningLevel"]>;
@@ -262,6 +253,9 @@ export function bbThreads(sdk: PluginBbSdk): ThreadsPort {
     async compact(id) {
       await sdk.threads.compact({ threadId: id });
     },
+    async markRead(id) {
+      await sdk.threads.markRead({ threadId: id });
+    },
     async restState(id, signal) {
       const row = await nullIfNotFound(sdk.threads.get({ threadId: id, signal }));
       if (row === null || row.archivedAt !== null || row.deletedAt !== null) return null;
@@ -319,61 +313,6 @@ export function bbProjects(sdk: PluginBbSdk): ProjectsPort {
     },
     async list() {
       return (await sdk.projects.list()).map((project) => ({ id: project.id, name: project.name }));
-    },
-  };
-}
-
-/** bb's bundled push-notifications plugin, and the method that sends a notification of a plugin's own (bb 0.48.1). */
-export const PUSH_PLUGIN_ID = "push-notifications";
-export const SEND_METHOD = "notifications.send";
-
-/**
- * The shapes read from the push-notifications plugin. Its contract is not published; these were read from
- * bb 0.48.1's bundle (`threadNotifications.list` answers only threads with a level of their own or an
- * ancestor's cap, `threadNotifications.set` the thread's levels after the change).
- */
-const LEVEL = z.enum(["inherit", "all", "input-only", "muted"]);
-const THREAD_LEVELS = z.object({ own: LEVEL });
-const LEVEL_LIST = z.object({ threads: z.record(z.string(), THREAD_LEVELS) });
-const SENT = z.object({ ok: z.literal(true), channels: z.array(z.string()) });
-
-export function bbNotifications(sdk: PluginBbSdk): NotificationsPort {
-  return {
-    async canSend() {
-      // bb before 0.48 has no discovery; there is nothing to send through then.
-      if (typeof sdk.plugins?.experimental_discoverRpc !== "function") return false;
-      const methods = await sdk.plugins.experimental_discoverRpc({ pluginId: PUSH_PLUGIN_ID, method: SEND_METHOD });
-      return methods.some((method) => method.pluginId === PUSH_PLUGIN_ID && method.method === SEND_METHOD);
-    },
-    async ownLevel(threadId) {
-      const { threads } = await sdk.plugins.callRpc({
-        pluginId: PUSH_PLUGIN_ID,
-        method: "threadNotifications.list",
-        input: { threadIds: [threadId] },
-        outputSchema: LEVEL_LIST,
-      });
-      return threads[threadId]?.own ?? "inherit";
-    },
-    async setOwnLevel(threadId, level) {
-      await sdk.plugins.callRpc({
-        pluginId: PUSH_PLUGIN_ID,
-        method: "threadNotifications.set",
-        input: { threadId, level },
-        outputSchema: THREAD_LEVELS,
-      });
-    },
-    async send({ title, body, threadId }) {
-      const { channels } = await sdk.plugins.callRpc({
-        pluginId: PUSH_PLUGIN_ID,
-        method: SEND_METHOD,
-        input: { title, body, threadId },
-        outputSchema: SENT,
-      });
-      return channels;
-    },
-    async attention(threadId) {
-      const thread = await nullIfNotFound(sdk.threads.get({ threadId }));
-      return thread === null ? null : { lastReadAt: thread.lastReadAt, latestAttentionAt: thread.latestAttentionAt };
     },
   };
 }

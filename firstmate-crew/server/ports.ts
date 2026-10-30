@@ -147,6 +147,8 @@ export interface ThreadsPort {
   clearContext(id: string): Promise<void>;
   /** Asks bb for the same structured `/compact` turn its composer sends. */
   compact(id: string): Promise<void>;
+  /** Marks the thread read, as opening it in bb does. */
+  markRead(id: string): Promise<void>;
   /** Null when the thread is missing, deleted or archived. */
   restState(id: string, signal?: AbortSignal): Promise<RestState | null>;
   /** The thread's latest `turn/completed` event, or null when no turn has ended yet. */
@@ -164,29 +166,4 @@ export interface ProjectsPort {
   create(name: string, path: string): Promise<{ id: string }>;
   /** Every project's id and name, for resolving what the captain or the first mate typed. */
   list(): Promise<{ id: string; name: string }[]>;
-}
-
-/**
- * A thread's notification level in bb's push-notifications plugin, as set on the thread itself
- * (`inherit` follows bb's defaults). `input-only` keeps questions, approvals and errors; `muted` sends nothing.
- */
-export type NotificationLevel = "inherit" | "all" | "input-only" | "muted";
-
-/** When the captain last read a thread, and when it last asked for attention, in epoch milliseconds. */
-export interface ThreadAttention {
-  lastReadAt: number | null;
-  latestAttentionAt: number;
-}
-
-/** bb's push-notifications plugin (bb 0.48.1), reached through `bb.sdk.plugins.callRpc`. */
-export interface NotificationsPort {
-  /** Whether the plugin is on and offers `notifications.send`; false on a bb without it. */
-  canSend(): Promise<boolean>;
-  /** The level set on the thread itself; `inherit` when none is. */
-  ownLevel(threadId: string): Promise<NotificationLevel>;
-  setOwnLevel(threadId: string, level: NotificationLevel): Promise<void>;
-  /** Sends to every channel the captain has on; a tap opens the thread. Answers the channels it reached. */
-  send(notification: { title: string; body: string; threadId: string }): Promise<string[]>;
-  /** Null when bb has no such thread. */
-  attention(threadId: string): Promise<ThreadAttention | null>;
 }

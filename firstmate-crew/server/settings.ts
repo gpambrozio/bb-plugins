@@ -71,11 +71,11 @@ export const SETTINGS = {
     description: "How often the board reloads the crew while it is open.",
     default: DEFAULT_REFRESH_SECONDS,
   },
-  mateNotifications: {
+  mateQuietShipshape: {
     type: "boolean",
-    label: "First mate: notify through FirstMate",
+    label: "First mate: no notification for \"Captain, shipshape.\"",
     description:
-      "FirstMate notifies you when the first mate finishes a turn, and skips a plain \"Captain, shipshape.\". bb still notifies you of the first mate's questions, approvals and errors. Needs bb 0.48.1 or later with Push Notifications on; otherwise bb's own notifications stay as they are.",
+      "When the first mate's whole reply is \"Captain, shipshape.\", meaning there was nothing to do, FirstMate marks the turn read so bb does not notify you of it. Every other turn notifies as bb's settings say. Workers are not affected.",
     default: false,
   },
   mateAutoCompact: {

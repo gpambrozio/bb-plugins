@@ -23,7 +23,6 @@ const FLEET: Fleet = {
   homeReady: true,
   mate: null,
   mateMissing: false,
-  notifications: null,
   cards: [],
   suggestions: [],
   charter: { edited: false, outdated: false },
