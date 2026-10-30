@@ -124,22 +124,13 @@ interface Outgoing {
   attempts: number;
   /** When it is next due. */
   dueAt: number;
-  /**
-   * Set when it is not yet known whether Herald owes it: an event an
-   * unloading instance could not finish looking up. Decided, from the
-   * records, before it is sent.
-   */
-  event?: PushEvent;
 }
 
 function outgoingOf(id: string, raw: unknown): Outgoing | null {
   if (typeof raw !== "object" || raw === null) return null;
   const row = raw as Partial<Outgoing>;
   if (typeof row.sentence !== "string" || typeof row.attempts !== "number" || typeof row.subject !== "object" || row.subject === null) return null;
-  const item: Outgoing = { id, subject: row.subject, sentence: row.sentence, attempts: row.attempts, dueAt: typeof row.dueAt === "number" ? row.dueAt : 0 };
-  const event = row.event;
-  if (typeof event === "object" && event !== null && typeof event.at === "number" && typeof event.reason === "string") item.event = { reason: event.reason, at: event.at };
-  return item;
+  return { id, subject: row.subject, sentence: row.sentence, attempts: row.attempts, dueAt: typeof row.dueAt === "number" ? row.dueAt : 0 };
 }
 
 export interface PushDeps {
@@ -325,21 +316,6 @@ export class PushTakeover {
   /** The thread was unarchived: it may be taken over again. */
   unarchived(threadId: string): void {
     this.forgotten.delete(threadId);
-  }
-
-  /**
-   * Stores, for the next instance, an event this one could not finish
-   * looking up before it unloads: whether it is owed is decided there, from
-   * the records, and then it goes with the plain sentence. Called while this
-   * instance's storage still works; never rejects.
-   */
-  async handOver(subject: PushSubject, sentence: string, event: PushEvent): Promise<void> {
-    const id = randomUUID();
-    try {
-      await this.deps.kv.set(`${OUTBOX_PREFIX}${id}`, { subject, sentence, attempts: 0, dueAt: this.now(), event });
-    } catch (error) {
-      this.deps.log.error(`Could not hand the notification for ${subject.threadId} to the next instance: ${reasonOf(error)}`);
-    }
   }
 
   /** The thread was archived (its level goes back, for an unarchive) or deleted (nothing is left to give back). */
@@ -660,15 +636,6 @@ export class PushTakeover {
 
   private async attemptOnce(item: Outgoing): Promise<void> {
     const { subject, sentence } = item;
-    if (item.event !== undefined) {
-      // Settled only, as a stale event is: no level changes for it.
-      const owed = await this.decide(subject.threadId, () => Promise.resolve("silent"), item.event, false);
-      if (!owed) {
-        if (item.id !== null) await this.deps.kv.delete(`${OUTBOX_PREFIX}${item.id}`).catch(() => {});
-        return;
-      }
-      item = { ...item, event: undefined };
-    }
     let news: boolean;
     try {
       news = await this.stillNews(subject);

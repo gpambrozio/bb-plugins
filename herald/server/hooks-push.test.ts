@@ -38,7 +38,6 @@ interface FakePush extends PushHooks {
   seen: string[];
   /** The `takeOver` of each decision, in order. */
   takeOvers: boolean[];
-  handedOver: Array<{ subject: PushSubject; sentence: string }>;
   decisions: Array<{ threadId: string; choice: ThreadChoice; reason: AttentionReason | null }>;
   sent: Array<{ subject: PushSubject; sentence: string }>;
   owes: boolean;
@@ -48,16 +47,13 @@ function fakePush(): FakePush {
   const fake: FakePush = {
     seen: [],
     takeOvers: [],
-    handedOver: [],
     decisions: [],
     sent: [],
     owes: true,
     saw(threadId) {
       fake.seen.push(threadId);
     },
-    async handOver(subject, sentence) {
-      fake.handedOver.push({ subject, sentence });
-    },
+
     async decide(threadId, choiceOf, event, takeOver = true) {
       fake.takeOvers.push(takeOver);
       fake.decisions.push({ threadId, choice: await choiceOf(), reason: event?.reason ?? null });
@@ -358,13 +354,12 @@ describe("hooks with push notifications", () => {
       }
     });
 
-    it("hands an event whose lookup outlasts both unload drains to the next instance, which sends it", async () => {
+    it("sends, while it unloads for good, the plain notification of an event whose lookup outlasts its drain", async () => {
       vi.useFakeTimers();
       try {
-        const rows = new Map<string, unknown>();
         const own = new Map<string, string>();
         const invalid = { value: false };
-        const old = realPush(new Set(), { value: false }, { rows, own, invalid });
+        const old = realPush(new Set(), { value: false }, { own, invalid });
         const { hooks } = setup({ push: old.push });
         hooks.active(thread());
         await vi.advanceTimersByTimeAsync(0);
@@ -372,37 +367,30 @@ describe("hooks with push notifications", () => {
         let release: () => void = () => {};
         holdNextContext = new Promise((resolve) => (release = resolve));
         const pending = hooks.interactionPending(thread(), question());
-        // Herald's drain runs out with the lookup still out; then it gives the level back.
+        // Disabled: no next instance. The drain runs out with the lookup still out.
         const disposing = hooks.dispose();
         await vi.advanceTimersByTimeAsync(DISPOSE_DRAIN_MS + 1);
         await disposing;
+        expect(old.sent).toEqual([{ threadId: "t1", body: "Login fix has a question: Which DB? Options: Postgres / SQLite." }]);
         const closing = old.push.close();
         await vi.advanceTimersByTimeAsync(RELEASE_QUIET_MS + 1);
         await closing;
         expect(own.has("t1")).toBe(false);
-        // bb's own drain runs out too, and the old instance's handles stop working.
-        await vi.advanceTimersByTimeAsync(5_000);
+        // bb invalidates the old handles; the lookup returning then sends nothing more.
         invalid.value = true;
         release();
         await pending;
         await vi.advanceTimersByTimeAsync(0);
-        expect(old.sent).toEqual([]);
-        // The next instance finds the event, decides it from the records, and sends it.
-        const next = realPush(new Set(), { value: false }, { rows, own });
-        await vi.advanceTimersByTimeAsync(0);
-        expect(next.sent).toEqual([{ threadId: "t1", body: "Login fix has a question: Which DB? Options: Postgres / SQLite." }]);
-        expect([...rows.keys()].some((key) => key.startsWith(OUTBOX_PREFIX))).toBe(false);
-        await next.push.close();
+        expect(old.sent).toHaveLength(1);
       } finally {
         vi.useRealTimers();
       }
     });
 
-    it("leaves a handed-over event alone in the next instance when Herald held no mute for it", async () => {
+    it("sends nothing on unload for an event bb was never muted for", async () => {
       vi.useFakeTimers();
       try {
-        const rows = new Map<string, unknown>();
-        const old = realPush(new Set(), { value: false }, { rows });
+        const old = realPush(new Set(), { value: false });
         const { hooks } = setup({ push: old.push, config: { ...CONFIG, push: false } });
         let release: () => void = () => {};
         holdNextContext = new Promise((resolve) => (release = resolve));
@@ -410,15 +398,11 @@ describe("hooks with push notifications", () => {
         const disposing = hooks.dispose();
         await vi.advanceTimersByTimeAsync(DISPOSE_DRAIN_MS + 1);
         await disposing;
-        await old.push.close();
         release();
         await pending;
-        const next = realPush(new Set(), { value: false }, { rows });
         await vi.advanceTimersByTimeAsync(0);
-        // bb was never muted for it: bb's own notification stands.
-        expect(next.sent).toEqual([]);
-        expect([...rows.keys()].some((key) => key.startsWith(OUTBOX_PREFIX))).toBe(false);
-        await next.push.close();
+        expect(old.sent).toEqual([]);
+        expect([...old.rows.keys()].some((key) => key.startsWith(OUTBOX_PREFIX))).toBe(false);
       } finally {
         vi.useRealTimers();
       }

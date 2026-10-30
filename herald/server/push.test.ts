@@ -664,6 +664,19 @@ describe("PushTakeover", () => {
       expect(bb.sent.map((sent) => sent.body)).toEqual(["Login fix finished."]);
     });
 
+    it("still sends a failed send after a restart more than ten minutes later", async () => {
+      bb.sendError = new Error("Push notifications are not running");
+      await push.send(subject(), "Login fix finished.");
+      await push.close();
+      vi.setSystemTime(Date.now() + 11 * 60_000);
+      bb.sendError = null;
+      const next = new PushTakeover({ port: bb, kv, enabled: async () => true, facts: async () => facts, interactionPending: async () => true, log });
+      await next.setReady();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(bb.sent.map((sent) => sent.body)).toEqual(["Login fix finished."]);
+      await next.close();
+    });
+
     it("gives up a send after its last try, with an error", async () => {
       bb.sendError = new Error("relay down");
       await push.send(subject(), "Login fix finished.");

@@ -41,8 +41,6 @@ export interface HeraldConfig {
  */
 export interface PushHooks {
   saw(threadId: string, at: number): void;
-  /** Stores an event Herald could not finish looking up before it unloads, for the next instance to decide. */
-  handOver(subject: PushSubject, sentence: string, event: PushEvent): Promise<void>;
   /** `takeOver` false: settle what the event is owed, and change no level. */
   decide(threadId: string, choiceOf: () => Promise<ThreadChoice>, event: PushEvent | null, takeOver?: boolean): Promise<boolean>;
   send(subject: PushSubject, sentence: string): Promise<void>;
@@ -183,10 +181,11 @@ export function createHooks(deps: HookDeps): Hooks {
   /**
    * Every event still being looked up, with what its notification would say
    * with nothing looked up: registered as it arrives, so an unload whose
-   * drain runs out can hand it to the next instance while storage still
-   * works. A handed-over event sends nothing itself when its lookup returns.
+   * drain runs out can settle it while its storage and calls still work —
+   * after the unload, bb may invalidate them. An event settled that way
+   * sends nothing itself when its lookup returns.
    */
-  const arrivals = new Map<number, { subject: PushSubject; fallback: string; event: PushEvent; handedOver: boolean }>();
+  const arrivals = new Map<number, { subject: PushSubject; fallback: string; event: PushEvent; settled: boolean }>();
   let arrivalCounter = 0;
 
   function arrive(thread: ThreadDto, at: number, what: { reason: AttentionReason; headline: string; detail: string | null; requestId: string | null }): number {
@@ -200,12 +199,12 @@ export function createHooks(deps: HookDeps): Hooks {
       createdAt: new Date(at).toISOString(),
     };
     const fallback = fallbackSpeech({ ...subject, headline: what.headline, detail: what.detail });
-    arrivals.set(arrivalCounter, { subject, fallback, event: { reason: what.reason, at }, handedOver: false });
+    arrivals.set(arrivalCounter, { subject, fallback, event: { reason: what.reason, at }, settled: false });
     return arrivalCounter;
   }
 
-  function handedOver(token: number): boolean {
-    return arrivals.get(token)?.handedOver === true;
+  function settledOnUnload(token: number): boolean {
+    return arrivals.get(token)?.settled === true;
   }
 
   /** Whether Herald notifies this event itself; false without the push hooks. */
@@ -321,7 +320,7 @@ export function createHooks(deps: HookDeps): Hooks {
       record(recording);
       return;
     }
-    if (handedOver(recording.token)) return;
+    if (settledOnUnload(recording.token)) return;
     const base = baseOf(recording);
     // Settled only: an event a newer one replaced takes no level, so it cannot re-take a thread given back meanwhile.
     pushWhen(decidePush(recording.thread, { reason: recording.reason, at: recording.at }, recording.config, recording.choice, false), base, fallbackSpeech(base));
@@ -352,7 +351,7 @@ export function createHooks(deps: HookDeps): Hooks {
     // Decided whatever is spoken: a mute of Herald's can suppress what bb
     // would have notified about an event Herald does not announce, and then
     // Herald notifies it with the plain sentence.
-    const owes = handedOver(recording.token) ? Promise.resolve(false) : decidePush(thread, { reason, at: recording.at }, config, choice);
+    const owes = settledOnUnload(recording.token) ? Promise.resolve(false) : decidePush(thread, { reason, at: recording.at }, config, choice);
     // Switched off, silenced from the thread menu, or a subagent its parent
     // speaks for: listed in the panel, with its sentence, never spoken — and
     // no tool is run to write it.
@@ -649,12 +648,17 @@ export function createHooks(deps: HookDeps): Hooks {
       const until = Date.now() + DISPOSE_DRAIN_MS;
       await drain(handlersRunning, until);
       // Lookups still out: past this point bb may stop this instance's
-      // storage and calls, so each such event is stored for the next one.
-      const unfinished = [...arrivals.values()].filter((arrival) => !arrival.handedOver);
-      for (const arrival of unfinished) arrival.handedOver = true;
-      await Promise.all(unfinished.map((arrival) => deps.push?.handOver(arrival.subject, arrival.fallback, arrival.event)));
+      // storage and calls, and there may be no next instance (a disable, a
+      // removal). So each such event is decided now, from the records as
+      // they stand — no level changes — and sent with the plain sentence.
+      for (const arrival of arrivals.values()) {
+        if (arrival.settled || deps.push === undefined) continue;
+        arrival.settled = true;
+        pushWhen(deps.push.decide(arrival.subject.threadId, () => Promise.resolve("silent"), arrival.event, false), arrival.subject, arrival.fallback);
+      }
       for (const [eventId, { fallback }] of [...owedPushes]) sendOwed(eventId, fallback);
-      await drain(pushesRunning, until);
+      // Their own window: the lookups may have used all of the first.
+      await drain(pushesRunning, Date.now() + DISPOSE_DRAIN_MS);
     },
   };
 }

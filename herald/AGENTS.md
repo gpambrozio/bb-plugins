@@ -309,11 +309,14 @@ a level. `server/push.ts` holds the logic; what must stay true:
   and leaves the outbox in storage; the next instance takes it up when it becomes ready and reads it
   again every `RETRY_MS`, since bb drains a plugin's handlers only after its unload hook and a late one
   can still store a failed send. A lookup can outlast both drains, after which bb has invalidated the
-  old instance's storage and calls, so every event registers its plain-sentence notification as it
-  arrives (`arrive`, before any lookup); when Herald's drain runs out, each one still out is stored in
-  the outbox *undecided* (`handOver`, with the event's kind and time) while storage still works, and
-  sends nothing itself when its lookup returns. The next instance decides it from the records (settle
-  only, no level change) and sends it, or drops it when Herald held no mute for it (review pass 4). `push.status` names threads still muted by Herald
+  old instance's storage and calls, and on a disable or a removal there is no next instance at all. So
+  every event registers its plain-sentence notification as it arrives (`arrive`, before any lookup), and
+  when Herald's drain runs out, the unloading instance decides each one still out itself — from its own
+  records, which are current, with no level change — and sends it at once if a Herald mute may have
+  held it back; its lookup returning later sends nothing. This works the same for a reload, a disable
+  and a removal. An earlier version stored such events undecided for the next instance, which lost
+  them on a disable and when the next start came after the records' retention (review pass 5). The
+  outbox holds only sends that failed, which need no records to be retried. `push.status` names threads still muted by Herald
   while it retries a give-back.
 - **Obligations belong to the event, not the banner.** Every event whose lookups finish gets its
   notification decided, even one a newer event or turn has replaced for the banner (`admit`): an earlier
