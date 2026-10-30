@@ -93,3 +93,46 @@ export interface ThreadChoicesPort {
   /** Sets the thread's own choice, or clears it with null. */
   setOwn(threadId: string, choice: ThreadChoice | null): Promise<void>;
 }
+
+/** A message in a thread's timeline: what a sentence is placed against. */
+export interface TimelineMessage {
+  /** The id bb's timeline gives the row, which message metadata receives too. */
+  id: string;
+  createdAt: number;
+  role: "user" | "assistant";
+  /** Who sent a `user` row: the person, or another thread or bb itself (a child's report, say); null for an answer. */
+  initiator: "user" | "agent" | "system" | null;
+  /** The turn it belongs to; a prompt carries the turn it started or steered. */
+  turnId: string | null;
+  /** A `user` row bb has not delivered yet (a queued prompt, or one it refused): it led to nothing. */
+  undelivered: boolean;
+}
+
+/** Any other top-level row of a turn — its work, a system row, a finished turn's "Worked for" — by when it started. */
+export interface TimelineMark {
+  turnId: string;
+  startedAt: number;
+  /** A finished turn's "Worked for" row, which folds the turn's work and its intermediate messages. */
+  folded: boolean;
+}
+
+/** Where the next older page of a thread's timeline starts. */
+export interface TimelineCursor {
+  anchorId: string;
+  anchorSeq: number;
+}
+
+/**
+ * A thread's timeline as bb shows it, newest page first. Only the messages
+ * at its top level count: a finished turn folds its work, and the messages
+ * in it, into one "Worked for" row, which message metadata does not reach.
+ */
+export interface TimelinePort {
+  page(
+    threadId: string,
+    older: TimelineCursor | null,
+    signal?: AbortSignal,
+  ): Promise<{ messages: TimelineMessage[]; marks: TimelineMark[]; older: TimelineCursor | null }>;
+  /** Whether a turn may still be running: its messages can fold into its "Worked for" row when it ends. */
+  running(threadId: string): Promise<boolean>;
+}

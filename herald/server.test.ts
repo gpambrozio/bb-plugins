@@ -12,7 +12,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import plugin, { ABANDONED_AFTER_MS } from "./server";
 import { announceDrained } from "./server/reload-signal";
 import type { AttentionEntry } from "./shared/herald";
-import { DEFAULT_STORED_CONFIG, ENTRIES_CHANNEL, TOOL_COMMANDS } from "./shared/herald";
+import { DEFAULT_STORED_CONFIG, ENTRIES_CHANNEL, SENTENCES_CHANNEL, TOOL_COMMANDS } from "./shared/herald";
 import { CHOICES_CHANNEL } from "./shared/thread-choice";
 
 /**
@@ -152,6 +152,9 @@ async function settle(): Promise<void> {
   for (let i = 0; i < 10; i += 1) await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+/** The top-level messages of every thread's timeline, as `threads.timeline` serves them; one page, one turn. */
+let timelineMessages: Array<{ id: string; createdAt: number; role: "user" | "assistant"; initiator: "user" | null }> = [];
+
 async function load(settings: Record<string, string | number | boolean> = {}) {
   const { metadata, failures, stubs } = metadataStubs();
   const push = pushStubs();
@@ -169,6 +172,16 @@ async function load(settings: Record<string, string | number | boolean> = {}) {
         promptHistory: async () =>
           [{ id: "m1", createdAt: 1, input: [{ type: "text", text: "Fix the login bug", mentions: [] }] }] as never,
         interactions: { list: async () => [], get: async () => ({ status: "pending" }) as never },
+        timeline: async () =>
+          ({
+            rows: timelineMessages.map((message) => ({
+              kind: "conversation",
+              ...message,
+              turnId: "turn_1",
+              turnRequest: message.role === "user" ? { isGrouped: false, kind: "message", status: "accepted" } : null,
+            })),
+            timelinePage: { olderCursor: null },
+          }) as never,
       },
     },
   });
@@ -192,6 +205,7 @@ function entriesOf(result: unknown): AttentionEntry[] {
 describe("herald server", () => {
   afterEach(async () => {
     await Promise.all(live.splice(0).map((host) => host.harness.lifecycle.dispose().catch(() => {})));
+    timelineMessages = [];
   });
 
   it("announces a finished turn with its plain sentence, tells the app, and starts no thread", async () => {
@@ -223,7 +237,7 @@ describe("herald server", () => {
       interaction: {
         createdAt: 1,
         id: "int_1",
-        payload: { kind: "user_question", questions: [{ id: "q", prompt: "Ship it?", allowFreeText: true, multiSelect: false }] },
+        payload: { kind: "user_question", questions: [{ id: "q", prompt: "Ship it?", allowFreeText: true, multiSelect: false, required: true }] },
         providerId: "claude-code",
         providerRequestId: "r",
         providerThreadId: "p",
@@ -366,6 +380,16 @@ describe("herald server", () => {
       expect(harness.realtimeSignals.filter((signal) => signal.channel === ENTRIES_CHANNEL)).toHaveLength(2);
     });
     expect(await harness.callRpc("history.list", { threadId: "thr_user" })).toEqual({ items: [] });
+    // The turn's end still tells the thread's timeline to place its sentences again: a question's may move to the answer.
+    expect(harness.realtimeSignals.filter((signal) => signal.channel === SENTENCES_CHANNEL)).toEqual([
+      { channel: SENTENCES_CHANNEL, payload: { threadId: "thr_user" } },
+    ]);
+  });
+
+  it("tells a thread's timeline to place its sentences again when a turn fails", async () => {
+    const { harness } = await load({ announceErrors: false });
+    await harness.emitThreadEvent("thread.failed", { thread: USER_THREAD, error: "Rate limited" });
+    expect(harness.realtimeSignals).toContainEqual({ channel: SENTENCES_CHANNEL, payload: { threadId: "thr_user" } });
   });
 
   it("drops, unspoken, a sentence the instance before it was still writing — a question answered meanwhile included", async () => {
@@ -376,7 +400,7 @@ describe("herald server", () => {
       interaction: {
         createdAt: 1,
         id: "int_1",
-        payload: { kind: "user_question", questions: [{ id: "q", prompt: "Ship it?", allowFreeText: true, multiSelect: false }] },
+        payload: { kind: "user_question", questions: [{ id: "q", prompt: "Ship it?", allowFreeText: true, multiSelect: false, required: true }] },
         providerId: "claude-code",
         providerRequestId: "r",
         providerThreadId: "p",
@@ -428,6 +452,28 @@ describe("herald server", () => {
     await harness.emitThreadEvent("thread.deleted", { thread: USER_THREAD });
     await settle();
     expect(await harness.callRpc("history.list", { threadId: "thr_user" })).toEqual({ items: [] });
+  });
+
+  it("places each sentence on the message that led to it as soon as it is saved, and keeps the place", async () => {
+    const { harness } = await load();
+    timelineMessages = [
+      { id: "m_prompt", createdAt: Date.now() - 2000, role: "user", initiator: "user" },
+      { id: "m_answer", createdAt: Date.now() - 1000, role: "assistant", initiator: null },
+    ];
+    await harness.emitThreadEvent("thread.idle", { thread: USER_THREAD, lastAssistantText: "I fixed auth.ts." });
+    await vi.waitFor(async () =>
+      expect(await harness.callRpc("history.placed", { threadId: "thr_user" })).toEqual({
+        sentences: [expect.objectContaining({ text: "Login fix finished. I fixed auth.ts.", reason: "finished", messageId: "m_answer" })],
+      }),
+    );
+    // Once saved, its thread hears so; the turn's end told it too.
+    expect(harness.realtimeSignals.filter((signal) => signal.channel === SENTENCES_CHANNEL).length).toBeGreaterThanOrEqual(2);
+    // Kept with the sentence: the timeline is not read again for it.
+    timelineMessages = [];
+    await settle();
+    expect(await harness.callRpc("history.placed", { threadId: "thr_user" })).toMatchObject({ sentences: [{ messageId: "m_answer" }] });
+    const { items } = (await harness.callRpc("history.list", { threadId: "thr_user" })) as { items: Array<{ messageId?: string | null }> };
+    expect(items.map((item) => item.messageId)).toEqual(["m_answer"]);
   });
 
   it("lists the newest sentences of every thread for the Herald page, as many as configured", async () => {

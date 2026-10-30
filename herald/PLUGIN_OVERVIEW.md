@@ -11,7 +11,9 @@ know which thread to go back to without watching the sidebar.
   on its sidebar entry. Tap a row to open the thread, or Read again to hear it again.
 - Below them on the same page, the latest sentences from every thread in every project, 20 by default
   and up to 50, each opening its thread.
-- The sentence above the waiting thread's composer, with a Read again button, until you answer.
+- Every sentence kept in the thread's conversation as a card with a Read again button, just above the
+  message it is about, the newest as soon as it is said (bb 0.48.1 and newer; on older bb the latest
+  sits above the composer).
 - Settings for where to speak (desktop app, browser tab, mobile app), the voice and speed, and which
   kinds of event are announced.
 - A choice in each thread's menu: Announce, Questions only, or Silent. A worker without one follows the

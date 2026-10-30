@@ -86,6 +86,7 @@ function rpc(entries: () => AttentionEntry[], calls: { list: number }) {
     "config.set": () => DEFAULT_STORED_CONFIG,
     "history.list": () => ({ items: [] }),
     "history.recent": () => ({ items: [] as RecentHistoryItem[] }),
+    "history.placed": () => ({ sentences: [] }),
     "speech.voices": () => ({ available: true, voices: [{ name: "Zoe (Premium)", lang: "en_US" }] }),
     "speech.render": () => ({ mimeType: "audio/wav", base64: "" }),
     "choices.list": () => ({ threads: {} }),
@@ -97,7 +98,7 @@ function rpc(entries: () => AttentionEntry[], calls: { list: number }) {
 }
 
 describe("Herald's app", () => {
-  it("registers its page, overlay, banner, settings section and thread panel", async () => {
+  it("registers its page, overlay, timeline cards, settings section and thread panel, and no composer banner", async () => {
     const app = await loadPluginApp(() => import("../app"));
     expect(app.navPanels.map((panel) => panel.path)).toEqual(["waiting"]);
     expect(app.tabs.map((tab) => [tab.id, tab.context.kind, tab.availability, tab.icon])).toEqual([
@@ -107,7 +108,9 @@ describe("Herald's app", () => {
     // which bb 0.48 folds into one split button with every other plugin's.
     expect(app.threadHeaderActions.map((action) => [action.id, action.component])).toEqual([["history", HeraldHeaderToggle]]);
     expect(app.appOverlays).toHaveLength(1);
-    expect(app.composerCustomizations[0]?.banners?.map((banner) => banner.id)).toEqual(["summary"]);
+    // bb 0.48.1 draws each sentence as a card in the timeline, which replaces the banner.
+    expect(app.messageMetadata.map((registration) => [registration.id, registration.placement])).toEqual([["sentences", "above"]]);
+    expect(app.composerCustomizations).toEqual([]);
     expect(app.settingsSections.map((section) => section.id)).toEqual(["summaries"]);
     expect(app.threadActions.map((action) => [action.id, action.placement])).toEqual([
       ["announcements", undefined],

@@ -1,7 +1,9 @@
 /**
- * The sentence above a thread's composer. In Paseo, Herald left a card in the
- * agent's transcript; a bb plugin cannot add a row to a thread's timeline, so
- * the sentence sits where the user is about to answer instead — and stays,
+ * The sentence above a thread's composer, on a bb before 0.48.1 only: from
+ * 0.48.1 each sentence is a card in the timeline instead (`app/timeline.tsx`).
+ * In Paseo, Herald left a card in the agent's transcript; a bb plugin cannot
+ * add a row to a thread's timeline, so the sentence sits where the user is
+ * about to answer instead — and stays,
  * read or not, through the next turn, until the next event replaces it. A
  * kind that is switched off gets no banner.
  */

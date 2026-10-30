@@ -66,9 +66,9 @@ export const AttentionEntrySchema = z.object({
 export type AttentionEntry = z.infer<typeof AttentionEntrySchema>;
 
 /**
- * One past sentence of a thread, for the thread's Herald panel: a way to find a
- * turn by what Herald said about it, since a plugin cannot write into the
- * transcript itself. Kept newest first, at most `HISTORY_LIMIT` per thread.
+ * One past sentence of a thread, for the thread's Herald panel and its
+ * timeline: a way to find a turn by what Herald said about it. Kept newest
+ * first, at most `HISTORY_LIMIT` per thread.
  */
 export const HistoryItemSchema = z.object({
   eventId: z.string(),
@@ -77,8 +77,38 @@ export const HistoryItemSchema = z.object({
   headline: z.string(),
   /** The sentence as it was spoken, or would have been. */
   text: z.string(),
+  /**
+   * Where it sits in the thread's timeline, once that is settled: the id of
+   * the message that led to the event, which it is drawn above; null when
+   * Herald gave up looking. Absent while not yet known (`server/placement.ts`).
+   */
+  messageId: z.string().nullable().optional(),
 });
 export type HistoryItem = z.infer<typeof HistoryItemSchema>;
+
+/** A past sentence placed in the thread's timeline, above the message `messageId`. */
+export const PlacedSentenceSchema = z.object({
+  eventId: z.string(),
+  reason: AttentionReasonSchema,
+  createdAt: z.string(),
+  text: z.string(),
+  messageId: z.string(),
+});
+export type PlacedSentence = z.infer<typeof PlacedSentenceSchema>;
+
+/** A thread's sentences in its timeline, each with the message it belongs to. */
+export const PlacedSentencesSchema = z.object({
+  sentences: z.array(PlacedSentenceSchema),
+});
+export type PlacedSentences = z.infer<typeof PlacedSentencesSchema>;
+
+/**
+ * Nudged with `{ threadId }` once a sentence has joined that thread's history,
+ * and whenever one of its turns ends (the turn folds its work, and with it a
+ * message a sentence may sit above for now), so a thread on screen places its
+ * sentences again without every other thread asking too.
+ */
+export const SENTENCES_CHANNEL = "sentences";
 
 export const HISTORY_LIMIT = 50;
 

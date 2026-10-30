@@ -52,6 +52,7 @@ function backend(items: () => HistoryItem[], reads: { count: number }) {
       return { items: items() };
     },
     "history.recent": () => ({ items: [] as RecentHistoryItem[] }),
+    "history.placed": () => ({ sentences: [] }),
     "speech.voices": () => ({ available: false, voices: [] }),
     "speech.render": () => ({ mimeType: "audio/wav", base64: "" }),
     "choices.list": () => ({ threads: {} }),

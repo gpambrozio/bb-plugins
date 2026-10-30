@@ -21,7 +21,7 @@ import {
   type OwnLevel,
 } from "../shared/push";
 import { CHOICE_METADATA_KEY, ownChoiceOf, type ThreadChoice } from "../shared/thread-choice";
-import type { EventsPort, LivenessPort, Log, NamesPort, PushPort, ThreadChoicesPort } from "./ports";
+import type { EventsPort, LivenessPort, Log, NamesPort, PushPort, ThreadChoicesPort, TimelineMark, TimelineMessage, TimelinePort } from "./ports";
 import { lastPrompt } from "./timeline";
 
 /** How long a project's name or an environment's folder is trusted; both change rarely. */
@@ -145,6 +145,44 @@ export function bbNames(sdk: PluginBbSdk): NamesPort {
       }
     },
     projectName,
+  };
+}
+
+/**
+ * A thread's timeline as bb's app shows it: the top-level rows, a page of
+ * twenty turns at a time, content deferred since only ids and times are read.
+ */
+export function bbTimeline(sdk: PluginBbSdk): TimelinePort {
+  return {
+    async page(threadId, older, signal) {
+      const result = await sdk.threads.timeline({
+        threadId,
+        signal,
+        deferContent: "true",
+        ...(older === null ? {} : { beforeAnchorId: older.anchorId, beforeAnchorSeq: String(older.anchorSeq) }),
+      });
+      const messages: TimelineMessage[] = [];
+      const marks: TimelineMark[] = [];
+      for (const row of result.rows) {
+        if (row.kind === "conversation") {
+          messages.push({
+            id: row.id,
+            createdAt: row.createdAt,
+            role: row.role,
+            initiator: row.role === "user" ? row.initiator : null,
+            turnId: row.turnId,
+            undelivered: row.role === "user" && row.turnRequest.status !== "accepted",
+          });
+        } else if (row.turnId !== null) {
+          marks.push({ turnId: row.turnId, startedAt: row.startedAt, folded: row.kind === "turn" });
+        }
+      }
+      return { messages, marks, older: result.timelinePage.olderCursor };
+    },
+    async running(threadId) {
+      const { status } = await sdk.threads.get({ threadId });
+      return status !== "idle" && status !== "error";
+    },
   };
 }
 

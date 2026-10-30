@@ -29,6 +29,7 @@ function target(id: string, parentThreadId: string | null = null, archivedAt: nu
     isUnread: false,
     status: "idle" as const,
     environment: null,
+    parentNotifications: "auto" as const,
   };
 }
 
@@ -53,6 +54,7 @@ function server(initial: Record<string, ChoiceInputs>) {
     "config.set": () => DEFAULT_STORED_CONFIG,
     "history.list": () => ({ items: [] }),
     "history.recent": () => ({ items: [] as RecentHistoryItem[] }),
+    "history.placed": () => ({ sentences: [] }),
     "speech.voices": () => ({ available: false, voices: [] }),
     "speech.render": () => ({ mimeType: "audio/wav", base64: "" }),
     log: () => null,

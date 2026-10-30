@@ -1,6 +1,6 @@
 {
   "name": "@gpambrozio/bb-plugin-herald",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "license": "MIT",
   "author": "gpambrozio (https://github.com/gpambrozio)",
   "homepage": "https://github.com/gpambrozio/bb-plugins/tree/main/herald#readme",
@@ -53,7 +53,7 @@
     "app": "./app.tsx"
   },
   "dependencies": {
-    "@get-bb/plugin-sdk": "0.6.94",
+    "@get-bb/plugin-sdk": "0.6.104",
     "@radix-ui/react-slot": "^1.3.0",
     "zod": "^4.3.6"
   },

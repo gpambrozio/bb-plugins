@@ -8,26 +8,29 @@
  */
 import { randomUUID } from "node:crypto";
 
-import type { BbPluginApi } from "@get-bb/plugin-sdk";
+import type { BbPluginApi, ExperimentalPluginRpcHandlerContext } from "@get-bb/plugin-sdk";
 
 import { rpcContract } from "./shared/contract";
 import {
   DEFAULT_STORED_CONFIG,
   ENTRIES_CHANNEL,
   RecentHistoryLimitSchema,
+  SENTENCES_CHANNEL,
   SentenceToolSchema,
   StoredConfigSchema,
   VoicesConfigSchema,
+  type HistoryItem,
   type StoredConfig,
 } from "./shared/herald";
 import { customCommandSeed, sentenceSettingsOf, SETTINGS } from "./shared/settings";
 import { CHOICES_CHANNEL, effectiveChoice } from "./shared/thread-choice";
-import { bbEvents, bbLiveness, bbNames, bbPush, bbThreadChoices } from "./server/bb-ports";
+import { bbEvents, bbLiveness, bbNames, bbPush, bbThreadChoices, bbTimeline } from "./server/bb-ports";
 import { SentenceHistory } from "./server/history";
 import { createHooks, type HeraldConfig } from "./server/hooks";
 import { kvBackend } from "./server/kv-backend";
 import { Liveness } from "./server/liveness";
-import type { EventsPort, LivenessPort, NamesPort, PushPort } from "./server/ports";
+import { placeSentences } from "./server/placement";
+import type { EventsPort, LivenessPort, NamesPort, PushPort, TimelinePort } from "./server/ports";
 import { PushTakeover } from "./server/push";
 import { withNames } from "./server/recent";
 import { announceDrained, onOtherDrained } from "./server/reload-signal";
@@ -47,6 +50,14 @@ const CONFIG_KEY = "config";
  * drain takes seconds; a cold start never sends one.
  */
 export const ABANDONED_AFTER_MS = 60_000;
+
+/**
+ * The RPC caller's signal. Typed as always there, but bb before 0.48.1 passes
+ * a context without it.
+ */
+function callerSignal(ctx: ExperimentalPluginRpcHandlerContext | undefined): AbortSignal | undefined {
+  return ctx?.experimental_signal;
+}
 
 function reasonText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -106,6 +117,7 @@ export default async function plugin(bb: BbPluginApi) {
   let choices: ThreadChoices | null = null;
   let facts: LivenessPort | null = null;
   let pushPort: PushPort | null = null;
+  let timeline: TimelinePort | null = null;
   const eventsPort = () => (events ??= bbEvents(bb.sdk, bb.log));
   const factsPort = () => (facts ??= bbLiveness(bb.sdk));
   const pushPortOf = () => (pushPort ??= bbPush(bb.sdk, bb.log));
@@ -114,6 +126,7 @@ export default async function plugin(bb: BbPluginApi) {
   const livenessOf = () => (liveness ??= new Liveness(factsPort(), bb.log));
   const namesPort = () => (names ??= bbNames(bb.sdk));
   const choicesOf = () => (choices ??= new ThreadChoices(bbThreadChoices(bb.sdk)));
+  const timelinePort = () => (timeline ??= bbTimeline(bb.sdk));
 
   function publishOn(channel: string, what: string): void {
     try {
@@ -126,6 +139,24 @@ export default async function plugin(bb: BbPluginApi) {
 
   function publish(): void {
     publishOn(ENTRIES_CHANNEL, "the entries");
+  }
+
+  /**
+   * Tells a thread's timeline, if it is on screen, to place its sentences
+   * again. The nudge names the thread, so only that thread reads.
+   */
+  function nudgeTimeline(threadId: string): void {
+    try {
+      bb.realtime.publish(SENTENCES_CHANNEL, { threadId });
+    } catch (error) {
+      bb.log.warn(`Could not tell the app ${threadId}'s timeline changed: ${reasonText(error)}`);
+    }
+  }
+
+  /** A sentence joins the thread's history, and once it is saved the thread's timeline places it. */
+  function remember(threadId: string, item: HistoryItem): void {
+    history.append(threadId, item);
+    void history.flush().then(() => nudgeTimeline(threadId));
   }
 
   /** The stored configuration, each part falling back to its default when unreadable. */
@@ -224,14 +255,23 @@ export default async function plugin(bb: BbPluginApi) {
     publish,
     // The tool runs here, on the bb server's machine; see AGENTS.md.
     writeSentence: (command, prompt) => writer.write(command, prompt),
-    remember: (threadId, item) => history.append(threadId, item),
+    remember,
     push,
     log: bb.log,
   });
 
   bb.events.on("thread.active", ({ thread }) => hooks.active(thread));
-  bb.events.on("thread.idle", ({ thread, lastAssistantText }) => hooks.idle(thread, lastAssistantText));
-  bb.events.on("thread.failed", ({ thread, error }) => hooks.failed(thread, error));
+  // A turn that ends folds its work, and with it any message a sentence was
+  // drawn above for now; so its timeline places again, whether or not the end
+  // itself brings a sentence (a quiet one does not).
+  bb.events.on("thread.idle", ({ thread, lastAssistantText }) => {
+    nudgeTimeline(thread.id);
+    return hooks.idle(thread, lastAssistantText);
+  });
+  bb.events.on("thread.failed", ({ thread, error }) => {
+    nudgeTimeline(thread.id);
+    return hooks.failed(thread, error);
+  });
   bb.events.on("interaction.pending", ({ thread, interaction }) => hooks.interactionPending(thread, interaction));
   bb.events.on("thread.archived", ({ thread }) => {
     hooks.gone(thread);
@@ -252,6 +292,15 @@ export default async function plugin(bb: BbPluginApi) {
   bb.rpc.register(rpcContract, {
     list: async () => ({ entries: await livenessOf().visible(store) }),
     "history.list": ({ threadId }) => history.list(threadId).then((items) => ({ items })),
+    // Each place found for good is kept, so a thread's timeline is read only
+    // back to the sentences still to place — most often just the newest.
+    "history.placed": async ({ threadId }, ctx) => {
+      await history.flush();
+      const items = await history.list(threadId);
+      const { settled, ...placed } = await placeSentences(threadId, items, timelinePort(), bb.log, callerSignal(ctx));
+      history.place(threadId, settled);
+      return placed;
+    },
     "history.recent": async () => {
       const { recentHistoryLimit } = await storedConfig();
       return { items: await withNames(await history.recent(recentHistoryLimit), namesPort(), bb.log) };

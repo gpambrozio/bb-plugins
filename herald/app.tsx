@@ -1,11 +1,12 @@
 // Herald — the app entry.
 //
-// A sidebar page listing every thread waiting on you, a banner with the
-// sentence above a thread's composer, a thread panel with the sentences of
-// its past turns, a choice in bb's thread menu of what Herald announces for
-// that thread or a selection of threads, a settings section for what the
-// host form cannot hold, and an app-wide overlay that keeps the list current
-// and speaks each new sentence.
+// A sidebar page listing every thread waiting on you, each sentence as a card
+// in the thread's timeline (bb 0.48.1; a banner above the composer on older
+// bb), a thread panel with the sentences of its past turns,
+// a choice in bb's thread menu of what Herald announces for that thread or a
+// selection of threads, a settings section for what the host form cannot
+// hold, and an app-wide overlay that keeps the list current and speaks each
+// new sentence.
 // See AGENTS.md.
 import { definePluginApp } from "@get-bb/plugin-sdk/app";
 
@@ -18,6 +19,7 @@ import { HERALD_ICONS } from "./app/icons";
 import { HeraldPanel, PANEL_PATH, useWaitingBadge } from "./app/panel";
 import { HeraldSettingsSection } from "./app/settings-section";
 import { THREAD_CHOICE_ACTION } from "./app/thread-action";
+import { registerTimelineSentences } from "./app/timeline";
 
 export default definePluginApp((app) => {
   app.slots.navPanel({
@@ -31,13 +33,18 @@ export default definePluginApp((app) => {
 
   app.slots.experimental_appOverlay({ id: "announcer", component: HeraldBridge });
 
-  app.composer.customize({
-    id: "summary",
-    scopes: ["thread"],
-    banners: [{ id: "summary", component: HeraldBanner }],
-  });
+  // Each sentence as a card above the message that led to it, on bb 0.48.1
+  // and newer; an older bb has no such slot and keeps the latest sentence in
+  // a banner above the composer, as before.
+  if (!registerTimelineSentences(app.slots)) {
+    app.composer.customize({
+      id: "summary",
+      scopes: ["thread"],
+      banners: [{ id: "summary", component: HeraldBanner }],
+    });
+  }
 
-  // A sentence per turn, in the thread's side panel: a plugin cannot write into the transcript.
+  // The same sentences, newest first, in the thread's side panel.
   app.slots.experimental_tab({
     id: HISTORY_PANEL_ACTION_ID,
     title: "Herald",
