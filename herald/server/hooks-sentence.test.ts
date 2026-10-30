@@ -270,7 +270,7 @@ describe("hooks with a model-written sentence", () => {
     w.silence();
     await settle();
     // Not spoken, listed or on the banner, not in the thread's history.
-    expect(store.get("t1")?.summary).toEqual({ status: "quiet" });
+    expect(store.get("t1")?.summary).toEqual({ status: "quiet", attentionAt: 0 });
     expect(publish).toHaveBeenCalledTimes(2);
     expect(remembered).not.toHaveBeenCalled();
     expect([...hooks.inFlightEventIds()]).toEqual([]);
@@ -356,27 +356,47 @@ describe("hooks with a model-written sentence", () => {
       ];
     }
 
+    /** bb's attention time for t1 as the quiet turn ended, carried by the idle event's thread. */
+    const T = Date.parse("2026-09-15T12:00:00.000Z");
+
     it("lists nothing for a quiet finished turn bb marked unread, and lists the needs-you event that follows", async () => {
       const w = heldWriter();
       const { hooks, store } = setup(w.write);
-      await hooks.idle(thread(), "Captain, shipshape.");
+      await hooks.idle(thread({ latestAttentionAt: T }), "Captain, shipshape.");
       w.silence();
       await settle();
-      const quiet = store.get("t1");
-      expect(quiet?.summary).toEqual({ status: "quiet" });
-      const recordedAt = Date.parse(quiet?.createdAt ?? "");
-      // bb flags the turn as it ends, a moment before Herald records it.
-      expect(joinRows(store.list(), sidebar({ latestAttentionAt: recordedAt - 50 }), recordedAt + 1_000)).toEqual([]);
+      expect(store.get("t1")?.summary).toEqual({ status: "quiet", attentionAt: T });
+      expect(joinRows(store.list(), sidebar({ latestAttentionAt: T }), T + 1_000)).toEqual([]);
       // The tool kept the event quiet even while bb's list was loading.
-      expect(joinRows(store.list(), null, recordedAt + 1_000)).toEqual([]);
+      expect(joinRows(store.list(), null, T + 1_000)).toEqual([]);
 
       // A question next: bb says it waits for input, and Herald's entry for it is listed.
       hooks.active(thread());
-      await hooks.interactionPending(thread(), question());
+      await hooks.interactionPending(thread({ latestAttentionAt: T + 5_000 }), question());
       w.silence();
       await settle();
-      const rows = joinRows(store.list(), sidebar({ latestAttentionAt: recordedAt + 5_000, hasPendingInteraction: true, indicator: "waiting-for-input" }), recordedAt + 6_000);
+      const rows = joinRows(store.list(), sidebar({ latestAttentionAt: T + 5_000, hasPendingInteraction: true, indicator: "waiting-for-input" }), T + 6_000);
       expect(rows.map((row) => [row.reason, row.entry?.summary.status])).toEqual([["question", "off"]]);
+    });
+
+    it("lists a later turn Herald missed, restored from storage after it was off, however soon after the quiet one", async () => {
+      let saved: unknown[] = [];
+      const backend = { read: async () => structuredClone(saved), write: async (entries: readonly unknown[]) => void (saved = structuredClone([...entries])) };
+      const w = heldWriter();
+      const store = new AttentionStore(backend, recordingLog());
+      const hooks = createHooks({ store, readConfig: async () => CONFIG, events, choiceOf: async () => NO_CHOICE, publish: vi.fn(), log: recordingLog(), writeSentence: w.write, remember: vi.fn() });
+      await hooks.idle(thread({ latestAttentionAt: T }), "Captain, shipshape.");
+      w.silence();
+      await settle();
+      await store.flush();
+      // Herald is off for the next turn, which ends with real news a second later; then it starts again.
+      await hooks.dispose();
+      const restored = new AttentionStore(backend, recordingLog());
+      await restored.load();
+      expect(restored.get("t1")?.summary).toEqual({ status: "quiet", attentionAt: T });
+      const later = sidebar({ latestAttentionAt: T + 1_000 });
+      expect(joinRows(restored.list(), later, T + 2_000).map((row) => row.reason)).toEqual(["finished"]);
+      expect(joinRows(restored.list(), later, T + 3_600_000).map((row) => row.reason)).toEqual(["finished"]);
     });
   });
 });

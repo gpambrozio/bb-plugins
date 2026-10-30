@@ -410,7 +410,7 @@ export function createHooks(deps: HookDeps): Hooks {
     // of the entry meanwhile; `send` itself skips what is no longer news.
     void written.then((outcome) => sendOwed(base.eventId, pushSentence(reason, outcome, fallback)));
     void written
-      .then((outcome) => settleSentence(base.threadId, base.eventId, outcome, fallback))
+      .then((outcome) => settleSentence(base.threadId, base.eventId, outcome, fallback, thread.latestAttentionAt))
       .catch((error: unknown) => deps.log.error(`Settling the sentence for ${base.threadId} failed: ${reasonOf(error)}`))
       .finally(() => inFlight.delete(base.eventId));
   }
@@ -447,10 +447,11 @@ export function createHooks(deps: HookDeps): Hooks {
    *
    * A tool that answered nothing keeps the event quiet: a finished turn
    * becomes `quiet` — unspoken, unlisted, not remembered, and its entry tells
-   * the page to leave bb's unread flag for it alone; an event that waits on
-   * the user stays listed with the plain sentence, as one not announced (`off`).
+   * the page to leave bb's unread flag for it alone, up to `attentionAt` (bb's
+   * attention time for the thread as the event arrived); an event that waits
+   * on the user stays listed with the plain sentence, as one not announced (`off`).
    */
-  async function settleSentence(threadId: string, eventId: string, outcome: WriteOutcome, fallback: string): Promise<void> {
+  async function settleSentence(threadId: string, eventId: string, outcome: WriteOutcome, fallback: string, attentionAt: number): Promise<void> {
     const stillWaiting = () => {
       if (disposed) return null;
       const current = deps.store.get(threadId);
@@ -466,7 +467,7 @@ export function createHooks(deps: HookDeps): Hooks {
     const current = stillWaiting();
     if (current === null) return;
     if (outcome.kind === "silent") {
-      deps.store.upsert({ ...current, summary: waitsOnUser(current.reason) ? { status: "off", fallback } : { status: "quiet" } });
+      deps.store.upsert({ ...current, summary: waitsOnUser(current.reason) ? { status: "off", fallback } : { status: "quiet", attentionAt } });
       deps.publish();
       return;
     }

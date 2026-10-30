@@ -362,7 +362,7 @@ describe("herald server", () => {
     await harness.callRpc("config.set", { sentenceTool: "custom", sentenceCommand: `"${process.execPath}" -e "process.exit(0)"` });
     await harness.emitThreadEvent("thread.idle", { thread: USER_THREAD, lastAssistantText: "Captain, shipshape." });
     await vi.waitFor(async () => {
-      expect(entriesOf(await harness.callRpc("list", {})).map((entry) => entry.summary)).toEqual([{ status: "quiet" }]);
+      expect(entriesOf(await harness.callRpc("list", {})).map((entry) => entry.summary)).toEqual([{ status: "quiet", attentionAt: USER_THREAD.latestAttentionAt }]);
       expect(harness.realtimeSignals.filter((signal) => signal.channel === ENTRIES_CHANNEL)).toHaveLength(2);
     });
     expect(await harness.callRpc("history.list", { threadId: "thr_user" })).toEqual({ items: [] });

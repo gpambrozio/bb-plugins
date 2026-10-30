@@ -71,21 +71,15 @@ function isCurrentEntry(entry: AttentionEntry, thread: ThreadState, now: number)
 }
 
 /**
- * How long after a quiet finished turn was recorded bb may still date the
- * attention that turn raised. bb flags the thread as the turn ends and Herald
- * records it once its lookups return, so the two are close; a flag later
- * than this is a newer event Herald did not record, and is listed.
- */
-export const QUIET_ATTENTION_SLACK_MS = 15_000;
-
-/**
  * Whether bb flags the thread only for the finished turn the sentence tool
  * kept quiet: unread, nothing waiting for input, no error, and no attention
- * newer than that turn. Such a flag is not listed, nor counted on the badge.
+ * newer than the one bb gave that turn (`attentionAt`, from the turn's own
+ * event). Such a flag is not listed, nor counted on the badge; a newer one
+ * is an event Herald missed — while it was off, say — and is listed.
  */
-function flaggedOnlyForQuietTurn(thread: ThreadState, quietAt: number | undefined): boolean {
-  if (quietAt === undefined || thread.hasPendingInteraction || thread.indicator === "unread-error") return false;
-  return thread.latestAttentionAt <= quietAt + QUIET_ATTENTION_SLACK_MS;
+function flaggedOnlyForQuietTurn(thread: ThreadState, attentionAt: number | undefined): boolean {
+  if (attentionAt === undefined || thread.hasPendingInteraction || thread.indicator === "unread-error") return false;
+  return thread.latestAttentionAt <= attentionAt;
 }
 
 function reasonFromBb(thread: ThreadState): RowReason {
@@ -102,11 +96,11 @@ function reasonFromBb(thread: ThreadState): RowReason {
 export function joinRows(entries: readonly AttentionEntry[], threads: readonly ThreadState[] | null, now: number): Row[] {
   const byId = new Map((threads ?? []).map((thread) => [thread.id, thread]));
   const rows = new Map<string, Row>();
-  /** Threads whose last Herald event is a finished turn the tool kept quiet, with when it was recorded. */
-  const quietAt = new Map<string, number>();
+  /** Threads whose last Herald event is a finished turn the tool kept quiet, with bb's attention time for it. */
+  const quietAttention = new Map<string, number>();
   for (const entry of entries) {
     if (entry.summary.status === "quiet") {
-      quietAt.set(entry.threadId, Date.parse(entry.createdAt));
+      quietAttention.set(entry.threadId, entry.summary.attentionAt);
       continue;
     }
     const thread = byId.get(entry.threadId);
@@ -123,7 +117,7 @@ export function joinRows(entries: readonly AttentionEntry[], threads: readonly T
   }
   for (const thread of threads ?? []) {
     if (rows.has(thread.id) || !isFlagged(thread) || isWorking(thread)) continue;
-    if (flaggedOnlyForQuietTurn(thread, quietAt.get(thread.id))) continue;
+    if (flaggedOnlyForQuietTurn(thread, quietAttention.get(thread.id))) continue;
     rows.set(thread.id, {
       threadId: thread.id,
       projectId: thread.projectId,

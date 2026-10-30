@@ -271,7 +271,7 @@ describe("hooks with push notifications", () => {
       await settle();
       expect(push.decisions.map((d) => d.reason)).toEqual(["finished"]);
       expect(push.sent).toEqual([]);
-      expect(store.get("t1")?.summary).toEqual({ status: "quiet" });
+      expect(store.get("t1")?.summary).toEqual({ status: "quiet", attentionAt: 0 });
       await hooks.dispose();
       expect(push.sent).toEqual([]);
     });

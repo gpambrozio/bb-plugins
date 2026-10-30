@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { AttentionEntry } from "../shared/herald";
-import { FRESH_ENTRY_MS, joinRows, QUIET_ATTENTION_SLACK_MS, type ThreadState } from "./rows";
+import { FRESH_ENTRY_MS, joinRows, type ThreadState } from "./rows";
 
 const NOW = Date.parse("2026-09-15T12:00:00.000Z");
 
@@ -86,23 +86,26 @@ describe("joinRows", () => {
 });
 
 describe("joinRows with a finished turn the sentence tool kept quiet", () => {
-  const QUIET_AT = NOW - 60_000;
-  const quiet = () => entry("t1", { createdAt: new Date(QUIET_AT).toISOString(), summary: { status: "quiet" } });
+  /** bb's attention time for the thread as the quiet turn ended. */
+  const ATTENTION_AT = NOW - 60_000;
+  const quiet = () => entry("t1", { createdAt: new Date(ATTENTION_AT + 2_000).toISOString(), summary: { status: "quiet", attentionAt: ATTENTION_AT } });
 
   it("lists neither the quiet entry nor bb's unread flag for that turn", () => {
-    expect(joinRows([quiet()], [thread("t1", { latestAttentionAt: QUIET_AT - 100 })], NOW)).toEqual([]);
-    expect(joinRows([quiet()], [thread("t1", { latestAttentionAt: QUIET_AT + QUIET_ATTENTION_SLACK_MS })], NOW)).toEqual([]);
+    expect(joinRows([quiet()], [thread("t1", { latestAttentionAt: ATTENTION_AT })], NOW)).toEqual([]);
+    expect(joinRows([quiet()], [thread("t1", { latestAttentionAt: ATTENTION_AT - 100 })], NOW)).toEqual([]);
     expect(joinRows([quiet()], null, NOW)).toEqual([]);
   });
 
-  it("still lists what bb says waits on the user, an error, or a newer flag", () => {
+  it("still lists what bb says waits on the user, an error, or any later flag", () => {
     const reasons = (threads: ThreadState[]) => joinRows([quiet()], threads, NOW).map((row) => row.reason);
-    expect(reasons([thread("t1", { hasPendingInteraction: true, indicator: "waiting-for-input" })])).toEqual(["input"]);
-    expect(reasons([thread("t1", { indicator: "unread-error" })])).toEqual(["error"]);
-    expect(reasons([thread("t1", { latestAttentionAt: QUIET_AT + QUIET_ATTENTION_SLACK_MS + 1 })])).toEqual(["finished"]);
+    expect(reasons([thread("t1", { latestAttentionAt: ATTENTION_AT, hasPendingInteraction: true, indicator: "waiting-for-input" })])).toEqual(["input"]);
+    expect(reasons([thread("t1", { latestAttentionAt: ATTENTION_AT, indicator: "unread-error" })])).toEqual(["error"]);
+    // A turn Herald missed (it was off) a second later is listed, then and an hour on.
+    expect(reasons([thread("t1", { latestAttentionAt: ATTENTION_AT + 1_000 })])).toEqual(["finished"]);
+    expect(joinRows([quiet()], [thread("t1", { latestAttentionAt: ATTENTION_AT + 1 })], NOW + 3_600_000).map((row) => row.reason)).toEqual(["finished"]);
   });
 
   it("leaves other threads' unread flags alone", () => {
-    expect(joinRows([quiet()], [thread("t1"), thread("t2")], NOW).map((row) => row.threadId)).toEqual(["t2"]);
+    expect(joinRows([quiet()], [thread("t1", { latestAttentionAt: ATTENTION_AT }), thread("t2")], NOW).map((row) => row.threadId)).toEqual(["t2"]);
   });
 });

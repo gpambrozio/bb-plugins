@@ -120,8 +120,10 @@ no shell. What that buys, and what must stay true:
   notifies that turn**, which is intended. The `quiet` entry is kept rather than removed because the
   page's other source, bb's unread flag, would list the turn again: `joinRows` skips a thread's
   unread-only row while its entry is `quiet`, unless bb says it waits for input, shows an error, or
-  flagged it more than `QUIET_ATTENTION_SLACK_MS` after the quiet turn was recorded (a newer event Herald
-  did not record). The quiet entry is the thread's last event like any other, replaced by the next. A
+  flagged it after the quiet turn: the entry keeps the idle event's own `latestAttentionAt`
+  (`attentionAt`), which bb sets as the turn ends and the sidebar carries unchanged, and only a flag at
+  or before it is hidden. A grace window over Herald's own clock was tried first; it hid for good a
+  later turn Herald missed while it was off. The quiet entry is the thread's last event like any other, replaced by the next. A
   **question, plan, permission or error** becomes `off` with the plain sentence (listed, no banner, not
   spoken, not remembered) and its owed notification goes out plain. A question answered meanwhile is
   still withdrawn first. Only a real failure falls back to the plain
