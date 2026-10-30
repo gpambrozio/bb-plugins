@@ -16,9 +16,10 @@
  */
 import type { AttentionEntry, AttentionReason, HistoryItem } from "../shared/herald";
 import type { SentenceSettings } from "../shared/settings";
-import { choiceAllows, effectiveChoice, NO_CHOICE, type ChoiceInputs } from "../shared/thread-choice";
+import { choiceAllows, effectiveChoice, NO_CHOICE, type ChoiceInputs, type ThreadChoice } from "../shared/thread-choice";
 import { fillTemplate, splitCommandLine } from "./command-line";
 import type { EventsPort, Interaction, Log, ThreadDto } from "./ports";
+import type { PushEvent, PushSubject } from "./push";
 import type { AttentionStore } from "./store";
 import { describeInteraction, displayName, fallbackSpeech, firstWords, preview } from "./timeline";
 
@@ -29,6 +30,20 @@ export interface HeraldConfig {
   announceSubagents: boolean;
   /** The tool that writes each sentence, or null for the plain one. */
   sentence: SentenceSettings | null;
+  /** *Send Herald's sentences as push notifications instead of bb's.* */
+  push: boolean;
+}
+
+/**
+ * Herald's push notifications (`push.ts`): hears of each event as it
+ * arrives, brings a thread's bb notification level in line with its choice,
+ * says whether Herald notifies an event itself, and sends. Nothing rejects.
+ */
+export interface PushHooks {
+  saw(threadId: string, at: number): void;
+  /** `takeOver` false: settle what the event is owed, and change no level. */
+  decide(threadId: string, choiceOf: () => Promise<ThreadChoice>, event: PushEvent | null, takeOver?: boolean): Promise<boolean>;
+  send(subject: PushSubject, sentence: string): Promise<void>;
 }
 
 export interface HookDeps {
@@ -43,6 +58,8 @@ export interface HookDeps {
   writeSentence: (command: string[], prompt: string) => Promise<string>;
   /** Adds a sentence that landed to the thread's history, for its panel. Never throws. */
   remember: (threadId: string, item: HistoryItem) => void;
+  /** Absent in tests that are not about notifications. */
+  push?: PushHooks;
   log: Log;
   now?: () => Date;
 }
@@ -65,6 +82,14 @@ function cut(text: string | null, max: number): string | null {
   return text !== null && text.length > max ? `${text.slice(0, max)}…` : text;
 }
 
+/**
+ * How long an unload waits for event handlers still looking things up, and
+ * for the notifications they send: bb drains a plugin's handlers only after
+ * its unload hook, so what finishes later is the next instance's to find in
+ * the outbox.
+ */
+export const DISPOSE_DRAIN_MS = 5_000;
+
 /** A second `thread.idle` for the same turn inside this window is a repeat, not a new turn. */
 export const TURN_REPEAT_WINDOW_MS = 15_000;
 
@@ -84,8 +109,12 @@ export const INTERRUPT_GRACE_MS = 10_000;
  * they hear. Then the kind of event must be switched on.
  */
 export function isAnnounced(thread: ThreadDto, reason: AttentionReason, config: HeraldConfig, choice: ChoiceInputs): boolean {
-  const effective = effectiveChoice(choice, thread.parentThreadId !== null, config.announceSubagents);
-  return choiceAllows(effective.choice, reason) && config.announce[reason];
+  return choiceAllows(choiceFor(thread, config, choice), reason) && config.announce[reason];
+}
+
+/** The thread's effective choice: its own, the subagent rule, an ancestor's, or announce. */
+function choiceFor(thread: ThreadDto, config: HeraldConfig, choice: ChoiceInputs): ThreadChoice {
+  return effectiveChoice(choice, thread.parentThreadId !== null, config.announceSubagents).choice;
 }
 
 function reasonOf(error: unknown): string {
@@ -101,8 +130,13 @@ export interface Hooks {
   gone(thread: ThreadDto): void;
   /** The events whose sentences a tool is still writing; a reload's settling leaves these alone. */
   inFlightEventIds(): ReadonlySet<string>;
-  /** Stops recording: on unload, nothing an event still in flight learned is kept. */
-  dispose(): void;
+  /**
+   * Stops recording: on unload, nothing an event still in flight learned is
+   * kept. Resolves once every notification still waiting on its sentence has
+   * gone out with the plain one: bb is muted for it, and the sentence will
+   * not come.
+   */
+  dispose(): Promise<void>;
 }
 
 export function createHooks(deps: HookDeps): Hooks {
@@ -128,6 +162,95 @@ export function createHooks(deps: HookDeps): Hooks {
   let disposed = false;
   /** Event ids with a tool run under way, until their sentence lands or is dropped. */
   const inFlight = new Set<string>();
+  /**
+   * The notifications waiting on a sentence being written, by event id. They
+   * are the event's, not the entry's: an entry a newer event replaced, or a
+   * banner taken back, does not mean bb told the user — bb was muted for it.
+   * Whoever takes one from here sends it: the sentence when it comes, or the
+   * plain one on unload.
+   */
+  const owedPushes = new Map<string, { owes: Promise<boolean>; subject: PushSubject; fallback: string }>();
+
+  /** Heard at once, before any lookup, so a give-back of the level waits for bb's read of it. */
+  function sawEvent(thread: ThreadDto): number {
+    const at = now().getTime();
+    deps.push?.saw(thread.id, at);
+    return at;
+  }
+
+  /**
+   * Every event still being looked up, with what its notification would say
+   * with nothing looked up: registered as it arrives, so an unload whose
+   * drain runs out can settle it while its storage and calls still work —
+   * after the unload, bb may invalidate them. An event settled that way
+   * sends nothing itself when its lookup returns.
+   */
+  const arrivals = new Map<number, { subject: PushSubject; fallback: string; event: PushEvent; settled: boolean }>();
+  let arrivalCounter = 0;
+
+  function arrive(thread: ThreadDto, at: number, what: { reason: AttentionReason; headline: string; detail: string | null; requestId: string | null }): number {
+    arrivalCounter += 1;
+    const subject = {
+      threadId: thread.id,
+      threadTitle: thread.title ?? thread.titleFallback,
+      projectName: null,
+      reason: what.reason,
+      requestId: what.requestId,
+      createdAt: new Date(at).toISOString(),
+    };
+    const fallback = fallbackSpeech({ ...subject, headline: what.headline, detail: what.detail });
+    arrivals.set(arrivalCounter, { subject, fallback, event: { reason: what.reason, at }, settled: false });
+    return arrivalCounter;
+  }
+
+  function settledOnUnload(token: number): boolean {
+    return arrivals.get(token)?.settled === true;
+  }
+
+  /** Whether Herald notifies this event itself; false without the push hooks. */
+  function decidePush(thread: ThreadDto, event: PushEvent, config: HeraldConfig, choice: ChoiceInputs, takeOver = true): Promise<boolean> {
+    if (deps.push === undefined) return Promise.resolve(false);
+    const effective = choiceFor(thread, config, choice);
+    return deps.push.decide(thread.id, () => Promise.resolve(effective), event, takeOver);
+  }
+
+  /** Handlers still running, and notifications being decided or sent: an unload waits for both. */
+  const handlersRunning = new Set<Promise<void>>();
+  const pushesRunning = new Set<Promise<void>>();
+
+  function tracked(set: Set<Promise<void>>, work: Promise<void>): Promise<void> {
+    set.add(work);
+    void work.finally(() => set.delete(work));
+    return work;
+  }
+
+  function pushWhen(owes: Promise<boolean>, subject: PushSubject, sentence: string): void {
+    void tracked(
+      pushesRunning,
+      owes.then(async (yes) => {
+        if (yes) await deps.push?.send(subject, sentence);
+      }),
+    );
+  }
+
+  /** Waits for every promise in the set, new ones included, for at most `until`. */
+  async function drain(set: Set<Promise<void>>, until: number): Promise<void> {
+    while (set.size > 0) {
+      // The wall clock, not `deps.now`, which a test may hold still.
+      const left = until - Date.now();
+      if (left <= 0) return;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([Promise.all([...set]), new Promise((resolve) => (timer = setTimeout(resolve, left)))]);
+      clearTimeout(timer);
+    }
+  }
+
+  function sendOwed(eventId: string, sentence: string): void {
+    const owed = owedPushes.get(eventId);
+    if (owed === undefined) return;
+    owedPushes.delete(eventId);
+    pushWhen(owed.owes, owed.subject, sentence);
+  }
 
   /** Marks the start of a recording; `isLatest` later says whether a newer one began since. */
   function beginEvent(threadId: string): number {
@@ -179,11 +302,33 @@ export function createHooks(deps: HookDeps): Hooks {
     lastUser: string | null;
     /** The whole of what the agent last said, for the prompt; the entry keeps only its start. */
     output: string | null;
+    /** When the event arrived, before any lookup. */
+    at: number;
+    /** Its arrival (`arrive`). */
+    token: number;
   }
 
-  function record(recording: Recording): void {
-    const { thread, reason, config, choice } = recording;
-    const base: Omit<AttentionEntry, "summary"> = {
+  /**
+   * An event whose lookups are done. A newer event or turn replaced it for
+   * the banner, which stays as it is; but bb may have held its notification
+   * back all the same — an earlier question still waits even when a later
+   * one was answered — so its notification is still decided and sent, with
+   * the plain sentence. `send` drops it when it is no longer news.
+   */
+  function admit(stale: boolean, recording: Recording): void {
+    if (!stale) {
+      record(recording);
+      return;
+    }
+    if (settledOnUnload(recording.token)) return;
+    const base = baseOf(recording);
+    // Settled only: an event a newer one replaced takes no level, so it cannot re-take a thread given back meanwhile.
+    pushWhen(decidePush(recording.thread, { reason: recording.reason, at: recording.at }, recording.config, recording.choice, false), base, fallbackSpeech(base));
+  }
+
+  function baseOf(recording: Recording): Omit<AttentionEntry, "summary"> {
+    const { thread, reason } = recording;
+    return {
       threadId: thread.id,
       projectId: thread.projectId,
       projectName: recording.projectName,
@@ -197,7 +342,16 @@ export function createHooks(deps: HookDeps): Hooks {
       headline: recording.headline,
       detail: recording.detail,
     };
+  }
+
+  function record(recording: Recording): void {
+    const { thread, reason, config, choice } = recording;
+    const base = baseOf(recording);
     const fallback = fallbackSpeech(base);
+    // Decided whatever is spoken: a mute of Herald's can suppress what bb
+    // would have notified about an event Herald does not announce, and then
+    // Herald notifies it with the plain sentence.
+    const owes = settledOnUnload(recording.token) ? Promise.resolve(false) : decidePush(thread, { reason, at: recording.at }, config, choice);
     // Switched off, silenced from the thread menu, or a subagent its parent
     // speaks for: listed in the panel, with its sentence, never spoken — and
     // no tool is run to write it.
@@ -205,12 +359,14 @@ export function createHooks(deps: HookDeps): Hooks {
       deps.store.upsert({ ...base, summary: { status: "off", fallback } });
       deps.publish();
       remember(base, fallback);
+      pushWhen(owes, base, fallback);
       return;
     }
     if (config.sentence === null) {
       deps.store.upsert({ ...base, summary: { status: "ready", text: fallback } });
       deps.publish();
       remember(base, fallback);
+      pushWhen(owes, base, fallback);
       return;
     }
     // Listed at once with the plain sentence as its stand-in; the tool's
@@ -218,7 +374,12 @@ export function createHooks(deps: HookDeps): Hooks {
     deps.store.upsert({ ...base, summary: { status: "pending", fallback } });
     deps.publish();
     inFlight.add(base.eventId);
-    void writeSentence(config.sentence, base, recording)
+    owedPushes.set(base.eventId, { owes, subject: base, fallback });
+    const written = writeSentence(config.sentence, base, recording);
+    // The notification goes with the event's own sentence, whatever became
+    // of the entry meanwhile; `send` itself skips what is no longer news.
+    void written.then((text) => sendOwed(base.eventId, text ?? fallback));
+    void written
       .then((text) => settleSentence(base.threadId, base.eventId, text ?? fallback))
       .catch((error: unknown) => deps.log.error(`Settling the sentence for ${base.threadId} failed: ${reasonOf(error)}`))
       .finally(() => inFlight.delete(base.eventId));
@@ -311,17 +472,38 @@ export function createHooks(deps: HookDeps): Hooks {
   }
 
   /** Runs a handler's async work; a failure is logged, never left to reject inside the bb server. */
-  async function guarded(what: string, work: () => Promise<void>): Promise<void> {
-    try {
-      await work();
-    } catch (error) {
-      deps.log.error(`Handling ${what} failed: ${reasonOf(error)}`);
-    }
+  function guarded(what: string, work: () => Promise<void>): Promise<void> {
+    return tracked(
+      handlersRunning,
+      (async () => {
+        try {
+          await work();
+        } catch (error) {
+          deps.log.error(`Handling ${what} failed: ${reasonOf(error)}`);
+        }
+      })(),
+    );
+  }
+
+  /**
+   * A turn starting is the earliest Herald hears of a thread, so its bb level
+   * is brought in line here, before the turn's end is notified — bb reads the
+   * level a couple of seconds after each event. Only with the switch on.
+   */
+  function syncPush(thread: ThreadDto): void {
+    const push = deps.push;
+    if (push === undefined || thread.visibility === "hidden") return;
+    void guarded("thread.active (notifications)", async () => {
+      const config = await deps.readConfig();
+      if (!config.push) return;
+      await push.decide(thread.id, async () => choiceFor(thread, config, await choiceOf(thread)), null);
+    });
   }
 
   return {
     active(thread) {
       movedOn(thread.id);
+      syncPush(thread);
       // The sentence is the thread's last event and stays above the composer
       // through the next turn — unless it is still being written: the agent
       // working again, on its own or on a new prompt, makes it stale before
@@ -332,6 +514,7 @@ export function createHooks(deps: HookDeps): Hooks {
 
     idle(thread, lastAssistantText) {
       if (thread.visibility === "hidden") return Promise.resolve();
+      const at = sawEvent(thread);
       return guarded("thread.idle", async () => {
         // bb assembles the turn's text itself, chunks and all; it is used as
         // it comes, with nothing added between the pieces.
@@ -341,87 +524,110 @@ export function createHooks(deps: HookDeps): Hooks {
         // a silent end does not stand in for the turn end that follows it.
         if (output === "") return;
         if (isRepeatIdle(thread.id)) return;
-        const event = beginEvent(thread.id);
-        const generation = generationOf(thread.id);
-        const [config, context, choice] = await Promise.all([
-          deps.readConfig(),
-          deps.events.context(thread, { withRequest: true }),
-          choiceOf(thread),
-        ]);
-        if (generationOf(thread.id) !== generation || !isLatest(thread.id, event)) return;
-        record({
-          thread,
-          reason: "finished",
-          eventId: `${thread.id}:idle:${now().getTime()}`,
-          requestId: null,
-          headline: "Finished",
-          detail: firstWords(output, 60),
-          config,
-          choice,
-          projectName: context.projectName,
-          folder: context.folder,
-          lastUser: context.lastRequest,
-          output,
-        });
+        const token = arrive(thread, at, { reason: "finished", headline: "Finished", detail: firstWords(output, 60), requestId: null });
+        try {
+          const event = beginEvent(thread.id);
+          const generation = generationOf(thread.id);
+          const [config, context, choice] = await Promise.all([
+            deps.readConfig(),
+            deps.events.context(thread, { withRequest: true }),
+            choiceOf(thread),
+          ]);
+          const stale = generationOf(thread.id) !== generation || !isLatest(thread.id, event);
+          admit(stale, {
+            thread,
+            reason: "finished",
+            eventId: `${thread.id}:idle:${now().getTime()}`,
+            requestId: null,
+            headline: "Finished",
+            detail: firstWords(output, 60),
+            config,
+            choice,
+            projectName: context.projectName,
+            folder: context.folder,
+            lastUser: context.lastRequest,
+            output,
+            at,
+            token,
+          });
+        } finally {
+          arrivals.delete(token);
+        }
       });
     },
 
     failed(thread, error) {
       if (thread.visibility === "hidden") return Promise.resolve();
+      const at = sawEvent(thread);
+      const token = arrive(thread, at, { reason: "error", headline: error?.trim() || "The turn failed", detail: null, requestId: null });
       return guarded("thread.failed", async () => {
-        const event = beginEvent(thread.id);
-        const generation = generationOf(thread.id);
-        const [config, context, interrupted, choice] = await Promise.all([
-          deps.readConfig(),
-          deps.events.context(thread, { withRequest: true }),
-          deps.events.interruptedRecently(thread.id, INTERRUPT_GRACE_MS),
-          choiceOf(thread),
-        ]);
-        if (interrupted) return;
-        if (generationOf(thread.id) !== generation || !isLatest(thread.id, event)) return;
-        record({
-          thread,
-          reason: "error",
-          eventId: `${thread.id}:failed:${now().getTime()}`,
-          requestId: null,
-          headline: error?.trim() || "The turn failed",
-          detail: null,
-          config,
-          choice,
-          projectName: context.projectName,
-          folder: context.folder,
-          lastUser: context.lastRequest,
-          output: null,
-        });
+        try {
+          const event = beginEvent(thread.id);
+          const generation = generationOf(thread.id);
+          const [config, context, interrupted, choice] = await Promise.all([
+            deps.readConfig(),
+            deps.events.context(thread, { withRequest: true }),
+            deps.events.interruptedRecently(thread.id, INTERRUPT_GRACE_MS),
+            choiceOf(thread),
+          ]);
+          if (interrupted) return;
+          const stale = generationOf(thread.id) !== generation || !isLatest(thread.id, event);
+          admit(stale, {
+            thread,
+            reason: "error",
+            eventId: `${thread.id}:failed:${now().getTime()}`,
+            requestId: null,
+            headline: error?.trim() || "The turn failed",
+            detail: null,
+            config,
+            choice,
+            projectName: context.projectName,
+            folder: context.folder,
+            lastUser: context.lastRequest,
+            output: null,
+            at,
+            token,
+          });
+        } finally {
+          arrivals.delete(token);
+        }
       });
     },
 
     interactionPending(thread, interaction) {
       if (thread.visibility === "hidden" || interaction.status !== "pending") return Promise.resolve();
+      const at = sawEvent(thread);
+      const described = describeInteraction(interaction);
+      const token = arrive(thread, at, { reason: described.reason, headline: described.headline, detail: described.detail, requestId: interaction.id });
       return guarded("interaction.pending", async () => {
-        const described = describeInteraction(interaction);
-        const event = beginEvent(thread.id);
-        const generation = generationOf(thread.id);
-        const [config, context, choice] = await Promise.all([
-          deps.readConfig(),
-          deps.events.context(thread, { withRequest: false }),
-          choiceOf(thread),
-        ]);
-        if (generationOf(thread.id) !== generation || !isLatest(thread.id, event)) return;
-        record({
-          thread,
-          reason: described.reason,
-          eventId: `${thread.id}:interaction:${interaction.id}`,
-          requestId: interaction.id,
-          headline: described.headline,
-          detail: described.detail,
-          config,
-          choice,
-          projectName: context.projectName,
-          folder: context.folder,
-          lastUser: null,
-          output: null,
-        });
+        try {
+          const event = beginEvent(thread.id);
+          const generation = generationOf(thread.id);
+          const [config, context, choice] = await Promise.all([
+            deps.readConfig(),
+            deps.events.context(thread, { withRequest: false }),
+            choiceOf(thread),
+          ]);
+          const stale = generationOf(thread.id) !== generation || !isLatest(thread.id, event);
+          admit(stale, {
+            thread,
+            reason: described.reason,
+            eventId: `${thread.id}:interaction:${interaction.id}`,
+            requestId: interaction.id,
+            headline: described.headline,
+            detail: described.detail,
+            config,
+            choice,
+            projectName: context.projectName,
+            folder: context.folder,
+            lastUser: null,
+            output: null,
+            at,
+            token,
+          });
+        } finally {
+          arrivals.delete(token);
+        }
       });
     },
 
@@ -435,8 +641,24 @@ export function createHooks(deps: HookDeps): Hooks {
       return inFlight;
     },
 
-    dispose() {
+    async dispose() {
       disposed = true;
+      // Handlers still looking things up finish first: their events settle
+      // what they are owed (`admit`), within the instance's own unload.
+      const until = Date.now() + DISPOSE_DRAIN_MS;
+      await drain(handlersRunning, until);
+      // Lookups still out: past this point bb may stop this instance's
+      // storage and calls, and there may be no next instance (a disable, a
+      // removal). So each such event is decided now, from the records as
+      // they stand — no level changes — and sent with the plain sentence.
+      for (const arrival of arrivals.values()) {
+        if (arrival.settled || deps.push === undefined) continue;
+        arrival.settled = true;
+        pushWhen(deps.push.decide(arrival.subject.threadId, () => Promise.resolve("silent"), arrival.event, false), arrival.subject, arrival.fallback);
+      }
+      for (const [eventId, { fallback }] of [...owedPushes]) sendOwed(eventId, fallback);
+      // Their own window: the lookups may have used all of the first.
+      await drain(pushesRunning, Date.now() + DISPOSE_DRAIN_MS);
     },
   };
 }

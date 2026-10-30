@@ -96,18 +96,72 @@ function metadataStubs() {
   return { metadata, failures, stubs };
 }
 
+/**
+ * bb's push-notifications plugin as Herald reaches it through `bb.sdk.plugins`:
+ * the per-thread levels, the send, its settings and whether it is there. No
+ * real level is changed and nothing is sent.
+ */
+function pushStubs() {
+  const levels = new Map<string, string>();
+  const sent: Array<{ title: string; body?: string; threadId?: string }> = [];
+  const state = { available: true };
+  const stubs = {
+    experimental_discoverRpc: async () =>
+      state.available
+        ? [
+            {
+              pluginId: "push-notifications",
+              method: "notifications.send",
+              displayName: "Push notifications",
+              inputSchema: {},
+              outputSchema: {},
+              methodDescription: null,
+              registrationDescription: null,
+            },
+          ]
+        : [],
+    getSettings: async () => ({ ok: true as const, schema: {}, values: { defaultLevel: "all", childLevel: "input-only" } }),
+    callRpc: async ({ method, input }: { method: string; input?: unknown }) => {
+      const args = input as { threadIds?: string[]; threadId?: string; level?: string; title?: string; body?: string };
+      switch (method) {
+        case "threadNotifications.list":
+          return {
+            threads: Object.fromEntries(
+              (args.threadIds ?? []).flatMap((id) => {
+                const own = levels.get(id);
+                return own === undefined ? [] : [[id, { own, ancestorCap: null }]];
+              }),
+            ),
+          };
+        case "threadNotifications.set":
+          if (args.level === "inherit") levels.delete(args.threadId ?? "");
+          else levels.set(args.threadId ?? "", args.level ?? "");
+          return { own: args.level, ancestorCap: null };
+        case "notifications.send":
+          sent.push({ title: args.title ?? "", body: args.body, threadId: args.threadId });
+          return { ok: true, channels: ["desktop"] };
+        default:
+          throw new Error(`No such method: ${method}`);
+      }
+    },
+  };
+  return { levels, sent, state, stubs };
+}
+
 async function settle(): Promise<void> {
   for (let i = 0; i < 10; i += 1) await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 async function load(settings: Record<string, string | number | boolean> = {}) {
   const { metadata, failures, stubs } = metadataStubs();
+  const push = pushStubs();
   const host = createFakePluginHost({
     pluginId: "herald",
     settings,
     sdk: {
       projects: { get: async () => ({ id: "prj_shop", name: "Shop" }) as never },
       environments: { get: async () => ({ id: "env_1", path: "/Users/me/shop" }) as never },
+      plugins: push.stubs as never,
       threads: {
         get: async ({ threadId }: { threadId: string }) =>
           KNOWN_THREADS.find((known) => known.id === threadId) ?? makeThreadResponse({ id: threadId }),
@@ -120,7 +174,7 @@ async function load(settings: Record<string, string | number | boolean> = {}) {
   });
   await plugin(host.bb);
   live.push(host);
-  return Object.assign(host, { metadata, failures });
+  return Object.assign(host, { metadata, failures, push });
 }
 
 /** Every host a test made: instances of one plugin share in-process channels, so each test disposes its own. */
@@ -466,5 +520,90 @@ describe("herald server", () => {
     announceDrained(bb.pluginId, "the-instance-before");
     await settle();
     expect(entriesOf(await harness.callRpc("list", {}))[0]?.summary.status).toBe("pending");
+  });
+
+  describe("with Herald's sentences as push notifications", () => {
+    /** Loaded with the switch on, past the wait for an instance before it. */
+    async function loadPushing(settings: Record<string, string | number | boolean> = {}) {
+      const host = await load({ pushSentences: true, ...settings });
+      announceDrained(host.bb.pluginId, "the-instance-before");
+      await settle();
+      return host;
+    }
+
+    it("mutes bb for an announced thread as its turn starts, and sends the turn's end with Herald's sentence, opening that thread", async () => {
+      const { harness, push } = await loadPushing();
+      await harness.emitThreadEvent("thread.active", { thread: USER_THREAD });
+      await settle();
+      expect(push.levels.get(USER_THREAD.id)).toBe("muted");
+      await harness.emitThreadEvent("thread.idle", { thread: USER_THREAD, lastAssistantText: "I fixed auth.ts." });
+      await settle();
+      expect(push.sent).toEqual([{ title: "Login fix · Shop", body: "Login fix finished. I fixed auth.ts.", threadId: USER_THREAD.id }]);
+      expect(await harness.callRpc("push.status", {})).toEqual({ state: "on", message: null });
+    });
+
+    it("gives the level back when the switch goes off, and when the thread is set to Silent", async () => {
+      const host = await loadPushing();
+      await host.harness.emitThreadEvent("thread.active", { thread: USER_THREAD });
+      await host.harness.emitThreadEvent("thread.active", { thread: OTHER_THREAD });
+      await settle();
+      await host.harness.callRpc("choices.set", { threadId: OTHER_THREAD.id, choice: "silent" });
+      await settle();
+      expect([...host.push.levels]).toEqual([[USER_THREAD.id, "muted"]]);
+      await host.harness.setSettings({ pushSentences: false });
+      await settle();
+      expect(host.push.levels.size).toBe(0);
+    });
+
+    it("gives an archived thread back, and takes it over again once unarchived", async () => {
+      const { harness, push } = await loadPushing();
+      await harness.emitThreadEvent("thread.active", { thread: USER_THREAD });
+      await settle();
+      expect(push.levels.get(USER_THREAD.id)).toBe("muted");
+      await harness.emitThreadEvent("thread.archived", { thread: USER_THREAD });
+      await settle();
+      expect(push.levels.has(USER_THREAD.id)).toBe(false);
+      await harness.emitThreadEvent("thread.unarchived", { thread: USER_THREAD });
+      await harness.emitThreadEvent("thread.active", { thread: USER_THREAD });
+      await settle();
+      expect(push.levels.get(USER_THREAD.id)).toBe("muted");
+    });
+
+    it("gives every level back when Herald unloads", async () => {
+      const { harness, push } = await loadPushing();
+      await harness.emitThreadEvent("thread.active", { thread: USER_THREAD });
+      await settle();
+      await harness.lifecycle.dispose();
+      expect(push.levels.size).toBe(0);
+    });
+
+    it("changes no level when bb cannot send, and says why on the Herald page", async () => {
+      const { harness, push } = await load({ pushSentences: true });
+      push.state.available = false;
+      announceDrained("herald", "the-instance-before");
+      await settle();
+      await harness.emitThreadEvent("thread.active", { thread: USER_THREAD });
+      await harness.emitThreadEvent("thread.idle", { thread: USER_THREAD, lastAssistantText: "Done." });
+      await settle();
+      expect(push.levels.size).toBe(0);
+      expect(push.sent).toEqual([]);
+      expect(await harness.callRpc("push.status", {})).toMatchObject({ state: "unavailable" });
+    });
+
+    it("touches no level before the instance before it has had its last word", async () => {
+      const { harness, push } = await load({ pushSentences: true });
+      await harness.emitThreadEvent("thread.active", { thread: USER_THREAD });
+      await settle();
+      expect(push.levels.size).toBe(0);
+    });
+
+    it("reaches bb's notifications for nothing while the switch is off", async () => {
+      const { harness } = await load();
+      announceDrained("herald", "the-instance-before");
+      await harness.emitThreadEvent("thread.active", { thread: USER_THREAD });
+      await harness.emitThreadEvent("thread.idle", { thread: USER_THREAD, lastAssistantText: "Done." });
+      await settle();
+      expect(harness.sdk.calls.filter((call) => call.path.startsWith("plugins."))).toEqual([]);
+    });
   });
 });

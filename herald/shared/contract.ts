@@ -13,6 +13,7 @@ import {
   SpeechVoiceSchema,
   StoredConfigSchema,
 } from "./herald";
+import { PushStatusSchema } from "./push";
 import { ChoiceInputsSchema, ChoiceOptionSchema, CHOICES_BATCH_MAX } from "./thread-choice";
 
 export const rpcContract = defineRpcContract({
@@ -65,6 +66,14 @@ export const rpcContract = defineRpcContract({
   "choices.setMany": {
     input: z.object({ threadIds: z.array(z.string().min(1)).min(1).max(CHOICES_BATCH_MAX), choice: ChoiceOptionSchema }),
     output: z.null(),
+  },
+  /**
+   * Whether Herald sends its sentences as push notifications in place of
+   * bb's, and when the switch is on but it cannot, why — for the Herald page.
+   */
+  "push.status": {
+    input: z.object({}),
+    output: PushStatusSchema,
   },
   /**
    * A line from the app for `bb plugin logs herald`: the announcer says here

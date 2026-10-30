@@ -57,6 +57,7 @@ function backend(items: () => HistoryItem[], reads: { count: number }) {
     "choices.list": () => ({ threads: {} }),
     "choices.set": () => NO_CHOICE,
     "choices.setMany": () => null,
+    "push.status": () => ({ state: "off" as const, message: null }),
     log: () => null,
   };
 }

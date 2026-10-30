@@ -76,6 +76,7 @@ function server(initial: Record<string, ChoiceInputs>) {
       }
       return null;
     },
+    "push.status": () => ({ state: "off" as const, message: null }),
   };
   return {
     stored,

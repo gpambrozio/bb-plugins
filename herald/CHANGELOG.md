@@ -5,6 +5,21 @@ Notable changes to `herald`. The other plugins in this repository version separa
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.6.0
+
+### Added
+
+- **Herald's sentences as your push notifications.** A new setting, off by default: *Send Herald's
+  sentences as push notifications instead of bb's*. On, every thread Herald announces gets its
+  notifications from Herald instead of bb — the same ones bb would have sent, with Herald's sentence in
+  place of the agent's last words, and the thread's name and project as the title. Tapping one opens that
+  thread. bb's own notifications come back when you switch it off, set a thread to Silent, archive it,
+  or disable Herald, and Herald never undoes a notification level you changed to something other than
+  Muted. If bb cannot take a level back or a notification fails to send, Herald keeps notifying and
+  tries again — across a reload too — and the Herald page says so. When Herald cannot be sure bb held
+  a notification back, it sends it anyway: rarely one twice, never none. It needs bb 0.48.1 with its Push notifications plugin on;
+  otherwise nothing changes, and the Herald page says why.
+
 ## 0.5.1
 
 ### Changed

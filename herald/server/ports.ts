@@ -5,6 +5,7 @@
  */
 import type { PluginBbSdk, PluginThreadEventPayloads } from "@get-bb/plugin-sdk";
 
+import type { LevelDefaults, OwnLevel } from "../shared/push";
 import type { ThreadChoice } from "../shared/thread-choice";
 
 /** The thread as every event carries it — the same DTO `GET /threads/:id` serves. */
@@ -60,6 +61,27 @@ export interface Log {
   info(message: string): void;
   warn(message: string): void;
   error(message: string): void;
+}
+
+/**
+ * bb's push-notifications plugin, as Herald uses it: whether it can send,
+ * each thread's own notification level, and the send. Every call goes
+ * through `bb.sdk.plugins` to that plugin, which the user can turn off.
+ */
+export interface PushPort {
+  /** Null when `notifications.send` can be called; otherwise why not, in words for the user. */
+  unavailable(): Promise<string | null>;
+  /** The thread's ancestors, parent first, or null when bb does not know the thread. */
+  ancestors(threadId: string): Promise<string[] | null>;
+  /** Every thread below this one, children first. */
+  descendants(threadId: string): Promise<string[]>;
+  /** The own level of each of these threads; a thread with none is left out. At most 200 ids. */
+  ownLevels(threadIds: readonly string[]): Promise<Map<string, OwnLevel>>;
+  setOwnLevel(threadId: string, level: OwnLevel): Promise<void>;
+  /** bb's defaults for a thread without a level of its own. */
+  defaults(): Promise<LevelDefaults>;
+  /** Sends one notification; a tap opens `threadId`. Rejects with a `PushSendError` code when bb says why. */
+  send(notification: { title: string; body: string; threadId: string }): Promise<void>;
 }
 
 /** Herald's per-thread choice, as bb stores it: plugin metadata on each thread, and each thread's ancestors. */

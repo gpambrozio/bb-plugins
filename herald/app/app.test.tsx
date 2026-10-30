@@ -91,6 +91,7 @@ function rpc(entries: () => AttentionEntry[], calls: { list: number }) {
     "choices.list": () => ({ threads: {} }),
     "choices.set": () => NO_CHOICE,
     "choices.setMany": () => null,
+    "push.status": () => ({ state: "off" as const, message: null }),
     log: () => null,
   };
 }
