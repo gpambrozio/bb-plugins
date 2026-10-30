@@ -93,3 +93,28 @@ export interface ThreadChoicesPort {
   /** Sets the thread's own choice, or clears it with null. */
   setOwn(threadId: string, choice: ThreadChoice | null): Promise<void>;
 }
+
+/** A message in a thread's timeline: what a sentence is placed against. */
+export interface TimelineMessage {
+  /** The id bb's timeline gives the row, which message metadata receives too. */
+  id: string;
+  createdAt: number;
+  role: "user" | "assistant";
+}
+
+/** Where the next older page of a thread's timeline starts. */
+export interface TimelineCursor {
+  anchorId: string;
+  anchorSeq: number;
+}
+
+/**
+ * A thread's timeline as bb shows it, newest page first. Only the messages
+ * at its top level count: a finished turn folds its work, and the messages
+ * in it, into one "Worked for" row, which message metadata does not reach.
+ */
+export interface TimelinePort {
+  page(threadId: string, older: TimelineCursor | null, signal?: AbortSignal): Promise<{ messages: TimelineMessage[]; older: TimelineCursor | null }>;
+  /** Whether a turn may still be running: its messages can fold into its "Worked for" row when it ends. */
+  running(threadId: string): Promise<boolean>;
+}

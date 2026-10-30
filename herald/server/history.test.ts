@@ -97,6 +97,25 @@ describe("SentenceHistory", () => {
     expect(log.lines.some((line) => line.includes("disk full"))).toBe(true);
   });
 
+  it("keeps a sentence's place in the timeline, once, and drops it when the sentence is replaced", async () => {
+    const kv = fakeKv();
+    const history = new SentenceHistory(kv, recordingLog());
+    history.append("t1", item(1));
+    history.append("t1", item(2));
+    history.place("t1", new Map([["t1:idle:1", "m2"], ["t1:idle:9", "m9"]]));
+    await history.flush();
+    expect((await history.list("t1")).map((entry) => entry.messageId)).toEqual([undefined, "m2"]);
+    // A place already kept stands; a later read that found another does not move it.
+    history.place("t1", new Map([["t1:idle:1", "m3"], ["t1:idle:2", null]]));
+    await history.flush();
+    expect((await history.list("t1")).map((entry) => entry.messageId)).toEqual([null, "m2"]);
+    // A new sentence for the same event starts without one, and is placed again.
+    history.append("t1", item(1, { text: "Written by the model." }));
+    await history.flush();
+    expect((await history.list("t1"))[0]).toMatchObject({ eventId: "t1:idle:1", text: "Written by the model." });
+    expect((await history.list("t1"))[0]?.messageId).toBeUndefined();
+  });
+
   describe("recent", () => {
     function at(threadId: string, second: number): HistoryItem {
       return item(second, { eventId: `${threadId}:idle:${second}`, text: `${threadId} ${second}.` });

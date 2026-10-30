@@ -12,7 +12,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import plugin, { ABANDONED_AFTER_MS } from "./server";
 import { announceDrained } from "./server/reload-signal";
 import type { AttentionEntry } from "./shared/herald";
-import { DEFAULT_STORED_CONFIG, ENTRIES_CHANNEL, TOOL_COMMANDS } from "./shared/herald";
+import { DEFAULT_STORED_CONFIG, ENTRIES_CHANNEL, SENTENCES_CHANNEL, TOOL_COMMANDS } from "./shared/herald";
 import { CHOICES_CHANNEL } from "./shared/thread-choice";
 
 /**
@@ -152,6 +152,9 @@ async function settle(): Promise<void> {
   for (let i = 0; i < 10; i += 1) await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+/** The top-level messages of every thread's timeline, as `threads.timeline` serves them; one page. */
+let timelineMessages: Array<{ id: string; createdAt: number; role: "user" | "assistant" }> = [];
+
 async function load(settings: Record<string, string | number | boolean> = {}) {
   const { metadata, failures, stubs } = metadataStubs();
   const push = pushStubs();
@@ -169,6 +172,11 @@ async function load(settings: Record<string, string | number | boolean> = {}) {
         promptHistory: async () =>
           [{ id: "m1", createdAt: 1, input: [{ type: "text", text: "Fix the login bug", mentions: [] }] }] as never,
         interactions: { list: async () => [], get: async () => ({ status: "pending" }) as never },
+        timeline: async () =>
+          ({
+            rows: timelineMessages.map((message) => ({ kind: "conversation", ...message })),
+            timelinePage: { olderCursor: null },
+          }) as never,
       },
     },
   });
@@ -192,6 +200,7 @@ function entriesOf(result: unknown): AttentionEntry[] {
 describe("herald server", () => {
   afterEach(async () => {
     await Promise.all(live.splice(0).map((host) => host.harness.lifecycle.dispose().catch(() => {})));
+    timelineMessages = [];
   });
 
   it("announces a finished turn with its plain sentence, tells the app, and starts no thread", async () => {
@@ -428,6 +437,28 @@ describe("herald server", () => {
     await harness.emitThreadEvent("thread.deleted", { thread: USER_THREAD });
     await settle();
     expect(await harness.callRpc("history.list", { threadId: "thr_user" })).toEqual({ items: [] });
+  });
+
+  it("places each sentence above the message after it in the thread's timeline, and keeps the place", async () => {
+    const { harness } = await load();
+    timelineMessages = [{ id: "m_answer", createdAt: Date.now() - 1000, role: "assistant" }];
+    await harness.emitThreadEvent("thread.idle", { thread: USER_THREAD, lastAssistantText: "I fixed auth.ts." });
+    await vi.waitFor(() => expect(harness.realtimeSignals).toContainEqual({ channel: SENTENCES_CHANNEL, payload: { threadId: "thr_user" } }));
+    // Nothing after the turn yet: the sentence waits, from its own time.
+    const waiting = (await harness.callRpc("history.placed", { threadId: "thr_user" })) as { sentences: unknown[]; waitingSince: number | null };
+    expect(waiting.sentences).toEqual([]);
+    expect(waiting.waitingSince).not.toBeNull();
+    timelineMessages.push({ id: "m_prompt", createdAt: Date.now() + 1000, role: "user" });
+    expect(await harness.callRpc("history.placed", { threadId: "thr_user" })).toMatchObject({
+      sentences: [{ text: "Login fix finished. I fixed auth.ts.", reason: "finished", messageId: "m_prompt" }],
+      waitingSince: null,
+    });
+    // Kept with the sentence: the timeline is not read again for it.
+    timelineMessages = [];
+    await settle();
+    expect(await harness.callRpc("history.placed", { threadId: "thr_user" })).toMatchObject({ sentences: [{ messageId: "m_prompt" }] });
+    const { items } = (await harness.callRpc("history.list", { threadId: "thr_user" })) as { items: Array<{ messageId?: string | null }> };
+    expect(items.map((item) => item.messageId)).toEqual(["m_prompt"]);
   });
 
   it("lists the newest sentences of every thread for the Herald page, as many as configured", async () => {

@@ -51,6 +51,25 @@ export class SentenceHistory {
     });
   }
 
+  /**
+   * Keeps where each sentence sits in the timeline (`server/placement.ts`),
+   * by event id, on the items that have no place yet. Never rejects.
+   */
+  place(threadId: string, settled: ReadonlyMap<string, string | null>): void {
+    if (settled.size === 0) return;
+    this.enqueue(threadId, async () => {
+      const current = await this.list(threadId);
+      let changed = false;
+      const next = current.map((item) => {
+        const messageId = settled.get(item.eventId);
+        if (messageId === undefined || item.messageId !== undefined) return item;
+        changed = true;
+        return { ...item, messageId };
+      });
+      if (changed) await this.kv.set(`${HISTORY_PREFIX}${threadId}`, next);
+    });
+  }
+
   /** Newest first; empty for a thread Herald has nothing on, or a row it cannot read. */
   async list(threadId: string): Promise<HistoryItem[]> {
     const raw = await this.kv.get<unknown>(`${HISTORY_PREFIX}${threadId}`);

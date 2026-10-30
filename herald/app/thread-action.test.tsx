@@ -54,6 +54,7 @@ function server(initial: Record<string, ChoiceInputs>) {
     "config.set": () => DEFAULT_STORED_CONFIG,
     "history.list": () => ({ items: [] }),
     "history.recent": () => ({ items: [] as RecentHistoryItem[] }),
+    "history.placed": () => ({ sentences: [], waitingSince: null }),
     "speech.voices": () => ({ available: false, voices: [] }),
     "speech.render": () => ({ mimeType: "audio/wav", base64: "" }),
     log: () => null,

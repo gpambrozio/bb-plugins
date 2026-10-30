@@ -9,6 +9,7 @@ import {
   AttentionEntrySchema,
   HistoryItemSchema,
   MAX_SPEECH_CHARS,
+  PlacedSentencesSchema,
   RecentHistoryItemSchema,
   SpeechVoiceSchema,
   StoredConfigSchema,
@@ -26,6 +27,14 @@ export const rpcContract = defineRpcContract({
   "history.list": {
     input: z.object({ threadId: z.string().min(1) }),
     output: z.object({ items: z.array(HistoryItemSchema) }),
+  },
+  /**
+   * A thread's past sentences with the message each sits above in its
+   * timeline, for bb 0.48.1's message metadata; see `server/placement.ts`.
+   */
+  "history.placed": {
+    input: z.object({ threadId: z.string().min(1) }),
+    output: PlacedSentencesSchema,
   },
   /**
    * The newest past sentences of every thread, newest first, for the Herald

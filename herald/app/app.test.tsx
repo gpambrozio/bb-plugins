@@ -86,6 +86,7 @@ function rpc(entries: () => AttentionEntry[], calls: { list: number }) {
     "config.set": () => DEFAULT_STORED_CONFIG,
     "history.list": () => ({ items: [] }),
     "history.recent": () => ({ items: [] as RecentHistoryItem[] }),
+    "history.placed": () => ({ sentences: [], waitingSince: null }),
     "speech.voices": () => ({ available: true, voices: [{ name: "Zoe (Premium)", lang: "en_US" }] }),
     "speech.render": () => ({ mimeType: "audio/wav", base64: "" }),
     "choices.list": () => ({ threads: {} }),
