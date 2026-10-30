@@ -340,7 +340,8 @@ function RecentHistory({ now, onOpen }: { now: number; onOpen: (threadId: string
 
 /**
  * Why Herald's push notifications are not going out although the switch is
- * on, or null. Read again when the switch changes, on every entries nudge (an
+ * on, or which threads bb has not taken back yet; null when there is nothing
+ * to say. Read again when the switch changes, on every entries nudge (an
  * event is when a send can fail) and on reconnect.
  */
 function usePushProblem(): string | null {
@@ -358,8 +359,7 @@ function usePushProblem(): string | null {
     if (previous.current === "reconnecting" && connection === "connected") refresh();
     previous.current = connection;
   }, [connection, refresh]);
-  if (!switchedOn || status === null) return null;
-  return status.state === "unavailable" || status.state === "failed" ? status.message : null;
+  return status?.message ?? null;
 }
 
 function hintFor(): string | null {
@@ -434,7 +434,7 @@ export function HeraldPanel() {
       {hint === null ? null : <p className="px-3 pt-2 text-xs text-muted-foreground">{hint}</p>}
       {pushProblem === null ? null : (
         <p role="status" className="mx-3 mt-2 rounded-md border border-warning p-2 text-xs text-warning-text">
-          Herald's push notifications are not on: {pushProblem}
+          Herald's push notifications: {pushProblem}
         </p>
       )}
       {error === null ? null : (

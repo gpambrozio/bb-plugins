@@ -253,7 +253,8 @@ a level. `server/push.ts` holds the logic; what must stay true:
 
 - **Herald sends exactly what its mutes hold back.** For each event it resolves bb's level twice with
   bb's rule (`resolveLevel`, a copy of bb 0.48.1's `resolveThreadNotifications`: own level, else
-  `childLevel` for a child, else `defaultLevel`; every ancestor's own level caps): as bb has it now, and
+  `childLevel` for a child, else `defaultLevel`; every ancestor's own level caps): as bb read it at its
+  flush (see *Decided for bb's flush*), and
   with every Herald mute (this thread's and its ancestors') replaced by the level it remembered. It sends
   when the first forbids the event and the second allows it. This was chosen over "send what Herald
   announces" because that drops notifications: a Questions-only thread's errors, any kind whose speech
@@ -264,31 +265,62 @@ a level. `server/push.ts` holds the logic; what must stay true:
 - **Which threads.** Effective choice (`effectiveChoice`, the same rule as speech) not Silent, own level
   not already `muted`, and not muted anyway by a level Herald did not set. A thread muted by the user or
   another plugin (firstmate-crew's first mate) is never taken over, so the two plugins do not both send.
-- **Lazily.** At `thread.active` (the earliest Herald hears of a thread; bb reads the level about two
-  seconds after each event, after coalescing) and at every recorded event; and at once for a thread whose
-  choice is changed from the menu (sequentially, a selection can be 200). No sweep: the only sweep is
-  `restoreAll` over Herald's own records.
-- **The record comes first and is the only claim.** `push:<threadId>` in kv holds the own level before the
-  mute, written before the mute is set. A record whose thread is no longer `muted` means someone changed
-  the level: the record is dropped and the level left alone, never "restored" over their change. A
-  restore sets the remembered level only while the level is still `muted`. A record kept because bb was
-  unreachable is retried at the next restore.
+- **Lazily.** At `thread.active` (the earliest Herald hears of a thread) and at every recorded event; and
+  at once for a thread whose choice is changed from the menu (sequentially, a selection can be 200). No
+  sweep: the only sweep is a give-back over Herald's own records.
+- **One queue, one lifecycle.** Every decision (its reads and any level change) runs in one queue in
+  `PushTakeover`, not per thread: a give-back of everything enumerates the records only after every
+  takeover queued before it has finished. A takeover re-checks `epoch` (moved by every switch, failure and
+  unload) and `closed` right before it writes its record. Unloading closes admission, drains the queue,
+  and gives every level back. The first version had per-thread chains and lost a takeover in flight
+  against a switch-off or an unload (review pass 1).
+- **Records are claims, kept on doubt.** `push:<threadId>` holds `previous` and `mutedAt` (asked-for
+  time, written *before* the mute) and, once given back, `releasedAt`, kept `RELEASE_LOG_MS` for
+  decisions made later (another instance's included). bb's level set writes its metadata and then does
+  more work, so a call that rejects may have landed: a failed mute keeps its record held (Herald assumes
+  muted and sends); a failed give-back keeps it held and retries every `RETRY_MS`. Each read reconciles:
+  a held record whose thread bb reports not `muted` is logged as given back now (someone changed it, a
+  mute never landed, or a give-back did), and the level is left alone.
+- **Decided for bb's flush.** bb reads the level when it flushes, up to two seconds after an event (it
+  coalesces per thread). So the hooks note each event's arrival time (`saw`, before any lookup) and
+  `owes` resolves the level "as bb read it": a record's mute counts if it was asked for no later than
+  `FLUSH_LEAD_MS` after the event and not given back before it. A mute set too late leaves the event to
+  bb; a give-back after the event still makes Herald send it, however late the decision runs.
+- **A give-back waits for quiet.** A level goes back only once the thread and every thread below it
+  (`experimental_listDescendants`; all threads when that fails) have had no event for
+  `RELEASE_QUIET_MS`, so every flush bb still has pending reads the mute and Herald is the only sender.
+  Without this, switching off or picking Silent within two seconds of an event sent it twice. Unloading
+  waits at most `CLOSE_QUIET_MAX_MS`, and only when it holds a mute.
+- **What is owed is sent, failure or not.** A send that fails (anything but `thread_not_found`) stops new
+  takeovers and gives every level back, and is itself tried again (`SEND_RETRY_MS`) while still news,
+  then given up with an error. Notifications already owed keep going out: bb discarded them under the
+  mute, and a give-back does not make bb send an old event. Unloading tries what waits once more.
+  `push.status` names threads still muted by Herald while it retries a give-back.
+- **Obligations belong to the event, not the banner.** With model-written sentences, the notification
+  goes out with the event's own sentence when it lands (or the plain one if the tool fails or Herald
+  unloads), whatever happened to the entry meanwhile: a newer event replacing the banner, or the banner
+  failing closed on an unreadable interaction, does not mean bb told the user. `send` judges news itself
+  and notifies when it cannot read whether a question was answered.
+- **A decision that cannot read bb** sends if Herald holds a record on the thread or on an ancestor it
+  read; when even the ancestors are unknown, if Herald holds any record at all.
 - **Given back** when the switch goes off (`settings.onChange`), when the choice becomes Silent (at the
   menu change or the next event), on archive (deleted: the record is dropped), on every unload — bb's
   `onDispose` is the only hook for a disable or a removal, so a reload gives everything back and the new
   instance takes threads over again as they run — and after a failed send.
-- **Never no notification.** No takeover unless `notifications.send` is discoverable
+- **No takeover unless bb can send.** `notifications.send` must be discoverable
   (`experimental_discoverRpc`, read loosely so bb 0.47 says "needs 0.48.1" instead of throwing; cached a
-  minute). A send that fails for any reason but `thread_not_found` stops the feature (`failure`), gives
-  every level back, and is shown on the Herald page through `push.status`, until the switch is turned on
-  again or Herald reloads. A decision that cannot read bb sends if Herald holds a mute on the thread.
-  When a decision changes the level, Herald sends if either the state before or after would drop the
-  event: a second notification is better than none.
+  minute).
 - **Across a reload,** the new instance changes no level until the old one has drained (the same drain
   signal and 60 s timer as the store), because the old one is giving every level back meanwhile. It
-  still sends what the records in kv say Herald's mutes hold back. On unload, a notification still
-  waiting on a model-written sentence goes out with the plain sentence (`hooks.dispose()` resolves once
-  sent), since bb was muted for it and the sentence will not come.
+  still sends what the records in kv say Herald's mutes held back, `releasedAt` included. On unload, a
+  notification still waiting on a model-written sentence goes out with the plain sentence
+  (`hooks.dispose()` resolves once sent). Events the old instance no longer hears can be given back
+  within bb's flush window, so a reload can, rarely, notify one twice.
+- **Known limit: bb's levels have no owner.** A Muted someone else sets on a thread Herald already holds
+  reads the same as Herald's, and is given back with it; a mute another writer lands between Herald's
+  read and its write is remembered as the earlier level. The level RPCs expose no owner or revision, so
+  this cannot be fixed from Herald. The README tells users to set a thread to Silent in Herald *before*
+  another plugin or they mute it, rather than after.
 - **Not news is not sent,** as bb judges it at its flush: a thread gone, read since the event, a finished
   turn no longer idle, a failed one no longer in error, a question answered. Herald does not coalesce
   events within two seconds as bb does, and a turn that ends with no text is not notified (Herald drops

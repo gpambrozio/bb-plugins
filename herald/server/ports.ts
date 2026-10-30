@@ -73,6 +73,8 @@ export interface PushPort {
   unavailable(): Promise<string | null>;
   /** The thread's ancestors, parent first, or null when bb does not know the thread. */
   ancestors(threadId: string): Promise<string[] | null>;
+  /** Every thread below this one, children first. */
+  descendants(threadId: string): Promise<string[]>;
   /** The own level of each of these threads; a thread with none is left out. At most 200 ids. */
   ownLevels(threadIds: readonly string[]): Promise<Map<string, OwnLevel>>;
   setOwnLevel(threadId: string, level: OwnLevel): Promise<void>;

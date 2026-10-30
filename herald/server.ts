@@ -78,7 +78,7 @@ export default async function plugin(bb: BbPluginApi) {
     push.setReady();
     void settings
       .get()
-      .then((values) => (values.pushSentences ? undefined : push.restoreAll()))
+      .then((values) => (values.pushSentences ? undefined : push.giveBackAll()))
       .catch((error: unknown) => bb.log.error(`Could not check Herald's push notifications at load: ${reasonText(error)}`));
   };
   const abandonedTimer = setTimeout(settledFromBefore, ABANDONED_AFTER_MS);
@@ -165,6 +165,7 @@ export default async function plugin(bb: BbPluginApi) {
     port: {
       unavailable: () => pushPortOf().unavailable(),
       ancestors: (threadId) => pushPortOf().ancestors(threadId),
+      descendants: (threadId) => pushPortOf().descendants(threadId),
       ownLevels: (threadIds) => pushPortOf().ownLevels(threadIds),
       setOwnLevel: (threadId, level) => pushPortOf().setOwnLevel(threadId, level),
       defaults: () => pushPortOf().defaults(),
@@ -180,7 +181,7 @@ export default async function plugin(bb: BbPluginApi) {
     if (next.pushSentences === prev.pushSentences) return;
     // On, nothing is swept: each thread is taken over as Herald next handles it.
     if (next.pushSentences) push.switchedOn();
-    else void push.restoreAll();
+    else void push.switchedOff();
   });
 
   /**
@@ -321,7 +322,7 @@ export default async function plugin(bb: BbPluginApi) {
     // level Herald muted is given back — bb has no separate hook for a
     // disable or a removal, and a reload takes them over again lazily.
     await owedPushes;
-    await push.restoreAll();
+    await push.close();
     await store.shutdown();
     await history.flush();
     announceDrained(bb.pluginId, instance);

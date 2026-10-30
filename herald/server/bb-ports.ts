@@ -203,6 +203,10 @@ export function bbPush(sdk: PluginBbSdk, log: Log): PushPort {
       const { threads } = await sdk.threads.experimental_listAncestors({ threadIds: [threadId] });
       return threads.find((thread) => thread.threadId === threadId)?.ancestorIds ?? null;
     },
+    async descendants(threadId) {
+      const { threads } = await sdk.threads.experimental_listDescendants({ threadIds: [threadId] });
+      return threads.find((thread) => thread.threadId === threadId)?.descendantIds ?? [];
+    },
     async ownLevels(threadIds) {
       const { threads } = await sdk.plugins.callRpc({
         pluginId: PUSH_PLUGIN_ID,

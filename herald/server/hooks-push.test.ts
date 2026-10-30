@@ -8,8 +8,8 @@ import { describe, expect, it, vi } from "vitest";
 import type { AttentionReason } from "../shared/herald";
 import { NO_CHOICE, type ChoiceInputs, type ThreadChoice } from "../shared/thread-choice";
 import { createHooks, type HeraldConfig, type HookDeps, type PushHooks } from "./hooks";
-import type { EventsPort, ThreadDto } from "./ports";
-import type { PushSubject } from "./push";
+import type { EventsPort, PushPort, ThreadDto } from "./ports";
+import { PushTakeover, type PushSubject } from "./push";
 import { AttentionStore } from "./store";
 import { commandApproval, planApproval, question, recordingLog, settle, thread } from "./testing/fixtures";
 
@@ -28,6 +28,7 @@ const events: EventsPort = {
 };
 
 interface FakePush extends PushHooks {
+  seen: string[];
   decisions: Array<{ threadId: string; choice: ThreadChoice; reason: AttentionReason | null }>;
   sent: Array<{ subject: PushSubject; sentence: string }>;
   owes: boolean;
@@ -35,12 +36,16 @@ interface FakePush extends PushHooks {
 
 function fakePush(): FakePush {
   const fake: FakePush = {
+    seen: [],
     decisions: [],
     sent: [],
     owes: true,
-    async decide(threadId, choiceOf, reason) {
-      fake.decisions.push({ threadId, choice: await choiceOf(), reason });
-      return reason !== null && fake.owes;
+    saw(threadId) {
+      fake.seen.push(threadId);
+    },
+    async decide(threadId, choiceOf, event) {
+      fake.decisions.push({ threadId, choice: await choiceOf(), reason: event?.reason ?? null });
+      return event !== null && fake.owes;
     },
     async send(subject, sentence) {
       fake.sent.push({ subject, sentence });
@@ -49,7 +54,7 @@ function fakePush(): FakePush {
   return fake;
 }
 
-function setup(options: { config?: HeraldConfig; choice?: ChoiceInputs; write?: HookDeps["writeSentence"] } = {}) {
+function setup(options: { config?: HeraldConfig; choice?: ChoiceInputs; write?: HookDeps["writeSentence"]; push?: PushHooks } = {}) {
   answered = false;
   const push = fakePush();
   const store = new AttentionStore(null, recordingLog());
@@ -62,15 +67,53 @@ function setup(options: { config?: HeraldConfig; choice?: ChoiceInputs; write?: 
     log: recordingLog(),
     writeSentence: options.write ?? (() => Promise.reject(new Error("no tool"))),
     remember: vi.fn(),
-    push,
+    push: options.push ?? push,
   });
   return { hooks, store, push };
 }
 
 function heldWriter() {
-  let release: (text: string) => void = () => {};
-  const write: HookDeps["writeSentence"] = () => new Promise<string>((resolve) => (release = resolve));
-  return { write, release: (text: string) => release(text) };
+  const releases: Array<(text: string) => void> = [];
+  const write: HookDeps["writeSentence"] = () => new Promise<string>((resolve) => releases.push(resolve));
+  /** Releases the `index`th run, the last one by default. */
+  return { write, release: (text: string, index = releases.length - 1) => releases[index]?.(text) };
+}
+
+/**
+ * The real takeover over a bb whose every thread is at its default level,
+ * with interactions answered by id; what it sends is recorded.
+ */
+function realPush(answeredIds: Set<string>, pendingFails: { value: boolean }) {
+  const own = new Map<string, string>();
+  const sent: Array<{ threadId: string; body: string }> = [];
+  const port: PushPort = {
+    unavailable: async () => null,
+    ancestors: async () => [],
+    descendants: async () => [],
+    ownLevels: async (ids) => new Map(ids.flatMap((id) => (own.has(id) ? [[id, own.get(id) as "muted"]] : []))),
+    setOwnLevel: async (id, level) => void (level === "inherit" ? own.delete(id) : own.set(id, level)),
+    defaults: async () => ({ defaultLevel: "all", childLevel: "input-only" }),
+    send: async ({ threadId, body }) => void sent.push({ threadId, body }),
+  };
+  const rows = new Map<string, unknown>();
+  const push = new PushTakeover({
+    port,
+    kv: {
+      get: async <T>(key: string) => rows.get(key) as T | undefined,
+      set: async (key: string, value: unknown) => void rows.set(key, value),
+      delete: async (key: string) => void rows.delete(key),
+      list: async (prefix?: string) => [...rows.keys()].filter((key) => prefix === undefined || key.startsWith(prefix)),
+    },
+    enabled: async () => true,
+    facts: async () => ({ kind: "open", status: "active", lastReadAt: 0, latestAttentionAt: 1 }),
+    interactionPending: async (_threadId, id) => {
+      if (pendingFails.value) throw new Error("bb is away");
+      return !answeredIds.has(id);
+    },
+    log: recordingLog(),
+  });
+  push.setReady();
+  return { push, sent, own };
 }
 
 const failed = (hooks: ReturnType<typeof setup>["hooks"], t: ThreadDto) => hooks.failed(t, "Out of credits");
@@ -155,14 +198,15 @@ describe("hooks with push notifications", () => {
     expect(push.sent.map((s) => s.sentence)).toEqual(["Login is fixed."]);
   });
 
-  it("sends nothing for a question answered while its sentence was written", async () => {
+  it("hands the takeover the model's sentence for an event whose banner was withdrawn; the takeover judges news", async () => {
     const w = heldWriter();
-    const { hooks, push } = setup({ config: { ...CONFIG, sentence: { command: "my-llm", prompt: "x" } }, write: w.write });
+    const { hooks, push, store } = setup({ config: { ...CONFIG, sentence: { command: "my-llm", prompt: "x" } }, write: w.write });
     await hooks.interactionPending(thread(), question());
     answered = true;
     w.release("Too late.");
     await settle();
-    expect(push.sent).toEqual([]);
+    expect(store.get("t1")).toBeNull();
+    expect(push.sent.map((s) => s.sentence)).toEqual(["Too late."]);
   });
 
   it("sends the plain sentence on unload for a notification still waiting on its sentence", async () => {
@@ -175,5 +219,49 @@ describe("hooks with push notifications", () => {
     w.release("Late.");
     await settle();
     expect(push.sent).toHaveLength(1);
+  });
+
+  it("hears of each event before its lookups", async () => {
+    const { hooks, push } = setup();
+    void hooks.idle(thread(), "Done.");
+    expect(push.seen).toEqual(["t1"]);
+  });
+
+  describe("with the real takeover", () => {
+    const MODEL: HeraldConfig = { ...CONFIG, sentence: { command: "my-llm", prompt: "x" } };
+
+    it("notifies a question whose banner a second question replaced, and not the second once answered", async () => {
+      const answeredIds = new Set<string>();
+      const real = realPush(answeredIds, { value: false });
+      const w = heldWriter();
+      const { hooks, store } = setup({ config: MODEL, write: w.write, push: real.push });
+      hooks.active(thread());
+      await settle();
+      expect(real.own.get("t1")).toBe("muted");
+      await hooks.interactionPending(thread(), question({ id: "qa" }));
+      await hooks.interactionPending(thread(), question({ id: "qb" }));
+      await settle();
+      expect(store.get("t1")?.requestId).toBe("qb");
+      answeredIds.add("qb");
+      w.release("Question B, answered already.", 1);
+      w.release("Login fix asks which database to use.", 0);
+      await settle();
+      expect(real.sent).toEqual([{ threadId: "t1", body: "Login fix asks which database to use." }]);
+    });
+
+    it("notifies a question when bb cannot say whether it was answered", async () => {
+      const pendingFails = { value: false };
+      const real = realPush(new Set(), pendingFails);
+      const w = heldWriter();
+      const { hooks } = setup({ config: MODEL, write: w.write, push: real.push });
+      hooks.active(thread());
+      await settle();
+      await hooks.interactionPending(thread(), question());
+      await settle();
+      pendingFails.value = true;
+      w.release("Login fix asks which database to use.");
+      await settle();
+      expect(real.sent.map((sent) => sent.body)).toEqual(["Login fix asks which database to use."]);
+    });
   });
 });

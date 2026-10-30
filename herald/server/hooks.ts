@@ -19,7 +19,7 @@ import type { SentenceSettings } from "../shared/settings";
 import { choiceAllows, effectiveChoice, NO_CHOICE, type ChoiceInputs, type ThreadChoice } from "../shared/thread-choice";
 import { fillTemplate, splitCommandLine } from "./command-line";
 import type { EventsPort, Interaction, Log, ThreadDto } from "./ports";
-import type { PushSubject } from "./push";
+import type { PushEvent, PushSubject } from "./push";
 import type { AttentionStore } from "./store";
 import { describeInteraction, displayName, fallbackSpeech, firstWords, preview } from "./timeline";
 
@@ -35,12 +35,13 @@ export interface HeraldConfig {
 }
 
 /**
- * Herald's push notifications (`push.ts`): brings a thread's bb notification
- * level in line with its choice, says whether Herald notifies an event
- * itself, and sends. Neither call rejects.
+ * Herald's push notifications (`push.ts`): hears of each event as it
+ * arrives, brings a thread's bb notification level in line with its choice,
+ * says whether Herald notifies an event itself, and sends. Nothing rejects.
  */
 export interface PushHooks {
-  decide(threadId: string, choiceOf: () => Promise<ThreadChoice>, reason: AttentionReason | null): Promise<boolean>;
+  saw(threadId: string, at: number): void;
+  decide(threadId: string, choiceOf: () => Promise<ThreadChoice>, event: PushEvent | null): Promise<boolean>;
   send(subject: PushSubject, sentence: string): Promise<void>;
 }
 
@@ -153,20 +154,37 @@ export function createHooks(deps: HookDeps): Hooks {
   /** Event ids with a tool run under way, until their sentence lands or is dropped. */
   const inFlight = new Set<string>();
   /**
-   * The notifications waiting on a sentence being written, by event id:
-   * whether Herald sends one (decided as the event landed), and what it is about.
+   * The notifications waiting on a sentence being written, by event id. They
+   * are the event's, not the entry's: an entry a newer event replaced, or a
+   * banner taken back, does not mean bb told the user — bb was muted for it.
+   * Whoever takes one from here sends it: the sentence when it comes, or the
+   * plain one on unload.
    */
   const owedPushes = new Map<string, { owes: Promise<boolean>; subject: PushSubject; fallback: string }>();
 
-  /** Whether Herald notifies this event itself, decided now; false without the push hooks. */
-  function decidePush(thread: ThreadDto, reason: AttentionReason, config: HeraldConfig, choice: ChoiceInputs): Promise<boolean> {
+  /** Heard at once, before any lookup, so a give-back of the level waits for bb's read of it. */
+  function sawEvent(thread: ThreadDto): number {
+    const at = now().getTime();
+    deps.push?.saw(thread.id, at);
+    return at;
+  }
+
+  /** Whether Herald notifies this event itself; false without the push hooks. */
+  function decidePush(thread: ThreadDto, event: PushEvent, config: HeraldConfig, choice: ChoiceInputs): Promise<boolean> {
     if (deps.push === undefined) return Promise.resolve(false);
     const effective = choiceFor(thread, config, choice);
-    return deps.push.decide(thread.id, () => Promise.resolve(effective), reason);
+    return deps.push.decide(thread.id, () => Promise.resolve(effective), event);
   }
 
   function pushWhen(owes: Promise<boolean>, subject: PushSubject, sentence: string): void {
     void owes.then((yes) => (yes ? deps.push?.send(subject, sentence) : undefined));
+  }
+
+  function sendOwed(eventId: string, sentence: string): void {
+    const owed = owedPushes.get(eventId);
+    if (owed === undefined) return;
+    owedPushes.delete(eventId);
+    pushWhen(owed.owes, owed.subject, sentence);
   }
 
   /** Marks the start of a recording; `isLatest` later says whether a newer one began since. */
@@ -219,6 +237,8 @@ export function createHooks(deps: HookDeps): Hooks {
     lastUser: string | null;
     /** The whole of what the agent last said, for the prompt; the entry keeps only its start. */
     output: string | null;
+    /** When the event arrived, before any lookup. */
+    at: number;
   }
 
   function record(recording: Recording): void {
@@ -241,7 +261,7 @@ export function createHooks(deps: HookDeps): Hooks {
     // Decided whatever is spoken: a mute of Herald's can suppress what bb
     // would have notified about an event Herald does not announce, and then
     // Herald notifies it with the plain sentence.
-    const owes = decidePush(thread, reason, config, choice);
+    const owes = decidePush(thread, { reason, at: recording.at }, config, choice);
     // Switched off, silenced from the thread menu, or a subagent its parent
     // speaks for: listed in the panel, with its sentence, never spoken — and
     // no tool is run to write it.
@@ -265,15 +285,14 @@ export function createHooks(deps: HookDeps): Hooks {
     deps.publish();
     inFlight.add(base.eventId);
     owedPushes.set(base.eventId, { owes, subject: base, fallback });
-    void writeSentence(config.sentence, base, recording)
+    const written = writeSentence(config.sentence, base, recording);
+    // The notification goes with the event's own sentence, whatever became
+    // of the entry meanwhile; `send` itself skips what is no longer news.
+    void written.then((text) => sendOwed(base.eventId, text ?? fallback));
+    void written
       .then((text) => settleSentence(base.threadId, base.eventId, text ?? fallback))
       .catch((error: unknown) => deps.log.error(`Settling the sentence for ${base.threadId} failed: ${reasonOf(error)}`))
-      .finally(() => {
-        inFlight.delete(base.eventId);
-        // Landed (and sent), withdrawn, or overtaken: nothing is owed any more.
-        // After an unload, the snapshot `dispose` took sends it instead.
-        owedPushes.delete(base.eventId);
-      });
+      .finally(() => inFlight.delete(base.eventId));
   }
 
   /** The tool's sentence, or null — with the reason logged — when it gave none. Never rejects. */
@@ -322,8 +341,6 @@ export function createHooks(deps: HookDeps): Hooks {
     deps.store.upsert({ ...current, summary: { status: "ready", text } });
     deps.publish();
     remember(current, text);
-    const owed = owedPushes.get(eventId);
-    if (owed !== undefined) pushWhen(owed.owes, owed.subject, text);
   }
 
   /**
@@ -402,6 +419,7 @@ export function createHooks(deps: HookDeps): Hooks {
 
     idle(thread, lastAssistantText) {
       if (thread.visibility === "hidden") return Promise.resolve();
+      const at = sawEvent(thread);
       return guarded("thread.idle", async () => {
         // bb assembles the turn's text itself, chunks and all; it is used as
         // it comes, with nothing added between the pieces.
@@ -432,12 +450,14 @@ export function createHooks(deps: HookDeps): Hooks {
           folder: context.folder,
           lastUser: context.lastRequest,
           output,
+          at,
         });
       });
     },
 
     failed(thread, error) {
       if (thread.visibility === "hidden") return Promise.resolve();
+      const at = sawEvent(thread);
       return guarded("thread.failed", async () => {
         const event = beginEvent(thread.id);
         const generation = generationOf(thread.id);
@@ -462,12 +482,14 @@ export function createHooks(deps: HookDeps): Hooks {
           folder: context.folder,
           lastUser: context.lastRequest,
           output: null,
+          at,
         });
       });
     },
 
     interactionPending(thread, interaction) {
       if (thread.visibility === "hidden" || interaction.status !== "pending") return Promise.resolve();
+      const at = sawEvent(thread);
       return guarded("interaction.pending", async () => {
         const described = describeInteraction(interaction);
         const event = beginEvent(thread.id);
@@ -491,6 +513,7 @@ export function createHooks(deps: HookDeps): Hooks {
           folder: context.folder,
           lastUser: null,
           output: null,
+          at,
         });
       });
     },
