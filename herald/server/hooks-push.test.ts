@@ -21,8 +21,15 @@ const CONFIG: HeraldConfig = {
 };
 
 let answered = false;
+/** When set, the next context lookup waits for it. */
+let holdNextContext: Promise<void> | null = null;
 const events: EventsPort = {
-  context: async (_thread, { withRequest }) => ({ projectName: "Shop", folder: "repo", lastRequest: withRequest ? "Fix the login bug" : null }),
+  async context(_thread, { withRequest }) {
+    const hold = holdNextContext;
+    holdNextContext = null;
+    if (hold !== null) await hold;
+    return { projectName: "Shop", folder: "repo", lastRequest: withRequest ? "Fix the login bug" : null };
+  },
   interruptedRecently: async () => false,
   interactionPending: async () => !answered,
 };
@@ -262,6 +269,28 @@ describe("hooks with push notifications", () => {
       w.release("Login fix asks which database to use.");
       await settle();
       expect(real.sent.map((sent) => sent.body)).toEqual(["Login fix asks which database to use."]);
+    });
+
+    it("notifies a question whose lookups finished after a later question's, though the later one was answered", async () => {
+      const answeredIds = new Set<string>();
+      const real = realPush(answeredIds, { value: false });
+      const { hooks, store } = setup({ push: real.push });
+      hooks.active(thread());
+      await settle();
+      let release: () => void = () => {};
+      holdNextContext = new Promise((resolve) => (release = resolve));
+      const first = hooks.interactionPending(thread(), question({ id: "qa" }));
+      // B is answered at once, so the only notification that may go is A's.
+      answeredIds.add("qb");
+      await hooks.interactionPending(thread(), question({ id: "qb" }));
+      await settle();
+      expect(real.sent).toEqual([]);
+      release();
+      await first;
+      await settle();
+      // The banner keeps the newer question; the notification goes for the one still waiting.
+      expect(store.get("t1")?.requestId).toBe("qb");
+      expect(real.sent.map((sent) => sent.body)).toEqual(["Login fix has a question: Which DB? Options: Postgres / SQLite."]);
     });
   });
 });

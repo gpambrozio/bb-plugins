@@ -17,22 +17,28 @@
  *   level bb reports. A given-back record is kept a minute with when it was
  *   given back (`releasedAt`), for events bb read under the mute but Herald
  *   decides later — in another instance too.
- * - **Decided for bb's flush, not for now.** bb reads the level about two
- *   seconds after an event (it coalesces). Herald sends an event when the
- *   level bb read then forbade it and the level without Herald's mutes —
- *   this thread's and its ancestors' — allows it. A mute set too late for an
- *   event leaves that event to bb.
+ * - **Never a guess at bb's timing.** bb reads the level some time after an
+ *   event — two seconds of coalescing, then reads with no bound — so Herald
+ *   cannot know whether bb saw a mute. It counts a mute of its own as
+ *   holding an event back if the mute was in force at any moment after the
+ *   event: held now, or given back after it. That costs a rare second
+ *   notification (a mute set while bb was already sending; a give-back while
+ *   bb was still reading) and never a lost one.
  * - **A give-back waits for quiet.** A level goes back only once the thread
- *   and every thread below it have had no event for `RELEASE_QUIET_MS`, so
- *   every flush bb still has pending reads the mute and Herald is the only
- *   sender. A give-back that fails is retried every `RETRY_MS`.
+ *   and every thread below it have had no event for `RELEASE_QUIET_MS`,
+ *   checked again just before the write, which keeps those duplicates rare.
+ *   A give-back that fails is retried every `RETRY_MS`; one a newer decision
+ *   no longer wants is dropped.
  * - **What is owed is sent.** A send that fails is tried again while it is
- *   still news; the failure stops new takeovers and gives the levels back,
- *   but never drops what bb has already discarded.
+ *   still news, from storage (`outbox:`), so a reload does not lose it; the
+ *   failure stops new takeovers and gives the levels back, but never drops
+ *   what bb has already discarded.
  * - **Muted is all bb tells.** bb's levels carry no owner, so a mute someone
  *   else sets on a thread Herald holds is indistinguishable from Herald's,
  *   and is given back with it. README and AGENTS.md say so.
  */
+import { randomUUID } from "node:crypto";
+
 import type { PluginKvStorage } from "@get-bb/plugin-sdk";
 
 import type { AttentionReason } from "../shared/herald";
@@ -51,21 +57,17 @@ import type { Log, PushPort, ThreadFacts } from "./ports";
 
 export const PUSH_RECORD_PREFIX = "push:";
 
+/** Notifications whose send failed, waiting to be tried again; kept in storage across a reload. */
+export const OUTBOX_PREFIX = "outbox:";
+
 /** How long bb's answer to "can Herald send?" is trusted. */
 export const AVAILABILITY_TTL_MS = 60_000;
-
-/**
- * bb's flush for an event reads the level at most this long after it: its
- * two-second coalescing window, and its own reads. A mute asked for later
- * came too late for the event; one asked for sooner may have been read.
- */
-export const FLUSH_LEAD_MS = 2_500;
 
 /** A level is given back only once its thread and the threads below it have been quiet this long. */
 export const RELEASE_QUIET_MS = 3_000;
 
-/** How long a given-back record is kept, for events decided after the give-back. */
-export const RELEASE_LOG_MS = 60_000;
+/** How long a given-back record is kept, for events decided after the give-back however slowly. */
+export const RELEASE_LOG_MS = 10 * 60_000;
 
 /** How often a give-back that failed is tried again. */
 export const RETRY_MS = 60_000;
@@ -115,9 +117,20 @@ export interface PushSubject {
 type GiveBack = "all" | "thread";
 
 interface Outgoing {
+  /** Its row under `OUTBOX_PREFIX` once a send failed; null before. */
+  id: string | null;
   subject: PushSubject;
   sentence: string;
   attempts: number;
+  /** When it is next due. */
+  dueAt: number;
+}
+
+function outgoingOf(id: string, raw: unknown): Outgoing | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const row = raw as Partial<Outgoing>;
+  if (typeof row.sentence !== "string" || typeof row.attempts !== "number" || typeof row.subject !== "object" || row.subject === null) return null;
+  return { id, subject: row.subject, sentence: row.sentence, attempts: row.attempts, dueAt: typeof row.dueAt === "number" ? row.dueAt : 0 };
 }
 
 export interface PushDeps {
@@ -175,16 +188,24 @@ export class PushTakeover {
   /** Give-backs that failed, to try again. */
   private readonly retries = new Map<string, GiveBack>();
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
-  /** Notifications whose send failed and that wait to be tried again. */
-  private readonly outbox = new Set<Outgoing>();
+  /** Sends under way, which an unload waits for so none fails unrecorded. */
+  private readonly sending = new Set<Promise<void>>();
+  /** The latest give-back asked for, per thread; an older one is dropped. */
+  private readonly giveBackTokens = new Map<string, number>();
+  private tokenCounter = 0;
 
   constructor(private readonly deps: PushDeps) {
     this.now = deps.now ?? Date.now;
   }
 
-  /** Levels may change from now on: the instance before this one, if any, has given its threads back. */
-  setReady(): void {
+  /**
+   * Levels may change from now on: the instance before this one, if any, has
+   * given its threads back and stored what it could not send. Those sends are
+   * taken up here.
+   */
+  setReady(): Promise<void> {
     this.ready = true;
+    return this.resumeOutbox();
   }
 
   /** The switch was turned on: a failure before it is forgotten, and bb is asked afresh. */
@@ -259,7 +280,7 @@ export class PushTakeover {
    * tried again later. Never rejects.
    */
   send(subject: PushSubject, sentence: string): Promise<void> {
-    return this.attempt({ subject, sentence, attempts: 0 });
+    return this.track(this.attempt({ id: null, subject, sentence, attempts: 0, dueAt: this.now() }));
   }
 
   /** Every level Herald holds goes back, each once its thread is quiet. */
@@ -285,8 +306,9 @@ export class PushTakeover {
 
   /**
    * Herald unloads: no level is taken from now on; what is queued finishes;
-   * then, after a short wait for quiet, every level goes back at once, and
-   * notifications waiting to be tried again get one last try.
+   * then, after a short wait for quiet, every level goes back at once. Sends
+   * under way finish; what waits to be tried again stays in storage for the
+   * next instance.
    */
   async close(): Promise<void> {
     this.closed = true;
@@ -302,11 +324,9 @@ export class PushTakeover {
       const latest = Math.max(0, ...this.lastEventAt.values());
       const wait = Math.min(CLOSE_QUIET_MAX_MS, latest + RELEASE_QUIET_MS - this.now());
       if (wait > 0) await sleep(wait);
-      for (const threadId of held) await this.giveBack(threadId);
+      for (const threadId of held) await this.giveBack(threadId, false);
     }).catch((error: unknown) => this.deps.log.error(`Could not give bb its notification levels back: ${reasonOf(error)}`));
-    const left = [...this.outbox];
-    this.outbox.clear();
-    await Promise.all(left.map((item) => this.attempt({ ...item, attempts: SEND_RETRY_MS.length })));
+    await Promise.all([...this.sending]);
   }
 
   private key(threadId: string): string {
@@ -415,15 +435,18 @@ export class PushTakeover {
   }
 
   /**
-   * Whether bb's flush for this event read a level that held it back, and
-   * would not have without Herald. A record's mute counts if it was asked for
-   * in time for that flush and not given back before the event.
+   * Whether bb's read of the level for this event may have held it back,
+   * where it would not have without Herald. bb's read comes at an unknown
+   * time after the event, so a record's mute counts if it was in force at any
+   * moment after the event: held now, however late it was set, or given back
+   * after it. A given-back record that a re-take replaced is held, so counts
+   * too.
    */
   private owes(state: LevelState, event: PushEvent): boolean {
     const atFlush = (id: string): OwnLevel => {
       const record = state.records.get(id);
       if (record === undefined) return state.own.get(id) ?? "inherit";
-      const inForce = record.mutedAt <= event.at + FLUSH_LEAD_MS && (record.releasedAt === undefined || record.releasedAt > event.at);
+      const inForce = record.releasedAt === undefined || record.releasedAt > event.at;
       return inForce ? "muted" : record.previous;
     };
     const read = resolveLevel(state.threadId, state.ancestorIds, atFlush, state.defaults);
@@ -447,7 +470,13 @@ export class PushTakeover {
       this.scheduleGiveBack(threadId, "thread");
       return;
     }
-    if (held || !wanted) return;
+    if (held) {
+      // Wanted again (Silent, then Announce): a give-back still waiting for quiet is dropped.
+      this.giveBackTokens.delete(threadId);
+      this.retries.delete(threadId);
+      return;
+    }
+    if (!wanted) return;
     const own = state.own.get(threadId) ?? "inherit";
     // Muted already, by its own level or an ancestor's Herald did not set:
     // there is nothing bb would say for Herald to say instead.
@@ -471,26 +500,34 @@ export class PushTakeover {
   /**
    * Asks for a thread's level back, once it and the threads below it are
    * quiet. `epoch` is when it was asked for: a give-back of everything is
-   * dropped if the switch went on again since.
+   * dropped if the switch went on again since. Each request replaces the
+   * thread's earlier one, and a decision that wants the mute again drops it.
    */
-  private scheduleGiveBack(threadId: string, why: GiveBack, epoch = this.epoch): void {
+  private scheduleGiveBack(threadId: string, why: GiveBack, epoch = this.epoch, token = this.nextToken(threadId)): void {
     if (this.closed) return;
     void this.enqueue(async () => {
-      if (this.closed) return;
+      if (this.closed || this.giveBackTokens.get(threadId) !== token) return;
       // Undone: the switch went on again since everything was to go back.
       if (why === "all" && this.epoch !== epoch && (await this.holding())) return;
-      const record = await this.record(threadId);
-      if (record === null || record.releasedAt !== undefined) return;
-      const quietAt = (await this.lastEventBelow(threadId)) + RELEASE_QUIET_MS;
-      if (this.now() < quietAt) {
-        this.setTimer(quietAt - this.now(), () => this.scheduleGiveBack(threadId, why, epoch));
-        return;
+      const outcome = await this.giveBack(threadId, true);
+      if (outcome === "later") {
+        const wait = Math.max(1, (await this.lastEventBelow(threadId)) + RELEASE_QUIET_MS - this.now());
+        this.setTimer(wait, () => this.scheduleGiveBack(threadId, why, epoch, token));
+      } else if (outcome === "failed") {
+        this.retryLater(threadId, why);
+      } else if (this.giveBackTokens.get(threadId) === token) {
+        this.giveBackTokens.delete(threadId);
       }
-      if (!(await this.giveBack(threadId))) this.retryLater(threadId, why);
     }).catch((error: unknown) => {
       this.deps.log.error(`Could not give ${threadId}'s notification level back to bb: ${reasonOf(error)}`);
       this.retryLater(threadId, why);
     });
+  }
+
+  private nextToken(threadId: string): number {
+    this.tokenCounter += 1;
+    this.giveBackTokens.set(threadId, this.tokenCounter);
+    return this.tokenCounter;
   }
 
   /** The latest event of the thread or any thread below it; every thread's when bb cannot say which are below. */
@@ -506,27 +543,34 @@ export class PushTakeover {
 
   /**
    * Puts one thread's level back, if it is still Herald's mute, and logs the
-   * give-back. False when bb could not be reached or did not answer: the
-   * record stays held — the give-back may not have landed — and the next
-   * read or retry settles it.
+   * give-back. With `quiet`, only once the thread and those below it have
+   * been quiet — checked before the read and again just before the write,
+   * since an event can arrive while bb answers. "failed" when bb could not be
+   * reached or did not answer: the record stays held — the give-back may not
+   * have landed — and the next read or retry settles it.
    */
-  private async giveBack(threadId: string): Promise<boolean> {
+  private async giveBack(threadId: string, quiet: boolean): Promise<"done" | "later" | "failed"> {
     const record = await this.record(threadId);
-    if (record === null || record.releasedAt !== undefined) return true;
+    if (record === null || record.releasedAt !== undefined) return "done";
+    const isQuiet = async () => !quiet || this.now() >= (await this.lastEventBelow(threadId)) + RELEASE_QUIET_MS;
     try {
+      if (!(await isQuiet())) return "later";
       const own = (await this.deps.port.ownLevels([threadId])).get(threadId) ?? "inherit";
-      if (own === "muted") await this.deps.port.setOwnLevel(threadId, record.previous);
+      if (own === "muted") {
+        if (!(await isQuiet())) return "later";
+        await this.deps.port.setOwnLevel(threadId, record.previous);
+      }
     } catch (error) {
       if (isThreadNotFound(error)) {
         await this.deps.kv.delete(this.key(threadId));
-        return true;
+        return "done";
       }
       this.deps.log.warn(`Could not give ${threadId}'s notification level back to bb yet: ${reasonOf(error)}`);
-      return false;
+      return "failed";
     }
     await this.deps.kv.set(this.key(threadId), { ...record, releasedAt: this.now() } satisfies PushRecord);
     this.retries.delete(threadId);
-    return true;
+    return "done";
   }
 
   private retryLater(threadId: string, why: GiveBack): void {
@@ -543,6 +587,12 @@ export class PushTakeover {
     (this.retryTimer as { unref?: () => void }).unref?.();
   }
 
+  private track(work: Promise<void>): Promise<void> {
+    this.sending.add(work);
+    void work.finally(() => this.sending.delete(work));
+    return work;
+  }
+
   private async attempt(item: Outgoing): Promise<void> {
     const { subject, sentence } = item;
     let news: boolean;
@@ -553,22 +603,55 @@ export class PushTakeover {
       this.deps.log.warn(`Could not check whether ${subject.threadId} still needs you; notifying anyway: ${reasonOf(error)}`);
       news = true;
     }
-    if (!news) return;
     try {
-      await this.deps.port.send({ title: pushTitle(subject.threadTitle, subject.projectName), body: pushBody(sentence), threadId: subject.threadId });
+      if (news) {
+        await this.deps.port.send({ title: pushTitle(subject.threadTitle, subject.projectName), body: pushBody(sentence), threadId: subject.threadId });
+      }
     } catch (error) {
-      if (isThreadNotFound(error)) return;
-      this.failed(reasonOf(error));
-      const delay = SEND_RETRY_MS[item.attempts];
-      if (delay === undefined || this.closed) {
-        this.deps.log.error(`Gave up on the notification for ${subject.threadId}: ${reasonOf(error)}`);
+      if (!isThreadNotFound(error)) {
+        await this.retrySend(item, reasonOf(error));
         return;
       }
-      const next: Outgoing = { ...item, attempts: item.attempts + 1 };
-      this.outbox.add(next);
-      this.setTimer(delay, () => {
-        if (this.outbox.delete(next)) void this.attempt(next);
-      });
+    }
+    if (item.id !== null) await this.deps.kv.delete(`${OUTBOX_PREFIX}${item.id}`).catch(() => {});
+  }
+
+  /** Stores a failed send to be tried again — by this instance, or the next after a reload — or gives it up. */
+  private async retrySend(item: Outgoing, reason: string): Promise<void> {
+    this.failed(reason);
+    const delay = SEND_RETRY_MS[item.attempts];
+    const id = item.id ?? randomUUID();
+    if (delay === undefined) {
+      this.deps.log.error(`Gave up on the notification for ${item.subject.threadId}: ${reason}`);
+      await this.deps.kv.delete(`${OUTBOX_PREFIX}${id}`).catch(() => {});
+      return;
+    }
+    const next: Outgoing = { ...item, id, attempts: item.attempts + 1, dueAt: this.now() + delay };
+    try {
+      await this.deps.kv.set(`${OUTBOX_PREFIX}${id}`, { subject: next.subject, sentence: next.sentence, attempts: next.attempts, dueAt: next.dueAt });
+    } catch (error) {
+      this.deps.log.warn(`Could not keep the notification for ${item.subject.threadId} across a reload: ${reasonOf(error)}`);
+    }
+    this.scheduleSend(next);
+  }
+
+  private scheduleSend(item: Outgoing): void {
+    if (this.closed) return;
+    this.setTimer(Math.max(0, item.dueAt - this.now()), () => {
+      if (!this.closed) void this.track(this.attempt(item));
+    });
+  }
+
+  /** Takes up the sends an earlier instance stored, or that this one stored before a failed read. */
+  private async resumeOutbox(): Promise<void> {
+    try {
+      for (const key of await this.deps.kv.list(OUTBOX_PREFIX)) {
+        const item = outgoingOf(key.slice(OUTBOX_PREFIX.length), await this.deps.kv.get<unknown>(key));
+        if (item === null) await this.deps.kv.delete(key);
+        else this.scheduleSend(item);
+      }
+    } catch (error) {
+      this.deps.log.error(`Could not read the notifications waiting to be sent again: ${reasonOf(error)}`);
     }
   }
 

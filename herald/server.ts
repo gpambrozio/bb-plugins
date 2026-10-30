@@ -75,7 +75,7 @@ export default async function plugin(bb: BbPluginApi) {
   // undone under this one. A cold start waits the same minute.
   const settledFromBefore = () => {
     dropAbandoned();
-    push.setReady();
+    void push.setReady();
     void settings
       .get()
       .then((values) => (values.pushSentences ? undefined : push.giveBackAll()))

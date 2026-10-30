@@ -67,7 +67,9 @@ words, for every thread Herald announces:
   picked. A thread you muted yourself, or that another plugin muted, before Herald took it over is never
   taken over. bb does not record who set a level, though: if you or another plugin set *Muted* on a
   thread Herald already holds, Herald cannot tell that mute from its own and gives the thread its old
-  level back with it. To keep a thread muted in bb, set it to *Silent* in Herald first, then mute it.
+  level back with it. To keep a thread muted in bb, set it to *Silent* in Herald, wait until bb's
+  Notifications menu (or `bb push-notifications thread <thread>`) no longer shows it as Muted — a few
+  seconds, longer if bb is busy or unreachable — and then mute it.
 - **Giving the level back.** Herald puts the remembered level back when you switch this off, when the
   thread's choice becomes *Silent*, when the thread is archived, when Herald is disabled, removed or
   reloaded (bb has one hook for all of them; a reload takes the threads over again as they next run),
@@ -81,15 +83,16 @@ words, for every thread Herald announces:
   the setting off and on again or Herald reloads. The notification that failed is tried again for a few
   minutes, and the ones Herald already owed still go out: bb had held them back.
 - **With FirstMate Crew.** FirstMate Crew can send the first mate's own notifications for its thread
-  too. If you use both, set the first mate's thread to *Silent* in Herald's thread menu *before* turning
-  on FirstMate Crew's notifications, so only one of them notifies for it. Setting it to Silent afterwards
-  can undo FirstMate Crew's mute, for the reason above.
+  too. If you use both, set the first mate's thread to *Silent* in Herald's thread menu, and wait until
+  bb no longer shows it as Muted, *before* turning on FirstMate Crew's notifications, so only one of them
+  notifies for it. Setting it to Silent afterwards can undo FirstMate Crew's mute, for the reason above.
 
 What differs from bb's own: a turn that ends without any text (a compaction, say) is not notified, as
 Herald does not announce it; bb's notifications arrive about two seconds after an event, Herald's as
-soon as its sentence is ready — up to 45 seconds later with *Write each sentence with a model* on; the
-first event of a thread Herald takes over may notify twice, once from bb; and a reload during an event
-can, rarely, do the same.
+soon as its sentence is ready — up to 45 seconds later with *Write each sentence with a model* on. When
+Herald cannot be sure bb held a notification back — the first event of a thread Herald takes over, an
+event just as a thread is given back, a reload — it sends it anyway, so you may rarely get one twice,
+but never none. A notification that fails to send is kept across a reload of Herald and tried again.
 
 ## What you need
 

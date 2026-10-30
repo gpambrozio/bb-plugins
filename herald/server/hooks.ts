@@ -241,9 +241,25 @@ export function createHooks(deps: HookDeps): Hooks {
     at: number;
   }
 
-  function record(recording: Recording): void {
-    const { thread, reason, config, choice } = recording;
-    const base: Omit<AttentionEntry, "summary"> = {
+  /**
+   * An event whose lookups are done. A newer event or turn replaced it for
+   * the banner, which stays as it is; but bb may have held its notification
+   * back all the same — an earlier question still waits even when a later
+   * one was answered — so its notification is still decided and sent, with
+   * the plain sentence. `send` drops it when it is no longer news.
+   */
+  function admit(stale: boolean, recording: Recording): void {
+    if (!stale) {
+      record(recording);
+      return;
+    }
+    const base = baseOf(recording);
+    pushWhen(decidePush(recording.thread, { reason: recording.reason, at: recording.at }, recording.config, recording.choice), base, fallbackSpeech(base));
+  }
+
+  function baseOf(recording: Recording): Omit<AttentionEntry, "summary"> {
+    const { thread, reason } = recording;
+    return {
       threadId: thread.id,
       projectId: thread.projectId,
       projectName: recording.projectName,
@@ -257,6 +273,11 @@ export function createHooks(deps: HookDeps): Hooks {
       headline: recording.headline,
       detail: recording.detail,
     };
+  }
+
+  function record(recording: Recording): void {
+    const { thread, reason, config, choice } = recording;
+    const base = baseOf(recording);
     const fallback = fallbackSpeech(base);
     // Decided whatever is spoken: a mute of Herald's can suppress what bb
     // would have notified about an event Herald does not announce, and then
@@ -436,8 +457,8 @@ export function createHooks(deps: HookDeps): Hooks {
           deps.events.context(thread, { withRequest: true }),
           choiceOf(thread),
         ]);
-        if (generationOf(thread.id) !== generation || !isLatest(thread.id, event)) return;
-        record({
+        const stale = generationOf(thread.id) !== generation || !isLatest(thread.id, event);
+        admit(stale, {
           thread,
           reason: "finished",
           eventId: `${thread.id}:idle:${now().getTime()}`,
@@ -468,8 +489,8 @@ export function createHooks(deps: HookDeps): Hooks {
           choiceOf(thread),
         ]);
         if (interrupted) return;
-        if (generationOf(thread.id) !== generation || !isLatest(thread.id, event)) return;
-        record({
+        const stale = generationOf(thread.id) !== generation || !isLatest(thread.id, event);
+        admit(stale, {
           thread,
           reason: "error",
           eventId: `${thread.id}:failed:${now().getTime()}`,
@@ -499,8 +520,8 @@ export function createHooks(deps: HookDeps): Hooks {
           deps.events.context(thread, { withRequest: false }),
           choiceOf(thread),
         ]);
-        if (generationOf(thread.id) !== generation || !isLatest(thread.id, event)) return;
-        record({
+        const stale = generationOf(thread.id) !== generation || !isLatest(thread.id, event);
+        admit(stale, {
           thread,
           reason: described.reason,
           eventId: `${thread.id}:interaction:${interaction.id}`,

@@ -16,7 +16,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   thread. bb's own notifications come back when you switch it off, set a thread to Silent, archive it,
   or disable Herald, and Herald never undoes a notification level you changed to something other than
   Muted. If bb cannot take a level back or a notification fails to send, Herald keeps notifying and
-  tries again, and the Herald page says so. It needs bb 0.48.1 with its Push notifications plugin on;
+  tries again — across a reload too — and the Herald page says so. When Herald cannot be sure bb held
+  a notification back, it sends it anyway: rarely one twice, never none. It needs bb 0.48.1 with its Push notifications plugin on;
   otherwise nothing changes, and the Herald page says why.
 
 ## 0.5.1

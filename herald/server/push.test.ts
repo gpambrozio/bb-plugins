@@ -11,7 +11,7 @@ import type { AttentionReason } from "../shared/herald";
 import { BB_LEVEL_DEFAULTS, levelAllows, resolveLevel, type LevelDefaults, type OwnLevel } from "../shared/push";
 import type { ThreadChoice } from "../shared/thread-choice";
 import type { PushPort, ThreadFacts } from "./ports";
-import { FLUSH_LEAD_MS, PUSH_RECORD_PREFIX, PushTakeover, RELEASE_QUIET_MS, RETRY_MS, SEND_RETRY_MS, type PushSubject } from "./push";
+import { OUTBOX_PREFIX, PUSH_RECORD_PREFIX, PushTakeover, RELEASE_QUIET_MS, RETRY_MS, SEND_RETRY_MS, type PushSubject } from "./push";
 import { recordingLog } from "./testing/fixtures";
 
 interface FakeBb extends PushPort {
@@ -32,9 +32,15 @@ interface FakeBb extends PushPort {
   readFailures: number;
   /** Set: each level write waits for this before saving. */
   hold: Promise<void> | null;
+  /** Set: each level read waits for this before answering. */
+  readHold: Promise<void> | null;
   defaultsValue: LevelDefaults;
-  /** bb's own sender: two seconds after an event, the level it resolves then decides. */
-  flushAfter(threadId: string, reason: AttentionReason): void;
+  /**
+   * bb's own sender, in its order: two seconds after an event its flush
+   * starts, reads the thread (taking `readMs`), then reads the level, which
+   * decides.
+   */
+  flushAfter(threadId: string, reason: AttentionReason, readMs?: number): void;
 }
 
 function fakeBb(): FakeBb {
@@ -56,6 +62,7 @@ function fakeBb(): FakeBb {
     setDown: false,
     readFailures: 0,
     hold: null,
+    readHold: null,
     defaultsValue: BB_LEVEL_DEFAULTS,
     unavailable: async () => fake.unavailableReason,
     async ancestors(threadId) {
@@ -67,6 +74,7 @@ function fakeBb(): FakeBb {
       return [...fake.parents.keys()].filter((id) => ancestorsOf(id).includes(threadId));
     },
     async ownLevels(threadIds) {
+      if (fake.readHold !== null) await fake.readHold;
       if (fake.readFailures > 0) {
         fake.readFailures -= 1;
         throw new Error("push-notifications is away");
@@ -94,10 +102,12 @@ function fakeBb(): FakeBb {
       if (fake.sendError !== null) throw fake.sendError;
       fake.sent.push(notification);
     },
-    flushAfter(threadId, reason) {
+    flushAfter(threadId, reason, readMs = 0) {
       setTimeout(() => {
-        const level = resolveLevel(threadId, ancestorsOf(threadId), (id) => fake.own.get(id) ?? "inherit", fake.defaultsValue);
-        if (levelAllows(level, reason)) fake.bbSent.push({ threadId, reason });
+        setTimeout(() => {
+          const level = resolveLevel(threadId, ancestorsOf(threadId), (id) => fake.own.get(id) ?? "inherit", fake.defaultsValue);
+          if (levelAllows(level, reason)) fake.bbSent.push({ threadId, reason });
+        }, readMs);
       }, 2_000);
     },
   };
@@ -229,10 +239,10 @@ describe("PushTakeover", () => {
       expect(bb.own.has("worker")).toBe(false);
     });
 
-    it("leaves to bb an event its flush read before Herald's mute was asked for", async () => {
-      const early = { reason: "finished" as const, at: Date.now() - FLUSH_LEAD_MS - 1 };
+    it("still sends an event whose mute was set long after it: bb may still be reading (a rare duplicate, never a loss)", async () => {
+      const early = { reason: "finished" as const, at: Date.now() - 10_000 };
       push.saw("t1", early.at);
-      expect(await push.decide("t1", choice("announce"), early)).toBe(false);
+      expect(await push.decide("t1", choice("announce"), early)).toBe(true);
       expect(bb.own.get("t1")).toBe("muted");
     });
 
@@ -320,6 +330,30 @@ describe("PushTakeover", () => {
       expect(bb.own.has("t1")).toBe(false);
     });
 
+    it("keeps the mute when a thread set to Silent is set back to Announce before its give-back", async () => {
+      await decide("t1", "announce", null);
+      await decide("t1", "silent", "question");
+      await vi.advanceTimersByTimeAsync(500);
+      await decide("t1", "announce", null);
+      await vi.advanceTimersByTimeAsync(RELEASE_QUIET_MS * 2);
+      expect(bb.own.get("t1")).toBe("muted");
+      expect(held("t1")).toBe(true);
+    });
+
+    it("leaves a mute set after its give-back finished alone — the README's order for muting a thread in bb", async () => {
+      await decide("t1", "announce", null);
+      await decide("t1", "silent", null);
+      await quiet();
+      // Confirmed back, as `bb push-notifications thread` shows it; then muted by hand.
+      expect(bb.own.has("t1")).toBe(false);
+      bb.own.set("t1", "muted");
+      enabled = false;
+      await push.switchedOff();
+      await quiet();
+      await decide("t1", "silent", "question");
+      expect(bb.own.get("t1")).toBe("muted");
+    });
+
     it("gives an archived thread back and forgets a deleted one", async () => {
       await decide("t1", "announce", null);
       await decide("t2", "announce", null);
@@ -349,8 +383,8 @@ describe("PushTakeover", () => {
       bb.setDown = true;
       expect(await decide("t1", "announce", "question")).toBe(true);
       bb.setDown = false;
-      await vi.advanceTimersByTimeAsync(FLUSH_LEAD_MS + 1);
-      expect(await decide("t1", "silent", "question")).toBe(false);
+      await vi.advanceTimersByTimeAsync(1_000);
+      await decide("t1", "silent", "question");
       expect(held("t1")).toBe(false);
       expect(bb.own.has("t1")).toBe(false);
     });
@@ -463,6 +497,57 @@ describe("PushTakeover", () => {
       expect(bb.bbSent).toEqual([{ threadId: "t1", reason: "question" }]);
     });
 
+    it("sends a question whose mute landed while bb's slow flush was still reading", async () => {
+      // The question arrives before any takeover; bb starts its flush at 2 s and reads the level at 4 s.
+      const question = event("t1", "question");
+      bb.flushAfter("t1", "question", 2_000);
+      await vi.advanceTimersByTimeAsync(3_000);
+      // Herald's lookups were slow: the decision, and the mute, come at 3 s.
+      expect(await push.decide("t1", choice("announce"), question)).toBe(true);
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(bb.bbSent).toEqual([]);
+    });
+
+    it("waits again when a thread below has an event while the give-back reads bb", async () => {
+      bb.parents.set("worker", "t1");
+      await decide("t1", "announce", null);
+      let release: () => void = () => {};
+      bb.readHold = new Promise((resolve) => (release = resolve));
+      enabled = false;
+      void push.switchedOff();
+      await vi.advanceTimersByTimeAsync(10);
+      // The give-back is reading the coordinator's level when the worker asks.
+      const question = event("worker", "question");
+      bb.flushAfter("worker", "question", 500);
+      bb.readHold = null;
+      release();
+      const owes = await push.decide("worker", choice("silent"), question);
+      await vi.advanceTimersByTimeAsync(2_600);
+      expect(owes).toBe(true);
+      expect(bb.bbSent).toEqual([]);
+      expect(bb.own.get("t1")).toBe("muted");
+      await quiet();
+      expect(bb.own.has("t1")).toBe(false);
+    });
+
+    it("sends a worker's question decided after its coordinator was given back and taken over again", async () => {
+      bb.parents.set("worker", "t1");
+      await decide("t1", "announce", null);
+      const question = event("worker", "question");
+      bb.flushAfter("worker", "question");
+      enabled = false;
+      await push.switchedOff();
+      await vi.advanceTimersByTimeAsync(RELEASE_QUIET_MS + 1);
+      expect(bb.own.has("t1")).toBe(false);
+      enabled = true;
+      push.switchedOn();
+      await decide("t1", "announce", null);
+      await vi.advanceTimersByTimeAsync(1_000);
+      // The worker's lookups took five seconds.
+      expect(await push.decide("worker", choice("silent"), question)).toBe(true);
+      expect(bb.bbSent).toEqual([]);
+    });
+
     it("still owes an event decided after a give-back that came after bb's flush", async () => {
       await decide("t1", "announce", null);
       const question = event("t1", "question");
@@ -503,6 +588,21 @@ describe("PushTakeover", () => {
       expect(await decide("t3", "announce", "finished")).toBe(false);
       push.switchedOn();
       expect(await decide("t3", "announce", "finished")).toBe(true);
+    });
+
+    it("keeps a failed send across a reload, and the next instance sends it once bb is back", async () => {
+      await decide("t1", "announce", null);
+      bb.sendError = new Error("Push notifications are not running");
+      await push.send(subject(), "Login fix finished.");
+      expect([...kv.rows.keys()].some((key) => key.startsWith(OUTBOX_PREFIX))).toBe(true);
+      await push.close();
+      const next = new PushTakeover({ port: bb, kv, enabled: async () => true, facts: async () => facts, interactionPending: async () => true, log });
+      await next.setReady();
+      bb.sendError = null;
+      await vi.advanceTimersByTimeAsync(SEND_RETRY_MS[0]);
+      expect(bb.sent.map((sent) => sent.body)).toEqual(["Login fix finished."]);
+      expect([...kv.rows.keys()].some((key) => key.startsWith(OUTBOX_PREFIX))).toBe(false);
+      await next.close();
     });
 
     it("gives up a send after its last try, with an error", async () => {
