@@ -9,6 +9,7 @@ import { NO_CHOICE } from "../shared/thread-choice";
 import { createHooks, type HeraldConfig, type HookDeps } from "./hooks";
 import type { EventsPort } from "./ports";
 import { AttentionStore } from "./store";
+import { joinRows, type ThreadState } from "../app/rows";
 import { commandApproval, planApproval, question, recordingLog, settle, thread } from "./testing/fixtures";
 import type { WrittenSentence } from "./writer";
 
@@ -268,8 +269,8 @@ describe("hooks with a model-written sentence", () => {
     expect(store.get("t1")?.summary.status).toBe("pending");
     w.silence();
     await settle();
-    // Not listed, not on the banner, not in the thread's history.
-    expect(store.get("t1")).toBeNull();
+    // Not spoken, listed or on the banner, not in the thread's history.
+    expect(store.get("t1")?.summary).toEqual({ status: "quiet" });
     expect(publish).toHaveBeenCalledTimes(2);
     expect(remembered).not.toHaveBeenCalled();
     expect([...hooks.inFlightEventIds()]).toEqual([]);
@@ -335,5 +336,47 @@ describe("hooks with a model-written sentence", () => {
     await settle();
     expect(store.get("t1")?.summary).toEqual({ status: "ready", text: "Login fix finished. Done." });
     expect(remembered).toHaveBeenCalledWith("t1", expect.objectContaining({ text: "Login fix finished. Done." }));
+  });
+  describe("on the Herald page, joined with bb's sidebar", () => {
+    /** bb's sidebar row for t1: read or not, waiting for input or not, flagged at `attentionAt`. */
+    function sidebar(overrides: Partial<ThreadState> & { latestAttentionAt: number }): ThreadState[] {
+      return [
+        {
+          id: "t1",
+          projectId: "p1",
+          displayTitle: "Login fix",
+          status: "idle",
+          isHidden: false,
+          isArchived: false,
+          isUnread: true,
+          hasPendingInteraction: false,
+          indicator: "unread-success",
+          ...overrides,
+        },
+      ];
+    }
+
+    it("lists nothing for a quiet finished turn bb marked unread, and lists the needs-you event that follows", async () => {
+      const w = heldWriter();
+      const { hooks, store } = setup(w.write);
+      await hooks.idle(thread(), "Captain, shipshape.");
+      w.silence();
+      await settle();
+      const quiet = store.get("t1");
+      expect(quiet?.summary).toEqual({ status: "quiet" });
+      const recordedAt = Date.parse(quiet?.createdAt ?? "");
+      // bb flags the turn as it ends, a moment before Herald records it.
+      expect(joinRows(store.list(), sidebar({ latestAttentionAt: recordedAt - 50 }), recordedAt + 1_000)).toEqual([]);
+      // The tool kept the event quiet even while bb's list was loading.
+      expect(joinRows(store.list(), null, recordedAt + 1_000)).toEqual([]);
+
+      // A question next: bb says it waits for input, and Herald's entry for it is listed.
+      hooks.active(thread());
+      await hooks.interactionPending(thread(), question());
+      w.silence();
+      await settle();
+      const rows = joinRows(store.list(), sidebar({ latestAttentionAt: recordedAt + 5_000, hasPendingInteraction: true, indicator: "waiting-for-input" }), recordedAt + 6_000);
+      expect(rows.map((row) => [row.reason, row.entry?.summary.status])).toEqual([["question", "off"]]);
+    });
   });
 });

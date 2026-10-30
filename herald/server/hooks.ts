@@ -445,9 +445,10 @@ export function createHooks(deps: HookDeps): Hooks {
    * A question or approval the user answered meanwhile fired no event, so it
    * is asked about first: answered, the entry is withdrawn, unspoken.
    *
-   * A tool that answered nothing keeps the event quiet: a finished turn is
-   * withdrawn, unspoken and not remembered; an event that waits on the user
-   * stays listed with the plain sentence, as one not announced (`off`).
+   * A tool that answered nothing keeps the event quiet: a finished turn
+   * becomes `quiet` — unspoken, unlisted, not remembered, and its entry tells
+   * the page to leave bb's unread flag for it alone; an event that waits on
+   * the user stays listed with the plain sentence, as one not announced (`off`).
    */
   async function settleSentence(threadId: string, eventId: string, outcome: WriteOutcome, fallback: string): Promise<void> {
     const stillWaiting = () => {
@@ -465,8 +466,7 @@ export function createHooks(deps: HookDeps): Hooks {
     const current = stillWaiting();
     if (current === null) return;
     if (outcome.kind === "silent") {
-      if (waitsOnUser(current.reason)) deps.store.upsert({ ...current, summary: { status: "off", fallback } });
-      else deps.store.remove(threadId);
+      deps.store.upsert({ ...current, summary: waitsOnUser(current.reason) ? { status: "off", fallback } : { status: "quiet" } });
       deps.publish();
       return;
     }

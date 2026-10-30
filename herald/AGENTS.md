@@ -114,12 +114,17 @@ no shell. What that buys, and what must stay true:
 - **An empty reply is silence, not a failure.** The writer answers a tri-state (`WrittenSentence` plus the
   hooks' `failed`): a sentence, `silent` (exit 0 and nothing left after `cleanSentence` — blank, or only
   quotes or markdown), or a rejection. The owner's prompt uses it to skip no-op turns ("Captain,
-  shipshape."). Silence never drops what waits on the user: a **finished** turn is withdrawn (not spoken,
-  not listed, not remembered in history, and `sendOwed(…, null)` sends nothing — its `owes` decision is
-  still drained), so with push on and the thread taken over, bb was muted and **no one notifies that
-  turn**, which is intended; a **question, plan, permission or error** becomes `off` with the plain
-  sentence (listed, no banner, not spoken, not remembered) and its owed notification goes out plain. A
-  question answered meanwhile is still withdrawn first. Only a real failure falls back to the plain
+  shipshape."). Silence never drops what waits on the user: a **finished** turn becomes `quiet` (not
+  spoken, no banner, not remembered in history, and `sendOwed(…, null)` sends nothing — its `owes`
+  decision is still drained), so with push on and the thread taken over, bb was muted and **no one
+  notifies that turn**, which is intended. The `quiet` entry is kept rather than removed because the
+  page's other source, bb's unread flag, would list the turn again: `joinRows` skips a thread's
+  unread-only row while its entry is `quiet`, unless bb says it waits for input, shows an error, or
+  flagged it more than `QUIET_ATTENTION_SLACK_MS` after the quiet turn was recorded (a newer event Herald
+  did not record). The quiet entry is the thread's last event like any other, replaced by the next. A
+  **question, plan, permission or error** becomes `off` with the plain sentence (listed, no banner, not
+  spoken, not remembered) and its owed notification goes out plain. A question answered meanwhile is
+  still withdrawn first. Only a real failure falls back to the plain
   sentence spoken; a run still going at unload is a failure (the plain notification goes out).
 - **The prompt is bounded.** The agent's output is cut at `PROMPT_OUTPUT_MAX` and the headline, detail
   and request at `PROMPT_PART_MAX` before they go into the template — a permission's command and a

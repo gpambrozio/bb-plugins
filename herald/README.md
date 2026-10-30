@@ -194,8 +194,8 @@ nothing.* What an empty reply (blank, or only quotes or markdown) does depends o
   the recent sentences or the thread's Herald tab. With *Send Herald's sentences as push notifications*
   on, Herald sends no notification for it either, and bb's own is muted for that thread, so no one
   notifies you of that turn. That is the point: a turn you asked to be quiet stays quiet everywhere. bb
-  may still mark the thread unread, and the Herald page lists unread threads as bb does, without a
-  sentence.
+  still marks the thread unread in its own sidebar, but the Herald page and its count leave that turn
+  out; the thread shows up there again as soon as it waits for you, fails, or flags something newer.
 - **A question, a plan or a permission waiting for you, or a failed turn** — not spoken and no banner,
   but never dropped: it stays listed as waiting on the Herald page, marked *Not announced*, and its
   notification still goes out, with the plain sentence, when Herald sends them.
