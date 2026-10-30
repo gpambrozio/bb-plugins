@@ -149,6 +149,27 @@ describe("the Scheduled jobs page", () => {
     expect(screen.getByText("Enable")).toBeTruthy();
   });
 
+  it("opens the plugin's settings page from the toolbar's Settings button", async () => {
+    window.localStorage.clear();
+    window.history.replaceState(null, "", "/plugins/launchd-jobs/jobs");
+    const popstates: Event[] = [];
+    const onPopstate = (event: Event) => popstates.push(event);
+    window.addEventListener("popstate", onPopstate);
+    renderSlot<PluginNavPanelProps, RpcContract>({ component: JobsPanel }, { subPath: "" }, {
+      rpc: stubs({
+        hosts: () => ({ primaryHostId: "mini", hosts: [{ id: "mini", name: "Mini" }] }),
+        list: () => ({ supported: true, jobs: [adopted], launchAgentsDir: "/agents" }),
+        health: () => ({ failing: [], checkedAt: 1 }),
+      }),
+    });
+
+    fireEvent.click(await screen.findByRole("button", { name: "Settings" }));
+    window.removeEventListener("popstate", onPopstate);
+
+    expect(window.location.pathname).toBe("/settings/plugins/launchd-jobs");
+    expect(popstates).toHaveLength(1);
+  });
+
   it("puts the failing count on the sidebar entry, and updates it when the server publishes", async () => {
     const app = await loadPluginApp(() => import("../app"));
     expect(app.navPanels.map((panel) => panel.experimental_useBadge)).toEqual([useFailingBadge]);

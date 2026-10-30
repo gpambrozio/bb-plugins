@@ -5,6 +5,13 @@ Notable changes to `launchd-jobs`. The other plugins in this repository version 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.3.1
+
+### Added
+
+- **A Settings button** on the Scheduled jobs page, the gear beside Refresh at the top. It opens the
+  plugin's settings, where the failure notification is turned on.
+
 ## 0.3.0
 
 ### Added
