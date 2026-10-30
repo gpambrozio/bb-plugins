@@ -174,7 +174,7 @@ describe.skipIf(!onMac)("adopting the Paseo plugin's jobs", () => {
 
     const health = await jobs.health();
 
-    expect(health).toEqual({ supported: true, jobCount: 2, failing: [{ id: "nightly-report", name: "Nightly report" }] });
+    expect(health).toEqual({ supported: true, jobCount: 2, failing: [{ id: "nightly-report", name: "Nightly report", exitCode: 1 }] });
   });
 
   it("changes nothing in the Paseo directory, or the plists, by listing, reading or counting", async () => {

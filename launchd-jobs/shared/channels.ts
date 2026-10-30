@@ -14,6 +14,8 @@ export const FailingEntrySchema = z.object({
   hostName: z.string(),
   id: z.string(),
   name: z.string(),
+  /** How the failing run ended; the push notification says it. */
+  exitCode: z.number().int(),
 });
 
 export type FailingEntry = z.infer<typeof FailingEntrySchema>;

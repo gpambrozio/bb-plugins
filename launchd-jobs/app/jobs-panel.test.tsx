@@ -162,15 +162,15 @@ describe("the Scheduled jobs page", () => {
     expect(view.container.textContent).toBe("null");
 
     await view.emitRealtime("health-changed", {
-      failing: [{ hostId: "mini", hostName: "Mini", id: "a", name: "A" }],
+      failing: [{ hostId: "mini", hostName: "Mini", id: "a", name: "A", exitCode: 1 }],
       checkedAt: 2,
     });
     expect(JSON.parse(view.container.textContent ?? "")).toEqual({ count: 1, tone: "critical", label: "1 failing job: A" });
 
     await view.emitRealtime("health-changed", {
       failing: [
-        { hostId: "mini", hostName: "Mini", id: "a", name: "A" },
-        { hostId: "mini", hostName: "Mini", id: "b", name: "B" },
+        { hostId: "mini", hostName: "Mini", id: "a", name: "A", exitCode: 1 },
+        { hostId: "mini", hostName: "Mini", id: "b", name: "B", exitCode: 1 },
       ],
       checkedAt: 3,
     });

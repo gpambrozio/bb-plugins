@@ -142,6 +142,7 @@ export const LogChunkSchema = z.object({
 
 export type LogChunk = z.infer<typeof LogChunkSchema>;
 
-export const FailingJobSchema = z.object({ id: z.string(), name: z.string() });
+/** A job whose latest run failed and is unacknowledged, with that run's exit code. */
+export const FailingJobSchema = z.object({ id: z.string(), name: z.string(), exitCode: z.number().int() });
 
 export type FailingJob = z.infer<typeof FailingJobSchema>;
