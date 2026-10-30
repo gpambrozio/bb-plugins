@@ -5,6 +5,17 @@ Notable changes to `herald`. The other plugins in this repository version separa
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.8.0
+
+### Added
+
+- **Every sentence stays in the thread's conversation.** On bb 0.48.1 and newer, each sentence Herald
+  said about a thread now also appears in that thread's conversation, small and muted beside a
+  megaphone, right after the event it is about: above your next prompt after a finished or failed
+  turn, above the turn's answer after a question it asked you. Each has a Read again button. The newest
+  sentence joins them once something follows it; until then it is the one above the composer, as
+  before. The banner and the thread's Herald tab stay as they were, and on an older bb nothing changes.
+
 ## 0.7.0
 
 ### Changed

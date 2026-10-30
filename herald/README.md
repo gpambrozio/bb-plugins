@@ -14,6 +14,11 @@ of what was done — and the bb app speaks it.
   thread, its project and how long ago; tap one to open its thread.
 - The sentence also sits above the thread's composer, with a Read again button, and stays there — whether
   or not you have read the thread, and through your next turn — until the next event replaces it.
+- On bb 0.48.1 and newer, **every past sentence also stays in the thread's conversation**, small and
+  muted, with a megaphone and a Read again button, right after the event it is about: above your next
+  prompt after a finished or failed turn, above the turn's answer after a question it asked you. The
+  newest one shows there once something follows it; until then it is the one above the composer.
+  Sentences from up to about sixty turns back are placed; older ones stay in the Herald tab only.
 - A **Herald** tab in each thread's side panel lists what Herald said about that thread's past turns,
   newest first, with when and a Read again button — a way to find a turn by its sentence. The last 50
   are kept per thread. The megaphone button in the thread's header opens it, and closes it again (on bb
@@ -208,9 +213,12 @@ the switch is off by default. A Claude run takes about ten seconds end to end.
 
 ## Limitations
 
-- bb has no way for a plugin to add a row to a thread's conversation, so the sentence is a banner above
-  the composer and a list in the thread's side panel rather than a card in the transcript beside each
-  turn.
+- bb has no way for a plugin to add a row to a thread's conversation. On bb 0.48.1 and newer Herald draws
+  each past sentence above the message that follows its event instead, which is where it shows: after a
+  finished turn whose next turn you started while it was still running, that is above the next turn's
+  answer rather than your prompt; a question's sentence sits above the answer of its turn, outside the
+  turn's folded work. On older bb the sentences are the banner above the composer and the list in the
+  thread's side panel only.
 - The model that writes a sentence is a command-line tool, not one of bb's own providers: bb 0.44 lets a
   plugin register an AI service for its thread titles but not call one. The plain sentence is built from
   the event alone.
