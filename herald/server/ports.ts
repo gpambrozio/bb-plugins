@@ -100,6 +100,8 @@ export interface TimelineMessage {
   id: string;
   createdAt: number;
   role: "user" | "assistant";
+  /** Who sent a `user` row: the person, or another thread or bb itself (a child's report, say); null for an answer. */
+  initiator: "user" | "agent" | "system" | null;
 }
 
 /** Where the next older page of a thread's timeline starts. */

@@ -7,7 +7,8 @@
  * A thread reads when its first message shows; when a message newer than a
  * sentence still waiting for its place shows (the prompt after a finished
  * turn, mostly), once per message; when the server says it has a new
- * sentence; and after a reconnect. One read at a time, and a reason to read
+ * sentence or a turn of it ended (which folds what a sentence may sit above
+ * for now); and after a reconnect. One read at a time, and a reason to read
  * during one asks for one more afterwards. A thread with no message on screen
  * is forgotten, so opening it again reads afresh.
  */
@@ -58,7 +59,7 @@ export class TimelineSentences {
     this.read(threadId, state, load);
   }
 
-  /** The server says the thread has a new sentence; only a thread on screen reads. */
+  /** The server says the thread has a new sentence, or a turn of it ended; only a thread on screen reads. */
   nudge(threadId: string, load: LoadPlaced): void {
     const state = this.threads.get(threadId);
     if (state !== undefined) this.read(threadId, state, load);

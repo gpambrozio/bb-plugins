@@ -161,7 +161,11 @@ export function bbTimeline(sdk: PluginBbSdk): TimelinePort {
         deferContent: "true",
         ...(older === null ? {} : { beforeAnchorId: older.anchorId, beforeAnchorSeq: String(older.anchorSeq) }),
       });
-      const messages = result.rows.flatMap((row) => (row.kind === "conversation" ? [{ id: row.id, createdAt: row.createdAt, role: row.role }] : []));
+      const messages = result.rows.flatMap((row) =>
+        row.kind !== "conversation"
+          ? []
+          : [{ id: row.id, createdAt: row.createdAt, role: row.role, initiator: row.role === "user" ? row.initiator : null }],
+      );
       return { messages, older: result.timelinePage.olderCursor };
     },
     async running(threadId) {

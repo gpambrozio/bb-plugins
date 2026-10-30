@@ -110,7 +110,9 @@ export type PlacedSentences = z.infer<typeof PlacedSentencesSchema>;
 
 /**
  * Nudged with `{ threadId }` once a sentence has joined that thread's history,
- * so a thread on screen places it without every other thread asking too.
+ * and whenever one of its turns ends (the turn folds its work, and with it a
+ * message a sentence may sit above for now), so a thread on screen places its
+ * sentences again without every other thread asking too.
  */
 export const SENTENCES_CHANNEL = "sentences";
 

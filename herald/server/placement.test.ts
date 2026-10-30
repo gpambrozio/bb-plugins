@@ -7,8 +7,8 @@ import { recordingLog } from "./testing/fixtures";
 
 const T0 = Date.UTC(2026, 9, 30, 10, 0, 0);
 
-function message(id: string, second: number, role: TimelineMessage["role"]): TimelineMessage {
-  return { id, createdAt: T0 + second * 1000, role };
+function message(id: string, second: number, role: TimelineMessage["role"], initiator?: "user" | "agent" | "system"): TimelineMessage {
+  return { id, createdAt: T0 + second * 1000, role, initiator: role === "user" ? (initiator ?? "user") : null };
 }
 
 function sentence(eventId: string, second: number, overrides: Partial<HistoryItem> = {}): HistoryItem {
@@ -23,7 +23,8 @@ function sentence(eventId: string, second: number, overrides: Partial<HistoryIte
 }
 
 /** A thread's top-level messages, oldest first, served newest page first as bb does. */
-function fakeTimeline(messages: TimelineMessage[], options: { perPage?: number; running?: boolean; fail?: boolean } = {}) {
+/** `running` answers each status read in turn (the last one from then on): before the page, then after it. */
+function fakeTimeline(messages: TimelineMessage[], options: { perPage?: number; running?: boolean | boolean[]; fail?: boolean } = {}) {
   const perPage = options.perPage ?? 100;
   const calls = { pages: 0, running: 0, signals: [] as Array<AbortSignal | undefined> };
   const port: TimelinePort = {
@@ -37,15 +38,16 @@ function fakeTimeline(messages: TimelineMessage[], options: { perPage?: number; 
     },
     async running() {
       calls.running += 1;
-      return options.running ?? false;
+      const answers = Array.isArray(options.running) ? options.running : [options.running ?? false];
+      return answers[Math.min(calls.running, answers.length) - 1] ?? false;
     },
   };
   return { port, calls };
 }
 
 describe("placeSentences", () => {
-  it("puts a finished turn's sentence above the next prompt, and keeps that place", async () => {
-    const { port } = fakeTimeline([message("u1", 0, "user"), message("a1", 10, "assistant"), message("u2", 30, "user"), message("a2", 40, "assistant")]);
+  it("puts a finished turn's sentence above the next prompt, and keeps that place, even while the prompt's turn runs", async () => {
+    const { port } = fakeTimeline([message("u1", 0, "user"), message("a1", 10, "assistant"), message("u2", 30, "user"), message("a2", 40, "assistant")], { running: true });
     const placed = await placeSentences("t1", [sentence("t1:idle:1", 11)], port, recordingLog());
     expect(placed.sentences).toEqual([{ eventId: "t1:idle:1", reason: "finished", createdAt: sentence("t1:idle:1", 11).createdAt, text: "Sentence for t1:idle:1.", messageId: "u2" }]);
     expect(placed.settled).toEqual(new Map([["t1:idle:1", "u2"]]));
@@ -78,6 +80,35 @@ describe("placeSentences", () => {
     const later = await placeSentences("t1", [asked], idle.port, recordingLog());
     expect(later.settled).toEqual(new Map([["t1:interaction:i1", "a2"]]));
     expect(later.waitingSince).toBeNull();
+  });
+
+  it("keeps a place above a message another thread or bb sent into a running turn only once no turn runs", async () => {
+    // A child's report steers its still-running parent after the question; bb folds such a message into the turn when it ends.
+    for (const initiator of ["system", "agent"] as const) {
+      const messages = [message("a1", 10, "assistant"), message("s1", 20, "user", initiator), message("a2", 30, "assistant")];
+      const asked = sentence("t1:interaction:i1", 12, { reason: "question" });
+      const running = await placeSentences("t1", [asked], fakeTimeline(messages, { running: true }).port, recordingLog());
+      expect(running.sentences.map((entry) => entry.messageId), initiator).toEqual(["s1"]);
+      expect(running.settled.size, initiator).toBe(0);
+      // Ended: the report is folded away and the answer leads; a later read places the sentence there for good.
+      const folded = [message("a1", 10, "assistant"), message("a2", 30, "assistant")];
+      const idle = await placeSentences("t1", [asked], fakeTimeline(folded).port, recordingLog());
+      expect(idle.settled, initiator).toEqual(new Map([["t1:interaction:i1", "a2"]]));
+    }
+  });
+
+  it("keeps nothing from a page read while a turn ran, even when it has ended by the time bb answers", async () => {
+    const messages = [message("a1", 10, "assistant"), message("a2", 20, "assistant")];
+    const asked = sentence("t1:interaction:i1", 12, { reason: "question" });
+    // Running as the page was read, idle just after: the page's answer may be one the turn then folds.
+    const ended = await placeSentences("t1", [asked], fakeTimeline(messages, { running: [true, false] }).port, recordingLog());
+    expect(ended.sentences.map((entry) => entry.messageId)).toEqual(["a2"]);
+    expect(ended.settled.size).toBe(0);
+    // Idle as it was read, running just after: a turn started meanwhile, and its answers can fold.
+    const started = await placeSentences("t1", [asked], fakeTimeline(messages, { running: [false, true] }).port, recordingLog());
+    expect(started.settled.size).toBe(0);
+    const still = await placeSentences("t1", [asked], fakeTimeline(messages, { running: [false, false] }).port, recordingLog());
+    expect(still.settled).toEqual(new Map([["t1:interaction:i1", "a2"]]));
   });
 
   it("reads nothing when every place is already kept, and draws the kept ones", async () => {

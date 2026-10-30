@@ -124,4 +124,27 @@ describe("Herald's sentences in the timeline", () => {
     await screen.findByText("Login fix is done.");
     expect(reads).toEqual(["t1", "t1"]);
   });
+
+  it("moves a question's sentence to the turn's answer when the turn ends quietly, the answer already on screen", async () => {
+    const reads: string[] = [];
+    // While the turn runs, the question's sentence sits above the first answer after it, for now.
+    let answerNow = placed([{ eventId: "t1:interaction:i1", text: "Login fix asked which database.", messageId: "a1" }], T0 + 5_000);
+    const rpc = backend(() => answerNow, reads);
+    const bridge = renderSlot<object, RpcContract>({ component: HeraldBridge }, {}, { rpc });
+    const intermediate = renderMessage(answer("a1", 10), rpc);
+    await screen.findByText("Login fix asked which database.");
+    // More work, then the final answer shows; it asks once and the place is still the first answer.
+    renderMessage(answer("a2", 30), rpc);
+    await waitFor(() => expect(reads.length).toBeGreaterThanOrEqual(2));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const before = reads.length;
+    // The turn ends with no sentence of its own (the tool kept it quiet): the end alone nudges the
+    // thread, the first answer folds into "Worked for", and the sentence moves to the final answer.
+    answerNow = placed([{ eventId: "t1:interaction:i1", text: "Login fix asked which database.", messageId: "a2" }]);
+    intermediate.unmount();
+    await bridge.emitRealtime(SENTENCES_CHANNEL, { threadId: "t1" });
+    await waitFor(() => expect(reads).toHaveLength(before + 1));
+    await screen.findByText("Login fix asked which database.");
+    expect(document.querySelectorAll("[data-herald-sentences]")).toHaveLength(1);
+  });
 });

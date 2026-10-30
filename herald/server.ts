@@ -142,19 +142,21 @@ export default async function plugin(bb: BbPluginApi) {
   }
 
   /**
-   * A sentence joins the thread's history, and once it is saved the thread's
-   * timeline, if it is on screen, places it: the nudge names the thread, so
-   * only that thread reads its timeline.
+   * Tells a thread's timeline, if it is on screen, to place its sentences
+   * again. The nudge names the thread, so only that thread reads.
    */
+  function nudgeTimeline(threadId: string): void {
+    try {
+      bb.realtime.publish(SENTENCES_CHANNEL, { threadId });
+    } catch (error) {
+      bb.log.warn(`Could not tell the app ${threadId}'s timeline changed: ${reasonText(error)}`);
+    }
+  }
+
+  /** A sentence joins the thread's history, and once it is saved the thread's timeline places it. */
   function remember(threadId: string, item: HistoryItem): void {
     history.append(threadId, item);
-    void history.flush().then(() => {
-      try {
-        bb.realtime.publish(SENTENCES_CHANNEL, { threadId });
-      } catch (error) {
-        bb.log.warn(`Could not tell the app ${threadId} has a new sentence: ${reasonText(error)}`);
-      }
-    });
+    void history.flush().then(() => nudgeTimeline(threadId));
   }
 
   /** The stored configuration, each part falling back to its default when unreadable. */
@@ -259,8 +261,17 @@ export default async function plugin(bb: BbPluginApi) {
   });
 
   bb.events.on("thread.active", ({ thread }) => hooks.active(thread));
-  bb.events.on("thread.idle", ({ thread, lastAssistantText }) => hooks.idle(thread, lastAssistantText));
-  bb.events.on("thread.failed", ({ thread, error }) => hooks.failed(thread, error));
+  // A turn that ends folds its work, and with it any message a sentence was
+  // drawn above for now; so its timeline places again, whether or not the end
+  // itself brings a sentence (a quiet one does not).
+  bb.events.on("thread.idle", ({ thread, lastAssistantText }) => {
+    nudgeTimeline(thread.id);
+    return hooks.idle(thread, lastAssistantText);
+  });
+  bb.events.on("thread.failed", ({ thread, error }) => {
+    nudgeTimeline(thread.id);
+    return hooks.failed(thread, error);
+  });
   bb.events.on("interaction.pending", ({ thread, interaction }) => hooks.interactionPending(thread, interaction));
   bb.events.on("thread.archived", ({ thread }) => {
     hooks.gone(thread);

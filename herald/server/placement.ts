@@ -8,10 +8,14 @@
  * shows it meanwhile.
  *
  * Only the messages at the timeline's top level count: a finished turn folds
- * its work, and the messages in it, into one "Worked for" row. A place is
- * settled, and saved with the sentence, when the message is a prompt (those
- * never fold) or no turn is running (nothing will fold any more); otherwise
- * it is used for now and looked for again on the next read.
+ * its work, and the messages in it, into one "Worked for" row — its
+ * intermediate answers, and a message another thread or bb sent into it while
+ * it ran (a child's report steering its parent). A place is settled, and
+ * saved with the sentence, when the message is the person's own prompt
+ * (those stay at the top level, even one sent mid-turn), or when no turn ran
+ * from before the page was read until after (nothing in it will fold any
+ * more); otherwise it is used for now and looked for again on the next read,
+ * which the end of the turn brings (`SENTENCES_CHANNEL`).
  *
  * The timeline is read newest page first, back past the oldest sentence still
  * to place, and at most `PLACEMENT_PAGES_MAX` pages: a sentence older than
@@ -74,6 +78,9 @@ async function place(
   unsettled: Map<string, string>,
   signal: AbortSignal | undefined,
 ): Promise<void> {
+  // Asked before the page is read, and again after: a page read while a turn
+  // ran can hold an answer that turn folds away once it ends.
+  const runningBefore = await port.running(threadId);
   const oldest = Math.min(...open.map(timeOf));
   const messages: TimelineMessage[] = [];
   let cursor: Awaited<ReturnType<TimelinePort["page"]>>["older"] = null;
@@ -91,7 +98,7 @@ async function place(
   messages.sort((a, b) => a.createdAt - b.createdAt);
   // Every message from `reach` on has been read, so a sentence from then on can be placed.
   const reach = whole ? -Infinity : (messages[0]?.createdAt ?? Infinity);
-  let running: boolean | null = null;
+  let settles: boolean | null = null;
   for (const item of open) {
     const at = timeOf(item);
     if (at < reach) {
@@ -101,13 +108,13 @@ async function place(
     // Strictly after: a message at the event's own millisecond is the one that led to it.
     const next = messages.find((message) => message.createdAt > at);
     if (next === undefined) continue;
-    if (next.role === "user") {
+    if (next.initiator === "user") {
       settled.set(item.eventId, next.id);
       continue;
     }
-    running ??= await port.running(threadId);
-    if (running) unsettled.set(item.eventId, next.id);
-    else settled.set(item.eventId, next.id);
+    settles ??= !runningBefore && !(await port.running(threadId));
+    if (settles) settled.set(item.eventId, next.id);
+    else unsettled.set(item.eventId, next.id);
   }
 }
 

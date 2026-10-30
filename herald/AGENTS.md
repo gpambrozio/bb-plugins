@@ -577,16 +577,21 @@ which is why the banner stays. What must stay true:
   millisecond is the one that led to it). The rows' ids are the ids message metadata receives.
 - **Only top-level rows count.** A finished turn folds its work and the messages in it into one
   "Worked for" row (`kind: "turn"`, with `children`), whose messages metadata reaches only when
-  expanded. So a place is **kept** with the sentence (`SentenceHistory.place`, never moved once set)
-  only when it cannot change: a prompt (prompts stay top-level, even one sent mid-turn), or any message
-  while the thread is idle or failed (`TimelinePort.running`). A place on an answer of a running turn
-  is drawn but looked for again on the next read. A sentence replaced for the same event starts with
-  no place.
+  expanded: its intermediate answers, and a message another thread or bb sent into it while it ran (an
+  accepted steer whose initiator is `agent` or `system`, such as a child's report reaching its running
+  parent, is groupable in bb 0.48.1). So a place is **kept** with the sentence
+  (`SentenceHistory.place`, never moved once set) only when it cannot change: the person's own prompt
+  (`initiator: "user"`, which stays top-level even mid-turn), or any message when the thread was idle
+  or failed both before the page was read and after it (`TimelinePort.running`, asked twice: a page
+  read while a turn ran can hold an answer that turn folds as it ends, and a turn can start while the
+  page is read). Any other place is drawn but looked for again on the next read. A sentence replaced
+  for the same event starts with no place.
 - **`waitingSince`** is the time of the oldest sentence not yet kept. A message newer than it that
   shows asks for one read, once per message (`app/timeline-store.ts`), which is what places the newest
   sentence when the next prompt appears. A thread also reads when its first message shows, when the
-  server publishes `SENTENCES_CHANNEL` with its id (once a remembered sentence is saved; the bridge
-  hears it once per window), and after a reconnect. One read per thread at a time, one more queued; a
+  server publishes `SENTENCES_CHANNEL` with its id — once a remembered sentence is saved, and at every
+  `thread.idle` and `thread.failed`, since a turn that ends folds what a place was drawn above for now,
+  even a quiet end that remembers nothing; the bridge hears it once per window — and after a reconnect. One read per thread at a time, one more queued; a
   thread with no message on screen is forgotten, so opening it reads afresh.
 - **Older bb keeps today's behaviour.** `registerTimelineSentences` registers only when `app.slots` has
   the slot, so `engines` stays at bb 0.47; the SDK is pinned at 0.6.104 for its typings.

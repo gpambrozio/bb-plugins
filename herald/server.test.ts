@@ -153,7 +153,7 @@ async function settle(): Promise<void> {
 }
 
 /** The top-level messages of every thread's timeline, as `threads.timeline` serves them; one page. */
-let timelineMessages: Array<{ id: string; createdAt: number; role: "user" | "assistant" }> = [];
+let timelineMessages: Array<{ id: string; createdAt: number; role: "user" | "assistant"; initiator: "user" | null }> = [];
 
 async function load(settings: Record<string, string | number | boolean> = {}) {
   const { metadata, failures, stubs } = metadataStubs();
@@ -375,6 +375,16 @@ describe("herald server", () => {
       expect(harness.realtimeSignals.filter((signal) => signal.channel === ENTRIES_CHANNEL)).toHaveLength(2);
     });
     expect(await harness.callRpc("history.list", { threadId: "thr_user" })).toEqual({ items: [] });
+    // The turn's end still tells the thread's timeline to place its sentences again: a question's may move to the answer.
+    expect(harness.realtimeSignals.filter((signal) => signal.channel === SENTENCES_CHANNEL)).toEqual([
+      { channel: SENTENCES_CHANNEL, payload: { threadId: "thr_user" } },
+    ]);
+  });
+
+  it("tells a thread's timeline to place its sentences again when a turn fails", async () => {
+    const { harness } = await load({ announceErrors: false });
+    await harness.emitThreadEvent("thread.failed", { thread: USER_THREAD, error: "Rate limited" });
+    expect(harness.realtimeSignals).toContainEqual({ channel: SENTENCES_CHANNEL, payload: { threadId: "thr_user" } });
   });
 
   it("drops, unspoken, a sentence the instance before it was still writing — a question answered meanwhile included", async () => {
@@ -441,14 +451,14 @@ describe("herald server", () => {
 
   it("places each sentence above the message after it in the thread's timeline, and keeps the place", async () => {
     const { harness } = await load();
-    timelineMessages = [{ id: "m_answer", createdAt: Date.now() - 1000, role: "assistant" }];
+    timelineMessages = [{ id: "m_answer", createdAt: Date.now() - 1000, role: "assistant", initiator: null }];
     await harness.emitThreadEvent("thread.idle", { thread: USER_THREAD, lastAssistantText: "I fixed auth.ts." });
     await vi.waitFor(() => expect(harness.realtimeSignals).toContainEqual({ channel: SENTENCES_CHANNEL, payload: { threadId: "thr_user" } }));
     // Nothing after the turn yet: the sentence waits, from its own time.
     const waiting = (await harness.callRpc("history.placed", { threadId: "thr_user" })) as { sentences: unknown[]; waitingSince: number | null };
     expect(waiting.sentences).toEqual([]);
     expect(waiting.waitingSince).not.toBeNull();
-    timelineMessages.push({ id: "m_prompt", createdAt: Date.now() + 1000, role: "user" });
+    timelineMessages.push({ id: "m_prompt", createdAt: Date.now() + 1000, role: "user", initiator: "user" });
     expect(await harness.callRpc("history.placed", { threadId: "thr_user" })).toMatchObject({
       sentences: [{ text: "Login fix finished. I fixed auth.ts.", reason: "finished", messageId: "m_prompt" }],
       waitingSince: null,
