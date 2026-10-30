@@ -1,8 +1,8 @@
 // Herald — the app entry.
 //
-// A sidebar page listing every thread waiting on you, a banner with the
-// sentence above a thread's composer, each past sentence in the thread's
-// timeline (bb 0.48.1), a thread panel with the sentences of its past turns,
+// A sidebar page listing every thread waiting on you, each sentence as a card
+// in the thread's timeline (bb 0.48.1; a banner above the composer on older
+// bb), a thread panel with the sentences of its past turns,
 // a choice in bb's thread menu of what Herald announces for that thread or a
 // selection of threads, a settings section for what the host form cannot
 // hold, and an app-wide overlay that keeps the list current and speaks each
@@ -33,14 +33,16 @@ export default definePluginApp((app) => {
 
   app.slots.experimental_appOverlay({ id: "announcer", component: HeraldBridge });
 
-  app.composer.customize({
-    id: "summary",
-    scopes: ["thread"],
-    banners: [{ id: "summary", component: HeraldBanner }],
-  });
-
-  // Each past sentence above the message after its event, on bb 0.48.1 and newer.
-  registerTimelineSentences(app.slots);
+  // Each sentence as a card above the message that led to it, on bb 0.48.1
+  // and newer; an older bb has no such slot and keeps the latest sentence in
+  // a banner above the composer, as before.
+  if (!registerTimelineSentences(app.slots)) {
+    app.composer.customize({
+      id: "summary",
+      scopes: ["thread"],
+      banners: [{ id: "summary", component: HeraldBanner }],
+    });
+  }
 
   // The same sentences, newest first, in the thread's side panel.
   app.slots.experimental_tab({

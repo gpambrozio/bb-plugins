@@ -17,7 +17,7 @@ what still holds and says what bb changed. The repo root `AGENTS.md` covers what
 | `server/store.ts` | One entry per thread, mirrored to storage; `load()` merges. |
 | `server/kv-backend.ts` | The store's rows in `bb.storage.kv`, one per thread. |
 | `server/history.ts` | Each thread's past sentences, one kv row per thread, capped; for the thread panel, and merged across threads for the page. |
-| `server/placement.ts` | Where each past sentence sits in the thread's timeline: above the first message after its event, read from bb's timeline and kept once settled. |
+| `server/placement.ts` | Which message each past sentence belongs to in the thread's timeline: the one that led to its event, read from bb's timeline and kept once settled. |
 | `server/recent.ts` | The page's history: each merged sentence named by its thread and project, looked up when the page reads. |
 | `server/thread-choices.ts` | Each thread's choice from bb's thread menu: its own from Herald's thread metadata, and the nearest ancestor's, in one batched read each. |
 | `server/push.ts` | *Send Herald's sentences as push notifications*: taking a thread's bb notification level over, giving it back, and which events Herald then sends. |
@@ -40,8 +40,8 @@ what still holds and says what bb changed. The repo root `AGENTS.md` covers what
 | `app/tip-button.tsx` | An icon button with bb's tooltip. |
 | `app/speech.ts` | Every browser audio global, and which bb client this is. |
 | `app/rows.ts` | What the page lists: bb's unread and waiting-for-input joined with Herald's entries. |
-| `app/panel.tsx`, `app/banner.tsx` | The Herald page (its waiting threads, then recent sentences from every thread; and the count on its sidebar entry, `useWaitingBadge`), and the sentence above a thread's composer. |
-| `app/timeline.tsx`, `app/timeline-store.ts` | The past sentences in the thread's timeline (bb 0.48.1's message metadata), and the window's one read per thread on screen. |
+| `app/panel.tsx`, `app/banner.tsx` | The Herald page (its waiting threads, then recent sentences from every thread; and the count on its sidebar entry, `useWaitingBadge`), and the sentence above a thread's composer on a bb before 0.48.1. |
+| `app/timeline.tsx`, `app/timeline-store.ts` | Each sentence as a card in the thread's timeline (bb 0.48.1's message metadata), and the window's one read per thread on screen. |
 | `app/history-panel.tsx`, `app/header-action.tsx` | The Herald tab in a thread's side panel — the sentences of its past turns — and the header button that opens it: the older header slot's megaphone on every bb. |
 | `app/thread-action.ts` | *Herald* in bb's thread menu: reads the rows on screen in one batch, shows each one's choice and where it comes from, saves a pick; and the same list for a sidebar selection (bb 0.48). |
 | `app/bb-features.ts` | Whether this bb's app is 0.48's (panel controller, tab visibility), read where a named import would break the build on 0.47. |
@@ -184,7 +184,7 @@ no shell. What that buys, and what must stay true:
   expansion, which the section says.
 - **The announcer waits.** A `pending` entry is not counted as spoken when first listed — not even in the
   seeding list a window reads when it opens — so the list that brings it `ready` speaks it, once
-  (`app/announcer.ts`). The card and the composer banner say *Writing the sentence…* meanwhile, and the
+  (`app/announcer.ts`). The page's card and, on a bb before 0.48.1, the composer banner say *Writing the sentence…* meanwhile, and the
   card's *Read again* is disabled.
 - **"Read-only" is weaker than "no tools".** Only the Claude preset runs with no tools. Codex's read-only
   sandbox also cuts the network; Gemini's plan mode keeps its read and web tools, so an instruction
@@ -478,7 +478,7 @@ playback sets that too, and must not stop the next press from priming.
 **The switches mean what they say.** `blockedMessage()` is the single gate — *Mute here*, the master
 switch, then the platform switch — and returns the reason. An announcement is gated when it is about to
 be said, not when it arrived, and a blocked one is logged and dropped. **An explicit press is forced
-through**: *Test voice* and *Read again* (on each card and on the composer banner) pass `{ force: true }`
+through**: *Test voice* and *Read again* (on each card, in the timeline and on the composer banner) pass `{ force: true }`
 and speak even with announcements off or this device muted — the owner's choice, and it is also the
 press that unlocks audio. Every play control is hidden where `canPlaySpeech()` is false.
 
@@ -538,10 +538,12 @@ against bb's list and the manifest. Refresh the list from bb's app bundle (`ICON
 
 ## The sentence in the thread
 
-A plugin cannot add a row to a thread's timeline, so Paseo's transcript card is gone. The latest sentence sits
-in a **composer banner** (`app.composer.customize`, thread scope) — where the user is about to
-answer — with a play button, and stays there, read or not and through the next turn, until the next
-event replaces it. It reads Herald's entries, not the panel's rows. A switched-off kind gets no banner.
+A plugin cannot add a row to a thread's timeline, so Paseo's transcript card is gone. On bb 0.48.1 and
+newer each sentence is a **card in the timeline** instead (below). On an older bb, which has no slot for
+it, the latest sentence sits in a **composer banner** (`app.composer.customize`, thread scope, registered
+only there) — where the user is about to answer — with a play button, and stays there, read or not and
+through the next turn, until the next event replaces it. It reads Herald's entries, not the panel's rows.
+A switched-off kind gets no banner.
 
 The owner wanted the previous sentence in the chat right before the next prompt, to find a turn by its
 summary. **bb 0.44 has no way for a plugin to write a passive row into a transcript** — checked
@@ -560,47 +562,57 @@ asks `experimental_useTabVisible` and, while it is not showing, stops its 15 s c
 nudge, reading once when it shows again. If bb gains a plugin-written timeline row, write the
 sentence there at the end of the turn and this panel becomes a convenience.
 
-**On bb 0.48.1 every past sentence is also in the timeline** (`app/timeline.tsx`), through
-`app.slots.experimental_messageMetadata`: a component bb mounts beside every realized message, given
-its id, thread, `createdAt`, `turnId` and role, and drawn either *above* it or in its hover action row.
-There is nothing below a message, and the timeline-renderer slot (the guide's "Timeline entry
-content") is only for rows a provider plugin writes, so "right after the event" is drawn as **above
-the first top-level message after it**: the next prompt after a finished or failed turn, the turn's
-answer after a question. The newest sentence has no message after it yet; the composer banner shows it,
-which is why the banner stays. What must stay true:
+**On bb 0.48.1 every sentence is a card in the timeline** (`app/timeline.tsx`), through
+`app.slots.experimental_messageMetadata`: a component bb mounts beside every realized message, given its
+id, thread, `createdAt`, `turnId` and role. It draws either *above* the message or in its action row,
+which bb shows only while the message is hovered or focused (`opacity-0`, a fixed 20 px line, checked in
+bb desktop-v0.48.1 and a 0.48.2 nightly); there is nothing below a message, and the timeline-renderer
+slot (the guide's "Timeline entry content") is only for rows a provider plugin writes. The owner asked
+for each sentence under the message that led to it, and chose, given that, **a card just above that
+message**: the turn's final answer for a finished turn, the answer (or the prompt) before a question,
+plan, permission or error. It is styled as the composer banner was — `Herald · <kind>`, the sentence,
+*Read again* — and the banner is not registered where the card is, since the newest sentence's card shows
+as soon as it is written. What must stay true:
 
 - **The server places, the app only matches ids** (`server/placement.ts`, RPC `history.placed`). It
   reads `bb.sdk.threads.timeline` (content deferred) newest page first — twenty turns a page, paged
-  with `timelinePage.olderCursor` — until it has read past the oldest sentence still to place, at most
-  `PLACEMENT_PAGES_MAX` pages; a sentence further back is given up on (`messageId: null`), once. A
-  sentence's time is its history `createdAt`; the message must be strictly later (the one at the same
-  millisecond is the one that led to it). The rows' ids are the ids message metadata receives.
+  with `timelinePage.olderCursor` — until it has read a message at or before the oldest sentence still
+  to place, at most `PLACEMENT_PAGES_MAX` pages; a sentence further back is given up on
+  (`messageId: null`), once. A sentence's time is its history `createdAt`, taken as the event is
+  recorded; the message at the same millisecond counts as before it. The rows' ids are the ids message
+  metadata receives.
 - **Only top-level rows count.** A finished turn folds its work and the messages in it into one
-  "Worked for" row (`kind: "turn"`, with `children`), whose messages metadata reaches only when
-  expanded: its intermediate answers, and a message another thread or bb sent into it while it ran (an
-  accepted steer whose initiator is `agent` or `system`, such as a child's report reaching its running
-  parent, is groupable in bb 0.48.1). So a place is **kept** with the sentence
-  (`SentenceHistory.place`, never moved once set) only when it cannot change: the person's own prompt
-  (`initiator: "user"`, which stays top-level even mid-turn), or any message when the thread was idle
-  or failed both before the page was read and after it (`TimelinePort.running`, asked twice: a page
-  read while a turn ran can hold an answer that turn folds as it ends, and a turn can start while the
-  page is read). Any other place is drawn but looked for again on the next read. A sentence replaced
-  for the same event starts with no place.
-- **`waitingSince`** is the time of the oldest sentence not yet kept. A message newer than it that
-  shows asks for one read, once per message (`app/timeline-store.ts`), which is what places the newest
-  sentence when the next prompt appears. A thread also reads when its first message shows, when the
-  server publishes `SENTENCES_CHANNEL` with its id — once a remembered sentence is saved, and at every
-  `thread.idle` and `thread.failed`, since a turn that ends folds what a place was drawn above for now,
-  even a quiet end that remembers nothing; the bridge hears it once per window — and after a reconnect. One read per thread at a time, one more queued; a
-  thread with no message on screen is forgotten, so opening it reads afresh.
+  "Worked for" row (`kind: "turn"`, with `startedAt`, `completedAt` and `children`), whose messages
+  metadata reaches only when expanded: its intermediate answers, and a message another thread or bb
+  sent into it while it ran (an accepted steer whose initiator is `agent` or `system`, such as a child's
+  report reaching its running parent, is groupable in bb 0.48.1). So the message is the last top-level
+  one at or before the event, unless the event lies inside a turn row that started after it — a
+  question in a finished turn, whose answer before it is folded — and then the first top-level message
+  from that turn's start, its final answer.
+- **A place is kept** with the sentence (`SentenceHistory.place`, never moved once set) only when it
+  cannot change, and never for an event inside a turn row still running (its final answer is yet to
+  come): the person's own prompt (`initiator: "user"`, which stays top-level even mid-turn), or
+  any message when the thread was idle or failed both before the page was read and after it
+  (`TimelinePort.running`, asked twice: a page read while a turn ran can hold an answer that turn folds
+  as it ends, and a turn can start while the page is read). Any other place is drawn but looked for
+  again on the next read. A sentence replaced for the same event starts with no place.
+- **When a thread reads** (`app/timeline-store.ts`): when its first message shows, when the server
+  publishes `SENTENCES_CHANNEL` with its id — once a remembered sentence is saved (which is how the
+  newest card appears), and at every `thread.idle` and `thread.failed`, since a turn that ends folds
+  what a place was drawn on for now, even a quiet end that remembers nothing; the bridge hears it once
+  per window — and after a reconnect. One read per thread at a time, one more queued; a thread with no
+  message on screen is forgotten, so opening it reads afresh.
 - **Older bb keeps today's behaviour.** `registerTimelineSentences` registers only when `app.slots` has
-  the slot, so `engines` stays at bb 0.47; the SDK is pinned at 0.6.104 for its typings.
+  the slot, and the app registers the composer banner only when it did not, so `engines` stays at
+  bb 0.47; the SDK is pinned at 0.6.104 for its typings.
 - **What it shows is the history**: exactly the sentences the Herald tab lists. A finished turn the
   tool kept quiet, and a waiting event it answered with silence, are not remembered, so they show
-  nothing here either.
-- **Known misplacements.** A turn started by a prompt sent while the previous turn was still running has
-  that prompt *before* the previous turn's answer, so the previous turn's sentence lands above the next
-  turn's answer instead. A message edited away or hidden by a context clear takes its sentences with it.
+  nothing here either. A sentence still being written has no card; the Herald page says *Writing the
+  sentence…* meanwhile.
+- **Known limits.** A message edited away or hidden by a context clear takes its cards with it. A
+  question in a turn split by a prompt the person sent mid-turn lands on that prompt, the first
+  top-level message after the folded part. A prompt sent in the moment between an event and its
+  recording is taken as the event's message.
 
 **The header button is the older header slot on every bb** (`app/header-action.tsx`, `registerHistoryOpener`):
 `experimental_threadHeaderAction`, the megaphone as an icon button of its own, one 28px control as that
@@ -647,21 +659,21 @@ cover, check by hand after `bb plugin reload herald`:
 1. Let a thread finish a turn. The page shows it with its sentence at once, and the desktop app speaks
    it. The `app:` lines in `bb plugin logs herald` say what was spoken, or why not.
 2. Ask a thread something that makes it ask you a question; answer it; the row goes from the Herald page
-   at once, and the banner stays until the turn that follows ends and replaces it.
+   at once, and the question's card stays in the timeline.
 3. With the thread open on screen, let a turn finish: bb marks it read at once, and the sentence is still
-   spoken and still sits above the composer. Send a new prompt while a sentence is being written: the
-   banner goes and nothing is spoken.
+   spoken and its card shows on the turn's answer. Send a new prompt while a sentence is being written:
+   no card comes and nothing is spoken.
 4. In a browser tab, nothing is spoken until **Test voice** has been pressed once.
 5. Switch a kind off in Settings → Plugins → Herald and trigger it: the row says "Not announced" and
    nothing is spoken.
-6. Switch *Write each sentence with a model* on (the tool defaults to claude) and let a thread finish: the row and
-   the banner say "Writing the sentence…" for a few seconds, then the model's sentence replaces it and is
-   spoken once. Reload the plugin while a sentence is being written: the entry goes, unspoken. Then,
+6. Switch *Write each sentence with a model* on (the tool defaults to claude) and let a thread finish: the row
+   says "Writing the sentence…" for a few seconds, then the model's sentence replaces it, is spoken once
+   and its card appears on the turn's answer. Reload the plugin while a sentence is being written: the entry goes, unspoken. Then,
    under *Model-written sentences*, pick the tool *custom*: a *Custom command* field
    appears under the select, filled in with the Claude command. Save a command that does not exist:
    the plain sentence is spoken and the log says why. Pick *claude* again: the field goes. Then add to
    the prompt "reply with nothing if the output only says Captain, shipshape." and have a thread end its
-   turn with exactly that: the row and the banner go and nothing is spoken; a question it asks stays
+   turn with exactly that: the row goes, no card comes and nothing is spoken; a question it asks stays
    listed as "Not announced".
 7. With a thread waiting, Herald's sidebar entry carries the count, and its tooltip says "1 thread waiting
    for you"; open the thread so nothing waits, and the badge goes. Each waiting row starts with the same
@@ -678,7 +690,9 @@ cover, check by hand after `bb plugin reload herald`:
     Herald's sentence, and tapping it opens that thread. Set the thread to *Silent*: the level is back.
     Switch the setting off: every level Herald set is back. Turn bb's Push notifications plugin off: the
     Herald page says why nothing is sent, and no level changes.
-11. On bb 0.48.1, let a thread finish two turns: the first turn's sentence shows, small and muted with a
-    megaphone, just above the prompt that started the second; the second's is above the composer only.
-    Ask a thread a question and answer it: its sentence sits above that turn's answer. *Read again* on
-    one speaks it. Reload the plugin and open the thread again: they are in the same places.
+11. On bb 0.48.1, let a thread finish two turns: each turn's sentence is a card ("Herald · Finished")
+    just above that turn's final answer, the newest as soon as it is spoken, and there is no banner above
+    the composer. Ask a thread a question: its card sits above the answer before it; answer it and let the
+    turn finish: the card moves to the turn's final answer. *Read again* on one speaks it. Reload the
+    plugin and open the thread again: they are in the same places. On bb 0.47 or 0.48.0 the banner is
+    back and there are no cards.

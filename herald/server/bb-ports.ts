@@ -166,7 +166,8 @@ export function bbTimeline(sdk: PluginBbSdk): TimelinePort {
           ? []
           : [{ id: row.id, createdAt: row.createdAt, role: row.role, initiator: row.role === "user" ? row.initiator : null }],
       );
-      return { messages, older: result.timelinePage.olderCursor };
+      const turns = result.rows.flatMap((row) => (row.kind === "turn" ? [{ startedAt: row.startedAt, completedAt: row.completedAt }] : []));
+      return { messages, turns, older: result.timelinePage.olderCursor };
     },
     async running(threadId) {
       const { status } = await sdk.threads.get({ threadId });

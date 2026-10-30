@@ -1,28 +1,32 @@
 /**
- * Where each past sentence sits in its thread's timeline: above the first
- * message after its event — the next prompt after a finished turn or an
- * error, the turn's answer after a question it asked. bb's message metadata
- * (`experimental_messageMetadata`, bb 0.48.1) draws above a message and never
- * below one, so "right after the event" is "above the next message". The
- * newest sentence, with nothing after it yet, waits; the composer banner
- * shows it meanwhile.
+ * Which message each past sentence belongs to in its thread's timeline: the
+ * message that led to its event — the turn's final answer for a finished
+ * turn, the answer (or prompt) before a question, plan, permission or error.
+ * bb's message metadata (`experimental_messageMetadata`, bb 0.48.1) draws
+ * above a message and never below one, so the sentence's card sits just above
+ * that message. It exists when the event does, so a sentence shows as soon as
+ * it is written.
  *
  * Only the messages at the timeline's top level count: a finished turn folds
  * its work, and the messages in it, into one "Worked for" row — its
  * intermediate answers, and a message another thread or bb sent into it while
- * it ran (a child's report steering its parent). A place is settled, and
- * saved with the sentence, when the message is the person's own prompt
- * (those stay at the top level, even one sent mid-turn), or when no turn ran
- * from before the page was read until after (nothing in it will fold any
- * more); otherwise it is used for now and looked for again on the next read,
- * which the end of the turn brings (`SENTENCES_CHANNEL`).
+ * it ran (a child's report steering its parent). So the message is the last
+ * top-level one at or before the event, unless the event happened inside a
+ * turn that started after that message: then its messages are folded, and the
+ * sentence goes to the first message after the turn's start, its final answer.
+ *
+ * A place is settled, and saved with the sentence, when the message is the
+ * person's own prompt (those stay at the top level, even one sent mid-turn),
+ * or when no turn ran from before the page was read until after (nothing will
+ * fold any more); otherwise it is used for now and looked for again on the
+ * next read, which the end of the turn brings (`SENTENCES_CHANNEL`).
  *
  * The timeline is read newest page first, back past the oldest sentence still
  * to place, and at most `PLACEMENT_PAGES_MAX` pages: a sentence older than
  * that is given up on, once, rather than read for on every visit.
  */
 import type { HistoryItem, PlacedSentence, PlacedSentences } from "../shared/herald";
-import type { Log, TimelineMessage, TimelinePort } from "./ports";
+import type { Log, TimelineMessage, TimelinePort, TimelineTurn } from "./ports";
 
 /** bb's pages hold twenty turns each; sixty turns back is past where anyone scrolls to find a sentence. */
 export const PLACEMENT_PAGES_MAX = 3;
@@ -60,14 +64,12 @@ export async function placeSentences(
     }
   }
   const sentences: PlacedSentence[] = [];
-  let waitingSince: number | null = null;
   for (const item of items) {
     const known = item.messageId !== undefined ? item.messageId : settled.get(item.eventId);
     const messageId = known !== undefined ? known : (unsettled.get(item.eventId) ?? null);
     if (messageId !== null) sentences.push({ eventId: item.eventId, reason: item.reason, createdAt: item.createdAt, text: item.text, messageId });
-    if (known === undefined) waitingSince = Math.min(waitingSince ?? Infinity, timeOf(item));
   }
-  return { sentences, waitingSince, settled };
+  return { sentences, settled };
 }
 
 async function place(
@@ -83,17 +85,20 @@ async function place(
   const runningBefore = await port.running(threadId);
   const oldest = Math.min(...open.map(timeOf));
   const messages: TimelineMessage[] = [];
+  const turns: TimelineTurn[] = [];
   let cursor: Awaited<ReturnType<TimelinePort["page"]>>["older"] = null;
   let whole = false;
   for (let pages = 0; pages < PLACEMENT_PAGES_MAX; pages += 1) {
     const page = await port.page(threadId, cursor, signal);
     messages.push(...page.messages);
+    turns.push(...page.turns);
     cursor = page.older;
     if (cursor === null) {
       whole = true;
       break;
     }
-    if (messages.some((message) => message.createdAt < oldest)) break;
+    // A message at or before the oldest sentence: every sentence's own message has been read.
+    if (messages.some((message) => message.createdAt <= oldest)) break;
   }
   messages.sort((a, b) => a.createdAt - b.createdAt);
   // Every message from `reach` on has been read, so a sentence from then on can be placed.
@@ -105,17 +110,40 @@ async function place(
       settled.set(item.eventId, null);
       continue;
     }
-    // Strictly after: a message at the event's own millisecond is the one that led to it.
-    const next = messages.find((message) => message.createdAt > at);
-    if (next === undefined) continue;
-    if (next.initiator === "user") {
-      settled.set(item.eventId, next.id);
+    const found = messageOf(at, messages, turns);
+    if (found === undefined) continue;
+    const { message, inRunningTurn } = found;
+    // Inside a turn still running, its final answer is yet to come: even a prompt is only for now.
+    if (inRunningTurn) {
+      unsettled.set(item.eventId, message.id);
+      continue;
+    }
+    if (message.initiator === "user") {
+      settled.set(item.eventId, message.id);
       continue;
     }
     settles ??= !runningBefore && !(await port.running(threadId));
-    if (settles) settled.set(item.eventId, next.id);
-    else unsettled.set(item.eventId, next.id);
+    if (settles) settled.set(item.eventId, message.id);
+    else unsettled.set(item.eventId, message.id);
   }
+}
+
+/**
+ * The top-level message an event at `at` belongs to (`messages` oldest
+ * first), and whether the event lies in a turn row still running.
+ */
+function messageOf(
+  at: number,
+  messages: readonly TimelineMessage[],
+  turns: readonly TimelineTurn[],
+): { message: TimelineMessage; inRunningTurn: boolean } | undefined {
+  // At the event's own millisecond counts as before it: that message led to it.
+  const before = messages.filter((message) => message.createdAt <= at).at(-1);
+  const folded = turns.find(
+    (turn) => turn.startedAt <= at && (turn.completedAt === null || at <= turn.completedAt) && turn.startedAt > (before?.createdAt ?? -Infinity),
+  );
+  const message = folded === undefined ? before : (messages.find((candidate) => candidate.createdAt >= folded.startedAt) ?? before);
+  return message === undefined ? undefined : { message, inRunningTurn: folded !== undefined && folded.completedAt === null };
 }
 
 function timeOf(item: HistoryItem): number {

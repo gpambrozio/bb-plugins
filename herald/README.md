@@ -12,13 +12,15 @@ of what was done — and the bb app speaks it.
   open the thread, or **Read again** on it to hear the sentence again. Below them, **Recent sentences**
   lists what Herald last said about any thread, in every project — the last 20 by default — with the
   thread, its project and how long ago; tap one to open its thread.
-- The sentence also sits above the thread's composer, with a Read again button, and stays there — whether
-  or not you have read the thread, and through your next turn — until the next event replaces it.
-- On bb 0.48.1 and newer, **every past sentence also stays in the thread's conversation**, small and
-  muted, with a megaphone and a Read again button, right after the event it is about: above your next
-  prompt after a finished or failed turn, above the turn's answer after a question it asked you. The
-  newest one shows there once something follows it; until then it is the one above the composer.
-  Sentences from up to about sixty turns back are placed; older ones stay in the Herald tab only.
+- On bb 0.48.1 and newer, **every sentence stays in the thread's conversation** as a card — "Herald ·
+  Finished" (or Question, Plan to approve, Permission, Error), the sentence and a Read again button —
+  just above the message it is about: the turn's final answer for a finished turn, the answer before a
+  question, plan, permission or error. The newest one appears as soon as Herald says it. bb only lets a
+  plugin draw above a message, not below it, which is why the card sits on top. Sentences from up to
+  about sixty turns back are placed; older ones stay in the Herald tab only.
+- On older bb the latest sentence sits above the thread's composer instead, with a Read again button,
+  and stays there — whether or not you have read the thread, and through your next turn — until the next
+  event replaces it.
 - A **Herald** tab in each thread's side panel lists what Herald said about that thread's past turns,
   newest first, with when and a Read again button — a way to find a turn by its sentence. The last 50
   are kept per thread. The megaphone button in the thread's header opens it, and closes it again (on bb
@@ -195,17 +197,19 @@ the thread, project, folder, event, headline, detail, the request and the agent'
 example: *If the agent's last output only acknowledges, such as "Captain, shipshape.", reply with
 nothing.* What an empty reply (blank, or only quotes or markdown) does depends on the event:
 
-- **A finished turn** — nothing at all: not spoken, not on the Herald page or above the composer, not in
-  the recent sentences or the thread's Herald tab. With *Send Herald's sentences as push notifications*
+- **A finished turn** — nothing at all: not spoken, not on the Herald page, in the conversation or above
+  the composer, not in the recent sentences or the thread's Herald tab. With *Send Herald's sentences as push notifications*
   on, Herald sends no notification for it either, and bb's own is muted for that thread, so no one
   notifies you of that turn. That is the point: a turn you asked to be quiet stays quiet everywhere. bb
   still marks the thread unread in its own sidebar, but the Herald page and its count leave that turn
   out; the thread shows up there again as soon as it waits for you, fails, or flags something newer.
-- **A question, a plan or a permission waiting for you, or a failed turn** — not spoken and no banner,
+- **A question, a plan or a permission waiting for you, or a failed turn** — not spoken and no card or
+  banner,
   but never dropped: it stays listed as waiting on the Herald page, marked *Not announced*, and its
   notification still goes out, with the plain sentence, when Herald sends them.
 
-While the tool runs, the row and the banner say *Writing the sentence…*; the plain sentence is spoken
+While the tool runs, the row (and on older bb the banner) says *Writing the sentence…*; the card appears
+once the sentence is written; the plain sentence is spoken
 instead if the tool fails (exits with an error), is missing, or takes longer than 45 seconds. A sentence still being written
 when Herald itself is reloaded is dropped rather than spoken late. The prompt includes the agent's
 own reply, which can carry instructions: that is why the presets run with no tools or read-only, and why
@@ -213,12 +217,11 @@ the switch is off by default. A Claude run takes about ten seconds end to end.
 
 ## Limitations
 
-- bb has no way for a plugin to add a row to a thread's conversation. On bb 0.48.1 and newer Herald draws
-  each past sentence above the message that follows its event instead, which is where it shows: after a
-  finished turn whose next turn you started while it was still running, that is above the next turn's
-  answer rather than your prompt; a question's sentence sits above the answer of its turn, outside the
-  turn's folded work. On older bb the sentences are the banner above the composer and the list in the
-  thread's side panel only.
+- bb has no way for a plugin to add a row to a thread's conversation, or to draw below a message. On bb
+  0.48.1 and newer Herald draws each sentence as a card just above the message that led to it instead.
+  While a turn is still running, a question's card sits on the answer before it; once the turn ends and
+  folds its work into "Worked for", the card moves to the turn's final answer. On older bb the sentences
+  are the banner above the composer and the list in the thread's side panel only.
 - The model that writes a sentence is a command-line tool, not one of bb's own providers: bb 0.44 lets a
   plugin register an AI service for its thread titles but not call one. The plain sentence is built from
   the event alone.

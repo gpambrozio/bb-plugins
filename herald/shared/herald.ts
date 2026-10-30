@@ -79,7 +79,7 @@ export const HistoryItemSchema = z.object({
   text: z.string(),
   /**
    * Where it sits in the thread's timeline, once that is settled: the id of
-   * the first message after the event, which it is drawn above; null when
+   * the message that led to the event, which it is drawn above; null when
    * Herald gave up looking. Absent while not yet known (`server/placement.ts`).
    */
   messageId: z.string().nullable().optional(),
@@ -96,15 +96,9 @@ export const PlacedSentenceSchema = z.object({
 });
 export type PlacedSentence = z.infer<typeof PlacedSentenceSchema>;
 
-/**
- * A thread's sentences in its timeline. `waitingSince` is the time (epoch
- * milliseconds) of the oldest sentence whose place is not settled — most often
- * the newest, which has no message after it yet — so the app asks again when
- * a message newer than that shows up. Null when every place is settled.
- */
+/** A thread's sentences in its timeline, each with the message it belongs to. */
 export const PlacedSentencesSchema = z.object({
   sentences: z.array(PlacedSentenceSchema),
-  waitingSince: z.number().nullable(),
 });
 export type PlacedSentences = z.infer<typeof PlacedSentencesSchema>;
 

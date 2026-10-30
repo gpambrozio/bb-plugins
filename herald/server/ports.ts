@@ -104,6 +104,13 @@ export interface TimelineMessage {
   initiator: "user" | "agent" | "system" | null;
 }
 
+/** A finished turn's "Worked for" row, which holds the turn's work and its folded messages; or a running turn's. */
+export interface TimelineTurn {
+  startedAt: number;
+  /** Null while it runs. */
+  completedAt: number | null;
+}
+
 /** Where the next older page of a thread's timeline starts. */
 export interface TimelineCursor {
   anchorId: string;
@@ -116,7 +123,11 @@ export interface TimelineCursor {
  * in it, into one "Worked for" row, which message metadata does not reach.
  */
 export interface TimelinePort {
-  page(threadId: string, older: TimelineCursor | null, signal?: AbortSignal): Promise<{ messages: TimelineMessage[]; older: TimelineCursor | null }>;
+  page(
+    threadId: string,
+    older: TimelineCursor | null,
+    signal?: AbortSignal,
+  ): Promise<{ messages: TimelineMessage[]; turns: TimelineTurn[]; older: TimelineCursor | null }>;
   /** Whether a turn may still be running: its messages can fold into its "Worked for" row when it ends. */
   running(threadId: string): Promise<boolean>;
 }

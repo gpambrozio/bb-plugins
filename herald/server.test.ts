@@ -449,26 +449,26 @@ describe("herald server", () => {
     expect(await harness.callRpc("history.list", { threadId: "thr_user" })).toEqual({ items: [] });
   });
 
-  it("places each sentence above the message after it in the thread's timeline, and keeps the place", async () => {
+  it("places each sentence on the message that led to it as soon as it is saved, and keeps the place", async () => {
     const { harness } = await load();
-    timelineMessages = [{ id: "m_answer", createdAt: Date.now() - 1000, role: "assistant", initiator: null }];
+    timelineMessages = [
+      { id: "m_prompt", createdAt: Date.now() - 2000, role: "user", initiator: "user" },
+      { id: "m_answer", createdAt: Date.now() - 1000, role: "assistant", initiator: null },
+    ];
     await harness.emitThreadEvent("thread.idle", { thread: USER_THREAD, lastAssistantText: "I fixed auth.ts." });
-    await vi.waitFor(() => expect(harness.realtimeSignals).toContainEqual({ channel: SENTENCES_CHANNEL, payload: { threadId: "thr_user" } }));
-    // Nothing after the turn yet: the sentence waits, from its own time.
-    const waiting = (await harness.callRpc("history.placed", { threadId: "thr_user" })) as { sentences: unknown[]; waitingSince: number | null };
-    expect(waiting.sentences).toEqual([]);
-    expect(waiting.waitingSince).not.toBeNull();
-    timelineMessages.push({ id: "m_prompt", createdAt: Date.now() + 1000, role: "user", initiator: "user" });
-    expect(await harness.callRpc("history.placed", { threadId: "thr_user" })).toMatchObject({
-      sentences: [{ text: "Login fix finished. I fixed auth.ts.", reason: "finished", messageId: "m_prompt" }],
-      waitingSince: null,
-    });
+    await vi.waitFor(async () =>
+      expect(await harness.callRpc("history.placed", { threadId: "thr_user" })).toEqual({
+        sentences: [expect.objectContaining({ text: "Login fix finished. I fixed auth.ts.", reason: "finished", messageId: "m_answer" })],
+      }),
+    );
+    // Once saved, its thread hears so; the turn's end told it too.
+    expect(harness.realtimeSignals.filter((signal) => signal.channel === SENTENCES_CHANNEL).length).toBeGreaterThanOrEqual(2);
     // Kept with the sentence: the timeline is not read again for it.
     timelineMessages = [];
     await settle();
-    expect(await harness.callRpc("history.placed", { threadId: "thr_user" })).toMatchObject({ sentences: [{ messageId: "m_prompt" }] });
+    expect(await harness.callRpc("history.placed", { threadId: "thr_user" })).toMatchObject({ sentences: [{ messageId: "m_answer" }] });
     const { items } = (await harness.callRpc("history.list", { threadId: "thr_user" })) as { items: Array<{ messageId?: string | null }> };
-    expect(items.map((item) => item.messageId)).toEqual(["m_prompt"]);
+    expect(items.map((item) => item.messageId)).toEqual(["m_answer"]);
   });
 
   it("lists the newest sentences of every thread for the Herald page, as many as configured", async () => {

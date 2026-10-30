@@ -10,11 +10,16 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - **Every sentence stays in the thread's conversation.** On bb 0.48.1 and newer, each sentence Herald
-  said about a thread now also appears in that thread's conversation, small and muted beside a
-  megaphone, right after the event it is about: above your next prompt after a finished or failed
-  turn, above the turn's answer after a question it asked you. Each has a Read again button. The newest
-  sentence joins them once something follows it; until then it is the one above the composer, as
-  before. The banner and the thread's Herald tab stay as they were, and on an older bb nothing changes.
+  says about a thread now appears in that thread's conversation as a card — what kind of event it was,
+  the sentence and a Read again button — just above the message it is about: the turn's final answer
+  for a finished turn, the answer before a question, plan, permission or error. The newest appears as
+  soon as Herald says it.
+
+### Changed
+
+- **No more banner above the composer** on bb 0.48.1 and newer: the card in the conversation takes its
+  place. The thread's Herald tab and the Herald page stay as they were, and on an older bb nothing
+  changes.
 
 ## 0.7.0
 
