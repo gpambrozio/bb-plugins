@@ -40,6 +40,14 @@ export type ColumnId = z.infer<typeof ColumnIdSchema>;
 export const ThreadStatusSchema = z.enum(["pending", "idle", "starting", "active", "stopping", "error"]);
 export type ThreadStatus = z.infer<typeof ThreadStatusSchema>;
 
+/**
+ * A child thread's Notify parent setting, as bb names it: `auto` tells the parent of every finished,
+ * failed or interrupted turn and every blocker; `stuck` leaves out finished turns; `off` tells it nothing.
+ * The plugin spawns crew with `auto`, and the captain can change it from any thread menu (bb 0.48.1).
+ */
+export const ParentNotificationsSchema = z.enum(["auto", "stuck", "off"]);
+export type ParentNotifications = z.infer<typeof ParentNotificationsSchema>;
+
 export const CrewReportSchema = z.object({
   state: CrewStateSchema,
   text: z.string(),
@@ -83,6 +91,8 @@ export const CrewSummarySchema = z.object({
   title: z.string().nullable(),
   status: ThreadStatusSchema,
   pendingInteractions: z.number().int(),
+  /** Anything but `auto` means bb will not tell the first mate when this crewmate finishes a turn. */
+  parentNotifications: ParentNotificationsSchema,
   projectId: z.string(),
   environmentId: z.string().nullable(),
   updatedAt: z.number(),

@@ -64,6 +64,16 @@ describe("bbThreads.spawn", () => {
     expect(pinned).toEqual([true, undefined]);
   });
 
+  it("passes Notify parent through when given, and leaves bb's default otherwise", async () => {
+    const { sdk, harness } = fakeSdk();
+    const threads = bbThreads(sdk);
+    const reuse = { kind: "reuse", environmentId: "env_1" } as const;
+    await threads.spawn({ projectId: "proj_web", title: "t", prompt: "p", parentThreadId: "thr_mate", parentNotifications: "auto", environment: reuse, metadata: {} });
+    await threads.spawn({ projectId: "proj_web", title: "t", prompt: "p", environment: reuse, metadata: {} });
+    const values = harness.callsTo("threads.spawn").map(([args]) => (args as { parentNotifications?: string }).parentNotifications);
+    expect(values).toEqual(["auto", undefined]);
+  });
+
   it("passes any reasoning level through for bb to check against the model", async () => {
     const { sdk, harness } = fakeSdk();
     const threads = bbThreads(sdk);
@@ -205,6 +215,28 @@ describe("bbThreads.origin", () => {
 
   it("is null for a thread bb does not have", async () => {
     expect(await bbThreads(sdkWithThread({ threadGone: true }).sdk).origin("thr_1")).toBeNull();
+  });
+});
+
+describe("bbThreads.children", () => {
+  it("reads each live child's Notify parent setting from its row", async () => {
+    const { sdk } = createFakeSdk({
+      pluginId: "firstmate-crew",
+      overrides: {
+        threads: {
+          list: () => [
+            makeThreadResponse({ id: "thr_auto", parentThreadId: "thr_mate", parentNotifications: "auto" }),
+            makeThreadResponse({ id: "thr_off", parentThreadId: "thr_mate", parentNotifications: "off" }),
+            makeThreadResponse({ id: "thr_gone", parentThreadId: "thr_mate", parentNotifications: "stuck", archivedAt: 1 }),
+          ],
+        },
+      },
+    });
+    const children = await bbThreads(sdk).children("thr_mate");
+    expect(children.map((child) => [child.id, child.parentNotifications])).toEqual([
+      ["thr_auto", "auto"],
+      ["thr_off", "off"],
+    ]);
   });
 });
 

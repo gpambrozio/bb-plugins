@@ -195,6 +195,7 @@ export async function summarizeCrew(
     title: thread.title,
     status: thread.status,
     pendingInteractions,
+    parentNotifications: thread.parentNotifications,
     projectId: thread.projectId,
     environmentId: thread.environmentId,
     updatedAt: thread.updatedAt,

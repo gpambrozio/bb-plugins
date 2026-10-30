@@ -15,6 +15,7 @@ function crew(overrides: Partial<CrewSummary> = {}): CrewSummary {
     title: "Fix login",
     status: "idle",
     pendingInteractions: 0,
+    parentNotifications: "auto",
     projectId: "prj_web",
     environmentId: "env_1",
     updatedAt: 1_000,
@@ -281,6 +282,19 @@ describe("loadFleet", () => {
     });
     expect(byKey.get("crew:thr_b")).toMatchObject({ column: "blocked", taskId: null, crew: { task: null, pendingInteractions: 1 } });
     expect(fleet.cards.find((card) => card.taskId === "next")).toMatchObject({ column: "queued", crew: null });
+  });
+
+  it("carries each crewmate's Notify parent setting onto its card", async () => {
+    const { deps, store, threads } = await setup();
+    const mate = threads.add({ id: "thr_mate" });
+    await store.setMateThreadId(mate.id);
+    threads.add({ id: "thr_auto", parentThreadId: mate.id });
+    threads.add({ id: "thr_stuck", parentThreadId: mate.id, parentNotifications: "stuck" });
+    threads.add({ id: "thr_off", parentThreadId: mate.id, parentNotifications: "off" });
+
+    const fleet = await loadFleet(deps);
+    const settingOf = new Map(fleet.cards.map((card) => [card.crew?.threadId, card.crew?.parentNotifications]));
+    expect(Object.fromEntries(settingOf)).toEqual({ thr_auto: "auto", thr_stuck: "stuck", thr_off: "off" });
   });
 
   it("shows a card without a status line when reading it fails, and says why", async () => {

@@ -3,7 +3,7 @@
  * actions can be tested against plain in-memory fakes (`testing/fakes.ts`). `bb-ports.ts` implements
  * them over `bb.sdk`; nothing else in `server/` touches the SDK's thread or project areas.
  */
-import type { ThreadStatus } from "../shared/types";
+import type { ParentNotifications, ThreadStatus } from "../shared/types";
 
 /** What the plugin reads of one bb thread. Times are epoch milliseconds. */
 export interface ThreadInfo {
@@ -11,6 +11,8 @@ export interface ThreadInfo {
   title: string | null;
   status: ThreadStatus;
   parentThreadId: string | null;
+  /** Which of its outcomes bb tells its parent about (the thread menu's Notify parent). */
+  parentNotifications: ParentNotifications;
   projectId: string;
   environmentId: string | null;
   updatedAt: number;
@@ -102,6 +104,8 @@ export interface SpawnArgs {
   title: string;
   prompt: string;
   parentThreadId?: string;
+  /** Which of the child's outcomes bb tells the parent about; absent leaves bb's default. */
+  parentNotifications?: ParentNotifications;
   environment: SpawnEnvironment;
   /** Empty or absent leaves bb's default. */
   providerId?: string;

@@ -13,7 +13,7 @@ against bb 0.44.0 and `@get-bb/plugin-sdk` 0.5.29; the pinned launch and the int
 crew metadata read against bb 0.46.0 and SDK 0.6.37, which it needs since 0.5.0; autocompact (0.6.0)
 against bb 0.46.1's server and the same SDK; the board's live reads, the `experimental_tab`, compact-first
 sends and the host toolchain (0.7.0) against SDK 0.6.94, built with bb 0.47.1 (which it needs since 0.7.0)
-and 0.48.0.
+and 0.48.0; the Notify parent guard (0.8.0) against bb 0.48.1, with the same SDK.
 
 ## Orientation
 
@@ -70,6 +70,15 @@ Do not break these; each was paid for.
   machine). The charter is the home's `AGENTS.md`, and the board opens home files through the first
   mate's environment, so a first mate working elsewhere would see neither.
 - **Only the first mate spawns crew.** `crew spawn` refuses any other calling thread.
+- **Crew are spawned with Notify parent `auto`, and nothing in the plugin changes it afterwards.** The
+  first mate learns of a crewmate's finished turns only from bb's parent notices, so `crew spawn`
+  (relaunches with `--environment` included) passes `parentNotifications: "auto"` rather than inherit a
+  project's or bb's default. bb 0.48.1 puts the setting in every thread menu and the sidebar's
+  multi-select; the captain may set `stuck` or `off` on purpose, so the plugin only reports it: the card
+  says so (`parentNotificationsWarning` in `app/format.ts`) and the charter (§3, §7) has the first mate
+  read `parentNotifications` from `bb thread list --json` and watch such a crewmate itself. bb fires no
+  event when the setting changes, so the board shows it on its next refresh. The field is on server
+  thread rows since SDK 0.6.75, so it needs no re-pin.
 - **A relayed message is a request, never the captain's word.** Work one starts, steers or relaunches
   carries `(hold: captain's word to merge)` until the captain answers in the first mate's chat, which
   overrides `+yolo` and standing merge orders (the charter, §0 and §4); the existing hold field is the

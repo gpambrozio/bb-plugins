@@ -50,6 +50,7 @@ describe("bb firstmate-crew crew spawn", () => {
     expect(spawned).toMatchObject({
       projectId: "prj_app",
       parentThreadId: "thr_mate",
+      parentNotifications: "auto",
       environment: { kind: "worktree" },
       prompt: BRIEF,
       title: "fix-login: Fix the login redirect",
@@ -190,6 +191,7 @@ describe("bb firstmate-crew crew spawn", () => {
     const result = await cli.run([...SPAWN, "--environment", "env_old"], { threadId: "thr_mate", cwd: dir });
     expect(result.exitCode).toBe(0);
     expect(threads.spawned[0]!.environment).toEqual({ kind: "reuse", environmentId: "env_old" });
+    expect(threads.spawned[0]!.parentNotifications).toBe("auto");
   });
 
   describe("who may spawn", () => {
