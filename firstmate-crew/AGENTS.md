@@ -13,21 +13,24 @@ against bb 0.44.0 and `@get-bb/plugin-sdk` 0.5.29; the pinned launch and the int
 crew metadata read against bb 0.46.0 and SDK 0.6.37, which it needs since 0.5.0; autocompact (0.6.0)
 against bb 0.46.1's server and the same SDK; the board's live reads, the `experimental_tab`, compact-first
 sends and the host toolchain (0.7.0) against SDK 0.6.94, built with bb 0.47.1 (which it needs since 0.7.0)
-and 0.48.0; the Notify parent guard (0.8.0) against bb 0.48.1, with the same SDK.
+and 0.48.0; the Notify parent guard (0.8.0) against bb 0.48.1, with the same SDK; FirstMate's own
+first-mate notifications (0.9.0) against bb 0.48.1's bundled push-notifications plugin, read from its
+build (not staged live), with the same SDK.
 
 ## Orientation
 
 | File | What it owns |
 | --- | --- |
-| `server.ts` | Wiring only: settings, the RPCs, `bb firstmate-crew`, the watch and autocompact services, the thread events that invalidate the `fleet` tag (created, active, idle, failed, archived, a pending interaction, and a thread moving to or from the first mate), and the `fleet.load` producer that invalidates it every `refreshSeconds` while a board watches. Every decision lives in `server/`. |
+| `server.ts` | Wiring only: settings, the RPCs, `bb firstmate-crew`, the watch, autocompact and notifications services, the thread events that invalidate the `fleet` tag (created, active, idle, failed, archived, a pending interaction, and a thread moving to or from the first mate), and the `fleet.load` producer that invalidates it every `refreshSeconds` while a board watches. Every decision lives in `server/`. |
 | `shared/contract.ts`, `shared/types.ts` | The RPC contract (zod), the card and fleet shapes, the crew metadata keys, `STATE_DIR`. The app imports the contract as a value (`experimental_useRpcQuery` takes it), so it imports nothing from the SDK at run time. |
 | `server/mate.ts` | Launch, adopt, release, restart, compact, `askMate`; the `mate` lock; the stored id. |
 | `server/crew.ts` | Steer, interrupt, end, relaunch, board note. |
 | `server/fleet.ts` | The first mate's children joined to backlog items on `task`; the seven columns; `ReportCache`. |
 | `server/cli.ts` | `bb firstmate-crew crew spawn` and `bb firstmate-crew tell` (words or `--message-base64`, always under the relay line). |
-| `server/bb-ports.ts`, `server/ports.ts` | The narrow `ThreadsPort` and `ProjectsPort` over `bb.sdk`, so everything else is tested against fakes. Where the machine rule below lives. |
-| `server/store.ts` | `bb.storage.kv`: the first mate's thread id, the switched-off watches and autocompact's marks. Nothing else. |
-| `server/settings.ts` | `bb.settings.define`: home directory, crew provider/model/reasoning, board refresh, and autocompact's six (on, thousands of tokens, idle minutes, for the first mate and for the crew). The token thresholds are set in thousands (`*KTokens`, ×1,000 in `autoCompactRules`) because bb's number field shows no thousands separators. |
+| `server/bb-ports.ts`, `server/ports.ts` | The narrow `ThreadsPort`, `ProjectsPort` and `NotificationsPort` (bb's push-notifications plugin) over `bb.sdk`, so everything else is tested against fakes. Where the machine rule below lives. |
+| `server/store.ts` | `bb.storage.kv`: the first mate's thread id, the switched-off watches, autocompact's marks and the first mate's notification level FirstMate replaced. Nothing else. |
+| `server/settings.ts` | `bb.settings.define`: home directory, crew provider/model/reasoning, board refresh, the first mate's notifications, and autocompact's six (on, thousands of tokens, idle minutes, for the first mate and for the crew). The token thresholds are set in thousands (`*KTokens`, ×1,000 in `autoCompactRules`) because bb's number field shows no thousands separators. |
+| `server/mate-notify.ts`, `notification-text.ts` | FirstMate's own notifications for the first mate's finished turns (`mateNotifications`): taking and giving back the first mate's bb level, the send, the fallbacks; the notification's text and the no-op rule. |
 | `server/autocompact.ts` | One autocompact check: which thread is at rest, idle long enough (bb's cache deadline, else the idle minutes) and over its threshold; the once-per-idle-stretch marks; `dueNow` for one thread. |
 | `server/compact-first.ts` | A message to a thread autocompact would compact now goes with bb's `compactFirst`. |
 | `server/home.ts`, `charter.ts`, `charter-file.ts` | Preparing the home; rendering `AGENTS.md`; the charter following the plugin until edited. |
@@ -163,6 +166,22 @@ Do not break these; each was paid for.
   and sends nothing more. A failure is logged once until it changes or clears (`FailureLog`); past its
   1,000 threads it admits no new ones and logs one summary, rather than evicting and logging again. Only the first mate and its live children are candidates; marks of anything else are
   dropped.
+- **FirstMate's notifications never leave the captain with none** (`server/mate-notify.ts`, opt-in). With
+  the setting on, the stored first mate's own level in bb's push-notifications plugin is `input-only`
+  (questions, approvals and errors stay bb's) and FirstMate sends each finished turn through
+  `notifications.send` with `threadId`, after bb's own two-second wait and read check. The level is taken
+  only when discovery finds `notifications.send`, and the level it replaced is stored *before* it is
+  changed; it is given back when the setting goes off, the first mate changes (the new one gets it), or a
+  send — or a read before it — fails, which stops sending until the setting changes or the plugin reloads.
+  Give-back happens only while the thread still has `input-only`, so a level the captain chose since
+  stays, and a turn is sent only while it still has it, so the two never both notify. Nothing is given
+  back on dispose: a reload must not flip the level, so a disabled or removed plugin leaves `input-only`
+  behind (the README says to switch it off first). The no-op rule is `isNoOpReply`, kept narrow to the
+  charter's `Captain, shipshape.` (a test reads the charter's words); a skipped reply never cancels a real
+  one still waiting. Crewmates' levels are never touched. The push plugin's level RPCs,
+  `threadNotifications.list` (`{ threadIds }`, which leaves out threads with no level of their own) and
+  `threadNotifications.set` (`{ threadId, level }`), are not discoverable and their contract is not
+  published: the shapes in `bbNotifications` (`server/bb-ports.ts`) were read from bb 0.48.1's bundle.
 - **Nothing throws into the server's event loop.** Services and listeners catch and log per tick;
   everything is released in `bb.onDispose`.
 - **Server code logs only through the injected `Log` (`server/log.ts`), wired to `bb.log`**, never

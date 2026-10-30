@@ -1,5 +1,6 @@
 /**
- * The crew board, shown on the first mate's thread: a notice when the plugin's charter has moved on, the
+ * The crew board, shown on the first mate's thread: a notice when the plugin's charter has moved on, one
+ * when FirstMate cannot send the first mate's notifications though the captain asked it to, the
  * Bearings button beside the first mate's own controls (Compact, Restart, settings), the first
  * mate's suggestions, the seven columns in the captain's order — each a collapsible section with its
  * count and arrows that move it past its shown neighbour, empty ones left out — and the home's watches.
@@ -79,6 +80,10 @@ export function Board({ fleet, mateThreadId, onChanged }: { fleet: Fleet; mateTh
             </Button>
           </div>
         </div>
+      ) : null}
+
+      {fleet.notifications !== null ? (
+        <div className="rounded-lg border border-warning p-3 text-sm text-warning-text">{fleet.notifications}</div>
       ) : null}
 
       <div className="flex flex-wrap items-center gap-2">

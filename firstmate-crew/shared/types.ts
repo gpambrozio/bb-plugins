@@ -239,5 +239,10 @@ export const FleetSchema = z.object({
   charter: CharterStateSchema,
   /** The home's watch scripts, by name; empty hides the card. */
   watches: z.array(WatchSummarySchema),
+  /**
+   * Why FirstMate is not sending the first mate's notifications though its setting is on (bb's own are
+   * unchanged then), or null.
+   */
+  notifications: z.string().nullable(),
 });
 export type Fleet = z.infer<typeof FleetSchema>;

@@ -1,7 +1,7 @@
 import { createFakeSdk, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { describe, expect, it } from "vitest";
 
-import { bbThreads } from "./bb-ports";
+import { bbNotifications, bbThreads } from "./bb-ports";
 import { CompactFirstRefused } from "./ports";
 
 const SERVER_HOST = "host_server";
@@ -345,5 +345,47 @@ describe("bbThreads, autocompact's reads", () => {
     const usage = { usedTokens: 250_000, estimated: false, modelContextWindow: 1_000_000, compactionOfferAt: "2026-10-28T12:00:00.000Z" };
     harness.stub("threads.context", () => ({ usage }));
     expect((await bbThreads(sdk).contextUsage("thr_1"))?.cacheExpiresAt).toBe(Date.UTC(2026, 9, 28, 12));
+  });
+});
+
+describe("bbNotifications", () => {
+  function discovering(methods: { pluginId: string; method: string }[]) {
+    return createFakeSdk({ pluginId: "firstmate-crew", overrides: { plugins: { experimental_discoverRpc: () => methods as never } } });
+  }
+
+  it("can send only when the push plugin offers notifications.send", async () => {
+    expect(await bbNotifications(discovering([{ pluginId: "push-notifications", method: "notifications.send" }]).sdk).canSend()).toBe(true);
+    expect(await bbNotifications(discovering([]).sdk).canSend()).toBe(false);
+  });
+
+  it("cannot send on a bb without plugin RPC discovery", async () => {
+    const { sdk } = createFakeSdk({ pluginId: "firstmate-crew" });
+    const plugins = { ...sdk.plugins, experimental_discoverRpc: undefined };
+    expect(await bbNotifications({ ...sdk, plugins } as unknown as typeof sdk).canSend()).toBe(false);
+  });
+
+  it("reads a thread the push plugin does not list as inheriting", async () => {
+    const { sdk, harness } = createFakeSdk({
+      pluginId: "firstmate-crew",
+      overrides: { plugins: { callRpc: (() => ({ threads: { thr_other: { own: "muted", ancestorCap: null } } })) as never } },
+    });
+    expect(await bbNotifications(sdk).ownLevel("thr_mate")).toBe("inherit");
+    expect(harness.callsTo("plugins.callRpc")[0]?.[0]).toMatchObject({
+      pluginId: "push-notifications",
+      method: "threadNotifications.list",
+      input: { threadIds: ["thr_mate"] },
+    });
+  });
+
+  it("sends with the thread, so a tap opens it, and answers the channels reached", async () => {
+    const { sdk, harness } = createFakeSdk({
+      pluginId: "firstmate-crew",
+      overrides: { plugins: { callRpc: (() => ({ ok: true, channels: ["mobile"] })) as never } },
+    });
+    expect(await bbNotifications(sdk).send({ title: "t", body: "b", threadId: "thr_mate" })).toEqual(["mobile"]);
+    expect(harness.callsTo("plugins.callRpc")[0]?.[0]).toMatchObject({
+      method: "notifications.send",
+      input: { title: "t", body: "b", threadId: "thr_mate" },
+    });
   });
 });

@@ -71,6 +71,13 @@ export const SETTINGS = {
     description: "How often the board reloads the crew while it is open.",
     default: DEFAULT_REFRESH_SECONDS,
   },
+  mateNotifications: {
+    type: "boolean",
+    label: "First mate: notify through FirstMate",
+    description:
+      "FirstMate notifies you when the first mate finishes a turn, and skips a plain \"Captain, shipshape.\". bb still notifies you of the first mate's questions, approvals and errors. Needs bb 0.48.1 or later with Push Notifications on; otherwise bb's own notifications stay as they are.",
+    default: false,
+  },
   mateAutoCompact: {
     type: "boolean",
     label: "First mate: compact when idle",

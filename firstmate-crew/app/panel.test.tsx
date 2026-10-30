@@ -2,7 +2,8 @@
 /**
  * A held worker's own FirstMate tab, through a whole Answer: the send goes out, the line is shut while it
  * does, the landed send brings the first mate's thread (and its board) into view, and coming back finds the
- * worker's card again with nothing lost.
+ * worker's card again with nothing lost. And the first mate's board's notice when FirstMate cannot send
+ * the first mate's notifications.
  */
 import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { renderSlot } from "@get-bb/plugin-sdk/testing/app";
@@ -24,6 +25,7 @@ const FLEET: Fleet = {
   homeReady: true,
   mate: { threadId: "thr_mate", status: "idle", title: "First mate" },
   mateMissing: false,
+  notifications: null,
   cards: [
     {
       key: "fix-login",
@@ -110,5 +112,18 @@ describe("a worker's panel, answering its hold", () => {
     expect(answerBox().value).toBe("");
     expect(answerBox().disabled).toBe(false);
     expect(view.rpcCalls.filter((call) => call.method === "mate.ask")).toHaveLength(1);
+  });
+});
+
+describe("the first mate's board", () => {
+  it("says why FirstMate is not sending the first mate's notifications, and nothing when it is", async () => {
+    const notice = "FirstMate stopped sending the first mate's notifications after one failed (sender_stopped).";
+    const view = renderSlot({ component: Panel }, { threadId: "thr_mate" }, { rpc: { "fleet.load": () => ({ ...FLEET, notifications: notice }) } });
+    await waitFor(() => expect(screen.getByText(notice)).toBeTruthy());
+    view.lifecycle.unmount();
+
+    renderSlot({ component: Panel }, { threadId: "thr_mate" }, { rpc: { "fleet.load": () => FLEET } });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Bearings" })).toBeTruthy());
+    expect(screen.queryByText(/sending the first mate's notifications/u)).toBeNull();
   });
 });

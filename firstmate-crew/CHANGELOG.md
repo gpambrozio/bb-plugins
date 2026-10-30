@@ -5,6 +5,17 @@ Notable changes to `firstmate`. The other plugins in this repository version sep
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.9.0
+
+### Added
+
+- **FirstMate can send the first mate's notifications itself, leaving out the "Captain, shipshape."
+  replies.** A new setting, off by default: when you switch it on, bb keeps notifying you of the first
+  mate's questions, approvals and errors, and FirstMate sends one notification for each finished turn
+  that says something, titled with the reply's first line. It needs bb 0.48.1 or newer with Push
+  Notifications on; otherwise nothing changes, and the board says why. Your workers' notifications are
+  not touched, and the first mate's own setting comes back when you switch it off.
+
 ## 0.8.0
 
 ### Changed
