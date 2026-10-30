@@ -186,8 +186,22 @@ while; the Claude preset cannot. Pick claude if any of that matters to you.
 The *Sentence prompt* is yours to edit, with a button to get the default back; it has placeholders for
 the thread, project, folder, event, headline, detail, the request and the agent's output.
 
+**A reply with nothing in it means "stay quiet" for that event.** Your prompt can ask for it, for
+example: *If the agent's last output only acknowledges, such as "Captain, shipshape.", reply with
+nothing.* What an empty reply (blank, or only quotes or markdown) does depends on the event:
+
+- **A finished turn** — nothing at all: not spoken, not on the Herald page or above the composer, not in
+  the recent sentences or the thread's Herald tab. With *Send Herald's sentences as push notifications*
+  on, Herald sends no notification for it either, and bb's own is muted for that thread, so no one
+  notifies you of that turn. That is the point: a turn you asked to be quiet stays quiet everywhere. bb
+  still marks the thread unread in its own sidebar, but the Herald page and its count leave that turn
+  out; the thread shows up there again as soon as it waits for you, fails, or flags something newer.
+- **A question, a plan or a permission waiting for you, or a failed turn** — not spoken and no banner,
+  but never dropped: it stays listed as waiting on the Herald page, marked *Not announced*, and its
+  notification still goes out, with the plain sentence, when Herald sends them.
+
 While the tool runs, the row and the banner say *Writing the sentence…*; the plain sentence is spoken
-instead if the tool fails, is missing, or takes longer than 45 seconds. A sentence still being written
+instead if the tool fails (exits with an error), is missing, or takes longer than 45 seconds. A sentence still being written
 when Herald itself is reloaded is dropped rather than spoken late. The prompt includes the agent's
 own reply, which can carry instructions: that is why the presets run with no tools or read-only, and why
 the switch is off by default. A Claude run takes about ten seconds end to end.

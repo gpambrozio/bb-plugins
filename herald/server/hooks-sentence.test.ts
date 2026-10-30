@@ -9,7 +9,9 @@ import { NO_CHOICE } from "../shared/thread-choice";
 import { createHooks, type HeraldConfig, type HookDeps } from "./hooks";
 import type { EventsPort } from "./ports";
 import { AttentionStore } from "./store";
-import { question, recordingLog, settle, thread } from "./testing/fixtures";
+import { joinRows, type ThreadState } from "../app/rows";
+import { commandApproval, planApproval, question, recordingLog, settle, thread } from "./testing/fixtures";
+import type { WrittenSentence } from "./writer";
 
 const CONFIG: HeraldConfig = {
   announce: { question: true, plan: true, permission: true, finished: true, error: true },
@@ -45,19 +47,25 @@ function setup(write: HookDeps["writeSentence"], config: HeraldConfig = CONFIG) 
   return { hooks, store, publish, log, remembered };
 }
 
-/** A writer whose reply the test releases. */
+/** A writer whose reply the test releases: a sentence, silence (an empty reply), or a failure. */
 function heldWriter() {
-  let release: (text: string) => void = () => {};
+  let release: (written: WrittenSentence) => void = () => {};
   let fail: (error: Error) => void = () => {};
   const calls: Array<{ command: string[]; prompt: string }> = [];
   const write: HookDeps["writeSentence"] = (command, prompt) => {
     calls.push({ command, prompt });
-    return new Promise<string>((resolve, reject) => {
+    return new Promise<WrittenSentence>((resolve, reject) => {
       release = resolve;
       fail = reject;
     });
   };
-  return { write, calls, release: (text: string) => release(text), fail: (error: Error) => fail(error) };
+  return {
+    write,
+    calls,
+    release: (text: string) => release({ kind: "sentence", text }),
+    silence: () => release({ kind: "silent" }),
+    fail: (error: Error) => fail(error),
+  };
 }
 
 describe("hooks with a model-written sentence", () => {
@@ -253,5 +261,142 @@ describe("hooks with a model-written sentence", () => {
     w.release("Too late.");
     await settle();
     expect(store.get("t1")?.summary).toEqual({ status: "pending", fallback: "Login fix finished. Done." });
+  });
+  it("says nothing at all for a finished turn the tool answered with nothing", async () => {
+    const w = heldWriter();
+    const { hooks, store, publish, remembered, log } = setup(w.write);
+    await hooks.idle(thread(), "Captain, shipshape.");
+    expect(store.get("t1")?.summary.status).toBe("pending");
+    w.silence();
+    await settle();
+    // Not spoken, listed or on the banner, not in the thread's history.
+    expect(store.get("t1")?.summary).toEqual({ status: "quiet", attentionAt: 0 });
+    expect(publish).toHaveBeenCalledTimes(2);
+    expect(remembered).not.toHaveBeenCalled();
+    expect([...hooks.inFlightEventIds()]).toEqual([]);
+    expect(log.lines.some((line) => line.startsWith("info:") && line.includes("replied with nothing"))).toBe(true);
+  });
+
+  it("keeps an event that waits on the user listed with the plain sentence, unspoken, when the tool answered with nothing", async () => {
+    type Fire = (hooks: ReturnType<typeof setup>["hooks"]) => Promise<void>;
+    const cases: Array<{ name: string; fire: Fire }> = [
+      { name: "question", fire: (hooks) => hooks.interactionPending(thread(), question()) },
+      { name: "plan", fire: (hooks) => hooks.interactionPending(thread(), planApproval("1. Add a test.")) },
+      { name: "permission", fire: (hooks) => hooks.interactionPending(thread(), commandApproval("npm test")) },
+      { name: "error", fire: (hooks) => hooks.failed(thread(), "Rate limited") },
+    ];
+    for (const { name, fire } of cases) {
+      const w = heldWriter();
+      const { hooks, store, remembered } = setup(w.write);
+      await fire(hooks);
+      const pending = store.get("t1")?.summary;
+      expect(pending?.status, name).toBe("pending");
+      const fallback = pending?.status === "pending" ? pending.fallback : "";
+      w.silence();
+      await settle();
+      // `off`: listed with the plain sentence, never spoken, no banner.
+      expect(store.get("t1")?.summary, name).toEqual({ status: "off", fallback });
+      expect(remembered, name).not.toHaveBeenCalled();
+    }
+  });
+
+  it("still drops a question the user answered while the tool chose silence", async () => {
+    answered = false;
+    const w = heldWriter();
+    const { hooks, store } = setup(w.write);
+    await hooks.interactionPending(thread(), question());
+    answered = true;
+    w.silence();
+    await settle();
+    answered = false;
+    expect(store.get("t1")).toBeNull();
+  });
+
+  it("leaves a newer event alone when an older run answers with nothing", async () => {
+    const first = heldWriter();
+    const second = heldWriter();
+    let turn = 0;
+    const { hooks, store } = setup((command, prompt) => (turn++ === 0 ? first.write(command, prompt) : second.write(command, prompt)));
+    await hooks.idle(thread(), "First.");
+    hooks.active(thread());
+    await hooks.interactionPending(thread(), question());
+    first.silence();
+    await settle();
+    expect(store.get("t1")?.summary.status).toBe("pending");
+    second.release("Login fix wants to know which database to use.");
+    await settle();
+    expect(store.get("t1")?.summary).toEqual({ status: "ready", text: "Login fix wants to know which database to use." });
+  });
+
+  it("falls back to the plain sentence, spoken, for a finished turn whose tool failed", async () => {
+    const w = heldWriter();
+    const { hooks, store, remembered } = setup(w.write);
+    await hooks.idle(thread(), "Done.");
+    w.fail(new Error("my-llm exited with 1: no error output"));
+    await settle();
+    expect(store.get("t1")?.summary).toEqual({ status: "ready", text: "Login fix finished. Done." });
+    expect(remembered).toHaveBeenCalledWith("t1", expect.objectContaining({ text: "Login fix finished. Done." }));
+  });
+  describe("on the Herald page, joined with bb's sidebar", () => {
+    /** bb's sidebar row for t1: read or not, waiting for input or not, flagged at `attentionAt`. */
+    function sidebar(overrides: Partial<ThreadState> & { latestAttentionAt: number }): ThreadState[] {
+      return [
+        {
+          id: "t1",
+          projectId: "p1",
+          displayTitle: "Login fix",
+          status: "idle",
+          isHidden: false,
+          isArchived: false,
+          isUnread: true,
+          hasPendingInteraction: false,
+          indicator: "unread-success",
+          ...overrides,
+        },
+      ];
+    }
+
+    /** bb's attention time for t1 as the quiet turn ended, carried by the idle event's thread. */
+    const T = Date.parse("2026-09-15T12:00:00.000Z");
+
+    it("lists nothing for a quiet finished turn bb marked unread, and lists the needs-you event that follows", async () => {
+      const w = heldWriter();
+      const { hooks, store } = setup(w.write);
+      await hooks.idle(thread({ latestAttentionAt: T }), "Captain, shipshape.");
+      w.silence();
+      await settle();
+      expect(store.get("t1")?.summary).toEqual({ status: "quiet", attentionAt: T });
+      expect(joinRows(store.list(), sidebar({ latestAttentionAt: T }), T + 1_000)).toEqual([]);
+      // The tool kept the event quiet even while bb's list was loading.
+      expect(joinRows(store.list(), null, T + 1_000)).toEqual([]);
+
+      // A question next: bb says it waits for input, and Herald's entry for it is listed.
+      hooks.active(thread());
+      await hooks.interactionPending(thread({ latestAttentionAt: T + 5_000 }), question());
+      w.silence();
+      await settle();
+      const rows = joinRows(store.list(), sidebar({ latestAttentionAt: T + 5_000, hasPendingInteraction: true, indicator: "waiting-for-input" }), T + 6_000);
+      expect(rows.map((row) => [row.reason, row.entry?.summary.status])).toEqual([["question", "off"]]);
+    });
+
+    it("lists a later turn Herald missed, restored from storage after it was off, however soon after the quiet one", async () => {
+      let saved: unknown[] = [];
+      const backend = { read: async () => structuredClone(saved), write: async (entries: readonly unknown[]) => void (saved = structuredClone([...entries])) };
+      const w = heldWriter();
+      const store = new AttentionStore(backend, recordingLog());
+      const hooks = createHooks({ store, readConfig: async () => CONFIG, events, choiceOf: async () => NO_CHOICE, publish: vi.fn(), log: recordingLog(), writeSentence: w.write, remember: vi.fn() });
+      await hooks.idle(thread({ latestAttentionAt: T }), "Captain, shipshape.");
+      w.silence();
+      await settle();
+      await store.flush();
+      // Herald is off for the next turn, which ends with real news a second later; then it starts again.
+      await hooks.dispose();
+      const restored = new AttentionStore(backend, recordingLog());
+      await restored.load();
+      expect(restored.get("t1")?.summary).toEqual({ status: "quiet", attentionAt: T });
+      const later = sidebar({ latestAttentionAt: T + 1_000 });
+      expect(joinRows(restored.list(), later, T + 2_000).map((row) => row.reason)).toEqual(["finished"]);
+      expect(joinRows(restored.list(), later, T + 3_600_000).map((row) => row.reason)).toEqual(["finished"]);
+    });
   });
 });

@@ -70,6 +70,18 @@ function isCurrentEntry(entry: AttentionEntry, thread: ThreadState, now: number)
   return now - Date.parse(entry.createdAt) < FRESH_ENTRY_MS;
 }
 
+/**
+ * Whether bb flags the thread only for the finished turn the sentence tool
+ * kept quiet: unread, nothing waiting for input, no error, and no attention
+ * newer than the one bb gave that turn (`attentionAt`, from the turn's own
+ * event). Such a flag is not listed, nor counted on the badge; a newer one
+ * is an event Herald missed — while it was off, say — and is listed.
+ */
+function flaggedOnlyForQuietTurn(thread: ThreadState, attentionAt: number | undefined): boolean {
+  if (attentionAt === undefined || thread.hasPendingInteraction || thread.indicator === "unread-error") return false;
+  return thread.latestAttentionAt <= attentionAt;
+}
+
 function reasonFromBb(thread: ThreadState): RowReason {
   if (thread.hasPendingInteraction) return "input";
   if (thread.indicator === "unread-error") return "error";
@@ -84,7 +96,13 @@ function reasonFromBb(thread: ThreadState): RowReason {
 export function joinRows(entries: readonly AttentionEntry[], threads: readonly ThreadState[] | null, now: number): Row[] {
   const byId = new Map((threads ?? []).map((thread) => [thread.id, thread]));
   const rows = new Map<string, Row>();
+  /** Threads whose last Herald event is a finished turn the tool kept quiet, with bb's attention time for it. */
+  const quietAttention = new Map<string, number>();
   for (const entry of entries) {
+    if (entry.summary.status === "quiet") {
+      quietAttention.set(entry.threadId, entry.summary.attentionAt);
+      continue;
+    }
     const thread = byId.get(entry.threadId);
     if (threads !== null && (thread === undefined || !isCurrentEntry(entry, thread, now))) continue;
     rows.set(entry.threadId, {
@@ -99,6 +117,7 @@ export function joinRows(entries: readonly AttentionEntry[], threads: readonly T
   }
   for (const thread of threads ?? []) {
     if (rows.has(thread.id) || !isFlagged(thread) || isWorking(thread)) continue;
+    if (flaggedOnlyForQuietTurn(thread, quietAttention.get(thread.id))) continue;
     rows.set(thread.id, {
       threadId: thread.id,
       projectId: thread.projectId,

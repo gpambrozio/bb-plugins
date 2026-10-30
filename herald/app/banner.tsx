@@ -35,7 +35,7 @@ export function HeraldBanner() {
   // sentence stays here once the thread is read, and through the next turn,
   // until the next event replaces it.
   const entry = threadId === null ? undefined : entries?.find((candidate) => candidate.threadId === threadId);
-  if (entry === undefined || entry.summary.status === "off") return null;
+  if (entry === undefined || entry.summary.status === "off" || entry.summary.status === "quiet") return null;
   const sentence = speechText(entry);
   return (
     <div className="flex items-start gap-2 px-3 py-2 text-sm">

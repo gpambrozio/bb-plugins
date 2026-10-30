@@ -108,14 +108,31 @@ no shell. What that buys, and what must stay true:
   process or a durable process registry was judged more machinery than this feature is worth.
 - **Fail closed, never queue, never wait long.** At most `MAX_IN_FLIGHT` (2) tools run at once; a third
   request gets the plain sentence at once. A run is killed after `WRITE_TIMEOUT_MS` (45 s; 20 s let a plugin build on the same Mac push two
-  runs over), or once it has written `MAX_OUTPUT_BYTES` (256 KB) without finishing. A missing tool, a non-zero exit, an empty
-  reply or an unreadable command all mean the plain sentence, with the reason in `bb plugin logs herald`.
+  runs over), or once it has written `MAX_OUTPUT_BYTES` (256 KB) without finishing. A missing tool, a non-zero exit, a timeout,
+  an abort or an unreadable command all mean the plain sentence, with the reason in `bb plugin logs herald`.
   A Claude run measured about 10 s end to end.
+- **An empty reply is silence, not a failure.** The writer answers a tri-state (`WrittenSentence` plus the
+  hooks' `failed`): a sentence, `silent` (exit 0 and nothing left after `cleanSentence` — blank, or only
+  quotes or markdown), or a rejection. The owner's prompt uses it to skip no-op turns ("Captain,
+  shipshape."). Silence never drops what waits on the user: a **finished** turn becomes `quiet` (not
+  spoken, no banner, not remembered in history, and `sendOwed(…, null)` sends nothing — its `owes`
+  decision is still drained), so with push on and the thread taken over, bb was muted and **no one
+  notifies that turn**, which is intended. The `quiet` entry is kept rather than removed because the
+  page's other source, bb's unread flag, would list the turn again: `joinRows` skips a thread's
+  unread-only row while its entry is `quiet`, unless bb says it waits for input, shows an error, or
+  flagged it after the quiet turn: the entry keeps the idle event's own `latestAttentionAt`
+  (`attentionAt`), which bb sets as the turn ends and the sidebar carries unchanged, and only a flag at
+  or before it is hidden. A grace window over Herald's own clock was tried first; it hid for good a
+  later turn Herald missed while it was off. The quiet entry is the thread's last event like any other, replaced by the next. A
+  **question, plan, permission or error** becomes `off` with the plain sentence (listed, no banner, not
+  spoken, not remembered) and its owed notification goes out plain. A question answered meanwhile is
+  still withdrawn first. Only a real failure falls back to the plain
+  sentence spoken; a run still going at unload is a failure (the plain notification goes out).
 - **The prompt is bounded.** The agent's output is cut at `PROMPT_OUTPUT_MAX` and the headline, detail
   and request at `PROMPT_PART_MAX` before they go into the template — a permission's command and a
   pasted-in request can both run to kilobytes.
 - **The reply is data.** `cleanSentence` keeps the last paragraph of stdout as one line, strips markdown
-  and wrapping quotes, and cuts at `MAX_SENTENCE_CHARS`; it then goes through the same `speakable` and
+  and wrapping quotes (an empty result is `silent`, above), and cuts at `MAX_SENTENCE_CHARS`; it then goes through the same `speakable` and
   `MAX_SPEECH_CHARS` limits as every sentence. The prompt tells the model that the data lines are not
   instructions, which a one-sentence Haiku turn honoured when tried; the real protection is that the tool
   has nothing to act with.
@@ -598,7 +615,10 @@ cover, check by hand after `bb plugin reload herald`:
    spoken once. Reload the plugin while a sentence is being written: the entry goes, unspoken. Then,
    under *Model-written sentences*, pick the tool *custom*: a *Custom command* field
    appears under the select, filled in with the Claude command. Save a command that does not exist:
-   the plain sentence is spoken and the log says why. Pick *claude* again: the field goes.
+   the plain sentence is spoken and the log says why. Pick *claude* again: the field goes. Then add to
+   the prompt "reply with nothing if the output only says Captain, shipshape." and have a thread end its
+   turn with exactly that: the row and the banner go and nothing is spoken; a question it asks stays
+   listed as "Not announced".
 7. With a thread waiting, Herald's sidebar entry carries the count, and its tooltip says "1 thread waiting
    for you"; open the thread so nothing waits, and the badge goes. Each waiting row starts with the same
    status glyph as the thread's sidebar row.

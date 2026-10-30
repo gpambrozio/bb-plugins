@@ -5,6 +5,19 @@ Notable changes to `herald`. The other plugins in this repository version separa
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.7.0
+
+### Changed
+
+- **A model-written sentence can be silence.** When the tool that writes Herald's sentences runs fine
+  but replies with nothing, Herald now says nothing for that event instead of reading the plain
+  sentence. Your prompt can use this, for example to skip a turn that only says "Captain, shipshape.".
+  A finished turn the tool keeps quiet is not spoken, not listed or counted on the Herald page (even
+  while bb shows it unread), not added to the recent sentences and sends no notification of Herald's — so with *Send Herald's sentences as push notifications* on, no
+  one notifies you of it. A question, a plan or a permission waiting for you, or a failed turn, is not
+  spoken either, but stays listed (as *Not announced*) and still gets its notification, with the plain
+  sentence. A tool that fails, is missing or is too slow still means the plain sentence, as before.
+
 ## 0.6.0
 
 ### Added

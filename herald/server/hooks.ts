@@ -22,6 +22,7 @@ import type { EventsPort, Interaction, Log, ThreadDto } from "./ports";
 import type { PushEvent, PushSubject } from "./push";
 import type { AttentionStore } from "./store";
 import { describeInteraction, displayName, fallbackSpeech, firstWords, preview } from "./timeline";
+import type { WrittenSentence } from "./writer";
 
 /** What the handlers act on, read fresh for every event so a settings change applies at once. */
 export interface HeraldConfig {
@@ -54,8 +55,11 @@ export interface HookDeps {
   choiceOf: (thread: ThreadDto) => Promise<ChoiceInputs>;
   /** Tells open clients the entries changed. */
   publish: () => void;
-  /** Runs the tool with the prompt on stdin and resolves to its sentence; rejects on any failure. */
-  writeSentence: (command: string[], prompt: string) => Promise<string>;
+  /**
+   * Runs the tool with the prompt on stdin and resolves to its sentence, or
+   * to `silent` when it ran and answered nothing; rejects on any failure.
+   */
+  writeSentence: (command: string[], prompt: string) => Promise<WrittenSentence>;
   /** Adds a sentence that landed to the thread's history, for its panel. Never throws. */
   remember: (threadId: string, item: HistoryItem) => void;
   /** Absent in tests that are not about notifications. */
@@ -116,6 +120,18 @@ export function isAnnounced(thread: ThreadDto, reason: AttentionReason, config: 
 function choiceFor(thread: ThreadDto, config: HeraldConfig, choice: ChoiceInputs): ThreadChoice {
   return effectiveChoice(choice, thread.parentThreadId !== null, config.announceSubagents).choice;
 }
+
+/**
+ * Whether the event waits on the user. A tool's silence keeps such an event
+ * from being spoken, never from being listed or notified; a finished turn it
+ * keeps quiet is gone altogether.
+ */
+function waitsOnUser(reason: AttentionReason): boolean {
+  return reason !== "finished";
+}
+
+/** What became of a tool run: what it wrote, its chosen silence, or a failure (the plain sentence). */
+type WriteOutcome = WrittenSentence | { kind: "failed" };
 
 function reasonOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -245,11 +261,24 @@ export function createHooks(deps: HookDeps): Hooks {
     }
   }
 
-  function sendOwed(eventId: string, sentence: string): void {
+  /**
+   * Settles a written event's notification: `sentence` goes out if Herald
+   * owes it, and null sends nothing — a finished turn the tool kept silent.
+   * The decision is still waited for, so an unload drains it like any other.
+   */
+  function sendOwed(eventId: string, sentence: string | null): void {
     const owed = owedPushes.get(eventId);
     if (owed === undefined) return;
     owedPushes.delete(eventId);
-    pushWhen(owed.owes, owed.subject, sentence);
+    if (sentence === null) void tracked(pushesRunning, owed.owes.then(() => undefined));
+    else pushWhen(owed.owes, owed.subject, sentence);
+  }
+
+  /** What a written event's notification says: the tool's sentence, the plain one, or nothing for a quiet finished turn. */
+  function pushSentence(reason: AttentionReason, outcome: WriteOutcome, fallback: string): string | null {
+    if (outcome.kind === "sentence") return outcome.text;
+    if (outcome.kind === "silent" && !waitsOnUser(reason)) return null;
+    return fallback;
   }
 
   /** Marks the start of a recording; `isLatest` later says whether a newer one began since. */
@@ -370,7 +399,8 @@ export function createHooks(deps: HookDeps): Hooks {
       return;
     }
     // Listed at once with the plain sentence as its stand-in; the tool's
-    // reply replaces it, or the stand-in is promoted when the tool fails.
+    // reply replaces it, or the stand-in is promoted when the tool fails. An
+    // empty reply is the tool's choice of silence (`settleSentence`).
     deps.store.upsert({ ...base, summary: { status: "pending", fallback } });
     deps.publish();
     inFlight.add(base.eventId);
@@ -378,15 +408,15 @@ export function createHooks(deps: HookDeps): Hooks {
     const written = writeSentence(config.sentence, base, recording);
     // The notification goes with the event's own sentence, whatever became
     // of the entry meanwhile; `send` itself skips what is no longer news.
-    void written.then((text) => sendOwed(base.eventId, text ?? fallback));
+    void written.then((outcome) => sendOwed(base.eventId, pushSentence(reason, outcome, fallback)));
     void written
-      .then((text) => settleSentence(base.threadId, base.eventId, text ?? fallback))
+      .then((outcome) => settleSentence(base.threadId, base.eventId, outcome, fallback, thread.latestAttentionAt))
       .catch((error: unknown) => deps.log.error(`Settling the sentence for ${base.threadId} failed: ${reasonOf(error)}`))
       .finally(() => inFlight.delete(base.eventId));
   }
 
-  /** The tool's sentence, or null — with the reason logged — when it gave none. Never rejects. */
-  async function writeSentence(sentence: SentenceSettings, base: Omit<AttentionEntry, "summary">, recording: Recording): Promise<string | null> {
+  /** What the tool wrote, its silence, or `failed` — with the reason logged. Never rejects. */
+  async function writeSentence(sentence: SentenceSettings, base: Omit<AttentionEntry, "summary">, recording: Recording): Promise<WriteOutcome> {
     try {
       const command = splitCommandLine(sentence.command);
       const prompt = fillTemplate(sentence.prompt, {
@@ -399,10 +429,12 @@ export function createHooks(deps: HookDeps): Hooks {
         request: cut(recording.lastUser, PROMPT_PART_MAX),
         output: cut(recording.output, PROMPT_OUTPUT_MAX),
       });
-      return await deps.writeSentence(command, prompt);
+      const written = await deps.writeSentence(command, prompt);
+      if (written.kind === "silent") deps.log.info(`The tool replied with nothing for ${base.threadId}'s ${base.reason} event; Herald does not speak it.`);
+      return written;
     } catch (error) {
       deps.log.warn(`The sentence for ${base.threadId} falls back to the plain one: ${reasonOf(error)}`);
-      return null;
+      return { kind: "failed" };
     }
   }
 
@@ -412,8 +444,14 @@ export function createHooks(deps: HookDeps): Hooks {
    * may have replaced it; a sentence about an earlier event is stale news.
    * A question or approval the user answered meanwhile fired no event, so it
    * is asked about first: answered, the entry is withdrawn, unspoken.
+   *
+   * A tool that answered nothing keeps the event quiet: a finished turn
+   * becomes `quiet` — unspoken, unlisted, not remembered, and its entry tells
+   * the page to leave bb's unread flag for it alone, up to `attentionAt` (bb's
+   * attention time for the thread as the event arrived); an event that waits
+   * on the user stays listed with the plain sentence, as one not announced (`off`).
    */
-  async function settleSentence(threadId: string, eventId: string, text: string): Promise<void> {
+  async function settleSentence(threadId: string, eventId: string, outcome: WriteOutcome, fallback: string, attentionAt: number): Promise<void> {
     const stillWaiting = () => {
       if (disposed) return null;
       const current = deps.store.get(threadId);
@@ -428,6 +466,12 @@ export function createHooks(deps: HookDeps): Hooks {
     }
     const current = stillWaiting();
     if (current === null) return;
+    if (outcome.kind === "silent") {
+      deps.store.upsert({ ...current, summary: waitsOnUser(current.reason) ? { status: "off", fallback } : { status: "quiet", attentionAt } });
+      deps.publish();
+      return;
+    }
+    const text = outcome.kind === "sentence" ? outcome.text : fallback;
     deps.store.upsert({ ...current, summary: { status: "ready", text } });
     deps.publish();
     remember(current, text);

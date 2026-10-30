@@ -22,12 +22,18 @@ export const AttentionReasonSchema = z.enum(ATTENTION_REASONS);
  * The entry's sentence. `ready` is announced; `pending` is being written by a
  * model and becomes `ready` with its sentence, or with the plain `fallback`
  * when that fails; `off` is listed but never spoken — the event kind is
- * switched off, or the thread is a subagent its parent speaks for.
+ * switched off, the thread is a subagent its parent speaks for, or the tool
+ * replied with nothing to an event that waits on the user; `quiet` is a
+ * finished turn the tool replied with nothing to — not spoken, not listed,
+ * and it keeps bb's unread flag for that turn off the page (`app/rows.ts`):
+ * `attentionAt` is bb's `latestAttentionAt` for the thread as that turn
+ * ended, so a flag bb raised later, for an event Herald missed, still shows.
  */
 export const SummaryStateSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("ready"), text: z.string() }),
   z.object({ status: z.literal("pending"), fallback: z.string() }),
   z.object({ status: z.literal("off"), fallback: z.string() }),
+  z.object({ status: z.literal("quiet"), attentionAt: z.number() }),
 ]);
 export type SummaryState = z.infer<typeof SummaryStateSchema>;
 
