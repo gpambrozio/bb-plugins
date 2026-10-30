@@ -155,18 +155,18 @@ function messageOf(
     ...delivered.flatMap((message) => (message.role === "assistant" && message.turnId !== null ? [{ turnId: message.turnId, at: message.createdAt }] : [])),
   ].filter((row) => row.at <= at);
   const turnId = ownRows.sort((a, b) => a.at - b.at).at(-1)?.turnId ?? null;
-  if (turnId === null) {
-    // Nothing of a turn before the event: the prompt that led to it, if any.
-    const prompt = delivered.filter((message) => message.role === "user" && message.createdAt <= at).at(-1);
-    return prompt === undefined ? undefined : { message: prompt, turnId: prompt.turnId };
-  }
+  // A thread's first prompt is thread-scoped (no turn id); it stands in for a
+  // turn with no message of its own. A prompt of another turn never does —
+  // one queued during the first turn keeps its earlier time — and with no
+  // such prompt the sentence stays unplaced.
+  const threadPrompt = delivered.filter((message) => message.role === "user" && message.turnId === null && message.createdAt <= at).at(-1);
+  if (turnId === null) return threadPrompt === undefined ? undefined : { message: threadPrompt, turnId: null };
   const inTurn = delivered.filter((message) => message.turnId === turnId);
   const before = inTurn.filter((message) => message.createdAt <= at).at(-1);
   const folded = marks.some((mark) => mark.folded && mark.turnId === turnId);
   const finalAnswer = inTurn.filter((message) => message.role === "assistant").at(-1);
   if (folded && (before === undefined || before.role === "user") && finalAnswer !== undefined) return { message: finalAnswer, turnId };
-  // A turn whose prompt carries no turn id (a thread's first): the prompt before the event.
-  const message = before ?? inTurn[0] ?? delivered.filter((candidate) => candidate.role === "user" && candidate.createdAt <= at).at(-1);
+  const message = before ?? inTurn[0] ?? threadPrompt;
   return message === undefined ? undefined : { message, turnId };
 }
 

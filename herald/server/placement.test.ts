@@ -161,6 +161,21 @@ describe("placeSentences", () => {
     expect(placed.settled).toEqual(new Map([["t1:interaction:i1", "u1"]]));
   });
 
+  it("keeps a failed first turn's cards on its thread-scoped prompt, never on a task queued during it and accepted as the next turn", async () => {
+    // The first prompt has no turn id; turn 1 did only tool work, asked, then failed. The second task,
+    // queued meanwhile, kept its queue time and was accepted as turn 2 before Herald first read.
+    const asked = sentence("t1:interaction:i1", 5, { reason: "permission", headline: "npm test" });
+    const failed = sentence("t1:failed:1", 8, { reason: "error", headline: "Rate limited" });
+    const messages = [prompt("u1", 0, null), prompt("u2", 3, "t2")];
+    const marks = [work(1, "t1"), work(4, "t1"), work(7, "t1"), work(9, "t2")];
+    const placed = await placeSentences("t1", [failed, asked], fakeTimeline(messages, { marks, running: true }).port, recordingLog());
+    expect(placed.settled).toEqual(new Map([["t1:failed:1", "u1"], ["t1:interaction:i1", "u1"]]));
+    // With no thread-scoped prompt to stand in, the cards stay unplaced rather than take turn 2's.
+    const without = await placeSentences("t1", [failed], fakeTimeline([prompt("u2", 3, "t2")], { marks, running: true }).port, recordingLog());
+    expect(without.sentences).toEqual([]);
+    expect(without.settled.size).toBe(0);
+  });
+
   it("keeps a place on a message another thread or bb sent into a running turn only once the turn is over", async () => {
     // A child's report steers its still-running parent before the question; bb folds such a message when the turn ends.
     for (const initiator of ["system", "agent"] as const) {

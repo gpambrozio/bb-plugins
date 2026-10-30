@@ -597,8 +597,10 @@ as soon as it is written. What must stay true:
   whose initiator is `agent` or `system`, such as a child's report reaching its running parent, is
   groupable). So the message is the turn's last one at or before the event; but when the turn has
   folded and that is a prompt (the answers before the event are in the fold), it is the turn's final
-  answer. A turn with no answer at all keeps its sentences on its prompt; a thread's first prompt can
-  carry no turn id, and then the prompt before the event stands in.
+  answer. A turn with no answer at all keeps its sentences on its prompt; a thread's first prompt is
+  thread-scoped (no turn id), and then only such a prompt stands in — never a prompt of another turn,
+  such as a task queued during the first turn, which keeps its earlier time (review pass 2); with none,
+  the sentence stays unplaced.
 - **A place is kept** with the sentence (`SentenceHistory.place`, never moved once set) only once its
   turn is over: when the thread was idle or failed both before the page was read and after it
   (`TimelinePort.running`, asked twice: a page read while a turn ran can hold an answer that turn folds
