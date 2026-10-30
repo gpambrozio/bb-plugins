@@ -881,7 +881,8 @@ describe("reviewing a GitHub pull request", () => {
 });
 
 describe("a caller that stops waiting", () => {
-  // bb's Git plugin ends a call whose signal fires, and the call rejects; this one answers nothing until then.
+  // A call whose signal fires rejects (bb's `callRpc` stops waiting, though bb 0.48.1's Git plugin finishes
+  // its own work); this one answers nothing until then. These tests cover this plugin's side only.
   const abandoned = (signal: AbortSignal | undefined) =>
     new Promise<void>((_resolve, reject) => {
       if (signal?.aborted === true) reject(signal.reason);

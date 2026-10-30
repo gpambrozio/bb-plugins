@@ -57,9 +57,12 @@ RPC handler's `experimental_signal` (bb 0.48.1; absent before, so it stays optio
 which binds it to every `gh` run of that load (`boundTo`) and, for an image, to the fetch alongside
 its 20-second timeout. bb aborts it when the plugin copy is reloaded, disabled or removed, or the
 caller's HTTP request disconnects (a window closing mid-load); the app's `useRpc().call` takes no
-signal, so the app cannot abort one itself. **A load whose signal fired caches nothing** (`signal.throwIfAborted()` before each
-cache write): a killed checks or branch-status request is caught as a pill-only failure, so the board
-it leaves looks whole but is not. The bound `warn` is silent once the signal has fired. No load is
+signal, so the app cannot abort one itself. **A load whose signal fired never caches its cut-short result**
+(`signal.throwIfAborted()` before the board, body and comments cache writes): a killed checks or
+branch-status request is caught as a pill-only failure, so the board it leaves looks whole but is not.
+A sub-read that completed before the signal fired (the viewer's login, `gh`'s token) may still be
+kept, since it is whole; an image reaches its cache only once its whole body arrived, as an aborted
+fetch rejects. The bound `warn` is silent once the signal has fired. No load is
 shared between callers, so one caller leaving never ends another's; a shared in-flight load would need
 its own controller, aborted only when its last caller leaves.
 

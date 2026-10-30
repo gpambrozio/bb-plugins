@@ -126,8 +126,8 @@ export class GitReads {
   /**
    * One call to the Git plugin. A call that fails asks bb whether the plugin is there and on, since a
    * turned-off plugin's error says only that the call failed; otherwise the call's own error stands.
-   * `signal` abandons the call (bb ends it in the Git plugin too); a call abandoned that way is not
-   * worth asking about.
+   * `signal` abandons the wait for the call, which rejects; bb 0.48.1's Git plugin ignores it, so work
+   * already started there runs to the end. A call abandoned that way is not worth asking about.
    */
   private async call<T>(method: string, input: Record<string, unknown>, outputSchema: z.ZodType<T>, signal?: AbortSignal): Promise<T> {
     try {
@@ -160,7 +160,7 @@ export class GitReads {
   /**
    * Patches for files at the revisions `files` gave, in batches of `GIT_PATCHES_MAX_KEYS`. A file the
    * plugin could not give is left out; `failure` says why the first one failed. `signal` abandons the
-   * batch in flight and the ones not yet sent.
+   * wait for the batch in flight (the Git plugin still finishes it) and sends no further batch.
    */
   async patches(
     environmentId: string,

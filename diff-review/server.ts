@@ -30,7 +30,8 @@ export default diffReviewPlugin();
 
 /**
  * The RPC caller's signal, which bb 0.48.1 aborts when the caller's request disconnects (its window
- * closed mid-load) or this copy of the plugin goes. Typed as always there, but bb 0.48.0 passes a
+ * closed mid-load) or this copy of the plugin goes. It ends this plugin's waits on bb's Git and PR
+ * Status plugins, not the work those have started. Typed as always there, but bb 0.48.0 passes a
  * context without it, and the reads then run to the end as before.
  */
 function callerSignal(ctx: ExperimentalPluginRpcHandlerContext | undefined): AbortSignal | undefined {

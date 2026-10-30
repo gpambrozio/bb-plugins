@@ -169,8 +169,8 @@ export class ReviewService {
    * was not opened on a chosen view), an empty uncommitted view gives way to the changes committed
    * since the base branch, when there are any; when both are empty, the uncommitted view stands.
    *
-   * `signal` (the caller's) abandons the PR status read and the commented files' patches, the reads
-   * that only fill the view in. The diff and the session are read and written whatever it says, so an
+   * `signal` (the caller's) abandons the wait for the PR status read and the commented files'
+   * patches, the reads that only fill the view in; what bb's plugins already started still finishes. The diff and the session are read and written whatever it says, so an
    * abandoned load never leaves them half done.
    */
   async view(

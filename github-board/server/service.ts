@@ -10,9 +10,10 @@
  *
  * The loads take the RPC caller's signal (bb 0.48.1 aborts it when the caller
  * stops waiting or the plugin reloads; older bb has none). It kills the load's
- * `gh` runs, and a load whose signal fired caches nothing: a pill-only request
- * killed half-way is caught and logged like any other failure, so the board it
- * leaves behind is short of pills without saying so. No load here is shared
+ * `gh` runs, and a load whose signal fired never caches its cut-short result
+ * (a sub-read that completed first, such as the viewer's login, may stay): a
+ * pill-only request killed half-way is caught and logged like any other
+ * failure, so the board it leaves behind is short of pills without saying so. No load here is shared
  * between callers, so one caller leaving never ends another's.
  */
 import type {

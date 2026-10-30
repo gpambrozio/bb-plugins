@@ -175,7 +175,7 @@ export class PullRequests {
 
   /**
    * The pull request of a workspace's branch, from bb's GitHub PR Status plugin; null when it has none
-   * or cannot say, and when `signal` abandoned the read.
+   * or cannot say, and when `signal` abandoned the wait (bb 0.48.1's PR Status finishes its lookup anyway).
    */
   async branchPull(environmentId: string, signal?: AbortSignal): Promise<(PullRef & { title: string }) | null> {
     try {
