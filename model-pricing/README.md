@@ -25,7 +25,7 @@ No accounts, keys or logins. The plugin only reads public price lists.
 ## Install
 
 ```bash
-bb plugin install 'git:github.com/gpambrozio/bb-plugins@^0.1.0' --plugin model-pricing --tag-prefix model-pricing/
+bb plugin install 'git:github.com/gpambrozio/bb-plugins@>=0.1.0' --plugin model-pricing --tag-prefix model-pricing/
 ```
 
 The page is **Model pricing** in the sidebar. The command palette has *Model pricing: open the price

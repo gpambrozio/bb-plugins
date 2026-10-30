@@ -33,7 +33,7 @@ source of truth, and the page reads them back every time.
 
 ## What you need
 
-- bb 0.47 or later. On bb 0.44 to 0.46, install with `@^0.1.0` instead of `@^0.3.0`.
+- bb 0.47 or later. On bb 0.44 to 0.46, install with `@^0.1.0` instead of `@>=0.3.0`.
 - For the push notification, bb 0.48.1 or later with Push notifications turned on. Without them the
   setting does nothing and the plugin logs it once; everything else works.
 - macOS, on the Mac whose jobs you manage. On any other machine the page says the plugin is macOS only.
@@ -41,7 +41,7 @@ source of truth, and the page reads them back every time.
 ## Install
 
 ```bash
-bb plugin install 'git:github.com/gpambrozio/bb-plugins@^0.3.0' --plugin launchd-jobs --tag-prefix launchd-jobs/
+bb plugin install 'git:github.com/gpambrozio/bb-plugins@>=0.3.0' --plugin launchd-jobs --tag-prefix launchd-jobs/
 ```
 
 The page is **Scheduled jobs** in the sidebar; the palette has *Scheduled jobs: open launchd jobs*.

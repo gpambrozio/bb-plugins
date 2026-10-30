@@ -18,12 +18,15 @@ each tracked by its own issue; `screen-sharing` and `diff-review` are new here.
 
 ## Install
 
-Each plugin releases from its own tags, `<id>/vX.Y.Z`. Install one and follow its compatible releases:
+Each plugin releases from its own tags, `<id>/vX.Y.Z`. Install one and follow its releases:
 
 ```bash
-bb plugin install 'git:github.com/gpambrozio/bb-plugins@^0.1.0' --plugin firstmate-crew --tag-prefix firstmate-crew/
+bb plugin install 'git:github.com/gpambrozio/bb-plugins@>=0.7.0' --plugin firstmate-crew --tag-prefix firstmate-crew/
 ```
 
+The range has a floor and no ceiling: a caret range such as `^0.7.0` never offers 0.8.0, while `>=0.7.0`
+follows every release, and bb skips any that needs a newer bb than yours. Each plugin's README gives
+its floor.
 Plugins listed in the BB Community marketplace also install from bb's Plugins page, or with
 `bb plugin install <id>@bb-community`. Each plugin's README has its details.
 

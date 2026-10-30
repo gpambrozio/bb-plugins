@@ -22,7 +22,7 @@ board, the dispatch command and the watch runner, and nothing else.
 
 ## What you need
 
-- bb 0.47 or newer. On bb 0.46, install with `@^0.6.0` instead of `@^0.7.0`; on bb 0.45, with `@^0.4.0`.
+- bb 0.47 or newer. On bb 0.46, install with `@^0.6.0` instead of `@>=0.7.0`; on bb 0.45, with `@^0.4.0`.
 - A capable model for the first mate. It spends its day reading records and deciding who does what, and a
   small model gets the commands wrong. Claude Sonnet or better, or a comparable Codex model, works.
 - `git` for the projects it works on, and, for the pull request watch, the `gh` command, logged in.
@@ -36,11 +36,14 @@ or run
 bb plugin install firstmate-crew@bb-community
 ```
 
-Straight from this repository, tracking compatible releases:
+Straight from this repository, following every new release:
 
 ```bash
-bb plugin install 'git:github.com/gpambrozio/bb-plugins@^0.7.0' --plugin firstmate-crew --tag-prefix firstmate-crew/
+bb plugin install 'git:github.com/gpambrozio/bb-plugins@>=0.7.0' --plugin firstmate-crew --tag-prefix firstmate-crew/
 ```
+
+The range has a floor and no ceiling, so the install picks up each new release, minor ones included,
+and bb skips any release that needs a newer bb than yours.
 
 Add `--yes` to skip the confirmation prompt, which a script needs. To hack on it, clone the repository,
 run `npm install --include=dev` in `firstmate-crew/`, then `bb plugin install path:$PWD --yes` from
