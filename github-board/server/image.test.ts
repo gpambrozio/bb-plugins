@@ -197,6 +197,28 @@ describe("image limits", () => {
     }
   });
 
+  it("stops fetching when its caller leaves", async () => {
+    const caller = new AbortController();
+    let aborted = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_input: unknown, init?: RequestInit) => {
+        return new Promise((_resolve, reject) => {
+          const stop = () => {
+            aborted = true;
+            reject(new Error("aborted"));
+          };
+          if (init?.signal?.aborted === true) stop();
+          init?.signal?.addEventListener("abort", stop);
+        });
+      }),
+    );
+    const pending = fetchGitHubImage("https://github.com/left.png", token, caller.signal);
+    caller.abort();
+    await expect(pending).rejects.toThrow("aborted");
+    expect(aborted).toBe(true);
+  });
+
   it("abandons a token lookup that never answers, and gives up without fetching", async () => {
     vi.useFakeTimers();
     let aborted = 0;

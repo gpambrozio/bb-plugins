@@ -29,8 +29,11 @@ export interface GitHubApi {
    * Runs one GraphQL document and answers its `data`. Rejects on a transport
    * failure *and* on any entry in `errors`, the way `gh api graphql` exits
    * non-zero — which is why checks and branch status are requests of their own.
+   * `signal` ends the request (kills the `gh` run) when it fires. The
+   * functions here never pass one: the service hands them an api already bound
+   * to its caller's signal.
    */
-  graphql(query: string, variables?: GraphQLVariables): Promise<unknown>;
+  graphql(query: string, variables?: GraphQLVariables, signal?: AbortSignal): Promise<unknown>;
   /** Where a failure that costs only pills goes, rather than being dropped. */
   warn(message: string): void;
 }

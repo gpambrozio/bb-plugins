@@ -11,6 +11,7 @@ import { createBoardService, CACHE_TTL_MS, type BoardServiceDeps } from "./servi
 interface Request {
   query: string;
   variables: GraphQLVariables;
+  signal: AbortSignal | undefined;
 }
 
 const EMPTY_SEARCH = { mine: { nodes: [] }, owned: { nodes: [] }, assigned: { nodes: [] } };
@@ -37,17 +38,19 @@ function setup(
   } = {},
 ) {
   const requests: Request[] = [];
+  const warnings: string[] = [];
   let clock = 1_000_000;
   const api: GitHubApi = {
-    graphql: async (query, variables = {}) => {
-      requests.push({ query, variables });
-      const routed = options.route?.({ query, variables });
+    graphql: async (query, variables = {}, signal) => {
+      const request = { query, variables, signal };
+      requests.push(request);
+      const routed = options.route?.(request);
       if (routed !== undefined) return routed;
       if (query.includes("viewer")) return { viewer: { login: "octocat" } };
       if (query.includes("search(")) return EMPTY_SEARCH;
       return {};
     },
-    warn: () => {},
+    warn: (message) => warnings.push(message),
   };
   const deps: BoardServiceDeps = {
     api,
@@ -65,6 +68,7 @@ function setup(
   return {
     service: createBoardService(deps),
     requests,
+    warnings,
     advance: (ms: number) => {
       clock += ms;
     },
@@ -261,5 +265,87 @@ describe("an edit while a load waits on project matching", () => {
     await service.toggleLabel({ itemId: "P1", labelId: "L", add: true });
     release();
     expect(labelsOf(await loading)).toEqual(["old", "new"]);
+  });
+});
+
+describe("a caller that stops waiting", () => {
+  const ITEM = { node: { body: "b", state: "OPEN", createdAt: "2026-09-01T00:00:00Z" } };
+  const COMMENTS = { node: { comments: { nodes: [], totalCount: 0 } } };
+  const isItem = (request: Request) => request.query.includes("body state createdAt");
+  const isComments = (request: Request) => request.query.includes("$replies");
+
+  it("hands its signal to every request a load makes", async () => {
+    const { service, requests } = setup({
+      route: (request) => {
+        if (request.query.includes("... on PullRequest {") && request.query.includes("search(")) {
+          return { mine: { nodes: [pullRequest("P1")] }, owned: { nodes: [] }, assigned: { nodes: [] } };
+        }
+        if (isItem(request)) return ITEM;
+        if (isComments(request)) return COMMENTS;
+        return undefined;
+      },
+    });
+    const { signal } = new AbortController();
+    await service.loadBoard({ limit: 30, force: false }, signal);
+    await service.loadItem({ id: "P1", force: false }, signal);
+    await service.loadComments({ id: "P1", force: false }, signal);
+    // The login, three searches, checks and branch status, the body and the comments.
+    expect(requests).toHaveLength(8);
+    expect(requests.every((request) => request.signal === signal)).toBe(true);
+  });
+
+  it("caches nothing from a board whose caller left, and says nothing about its killed checks", async () => {
+    const caller = new AbortController();
+    const { service, requests, warnings } = setup({
+      route: (request) => {
+        if (request.query.includes("... on PullRequest {") && request.query.includes("search(")) {
+          return { mine: { nodes: [pullRequest("P1")] }, owned: { nodes: [] }, assigned: { nodes: [] } };
+        }
+        if (request.query === CHECKS_QUERY && request.signal?.aborted === false) {
+          // What the gh runner does when the signal fires: the run is killed and fails.
+          caller.abort();
+          throw new Error("The operation was aborted");
+        }
+        return undefined;
+      },
+    });
+    await expect(service.loadBoard({ limit: 30, force: false }, caller.signal)).rejects.toThrow();
+    expect(warnings).toEqual([]);
+
+    const next = await service.loadBoard({ limit: 30, force: false });
+    expect(searches(requests)).toHaveLength(6);
+    expect(next.columns.every((column) => column.error === null)).toBe(true);
+  });
+
+  it("caches neither a body nor comments that arrived after their caller left", async () => {
+    let caller = new AbortController();
+    const { service, requests } = setup({
+      route: (request) => {
+        if (request.signal?.aborted === false) caller.abort();
+        if (isItem(request)) return ITEM;
+        if (isComments(request)) return COMMENTS;
+        return undefined;
+      },
+    });
+    await expect(service.loadItem({ id: "P1", force: false }, caller.signal)).rejects.toThrow();
+    caller = new AbortController();
+    await expect(service.loadComments({ id: "P1", force: false }, caller.signal)).rejects.toThrow();
+
+    await service.loadItem({ id: "P1", force: false });
+    await service.loadComments({ id: "P1", force: false });
+    expect(requests.filter(isItem)).toHaveLength(2);
+    expect(requests.filter(isComments)).toHaveLength(2);
+  });
+
+  it("does not end one caller's load when another caller leaves", async () => {
+    const leaving = new AbortController();
+    const { service } = setup({
+      route: (request) => (isItem(request) ? ITEM : undefined),
+    });
+    const staying = service.loadItem({ id: "P1", force: false });
+    const gone = service.loadItem({ id: "P1", force: false }, leaving.signal);
+    leaving.abort();
+    await expect(gone).rejects.toThrow();
+    expect((await staying).body).toBe("b");
   });
 });

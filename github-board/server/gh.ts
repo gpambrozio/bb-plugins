@@ -86,9 +86,9 @@ export type ExecFile = (
  * own tools: the login shell's PATH, `~/.local/bin`, mise and asdf shims,
  * Volta and Homebrew. It is looked up on every call, and a miss refreshes
  * that lookup in the background, so a `gh` installed after the plugin loaded
- * is found without a reload. `signal` kills the subprocess when it fires, for
- * a caller with a deadline of its own; every call is killed after 30 seconds
- * regardless. A failure is a `GhError`.
+ * is found without a reload. `signal` kills the subprocess when it fires: a
+ * caller's own deadline, or an RPC caller that stopped waiting; every call is
+ * killed after 30 seconds regardless. A failure is a `GhError`.
  */
 export function ghRunner(exec: ExecFile = experimental_execHostFile): GhRunner {
   return async (args, signal) => {
@@ -106,13 +106,14 @@ export function ghRunner(exec: ExecFile = experimental_execHostFile): GhRunner {
   };
 }
 
-/** One GraphQL request through `run`, answering its `data`. */
+/** One GraphQL request through `run`, answering its `data`; `signal` kills the run. */
 export async function ghGraphql(
   run: GhRunner,
   query: string,
   variables?: GraphQLVariables,
+  signal?: AbortSignal,
 ): Promise<unknown> {
-  const parsed: unknown = JSON.parse(await run(ghGraphqlArgs(query, variables)));
+  const parsed: unknown = JSON.parse(await run(ghGraphqlArgs(query, variables), signal));
   return (parsed as { data?: unknown }).data;
 }
 
