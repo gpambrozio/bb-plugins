@@ -24,6 +24,7 @@ with how long each took and how it exited, and the tail of its log.
   when you turn it on are not announced, and reloading the plugin or restarting bb does not repeat any.
   It goes through bb's own Push notifications, so it reaches the web, desktop and mobile channels you
   have turned on there.
+- **Settings**, the gear at the top of the page, opens the plugin's settings.
 - With more than one Mac connected to bb, a picker at the top chooses whose jobs you see. It starts on
   the Mac running the bb server.
 

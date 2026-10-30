@@ -20,6 +20,7 @@ import { duration, errorText, relativeTime } from "./format";
 import { useReconnects } from "./health";
 import { JobDetail, StatusPill } from "./job-detail";
 import { JobForm } from "./job-form";
+import { openPluginSettings } from "./open-plugin-settings";
 
 export const PANEL_PATH = "jobs";
 
@@ -53,6 +54,10 @@ function storeHost(hostId: string): void {
   } catch {
     // A private window: the picker simply starts on the server's Mac next time.
   }
+}
+
+function openSettings(): void {
+  if (!openPluginSettings(window)) toast.info("Scheduled Jobs' settings are in Settings → Plugins → Scheduled Jobs.");
 }
 
 function JobRow({ job, selected, onSelect }: { job: Job; selected: boolean; onSelect(): void }) {
@@ -281,6 +286,9 @@ export function JobsPanel(_props: PluginNavPanelProps) {
       <div className="flex-1" />
       <Button variant="ghost" size="icon" aria-label={busy ? "Loading" : "Refresh"} disabled={busy || hostId === null} onClick={() => void refresh(false)}>
         <Icon name={busy ? "Spinner" : "ArrowReloadHorizontal"} />
+      </Button>
+      <Button variant="ghost" size="icon" aria-label="Settings" onClick={openSettings}>
+        <Icon name="Settings" />
       </Button>
       <Button size="sm" disabled={hostId === null || !supported} onClick={() => setPane({ kind: "new" })}>
         <Icon name="Plus" />
