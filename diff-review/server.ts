@@ -29,8 +29,8 @@ export function diffReviewPlugin(deps: { gh?: GhRunner } = {}) {
 export default diffReviewPlugin();
 
 /**
- * The RPC caller's signal, which bb 0.48.1 aborts when the caller stops waiting (a Review tab closed
- * or switched mid-load) or this copy of the plugin goes. Typed as always there, but bb 0.48.0 passes a
+ * The RPC caller's signal, which bb 0.48.1 aborts when the caller's request disconnects (its window
+ * closed mid-load) or this copy of the plugin goes. Typed as always there, but bb 0.48.0 passes a
  * context without it, and the reads then run to the end as before.
  */
 function callerSignal(ctx: ExperimentalPluginRpcHandlerContext | undefined): AbortSignal | undefined {
