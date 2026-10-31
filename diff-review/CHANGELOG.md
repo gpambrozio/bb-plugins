@@ -5,6 +5,16 @@ Notable changes to `diff-review`. The other plugins in this repository version s
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.5.1
+
+### Fixed
+
+- A line comment you submit to a pull request now shows as one comment thread, even when the review
+  re-read GitHub while Submit review was sending it (Sync, a reconnect, another window). It used to
+  show twice: your comment, and a second copy of it from GitHub. A copy left by an earlier version
+  goes the next time the review reads GitHub, and anything written on it (an agent's draft, a reply
+  you were typing) moves to the one that stays.
+
 ## 0.5.0
 
 ### Added
