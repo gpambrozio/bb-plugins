@@ -192,7 +192,7 @@ export class ReviewService {
       const settings = await this.settings();
       const patterns = await ignorePatterns(this.bb.sdk, this.bb.log, environment, settings.ignorePatterns, settings.readIgnoreFiles);
       let pull: Awaited<ReturnType<PullRequests["load"]>> | null = null;
-      if (target.kind === "pr") pull = await this.prs.load(environment, target, patterns, ignoreWhitespace);
+      if (target.kind === "pr") pull = await this.prs.load(environment, target, patterns, ignoreWhitespace, { viewed: true, ...(signal === undefined ? {} : { signal }) });
       let diff =
         pull !== null
           ? pull.diff
@@ -277,11 +277,16 @@ export class ReviewService {
 
   /**
    * Marks a file Viewed at the revision the tab showed, or clears its mark. The marks are bb's own,
-   * so bb's diff panel shows the same.
+   * so bb's diff panel shows the same; a pull request's are the account's own on GitHub, per file.
    */
   async setViewed(threadId: string, target: Target, path: string, revision: string, viewed: boolean): Promise<void> {
     if (isHostTarget(target) || target.kind === "files") throw new ReviewError("bb's Viewed marks do not cover the staged, unstaged, range and Any file views.", "not_viewable");
     const environment = await workspaceOf(this.bb.sdk, threadId);
+    if (target.kind === "pr") {
+      const session = this.store.session(environment.id, targetKey(target));
+      await github(() => this.prs.setViewed(session.id, target, path, viewed));
+      return;
+    }
     if (viewed) await this.git.markViewed(environment.id, gitTarget(target), path, revision);
     else await this.git.clearViewed(environment.id, gitTarget(target), path);
   }

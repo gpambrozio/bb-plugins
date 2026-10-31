@@ -48,6 +48,8 @@ export const pullDetailsSchema = z
     /** When the review threads were last read from GitHub (epoch ms), or null when they could not be. */
     syncedAt: z.number().nullable(),
     syncError: z.string().nullable(),
+    /** Why the account's Viewed marks on the files could not be read from GitHub, or null. */
+    viewedError: z.string().nullable(),
   })
   .strict();
 export type PullDetails = z.infer<typeof pullDetailsSchema>;

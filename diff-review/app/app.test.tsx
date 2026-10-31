@@ -713,7 +713,7 @@ describe("a pull request's view", () => {
     ...VIEW,
     target: { kind: "pr" as const, owner: "o", repo: "r", number: 7 },
     viewable: false,
-    pullRequest: { number: 7, title: "Add b", url: "https://github.com/o/r/pull/7", state: "OPEN", baseRefName: "main", headRefName: "feature", headSha: HEAD, baseSha: "b".repeat(40), syncedAt: Date.now(), syncError: null },
+    pullRequest: { number: 7, title: "Add b", url: "https://github.com/o/r/pull/7", state: "OPEN", baseRefName: "main", headRefName: "feature", headSha: HEAD, baseSha: "b".repeat(40), syncedAt: Date.now(), syncError: null, viewedError: null },
     threads: [
       { ...thread({ id: "aaaaaa000030", body: "Why 3?", startLine: 2, endLine: 2 }), githubThreadId: "PRRT_1", comments: [{ id: "c1", authorType: "github" as const, authorName: "octo", body: "Why 3?", createdAt: 1, editedAt: null }] },
       thread({ id: "aaaaaa000031", body: "Name it c.", startLine: 2, endLine: 2 }),
@@ -756,6 +756,44 @@ describe("a pull request's view", () => {
         items: [{ reviewThreadId: "aaaaaa000031", body: "Name it c, please." }],
       }),
     );
+  });
+
+  it("marks a file Viewed on GitHub, folding it, and puts the box back when GitHub refuses", async () => {
+    const { toast } = await import("sonner");
+    let refuse = false;
+    const slot = render({
+      getReview: () => ({ ...PR_VIEW, viewable: true, files: [{ ...VIEW.files[0]!, viewed: "changed" }] }),
+      setViewed: () => {
+        if (refuse) throw new Error("Resource not accessible by integration");
+        return { ok: true };
+      },
+    });
+    // GitHub dismissed the mark when the file changed after it was viewed.
+    expect(await screen.findByText("changed since viewed")).toBeTruthy();
+    const box = screen.getByRole("checkbox", { name: "Viewed src/a.ts" });
+    expect(box.getAttribute("aria-checked")).toBe("false");
+    fireEvent.click(box);
+    await waitFor(() => expect(screen.queryByTestId("patch")).toBeNull());
+    expect(slot.inspection.rpcCalls.find((call) => call.method === "setViewed")!.input).toEqual({
+      threadId: "thr_1",
+      target: { kind: "pr", owner: "o", repo: "r", number: 7 },
+      path: "src/a.ts",
+      revision: "rev-a",
+      viewed: true,
+    });
+    expect(screen.getByRole("checkbox", { name: "Viewed src/a.ts" }).getAttribute("aria-checked")).toBe("true");
+
+    refuse = true;
+    fireEvent.click(screen.getByRole("checkbox", { name: "Viewed src/a.ts" }));
+    await waitFor(() => expect(vi.mocked(toast.error)).toHaveBeenCalledWith("Could not clear the Viewed mark: Resource not accessible by integration"));
+    await waitFor(() => expect(screen.getByRole("checkbox", { name: "Viewed src/a.ts" }).getAttribute("aria-checked")).toBe("true"));
+  });
+
+  it("offers no Viewed box when GitHub's marks could not be read, and says so", async () => {
+    render({ getReview: () => ({ ...PR_VIEW, viewable: false, pullRequest: { ...PR_VIEW.pullRequest, viewedError: "API rate limit exceeded" } }) });
+    expect(await screen.findByText("Could not read your Viewed marks")).toBeTruthy();
+    expect(screen.getByText("Could not read your Viewed marks").getAttribute("title")).toBe("API rate limit exceeded");
+    expect(screen.queryByRole("checkbox", { name: "Viewed src/a.ts" })).toBeNull();
   });
 
   it("is the view a thread's tab comes back on until the pull request is closed or merged", async () => {

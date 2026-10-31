@@ -25,6 +25,11 @@ export function PullBar({ pull, onSubmit, onSync, refreshing }: { pull: PullDeta
           Could not read GitHub's review threads
         </span>
       )}
+      {pull.viewedError === null ? null : (
+        <span className="shrink-0 text-warning-text" title={pull.viewedError}>
+          Could not read your Viewed marks
+        </span>
+      )}
       <Button type="button" variant="ghost" size="sm" className="h-6 gap-1 px-1.5 text-xs" onClick={onSync} disabled={refreshing}>
         <Icon name="ArrowReloadHorizontal" className="size-3.5" />
         Sync with GitHub

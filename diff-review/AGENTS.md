@@ -23,7 +23,8 @@ specific to `diff-review`.
 | `server/git.ts` | bb's Git plugin (`bb--git`) through `bb.sdk.plugins.callRpc`: status, files, patches by revision, Viewed marks; a copy of the shapes read, and the "Git plugin is off" message. |
 | `server/host-git.ts` | The server's client of the host entry. |
 | `server/edits.ts` | Applying a suggestion (bb's file read and `expectedSha256` write, its lines checked against what the tab showed) and handing a revert to the host entry. |
-| `server/github.ts`, `server/pull-requests.ts` | `gh api graphql` (diffity's queries) and the `pr` view: load (host fetch, range diff), mirror review threads, reply / resolve on GitHub, the review plan and Submit. |
+| `server/github.ts`, `server/pull-requests.ts` | `gh api graphql` (diffity's queries) and the `pr` view: load (host fetch, range diff, the account's Viewed marks), mirror review threads, reply / resolve and Viewed on GitHub, the review plan and Submit. |
+| `server/testing/github-schema.ts` | The slice of GitHub's GraphQL schema the Viewed requests use, recorded from introspection, and the checker the tests' fake `gh` runs on them. |
 | `server/refusal.ts` | `ReviewError`s answered as `experimental_PluginRpcRefusal`, so a caller's mistake is not logged as a crash. |
 | `shared/routes.ts` | The Reviews page's addresses (`<thread>/<view>[/<file>]`), and `bb diff-review open`'s realtime request. |
 | `shared/suggestion.ts`, `shared/revert.ts` | Suggestion blocks (diffity's) and line replacement; reverting hunks from a file's patch. |
@@ -239,7 +240,7 @@ copy of the shapes it reads.
 **Reads nobody waits for are abandoned, but only reads that fill a view in.** `loadPatches` and
 `getReview` hand the RPC handler's `experimental_signal` (bb 0.48.1; absent on 0.48.0, so it stays
 optional) to the Git plugin's `patches` calls and to the GitHub PR Status read (`branchPull`), through
-`callRpc`'s `signal`. That ends this plugin's wait and the patch batches not yet sent, not the work
+`callRpc`'s `signal`, and to a pull request's Viewed read, whose `gh` it kills. That ends this plugin's wait and the patch batches not yet sent, not the work
 already started: in bb 0.48.1 the Git plugin's `patches` and PR Status's `pullRequests` handlers ignore
 their request signal, so a host read under way runs to the end. Stopping it needs bb to pass the signal
 on, and PR Status to keep a lookup another caller shares. bb aborts it when this plugin copy is reloaded, disabled or removed, or the
@@ -260,9 +261,19 @@ staged or unstaged; only a change sends `diff`. For a workspace no tab shows, an
 and the first lease taken after that has it checked once. The check reads only, so it cannot set off
 another.
 
-**Viewed marks are bb's.** They live in the Git plugin per environment, view and revision, shared with
-bb's diff panel; a mark at an older revision is "changed since viewed". The host views and Any file
-have no marks (`viewable: false`).
+**Viewed marks are bb's, or GitHub's on a pull request.** They live in the Git plugin per environment,
+view and revision, shared with bb's diff panel; a mark at an older revision is "changed since viewed".
+The host views and Any file have no marks (`viewable: false`). A `pr` view's marks are the `gh`
+account's own on GitHub (`PullRequest.files { path viewerViewedState }`, 100 a page, up to GitHub's
+3,000 files), read beside the fetch on every load; `DISMISSED` (GitHub's reset when a file changes
+after it was viewed) is "changed since viewed". The box calls `markFileAsViewed` /
+`unmarkFileAsViewed` with the pull request's node id and the path, a file of the last load only; the
+tab already updates first and rolls back with a toast. GitHub keeps one mark per file, not per
+revision: a push between the load and the tick marks the new version viewed (the next load shows it),
+so the file's `revision` is not sent. A read that fails gives the view no boxes and the bar's
+`viewedError`, never a failed load; it is the one GitHub read `getReview`'s signal abandons, since it
+writes nothing. The fake `gh` checks these requests against `server/testing/github-schema.ts`;
+re-record that slice by introspection (`__type(name: …)`, read only) when a request changes.
 
 **The tab is an `experimental_tab`, the button the old `experimental_threadHeaderAction` slot, both
 opened through the panel controller.** bb 0.48 retired `threadPanelAction`,

@@ -9,6 +9,7 @@ import plugin, { diffReviewPlugin } from "./server";
 import { REPORT_LINE } from "./server/run-prompts";
 import { placeThread } from "./shared/anchors";
 import { parsePatchLines } from "./shared/patch-lines";
+import { checkGithubRequest } from "./server/testing/github-schema";
 import { TOOL_NAMES } from "./server/tool-names";
 import type { ReviewThread, ReviewView, Run } from "./shared/types";
 
@@ -68,7 +69,7 @@ interface Setup {
   /** The host entry's revert refuses with this message. */
   hostRevertRefuses?: string;
   /** The GitHub CLI, for the pull request view. */
-  gh?: (args: readonly string[], stdin?: string) => Promise<string>;
+  gh?: (args: readonly string[], stdin?: string, signal?: AbortSignal) => Promise<string>;
   /** What bb's GitHub PR Status says the workspace's branch has. */
   branchPull?: { url: string; title: string };
   /** Awaited before the Git plugin answers a `patches` call, with the call's signal. */
@@ -633,6 +634,13 @@ describe("reviewing a GitHub pull request", () => {
       head: HEAD,
       /** Runs as GitHub adds each review thread of a submission (a push, a reply landing meanwhile). */
       onAddThread: async () => undefined as void,
+      /** The account's Viewed mark on each file, by path. */
+      viewed: { "src/a.ts": "VIEWED" } as Record<string, string>,
+      /** Runs as GitHub reads the Viewed marks, with the request's signal. */
+      onReadViewed: async (_signal?: AbortSignal) => undefined as void,
+      /** GitHub's error for the Viewed read, or the mark and unmark, when set. */
+      viewedFails: null as string | null,
+      markFails: null as string | null,
       threads: [
         {
           id: "PRRT_1", isResolved: false, isOutdated: false, path: "src/a.ts", line: 2, startLine: null, originalLine: 2, originalStartLine: null, diffSide: "RIGHT",
@@ -640,11 +648,36 @@ describe("reviewing a GitHub pull request", () => {
         },
       ] as Record<string, unknown>[],
     };
-    const gh = async (args: readonly string[], stdin?: string) => {
+    const gh = async (args: readonly string[], stdin?: string, signal?: AbortSignal) => {
       expect(args).toEqual(["api", "graphql", "--input", "-"]);
       const request = JSON.parse(stdin!) as { query: string; variables: Record<string, unknown> };
       requests.push(request);
       const data = (value: unknown) => JSON.stringify({ data: value });
+      if (request.query.includes("viewerViewedState") || request.query.includes("FileAsViewed")) {
+        // Checked against GitHub's own schema, as GitHub would check them.
+        expect(checkGithubRequest(request.query, request.variables)).toEqual([]);
+      }
+      if (request.query.includes("viewerViewedState")) {
+        await remote.onReadViewed(signal);
+        if (remote.viewedFails !== null) return JSON.stringify({ errors: [{ message: remote.viewedFails }] });
+        // Two pages, as GitHub pages them by 100.
+        const paths = Object.keys(remote.viewed);
+        const first = request.variables.after === undefined;
+        const page = first ? paths.slice(0, 1) : paths.slice(1);
+        return data({
+          repository: {
+            pullRequest: {
+              files: { pageInfo: { hasNextPage: first && paths.length > 1, endCursor: first ? "cursor-1" : null }, nodes: page.map((path) => ({ path, viewerViewedState: remote.viewed[path] })) },
+            },
+          },
+        });
+      }
+      if (request.query.includes("FileAsViewed")) {
+        const input = request.variables.input as { pullRequestId: string; path: string };
+        if (remote.markFails !== null) return JSON.stringify({ errors: [{ message: remote.markFails }] });
+        remote.viewed[input.path] = request.query.includes("unmarkFileAsViewed") ? "UNVIEWED" : "VIEWED";
+        return data({ [request.query.includes("unmarkFileAsViewed") ? "unmarkFileAsViewed" : "markFileAsViewed"]: { clientMutationId: null } });
+      }
       if (request.query.includes("reviewThreads")) return data({ repository: { pullRequest: { reviewThreads: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: remote.threads } } } });
       if (request.query.startsWith("query")) {
         return data({ repository: { pullRequest: { id: "PR_1", number: 7, title: "Add b", url: "https://github.com/o/r/pull/7", state: "OPEN", baseRefName: "main", headRefName: "feature", headRefOid: remote.head, baseRefOid: "b".repeat(40) } } });
@@ -690,6 +723,109 @@ describe("reviewing a GitHub pull request", () => {
     ]);
     // Read again, nothing doubles.
     expect((await view(PULL)).threads).toHaveLength(1);
+  });
+
+  it("shows each file's Viewed mark from GitHub, a dismissed one as changed since viewed", async () => {
+    const github = fakeGitHub();
+    // The diff's file is on the second page of GitHub's list; GitHub dismissed its mark when it changed.
+    github.remote.viewed = { "docs/elsewhere.md": "VIEWED", "src/a.ts": "DISMISSED" };
+    const { view } = await setup({ gh: github.gh });
+    const dismissed = await view(PULL);
+    expect(dismissed).toMatchObject({ viewable: true, pullRequest: { viewedError: null } });
+    expect(dismissed.files.map((file) => [file.path, file.viewed])).toEqual([["src/a.ts", "changed"]]);
+    const reads = github.requests.filter((request) => request.query.includes("viewerViewedState"));
+    expect(reads.map((request) => request.variables)).toEqual([
+      { owner: "o", name: "r", number: 7 },
+      { owner: "o", name: "r", number: 7, after: "cursor-1" },
+    ]);
+
+    // Read again on every load: marked on GitHub meanwhile.
+    github.remote.viewed["src/a.ts"] = "VIEWED";
+    expect((await view(PULL)).files.map((file) => file.viewed)).toEqual(["yes"]);
+    github.remote.viewed["src/a.ts"] = "UNVIEWED";
+    expect((await view(PULL)).files.map((file) => file.viewed)).toEqual(["no"]);
+  });
+
+  it("marks and clears a file's Viewed mark on GitHub, and refuses a file the view does not show", async () => {
+    const github = fakeGitHub();
+    github.remote.viewed = { "src/a.ts": "UNVIEWED" };
+    const { view, rpc } = await setup({ gh: github.gh });
+    const [file] = (await view(PULL)).files;
+    await rpc("setViewed", { threadId: THREAD, target: PULL, path: "src/a.ts", revision: file!.revision, viewed: true });
+    expect(github.remote.viewed["src/a.ts"]).toBe("VIEWED");
+    await rpc("setViewed", { threadId: THREAD, target: PULL, path: "src/a.ts", revision: file!.revision, viewed: false });
+    expect(github.remote.viewed["src/a.ts"]).toBe("UNVIEWED");
+    const sent = github.requests.filter((request) => request.query.includes("FileAsViewed"));
+    expect(sent.map((request) => [request.query.includes("unmark") ? "unmark" : "mark", request.variables])).toEqual([
+      ["mark", { input: { pullRequestId: "PR_1", path: "src/a.ts" } }],
+      ["unmark", { input: { pullRequestId: "PR_1", path: "src/a.ts" } }],
+    ]);
+    // Nothing else is written to GitHub.
+    expect(github.requests.filter((request) => request.query.startsWith("mutation"))).toHaveLength(2);
+
+    await expect(rpc("setViewed", { threadId: THREAD, target: PULL, path: "src/other.ts", revision: "x", viewed: true })).rejects.toMatchObject({
+      code: "conflict",
+      message: expect.stringContaining("not in the pull request's diff"),
+    });
+    github.remote.markFails = "Resource not accessible by integration";
+    await expect(rpc("setViewed", { threadId: THREAD, target: PULL, path: "src/a.ts", revision: file!.revision, viewed: true })).rejects.toMatchObject({
+      code: "conflict",
+      message: "Resource not accessible by integration",
+    });
+    expect(github.remote.viewed["src/a.ts"]).toBe("UNVIEWED");
+  });
+
+  it("marks a file Viewed on GitHub after a plugin reload, asking GitHub for the pull request first", async () => {
+    const github = fakeGitHub();
+    const { rpc } = await setup({ gh: github.gh });
+    // No load since the plugin started: the tab still shows the view it loaded before.
+    await rpc("setViewed", { threadId: THREAD, target: PULL, path: "src/a.ts", revision: "h:1", viewed: false });
+    expect(github.requests.map((request) => (request.query.startsWith("mutation") ? request.variables : "read"))).toEqual(["read", { input: { pullRequestId: "PR_1", path: "src/a.ts" } }]);
+  });
+
+  it("shows the diff without Viewed boxes when GitHub's marks cannot be read, and says why", async () => {
+    const github = fakeGitHub();
+    github.remote.viewedFails = "API rate limit exceeded for user ID 1.";
+    const { view, harness } = await setup({ gh: github.gh });
+    const result = await view(PULL);
+    expect(result).toMatchObject({ viewable: false, pullRequest: { viewedError: "API rate limit exceeded for user ID 1.", syncError: null } });
+    expect(result.files.map((file) => [file.path, file.viewed, file.patch !== null])).toEqual([["src/a.ts", "no", true]]);
+    expect(harness.inspection.logEntries.some((entry) => entry.message.includes("Could not read the Viewed marks of https://github.com/o/r/pull/7"))).toBe(true);
+  });
+
+  it("hands the Viewed read the caller's signal, and still shows the diff when the caller leaves", async () => {
+    const github = fakeGitHub();
+    const caller = new AbortController();
+    const signals: (AbortSignal | undefined)[] = [];
+    github.remote.onReadViewed = async (signal) => {
+      signals.push(signal);
+      caller.abort();
+      signal?.throwIfAborted();
+    };
+    const { harness } = await setup({ gh: github.gh });
+    const result = (await harness.behavior.callRpc("getReview", { threadId: THREAD, target: PULL }, { signal: caller.signal })) as Extract<ReviewView, { ok: true }>;
+    expect(signals.map((signal) => signal?.aborted)).toEqual([true]);
+    expect(result).toMatchObject({ viewable: false, files: [{ path: "src/a.ts" }] });
+    // Nobody waits for it, so nothing is worth a warning.
+    expect(harness.inspection.logEntries.filter((entry) => entry.message.includes("Viewed marks"))).toEqual([]);
+    // The other reads are not the caller's to cut short.
+    expect(github.requests.filter((request) => request.query.includes("reviewThreads"))).toHaveLength(1);
+  });
+
+  it("checks the Viewed requests against GitHub's schema, so a wrong name fails here", () => {
+    expect(checkGithubRequest("mutation($input:MarkFileAsViewedInput!){markFileViewed(input:$input){clientMutationId}}", { input: { pullRequestId: "PR_1", path: "a" } })).toEqual([
+      "mutation.markFileViewed: Mutation has no field markFileViewed.",
+    ]);
+    expect(checkGithubRequest("mutation($input:MarkFileAsViewedInput!){markFileAsViewed(input:$input){clientMutationId}}", { input: { pullRequestID: "PR_1", path: "a" } })).toEqual([
+      "$input: MarkFileAsViewedInput has no field pullRequestID.",
+      "$input.pullRequestId: required (ID!).",
+    ]);
+    expect(checkGithubRequest("query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){files(first:100){nodes{path viewedState}}}}}", { owner: "o", name: "r", number: 7 })).toEqual([
+      "query.repository.pullRequest.files.nodes.viewedState: PullRequestChangedFile has no field viewedState.",
+    ]);
+    expect(checkGithubRequest("query($owner:String!,$name:String!,$number:String!){repository(owner:$owner,name:$name){pullRequest(number:$number){id}}}", { owner: "o", name: "r", number: "7" })).toEqual([
+      "query.repository.pullRequest: $number is String!, number wants Int!.",
+    ]);
   });
 
   it("replies on, resolves and reopens a GitHub thread on GitHub, and refuses to dismiss or edit it", async () => {

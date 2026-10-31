@@ -12,8 +12,8 @@ export const GH_CANDIDATES = ["gh", "/opt/homebrew/bin/gh", "/usr/local/bin/gh"]
 const GH_TIMEOUT_MS = 30_000;
 const GH_MAX_OUTPUT = 16 * 1024 * 1024;
 
-/** Runs `gh` with `args`, writing `stdin` to it when given; answers its stdout. */
-export type GhRunner = (args: readonly string[], stdin?: string) => Promise<string>;
+/** Runs `gh` with `args`, writing `stdin` to it when given; answers its stdout. `signal` kills it. */
+export type GhRunner = (args: readonly string[], stdin?: string, signal?: AbortSignal) => Promise<string>;
 
 export class GitHubError extends Error {}
 
@@ -26,9 +26,10 @@ function describeFailure(error: unknown, stderr: string): string {
 /** Runs `gh`, the first of `GH_CANDIDATES` that exists; remembered once found. */
 export function createGhRunner(): GhRunner {
   let found: string | null = null;
-  const attempt = (file: string, args: readonly string[], stdin: string | undefined) =>
+  const attempt = (file: string, args: readonly string[], stdin: string | undefined, signal: AbortSignal | undefined) =>
     new Promise<{ stdout: string; missing: boolean }>((resolve, reject) => {
-      const child = execFile(file, [...args], { encoding: "utf8", timeout: GH_TIMEOUT_MS, maxBuffer: GH_MAX_OUTPUT }, (error, stdout, stderr) => {
+      const options = { encoding: "utf8" as const, timeout: GH_TIMEOUT_MS, maxBuffer: GH_MAX_OUTPUT, ...(signal === undefined ? {} : { signal }) };
+      const child = execFile(file, [...args], options, (error, stdout, stderr) => {
         if (error === null) resolve({ stdout, missing: false });
         else if ((error as { code?: unknown }).code === "ENOENT") resolve({ stdout: "", missing: true });
         else reject(new GitHubError(describeFailure(error, stderr)));
@@ -36,9 +37,9 @@ export function createGhRunner(): GhRunner {
       child.stdin?.on("error", () => undefined);
       child.stdin?.end(stdin ?? "");
     });
-  return async (args, stdin) => {
+  return async (args, stdin, signal) => {
     for (const candidate of found === null ? GH_CANDIDATES : [found]) {
-      const result = await attempt(candidate, args, stdin);
+      const result = await attempt(candidate, args, stdin, signal);
       if (result.missing) continue;
       found = candidate;
       return result.stdout;
@@ -114,16 +115,27 @@ const DELETE_REVIEW = "mutation($input:DeletePullRequestReviewInput!){deletePull
 const REPLY = "mutation($input:AddPullRequestReviewThreadReplyInput!){addPullRequestReviewThreadReply(input:$input){comment{id}}}";
 const RESOLVE = "mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{id isResolved}}}";
 const UNRESOLVE = "mutation($id:ID!){unresolveReviewThread(input:{threadId:$id}){thread{id isResolved}}}";
+const FILES_QUERY = `query($owner:String!,$name:String!,$number:Int!,$after:String){repository(owner:$owner,name:$name){pullRequest(number:$number){files(first:100,after:$after){pageInfo{hasNextPage endCursor} nodes{path viewerViewedState}}}}}`;
+const MARK_VIEWED = "mutation($input:MarkFileAsViewedInput!){markFileAsViewed(input:$input){clientMutationId}}";
+const UNMARK_VIEWED = "mutation($input:UnmarkFileAsViewedInput!){unmarkFileAsViewed(input:$input){clientMutationId}}";
+
+/**
+ * The signed-in account's own Viewed mark on a pull request's file: `DISMISSED` when the file changed
+ * after it was marked (GitHub then shows it unmarked).
+ */
+export type FileViewedState = "VIEWED" | "UNVIEWED" | "DISMISSED";
 
 /** The most review threads read from one pull request. */
 const MAX_THREAD_PAGES = 10;
+/** The most pages of a pull request's files read for their Viewed marks: GitHub lists 3,000 files at most. */
+const MAX_FILE_PAGES = 30;
 
 export class GitHub {
   constructor(private readonly run: GhRunner) {}
 
-  private async graphql(query: string, variables: Variables): Promise<Record<string, unknown>> {
+  private async graphql(query: string, variables: Variables, signal?: AbortSignal): Promise<Record<string, unknown>> {
     const request = graphqlRequest(query, variables);
-    const raw = await this.run(request.args, request.body);
+    const raw = await this.run(request.args, request.body, signal);
     let parsed: { data?: Record<string, unknown>; errors?: { message?: string }[] };
     try {
       parsed = JSON.parse(raw) as typeof parsed;
@@ -173,6 +185,34 @@ export class GitHub {
       after = connection.pageInfo.endCursor;
     }
     return threads;
+  }
+
+  /** The account's Viewed mark on each of the pull request's files, by path; `signal` abandons the read. */
+  async viewedFiles(ref: PullRef, signal?: AbortSignal): Promise<Map<string, FileViewedState>> {
+    const states = new Map<string, FileViewedState>();
+    let after: string | null = null;
+    for (let page = 0; page < MAX_FILE_PAGES; page++) {
+      signal?.throwIfAborted();
+      const data = await this.graphql(FILES_QUERY, { owner: ref.owner, name: ref.repo, number: ref.number, after }, signal);
+      const connection = (data.repository as { pullRequest?: { files?: unknown } } | null)?.pullRequest?.files as
+        | { pageInfo: { hasNextPage: boolean; endCursor: string | null }; nodes: ({ path: string; viewerViewedState: string } | null)[] | null }
+        | null
+        | undefined;
+      if (connection === undefined || connection === null) break;
+      for (const node of connection.nodes ?? []) {
+        if (node === null) continue;
+        const state = node.viewerViewedState;
+        states.set(node.path, state === "VIEWED" || state === "DISMISSED" ? state : "UNVIEWED");
+      }
+      if (!connection.pageInfo.hasNextPage || connection.pageInfo.endCursor === null) break;
+      after = connection.pageInfo.endCursor;
+    }
+    return states;
+  }
+
+  /** Marks a file of the pull request Viewed for the signed-in account, or clears the mark. */
+  async setViewed(pullId: string, path: string, viewed: boolean): Promise<void> {
+    await this.graphql(viewed ? MARK_VIEWED : UNMARK_VIEWED, { input: { pullRequestId: pullId, path } });
   }
 
   async reply(threadId: string, body: string): Promise<void> {

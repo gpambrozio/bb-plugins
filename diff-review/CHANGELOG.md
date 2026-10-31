@@ -5,6 +5,18 @@ Notable changes to `diff-review`. The other plugins in this repository version s
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.5.0
+
+### Added
+
+- **Viewed on pull requests.** A pull request's review now has the Viewed box on every file, as the
+  other views do. It is your own Viewed mark on GitHub, the one GitHub's *Files changed* page shows:
+  ticking it folds the file and marks it viewed on GitHub, clearing it does the opposite, and every
+  load (Sync with GitHub, new commits) reads the marks again. A file GitHub reset because it changed
+  after you viewed it shows "changed since viewed". When GitHub refuses a change, the box goes back
+  and says why; when the marks cannot be read, the pull request's bar says so and the diff shows
+  without the boxes. Nothing else is posted to GitHub.
+
 ## 0.4.1
 
 ### Changed

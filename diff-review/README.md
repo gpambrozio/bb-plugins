@@ -23,7 +23,8 @@ It is a bb take on [diffity](https://github.com/nilbuild/diffity)'s review loop,
 - **Any file.** *Any file* in the view picker searches the workspace for a file, in the diff or not,
   opens it and takes comments on its lines like the diff does.
 - **Viewed**, per file, shared with bb's own diff panel: marking a file folds it, and a file that
-  changed since you marked it says so. **Open** shows the file in bb's viewer at the version the view
+  changed since you marked it says so. On a pull request the marks are your own on GitHub, the same
+  ones GitHub's *Files changed* page shows. **Open** shows the file in bb's viewer at the version the view
   shows.
 - **Find and go to.** **Find** searches every file of the diff, folded ones too; **Go to** (from the
   palette) jumps to a file, an open comment or another view as you type. The up and down arrows in
@@ -98,10 +99,14 @@ It is a bb take on [diffity](https://github.com/nilbuild/diffity)'s review loop,
   request…*, or `bb diff-review open <pull request address>` reviews a pull request here: its changes
   are fetched into the workspace's repository (into refs of the plugin's own, never switching your
   checkout), its review threads from GitHub sit on their lines, and a reply, Resolve or Reopen on one
-  goes to GitHub (a reply that asks @reviewer or @agent stays in the tab and asks the AI reviewer). **Submit review…** posts your own comments as one review with the verdict you pick;
+  goes to GitHub (a reply that asks @reviewer or @agent stays in the tab and asks the AI reviewer). Each
+  file's **Viewed** box is your Viewed mark on GitHub, read again on every load: ticking or clearing it
+  changes that mark on GitHub, and a file GitHub reset because it changed after you viewed it shows
+  "changed since viewed". **Submit review…** posts your own comments as one review with the verdict you pick;
   a comment that cannot be posted says why. *A new thread…* in Send to agent fixes the pull request in
   a new worktree that checks it out. This needs the GitHub CLI (`gh`), signed in, on the machine
-  running bb; it posts as that account, and only from Submit.
+  running bb; it posts as that account, only from Submit, and changes your Viewed marks only from the
+  Viewed box.
 
 Comments are stored by the plugin, per workspace and view, on the bb server; they stay when the tab or
 bb closes. The diffs come from bb's Git plugin (turned on by default), and the staged, unstaged and
@@ -111,7 +116,8 @@ range views from git itself, run on the machine that holds the workspace.
 
 - It does not comment inside bb's own diff panel (Mod+D): bb has no hook for that, so the Review tab
   draws its own diff with the same renderer.
-- Viewed marks cover bb's own views; the staged, unstaged, range and Any file views have none.
+- Viewed marks cover bb's own views and pull requests; the staged, unstaged, range and Any file views
+  have none.
 - The agent may edit files the way it always can in its thread: Diff Review adds no permission of its
   own. Its AI runs use *Approve for me* (or *Accept edits*, if you set it).
 

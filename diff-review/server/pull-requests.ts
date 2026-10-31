@@ -18,9 +18,9 @@ import { z } from "zod";
 import { placeThread } from "../shared/anchors";
 import { parsePullUrl, pullUrl, type PullDetails, type PullRef, type ReviewEvent } from "../shared/github";
 import { linesText, parsePatchLines } from "../shared/patch-lines";
-import { GENERAL_PATH, type DiffFile, type ReviewThread, type Side } from "../shared/types";
+import { GENERAL_PATH, type DiffFile, type ReviewThread, type Side, type Viewed } from "../shared/types";
 import { loadDiff, ReviewUnavailable, type DiffSources, type LoadedDiff } from "./diff";
-import { GitHubError, type DraftThread, type GitHub, type RemoteThread } from "./github";
+import { GitHubError, type DraftThread, type FileViewedState, type GitHub, type RemoteThread } from "./github";
 import type { HostFetchPull } from "./host-git";
 import type { GithubThreadInput, ReviewStore } from "./store";
 
@@ -151,6 +151,16 @@ export function mirrorThread(remote: RemoteThread, files: readonly DiffFile[]): 
  */
 export const OUTDATED_ANCHOR = "\u0000diff-review: outdated on GitHub\u0000";
 
+/**
+ * A file's Viewed mark on GitHub as the view shows one: GitHub resets a mark to `DISMISSED` when the
+ * file changes after it was marked, which is the view's "changed since viewed".
+ */
+export function githubViewed(state: FileViewedState | undefined): Viewed {
+  if (state === "VIEWED") return "yes";
+  if (state === "DISMISSED") return "changed";
+  return "no";
+}
+
 const prStatusSchema = z.record(
   z.string(),
   z.object({ outcome: z.string(), pullRequest: z.object({ url: z.string(), title: z.string() }).passthrough().optional() }).passthrough(),
@@ -195,9 +205,21 @@ export class PullRequests {
     }
   }
 
-  /** The pull request's diff, fetched and computed on the workspace's machine. */
-  async load(environment: Environment, ref: PullRef, patterns: readonly string[], ignoreWhitespace: boolean): Promise<{ diff: LoadedDiff; details: Omit<PullDetails, "syncedAt" | "syncError">; pullId: string }> {
+  /**
+   * The pull request's diff, fetched and computed on the workspace's machine. With `viewed`, each file
+   * carries the account's own Viewed mark on GitHub, read beside the fetch; when the marks cannot be
+   * read the view takes none (`viewable: false`) and `viewedError` says why. `signal` abandons only that
+   * read: the diff is the view, and nothing is written from the marks.
+   */
+  async load(
+    environment: Environment,
+    ref: PullRef,
+    patterns: readonly string[],
+    ignoreWhitespace: boolean,
+    options: { viewed?: boolean; signal?: AbortSignal } = {},
+  ): Promise<{ diff: LoadedDiff; details: Omit<PullDetails, "syncedAt" | "syncError">; pullId: string }> {
     if (environment.path === null) throw new ReviewUnavailable("This workspace has no checkout to fetch the pull request into.");
+    const marks = options.viewed === true ? this.viewedMarks(ref, options.signal) : Promise.resolve({ states: null, error: null });
     let meta;
     try {
       meta = await this.github.pull(ref);
@@ -211,11 +233,44 @@ export class PullRequests {
       throw new ReviewUnavailable(`Could not fetch the pull request on the workspace's machine: ${failure(error)}`);
     }
     const diff = await loadDiff(this.sources, this.bb.log, environment, { kind: "range", from: fetched.baseSha, to: fetched.headSha, symmetric: true }, patterns, ignoreWhitespace);
+    const { states, error: viewedError } = await marks;
     return {
-      diff: { ...diff, viewable: false },
+      diff: { ...diff, files: states === null ? diff.files : diff.files.map((file) => ({ ...file, viewed: githubViewed(states.get(file.path)) })), viewable: states !== null },
       pullId: meta.id,
-      details: { number: meta.number, title: meta.title, url: meta.url, state: meta.state, baseRefName: meta.baseRefName, headRefName: meta.headRefName, headSha: fetched.headSha, baseSha: fetched.baseSha },
+      details: {
+        number: meta.number,
+        title: meta.title,
+        url: meta.url,
+        state: meta.state,
+        baseRefName: meta.baseRefName,
+        headRefName: meta.headRefName,
+        headSha: fetched.headSha,
+        baseSha: fetched.baseSha,
+        viewedError,
+      },
     };
+  }
+
+  /** The account's Viewed marks on the pull request's files; never rejects, so a failed read cannot fail the load. */
+  private async viewedMarks(ref: PullRef, signal?: AbortSignal): Promise<{ states: Map<string, FileViewedState> | null; error: string | null }> {
+    try {
+      return { states: await this.github.viewedFiles(ref, signal), error: null };
+    } catch (error) {
+      if (signal?.aborted !== true) this.bb.log.warn(`Could not read the Viewed marks of ${pullUrl(ref)}: ${failure(error)}`);
+      return { states: null, error: failure(error) };
+    }
+  }
+
+  /**
+   * Marks a file Viewed on GitHub for the signed-in account, or clears the mark (only ever from the
+   * tab's Viewed box). GitHub keeps one mark per file, which it dismisses itself when the file changes.
+   * A file the view's last load did not show is refused.
+   */
+  async setViewed(sessionId: string, ref: PullRef, path: string, viewed: boolean): Promise<void> {
+    const loaded = this.loaded.get(sessionId);
+    if (loaded !== undefined && !loaded.files.some((file) => file.path === path)) throw new GitHubError(`${path} is not in the pull request's diff; reload the view.`);
+    const pullId = loaded?.pullId ?? (await this.github.pull(ref)).id;
+    await this.github.setViewed(pullId, path, viewed);
   }
 
   /** Mirrors the pull request's review threads into the session; the error, when GitHub cannot be read. */
