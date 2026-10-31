@@ -643,6 +643,10 @@ describe("reviewing a GitHub pull request", () => {
       markFails: null as string | null,
       /** GitHub's error for resolving or reopening a thread, when set. */
       resolveFails: null as string | null,
+      /** Runs as each request reaches GitHub, before it is handled (a slow request). */
+      onRequest: async (_query: string) => undefined as void,
+      /** Runs once GitHub has added a reply, before it answers (a read landing meanwhile sees it). */
+      onReply: async () => undefined as void,
       threads: [
         {
           id: "PRRT_1", isResolved: false, isOutdated: false, path: "src/a.ts", line: 2, startLine: null, originalLine: 2, originalStartLine: null, diffSide: "RIGHT",
@@ -654,6 +658,7 @@ describe("reviewing a GitHub pull request", () => {
       expect(args).toEqual(["api", "graphql", "--input", "-"]);
       const request = JSON.parse(stdin!) as { query: string; variables: Record<string, unknown> };
       requests.push(request);
+      await remote.onRequest(request.query);
       const data = (value: unknown) => JSON.stringify({ data: value });
       if (["viewerViewedState", "FileAsViewed", "addPullRequestReviewThreadReply", "resolveReviewThread"].some((name) => request.query.includes(name))) {
         // Checked against GitHub's own schema, as GitHub would check them.
@@ -708,6 +713,7 @@ describe("reviewing a GitHub pull request", () => {
         const nodes = (thread.comments as { nodes: unknown[] }).nodes;
         const id = `${input.pullRequestReviewThreadId}_r${nodes.length}`;
         nodes.push({ id, body: input.body, createdAt: "2026-10-02T00:00:00Z", author: { login: "me" } });
+        await remote.onReply();
         return data({ addPullRequestReviewThreadReply: { comment: { id, author: { login: "me" } } } });
       }
       return data({});
@@ -975,6 +981,77 @@ describe("reviewing a GitHub pull request", () => {
       expect(thread.comments.map((comment) => [comment.authorType, comment.body, comment.githubDraft ?? null])).toEqual([["github", "Why 3?", null], ["github", "Renamed it.", null]]);
       expect(((await rpc("reviewPlan", { sessionId })) as { replies: unknown[] }).replies).toEqual([]);
     });
+
+    /** A gate the fake GitHub waits on: `reached` once it waits, `open()` to let it go on. */
+    function gate() {
+      let open!: () => void;
+      let reached!: () => void;
+      const opened = new Promise<void>((resolve) => (open = resolve));
+      const waiting = new Promise<void>((resolve) => (reached = resolve));
+      return { wait: () => (reached(), opened), reached: waiting, open };
+    }
+    const replies = (github: ReturnType<typeof fakeGitHub>) => github.requests.filter((request) => request.query.includes("addPullRequestReviewThreadReply"));
+    const submitDraft = (rpc: (method: string, input?: unknown) => Promise<unknown>, sessionId: string, draft: { id: string; body: string }) =>
+      rpc("submitReview", { sessionId, event: "COMMENT", body: "", headSha: HEAD, items: [], replies: [{ commentId: draft.id, body: draft.body }] });
+
+    it("refuses Post while Submit review is posting the same draft (another window, GitHub slow)", async () => {
+      const { harness, rpc, mirror, sessionId, github, row } = await sentPull();
+      await harness.behavior.runCli(["reply", mirror.id, "Once."], { threadId: THREAD });
+      const draft = (await row(mirror.id)).comments.at(-1)!;
+      const slow = gate();
+      github.remote.onRequest = async (query) => {
+        if (query.includes("addPullRequestReview(")) await slow.wait();
+      };
+      const submitting = submitDraft(rpc, sessionId, draft);
+      await slow.reached;
+      await expect(rpc("postDraft", { commentId: draft.id, body: "Once." })).rejects.toMatchObject({ code: "conflict", message: "That draft is being posted already." });
+      slow.open();
+      await expect(submitting).resolves.toMatchObject({ posted: 1 });
+      expect(replies(github)).toHaveLength(1);
+      expect((await row(mirror.id)).comments.map((comment) => [comment.authorType, comment.body])).toEqual([["github", "Why 3?"], ["github", "Once."]]);
+    });
+
+    it("refuses Submit review of a draft while its Post is under way", async () => {
+      const { harness, rpc, mirror, sessionId, github, row } = await sentPull();
+      await harness.behavior.runCli(["reply", mirror.id, "Once."], { threadId: THREAD });
+      const draft = (await row(mirror.id)).comments.at(-1)!;
+      const slow = gate();
+      github.remote.onRequest = async (query) => {
+        if (query.includes("addPullRequestReviewThreadReply")) await slow.wait();
+      };
+      const posting = rpc("postDraft", { commentId: draft.id, body: "Once." });
+      await slow.reached;
+      await expect(submitDraft(rpc, sessionId, draft)).rejects.toMatchObject({ code: "conflict", message: "That draft is being posted already." });
+      // Nothing of the review went to GitHub.
+      expect(github.requests.some((request) => request.query.includes("addPullRequestReview("))).toBe(false);
+      slow.open();
+      await posting;
+      expect(replies(github)).toHaveLength(1);
+      // Once posted, it is no draft any more, and Submit says so.
+      await expect(submitDraft(rpc, sessionId, draft)).rejects.toMatchObject({ code: "conflict", message: expect.stringContaining("gone or closed") });
+    });
+
+    for (const path of ["Post", "Submit review"] as const) {
+      it(`keeps one copy of a draft posted with ${path} when a read imported GitHub's copy first`, async () => {
+        const { harness, rpc, view, mirror, sessionId, github, row } = await sentPull();
+        await harness.behavior.runCli(["reply", mirror.id, "Once."], { threadId: THREAD });
+        const draft = (await row(mirror.id)).comments.at(-1)!;
+        // GitHub has the reply; before it answers, a Sync or a reconnect elsewhere reads it.
+        const slow = gate();
+        github.remote.onReply = () => slow.wait();
+        const posting = path === "Post" ? rpc("postDraft", { commentId: draft.id, body: "Once." }) : submitDraft(rpc, sessionId, draft);
+        await slow.reached;
+        await view(PULL);
+        slow.open();
+        await posting;
+        const expected = [[true, "github", "Once."]];
+        const ours = async () => (await row(mirror.id)).comments.slice(1).map((comment) => [comment.id === draft.id, comment.authorType, comment.body]);
+        expect(await ours()).toEqual(expected);
+        await view(PULL);
+        expect(await ours()).toEqual(expected);
+        expect(replies(github)).toHaveLength(1);
+      });
+    }
   });
 
   it("keeps a reply that asks the reviewer on a GitHub thread in the tab, and asks the reviewer", async () => {

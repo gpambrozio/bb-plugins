@@ -950,19 +950,10 @@ export class ReviewService {
     if (comment.body !== body) throw new ReviewError("The draft changed since the tab showed it; look at it again before posting.", "changed");
     const thread = this.requireThread(comment.threadId);
     if (thread.githubThreadId === null) throw new ReviewError("That thread is no longer on GitHub.", "changed");
-    // A second Post (another window) while GitHub answers the first would post it twice.
-    if (this.posting.has(comment.id)) throw new ReviewError("That draft is being posted already.", "changed");
-    this.posting.add(comment.id);
-    try {
-      await github(() => this.prs.postDraft(thread, { id: comment.id, body: comment.body, githubDraft: comment.githubDraft! }, this.pullOf(thread.sessionId)));
-    } finally {
-      this.posting.delete(comment.id);
-    }
+    // A second Post, or a Submit review, while GitHub answers the first is refused there.
+    await github(() => this.prs.postDraft(thread, { id: comment.id, body: comment.body, githubDraft: comment.githubDraft! }, this.pullOf(thread.sessionId)));
     return this.changed(thread.id);
   }
-
-  /** The drafts whose Post is under way. */
-  private readonly posting = new Set<string>();
 }
 
 /**

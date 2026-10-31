@@ -432,13 +432,16 @@ export class ReviewStore {
 
   /**
    * A draft the user posted to GitHub: the row becomes the mirror of the comment GitHub made (its id,
-   * GitHub's author, the text posted), so the next sync finds it rather than adding a copy.
+   * GitHub's author, the text posted), so the next sync finds it rather than adding a copy. A read that
+   * landed after GitHub took the reply and before this already imported it as a row of its own; that
+   * copy goes, and the draft's row (the id the tab knows) stays.
    */
   postedDraft(commentId: string, githubCommentId: string, author: string, body: string): void {
     const at = this.now();
     const row = this.comment(commentId);
     if (row === null) return;
     this.db.transaction(() => {
+      this.db.prepare("DELETE FROM review_comments WHERE thread_id = ? AND github_comment_id = ? AND id != ?").run(row.threadId, githubCommentId, commentId);
       this.db
         .prepare("UPDATE review_comments SET github_comment_id = ?, github_draft = NULL, author_type = 'user', author_name = ?, body = ? WHERE id = ?")
         .run(githubCommentId, author, body, commentId);
@@ -708,14 +711,21 @@ export class ReviewStore {
             .run(thread.status, thread.side, thread.startLine, thread.endLine, thread.anchorContent, at, id);
           changed = true;
         }
-        // Each GitHub comment keeps its row (and id) across reads; only what changed is written.
-        const known = new Map(
-          this.db
-            .prepare<[string], { id: string; github_comment_id: string; body: string }>("SELECT id, github_comment_id, body FROM review_comments WHERE thread_id = ? AND github_comment_id IS NOT NULL")
-            .all(id)
-            .map((row) => [row.github_comment_id, row]),
-        );
+        // Each GitHub comment keeps its row (and id) across reads; only what changed is written. One
+        // row per GitHub comment: should a second copy of one be here, it goes.
+        const known = new Map<string, { id: string; github_comment_id: string; body: string }>();
         let commentsChanged = false;
+        const rows = this.db
+          .prepare<[string], { id: string; github_comment_id: string; body: string }>("SELECT id, github_comment_id, body FROM review_comments WHERE thread_id = ? AND github_comment_id IS NOT NULL ORDER BY rowid")
+          .all(id);
+        for (const row of rows) {
+          if (!known.has(row.github_comment_id)) {
+            known.set(row.github_comment_id, row);
+            continue;
+          }
+          this.db.prepare("DELETE FROM review_comments WHERE id = ?").run(row.id);
+          commentsChanged = true;
+        }
         for (const comment of thread.comments) {
           const row = known.get(comment.githubCommentId);
           known.delete(comment.githubCommentId);

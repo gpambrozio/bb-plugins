@@ -39,6 +39,11 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - An agent's resolve of a GitHub thread no longer comes undone: the next read of GitHub's threads
   used to reopen it in the tab, since GitHub still had it open. It is now kept as the agent's draft
   until you post it.
+- An agent's draft is posted once, even when you press Post in one window while Submit review is
+  sending it from another, and shows once after posting even when the review re-read GitHub at that
+  moment.
+- When two quick changes of a file's Viewed box both fail, the box goes back to the mark GitHub has,
+  not to the first change.
 
 ## 0.4.1
 

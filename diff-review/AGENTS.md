@@ -276,7 +276,9 @@ number and the time its write was answered, and laid over every load that starte
 within `GITHUB_VIEWED_LAG_MS` after it on a pull request (GitHub may serve the old mark for a moment);
 a later load that agrees ends it, and one later still that disagrees wins. A file's writes go one at a
 time in order (two at once reached GitHub as two `gh` processes, in either order), and a failed write
-rolls back only if no later change was made. GitHub keeps one mark per file, not per
+rolls back only if no later change was made, and then to the last mark the server took (`confirmed`:
+the mark shown before the first of the file's queued writes, advanced by each that succeeds), never to
+the optimistic mark of an earlier write that failed too. GitHub keeps one mark per file, not per
 revision: a push between the load and the tick marks the new version viewed (the next load shows it),
 so the file's `revision` is not sent. A read that fails gives the view no boxes and the bar's
 `viewedError`, never a failed load; it is the one GitHub read `getReview`'s signal abandons, since it
@@ -332,7 +334,13 @@ counts as open for it (`sentTo`). The user may edit or discard a draft (`editCom
 `deleteComment` accept one), and **Post** (`postDraft`) sends it with `addPullRequestReviewThreadReply`
 exactly as the tab showed it (a draft changed since is refused), then resolves the thread for a
 `resolve` draft; the draft's row becomes GitHub's comment (`postedDraft`: its id and author), so the
-sync finds it rather than adding a copy. A resolve that fails after the reply went in says so; the
+sync finds it rather than adding a copy. A sync can land between GitHub taking the reply and that
+adoption (another window's Sync or reconnect) and import GitHub's copy as a row of its own:
+`postedDraft` deletes such a row and keeps the draft's, and `syncGithubThreads` keeps one row per
+GitHub comment. **Post and Submit share one claim per draft** (`PullRequests.posting`, `claimDrafts`),
+taken in the same turn as the check that the draft is still the one shown and held until its row
+records GitHub's comment: Submit's plan, taken before its first request, would otherwise post a draft
+that a Post in another window posted while GitHub was slow. A resolve that fails after the reply went in says so; the
 reply stays posted. Agents never post: only the user's Post and Submit do.
 
 **Submit** is the only path that posts a review (decision 5). It also takes agents' drafts, listed

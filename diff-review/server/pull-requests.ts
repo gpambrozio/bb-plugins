@@ -186,6 +186,11 @@ function failure(error: unknown): string {
 export class PullRequests {
   /** What each `pr` session last loaded: the pull request's node id, the commits and files shown. */
   private readonly loaded = new Map<string, Loaded>();
+  /**
+   * The agents' drafts being posted, by comment id, until the row records GitHub's comment. Post and
+   * Submit review each claim theirs (two windows, a slow GitHub), so a draft goes to GitHub once.
+   */
+  private readonly posting = new Set<string>();
 
   constructor(
     private readonly bb: BbPluginApi,
@@ -313,8 +318,15 @@ export class PullRequests {
    * row becomes GitHub's comment, so nothing is lost if the read fails.
    */
   async postDraft(thread: ReviewThread, draft: { id: string; body: string; githubDraft: GithubDraft }, ref: PullRef): Promise<void> {
-    const posted = await this.github.reply(thread.githubThreadId!, draft.body);
-    this.store.postedDraft(draft.id, posted.id, posted.author, draft.body);
+    const release = this.claimDrafts([draft.id]);
+    try {
+      const row = this.store.comment(draft.id);
+      if (row?.githubDraft !== draft.githubDraft || row.body !== draft.body) throw new GitHubError("That draft changed or was posted meanwhile; look at it again.");
+      const posted = await this.github.reply(thread.githubThreadId!, draft.body);
+      this.store.postedDraft(draft.id, posted.id, posted.author, draft.body);
+    } finally {
+      release();
+    }
     if (draft.githubDraft === "resolve") {
       try {
         await this.github.setResolved(thread.githubThreadId!, true);
@@ -324,6 +336,15 @@ export class PullRequests {
       }
     }
     await this.sync(thread.sessionId, ref);
+  }
+
+  /** Claims drafts for posting (all or none), or throws when one is being posted; the result lets them go. */
+  private claimDrafts(ids: readonly string[]): () => void {
+    if (ids.some((id) => this.posting.has(id))) throw new GitHubError("That draft is being posted already.");
+    for (const id of ids) this.posting.add(id);
+    return () => {
+      for (const id of ids) this.posting.delete(id);
+    };
   }
 
   /** Resolves or reopens a mirrored thread on GitHub, then reads it back. */
@@ -406,15 +427,32 @@ export class PullRequests {
     if (missing.length > 0 || missingReplies.length > 0) throw new GitHubError("A comment you chose is gone or closed; open Submit review again.");
     const body = reviewBody(input.body, plan.body.map((entry) => entry.text));
     if (input.event === "REQUEST_CHANGES" && body === "" && plan.lines.length === 0 && plan.replies.length === 0) throw new GitHubError("Requesting changes needs a comment or a review body.");
+    // Claimed in the same turn as the check above, and held until each row records GitHub's comment.
+    const release = this.claimDrafts(plan.replies.map((entry) => entry.commentId));
+    try {
+      return await this.submitPlan(input, meta.id, plan, body, async () => {
+        if ((await headNow()) !== input.headSha) throw moved;
+      });
+    } finally {
+      release();
+    }
+  }
+
+  /** The submission of a checked plan (`submit`), as one review, and what it made of each comment. */
+  private async submitPlan(
+    input: { sessionId: string; ref: PullRef; event: ReviewEvent; headSha: string },
+    pullId: string,
+    plan: ReviewPlan,
+    body: string,
+    beforeSubmit: () => Promise<void>,
+  ): Promise<{ url: string | null; posted: number; blocked: ReviewPlan["blocked"]; warnings: string[] }> {
     const result = await this.github.submitReview(
-      meta.id,
+      pullId,
       input.headSha,
       input.event,
       body,
       plan.lines.map((entry) => entry.draft),
-      async () => {
-        if ((await headNow()) !== input.headSha) throw moved;
-      },
+      beforeSubmit,
       plan.replies.map((entry) => ({ threadId: entry.githubThreadId, body: entry.body })),
     );
     plan.lines.forEach((entry, index) => {

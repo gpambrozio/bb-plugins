@@ -984,6 +984,39 @@ describe("a pull request's view", () => {
       expect(ticked()).toBe(false);
       expect(slot.inspection.rpcCalls.filter((call) => call.method === "setViewed")).toHaveLength(2);
     });
+
+    /** A file left unviewed, ticked and unticked before GitHub answers; `results`: each write's outcome, in order. */
+    async function twoChanges(results: ("ok" | "fail")[]) {
+      const answers: (() => void)[] = [];
+      render({
+        getReview: () => viewedAs("no"),
+        setViewed: () =>
+          new Promise((resolve, reject) => {
+            const result = results[answers.length];
+            answers.push(() => (result === "ok" ? resolve({ ok: true }) : reject(new Error("Resource not accessible by integration"))));
+          }),
+      });
+      await screen.findByRole("checkbox", { name: "Viewed src/a.ts" });
+      fireEvent.click(box());
+      await settle();
+      fireEvent.click(box());
+      await settle();
+      await act(async () => answers[0]!());
+      await waitFor(() => expect(answers).toHaveLength(2));
+      await act(async () => answers[1]!());
+      await settle();
+    }
+
+    it("puts back the mark GitHub has when both quick changes fail, not the first's tick", async () => {
+      await twoChanges(["fail", "fail"]);
+      expect(ticked()).toBe(false);
+      expect(screen.getByTestId("patch")).toBeTruthy();
+    });
+
+    it("puts back the mark the earlier change made when the later one fails", async () => {
+      await twoChanges(["ok", "fail"]);
+      expect(ticked()).toBe(true);
+    });
   });
 
   it("offers no Viewed box when GitHub's marks could not be read, and says so", async () => {

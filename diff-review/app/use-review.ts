@@ -183,6 +183,8 @@ export function useReview(threadId: string, target: TargetRequest, options: Revi
   // writes in order: a change waits for the one before it, so GitHub gets them as they were made.
   const toggles = useRef(new Map<string, ViewedToggle>());
   const writes = useRef(new Map<string, Promise<void>>());
+  // While a file's writes are under way, the last mark the server took: what a failure goes back to.
+  const confirmed = useRef(new Map<string, Viewed>());
   const toggleSeq = useRef(0);
   // The view request whose answer is on screen; a load of any other is a switch, shown as pending.
   const shown = useRef<string | null>(null);
@@ -347,12 +349,15 @@ export function useReview(threadId: string, target: TargetRequest, options: Revi
   /**
    * The user's Viewed change of a file: shown at once, written by `write` after the file's previous
    * change was answered, and kept over every load that cannot have read it (`applyViewedToggles`).
-   * When the write fails and no later change was made, the mark goes back to `before`; the error is
-   * the caller's to show. `lag`: how long after its answer a read may still be behind (a pull request's).
+   * When the write fails and no later change was made, the mark goes back to the last one the server
+   * took: `before` (the mark shown) when no earlier change is still under way, else the latest earlier
+   * change that succeeded. The error is the caller's to show. `lag`: how long after its answer a read
+   * may still be behind (a pull request's).
    */
   const changeViewed = useCallback((sessionId: string, path: string, viewed: Viewed, before: Viewed, lag: number, write: () => Promise<void>): Promise<void> => {
     const key = toggleKey(sessionId, path);
     const seq = ++toggleSeq.current;
+    if (!writes.current.has(key)) confirmed.current.set(key, before);
     toggles.current.set(key, { viewed, seq, doneAt: null, lag });
     putViewed(sessionId, path, viewed);
     const run = async () => {
@@ -361,10 +366,11 @@ export function useReview(threadId: string, target: TargetRequest, options: Revi
       } catch (error) {
         if (toggles.current.get(key)?.seq === seq) {
           toggles.current.delete(key);
-          putViewed(sessionId, path, before);
+          putViewed(sessionId, path, confirmed.current.get(key) ?? before);
         }
         throw error;
       }
+      confirmed.current.set(key, viewed);
       const toggle = toggles.current.get(key);
       if (toggle?.seq === seq) toggle.doneAt = Date.now();
     };
@@ -373,7 +379,9 @@ export function useReview(threadId: string, target: TargetRequest, options: Revi
     const settled = mine.catch(() => undefined);
     writes.current.set(key, settled);
     void settled.then(() => {
-      if (writes.current.get(key) === settled) writes.current.delete(key);
+      if (writes.current.get(key) !== settled) return;
+      writes.current.delete(key);
+      confirmed.current.delete(key);
     });
     return mine;
   }, [putViewed]);
