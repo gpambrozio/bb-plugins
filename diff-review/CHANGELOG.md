@@ -5,6 +5,47 @@ Notable changes to `diff-review`. The other plugins in this repository version s
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.5.0
+
+### Added
+
+- **Viewed on pull requests.** A pull request's review now has the Viewed box on every file, as the
+  other views do. It is your own Viewed mark on GitHub, the one GitHub's *Files changed* page shows:
+  ticking it folds the file and marks it viewed on GitHub, clearing it does the opposite, and every
+  load (Sync with GitHub, new commits) reads the marks again. A file GitHub reset because it changed
+  after you viewed it shows "changed since viewed". When GitHub refuses a change, the box goes back
+  and says why; when the marks cannot be read, the pull request's bar says so and the diff shows
+  without the boxes. Nothing else is posted to GitHub. A tick stays put even when the review
+  reloads at that moment (a reconnect, a change in the workspace, Sync) or GitHub takes a few seconds
+  to report the change back, and quick ticks and unticks of a file reach GitHub one at a time, in the
+  order you made them.
+- **Agents' answers on GitHub threads are drafts you post.** When you send a pull request's GitHub
+  threads to an agent, its reply comes back on the thread as a draft marked as the agent's, with
+  **Post to GitHub** to post it as your account, and Edit and Discard. When the agent resolved or
+  dismissed the thread, the draft says so and **Post and resolve** also resolves the thread on GitHub.
+  **Submit review…** lists the drafts too, each left out until you tick it, and posts the ones you
+  tick as replies in your review. The agent itself still never posts to GitHub.
+
+### Changed
+
+- **Picking another view shows at once.** The picker shows the new choice right away, and the
+  previous diff is dimmed under a loading indicator until the new one arrives, instead of staying as
+  it was and then suddenly changing. If the new view cannot be loaded, the reason shows over it with
+  *Try again*, and you can still pick another view. A slow answer for a view you have already moved
+  on from never replaces the newer one.
+
+### Fixed
+
+- An agent's resolve of a GitHub thread no longer comes undone: the next read of GitHub's threads
+  used to reopen it in the tab, since GitHub still had it open. It is now kept as the agent's draft
+  until you post it.
+- An agent's draft is posted once, even when you press Post in one window while Submit review is
+  sending it from another, and shows once after posting even when the review re-read GitHub at that
+  moment.
+- When two quick changes of a file's Viewed box both fail, the box goes back to the mark GitHub has,
+  not to the first change; when only the second fails, the first stays, even if the review reloads
+  at that moment.
+
 ## 0.4.1
 
 ### Changed

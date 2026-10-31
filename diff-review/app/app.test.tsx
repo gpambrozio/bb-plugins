@@ -7,7 +7,7 @@
 import { act, cleanup, fireEvent, render as renderPlain, screen, waitFor, within } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import type { ReactNode } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ReviewThread, ReviewView, ViewState } from "../shared/types";
 import { ANNOTATION_FIT } from "./annotation-fit";
@@ -707,13 +707,123 @@ describe("the Files view", () => {
   });
 });
 
+describe("switching to another view", () => {
+  /** A `getReview` that answers each load of `kind` when the test says, in any order. */
+  function heldLoads() {
+    const held: { kind: string; resolve(view: unknown): void; reject(error: Error): void }[] = [];
+    const getReview = (input: never) => {
+      const { target } = input as { target: { kind: string } };
+      if (target.kind === "uncommitted") return VIEW;
+      return new Promise((resolve, reject) => held.push({ kind: target.kind, resolve, reject }));
+    };
+    return { held, getReview };
+  }
+
+  const BRANCH_VIEW = { ...VIEW, sessionId: "ses_2", target: { kind: "branch" as const, base: "main" }, threads: [], files: [{ ...VIEW.files[0]!, path: "src/b.ts", patch: PATCH.replaceAll("src/a.ts", "src/b.ts") }] };
+  const STAGED_VIEW = { ...VIEW, sessionId: "ses_3", target: { kind: "staged" as const }, viewable: false, threads: [], files: [{ ...VIEW.files[0]!, path: "src/c.ts", patch: PATCH.replaceAll("src/a.ts", "src/c.ts") }] };
+
+  // Radix's Select scrolls its own list to the chosen option, which jsdom cannot.
+  let restoreScroll: () => void = () => undefined;
+  beforeEach(() => {
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = () => undefined;
+    restoreScroll = () => {
+      Element.prototype.scrollIntoView = original;
+    };
+  });
+  afterEach(() => restoreScroll());
+
+  async function pickView(label: string) {
+    const picker = screen.getByRole("combobox", { name: "What to review" });
+    fireEvent.keyDown(picker, { key: "Enter" });
+    fireEvent.click(await screen.findByRole("option", { name: label }));
+  }
+
+  const dimmed = (path: string) => screen.getByText(path).closest("[inert]");
+
+  it("marks the picked view at once and dims the previous one under bb's spinner until the new one arrives", async () => {
+    const { held, getReview } = heldLoads();
+    render({ getReview });
+    await screen.findByTestId("patch");
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(dimmed("src/a.ts")).toBeNull();
+
+    await pickView("Committed since main");
+    expect(screen.getByRole("combobox", { name: "What to review" }).textContent).toContain("Committed since main");
+    expect((await screen.findByRole("status")).textContent).toContain("Loading Committed since main…");
+    // The previous view is still there, dimmed and out of reach, and nothing acts on it.
+    expect(dimmed("src/a.ts")).not.toBeNull();
+    expect(screen.getByRole("button", { name: /Send to agent/ }).closest("[inert]")).not.toBeNull();
+    expect(screen.getByRole("combobox", { name: "What to review" }).closest("[inert]")).toBeNull();
+
+    await act(async () => held[0]!.resolve(BRANCH_VIEW));
+    await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
+    expect(screen.getByText("src/b.ts").closest("[inert]")).toBeNull();
+    expect(screen.queryByText("src/a.ts")).toBeNull();
+  });
+
+  it("says why a picked view could not load, over the previous one, and tries it again", async () => {
+    const { held, getReview } = heldLoads();
+    const slot = render({ getReview });
+    await screen.findByTestId("patch");
+    await pickView("Staged changes");
+    await act(async () => held[0]!.reject(new Error("host offline")));
+    expect((await screen.findByRole("status")).textContent).toContain("Could not load Staged changes: host offline");
+    expect(screen.getByRole("combobox", { name: "What to review" }).textContent).toContain("Staged changes");
+    expect(dimmed("src/a.ts")).not.toBeNull();
+
+    fireEvent.click(within(screen.getByRole("status")).getByRole("button", { name: "Try again" }));
+    expect((await screen.findByRole("status")).textContent).toContain("Loading Staged changes…");
+    await waitFor(() => expect(held).toHaveLength(2));
+    await act(async () => held[1]!.resolve(STAGED_VIEW));
+    expect(await screen.findByText("src/c.ts")).toBeTruthy();
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(loadsOf(slot).map((load) => [load.reason, (load.target as { kind: string }).kind])).toEqual([["open", "uncommitted"], ["view", "staged"], ["manual", "staged"]]);
+  });
+
+  it("never lets an answer for a view picked earlier replace the one picked after it", async () => {
+    const { held, getReview } = heldLoads();
+    render({ getReview });
+    await screen.findByTestId("patch");
+    await pickView("Committed since main");
+    await pickView("Staged changes");
+    expect((await screen.findByRole("status")).textContent).toContain("Loading Staged changes…");
+
+    // The earlier pick answers first: it is dropped, and the later one is still loading.
+    await act(async () => held.find((load) => load.kind === "branch")!.resolve(BRANCH_VIEW));
+    expect(screen.queryByText("src/b.ts")).toBeNull();
+    expect(screen.getByRole("status").textContent).toContain("Loading Staged changes…");
+
+    await act(async () => held.find((load) => load.kind === "staged")!.resolve(STAGED_VIEW));
+    expect(await screen.findByText("src/c.ts")).toBeTruthy();
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.getByRole("combobox", { name: "What to review" }).textContent).toContain("Staged changes");
+  });
+
+  it("drops an earlier pick's answer that comes after the later one landed, and its failure too", async () => {
+    const { held, getReview } = heldLoads();
+    render({ getReview });
+    await screen.findByTestId("patch");
+    await pickView("Committed since main");
+    await pickView("Staged changes");
+    await act(async () => held.find((load) => load.kind === "staged")!.resolve(STAGED_VIEW));
+    expect(await screen.findByText("src/c.ts")).toBeTruthy();
+
+    await act(async () => held.find((load) => load.kind === "branch")!.reject(new Error("too late")));
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 20)));
+    expect(screen.getByText("src/c.ts")).toBeTruthy();
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.queryByText(/too late/)).toBeNull();
+  });
+});
+
 describe("a pull request's view", () => {
   const HEAD = "a".repeat(40);
   const PR_VIEW = {
     ...VIEW,
     target: { kind: "pr" as const, owner: "o", repo: "r", number: 7 },
     viewable: false,
-    pullRequest: { number: 7, title: "Add b", url: "https://github.com/o/r/pull/7", state: "OPEN", baseRefName: "main", headRefName: "feature", headSha: HEAD, baseSha: "b".repeat(40), syncedAt: Date.now(), syncError: null },
+    pullRequest: { number: 7, title: "Add b", url: "https://github.com/o/r/pull/7", state: "OPEN", baseRefName: "main", headRefName: "feature", headSha: HEAD, baseSha: "b".repeat(40), syncedAt: Date.now(), syncError: null, viewedError: null },
     threads: [
       { ...thread({ id: "aaaaaa000030", body: "Why 3?", startLine: 2, endLine: 2 }), githubThreadId: "PRRT_1", comments: [{ id: "c1", authorType: "github" as const, authorName: "octo", body: "Why 3?", createdAt: 1, editedAt: null }] },
       thread({ id: "aaaaaa000031", body: "Name it c.", startLine: 2, endLine: 2 }),
@@ -729,8 +839,8 @@ describe("a pull request's view", () => {
         rpc: {
           getReview: () => PR_VIEW,
           // The dialog shows, and posts, the text as the plan read it, even if the view's copy is older.
-          reviewPlan: () => ({ lines: [{ reviewThreadId: "aaaaaa000031", location: "src/a.ts:2 (new side)", path: "src/a.ts", line: 2, body: "Name it c, please." }], body: [], blocked: [] }),
-          submitReview: () => ({ url: "https://github.com/o/r/pull/7#review-1", posted: 1, blocked: [] }),
+          reviewPlan: () => ({ lines: [{ reviewThreadId: "aaaaaa000031", location: "src/a.ts:2 (new side)", path: "src/a.ts", line: 2, body: "Name it c, please." }], body: [], blocked: [], replies: [] }),
+          submitReview: () => ({ url: "https://github.com/o/r/pull/7#review-1", posted: 1, blocked: [], warnings: [] }),
         },
         openUrl: (url) => (opened.push(url), true),
       },
@@ -754,8 +864,296 @@ describe("a pull request's view", () => {
         body: "",
         headSha: HEAD,
         items: [{ reviewThreadId: "aaaaaa000031", body: "Name it c, please." }],
+        replies: [],
       }),
     );
+  });
+
+  it("marks a file Viewed on GitHub, folding it, and puts the box back when GitHub refuses", async () => {
+    const { toast } = await import("sonner");
+    let refuse = false;
+    const slot = render({
+      getReview: () => ({ ...PR_VIEW, viewable: true, files: [{ ...VIEW.files[0]!, viewed: "changed" }] }),
+      setViewed: () => {
+        if (refuse) throw new Error("Resource not accessible by integration");
+        return { ok: true };
+      },
+    });
+    // GitHub dismissed the mark when the file changed after it was viewed.
+    expect(await screen.findByText("changed since viewed")).toBeTruthy();
+    const box = screen.getByRole("checkbox", { name: "Viewed src/a.ts" });
+    expect(box.getAttribute("aria-checked")).toBe("false");
+    fireEvent.click(box);
+    await waitFor(() => expect(screen.queryByTestId("patch")).toBeNull());
+    expect(slot.inspection.rpcCalls.find((call) => call.method === "setViewed")!.input).toEqual({
+      threadId: "thr_1",
+      target: { kind: "pr", owner: "o", repo: "r", number: 7 },
+      path: "src/a.ts",
+      revision: "rev-a",
+      viewed: true,
+    });
+    expect(screen.getByRole("checkbox", { name: "Viewed src/a.ts" }).getAttribute("aria-checked")).toBe("true");
+
+    refuse = true;
+    fireEvent.click(screen.getByRole("checkbox", { name: "Viewed src/a.ts" }));
+    await waitFor(() => expect(vi.mocked(toast.error)).toHaveBeenCalledWith("Could not clear the Viewed mark: Resource not accessible by integration"));
+    await waitFor(() => expect(screen.getByRole("checkbox", { name: "Viewed src/a.ts" }).getAttribute("aria-checked")).toBe("true"));
+  });
+
+  describe("a Viewed change racing GitHub's reads", () => {
+    const viewedAs = (viewed: "no" | "yes" | "changed") => ({ ...PR_VIEW, viewable: true, threads: [], files: [{ ...VIEW.files[0]!, viewed }] });
+    const box = () => screen.getByRole("checkbox", { name: "Viewed src/a.ts" });
+    const ticked = () => box().getAttribute("aria-checked") === "true";
+    const settle = () => act(async () => new Promise((resolve) => setTimeout(resolve, 20)));
+    afterEach(() => vi.useRealTimers());
+
+    it("keeps a tick over a reload that read GitHub before the mark was made", async () => {
+      // The load under way (a reconnect, a workspace change, Sync) read GitHub before the click.
+      const held: ((view: unknown) => void)[] = [];
+      let loads = 0;
+      render({
+        getReview: () => (loads++ === 0 ? viewedAs("no") : new Promise((resolve) => held.push(resolve))),
+        setViewed: () => ({ ok: true }),
+      });
+      await screen.findByRole("checkbox", { name: "Viewed src/a.ts" });
+      fireEvent.click(screen.getByRole("button", { name: "Reload the diff" }));
+      await waitFor(() => expect(held).toHaveLength(1));
+      fireEvent.click(box());
+      await settle();
+      expect(ticked()).toBe(true);
+      await act(async () => held[0]!(viewedAs("no")));
+      await settle();
+      expect(ticked()).toBe(true);
+    });
+
+    it("keeps a tick over a read GitHub has not caught up on, and takes GitHub's word once it has had time", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-10-30T12:00:00Z"));
+      let github: "no" | "yes" = "no";
+      render({ getReview: () => viewedAs(github), setViewed: () => ({ ok: true }) });
+      await screen.findByRole("checkbox", { name: "Viewed src/a.ts" });
+      fireEvent.click(box());
+      await settle();
+      // A read just after the mark still has the old one.
+      vi.setSystemTime(new Date("2026-10-30T12:00:02Z"));
+      fireEvent.click(screen.getByRole("button", { name: "Reload the diff" }));
+      await settle();
+      expect(ticked()).toBe(true);
+      // Long after, GitHub says no: the mark was cleared elsewhere, and GitHub wins.
+      vi.setSystemTime(new Date("2026-10-30T12:00:30Z"));
+      fireEvent.click(screen.getByRole("button", { name: "Reload the diff" }));
+      await waitFor(() => expect(ticked()).toBe(false));
+      // A read that confirms a change ends it: a later one is GitHub's word at once.
+      fireEvent.click(box());
+      await settle();
+      github = "yes";
+      vi.setSystemTime(new Date("2026-10-30T12:00:31Z"));
+      fireEvent.click(screen.getByRole("button", { name: "Reload the diff" }));
+      await settle();
+      github = "no";
+      vi.setSystemTime(new Date("2026-10-30T12:00:32Z"));
+      fireEvent.click(screen.getByRole("button", { name: "Reload the diff" }));
+      await waitFor(() => expect(ticked()).toBe(false));
+    });
+
+    it("writes two quick changes one at a time, in order, and a failed earlier one leaves the later in place", async () => {
+      const { toast } = await import("sonner");
+      const answers: { viewed: boolean; answer(error?: Error): void }[] = [];
+      const slot = render({
+        getReview: () => viewedAs("no"),
+        setViewed: (input: never) =>
+          new Promise((resolve, reject) =>
+            answers.push({ viewed: (input as { viewed: boolean }).viewed, answer: (error) => (error === undefined ? resolve({ ok: true }) : reject(error)) }),
+          ),
+      });
+      await screen.findByRole("checkbox", { name: "Viewed src/a.ts" });
+      fireEvent.click(box());
+      await settle();
+      fireEvent.click(box());
+      await settle();
+      expect(ticked()).toBe(false);
+      // The second waits for GitHub to answer the first: two at once may land in either order.
+      expect(answers.map((entry) => entry.viewed)).toEqual([true]);
+      await act(async () => answers[0]!.answer(new Error("Something went wrong")));
+      await waitFor(() => expect(answers.map((entry) => entry.viewed)).toEqual([true, false]));
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith("Could not mark the file viewed: Something went wrong");
+      // The first's failure does not put back what the second replaced.
+      expect(ticked()).toBe(false);
+      await act(async () => answers[1]!.answer());
+      await settle();
+      expect(ticked()).toBe(false);
+      expect(slot.inspection.rpcCalls.filter((call) => call.method === "setViewed")).toHaveLength(2);
+    });
+
+    /** A file left unviewed, ticked and unticked before GitHub answers; `results`: each write's outcome, in order. */
+    async function twoChanges(results: ("ok" | "fail")[]) {
+      const answers: (() => void)[] = [];
+      render({
+        getReview: () => viewedAs("no"),
+        setViewed: () =>
+          new Promise((resolve, reject) => {
+            const result = results[answers.length];
+            answers.push(() => (result === "ok" ? resolve({ ok: true }) : reject(new Error("Resource not accessible by integration"))));
+          }),
+      });
+      await screen.findByRole("checkbox", { name: "Viewed src/a.ts" });
+      fireEvent.click(box());
+      await settle();
+      fireEvent.click(box());
+      await settle();
+      await act(async () => answers[0]!());
+      await waitFor(() => expect(answers).toHaveLength(2));
+      await act(async () => answers[1]!());
+      await settle();
+    }
+
+    it("puts back the mark GitHub has when both quick changes fail, not the first's tick", async () => {
+      await twoChanges(["fail", "fail"]);
+      expect(ticked()).toBe(false);
+      expect(screen.getByTestId("patch")).toBeTruthy();
+    });
+
+    it("puts back the mark the earlier change made when the later one fails", async () => {
+      await twoChanges(["ok", "fail"]);
+      expect(ticked()).toBe(true);
+    });
+
+    it("keeps the earlier change's mark it went back to over a reload that read GitHub before it", async () => {
+      const held: ((view: unknown) => void)[] = [];
+      const answers: ((error?: Error) => void)[] = [];
+      let loads = 0;
+      render({
+        getReview: () => (loads++ === 0 ? viewedAs("no") : new Promise((resolve) => held.push(resolve))),
+        setViewed: () => new Promise((resolve, reject) => answers.push((error) => (error === undefined ? resolve({ ok: true }) : reject(error)))),
+      });
+      await screen.findByRole("checkbox", { name: "Viewed src/a.ts" });
+      fireEvent.click(box());
+      await settle();
+      fireEvent.click(box());
+      await settle();
+      // A reload starts while the tick is still on its way, and reads GitHub without it.
+      fireEvent.click(screen.getByRole("button", { name: "Reload the diff" }));
+      await waitFor(() => expect(held).toHaveLength(1));
+      await act(async () => answers[0]!());
+      await waitFor(() => expect(answers).toHaveLength(2));
+      await act(async () => answers[1]!(new Error("Resource not accessible by integration")));
+      await settle();
+      expect(ticked()).toBe(true);
+      await act(async () => held[0]!(viewedAs("no")));
+      await settle();
+      expect(ticked()).toBe(true);
+    });
+
+    it("keeps an answered tick over a reload that read GitHub before it, when a later untick fails", async () => {
+      const held: ((view: unknown) => void)[] = [];
+      const answers: ((error?: Error) => void)[] = [];
+      let loads = 0;
+      render({
+        getReview: () => (loads++ === 0 ? viewedAs("no") : new Promise((resolve) => held.push(resolve))),
+        setViewed: () => new Promise((resolve, reject) => answers.push((error) => (error === undefined ? resolve({ ok: true }) : reject(error)))),
+      });
+      await screen.findByRole("checkbox", { name: "Viewed src/a.ts" });
+      fireEvent.click(box());
+      await settle();
+      fireEvent.click(screen.getByRole("button", { name: "Reload the diff" }));
+      await waitFor(() => expect(held).toHaveLength(1));
+      // The tick is answered, and nothing else of the file's is under way, before the untick.
+      await act(async () => answers[0]!());
+      await settle();
+      fireEvent.click(box());
+      await waitFor(() => expect(answers).toHaveLength(2));
+      await act(async () => answers[1]!(new Error("Resource not accessible by integration")));
+      await settle();
+      expect(ticked()).toBe(true);
+      await act(async () => held[0]!(viewedAs("no")));
+      await settle();
+      expect(ticked()).toBe(true);
+    });
+
+    it("goes back to GitHub's word, read while a change was under way, when that change fails", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-10-30T12:00:00Z"));
+      let github: "no" | "yes" = "no";
+      const answers: ((error?: Error) => void)[] = [];
+      render({
+        getReview: () => viewedAs(github),
+        setViewed: () => new Promise((resolve, reject) => answers.push((error) => (error === undefined ? resolve({ ok: true }) : reject(error)))),
+      });
+      await screen.findByRole("checkbox", { name: "Viewed src/a.ts" });
+      fireEvent.click(box());
+      await settle();
+      github = "yes";
+      await act(async () => answers[0]!());
+      await settle();
+      // Long after, the user unticks; while that is under way, a read finds the mark cleared on github.com.
+      vi.setSystemTime(new Date("2026-10-30T12:00:30Z"));
+      fireEvent.click(box());
+      await waitFor(() => expect(answers).toHaveLength(2));
+      github = "no";
+      fireEvent.click(screen.getByRole("button", { name: "Reload the diff" }));
+      await settle();
+      await act(async () => answers[1]!(new Error("Resource not accessible by integration")));
+      await settle();
+      expect(ticked()).toBe(false);
+    });
+  });
+
+  it("offers no Viewed box when GitHub's marks could not be read, and says so", async () => {
+    render({ getReview: () => ({ ...PR_VIEW, viewable: false, pullRequest: { ...PR_VIEW.pullRequest, viewedError: "API rate limit exceeded" } }) });
+    expect(await screen.findByText("Could not read your Viewed marks")).toBeTruthy();
+    expect(screen.getByText("Could not read your Viewed marks").getAttribute("title")).toBe("API rate limit exceeded");
+    expect(screen.queryByRole("checkbox", { name: "Viewed src/a.ts" })).toBeNull();
+  });
+
+  describe("an agent's drafts on GitHub threads", () => {
+    const DRAFT = { id: "c2", authorType: "agent" as const, authorName: "Claude Code", body: "Renamed it.", createdAt: 2, editedAt: null, githubDraft: "resolve" as const };
+    const withDraft = { ...PR_VIEW, threads: [{ ...PR_VIEW.threads[0]!, comments: [...PR_VIEW.threads[0]!.comments, DRAFT] }, PR_VIEW.threads[1]!] };
+
+    it("shows a draft as the agent's, and posts it to GitHub as it reads, resolving the thread", async () => {
+      const posted = { ...withDraft.threads[0]!, status: "resolved" as const, comments: [withDraft.threads[0]!.comments[0]!, { id: "c2", authorType: "github" as const, authorName: "me", body: "Renamed it.", createdAt: 2, editedAt: null }] };
+      const slot = render({ getReview: () => withDraft, postDraft: () => ({ thread: posted }) });
+      expect(await screen.findByText("Agent's draft for GitHub · resolves the thread")).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Edit Claude Code's draft" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Discard Claude Code's draft" })).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "Post Claude Code's draft to GitHub" }));
+      await waitFor(() => expect(slot.inspection.rpcCalls.find((call) => call.method === "postDraft")?.input).toEqual({ commentId: "c2", body: "Renamed it." }));
+      await waitFor(() => expect(screen.queryByText("Agent's draft for GitHub · resolves the thread")).toBeNull());
+    });
+
+    it("discards a draft, and edits one before it is posted", async () => {
+      const slot = render({ getReview: () => withDraft, deleteComment: () => ({ ok: true }), editComment: () => ({ thread: withDraft.threads[0]! }), listThreads: () => ({ threads: withDraft.threads, runs: [] }) });
+      await screen.findByText("Agent's draft for GitHub · resolves the thread");
+      fireEvent.click(screen.getByRole("button", { name: "Edit Claude Code's draft" }));
+      const editor = await screen.findByPlaceholderText("Edit the draft before posting it");
+      fireEvent.change(editor, { target: { value: "Renamed it, and the test." } });
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(slot.inspection.rpcCalls.find((call) => call.method === "editComment")?.input).toEqual({ commentId: "c2", body: "Renamed it, and the test." }));
+      fireEvent.click(await screen.findByRole("button", { name: "Discard Claude Code's draft" }));
+      await waitFor(() => expect(slot.inspection.rpcCalls.find((call) => call.method === "deleteComment")?.input).toEqual({ commentId: "c2" }));
+    });
+
+    it("lists drafts in Submit review apart, left out until ticked", async () => {
+      const slot = render({
+        getReview: () => withDraft,
+        reviewPlan: () => ({
+          lines: [],
+          body: [],
+          blocked: [],
+          replies: [{ reviewThreadId: "aaaaaa000030", commentId: "c2", location: "src/a.ts:2 (new side)", author: "Claude Code", body: "Renamed it.", resolve: true }],
+        }),
+        submitReview: () => ({ url: null, posted: 1, blocked: [], warnings: [] }),
+      });
+      await screen.findByText("#7 Add b");
+      fireEvent.click(screen.getByRole("button", { name: "Submit review…" }));
+      const box = await screen.findByRole("checkbox", { name: "Include Claude Code's draft on src/a.ts:2 (new side)" });
+      expect(box.getAttribute("aria-checked")).toBe("false");
+      expect(screen.getByText("Claude Code's draft · src/a.ts:2 (new side) · resolves the thread")).toBeTruthy();
+      fireEvent.click(box);
+      fireEvent.click(screen.getByRole("button", { name: "Submit: Comment" }));
+      await waitFor(() =>
+        expect(slot.inspection.rpcCalls.find((call) => call.method === "submitReview")?.input).toMatchObject({ items: [], replies: [{ commentId: "c2", body: "Renamed it." }] }),
+      );
+    });
   });
 
   it("is the view a thread's tab comes back on until the pull request is closed or merged", async () => {
@@ -794,8 +1192,9 @@ describe("a pull request's view", () => {
             lines: [{ reviewThreadId: "aaaaaa000031", location: "src/a.ts:2 (new side)", path: "src/a.ts", line: 2, body: "Name it c." }],
             body: [{ reviewThreadId: "aaaaaa000099", location: "the whole diff", body: "Written elsewhere." }],
             blocked: [{ reviewThreadId: "aaaaaa000098", location: "src/gone.ts:4 (new side)", reason: "Its file is not in the pull request." }],
+            replies: [],
           }),
-          submitReview: () => ({ url: null, posted: 2, blocked: [] }),
+          submitReview: () => ({ url: null, posted: 2, blocked: [], warnings: [] }),
         },
       },
     );
@@ -819,8 +1218,8 @@ describe("a pull request's view", () => {
       {
         rpc: {
           getReview: () => ({ ...PR_VIEW, pullRequest: { ...PR_VIEW.pullRequest, headSha: head } }),
-          reviewPlan: () => ({ lines: [{ reviewThreadId: "aaaaaa000031", location: "src/a.ts:2 (new side)", path: "src/a.ts", line: 2, body: "Name it c." }], body: [], blocked: [] }),
-          submitReview: () => ({ url: null, posted: 1, blocked: [] }),
+          reviewPlan: () => ({ lines: [{ reviewThreadId: "aaaaaa000031", location: "src/a.ts:2 (new side)", path: "src/a.ts", line: 2, body: "Name it c." }], body: [], blocked: [], replies: [] }),
+          submitReview: () => ({ url: null, posted: 1, blocked: [], warnings: [] }),
         },
       },
     );

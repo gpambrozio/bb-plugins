@@ -239,6 +239,8 @@ export const rpcContract = defineRpcContract({
         lines: z.array(z.object({ reviewThreadId: z.string(), location: z.string(), path: z.string(), line: z.number(), body: z.string() }).strict()),
         body: z.array(z.object({ reviewThreadId: z.string(), location: z.string(), body: z.string() }).strict()),
         blocked: z.array(z.object({ reviewThreadId: z.string(), location: z.string(), reason: z.string() }).strict()),
+        /** Agents' drafts on GitHub threads, posted as replies in the review; `resolve` ones then resolve their thread. */
+        replies: z.array(z.object({ reviewThreadId: z.string(), commentId: z.string(), location: z.string(), author: z.string(), body: z.string(), resolve: z.boolean() }).strict()),
       })
       .strict(),
   },
@@ -252,9 +254,24 @@ export const rpcContract = defineRpcContract({
         headSha: z.string().regex(/^[0-9a-f]{40}$/),
         /** The comments the user approved, each as the dialog showed its text; one changed since is refused. */
         items: z.array(z.object({ reviewThreadId: id, body: z.string().max(BODY_MAX_CHARS) }).strict()).max(500),
+        /** The agents' drafts the user approved, each as the dialog showed its text. */
+        replies: z.array(z.object({ commentId: id, body: z.string().max(BODY_MAX_CHARS) }).strict()).max(500).optional(),
       })
       .strict(),
-    output: z.object({ url: z.string().nullable(), posted: z.number().int(), blocked: z.array(z.object({ reviewThreadId: z.string(), reason: z.string() }).strict()) }).strict(),
+    output: z
+      .object({
+        url: z.string().nullable(),
+        posted: z.number().int(),
+        blocked: z.array(z.object({ reviewThreadId: z.string(), reason: z.string() }).strict()),
+        /** What went wrong after the review was in (a thread a draft resolves that GitHub would not resolve). */
+        warnings: z.array(z.string()),
+      })
+      .strict(),
+  },
+  postDraft: {
+    /** Posts an agent's draft on a GitHub thread as the user; `body` is the text the tab showed. */
+    input: z.object({ commentId: id, body }).strict(),
+    output: threadResult,
   },
   listReviews: {
     input: z.object({}).strict(),

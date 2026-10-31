@@ -119,9 +119,18 @@ async function plugin(bb: BbPluginApi, deps: { gh?: GhRunner }) {
         lines: plan.lines.map((entry) => ({ reviewThreadId: entry.reviewThreadId, location: location(entry.reviewThreadId), path: entry.draft.path, line: entry.draft.line, body: entry.body })),
         body: plan.body.map((entry) => ({ reviewThreadId: entry.reviewThreadId, location: location(entry.reviewThreadId), body: entry.body })),
         blocked: plan.blocked.map((entry) => ({ ...entry, location: location(entry.reviewThreadId) })),
+        replies: plan.replies.map((entry) => ({
+          reviewThreadId: entry.reviewThreadId,
+          commentId: entry.commentId,
+          location: location(entry.reviewThreadId),
+          author: service.requireThread(entry.reviewThreadId).comments.find((comment) => comment.id === entry.commentId)?.authorName ?? "Agent",
+          body: entry.body,
+          resolve: entry.resolve,
+        })),
       };
     },
     submitReview: (input) => service.submitReview(input),
+    postDraft: async ({ commentId, body }) => ({ thread: await service.postDraft(commentId, body) }),
     send: (input) => service.send(input),
     runDefaults: ({ threadId }) => runs.defaults(threadId),
     startReview: async (input) => ({ run: await runs.startReview(input) }),

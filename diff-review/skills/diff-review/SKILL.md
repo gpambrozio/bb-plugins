@@ -26,7 +26,12 @@ comments were sent to, and the user sees them in the tab, next to the code.
   that shows the thread, and prints the page's address to give the user. A GitHub pull request's
   address in place of the file opens that pull request's review.
 - Comments marked GitHub come from a pull request's review threads. You never post to GitHub: answer
-  them with `reply` like any other (your answer stays in the tab), and the user posts what they choose.
+  them with `reply`, `resolve` or `dismiss` like any other, and your answer becomes a **draft** the
+  user reads and posts to GitHub as their own account (editing it first, or discarding it). A
+  `resolve` or `dismiss` there does not close the thread yet: it is a draft that resolves the thread on
+  GitHub when the user posts it, so the thread stays open on GitHub, and the command says so. Write the
+  text as the reply you would want posted under the user's name, and do not answer the same thread
+  again.
 
 An id may be shortened to any unique prefix of four or more characters.
 

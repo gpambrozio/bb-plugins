@@ -36,3 +36,21 @@ describe("deleting a session", () => {
     expect(reviews.sessionById(gone.id)).toBeNull();
   });
 });
+
+describe("mirroring GitHub's threads", () => {
+  it("keeps one row per GitHub comment, dropping a second copy of one", () => {
+    const { db, store: reviews } = store();
+    const session = reviews.session("env_1", "pr:o/r#7");
+    const remote = {
+      githubThreadId: "PRRT_1", filePath: "a.ts", side: "new" as const, startLine: 1, endLine: 1, status: "open" as const, anchorContent: null,
+      comments: [{ githubCommentId: "PRRC_1", author: "octo", body: "Why?", createdAt: 1 }],
+    };
+    reviews.syncGithubThreads(session.id, [remote]);
+    const [thread] = reviews.threads(session.id);
+    // A copy of the same GitHub comment, as an import racing a draft's adoption once left.
+    db.prepare("INSERT INTO review_comments (id, thread_id, author_type, author_name, body, created_at, github_comment_id) VALUES ('copy', ?, 'user', 'octo', 'Why?', 2, 'PRRC_1')").run(thread!.id);
+    expect(reviews.syncGithubThreads(session.id, [remote])).toBe(true);
+    expect(reviews.threads(session.id)[0]!.comments.map((comment) => [comment.id === "copy", comment.body])).toEqual([[false, "Why?"]]);
+    expect(reviews.syncGithubThreads(session.id, [remote])).toBe(false);
+  });
+});
