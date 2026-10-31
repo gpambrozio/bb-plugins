@@ -278,7 +278,8 @@ a later load that agrees ends it, and one later still that disagrees wins. A fil
 time in order (two at once reached GitHub as two `gh` processes, in either order), and a failed write
 rolls back only if no later change was made, and then to the last mark the server took (`confirmed`:
 the mark shown before the first of the file's queued writes, advanced by each that succeeds), never to
-the optimistic mark of an earlier write that failed too. GitHub keeps one mark per file, not per
+the optimistic mark of an earlier write that failed too. A rollback to a successful write reinstates
+that write's toggle (its answer time and lag), so a load that started before it still cannot clear it. GitHub keeps one mark per file, not per
 revision: a push between the load and the tick marks the new version viewed (the next load shows it),
 so the file's `revision` is not sent. A read that fails gives the view no boxes and the bar's
 `viewedError`, never a failed load; it is the one GitHub read `getReview`'s signal abandons, since it

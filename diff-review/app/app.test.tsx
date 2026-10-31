@@ -1017,6 +1017,32 @@ describe("a pull request's view", () => {
       await twoChanges(["ok", "fail"]);
       expect(ticked()).toBe(true);
     });
+
+    it("keeps the earlier change's mark it went back to over a reload that read GitHub before it", async () => {
+      const held: ((view: unknown) => void)[] = [];
+      const answers: ((error?: Error) => void)[] = [];
+      let loads = 0;
+      render({
+        getReview: () => (loads++ === 0 ? viewedAs("no") : new Promise((resolve) => held.push(resolve))),
+        setViewed: () => new Promise((resolve, reject) => answers.push((error) => (error === undefined ? resolve({ ok: true }) : reject(error)))),
+      });
+      await screen.findByRole("checkbox", { name: "Viewed src/a.ts" });
+      fireEvent.click(box());
+      await settle();
+      fireEvent.click(box());
+      await settle();
+      // A reload starts while the tick is still on its way, and reads GitHub without it.
+      fireEvent.click(screen.getByRole("button", { name: "Reload the diff" }));
+      await waitFor(() => expect(held).toHaveLength(1));
+      await act(async () => answers[0]!());
+      await waitFor(() => expect(answers).toHaveLength(2));
+      await act(async () => answers[1]!(new Error("Resource not accessible by integration")));
+      await settle();
+      expect(ticked()).toBe(true);
+      await act(async () => held[0]!(viewedAs("no")));
+      await settle();
+      expect(ticked()).toBe(true);
+    });
   });
 
   it("offers no Viewed box when GitHub's marks could not be read, and says so", async () => {

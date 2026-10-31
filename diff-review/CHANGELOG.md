@@ -43,7 +43,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   sending it from another, and shows once after posting even when the review re-read GitHub at that
   moment.
 - When two quick changes of a file's Viewed box both fail, the box goes back to the mark GitHub has,
-  not to the first change.
+  not to the first change; when only the second fails, the first stays, even if the review reloads
+  at that moment.
 
 ## 0.4.1
 
