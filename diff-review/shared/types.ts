@@ -101,6 +101,13 @@ export function isHostTarget(target: Target): target is HostTarget {
   return target.kind === "staged" || target.kind === "unstaged" || target.kind === "range";
 }
 
+/**
+ * An agent's answer on a GitHub review thread, waiting for the user to post it: `reply`, or `resolve`
+ * (the agent resolved or dismissed the thread; posting it also resolves the thread on GitHub).
+ */
+export const githubDraftSchema = z.enum(["reply", "resolve"]);
+export type GithubDraft = z.infer<typeof githubDraftSchema>;
+
 export const commentSchema = z
   .object({
     id: z.string(),
@@ -110,6 +117,8 @@ export const commentSchema = z
     body: z.string(),
     createdAt: z.number(),
     editedAt: z.number().nullable(),
+    /** Set on an agent's answer to a GitHub thread that the user has not posted yet. */
+    githubDraft: githubDraftSchema.optional(),
   })
   .strict();
 export type ReviewComment = z.infer<typeof commentSchema>;

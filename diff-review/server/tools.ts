@@ -10,7 +10,7 @@ import { z } from "zod";
 
 import { BODY_MAX_CHARS, GENERAL_PATH, describeLocation, severitySchema, sideSchema } from "../shared/types";
 import { formatThread } from "./cli";
-import { ReviewError, type AgentAction, type ReviewService } from "./review";
+import { answeredText, ReviewError, type AgentAction, type ReviewService } from "./review";
 import type { RunService } from "./runs";
 import { TOOL } from "./tool-names";
 
@@ -85,10 +85,10 @@ export function registerTools(bb: BbPluginApi, review: ReviewService, runs: RunS
       }),
   });
 
-  const answers: { name: string; action: AgentAction; description: string; what: string; pending: string; completed: string; done: string }[] = [
-    { name: TOOL.reply, action: "reply", description: "Answer in a Diff Review comment thread; it stays open.", what: "Your reply, in Markdown", pending: "Replying in a review thread", completed: "Replied in a review thread", done: "Replied on" },
-    { name: TOOL.resolve, action: "resolve", description: "Resolve a Diff Review comment thread with a one-line summary of what you changed.", what: "What you changed, in one sentence", pending: "Resolving a review thread", completed: "Resolved a review thread", done: "Resolved" },
-    { name: TOOL.dismiss, action: "dismiss", description: "Close a Diff Review comment thread you will not act on, with the reason.", what: "Why it needs no change", pending: "Dismissing a review thread", completed: "Dismissed a review thread", done: "Dismissed" },
+  const answers: { name: string; action: AgentAction; description: string; what: string; pending: string; completed: string }[] = [
+    { name: TOOL.reply, action: "reply", description: "Answer in a Diff Review comment thread; it stays open.", what: "Your reply, in Markdown", pending: "Replying in a review thread", completed: "Replied in a review thread" },
+    { name: TOOL.resolve, action: "resolve", description: "Resolve a Diff Review comment thread with a one-line summary of what you changed.", what: "What you changed, in one sentence", pending: "Resolving a review thread", completed: "Resolved a review thread" },
+    { name: TOOL.dismiss, action: "dismiss", description: "Close a Diff Review comment thread you will not act on, with the reason.", what: "Why it needs no change", pending: "Dismissing a review thread", completed: "Dismissed a review thread" },
   ];
   for (const tool of answers) {
     bb.agents.registerTool({
@@ -99,7 +99,7 @@ export function registerTools(bb: BbPluginApi, review: ReviewService, runs: RunS
       execute: (args, ctx) =>
         forCaller(ctx.threadId, async () => {
           const thread = await review.answer(ctx.threadId, args.threadId, tool.action, args.text);
-          return `${tool.done} ${thread.id} (${describeLocation(thread)}).`;
+          return answeredText(thread, tool.action);
         }),
     });
   }

@@ -95,6 +95,12 @@ export interface RemoteThread {
   comments: RemoteComment[];
 }
 
+/** A comment GitHub made: its id and its author's login. */
+export interface PostedComment {
+  id: string;
+  author: string;
+}
+
 export interface DraftThread {
   path: string;
   body: string;
@@ -112,7 +118,7 @@ const ADD_REVIEW = "mutation($input:AddPullRequestReviewInput!){addPullRequestRe
 const ADD_THREAD = "mutation($input:AddPullRequestReviewThreadInput!){addPullRequestReviewThread(input:$input){thread{id comments(first:1){nodes{id}}}}}";
 const SUBMIT_REVIEW = "mutation($input:SubmitPullRequestReviewInput!){submitPullRequestReview(input:$input){pullRequestReview{id url}}}";
 const DELETE_REVIEW = "mutation($input:DeletePullRequestReviewInput!){deletePullRequestReview(input:$input){pullRequestReview{id}}}";
-const REPLY = "mutation($input:AddPullRequestReviewThreadReplyInput!){addPullRequestReviewThreadReply(input:$input){comment{id}}}";
+const REPLY = "mutation($input:AddPullRequestReviewThreadReplyInput!){addPullRequestReviewThreadReply(input:$input){comment{id author{login}}}}";
 const RESOLVE = "mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{id isResolved}}}";
 const UNRESOLVE = "mutation($id:ID!){unresolveReviewThread(input:{threadId:$id}){thread{id isResolved}}}";
 const FILES_QUERY = `query($owner:String!,$name:String!,$number:Int!,$after:String){repository(owner:$owner,name:$name){pullRequest(number:$number){files(first:100,after:$after){pageInfo{hasNextPage endCursor} nodes{path viewerViewedState}}}}}`;
@@ -215,8 +221,12 @@ export class GitHub {
     await this.graphql(viewed ? MARK_VIEWED : UNMARK_VIEWED, { input: { pullRequestId: pullId, path } });
   }
 
-  async reply(threadId: string, body: string): Promise<void> {
-    await this.graphql(REPLY, { input: { pullRequestReviewThreadId: threadId, body } });
+  /** A reply on a review thread; `reviewId` makes it part of that pending review. Answers GitHub's comment. */
+  async reply(threadId: string, body: string, reviewId?: string): Promise<PostedComment> {
+    const data = await this.graphql(REPLY, { input: { pullRequestReviewThreadId: threadId, body, ...(reviewId === undefined ? {} : { pullRequestReviewId: reviewId }) } });
+    const comment = (data.addPullRequestReviewThreadReply as { comment?: { id?: string; author?: { login?: string } | null } | null } | undefined)?.comment;
+    if (comment?.id === undefined) throw new GitHubError("GitHub did not add the reply.");
+    return { id: comment.id, author: comment.author?.login ?? "ghost" };
   }
 
   async setResolved(threadId: string, resolved: boolean): Promise<void> {
@@ -227,7 +237,8 @@ export class GitHub {
    * One review, in diffity's order: a pending review on the head commit, a thread per line comment,
    * then the submit with the verdict and body. `beforeSubmit` runs just before that last request (the
    * head check); a review that fails or is refused part-way is deleted, so no half-made pending
-   * review is left on the pull request. Answers each draft's new thread and first comment ids.
+   * review is left on the pull request. Answers each draft's new thread and first comment ids, and
+   * each of `replies` (replies on existing threads, in the same review) GitHub's comment.
    */
   async submitReview(
     pullId: string,
@@ -236,7 +247,8 @@ export class GitHub {
     body: string,
     drafts: readonly DraftThread[],
     beforeSubmit: () => Promise<void> = async () => undefined,
-  ): Promise<{ url: string | null; threads: { threadId: string; commentId: string | null }[] }> {
+    replies: readonly { threadId: string; body: string }[] = [],
+  ): Promise<{ url: string | null; threads: { threadId: string; commentId: string | null }[]; replies: PostedComment[] }> {
     const added = await this.graphql(ADD_REVIEW, { input: { pullRequestId: pullId, commitOID: headSha } });
     const review = (added.addPullRequestReview as { pullRequestReview?: { id: string; url: string } } | undefined)?.pullRequestReview;
     if (review === undefined) throw new GitHubError("GitHub did not start the review.");
@@ -257,9 +269,11 @@ export class GitHub {
         if (thread === undefined) throw new GitHubError("GitHub did not add a review comment.");
         threads.push({ threadId: thread.id, commentId: thread.comments?.nodes?.[0]?.id ?? null });
       }
+      const posted: PostedComment[] = [];
+      for (const reply of replies) posted.push(await this.reply(reply.threadId, reply.body, review.id));
       await beforeSubmit();
       const submitted = await this.graphql(SUBMIT_REVIEW, { input: { pullRequestReviewId: review.id, event, ...(body.trim() === "" ? {} : { body }) } });
-      return { url: (submitted.submitPullRequestReview as { pullRequestReview?: { url?: string } } | undefined)?.pullRequestReview?.url ?? review.url, threads };
+      return { url: (submitted.submitPullRequestReview as { pullRequestReview?: { url?: string } } | undefined)?.pullRequestReview?.url ?? review.url, threads, replies: posted };
     } catch (error) {
       await this.graphql(DELETE_REVIEW, { input: { pullRequestReviewId: review.id } }).catch(() => undefined);
       throw error;

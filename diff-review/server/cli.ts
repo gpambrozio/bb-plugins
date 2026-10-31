@@ -13,7 +13,7 @@ import { PluginCliError, cliCommand, defineCli, type PluginCliRegistration } fro
 import { describeLocation, describeTarget, GENERAL_PATH, type ReviewThread, type TargetRequest } from "../shared/types";
 import { parseRange } from "../shared/git-spec";
 import { parsePullUrl } from "../shared/github";
-import { ReviewError, type AgentAction, type ReviewService } from "./review";
+import { answeredText, ReviewError, type AgentAction, type ReviewService } from "./review";
 import type { RunService } from "./runs";
 
 /** The longest text a command takes, in UTF-8 bytes; its base64 still fits bb's 16 KiB stdin line. */
@@ -113,8 +113,7 @@ function answerCommand(service: ReviewService, runs: RunService, action: AgentAc
       guarded(async () => {
         const text = textOf(input.positionals.text, input.options["text-base64"]);
         const thread = await service.answer(ctx.threadId, input.positionals.id, action, text);
-        const done = action === "reply" ? "Replied on" : action === "resolve" ? "Resolved" : "Dismissed";
-        return { exitCode: 0, stdout: `${done} ${thread.id} (${describeLocation(thread)}).\n` };
+        return { exitCode: 0, stdout: `${answeredText(thread, action)}\n` };
       }, runs, ctx.threadId),
   });
 }

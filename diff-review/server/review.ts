@@ -12,6 +12,7 @@ import { posix } from "node:path";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import {
+  describeLocation,
   environmentChannel,
   GENERAL_PATH,
   targetKey,
@@ -323,14 +324,16 @@ export class ReviewService {
     return changed;
   }
 
+  /** The user's edit of their own comment, or of an agent's draft for GitHub before posting it. */
   editComment(commentId: string, body: string): ReviewThread {
-    const comment = this.requireUserComment(commentId);
+    const comment = this.requireUserComment(commentId, true);
     this.store.editComment(comment.id, requireText(body, "The comment"));
     return this.changed(comment.threadId);
   }
 
+  /** Deletes the user's own comment, or discards an agent's draft for GitHub. */
   deleteComment(commentId: string): void {
-    const comment = this.requireUserComment(commentId);
+    const comment = this.requireUserComment(commentId, true);
     const thread = this.requireThread(comment.threadId);
     this.store.deleteComment(comment.id);
     const session = this.requireSession(thread.sessionId);
@@ -384,7 +387,8 @@ export class ReviewService {
   /** The threads an agent's thread may answer (`agentScope`); with `all`, the closed ones too. */
   sentTo(callerThreadId: string, all: boolean): ReviewThread[] {
     const rows = this.agentScope(callerThreadId);
-    return all ? rows : rows.filter((row) => row.status === "open");
+    // A GitHub thread an agent resolved stays open until the user posts the draft; it is done here.
+    return all ? rows : rows.filter((row) => row.status === "open" && !row.comments.some((comment) => comment.githubDraft === "resolve"));
   }
 
   /** An agent's reply, resolution or dismissal, from `bb diff-review`. */
@@ -916,17 +920,63 @@ export class ReviewService {
     return plan;
   }
 
-  submitReview(input: { sessionId: string; event: ReviewEvent; body: string; headSha: string; items: readonly { reviewThreadId: string; body: string }[] }) {
+  submitReview(input: {
+    sessionId: string;
+    event: ReviewEvent;
+    body: string;
+    headSha: string;
+    items: readonly { reviewThreadId: string; body: string }[];
+    replies?: readonly { commentId: string; body: string }[];
+  }) {
     const ref = this.pullOf(input.sessionId);
     return github(() => this.prs.submit({ ...input, ref }));
   }
 
-  private requireUserComment(id: string) {
+  /** A comment the user may change: their own, or with `drafts`, an agent's draft for GitHub too. */
+  private requireUserComment(id: string, drafts = false) {
     const comment = this.store.comment(id);
     if (comment === null) throw new ReviewError(`No comment ${id}.`, "unknown_comment");
-    if (comment.authorType !== "user") throw new ReviewError("Only your own comments can be changed.", "not_yours");
+    if (comment.authorType !== "user" && !(drafts && comment.githubDraft !== undefined)) throw new ReviewError("Only your own comments can be changed.", "not_yours");
     return comment;
   }
+
+  /**
+   * Posts an agent's draft on a GitHub thread to GitHub as the user, exactly as the tab showed it
+   * (`body`); a draft changed or discarded since is refused. A resolution also resolves the thread.
+   */
+  async postDraft(commentId: string, body: string): Promise<ReviewThread> {
+    const comment = this.store.comment(commentId);
+    if (comment === null || comment.githubDraft === undefined) throw new ReviewError("That draft is gone or already posted.", "changed");
+    if (comment.body !== body) throw new ReviewError("The draft changed since the tab showed it; look at it again before posting.", "changed");
+    const thread = this.requireThread(comment.threadId);
+    if (thread.githubThreadId === null) throw new ReviewError("That thread is no longer on GitHub.", "changed");
+    // A second Post (another window) while GitHub answers the first would post it twice.
+    if (this.posting.has(comment.id)) throw new ReviewError("That draft is being posted already.", "changed");
+    this.posting.add(comment.id);
+    try {
+      await github(() => this.prs.postDraft(thread, { id: comment.id, body: comment.body, githubDraft: comment.githubDraft! }, this.pullOf(thread.sessionId)));
+    } finally {
+      this.posting.delete(comment.id);
+    }
+    return this.changed(thread.id);
+  }
+
+  /** The drafts whose Post is under way. */
+  private readonly posting = new Set<string>();
+}
+
+/**
+ * What an agent is told after answering: on a GitHub thread, that its answer is a draft the user
+ * posts (and resolves the thread with, for a resolve or dismiss), since nothing reaches GitHub yet.
+ */
+export function answeredText(thread: ReviewThread, action: AgentAction): string {
+  const where = `${thread.id} (${describeLocation(thread)})`;
+  if (thread.githubThreadId !== null) {
+    return action === "reply"
+      ? `Drafted a reply on GitHub thread ${where}; the user posts it to GitHub.`
+      : `Drafted a reply on GitHub thread ${where} that resolves it on GitHub when the user posts it; it stays open on GitHub until then.`;
+  }
+  return `${action === "reply" ? "Replied on" : action === "resolve" ? "Resolved" : "Dismissed"} ${where}.`;
 }
 
 /** A GitHub call, its failure worded as a refusal the tab shows. */

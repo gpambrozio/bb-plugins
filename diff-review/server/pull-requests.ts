@@ -18,7 +18,7 @@ import { z } from "zod";
 import { placeThread } from "../shared/anchors";
 import { parsePullUrl, pullUrl, type PullDetails, type PullRef, type ReviewEvent } from "../shared/github";
 import { linesText, parsePatchLines } from "../shared/patch-lines";
-import { GENERAL_PATH, type DiffFile, type ReviewThread, type Side, type Viewed } from "../shared/types";
+import { GENERAL_PATH, type DiffFile, type GithubDraft, type ReviewThread, type Side, type Viewed } from "../shared/types";
 import { loadDiff, ReviewUnavailable, type DiffSources, type LoadedDiff } from "./diff";
 import { GitHubError, type DraftThread, type FileViewedState, type GitHub, type RemoteThread } from "./github";
 import type { HostFetchPull } from "./host-git";
@@ -48,6 +48,8 @@ export interface ReviewPlan {
   /** Whole-diff and whole-file comments, which go into the review's body. */
   body: { reviewThreadId: string; commentId: string; body: string; text: string }[];
   blocked: { reviewThreadId: string; reason: string }[];
+  /** Agents' drafts on GitHub threads, each a reply in the review; `resolve` ones resolve their thread after it. */
+  replies: { reviewThreadId: string; commentId: string; githubThreadId: string; body: string; resolve: boolean }[];
 }
 
 function firstBody(thread: ReviewThread): string | null {
@@ -55,12 +57,23 @@ function firstBody(thread: ReviewThread): string | null {
   return first === undefined || first.body.trim() === "" ? null : first.body;
 }
 
-/** The user's own open comment threads of a `pr` view, as one review (diffity's `build_review_plan`). */
-export function reviewPlan(threads: readonly ReviewThread[], files: readonly DiffFile[], chosen?: ReadonlySet<string>): ReviewPlan {
-  const plan: ReviewPlan = { lines: [], body: [], blocked: [] };
+/**
+ * The user's own open comment threads of a `pr` view, and agents' drafts on its GitHub threads, as one
+ * review (diffity's `build_review_plan`). `chosen` limits the threads, `chosenReplies` the drafts (by
+ * comment id); each takes everything when left out.
+ */
+export function reviewPlan(threads: readonly ReviewThread[], files: readonly DiffFile[], chosen?: ReadonlySet<string>, chosenReplies?: ReadonlySet<string>): ReviewPlan {
+  const plan: ReviewPlan = { lines: [], body: [], blocked: [], replies: [] };
   const byPath = new Map(files.map((file) => [file.path, file]));
   for (const thread of threads) {
-    if (thread.githubThreadId !== null || thread.status !== "open" || thread.comments[0]?.authorType !== "user") continue;
+    if (thread.githubThreadId !== null) {
+      for (const comment of thread.comments) {
+        if (comment.githubDraft === undefined || (chosenReplies !== undefined && !chosenReplies.has(comment.id))) continue;
+        plan.replies.push({ reviewThreadId: thread.id, commentId: comment.id, githubThreadId: thread.githubThreadId, body: comment.body, resolve: comment.githubDraft === "resolve" });
+      }
+      continue;
+    }
+    if (thread.status !== "open" || thread.comments[0]?.authorType !== "user") continue;
     if (chosen !== undefined && !chosen.has(thread.id)) continue;
     const body = firstBody(thread);
     if (body === null) {
@@ -294,6 +307,25 @@ export class PullRequests {
     await this.sync(thread.sessionId, ref);
   }
 
+  /**
+   * Posts an agent's draft on a mirrored thread to GitHub as the user (`body`: the text the tab showed),
+   * then resolves the thread when the draft is a resolution, and reads the threads back. The draft's
+   * row becomes GitHub's comment, so nothing is lost if the read fails.
+   */
+  async postDraft(thread: ReviewThread, draft: { id: string; body: string; githubDraft: GithubDraft }, ref: PullRef): Promise<void> {
+    const posted = await this.github.reply(thread.githubThreadId!, draft.body);
+    this.store.postedDraft(draft.id, posted.id, posted.author, draft.body);
+    if (draft.githubDraft === "resolve") {
+      try {
+        await this.github.setResolved(thread.githubThreadId!, true);
+      } catch (error) {
+        await this.sync(thread.sessionId, ref);
+        throw new GitHubError(`Posted the reply, but could not resolve the thread on GitHub: ${failure(error)}`);
+      }
+    }
+    await this.sync(thread.sessionId, ref);
+  }
+
   /** Resolves or reopens a mirrored thread on GitHub, then reads it back. */
   async setResolved(thread: ReviewThread, ref: PullRef, resolved: boolean): Promise<void> {
     await this.github.setResolved(thread.githubThreadId!, resolved);
@@ -343,7 +375,9 @@ export class PullRequests {
     body: string;
     headSha: string;
     items: readonly { reviewThreadId: string; body: string }[];
-  }): Promise<{ url: string | null; posted: number; blocked: ReviewPlan["blocked"] }> {
+    /** Agents' drafts the user approved, each by comment id with the text the dialog showed. */
+    replies?: readonly { commentId: string; body: string }[];
+  }): Promise<{ url: string | null; posted: number; blocked: ReviewPlan["blocked"]; warnings: string[] }> {
     const loaded = this.loaded.get(input.sessionId);
     if (loaded === undefined) throw new GitHubError("Load the pull request's view first.");
     const headNow = async () => {
@@ -359,25 +393,50 @@ export class PullRequests {
     });
     if (meta.headRefOid !== input.headSha || loaded.headSha !== input.headSha) throw moved;
     const approved = new Map(input.items.map((item) => [item.reviewThreadId, item.body]));
-    const plan = reviewPlan(this.store.threads(input.sessionId), loaded.files, new Set(approved.keys()));
+    const approvedReplies = new Map((input.replies ?? []).map((reply) => [reply.commentId, reply.body]));
+    const plan = reviewPlan(this.store.threads(input.sessionId), loaded.files, new Set(approved.keys()), new Set(approvedReplies.keys()));
     for (const entry of [...plan.lines, ...plan.body]) {
       if (approved.get(entry.reviewThreadId) !== entry.body) throw new GitHubError("A comment changed since you opened the dialog; open Submit review again to see it.");
     }
+    for (const entry of plan.replies) {
+      if (approvedReplies.get(entry.commentId) !== entry.body) throw new GitHubError("An agent's draft changed since you opened the dialog; open Submit review again to see it.");
+    }
     const missing = [...approved.keys()].filter((id) => ![...plan.lines, ...plan.body, ...plan.blocked].some((entry) => entry.reviewThreadId === id));
-    if (missing.length > 0) throw new GitHubError("A comment you chose is gone or closed; open Submit review again.");
+    const missingReplies = [...approvedReplies.keys()].filter((id) => !plan.replies.some((entry) => entry.commentId === id));
+    if (missing.length > 0 || missingReplies.length > 0) throw new GitHubError("A comment you chose is gone or closed; open Submit review again.");
     const body = reviewBody(input.body, plan.body.map((entry) => entry.text));
-    if (input.event === "REQUEST_CHANGES" && body === "" && plan.lines.length === 0) throw new GitHubError("Requesting changes needs a comment or a review body.");
-    const result = await this.github.submitReview(meta.id, input.headSha, input.event, body, plan.lines.map((entry) => entry.draft), async () => {
-      if ((await headNow()) !== input.headSha) throw moved;
-    });
+    if (input.event === "REQUEST_CHANGES" && body === "" && plan.lines.length === 0 && plan.replies.length === 0) throw new GitHubError("Requesting changes needs a comment or a review body.");
+    const result = await this.github.submitReview(
+      meta.id,
+      input.headSha,
+      input.event,
+      body,
+      plan.lines.map((entry) => entry.draft),
+      async () => {
+        if ((await headNow()) !== input.headSha) throw moved;
+      },
+      plan.replies.map((entry) => ({ threadId: entry.githubThreadId, body: entry.body })),
+    );
     plan.lines.forEach((entry, index) => {
       const made = result.threads[index];
       if (made === undefined) return;
       this.store.linkGithubThread(entry.reviewThreadId, made.threadId, made.commentId === null ? null : { commentId: entry.commentId, body: entry.body, githubCommentId: made.commentId });
     });
     for (const entry of plan.body) this.store.setStatus(entry.reviewThreadId, "resolved", false);
+    // Each draft is now GitHub's comment; a resolution resolves its thread now the review is in.
+    const warnings: string[] = [];
+    for (const [index, entry] of plan.replies.entries()) {
+      const posted = result.replies[index];
+      if (posted !== undefined) this.store.postedDraft(entry.commentId, posted.id, posted.author, entry.body);
+      if (!entry.resolve) continue;
+      try {
+        await this.github.setResolved(entry.githubThreadId, true);
+      } catch (error) {
+        warnings.push(`Could not resolve a thread on GitHub after posting its reply: ${failure(error)}`);
+      }
+    }
     await this.sync(input.sessionId, input.ref);
     this.publish(input.sessionId);
-    return { url: result.url, posted: plan.lines.length + plan.body.length, blocked: plan.blocked };
+    return { url: result.url, posted: plan.lines.length + plan.body.length + plan.replies.length, blocked: plan.blocked, warnings };
   }
 }

@@ -44,13 +44,41 @@ function Comment({ comment }: { comment: ReviewComment }) {
   const editDraft = useDraft(draftKeys.edit(comment.id));
   const editing = editDraft.active !== null;
   const own = comment.authorType === "user";
+  const draft = comment.githubDraft;
+  const [posting, setPosting] = useState(false);
+  const post = () => {
+    setPosting(true);
+    void actions
+      .postDraft(comment)
+      .catch(() => undefined)
+      .finally(() => setPosting(false));
+  };
   return (
-    <div className="flex flex-col gap-1">
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+    <div className={cn("flex flex-col gap-1", draft === undefined ? null : "rounded-md border border-dashed border-border p-2")}>
+      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
         <Icon name={own ? "UserRound" : comment.authorType === "github" ? "Github" : "Bot"} className="size-3.5" />
         <span className="font-medium text-foreground">{comment.authorName}</span>
         <span>{ago(comment.createdAt)}</span>
         {comment.editedAt === null ? null : <span>(edited)</span>}
+        {draft === undefined ? null : (
+          <Badge variant="outline" className="text-xs">
+            {draft === "resolve" ? "Agent's draft for GitHub · resolves the thread" : "Agent's draft for GitHub"}
+          </Badge>
+        )}
+        {draft !== undefined && !editing ? (
+          <span className="ml-auto flex items-center gap-1">
+            <Button type="button" size="sm" className="h-6 gap-1 px-1.5 text-xs" disabled={posting} onClick={post} aria-label={`Post ${comment.authorName}'s draft to GitHub`}>
+              <Icon name={posting ? "Spinner" : "Github"} className="size-3.5" />
+              {draft === "resolve" ? "Post and resolve" : "Post to GitHub"}
+            </Button>
+            <Button type="button" variant="ghost" size="sm" className="h-6 px-1.5 text-xs" disabled={posting} onClick={() => editDraft.open({ body: comment.body })} aria-label={`Edit ${comment.authorName}'s draft`}>
+              Edit
+            </Button>
+            <Button type="button" variant="ghost" size="sm" className="h-6 px-1.5 text-xs" disabled={posting} onClick={() => void actions.remove(comment.id).catch(() => undefined)} aria-label={`Discard ${comment.authorName}'s draft`}>
+              Discard
+            </Button>
+          </span>
+        ) : null}
         {own && !editing ? (
           <span className="ml-auto flex items-center gap-1">
             <Button type="button" variant="ghost" size="sm" className="h-6 px-1.5 text-xs" onClick={() => editDraft.open({ body: comment.body })}>
@@ -64,7 +92,7 @@ function Comment({ comment }: { comment: ReviewComment }) {
       </div>
       {editing ? (
         <CommentComposer
-          placeholder="Edit your comment"
+          placeholder={draft === undefined ? "Edit your comment" : "Edit the draft before posting it"}
           submitLabel="Save"
           initialBody={editDraft.latest().body}
           onChange={editDraft.change}

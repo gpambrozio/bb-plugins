@@ -99,14 +99,18 @@ It is a bb take on [diffity](https://github.com/nilbuild/diffity)'s review loop,
   request…*, or `bb diff-review open <pull request address>` reviews a pull request here: its changes
   are fetched into the workspace's repository (into refs of the plugin's own, never switching your
   checkout), its review threads from GitHub sit on their lines, and a reply, Resolve or Reopen on one
-  goes to GitHub (a reply that asks @reviewer or @agent stays in the tab and asks the AI reviewer). Each
+  goes to GitHub (a reply that asks @reviewer or @agent stays in the tab and asks the AI reviewer). When
+  you send GitHub's threads to an agent, its answers come back as **drafts** marked as the agent's:
+  **Post to GitHub** (or **Post and resolve**, when the agent resolved or dismissed the thread) posts
+  one as your account, and you can edit or discard it first; nothing the agent writes reaches GitHub
+  otherwise. Each
   file's **Viewed** box is your Viewed mark on GitHub, read again on every load: ticking or clearing it
   changes that mark on GitHub, and a file GitHub reset because it changed after you viewed it shows
-  "changed since viewed". **Submit review…** posts your own comments as one review with the verdict you pick;
-  a comment that cannot be posted says why. *A new thread…* in Send to agent fixes the pull request in
+  "changed since viewed". **Submit review…** posts your own comments as one review with the verdict you pick,
+  and the agents' drafts you tick in it as replies in that review; a comment that cannot be posted says why. *A new thread…* in Send to agent fixes the pull request in
   a new worktree that checks it out. This needs the GitHub CLI (`gh`), signed in, on the machine
-  running bb; it posts as that account, only from Submit, and changes your Viewed marks only from the
-  Viewed box.
+  running bb; it posts as that account, only from Submit and a draft's Post, and changes your Viewed
+  marks only from the Viewed box.
 
 Comments are stored by the plugin, per workspace and view, on the bb server; they stay when the tab or
 bb closes. The diffs come from bb's Git plugin (turned on by default), and the staged, unstaged and

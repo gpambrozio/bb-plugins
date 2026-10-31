@@ -1,7 +1,7 @@
 /**
- * The part of GitHub's GraphQL schema the Viewed marks use, as introspection on api.github.com gave it
- * (October 2026: `__type(name: …)` for each type below, read only), and a checker the tests' fake `gh`
- * runs on those requests: every field selected exists on its type, arguments and variables have the
+ * The part of GitHub's GraphQL schema the Viewed marks, replies and resolutions use, as introspection
+ * on api.github.com gave it (October 2026: `__type(name: …)` for each type below, read only), and a
+ * checker the tests' fake `gh` runs on those requests: every field selected exists on its type, arguments and variables have the
  * types GitHub declares, required ones are present, and an input object carries only its own fields.
  * It reads the plain queries this plugin writes (no fragments, directives or aliases), nothing more.
  */
@@ -14,7 +14,7 @@ interface Field {
   args?: Record<string, TypeRef>;
 }
 
-type SchemaType = { kind: "OBJECT"; fields: Record<string, Field> } | { kind: "INPUT_OBJECT"; fields: Record<string, TypeRef> } | { kind: "SCALAR" } | { kind: "ENUM"; values: string[] };
+type SchemaType = { kind: "OBJECT" | "INTERFACE"; fields: Record<string, Field> } | { kind: "INPUT_OBJECT"; fields: Record<string, TypeRef> } | { kind: "SCALAR" } | { kind: "ENUM"; values: string[] };
 
 export const GITHUB_SCHEMA: Record<string, SchemaType> = {
   Query: { kind: "OBJECT", fields: { repository: { type: "Repository", args: { owner: "String!", name: "String!", followRenames: "Boolean" } } } },
@@ -23,8 +23,24 @@ export const GITHUB_SCHEMA: Record<string, SchemaType> = {
     fields: {
       markFileAsViewed: { type: "MarkFileAsViewedPayload", args: { input: "MarkFileAsViewedInput!" } },
       unmarkFileAsViewed: { type: "UnmarkFileAsViewedPayload", args: { input: "UnmarkFileAsViewedInput!" } },
+      addPullRequestReviewThreadReply: { type: "AddPullRequestReviewThreadReplyPayload", args: { input: "AddPullRequestReviewThreadReplyInput!" } },
+      resolveReviewThread: { type: "ResolveReviewThreadPayload", args: { input: "ResolveReviewThreadInput!" } },
+      unresolveReviewThread: { type: "UnresolveReviewThreadPayload", args: { input: "UnresolveReviewThreadInput!" } },
     },
   },
+  AddPullRequestReviewThreadReplyInput: {
+    kind: "INPUT_OBJECT",
+    fields: { clientMutationId: "String", pullRequestReviewId: "ID", pullRequestReviewThreadId: "ID!", body: "String!" },
+  },
+  AddPullRequestReviewThreadReplyPayload: { kind: "OBJECT", fields: { clientMutationId: { type: "String" }, comment: { type: "PullRequestReviewComment" } } },
+  PullRequestReviewComment: { kind: "OBJECT", fields: { id: { type: "ID!" }, author: { type: "Actor" }, body: { type: "String!" } } },
+  Actor: { kind: "INTERFACE", fields: { login: { type: "String!" } } },
+  ResolveReviewThreadInput: { kind: "INPUT_OBJECT", fields: { clientMutationId: "String", resolutionReason: "PullRequestReviewThreadResolutionReason", threadId: "ID!" } },
+  UnresolveReviewThreadInput: { kind: "INPUT_OBJECT", fields: { clientMutationId: "String", threadId: "ID!" } },
+  ResolveReviewThreadPayload: { kind: "OBJECT", fields: { clientMutationId: { type: "String" }, thread: { type: "PullRequestReviewThread" } } },
+  UnresolveReviewThreadPayload: { kind: "OBJECT", fields: { clientMutationId: { type: "String" }, thread: { type: "PullRequestReviewThread" } } },
+  PullRequestReviewThread: { kind: "OBJECT", fields: { id: { type: "ID!" }, isResolved: { type: "Boolean!" } } },
+  PullRequestReviewThreadResolutionReason: { kind: "ENUM", values: ["ADDRESSED", "WONT_FIX", "INVALID"] },
   Repository: { kind: "OBJECT", fields: { pullRequest: { type: "PullRequest", args: { number: "Int!" } } } },
   PullRequest: {
     kind: "OBJECT",
@@ -105,13 +121,24 @@ class Parser {
     return ref;
   }
 
-  /** A value: a variable (`{ variable }`), or a literal kept as its text. */
-  private value(): { variable: string } | { literal: string } {
+  /** A value: a variable (`{ variable }`), an object literal of values, or a literal kept as its text. */
+  private value(): Value {
     if (this.peek() === "$") {
       this.next();
       return { variable: this.next() };
     }
-    if (this.peek() === "{") throw new Error("Object literals are not read; pass an input variable.");
+    if (this.peek() === "{") {
+      this.next();
+      const object: Record<string, Value> = {};
+      while (this.peek() !== "}") {
+        const name = this.next();
+        this.expect(":");
+        object[name] = this.value();
+        this.skipCommas();
+      }
+      this.next();
+      return { object };
+    }
     return { literal: this.next() };
   }
 
@@ -140,7 +167,7 @@ class Parser {
     const fields: Selection[] = [];
     while (this.peek() !== "}") {
       const name = this.next();
-      const args: Record<string, { variable: string } | { literal: string }> = {};
+      const args: Record<string, Value> = {};
       if (this.peek() === "(") {
         this.next();
         while (this.peek() !== ")") {
@@ -159,10 +186,38 @@ class Parser {
   }
 }
 
+type Value = { variable: string } | { literal: string } | { object: Record<string, Value> };
+
 interface Selection {
   name: string;
-  args: Record<string, { variable: string } | { literal: string }>;
+  args: Record<string, Value>;
   selection: Selection[] | null;
+}
+
+/** Whether `value`, written where `wanted` is declared, fits it: a variable's type, an input object's fields, a literal's form. */
+function checkArgument(wanted: TypeRef, value: Value, variables: Record<string, TypeRef>, at: string, errors: string[]): void {
+  if ("variable" in value) {
+    const given = variables[value.variable];
+    if (given === undefined) errors.push(`${at}: $${value.variable} is not declared.`);
+    else if (!fits(given, wanted)) errors.push(`${at}: $${value.variable} is ${given}, it wants ${wanted}.`);
+    return;
+  }
+  const name = namedType(wanted);
+  const type = GITHUB_SCHEMA[name];
+  if ("object" in value) {
+    if (type?.kind !== "INPUT_OBJECT") {
+      errors.push(`${at}: ${name} is not an input object.`);
+      return;
+    }
+    for (const [key, inner] of Object.entries(value.object)) {
+      const field = type.fields[key];
+      if (field === undefined) errors.push(`${at}: ${name} has no field ${key}.`);
+      else checkArgument(field, inner, variables, `${at}.${key}`, errors);
+    }
+    for (const [key, field] of Object.entries(type.fields)) if (field.endsWith("!") && value.object[key] === undefined) errors.push(`${at}.${key}: required (${field}).`);
+    return;
+  }
+  if (name === "Int" && !/^-?\d+$/.test(value.literal)) errors.push(`${at}: wants an Int, got ${value.literal}.`);
 }
 
 /** Whether a variable of type `variable` may be passed where `wanted` is declared (a non-null one also fits a nullable place). */
@@ -172,7 +227,7 @@ function fits(variable: TypeRef, wanted: TypeRef): boolean {
 
 function checkSelection(typeName: string, selection: Selection[], variables: Record<string, TypeRef>, path: string, errors: string[]): void {
   const type = GITHUB_SCHEMA[typeName];
-  if (type === undefined || type.kind !== "OBJECT") {
+  if (type === undefined || (type.kind !== "OBJECT" && type.kind !== "INTERFACE")) {
     errors.push(`${path}: ${typeName} has no fields (or is not in the recorded schema).`);
     return;
   }
@@ -187,15 +242,11 @@ function checkSelection(typeName: string, selection: Selection[], variables: Rec
     for (const [arg, value] of Object.entries(field.args)) {
       const wanted = args[arg];
       if (wanted === undefined) errors.push(`${at}: no argument ${arg}.`);
-      else if ("variable" in value) {
-        const given = variables[value.variable];
-        if (given === undefined) errors.push(`${at}: $${value.variable} is not declared.`);
-        else if (!fits(given, wanted)) errors.push(`${at}: $${value.variable} is ${given}, ${arg} wants ${wanted}.`);
-      } else if (namedType(wanted) === "Int" && !/^-?\d+$/.test(value.literal)) errors.push(`${at}: ${arg} wants an Int, got ${value.literal}.`);
+      else checkArgument(wanted, value, variables, `${at}(${arg})`, errors);
     }
     for (const [arg, wanted] of Object.entries(args)) if (wanted.endsWith("!") && field.args[arg] === undefined) errors.push(`${at}: the required argument ${arg} is missing.`);
     const kind = GITHUB_SCHEMA[namedType(declared.type)]?.kind;
-    if (kind === "OBJECT") {
+    if (kind === "OBJECT" || kind === "INTERFACE") {
       if (field.selection === null) errors.push(`${at}: an object field needs a selection.`);
       else checkSelection(namedType(declared.type), field.selection, variables, at, errors);
     } else if (field.selection !== null) errors.push(`${at}: a ${kind ?? "unknown"} field takes no selection.`);

@@ -24,8 +24,8 @@ and answers each one. It is diffity's review loop on your own working tree, insi
   tab. Write @reviewer in a comment and the view's AI reviewer answers in the thread. Fix in a new
   thread sends the comments to a new thread with the agent you pick.
 - GitHub pull request review: fetch a pull request without switching your checkout, answer its
-  review threads, mark files Viewed in step with GitHub's own Viewed marks, and submit your comments
-  as one review with the verdict you pick.
+  review threads (an agent's answers there come back as drafts you post), mark files Viewed in step
+  with GitHub's own Viewed marks, and submit your comments as one review with the verdict you pick.
 - A Reviews page listing every review with comments across projects, with the open count on its
   sidebar entry, and the count in each thread's Info tab.
 - Ignore patterns for lockfiles and generated files, in the plugin's settings and in the workspace's

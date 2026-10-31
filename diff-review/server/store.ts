@@ -11,7 +11,7 @@ import { randomBytes } from "node:crypto";
 
 import type Database from "better-sqlite3";
 
-import type { AuthorType, DeliveryState, ReviewComment, ReviewThread, Run, RunKind, RunStatus, Severity, Side, ThreadStatus } from "../shared/types";
+import type { AuthorType, DeliveryState, GithubDraft, ReviewComment, ReviewThread, Run, RunKind, RunStatus, Severity, Side, ThreadStatus } from "../shared/types";
 
 export const MIGRATIONS: string[] = [
   `CREATE TABLE review_sessions (
@@ -103,6 +103,9 @@ export const MIGRATIONS: string[] = [
   // comment's, read back from GitHub (stored as `user` rows, shown as `github`; never edited here).
   `ALTER TABLE review_threads ADD COLUMN github_thread_id TEXT`,
   `ALTER TABLE review_comments ADD COLUMN github_comment_id TEXT`,
+  // An agent's answer on a GitHub thread is a draft the user posts (`reply`, or `resolve`: the thread
+  // is resolved on GitHub when it is posted); null for every other comment.
+  `ALTER TABLE review_comments ADD COLUMN github_draft TEXT`,
 ];
 
 export interface Session {
@@ -227,6 +230,7 @@ interface CommentRow {
   thread_id: string;
   author_type: AuthorType;
   github_comment_id: string | null;
+  github_draft: GithubDraft | null;
   author_name: string;
   body: string;
   created_at: number;
@@ -406,11 +410,15 @@ export class ReviewStore {
    * any time when unknown), that send marked answered. An answer from an earlier turn does not
    * acknowledge a question queued after it, nor a send to another thread.
    */
-  answerAsAgent(input: { threadId: string; callerThreadId: string; ackBefore: number | null; authorName: string; body: string; status: ThreadStatus | null }): void {
+  answerAsAgent(input: { threadId: string; callerThreadId: string; ackBefore: number | null; authorName: string; body: string; status: ThreadStatus | null }): { drafted: boolean } {
     const at = this.now();
-    this.db.transaction(() => {
-      this.insertComment({ threadId: input.threadId, authorType: "agent", authorName: input.authorName, body: input.body }, at);
-      if (input.status !== null) this.db.prepare("UPDATE review_threads SET status = ? WHERE id = ?").run(input.status, input.threadId);
+    return this.db.transaction(() => {
+      // On a GitHub thread the answer is a draft for the user to post, and the thread's status stays
+      // GitHub's: a status set here would be read back from GitHub, and undone, by the next sync.
+      const mirror = this.db.prepare<[string], { github_thread_id: string | null }>("SELECT github_thread_id FROM review_threads WHERE id = ?").get(input.threadId)?.github_thread_id != null;
+      const commentId = this.insertComment({ threadId: input.threadId, authorType: "agent", authorName: input.authorName, body: input.body }, at);
+      if (mirror) this.db.prepare("UPDATE review_comments SET github_draft = ? WHERE id = ?").run(input.status === null ? "reply" : "resolve", commentId);
+      else if (input.status !== null) this.db.prepare("UPDATE review_threads SET status = ? WHERE id = ?").run(input.status, input.threadId);
       this.db.prepare("UPDATE review_threads SET updated_at = ? WHERE id = ?").run(at, input.threadId);
       this.db
         .prepare(
@@ -418,6 +426,23 @@ export class ReviewStore {
              (SELECT id FROM sends WHERE bb_thread_id = ? AND (? IS NULL OR created_at <= ?))`,
         )
         .run(input.threadId, input.callerThreadId, input.ackBefore, input.ackBefore);
+      return { drafted: mirror };
+    })();
+  }
+
+  /**
+   * A draft the user posted to GitHub: the row becomes the mirror of the comment GitHub made (its id,
+   * GitHub's author, the text posted), so the next sync finds it rather than adding a copy.
+   */
+  postedDraft(commentId: string, githubCommentId: string, author: string, body: string): void {
+    const at = this.now();
+    const row = this.comment(commentId);
+    if (row === null) return;
+    this.db.transaction(() => {
+      this.db
+        .prepare("UPDATE review_comments SET github_comment_id = ?, github_draft = NULL, author_type = 'user', author_name = ?, body = ? WHERE id = ?")
+        .run(githubCommentId, author, body, commentId);
+      this.touch(row.threadId, at, false);
     })();
   }
 
@@ -816,5 +841,6 @@ function toComment(row: CommentRow): ReviewComment {
     body: row.body,
     createdAt: row.created_at,
     editedAt: row.edited_at,
+    ...(row.github_draft === null || row.github_comment_id !== null ? {} : { githubDraft: row.github_draft }),
   };
 }

@@ -8,7 +8,7 @@ import { createContext, useContext, useMemo, type ReactNode } from "react";
 import { toast } from "sonner";
 
 import type { RpcContract } from "../shared/contract";
-import type { DiffFile, ReviewThread, Run, Severity, Side, Target, ThreadStatus } from "../shared/types";
+import type { DiffFile, ReviewComment, ReviewThread, Run, Severity, Side, Target, ThreadStatus } from "../shared/types";
 import { fileRef } from "./open-file";
 import { errorMessage, GITHUB_VIEWED_LAG_MS } from "./use-review";
 
@@ -29,6 +29,8 @@ export interface ReviewActions {
   reply(reviewThreadId: string, body: string): Promise<void>;
   edit(commentId: string, body: string): Promise<void>;
   remove(commentId: string): Promise<void>;
+  /** Posts an agent's draft on a GitHub thread to GitHub as the user, as it reads on screen. */
+  postDraft(comment: ReviewComment): Promise<void>;
   setStatus(reviewThreadId: string, status: ThreadStatus): Promise<void>;
   openThread(threadId: string): void;
   /** Marks a file Viewed (folding it) or clears its mark. */
@@ -121,6 +123,11 @@ export function ReviewActionsProvider({
         reported("Could not delete the comment", async () => {
           await rpc.call("deleteComment", { commentId });
           await refreshThreads();
+        }),
+      postDraft: (comment) =>
+        reported("Could not post the draft to GitHub", async () => {
+          putThread((await rpc.call("postDraft", { commentId: comment.id, body: comment.body })).thread);
+          toast.success(comment.githubDraft === "resolve" ? "Posted to GitHub and resolved the thread." : "Posted to GitHub.");
         }),
       setStatus: (reviewThreadId, status) =>
         reported("Could not change the thread", async () => {

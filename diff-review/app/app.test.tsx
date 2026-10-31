@@ -839,8 +839,8 @@ describe("a pull request's view", () => {
         rpc: {
           getReview: () => PR_VIEW,
           // The dialog shows, and posts, the text as the plan read it, even if the view's copy is older.
-          reviewPlan: () => ({ lines: [{ reviewThreadId: "aaaaaa000031", location: "src/a.ts:2 (new side)", path: "src/a.ts", line: 2, body: "Name it c, please." }], body: [], blocked: [] }),
-          submitReview: () => ({ url: "https://github.com/o/r/pull/7#review-1", posted: 1, blocked: [] }),
+          reviewPlan: () => ({ lines: [{ reviewThreadId: "aaaaaa000031", location: "src/a.ts:2 (new side)", path: "src/a.ts", line: 2, body: "Name it c, please." }], body: [], blocked: [], replies: [] }),
+          submitReview: () => ({ url: "https://github.com/o/r/pull/7#review-1", posted: 1, blocked: [], warnings: [] }),
         },
         openUrl: (url) => (opened.push(url), true),
       },
@@ -864,6 +864,7 @@ describe("a pull request's view", () => {
         body: "",
         headSha: HEAD,
         items: [{ reviewThreadId: "aaaaaa000031", body: "Name it c, please." }],
+        replies: [],
       }),
     );
   });
@@ -992,6 +993,57 @@ describe("a pull request's view", () => {
     expect(screen.queryByRole("checkbox", { name: "Viewed src/a.ts" })).toBeNull();
   });
 
+  describe("an agent's drafts on GitHub threads", () => {
+    const DRAFT = { id: "c2", authorType: "agent" as const, authorName: "Claude Code", body: "Renamed it.", createdAt: 2, editedAt: null, githubDraft: "resolve" as const };
+    const withDraft = { ...PR_VIEW, threads: [{ ...PR_VIEW.threads[0]!, comments: [...PR_VIEW.threads[0]!.comments, DRAFT] }, PR_VIEW.threads[1]!] };
+
+    it("shows a draft as the agent's, and posts it to GitHub as it reads, resolving the thread", async () => {
+      const posted = { ...withDraft.threads[0]!, status: "resolved" as const, comments: [withDraft.threads[0]!.comments[0]!, { id: "c2", authorType: "github" as const, authorName: "me", body: "Renamed it.", createdAt: 2, editedAt: null }] };
+      const slot = render({ getReview: () => withDraft, postDraft: () => ({ thread: posted }) });
+      expect(await screen.findByText("Agent's draft for GitHub · resolves the thread")).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Edit Claude Code's draft" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Discard Claude Code's draft" })).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "Post Claude Code's draft to GitHub" }));
+      await waitFor(() => expect(slot.inspection.rpcCalls.find((call) => call.method === "postDraft")?.input).toEqual({ commentId: "c2", body: "Renamed it." }));
+      await waitFor(() => expect(screen.queryByText("Agent's draft for GitHub · resolves the thread")).toBeNull());
+    });
+
+    it("discards a draft, and edits one before it is posted", async () => {
+      const slot = render({ getReview: () => withDraft, deleteComment: () => ({ ok: true }), editComment: () => ({ thread: withDraft.threads[0]! }), listThreads: () => ({ threads: withDraft.threads, runs: [] }) });
+      await screen.findByText("Agent's draft for GitHub · resolves the thread");
+      fireEvent.click(screen.getByRole("button", { name: "Edit Claude Code's draft" }));
+      const editor = await screen.findByPlaceholderText("Edit the draft before posting it");
+      fireEvent.change(editor, { target: { value: "Renamed it, and the test." } });
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(slot.inspection.rpcCalls.find((call) => call.method === "editComment")?.input).toEqual({ commentId: "c2", body: "Renamed it, and the test." }));
+      fireEvent.click(await screen.findByRole("button", { name: "Discard Claude Code's draft" }));
+      await waitFor(() => expect(slot.inspection.rpcCalls.find((call) => call.method === "deleteComment")?.input).toEqual({ commentId: "c2" }));
+    });
+
+    it("lists drafts in Submit review apart, left out until ticked", async () => {
+      const slot = render({
+        getReview: () => withDraft,
+        reviewPlan: () => ({
+          lines: [],
+          body: [],
+          blocked: [],
+          replies: [{ reviewThreadId: "aaaaaa000030", commentId: "c2", location: "src/a.ts:2 (new side)", author: "Claude Code", body: "Renamed it.", resolve: true }],
+        }),
+        submitReview: () => ({ url: null, posted: 1, blocked: [], warnings: [] }),
+      });
+      await screen.findByText("#7 Add b");
+      fireEvent.click(screen.getByRole("button", { name: "Submit review…" }));
+      const box = await screen.findByRole("checkbox", { name: "Include Claude Code's draft on src/a.ts:2 (new side)" });
+      expect(box.getAttribute("aria-checked")).toBe("false");
+      expect(screen.getByText("Claude Code's draft · src/a.ts:2 (new side) · resolves the thread")).toBeTruthy();
+      fireEvent.click(box);
+      fireEvent.click(screen.getByRole("button", { name: "Submit: Comment" }));
+      await waitFor(() =>
+        expect(slot.inspection.rpcCalls.find((call) => call.method === "submitReview")?.input).toMatchObject({ items: [], replies: [{ commentId: "c2", body: "Renamed it." }] }),
+      );
+    });
+  });
+
   it("is the view a thread's tab comes back on until the pull request is closed or merged", async () => {
     const PR = { kind: "pr", owner: "o", repo: "r", number: 7 };
     let state = "OPEN";
@@ -1028,8 +1080,9 @@ describe("a pull request's view", () => {
             lines: [{ reviewThreadId: "aaaaaa000031", location: "src/a.ts:2 (new side)", path: "src/a.ts", line: 2, body: "Name it c." }],
             body: [{ reviewThreadId: "aaaaaa000099", location: "the whole diff", body: "Written elsewhere." }],
             blocked: [{ reviewThreadId: "aaaaaa000098", location: "src/gone.ts:4 (new side)", reason: "Its file is not in the pull request." }],
+            replies: [],
           }),
-          submitReview: () => ({ url: null, posted: 2, blocked: [] }),
+          submitReview: () => ({ url: null, posted: 2, blocked: [], warnings: [] }),
         },
       },
     );
@@ -1053,8 +1106,8 @@ describe("a pull request's view", () => {
       {
         rpc: {
           getReview: () => ({ ...PR_VIEW, pullRequest: { ...PR_VIEW.pullRequest, headSha: head } }),
-          reviewPlan: () => ({ lines: [{ reviewThreadId: "aaaaaa000031", location: "src/a.ts:2 (new side)", path: "src/a.ts", line: 2, body: "Name it c." }], body: [], blocked: [] }),
-          submitReview: () => ({ url: null, posted: 1, blocked: [] }),
+          reviewPlan: () => ({ lines: [{ reviewThreadId: "aaaaaa000031", location: "src/a.ts:2 (new side)", path: "src/a.ts", line: 2, body: "Name it c." }], body: [], blocked: [], replies: [] }),
+          submitReview: () => ({ url: null, posted: 1, blocked: [], warnings: [] }),
         },
       },
     );

@@ -641,6 +641,8 @@ describe("reviewing a GitHub pull request", () => {
       /** GitHub's error for the Viewed read, or the mark and unmark, when set. */
       viewedFails: null as string | null,
       markFails: null as string | null,
+      /** GitHub's error for resolving or reopening a thread, when set. */
+      resolveFails: null as string | null,
       threads: [
         {
           id: "PRRT_1", isResolved: false, isOutdated: false, path: "src/a.ts", line: 2, startLine: null, originalLine: 2, originalStartLine: null, diffSide: "RIGHT",
@@ -653,7 +655,7 @@ describe("reviewing a GitHub pull request", () => {
       const request = JSON.parse(stdin!) as { query: string; variables: Record<string, unknown> };
       requests.push(request);
       const data = (value: unknown) => JSON.stringify({ data: value });
-      if (request.query.includes("viewerViewedState") || request.query.includes("FileAsViewed")) {
+      if (["viewerViewedState", "FileAsViewed", "addPullRequestReviewThreadReply", "resolveReviewThread"].some((name) => request.query.includes(name))) {
         // Checked against GitHub's own schema, as GitHub would check them.
         expect(checkGithubRequest(request.query, request.variables)).toEqual([]);
       }
@@ -695,16 +697,18 @@ describe("reviewing a GitHub pull request", () => {
         return data({ addPullRequestReviewThread: { thread: { id, comments: { nodes: [{ id: `${id}_c1` }] } } } });
       }
       if (request.query.includes("resolveReviewThread")) {
+        if (remote.resolveFails !== null) return JSON.stringify({ errors: [{ message: remote.resolveFails }] });
         const thread = remote.threads.find((entry) => entry.id === request.variables.id)!;
         thread.isResolved = !request.query.includes("unresolve");
-        return data({});
+        return data({ [request.query.includes("unresolve") ? "unresolveReviewThread" : "resolveReviewThread"]: { thread: { id: thread.id, isResolved: thread.isResolved } } });
       }
       if (request.query.includes("addPullRequestReviewThreadReply")) {
         const input = request.variables.input as { pullRequestReviewThreadId: string; body: string };
         const thread = remote.threads.find((entry) => entry.id === input.pullRequestReviewThreadId)!;
         const nodes = (thread.comments as { nodes: unknown[] }).nodes;
-        nodes.push({ id: `${input.pullRequestReviewThreadId}_r${nodes.length}`, body: input.body, createdAt: "2026-10-02T00:00:00Z", author: { login: "me" } });
-        return data({});
+        const id = `${input.pullRequestReviewThreadId}_r${nodes.length}`;
+        nodes.push({ id, body: input.body, createdAt: "2026-10-02T00:00:00Z", author: { login: "me" } });
+        return data({ addPullRequestReviewThreadReply: { comment: { id, author: { login: "me" } } } });
       }
       return data({});
     };
@@ -824,7 +828,7 @@ describe("reviewing a GitHub pull request", () => {
       "query.repository.pullRequest.files.nodes.viewedState: PullRequestChangedFile has no field viewedState.",
     ]);
     expect(checkGithubRequest("query($owner:String!,$name:String!,$number:String!){repository(owner:$owner,name:$name){pullRequest(number:$number){id}}}", { owner: "o", name: "r", number: "7" })).toEqual([
-      "query.repository.pullRequest: $number is String!, number wants Int!.",
+      "query.repository.pullRequest(number): $number is String!, it wants Int!.",
     ]);
   });
 
@@ -839,6 +843,138 @@ describe("reviewing a GitHub pull request", () => {
     expect(((await rpc("setStatus", { reviewThreadId: mirror!.id, status: "open" })) as { thread: ReviewThread }).thread.status).toBe("open");
     await expect(rpc("setStatus", { reviewThreadId: mirror!.id, status: "dismissed" })).rejects.toMatchObject({ code: "invalid" });
     await expect(rpc("editComment", { commentId: mirror!.comments[0]!.id, body: "x" })).rejects.toMatchObject({ code: "forbidden" });
+  });
+
+  describe("an agent's answers on GitHub threads", () => {
+    /** The pull request's view with its GitHub thread and a thread of the plugin's own, both sent to the agent. */
+    async function sentPull() {
+      const github = fakeGitHub();
+      const context = await setup({ gh: github.gh });
+      const { sessionId, threads } = await context.view(PULL);
+      const mirror = threads[0]!;
+      const local = ((await context.rpc("createThread", { sessionId, filePath: "src/a.ts", side: "new", startLine: 2, endLine: 2, severity: null, anchorContent: "const b = 3;", body: "Local one" })) as { thread: ReviewThread }).thread;
+      await context.rpc("send", { sessionId, threadId: THREAD, reviewThreadIds: [mirror.id, local.id], note: "" });
+      const mutations = () => github.requests.filter((request) => request.query.startsWith("mutation"));
+      const row = async (id: string) => ((await context.rpc("listThreads", { sessionId })) as { threads: ReviewThread[] }).threads.find((thread) => thread.id === id)!;
+      return { ...context, github, sessionId, mirror, local, mutations, row };
+    }
+
+    it("keeps an agent's resolve of a GitHub thread as a draft that resolves it when posted, which a sync cannot undo", async () => {
+      const { harness, view, mirror, local, mutations, row } = await sentPull();
+      const resolved = await harness.behavior.runCli(["resolve", mirror.id, "Renamed", "it."], { threadId: THREAD });
+      expect(resolved).toMatchObject({ exitCode: 0, stdout: `Drafted a reply on GitHub thread ${mirror.id} (src/a.ts:2 (new side)) that resolves it on GitHub when the user posts it; it stays open on GitHub until then.\n` });
+      // A thread of the plugin's own resolves as before.
+      expect((await harness.behavior.runCli(["resolve", local.id, "Done."], { threadId: THREAD })).stdout).toBe(`Resolved ${local.id} (src/a.ts:2 (new side)).\n`);
+      expect(mutations()).toEqual([]);
+
+      let thread = await row(mirror.id);
+      expect(thread.status).toBe("open");
+      expect(thread.delivery!.state).toBe("answered");
+      expect(thread.comments.at(-1)).toMatchObject({ authorType: "agent", authorName: "Claude Code", body: "Renamed it.", githubDraft: "resolve" });
+      // Read again from GitHub, which still has the thread open: the agent's resolution is still there.
+      await view(PULL);
+      thread = await row(mirror.id);
+      expect(thread.comments.map((comment) => [comment.authorType, comment.githubDraft ?? null])).toEqual([["github", null], ["agent", "resolve"]]);
+      expect((await row(local.id)).status).toBe("resolved");
+      // Done, as far as the agent goes: neither is listed as open any more.
+      expect((await harness.behavior.runCli(["list"], { threadId: THREAD })).stdout).toBe("No open comment threads were sent to this thread.\n");
+
+      const replied = await harness.behavior.runCli(["reply", mirror.id, "Also", "renamed", "the", "test."], { threadId: THREAD });
+      expect(replied.stdout).toBe(`Drafted a reply on GitHub thread ${mirror.id} (src/a.ts:2 (new side)); the user posts it to GitHub.\n`);
+      expect((await row(mirror.id)).comments.at(-1)).toMatchObject({ githubDraft: "reply" });
+      expect(mutations()).toEqual([]);
+    });
+
+    it("posts a draft to GitHub as the user, exactly as the tab showed it, then resolves the thread", async () => {
+      const { harness, rpc, view, mirror, mutations, row, github } = await sentPull();
+      await harness.behavior.runCli(["resolve", mirror.id, "Renamed", "it."], { threadId: THREAD });
+      const draft = (await row(mirror.id)).comments.at(-1)!;
+      await expect(rpc("postDraft", { commentId: draft.id, body: "Something else" })).rejects.toMatchObject({ code: "conflict", message: expect.stringContaining("changed since the tab showed it") });
+      expect(mutations()).toEqual([]);
+
+      const posted = ((await rpc("postDraft", { commentId: draft.id, body: "Renamed it." })) as { thread: ReviewThread }).thread;
+      expect(mutations().map((request) => [request.query.includes("addPullRequestReviewThreadReply") ? "reply" : request.query.includes("unresolve") ? "unresolve" : "resolve", request.variables])).toEqual([
+        ["reply", { input: { pullRequestReviewThreadId: "PRRT_1", body: "Renamed it." } }],
+        ["resolve", { id: "PRRT_1" }],
+      ]);
+      expect(posted.status).toBe("resolved");
+      expect(posted.comments.map((comment) => [comment.id === draft.id, comment.authorType, comment.authorName, comment.body, comment.githubDraft ?? null])).toEqual([
+        [false, "github", "octo", "Why 3?", null],
+        [true, "github", "me", "Renamed it.", null],
+      ]);
+      // GitHub's copy is that same row: read again, nothing doubles.
+      expect((await view(PULL)).threads.find((thread) => thread.id === mirror.id)!.comments).toHaveLength(2);
+      expect(github.remote.threads[0]!.isResolved).toBe(true);
+      await expect(rpc("postDraft", { commentId: draft.id, body: "Renamed it." })).rejects.toMatchObject({ code: "conflict" });
+    });
+
+    it("posts a draft once when Post is pressed twice", async () => {
+      const { harness, rpc, mirror, mutations, row } = await sentPull();
+      await harness.behavior.runCli(["reply", mirror.id, "Once."], { threadId: THREAD });
+      const draft = (await row(mirror.id)).comments.at(-1)!;
+      const results = await Promise.allSettled([rpc("postDraft", { commentId: draft.id, body: "Once." }), rpc("postDraft", { commentId: draft.id, body: "Once." })]);
+      expect(results.map((result) => result.status).sort()).toEqual(["fulfilled", "rejected"]);
+      expect(mutations()).toHaveLength(1);
+    });
+
+    it("lets the user edit or discard a draft first, and nothing else of the agent's", async () => {
+      const { harness, rpc, mirror, local, mutations, row } = await sentPull();
+      await harness.behavior.runCli(["reply", mirror.id, "First", "try."], { threadId: THREAD });
+      await harness.behavior.runCli(["reply", local.id, "Local", "answer."], { threadId: THREAD });
+      const draft = (await row(mirror.id)).comments.at(-1)!;
+      await rpc("editComment", { commentId: draft.id, body: "Better words." });
+      expect((await row(mirror.id)).comments.at(-1)).toMatchObject({ body: "Better words.", githubDraft: "reply", editedAt: expect.any(Number) });
+      await rpc("postDraft", { commentId: draft.id, body: "Better words." });
+      expect(mutations().map((request) => request.variables)).toEqual([{ input: { pullRequestReviewThreadId: "PRRT_1", body: "Better words." } }]);
+      // A reply draft leaves the thread open.
+      expect((await row(mirror.id)).status).toBe("open");
+
+      await harness.behavior.runCli(["reply", mirror.id, "Not", "this."], { threadId: THREAD });
+      const discard = (await row(mirror.id)).comments.at(-1)!;
+      await rpc("deleteComment", { commentId: discard.id });
+      expect((await row(mirror.id)).comments.map((comment) => comment.body)).toEqual(["Why 3?", "Better words."]);
+      const agentLocal = (await row(local.id)).comments.at(-1)!;
+      await expect(rpc("editComment", { commentId: agentLocal.id, body: "x" })).rejects.toMatchObject({ code: "forbidden" });
+      await expect(rpc("postDraft", { commentId: agentLocal.id, body: "Local answer." })).rejects.toMatchObject({ code: "conflict" });
+    });
+
+    it("says so when GitHub took the reply but would not resolve the thread", async () => {
+      const { harness, rpc, mirror, row, github } = await sentPull();
+      await harness.behavior.runCli(["dismiss", mirror.id, "Intended."], { threadId: THREAD });
+      const draft = (await row(mirror.id)).comments.at(-1)!;
+      expect(draft.githubDraft).toBe("resolve");
+      github.remote.resolveFails = "Resource not accessible by integration";
+      await expect(rpc("postDraft", { commentId: draft.id, body: "Intended." })).rejects.toMatchObject({
+        code: "conflict",
+        message: "Posted the reply, but could not resolve the thread on GitHub: Resource not accessible by integration",
+      });
+      const thread = await row(mirror.id);
+      expect(thread.status).toBe("open");
+      expect(thread.comments.at(-1)).toMatchObject({ authorType: "github", body: "Intended." });
+    });
+
+    it("posts drafts with Submit review as replies in the review, then resolves the ones that resolve", async () => {
+      const { harness, rpc, mirror, sessionId, github, row } = await sentPull();
+      await harness.behavior.runCli(["resolve", mirror.id, "Renamed", "it."], { threadId: THREAD });
+      const draft = (await row(mirror.id)).comments.at(-1)!;
+      const plan = (await rpc("reviewPlan", { sessionId })) as { replies: unknown[] };
+      expect(plan.replies).toEqual([{ reviewThreadId: mirror.id, commentId: draft.id, location: "src/a.ts:2 (new side)", author: "Claude Code", body: "Renamed it.", resolve: true }]);
+      await expect(rpc("submitReview", { sessionId, event: "COMMENT", body: "", headSha: HEAD, items: [], replies: [{ commentId: draft.id, body: "Edited elsewhere" }] })).rejects.toMatchObject({ code: "conflict" });
+
+      const result = (await rpc("submitReview", { sessionId, event: "COMMENT", body: "", headSha: HEAD, items: [], replies: [{ commentId: draft.id, body: "Renamed it." }] })) as { posted: number; warnings: string[] };
+      expect(result).toMatchObject({ posted: 1, warnings: [] });
+      const sent = github.requests.filter((request) => request.query.startsWith("mutation"));
+      expect(sent.map((request) => request.variables)).toEqual([
+        { input: { pullRequestId: "PR_1", commitOID: HEAD } },
+        { input: { pullRequestReviewThreadId: "PRRT_1", body: "Renamed it.", pullRequestReviewId: "PRR_1" } },
+        { input: { pullRequestReviewId: "PRR_1", event: "COMMENT" } },
+        { id: "PRRT_1" },
+      ]);
+      const thread = await row(mirror.id);
+      expect(thread.status).toBe("resolved");
+      expect(thread.comments.map((comment) => [comment.authorType, comment.body, comment.githubDraft ?? null])).toEqual([["github", "Why 3?", null], ["github", "Renamed it.", null]]);
+      expect(((await rpc("reviewPlan", { sessionId })) as { replies: unknown[] }).replies).toEqual([]);
+    });
   });
 
   it("keeps a reply that asks the reviewer on a GitHub thread in the tab, and asks the reviewer", async () => {

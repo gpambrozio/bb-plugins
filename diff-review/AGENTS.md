@@ -24,7 +24,7 @@ specific to `diff-review`.
 | `server/host-git.ts` | The server's client of the host entry. |
 | `server/edits.ts` | Applying a suggestion (bb's file read and `expectedSha256` write, its lines checked against what the tab showed) and handing a revert to the host entry. |
 | `server/github.ts`, `server/pull-requests.ts` | `gh api graphql` (diffity's queries) and the `pr` view: load (host fetch, range diff, the account's Viewed marks), mirror review threads, reply / resolve and Viewed on GitHub, the review plan and Submit. |
-| `server/testing/github-schema.ts` | The slice of GitHub's GraphQL schema the Viewed requests use, recorded from introspection, and the checker the tests' fake `gh` runs on them. |
+| `server/testing/github-schema.ts` | The slice of GitHub's GraphQL schema the Viewed, reply and resolve requests use, recorded from introspection, and the checker the tests' fake `gh` runs on them. |
 | `server/refusal.ts` | `ReviewError`s answered as `experimental_PluginRpcRefusal`, so a caller's mistake is not logged as a crash. |
 | `shared/routes.ts` | The Reviews page's addresses (`<thread>/<view>[/<file>]`), and `bb diff-review open`'s realtime request. |
 | `shared/suggestion.ts`, `shared/revert.ts` | Suggestion blocks (diffity's) and line replacement; reverting hunks from a file's patch. |
@@ -321,8 +321,24 @@ asks the reviewer, since on GitHub it would notify the accounts of those names (
 mirror's own comments). The Submit dialog draws every row from the plan it read, each entry with its
 `location`, never from the tab's threads, which may lag behind it: whatever Submit posts is on screen.
 
-**Submit** is the only path that posts a review (decision 5); an agent's `reply` on a mirror stays in
-the tab.
+**An agent's answer on a GitHub thread is a draft the user posts** (the owner's choice: "draft, you
+approve"). `answerAsAgent` stores a `reply`, `resolve` or `dismiss` on a mirror as an agent comment
+with `github_draft` (`reply`, or `resolve` for both of the others: GitHub has no dismiss, and closing a
+thread there is resolving it) and **never sets a mirror's status**. A status set here was read back
+from GitHub, and undone, by the next sync (`syncGithubThreads` takes GitHub's status), which is how an
+agent's resolve of a GitHub thread came undone while those of the plugin's own threads stayed. The
+agent is told its answer is a draft (`answeredText`), and a mirror with a `resolve` draft no longer
+counts as open for it (`sentTo`). The user may edit or discard a draft (`editComment` /
+`deleteComment` accept one), and **Post** (`postDraft`) sends it with `addPullRequestReviewThreadReply`
+exactly as the tab showed it (a draft changed since is refused), then resolves the thread for a
+`resolve` draft; the draft's row becomes GitHub's comment (`postedDraft`: its id and author), so the
+sync finds it rather than adding a copy. A resolve that fails after the reply went in says so; the
+reply stays posted. Agents never post: only the user's Post and Submit do.
+
+**Submit** is the only path that posts a review (decision 5). It also takes agents' drafts, listed
+apart and each left out until the user ticks it: they go in as replies in the same pending review
+(`pullRequestReviewId`), and `resolve` ones resolve their thread once the review is in (a failure there
+is a warning, not a failed submit).
 - It posts exactly what the dialog showed: the plan carries each comment's text, the dialog sends it
   back, and a comment changed since is refused before anything is posted. The dialog fixes the head
   when it opens and sends that one; a load of new commits while it is open closes it (and the
@@ -361,7 +377,8 @@ the branch has some, and the tab's picker adopts that view without loading it ag
   0.2.0 added the `runs` table at 7–9, its `parent_thread_id` at 10 (an `ALTER`, since 7 was
   already applied on installs of the branch), `view_states` at 11 and `send_previous` at 12; 0.3.0
   added `review_threads.file_revision` at 13 and `runs.purpose` at 14; 0.4.0 added
-  `review_threads.github_thread_id` at 15 and `review_comments.github_comment_id` at 16. `docs.test.ts`
+  `review_threads.github_thread_id` at 15 and `review_comments.github_comment_id` at 16; 0.5.0 added
+  `review_comments.github_draft` at 17. `docs.test.ts`
   keeps the README's install range on the package's minor version.
 - The tab's kept state (drafts, file and thread folds, scroll) lives in the plugin's database, keyed by bb thread and
   session, not in `localStorage`: it must survive a restart and follow the user to another device (the
