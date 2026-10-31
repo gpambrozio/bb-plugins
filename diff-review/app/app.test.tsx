@@ -1043,6 +1043,59 @@ describe("a pull request's view", () => {
       await settle();
       expect(ticked()).toBe(true);
     });
+
+    it("keeps an answered tick over a reload that read GitHub before it, when a later untick fails", async () => {
+      const held: ((view: unknown) => void)[] = [];
+      const answers: ((error?: Error) => void)[] = [];
+      let loads = 0;
+      render({
+        getReview: () => (loads++ === 0 ? viewedAs("no") : new Promise((resolve) => held.push(resolve))),
+        setViewed: () => new Promise((resolve, reject) => answers.push((error) => (error === undefined ? resolve({ ok: true }) : reject(error)))),
+      });
+      await screen.findByRole("checkbox", { name: "Viewed src/a.ts" });
+      fireEvent.click(box());
+      await settle();
+      fireEvent.click(screen.getByRole("button", { name: "Reload the diff" }));
+      await waitFor(() => expect(held).toHaveLength(1));
+      // The tick is answered, and nothing else of the file's is under way, before the untick.
+      await act(async () => answers[0]!());
+      await settle();
+      fireEvent.click(box());
+      await waitFor(() => expect(answers).toHaveLength(2));
+      await act(async () => answers[1]!(new Error("Resource not accessible by integration")));
+      await settle();
+      expect(ticked()).toBe(true);
+      await act(async () => held[0]!(viewedAs("no")));
+      await settle();
+      expect(ticked()).toBe(true);
+    });
+
+    it("goes back to GitHub's word, read while a change was under way, when that change fails", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-10-30T12:00:00Z"));
+      let github: "no" | "yes" = "no";
+      const answers: ((error?: Error) => void)[] = [];
+      render({
+        getReview: () => viewedAs(github),
+        setViewed: () => new Promise((resolve, reject) => answers.push((error) => (error === undefined ? resolve({ ok: true }) : reject(error)))),
+      });
+      await screen.findByRole("checkbox", { name: "Viewed src/a.ts" });
+      fireEvent.click(box());
+      await settle();
+      github = "yes";
+      await act(async () => answers[0]!());
+      await settle();
+      // Long after, the user unticks; while that is under way, a read finds the mark cleared on github.com.
+      vi.setSystemTime(new Date("2026-10-30T12:00:30Z"));
+      fireEvent.click(box());
+      await waitFor(() => expect(answers).toHaveLength(2));
+      github = "no";
+      fireEvent.click(screen.getByRole("button", { name: "Reload the diff" }));
+      await settle();
+      await act(async () => answers[1]!(new Error("Resource not accessible by integration")));
+      await settle();
+      expect(ticked()).toBe(false);
+    });
   });
 
   it("offers no Viewed box when GitHub's marks could not be read, and says so", async () => {

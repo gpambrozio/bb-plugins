@@ -114,28 +114,50 @@ export interface ViewedToggle {
 }
 
 /**
- * `view` with the user's Viewed changes over what a load that started at `startedAt` read: each change
- * still being written, or answered too recently for that read to have seen it, wins. A change a load
- * started after it settled confirms or overrules is dropped. Files keep their object when unchanged.
+ * What one file shows from a load that started at `startedAt` and read `read`, under the change
+ * `toggle`, and whether the change still holds after it: a change still being written, or answered too
+ * recently for that read to have seen it, wins; one that a load started after it settled confirms, or
+ * that one started long enough after overrules, is done.
  */
-export function applyViewedToggles(view: ReadyView, toggles: Map<string, ViewedToggle>, startedAt: number): ReadyView {
+function overlay(read: Viewed, toggle: ViewedToggle, startedAt: number): { viewed: Viewed; holds: boolean } {
+  const settled = toggle.doneAt !== null && startedAt >= toggle.doneAt;
+  // Started long enough after the write was answered: what it read is GitHub's (or bb's) word.
+  if (settled && startedAt >= toggle.doneAt! + toggle.lag) return { viewed: read, holds: false };
+  if (read === toggle.viewed) return { viewed: read, holds: !settled };
+  return { viewed: toggle.viewed, holds: true };
+}
+
+/**
+ * While a file's writes are under way, what it shows without them: the mark the server last took, and
+ * the change that made it while that still holds (null: the mark is what loads read). A failed write
+ * with no later change goes back to it.
+ */
+export interface ViewedBase {
+  viewed: Viewed;
+  toggle: ViewedToggle | null;
+}
+
+/**
+ * `view` with the user's Viewed changes (`toggles`) over what a load that started at `startedAt` read
+ * (`overlay`); the changes it ends are dropped. The same load moves each file's `bases` on, as it would
+ * have without the changes under way. Files keep their object when unchanged.
+ */
+export function applyViewedToggles(view: ReadyView, toggles: Map<string, ViewedToggle>, startedAt: number, bases?: Map<string, ViewedBase>): ReadyView {
   let changed = false;
   const files = view.files.map((file) => {
     const key = toggleKey(view.sessionId, file.path);
+    const base = bases?.get(key);
+    if (base !== undefined) {
+      const under = base.toggle === null ? { viewed: file.viewed, holds: false } : overlay(file.viewed, base.toggle, startedAt);
+      bases!.set(key, { viewed: under.viewed, toggle: under.holds ? base.toggle : null });
+    }
     const toggle = toggles.get(key);
     if (toggle === undefined) return file;
-    const settled = toggle.doneAt !== null && startedAt >= toggle.doneAt;
-    // Started long enough after the write was answered: what it read is GitHub's (or bb's) word.
-    if (settled && startedAt >= toggle.doneAt! + toggle.lag) {
-      toggles.delete(key);
-      return file;
-    }
-    if (file.viewed === toggle.viewed) {
-      if (settled) toggles.delete(key);
-      return file;
-    }
+    const shown = overlay(file.viewed, toggle, startedAt);
+    if (!shown.holds) toggles.delete(key);
+    if (shown.viewed === file.viewed) return file;
     changed = true;
-    return { ...file, viewed: toggle.viewed };
+    return { ...file, viewed: shown.viewed };
   });
   return changed ? { ...view, files } : view;
 }
@@ -183,9 +205,8 @@ export function useReview(threadId: string, target: TargetRequest, options: Revi
   // writes in order: a change waits for the one before it, so GitHub gets them as they were made.
   const toggles = useRef(new Map<string, ViewedToggle>());
   const writes = useRef(new Map<string, Promise<void>>());
-  // While a file's writes are under way, the last mark the server took: what a failure goes back to,
-  // with the change that made it (null: the mark shown before them), kept over loads that missed it.
-  const confirmed = useRef(new Map<string, { viewed: Viewed; toggle: ViewedToggle | null }>());
+  // While a file's writes are under way, what it shows without them (`ViewedBase`).
+  const bases = useRef(new Map<string, ViewedBase>());
   const toggleSeq = useRef(0);
   // The view request whose answer is on screen; a load of any other is a switch, shown as pending.
   const shown = useRef<string | null>(null);
@@ -235,7 +256,7 @@ export function useReview(threadId: string, target: TargetRequest, options: Revi
           return previous.status === "ready" && switching ? { ...previous, refreshing: false, pending: { target: pending!.target, error: view.message } } : { status: "unavailable", message: view.message };
         }
         // A Viewed change made while this load was under way (or just before it) is not in what it read.
-        const read = applyViewedToggles(view, toggles.current, startedAt);
+        const read = applyViewedToggles(view, toggles.current, startedAt, bases.current);
         if (previous.status !== "ready" || previous.view.sessionId !== view.sessionId) {
           return { status: "ready", view: read, refreshing: false, loadId: mine, stalePatches: NO_PATHS, pending: null };
         }
@@ -350,16 +371,20 @@ export function useReview(threadId: string, target: TargetRequest, options: Revi
   /**
    * The user's Viewed change of a file: shown at once, written by `write` after the file's previous
    * change was answered, and kept over every load that cannot have read it (`applyViewedToggles`).
-   * When the write fails and no later change was made, the mark goes back to the last one the server
-   * took: `before` (the mark shown) when no earlier change is still under way, else the latest earlier
-   * change that succeeded, which then stays over loads that started before its answer as it would have
-   * without the later change. The error is the caller's to show. `lag`: how long after its answer a
-   * read may still be behind (a pull request's).
+   * When the write fails and no later change was made, the file goes back to its `ViewedBase`: the
+   * mark shown when no earlier change was under way, with the change that made it while that still
+   * holds, moved on by each later write that succeeded and by each load that landed meanwhile. The
+   * error is the caller's to show. `lag`: how long after its answer a read may still be behind (a pull
+   * request's).
    */
   const changeViewed = useCallback((sessionId: string, path: string, viewed: Viewed, before: Viewed, lag: number, write: () => Promise<void>): Promise<void> => {
     const key = toggleKey(sessionId, path);
     const seq = ++toggleSeq.current;
-    if (!writes.current.has(key)) confirmed.current.set(key, { viewed: before, toggle: null });
+    if (!writes.current.has(key)) {
+      // An answered change still kept over older loads keeps protecting the mark if this one fails.
+      const held = toggles.current.get(key);
+      bases.current.set(key, { viewed: before, toggle: held !== undefined && held.doneAt !== null && held.viewed === before ? held : null });
+    }
     toggles.current.set(key, { viewed, seq, doneAt: null, lag });
     putViewed(sessionId, path, viewed);
     const run = async () => {
@@ -367,17 +392,17 @@ export function useReview(threadId: string, target: TargetRequest, options: Revi
         await write();
       } catch (error) {
         if (toggles.current.get(key)?.seq === seq) {
-          const last = confirmed.current.get(key) ?? { viewed: before, toggle: null };
-          if (last.toggle === null) toggles.current.delete(key);
-          else toggles.current.set(key, last.toggle);
-          putViewed(sessionId, path, last.viewed);
+          const base = bases.current.get(key) ?? { viewed: before, toggle: null };
+          if (base.toggle === null) toggles.current.delete(key);
+          else toggles.current.set(key, base.toggle);
+          putViewed(sessionId, path, base.viewed);
         }
         throw error;
       }
-      const doneAt = Date.now();
-      confirmed.current.set(key, { viewed, toggle: { viewed, seq, doneAt, lag } });
       const toggle = toggles.current.get(key);
-      if (toggle?.seq === seq) toggle.doneAt = doneAt;
+      const done: ViewedToggle = toggle?.seq === seq ? toggle : { viewed, seq, doneAt: null, lag };
+      done.doneAt = Date.now();
+      bases.current.set(key, { viewed, toggle: done });
     };
     const previous = writes.current.get(key) ?? Promise.resolve();
     const mine = previous.then(run, run);
@@ -386,7 +411,7 @@ export function useReview(threadId: string, target: TargetRequest, options: Revi
     void settled.then(() => {
       if (writes.current.get(key) !== settled) return;
       writes.current.delete(key);
-      confirmed.current.delete(key);
+      bases.current.delete(key);
     });
     return mine;
   }, [putViewed]);

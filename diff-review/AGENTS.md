@@ -276,11 +276,14 @@ number and the time its write was answered, and laid over every load that starte
 within `GITHUB_VIEWED_LAG_MS` after it on a pull request (GitHub may serve the old mark for a moment);
 a later load that agrees ends it, and one later still that disagrees wins. A file's writes go one at a
 time in order (two at once reached GitHub as two `gh` processes, in either order), and a failed write
-rolls back only if no later change was made, and then to the last mark the server took (`confirmed`:
-the mark shown before the first of the file's queued writes, advanced by each that succeeds), never to
-the optimistic mark of an earlier write that failed too. A rollback to a successful write reinstates
-that write's toggle (its answer time and lag), so a load that started before it still cannot clear it. GitHub keeps one mark per file, not per
-revision: a push between the load and the tick marks the new version viewed (the next load shows it),
+rolls back only if no later change was made, and then to the file's `ViewedBase`: what it would show
+without the changes under way. A base is set when a file's queue starts (the mark shown, with the
+answered toggle that still protects it, if any), replaced by each write that succeeds (with its own
+answer time and lag), and moved on by each load that lands meanwhile, by the same rule as a toggle
+(`overlay`; only the latest load lands, so one that lands is never older than the base). A rollback
+reinstates the base's toggle, so a load that started before an accepted write still cannot clear it,
+and never restores the optimistic mark of a write that failed too. GitHub keeps one mark per file, not
+per revision: a push between the load and the tick marks the new version viewed (the next load shows it),
 so the file's `revision` is not sent. A read that fails gives the view no boxes and the bar's
 `viewedError`, never a failed load; it is the one GitHub read `getReview`'s signal abandons, since it
 writes nothing. The fake `gh` checks these requests against `server/testing/github-schema.ts`;
