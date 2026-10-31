@@ -28,8 +28,16 @@ export type ReviewState =
   /**
    * `loadId` changes with every load of the view, so the tab knows its patches were replaced.
    * `stalePatches`: on-demand files still showing the previous load's patch while it loads again.
+   * `pending`: another view was picked and has not loaded yet (or could not be: `error`); `view` is
+   * still the previous one, which the tab dims rather than passes off as the new one.
    */
-  | { status: "ready"; view: ReadyView; refreshing: boolean; loadId: number; stalePatches: ReadonlySet<string> };
+  | { status: "ready"; view: ReadyView; refreshing: boolean; loadId: number; stalePatches: ReadonlySet<string>; pending: PendingView | null };
+
+/** A view picked while another shows: what was asked for, and why it could not be loaded, if it could not. */
+export interface PendingView {
+  target: TargetRequest;
+  error: string | null;
+}
 
 const NO_PATHS: ReadonlySet<string> = new Set();
 
@@ -121,6 +129,8 @@ export function useReview(threadId: string, target: TargetRequest, options: Revi
   const adopted = useRef<string | null>(null);
   const onTargetRef = useRef(onTarget);
   onTargetRef.current = onTarget;
+  // The view request whose answer is on screen; a load of any other is a switch, shown as pending.
+  const shown = useRef<string | null>(null);
 
   // A signal or a reconnect while a load is under way does not start a second one beside it: it waits,
   // and one more load runs when the current one ends (it may have read the workspace before the
@@ -145,7 +155,10 @@ export function useReview(threadId: string, target: TargetRequest, options: Revi
     const mine = ++generation.current;
     const auto = autoPending.current;
     autoPending.current = false;
-    setState((previous) => (previous.status === "ready" ? { ...previous, refreshing: true } : { status: "loading" }));
+    const request = targetJson;
+    const switching = shown.current !== null && shown.current !== request;
+    const pending: PendingView | null = switching ? { target: JSON.parse(request) as TargetRequest, error: null } : null;
+    setState((previous) => (previous.status === "ready" ? { ...previous, refreshing: true, pending } : { status: "loading" }));
     try {
       const view = await rpc.call("getReview", {
         threadId,
@@ -155,22 +168,31 @@ export function useReview(threadId: string, target: TargetRequest, options: Revi
         ...(auto ? { autoTarget: true } : {}),
         ...(ignoreWhitespace ? { ignoreWhitespace: true } : {}),
       });
+      // An answer for a view no longer asked for (the user picked another meanwhile) never lands.
       if (mine !== generation.current) return;
       setState((previous) => {
-        if (!view.ok) return { status: "unavailable", message: view.message };
+        if (!view.ok) {
+          // A picked view the server cannot read leaves the previous one dimmed under the message, so another can be picked.
+          return previous.status === "ready" && switching ? { ...previous, refreshing: false, pending: { target: pending!.target, error: view.message } } : { status: "unavailable", message: view.message };
+        }
         if (previous.status !== "ready" || previous.view.sessionId !== view.sessionId) {
-          return { status: "ready", view, refreshing: false, loadId: mine, stalePatches: NO_PATHS };
+          return { status: "ready", view, refreshing: false, loadId: mine, stalePatches: NO_PATHS, pending: null };
         }
         const merged = mergeView(previous.view, previous.stalePatches, view);
-        return { status: "ready", view: merged.view, refreshing: false, loadId: mine, stalePatches: merged.stale };
+        return { status: "ready", view: merged.view, refreshing: false, loadId: mine, stalePatches: merged.stale, pending: null };
       });
+      if (view.ok) shown.current = request;
       if (view.ok && auto && JSON.stringify(view.target) !== targetJson) {
         adopted.current = JSON.stringify(view.target);
+        shown.current = adopted.current;
         onTargetRef.current?.(view.target);
       }
     } catch (error) {
       if (mine !== generation.current) return;
-      setState({ status: "error", message: errorMessage(error) });
+      const message = errorMessage(error);
+      setState((previous) =>
+        previous.status === "ready" && switching ? { ...previous, refreshing: false, pending: { target: pending!.target, error: message } } : { status: "error", message },
+      );
     } finally {
       if (mine === generation.current) {
         inFlight.current = false;

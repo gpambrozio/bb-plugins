@@ -17,6 +17,14 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and says why; when the marks cannot be read, the pull request's bar says so and the diff shows
   without the boxes. Nothing else is posted to GitHub.
 
+### Changed
+
+- **Picking another view shows at once.** The picker shows the new choice right away, and the
+  previous diff is dimmed under a loading indicator until the new one arrives, instead of staying as
+  it was and then suddenly changing. If the new view cannot be loaded, the reason shows over it with
+  *Try again*, and you can still pick another view. A slow answer for a view you have already moved
+  on from never replaces the newer one.
+
 ## 0.4.1
 
 ### Changed

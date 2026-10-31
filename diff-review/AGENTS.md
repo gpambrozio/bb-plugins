@@ -60,7 +60,7 @@ specific to `diff-review`.
 | `app/send-dialog.tsx` | Picking threads and a note for **Send to agent**, to this thread or a new one. |
 | `app/ai-review-dialog.tsx`, `app/execution-picker.tsx` | The AI review dialog (focus chips, instructions); bb's provider/model picker, seeded from the settings. |
 | `app/runs-list.tsx` | The session's runs under the toolbar: status, files a review changed, Open thread, Close. |
-| `app/use-review.ts`, `app/actions.tsx` | The tab's data (RPC + realtime) and the thread actions every card shares. |
+| `app/use-review.ts`, `app/actions.tsx` | The tab's data (RPC + realtime) and the thread actions every card shares. A load of a view other than the one on screen is a switch: the state keeps the previous view with `pending` (the request, and its error if it failed), the panel shows the pick in the picker, dims and `inert`s the old toolbar and content under bb's `Spinner` (or the error with Try again), and only the latest load's answer or failure lands (`generation`). |
 | `skills/diff-review/SKILL.md` | What an agent needs to answer: the commands, base64 through stdin, how to write answers. |
 
 `npm test` runs everything. The server tests drive `server.ts` on the SDK's fake plugin host with a

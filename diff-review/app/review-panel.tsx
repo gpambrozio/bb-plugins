@@ -25,7 +25,7 @@ import type { RpcContract } from "../shared/contract";
 import { parseRange, rangeText } from "../shared/git-spec";
 import { parsePullText, pullText } from "../shared/github";
 import { linesText, parsePatchLines } from "../shared/patch-lines";
-import { describeLocation, GENERAL_PATH, type ReviewThread, type Run, type TargetRequest } from "../shared/types";
+import { describeLocation, GENERAL_PATH, type ReviewThread, type Run, type Target, type TargetRequest } from "../shared/types";
 import { ReviewActionsProvider, useActions } from "./actions";
 import { useReviewCommands } from "./commands";
 import { carryCurrent, findInFiles, type FindMatch } from "./find";
@@ -48,7 +48,7 @@ import { RunsList } from "./runs-list";
 import { useScrollMemory } from "./scroll-memory";
 import { SendDialog } from "./send-dialog";
 import { ThreadCard } from "./thread-card";
-import { errorMessage, useReview, type ReadyView } from "./use-review";
+import { errorMessage, useReview, type PendingView, type ReadyView } from "./use-review";
 import { forgetView, keepView, startingView } from "./view-memory";
 import { draftKeys, useDraft, useDraftKeys, useViewState, ViewStateProvider } from "./view-state";
 
@@ -125,6 +125,12 @@ export function fromPicker(value: string): TargetRequest {
   }
   if (value === "branch" || value === "all" || value === "staged" || value === "unstaged" || value === "files") return { kind: value };
   return { kind: "uncommitted" };
+}
+
+/** The picker's label for a view asked for; a branch view without a base compares against `defaultBase`. */
+export function requestLabel(target: TargetRequest, defaultBase: string | null): string {
+  if (target.kind === "branch" || target.kind === "all") return targetLabel({ kind: target.kind, base: target.base ?? defaultBase ?? "the base branch" });
+  return targetLabel(target as Target);
 }
 
 /** Whether a kept view that loaded is not one to come back to: a pull request closed or merged since. */
@@ -239,7 +245,12 @@ export function ReviewBody({
         threadId={threadId}
         view={state.view}
         refreshing={state.refreshing}
-        pickerValue={pickerValue(state.view.target.kind === "commit" || state.view.target.kind === "range" || state.view.target.kind === "pr" ? state.view.target : target)}
+        pending={state.pending}
+        pickerValue={
+          state.pending !== null
+            ? pickerValue(state.pending.target)
+            : pickerValue(state.view.target.kind === "commit" || state.view.target.kind === "range" || state.view.target.kind === "pr" ? state.view.target : target)
+        }
         onPick={pick}
         onReload={() => void review.reload("manual")}
         loadId={state.loadId}
@@ -257,6 +268,31 @@ export function ReviewBody({
   );
 }
 
+/** Over the dimmed previous view: bb's spinner while the picked view loads, or why it could not. */
+function PendingOverlay({ label, error, onRetry }: { label: string; error: string | null; onRetry(): void }) {
+  return (
+    <div className="absolute inset-0 z-20 flex items-start justify-center p-6" role="status" aria-live="polite">
+      <div className="flex max-w-md flex-col items-center gap-3 rounded-md border border-border bg-background px-4 py-3 text-center text-sm shadow-sm">
+        {error === null ? (
+          <span className="flex items-center gap-2 text-muted-foreground">
+            <Icon name="Spinner" className="size-4" />
+            Loading {label}…
+          </span>
+        ) : (
+          <>
+            <span className="text-destructive">
+              Could not load {label}: {error}
+            </span>
+            <Button type="button" variant="outline" size="sm" onClick={onRetry}>
+              Try again
+            </Button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function Centered({ children }: { children: React.ReactNode }) {
   return <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center text-sm text-muted-foreground">{children}</div>;
 }
@@ -265,6 +301,7 @@ function ReadyPanel({
   threadId,
   view,
   refreshing,
+  pending,
   pickerValue: value,
   onPick,
   onReload,
@@ -281,6 +318,8 @@ function ReadyPanel({
   threadId: string;
   view: ReadyView;
   refreshing: boolean;
+  /** Another view was picked and is loading (or failed to): `view` is the previous one, dimmed. */
+  pending: PendingView | null;
   pickerValue: string;
   onPick(value: string): void;
   onReload(): void;
@@ -296,6 +335,16 @@ function ReadyPanel({
 }) {
   const rpc = useRpc<RpcContract>();
   const actions = useActions();
+  // A range or pull request picked by address has no item of its own in the picker until it loads.
+  const pendingItem = useMemo(() => {
+    if (pending === null || (pending.target.kind !== "range" && pending.target.kind !== "pr")) return null;
+    const value = pickerValue(pending.target);
+    const listed = [
+      view.target.kind === "range" || view.target.kind === "pr" ? pickerValue(view.target) : null,
+      view.branchPullRequest === null ? null : `pr:${pullText(view.branchPullRequest)}`,
+    ];
+    return listed.includes(value) ? null : { value, label: requestLabel(pending.target, view.defaultBase) };
+  }, [pending, view.target, view.branchPullRequest, view.defaultBase]);
   const [diffStyle, setDiffStyle] = useState<DiffStyle>(() => (stored(DIFF_STYLE_KEY) === "split" ? "split" : "unified"));
   const [onlyCommented, setOnlyCommented] = useState(() => stored(onlyCommentedKey(threadId)) === "true");
   const viewState = useViewState();
@@ -598,6 +647,8 @@ function ReadyPanel({
 
   // The palette's commands for this thread land here while the tab shows.
   useReviewCommands(threadId, visible, (command) => {
+    // Nothing acts on the previous view while another one loads.
+    if (pending !== null && command !== "reload") return;
     // The Any file view has no diff to find in, review or filter.
     if (browsing && ["ai-review", "find", "toggle-style", "toggle-only-commented", "toggle-whitespace", "next-comment", "previous-comment"].includes(command)) {
       toast.info("That works on a diff; pick a view of changes first.");
@@ -677,9 +728,12 @@ function ReadyPanel({
               </SelectItem>
             )}
             {view.target.kind === "pr" ? <SelectItem value={`pr:${pullText(view.target)}`}>{view.pullRequest === null ? targetLabel(view.target) : `Pull request #${view.pullRequest.number}: ${view.pullRequest.title}`}</SelectItem> : null}
+            {pendingItem === null ? null : <SelectItem value={pendingItem.value}>{pendingItem.label}</SelectItem>}
             <SelectItem value={PICK_PULL}>A pull request…</SelectItem>
           </SelectContent>
         </Select>
+        {/* The rest of the toolbar acts on the view on screen, so it rests while another one loads. */}
+        <div className={pending === null ? "contents" : "contents [&>*]:opacity-50"} inert={pending !== null}>
         {browsing ? null : (
           <>
           <Button type="button" variant="ghost" size="sm" onClick={toggleStyle} aria-pressed={diffStyle === "split"}>
@@ -722,7 +776,12 @@ function ReadyPanel({
           <Icon name="Sent" className="size-4" />
           Send to agent{open.length === 0 ? "" : ` (${open.length})`}
         </Button>
+        </div>
       </div>
+
+      <div className="relative flex min-h-0 flex-1 flex-col">
+      {/* The previous view stays, dimmed and out of reach, until the one picked has loaded. */}
+      <div className={pending === null ? "flex min-h-0 flex-1 flex-col" : "flex min-h-0 flex-1 flex-col opacity-40"} inert={pending !== null} aria-busy={pending !== null && pending.error === null}>
 
       {view.pullRequest === null ? null : (
         <PullBar pull={view.pullRequest} onSubmit={() => setSubmitting(true)} onSync={onReload} refreshing={refreshing} />
@@ -800,6 +859,9 @@ function ReadyPanel({
         ))}
       </div>
       )}
+      </div>
+      {pending === null ? null : <PendingOverlay label={requestLabel(pending.target, view.defaultBase)} error={pending.error} onRetry={onReload} />}
+      </div>
 
       <SendDialog
         open={sending}

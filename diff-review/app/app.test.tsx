@@ -7,7 +7,7 @@
 import { act, cleanup, fireEvent, render as renderPlain, screen, waitFor, within } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import type { ReactNode } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ReviewThread, ReviewView, ViewState } from "../shared/types";
 import { ANNOTATION_FIT } from "./annotation-fit";
@@ -704,6 +704,116 @@ describe("the Files view", () => {
     fireEvent.change(await screen.findByRole("textbox", { name: "Find a file" }), { target: { value: "a.ts" } });
     expect(await screen.findByRole("button", { name: "lib/a.ts" })).toBeTruthy();
     expect(slot.inspection.rpcCalls.find((call) => call.method === "searchFiles")!.input).toEqual({ threadId: "thr_1", query: "a.ts" });
+  });
+});
+
+describe("switching to another view", () => {
+  /** A `getReview` that answers each load of `kind` when the test says, in any order. */
+  function heldLoads() {
+    const held: { kind: string; resolve(view: unknown): void; reject(error: Error): void }[] = [];
+    const getReview = (input: never) => {
+      const { target } = input as { target: { kind: string } };
+      if (target.kind === "uncommitted") return VIEW;
+      return new Promise((resolve, reject) => held.push({ kind: target.kind, resolve, reject }));
+    };
+    return { held, getReview };
+  }
+
+  const BRANCH_VIEW = { ...VIEW, sessionId: "ses_2", target: { kind: "branch" as const, base: "main" }, threads: [], files: [{ ...VIEW.files[0]!, path: "src/b.ts", patch: PATCH.replaceAll("src/a.ts", "src/b.ts") }] };
+  const STAGED_VIEW = { ...VIEW, sessionId: "ses_3", target: { kind: "staged" as const }, viewable: false, threads: [], files: [{ ...VIEW.files[0]!, path: "src/c.ts", patch: PATCH.replaceAll("src/a.ts", "src/c.ts") }] };
+
+  // Radix's Select scrolls its own list to the chosen option, which jsdom cannot.
+  let restoreScroll: () => void = () => undefined;
+  beforeEach(() => {
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = () => undefined;
+    restoreScroll = () => {
+      Element.prototype.scrollIntoView = original;
+    };
+  });
+  afterEach(() => restoreScroll());
+
+  async function pickView(label: string) {
+    const picker = screen.getByRole("combobox", { name: "What to review" });
+    fireEvent.keyDown(picker, { key: "Enter" });
+    fireEvent.click(await screen.findByRole("option", { name: label }));
+  }
+
+  const dimmed = (path: string) => screen.getByText(path).closest("[inert]");
+
+  it("marks the picked view at once and dims the previous one under bb's spinner until the new one arrives", async () => {
+    const { held, getReview } = heldLoads();
+    render({ getReview });
+    await screen.findByTestId("patch");
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(dimmed("src/a.ts")).toBeNull();
+
+    await pickView("Committed since main");
+    expect(screen.getByRole("combobox", { name: "What to review" }).textContent).toContain("Committed since main");
+    expect((await screen.findByRole("status")).textContent).toContain("Loading Committed since main…");
+    // The previous view is still there, dimmed and out of reach, and nothing acts on it.
+    expect(dimmed("src/a.ts")).not.toBeNull();
+    expect(screen.getByRole("button", { name: /Send to agent/ }).closest("[inert]")).not.toBeNull();
+    expect(screen.getByRole("combobox", { name: "What to review" }).closest("[inert]")).toBeNull();
+
+    await act(async () => held[0]!.resolve(BRANCH_VIEW));
+    await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
+    expect(screen.getByText("src/b.ts").closest("[inert]")).toBeNull();
+    expect(screen.queryByText("src/a.ts")).toBeNull();
+  });
+
+  it("says why a picked view could not load, over the previous one, and tries it again", async () => {
+    const { held, getReview } = heldLoads();
+    const slot = render({ getReview });
+    await screen.findByTestId("patch");
+    await pickView("Staged changes");
+    await act(async () => held[0]!.reject(new Error("host offline")));
+    expect((await screen.findByRole("status")).textContent).toContain("Could not load Staged changes: host offline");
+    expect(screen.getByRole("combobox", { name: "What to review" }).textContent).toContain("Staged changes");
+    expect(dimmed("src/a.ts")).not.toBeNull();
+
+    fireEvent.click(within(screen.getByRole("status")).getByRole("button", { name: "Try again" }));
+    expect((await screen.findByRole("status")).textContent).toContain("Loading Staged changes…");
+    await waitFor(() => expect(held).toHaveLength(2));
+    await act(async () => held[1]!.resolve(STAGED_VIEW));
+    expect(await screen.findByText("src/c.ts")).toBeTruthy();
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(loadsOf(slot).map((load) => [load.reason, (load.target as { kind: string }).kind])).toEqual([["open", "uncommitted"], ["view", "staged"], ["manual", "staged"]]);
+  });
+
+  it("never lets an answer for a view picked earlier replace the one picked after it", async () => {
+    const { held, getReview } = heldLoads();
+    render({ getReview });
+    await screen.findByTestId("patch");
+    await pickView("Committed since main");
+    await pickView("Staged changes");
+    expect((await screen.findByRole("status")).textContent).toContain("Loading Staged changes…");
+
+    // The earlier pick answers first: it is dropped, and the later one is still loading.
+    await act(async () => held.find((load) => load.kind === "branch")!.resolve(BRANCH_VIEW));
+    expect(screen.queryByText("src/b.ts")).toBeNull();
+    expect(screen.getByRole("status").textContent).toContain("Loading Staged changes…");
+
+    await act(async () => held.find((load) => load.kind === "staged")!.resolve(STAGED_VIEW));
+    expect(await screen.findByText("src/c.ts")).toBeTruthy();
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.getByRole("combobox", { name: "What to review" }).textContent).toContain("Staged changes");
+  });
+
+  it("drops an earlier pick's answer that comes after the later one landed, and its failure too", async () => {
+    const { held, getReview } = heldLoads();
+    render({ getReview });
+    await screen.findByTestId("patch");
+    await pickView("Committed since main");
+    await pickView("Staged changes");
+    await act(async () => held.find((load) => load.kind === "staged")!.resolve(STAGED_VIEW));
+    expect(await screen.findByText("src/c.ts")).toBeTruthy();
+
+    await act(async () => held.find((load) => load.kind === "branch")!.reject(new Error("too late")));
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 20)));
+    expect(screen.getByText("src/c.ts")).toBeTruthy();
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.queryByText(/too late/)).toBeNull();
   });
 });
 
