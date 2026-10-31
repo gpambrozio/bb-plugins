@@ -16,7 +16,12 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   you were typing) moves to the one that stays.
 - A reply you were typing on that second copy moves to the comment thread that stays, in every open
   window, and stays there however long the window is open. When you had started a reply on both,
-  you get both texts in the one reply box, and nothing is posted until you press Reply.
+  you get both texts, in full, in the one reply box, and nothing is posted until you press Reply; if
+  together they are longer than a comment can be, the box says by how much, so you can shorten them.
+- A reply you had already sent from either copy stays greyed out while it is being posted, even when
+  the two copies become one meanwhile, and once it is posted only that text leaves the reply box: a
+  reply you started on the other copy stays, unsent. The same holds for a reply or an edit still
+  being saved when you leave the Review tab and come back.
 - A Reply, Post, Resolve or Reopen you pressed on that second copy just as it went no longer says it
   failed after GitHub took it, so you won't post the same reply twice.
 

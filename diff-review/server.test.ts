@@ -1238,6 +1238,16 @@ describe("reviewing a GitHub pull request", () => {
     expect(((await rpc("listThreads", { sessionId })) as { aliases: unknown }).aliases).toEqual({ [copy.id]: line.id });
   });
 
+  it("keeps both of two long replies typed on the two copies whole, though together they are over a comment's limit", async () => {
+    const { rpc, view, sessionId, line, copy, finish } = await heldSubmit();
+    const first = "a".repeat(12_000);
+    const second = "b".repeat(12_000);
+    const reply = (body: string) => ({ body, severity: null, range: null });
+    await rpc("saveViewState", { threadId: THREAD, sessionId, state: { drafts: { [`reply:${line.id}`]: reply(first), [`reply:${copy.id}`]: reply(second) }, collapsed: {}, scroll: null, savedAt: 1 } });
+    await finish();
+    expect((await view(PULL)).viewState!.drafts).toEqual({ [`reply:${line.id}`]: reply(`${first}\n\n${second}`) });
+  });
+
   it("refuses a comment edited since the dialog read it, posting nothing", async () => {
     const github = fakeGitHub();
     const { view, rpc } = await setup({ gh: github.gh });

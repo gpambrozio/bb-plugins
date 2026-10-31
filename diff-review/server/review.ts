@@ -258,7 +258,8 @@ export class ReviewService {
     const commentIds = new Set(threads.flatMap((thread) => thread.comments.map((comment) => comment.id)));
     const drafts = Object.fromEntries(
       Object.entries(state.drafts).filter(([key]) => {
-        if (key.startsWith("reply:")) return threadIds.has(key.slice("reply:".length));
+        // A reply too long to join the kept thread's own stays under its folded id (`remapThreadKeys`).
+        if (key.startsWith("reply:")) return threadIds.has(key.slice("reply:".length)) || threadIds.has(aliases[key.slice("reply:".length)] ?? "");
         if (key.startsWith("edit:")) return commentIds.has(key.slice("edit:".length));
         return true;
       }),

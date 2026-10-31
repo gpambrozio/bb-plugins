@@ -92,14 +92,13 @@ function Comment({ comment }: { comment: ReviewComment }) {
       </div>
       {editing ? (
         <CommentComposer
+          key={editDraft.revision}
           placeholder={draft === undefined ? "Edit your comment" : "Edit the draft before posting it"}
           submitLabel="Save"
           initialBody={editDraft.latest().body}
+          sending={editDraft.sending}
           onChange={editDraft.change}
-          onSubmit={async ({ body }) => {
-            await actions.edit(comment.id, body);
-            editDraft.close();
-          }}
+          onSubmit={({ body }) => editDraft.send(body, () => actions.edit(comment.id, body))}
           onCancel={editDraft.close}
         />
       ) : (
@@ -243,10 +242,8 @@ export function ThreadCard({
           submitLabel="Reply"
           initialBody={replyDraft.latest().body}
           onChange={replyDraft.change}
-          onSubmit={async ({ body }) => {
-            await actions.reply(thread.id, body);
-            replyDraft.close();
-          }}
+          sending={replyDraft.sending}
+          onSubmit={({ body }) => replyDraft.send(body, () => actions.reply(thread.id, body))}
           onCancel={replyDraft.close}
         />
       ) : (
