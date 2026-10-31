@@ -268,7 +268,15 @@ account's own on GitHub (`PullRequest.files { path viewerViewedState }`, 100 a p
 3,000 files), read beside the fetch on every load; `DISMISSED` (GitHub's reset when a file changes
 after it was viewed) is "changed since viewed". The box calls `markFileAsViewed` /
 `unmarkFileAsViewed` with the pull request's node id and the path, a file of the last load only; the
-tab already updates first and rolls back with a toast. GitHub keeps one mark per file, not per
+tab already updates first and rolls back with a toast. **A user's Viewed change wins over reads that
+missed it** (`changeViewed`, `applyViewedToggles` in `app/use-review.ts`): a whole-view load merges the
+server's files, so one whose read ran before the write landed (a reconnect, a `diff` signal, Sync)
+put a fresh tick back with no error anywhere. Each change is kept per session and path with a sequence
+number and the time its write was answered, and laid over every load that started before that, or
+within `GITHUB_VIEWED_LAG_MS` after it on a pull request (GitHub may serve the old mark for a moment);
+a later load that agrees ends it, and one later still that disagrees wins. A file's writes go one at a
+time in order (two at once reached GitHub as two `gh` processes, in either order), and a failed write
+rolls back only if no later change was made. GitHub keeps one mark per file, not per
 revision: a push between the load and the tick marks the new version viewed (the next load shows it),
 so the file's `revision` is not sent. A read that fails gives the view no boxes and the bar's
 `viewedError`, never a failed load; it is the one GitHub read `getReview`'s signal abandons, since it

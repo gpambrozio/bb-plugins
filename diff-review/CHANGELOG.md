@@ -15,7 +15,10 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   load (Sync with GitHub, new commits) reads the marks again. A file GitHub reset because it changed
   after you viewed it shows "changed since viewed". When GitHub refuses a change, the box goes back
   and says why; when the marks cannot be read, the pull request's bar says so and the diff shows
-  without the boxes. Nothing else is posted to GitHub.
+  without the boxes. Nothing else is posted to GitHub. A tick stays put even when the review
+  reloads at that moment (a reconnect, a change in the workspace, Sync) or GitHub takes a few seconds
+  to report the change back, and quick ticks and unticks of a file reach GitHub one at a time, in the
+  order you made them.
 
 ### Changed
 

@@ -10,7 +10,7 @@ import { toast } from "sonner";
 import type { RpcContract } from "../shared/contract";
 import type { DiffFile, ReviewThread, Run, Severity, Side, Target, ThreadStatus } from "../shared/types";
 import { fileRef } from "./open-file";
-import { errorMessage } from "./use-review";
+import { errorMessage, GITHUB_VIEWED_LAG_MS } from "./use-review";
 
 export interface NewThread {
   filePath: string;
@@ -79,7 +79,7 @@ export function ReviewActionsProvider({
   view,
   ignoreWhitespace = false,
   putThread,
-  putViewed,
+  changeViewed,
   putRun,
   refreshThreads,
   onEdited,
@@ -93,7 +93,8 @@ export function ReviewActionsProvider({
   /** Whether the view hides whitespace-only changes. */
   ignoreWhitespace?: boolean;
   putThread(thread: ReviewThread): void;
-  putViewed(sessionId: string, path: string, viewed: DiffFile["viewed"]): void;
+  /** The tab's data's Viewed change: shown at once, written in order, kept over reads that missed it. */
+  changeViewed(sessionId: string, path: string, viewed: DiffFile["viewed"], before: DiffFile["viewed"], lag: number, write: () => Promise<void>): Promise<void>;
   putRun(run: Run): void;
   refreshThreads(): Promise<void>;
   /** The tab changed files in the workspace; reload the view. */
@@ -127,16 +128,12 @@ export function ReviewActionsProvider({
         }),
       openThread: (threadId) => navigate.toThread(threadId),
       setViewed: (file, viewed) =>
-        reported(viewed ? "Could not mark the file viewed" : "Could not clear the Viewed mark", async () => {
-          const before = file.viewed;
-          putViewed(sessionId, file.path, viewed ? "yes" : "no");
-          try {
+        reported(viewed ? "Could not mark the file viewed" : "Could not clear the Viewed mark", () =>
+          // GitHub may still answer a read with the old mark for a moment after it took the change.
+          changeViewed(sessionId, file.path, viewed ? "yes" : "no", file.viewed, view.target.kind === "pr" ? GITHUB_VIEWED_LAG_MS : 0, async () => {
             await rpc.call("setViewed", { threadId, target: view.target, path: file.path, revision: file.revision, viewed });
-          } catch (error) {
-            putViewed(sessionId, file.path, before);
-            throw error;
-          }
-        }),
+          }),
+        ),
       canOpenFile: (file) => fileRef(view.target, file, view.mergeBaseRef, view.headRef) !== null,
       canEditWorkingCopy: view.target.kind === "uncommitted" || view.target.kind === "all" || view.target.kind === "unstaged",
       viewable: view.viewable,
@@ -168,7 +165,7 @@ export function ReviewActionsProvider({
         });
       },
     }),
-    [rpc, navigate, sessionId, threadId, view.target, view.environmentId, view.mergeBaseRef, view.headRef, view.viewable, putThread, putViewed, putRun, refreshThreads, onEdited, ignoreWhitespace],
+    [rpc, navigate, sessionId, threadId, view.target, view.environmentId, view.mergeBaseRef, view.headRef, view.viewable, putThread, changeViewed, putRun, refreshThreads, onEdited, ignoreWhitespace],
   );
   return <ActionsContext.Provider value={actions}>{children}</ActionsContext.Provider>;
 }

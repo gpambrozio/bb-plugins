@@ -899,6 +899,92 @@ describe("a pull request's view", () => {
     await waitFor(() => expect(screen.getByRole("checkbox", { name: "Viewed src/a.ts" }).getAttribute("aria-checked")).toBe("true"));
   });
 
+  describe("a Viewed change racing GitHub's reads", () => {
+    const viewedAs = (viewed: "no" | "yes" | "changed") => ({ ...PR_VIEW, viewable: true, threads: [], files: [{ ...VIEW.files[0]!, viewed }] });
+    const box = () => screen.getByRole("checkbox", { name: "Viewed src/a.ts" });
+    const ticked = () => box().getAttribute("aria-checked") === "true";
+    const settle = () => act(async () => new Promise((resolve) => setTimeout(resolve, 20)));
+    afterEach(() => vi.useRealTimers());
+
+    it("keeps a tick over a reload that read GitHub before the mark was made", async () => {
+      // The load under way (a reconnect, a workspace change, Sync) read GitHub before the click.
+      const held: ((view: unknown) => void)[] = [];
+      let loads = 0;
+      render({
+        getReview: () => (loads++ === 0 ? viewedAs("no") : new Promise((resolve) => held.push(resolve))),
+        setViewed: () => ({ ok: true }),
+      });
+      await screen.findByRole("checkbox", { name: "Viewed src/a.ts" });
+      fireEvent.click(screen.getByRole("button", { name: "Reload the diff" }));
+      await waitFor(() => expect(held).toHaveLength(1));
+      fireEvent.click(box());
+      await settle();
+      expect(ticked()).toBe(true);
+      await act(async () => held[0]!(viewedAs("no")));
+      await settle();
+      expect(ticked()).toBe(true);
+    });
+
+    it("keeps a tick over a read GitHub has not caught up on, and takes GitHub's word once it has had time", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-10-30T12:00:00Z"));
+      let github: "no" | "yes" = "no";
+      render({ getReview: () => viewedAs(github), setViewed: () => ({ ok: true }) });
+      await screen.findByRole("checkbox", { name: "Viewed src/a.ts" });
+      fireEvent.click(box());
+      await settle();
+      // A read just after the mark still has the old one.
+      vi.setSystemTime(new Date("2026-10-30T12:00:02Z"));
+      fireEvent.click(screen.getByRole("button", { name: "Reload the diff" }));
+      await settle();
+      expect(ticked()).toBe(true);
+      // Long after, GitHub says no: the mark was cleared elsewhere, and GitHub wins.
+      vi.setSystemTime(new Date("2026-10-30T12:00:30Z"));
+      fireEvent.click(screen.getByRole("button", { name: "Reload the diff" }));
+      await waitFor(() => expect(ticked()).toBe(false));
+      // A read that confirms a change ends it: a later one is GitHub's word at once.
+      fireEvent.click(box());
+      await settle();
+      github = "yes";
+      vi.setSystemTime(new Date("2026-10-30T12:00:31Z"));
+      fireEvent.click(screen.getByRole("button", { name: "Reload the diff" }));
+      await settle();
+      github = "no";
+      vi.setSystemTime(new Date("2026-10-30T12:00:32Z"));
+      fireEvent.click(screen.getByRole("button", { name: "Reload the diff" }));
+      await waitFor(() => expect(ticked()).toBe(false));
+    });
+
+    it("writes two quick changes one at a time, in order, and a failed earlier one leaves the later in place", async () => {
+      const { toast } = await import("sonner");
+      const answers: { viewed: boolean; answer(error?: Error): void }[] = [];
+      const slot = render({
+        getReview: () => viewedAs("no"),
+        setViewed: (input: never) =>
+          new Promise((resolve, reject) =>
+            answers.push({ viewed: (input as { viewed: boolean }).viewed, answer: (error) => (error === undefined ? resolve({ ok: true }) : reject(error)) }),
+          ),
+      });
+      await screen.findByRole("checkbox", { name: "Viewed src/a.ts" });
+      fireEvent.click(box());
+      await settle();
+      fireEvent.click(box());
+      await settle();
+      expect(ticked()).toBe(false);
+      // The second waits for GitHub to answer the first: two at once may land in either order.
+      expect(answers.map((entry) => entry.viewed)).toEqual([true]);
+      await act(async () => answers[0]!.answer(new Error("Something went wrong")));
+      await waitFor(() => expect(answers.map((entry) => entry.viewed)).toEqual([true, false]));
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith("Could not mark the file viewed: Something went wrong");
+      // The first's failure does not put back what the second replaced.
+      expect(ticked()).toBe(false);
+      await act(async () => answers[1]!.answer());
+      await settle();
+      expect(ticked()).toBe(false);
+      expect(slot.inspection.rpcCalls.filter((call) => call.method === "setViewed")).toHaveLength(2);
+    });
+  });
+
   it("offers no Viewed box when GitHub's marks could not be read, and says so", async () => {
     render({ getReview: () => ({ ...PR_VIEW, viewable: false, pullRequest: { ...PR_VIEW.pullRequest, viewedError: "API rate limit exceeded" } }) });
     expect(await screen.findByText("Could not read your Viewed marks")).toBeTruthy();

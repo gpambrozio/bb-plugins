@@ -234,7 +234,7 @@ export function ReviewBody({
       view={state.view}
       ignoreWhitespace={ignoreWhitespace}
       putThread={review.putThread}
-      putViewed={review.putViewed}
+      changeViewed={review.changeViewed}
       putRun={review.putRun}
       refreshThreads={review.refreshThreads}
       onEdited={onEdited}

@@ -94,6 +94,56 @@ export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/**
+ * How long after GitHub answered a Viewed change a pull request's reads may still show the old mark:
+ * a read GitHub serves from a replica not yet updated. Past it, a read that disagrees wins (the mark
+ * changed elsewhere, on github.com say).
+ */
+export const GITHUB_VIEWED_LAG_MS = 10_000;
+
+/**
+ * A Viewed change the user made, kept over every load that may not have seen it: `seq` orders the
+ * changes of one file, `doneAt` is when the write was answered (null while it is under way), `lag` how
+ * long after that a read may still be behind.
+ */
+export interface ViewedToggle {
+  viewed: Viewed;
+  seq: number;
+  doneAt: number | null;
+  lag: number;
+}
+
+/**
+ * `view` with the user's Viewed changes over what a load that started at `startedAt` read: each change
+ * still being written, or answered too recently for that read to have seen it, wins. A change a load
+ * started after it settled confirms or overrules is dropped. Files keep their object when unchanged.
+ */
+export function applyViewedToggles(view: ReadyView, toggles: Map<string, ViewedToggle>, startedAt: number): ReadyView {
+  let changed = false;
+  const files = view.files.map((file) => {
+    const key = toggleKey(view.sessionId, file.path);
+    const toggle = toggles.get(key);
+    if (toggle === undefined) return file;
+    const settled = toggle.doneAt !== null && startedAt >= toggle.doneAt;
+    // Started long enough after the write was answered: what it read is GitHub's (or bb's) word.
+    if (settled && startedAt >= toggle.doneAt! + toggle.lag) {
+      toggles.delete(key);
+      return file;
+    }
+    if (file.viewed === toggle.viewed) {
+      if (settled) toggles.delete(key);
+      return file;
+    }
+    changed = true;
+    return { ...file, viewed: toggle.viewed };
+  });
+  return changed ? { ...view, files } : view;
+}
+
+function toggleKey(sessionId: string, path: string): string {
+  return `${sessionId}\u0000${path}`;
+}
+
 /** How often a showing tab renews its watch; the server lets one lapse after 90 seconds. */
 const LEASE_RENEW_MS = 30_000;
 
@@ -129,6 +179,11 @@ export function useReview(threadId: string, target: TargetRequest, options: Revi
   const adopted = useRef<string | null>(null);
   const onTargetRef = useRef(onTarget);
   onTargetRef.current = onTarget;
+  // The user's Viewed changes not yet known to be read back, by session and path, and each file's
+  // writes in order: a change waits for the one before it, so GitHub gets them as they were made.
+  const toggles = useRef(new Map<string, ViewedToggle>());
+  const writes = useRef(new Map<string, Promise<void>>());
+  const toggleSeq = useRef(0);
   // The view request whose answer is on screen; a load of any other is a switch, shown as pending.
   const shown = useRef<string | null>(null);
 
@@ -159,6 +214,7 @@ export function useReview(threadId: string, target: TargetRequest, options: Revi
     const switching = shown.current !== null && shown.current !== request;
     const pending: PendingView | null = switching ? { target: JSON.parse(request) as TargetRequest, error: null } : null;
     setState((previous) => (previous.status === "ready" ? { ...previous, refreshing: true, pending } : { status: "loading" }));
+    const startedAt = Date.now();
     try {
       const view = await rpc.call("getReview", {
         threadId,
@@ -175,10 +231,12 @@ export function useReview(threadId: string, target: TargetRequest, options: Revi
           // A picked view the server cannot read leaves the previous one dimmed under the message, so another can be picked.
           return previous.status === "ready" && switching ? { ...previous, refreshing: false, pending: { target: pending!.target, error: view.message } } : { status: "unavailable", message: view.message };
         }
+        // A Viewed change made while this load was under way (or just before it) is not in what it read.
+        const read = applyViewedToggles(view, toggles.current, startedAt);
         if (previous.status !== "ready" || previous.view.sessionId !== view.sessionId) {
-          return { status: "ready", view, refreshing: false, loadId: mine, stalePatches: NO_PATHS, pending: null };
+          return { status: "ready", view: read, refreshing: false, loadId: mine, stalePatches: NO_PATHS, pending: null };
         }
-        const merged = mergeView(previous.view, previous.stalePatches, view);
+        const merged = mergeView(previous.view, previous.stalePatches, read);
         return { status: "ready", view: merged.view, refreshing: false, loadId: mine, stalePatches: merged.stale, pending: null };
       });
       if (view.ok) shown.current = request;
@@ -277,7 +335,7 @@ export function useReview(threadId: string, target: TargetRequest, options: Revi
     });
   }, []);
 
-  /** Sets a file's Viewed mark in place, as the tab just asked bb to. */
+  /** Sets a file's Viewed mark in place. */
   const putViewed = useCallback((sessionId: string, path: string, viewed: Viewed) => {
     setState((previous) => {
       if (previous.status !== "ready" || previous.view.sessionId !== sessionId) return previous;
@@ -285,6 +343,40 @@ export function useReview(threadId: string, target: TargetRequest, options: Revi
       return { ...previous, view: { ...previous.view, files } };
     });
   }, []);
+
+  /**
+   * The user's Viewed change of a file: shown at once, written by `write` after the file's previous
+   * change was answered, and kept over every load that cannot have read it (`applyViewedToggles`).
+   * When the write fails and no later change was made, the mark goes back to `before`; the error is
+   * the caller's to show. `lag`: how long after its answer a read may still be behind (a pull request's).
+   */
+  const changeViewed = useCallback((sessionId: string, path: string, viewed: Viewed, before: Viewed, lag: number, write: () => Promise<void>): Promise<void> => {
+    const key = toggleKey(sessionId, path);
+    const seq = ++toggleSeq.current;
+    toggles.current.set(key, { viewed, seq, doneAt: null, lag });
+    putViewed(sessionId, path, viewed);
+    const run = async () => {
+      try {
+        await write();
+      } catch (error) {
+        if (toggles.current.get(key)?.seq === seq) {
+          toggles.current.delete(key);
+          putViewed(sessionId, path, before);
+        }
+        throw error;
+      }
+      const toggle = toggles.current.get(key);
+      if (toggle?.seq === seq) toggle.doneAt = Date.now();
+    };
+    const previous = writes.current.get(key) ?? Promise.resolve();
+    const mine = previous.then(run, run);
+    const settled = mine.catch(() => undefined);
+    writes.current.set(key, settled);
+    void settled.then(() => {
+      if (writes.current.get(key) === settled) writes.current.delete(key);
+    });
+    return mine;
+  }, [putViewed]);
 
   /**
    * Fills in patches loaded on demand for the load `loadId` of session `sessionId`. An answer that
@@ -321,5 +413,5 @@ export function useReview(threadId: string, target: TargetRequest, options: Revi
     if (connection === "connected" && previous !== "connected") void loadRef.current("reconnect");
   }, [connection]);
 
-  return { state, reload: load, putThread, putRun, putPatches, putViewed, refreshThreads };
+  return { state, reload: load, putThread, putRun, putPatches, changeViewed, refreshThreads };
 }
