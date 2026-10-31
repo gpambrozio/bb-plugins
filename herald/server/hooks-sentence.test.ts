@@ -5,6 +5,7 @@
  */
 import { describe, expect, it, vi } from "vitest";
 
+import type { ReplyFormat } from "../shared/herald";
 import { NO_CHOICE } from "../shared/thread-choice";
 import { createHooks, type HeraldConfig, type HookDeps } from "./hooks";
 import type { EventsPort } from "./ports";
@@ -16,7 +17,7 @@ import type { WrittenSentence } from "./writer";
 const CONFIG: HeraldConfig = {
   announce: { question: true, plan: true, permission: true, finished: true, error: true },
   announceSubagents: false,
-  sentence: { command: "my-llm --fast", prompt: "Thread: {{thread}}\nEvent: {{event}}\nRequest: {{request}}\nOutput: {{output}}" },
+  sentence: { command: "my-llm --fast", prompt: "Thread: {{thread}}\nEvent: {{event}}\nRequest: {{request}}\nOutput: {{output}}", reply: "claude-json" },
   push: false,
 };
 
@@ -51,9 +52,9 @@ function setup(write: HookDeps["writeSentence"], config: HeraldConfig = CONFIG) 
 function heldWriter() {
   let release: (written: WrittenSentence) => void = () => {};
   let fail: (error: Error) => void = () => {};
-  const calls: Array<{ command: string[]; prompt: string }> = [];
-  const write: HookDeps["writeSentence"] = (command, prompt) => {
-    calls.push({ command, prompt });
+  const calls: Array<{ command: string[]; prompt: string; reply: ReplyFormat }> = [];
+  const write: HookDeps["writeSentence"] = (command, prompt, reply) => {
+    calls.push({ command, prompt, reply });
     return new Promise<WrittenSentence>((resolve, reject) => {
       release = resolve;
       fail = reject;
@@ -76,6 +77,7 @@ describe("hooks with a model-written sentence", () => {
     expect(store.get("t1")?.summary).toEqual({ status: "pending", fallback: "Login fix finished. I fixed auth.ts and added a test." });
     expect(publish).toHaveBeenCalledTimes(1);
     expect(w.calls[0]?.command).toEqual(["my-llm", "--fast"]);
+    expect(w.calls[0]?.reply).toBe("claude-json");
     expect(w.calls[0]?.prompt).toBe(
       "Thread: Login fix\nEvent: finished its turn\nRequest: Fix the login bug\nOutput: I fixed auth.ts and added a test.",
     );
@@ -101,7 +103,7 @@ describe("hooks with a model-written sentence", () => {
 
   it("falls back when the command cannot be read", async () => {
     const w = heldWriter();
-    const { hooks, store } = setup(w.write, { ...CONFIG, sentence: { command: 'my-llm "oops', prompt: "x" } });
+    const { hooks, store } = setup(w.write, { ...CONFIG, sentence: { command: 'my-llm "oops', prompt: "x", reply: "text" } });
     await hooks.idle(thread(), "Done.");
     await settle();
     expect(w.calls).toHaveLength(0);
@@ -146,7 +148,7 @@ describe("hooks with a model-written sentence", () => {
     const first = heldWriter();
     const second = heldWriter();
     let turn = 0;
-    const { hooks, store } = setup((command, prompt) => (turn++ === 0 ? first.write(command, prompt) : second.write(command, prompt)));
+    const { hooks, store } = setup((command, prompt, reply) => (turn++ === 0 ? first.write(command, prompt, reply) : second.write(command, prompt, reply)));
     await hooks.idle(thread(), "First.");
     hooks.active(thread());
     await hooks.interactionPending(thread(), question());
@@ -274,7 +276,7 @@ describe("hooks with a model-written sentence", () => {
     expect(publish).toHaveBeenCalledTimes(2);
     expect(remembered).not.toHaveBeenCalled();
     expect([...hooks.inFlightEventIds()]).toEqual([]);
-    expect(log.lines.some((line) => line.startsWith("info:") && line.includes("replied with nothing"))).toBe(true);
+    expect(log.lines.some((line) => line.startsWith("info:") && line.includes("chose to say nothing"))).toBe(true);
   });
 
   it("keeps an event that waits on the user listed with the plain sentence, unspoken, when the tool answered with nothing", async () => {
@@ -316,7 +318,7 @@ describe("hooks with a model-written sentence", () => {
     const first = heldWriter();
     const second = heldWriter();
     let turn = 0;
-    const { hooks, store } = setup((command, prompt) => (turn++ === 0 ? first.write(command, prompt) : second.write(command, prompt)));
+    const { hooks, store } = setup((command, prompt, reply) => (turn++ === 0 ? first.write(command, prompt, reply) : second.write(command, prompt, reply)));
     await hooks.idle(thread(), "First.");
     hooks.active(thread());
     await hooks.interactionPending(thread(), question());

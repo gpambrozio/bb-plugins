@@ -139,7 +139,7 @@ function Sentence({ entry }: { entry: AttentionEntry | null }): ReactNode {
   return (
     <p className="text-xs text-muted-foreground">
       Not announced: this kind of event is switched off, Herald is set to Silent or Questions only for this thread, the
-      thread that started this one speaks for it, or the sentence tool replied with nothing.
+      thread that started this one speaks for it, or the sentence tool chose to say nothing.
     </p>
   );
 }

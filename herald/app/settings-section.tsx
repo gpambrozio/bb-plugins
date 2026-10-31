@@ -92,8 +92,8 @@ function ModelSentence({ config, onSave }: { config: StoredConfig; onSave: (next
     <section className="space-y-3">
       <Heading title="Model-written sentences">
         Applies while <em>Write each sentence with a model</em> is on above. The tool must be installed and logged in on the Mac running
-        bb; it runs there once per announcement with the prompt on standard input, and the last paragraph of its standard output becomes
-        the sentence.
+        bb; it runs there once per announcement with the prompt on standard input. Claude Code and Codex answer in JSON, with the sentence
+        in a summary field; for Gemini and a custom command, the last paragraph of the standard output becomes the sentence.
       </Heading>
       <div className="space-y-1">
         <p className="text-xs font-semibold">Tool that writes the sentence</p>
@@ -126,11 +126,12 @@ function ModelSentence({ config, onSave }: { config: StoredConfig; onSave: (next
           Placeholders: {"{{thread}}, {{project}}, {{folder}}, {{event}}, {{headline}}, {{detail}}, {{request}}"} and {"{{output}}"}.
         </p>
         <p className="text-xs text-muted-foreground">
-          A reply with nothing in it keeps the event quiet. A finished turn is then not spoken or listed, and Herald sends no
+          An empty answer keeps the event quiet: an empty summary from Claude Code or Codex, a reply with nothing in it from the
+          others. A finished turn is then not spoken or listed, and Herald sends no
           notification for it; bb sends none either only for a thread whose notifications Herald has taken over. A question, plan,
           permission or error is still listed, and still notified with the plain sentence when Herald owes the notification, but not
           spoken. For example: &ldquo;If the agent&apos;s last output only acknowledges, such as &lsquo;Captain, shipshape.&rsquo;,
-          reply with nothing.&rdquo;
+          say nothing.&rdquo;
         </p>
         <TextField
           label="Sentence prompt"

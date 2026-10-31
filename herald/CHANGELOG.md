@@ -5,6 +5,17 @@ Notable changes to `herald`. The other plugins in this repository version separa
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.9.0
+
+### Changed
+
+- **Asking for silence works with Claude Code and Codex.** Asked to reply with nothing, a model would
+  often write a note instead — "[Empty output: … so nothing is spoken.]" — and Herald read that note
+  aloud. Claude Code and Codex now answer in a fixed format with a place for the sentence that may be
+  left empty, so a prompt that asks them to say nothing about an event, such as a turn that only says
+  "Captain, shipshape.", keeps it quiet. If either answers without that format, Herald says its plain
+  sentence. Gemini and a custom command work as before.
+
 ## 0.8.0
 
 ### Added

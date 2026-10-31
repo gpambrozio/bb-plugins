@@ -6,16 +6,20 @@
  * nothing to find and put away: `dispose` kills whatever is still running.
  *
  * Fail closed, never queue: a tool that is slow or missing costs the plain
- * sentence, and nothing more. A tool that runs and answers nothing has
- * chosen silence, which is not a failure (`WrittenSentence`). At most `MAX_IN_FLIGHT` processes run at once;
- * a request beyond that is refused at once.
+ * sentence, and nothing more. A tool that runs and answers nothing — an empty
+ * reply, or an empty summary where it answers in JSON (`ReplyFormat`) — has
+ * chosen silence, which is not a failure (`WrittenSentence`); JSON that is
+ * missing or not the schema's is. At most `MAX_IN_FLIGHT` processes run at
+ * once; a request beyond that is refused at once.
  */
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { experimental_spawnHostProcess } from "@get-bb/plugin-sdk/process";
+import { z } from "zod";
 
+import type { ReplyFormat } from "../shared/herald";
 import type { Log } from "./ports";
 import { plainText } from "./timeline";
 
@@ -114,29 +118,103 @@ function killGroup(pid: number | undefined, fallback: () => void): void {
 
 /**
  * What a tool that ran to the end gave: one line to speak, or nothing at
- * all. A prompt may ask the model to reply with nothing to keep an event
- * quiet ("Captain, shipshape."); that is an answer, not a failure, and a
- * failure is a rejection, never `silent`.
+ * all. A prompt may ask the model to say nothing to keep an event quiet
+ * ("Captain, shipshape."): an empty reply, or a null or empty summary in
+ * JSON. That is an answer, not a failure, and a failure is a rejection,
+ * never `silent`.
  */
 export type WrittenSentence = { kind: "sentence"; text: string } | { kind: "silent" };
 
 /**
  * The reply as one spoken line: the last paragraph (a tool may print
- * progress before its answer), markdown and wrapping quotes gone, cut to
- * `MAX_SENTENCE_CHARS`. A reply that is empty once cleaned — blank, or only
- * quotes or markdown — is `silent`.
+ * progress before its answer), cleaned by `cleanLine`. A reply that is empty
+ * once cleaned — blank, or only quotes or markdown — is `silent`.
  */
 export function cleanSentence(raw: string): WrittenSentence {
   const paragraphs = raw
     .split(/\n\s*\n/)
     .map((paragraph) => paragraph.trim())
     .filter((paragraph) => paragraph !== "");
-  const last = paragraphs[paragraphs.length - 1] ?? "";
-  let line = plainText(last);
+  return cleanLine(paragraphs[paragraphs.length - 1] ?? "");
+}
+
+/** Markdown and wrapping quotes gone, cut to `MAX_SENTENCE_CHARS`; `silent` when nothing is left. */
+function cleanLine(text: string): WrittenSentence {
+  let line = plainText(text);
   line = line.replace(/^["'“”‘’]+/, "").replace(/["'“”‘’]+$/, "").trim();
   if (line === "") return { kind: "silent" };
   if (line.length > MAX_SENTENCE_CHARS) line = `${line.slice(0, MAX_SENTENCE_CHARS - 1).trimEnd()}…`;
   return { kind: "sentence", text: line };
+}
+
+/**
+ * What Claude Code and Codex are held to. Every field required and no others,
+ * as strict-mode schemas need; the description reaches the model with it, so
+ * a prompt that asks for "nothing" has a way to say so.
+ */
+export const SUMMARY_SCHEMA = {
+  type: "object",
+  properties: {
+    summary: {
+      type: ["string", "null"],
+      description: "The one spoken sentence, or null (or an empty string) to say nothing about this event.",
+    },
+  },
+  required: ["summary"],
+  additionalProperties: false,
+} as const;
+
+const SummarySchema = z.strictObject({ summary: z.string().nullable() });
+
+/** Claude Code's `--output-format json` result; the schema's object is in `structured_output`. */
+const ClaudeResultSchema = z.object({ is_error: z.boolean().optional(), structured_output: z.unknown().optional() });
+
+/** The file Codex reads `SUMMARY_SCHEMA` from, in the run's own folder. */
+const SCHEMA_FILE = "summary-schema.json";
+
+/**
+ * `command` with the switches that make the tool answer in `reply`'s format.
+ * Codex reads the schema from `schemaPath`, given before the trailing `-` that
+ * tells it to read the prompt from stdin.
+ */
+export function commandFor(command: readonly string[], reply: ReplyFormat, schemaPath: string): string[] {
+  switch (reply) {
+    case "text":
+      return [...command];
+    case "claude-json":
+      return [...command, "--output-format", "json", "--json-schema", JSON.stringify(SUMMARY_SCHEMA)];
+    case "codex-json":
+      return command[command.length - 1] === "-"
+        ? [...command.slice(0, -1), "--output-schema", schemaPath, "-"]
+        : [...command, "--output-schema", schemaPath];
+  }
+}
+
+/**
+ * The sentence in what a tool that exited 0 printed. In JSON, a null, empty
+ * or blank summary is `silent`, like an empty plain reply; JSON that is
+ * missing, unreadable or not the schema's throws, so the plain sentence is
+ * spoken rather than nothing.
+ */
+export function readReply(stdout: string, reply: ReplyFormat): WrittenSentence {
+  if (reply === "text") return cleanSentence(stdout);
+  const tool = reply === "claude-json" ? "Claude Code" : "Codex";
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    throw new Error(`${tool} did not answer in JSON: ${stdout.trim().slice(0, 200) || "no output"}`);
+  }
+  let structured = parsed;
+  if (reply === "claude-json") {
+    const result = ClaudeResultSchema.safeParse(parsed);
+    if (!result.success) throw new Error(`${tool}'s answer is not a JSON result: ${stdout.trim().slice(0, 200)}`);
+    if (result.data.is_error === true) throw new Error(`${tool} answered with an error: ${stdout.trim().slice(0, 200)}`);
+    structured = result.data.structured_output;
+  }
+  const answer = SummarySchema.safeParse(structured);
+  if (!answer.success) throw new Error(`${tool}'s answer is not { summary }: ${JSON.stringify(structured ?? null).slice(0, 200)}`);
+  return answer.data.summary === null ? { kind: "silent" } : cleanLine(answer.data.summary);
 }
 
 export class SentenceWriter {
@@ -148,24 +226,28 @@ export class SentenceWriter {
 
   /**
    * Runs `command` with `prompt` on stdin and returns the cleaned sentence,
-   * or `silent` when the tool exits 0 with nothing to say. Rejects when the
-   * writer is busy or disposed, the tool is missing, fails, or outlives
-   * `WRITE_TIMEOUT_MS`.
+   * or `silent` when the tool exits 0 with nothing to say. `reply` says how
+   * its answer is read (`readReply`). Rejects when the writer is busy or
+   * disposed, the tool is missing, fails, outlives `WRITE_TIMEOUT_MS`, or
+   * answers JSON that is not the schema's.
    *
    * Each run gets an empty folder of its own under the temp directory, made
    * for it and removed after it, so a tool that reads its working directory
-   * — project instructions, hooks, a repository — finds nothing. (One folder
+   * — project instructions, hooks, a repository — finds nothing but Codex's
+   * schema file, when Codex is asked for JSON. (One folder
    * for the life of the plugin was tried first; macOS purges unused temp
    * entries after a few days, and a bb server runs for weeks.)
    */
-  async write(command: readonly string[], prompt: string): Promise<WrittenSentence> {
+  async write(command: readonly string[], prompt: string, reply: ReplyFormat): Promise<WrittenSentence> {
     if (this.disposed) throw new Error("The sentence writer is closed.");
     if (this.inFlight >= MAX_IN_FLIGHT) throw new Error(`The sentence writer is busy (${MAX_IN_FLIGHT} already running).`);
     this.inFlight += 1;
     let cwd: string | null = null;
     try {
       cwd = await mkdtemp(join(tmpdir(), "herald-writer-"));
-      const result = await runCommand(command, prompt, {
+      const schemaPath = join(cwd, SCHEMA_FILE);
+      if (reply === "codex-json") await writeFile(schemaPath, JSON.stringify(SUMMARY_SCHEMA), "utf8");
+      const result = await runCommand(commandFor(command, reply, schemaPath), prompt, {
         cwd,
         env: process.env,
         timeoutMs: WRITE_TIMEOUT_MS,
@@ -174,7 +256,7 @@ export class SentenceWriter {
       if (result.code !== 0) {
         throw new Error(`${command[0]} exited with ${result.code ?? "a signal"}: ${result.stderr.trim().slice(-300) || "no error output"}`);
       }
-      return cleanSentence(result.stdout);
+      return readReply(result.stdout, reply);
     } finally {
       this.inFlight -= 1;
       if (cwd !== null) {

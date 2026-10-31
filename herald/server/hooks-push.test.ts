@@ -220,7 +220,7 @@ describe("hooks with push notifications", () => {
 
   it("sends the model's sentence once it lands, not the plain one", async () => {
     const w = heldWriter();
-    const { hooks, push } = setup({ config: { ...CONFIG, sentence: { command: "my-llm", prompt: "x" } }, write: w.write });
+    const { hooks, push } = setup({ config: { ...CONFIG, sentence: { command: "my-llm", prompt: "x", reply: "text" } }, write: w.write });
     await hooks.idle(thread(), "I fixed auth.ts.");
     await settle();
     expect(push.sent).toEqual([]);
@@ -231,7 +231,7 @@ describe("hooks with push notifications", () => {
 
   it("hands the takeover the model's sentence for an event whose banner was withdrawn; the takeover judges news", async () => {
     const w = heldWriter();
-    const { hooks, push, store } = setup({ config: { ...CONFIG, sentence: { command: "my-llm", prompt: "x" } }, write: w.write });
+    const { hooks, push, store } = setup({ config: { ...CONFIG, sentence: { command: "my-llm", prompt: "x", reply: "text" } }, write: w.write });
     await hooks.interactionPending(thread(), question());
     answered = true;
     w.release("Too late.");
@@ -242,7 +242,7 @@ describe("hooks with push notifications", () => {
 
   it("sends the plain sentence on unload for a notification still waiting on its sentence", async () => {
     const w = heldWriter();
-    const { hooks, push } = setup({ config: { ...CONFIG, sentence: { command: "my-llm", prompt: "x" } }, write: w.write });
+    const { hooks, push } = setup({ config: { ...CONFIG, sentence: { command: "my-llm", prompt: "x", reply: "text" } }, write: w.write });
     await hooks.interactionPending(thread(), question());
     await settle();
     await hooks.dispose();
@@ -253,7 +253,7 @@ describe("hooks with push notifications", () => {
   });
 
   describe("when the tool replies with nothing", () => {
-    const MODEL: HeraldConfig = { ...CONFIG, sentence: { command: "my-llm", prompt: "x" } };
+    const MODEL: HeraldConfig = { ...CONFIG, sentence: { command: "my-llm", prompt: "x", reply: "text" } };
     type Fire = (hooks: ReturnType<typeof setup>["hooks"]) => Promise<void>;
     const WAITING: Array<{ name: string; fire: Fire; plain: string }> = [
       { name: "question", fire: (hooks) => hooks.interactionPending(thread(), question()), plain: "Login fix has a question: Which DB? Options: Postgres / SQLite." },
@@ -367,7 +367,7 @@ describe("hooks with push notifications", () => {
   });
 
   describe("with the real takeover", () => {
-    const MODEL: HeraldConfig = { ...CONFIG, sentence: { command: "my-llm", prompt: "x" } };
+    const MODEL: HeraldConfig = { ...CONFIG, sentence: { command: "my-llm", prompt: "x", reply: "text" } };
 
     it("notifies a question whose banner a second question replaced, and not the second once answered", async () => {
       const answeredIds = new Set<string>();

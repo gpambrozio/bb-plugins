@@ -254,7 +254,7 @@ export default async function plugin(bb: BbPluginApi) {
     choiceOf: (thread) => choicesOf().inputsOf(thread.id),
     publish,
     // The tool runs here, on the bb server's machine; see AGENTS.md.
-    writeSentence: (command, prompt) => writer.write(command, prompt),
+    writeSentence: (command, prompt, reply) => writer.write(command, prompt, reply),
     remember,
     push,
     log: bb.log,

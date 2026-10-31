@@ -23,8 +23,8 @@ export const AttentionReasonSchema = z.enum(ATTENTION_REASONS);
  * model and becomes `ready` with its sentence, or with the plain `fallback`
  * when that fails; `off` is listed but never spoken — the event kind is
  * switched off, the thread is a subagent its parent speaks for, or the tool
- * replied with nothing to an event that waits on the user; `quiet` is a
- * finished turn the tool replied with nothing to — not spoken, not listed,
+ * chose to say nothing about an event that waits on the user; `quiet` is a
+ * finished turn the tool chose to say nothing about — not spoken, not listed,
  * and it keeps bb's unread flag for that turn off the page (`app/rows.ts`):
  * `attentionAt` is bb's `latestAttentionAt` for the thread as that turn
  * ended, so a flag bb raised later, for an event Herald missed, still shows.
@@ -224,6 +224,28 @@ export const TOOL_COMMANDS: Record<Exclude<SentenceTool, "custom">, string> = {
     'claude -p --tools "" --max-turns 1 --no-session-persistence --setting-sources "" --strict-mcp-config --model haiku --effort low',
   codex: "codex exec --ephemeral --ignore-user-config --skip-git-repo-check --sandbox read-only --ignore-rules --color never -",
   gemini: 'gemini -p "Reply with the sentence only." --approval-mode plan --output-format text',
+};
+
+/**
+ * How a tool's answer is read. Claude Code and Codex are asked for a JSON
+ * object, `{ "summary": string | null }`, that the CLI itself holds to a
+ * schema (`--output-format json --json-schema` and `--output-schema`): the
+ * model always has something to return, and a null or empty summary is its
+ * choice of silence. Asked for an empty reply instead, a model writes a note
+ * saying that it says nothing. Gemini CLI has no such switch, and a custom
+ * command is the user's own, so those two answer in plain text.
+ *
+ * The switches are not in `TOOL_COMMANDS`: the custom command starts from a
+ * preset's, and it is read as plain text.
+ */
+export const REPLY_FORMATS = ["text", "claude-json", "codex-json"] as const;
+export type ReplyFormat = (typeof REPLY_FORMATS)[number];
+
+export const TOOL_REPLY_FORMATS: Record<SentenceTool, ReplyFormat> = {
+  claude: "claude-json",
+  codex: "codex-json",
+  gemini: "text",
+  custom: "text",
 };
 
 /**

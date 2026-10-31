@@ -19,6 +19,14 @@ describe("sentenceSettingsOf", () => {
     expect(sentence?.prompt).toBe(DEFAULT_SENTENCE_PROMPT);
   });
 
+  it("asks Claude Code and Codex for structured output, and reads Gemini and a custom command as plain text", () => {
+    expect(sentenceSettingsOf(true, stored({ sentenceTool: "claude" }))?.reply).toBe("claude-json");
+    expect(sentenceSettingsOf(true, stored({ sentenceTool: "codex" }))?.reply).toBe("codex-json");
+    expect(sentenceSettingsOf(true, stored({ sentenceTool: "gemini" }))?.reply).toBe("text");
+    // A custom command seeded from the Claude preset is still the user's own, read as text.
+    expect(sentenceSettingsOf(true, stored({ sentenceTool: "custom", sentenceCommand: TOOL_COMMANDS.claude }))?.reply).toBe("text");
+  });
+
   it("uses the custom command when that is the tool, and nothing when it is blank", () => {
     expect(sentenceSettingsOf(true, stored({ sentenceTool: "custom", sentenceCommand: " my-llm --fast " }))?.command).toBe("my-llm --fast");
     expect(sentenceSettingsOf(true, stored({ sentenceTool: "custom", sentenceCommand: "  " }))).toBeNull();

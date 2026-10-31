@@ -173,13 +173,15 @@ custom command and the prompt sit together in the *Model-written sentences* sect
 page, below bb's own form. The presets:
 
 - **claude** — Claude Code, with no tools, no settings-file hooks and no MCP servers, one turn of the
-  Haiku model at low effort.
+  Haiku model at low effort. It answers in JSON, with the sentence in a summary field.
 - **codex** — OpenAI Codex without its user configuration (so none of your MCP servers or hooks),
-  read-only, nothing saved to disk. Its login still comes from your Codex home.
+  read-only, nothing saved to disk. Its login still comes from your Codex home. It answers in JSON, with
+  the sentence in a summary field.
 - **gemini** — Gemini CLI, in its read-only plan mode.
 - **custom** — a command of your own. A *Custom command* field appears under the tool only while custom
   is selected, filled in with the command of the tool you had selected, to start from. The prompt
-  arrives on standard input; the last paragraph of the standard output becomes the sentence. No shell
+  arrives on standard input; the last paragraph of the standard output becomes the sentence, as it does
+  for gemini. No shell
   runs the command: quote as you would in one, but `~` and `$VARIABLES` are not expanded, and it sees
   the bb server's environment.
 
@@ -193,9 +195,12 @@ while; the Claude preset cannot. Pick claude if any of that matters to you.
 The *Sentence prompt* is yours to edit, with a button to get the default back; it has placeholders for
 the thread, project, folder, event, headline, detail, the request and the agent's output.
 
-**A reply with nothing in it means "stay quiet" for that event.** Your prompt can ask for it, for
-example: *If the agent's last output only acknowledges, such as "Captain, shipshape.", reply with
-nothing.* What an empty reply (blank, or only quotes or markdown) does depends on the event:
+**An empty answer means "stay quiet" for that event.** Your prompt can ask for it, for example: *If the
+agent's last output only acknowledges, such as "Captain, shipshape.", say nothing.* With claude and
+codex the answer is JSON, so the model always has something to return and leaves the summary empty (null)
+to say nothing; asked for an empty reply, a model tends to write a note about saying nothing instead,
+which would be spoken. With gemini or a custom command, an empty answer is a reply with nothing in it.
+What an empty answer (blank, or only quotes or markdown) does depends on the event:
 
 - **A finished turn** — nothing at all: not spoken, not on the Herald page, in the conversation or above
   the composer, not in the recent sentences or the thread's Herald tab. With *Send Herald's sentences as push notifications*
@@ -210,7 +215,7 @@ nothing.* What an empty reply (blank, or only quotes or markdown) does depends o
 
 While the tool runs, the row (and on older bb the banner) says *Writing the sentence…*; the card appears
 once the sentence is written; the plain sentence is spoken
-instead if the tool fails (exits with an error), is missing, or takes longer than 45 seconds. A sentence still being written
+instead if the tool fails (exits with an error, or claude or codex answers without its JSON), is missing, or takes longer than 45 seconds. A sentence still being written
 when Herald itself is reloaded is dropped rather than spoken late. The prompt includes the agent's
 own reply, which can carry instructions: that is why the presets run with no tools or read-only, and why
 the switch is off by default. A Claude run takes about ten seconds end to end.
