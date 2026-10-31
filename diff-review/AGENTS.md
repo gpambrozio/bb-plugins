@@ -363,6 +363,15 @@ is a warning, not a failed submit).
   first comment takes that comment's place when unedited, and its replies, an agent's answers and
   anything written during the submission stay, unposted. A whole-file or whole-diff comment, now in the
   review's body, is resolved.
+- A sync can land between GitHub making a line comment's thread (or taking the submit) and that link
+  (another window's Sync or reconnect) and import GitHub's thread as a local thread of its own.
+  `linkGithubThread` folds such a copy into the line comment's thread (the id the tab knows) in the
+  same transaction, and `syncGithubThreads` keeps one thread per GitHub thread, folding a later one
+  (by `rowid`) into the first, which cleans up copies left before 0.5.1. A fold (`foldThread`) moves
+  the copy's comments but a GitHub comment the kept thread has, its send when the kept thread has
+  none, its runs, and each tab's `reply:` draft and thread fold. Uniqueness is the code's, not an
+  index's: a unique index would need a migration that folds existing copies in SQL. An agent still
+  holding the copy's id is told there is no such comment thread.
 
 An AI run's comments on a pull request are checked against its fetched range (`PullRequests.filesFor`,
 the view's last load or a fresh fetch). A fix run for a pull request starts in a new managed worktree

@@ -53,4 +53,36 @@ describe("mirroring GitHub's threads", () => {
     expect(reviews.threads(session.id)[0]!.comments.map((comment) => [comment.id === "copy", comment.body])).toEqual([[false, "Why?"]]);
     expect(reviews.syncGithubThreads(session.id, [remote])).toBe(false);
   });
+
+  it("folds a second thread for one GitHub thread into the first, with its comments, send, runs and drafts", () => {
+    const { db, store: reviews } = store();
+    const session = reviews.session("env_1", "pr:o/r#7");
+    const draft = { body: "", severity: null, range: null };
+    // The line comment Submit made into PRRT_9, linked, beside the copy a read imported first (as before 0.5.1).
+    const kept = reviews.createThread({ sessionId: session.id, filePath: "a.ts", side: "new", startLine: 1, endLine: 1, severity: null, anchorContent: "a", body: "Name it c." });
+    reviews.addComment({ threadId: kept.id, authorType: "user", authorName: "You", body: "Mine, unposted." });
+    const remote = {
+      githubThreadId: "PRRT_9", filePath: "a.ts", side: "new" as const, startLine: 1, endLine: 1, status: "open" as const, anchorContent: "a",
+      comments: [{ githubCommentId: "PRRC_9", author: "me", body: "Name it c.", createdAt: 1 }],
+    };
+    reviews.syncGithubThreads(session.id, [remote]);
+    const copy = reviews.threads(session.id).find((thread) => thread.id !== kept.id)!;
+    db.prepare("UPDATE review_threads SET github_thread_id = 'PRRT_9' WHERE id = ?").run(kept.id);
+    db.prepare("UPDATE review_comments SET github_comment_id = 'PRRC_9' WHERE id = ?").run(kept.comments[0]!.id);
+    // What was done on the copy meanwhile: an agent's draft, a send, a run, a reply typed in a tab.
+    reviews.addComment({ threadId: copy.id, authorType: "agent", authorName: "AI", body: "On the copy." });
+    reviews.recordSend(session.id, "thr_1", [copy.id], "");
+    const run = reviews.createRun({ sessionId: session.id, kind: "mention", bbThreadId: "thr_run", reviewThreadId: copy.id, focus: null, providerId: "claude-code", model: null, status: "running" });
+    reviews.saveViewState("thr_1", session.id, { savedAt: 1, drafts: { [`reply:${copy.id}`]: { ...draft, body: "Typed on the copy" } }, expandedThreads: { [copy.id]: true }, collapsed: {}, scroll: null } as never);
+    expect(reviews.threads(session.id).filter((thread) => thread.githubThreadId === "PRRT_9")).toHaveLength(2);
+
+    expect(reviews.syncGithubThreads(session.id, [remote])).toBe(true);
+    const threads = reviews.threads(session.id);
+    expect(threads.map((thread) => thread.id)).toEqual([kept.id]);
+    expect(threads[0]!.comments.map((comment) => [comment.authorType, comment.body])).toEqual([["github", "Name it c."], ["user", "Mine, unposted."], ["agent", "On the copy."]]);
+    expect(threads[0]!.delivery).toMatchObject({ state: "sent", threadId: "thr_1" });
+    expect(reviews.run(run.id)!.reviewThreadId).toBe(kept.id);
+    expect(reviews.viewState("thr_1", session.id)).toMatchObject({ drafts: { [`reply:${kept.id}`]: { body: "Typed on the copy" } }, expandedThreads: { [kept.id]: true } });
+    expect(reviews.syncGithubThreads(session.id, [remote])).toBe(false);
+  });
 });

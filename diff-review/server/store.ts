@@ -682,14 +682,23 @@ export class ReviewStore {
   syncGithubThreads(sessionId: string, remote: readonly GithubThreadInput[]): boolean {
     let changed = false;
     this.db.transaction(() => {
-      const existing = new Map(
-        this.db
-          .prepare<[string], { id: string; github_thread_id: string; status: ThreadStatus; start_line: number; end_line: number; side: Side | null; anchor_content: string | null }>(
-            "SELECT id, github_thread_id, status, start_line, end_line, side, anchor_content FROM review_threads WHERE session_id = ? AND github_thread_id IS NOT NULL",
-          )
-          .all(sessionId)
-          .map((row) => [row.github_thread_id, row]),
-      );
+      // One thread per GitHub thread: should a second be here (an import that raced Submit's link once
+      // left one), it folds into the first.
+      const existing = new Map<string, { id: string; github_thread_id: string; status: ThreadStatus; start_line: number; end_line: number; side: Side | null; anchor_content: string | null }>();
+      const rows = this.db
+        .prepare<[string], { id: string; github_thread_id: string; status: ThreadStatus; start_line: number; end_line: number; side: Side | null; anchor_content: string | null }>(
+          "SELECT id, github_thread_id, status, start_line, end_line, side, anchor_content FROM review_threads WHERE session_id = ? AND github_thread_id IS NOT NULL ORDER BY rowid",
+        )
+        .all(sessionId);
+      for (const row of rows) {
+        const first = existing.get(row.github_thread_id);
+        if (first === undefined) {
+          existing.set(row.github_thread_id, row);
+          continue;
+        }
+        this.foldThread(sessionId, row.id, first.id);
+        changed = true;
+      }
       const seen = new Set<string>();
       for (const thread of remote) {
         seen.add(thread.githubThreadId);
@@ -765,15 +774,54 @@ export class ReviewStore {
    * A comment thread submitted to GitHub becomes the mirror of the review thread it made: it takes
    * that thread's id, and its first comment the GitHub comment's when it still reads as posted (an
    * edit made meanwhile stays the plugin's own). Its other comments, replies included, stay as they
-   * are.
+   * are. A read that landed after GitHub made the thread and before this already imported it as a
+   * thread of its own; that copy folds into this one (the id the tab knows), in the same transaction.
    */
   linkGithubThread(threadId: string, githubThreadId: string, first: { commentId: string; body: string; githubCommentId: string } | null): void {
     this.db.transaction(() => {
+      const sessionId = this.db.prepare<[string], { session_id: string }>("SELECT session_id FROM review_threads WHERE id = ?").get(threadId)?.session_id;
+      if (sessionId === undefined) return;
       this.db.prepare("UPDATE review_threads SET github_thread_id = ?, updated_at = ? WHERE id = ?").run(githubThreadId, this.now(), threadId);
       if (first !== null) {
         this.db.prepare("UPDATE review_comments SET github_comment_id = ? WHERE id = ? AND thread_id = ? AND body = ?").run(first.githubCommentId, first.commentId, threadId, first.body);
       }
+      const copies = this.db
+        .prepare<[string, string, string], { id: string }>("SELECT id FROM review_threads WHERE session_id = ? AND github_thread_id = ? AND id != ? ORDER BY rowid")
+        .all(sessionId, githubThreadId, threadId);
+      for (const copy of copies) this.foldThread(sessionId, copy.id, threadId);
     })();
+  }
+
+  /**
+   * Folds a second thread mirroring one GitHub thread into the one kept (inside the caller's
+   * transaction), then deletes it: its comments move, but for a GitHub comment the kept thread has;
+   * its send when the kept thread has none; its runs; and each tab's reply draft and fold on it, when
+   * the kept thread has none.
+   */
+  private foldThread(sessionId: string, copyId: string, keepId: string): void {
+    this.db
+      .prepare(
+        `DELETE FROM review_comments WHERE thread_id = ? AND github_comment_id IN
+           (SELECT github_comment_id FROM review_comments WHERE thread_id = ? AND github_comment_id IS NOT NULL)`,
+      )
+      .run(copyId, keepId);
+    this.db.prepare("UPDATE review_comments SET thread_id = ? WHERE thread_id = ?").run(keepId, copyId);
+    this.db
+      .prepare(
+        `UPDATE review_threads SET (send_id, delivery) = (SELECT send_id, delivery FROM review_threads WHERE id = ?)
+         WHERE id = ? AND send_id IS NULL`,
+      )
+      .run(copyId, keepId);
+    this.db.prepare("UPDATE OR IGNORE send_previous SET thread_id = ? WHERE thread_id = ?").run(keepId, copyId);
+    this.db.prepare("UPDATE runs SET review_thread_id = ? WHERE review_thread_id = ?").run(keepId, copyId);
+    const states = this.db.prepare<[string], { thread_id: string; state: string }>("SELECT thread_id, state FROM view_states WHERE session_id = ?").all(sessionId);
+    for (const row of states) {
+      const state = JSON.parse(row.state) as { drafts?: Record<string, unknown>; expandedThreads?: Record<string, unknown> };
+      const movedDraft = moveKey(state.drafts, `reply:${copyId}`, `reply:${keepId}`);
+      const movedFold = moveKey(state.expandedThreads, copyId, keepId);
+      if (movedDraft || movedFold) this.db.prepare("UPDATE view_states SET state = ? WHERE thread_id = ? AND session_id = ?").run(JSON.stringify(state), row.thread_id, sessionId);
+    }
+    this.db.prepare("DELETE FROM review_threads WHERE id = ?").run(copyId);
   }
 
   private insertComment(input: NewComment, at: number): string {
@@ -822,6 +870,14 @@ export class ReviewStore {
           : { state: row.delivery, sendId: row.send_id, threadId: row.bb_thread_id, sentAt: row.sent_at },
     }));
   }
+}
+
+/** Moves `record[from]` to `record[to]`, unless `to` is taken (then it is dropped); true when anything changed. */
+function moveKey(record: Record<string, unknown> | undefined, from: string, to: string): boolean {
+  if (record === undefined || !Object.hasOwn(record, from)) return false;
+  if (!Object.hasOwn(record, to)) record[to] = record[from];
+  delete record[from];
+  return true;
 }
 
 function toRun(row: RunRow): StoredRun {
