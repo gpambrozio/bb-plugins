@@ -11,7 +11,8 @@ import { randomBytes } from "node:crypto";
 
 import type Database from "better-sqlite3";
 
-import type { AuthorType, DeliveryState, GithubDraft, ReviewComment, ReviewThread, Run, RunKind, RunStatus, Severity, Side, ThreadStatus } from "../shared/types";
+import { remapThreadKeys } from "../shared/thread-aliases";
+import type { AuthorType, DeliveryState, Draft, GithubDraft, ReviewComment, ReviewThread, Run, RunKind, RunStatus, Severity, Side, ThreadStatus } from "../shared/types";
 
 export const MIGRATIONS: string[] = [
   `CREATE TABLE review_sessions (
@@ -106,6 +107,13 @@ export const MIGRATIONS: string[] = [
   // An agent's answer on a GitHub thread is a draft the user posts (`reply`, or `resolve`: the thread
   // is resolved on GitHub when it is posted); null for every other comment.
   `ALTER TABLE review_comments ADD COLUMN github_draft TEXT`,
+  // 0.5.1: a thread folded into another (two local copies of one GitHub thread) leaves its id as an
+  // alias of the one kept, so a request or a tab still holding the old id reaches it.
+  `CREATE TABLE thread_aliases (
+     alias_id TEXT PRIMARY KEY,
+     thread_id TEXT NOT NULL REFERENCES review_threads(id) ON DELETE CASCADE
+   )`,
+  `CREATE INDEX thread_aliases_thread ON thread_aliases(thread_id)`,
 ];
 
 export interface Session {
@@ -280,9 +288,22 @@ export class ReviewStore {
     return this.withComments(rows);
   }
 
+  /** A thread by its id, or by the id of a thread folded into it (`foldThread`). */
   thread(id: string): ReviewThread | null {
-    const row = this.db.prepare<[string], ThreadRow>(`${THREAD_SELECT} WHERE t.id = ?`).get(id);
+    const row =
+      this.db.prepare<[string], ThreadRow>(`${THREAD_SELECT} WHERE t.id = ?`).get(id) ??
+      this.db.prepare<[string], ThreadRow>(`${THREAD_SELECT} WHERE t.id = (SELECT thread_id FROM thread_aliases WHERE alias_id = ?)`).get(id);
     return row === undefined ? null : this.withComments([row])[0]!;
+  }
+
+  /** The session's folded thread ids, each with the id of the thread it was folded into. */
+  aliases(sessionId: string): Record<string, string> {
+    const rows = this.db
+      .prepare<[string], { alias_id: string; thread_id: string }>(
+        "SELECT a.alias_id, a.thread_id FROM thread_aliases a JOIN review_threads t ON t.id = a.thread_id WHERE t.session_id = ? ORDER BY a.rowid",
+      )
+      .all(sessionId);
+    return Object.fromEntries(rows.map((row) => [row.alias_id, row.thread_id]));
   }
 
   /** The threads whose last send went to `bbThreadId`, oldest first. */
@@ -795,8 +816,9 @@ export class ReviewStore {
   /**
    * Folds a second thread mirroring one GitHub thread into the one kept (inside the caller's
    * transaction), then deletes it: its comments move, but for a GitHub comment the kept thread has;
-   * its send when the kept thread has none; its runs; and each tab's reply draft and fold on it, when
-   * the kept thread has none.
+   * its send when the kept thread has none; its runs; and each tab's reply draft and fold on it
+   * (`remapThreadKeys`). Its id stays as an alias of the kept thread (`thread_aliases`), so a request
+   * already under way for it, a tab that still shows it and an agent told of it reach the kept one.
    */
   private foldThread(sessionId: string, copyId: string, keepId: string): void {
     this.db
@@ -816,11 +838,13 @@ export class ReviewStore {
     this.db.prepare("UPDATE runs SET review_thread_id = ? WHERE review_thread_id = ?").run(keepId, copyId);
     const states = this.db.prepare<[string], { thread_id: string; state: string }>("SELECT thread_id, state FROM view_states WHERE session_id = ?").all(sessionId);
     for (const row of states) {
-      const state = JSON.parse(row.state) as { drafts?: Record<string, unknown>; expandedThreads?: Record<string, unknown> };
-      const movedDraft = moveKey(state.drafts, `reply:${copyId}`, `reply:${keepId}`);
-      const movedFold = moveKey(state.expandedThreads, copyId, keepId);
-      if (movedDraft || movedFold) this.db.prepare("UPDATE view_states SET state = ? WHERE thread_id = ? AND session_id = ?").run(JSON.stringify(state), row.thread_id, sessionId);
+      const state = JSON.parse(row.state) as { drafts?: Record<string, Draft>; expandedThreads?: Record<string, boolean> };
+      const remapped = remapThreadKeys({ ...state, drafts: state.drafts ?? {} }, { [copyId]: keepId });
+      if (remapped !== null) this.db.prepare("UPDATE view_states SET state = ? WHERE thread_id = ? AND session_id = ?").run(JSON.stringify(remapped.state), row.thread_id, sessionId);
     }
+    // Aliases of the copy now name the kept thread; then the copy's own id does.
+    this.db.prepare("UPDATE thread_aliases SET thread_id = ? WHERE thread_id = ?").run(keepId, copyId);
+    this.db.prepare("INSERT OR REPLACE INTO thread_aliases (alias_id, thread_id) VALUES (?, ?)").run(copyId, keepId);
     this.db.prepare("DELETE FROM review_threads WHERE id = ?").run(copyId);
   }
 
@@ -870,14 +894,6 @@ export class ReviewStore {
           : { state: row.delivery, sendId: row.send_id, threadId: row.bb_thread_id, sentAt: row.sent_at },
     }));
   }
-}
-
-/** Moves `record[from]` to `record[to]`, unless `to` is taken (then it is dropped); true when anything changed. */
-function moveKey(record: Record<string, unknown> | undefined, from: string, to: string): boolean {
-  if (record === undefined || !Object.hasOwn(record, from)) return false;
-  if (!Object.hasOwn(record, to)) record[to] = record[from];
-  delete record[from];
-  return true;
 }
 
 function toRun(row: RunRow): StoredRun {

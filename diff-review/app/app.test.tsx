@@ -150,6 +150,7 @@ const VIEW: Extract<ReviewView, { ok: true }> = {
   truncated: false,
   runs: [],
   viewState: null,
+  aliases: {},
   threads: [
     // Made on line 5 but its text is on line 2 now: shown there, as moved.
     thread({ id: "aaaaaa000001", body: "Why three?", startLine: 5, endLine: 5, severity: "question" }),
@@ -2034,6 +2035,71 @@ describe("the Review tab", () => {
       }
       cleanup();
       expect(lastSaved(first).collapsed).toEqual({ "src/a.ts": false, "src/large.ts": false });
+    });
+
+    describe("a reply typed on a copy of a GitHub thread that is folded into the kept one", () => {
+      const kept = { ...VIEW.threads[0]!, githubThreadId: "PRRT_9" };
+      const copy = thread({ id: "bbbbbb000009", body: "GitHub's copy", startLine: 5, endLine: 5, githubThreadId: "PRRT_9" });
+      const folded = { [copy.id]: kept.id };
+      const card = (id: string) => document.querySelector(`[data-thread-id="${id}"]`) as HTMLElement;
+      const savedDrafts = (slot: Slot) => slot.inspection.rpcCalls.filter((call) => call.method === "saveViewState").map((call) => Object.keys((call.input as { state: ViewState }).state.drafts));
+
+      it("moves to the kept card when the thread list says so, with the save still pending, later saves and a remount", async () => {
+        let listed = { threads: [kept, copy], runs: [], aliases: {} };
+        const first = render({ getReview: () => ({ ...VIEW, threads: [kept, copy] }), saveViewState: () => ({ ok: true }), listThreads: () => listed });
+        await screen.findByText("GitHub's copy");
+        fireEvent.click(within(card(copy.id)).getByRole("button", { name: "Reply" }));
+        fireEvent.change(within(card(copy.id)).getByPlaceholderText(/^Reply/), { target: { value: "Typed on the copy" } });
+        // Submit review linked the line comment meanwhile, folding the copy, before the tab's save went out.
+        listed = { threads: [kept], runs: [], aliases: folded };
+        await first.behavior.emitRealtime("environment:env_1", { kind: "threads", sessionId: "ses_1" });
+        const editor = (await within(card(kept.id)).findByDisplayValue("Typed on the copy")) as HTMLTextAreaElement;
+        expect(card(copy.id)).toBeNull();
+        // Typed on after the fold, then the tab left: no save ever named the copy.
+        fireEvent.change(editor, { target: { value: "Typed on the copy, then more" } });
+        cleanup();
+        expect(savedDrafts(first).every((keys) => !keys.includes(`reply:${copy.id}`))).toBe(true);
+        expect(lastSaved(first).drafts).toEqual({ [`reply:${kept.id}`]: { body: "Typed on the copy, then more", severity: null, range: null } });
+
+        // Back in this window, its own copy wins over the server's older one, which still names the copy.
+        const stale: ViewState = { drafts: { [`reply:${copy.id}`]: { body: "Typed on the copy", severity: null, range: null } }, collapsed: {}, scroll: null, savedAt: 1 };
+        renderWith(stale, { threads: [kept], aliases: folded });
+        await screen.findByText("Why three?");
+        await within(card(kept.id)).findByDisplayValue("Typed on the copy, then more");
+        cleanup();
+        // In another window, the server's copy still names the folded thread: it opens on the kept one.
+        forgetViewStates();
+        renderWith(stale, { threads: [kept], aliases: folded });
+        await screen.findByText("Why three?");
+        await within(card(kept.id)).findByDisplayValue("Typed on the copy");
+      });
+
+      it("fills the kept card's empty editor when a reload says so, and keeps both texts when both had one", async () => {
+        let view = { ...VIEW, threads: [kept, copy], viewState: null as ViewState | null };
+        const slot = render({ getReview: () => view, saveViewState: () => ({ ok: true }) });
+        await screen.findByText("GitHub's copy");
+        fireEvent.click(within(card(kept.id)).getByRole("button", { name: "Reply" }));
+        fireEvent.click(within(card(copy.id)).getByRole("button", { name: "Reply" }));
+        fireEvent.change(within(card(copy.id)).getByPlaceholderText(/^Reply/), { target: { value: "Typed on the copy" } });
+        // A reload's sync folded a copy an earlier version left.
+        view = { ...view, threads: [kept], aliases: folded };
+        await slot.behavior.emitRealtime("environment:env_1", { kind: "diff" });
+        await within(card(kept.id)).findByDisplayValue("Typed on the copy");
+        cleanup();
+        expect(lastSaved(slot).drafts).toEqual({ [`reply:${kept.id}`]: { body: "Typed on the copy", severity: null, range: null } });
+
+        forgetViewStates();
+        const both: ViewState = {
+          drafts: { [`reply:${kept.id}`]: { body: "First thought", severity: null, range: null }, [`reply:${copy.id}`]: { body: "Second thought", severity: null, range: null } },
+          collapsed: {},
+          scroll: null,
+          savedAt: 1,
+        };
+        renderWith(both, { threads: [kept], aliases: folded });
+        await screen.findByText("Why three?");
+        const merged = (await within(card(kept.id)).findByPlaceholderText(/^Reply/)) as HTMLTextAreaElement;
+        expect(merged.value).toBe("First thought\n\nSecond thought");
+      });
     });
 
     it("comes back to this window's copy when the server's is older", async () => {

@@ -1058,6 +1058,31 @@ describe("reviewing a GitHub pull request", () => {
         expect(replies(github)).toHaveLength(1);
       });
     }
+
+    it("answers a Post on the copy with the kept thread when Submit folds the copy while GitHub takes it", async () => {
+      const { harness, rpc, view, sessionId, github } = await sentPull();
+      const line = ((await rpc("createThread", { sessionId, filePath: "src/a.ts", side: "new", startLine: 2, endLine: 2, severity: null, anchorContent: "const b = 3;", body: "Name it c." })) as { thread: ReviewThread }).thread;
+      const held = gate();
+      github.remote.onSubmitted = () => held.wait();
+      const plan = (await rpc("reviewPlan", { sessionId })) as { lines: { reviewThreadId: string; body: string }[] };
+      const submitting = rpc("submitReview", { sessionId, event: "COMMENT", body: "", headSha: HEAD, items: plan.lines.filter((entry) => entry.reviewThreadId === line.id).map((entry) => ({ reviewThreadId: entry.reviewThreadId, body: entry.body })) });
+      await held.reached;
+      const copy = (await view(PULL)).threads.find((thread) => thread.githubThreadId === "PRRT_new1" && thread.id !== line.id)!;
+      await rpc("send", { sessionId, threadId: THREAD, reviewThreadIds: [copy.id], note: "" });
+      await harness.behavior.runCli(["reply", copy.id, "Agreed."], { threadId: THREAD });
+      const draft = (await rpc("listThreads", { sessionId }) as { threads: ReviewThread[] }).threads.find((thread) => thread.id === copy.id)!.comments.at(-1)!;
+      const slow = gate();
+      github.remote.onReply = () => slow.wait();
+      const posting = rpc("postDraft", { commentId: draft.id, body: "Agreed." });
+      await slow.reached;
+      held.open();
+      await submitting;
+      slow.open();
+      const { thread } = (await posting) as { thread: ReviewThread };
+      expect(thread.id).toBe(line.id);
+      expect(thread.comments.map((comment) => [comment.id === draft.id, comment.authorType, comment.body]).sort()).toEqual([[false, "github", "Name it c."], [true, "github", "Agreed."]]);
+      expect(replies(github)).toHaveLength(1);
+    });
   });
 
   it("keeps a reply that asks the reviewer on a GitHub thread in the tab, and asks the reviewer", async () => {
@@ -1152,6 +1177,66 @@ describe("reviewing a GitHub pull request", () => {
       expect(await ours()).toEqual(expected);
     });
   }
+
+  /** A line comment, Submit review held once GitHub took it, and the copy a read imported meanwhile. */
+  async function heldSubmit() {
+    const github = fakeGitHub();
+    const context = await setup({ gh: github.gh });
+    const { sessionId } = await context.view(PULL);
+    const line = ((await context.rpc("createThread", { sessionId, filePath: "src/a.ts", side: "new", startLine: 2, endLine: 2, severity: null, anchorContent: "const b = 3;", body: "Name it c." })) as { thread: ReviewThread }).thread;
+    const held = gate();
+    github.remote.onSubmitted = () => held.wait();
+    const submitting = submitAll(context.rpc, sessionId, "COMMENT", "");
+    await held.reached;
+    const copy = (await context.view(PULL)).threads.find((thread) => thread.githubThreadId === "PRRT_new1" && thread.id !== line.id)!;
+    expect(copy).toBeDefined();
+    const finish = async () => {
+      held.open();
+      await expect(submitting).resolves.toMatchObject({ posted: 1 });
+    };
+    return { ...context, github, sessionId, line, copy, finish };
+  }
+
+  for (const action of ["Reply", "Resolve"] as const) {
+    it(`answers a ${action} on the copy with the kept thread when Submit folds the copy while GitHub takes it`, async () => {
+      const { rpc, github, line, copy, finish } = await heldSubmit();
+      const slow = gate();
+      if (action === "Reply") github.remote.onReply = () => slow.wait();
+      else github.remote.onRequest = async (query) => (query.includes("resolveReviewThread") ? slow.wait() : undefined);
+      const answering = action === "Reply" ? rpc("addComment", { reviewThreadId: copy.id, body: "On the copy." }) : rpc("setStatus", { reviewThreadId: copy.id, status: "resolved" });
+      await slow.reached;
+      await finish();
+      slow.open();
+      const { thread } = (await answering) as { thread: ReviewThread };
+      expect(thread.id).toBe(line.id);
+      const mutation = action === "Reply" ? "addPullRequestReviewThreadReply" : "resolveReviewThread";
+      expect(github.requests.filter((request) => request.query.includes(mutation))).toHaveLength(1);
+      // GitHub's reply dates from before the local comment's own time, so the order is not the point.
+      if (action === "Reply") expect(thread.comments.map((comment) => [comment.authorType, comment.body]).sort()).toEqual([["github", "Name it c."], ["github", "On the copy."]]);
+      else expect(thread.status).toBe("resolved");
+    });
+  }
+
+  it("moves a reply typed on the copy to the kept thread, even when the tab saves it again after the fold", async () => {
+    const { rpc, view, sessionId, line, copy, finish } = await heldSubmit();
+    const state = (savedAt: number, drafts: Record<string, string>) => ({
+      drafts: Object.fromEntries(Object.entries(drafts).map(([key, body]) => [key, { body, severity: null, range: null }])),
+      collapsed: {},
+      expandedThreads: { [copy.id]: true },
+      scroll: null,
+      savedAt,
+    });
+    await rpc("saveViewState", { threadId: THREAD, sessionId, state: state(1, { [`reply:${copy.id}`]: "Typed on the copy" }) });
+    await finish();
+    let shown = await view(PULL);
+    expect(shown.aliases).toEqual({ [copy.id]: line.id });
+    expect(shown.viewState).toMatchObject({ drafts: { [`reply:${line.id}`]: { body: "Typed on the copy" } }, expandedThreads: { [line.id]: true } });
+    // A tab that has not heard of the fold saves its state again, newer: the draft still lands on the kept thread.
+    await rpc("saveViewState", { threadId: THREAD, sessionId, state: state(2, { [`reply:${copy.id}`]: "Typed on the copy, then more" }) });
+    shown = await view(PULL);
+    expect(shown.viewState!.drafts).toEqual({ [`reply:${line.id}`]: { body: "Typed on the copy, then more", severity: null, range: null } });
+    expect(((await rpc("listThreads", { sessionId })) as { aliases: unknown }).aliases).toEqual({ [copy.id]: line.id });
+  });
 
   it("refuses a comment edited since the dialog read it, posting nothing", async () => {
     const github = fakeGitHub();
@@ -2255,7 +2340,7 @@ describe("AI runs", () => {
     const { run: fixRun } = (await rpc("fixInNewThread", { sessionId, threadId: THREAD, reviewThreadIds: [fix.id], note: "", execution })) as { run: Run };
 
     expect(await rpc("clearReview", { sessionId })).toEqual({ deletedThreads: 3, closedRuns: 2 });
-    expect(await sessionState(rpc, sessionId)).toEqual({ threads: [], runs: [] });
+    expect(await sessionState(rpc, sessionId)).toEqual({ threads: [], runs: [], aliases: {} });
     expect(harness.inspection.sdk.callsTo("threads.archive").map((call) => (call[0] as { threadId: string }).threadId).sort()).toEqual([review.threadId, fixRun.threadId].sort());
     // Another view's review is not this one.
     expect((await sessionState(rpc, other.sessionId)).threads.map((row) => row.id)).toEqual([kept.id]);
@@ -2301,7 +2386,7 @@ describe("AI runs", () => {
     const { run } = (await fixing) as { run: Run };
     expect(run).toMatchObject({ status: "closed", threadId: "thr_run_1" });
     expect(harness.inspection.sdk.callsTo("threads.archive").map((call) => (call[0] as { threadId: string }).threadId)).toEqual(["thr_run_1"]);
-    expect(await sessionState(rpc, sessionId)).toEqual({ threads: [], runs: [] });
+    expect(await sessionState(rpc, sessionId)).toEqual({ threads: [], runs: [], aliases: {} });
   });
 
   // Review loop, pass 1 (findings numbered as in the review).
@@ -2391,7 +2476,7 @@ describe("AI runs", () => {
     armed = false;
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(harness.inspection.sdk.callsTo("threads.spawn")).toHaveLength(0);
-    expect(await sessionState(rpc, sessionId)).toEqual({ threads: [], runs: [] });
+    expect(await sessionState(rpc, sessionId)).toEqual({ threads: [], runs: [], aliases: {} });
   });
 
   it("3: a question waiting on the reviewer's turn lookup sends nothing once the review is cleared", async () => {
@@ -2412,7 +2497,7 @@ describe("AI runs", () => {
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(harness.inspection.sdk.callsTo("threads.send")).toHaveLength(1);
     expect(harness.inspection.sdk.callsTo("threads.spawn")).toHaveLength(1);
-    expect(await sessionState(rpc, sessionId)).toEqual({ threads: [], runs: [] });
+    expect(await sessionState(rpc, sessionId)).toEqual({ threads: [], runs: [], aliases: {} });
   });
 
   it("4: a fix run's thread can answer, and end its turn, before bb has answered its start", async () => {

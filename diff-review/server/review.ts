@@ -37,6 +37,7 @@ import {
 import { gitTarget, ignorePatterns, loadDiff, type DiffSources, loadPatches, resolveTarget, ReviewUnavailable, withThreadPatches, workspaceOf, workspaceRefs, workspaceState, type WorkspaceState } from "./diff";
 import { parseRange, rangeText } from "../shared/git-spec";
 import { mentionsReviewer } from "../shared/mentions";
+import { remapThreadKeys, type ThreadAliases } from "../shared/thread-aliases";
 import { OPEN_CHANNEL, reviewRoute } from "../shared/routes";
 import { GitReads } from "./git";
 import { createGhRunner, GitHub, type GhRunner } from "./github";
@@ -216,6 +217,7 @@ export class ReviewService {
           : null;
       const branchPullRequest = target.kind === "pr" ? null : await this.prs.branchPull(environment.id, signal);
       const threads = this.store.threads(session.id);
+      const aliases = this.store.aliases(session.id);
       const files = await withThreadPatches(this.git, this.bb.log, environment, target, diff.files, threads, ignoreWhitespace, signal);
       return {
         ok: true,
@@ -235,7 +237,8 @@ export class ReviewService {
         truncated: diff.truncated,
         threads,
         runs: this.store.openRuns(session.id).map(publicRun),
-        viewState: this.viewState(threadId, session.id, threads),
+        viewState: this.viewState(threadId, session.id, threads, aliases),
+        aliases,
       };
     } catch (error) {
       if (error instanceof ReviewUnavailable) return { ok: false, message: error.message };
@@ -247,27 +250,31 @@ export class ReviewService {
    * What `threadId`'s tab kept of a view, minus the reply and edit drafts whose thread or comment is
    * gone (deleted, or cleared with the review). A stored copy that no longer parses counts as none.
    */
-  private viewState(threadId: string, sessionId: string, threads: readonly ReviewThread[]): ViewState | null {
+  private viewState(threadId: string, sessionId: string, threads: readonly ReviewThread[], aliases: ThreadAliases): ViewState | null {
     const parsed = viewStateSchema.safeParse(this.store.viewState(threadId, sessionId));
     if (!parsed.success) return null;
+    const state = remapThreadKeys(parsed.data, aliases)?.state ?? parsed.data;
     const threadIds = new Set(threads.map((thread) => thread.id));
     const commentIds = new Set(threads.flatMap((thread) => thread.comments.map((comment) => comment.id)));
     const drafts = Object.fromEntries(
-      Object.entries(parsed.data.drafts).filter(([key]) => {
+      Object.entries(state.drafts).filter(([key]) => {
         if (key.startsWith("reply:")) return threadIds.has(key.slice("reply:".length));
         if (key.startsWith("edit:")) return commentIds.has(key.slice("edit:".length));
         return true;
       }),
     );
     // Folds of threads that are gone are dropped the same way.
-    const expandedThreads = Object.fromEntries(Object.entries(parsed.data.expandedThreads ?? {}).filter(([id]) => threadIds.has(id)));
-    return { ...parsed.data, drafts, expandedThreads };
+    const expandedThreads = Object.fromEntries(Object.entries(state.expandedThreads ?? {}).filter(([id]) => threadIds.has(id)));
+    return { ...state, drafts, expandedThreads };
   }
 
-  /** Keeps what `threadId`'s tab holds of a session's view. */
+  /**
+   * Keeps what `threadId`'s tab holds of a session's view. A save made before the tab heard of a fold
+   * still names the folded thread; its reply draft and fold go to the thread kept (`remapThreadKeys`).
+   */
   saveViewState(threadId: string, sessionId: string, state: ViewState): void {
     const session = this.requireSession(sessionId);
-    this.store.saveViewState(threadId, session.id, state);
+    this.store.saveViewState(threadId, session.id, remapThreadKeys(state, this.store.aliases(session.id))?.state ?? state);
   }
 
   /** Patches bb left to load on demand, at the revisions the view's file list gave; `signal` abandons them. */
@@ -293,9 +300,9 @@ export class ReviewService {
   }
 
   /** A session's threads and its runs not yet closed. */
-  sessionState(sessionId: string): { threads: ReviewThread[]; runs: Run[] } {
+  sessionState(sessionId: string): { threads: ReviewThread[]; runs: Run[]; aliases: Record<string, string> } {
     this.requireSession(sessionId);
-    return { threads: this.store.threads(sessionId), runs: this.store.openRuns(sessionId).map(publicRun) };
+    return { threads: this.store.threads(sessionId), runs: this.store.openRuns(sessionId).map(publicRun), aliases: this.store.aliases(sessionId) };
   }
 
   /** `viewerThreadId`: the thread whose Review tab it was written in, when the tab says. */
@@ -613,6 +620,11 @@ export class ReviewService {
       throw new ReviewError(`"${idPrefix}" matches ${matches.length} threads (${matches.map((row) => row.id).join(", ")}); give more of the id.`, "ambiguous_id");
     }
     const exists = this.store.thread(prefix);
+    // The full id of a thread folded into another since (`foldThread`) names the one kept.
+    if (exists !== null && exists.id !== prefix) {
+      const kept = this.agentScope(callerThreadId).find((row) => row.id === exists.id);
+      if (kept !== undefined) return kept;
+    }
     if (exists !== null) {
       throw new ReviewError(`Comment thread ${exists.id} was not sent to this thread, so it cannot answer it here.`, "not_sent_here");
     }

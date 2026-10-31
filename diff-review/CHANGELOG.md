@@ -14,6 +14,11 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   show twice: your comment, and a second copy of it from GitHub. A copy left by an earlier version
   goes the next time the review reads GitHub, and anything written on it (an agent's draft, a reply
   you were typing) moves to the one that stays.
+- A reply you were typing on that second copy moves to the comment thread that stays, in every open
+  window, and stays there however long the window is open. When you had started a reply on both,
+  you get both texts in the one reply box, and nothing is posted until you press Reply.
+- A Reply, Post, Resolve or Reopen you pressed on that second copy just as it went no longer says it
+  failed after GitHub took it, so you won't post the same reply twice.
 
 ## 0.5.0
 

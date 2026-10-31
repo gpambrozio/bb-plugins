@@ -318,6 +318,8 @@ export const reviewViewSchema = z.discriminatedUnion("ok", [
       runs: z.array(runSchema),
       /** What this thread's tab kept of this view, or null the first time. */
       viewState: viewStateSchema.nullable(),
+      /** Ids of threads folded into another (two copies of one GitHub thread), each with the one kept. */
+      aliases: z.record(z.string(), z.string()),
     })
     .strict(),
   z.object({ ok: z.literal(false), message: z.string() }).strict(),

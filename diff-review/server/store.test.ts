@@ -85,4 +85,27 @@ describe("mirroring GitHub's threads", () => {
     expect(reviews.viewState("thr_1", session.id)).toMatchObject({ drafts: { [`reply:${kept.id}`]: { body: "Typed on the copy" } }, expandedThreads: { [kept.id]: true } });
     expect(reviews.syncGithubThreads(session.id, [remote])).toBe(false);
   });
+
+  it("keeps both replies a tab saved on the two copies of one GitHub thread, and the copy's id names the kept one", () => {
+    const { db, store: reviews } = store();
+    const session = reviews.session("env_1", "pr:o/r#7");
+    const remote = {
+      githubThreadId: "PRRT_9", filePath: "a.ts", side: "new" as const, startLine: 1, endLine: 1, status: "open" as const, anchorContent: "a",
+      comments: [{ githubCommentId: "PRRC_9", author: "me", body: "Name it c.", createdAt: 1 }],
+    };
+    // The line comment Submit made into PRRT_9 and the copy a read imported, as 0.5.0 could leave them,
+    // with a reply typed on each card.
+    const kept = reviews.createThread({ sessionId: session.id, filePath: "a.ts", side: "new", startLine: 1, endLine: 1, severity: null, anchorContent: "a", body: "Name it c." });
+    reviews.syncGithubThreads(session.id, [remote]);
+    db.prepare("UPDATE review_threads SET github_thread_id = 'PRRT_9' WHERE id = ?").run(kept.id);
+    const copy = reviews.threads(session.id).find((thread) => thread.id !== kept.id)!;
+    const reply = (body: string) => ({ body, severity: null, range: null });
+    reviews.saveViewState("thr_1", session.id, { savedAt: 1, drafts: { [`reply:${kept.id}`]: reply("First thought"), [`reply:${copy.id}`]: reply("Second thought") }, collapsed: {}, scroll: null } as never);
+
+    reviews.syncGithubThreads(session.id, [remote]);
+    expect(reviews.threads(session.id).map((thread) => thread.id)).toEqual([kept.id]);
+    expect(reviews.viewState("thr_1", session.id)).toMatchObject({ drafts: { [`reply:${kept.id}`]: { body: "First thought\n\nSecond thought" } } });
+    expect(reviews.aliases(session.id)).toEqual({ [copy.id]: kept.id });
+    expect(reviews.thread(copy.id)!.id).toBe(kept.id);
+  });
 });

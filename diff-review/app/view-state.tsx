@@ -13,6 +13,7 @@ import { createContext, useContext, useEffect, useRef, useState, useSyncExternal
 import { toast } from "sonner";
 
 import type { RpcContract } from "../shared/contract";
+import { remapThreadKeys, type ThreadAliases } from "../shared/thread-aliases";
 import { VIEW_STATE_MAX_DRAFTS, VIEW_STATE_MAX_FOLDS, type Draft, type ScrollAnchor, type ViewState } from "../shared/types";
 import { errorMessage } from "./use-review";
 
@@ -48,6 +49,13 @@ export interface ViewStateStore {
   setThreadExpanded(threadId: string, expanded: boolean): void;
   scroll(): ScrollAnchor | null;
   setScroll(anchor: ScrollAnchor): void;
+  /**
+   * Moves the reply drafts and folds of threads folded into another to the thread kept, as the server
+   * does (`remapThreadKeys`), so this tab's next save cannot bring the old id back.
+   */
+  remap(aliases: ThreadAliases): void;
+  /** How often `remap` wrote the draft `key`: its editor shows the text again when this changes. */
+  revision(key: string): number;
 }
 
 function emptyState(): ViewState {
@@ -63,6 +71,7 @@ function newest<T>(record: Record<string, T>, max: number): Record<string, T> {
 /** A store over `state` that hands every change to `changed`. */
 export function createViewStateStore(initial: ViewState, changed: (state: ViewState) => void): ViewStateStore {
   let state = initial;
+  const revisions = new Map<string, number>();
   const listeners = new Set<() => void>();
   const update = (next: Omit<ViewState, "savedAt">) => {
     state = {
@@ -103,6 +112,13 @@ export function createViewStateStore(initial: ViewState, changed: (state: ViewSt
       if (current !== null && current.path === anchor.path && current.index === anchor.index && Math.abs(current.offset - anchor.offset) < 1) return;
       update({ ...state, scroll: anchor });
     },
+    remap: (aliases) => {
+      const remapped = remapThreadKeys(state, aliases);
+      if (remapped === null) return;
+      for (const key of remapped.changedDrafts) revisions.set(key, (revisions.get(key) ?? 0) + 1);
+      update(remapped.state);
+    },
+    revision: (key) => revisions.get(key) ?? 0,
   };
 }
 
@@ -120,7 +136,20 @@ export function useDraftKeys(): string[] {
   return JSON.parse(json) as string[];
 }
 
-export function ViewStateProvider({ threadId, sessionId, saved, children }: { threadId: string; sessionId: string; saved: ViewState | null; children: ReactNode }) {
+export function ViewStateProvider({
+  threadId,
+  sessionId,
+  saved,
+  aliases,
+  children,
+}: {
+  threadId: string;
+  sessionId: string;
+  saved: ViewState | null;
+  /** The session's folded thread ids, as the latest load or thread list gave them. */
+  aliases: ThreadAliases;
+  children: ReactNode;
+}) {
   const rpc = useRpc<RpcContract>();
   const key = `${threadId} ${sessionId}`;
   const pending = useRef<ViewState | null>(null);
@@ -143,13 +172,21 @@ export function ViewStateProvider({ threadId, sessionId, saved, children }: { th
 
   const [store] = useState(() => {
     const copy = windowCopies.get(key);
-    const initial = copy !== undefined && (saved === null || copy.savedAt >= saved.savedAt) ? copy : (saved ?? emptyState());
+    const chosen = copy !== undefined && (saved === null || copy.savedAt >= saved.savedAt) ? copy : (saved ?? emptyState());
+    // This window's copy may predate a fold the server has seen.
+    const initial = remapThreadKeys(chosen, aliases ?? {})?.state ?? chosen;
     return createViewStateStore(initial, (state) => {
       windowCopies.set(key, state);
       pending.current = state;
       if (timer.current === null) timer.current = setTimeout(() => flush.current(), SAVE_DELAY_MS);
     });
   });
+
+  // A fold seen after the tab mounted: the live drafts move, and with them the save still pending.
+  const aliasesJson = JSON.stringify(aliases ?? {});
+  useEffect(() => {
+    store.remap(JSON.parse(aliasesJson) as ThreadAliases);
+  }, [store, aliasesJson]);
 
   useEffect(() => {
     const leave = () => flush.current();
@@ -172,8 +209,15 @@ const EMPTY_DRAFT: Draft = { body: "", severity: null, range: null };
 export function useDraft(key: string) {
   const store = useViewState();
   const [active, setActive] = useState<Draft | null>(() => store.draft(key) ?? null);
+  // A draft moved here from a folded thread (`remap`) opens, or shows its new text.
+  const revision = useSyncExternalStore(store.subscribe, () => store.revision(key));
+  useEffect(() => {
+    if (revision > 0) setActive(store.draft(key) ?? null);
+  }, [store, key, revision]);
   return {
     active,
+    /** Changes when the draft's text was replaced from outside its editor; remount the editor on it. */
+    revision,
     latest: (): Draft => store.draft(key) ?? active ?? EMPTY_DRAFT,
     /**
      * Opens the editor. A draft already kept stays as typed (a second click on "Comment on file", or

@@ -240,7 +240,7 @@ export function ReviewBody({
       onEdited={onEdited}
     >
       {/* Keyed by the view: each view of this thread has its own drafts, folds and place. */}
-      <ViewStateProvider key={state.view.sessionId} threadId={threadId} sessionId={state.view.sessionId} saved={state.view.viewState}>
+      <ViewStateProvider key={state.view.sessionId} threadId={threadId} sessionId={state.view.sessionId} saved={state.view.viewState} aliases={state.view.aliases}>
       <ReadyPanel
         threadId={threadId}
         view={state.view}
