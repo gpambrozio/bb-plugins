@@ -8,7 +8,16 @@
  */
 import type { PluginSettingDescriptor, PluginSettingsValues } from "@get-bb/plugin-sdk";
 
-import { DEFAULT_SENTENCE_PROMPT, RATE_OPTIONS, SPEECH_ENGINES, TOOL_COMMANDS, type SpeechEngine, type StoredConfig } from "./herald";
+import {
+  DEFAULT_SENTENCE_PROMPT,
+  RATE_OPTIONS,
+  SPEECH_ENGINES,
+  TOOL_COMMANDS,
+  TOOL_REPLY_FORMATS,
+  type ReplyFormat,
+  type SpeechEngine,
+  type StoredConfig,
+} from "./herald";
 
 /** What the form shows for each voice source, instead of its stored value. */
 export const ENGINE_LABELS: Record<SpeechEngine, string> = {
@@ -127,6 +136,8 @@ export interface SentenceSettings {
   /** The command line, to be split into words; never blank. */
   command: string;
   prompt: string;
+  /** How the tool's answer is read: the switches the server adds for it, and where the sentence is. */
+  reply: ReplyFormat;
 }
 
 /**
@@ -138,7 +149,11 @@ export function sentenceSettingsOf(writeWithModel: unknown, stored: StoredConfig
   if (writeWithModel !== true) return null;
   const command = (stored.sentenceTool === "custom" ? stored.sentenceCommand : TOOL_COMMANDS[stored.sentenceTool]).trim();
   if (command === "") return null;
-  return { command, prompt: stored.sentencePrompt.trim() === "" ? DEFAULT_SENTENCE_PROMPT : stored.sentencePrompt };
+  return {
+    command,
+    prompt: stored.sentencePrompt.trim() === "" ? DEFAULT_SENTENCE_PROMPT : stored.sentencePrompt,
+    reply: TOOL_REPLY_FORMATS[stored.sentenceTool],
+  };
 }
 
 /**

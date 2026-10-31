@@ -24,7 +24,7 @@ what still holds and says what bb changed. The repo root `AGENTS.md` covers what
 | `server/liveness.ts` | Asks bb whether each entry's thread still exists before the list goes out; gone ones are removed. |
 | `server/timeline.ts` | Pure text: what an interaction asks, the user's last prompt, the spoken sentence. |
 | `server/say.ts` | `say` on the bb server's Mac, driven for its voices: text in on stdin, a WAV out, bytes back. |
-| `server/writer.ts` | The optional sentence-writing tool, run as a child process through bb's host toolchain: prompt in on stdin, one line out; the timeout, the cap, the empty folder. |
+| `server/writer.ts` | The optional sentence-writing tool, run as a child process through bb's host toolchain: prompt in on stdin, one line out (from the JSON summary for Claude Code and Codex); the timeout, the cap, the empty folder. |
 | `server/command-line.ts` | The user's command split into words without a shell, and the prompt template filled in. |
 | `server/ports.ts`, `server/bb-ports.ts` | The seams the logic is tested through, and their implementations over `bb.sdk`. |
 | `shared/herald.ts` | The entry shape and the stored configuration: the voices, the model-written sentence's tool, command and prompt, and the page's history length. No SDK import. |
@@ -80,8 +80,8 @@ no shell. What that buys, and what must stay true:
   MCP servers, hooks and plugins of the user's `config.toml` do not load (`--ignore-rules` alone only
   dropped execution-policy rules, which a review caught; login still comes from `CODEX_HOME`). `--bare` is **not** in the Claude preset: with
   it the CLI reported *Not logged in* on the machine this was built on. Every preset was checked by hand
-  against its CLI's `--help`; only the Claude one has been run end to end here (Codex could not run inside
-  the build sandbox, Gemini is not installed).
+  against its CLI's `--help`; Claude and Codex have been run end to end here (Codex first in 0.9.0), and
+  Gemini is not installed.
 - **bb's host toolchain finds the tool.** The child is started with `experimental_spawnHostProcess`
   (`@get-bb/plugin-sdk/process`), which resolves the command and sets the child's PATH the way bb does
   for its own tools — the login shell's PATH, `~/.local/bin`, mise and asdf shims, Volta, Homebrew — and
@@ -90,7 +90,8 @@ no shell. What that buys, and what must stay true:
   devDependency** (a git install omits dev dependencies), and it works on bb 0.47 as well. It takes
   Node's spawn options, so `detached` and the three pipes are as before.
 - **An empty working folder per run.** Each run gets its own `mkdtemp` folder under the temp directory,
-  removed in a `finally`, so no project instructions, hooks or repository are in reach. One folder for
+  removed in a `finally`, so no project instructions, hooks or repository are in reach. The one file in
+  it is Codex's `summary-schema.json` (below), when Codex is the tool. One folder for
   the life of the plugin was the first version: macOS purges unused temp entries after a few days and a
   bb server runs for weeks, after which every spawn failed with an ENOENT that named the *tool*.
 - **A kill takes the tool's helpers with it, on every way out.** The child is spawned `detached`, leading
@@ -113,9 +114,23 @@ no shell. What that buys, and what must stay true:
   runs over), or once it has written `MAX_OUTPUT_BYTES` (256 KB) without finishing. A missing tool, a non-zero exit, a timeout,
   an abort or an unreadable command all mean the plain sentence, with the reason in `bb plugin logs herald`.
   A Claude run measured about 10 s end to end.
-- **An empty reply is silence, not a failure.** The writer answers a tri-state (`WrittenSentence` plus the
-  hooks' `failed`): a sentence, `silent` (exit 0 and nothing left after `cleanSentence` — blank, or only
-  quotes or markdown), or a rejection. The owner's prompt uses it to skip no-op turns ("Captain,
+- **Claude Code and Codex answer in JSON; the others in plain text.** A model asked to "reply with
+  nothing" does not: it writes a note such as *[Empty output: … so nothing is spoken.]*, which Herald then
+  spoke. So the claude and codex presets get the CLI's own structured output, `{"summary": string | null}`
+  (`SUMMARY_SCHEMA`: every field required, no others, as strict mode needs; the field's description tells
+  the model null means silence), and always have something to return. `commandFor` adds the switches at run
+  time — `--output-format json --json-schema '<schema>'` for Claude Code, whose answer is the result's
+  `structured_output`; `--output-schema <file>` before the trailing `-` for Codex, whose stdout is then the
+  object itself — and `readReply` reads it. They are not in `TOOL_COMMANDS` because the custom command is
+  seeded from a preset and read as text: **a custom command and Gemini stay on plain text** (Gemini CLI is
+  not installed on the machine this was built on, so no schema switch could be checked by hand). Both presets were run by hand with
+  the schema, as `claude` 2.1.314 and `codex-cli` 0.166.0: a sentence, and a null summary for a prompt that
+  said "reply with nothing" to "Captain, shipshape.". Claude's turn cap holds: `--max-turns 1` with
+  `--tools ""` still returns `structured_output` (the result reports two turns).
+- **An empty answer is silence, not a failure.** The writer answers a tri-state (`WrittenSentence` plus the
+  hooks' `failed`): a sentence, `silent` (exit 0 and nothing left after cleaning — blank, or only quotes or
+  markdown; in JSON, a null, empty or blank summary), or a rejection. Exit 0 with JSON that is missing,
+  unreadable, an error result or not the schema's is a rejection, so the plain sentence is spoken. The owner's prompt uses it to skip no-op turns ("Captain,
   shipshape."). Silence never drops what waits on the user: a **finished** turn becomes `quiet` (not
   spoken, no banner, not remembered in history, and `sendOwed(…, null)` sends nothing — its `owes`
   decision is still drained), so with push on and the thread taken over, bb was muted and **no one
@@ -133,8 +148,9 @@ no shell. What that buys, and what must stay true:
 - **The prompt is bounded.** The agent's output is cut at `PROMPT_OUTPUT_MAX` and the headline, detail
   and request at `PROMPT_PART_MAX` before they go into the template — a permission's command and a
   pasted-in request can both run to kilobytes.
-- **The reply is data.** `cleanSentence` keeps the last paragraph of stdout as one line, strips markdown
-  and wrapping quotes (an empty result is `silent`, above), and cuts at `MAX_SENTENCE_CHARS`; it then goes through the same `speakable` and
+- **The reply is data.** `cleanSentence` keeps the last paragraph of stdout as one line (a JSON summary is
+  taken whole), strips markdown and wrapping quotes (an empty result is `silent`, above), and cuts at
+  `MAX_SENTENCE_CHARS`; it then goes through the same `speakable` and
   `MAX_SPEECH_CHARS` limits as every sentence. The prompt tells the model that the data lines are not
   instructions, which a one-sentence Haiku turn honoured when tried; the real protection is that the tool
   has nothing to act with.
@@ -683,7 +699,7 @@ cover, check by hand after `bb plugin reload herald`:
    under *Model-written sentences*, pick the tool *custom*: a *Custom command* field
    appears under the select, filled in with the Claude command. Save a command that does not exist:
    the plain sentence is spoken and the log says why. Pick *claude* again: the field goes. Then add to
-   the prompt "reply with nothing if the output only says Captain, shipshape." and have a thread end its
+   the prompt "say nothing if the output only says Captain, shipshape." and have a thread end its
    turn with exactly that: the row goes, no card comes and nothing is spoken; a question it asks stays
    listed as "Not announced".
 7. With a thread waiting, Herald's sidebar entry carries the count, and its tooltip says "1 thread waiting

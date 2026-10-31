@@ -22,7 +22,8 @@ know which thread to go back to without watching the sidebar.
 - Optionally, a model writes each sentence: Claude Code, OpenAI Codex, Gemini CLI or a command of your
   own, installed on the Mac running bb, runs once per announcement with no tools or read-only. Off by
   default; the plain sentence is spoken whenever the tool fails or is slow. Your prompt can have the
-  tool reply with nothing to keep an event quiet, such as a turn that only says "Captain, shipshape.";
+  tool say nothing to keep an event quiet, such as a turn that only says "Captain, shipshape." (Claude
+  Code and Codex answer in JSON, so an empty summary is never mistaken for a sentence);
   a question or anything else waiting for you is still listed and notified.
 
 ## Beside bb's push notifications

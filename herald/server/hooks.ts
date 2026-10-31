@@ -14,7 +14,7 @@
  * 4. **Leave hidden threads alone.** Another plugin's background worker is not
  *    something the user is waiting on; bb keeps it out of their attention too.
  */
-import type { AttentionEntry, AttentionReason, HistoryItem } from "../shared/herald";
+import type { AttentionEntry, AttentionReason, HistoryItem, ReplyFormat } from "../shared/herald";
 import type { SentenceSettings } from "../shared/settings";
 import { choiceAllows, effectiveChoice, NO_CHOICE, type ChoiceInputs, type ThreadChoice } from "../shared/thread-choice";
 import { fillTemplate, splitCommandLine } from "./command-line";
@@ -57,9 +57,10 @@ export interface HookDeps {
   publish: () => void;
   /**
    * Runs the tool with the prompt on stdin and resolves to its sentence, or
-   * to `silent` when it ran and answered nothing; rejects on any failure.
+   * to `silent` when it ran and answered nothing (an empty reply, or a null
+   * or empty summary in JSON); rejects on any failure.
    */
-  writeSentence: (command: string[], prompt: string) => Promise<WrittenSentence>;
+  writeSentence: (command: string[], prompt: string, reply: ReplyFormat) => Promise<WrittenSentence>;
   /** Adds a sentence that landed to the thread's history, for its panel. Never throws. */
   remember: (threadId: string, item: HistoryItem) => void;
   /** Absent in tests that are not about notifications. */
@@ -429,8 +430,8 @@ export function createHooks(deps: HookDeps): Hooks {
         request: cut(recording.lastUser, PROMPT_PART_MAX),
         output: cut(recording.output, PROMPT_OUTPUT_MAX),
       });
-      const written = await deps.writeSentence(command, prompt);
-      if (written.kind === "silent") deps.log.info(`The tool replied with nothing for ${base.threadId}'s ${base.reason} event; Herald does not speak it.`);
+      const written = await deps.writeSentence(command, prompt, sentence.reply);
+      if (written.kind === "silent") deps.log.info(`The tool chose to say nothing for ${base.threadId}'s ${base.reason} event; Herald does not speak it.`);
       return written;
     } catch (error) {
       deps.log.warn(`The sentence for ${base.threadId} falls back to the plain one: ${reasonOf(error)}`);
