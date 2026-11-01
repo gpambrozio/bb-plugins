@@ -13,6 +13,7 @@ import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 
 import { TerminalConnection, terminalSocketUrl, type ConnectionStatus, type SocketLike } from "./connection";
+import { TerminalSizing } from "./sizing";
 import { currentFontFamily, currentTheme } from "./theme";
 
 export interface LiveTerminal {
@@ -24,7 +25,11 @@ export interface LiveTerminal {
   attach(parent: HTMLElement): void;
   /** Takes it off the page, remembering the line it was scrolled to. */
   detach(): void;
-  /** Fits it to its parent and tells bb the new size. */
+  /**
+   * Fits it to its parent and, since this window is the one in use, gives
+   * the shell that size (app/sizing.ts). Call it when the view is shown,
+   * resized, or its window comes back to the front.
+   */
   fit(): void;
   focus(): void;
   applyTheme(): void;
@@ -38,6 +43,7 @@ export interface TerminalsBackend {
   output(args: { terminalId: string; sinceSeq: number; tailBytes: number }): Promise<{
     chunks: readonly { seq: number; dataBase64: string }[];
   }>;
+  resize(args: { terminalId: string; cols: number; rows: number }): Promise<unknown>;
 }
 
 const SCROLLBACK_LINES = 10_000;
@@ -65,36 +71,54 @@ function create(terminalId: string, backend: TerminalsBackend): LiveTerminal & {
   const fitAddon = new FitAddon();
   term.loadAddon(fitAddon);
 
+  let opened = false;
+  /** Whether the page shows this terminal in this window now. */
+  let shown = false;
+
+  const sizing = new TerminalSizing({
+    localSize: () => ({ cols: term.cols, rows: term.rows }),
+    resizeLocal: ({ cols, rows }) => term.resize(cols, rows),
+    claim: async ({ cols, rows }) => {
+      await backend.resize({ terminalId, cols, rows });
+    },
+    warn: (message) => console.warn(`terminals: ${terminalId}: ${message}`),
+  });
   const listeners = new Set<(status: ConnectionStatus) => void>();
   const connection = new TerminalConnection({
     terminalId,
     openSocket,
     write: (bytes, drawn) => term.write(bytes, drawn),
     onStatus: (status) => {
+      // Back from offline while on screen: a size asked for meanwhile did not land.
+      if (status.state === "live" && shown) fit();
       for (const listener of listeners) listener(status);
     },
+    onSize: (size) => sizing.sessionChanged(size),
     readRetained: async (sinceSeq) =>
       (await backend.output({ terminalId, sinceSeq, tailBytes: RETAINED_TAIL_BYTES })).chunks,
   });
-  term.onData((data) => connection.sendInput(data));
+  term.onData((data) => {
+    // Typing here makes this the window in use: take the shell back if another window resized it.
+    if (shown && sizing.differs) fit();
+    connection.sendInput(data);
+  });
   term.onBinary((data) => {
     const bytes = new Uint8Array(data.length);
     for (let index = 0; index < data.length; index += 1) bytes[index] = data.charCodeAt(index) & 0xff;
     connection.sendBytes(bytes);
   });
 
-  let opened = false;
   /** Where the view was when it left the page; null for "following the output". */
   let savedLine: number | null = null;
 
   function fit(): void {
-    if (!opened || element.clientWidth === 0 || element.clientHeight === 0) return;
+    if (!shown || !opened || element.clientWidth === 0 || element.clientHeight === 0) return;
     const proposed = fitAddon.proposeDimensions();
     if (proposed === undefined || !Number.isFinite(proposed.cols) || !Number.isFinite(proposed.rows)) return;
-    const cols = Math.max(2, Math.min(500, proposed.cols));
-    const rows = Math.max(1, Math.min(200, proposed.rows));
-    if (cols !== term.cols || rows !== term.rows) term.resize(cols, rows);
-    connection.resize(cols, rows);
+    // bb's limits for a terminal's size.
+    const cols = Math.max(2, Math.min(500, Math.floor(proposed.cols)));
+    const rows = Math.max(1, Math.min(200, Math.floor(proposed.rows)));
+    sizing.fitted({ cols, rows });
   }
 
   connection.connect();
@@ -107,6 +131,7 @@ function create(terminalId: string, backend: TerminalsBackend): LiveTerminal & {
       return () => listeners.delete(listener);
     },
     attach(parent) {
+      shown = true;
       if (element.parentElement !== parent) parent.appendChild(element);
       if (!opened) {
         term.open(element);
@@ -119,6 +144,7 @@ function create(terminalId: string, backend: TerminalsBackend): LiveTerminal & {
       term.refresh(0, term.rows - 1);
     },
     detach() {
+      shown = false;
       if (opened) {
         const buffer = term.buffer.active;
         savedLine = buffer.viewportY >= buffer.baseY ? null : buffer.viewportY;
@@ -132,6 +158,7 @@ function create(terminalId: string, backend: TerminalsBackend): LiveTerminal & {
       term.options.fontFamily = currentFontFamily();
     },
     dispose() {
+      shown = false;
       listeners.clear();
       connection.dispose();
       term.dispose();

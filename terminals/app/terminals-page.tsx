@@ -89,7 +89,13 @@ function useTerminalsBackend(): TerminalsBackend {
   const sdk = useSdk();
   const latest = useRef(sdk);
   latest.current = sdk;
-  return useMemo<TerminalsBackend>(() => ({ output: (args) => latest.current.terminals.output(args) }), []);
+  return useMemo<TerminalsBackend>(
+    () => ({
+      output: (args) => latest.current.terminals.output(args),
+      resize: (args) => latest.current.terminals.resize(args),
+    }),
+    [],
+  );
 }
 
 /** How often the page reads the list again while a tab's shell is still opening. */
@@ -462,8 +468,16 @@ function TerminalView({ terminalId, onClose }: { terminalId: string; onClose: ()
     terminal.focus();
     const observer = new ResizeObserver(() => terminal.fit());
     observer.observe(parent);
+    // Back to this window: it is the one in use, so the shell takes its size again (app/sizing.ts).
+    const refit = () => {
+      if (document.visibilityState === "visible") terminal.fit();
+    };
+    window.addEventListener("focus", refit);
+    document.addEventListener("visibilitychange", refit);
     return () => {
       observer.disconnect();
+      window.removeEventListener("focus", refit);
+      document.removeEventListener("visibilitychange", refit);
       terminal.detach();
     };
   }, [terminalId, backend]);

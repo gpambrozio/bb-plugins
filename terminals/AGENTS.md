@@ -18,7 +18,8 @@ specific to `terminals`.
 | `app.tsx` | The nav panel, and an invisible app overlay whose unmount (bb reloading or disabling the plugin) releases this copy's terminals and sockets. |
 | `app/terminals-page.tsx` | The page: tab strip, "+" and its machine menu, renaming in place (double click, F2, the tab's context menu), the shown terminal, the offline and ended notices, the empty state. |
 | `app/live-terminals.ts` | One xterm instance and one connection per open tab, in module scope for the life of the window, so leaving the page keeps them. Re-parents the element on return and restores the scrolled-to line. |
-| `app/connection.ts` | One tab's line to bb's terminal socket: replay and resume by sequence number, acknowledgement after drawing, heartbeat, reconnect, when to stop. No React, no xterm. |
+| `app/connection.ts` | One tab's line to bb's terminal socket: replay and resume by sequence number, acknowledgement after drawing, heartbeat, reconnect (also after a failed or silent attach), the output an exited shell left, when to stop. No React, no xterm. |
+| `app/sizing.ts` | Which window sizes a shell several windows show, and drawing every window at the shell's real size. |
 | `app/selection.ts` | Which tab this window shows, and where the selection goes when a tab closes; kept in localStorage. |
 | `app/theme.ts` | The terminal's colours and font from bb's CSS variables, the ones bb's own terminal reads. |
 
@@ -51,6 +52,13 @@ for 3 s stops governing, and a hidden one never does (bb 0.48.1, `TerminalOutput
 connection acknowledges each chunk once xterm has parsed it, which keeps happening while the page is
 away, and never reports itself hidden. A window that stops processing (a throttled background browser
 tab) can hold a printing program back for those 3 s at most.
+
+**The window in use sizes the shell.** bb 0.48.1 takes a socket `resize` only from the socket that
+attached last and drops the rest silently, and a tab's socket here stays attached while its page is
+away — so a second window would hold the size for good. The socket never resizes: the window that
+shows the tab and is shown, resized, focused or typed in asks `terminals.resize` (any client may), and
+every window draws the shell at the size bb reports in `session-updated` (`app/sizing.ts`). A window not
+in use never asks, so two windows cannot fight; the last one used wins.
 
 **Terminals outlive the page, not the window.** `app/live-terminals.ts` keeps each tab's xterm and
 socket in module scope; the page only lends them an element. That is what keeps scrollback, scroll

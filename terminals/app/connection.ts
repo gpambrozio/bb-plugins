@@ -10,6 +10,10 @@
  *   the buffered output from `n` (at most the last 512 KB), then streams;
  * - every `output` chunk has a sequence number, so a reconnect resumes where
  *   it stopped and a duplicate is dropped;
+ * - bb takes a `resize` only from the socket that attached last and drops the
+ *   others' silently, so this file never sends one: the window in use sizes
+ *   the shell through `terminals.resize` (app/sizing.ts), and this file passes
+ *   on the size bb reports;
  * - `ack` with the next sequence once the output is drawn is bb's flow
  *   control: bb paces the shell to its visible clients' acks, and stops
  *   waiting on a client that has not acked for 3 s. The tab's terminal keeps
@@ -72,6 +76,8 @@ export interface ConnectionOptions {
   /** Draws a chunk; calls `drawn` once it is on screen, which acknowledges it to bb. */
   write(bytes: Uint8Array, drawn: () => void): void;
   onStatus(status: ConnectionStatus): void;
+  /** The shell's size, each time bb reports it (`attached`, `session-updated`); see app/sizing.ts. */
+  onSize?(size: { cols: number; rows: number }): void;
   /**
    * The output bb kept for this terminal from `sinceSeq` on, read once it has
    * exited (`terminals.output`); null when bb no longer has it.
@@ -121,8 +127,6 @@ export class TerminalConnection {
   private status: ConnectionStatus = { state: "connecting", exitCode: null };
   private pendingInput: string[] = [];
   private pendingInputBytes = 0;
-  private size: { cols: number; rows: number } | null = null;
-  private sentSize: { cols: number; rows: number } | null = null;
 
   constructor(options: ConnectionOptions) {
     this.options = options;
@@ -145,8 +149,6 @@ export class TerminalConnection {
         this.attachTimer = null;
         if (this.socket === socket && this.attachedSocket !== socket) this.retry(socket, "attach timeout");
       }, ATTACH_TIMEOUT_MS);
-      this.sentSize = null;
-      this.flushSize();
       this.flushInput();
     };
     socket.onmessage = (event) => {
@@ -183,13 +185,6 @@ export class TerminalConnection {
       this.pendingInput.push(message);
       this.pendingInputBytes += piece.byteLength;
     }
-  }
-
-  /** Asks bb to size the shell's terminal; the latest size is resent after a reconnect. */
-  resize(cols: number, rows: number): void {
-    if (!Number.isInteger(cols) || !Number.isInteger(rows) || cols <= 0 || rows <= 0) return;
-    this.size = { cols, rows };
-    this.flushSize();
   }
 
   dispose(): void {
@@ -245,7 +240,8 @@ export class TerminalConnection {
     }
   }
 
-  private applySession(session: { status: SessionStatus; exitCode: number | null }): void {
+  private applySession(session: SessionInfo): void {
+    if (session.size !== null) this.options.onSize?.(session.size);
     if (session.status === "exited") return this.finish(session.exitCode, true);
     this.setStatus({ state: session.status === "disconnected" ? "offline" : "live", exitCode: null });
   }
@@ -282,14 +278,6 @@ export class TerminalConnection {
     if (status.state === this.status.state && status.exitCode === this.status.exitCode) return;
     this.status = status;
     this.options.onStatus(status);
-  }
-
-  private flushSize(): void {
-    const size = this.size;
-    if (size === null || this.socket?.readyState !== OPEN) return;
-    if (this.sentSize !== null && this.sentSize.cols === size.cols && this.sentSize.rows === size.rows) return;
-    this.socket.send(JSON.stringify({ type: "resize", cols: size.cols, rows: size.rows }));
-    this.sentSize = size;
   }
 
   private flushInput(): void {
@@ -368,11 +356,18 @@ export function terminalSocketUrl(location: { protocol: string; host: string }, 
   return `${protocol}//${location.host}/ws/terminals/${encodeURIComponent(terminalId)}?sinceSeq=${sinceSeq}&outputAcks=1`;
 }
 
+interface SessionInfo {
+  status: SessionStatus;
+  exitCode: number | null;
+  /** The shell's size, when bb sent a usable one. */
+  size: { cols: number; rows: number } | null;
+}
+
 type ServerMessage =
-  | { type: "attached"; replayStartSeq: number; nextSeq: number; session: { status: SessionStatus; exitCode: number | null } }
+  | { type: "attached"; replayStartSeq: number; nextSeq: number; session: SessionInfo }
   | { type: "output"; chunk: { seq: number; dataBase64: string } }
-  | { type: "session-updated"; session: { status: SessionStatus; exitCode: number | null } }
-  | { type: "exited"; session: { status: SessionStatus; exitCode: number | null } }
+  | { type: "session-updated"; session: SessionInfo }
+  | { type: "exited"; session: SessionInfo }
   | { type: "error"; code: string; message: string }
   | { type: "pong" };
 
@@ -382,12 +377,17 @@ function isSeq(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
-function parseSession(value: unknown): { status: SessionStatus; exitCode: number | null } | null {
+function isDimension(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value > 0;
+}
+
+function parseSession(value: unknown): SessionInfo | null {
   if (typeof value !== "object" || value === null) return null;
   const record = value as Record<string, unknown>;
   if (typeof record.status !== "string" || !SESSION_STATUSES.has(record.status)) return null;
   const exitCode = typeof record.exitCode === "number" ? record.exitCode : null;
-  return { status: record.status as SessionStatus, exitCode };
+  const size = isDimension(record.cols) && isDimension(record.rows) ? { cols: record.cols, rows: record.rows } : null;
+  return { status: record.status as SessionStatus, exitCode, size };
 }
 
 /** Parses one server message, or null for anything this file does not understand. */

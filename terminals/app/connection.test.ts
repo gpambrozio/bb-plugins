@@ -97,7 +97,13 @@ const chunk = (seq: number, text: string) => ({ type: "output", chunk: { seq, da
 
 type Retained = readonly { seq: number; dataBase64: string }[] | null;
 
-function setup(options: { drawLater?: boolean; retained?: (sinceSeq: number) => Promise<Retained> } = {}) {
+function setup(
+  options: {
+    drawLater?: boolean;
+    retained?: (sinceSeq: number) => Promise<Retained>;
+    onSize?: (size: { cols: number; rows: number }) => void;
+  } = {},
+) {
   const clock = new ManualClock();
   const sockets: FakeSocket[] = [];
   const written: string[] = [];
@@ -118,6 +124,7 @@ function setup(options: { drawLater?: boolean; retained?: (sinceSeq: number) => 
     },
     onStatus: (status) => statuses.push(status),
     ...(options.retained === undefined ? {} : { readRetained: options.retained }),
+    ...(options.onSize === undefined ? {} : { onSize: options.onSize }),
   });
   connection.connect();
   const socket = () => sockets.at(-1)!;
@@ -329,29 +336,27 @@ describe("TerminalConnection", () => {
     expect(statuses.at(-1)?.state).toBe("live");
   });
 
-  it("queues typing while connecting and sends it, and the size, once open", () => {
+  it("queues typing while connecting and sends it once open", () => {
     const { socket, connection } = setup();
     connection.sendInput("echo hi\r");
-    connection.resize(120, 40);
-    connection.resize(132, 43);
     expect(socket().sent).toEqual([]);
     socket().open();
-    expect(socket().sent).toEqual([
-      { type: "resize", cols: 132, rows: 43 },
-      { type: "input", dataBase64: encodeBase64(new TextEncoder().encode("echo hi\r")) },
-    ]);
+    expect(socket().sent).toEqual([{ type: "input", dataBase64: encodeBase64(new TextEncoder().encode("echo hi\r")) }]);
   });
 
-  it("resends the size after a reconnect, and only a changed size otherwise", () => {
-    const { clock, socket, connection } = setup();
+  it("passes on the shell's size as bb reports it, and never sends one itself", () => {
+    const sizes: unknown[] = [];
+    const { socket } = setup({ onSize: (size) => sizes.push(size) });
     socket().open();
-    connection.resize(80, 24);
-    connection.resize(80, 24);
-    expect(socket().sent).toEqual([{ type: "resize", cols: 80, rows: 24 }]);
-    socket().drop();
-    clock.advance(RECONNECT_DELAYS_MS[0]!);
-    socket().open();
-    expect(socket().sent).toEqual([{ type: "resize", cols: 80, rows: 24 }]);
+    socket().receive({ type: "attached", replayStartSeq: 0, nextSeq: 0, session: { ...running, cols: 80, rows: 24 } });
+    socket().receive({ type: "session-updated", session: { ...running, cols: 150, rows: 45 } });
+    socket().receive({ type: "session-updated", session: { ...running, cols: 0, rows: 45 } });
+    expect(sizes).toEqual([
+      { cols: 80, rows: 24 },
+      { cols: 150, rows: 45 },
+    ]);
+    // bb drops a resize from any socket but the one that attached last (bb 0.48.1).
+    expect(socket().sent.filter((message) => (message as { type: string }).type === "resize")).toEqual([]);
   });
 
   it("splits a large paste into messages bb accepts", () => {

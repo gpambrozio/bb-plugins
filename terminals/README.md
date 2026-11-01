@@ -22,11 +22,13 @@ machine running the bb server is listed first.
   its output replayed.
 - **The same tabs everywhere.** The tab list belongs to your bb, not to a window: the desktop app and
   bb in a browser through getbb.app show the same tabs and type into the same shells. Which tab is
-  shown is each window's own.
+  shown is each window's own. A shell has one size: the window you are using (showing, resizing,
+  returning to or typing in) sets it, and the others draw the shell at that size.
 - **A machine that goes offline** marks its tabs with a dot and says so above the terminal; when it
   reconnects, the shell carries on where it was.
 - **A shell that ends** (you typed `exit`, or its machine restarted) keeps its output on screen with
-  the exit code and a **Close tab** button. The next time the plugin loads, tabs whose shell has ended
+  the exit code and a **Close tab** button, also after a reload, for as long as its machine keeps that
+  output (30 minutes). The next time the plugin loads, tabs whose shell has ended
   are dropped.
 
 The colours and font follow bb's theme, as bb's own terminal does.
