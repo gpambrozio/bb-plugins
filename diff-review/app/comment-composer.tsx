@@ -26,6 +26,7 @@ export function CommentComposer({
   initialSeverity = null,
   withSeverity = false,
   autoFocus = true,
+  sending = false,
   suggestFrom,
   onChange,
   onSubmit,
@@ -37,6 +38,11 @@ export function CommentComposer({
   initialSeverity?: Severity | null;
   withSeverity?: boolean;
   autoFocus?: boolean;
+  /**
+   * A submission of this draft is under way that this editor did not start (one begun in an editor
+   * the draft moved from): the editor waits, as it does for its own.
+   */
+  sending?: boolean;
   /** The commented lines' text: offers "Suggest a change", which inserts a suggestion block seeded with it. */
   suggestFrom?: string;
   /** Told of every edit, for a parent that keeps the draft (across a remount, a reload, a restart). */
@@ -46,8 +52,12 @@ export function CommentComposer({
 }) {
   const [body, setBody] = useState(initialBody);
   const [severity, setSeverity] = useState<string>(initialSeverity ?? NO_SEVERITY);
-  const [busy, setBusy] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const busy = submitting || sending;
   const empty = body.trim() === "";
+  // A draft may hold more than a comment can (two replies joined when a thread folded into another);
+  // it is kept whole, and posts once shortened.
+  const over = body.length - BODY_MAX_CHARS;
   const textarea = useRef<HTMLTextAreaElement>(null);
 
   const change = (next: string, nextSeverity: string = severity) => {
@@ -67,14 +77,14 @@ export function CommentComposer({
   };
 
   const submit = async () => {
-    if (empty || busy) return;
-    setBusy(true);
+    if (empty || busy || over > 0) return;
+    setSubmitting(true);
     try {
       await onSubmit({ body, severity: severity === NO_SEVERITY ? null : (severity as Severity) });
       setBody("");
       setSeverity(NO_SEVERITY);
     } finally {
-      setBusy(false);
+      setSubmitting(false);
     }
   };
 
@@ -102,6 +112,7 @@ export function CommentComposer({
         disabled={busy}
         className="min-h-16 text-sm"
       />
+      {over > 0 ? <p className="text-xs text-destructive">{over.toLocaleString()} characters over the limit of {BODY_MAX_CHARS.toLocaleString()}; shorten it to post.</p> : null}
       <div className="flex items-center gap-2">
         {withSeverity ? (
           <Select
@@ -136,7 +147,7 @@ export function CommentComposer({
               Cancel
             </Button>
           )}
-          <Button type="button" size="sm" onClick={() => void submit()} disabled={empty || busy}>
+          <Button type="button" size="sm" onClick={() => void submit()} disabled={empty || busy || over > 0}>
             {submitLabel}
           </Button>
         </div>

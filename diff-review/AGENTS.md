@@ -363,6 +363,36 @@ is a warning, not a failed submit).
   first comment takes that comment's place when unedited, and its replies, an agent's answers and
   anything written during the submission stay, unposted. A whole-file or whole-diff comment, now in the
   review's body, is resolved.
+- A sync can land between GitHub making a line comment's thread (or taking the submit) and that link
+  (another window's Sync or reconnect) and import GitHub's thread as a local thread of its own.
+  `linkGithubThread` folds such a copy into the line comment's thread (the id the tab knows) in the
+  same transaction, and `syncGithubThreads` keeps one thread per GitHub thread, folding a later one
+  (by `rowid`) into the first, which cleans up copies left before 0.5.1. A fold (`foldThread`) moves
+  the copy's comments but a GitHub comment the kept thread has, its send when the kept thread has
+  none, its runs, and each tab's `reply:` draft and thread fold. Uniqueness is the code's, not an
+  index's: a unique index would need a migration that folds existing copies in SQL.
+- **A folded thread's id lives on as an alias** (`thread_aliases`, the copy's id → the kept one's),
+  because a request, a tab or an agent can still hold it after the fold: `ReviewStore.thread` follows
+  it, so a Reply, Post, resolve or reopen on the copy that GitHub took while Submit folded it answers
+  with the kept thread rather than failing after the fact (a retry would post it twice), and an agent
+  given the copy's full id reaches the kept one. Every place a tab's kept state names threads is
+  normalised through the session's aliases by `remapThreadKeys` (`shared/thread-aliases.ts`): the fold
+  itself, `saveViewState` (a save made before the tab heard of the fold), `getReview`, and the tab,
+  which gets `aliases` with every load and thread list and remaps its live drafts, its pending save
+  and its window copy, so no later save brings the old key back. Two reply drafts meeting on one
+  thread are merged, never dropped or cut (`mergeReplyDrafts`: an empty one gives way, the same text
+  is kept once, two texts are joined in the editor); nothing is posted until the user presses Reply.
+  So a draft may be longer than a comment: drafts are stored up to `DRAFT_MAX_CHARS` (two full
+  replies joined), and the editor asks for a text over `BODY_MAX_CHARS` to be shortened before it
+  posts. A draft moved in bumps its key's `revision` in the tab's store, which opens or remounts that
+  editor.
+- **A submission belongs to the draft, not to its editor.** Reply and Save go through `useDraft`'s
+  `send`, which marks the text as on its way in the tab's store (`beginSend`, a ticket whose key a fold
+  moves) and, once posted, takes only that text out of the draft wherever it is now (`endSend`,
+  `withoutSent`): text a fold joined to it meanwhile stays. Every editor showing the draft reads
+  `sending` and stays disabled until it settles, so neither a fold's remount nor the tab's (the store
+  is kept per window and view, `windowStores`) offers the text to send again. Never close a draft
+  from an editor's own completion again.
 
 An AI run's comments on a pull request are checked against its fetched range (`PullRequests.filesFor`,
 the view's last load or a fresh fetch). A fix run for a pull request starts in a new managed worktree
@@ -390,13 +420,13 @@ the branch has some, and the tab's picker adopts that view without loading it ag
   already applied on installs of the branch), `view_states` at 11 and `send_previous` at 12; 0.3.0
   added `review_threads.file_revision` at 13 and `runs.purpose` at 14; 0.4.0 added
   `review_threads.github_thread_id` at 15 and `review_comments.github_comment_id` at 16; 0.5.0 added
-  `review_comments.github_draft` at 17. `docs.test.ts`
+  `review_comments.github_draft` at 17; 0.5.1 added `thread_aliases` at 18 and its index at 19. `docs.test.ts`
   keeps the README's install range on the package's minor version.
 - The tab's kept state (drafts, file and thread folds, scroll) lives in the plugin's database, keyed by bb thread and
   session, not in `localStorage`: it must survive a restart and follow the user to another device (the
-  owner uses bb remotely). Saves are debounced and flushed when the tab unmounts or the page hides; a
-  copy per window wins over the server's when it is newer (`savedAt`), so a remount never loses to a
-  save in flight; the server keeps an older copy from out of order (by `savedAt`). `getReview` drops
+  owner uses bb remotely). Saves are debounced and flushed when the tab unmounts or the page hides; the
+  window keeps its store per view across remounts (`windowStores`), which wins over the server's copy
+  when it is newer (`savedAt`), so a remount never loses to a save in flight; the server keeps an older copy from out of order (by `savedAt`). `getReview` drops
   reply and edit drafts whose thread or comment is gone. A draft is never hidden: a file with one
   opens, the comment filter shows it, a line draft whose lines left the diff sits above the diff, and
   drafts on files no longer in the view are listed apart. Reopening an editor keeps its draft.

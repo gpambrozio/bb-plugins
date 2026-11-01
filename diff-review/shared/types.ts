@@ -17,6 +17,11 @@ export const GENERAL_PATH = "__general__";
 
 /** The longest comment body the plugin stores, in characters. */
 export const BODY_MAX_CHARS = 20_000;
+/**
+ * The longest unsent comment a tab keeps: two full replies joined (`mergeReplyDrafts`, when a thread
+ * folds into another with a reply typed on each), which is never cut; it posts once within `BODY_MAX_CHARS`.
+ */
+export const DRAFT_MAX_CHARS = 2 * BODY_MAX_CHARS + 2;
 /** The longest anchor snippet stored with a thread, in characters. */
 export const ANCHOR_MAX_CHARS = 20_000;
 
@@ -256,7 +261,7 @@ export const VIEW_STATE_MAX_FOLDS = 5_000;
  */
 export const draftSchema = z
   .object({
-    body: z.string().max(BODY_MAX_CHARS),
+    body: z.string().max(DRAFT_MAX_CHARS),
     severity: severitySchema.nullable(),
     range: z.object({ side: sideSchema, startLine: z.number().int().positive(), endLine: z.number().int().positive() }).strict().nullable(),
   })
@@ -318,6 +323,8 @@ export const reviewViewSchema = z.discriminatedUnion("ok", [
       runs: z.array(runSchema),
       /** What this thread's tab kept of this view, or null the first time. */
       viewState: viewStateSchema.nullable(),
+      /** Ids of threads folded into another (two copies of one GitHub thread), each with the one kept. */
+      aliases: z.record(z.string(), z.string()),
     })
     .strict(),
   z.object({ ok: z.literal(false), message: z.string() }).strict(),

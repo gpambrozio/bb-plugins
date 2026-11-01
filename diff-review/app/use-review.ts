@@ -327,10 +327,10 @@ export function useReview(threadId: string, target: TargetRequest, options: Revi
   const refreshThreads = useCallback(async () => {
     if (sessionId === null) return;
     try {
-      const { threads, runs } = await rpc.call("listThreads", { sessionId });
+      const { threads, runs, aliases } = await rpc.call("listThreads", { sessionId });
       setState((previous) =>
         previous.status === "ready" && previous.view.sessionId === sessionId
-          ? { ...previous, view: { ...previous.view, threads: shareById(previous.view.threads, threads), runs: shareById(previous.view.runs, runs) } }
+          ? { ...previous, view: { ...previous.view, threads: shareById(previous.view.threads, threads), runs: shareById(previous.view.runs, runs), aliases } }
           : previous,
       );
     } catch (error) {

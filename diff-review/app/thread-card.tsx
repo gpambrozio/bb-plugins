@@ -5,7 +5,7 @@
  */
 import { Markdown } from "@get-bb/plugin-sdk/app";
 import { Fragment } from "react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -92,14 +92,13 @@ function Comment({ comment }: { comment: ReviewComment }) {
       </div>
       {editing ? (
         <CommentComposer
+          key={editDraft.revision}
           placeholder={draft === undefined ? "Edit your comment" : "Edit the draft before posting it"}
           submitLabel="Save"
           initialBody={editDraft.latest().body}
+          sending={editDraft.sending}
           onChange={editDraft.change}
-          onSubmit={async ({ body }) => {
-            await actions.edit(comment.id, body);
-            editDraft.close();
-          }}
+          onSubmit={({ body }) => editDraft.send(body, () => actions.edit(comment.id, body))}
           onCancel={editDraft.close}
         />
       ) : (
@@ -145,6 +144,10 @@ export function ThreadCard({
   // A thread stays as the user left it (kept with the view); otherwise closed ones start folded. A
   // folded thread with a reply being written opens, so the reply shows.
   const [expanded, setExpandedState] = useState(() => replying || (viewState.threadExpanded(thread.id) ?? !closed));
+  // A reply moved here from a folded copy of the thread opens it too.
+  useEffect(() => {
+    if (replyDraft.revision > 0 && replying) setExpandedState(true);
+  }, [replyDraft.revision, replying]);
   const setExpanded = (value: boolean) => {
     viewState.setThreadExpanded(thread.id, value);
     setExpandedState(value);
@@ -230,6 +233,7 @@ export function ThreadCard({
       ))}
       {replying ? (
         <CommentComposer
+          key={replyDraft.revision}
           placeholder={
             thread.githubThreadId === null
               ? "Reply (@reviewer or @agent asks this view's AI reviewer)"
@@ -238,10 +242,8 @@ export function ThreadCard({
           submitLabel="Reply"
           initialBody={replyDraft.latest().body}
           onChange={replyDraft.change}
-          onSubmit={async ({ body }) => {
-            await actions.reply(thread.id, body);
-            replyDraft.close();
-          }}
+          sending={replyDraft.sending}
+          onSubmit={({ body }) => replyDraft.send(body, () => actions.reply(thread.id, body))}
           onCancel={replyDraft.close}
         />
       ) : (

@@ -62,7 +62,7 @@ export const rpcContract = defineRpcContract({
   },
   listThreads: {
     input: z.object({ sessionId: id }).strict(),
-    output: z.object({ threads: z.array(reviewThreadSchema), runs: z.array(runSchema) }).strict(),
+    output: z.object({ threads: z.array(reviewThreadSchema), runs: z.array(runSchema), aliases: z.record(z.string(), z.string()) }).strict(),
   },
   createThread: {
     input: z
