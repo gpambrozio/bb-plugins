@@ -100,7 +100,7 @@ function create(terminalId: string, backend: TerminalsBackend): LiveTerminal & {
   });
   term.onData((data) => {
     // Typing here makes this the window in use: take the shell back if another window resized it.
-    if (shown && sizing.differs) fit();
+    if (shown) sizing.typed(measure);
     connection.sendInput(data);
   });
   term.onBinary((data) => {
@@ -112,14 +112,21 @@ function create(terminalId: string, backend: TerminalsBackend): LiveTerminal & {
   /** Where the view was when it left the page; null for "following the output". */
   let savedPlace: ViewportPlace = null;
 
-  function fit(): void {
-    if (!shown || !opened || element.clientWidth === 0 || element.clientHeight === 0) return;
+  /** The size the view fits on screen now, or null when it is not on screen. */
+  function measure(): { cols: number; rows: number } | null {
+    if (!shown || !opened || element.clientWidth === 0 || element.clientHeight === 0) return null;
     const proposed = fitAddon.proposeDimensions();
-    if (proposed === undefined || !Number.isFinite(proposed.cols) || !Number.isFinite(proposed.rows)) return;
+    if (proposed === undefined || !Number.isFinite(proposed.cols) || !Number.isFinite(proposed.rows)) return null;
     // bb's limits for a terminal's size.
-    const cols = Math.max(2, Math.min(500, Math.floor(proposed.cols)));
-    const rows = Math.max(1, Math.min(200, Math.floor(proposed.rows)));
-    sizing.fitted({ cols, rows });
+    return {
+      cols: Math.max(2, Math.min(500, Math.floor(proposed.cols))),
+      rows: Math.max(1, Math.min(200, Math.floor(proposed.rows))),
+    };
+  }
+
+  function fit(): void {
+    const size = measure();
+    if (size !== null) sizing.fitted(size);
   }
 
   connection.connect();

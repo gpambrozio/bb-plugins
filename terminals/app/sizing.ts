@@ -49,6 +49,8 @@ export class TerminalSizing {
    * already drawn (a window being resized asks for several in a row).
    */
   private asked: Size[] = [];
+  /** Whether another window has sized the shell since this one last fitted it. */
+  private yielded = false;
 
   constructor(options: SizingOptions) {
     this.options = options;
@@ -66,6 +68,7 @@ export class TerminalSizing {
 
   /** This window is in use and its view fits `size`: draw it so, and have the shell take it. */
   fitted(size: Size): void {
+    this.yielded = false;
     if (!sameSize(this.options.localSize(), size)) this.options.resizeLocal(size);
     // Already what the shell has, or what this window is about to give it.
     const target = this.wanted ?? (this.inFlight ? this.asked.at(-1) : this.session);
@@ -84,7 +87,20 @@ export class TerminalSizing {
     }
     // Another window sized the shell: draw what the shell really has.
     this.asked = [];
+    this.yielded = true;
     if (!sameSize(this.options.localSize(), size)) this.options.resizeLocal(size);
+  }
+
+  /**
+   * The user typed in this window, which makes it the one in use: if another
+   * window has sized the shell since, give it this window's size again.
+   * `measure` is what this window's view fits (null when it cannot tell);
+   * it runs only then, so typing costs no layout read otherwise.
+   */
+  typed(measure: () => Size | null): void {
+    if (!this.yielded) return;
+    const size = measure();
+    if (size !== null) this.fitted(size);
   }
 
   private get driving(): boolean {

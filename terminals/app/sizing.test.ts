@@ -122,6 +122,38 @@ describe("TerminalSizing", () => {
     expect(bb.claims).toHaveLength(3);
   });
 
+  it("takes the shell back when the user types in a window that never lost focus", async () => {
+    const bb = fakeBb({ cols: 80, rows: 24 });
+    const desktop = bb.window();
+    const phone = bb.window();
+    const desktopView = { cols: 150, rows: 45 };
+    let measured = 0;
+    const measure = () => {
+      measured += 1;
+      return desktopView;
+    };
+    desktop.sizing.fitted(desktopView);
+    bb.answer();
+    await settle();
+    // Typing while the desktop has the shell reads no layout and asks nothing.
+    desktop.sizing.typed(measure);
+    expect(measured).toBe(0);
+    // A phone opens the page and sizes the shell; the desktop, still focused, follows.
+    phone.sizing.fitted({ cols: 60, rows: 20 });
+    bb.answer();
+    await settle();
+    expect(desktop.local()).toEqual({ cols: 60, rows: 20 });
+    // No focus or resize event on the desktop: the user just types there again.
+    desktop.sizing.typed(measure);
+    bb.answer();
+    await settle();
+    expect(bb.size).toEqual(desktopView);
+    expect(desktop.local()).toEqual(desktopView);
+    desktop.sizing.typed(measure);
+    expect(measured).toBe(1);
+    expect(bb.claims).toHaveLength(3);
+  });
+
   it("asks again after bb could not resize, such as while the machine was offline", async () => {
     const bb = fakeBb({ cols: 80, rows: 24 });
     const desktop = bb.window();
