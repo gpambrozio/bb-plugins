@@ -16,6 +16,11 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the sentence covers them all, and a prompt that skips acknowledgements still speaks the review. Turns
   from different threads are never mixed, and only the last few are kept, with the model told when
   older ones were left out.
+- **A quick burst of turns no longer falls back to the plain sentence.** Herald stops writing a
+  sentence as soon as a newer turn of the same thread makes it out of date, so the model is free for
+  the sentence that covers them all instead of being too busy and reading the last turn's plain
+  sentence — which also kept a burst of acknowledgements quiet. A sentence about a question is never
+  stopped this way.
 
 ## 0.9.0
 

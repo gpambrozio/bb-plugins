@@ -1,21 +1,27 @@
 /**
- * What a thread said that no sentence has covered yet. A tool run is not
- * stopped when a newer event overtakes it, but its sentence is dropped: the
+ * What a thread said that no sentence has covered yet. When a newer event
+ * overtakes a tool run, the run is stopped and its sentence never lands: the
  * thread moved on before it was ready. Without this, what that update said
  * was never read aloud — a review result followed at once by two
- * "Captain, shipshape." turns was lost with them. So each finished turn a
- * tool is writing for is held here per thread, and every later run for that
- * thread is given the updates still held, oldest first, until a sentence for
- * one of them lands (spoken, or the tool's chosen silence).
+ * "Captain, shipshape." turns was lost with them. So every finished turn is
+ * held here per thread **as it arrives**, before any lookup, in arrival
+ * order, and each tool run for the thread is given the updates that arrived
+ * before its own, oldest first. They stay until a run that covered them lands
+ * (a sentence, or the tool's chosen silence).
+ *
+ * Arrival is the only way in: the hooks' lookups can only take an update
+ * back out (`withdraw`, once they know no tool writes for it), so a lookup
+ * that answers late can neither reorder updates nor bring one back after the
+ * thread was archived or spoken for without a tool (`forget`, `coveredThrough`).
  *
  * Only finished turns are held: a question, plan or permission a newer event
  * overtook was answered, and an error was followed by a new turn. In memory
  * only, like a sentence being written: a reload drops it.
  */
 
-/** Earlier updates kept per thread at most; the oldest go first. */
+/** Earlier updates a run is given at most; the oldest go first. */
 export const CARRY_MAX_UPDATES = 4;
-/** The earlier updates' text kept per thread at most, together; the oldest go first. */
+/** The earlier updates' text a run is given at most, together; the oldest go first. */
 export const CARRY_MAX_CHARS = 6_000;
 
 export interface CarriedUpdate {
@@ -27,62 +33,76 @@ export interface CarriedUpdate {
 
 /** What a run is given: the earlier updates still held, and how many older ones the caps let go. */
 export interface Carried {
-  updates: readonly HeldUpdate[];
+  updates: readonly CarriedUpdate[];
   dropped: number;
 }
 
-/** A held update, with the number a landed run forgets it by. */
-interface HeldUpdate extends CarriedUpdate {
-  key: number;
+interface Held extends CarriedUpdate {
+  /** Its place in arrival order, across threads. */
+  seq: number;
+  /** How many older updates the caps let go while this was the oldest held; they were never in a prompt. */
+  droppedBefore: number;
 }
 
-const NOTHING: Carried = { updates: [], dropped: 0 };
-
 export class CarriedUpdates {
-  private readonly threads = new Map<string, { updates: HeldUpdate[]; dropped: number }>();
+  private readonly threads = new Map<string, Held[]>();
   private counter = 0;
 
-  /** The updates a run starting now must cover besides its own. */
-  earlier(threadId: string): Carried {
-    const held = this.threads.get(threadId);
-    return held === undefined ? NOTHING : { updates: [...held.updates], dropped: held.dropped };
-  }
-
-  /** An update a run is writing for: held until a run that covers it lands. Returns its key for `landed`. */
-  hold(threadId: string, update: CarriedUpdate): number {
+  /**
+   * An event arriving, before any lookup: its place in the thread's order,
+   * and its finished turn, when it has one, held from now on.
+   */
+  arrive(threadId: string, update: CarriedUpdate | null): number {
     this.counter += 1;
-    const held = this.threads.get(threadId) ?? { updates: [], dropped: 0 };
-    held.updates.push({ ...update, key: this.counter });
-    while (held.updates.length > CARRY_MAX_UPDATES || (held.updates.length > 1 && length(held.updates) > CARRY_MAX_CHARS)) {
-      held.updates.shift();
-      held.dropped += 1;
+    if (update === null) return this.counter;
+    const held = this.threads.get(threadId) ?? [];
+    held.push({ ...update, seq: this.counter, droppedBefore: 0 });
+    // The newest is some run's own update; the caps bound what comes before it.
+    while (held.length > CARRY_MAX_UPDATES + 1 || (held.length > 1 && length(held.slice(0, -1)) > CARRY_MAX_CHARS)) {
+      const oldest = held.shift() as Held;
+      (held[0] as Held).droppedBefore += oldest.droppedBefore + 1;
     }
     this.threads.set(threadId, held);
     return this.counter;
   }
 
-  /** A run's sentence landed: what it covered — its own update (`own`, null when not held) and `covered` — is forgotten. */
-  landed(threadId: string, own: number | null, covered: Carried): void {
-    const held = this.threads.get(threadId);
-    if (held === undefined) return;
-    const gone = new Set(covered.updates.map((update) => update.key));
-    if (own !== null) gone.add(own);
-    held.updates = held.updates.filter((update) => !gone.has(update.key));
-    // Updates go oldest first, so what was pushed out since the run started
-    // was what it covered, then its own; only what goes past those was never
-    // in its prompt and is still left out.
-    const since = held.dropped - covered.dropped;
-    held.dropped = Math.max(0, since - covered.updates.length - (own === null ? 0 : 1));
-    if (held.updates.length === 0) this.threads.delete(threadId);
+  /** The updates that arrived before `seq`, oldest first: what the run for `seq` covers besides its own. */
+  earlier(threadId: string, seq: number): Carried {
+    const before = (this.threads.get(threadId) ?? []).filter((update) => update.seq < seq);
+    return {
+      updates: before.map(({ event, output }) => ({ event, output })),
+      dropped: before.reduce((sum, update) => sum + update.droppedBefore, 0),
+    };
   }
 
-  /** The thread was spoken for without a tool, or is gone. */
+  /** The run for `seq` landed, or the plain sentence spoke for it: it and everything before it is covered. */
+  coveredThrough(threadId: string, seq: number): void {
+    const held = this.threads.get(threadId);
+    if (held === undefined) return;
+    const left = held.filter((update) => update.seq > seq);
+    if (left.length === 0) this.threads.delete(threadId);
+    else this.threads.set(threadId, left);
+  }
+
+  /** Only `seq` itself is out: no tool writes for it, or only its own plain sentence was spoken. */
+  withdraw(threadId: string, seq: number): void {
+    const held = this.threads.get(threadId);
+    const index = held?.findIndex((update) => update.seq === seq) ?? -1;
+    if (held === undefined || index < 0) return;
+    const [gone] = held.splice(index, 1);
+    // What the caps let go before it still went unread; the next one carries the count.
+    const next = held[index];
+    if (next !== undefined && gone !== undefined) next.droppedBefore += gone.droppedBefore;
+    if (held.length === 0) this.threads.delete(threadId);
+  }
+
+  /** The thread is gone. */
   forget(threadId: string): void {
     this.threads.delete(threadId);
   }
 }
 
-function length(updates: readonly HeldUpdate[]): number {
+function length(updates: readonly Held[]): number {
   return updates.reduce((sum, update) => sum + update.output.length, 0);
 }
 

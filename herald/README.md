@@ -220,10 +220,11 @@ when Herald itself is reloaded is dropped rather than spoken late.
 
 **Nothing a thread said is lost because it said more right after.** When a thread finishes another turn
 before the sentence for its last one is ready — a review result followed at once by two "Captain,
-shipshape." replies, say — Herald drops that sentence, as before, but carries the turn forward: the
-next sentence the tool writes for that thread is given every such turn, oldest first, each marked as a
+shipshape." replies, say — Herald stops writing that sentence and carries the turn forward: the next
+sentence the tool writes for that thread is given every such turn, oldest first, each marked as a
 separate update, in place of the agent's output alone. Once a sentence is spoken (or the tool chooses to
-stay quiet), they are forgotten. So a prompt that skips acknowledgements still speaks the review, and
+stay quiet), they are forgotten; if the tool fails and the plain sentence is spoken instead, they wait
+for the next one. So a prompt that skips acknowledgements still speaks the review, and
 stays quiet when every update was one. Threads are never mixed. At most four earlier turns and 6,000
 characters of them are carried, oldest dropped first, and the tool is told when some were left out.
 Without the model, nothing is carried: the plain sentence speaks each turn as it ends.

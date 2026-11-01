@@ -148,7 +148,7 @@ describe("hooks with a model-written sentence", () => {
     const first = heldWriter();
     const second = heldWriter();
     let turn = 0;
-    const { hooks, store } = setup((command, prompt, reply) => (turn++ === 0 ? first.write(command, prompt, reply) : second.write(command, prompt, reply)));
+    const { hooks, store } = setup((command, prompt, reply, signal) => (turn++ === 0 ? first.write(command, prompt, reply, signal) : second.write(command, prompt, reply, signal)));
     await hooks.idle(thread(), "First.");
     hooks.active(thread());
     await hooks.interactionPending(thread(), question());
@@ -318,7 +318,7 @@ describe("hooks with a model-written sentence", () => {
     const first = heldWriter();
     const second = heldWriter();
     let turn = 0;
-    const { hooks, store } = setup((command, prompt, reply) => (turn++ === 0 ? first.write(command, prompt, reply) : second.write(command, prompt, reply)));
+    const { hooks, store } = setup((command, prompt, reply, signal) => (turn++ === 0 ? first.write(command, prompt, reply, signal) : second.write(command, prompt, reply, signal)));
     await hooks.idle(thread(), "First.");
     hooks.active(thread());
     await hooks.interactionPending(thread(), question());

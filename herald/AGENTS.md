@@ -24,7 +24,7 @@ what still holds and says what bb changed. The repo root `AGENTS.md` covers what
 | `server/liveness.ts` | Asks bb whether each entry's thread still exists before the list goes out; gone ones are removed. |
 | `server/timeline.ts` | Pure text: what an interaction asks, the user's last prompt, the spoken sentence. |
 | `server/say.ts` | `say` on the bb server's Mac, driven for its voices: text in on stdin, a WAV out, bytes back. |
-| `server/carry.ts` | The finished turns a newer event overtook before their sentence landed, per thread, capped; and the prompt's output that lists them with the latest. |
+| `server/carry.ts` | Each thread's finished turns no landed sentence has covered yet, held as they arrive, capped; and the prompt's output that lists them with the latest. |
 | `server/writer.ts` | The optional sentence-writing tool, run as a child process through bb's host toolchain: prompt in on stdin, one line out (from the JSON summary for Claude Code and Codex); the timeout, the cap, the empty folder. |
 | `server/command-line.ts` | The user's command split into words without a shell, and the prompt template filled in. |
 | `server/ports.ts`, `server/bb-ports.ts` | The seams the logic is tested through, and their implementations over `bb.sdk`. |
@@ -146,22 +146,40 @@ no shell. What that buys, and what must stay true:
   spoken, not remembered) and its owed notification goes out plain. A question answered meanwhile is
   still withdrawn first. Only a real failure falls back to the plain
   sentence spoken; a run still going at unload is a failure (the plain notification goes out).
-- **An overtaken turn is carried, not lost** (`server/carry.ts`). A run a newer event overtakes is not
-  stopped, but its sentence is dropped (`settleSentence`), and with it what that turn said: the first
-  mate's review result went unspoken because two "Captain, shipshape." turns followed before its sentence
-  was ready. So every finished turn a tool run starts for is *held* per thread, and every later run for
-  that thread gets the held turns in its `{{output}}` (a turn the next one overtook while its lookups
-  ran, `admit`'s stale branch, is held too, when a tool would have written for it), oldest first, each under an `[Update n of m: …]`
-  header (`combinedOutput`; the template is unchanged, so a user's prompt keeps working). A run that
-  **lands** — a sentence, the plain fallback, or the tool's silence — forgets what it covered and its own
-  turn (`landed`, by a key of its own, not the event id, which is only millisecond-unique); a run that is
-  dropped or withdrawn forgets nothing. Only finished turns are held: an overtaken question was answered,
-  and an error was followed by a new turn. An event that is not announced (`off`) leaves the held turns
-  for the next announced one; a plain sentence (model switched off) and an archive forget them. At most
-  `CARRY_MAX_UPDATES` (4) earlier turns and `CARRY_MAX_CHARS` (6,000) of their text, each already cut at
-  `PROMPT_OUTPUT_MAX`, oldest dropped first and counted in the output ("left out"). In memory only: a
-  reload drops them, as it drops a sentence being written. A turn the user answers while its sentence is
-  being written is carried too, so the next sentence may mention what they already read.
+- **An overtaken turn is carried, not lost** (`server/carry.ts`). A sentence a newer event overtakes
+  can no longer land (`settleSentence`), and with it went what that turn said: the first mate's review
+  result went unspoken because two "Captain, shipshape." turns followed before its sentence was ready.
+  What must stay true:
+  - **Held as it arrives.** Every finished turn is held per thread in `idle`, after the empty and repeat
+    checks and *before any lookup* (`CarriedUpdates.arrive`), with a sequence number every event takes
+    (questions and errors take one and hold nothing). Lookups can only take a turn back out (`withdraw`:
+    not announced, or no tool writes for it); nothing is added later. So a run is given every turn that
+    arrived before its event, oldest first, even one whose own lookups are still out, and a late lookup
+    can neither reorder turns nor bring one back after an archive or a plain sentence cleared them.
+    Holding after the lookups was review pass 1's second and third findings.
+  - **The prompt.** A run reads the held turns before its own sequence number when it starts and puts
+    them in `{{output}}`, each under an `[Update n of m: …]` header (`combinedOutput`). The template is
+    unchanged, so a user's prompt keeps working, and with nothing carried the output is as before.
+  - **An overtaken finished turn's run is stopped** (`runs`, an `AbortController` per run passed to the
+    writer), and the new run waits for it to end (`OVERTAKEN_STOP_MS`, abort rejects at once) before it
+    starts, so its slot is free. Without that, a review and two no-ops filled `MAX_IN_FLIGHT`, the
+    combined run was refused as busy, and its plain sentence was spoken (review pass 1, first finding;
+    `hooks-carry.test.ts` checks it against the real `SentenceWriter`). The stopped run's owed
+    notification moves to the new run (owed if either was), sent once with the sentence that covers both.
+    **A question's run is never stopped**: an earlier question still waits when a later one is answered,
+    and its notification is its own (`hooks-push.test.ts`).
+  - **What clears them.** The tool's sentence or silence covers everything up to its event
+    (`coveredThrough`); a failure — busy, missing, timeout — speaks the plain sentence, which covers only
+    the event's own turn (`withdraw`), so the earlier ones wait for the next run. A plain sentence (model
+    off) covers everything up to it; an archive or delete forgets the thread; an event that is not
+    announced (`off`) withdraws only itself. A run that is dropped or withdrawn clears nothing.
+  - **Bounds.** At most `CARRY_MAX_UPDATES` (4) earlier turns and `CARRY_MAX_CHARS` (6,000) of their text,
+    each already cut at `PROMPT_OUTPUT_MAX`, oldest dropped first; how many were let go is counted on the
+    oldest held turn and said in the output ("left out") until a run that was told lands.
+  - Only finished turns are held: an overtaken question was answered, and an error was followed by a new
+    turn. In memory only: a reload drops them, as it drops a sentence being written. A turn the user
+    answers while its sentence is being written is carried too, so the next sentence may mention what
+    they already read.
 - **The prompt is bounded.** The agent's output is cut at `PROMPT_OUTPUT_MAX` and the headline, detail
   and request at `PROMPT_PART_MAX` before they go into the template — a permission's command and a
   pasted-in request can both run to kilobytes.

@@ -11,7 +11,8 @@ import type { EventsPort } from "./ports";
 import { AttentionStore } from "./store";
 import { CARRY_MAX_UPDATES } from "./carry";
 import { question, recordingLog, settle, thread } from "./testing/fixtures";
-import type { WrittenSentence } from "./writer";
+import type { ReplyFormat } from "../shared/herald";
+import { MAX_IN_FLIGHT, SentenceWriter, type WrittenSentence } from "./writer";
 
 const CONFIG: HeraldConfig = {
   announce: { question: true, plan: true, permission: true, finished: true, error: true },
@@ -33,11 +34,18 @@ const events: EventsPort = {
   },
 };
 
-/** A writer where every run waits for the test to answer it, by its index. */
+/** A writer where every run waits for the test to answer it, by its index, and rejects when its run is stopped. */
 function runs() {
-  const calls: Array<{ prompt: string; answer: (written: WrittenSentence) => void }> = [];
-  const write: HookDeps["writeSentence"] = (_command, prompt) =>
-    new Promise<WrittenSentence>((resolve) => calls.push({ prompt, answer: resolve }));
+  const calls: Array<{ prompt: string; answer: (written: WrittenSentence) => void; stopped: boolean }> = [];
+  const write: HookDeps["writeSentence"] = (_command, prompt, _reply, signal) =>
+    new Promise<WrittenSentence>((resolve, reject) => {
+      const call = { prompt, answer: resolve, stopped: false };
+      calls.push(call);
+      signal.addEventListener("abort", () => {
+        call.stopped = true;
+        reject(new Error("The run was aborted."));
+      });
+    });
   return {
     write,
     calls,
@@ -47,11 +55,27 @@ function runs() {
   };
 }
 
-function setup(write: HookDeps["writeSentence"], config: HeraldConfig = CONFIG) {
+interface Options {
+  config?: () => HeraldConfig;
+  events?: EventsPort;
+}
+
+function setup(write: HookDeps["writeSentence"], options: Options = {}) {
   const store = new AttentionStore(null, recordingLog());
   const remembered = vi.fn();
   const log = recordingLog();
-  const hooks = createHooks({ store, readConfig: async () => config, events, choiceOf: async () => NO_CHOICE, publish: vi.fn(), log, writeSentence: write, remember: remembered, now: ticking() });
+  const config = options.config ?? (() => CONFIG);
+  const hooks = createHooks({
+    store,
+    readConfig: async () => config(),
+    events: options.events ?? events,
+    choiceOf: async () => NO_CHOICE,
+    publish: vi.fn(),
+    log,
+    writeSentence: write,
+    remember: remembered,
+    now: ticking(),
+  });
   return { hooks, store, remembered, log };
 }
 
@@ -61,10 +85,42 @@ function ticking(): () => Date {
   return () => new Date((at += 1_000));
 }
 
-/** One turn of a thread: it starts, and ends saying `output`. */
+/** One turn of a thread: it starts, ends saying `output`, and its run (if any) has started. */
 async function turn(hooks: ReturnType<typeof setup>["hooks"], output: string, id = "t1") {
   hooks.active(thread({ id }));
   await hooks.idle(thread({ id }), output);
+  await settle();
+}
+
+/** A turn whose lookups the test holds (`deferredLookups`): it ends, and its handler is left waiting. */
+async function heldTurn(hooks: ReturnType<typeof setup>["hooks"], output: string) {
+  hooks.active(thread());
+  void hooks.idle(thread(), output);
+  await settle();
+}
+
+/**
+ * Events whose context lookup for a given output waits until the test
+ * releases it: the lookups of one turn answering after a later turn's.
+ */
+function deferredLookups() {
+  const gates = new Map<string, () => void>();
+  let holdNext = false;
+  const port: EventsPort = {
+    ...events,
+    async context(thread, options) {
+      if (holdNext) {
+        holdNext = false;
+        await new Promise<void>((resolve) => gates.set("held", resolve));
+      }
+      return events.context(thread, options);
+    },
+  };
+  return {
+    port,
+    holdNext: () => (holdNext = true),
+    release: () => gates.get("held")?.(),
+  };
 }
 
 const REVIEW = "Review done: two findings, both fixed. PR https://github.com/o/r/pull/7 is green.";
@@ -176,6 +232,7 @@ describe("hooks carrying overtaken updates", () => {
     await turn(hooks, REVIEW);
     hooks.active(thread());
     await hooks.interactionPending(thread(), question());
+    await settle();
     const prompt = w.prompt(1);
     expect(prompt).toContain("Event: asks the developer a question");
     expect(prompt).toContain(REVIEW);
@@ -226,6 +283,7 @@ describe("hooks carrying overtaken updates", () => {
     await turn(hooks, REVIEW);
     hooks.gone(thread());
     await hooks.idle(thread(), "After.");
+    await settle();
     expect(w.prompt(1)).toBe("Event: finished its turn\nOutput: After.");
   });
 
@@ -256,5 +314,165 @@ describe("hooks carrying overtaken updates", () => {
     config = CONFIG;
     await turn(hooks, "Model again.");
     expect(w.prompt(1)).toBe("Event: finished its turn\nOutput: Model again.");
+  });
+
+  it("stops the run a newer turn overtook, and lets a question's run be", async () => {
+    const w = runs();
+    const { hooks } = setup(w.write);
+    await turn(hooks, REVIEW);
+    await turn(hooks, SHIPSHAPE);
+    expect(w.calls.map((call) => call.stopped)).toEqual([true, false]);
+    await hooks.interactionPending(thread(), question({ id: "qa" }));
+    await settle();
+    await hooks.interactionPending(thread(), question({ id: "qb" }));
+    await settle();
+    // The finished turn's run was stopped by the first question; the questions both still run.
+    expect(w.calls.map((call) => call.stopped)).toEqual([true, true, false, false]);
+  });
+
+  it("keeps carrying past a tool that failed: the plain sentence covers only its own update", async () => {
+    let fail = false;
+    const w = runs();
+    const write: HookDeps["writeSentence"] = (command, prompt, reply, signal) => (fail ? Promise.reject(new Error("busy")) : w.write(command, prompt, reply, signal));
+    const { hooks, store } = setup(write);
+    await turn(hooks, REVIEW);
+    fail = true;
+    await turn(hooks, "Failed one.");
+    expect(store.get("t1")?.summary).toEqual({ status: "ready", text: "Login fix finished. Failed one." });
+    fail = false;
+    await turn(hooks, "Next.");
+    expect(w.prompt(1)).toContain(REVIEW);
+    expect(w.prompt(1)).not.toContain("Failed one.");
+  });
+
+  describe("with the real writer's two slots", () => {
+    /** A tool that takes a moment, then sums up the review, and says nothing about anything else. */
+    const TOOL = [
+      process.execPath,
+      "-e",
+      `let s="";process.stdin.on("data",c=>s+=c).on("end",()=>setTimeout(()=>process.stdout.write(s.includes("Review done")?"The review is done and the PR is green.":""),300))`,
+      "--",
+    ];
+    const REAL: HeraldConfig = { ...CONFIG, sentence: { command: TOOL.map((word) => JSON.stringify(word)).join(" "), prompt: CONFIG.sentence?.prompt ?? "", reply: "text" as ReplyFormat } };
+
+    function real() {
+      const log = recordingLog();
+      const writer = new SentenceWriter(log);
+      const parts = setup((command, prompt, reply, signal) => writer.write(command, prompt, reply, signal), { config: () => REAL });
+      return { ...parts, writer, writerLog: log };
+    }
+
+    async function settled(store: AttentionStore) {
+      await vi.waitFor(() => expect(store.get("t1")?.summary.status).not.toBe("pending"), { timeout: 10_000, interval: 50 });
+    }
+
+    it(`speaks a review two quick no-op turns overtook, within ${MAX_IN_FLIGHT} tools at once`, async () => {
+      const { hooks, store, remembered, log, writer } = real();
+      try {
+        await turn(hooks, REVIEW);
+        await turn(hooks, SHIPSHAPE);
+        await turn(hooks, SHIPSHAPE);
+        await settled(store);
+        expect(store.get("t1")?.summary).toEqual({ status: "ready", text: "The review is done and the PR is green." });
+        expect(remembered).toHaveBeenCalledTimes(1);
+        expect(log.lines.some((line) => line.includes("busy"))).toBe(false);
+      } finally {
+        await writer.dispose();
+      }
+    });
+
+    it("keeps a burst of no-op turns quiet", async () => {
+      const { hooks, store, remembered, log, writer } = real();
+      try {
+        await turn(hooks, SHIPSHAPE);
+        await turn(hooks, SHIPSHAPE);
+        await turn(hooks, SHIPSHAPE);
+        await settled(store);
+        expect(store.get("t1")?.summary.status).toBe("quiet");
+        expect(remembered).not.toHaveBeenCalled();
+        expect(log.lines.some((line) => line.includes("busy"))).toBe(false);
+      } finally {
+        await writer.dispose();
+      }
+    });
+  });
+
+  describe("when lookups answer out of order", () => {
+    it("gives a later run an update whose lookups are still out, in arrival order", async () => {
+      const lookups = deferredLookups();
+      const w = runs();
+      const { hooks } = setup(w.write, { events: lookups.port });
+      lookups.holdNext();
+      await heldTurn(hooks, REVIEW);
+      expect(w.calls).toHaveLength(0);
+      await turn(hooks, SHIPSHAPE);
+      const first = w.prompt(0);
+      expect(first).toContain("[Update 1 of 2: finished its turn]\n" + REVIEW);
+      expect(first).toContain("[Update 2 of 2, the latest: finished its turn]\n" + SHIPSHAPE);
+    });
+
+    it("keeps arrival order when the older lookups answer during a later run", async () => {
+      const lookups = deferredLookups();
+      const w = runs();
+      const { hooks } = setup(w.write, { events: lookups.port });
+      lookups.holdNext();
+      await heldTurn(hooks, REVIEW);
+      await turn(hooks, "Second.");
+      lookups.release();
+      await settle();
+      await turn(hooks, "Third.");
+      const last = w.prompt(1);
+      expect(last.indexOf(REVIEW)).toBeGreaterThan(-1);
+      expect(last.indexOf(REVIEW)).toBeLessThan(last.indexOf("Second."));
+      expect(last.indexOf("Second.")).toBeLessThan(last.indexOf("Third."));
+    });
+
+    it("does not bring an update back when its lookups answer after a silent run covered it", async () => {
+      const lookups = deferredLookups();
+      const w = runs();
+      const { hooks } = setup(w.write, { events: lookups.port });
+      lookups.holdNext();
+      await heldTurn(hooks, REVIEW);
+      await turn(hooks, SHIPSHAPE);
+      w.silence(0);
+      await settle();
+      lookups.release();
+      await settle();
+      await turn(hooks, "Next.");
+      expect(w.prompt(1)).toBe("Event: finished its turn\nOutput: Next.");
+    });
+  });
+
+  describe("a late lookup after the thread was reset", () => {
+    it("does not bring back what an archive or a delete forgot", async () => {
+      // server.ts sends thread.archived and thread.deleted both to hooks.gone.
+      const lookups = deferredLookups();
+      const w = runs();
+      const { hooks } = setup(w.write, { events: lookups.port });
+      lookups.holdNext();
+      await heldTurn(hooks, REVIEW);
+      hooks.gone(thread());
+      lookups.release();
+      await settle();
+      await turn(hooks, "After unarchiving.");
+      expect(w.prompt(0)).toBe("Event: finished its turn\nOutput: After unarchiving.");
+    });
+
+    it("does not bring back what a plain sentence spoke for", async () => {
+      let config = CONFIG;
+      const lookups = deferredLookups();
+      const w = runs();
+      const { hooks } = setup(w.write, { events: lookups.port, config: () => config });
+      lookups.holdNext();
+      await heldTurn(hooks, REVIEW);
+      config = { ...CONFIG, sentence: null };
+      await turn(hooks, "Plain.");
+      lookups.release();
+      await settle();
+      config = CONFIG;
+      await turn(hooks, "Model again.");
+      expect(w.calls).toHaveLength(1);
+      expect(w.prompt(0)).toBe("Event: finished its turn\nOutput: Model again.");
+    });
   });
 });
