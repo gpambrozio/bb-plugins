@@ -94,11 +94,24 @@ function tab(terminalId: string, hostId: string, hostName: string): TabView {
 
 /** A fake server holding a tab list, with the given machines connected. */
 function server(hosts: HostChoice[], initial: TabView[] = []) {
-  const state = { tabs: [...initial], opened: [] as string[], closed: [] as string[], renamed: [] as [string, string | null][] };
+  const state = {
+    tabs: [...initial],
+    opened: [] as string[],
+    closed: [] as string[],
+    renamed: [] as [string, string | null][],
+    /** While set, each list call answers only when the test calls the function it leaves in `heldLists`. */
+    holdLists: false,
+    heldLists: [] as (() => void)[],
+  };
   let next = initial.length + 1;
   const rpc = {
     hosts: () => ({ hosts }),
-    list: () => ({ tabs: state.tabs }),
+    list: () => {
+      // The list as it was when asked, however late the answer comes.
+      const snapshot = { tabs: state.tabs };
+      if (!state.holdLists) return snapshot;
+      return new Promise((resolve) => state.heldLists.push(() => resolve(snapshot)));
+    },
     open: ({ hostId }: { hostId: string }) => {
       const host = hosts.find((entry) => entry.id === hostId)!;
       const opened = tab(`term_${next++}`, hostId, host.name);
@@ -220,6 +233,46 @@ describe("the Terminals page", () => {
     state.tabs = [tab("term_1", "mini", "Mac mini")];
     await waitFor(() => expect(terminals.entries.get("term_1")?.attached).toBe(1), { timeout: 4_000 });
     expect(screen.queryByText("Starting the shell…")).toBeNull();
+  });
+
+  describe("reading the tab list", () => {
+    const visibleTabs = () => screen.queryAllByRole("tab").map((element) => element.textContent);
+
+    it("keeps the newest list when two reads answer in the reverse order", async () => {
+      const { state, rpc } = server([{ id: "mini", name: "Mac mini" }], [tab("term_1", "mini", "Mac mini")]);
+      const view = render(rpc);
+      await screen.findByRole("tab", { name: "Mac mini" });
+      state.holdLists = true;
+      await view.emitRealtime("tabs-changed", {});
+      // Another window opens a tab; its signal starts a second read.
+      state.tabs = [tab("term_1", "mini", "Mac mini"), tab("term_2", "mini", "Mac mini")];
+      await view.emitRealtime("tabs-changed", {});
+      expect(state.heldLists).toHaveLength(2);
+      const [older, newer] = state.heldLists.splice(0);
+      await act(async () => newer!());
+      await screen.findByRole("tab", { name: "Mac mini 2" });
+      await act(async () => older!());
+      expect(visibleTabs()).toEqual(["Mac mini 1", "Mac mini 2"]);
+      expect(terminals.entries.has("term_2")).toBe(true);
+    });
+
+    it("does not bring back a tab this window closed when an older read answers after it", async () => {
+      const { state, rpc } = server(
+        [{ id: "mini", name: "Mac mini" }],
+        [tab("term_1", "mini", "Mac mini"), tab("term_2", "mini", "Mac mini")],
+      );
+      const view = render(rpc);
+      await screen.findByRole("tab", { name: "Mac mini 2" });
+      state.holdLists = true;
+      await view.emitRealtime("tabs-changed", {});
+      fireEvent.click(screen.getByRole("button", { name: "Close Mac mini 2" }));
+      await waitFor(() => expect(state.closed).toEqual(["term_2"]));
+      await waitFor(() => expect(state.heldLists).toHaveLength(2));
+      const [beforeClose, afterClose] = state.heldLists.splice(0);
+      await act(async () => afterClose!());
+      await act(async () => beforeClose!());
+      expect(visibleTabs()).toEqual(["Mac mini"]);
+    });
   });
 
   it("says when a shell has ended and offers to close its tab", async () => {

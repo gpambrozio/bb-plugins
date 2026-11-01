@@ -38,18 +38,31 @@ function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** The open tabs, kept current by the server's signal and refetched after a reconnect. */
+/**
+ * The open tabs, kept current by the server's signal and refetched after a
+ * reconnect. Reads can overlap and answer out of order, so only the latest
+ * one counts, and a change this window shows before the server confirms it
+ * makes every read already on its way out of date (`invalidate`).
+ */
 function useTabs() {
   const rpc = useRpc<RpcContract>();
   const [tabs, setTabs] = useState<TabView[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const generation = useRef(0);
+  const invalidate = useCallback(() => {
+    generation.current += 1;
+  }, []);
   const refetch = useCallback(() => {
+    const mine = ++generation.current;
     rpc.call("list", {}).then(
       (result) => {
+        if (mine !== generation.current) return;
         setTabs(result.tabs);
         setError(null);
       },
-      (cause: unknown) => setError(message(cause)),
+      (cause: unknown) => {
+        if (mine === generation.current) setError(message(cause));
+      },
     );
   }, [rpc]);
   useEffect(refetch, [refetch]);
@@ -61,7 +74,7 @@ function useTabs() {
     if (connection === "connected" && !wasConnected.current) refetch();
     wasConnected.current = connection === "connected";
   }, [connection, refetch]);
-  return { rpc, tabs, setTabs, error, setError, refetch };
+  return { rpc, tabs, setTabs, error, setError, refetch, invalidate };
 }
 
 const OPENING_STATUS: ConnectionStatus = { state: "connecting", exitCode: null };
@@ -102,7 +115,7 @@ function useTerminalsBackend(): TerminalsBackend {
 const OPENING_POLL_MS = 2_000;
 
 export function TerminalsPage(_props: PluginNavPanelProps) {
-  const { rpc, tabs, setTabs, error, setError, refetch } = useTabs();
+  const { rpc, tabs, setTabs, error, setError, refetch, invalidate } = useTabs();
   const [selected, setSelectedState] = useState<string | null>(() => windowSelection.get());
   const [opening, setOpening] = useState(false);
   const [hostMenu, setHostMenu] = useState<HostChoice[] | null>(null);
@@ -149,13 +162,15 @@ export function TerminalsPage(_props: PluginNavPanelProps) {
         const tab = await rpc.call("open", { hostId, ...INITIAL_SIZE });
         setTabs((current) => (current?.some((entry) => entry.terminalId === tab.terminalId) ? current : [...(current ?? []), tab]));
         select(tab.terminalId);
+        // Any read that started before the tab was stored would drop it again.
+        refetch();
       } catch (cause) {
         setNotice(`Could not open a terminal: ${message(cause)}`);
       } finally {
         setOpening(false);
       }
     },
-    [rpc, select, setTabs],
+    [rpc, select, setTabs, refetch],
   );
 
   const plus = useCallback(async () => {
@@ -181,15 +196,17 @@ export function TerminalsPage(_props: PluginNavPanelProps) {
       if (current === undefined || current.name === name) return;
       setNotice(null);
       // Shown at once; the server's signal brings the same name to every other window.
+      invalidate();
       setTabs((list) => list?.map((tab) => (tab.terminalId === terminalId ? { ...tab, name } : tab)) ?? list);
       try {
         await rpc.call("rename", { terminalId, name });
       } catch (cause) {
         setNotice(`Could not rename the terminal: ${message(cause)}`);
-        refetch();
       }
+      // A read that started while the name was on its way would bring back the old one.
+      refetch();
     },
-    [rpc, tabs, setTabs, refetch],
+    [rpc, tabs, setTabs, refetch, invalidate],
   );
 
   const close = useCallback(
@@ -201,8 +218,9 @@ export function TerminalsPage(_props: PluginNavPanelProps) {
         setTabs((current) => current?.filter((tab) => tab.terminalId !== terminalId) ?? current);
       } catch (cause) {
         setNotice(`Could not close the terminal: ${message(cause)}`);
-        refetch();
       }
+      // A read that started before the tab was removed would bring it (and its terminal) back.
+      refetch();
     },
     [rpc, select, tabIds, shown, setTabs, refetch],
   );
