@@ -8,7 +8,13 @@ machine connected it opens there straight away; with several, it lists them and 
 machine running the bb server is listed first.
 
 - **Tabs** are named after their machine, numbered when a machine has more than one ("Mac mini 1",
-  "Mac mini 2"). Close one with its **×** or a middle click; closing a tab ends its shell.
+  "Mac mini 2"). Close one with its **×**, a middle click or **Close tab** in its right-click menu;
+  closing a tab ends its shell.
+- **Rename a tab** by double-clicking its title, choosing **Rename** from its right-click menu, or
+  pressing F2 on it, then type in place: Enter (or clicking elsewhere) saves, Escape keeps the old
+  name, and an empty name brings back the default title. Names are saved with the tabs, so every
+  window shows them and they survive a reload; a renamed tab's tooltip still names its machine, and
+  `bb terminal list` shows the same title.
 - **Leave the page and come back** and everything is where it was: every tab, the one you were on,
   and each terminal's scrollback at the line you had scrolled to. Whatever was running kept running,
   and kept printing, while you were elsewhere in bb.
@@ -57,7 +63,7 @@ remembers which sessions are tabs, in which order. The page draws each one with
 terminal connection — the one bb's terminal panel uses — on the page's own origin. No port is opened
 and nothing new listens anywhere.
 
-Nothing is stored but the list of tabs (machine, name and session id). No output, keystroke or
+Nothing is stored but the list of tabs (machine, session id and the name you gave it). No output, keystroke or
 credential is written to the plugin's storage or its log.
 
 ## What happens when

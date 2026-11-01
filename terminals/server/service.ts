@@ -7,7 +7,7 @@
  * and keep their output whatever the app does. This file only remembers which
  * sessions are tabs, in which order.
  */
-import { MAX_TABS, tabStatus, type HostChoice, type Tab, type TabView } from "../shared/tabs";
+import { MAX_TABS, normalizeTabName, tabStatus, type HostChoice, type Tab, type TabView } from "../shared/tabs";
 
 /** The fields of a bb terminal session this file reads. */
 export interface TerminalSessionInfo {
@@ -26,6 +26,8 @@ export interface TerminalsPorts {
   createTerminal(args: { hostId: string; title: string; cols: number; rows: number }): Promise<TerminalSessionInfo>;
   /** The session, or null when bb no longer knows it. */
   getTerminal(terminalId: string): Promise<TerminalSessionInfo | null>;
+  /** Sets bb's own title for the session (what `bb terminal list` shows). */
+  renameTerminal(terminalId: string, title: string): Promise<void>;
   /** Ends the shell, or throws (bb throws for a session that has already ended, too). */
   closeTerminal(terminalId: string): Promise<void>;
   /** Tells every client the tab list changed. */
@@ -37,6 +39,8 @@ export interface TerminalsPorts {
 export interface TerminalsService {
   list(): Promise<TabView[]>;
   open(args: { hostId: string; cols: number; rows: number }): Promise<TabView>;
+  /** Names the tab; an empty name or null brings back its default title. */
+  rename(terminalId: string, name: string | null): Promise<void>;
   close(terminalId: string): Promise<void>;
   /** Drops the tabs whose shell has ended — after a bb server restart, every one. */
   prune(): Promise<void>;
@@ -79,7 +83,7 @@ export function createTerminalsService(ports: TerminalsPorts): TerminalsService 
         throw new Error(`At most ${MAX_TABS} terminals can be open; close one first.`);
       }
       const session = await ports.createTerminal({ hostId, title: host.name, cols, rows });
-      const tab: Tab = { terminalId: session.id, hostId, hostName: host.name, createdAt: ports.now() };
+      const tab: Tab = { terminalId: session.id, hostId, hostName: host.name, createdAt: ports.now(), name: null };
       try {
         await serialized(async () => ports.save([...(await ports.load()), tab]));
       } catch (error) {
@@ -91,6 +95,24 @@ export function createTerminalsService(ports: TerminalsPorts): TerminalsService 
       }
       ports.publish();
       return { ...tab, status: tabStatus(session), exitCode: session.exitCode };
+    },
+
+    async rename(terminalId, name) {
+      const normalized = normalizeTabName(name);
+      const renamed = await serialized(async () => {
+        const tabs = await ports.load();
+        const tab = tabs.find((entry) => entry.terminalId === terminalId);
+        if (tab === undefined) throw new Error("That tab is closed.");
+        if (tab.name === normalized) return null;
+        await ports.save(tabs.map((entry) => (entry === tab ? { ...entry, name: normalized } : entry)));
+        return tab;
+      });
+      if (renamed === null) return;
+      ports.publish();
+      // bb's own title follows, so `bb terminal list` says the same; the tab's name is what counts.
+      await ports.renameTerminal(terminalId, normalized ?? renamed.hostName).catch((error: unknown) => {
+        ports.warn(`could not retitle terminal ${terminalId}: ${String(error)}`);
+      });
     },
 
     async close(terminalId) {

@@ -6,7 +6,8 @@ terminal app does.
 
 - Press + at the end of the tab strip to open a terminal. With one machine connected it opens there at
   once; with several, pick one from the list.
-- Tabs are named after their machine, and closing a tab ends its shell.
+- Tabs are named after their machine; rename one by double-clicking its title, from its right-click
+  menu or with F2, and every window shows the new name. Closing a tab ends its shell.
 - Leave the page and come back to find every tab, the one you were on, and each terminal's scrollback
   at the line you left it. Whatever was running kept running.
 - Reload or reopen the app and every tab reattaches to its shell, with its recent output replayed.

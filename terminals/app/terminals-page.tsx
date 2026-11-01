@@ -17,8 +17,9 @@ import {
 
 import type { RpcContract } from "../shared/contract";
 import { plusAction } from "../shared/host-choice";
-import { TABS_CHANGED, tabLabels, type HostChoice, type TabView } from "../shared/tabs";
+import { MAX_TAB_NAME, TABS_CHANGED, normalizeTabName, tabLabels, type HostChoice, type TabView } from "../shared/tabs";
 import { Button } from "@/components/ui/button";
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
@@ -133,6 +134,24 @@ export function TerminalsPage(_props: PluginNavPanelProps) {
     else setHostMenu(action.hosts);
   }, [opening, openOn, rpc]);
 
+  const rename = useCallback(
+    async (terminalId: string, typed: string) => {
+      const name = normalizeTabName(typed);
+      const current = tabs?.find((tab) => tab.terminalId === terminalId);
+      if (current === undefined || current.name === name) return;
+      setNotice(null);
+      // Shown at once; the server's signal brings the same name to every other window.
+      setTabs((list) => list?.map((tab) => (tab.terminalId === terminalId ? { ...tab, name } : tab)) ?? list);
+      try {
+        await rpc.call("rename", { terminalId, name });
+      } catch (cause) {
+        setNotice(`Could not rename the terminal: ${message(cause)}`);
+        refetch();
+      }
+    },
+    [rpc, tabs, setTabs, refetch],
+  );
+
   const close = useCallback(
     async (terminalId: string) => {
       setNotice(null);
@@ -158,6 +177,7 @@ export function TerminalsPage(_props: PluginNavPanelProps) {
             label={labels.get(tab.terminalId) ?? tab.hostName}
             selected={tab.terminalId === shown}
             onSelect={() => select(tab.terminalId)}
+            onRename={(name) => void rename(tab.terminalId, name)}
             onClose={() => void close(tab.terminalId)}
           />
         ))}
@@ -239,49 +259,145 @@ function TabButton({
   label,
   selected,
   onSelect,
+  onRename,
   onClose,
 }: {
   tab: TabView;
   label: string;
   selected: boolean;
   onSelect: () => void;
+  /** Saves a name; an empty one brings back the default title. */
+  onRename: (name: string) => void;
   onClose: () => void;
 }) {
   const status = useConnectionStatus(tab.terminalId);
+  const [editing, setEditing] = useState(false);
+  const tabButton = useRef<HTMLButtonElement>(null);
+  const startEditing = useCallback(() => setEditing(true), []);
+  const stopEditing = useCallback((name: string | null) => {
+    setEditing(false);
+    // Saving the default title untouched is no rename: it would stop following the tab's number.
+    const unchanged = name === null || (tab.name === null && normalizeTabName(name) === label);
+    if (!unchanged) onRename(name);
+    // Back to the tab, not to wherever the browser would put focus.
+    requestAnimationFrame(() => tabButton.current?.focus({ preventScroll: true }));
+  }, [onRename, tab.name, label]);
+  const where = tab.name === null ? label : `${label} — ${tab.hostName}`;
+
   return (
-    <div
-      className={cn(
-        "group flex max-w-56 shrink-0 items-center gap-1 border-r border-border pl-3 pr-1 text-sm",
-        selected ? "bg-sidebar text-foreground" : "text-muted-foreground hover:bg-state-hover",
-      )}
-    >
-      <button
-        type="button"
-        role="tab"
-        aria-selected={selected}
-        className="flex min-w-0 items-center gap-2 py-2 outline-none focus-visible:underline"
-        onClick={onSelect}
-        onAuxClick={(event) => {
-          // A middle click closes the tab, as in a browser or a terminal app.
-          if (event.button === 1) onClose();
-        }}
-        title={status.state === "ended" ? `${label} (ended)` : status.state === "offline" ? `${label} (offline)` : label}
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <div
+          className={cn(
+            "group flex max-w-56 shrink-0 items-center gap-1 border-r border-border pl-3 pr-1 text-sm",
+            selected ? "bg-sidebar text-foreground" : "text-muted-foreground hover:bg-state-hover",
+          )}
+        >
+          {editing ? (
+            <TabNameEditor initial={tab.name ?? label} label={label} onDone={stopEditing} />
+          ) : (
+            <button
+              ref={tabButton}
+              type="button"
+              role="tab"
+              aria-selected={selected}
+              className="flex min-w-0 items-center gap-2 py-2 outline-none focus-visible:underline"
+              onClick={onSelect}
+              onDoubleClick={startEditing}
+              onKeyDown={(event) => {
+                // F2 renames, as it renames a file or a terminal tab elsewhere.
+                if (event.key === "F2") {
+                  event.preventDefault();
+                  startEditing();
+                }
+              }}
+              onAuxClick={(event) => {
+                // A middle click closes the tab, as in a browser or a terminal app.
+                if (event.button === 1) onClose();
+              }}
+              title={status.state === "ended" ? `${where} (ended)` : status.state === "offline" ? `${where} (offline)` : where}
+            >
+              <StatusDot status={status} />
+              <span className="truncate">{label}</span>
+            </button>
+          )}
+          <button
+            type="button"
+            aria-label={`Close ${label}`}
+            className={cn(
+              "rounded p-0.5 text-muted-foreground hover:bg-state-hover hover:text-foreground",
+              selected ? "opacity-100" : "opacity-0 group-hover:opacity-100 focus-visible:opacity-100",
+            )}
+            onClick={onClose}
+          >
+            <Icon name="X" className="size-3.5" />
+          </button>
+        </div>
+      </ContextMenuTrigger>
+      <ContextMenuContent
+        // The editor takes focus itself; the menu must not hand it back to the tab.
+        onCloseAutoFocus={(event) => event.preventDefault()}
       >
-        <StatusDot status={status} />
-        <span className="truncate">{label}</span>
-      </button>
-      <button
-        type="button"
-        aria-label={`Close ${label}`}
-        className={cn(
-          "rounded p-0.5 text-muted-foreground hover:bg-state-hover hover:text-foreground",
-          selected ? "opacity-100" : "opacity-0 group-hover:opacity-100 focus-visible:opacity-100",
-        )}
-        onClick={onClose}
-      >
-        <Icon name="X" className="size-3.5" />
-      </button>
-    </div>
+        <ContextMenuItem onSelect={startEditing}>
+          <Icon name="Edit" />
+          Rename
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={onClose}>
+          <Icon name="X" />
+          Close tab
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  );
+}
+
+/**
+ * The tab's title as a text field: Enter or leaving the field saves, Escape
+ * keeps the old name, and an empty name brings back the default title.
+ */
+function TabNameEditor({ initial, label, onDone }: { initial: string; label: string; onDone: (name: string | null) => void }) {
+  const [value, setValue] = useState(initial);
+  const input = useRef<HTMLInputElement>(null);
+  const done = useRef(false);
+  const finish = useCallback(
+    (name: string | null) => {
+      if (done.current) return;
+      done.current = true;
+      onDone(name);
+    },
+    [onDone],
+  );
+  useEffect(() => {
+    // After a menu that closed in the same click has finished moving focus.
+    const timer = setTimeout(() => {
+      input.current?.focus({ preventScroll: true });
+      input.current?.select();
+    }, 0);
+    return () => clearTimeout(timer);
+  }, []);
+  return (
+    <input
+      ref={input}
+      aria-label={`Rename ${label}`}
+      value={value}
+      maxLength={MAX_TAB_NAME}
+      size={Math.max(8, Math.min(28, value.length + 1))}
+      className="my-1 min-w-0 rounded border border-input bg-background px-1.5 py-0.5 text-sm text-foreground outline-none focus-visible:ring-1 focus-visible:ring-ring"
+      onChange={(event) => setValue(event.target.value)}
+      onKeyDown={(event) => {
+        // Keep Enter and Escape from bb's own shortcuts (Escape leaves the page).
+        if (event.key === "Enter") {
+          event.preventDefault();
+          event.stopPropagation();
+          finish(value);
+        } else if (event.key === "Escape") {
+          event.preventDefault();
+          event.stopPropagation();
+          finish(null);
+        }
+      }}
+      onBlur={() => finish(value)}
+    />
   );
 }
 

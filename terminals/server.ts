@@ -55,6 +55,9 @@ export default async function plugin(bb: BbPluginApi) {
         throw error;
       }
     },
+    renameTerminal: async (terminalId, title) => {
+      await bb.sdk.terminals.rename({ terminalId, title: title.trim() === "" ? "Terminal" : title });
+    },
     closeTerminal: async (terminalId) => {
       await bb.sdk.terminals.close({ terminalId, mode: "force" });
     },
@@ -67,6 +70,10 @@ export default async function plugin(bb: BbPluginApi) {
     hosts: async () => ({ hosts: await hosts() }),
     list: async () => ({ tabs: await service.list() }),
     open: (input) => service.open(input),
+    rename: async ({ terminalId, name }) => {
+      await service.rename(terminalId, name);
+      return {};
+    },
     close: async ({ terminalId }) => {
       await service.close(terminalId);
       return {};

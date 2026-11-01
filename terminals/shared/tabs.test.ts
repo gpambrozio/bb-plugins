@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { tabLabels, tabStatus } from "./tabs";
+import { MAX_TAB_NAME, TabSchema, normalizeTabName, tabLabels, tabStatus } from "./tabs";
 
 const tab = (terminalId: string, hostId: string, hostName: string) => ({ terminalId, hostId, hostName });
 
@@ -20,6 +20,15 @@ describe("tabLabels", () => {
     expect(labels.get("t3")).toBe("Mac mini 2");
   });
 
+  it("shows a tab's own name, and keeps the others' numbers", () => {
+    const labels = tabLabels([
+      { ...tab("t1", "mini", "Mac mini"), name: "logs" },
+      { ...tab("t2", "mini", "Mac mini"), name: null },
+    ]);
+    expect(labels.get("t1")).toBe("logs");
+    expect(labels.get("t2")).toBe("Mac mini 2");
+  });
+
   it("falls back to Terminal for a machine with no name", () => {
     expect(tabLabels([tab("t1", "h", "  ")]).get("t1")).toBe("Terminal");
   });
@@ -35,5 +44,28 @@ describe("tabStatus", () => {
   it("calls an exited or unknown session ended", () => {
     expect(tabStatus({ status: "exited" })).toBe("ended");
     expect(tabStatus(null)).toBe("ended");
+  });
+});
+
+describe("normalizeTabName", () => {
+  it("trims and collapses whitespace", () => {
+    expect(normalizeTabName("  dev \t server\n")).toBe("dev server");
+  });
+
+  it("turns an empty name into the default title", () => {
+    expect(normalizeTabName("")).toBeNull();
+    expect(normalizeTabName("   ")).toBeNull();
+    expect(normalizeTabName(null)).toBeNull();
+  });
+
+  it("cuts a long name without splitting a character", () => {
+    const cut = normalizeTabName("😀".repeat(MAX_TAB_NAME + 5))!;
+    expect([...cut]).toHaveLength(MAX_TAB_NAME);
+  });
+});
+
+describe("TabSchema", () => {
+  it("reads a tab saved before tabs had names", () => {
+    expect(TabSchema.parse({ terminalId: "t", hostId: "h", hostName: "Mac", createdAt: 1 }).name).toBeNull();
   });
 });

@@ -20,6 +20,11 @@ export const rpcContract = defineRpcContract({
   list: { input: Empty, output: z.object({ tabs: z.array(TabViewSchema) }) },
   /** Opens a shell in the home directory of `hostId`, as a new tab at the end. */
   open: { input: z.object({ hostId: z.string().min(1), cols: Cols, rows: Rows }), output: TabViewSchema },
+  /**
+   * Names the tab, for every client. The name is trimmed; an empty one, or
+   * null, brings back the default title.
+   */
+  rename: { input: z.object({ terminalId: z.string().min(1), name: z.string().max(1000).nullable() }), output: Empty },
   /** Closes the tab and ends its shell. Closing a tab that is already gone succeeds. */
   close: { input: z.object({ terminalId: z.string().min(1) }), output: Empty },
 });

@@ -12,11 +12,11 @@ specific to `terminals`.
 | --- | --- |
 | `server.ts` | Wires the RPCs to `bb.sdk.terminals`, `bb.sdk.hosts` and `bb.storage.kv`, and runs the once-per-load prune of ended tabs. |
 | `server/service.ts` | The tab list and the sessions behind it, over injected ports: open (and end the shell if its tab cannot be saved), close (and keep the tab if its running shell could not be ended), list with each shell's status, prune. Every read-modify-write of the list is serialized. |
-| `shared/tabs.ts` | The stored tab, its status, the realtime channel, the tab limit, tab labels. No SDK import, so the app may use it. |
+| `shared/tabs.ts` | The stored tab (with the user's name for it, null for the default title), its status, the realtime channel, the tab and name limits, name normalising, tab labels. No SDK import, so the app may use it. |
 | `shared/host-choice.ts` | Which machines "+" offers (connected and active, the server's own first) and whether it asks. No SDK import. |
 | `shared/contract.ts` | The app ⇄ server RPC contract. The app imports it as a type only (`app/imports.test.ts`). |
 | `app.tsx` | The nav panel, and an invisible app overlay whose unmount (bb reloading or disabling the plugin) releases this copy's terminals and sockets. |
-| `app/terminals-page.tsx` | The page: tab strip, "+" and its machine menu, the shown terminal, the offline and ended notices, the empty state. |
+| `app/terminals-page.tsx` | The page: tab strip, "+" and its machine menu, renaming in place (double click, F2, the tab's context menu), the shown terminal, the offline and ended notices, the empty state. |
 | `app/live-terminals.ts` | One xterm instance and one connection per open tab, in module scope for the life of the window, so leaving the page keeps them. Re-parents the element on return and restores the scrolled-to line. |
 | `app/connection.ts` | One tab's line to bb's terminal socket: replay and resume by sequence number, acknowledgement after drawing, heartbeat, reconnect, when to stop. No React, no xterm. |
 | `app/selection.ts` | Which tab this window shows, and where the selection goes when a tab closes; kept in localStorage. |
@@ -61,6 +61,13 @@ reattaches with `sinceSeq=0` and bb replays at most its last 512 KB.
 **The tab list is the user's, the selection the window's.** Tabs live in `bb.storage.kv` and every
 change publishes `tabs-changed`, so every client shows the same tabs; the page refetches on that signal
 and after its realtime link reconnects. The shown tab is per window, in localStorage.
+
+**Names live with the tabs.** A tab's name is stored in the same kv list as the tab, normalised on
+the server (trimmed, whitespace collapsed, at most 80 characters, empty → null), so every client
+shows it and it survives reloads. The default title is computed in the app from the machine's name
+and the tab's position among that machine's tabs; a named tab keeps its position, so clearing the
+name brings back the title it had, and saving the default title untouched sends nothing. Renaming
+also sets bb's own terminal title, best-effort: the tab's name is what counts.
 
 **Lifecycle.** Closing a tab ends its shell with `terminals.close({ mode: "force" })` *before* removing
 the tab, so a failure leaves the tab to try again rather than an orphan; closing a session bb says has

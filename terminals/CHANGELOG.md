@@ -17,4 +17,7 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   scrollback and position stay as they were, and whatever was running keeps running.
 - **Reloading or reopening the app** reattaches every tab to its shell, with its recent output.
 - **The same tabs in every window**, in the desktop app and in a browser.
+- **Rename a tab** by double-clicking its title, from its right-click menu, or with F2. Enter saves,
+  Escape cancels, and an empty name brings back the machine's name. Every window shows the new name,
+  and it stays after a reload.
 - **Offline machines and ended shells are shown as such**; closing a tab ends its shell.

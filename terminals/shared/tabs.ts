@@ -8,11 +8,24 @@
  */
 import { z } from "zod";
 
-/** Published, with no payload, whenever a tab is opened or closed. */
+/** Published, with no payload, whenever a tab is opened, renamed or closed. */
 export const TABS_CHANGED = "tabs-changed";
 
 /** At most this many tabs at once, so a stuck "+" cannot fill a machine with shells. */
 export const MAX_TABS = 24;
+
+/** The longest name a tab takes. */
+export const MAX_TAB_NAME = 80;
+
+/**
+ * A name the user typed, as stored: trimmed, at most `MAX_TAB_NAME`
+ * characters, and null when empty — an empty name means the default title.
+ */
+export function normalizeTabName(name: string | null): string | null {
+  if (name === null) return null;
+  const trimmed = name.trim().replace(/\s+/g, " ");
+  return trimmed === "" ? null : [...trimmed].slice(0, MAX_TAB_NAME).join("");
+}
 
 /** What the server stores for a tab. The terminal id is the tab's id. */
 export const TabSchema = z.object({
@@ -21,6 +34,8 @@ export const TabSchema = z.object({
   /** The machine's name when the tab was opened, so a tab on a removed machine still reads. */
   hostName: z.string(),
   createdAt: z.number(),
+  /** The name the user gave the tab, or null for the default title. Tabs saved before names had none. */
+  name: z.string().min(1).max(MAX_TAB_NAME).nullable().default(null),
 });
 
 export type Tab = z.infer<typeof TabSchema>;
@@ -53,10 +68,14 @@ export function tabStatus(session: { status: "starting" | "running" | "disconnec
 }
 
 /**
- * Each tab's label: its machine's name, numbered in opening order when the
- * machine has more than one tab ("Mac mini", or "Mac mini 1", "Mac mini 2").
+ * Each tab's label: the name the user gave it, else its default title — its
+ * machine's name, numbered in opening order when the machine has more than
+ * one tab ("Mac mini", or "Mac mini 1", "Mac mini 2"). A renamed tab keeps its
+ * number, so clearing its name brings back the title it had.
  */
-export function tabLabels(tabs: readonly Pick<Tab, "terminalId" | "hostId" | "hostName">[]): Map<string, string> {
+export function tabLabels(
+  tabs: readonly (Pick<Tab, "terminalId" | "hostId" | "hostName"> & { name?: string | null })[],
+): Map<string, string> {
   const perHost = new Map<string, number>();
   for (const tab of tabs) perHost.set(tab.hostId, (perHost.get(tab.hostId) ?? 0) + 1);
   const seen = new Map<string, number>();
@@ -65,7 +84,8 @@ export function tabLabels(tabs: readonly Pick<Tab, "terminalId" | "hostId" | "ho
     const index = (seen.get(tab.hostId) ?? 0) + 1;
     seen.set(tab.hostId, index);
     const name = tab.hostName.trim() === "" ? "Terminal" : tab.hostName;
-    labels.set(tab.terminalId, (perHost.get(tab.hostId) ?? 0) > 1 ? `${name} ${index}` : name);
+    const fallback = (perHost.get(tab.hostId) ?? 0) > 1 ? `${name} ${index}` : name;
+    labels.set(tab.terminalId, tab.name ?? fallback);
   }
   return labels;
 }

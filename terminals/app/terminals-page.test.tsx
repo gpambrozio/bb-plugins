@@ -89,12 +89,12 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 function tab(terminalId: string, hostId: string, hostName: string): TabView {
-  return { terminalId, hostId, hostName, createdAt: 0, status: "running", exitCode: null };
+  return { terminalId, hostId, hostName, createdAt: 0, name: null, status: "running", exitCode: null };
 }
 
 /** A fake server holding a tab list, with the given machines connected. */
 function server(hosts: HostChoice[], initial: TabView[] = []) {
-  const state = { tabs: [...initial], opened: [] as string[], closed: [] as string[] };
+  const state = { tabs: [...initial], opened: [] as string[], closed: [] as string[], renamed: [] as [string, string | null][] };
   let next = initial.length + 1;
   const rpc = {
     hosts: () => ({ hosts }),
@@ -105,6 +105,11 @@ function server(hosts: HostChoice[], initial: TabView[] = []) {
       state.tabs = [...state.tabs, opened];
       state.opened.push(hostId);
       return opened;
+    },
+    rename: ({ terminalId, name }: { terminalId: string; name: string | null }) => {
+      state.renamed.push([terminalId, name]);
+      state.tabs = state.tabs.map((entry) => (entry.terminalId === terminalId ? { ...entry, name } : entry));
+      return {};
     },
     close: ({ terminalId }: { terminalId: string }) => {
       state.tabs = state.tabs.filter((entry) => entry.terminalId !== terminalId);
@@ -195,5 +200,99 @@ describe("the Terminals page", () => {
     await screen.findByRole("tab", { name: "Mac mini" });
     act(() => terminals.setStatus("term_1", { state: "offline", exitCode: null }));
     expect(await screen.findByText(/This machine is offline/)).toBeTruthy();
+  });
+
+  describe("renaming a tab", () => {
+    const twoTabs = () =>
+      server([{ id: "mini", name: "Mac mini" }], [tab("term_1", "mini", "Mac mini"), tab("term_2", "mini", "Mac mini")]);
+
+    async function editByDoubleClick(name: string) {
+      fireEvent.doubleClick(await screen.findByRole("tab", { name }));
+      return (await screen.findByRole("textbox", { name: `Rename ${name}` })) as HTMLInputElement;
+    }
+
+    it("edits the title in place on a double click; Enter saves it for every client", async () => {
+      const { state, rpc } = twoTabs();
+      render(rpc);
+      const input = await editByDoubleClick("Mac mini 2");
+      expect(input.value).toBe("Mac mini 2");
+      fireEvent.change(input, { target: { value: "  dev server " } });
+      fireEvent.keyDown(input, { key: "Enter" });
+      expect(await screen.findByRole("tab", { name: "dev server" })).toBeTruthy();
+      expect(state.renamed).toEqual([["term_2", "dev server"]]);
+      // The other tab keeps its number.
+      expect(screen.getByRole("tab", { name: "Mac mini 1" })).toBeTruthy();
+    });
+
+    it("keeps the old title on Escape", async () => {
+      const { state, rpc } = twoTabs();
+      render(rpc);
+      const input = await editByDoubleClick("Mac mini 1");
+      fireEvent.change(input, { target: { value: "scratch" } });
+      fireEvent.keyDown(input, { key: "Escape" });
+      expect(await screen.findByRole("tab", { name: "Mac mini 1" })).toBeTruthy();
+      expect(screen.queryByRole("textbox")).toBeNull();
+      expect(state.renamed).toEqual([]);
+    });
+
+    it("brings back the default title for an empty name", async () => {
+      const { state, rpc } = server([{ id: "mini", name: "Mac mini" }], [{ ...tab("term_1", "mini", "Mac mini"), name: "logs" }]);
+      render(rpc);
+      const input = await editByDoubleClick("logs");
+      expect(input.value).toBe("logs");
+      fireEvent.change(input, { target: { value: "   " } });
+      fireEvent.keyDown(input, { key: "Enter" });
+      expect(await screen.findByRole("tab", { name: "Mac mini" })).toBeTruthy();
+      expect(state.renamed).toEqual([["term_1", null]]);
+    });
+
+    it("saves when the field loses focus, and sends nothing for an untouched default title", async () => {
+      const { state, rpc } = twoTabs();
+      render(rpc);
+      let input = await editByDoubleClick("Mac mini 1");
+      fireEvent.blur(input);
+      await screen.findByRole("tab", { name: "Mac mini 1" });
+      expect(state.renamed).toEqual([]);
+      input = await editByDoubleClick("Mac mini 1");
+      fireEvent.change(input, { target: { value: "build" } });
+      fireEvent.blur(input);
+      expect(await screen.findByRole("tab", { name: "build" })).toBeTruthy();
+      expect(state.renamed).toEqual([["term_1", "build"]]);
+    });
+
+    it("renames from the tab's context menu and with F2", async () => {
+      const { state, rpc } = twoTabs();
+      render(rpc);
+      fireEvent.contextMenu(await screen.findByRole("tab", { name: "Mac mini 1" }));
+      fireEvent.click(await screen.findByRole("menuitem", { name: /Rename/ }));
+      let input = (await screen.findByRole("textbox", { name: "Rename Mac mini 1" })) as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "one" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+      await screen.findByRole("tab", { name: "one" });
+      fireEvent.keyDown(screen.getByRole("tab", { name: "Mac mini 2" }), { key: "F2" });
+      input = (await screen.findByRole("textbox", { name: "Rename Mac mini 2" })) as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "two" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+      await screen.findByRole("tab", { name: "two" });
+      expect(state.renamed).toEqual([
+        ["term_1", "one"],
+        ["term_2", "two"],
+      ]);
+    });
+
+    it("closes a tab from its context menu", async () => {
+      const { state, rpc } = twoTabs();
+      render(rpc);
+      fireEvent.contextMenu(await screen.findByRole("tab", { name: "Mac mini 2" }));
+      fireEvent.click(await screen.findByRole("menuitem", { name: /Close tab/ }));
+      await waitFor(() => expect(state.closed).toEqual(["term_2"]));
+    });
+
+    it("shows a name another client gave", async () => {
+      const { rpc } = server([{ id: "mini", name: "Mac mini" }], [{ ...tab("term_1", "mini", "Mac mini"), name: "deploy" }]);
+      render(rpc);
+      const named = await screen.findByRole("tab", { name: "deploy" });
+      expect(named.getAttribute("title")).toBe("deploy — Mac mini");
+    });
   });
 });
