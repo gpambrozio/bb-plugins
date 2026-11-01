@@ -5,6 +5,14 @@ Notable changes to `terminals`. The other plugins in this repository version sep
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.1.1
+
+### Fixed
+
+- **Renaming one tab right after another** no longer closes the second tab's name field before you
+  can type in it. Saving a name puts you back on its tab only when your focus has not already moved
+  somewhere else, such as into another tab's name field or the shell.
+
 ## 0.1.0
 
 ### Added
