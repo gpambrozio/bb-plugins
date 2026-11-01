@@ -12,6 +12,7 @@ import {
   useRealtime,
   useRealtimeConnectionState,
   useRpc,
+  useSdk,
   type PluginNavPanelProps,
 } from "@get-bb/plugin-sdk/app";
 
@@ -25,7 +26,7 @@ import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
 
 import type { ConnectionStatus } from "./connection";
-import { applyThemeToAll, liveTerminal, releaseClosedTerminals } from "./live-terminals";
+import { applyThemeToAll, liveTerminal, releaseClosedTerminals, type TerminalsBackend } from "./live-terminals";
 import { resolveSelection, selectionAfterClose, windowSelection } from "./selection";
 
 export const PANEL_PATH = "terminals";
@@ -71,12 +72,24 @@ const noSubscription = () => () => undefined;
  * no terminal yet: attaching now would hear "not found" and end it.
  */
 function useConnectionStatus(terminalId: string, opening: boolean): ConnectionStatus {
-  const terminal = opening ? null : liveTerminal(terminalId);
+  const backend = useTerminalsBackend();
+  const terminal = opening ? null : liveTerminal(terminalId, backend);
   const subscribe = useCallback(
     (notify: () => void) => (terminal === null ? noSubscription() : terminal.onStatus(notify)),
     [terminal],
   );
   return useSyncExternalStore(subscribe, () => (terminal === null ? OPENING_STATUS : terminal.status()));
+}
+
+/**
+ * bb's terminal calls, for the tabs' terminals. The same object on every
+ * render, so the effects that take it do not reattach the terminal.
+ */
+function useTerminalsBackend(): TerminalsBackend {
+  const sdk = useSdk();
+  const latest = useRef(sdk);
+  latest.current = sdk;
+  return useMemo<TerminalsBackend>(() => ({ output: (args) => latest.current.terminals.output(args) }), []);
 }
 
 /** How often the page reads the list again while a tab's shell is still opening. */
@@ -99,11 +112,12 @@ export function TerminalsPage(_props: PluginNavPanelProps) {
   }, []);
 
   // Start every open tab's terminal, so tabs out of sight keep their output, and let go of closed ones.
+  const backend = useTerminalsBackend();
   useEffect(() => {
     if (tabs === null) return;
-    for (const tab of tabs) if (tab.status !== "opening") liveTerminal(tab.terminalId);
+    for (const tab of tabs) if (tab.status !== "opening") liveTerminal(tab.terminalId, backend);
     releaseClosedTerminals(new Set(tabIds));
-  }, [tabs, tabIds]);
+  }, [tabs, tabIds, backend]);
 
   // A shell another window (or a reloaded copy of the plugin) is opening: look again until bb has it.
   const anyOpening = tabs?.some((tab) => tab.status === "opening") ?? false;
@@ -438,11 +452,12 @@ function TabNameEditor({ initial, label, onDone }: { initial: string; label: str
 function TerminalView({ terminalId, onClose }: { terminalId: string; onClose: () => void }) {
   const container = useRef<HTMLDivElement>(null);
   const status = useConnectionStatus(terminalId, false);
+  const backend = useTerminalsBackend();
 
   useLayoutEffect(() => {
     const parent = container.current;
     if (parent === null) return;
-    const terminal = liveTerminal(terminalId);
+    const terminal = liveTerminal(terminalId, backend);
     terminal.attach(parent);
     terminal.focus();
     const observer = new ResizeObserver(() => terminal.fit());
@@ -451,7 +466,7 @@ function TerminalView({ terminalId, onClose }: { terminalId: string; onClose: ()
       observer.disconnect();
       terminal.detach();
     };
-  }, [terminalId]);
+  }, [terminalId, backend]);
 
   return (
     <div className="absolute inset-0 flex flex-col">

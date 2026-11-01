@@ -95,7 +95,9 @@ class ManualClock implements Clock {
 const running = { status: "running", exitCode: null };
 const chunk = (seq: number, text: string) => ({ type: "output", chunk: { seq, dataBase64: encodeBase64(new TextEncoder().encode(text)) } });
 
-function setup(options: { drawLater?: boolean } = {}) {
+type Retained = readonly { seq: number; dataBase64: string }[] | null;
+
+function setup(options: { drawLater?: boolean; retained?: (sinceSeq: number) => Promise<Retained> } = {}) {
   const clock = new ManualClock();
   const sockets: FakeSocket[] = [];
   const written: string[] = [];
@@ -115,6 +117,7 @@ function setup(options: { drawLater?: boolean } = {}) {
       else drawn();
     },
     onStatus: (status) => statuses.push(status),
+    ...(options.retained === undefined ? {} : { readRetained: options.retained }),
   });
   connection.connect();
   const socket = () => sockets.at(-1)!;
@@ -220,6 +223,60 @@ describe("TerminalConnection", () => {
     expect(socket().closed).not.toBeNull();
     clock.advance(60_000);
     expect(sockets).toHaveLength(1);
+  });
+
+  describe("a shell that has exited", () => {
+    const exited = { status: "exited", exitCode: 2 };
+    const kept = (from: number, to: number) =>
+      Array.from({ length: to - from + 1 }, (_, index) => chunk(from + index, `line${from + index}\n`).chunk);
+
+    it("draws the output bb kept for it when the tab attaches after it ended", async () => {
+      const asked: number[] = [];
+      const { socket, written, statuses } = setup({
+        retained: async (sinceSeq) => {
+          asked.push(sinceSeq);
+          return [...kept(0, 2)].reverse();
+        },
+      });
+      socket().open();
+      // bb 0.48.1 attaching to an exited session: no replay, then exited.
+      socket().receive({ type: "attached", replayStartSeq: 0, nextSeq: 0, session: exited });
+      socket().receive({ type: "exited", session: exited });
+      expect(statuses.at(-1)?.state).not.toBe("ended");
+      await expect.poll(() => statuses.at(-1)).toEqual({ state: "ended", exitCode: 2 });
+      expect(asked).toEqual([0]);
+      expect(written).toEqual(["line0\n", "line1\n", "line2\n"]);
+    });
+
+    it("adds only what it had not drawn when the shell exits during the attach", async () => {
+      const asked: number[] = [];
+      const { socket, written, statuses } = setup({
+        retained: async (sinceSeq) => {
+          asked.push(sinceSeq);
+          return kept(1, 4);
+        },
+      });
+      socket().open();
+      socket().receive({ type: "attached", replayStartSeq: 0, nextSeq: 0, session: running });
+      socket().receive(chunk(0, "line0\n"));
+      socket().receive(chunk(1, "line1\n"));
+      socket().receive({ type: "exited", session: exited });
+      await expect.poll(() => statuses.at(-1)?.state).toBe("ended");
+      expect(asked).toEqual([2]);
+      expect(written).toEqual(["line0\n", "line1\n", "line2\n", "line3\n", "line4\n"]);
+    });
+
+    it("still says it ended when bb no longer has the output", async () => {
+      const { socket, written, statuses } = setup({
+        retained: async () => {
+          throw new Error("terminal_output_unavailable");
+        },
+      });
+      socket().open();
+      socket().receive({ type: "attached", replayStartSeq: 0, nextSeq: 0, session: exited });
+      await expect.poll(() => statuses.at(-1)).toEqual({ state: "ended", exitCode: 2 });
+      expect(written).toEqual([]);
+    });
   });
 
   it("stops for good when bb no longer has the session", () => {

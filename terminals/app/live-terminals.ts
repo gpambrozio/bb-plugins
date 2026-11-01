@@ -30,7 +30,19 @@ export interface LiveTerminal {
   applyTheme(): void;
 }
 
+/**
+ * The bb terminal calls a tab makes itself: the app SDK's `useSdk().terminals`
+ * satisfies this.
+ */
+export interface TerminalsBackend {
+  output(args: { terminalId: string; sinceSeq: number; tailBytes: number }): Promise<{
+    chunks: readonly { seq: number; dataBase64: string }[];
+  }>;
+}
+
 const SCROLLBACK_LINES = 10_000;
+/** As much of an exited shell's output as bb replays to a live one. */
+const RETAINED_TAIL_BYTES = 512 * 1024;
 
 const live = new Map<string, LiveTerminal & { dispose(): void }>();
 
@@ -38,7 +50,7 @@ function openSocket(terminalId: string, sinceSeq: number): SocketLike {
   return new WebSocket(terminalSocketUrl(window.location, terminalId, sinceSeq)) as unknown as SocketLike;
 }
 
-function create(terminalId: string): LiveTerminal & { dispose(): void } {
+function create(terminalId: string, backend: TerminalsBackend): LiveTerminal & { dispose(): void } {
   const element = document.createElement("div");
   element.style.width = "100%";
   element.style.height = "100%";
@@ -61,6 +73,8 @@ function create(terminalId: string): LiveTerminal & { dispose(): void } {
     onStatus: (status) => {
       for (const listener of listeners) listener(status);
     },
+    readRetained: async (sinceSeq) =>
+      (await backend.output({ terminalId, sinceSeq, tailBytes: RETAINED_TAIL_BYTES })).chunks,
   });
   term.onData((data) => connection.sendInput(data));
   term.onBinary((data) => {
@@ -127,10 +141,10 @@ function create(terminalId: string): LiveTerminal & { dispose(): void } {
 }
 
 /** The tab's terminal, started the first time it is asked for. */
-export function liveTerminal(terminalId: string): LiveTerminal {
+export function liveTerminal(terminalId: string, backend: TerminalsBackend): LiveTerminal {
   let entry = live.get(terminalId);
   if (entry === undefined) {
-    entry = create(terminalId);
+    entry = create(terminalId, backend);
     live.set(terminalId, entry);
   }
   return entry;

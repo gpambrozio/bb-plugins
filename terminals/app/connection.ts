@@ -16,6 +16,10 @@
  *   parsing, and acking, while the page is away;
  * - `ping` / `pong` keep the line honest, `exited` ends it, and an `error`
  *   with `terminal_not_found` means bb no longer has the session;
+ * - attaching to a shell that has already exited gets `attached` with no
+ *   replay and then `exited`: bb does not send the output it kept. That comes
+ *   from `terminals.output` instead (`readRetained`), from the first sequence
+ *   not yet drawn, before the tab says it ended;
  * - an attach can fail without the socket closing: bb sends an `error` such as
  *   `terminal_attach_timeout` (its own 10 s limit on the host's answer) and
  *   forgets the client, while the socket still answers pings. So any other
@@ -68,6 +72,11 @@ export interface ConnectionOptions {
   /** Draws a chunk; calls `drawn` once it is on screen, which acknowledges it to bb. */
   write(bytes: Uint8Array, drawn: () => void): void;
   onStatus(status: ConnectionStatus): void;
+  /**
+   * The output bb kept for this terminal from `sinceSeq` on, read once it has
+   * exited (`terminals.output`); null when bb no longer has it.
+   */
+  readRetained?(sinceSeq: number): Promise<readonly { seq: number; dataBase64: string }[] | null>;
   clock?: Clock;
 }
 
@@ -223,7 +232,7 @@ export class TerminalConnection {
         this.applySession(message.session);
         return;
       case "exited":
-        this.finish(message.session.exitCode);
+        this.finish(message.session.exitCode, true);
         return;
       case "error":
         if (ENDED_ERRORS.has(message.code)) this.finish(null);
@@ -237,17 +246,36 @@ export class TerminalConnection {
   }
 
   private applySession(session: { status: SessionStatus; exitCode: number | null }): void {
-    if (session.status === "exited") return this.finish(session.exitCode);
+    if (session.status === "exited") return this.finish(session.exitCode, true);
     this.setStatus({ state: session.status === "disconnected" ? "offline" : "live", exitCode: null });
   }
 
-  private finish(exitCode: number | null): void {
+  /** Stops for good; for a shell that exited, draws what bb kept of its output that this tab has not. */
+  private finish(exitCode: number | null, exited = false): void {
+    if (this.finished) return;
     this.finished = true;
     this.clearReconnect();
     const socket = this.socket;
     this.dropSocket();
     socket?.close(1000, "terminal ended");
-    this.setStatus({ state: "ended", exitCode });
+    const ended = { state: "ended", exitCode } as const;
+    if (!exited || this.options.readRetained === undefined) return this.setStatus(ended);
+    this.options.readRetained(this.nextSeq).then(
+      (chunks) => {
+        if (this.disposed) return;
+        for (const chunk of [...(chunks ?? [])].sort((a, b) => a.seq - b.seq)) {
+          if (chunk.seq < this.nextSeq) continue;
+          this.nextSeq = chunk.seq + 1;
+          this.options.write(decodeBase64(chunk.dataBase64), () => undefined);
+        }
+        this.setStatus(ended);
+      },
+      (error: unknown) => {
+        // bb keeps an exited shell's output for 30 minutes; after that the tab just shows what it had.
+        console.warn(`terminals: could not read what ${this.options.terminalId} printed before it exited: ${String(error)}`);
+        if (!this.disposed) this.setStatus(ended);
+      },
+    );
   }
 
   private setStatus(status: ConnectionStatus): void {

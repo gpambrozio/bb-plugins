@@ -56,7 +56,9 @@ tab) can hold a printing program back for those 3 s at most.
 socket in module scope; the page only lends them an element. That is what keeps scrollback, scroll
 position and a running TUI exactly as they were across page switches, without a replay. A tab no
 longer in the list is disposed (`releaseClosedTerminals`). An app reload starts empty: each tab
-reattaches with `sinceSeq=0` and bb replays at most its last 512 KB.
+reattaches with `sinceSeq=0` and bb replays at most its last 512 KB. bb replays nothing for a shell
+that has already exited, so an ended tab reads what bb kept (30 minutes, `terminals.output` through
+the app's `useSdk()`) from the first sequence it has not drawn, then says it ended.
 
 **The tab list is the user's, the selection the window's.** Tabs live in `bb.storage.kv` and every
 change publishes `tabs-changed`, so every client shows the same tabs; the page refetches on that signal
