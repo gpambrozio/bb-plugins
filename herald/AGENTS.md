@@ -24,6 +24,7 @@ what still holds and says what bb changed. The repo root `AGENTS.md` covers what
 | `server/liveness.ts` | Asks bb whether each entry's thread still exists before the list goes out; gone ones are removed. |
 | `server/timeline.ts` | Pure text: what an interaction asks, the user's last prompt, the spoken sentence. |
 | `server/say.ts` | `say` on the bb server's Mac, driven for its voices: text in on stdin, a WAV out, bytes back. |
+| `server/carry.ts` | Each thread's finished turns no landed sentence has covered yet, held as they arrive, capped; and the prompt's output that lists them with the latest. |
 | `server/writer.ts` | The optional sentence-writing tool, run as a child process through bb's host toolchain: prompt in on stdin, one line out (from the JSON summary for Claude Code and Codex); the timeout, the cap, the empty folder. |
 | `server/command-line.ts` | The user's command split into words without a shell, and the prompt template filled in. |
 | `server/ports.ts`, `server/bb-ports.ts` | The seams the logic is tested through, and their implementations over `bb.sdk`. |
@@ -145,6 +146,50 @@ no shell. What that buys, and what must stay true:
   spoken, not remembered) and its owed notification goes out plain. A question answered meanwhile is
   still withdrawn first. Only a real failure falls back to the plain
   sentence spoken; a run still going at unload is a failure (the plain notification goes out).
+- **An overtaken turn is carried, not lost** (`server/carry.ts`). A sentence a newer event overtakes
+  can no longer land (`settleSentence`), and with it went what that turn said: the first mate's review
+  result went unspoken because two "Captain, shipshape." turns followed before its sentence was ready.
+  What must stay true:
+  - **Held as it arrives.** Every finished turn is held per thread in `idle`, after the empty and repeat
+    checks and *before any lookup* (`CarriedUpdates.arrive`), with a sequence number every event takes
+    (questions and errors take one and hold nothing). Lookups can only take a turn back out (`withdraw`:
+    not announced, or no tool writes for it); nothing is added later. So a run is given every turn that
+    arrived before its event, oldest first, even one whose own lookups are still out, and a late lookup
+    can neither reorder turns nor bring one back after an archive or a plain sentence cleared them.
+    Holding after the lookups was review pass 1's second and third findings.
+  - **Eligible before it is given.** Whether a tool writes for a held turn (model on, and announced by
+    the settings and the thread's choice) is decided from its config and choice reads alone, apart from
+    its context lookup, which reads the thread's prompts and can be slow. A run waits for every earlier
+    turn's decision (`decided`, at most `ELIGIBILITY_WAIT_MS`) and is given only turns decided eligible;
+    one still undecided stays held for a later run. Otherwise, with finished turns switched off or a
+    Questions-only thread, a turn whose context was still being read reached a question's prompt and
+    was spoken through it (review pass 2).
+  - **The prompt.** A run reads the held turns before its own sequence number when it starts and puts
+    them in `{{output}}`, each under an `[Update n of m: …]` header (`combinedOutput`). The template is
+    unchanged, so a user's prompt keeps working, and with nothing carried the output is as before.
+  - **An overtaken finished turn's run is stopped** (`runs`, an `AbortController` per run passed to the
+    writer), and the new run waits for it to end (`OVERTAKEN_STOP_MS`, abort rejects at once) before it
+    starts, so its slot is free. Without that, a review and two no-ops filled `MAX_IN_FLIGHT`, the
+    combined run was refused as busy, and its plain sentence was spoken (review pass 1, first finding;
+    `hooks-carry.test.ts` checks it against the real `SentenceWriter`). The stopped run's owed
+    notification moves to the new run (owed if either was), sent once with the sentence that covers both.
+    **A question's run is never stopped**: an earlier question still waits when a later one is answered,
+    and its notification is its own (`hooks-push.test.ts`).
+  - **What clears them.** The tool's sentence or silence covers what it was given and its own turn
+    (`covered`); a failure — busy, missing, timeout — speaks the plain sentence, which covers only
+    the event's own turn (`withdraw`), so the earlier ones wait for the next run. A plain sentence (model
+    off) covers everything up to it; an archive or delete forgets the thread; an event that is not
+    announced (`off`) withdraws only itself. A run that is dropped or withdrawn clears nothing.
+  - **Bounds.** A run is given at most `CARRY_MAX_UPDATES` (4) earlier turns and `CARRY_MAX_CHARS` (6,000)
+    of their text, each already cut at `PROMPT_OUTPUT_MAX`, applied where the run reads them
+    (`earlier`), so a question or an error, which holds no turn of its own, is bounded too (review
+    pass 2). The oldest go first; how many were let go is counted on the oldest held turn and said in
+    the output ("left out") until a run that was told lands. Memory keeps twice the count per thread,
+    for turns still undecided.
+  - Only finished turns are held: an overtaken question was answered, and an error was followed by a new
+    turn. In memory only: a reload drops them, as it drops a sentence being written. A turn the user
+    answers while its sentence is being written is carried too, so the next sentence may mention what
+    they already read.
 - **The prompt is bounded.** The agent's output is cut at `PROMPT_OUTPUT_MAX` and the headline, detail
   and request at `PROMPT_PART_MAX` before they go into the template — a permission's command and a
   pasted-in request can both run to kilobytes.
@@ -689,7 +734,7 @@ cover, check by hand after `bb plugin reload herald`:
    at once, and the question's card stays in the timeline.
 3. With the thread open on screen, let a turn finish: bb marks it read at once, and the sentence is still
    spoken and its card shows on the turn's answer. Send a new prompt while a sentence is being written:
-   no card comes and nothing is spoken.
+   no card comes and nothing is spoken then; with the model on, the next turn's sentence covers both.
 4. In a browser tab, nothing is spoken until **Test voice** has been pressed once.
 5. Switch a kind off in Settings → Plugins → Herald and trigger it: the row says "Not announced" and
    nothing is spoken.

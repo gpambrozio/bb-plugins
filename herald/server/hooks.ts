@@ -17,6 +17,7 @@
 import type { AttentionEntry, AttentionReason, HistoryItem, ReplyFormat } from "../shared/herald";
 import type { SentenceSettings } from "../shared/settings";
 import { choiceAllows, effectiveChoice, NO_CHOICE, type ChoiceInputs, type ThreadChoice } from "../shared/thread-choice";
+import { CarriedUpdates, combinedOutput, type Carried } from "./carry";
 import { fillTemplate, splitCommandLine } from "./command-line";
 import type { EventsPort, Interaction, Log, ThreadDto } from "./ports";
 import type { PushEvent, PushSubject } from "./push";
@@ -58,9 +59,10 @@ export interface HookDeps {
   /**
    * Runs the tool with the prompt on stdin and resolves to its sentence, or
    * to `silent` when it ran and answered nothing (an empty reply, or a null
-   * or empty summary in JSON); rejects on any failure.
+   * or empty summary in JSON); rejects on any failure, and when `signal`
+   * aborts — which frees the run's slot by the time it has rejected.
    */
-  writeSentence: (command: string[], prompt: string, reply: ReplyFormat) => Promise<WrittenSentence>;
+  writeSentence: (command: string[], prompt: string, reply: ReplyFormat, signal: AbortSignal) => Promise<WrittenSentence>;
   /** Adds a sentence that landed to the thread's history, for its panel. Never throws. */
   remember: (threadId: string, item: HistoryItem) => void;
   /** Absent in tests that are not about notifications. */
@@ -82,6 +84,21 @@ const EVENT_PHRASES: Record<AttentionReason, string> = {
 const PROMPT_OUTPUT_MAX = 3000;
 /** A pasted-in request or a kilobyte-long command is cut too; the prompt is about the event, not a transcript. */
 const PROMPT_PART_MAX = 1000;
+
+/**
+ * How long a run waits for the run it overtook to stop. Aborting one rejects
+ * at once and frees its slot, so this only bounds a run that ignores it.
+ */
+export const OVERTAKEN_STOP_MS = 2_000;
+
+/**
+ * How long a run waits for bb to say whether earlier held turns are ones a
+ * tool writes for (their config and choice reads). One still undecided
+ * after this is left out of the run's prompt and stays held.
+ */
+export const ELIGIBILITY_WAIT_MS = 5_000;
+
+const NOTHING_EARLIER: Carried = { updates: [], dropped: 0, seqs: [] };
 
 function cut(text: string | null, max: number): string | null {
   return text !== null && text.length > max ? `${text.slice(0, max)}…` : text;
@@ -187,6 +204,17 @@ export function createHooks(deps: HookDeps): Hooks {
    * plain one on unload.
    */
   const owedPushes = new Map<string, { owes: Promise<boolean>; subject: PushSubject; fallback: string }>();
+  /** Each thread's finished turns no landed sentence has covered yet (`carry.ts`). */
+  const carried = new CarriedUpdates();
+  /**
+   * Each thread's newest tool run for a finished turn. A newer run stops it
+   * before starting — its update is carried into the newer one's prompt — so
+   * one thread never holds both of the writer's slots with sentences that can
+   * no longer land, and takes over the notification it owed. A question's run
+   * is never stopped: an earlier question still waits on the user when a
+   * later one is answered, and its notification is its own.
+   */
+  const runs = new Map<string, { eventId: string; controller: AbortController; done: Promise<unknown> }>();
 
   /** Heard at once, before any lookup, so a give-back of the level waits for bb's read of it. */
   function sawEvent(thread: ThreadDto): number {
@@ -336,6 +364,8 @@ export function createHooks(deps: HookDeps): Hooks {
     at: number;
     /** Its arrival (`arrive`). */
     token: number;
+    /** Its place in the thread's order, taken as it arrived (`CarriedUpdates.arrive`). */
+    seq: number;
   }
 
   /**
@@ -350,10 +380,18 @@ export function createHooks(deps: HookDeps): Hooks {
       record(recording);
       return;
     }
+    // Overtaken before its run could start: what it said stays held for the
+    // next run, unless no tool would have written for it.
+    if (!toolWrites(recording)) carried.withdraw(recording.thread.id, recording.seq);
     if (settledOnUnload(recording.token)) return;
     const base = baseOf(recording);
     // Settled only: an event a newer one replaced takes no level, so it cannot re-take a thread given back meanwhile.
     pushWhen(decidePush(recording.thread, { reason: recording.reason, at: recording.at }, recording.config, recording.choice, false), base, fallbackSpeech(base));
+  }
+
+  /** Whether a tool writes this event's sentence, as its lookups say. */
+  function toolWrites({ thread, reason, config, choice }: Recording): boolean {
+    return config.sentence !== null && isAnnounced(thread, reason, config, choice);
   }
 
   function baseOf(recording: Recording): Omit<AttentionEntry, "summary"> {
@@ -386,6 +424,8 @@ export function createHooks(deps: HookDeps): Hooks {
     // speaks for: listed in the panel, with its sentence, never spoken — and
     // no tool is run to write it.
     if (!isAnnounced(thread, reason, config, choice)) {
+      // Not spoken: what came before waits for the next announced event, without this one.
+      carried.withdraw(thread.id, recording.seq);
       deps.store.upsert({ ...base, summary: { status: "off", fallback } });
       deps.publish();
       remember(base, fallback);
@@ -393,6 +433,8 @@ export function createHooks(deps: HookDeps): Hooks {
       return;
     }
     if (config.sentence === null) {
+      // Spoken without a tool: there is no run to give what was carried to.
+      carried.coveredThrough(thread.id, recording.seq);
       deps.store.upsert({ ...base, summary: { status: "ready", text: fallback } });
       deps.publish();
       remember(base, fallback);
@@ -405,21 +447,73 @@ export function createHooks(deps: HookDeps): Hooks {
     deps.store.upsert({ ...base, summary: { status: "pending", fallback } });
     deps.publish();
     inFlight.add(base.eventId);
-    owedPushes.set(base.eventId, { owes, subject: base, fallback });
-    const written = writeSentence(config.sentence, base, recording);
+    // The run this one overtakes can no longer land: it is stopped, so its
+    // slot is free for this one, and what it owed goes out with this
+    // sentence, which covers its update too.
+    const overtaken = runs.get(thread.id);
+    let owesAny = owes;
+    if (overtaken !== undefined) {
+      overtaken.controller.abort();
+      const owedBefore = owedPushes.get(overtaken.eventId);
+      if (owedBefore !== undefined) {
+        owedPushes.delete(overtaken.eventId);
+        owesAny = Promise.all([owedBefore.owes, owes]).then(([before, mine]) => before || mine);
+      }
+    }
+    owedPushes.set(base.eventId, { owes: owesAny, subject: base, fallback });
+    const controller = new AbortController();
+    const run = writeSentence(config.sentence, base, recording, controller.signal, overtaken?.done ?? null);
+    const written = run.then(({ outcome }) => outcome);
+    if (reason === "finished") {
+      const run = { eventId: base.eventId, controller, done: written };
+      runs.set(thread.id, run);
+      void written.finally(() => {
+        if (runs.get(thread.id) === run) runs.delete(thread.id);
+      });
+    } else {
+      // Not one a newer run may stop; a finished turn's run before it was stopped above.
+      runs.delete(thread.id);
+    }
     // The notification goes with the event's own sentence, whatever became
     // of the entry meanwhile; `send` itself skips what is no longer news.
     void written.then((outcome) => sendOwed(base.eventId, pushSentence(reason, outcome, fallback)));
-    void written
-      .then((outcome) => settleSentence(base.threadId, base.eventId, outcome, fallback, thread.latestAttentionAt))
+    void run
+      .then(async ({ outcome, given }) => {
+        if (!(await settleSentence(base.threadId, base.eventId, outcome, fallback, thread.latestAttentionAt))) return;
+        // The tool's sentence or silence covered every update it was given;
+        // the plain sentence, after a failure, only this event's own.
+        if (outcome.kind === "failed") carried.withdraw(thread.id, recording.seq);
+        else carried.covered(thread.id, recording.seq, given);
+      })
       .catch((error: unknown) => deps.log.error(`Settling the sentence for ${base.threadId} failed: ${reasonOf(error)}`))
       .finally(() => inFlight.delete(base.eventId));
   }
 
-  /** What the tool wrote, its silence, or `failed` — with the reason logged. Never rejects. */
-  async function writeSentence(sentence: SentenceSettings, base: Omit<AttentionEntry, "summary">, recording: Recording): Promise<WriteOutcome> {
+  /**
+   * What the tool wrote, its silence, or `failed` — with the reason logged —
+   * and the earlier updates it was given. Never rejects. The run it overtook
+   * (`overtaken`) is let go first, and the updates held for the thread are
+   * read only once every earlier one is known to be one a tool writes for, or
+   * not (`ELIGIBILITY_WAIT_MS` at most).
+   */
+  async function writeSentence(
+    sentence: SentenceSettings,
+    base: Omit<AttentionEntry, "summary">,
+    recording: Recording,
+    signal: AbortSignal,
+    overtaken: Promise<unknown> | null,
+  ): Promise<{ outcome: WriteOutcome; given: Carried }> {
+    let earlier = NOTHING_EARLIER;
     try {
       const command = splitCommandLine(sentence.command);
+      if (overtaken !== null) await stopped(overtaken);
+      await carried.decided(base.threadId, recording.seq, ELIGIBILITY_WAIT_MS);
+      if (signal.aborted) throw new Error("overtaken");
+      earlier = carried.earlier(base.threadId, recording.seq);
+      if (earlier.updates.length > 0) {
+        const left = earlier.dropped > 0 ? `, ${earlier.dropped} older left out` : "";
+        deps.log.info(`The sentence for ${base.threadId}'s ${base.reason} event also covers ${earlier.updates.length} earlier update(s) a newer one overtook${left}.`);
+      }
       const prompt = fillTemplate(sentence.prompt, {
         thread: displayName(base),
         project: base.projectName,
@@ -428,15 +522,24 @@ export function createHooks(deps: HookDeps): Hooks {
         headline: cut(base.headline, PROMPT_PART_MAX),
         detail: cut(base.detail, PROMPT_PART_MAX),
         request: cut(recording.lastUser, PROMPT_PART_MAX),
-        output: cut(recording.output, PROMPT_OUTPUT_MAX),
+        output: combinedOutput(earlier, { event: EVENT_PHRASES[base.reason], output: cut(recording.output, PROMPT_OUTPUT_MAX) }),
       });
-      const written = await deps.writeSentence(command, prompt, sentence.reply);
+      const written = await deps.writeSentence(command, prompt, sentence.reply, signal);
+      if (signal.aborted) throw new Error("overtaken");
       if (written.kind === "silent") deps.log.info(`The tool chose to say nothing for ${base.threadId}'s ${base.reason} event; Herald does not speak it.`);
-      return written;
+      return { outcome: written, given: earlier };
     } catch (error) {
-      deps.log.warn(`The sentence for ${base.threadId} falls back to the plain one: ${reasonOf(error)}`);
-      return { kind: "failed" };
+      if (signal.aborted) deps.log.info(`The sentence for ${base.threadId}'s ${base.reason} event was stopped: a newer event's sentence covers it.`);
+      else deps.log.warn(`The sentence for ${base.threadId} falls back to the plain one: ${reasonOf(error)}`);
+      return { outcome: { kind: "failed" }, given: earlier };
     }
+  }
+
+  /** Waits for a stopped run to end, at most `OVERTAKEN_STOP_MS`. */
+  async function stopped(run: Promise<unknown>): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([run, new Promise((resolve) => (timer = setTimeout(resolve, OVERTAKEN_STOP_MS)))]);
+    clearTimeout(timer);
   }
 
   /**
@@ -451,31 +554,35 @@ export function createHooks(deps: HookDeps): Hooks {
    * the page to leave bb's unread flag for it alone, up to `attentionAt` (bb's
    * attention time for the thread as the event arrived); an event that waits
    * on the user stays listed with the plain sentence, as one not announced (`off`).
+   *
+   * Resolves whether something landed — a sentence, the plain one, or the
+   * tool's silence — rather than being dropped or withdrawn.
    */
-  async function settleSentence(threadId: string, eventId: string, outcome: WriteOutcome, fallback: string, attentionAt: number): Promise<void> {
+  async function settleSentence(threadId: string, eventId: string, outcome: WriteOutcome, fallback: string, attentionAt: number): Promise<boolean> {
     const stillWaiting = () => {
       if (disposed) return null;
       const current = deps.store.get(threadId);
       return current !== null && current.eventId === eventId && current.summary.status === "pending" ? current : null;
     };
     const entry = stillWaiting();
-    if (entry === null) return;
+    if (entry === null) return false;
     if (entry.requestId !== null && !(await stillPending(threadId, entry.requestId))) {
       // Checked again after the wait: the thread may have moved on meanwhile.
       if (stillWaiting() !== null && deps.store.remove(threadId) !== null) deps.publish();
-      return;
+      return false;
     }
     const current = stillWaiting();
-    if (current === null) return;
+    if (current === null) return false;
     if (outcome.kind === "silent") {
       deps.store.upsert({ ...current, summary: waitsOnUser(current.reason) ? { status: "off", fallback } : { status: "quiet", attentionAt } });
       deps.publish();
-      return;
+      return true;
     }
     const text = outcome.kind === "sentence" ? outcome.text : fallback;
     deps.store.upsert({ ...current, summary: { status: "ready", text } });
     deps.publish();
     remember(current, text);
+    return true;
   }
 
   /**
@@ -570,14 +677,19 @@ export function createHooks(deps: HookDeps): Hooks {
         if (output === "") return;
         if (isRepeatIdle(thread.id)) return;
         const token = arrive(thread, at, { reason: "finished", headline: "Finished", detail: firstWords(output, 60), requestId: null });
+        // Held before any lookup, in the order turns ended (`carry.ts`), and
+        // known to be one a tool writes for from the config and the choice
+        // alone: a later run waits for that, never for the context lookup.
+        const configRead = deps.readConfig();
+        const choiceRead = choiceOf(thread);
+        const eligible = Promise.all([configRead, choiceRead]).then(
+          ([config, choice]) => config.sentence !== null && isAnnounced(thread, "finished", config, choice),
+        );
+        const seq = carried.arrive(thread.id, { event: EVENT_PHRASES.finished, output: cut(output, PROMPT_OUTPUT_MAX) ?? output }, eligible);
         try {
           const event = beginEvent(thread.id);
           const generation = generationOf(thread.id);
-          const [config, context, choice] = await Promise.all([
-            deps.readConfig(),
-            deps.events.context(thread, { withRequest: true }),
-            choiceOf(thread),
-          ]);
+          const [config, context, choice] = await Promise.all([configRead, deps.events.context(thread, { withRequest: true }), choiceRead]);
           const stale = generationOf(thread.id) !== generation || !isLatest(thread.id, event);
           admit(stale, {
             thread,
@@ -594,6 +706,7 @@ export function createHooks(deps: HookDeps): Hooks {
             output,
             at,
             token,
+            seq,
           });
         } finally {
           arrivals.delete(token);
@@ -605,6 +718,7 @@ export function createHooks(deps: HookDeps): Hooks {
       if (thread.visibility === "hidden") return Promise.resolve();
       const at = sawEvent(thread);
       const token = arrive(thread, at, { reason: "error", headline: error?.trim() || "The turn failed", detail: null, requestId: null });
+      const seq = carried.arrive(thread.id, null);
       return guarded("thread.failed", async () => {
         try {
           const event = beginEvent(thread.id);
@@ -632,6 +746,7 @@ export function createHooks(deps: HookDeps): Hooks {
             output: null,
             at,
             token,
+            seq,
           });
         } finally {
           arrivals.delete(token);
@@ -644,6 +759,7 @@ export function createHooks(deps: HookDeps): Hooks {
       const at = sawEvent(thread);
       const described = describeInteraction(interaction);
       const token = arrive(thread, at, { reason: described.reason, headline: described.headline, detail: described.detail, requestId: interaction.id });
+      const seq = carried.arrive(thread.id, null);
       return guarded("interaction.pending", async () => {
         try {
           const event = beginEvent(thread.id);
@@ -669,6 +785,7 @@ export function createHooks(deps: HookDeps): Hooks {
             output: null,
             at,
             token,
+            seq,
           });
         } finally {
           arrivals.delete(token);
@@ -679,6 +796,7 @@ export function createHooks(deps: HookDeps): Hooks {
     gone(thread) {
       movedOn(thread.id);
       recentIdles.delete(thread.id);
+      carried.forget(thread.id);
       removeEntry(thread.id);
     },
 

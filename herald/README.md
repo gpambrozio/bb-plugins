@@ -216,7 +216,20 @@ What an empty answer (blank, or only quotes or markdown) does depends on the eve
 While the tool runs, the row (and on older bb the banner) says *Writing the sentence…*; the card appears
 once the sentence is written; the plain sentence is spoken
 instead if the tool fails (exits with an error, or claude or codex answers without its JSON), is missing, or takes longer than 45 seconds. A sentence still being written
-when Herald itself is reloaded is dropped rather than spoken late. The prompt includes the agent's
+when Herald itself is reloaded is dropped rather than spoken late.
+
+**Nothing a thread said is lost because it said more right after.** When a thread finishes another turn
+before the sentence for its last one is ready — a review result followed at once by two "Captain,
+shipshape." replies, say — Herald stops writing that sentence and carries the turn forward: the next
+sentence the tool writes for that thread is given every such turn, oldest first, each marked as a
+separate update, in place of the agent's output alone. Once a sentence is spoken (or the tool chooses to
+stay quiet), they are forgotten; if the tool fails and the plain sentence is spoken instead, they wait
+for the next one. So a prompt that skips acknowledgements still speaks the review, and
+stays quiet when every update was one. Threads are never mixed. At most four earlier turns and 6,000
+characters of them are carried, oldest dropped first, and the tool is told when some were left out.
+Without the model, nothing is carried: the plain sentence speaks each turn as it ends.
+
+The prompt includes the agent's
 own reply, which can carry instructions: that is why the presets run with no tools or read-only, and why
 the switch is off by default. A Claude run takes about ten seconds end to end.
 

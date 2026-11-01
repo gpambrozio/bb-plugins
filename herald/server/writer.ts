@@ -229,7 +229,8 @@ export class SentenceWriter {
    * or `silent` when the tool exits 0 with nothing to say. `reply` says how
    * its answer is read (`readReply`). Rejects when the writer is busy or
    * disposed, the tool is missing, fails, outlives `WRITE_TIMEOUT_MS`, or
-   * answers JSON that is not the schema's.
+   * answers JSON that is not the schema's — and when `signal` aborts, which
+   * kills the tool; the run's slot is free again by the time it rejects.
    *
    * Each run gets an empty folder of its own under the temp directory, made
    * for it and removed after it, so a tool that reads its working directory
@@ -238,7 +239,7 @@ export class SentenceWriter {
    * for the life of the plugin was tried first; macOS purges unused temp
    * entries after a few days, and a bb server runs for weeks.)
    */
-  async write(command: readonly string[], prompt: string, reply: ReplyFormat): Promise<WrittenSentence> {
+  async write(command: readonly string[], prompt: string, reply: ReplyFormat, signal?: AbortSignal): Promise<WrittenSentence> {
     if (this.disposed) throw new Error("The sentence writer is closed.");
     if (this.inFlight >= MAX_IN_FLIGHT) throw new Error(`The sentence writer is busy (${MAX_IN_FLIGHT} already running).`);
     this.inFlight += 1;
@@ -251,7 +252,7 @@ export class SentenceWriter {
         cwd,
         env: process.env,
         timeoutMs: WRITE_TIMEOUT_MS,
-        signal: this.controller.signal,
+        signal: signal === undefined ? this.controller.signal : AbortSignal.any([this.controller.signal, signal]),
       });
       if (result.code !== 0) {
         throw new Error(`${command[0]} exited with ${result.code ?? "a signal"}: ${result.stderr.trim().slice(-300) || "no error output"}`);
