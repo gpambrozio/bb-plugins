@@ -9,13 +9,16 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import { rpcContract } from "./shared/contract";
 import { selectableHosts } from "./shared/host-choice";
-import { TABS_CHANGED, TabSchema, type Tab } from "./shared/tabs";
+import { ClosingSchema, TABS_CHANGED, TabSchema, type Closing, type Tab } from "./shared/tabs";
 import { createTerminalsService } from "./server/service";
 import { newTerminalId } from "./server/terminal-id";
 
 export type { RpcContract } from "./shared/contract";
 
 const TABS_KEY = "tabs";
+const CLOSING_KEY = "closing";
+/** How often a tab closed while its shell was opening is checked on, while there is one. */
+const SETTLE_INTERVAL_MS = 5_000;
 
 function isNotFound(error: unknown): boolean {
   return error instanceof Error && "status" in error && error.status === 404;
@@ -38,6 +41,15 @@ export default async function plugin(bb: BbPluginApi) {
       return parsed.data;
     },
     save: (tabs: Tab[]) => bb.storage.kv.set(TABS_KEY, tabs),
+    loadClosing: async () => {
+      const parsed = ClosingSchema.array().safeParse((await bb.storage.kv.get<unknown>(CLOSING_KEY)) ?? []);
+      if (!parsed.success) {
+        bb.log.warn(`ignoring an unreadable list of closing tabs: ${parsed.error.message}`);
+        return [];
+      }
+      return parsed.data;
+    },
+    saveClosing: (closing: Closing[]) => bb.storage.kv.set(CLOSING_KEY, closing),
     hosts,
     newTerminalId: () => newTerminalId(),
     createTerminal: ({ terminalId, hostId, title, cols, rows }) =>
@@ -79,14 +91,21 @@ export default async function plugin(bb: BbPluginApi) {
     },
     close: async ({ terminalId }) => {
       await service.close(terminalId);
+      wakeSettler();
       return {};
     },
   });
 
+  /** Wakes the service below early, after a close that may have left a record. */
+  let wakeSettler: () => void = () => undefined;
+
   // A shell lives in its machine's host daemon. bb reattaches it after its own
   // server restarts, but a daemon that restarted (a reboot, bb quit on that
   // machine) took its shells with it, and a shell may have exited while no app
-  // was open. Drop the tabs of ended shells once per load.
+  // was open. Drop the tabs of ended shells once per load. Then end the shells
+  // of tabs closed before bb had made them — the record of those outlives a
+  // reload, so a shell bb finishes making after it is still ended — checking
+  // every few seconds while there are any.
   bb.background.service("prune-ended-tabs", {
     async start(signal) {
       try {
@@ -94,10 +113,27 @@ export default async function plugin(bb: BbPluginApi) {
       } catch (error) {
         bb.log.warn(`could not drop ended tabs: ${String(error)}`);
       }
-      await new Promise<void>((resolve) => {
-        if (signal.aborted) return resolve();
-        signal.addEventListener("abort", () => resolve(), { once: true });
-      });
+      while (!signal.aborted) {
+        let pending: boolean;
+        try {
+          pending = await service.settleClosing();
+        } catch (error) {
+          bb.log.warn(`could not check on tabs closed while opening: ${String(error)}`);
+          pending = true;
+        }
+        await new Promise<void>((resolve) => {
+          const done = () => {
+            if (timer !== undefined) clearTimeout(timer);
+            signal.removeEventListener("abort", done);
+            wakeSettler = () => undefined;
+            resolve();
+          };
+          const timer = pending ? setTimeout(done, SETTLE_INTERVAL_MS) : undefined;
+          wakeSettler = done;
+          signal.addEventListener("abort", done, { once: true });
+          if (signal.aborted) done();
+        });
+      }
     },
   });
 }

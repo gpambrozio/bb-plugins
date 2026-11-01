@@ -41,6 +41,19 @@ export const TabSchema = z.object({
 export type Tab = z.infer<typeof TabSchema>;
 
 /**
+ * A tab closed while bb had not made its shell yet. The shell may still be on
+ * its way, so the server keeps this until bb has it (then ends it) or it is
+ * past `OPENING_GRACE_MS` (bb never made it) — across reloads.
+ */
+export const ClosingSchema = z.object({
+  terminalId: z.string().min(1),
+  /** When its tab was opened, which starts the grace. */
+  createdAt: z.number(),
+});
+
+export type Closing = z.infer<typeof ClosingSchema>;
+
+/**
  * Where the tab's shell is: `opening` while bb has not made it yet (the tab is
  * stored first, see server/service.ts); `running` (or `starting`) on its
  * machine; `disconnected` while the machine is offline, which bb resumes when

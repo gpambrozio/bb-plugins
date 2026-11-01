@@ -85,9 +85,12 @@ serialized section, then asks bb for the shell. So no shell ever runs without a 
 disable while bb is still opening one leaves a tab the next copy sees — and two clients pressing "+"
 at once cannot pass `MAX_TABS`. Until bb has the session, `list` calls the tab `opening` (for
 `OPENING_GRACE_MS`, after which it is `ended`); the page draws a placeholder and polls rather than
-attach, which would hear "not found". If bb cannot start the shell the tab is dropped again; a tab
-closed while its shell was opening has that shell ended when it arrives (in the same copy of the plugin;
-across a reload in that window the shell is left for the user to close from `bb terminal list`).
+attach, which would hear "not found". If bb cannot start the shell the tab is dropped again. A tab
+closed before bb has a session for it leaves a record in kv (`closing`, `ClosingSchema`), because the
+shell may still be on its way and the copy of the plugin that asked for it may be reloaded first: the
+background service of whichever copy is loaded checks every few seconds while there is one, ends the
+shell once bb has it, and forgets the record once the shell has ended or `OPENING_GRACE_MS` has passed
+with no session (bb inserts its row before asking the host, so by then it never made one).
 Closing a tab ends its shell with `terminals.close({ mode: "force" })` *before* removing the tab, so a
 failure leaves the tab to try again rather than an orphan; closing a session bb says has already ended
 (or no longer knows) just removes the tab. On every load the server drops the tabs whose shell has ended. From bb 0.48.1's server source (not

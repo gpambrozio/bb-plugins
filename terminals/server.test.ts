@@ -134,6 +134,30 @@ describe("terminals server", () => {
     expect(harness.sdk.callsTo("terminals.create")).toEqual([]);
   });
 
+  it("ends a shell bb finishes making after its tab was closed and the plugin reloaded", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const { harness, sessions, held } = await start({ holdCreates: true });
+    const opening = harness.callRpc("open", { hostId: "mini", cols: 80, rows: 24 });
+    opening.catch(() => undefined);
+    await expect.poll(() => held.length).toBe(1);
+    const [stored] = await tabs(harness);
+    // bb has no session yet, so closing finds nothing to end.
+    await harness.callRpc("close", { terminalId: stored!.terminalId });
+    expect(await tabs(harness)).toEqual([]);
+    const next = (await harness.reload(plugin)).harness;
+    const service = next.runService("prune-ended-tabs");
+    held[0]!();
+    // The old copy can no longer touch anything: its open fails on its stale handle.
+    await expect(opening).rejects.toThrow(/stale/);
+    expect(sessions.has(stored!.terminalId)).toBe(true);
+    // The new copy checks on the closed tab (every few seconds) and ends the shell that arrived.
+    await vi.advanceTimersByTimeAsync(5_000);
+    await expect.poll(() => sessions.get(stored!.terminalId)?.status).toBe("exited");
+    expect(await tabs(next)).toEqual([]);
+    service.controller.abort();
+    await service.done;
+  });
+
   it("ends the shell when its tab closes", async () => {
     const { harness, sessions } = await start();
     const tab = (await harness.callRpc("open", { hostId: "mini", cols: 80, rows: 24 })) as TabView;

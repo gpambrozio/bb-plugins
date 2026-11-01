@@ -7,7 +7,7 @@
  * and keep their output whatever the app does. This file only remembers which
  * sessions are tabs, in which order.
  */
-import { MAX_TABS, OPENING_GRACE_MS, normalizeTabName, tabStatus, type HostChoice, type Tab, type TabView } from "../shared/tabs";
+import { MAX_TABS, OPENING_GRACE_MS, normalizeTabName, tabStatus, type Closing, type HostChoice, type Tab, type TabView } from "../shared/tabs";
 
 /** The fields of a bb terminal session this file reads. */
 export interface TerminalSessionInfo {
@@ -20,6 +20,9 @@ export interface TerminalsPorts {
   /** The stored tabs, in opening order; [] before the first one. */
   load(): Promise<Tab[]>;
   save(tabs: Tab[]): Promise<void>;
+  /** Tabs closed before bb had made their shell ([] when there are none); see `ClosingSchema`. */
+  loadClosing(): Promise<Closing[]>;
+  saveClosing(closing: Closing[]): Promise<void>;
   /** The machines a shell can open on now (`shared/host-choice.ts`). */
   hosts(): Promise<HostChoice[]>;
   /** A new id for bb's next terminal (`server/terminal-id.ts`). */
@@ -46,6 +49,11 @@ export interface TerminalsService {
   close(terminalId: string): Promise<void>;
   /** Drops the tabs whose shell has ended; a tab still opening stays. */
   prune(): Promise<void>;
+  /**
+   * Ends the shells of tabs closed before bb had made them, once bb has them;
+   * true while some may still be on their way.
+   */
+  settleClosing(): Promise<boolean>;
 }
 
 export function createTerminalsService(ports: TerminalsPorts): TerminalsService {
@@ -150,14 +158,31 @@ export function createTerminalsService(ports: TerminalsPorts): TerminalsService 
 
     async close(terminalId) {
       // End the shell first: if that fails, the tab stays, so the shell is never left without one.
+      let unknownToBb = false;
       try {
         await ports.closeTerminal(terminalId);
       } catch (error) {
         // bb refuses to close a session that has already ended or is gone; that is the outcome asked for.
         const session = await ports.getTerminal(terminalId).catch(() => undefined);
         if (session === undefined || (session !== null && session.status !== "exited")) throw error;
+        unknownToBb = session === null;
       }
-      if (await removeTab(terminalId)) ports.publish();
+      const removed = await serialized(async () => {
+        const tabs = await ports.load();
+        const tab = tabs.find((entry) => entry.terminalId === terminalId);
+        if (tab === undefined) return false;
+        // bb has no shell for it, but one may still be on its way (the tab was stored first): keep
+        // a record that outlives this copy of the plugin, so whichever copy is loaded ends it.
+        if (unknownToBb && ports.now() - tab.createdAt < OPENING_GRACE_MS) {
+          const closing = await ports.loadClosing();
+          if (!closing.some((entry) => entry.terminalId === terminalId)) {
+            await ports.saveClosing([...closing, { terminalId, createdAt: tab.createdAt }]);
+          }
+        }
+        await ports.save(tabs.filter((entry) => entry !== tab));
+        return true;
+      });
+      if (removed) ports.publish();
     },
 
     async prune() {
@@ -167,6 +192,32 @@ export function createTerminalsService(ports: TerminalsPorts): TerminalsService 
       if (ended.size === 0) return;
       await serialized(async () => ports.save((await ports.load()).filter((tab) => !ended.has(tab.terminalId))));
       ports.publish();
+    },
+
+    async settleClosing() {
+      const records = await ports.loadClosing();
+      if (records.length === 0) return false;
+      const settled = new Set<string>();
+      for (const record of records) {
+        try {
+          const session = await ports.getTerminal(record.terminalId);
+          if (session === null) {
+            // Past the grace bb never made it; before, it may still come.
+            if (ports.now() - record.createdAt >= OPENING_GRACE_MS) settled.add(record.terminalId);
+            continue;
+          }
+          if (session.status !== "exited") await ports.closeTerminal(record.terminalId);
+          settled.add(record.terminalId);
+        } catch (error) {
+          ports.warn(`could not end terminal ${record.terminalId}, whose tab was closed while it opened: ${String(error)}`);
+        }
+      }
+      const left = await serialized(async () => {
+        const rest = (await ports.loadClosing()).filter((entry) => !settled.has(entry.terminalId));
+        if (settled.size > 0) await ports.saveClosing(rest);
+        return rest.length;
+      });
+      return left > 0;
     },
   };
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { MAX_TABS, OPENING_GRACE_MS, type HostChoice, type Tab } from "../shared/tabs";
+import { MAX_TABS, OPENING_GRACE_MS, type Closing, type HostChoice, type Tab } from "../shared/tabs";
 import { createTerminalsService, type TerminalSessionInfo, type TerminalsPorts } from "./service";
 
 function setup(
@@ -16,6 +16,7 @@ function setup(
 ) {
   const state = {
     tabs: [] as Tab[],
+    closing: [] as Closing[],
     sessions: new Map<string, TerminalSessionInfo>(),
     closed: [] as string[],
     titles: [] as [string, string][],
@@ -29,6 +30,10 @@ function setup(
     save: async (tabs) => {
       if (options.saveFails) throw new Error("storage is full");
       state.tabs = tabs;
+    },
+    loadClosing: async () => state.closing.map((entry) => ({ ...entry })),
+    saveClosing: async (closing) => {
+      state.closing = closing;
     },
     hosts: async () => options.hosts ?? [{ id: "mini", name: "Mac mini" }],
     newTerminalId: () => `term_${state.nextId++}`,
@@ -256,6 +261,66 @@ describe("rename", () => {
       ["term_1", "logs"],
       ["term_2", null],
     ]);
+  });
+});
+
+describe("a tab closed before bb has made its shell", () => {
+  async function closedWhileOpening() {
+    const holdCreates: (() => void)[] = [];
+    const setupResult = setup({ holdCreates });
+    const opening = setupResult.service.open({ hostId: "mini", cols: 80, rows: 24 });
+    opening.catch(() => undefined);
+    await expect.poll(() => holdCreates.length).toBe(1);
+    await setupResult.service.close("term_1");
+    return { ...setupResult, holdCreates, opening };
+  }
+
+  it("is remembered until bb has the shell, which is then ended", async () => {
+    const { state, service, holdCreates } = await closedWhileOpening();
+    expect(state.tabs).toEqual([]);
+    expect(state.closing).toEqual([{ terminalId: "term_1", createdAt: 1_000 }]);
+    // Nothing to end yet, and it may still come.
+    expect(await service.settleClosing()).toBe(true);
+    expect(state.closing).toHaveLength(1);
+    holdCreates[0]!();
+    await expect.poll(() => state.sessions.has("term_1")).toBe(true);
+    expect(await service.settleClosing()).toBe(false);
+    expect(state.sessions.get("term_1")?.status).toBe("exited");
+    expect(state.closing).toEqual([]);
+  });
+
+  it("is forgotten once bb has taken too long to have made it", async () => {
+    const { state, service } = await closedWhileOpening();
+    state.now += OPENING_GRACE_MS;
+    expect(await service.settleClosing()).toBe(false);
+    expect(state.closing).toEqual([]);
+  });
+
+  it("is kept when bb cannot end the shell yet", async () => {
+    const holdCreates: (() => void)[] = [];
+    const options = { holdCreates, closeFails: false };
+    const { state, service } = setup(options);
+    const opening = service.open({ hostId: "mini", cols: 80, rows: 24 });
+    opening.catch(() => undefined);
+    await expect.poll(() => holdCreates.length).toBe(1);
+    await service.close("term_1");
+    // bb makes the shell, but its machine stops answering before it can be ended.
+    state.sessions.set("term_1", { id: "term_1", status: "running", exitCode: null });
+    options.closeFails = true;
+    expect(await service.settleClosing()).toBe(true);
+    expect(state.closing).toHaveLength(1);
+    expect(state.warnings.some((warning) => warning.includes("term_1"))).toBe(true);
+    options.closeFails = false;
+    expect(await service.settleClosing()).toBe(false);
+    expect(state.sessions.get("term_1")?.status).toBe("exited");
+  });
+
+  it("needs no record for a tab whose shell bb already has", async () => {
+    const { state, service } = setup();
+    await service.open({ hostId: "mini", cols: 80, rows: 24 });
+    await service.close("term_1");
+    expect(state.closing).toEqual([]);
+    expect(await service.settleClosing()).toBe(false);
   });
 });
 
