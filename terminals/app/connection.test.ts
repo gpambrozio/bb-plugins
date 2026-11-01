@@ -324,6 +324,35 @@ describe("TerminalConnection", () => {
     expect(sockets).toHaveLength(2);
   });
 
+  it("waits for a shell bb is still starting instead of calling it ended", () => {
+    const { clock, sockets, socket, statuses, connection } = setup();
+    const starting = { status: "starting", exitCode: null };
+    // bb 0.48.1 attaching to a session in its starting state.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      socket().open();
+      socket().receive({ type: "attached", replayStartSeq: 0, nextSeq: 0, session: starting });
+      socket().receive({ type: "error", code: "terminal_not_running", message: "Terminal session is not running" });
+      expect(socket().closed?.code).toBe(4001);
+      expect(connection.current.state).toBe("connecting");
+      clock.advance(RECONNECT_DELAYS_MS[attempt]!);
+    }
+    // Backing off, not hammering bb every 100 ms.
+    expect(sockets.map((entry) => entry.sinceSeq)).toHaveLength(4);
+    socket().open();
+    socket().receive({ type: "attached", replayStartSeq: 0, nextSeq: 0, session: running });
+    socket().receive(chunk(0, "% "));
+    expect(statuses.at(-1)?.state).toBe("live");
+    expect(statuses.some((status) => status.state === "ended")).toBe(false);
+  });
+
+  it("still ends when a running shell is reported not running", () => {
+    const { socket, statuses } = setup();
+    socket().open();
+    socket().receive({ type: "attached", replayStartSeq: 0, nextSeq: 0, session: running });
+    socket().receive({ type: "error", code: "terminal_not_running", message: "Terminal session is not running" });
+    expect(statuses.at(-1)?.state).toBe("ended");
+  });
+
   it("keeps an attached socket through an error about one message", () => {
     const { clock, sockets, socket, statuses } = setup();
     socket().open();

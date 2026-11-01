@@ -224,8 +224,8 @@ describe("the Terminals page", () => {
     expect(frame(second).className).toMatch(/\bbg-state-active\b/);
     expect(frame(first).className).not.toMatch(/\bbg-state-active\b/);  });
 
-  it("waits for a shell bb is still opening before attaching to it", async () => {
-    const { state, rpc } = server([{ id: "mini", name: "Mac mini" }], [{ ...tab("term_1", "mini", "Mac mini"), status: "opening" }]);
+  it.each(["opening", "starting"] as const)("waits for a shell that is %s before attaching to it", async (status) => {
+    const { state, rpc } = server([{ id: "mini", name: "Mac mini" }], [{ ...tab("term_1", "mini", "Mac mini"), status }]);
     render(rpc);
     expect(await screen.findByText("Starting the shell…")).toBeTruthy();
     // No terminal yet: attaching now would hear "not found" and call the shell ended.

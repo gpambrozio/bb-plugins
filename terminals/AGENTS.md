@@ -84,8 +84,10 @@ also sets bb's own terminal title, best-effort: the tab's name is what counts.
 serialized section, then asks bb for the shell. So no shell ever runs without a tab — a reload or
 disable while bb is still opening one leaves a tab the next copy sees — and two clients pressing "+"
 at once cannot pass `MAX_TABS`. Until bb has the session, `list` calls the tab `opening` (for
-`OPENING_GRACE_MS`, after which it is `ended`); the page draws a placeholder and polls rather than
-attach, which would hear "not found". If bb cannot start the shell the tab is dropped again. A tab
+`OPENING_GRACE_MS`, after which it is `ended`), and bb's own `starting` follows while the machine opens
+the shell. The page treats both as pending (`isPending`): it draws a placeholder and polls rather than
+attach, which would hear "not found" or "not running"; and a connection that meets `starting` anyway
+(bb answers `attached` then `terminal_not_running`) backs off and tries again instead of ending. If bb cannot start the shell the tab is dropped again. A tab
 closed before bb has a session for it leaves a record in kv (`closing`, `ClosingSchema`), because the
 shell may still be on its way and the copy of the plugin that asked for it may be reloaded first: the
 background service of whichever copy is loaded checks every few seconds while there is one, ends the

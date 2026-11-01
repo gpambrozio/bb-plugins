@@ -24,6 +24,9 @@
  *   replay and then `exited`: bb does not send the output it kept. That comes
  *   from `terminals.output` instead (`readRetained`), from the first sequence
  *   not yet drawn, before the tab says it ended;
+ * - bb answers an attach to a shell it is still starting on its machine
+ *   with `attached` (status `starting`) and then `terminal_not_running`; that
+ *   is tried again like a failed attach, not taken as the end;
  * - an attach can fail without the socket closing: bb sends an `error` such as
  *   `terminal_attach_timeout` (its own 10 s limit on the host's answer) and
  *   forgets the client, while the socket still answers pings. So any other
@@ -121,6 +124,8 @@ export class TerminalConnection {
   private reconnectTimer: unknown = null;
   private heartbeat: unknown = null;
   private attachTimer: unknown = null;
+  /** The session's status as bb last reported it. */
+  private sessionStatus: SessionStatus | null = null;
   /** The socket bb has answered `attached` on; until then an error is this attempt's, not the session's. */
   private attachedSocket: SocketLike | null = null;
   private lastPongAt = 0;
@@ -203,7 +208,8 @@ export class TerminalConnection {
     if (message === null) return;
     switch (message.type) {
       case "attached":
-        this.attempts = 0;
+        // A shell still starting is answered with "not running" next: keep backing off until it runs.
+        if (message.session.status !== "starting") this.attempts = 0;
         this.attachedSocket = this.socket;
         this.clearAttachTimer();
         // A replay that starts later than asked lost the oldest output to bb's bound; carry on from there.
@@ -230,7 +236,10 @@ export class TerminalConnection {
         this.finish(message.session.exitCode, true);
         return;
       case "error":
-        if (ENDED_ERRORS.has(message.code)) this.finish(null);
+        // bb answers an attach to a shell it is still starting with "not running": not over, just early.
+        if (message.code === "terminal_not_running" && this.sessionStatus === "starting" && this.socket !== null) {
+          this.retry(this.socket, message.code);
+        } else if (ENDED_ERRORS.has(message.code)) this.finish(null);
         // bb forgot this client when the attach failed; the socket would stay open and silent.
         else if (this.socket !== null && this.attachedSocket !== this.socket) this.retry(this.socket, message.code);
         return;
@@ -241,9 +250,11 @@ export class TerminalConnection {
   }
 
   private applySession(session: SessionInfo): void {
+    this.sessionStatus = session.status;
     if (session.size !== null) this.options.onSize?.(session.size);
     if (session.status === "exited") return this.finish(session.exitCode, true);
-    this.setStatus({ state: session.status === "disconnected" ? "offline" : "live", exitCode: null });
+    const state = session.status === "disconnected" ? "offline" : session.status === "starting" ? "connecting" : "live";
+    this.setStatus({ state, exitCode: null });
   }
 
   /** Stops for good; for a shell that exited, draws what bb kept of its output that this tab has not. */
@@ -293,7 +304,7 @@ export class TerminalConnection {
     this.dropSocket();
     socket.close(4001, reason.slice(0, 100));
     if (this.disposed || this.finished) return;
-    this.setStatus({ state: "offline", exitCode: null });
+    this.setStatus({ state: this.sessionStatus === "starting" ? "connecting" : "offline", exitCode: null });
     this.scheduleReconnect();
   }
 

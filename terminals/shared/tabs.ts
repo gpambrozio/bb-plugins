@@ -70,6 +70,15 @@ export const OPENING_GRACE_MS = 60_000;
 
 export type TabStatus = z.infer<typeof TabStatusSchema>;
 
+/**
+ * Whether the tab's shell is not ready to attach to: bb has no session yet
+ * (`opening`), or has one it is still starting on the machine (`starting`,
+ * which bb answers an attach to with "not running").
+ */
+export function isPending(status: TabStatus): boolean {
+  return status === "opening" || status === "starting";
+}
+
 export const TabViewSchema = TabSchema.extend({
   status: TabStatusSchema,
   /** The shell's exit code, once it has one. */

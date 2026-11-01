@@ -18,7 +18,7 @@ import {
 
 import type { RpcContract } from "../shared/contract";
 import { plusAction } from "../shared/host-choice";
-import { MAX_TAB_NAME, TABS_CHANGED, normalizeTabName, tabLabels, type HostChoice, type TabView } from "../shared/tabs";
+import { MAX_TAB_NAME, TABS_CHANGED, isPending, normalizeTabName, tabLabels, type HostChoice, type TabView } from "../shared/tabs";
 import { Button } from "@/components/ui/button";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -134,12 +134,13 @@ export function TerminalsPage(_props: PluginNavPanelProps) {
   const backend = useTerminalsBackend();
   useEffect(() => {
     if (tabs === null) return;
-    for (const tab of tabs) if (tab.status !== "opening") liveTerminal(tab.terminalId, backend);
+    for (const tab of tabs) if (!isPending(tab.status)) liveTerminal(tab.terminalId, backend);
     releaseClosedTerminals(new Set(tabIds));
   }, [tabs, tabIds, backend]);
 
-  // A shell another window (or a reloaded copy of the plugin) is opening: look again until bb has it.
-  const anyOpening = tabs?.some((tab) => tab.status === "opening") ?? false;
+  // A shell bb is still opening (here, in another window, or for a reloaded copy of the plugin):
+  // look again until it runs.
+  const anyOpening = tabs?.some((tab) => isPending(tab.status)) ?? false;
   useEffect(() => {
     if (!anyOpening) return;
     const timer = setTimeout(refetch, OPENING_POLL_MS);
@@ -289,7 +290,7 @@ export function TerminalsPage(_props: PluginNavPanelProps) {
         </div>
       ) : null}
       <div className="relative min-h-0 flex-1 bg-sidebar">
-        {shown !== null && tabs?.find((tab) => tab.terminalId === shown)?.status === "opening" ? (
+        {shown !== null && isPending(tabs?.find((tab) => tab.terminalId === shown)?.status ?? "running") ? (
           <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground">
             <Icon name="Spinner" />
             Starting the shell…
@@ -333,7 +334,7 @@ function TabButton({
   onRename: (name: string) => void;
   onClose: () => void;
 }) {
-  const opening = tab.status === "opening";
+  const opening = isPending(tab.status);
   const status = useConnectionStatus(tab.terminalId, opening);
   const [editing, setEditing] = useState(false);
   const tabButton = useRef<HTMLButtonElement>(null);

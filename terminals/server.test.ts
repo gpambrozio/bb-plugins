@@ -11,14 +11,14 @@ import { OPENING_GRACE_MS, TABS_CHANGED, type TabView } from "./shared/tabs";
 
 afterEach(() => vi.useRealTimers());
 
-type Session = { id: string; status: "running" | "exited"; exitCode: number | null };
+type Session = { id: string; status: "starting" | "running" | "exited"; exitCode: number | null };
 
 function notFound(): Error {
   return Object.assign(new Error("Terminal session not found"), { status: 404 });
 }
 
 /** bb's terminal API, stubbed; `holdCreates` keeps each create waiting until the test lets it finish. */
-async function start(options: { holdCreates?: boolean } = {}) {
+async function start(options: { holdCreates?: boolean; startingWhileHeld?: boolean } = {}) {
   const sessions = new Map<string, Session>();
   const held: (() => void)[] = [];
   const session = (id: string) => ({
@@ -49,6 +49,8 @@ async function start(options: { holdCreates?: boolean } = {}) {
       terminals: {
         create: async ({ id }) => {
           if (id === undefined) throw new Error("the plugin must choose the id");
+          // bb 0.48.1 inserts the session as starting before it asks the machine to open it.
+          if (options.startingWhileHeld) sessions.set(id, { id, status: "starting", exitCode: null });
           if (options.holdCreates) await new Promise<void>((resolve) => held.push(resolve));
           sessions.set(id, { id, status: "running", exitCode: null });
           return session(id);
@@ -154,6 +156,19 @@ describe("terminals server", () => {
     await vi.advanceTimersByTimeAsync(5_000);
     await expect.poll(() => sessions.get(stored!.terminalId)?.status).toBe("exited");
     expect(await tabs(next)).toEqual([]);
+    service.controller.abort();
+    await service.done;
+  });
+
+  it("lists a shell bb is still starting as starting, and keeps its tab", async () => {
+    const { harness, held } = await start({ holdCreates: true, startingWhileHeld: true });
+    const opening = harness.callRpc("open", { hostId: "mini", cols: 80, rows: 24 });
+    await expect.poll(() => held.length).toBe(1);
+    const service = harness.runService("prune-ended-tabs");
+    expect(await tabs(harness)).toMatchObject([{ status: "starting" }]);
+    held[0]!();
+    await opening;
+    expect(await tabs(harness)).toMatchObject([{ status: "running" }]);
     service.controller.abort();
     await service.done;
   });
