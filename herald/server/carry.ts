@@ -14,6 +14,13 @@
  * that answers late can neither reorder updates nor bring one back after the
  * thread was archived or spoken for without a tool (`forget`, `coveredThrough`).
  *
+ * Whether a tool writes for an update — announced, and the model on — is
+ * decided apart from, and usually before, the event's context lookup
+ * (`eligible`). A run waits for the earlier decisions (`decided`) and is
+ * given only updates decided eligible: a finished turn whose announcement
+ * is off must never reach a question's prompt while its context is still
+ * being read.
+ *
  * Only finished turns are held: a question, plan or permission a newer event
  * overtook was answered, and an error was followed by a new turn. In memory
  * only, like a sentence being written: a reload drops it.
@@ -23,6 +30,11 @@
 export const CARRY_MAX_UPDATES = 4;
 /** The earlier updates' text a run is given at most, together; the oldest go first. */
 export const CARRY_MAX_CHARS = 6_000;
+/**
+ * What memory keeps per thread, decided or not, beyond the caps a run is
+ * given within: room for updates whose eligibility is still being read.
+ */
+const HELD_MAX = 2 * (CARRY_MAX_UPDATES + 1);
 
 export interface CarriedUpdate {
   /** How the prompt names its kind of event. */
@@ -35,6 +47,8 @@ export interface CarriedUpdate {
 export interface Carried {
   updates: readonly CarriedUpdate[];
   dropped: number;
+  /** Which held updates these are, for `covered`. */
+  seqs: readonly number[];
 }
 
 interface Held extends CarriedUpdate {
@@ -42,6 +56,10 @@ interface Held extends CarriedUpdate {
   seq: number;
   /** How many older updates the caps let go while this was the oldest held; they were never in a prompt. */
   droppedBefore: number;
+  /** Whether a tool writes for it: null until decided. */
+  eligible: boolean | null;
+  /** Settles once `eligible` is decided. */
+  decision: Promise<void>;
 }
 
 export class CarriedUpdates {
@@ -50,29 +68,72 @@ export class CarriedUpdates {
 
   /**
    * An event arriving, before any lookup: its place in the thread's order,
-   * and its finished turn, when it has one, held from now on.
+   * and its finished turn, when it has one, held from now on. `eligible`
+   * says whether a tool writes for it (rejecting counts as no); without it,
+   * it is eligible.
    */
-  arrive(threadId: string, update: CarriedUpdate | null): number {
+  arrive(threadId: string, update: CarriedUpdate | null, eligible?: Promise<boolean>): number {
     this.counter += 1;
-    if (update === null) return this.counter;
+    const seq = this.counter;
+    if (update === null) return seq;
     const held = this.threads.get(threadId) ?? [];
-    held.push({ ...update, seq: this.counter, droppedBefore: 0 });
-    // The newest is some run's own update; the caps bound what comes before it.
-    while (held.length > CARRY_MAX_UPDATES + 1 || (held.length > 1 && length(held.slice(0, -1)) > CARRY_MAX_CHARS)) {
-      const oldest = held.shift() as Held;
-      (held[0] as Held).droppedBefore += oldest.droppedBefore + 1;
+    const item: Held = { ...update, seq, droppedBefore: 0, eligible: eligible === undefined ? true : null, decision: Promise.resolve() };
+    if (eligible !== undefined) {
+      item.decision = eligible.then(
+        (yes) => this.decide(threadId, item, yes),
+        () => this.decide(threadId, item, false),
+      );
     }
+    held.push(item);
+    // Only memory is bounded here; `earlier` applies the caps to what a run is given.
+    while (held.length > HELD_MAX) this.drop(held, 0);
     this.threads.set(threadId, held);
-    return this.counter;
+    return seq;
   }
 
-  /** The updates that arrived before `seq`, oldest first: what the run for `seq` covers besides its own. */
+  /** Resolves once every update that arrived before `seq` is decided, or after `waitMs`, whichever is first. */
+  async decided(threadId: string, seq: number, waitMs: number): Promise<void> {
+    const pending = (this.threads.get(threadId) ?? []).filter((update) => update.seq < seq && update.eligible === null).map((update) => update.decision);
+    if (pending.length === 0) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([Promise.all(pending), new Promise((resolve) => (timer = setTimeout(resolve, waitMs)))]);
+    clearTimeout(timer);
+  }
+
+  /**
+   * The eligible updates that arrived before `seq`, oldest first, within the
+   * caps: what the run for `seq` covers besides its own, whatever kind of
+   * event it is. What the caps let go now is dropped and counted.
+   */
   earlier(threadId: string, seq: number): Carried {
-    const before = (this.threads.get(threadId) ?? []).filter((update) => update.seq < seq);
+    const held = this.threads.get(threadId) ?? [];
+    const before = () => held.filter((update) => update.seq < seq && update.eligible === true);
+    let given = before();
+    while (given.length > CARRY_MAX_UPDATES || (given.length > 1 && length(given) > CARRY_MAX_CHARS)) {
+      this.drop(held, held.indexOf(given[0] as Held));
+      given = before();
+    }
+    if (held.length === 0) this.threads.delete(threadId);
     return {
-      updates: before.map(({ event, output }) => ({ event, output })),
-      dropped: before.reduce((sum, update) => sum + update.droppedBefore, 0),
+      updates: given.map(({ event, output }) => ({ event, output })),
+      // Counted on whatever is held before `seq`, given or not: every one was let go before this run.
+      dropped: held.filter((update) => update.seq < seq).reduce((sum, update) => sum + update.droppedBefore, 0),
+      seqs: given.map((update) => update.seq),
     };
+  }
+
+  /**
+   * The run for `own` landed: it and what it was given are covered, and the
+   * count of what was let go before it was told.
+   */
+  covered(threadId: string, own: number, given: Carried): void {
+    const held = this.threads.get(threadId);
+    if (held === undefined) return;
+    const gone = new Set([own, ...given.seqs]);
+    const left = held.filter((update) => !gone.has(update.seq));
+    for (const update of left) if (update.seq < own) update.droppedBefore = 0;
+    if (left.length === 0) this.threads.delete(threadId);
+    else this.threads.set(threadId, left);
   }
 
   /** The run for `seq` landed, or the plain sentence spoke for it: it and everything before it is covered. */
@@ -94,6 +155,22 @@ export class CarriedUpdates {
     const next = held[index];
     if (next !== undefined && gone !== undefined) next.droppedBefore += gone.droppedBefore;
     if (held.length === 0) this.threads.delete(threadId);
+  }
+
+  private decide(threadId: string, item: Held, yes: boolean): void {
+    if (yes) item.eligible = true;
+    else this.withdraw(threadId, item.seq);
+  }
+
+  /**
+   * Lets the caps take `held[index]`: counted on the next one held, as it
+   * was never in a prompt — unless it was not yet known to be one a tool
+   * writes for, which only memory's bound lets go.
+   */
+  private drop(held: Held[], index: number): void {
+    const [gone] = held.splice(index, 1);
+    const next = held[index];
+    if (gone !== undefined && next !== undefined) next.droppedBefore += gone.droppedBefore + (gone.eligible === true ? 1 : 0);
   }
 
   /** The thread is gone. */

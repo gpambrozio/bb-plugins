@@ -5,7 +5,7 @@
  */
 import { describe, expect, it, vi } from "vitest";
 
-import { NO_CHOICE } from "../shared/thread-choice";
+import { NO_CHOICE, type ChoiceInputs } from "../shared/thread-choice";
 import { createHooks, type HeraldConfig, type HookDeps } from "./hooks";
 import type { EventsPort } from "./ports";
 import { AttentionStore } from "./store";
@@ -58,6 +58,7 @@ function runs() {
 interface Options {
   config?: () => HeraldConfig;
   events?: EventsPort;
+  choiceOf?: HookDeps["choiceOf"];
 }
 
 function setup(write: HookDeps["writeSentence"], options: Options = {}) {
@@ -69,7 +70,7 @@ function setup(write: HookDeps["writeSentence"], options: Options = {}) {
     store,
     readConfig: async () => config(),
     events: options.events ?? events,
-    choiceOf: async () => NO_CHOICE,
+    choiceOf: options.choiceOf ?? (async () => NO_CHOICE),
     publish: vi.fn(),
     log,
     writeSentence: write,
@@ -473,6 +474,102 @@ describe("hooks carrying overtaken updates", () => {
       await turn(hooks, "Model again.");
       expect(w.calls).toHaveLength(1);
       expect(w.prompt(0)).toBe("Event: finished its turn\nOutput: Model again.");
+    });
+  });
+
+  describe("caps for an event with no update of its own", () => {
+    for (const [kind, end] of [
+      ["question", (hooks: ReturnType<typeof setup>["hooks"]) => hooks.interactionPending(thread(), question())],
+      ["error", (hooks: ReturnType<typeof setup>["hooks"]) => hooks.failed(thread(), "The tool crashed")],
+    ] as const) {
+      it(`gives the ${kind} event at most ${CARRY_MAX_UPDATES} earlier updates, and says how many were left out`, async () => {
+        const w = runs();
+        const { hooks } = setup(w.write);
+        for (let index = 1; index <= CARRY_MAX_UPDATES + 1; index += 1) await turn(hooks, `Update number ${index}.`);
+        hooks.active(thread());
+        await end(hooks);
+        await settle();
+        const prompt = w.prompt(CARRY_MAX_UPDATES + 1);
+        expect(prompt).toContain(`${CARRY_MAX_UPDATES + 1} updates from this thread`);
+        expect(prompt).not.toContain("Update number 1.");
+        expect(prompt).toContain("Update number 2.");
+        expect(prompt).toContain("1 older update was left out");
+      });
+
+      it(`gives the ${kind} event at most the carried characters`, async () => {
+        const w = runs();
+        const { hooks } = setup(w.write);
+        for (const letter of ["a", "b", "c"]) await turn(hooks, letter.repeat(3_000));
+        hooks.active(thread());
+        await end(hooks);
+        await settle();
+        const prompt = w.prompt(3);
+        expect(prompt).not.toContain("aaaa");
+        expect(prompt).toContain("bbbb");
+        expect(prompt).toContain("cccc");
+        expect(prompt).toContain("1 older update was left out");
+        expect(prompt.length).toBeLessThan(7_000);
+      });
+    }
+  });
+
+  describe("a finished turn no tool writes for", () => {
+    const DISABLED = "FINISHED ANNOUNCEMENTS ARE OFF: do not carry me";
+
+    it("never reaches a question's prompt while its context is still being read", async () => {
+      const lookups = deferredLookups();
+      const w = runs();
+      const config = { ...CONFIG, announce: { ...CONFIG.announce, finished: false } };
+      const { hooks } = setup(w.write, { events: lookups.port, config: () => config });
+      lookups.holdNext();
+      await heldTurn(hooks, DISABLED);
+      hooks.active(thread());
+      await hooks.interactionPending(thread(), question());
+      await settle();
+      expect(w.calls).toHaveLength(1);
+      expect(w.prompt(0)).not.toContain(DISABLED);
+      lookups.release();
+      await settle();
+      expect(w.calls.every((call) => !call.prompt.includes(DISABLED))).toBe(true);
+    });
+
+    it("never reaches a question's prompt on a Questions-only thread", async () => {
+      const lookups = deferredLookups();
+      const w = runs();
+      const questionsOnly: ChoiceInputs = { own: "questions", inherited: null };
+      const { hooks } = setup(w.write, { events: lookups.port, choiceOf: async () => questionsOnly });
+      lookups.holdNext();
+      await heldTurn(hooks, DISABLED);
+      hooks.active(thread());
+      await hooks.interactionPending(thread(), question());
+      await settle();
+      expect(w.prompt(0)).toContain("Event: asks the developer a question");
+      expect(w.prompt(0)).not.toContain(DISABLED);
+    });
+
+    it("waits for an earlier turn's choice before giving it to a run", async () => {
+      let answerChoice: (choice: ChoiceInputs) => void = () => {};
+      let slowNext = true;
+      const w = runs();
+      const { hooks } = setup(w.write, {
+        choiceOf: () => {
+          if (!slowNext) return Promise.resolve(NO_CHOICE);
+          slowNext = false;
+          return new Promise<ChoiceInputs>((resolve) => (answerChoice = resolve));
+        },
+      });
+      hooks.active(thread());
+      void hooks.idle(thread(), REVIEW);
+      await settle();
+      hooks.active(thread());
+      await hooks.interactionPending(thread(), question());
+      await settle();
+      // The question's run waits on the review's choice before it is written.
+      expect(w.calls).toHaveLength(0);
+      answerChoice(NO_CHOICE);
+      await settle();
+      expect(w.calls).toHaveLength(1);
+      expect(w.prompt(0)).toContain(REVIEW);
     });
   });
 });

@@ -58,12 +58,27 @@ describe("CarriedUpdates", () => {
     for (let index = 0; index < CARRY_MAX_UPDATES + 3; index += 1) carry.arrive("t1", update(`u${index}`));
     const mine = carry.arrive("t1", update("mine"));
     const told = carry.earlier("t1", mine);
-    expect(told.updates).toHaveLength(CARRY_MAX_UPDATES);
+    expect(told.updates.map((held) => held.output)).toEqual(["u3", "u4", "u5", "u6"]);
     expect(told.dropped).toBe(3);
-    // Arrivals during the run push out what it was given: those were in its prompt.
     const later = carry.arrive("t1", update("later"));
-    carry.coveredThrough("t1", mine);
-    expect(carry.earlier("t1", later + 1)).toEqual({ updates: [update("later")], dropped: 0 });
+    carry.covered("t1", mine, told);
+    expect(carry.earlier("t1", later + 1)).toEqual({ updates: [update("later")], dropped: 0, seqs: [later] });
+  });
+
+  it("applies the caps for an event with no update of its own", () => {
+    const carry = new CarriedUpdates();
+    for (let index = 0; index < CARRY_MAX_UPDATES + 1; index += 1) carry.arrive("t1", update(`u${index}`));
+    const asked = carry.arrive("t1", null);
+    const told = carry.earlier("t1", asked);
+    expect(told.updates).toHaveLength(CARRY_MAX_UPDATES);
+    expect(told.dropped).toBe(1);
+
+    const long = new CarriedUpdates();
+    for (const letter of ["a", "b", "c"]) long.arrive("t1", update(letter.repeat(3_000)));
+    const failed = long.arrive("t1", null);
+    const given = long.earlier("t1", failed);
+    expect(given.updates.map((held) => held.output[0])).toEqual(["b", "c"]);
+    expect(given.dropped).toBe(1);
   });
 
   it("keeps the count of what went unread when only a run's own update is withdrawn", () => {
@@ -71,10 +86,24 @@ describe("CarriedUpdates", () => {
     const seqs: number[] = [];
     for (let index = 0; index < CARRY_MAX_UPDATES + 2; index += 1) seqs.push(carry.arrive("t1", update(`u${index}`)));
     const all = Number.MAX_SAFE_INTEGER;
-    expect(carry.earlier("t1", all).dropped).toBe(1);
-    // The oldest held (u1) carries the count; withdrawn, the next one does.
-    carry.withdraw("t1", seqs[1] as number);
-    expect(carry.earlier("t1", all)).toEqual({ updates: ["u2", "u3", "u4", "u5"].map(update), dropped: 1 });
+    expect(carry.earlier("t1", all).dropped).toBe(2);
+    // The oldest held (u2) carries the count; withdrawn, the next one does.
+    carry.withdraw("t1", seqs[2] as number);
+    expect(carry.earlier("t1", all)).toEqual({ updates: ["u3", "u4", "u5"].map(update), dropped: 2, seqs: seqs.slice(3) });
+  });
+
+  it("gives only updates known to be ones a tool writes for, once decided", async () => {
+    const carry = new CarriedUpdates();
+    let decide: (yes: boolean) => void = () => {};
+    carry.arrive("t1", update("off"), Promise.resolve(false));
+    carry.arrive("t1", update("pending"), new Promise<boolean>((resolve) => (decide = resolve)));
+    const mine = carry.arrive("t1", update("mine"));
+    await carry.decided("t1", mine, 1);
+    expect(carry.earlier("t1", mine).updates).toEqual([]);
+    const waiting = carry.decided("t1", mine, 10_000);
+    decide(true);
+    await waiting;
+    expect(carry.earlier("t1", mine).updates).toEqual([update("pending")]);
   });
 
   it("keeps one update however long it is, and never mixes threads", () => {

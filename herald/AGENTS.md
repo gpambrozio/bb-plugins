@@ -157,6 +157,13 @@ no shell. What that buys, and what must stay true:
     arrived before its event, oldest first, even one whose own lookups are still out, and a late lookup
     can neither reorder turns nor bring one back after an archive or a plain sentence cleared them.
     Holding after the lookups was review pass 1's second and third findings.
+  - **Eligible before it is given.** Whether a tool writes for a held turn (model on, and announced by
+    the settings and the thread's choice) is decided from its config and choice reads alone, apart from
+    its context lookup, which reads the thread's prompts and can be slow. A run waits for every earlier
+    turn's decision (`decided`, at most `ELIGIBILITY_WAIT_MS`) and is given only turns decided eligible;
+    one still undecided stays held for a later run. Otherwise, with finished turns switched off or a
+    Questions-only thread, a turn whose context was still being read reached a question's prompt and
+    was spoken through it (review pass 2).
   - **The prompt.** A run reads the held turns before its own sequence number when it starts and puts
     them in `{{output}}`, each under an `[Update n of m: …]` header (`combinedOutput`). The template is
     unchanged, so a user's prompt keeps working, and with nothing carried the output is as before.
@@ -168,14 +175,17 @@ no shell. What that buys, and what must stay true:
     notification moves to the new run (owed if either was), sent once with the sentence that covers both.
     **A question's run is never stopped**: an earlier question still waits when a later one is answered,
     and its notification is its own (`hooks-push.test.ts`).
-  - **What clears them.** The tool's sentence or silence covers everything up to its event
-    (`coveredThrough`); a failure — busy, missing, timeout — speaks the plain sentence, which covers only
+  - **What clears them.** The tool's sentence or silence covers what it was given and its own turn
+    (`covered`); a failure — busy, missing, timeout — speaks the plain sentence, which covers only
     the event's own turn (`withdraw`), so the earlier ones wait for the next run. A plain sentence (model
     off) covers everything up to it; an archive or delete forgets the thread; an event that is not
     announced (`off`) withdraws only itself. A run that is dropped or withdrawn clears nothing.
-  - **Bounds.** At most `CARRY_MAX_UPDATES` (4) earlier turns and `CARRY_MAX_CHARS` (6,000) of their text,
-    each already cut at `PROMPT_OUTPUT_MAX`, oldest dropped first; how many were let go is counted on the
-    oldest held turn and said in the output ("left out") until a run that was told lands.
+  - **Bounds.** A run is given at most `CARRY_MAX_UPDATES` (4) earlier turns and `CARRY_MAX_CHARS` (6,000)
+    of their text, each already cut at `PROMPT_OUTPUT_MAX`, applied where the run reads them
+    (`earlier`), so a question or an error, which holds no turn of its own, is bounded too (review
+    pass 2). The oldest go first; how many were let go is counted on the oldest held turn and said in
+    the output ("left out") until a run that was told lands. Memory keeps twice the count per thread,
+    for turns still undecided.
   - Only finished turns are held: an overtaken question was answered, and an error was followed by a new
     turn. In memory only: a reload drops them, as it drops a sentence being written. A turn the user
     answers while its sentence is being written is carried too, so the next sentence may mention what
