@@ -10,6 +10,7 @@
     { "name": "model-pricing", "source": "./model-pricing" },
     { "name": "skills", "source": "./skills" },
     { "name": "screen-sharing", "source": "./screen-sharing" },
-    { "name": "diff-review", "source": "./diff-review" }
+    { "name": "diff-review", "source": "./diff-review" },
+    { "name": "terminals", "source": "./terminals" }
   ]
 }

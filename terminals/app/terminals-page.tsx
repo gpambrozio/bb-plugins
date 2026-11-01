@@ -1,0 +1,340 @@
+/**
+ * The Terminals page: a strip of tabs, one shell each, with "+" at its end.
+ *
+ * The tab list comes from the server and is the same in every window; which
+ * tab is shown is this window's own (app/selection.ts). Each tab's terminal
+ * lives in app/live-terminals.ts, outside this component, so leaving the page
+ * and coming back finds every shell where it was.
+ */
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import {
+  experimental_useCodeTheme,
+  useRealtime,
+  useRealtimeConnectionState,
+  useRpc,
+  type PluginNavPanelProps,
+} from "@get-bb/plugin-sdk/app";
+
+import type { RpcContract } from "../shared/contract";
+import { plusAction } from "../shared/host-choice";
+import { TABS_CHANGED, tabLabels, type HostChoice, type TabView } from "../shared/tabs";
+import { Button } from "@/components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Icon } from "@/components/ui/icon";
+import { cn } from "@/lib/utils";
+
+import type { ConnectionStatus } from "./connection";
+import { applyThemeToAll, liveTerminal, releaseClosedTerminals } from "./live-terminals";
+import { resolveSelection, selectionAfterClose, windowSelection } from "./selection";
+
+export const PANEL_PATH = "terminals";
+
+/** The size a new shell starts at; the tab resizes it as soon as it is on screen. */
+const INITIAL_SIZE = { cols: 100, rows: 30 };
+
+function message(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** The open tabs, kept current by the server's signal and refetched after a reconnect. */
+function useTabs() {
+  const rpc = useRpc<RpcContract>();
+  const [tabs, setTabs] = useState<TabView[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const refetch = useCallback(() => {
+    rpc.call("list", {}).then(
+      (result) => {
+        setTabs(result.tabs);
+        setError(null);
+      },
+      (cause: unknown) => setError(message(cause)),
+    );
+  }, [rpc]);
+  useEffect(refetch, [refetch]);
+  useRealtime(TABS_CHANGED, refetch);
+  const connection = useRealtimeConnectionState();
+  const wasConnected = useRef(connection === "connected");
+  useEffect(() => {
+    // A signal sent while the realtime link was down is lost; read the list again.
+    if (connection === "connected" && !wasConnected.current) refetch();
+    wasConnected.current = connection === "connected";
+  }, [connection, refetch]);
+  return { rpc, tabs, setTabs, error, setError, refetch };
+}
+
+/** The tab's live connection status. */
+function useConnectionStatus(terminalId: string): ConnectionStatus {
+  const terminal = liveTerminal(terminalId);
+  const subscribe = useCallback((notify: () => void) => terminal.onStatus(notify), [terminal]);
+  return useSyncExternalStore(subscribe, () => terminal.status());
+}
+
+export function TerminalsPage(_props: PluginNavPanelProps) {
+  const { rpc, tabs, setTabs, error, setError, refetch } = useTabs();
+  const [selected, setSelectedState] = useState<string | null>(() => windowSelection.get());
+  const [opening, setOpening] = useState(false);
+  const [hostMenu, setHostMenu] = useState<HostChoice[] | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const tabIds = useMemo(() => (tabs ?? []).map((tab) => tab.terminalId), [tabs]);
+  const shown = tabs === null ? null : resolveSelection(tabIds, selected);
+  const labels = useMemo(() => tabLabels(tabs ?? []), [tabs]);
+
+  const select = useCallback((terminalId: string | null) => {
+    windowSelection.set(terminalId);
+    setSelectedState(terminalId);
+  }, []);
+
+  // Start every open tab's terminal, so tabs out of sight keep their output, and let go of closed ones.
+  useEffect(() => {
+    if (tabs === null) return;
+    for (const id of tabIds) liveTerminal(id);
+    releaseClosedTerminals(new Set(tabIds));
+  }, [tabs, tabIds]);
+
+  const { mode, name } = experimental_useCodeTheme();
+  useEffect(() => {
+    // After bb has applied the new theme's variables, which it may do after this render.
+    const frame = requestAnimationFrame(applyThemeToAll);
+    return () => cancelAnimationFrame(frame);
+  }, [mode, name]);
+
+  const openOn = useCallback(
+    async (hostId: string) => {
+      setHostMenu(null);
+      setOpening(true);
+      setNotice(null);
+      try {
+        const tab = await rpc.call("open", { hostId, ...INITIAL_SIZE });
+        setTabs((current) => (current?.some((entry) => entry.terminalId === tab.terminalId) ? current : [...(current ?? []), tab]));
+        select(tab.terminalId);
+      } catch (cause) {
+        setNotice(`Could not open a terminal: ${message(cause)}`);
+      } finally {
+        setOpening(false);
+      }
+    },
+    [rpc, select, setTabs],
+  );
+
+  const plus = useCallback(async () => {
+    if (opening) return;
+    setNotice(null);
+    let hosts: HostChoice[];
+    try {
+      hosts = (await rpc.call("hosts", {})).hosts;
+    } catch (cause) {
+      setNotice(`Could not list machines: ${message(cause)}`);
+      return;
+    }
+    const action = plusAction(hosts);
+    if (action.kind === "none") setNotice("No machine is connected to bb right now.");
+    else if (action.kind === "open") await openOn(action.hostId);
+    else setHostMenu(action.hosts);
+  }, [opening, openOn, rpc]);
+
+  const close = useCallback(
+    async (terminalId: string) => {
+      setNotice(null);
+      try {
+        await rpc.call("close", { terminalId });
+        select(selectionAfterClose(tabIds, terminalId, shown));
+        setTabs((current) => current?.filter((tab) => tab.terminalId !== terminalId) ?? current);
+      } catch (cause) {
+        setNotice(`Could not close the terminal: ${message(cause)}`);
+        refetch();
+      }
+    },
+    [rpc, select, tabIds, shown, setTabs, refetch],
+  );
+
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div role="tablist" aria-label="Terminals" className="flex min-h-10 items-stretch overflow-x-auto border-b border-border">
+        {(tabs ?? []).map((tab) => (
+          <TabButton
+            key={tab.terminalId}
+            tab={tab}
+            label={labels.get(tab.terminalId) ?? tab.hostName}
+            selected={tab.terminalId === shown}
+            onSelect={() => select(tab.terminalId)}
+            onClose={() => void close(tab.terminalId)}
+          />
+        ))}
+        <DropdownMenu
+          open={hostMenu !== null}
+          onOpenChange={(open) => {
+            if (open) void plus();
+            else setHostMenu(null);
+          }}
+        >
+          <DropdownMenuTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="m-1 h-8 w-8 shrink-0 px-0"
+              aria-label="New terminal"
+              disabled={opening || tabs === null}
+            >
+              <Icon name={opening ? "Spinner" : "Plus"} />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" mobileTitle="Open a terminal on">
+            <DropdownMenuLabel>Open a terminal on</DropdownMenuLabel>
+            {(hostMenu ?? []).map((host) => (
+              <DropdownMenuItem key={host.id} onSelect={() => void openOn(host.id)}>
+                <Icon name="Laptop" />
+                {host.name}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+      {notice !== null || error !== null ? (
+        <div role="alert" className="flex items-center gap-2 border-b border-border px-3 py-2 text-xs text-destructive">
+          <Icon name="AlertTriangle" />
+          <span className="min-w-0 flex-1">{notice ?? `Could not load the terminals: ${error}`}</span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-6 px-2"
+            onClick={() => {
+              setNotice(null);
+              setError(null);
+              if (error !== null) refetch();
+            }}
+          >
+            {error !== null && notice === null ? "Retry" : "Dismiss"}
+          </Button>
+        </div>
+      ) : null}
+      <div className="relative min-h-0 flex-1 bg-sidebar">
+        {shown !== null ? (
+          <TerminalView key={shown} terminalId={shown} onClose={() => void close(shown)} />
+        ) : tabs === null ? null : (
+          <EmptyState opening={opening} onOpen={() => void plus()} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function StatusDot({ status }: { status: ConnectionStatus }) {
+  if (status.state === "live") return null;
+  return (
+    <span
+      aria-hidden
+      className={cn(
+        "size-1.5 shrink-0 rounded-full",
+        status.state === "ended" ? "bg-muted-foreground" : "bg-warning",
+      )}
+    />
+  );
+}
+
+function TabButton({
+  tab,
+  label,
+  selected,
+  onSelect,
+  onClose,
+}: {
+  tab: TabView;
+  label: string;
+  selected: boolean;
+  onSelect: () => void;
+  onClose: () => void;
+}) {
+  const status = useConnectionStatus(tab.terminalId);
+  return (
+    <div
+      className={cn(
+        "group flex max-w-56 shrink-0 items-center gap-1 border-r border-border pl-3 pr-1 text-sm",
+        selected ? "bg-sidebar text-foreground" : "text-muted-foreground hover:bg-state-hover",
+      )}
+    >
+      <button
+        type="button"
+        role="tab"
+        aria-selected={selected}
+        className="flex min-w-0 items-center gap-2 py-2 outline-none focus-visible:underline"
+        onClick={onSelect}
+        onAuxClick={(event) => {
+          // A middle click closes the tab, as in a browser or a terminal app.
+          if (event.button === 1) onClose();
+        }}
+        title={status.state === "ended" ? `${label} (ended)` : status.state === "offline" ? `${label} (offline)` : label}
+      >
+        <StatusDot status={status} />
+        <span className="truncate">{label}</span>
+      </button>
+      <button
+        type="button"
+        aria-label={`Close ${label}`}
+        className={cn(
+          "rounded p-0.5 text-muted-foreground hover:bg-state-hover hover:text-foreground",
+          selected ? "opacity-100" : "opacity-0 group-hover:opacity-100 focus-visible:opacity-100",
+        )}
+        onClick={onClose}
+      >
+        <Icon name="X" className="size-3.5" />
+      </button>
+    </div>
+  );
+}
+
+function TerminalView({ terminalId, onClose }: { terminalId: string; onClose: () => void }) {
+  const container = useRef<HTMLDivElement>(null);
+  const status = useConnectionStatus(terminalId);
+
+  useLayoutEffect(() => {
+    const parent = container.current;
+    if (parent === null) return;
+    const terminal = liveTerminal(terminalId);
+    terminal.attach(parent);
+    terminal.focus();
+    const observer = new ResizeObserver(() => terminal.fit());
+    observer.observe(parent);
+    return () => {
+      observer.disconnect();
+      terminal.detach();
+    };
+  }, [terminalId]);
+
+  return (
+    <div className="absolute inset-0 flex flex-col">
+      {status.state === "offline" ? (
+        <div className="flex items-center gap-2 border-b border-warning px-3 py-1.5 text-xs text-warning-text">
+          <Icon name="Spinner" />
+          This machine is offline. The shell picks up where it was when it reconnects.
+        </div>
+      ) : null}
+      {status.state === "ended" ? (
+        <div className="flex items-center gap-2 border-b border-border px-3 py-1.5 text-xs text-muted-foreground">
+          <span className="min-w-0 flex-1">
+            {status.exitCode === null ? "This shell has ended." : `This shell exited with code ${status.exitCode}.`}
+          </span>
+          <Button type="button" variant="outline" size="sm" className="h-6 px-2" onClick={onClose}>
+            Close tab
+          </Button>
+        </div>
+      ) : null}
+      <div ref={container} className="min-h-0 flex-1 overflow-hidden p-1" />
+    </div>
+  );
+}
+
+function EmptyState({ opening, onOpen }: { opening: boolean; onOpen: () => void }) {
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
+      <Icon name="Terminal" className="size-6 text-muted-foreground" />
+      <p className="text-sm text-muted-foreground">No terminals open. A new one starts in your home folder.</p>
+      <Button type="button" variant="outline" size="sm" onClick={onOpen} disabled={opening}>
+        <Icon name={opening ? "Spinner" : "Plus"} />
+        New terminal
+      </Button>
+    </div>
+  );
+}

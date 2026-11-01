@@ -244,6 +244,12 @@ What a port only learns by running it:
   worktree `.git` is a file (`gitdir: …`), so `<path>/.git/info/…` fails with ENOTDIR; through
   `files.read` alone, follow the gitfile and its git dir's `commondir`, as `git rev-parse --git-path`
   does (`diff-review/server/diff.ts`, `gitInfoParent`).
+- **A shell on any machine is `bb.sdk.terminals`, and drawing it is the plugin's job.** `create` with
+  `scope: { kind: "host_path", hostId, cwd: null }` starts a persistent PTY in that machine's home
+  folder, run by its host daemon and buffered by bb (it survives the app and the page). The SDK has no
+  terminal view: `useBbNavigate().experimental_openTerminal` shows one only in the App panel beside a
+  page, with bb's own tab strip, and the stream a custom view needs is bb's undocumented
+  `/ws/terminals/<id>` socket (`terminals/app/connection.ts` has its bb 0.48.1 protocol).
 - **A `threads.get` row is not a `threads.list` row.** Only list rows carry `queuedWork`,
   `hasPendingInteraction` and the `activity` counts; a get row has `queuedMessageCount` and
   `activeBackgroundAgentCount` instead, and neither says whether an interaction is pending (read
