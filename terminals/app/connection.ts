@@ -82,10 +82,11 @@ export interface ConnectionOptions {
   /** The shell's size, each time bb reports it (`attached`, `session-updated`); see app/sizing.ts. */
   onSize?(size: { cols: number; rows: number }): void;
   /**
-   * The output bb kept for this terminal from `sinceSeq` on, read once it has
-   * exited (`terminals.output`); null when bb no longer has it.
+   * The output bb kept for this terminal from `sinceSeq` on, and its exit
+   * code, read once it has exited (`terminals.output`); rejects when bb no
+   * longer has it.
    */
-  readRetained?(sinceSeq: number): Promise<readonly { seq: number; dataBase64: string }[] | null>;
+  readRetained?(sinceSeq: number): Promise<{ chunks: readonly { seq: number; dataBase64: string }[]; exitCode: number | null }>;
   clock?: Clock;
 }
 
@@ -239,7 +240,11 @@ export class TerminalConnection {
         // bb answers an attach to a shell it is still starting with "not running": not over, just early.
         if (message.code === "terminal_not_running" && this.sessionStatus === "starting" && this.socket !== null) {
           this.retry(this.socket, message.code);
-        } else if (ENDED_ERRORS.has(message.code)) this.finish(null);
+        }
+        // A shell that exits while bb is still attaching this socket is reported as this error, not
+        // as `exited` (the socket is not a client yet): it exited all the same, so read what it left.
+        else if (message.code === "terminal_exited") this.finish(null, true);
+        else if (ENDED_ERRORS.has(message.code)) this.finish(null);
         // bb forgot this client when the attach failed; the socket would stay open and silent.
         else if (this.socket !== null && this.attachedSocket !== this.socket) this.retry(this.socket, message.code);
         return;
@@ -268,14 +273,14 @@ export class TerminalConnection {
     const ended = { state: "ended", exitCode } as const;
     if (!exited || this.options.readRetained === undefined) return this.setStatus(ended);
     this.options.readRetained(this.nextSeq).then(
-      (chunks) => {
+      (retained) => {
         if (this.disposed) return;
-        for (const chunk of [...(chunks ?? [])].sort((a, b) => a.seq - b.seq)) {
+        for (const chunk of [...retained.chunks].sort((a, b) => a.seq - b.seq)) {
           if (chunk.seq < this.nextSeq) continue;
           this.nextSeq = chunk.seq + 1;
           this.options.write(decodeBase64(chunk.dataBase64), () => undefined);
         }
-        this.setStatus(ended);
+        this.setStatus({ state: "ended", exitCode: exitCode ?? retained.exitCode });
       },
       (error: unknown) => {
         // bb keeps an exited shell's output for 30 minutes; after that the tab just shows what it had.

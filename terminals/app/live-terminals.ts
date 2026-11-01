@@ -43,6 +43,7 @@ export interface LiveTerminal {
 export interface TerminalsBackend {
   output(args: { terminalId: string; sinceSeq: number; tailBytes: number }): Promise<{
     chunks: readonly { seq: number; dataBase64: string }[];
+    exitCode: number | null;
   }>;
   resize(args: { terminalId: string; cols: number; rows: number }): Promise<unknown>;
 }
@@ -95,8 +96,7 @@ function create(terminalId: string, backend: TerminalsBackend): LiveTerminal & {
       for (const listener of listeners) listener(status);
     },
     onSize: (size) => sizing.sessionChanged(size),
-    readRetained: async (sinceSeq) =>
-      (await backend.output({ terminalId, sinceSeq, tailBytes: RETAINED_TAIL_BYTES })).chunks,
+    readRetained: (sinceSeq) => backend.output({ terminalId, sinceSeq, tailBytes: RETAINED_TAIL_BYTES }),
   });
   term.onData((data) => {
     // Typing here makes this the window in use: take the shell back if another window resized it.

@@ -95,7 +95,7 @@ class ManualClock implements Clock {
 const running = { status: "running", exitCode: null };
 const chunk = (seq: number, text: string) => ({ type: "output", chunk: { seq, dataBase64: encodeBase64(new TextEncoder().encode(text)) } });
 
-type Retained = readonly { seq: number; dataBase64: string }[] | null;
+type Retained = { chunks: readonly { seq: number; dataBase64: string }[]; exitCode: number | null };
 
 function setup(
   options: {
@@ -242,7 +242,7 @@ describe("TerminalConnection", () => {
       const { socket, written, statuses } = setup({
         retained: async (sinceSeq) => {
           asked.push(sinceSeq);
-          return [...kept(0, 2)].reverse();
+          return { chunks: [...kept(0, 2)].reverse(), exitCode: 2 };
         },
       });
       socket().open();
@@ -260,7 +260,7 @@ describe("TerminalConnection", () => {
       const { socket, written, statuses } = setup({
         retained: async (sinceSeq) => {
           asked.push(sinceSeq);
-          return kept(1, 4);
+          return { chunks: kept(1, 4), exitCode: 2 };
         },
       });
       socket().open();
@@ -271,6 +271,22 @@ describe("TerminalConnection", () => {
       await expect.poll(() => statuses.at(-1)?.state).toBe("ended");
       expect(asked).toEqual([2]);
       expect(written).toEqual(["line0\n", "line1\n", "line2\n", "line3\n", "line4\n"]);
+    });
+
+    it("draws it when the shell exits while bb is still attaching, which bb reports as an error", async () => {
+      const asked: number[] = [];
+      const { socket, written, statuses } = setup({
+        retained: async (sinceSeq) => {
+          asked.push(sinceSeq);
+          return { chunks: kept(0, 1), exitCode: 7 };
+        },
+      });
+      socket().open();
+      // bb 0.48.1 rejecting the pending attach: no attached, no exited frame, only this.
+      socket().receive({ type: "error", code: "terminal_exited", message: "Terminal session exited" });
+      await expect.poll(() => statuses.at(-1)).toEqual({ state: "ended", exitCode: 7 });
+      expect(asked).toEqual([0]);
+      expect(written).toEqual(["line0\n", "line1\n"]);
     });
 
     it("still says it ended when bb no longer has the output", async () => {
