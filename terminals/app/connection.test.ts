@@ -6,6 +6,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  ATTACH_TIMEOUT_MS,
   HEARTBEAT_INTERVAL_MS,
   HEARTBEAT_TIMEOUT_MS,
   INPUT_CHUNK_BYTES,
@@ -231,6 +232,46 @@ describe("TerminalConnection", () => {
     expect(sockets).toHaveLength(1);
   });
 
+  it("tries again when bb could not attach, though the socket stays open and answers pings", () => {
+    const { clock, sockets, socket, statuses } = setup();
+    socket().open();
+    // bb 0.48.1's failTerminalAttach: the client is forgotten, the socket is not closed.
+    socket().receive({ type: "error", code: "terminal_attach_timeout", message: "Timed out attaching terminal session" });
+    expect(socket().closed?.code).toBe(4001);
+    expect(statuses.at(-1)?.state).toBe("offline");
+    clock.advance(RECONNECT_DELAYS_MS[0]!);
+    expect(sockets).toHaveLength(2);
+    expect(sockets[1]!.sinceSeq).toBe(0);
+    socket().open();
+    socket().receive({ type: "attached", replayStartSeq: 0, nextSeq: 0, session: running });
+    socket().receive(chunk(0, "back"));
+    expect(statuses.at(-1)?.state).toBe("live");
+  });
+
+  it("tries again when bb never answers the attach", () => {
+    const { clock, sockets, socket } = setup();
+    socket().open();
+    for (let elapsed = 0; elapsed < ATTACH_TIMEOUT_MS; elapsed += HEARTBEAT_INTERVAL_MS / 3) {
+      clock.advance(HEARTBEAT_INTERVAL_MS / 3);
+      socket().receive({ type: "pong" });
+    }
+    expect(socket().closed?.code).toBe(4001);
+    clock.advance(RECONNECT_DELAYS_MS[0]!);
+    expect(sockets).toHaveLength(2);
+  });
+
+  it("keeps an attached socket through an error about one message", () => {
+    const { clock, sockets, socket, statuses } = setup();
+    socket().open();
+    socket().receive({ type: "attached", replayStartSeq: 0, nextSeq: 0, session: running });
+    // Typing while the machine drops off: bb holds the shell and says so with session-updated.
+    socket().receive({ type: "error", code: "host_disconnected", message: "Host is not connected" });
+    clock.advance(ATTACH_TIMEOUT_MS * 2);
+    expect(socket().closed).toBeNull();
+    expect(sockets).toHaveLength(1);
+    expect(statuses.at(-1)?.state).toBe("live");
+  });
+
   it("queues typing while connecting and sends it, and the size, once open", () => {
     const { socket, connection } = setup();
     connection.sendInput("echo hi\r");
@@ -267,6 +308,7 @@ describe("TerminalConnection", () => {
   it("pings, and drops a socket that stops answering", () => {
     const { clock, sockets, socket } = setup();
     socket().open();
+    socket().receive({ type: "attached", replayStartSeq: 0, nextSeq: 0, session: running });
     clock.advance(HEARTBEAT_INTERVAL_MS);
     expect(socket().sent).toContainEqual({ type: "ping" });
     socket().receive({ type: "pong" });

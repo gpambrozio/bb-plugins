@@ -15,7 +15,12 @@
  *   waiting on a client that has not acked for 3 s. The tab's terminal keeps
  *   parsing, and acking, while the page is away;
  * - `ping` / `pong` keep the line honest, `exited` ends it, and an `error`
- *   with `terminal_not_found` means bb no longer has the session.
+ *   with `terminal_not_found` means bb no longer has the session;
+ * - an attach can fail without the socket closing: bb sends an `error` such as
+ *   `terminal_attach_timeout` (its own 10 s limit on the host's answer) and
+ *   forgets the client, while the socket still answers pings. So any other
+ *   error before `attached`, or no `attached` within `ATTACH_TIMEOUT_MS`,
+ *   drops the socket and tries again.
  *
  * No React, no xterm: the socket and the clock are injected, so the
  * reconnect and replay rules are tested on their own (connection.test.ts).
@@ -70,6 +75,10 @@ export interface ConnectionOptions {
 export const RECONNECT_DELAYS_MS = [100, 250, 500, 1000, 2000, 5000];
 export const HEARTBEAT_INTERVAL_MS = 15_000;
 export const HEARTBEAT_TIMEOUT_MS = 45_000;
+/** How long an open socket may go without `attached` before it is dropped and tried again. */
+export const ATTACH_TIMEOUT_MS = 20_000;
+/** Errors that mean the session is over, not that this attempt failed (bb 0.48.1). */
+const ENDED_ERRORS = new Set(["terminal_not_found", "terminal_not_running", "terminal_exited", "terminal_closed"]);
 /** bb takes at most 64 KiB per input message; stay well under it. */
 export const INPUT_CHUNK_BYTES = 32 * 1024;
 /** Typing queued while the socket is down, kept up to this much. */
@@ -96,6 +105,9 @@ export class TerminalConnection {
   private attempts = 0;
   private reconnectTimer: unknown = null;
   private heartbeat: unknown = null;
+  private attachTimer: unknown = null;
+  /** The socket bb has answered `attached` on; until then an error is this attempt's, not the session's. */
+  private attachedSocket: SocketLike | null = null;
   private lastPongAt = 0;
   private status: ConnectionStatus = { state: "connecting", exitCode: null };
   private pendingInput: string[] = [];
@@ -120,6 +132,10 @@ export class TerminalConnection {
       if (this.socket !== socket) return;
       this.lastPongAt = this.clock.now();
       this.startHeartbeat(socket);
+      this.attachTimer = this.clock.setTimeout(() => {
+        this.attachTimer = null;
+        if (this.socket === socket && this.attachedSocket !== socket) this.retry(socket, "attach timeout");
+      }, ATTACH_TIMEOUT_MS);
       this.sentSize = null;
       this.flushSize();
       this.flushInput();
@@ -184,6 +200,8 @@ export class TerminalConnection {
     switch (message.type) {
       case "attached":
         this.attempts = 0;
+        this.attachedSocket = this.socket;
+        this.clearAttachTimer();
         // A replay that starts later than asked lost the oldest output to bb's bound; carry on from there.
         if (message.replayStartSeq > this.nextSeq) this.nextSeq = message.replayStartSeq;
         this.applySession(message.session);
@@ -208,7 +226,9 @@ export class TerminalConnection {
         this.finish(message.session.exitCode);
         return;
       case "error":
-        if (message.code === "terminal_not_found" || message.code === "terminal_not_running") this.finish(null);
+        if (ENDED_ERRORS.has(message.code)) this.finish(null);
+        // bb forgot this client when the attach failed; the socket would stay open and silent.
+        else if (this.socket !== null && this.attachedSocket !== this.socket) this.retry(this.socket, message.code);
         return;
       case "pong":
         this.lastPongAt = this.clock.now();
@@ -252,6 +272,20 @@ export class TerminalConnection {
     this.pendingInputBytes = 0;
   }
 
+  /** Gives up on this socket and reconnects with the usual back-off. */
+  private retry(socket: SocketLike, reason: string): void {
+    this.dropSocket();
+    socket.close(4001, reason.slice(0, 100));
+    if (this.disposed || this.finished) return;
+    this.setStatus({ state: "offline", exitCode: null });
+    this.scheduleReconnect();
+  }
+
+  private clearAttachTimer(): void {
+    if (this.attachTimer !== null) this.clock.clearTimeout(this.attachTimer);
+    this.attachTimer = null;
+  }
+
   private startHeartbeat(socket: SocketLike): void {
     this.stopHeartbeat();
     this.heartbeat = this.clock.setInterval(() => {
@@ -272,6 +306,8 @@ export class TerminalConnection {
 
   private dropSocket(): void {
     this.stopHeartbeat();
+    this.clearAttachTimer();
+    this.attachedSocket = null;
     const socket = this.socket;
     this.socket = null;
     if (socket !== null) {
