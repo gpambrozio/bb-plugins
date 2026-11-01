@@ -372,6 +372,35 @@ describe("the Terminals page", () => {
       ]);
     });
 
+    /** Lets the frame the page waits for after an edit go by. */
+    const nextFrame = () => act(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+
+    it("puts focus back on the tab after Enter", async () => {
+      const { rpc } = twoTabs();
+      render(rpc);
+      const input = await editByDoubleClick("Mac mini 1");
+      fireEvent.change(input, { target: { value: "one" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+      const renamed = await screen.findByRole("tab", { name: "one" });
+      await waitFor(() => expect(document.activeElement).toBe(renamed));
+    });
+
+    it("leaves focus in the next tab's rename field when that opens within a frame", async () => {
+      // The previous edit's return to its tab comes a frame later; it must not close this field unsaved.
+      const { state, rpc } = twoTabs();
+      render(rpc);
+      let input = await editByDoubleClick("Mac mini 1");
+      fireEvent.change(input, { target: { value: "one" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+      fireEvent.keyDown(await screen.findByRole("tab", { name: "Mac mini 2" }), { key: "F2" });
+      input = (await screen.findByRole("textbox", { name: "Rename Mac mini 2" })) as HTMLInputElement;
+      await waitFor(() => expect(document.activeElement).toBe(input));
+      await nextFrame();
+      expect(screen.getByRole("textbox", { name: "Rename Mac mini 2" })).toBe(input);
+      expect(document.activeElement).toBe(input);
+      expect(state.renamed).toEqual([["term_1", "one"]]);
+    });
+
     it("closes a tab from its context menu", async () => {
       const { state, rpc } = twoTabs();
       render(rpc);

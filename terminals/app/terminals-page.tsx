@@ -344,8 +344,13 @@ function TabButton({
     // Saving the default title untouched is no rename: it would stop following the tab's number.
     const unchanged = name === null || (tab.name === null && normalizeTabName(name) === label);
     if (!unchanged) onRename(name);
-    // Back to the tab, not to wherever the browser would put focus.
-    requestAnimationFrame(() => tabButton.current?.focus({ preventScroll: true }));
+    // Back to the tab when the field took focus with it (Enter, Escape), not to wherever the browser
+    // would put it. A frame later focus may already be somewhere the user chose — another tab's
+    // rename field, the shell — and taking it from there would close that field unsaved.
+    requestAnimationFrame(() => {
+      const active = document.activeElement;
+      if (active === null || active === document.body) tabButton.current?.focus({ preventScroll: true });
+    });
   }, [onRename, tab.name, label]);
   const where = tab.name === null ? label : `${label} — ${tab.hostName}`;
 
