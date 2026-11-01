@@ -183,6 +183,34 @@ describe("the Terminals page", () => {
     expect(screen.getByRole("tab", { name: "Mac mini" })).toBeTruthy();
   });
 
+  it("marks only the selected tab, the way bb marks its own, and moves the mark with the selection", async () => {
+    const { rpc } = server(
+      [{ id: "mini", name: "Mac mini" }],
+      [tab("term_1", "mini", "Mac mini"), tab("term_2", "mini", "Mac mini")],
+    );
+    windowSelection.set("term_1");
+    render(rpc);
+    const first = await screen.findByRole("tab", { name: "Mac mini 1" });
+    const second = screen.getByRole("tab", { name: "Mac mini 2" });
+    // The tab's frame is the element around its button and its close button.
+    const frame = (button: HTMLElement) => button.parentElement as HTMLElement;
+    const marked = (button: HTMLElement) => frame(button).querySelector("[data-tab-indicator]") !== null;
+
+    // bb's "active" fill and full-strength text, against dimmer text on the others; the
+    // old fill (bg-sidebar) was all but the page's own background in dark mode.
+    expect(frame(first).className).toMatch(/\bbg-state-active\b/);
+    expect(frame(first).className).toMatch(/\btext-foreground\b/);
+    expect(frame(first).className).not.toMatch(/\bbg-sidebar\b/);
+    expect(frame(second).className).not.toMatch(/\bbg-state-active\b/);
+    expect(frame(second).className).toMatch(/\btext-subtle-foreground\b/);
+    expect([marked(first), marked(second)]).toEqual([true, false]);
+
+    fireEvent.click(second);
+    await waitFor(() => expect(second.getAttribute("aria-selected")).toBe("true"));
+    expect([marked(first), marked(second)]).toEqual([false, true]);
+    expect(frame(second).className).toMatch(/\bbg-state-active\b/);
+    expect(frame(first).className).not.toMatch(/\bbg-state-active\b/);  });
+
   it("says when a shell has ended and offers to close its tab", async () => {
     const { state, rpc } = server([{ id: "mini", name: "Mac mini" }], [tab("term_1", "mini", "Mac mini")]);
     render(rpc);

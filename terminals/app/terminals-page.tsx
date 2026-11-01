@@ -288,11 +288,19 @@ function TabButton({
     <ContextMenu>
       <ContextMenuTrigger asChild>
         <div
+          data-selected={selected ? "" : undefined}
           className={cn(
-            "group flex max-w-56 shrink-0 items-center gap-1 border-r border-border pl-3 pr-1 text-sm",
-            selected ? "bg-sidebar text-foreground" : "text-muted-foreground hover:bg-state-hover",
+            "group relative flex max-w-56 shrink-0 items-center gap-1 border-r border-border pl-3 pr-1 text-sm",
+            // bb's own tab pills: the selected one on the "active" fill in full-strength text, the
+            // others dimmer and only tinted on hover. The bar under it marks it even at a glance.
+            selected
+              ? "bg-state-active font-medium text-foreground"
+              : "text-subtle-foreground hover:bg-state-hover hover:text-foreground",
           )}
         >
+          {selected ? (
+            <span aria-hidden data-tab-indicator className="pointer-events-none absolute inset-x-0 bottom-0 h-0.5 bg-primary" />
+          ) : null}
           {editing ? (
             <TabNameEditor initial={tab.name ?? label} label={label} onDone={stopEditing} />
           ) : (
