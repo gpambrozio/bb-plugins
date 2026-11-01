@@ -3,7 +3,7 @@
  * page. Leaving the Terminals page unmounts its React tree; the xterm
  * instance, its scrollback and its socket stay here, keep drawing whatever
  * the shell prints, and the page re-parents the same element when it comes
- * back, at the line it was scrolled to.
+ * back, at the line it was scrolled to (app/viewport.ts).
  *
  * A reload of the app starts this map empty: each tab then reattaches and bb
  * replays its last 512 KB of output (app/connection.ts).
@@ -15,6 +15,7 @@ import "@xterm/xterm/css/xterm.css";
 import { TerminalConnection, terminalSocketUrl, type ConnectionStatus, type SocketLike } from "./connection";
 import { TerminalSizing } from "./sizing";
 import { currentFontFamily, currentTheme } from "./theme";
+import { rememberViewport, restoreViewport, type ViewportPlace } from "./viewport";
 
 export interface LiveTerminal {
   readonly terminalId: string;
@@ -109,7 +110,7 @@ function create(terminalId: string, backend: TerminalsBackend): LiveTerminal & {
   });
 
   /** Where the view was when it left the page; null for "following the output". */
-  let savedLine: number | null = null;
+  let savedPlace: ViewportPlace = null;
 
   function fit(): void {
     if (!shown || !opened || element.clientWidth === 0 || element.clientHeight === 0) return;
@@ -138,16 +139,15 @@ function create(terminalId: string, backend: TerminalsBackend): LiveTerminal & {
         opened = true;
       }
       fit();
-      if (savedLine !== null) term.scrollToLine(savedLine);
-      else term.scrollToBottom();
-      savedLine = null;
+      restoreViewport(term, savedPlace);
+      savedPlace = null;
       term.refresh(0, term.rows - 1);
     },
     detach() {
       shown = false;
       if (opened) {
-        const buffer = term.buffer.active;
-        savedLine = buffer.viewportY >= buffer.baseY ? null : buffer.viewportY;
+        savedPlace?.dispose();
+        savedPlace = rememberViewport(term);
       }
       element.remove();
     },
