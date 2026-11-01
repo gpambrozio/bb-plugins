@@ -11,7 +11,7 @@ specific to `terminals`.
 | File | What it owns |
 | --- | --- |
 | `server.ts` | Wires the RPCs to `bb.sdk.terminals`, `bb.sdk.hosts` and `bb.storage.kv`, and runs the once-per-load prune of ended tabs. |
-| `server/service.ts` | The tab list and the sessions behind it, over injected ports: open (and end the shell if its tab cannot be saved), close (and keep the tab if its running shell could not be ended), list with each shell's status, prune. Every read-modify-write of the list is serialized. |
+| `server/service.ts` | The tab list and the sessions behind it, over injected ports: open (store the tab, then make its shell under the tab's id), close (and keep the tab if its running shell could not be ended), list with each shell's status, prune. Every read-modify-write of the list is serialized. |
 | `shared/tabs.ts` | The stored tab (with the user's name for it, null for the default title), its status, the realtime channel, the tab and name limits, name normalising, tab labels. No SDK import, so the app may use it. |
 | `shared/host-choice.ts` | Which machines "+" offers (connected and active, the server's own first) and whether it asks. No SDK import. |
 | `shared/contract.ts` | The app ⇄ server RPC contract. The app imports it as a type only (`app/imports.test.ts`). |
@@ -69,10 +69,18 @@ and the tab's position among that machine's tabs; a named tab keeps its position
 name brings back the title it had, and saving the default title untouched sends nothing. Renaming
 also sets bb's own terminal title, best-effort: the tab's name is what counts.
 
-**Lifecycle.** Closing a tab ends its shell with `terminals.close({ mode: "force" })` *before* removing
-the tab, so a failure leaves the tab to try again rather than an orphan; closing a session bb says has
-already ended (or no longer knows) just removes the tab. A shell whose tab could not be saved is ended.
-On every load the server drops the tabs whose shell has ended. From bb 0.48.1's server source (not
+**Lifecycle.** A tab is stored *before* its shell exists: `open` picks the terminal id itself
+(`terminals.create` takes one, `server/terminal-id.ts`), saves the tab under the limit check in the
+serialized section, then asks bb for the shell. So no shell ever runs without a tab — a reload or
+disable while bb is still opening one leaves a tab the next copy sees — and two clients pressing "+"
+at once cannot pass `MAX_TABS`. Until bb has the session, `list` calls the tab `opening` (for
+`OPENING_GRACE_MS`, after which it is `ended`); the page draws a placeholder and polls rather than
+attach, which would hear "not found". If bb cannot start the shell the tab is dropped again; a tab
+closed while its shell was opening has that shell ended when it arrives (in the same copy of the plugin;
+across a reload in that window the shell is left for the user to close from `bb terminal list`).
+Closing a tab ends its shell with `terminals.close({ mode: "force" })` *before* removing the tab, so a
+failure leaves the tab to try again rather than an orphan; closing a session bb says has already ended
+(or no longer knows) just removes the tab. On every load the server drops the tabs whose shell has ended. From bb 0.48.1's server source (not
 exercised live): a bb server restart reattaches the shells of a host daemon that kept running, and a
 daemon that restarted (a reboot, bb quit on that machine) has its shells ended. Removing the plugin
 does not end shells — `bb.onDispose` also runs on a reload, which must keep them. `MAX_TABS` (24)

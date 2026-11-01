@@ -41,11 +41,19 @@ export const TabSchema = z.object({
 export type Tab = z.infer<typeof TabSchema>;
 
 /**
- * Where the tab's shell is: `running` (or `starting`) on its machine;
- * `disconnected` while the machine is offline, which bb resumes when it comes
- * back; `ended` once the shell has exited or bb has closed the session.
+ * Where the tab's shell is: `opening` while bb has not made it yet (the tab is
+ * stored first, see server/service.ts); `running` (or `starting`) on its
+ * machine; `disconnected` while the machine is offline, which bb resumes when
+ * it comes back; `ended` once the shell has exited or bb has closed the session.
  */
-export const TabStatusSchema = z.enum(["starting", "running", "disconnected", "ended"]);
+export const TabStatusSchema = z.enum(["opening", "starting", "running", "disconnected", "ended"]);
+
+/**
+ * How long a stored tab may wait for bb to make its shell before it counts as
+ * ended. bb gives up on opening a terminal after 10 s; this leaves room for a
+ * slow machine on top.
+ */
+export const OPENING_GRACE_MS = 60_000;
 
 export type TabStatus = z.infer<typeof TabStatusSchema>;
 

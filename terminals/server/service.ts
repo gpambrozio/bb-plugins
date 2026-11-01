@@ -7,7 +7,7 @@
  * and keep their output whatever the app does. This file only remembers which
  * sessions are tabs, in which order.
  */
-import { MAX_TABS, normalizeTabName, tabStatus, type HostChoice, type Tab, type TabView } from "../shared/tabs";
+import { MAX_TABS, OPENING_GRACE_MS, normalizeTabName, tabStatus, type HostChoice, type Tab, type TabView } from "../shared/tabs";
 
 /** The fields of a bb terminal session this file reads. */
 export interface TerminalSessionInfo {
@@ -22,8 +22,10 @@ export interface TerminalsPorts {
   save(tabs: Tab[]): Promise<void>;
   /** The machines a shell can open on now (`shared/host-choice.ts`). */
   hosts(): Promise<HostChoice[]>;
-  /** Starts a login shell in the home directory of `hostId`. */
-  createTerminal(args: { hostId: string; title: string; cols: number; rows: number }): Promise<TerminalSessionInfo>;
+  /** A new id for bb's next terminal (`server/terminal-id.ts`). */
+  newTerminalId(): string;
+  /** Starts a login shell in the home directory of `hostId`, under the given id. */
+  createTerminal(args: { terminalId: string; hostId: string; title: string; cols: number; rows: number }): Promise<TerminalSessionInfo>;
   /** The session, or null when bb no longer knows it. */
   getTerminal(terminalId: string): Promise<TerminalSessionInfo | null>;
   /** Sets bb's own title for the session (what `bb terminal list` shows). */
@@ -42,7 +44,7 @@ export interface TerminalsService {
   /** Names the tab; an empty name or null brings back its default title. */
   rename(terminalId: string, name: string | null): Promise<void>;
   close(terminalId: string): Promise<void>;
-  /** Drops the tabs whose shell has ended — after a bb server restart, every one. */
+  /** Drops the tabs whose shell has ended; a tab still opening stays. */
   prune(): Promise<void>;
 }
 
@@ -67,7 +69,22 @@ export function createTerminalsService(ports: TerminalsPorts): TerminalsService 
       ports.warn(`could not read terminal ${tab.terminalId}: ${String(error)}`);
       return { ...tab, status: "disconnected", exitCode: null };
     }
+    // A new tab is stored before bb makes its shell (see open): give bb time before calling it ended.
+    if (session === null && ports.now() - tab.createdAt < OPENING_GRACE_MS) {
+      return { ...tab, status: "opening", exitCode: null };
+    }
     return { ...tab, status: tabStatus(session), exitCode: session?.exitCode ?? null };
+  }
+
+  /** Removes the tab from the stored list; true when it was there. */
+  function removeTab(terminalId: string): Promise<boolean> {
+    return serialized(async () => {
+      const tabs = await ports.load();
+      const rest = tabs.filter((tab) => tab.terminalId !== terminalId);
+      if (rest.length === tabs.length) return false;
+      await ports.save(rest);
+      return true;
+    });
   }
 
   return {
@@ -79,19 +96,35 @@ export function createTerminalsService(ports: TerminalsPorts): TerminalsService 
     async open({ hostId, cols, rows }) {
       const host = (await ports.hosts()).find((entry) => entry.id === hostId);
       if (host === undefined) throw new Error("That machine is not connected to bb.");
-      if ((await ports.load()).length >= MAX_TABS) {
-        throw new Error(`At most ${MAX_TABS} terminals can be open; close one first.`);
-      }
-      const session = await ports.createTerminal({ hostId, title: host.name, cols, rows });
-      const tab: Tab = { terminalId: session.id, hostId, hostName: host.name, createdAt: ports.now(), name: null };
+      const tab: Tab = { terminalId: ports.newTerminalId(), hostId, hostName: host.name, createdAt: ports.now(), name: null };
+      // The tab is stored before its shell exists, under the id bb will give the shell. So a shell
+      // never runs without a tab — not even when this copy of the plugin is reloaded or disabled
+      // while bb is still starting it — and a stored tab holds its place under the limit while
+      // other opens check it.
+      await serialized(async () => {
+        const tabs = await ports.load();
+        if (tabs.length >= MAX_TABS) throw new Error(`At most ${MAX_TABS} terminals can be open; close one first.`);
+        await ports.save([...tabs, tab]);
+      });
+      let session: TerminalSessionInfo;
       try {
-        await serialized(async () => ports.save([...(await ports.load()), tab]));
+        session = await ports.createTerminal({ terminalId: tab.terminalId, hostId, title: host.name, cols, rows });
       } catch (error) {
-        // A shell no tab points at would run until bb restarts; end it.
-        await ports.closeTerminal(session.id).catch((closeError: unknown) => {
-          ports.warn(`could not end terminal ${session.id} after failing to save its tab: ${String(closeError)}`);
-        });
+        try {
+          if (await removeTab(tab.terminalId)) ports.publish();
+        } catch (removeError) {
+          // The tab shows as ended once its grace runs out, and the next load drops it.
+          ports.warn(`could not drop the tab of terminal ${tab.terminalId}, which failed to open: ${String(removeError)}`);
+        }
         throw error;
+      }
+      // Closed while bb was starting it: end the shell no tab points at any more.
+      const stillOpen = await serialized(async () => (await ports.load()).some((entry) => entry.terminalId === tab.terminalId));
+      if (!stillOpen) {
+        await ports.closeTerminal(session.id).catch((closeError: unknown) => {
+          ports.warn(`could not end terminal ${session.id}, whose tab was closed while it opened: ${String(closeError)}`);
+        });
+        throw new Error("That tab was closed while it was opening.");
       }
       ports.publish();
       return { ...tab, status: tabStatus(session), exitCode: session.exitCode };
@@ -124,14 +157,7 @@ export function createTerminalsService(ports: TerminalsPorts): TerminalsService 
         const session = await ports.getTerminal(terminalId).catch(() => undefined);
         if (session === undefined || (session !== null && session.status !== "exited")) throw error;
       }
-      const removed = await serialized(async () => {
-        const tabs = await ports.load();
-        const rest = tabs.filter((tab) => tab.terminalId !== terminalId);
-        if (rest.length === tabs.length) return false;
-        await ports.save(rest);
-        return true;
-      });
-      if (removed) ports.publish();
+      if (await removeTab(terminalId)) ports.publish();
     },
 
     async prune() {

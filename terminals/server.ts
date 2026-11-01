@@ -11,6 +11,7 @@ import { rpcContract } from "./shared/contract";
 import { selectableHosts } from "./shared/host-choice";
 import { TABS_CHANGED, TabSchema, type Tab } from "./shared/tabs";
 import { createTerminalsService } from "./server/service";
+import { newTerminalId } from "./server/terminal-id";
 
 export type { RpcContract } from "./shared/contract";
 
@@ -38,8 +39,10 @@ export default async function plugin(bb: BbPluginApi) {
     },
     save: (tabs: Tab[]) => bb.storage.kv.set(TABS_KEY, tabs),
     hosts,
-    createTerminal: ({ hostId, title, cols, rows }) =>
+    newTerminalId: () => newTerminalId(),
+    createTerminal: ({ terminalId, hostId, title, cols, rows }) =>
       bb.sdk.terminals.create({
+        id: terminalId,
         // A null cwd is the host's home directory, as a new window in a terminal app.
         scope: { kind: "host_path", hostId, cwd: null },
         start: { mode: "shell" },

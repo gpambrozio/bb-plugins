@@ -211,6 +211,17 @@ describe("the Terminals page", () => {
     expect(frame(second).className).toMatch(/\bbg-state-active\b/);
     expect(frame(first).className).not.toMatch(/\bbg-state-active\b/);  });
 
+  it("waits for a shell bb is still opening before attaching to it", async () => {
+    const { state, rpc } = server([{ id: "mini", name: "Mac mini" }], [{ ...tab("term_1", "mini", "Mac mini"), status: "opening" }]);
+    render(rpc);
+    expect(await screen.findByText("Starting the shell…")).toBeTruthy();
+    // No terminal yet: attaching now would hear "not found" and call the shell ended.
+    expect(terminals.entries.has("term_1")).toBe(false);
+    state.tabs = [tab("term_1", "mini", "Mac mini")];
+    await waitFor(() => expect(terminals.entries.get("term_1")?.attached).toBe(1), { timeout: 4_000 });
+    expect(screen.queryByText("Starting the shell…")).toBeNull();
+  });
+
   it("says when a shell has ended and offers to close its tab", async () => {
     const { state, rpc } = server([{ id: "mini", name: "Mac mini" }], [tab("term_1", "mini", "Mac mini")]);
     render(rpc);

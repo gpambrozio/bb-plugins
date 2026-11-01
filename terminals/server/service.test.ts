@@ -1,9 +1,19 @@
 import { describe, expect, it } from "vitest";
 
-import { MAX_TABS, type HostChoice, type Tab } from "../shared/tabs";
+import { MAX_TABS, OPENING_GRACE_MS, type HostChoice, type Tab } from "../shared/tabs";
 import { createTerminalsService, type TerminalSessionInfo, type TerminalsPorts } from "./service";
 
-function setup(options: { hosts?: HostChoice[]; saveFails?: boolean; closeFails?: boolean; retitleFails?: boolean } = {}) {
+function setup(
+  options: {
+    hosts?: HostChoice[];
+    saveFails?: boolean;
+    closeFails?: boolean;
+    retitleFails?: boolean;
+    createFails?: boolean;
+    /** Keeps each create waiting until the test calls the function it leaves here. */
+    holdCreates?: (() => void)[];
+  } = {},
+) {
   const state = {
     tabs: [] as Tab[],
     sessions: new Map<string, TerminalSessionInfo>(),
@@ -12,6 +22,7 @@ function setup(options: { hosts?: HostChoice[]; saveFails?: boolean; closeFails?
     published: 0,
     warnings: [] as string[],
     nextId: 1,
+    now: 1_000,
   };
   const ports: TerminalsPorts = {
     load: async () => state.tabs.map((tab) => ({ ...tab })),
@@ -20,8 +31,11 @@ function setup(options: { hosts?: HostChoice[]; saveFails?: boolean; closeFails?
       state.tabs = tabs;
     },
     hosts: async () => options.hosts ?? [{ id: "mini", name: "Mac mini" }],
-    createTerminal: async () => {
-      const session: TerminalSessionInfo = { id: `term_${state.nextId++}`, status: "running", exitCode: null };
+    newTerminalId: () => `term_${state.nextId++}`,
+    createTerminal: async ({ terminalId }) => {
+      if (options.holdCreates) await new Promise<void>((resolve) => options.holdCreates!.push(resolve));
+      if (options.createFails) throw new Error("the machine did not answer");
+      const session: TerminalSessionInfo = { id: terminalId, status: "running", exitCode: null };
       state.sessions.set(session.id, session);
       return session;
     },
@@ -38,7 +52,7 @@ function setup(options: { hosts?: HostChoice[]; saveFails?: boolean; closeFails?
       state.closed.push(terminalId);
     },
     publish: () => void (state.published += 1),
-    now: () => 1_000,
+    now: () => state.now,
     warn: (message) => void state.warnings.push(message),
   };
   return { state, service: createTerminalsService(ports) };
@@ -76,17 +90,67 @@ describe("open", () => {
     expect(state.sessions.size).toBe(MAX_TABS);
   });
 
-  it("ends the shell when its tab cannot be saved", async () => {
+  it("starts no shell when its tab cannot be saved", async () => {
     const { state, service } = setup({ saveFails: true });
     await expect(service.open({ hostId: "mini", cols: 80, rows: 24 })).rejects.toThrow(/storage is full/);
-    expect(state.closed).toEqual(["term_1"]);
+    expect(state.sessions.size).toBe(0);
     expect(state.published).toBe(0);
+  });
+
+  it("drops the tab again when bb cannot start its shell", async () => {
+    const { state, service } = setup({ createFails: true });
+    await expect(service.open({ hostId: "mini", cols: 80, rows: 24 })).rejects.toThrow(/did not answer/);
+    expect(state.tabs).toEqual([]);
   });
 
   it("keeps both tabs when two open at once", async () => {
     const { state, service } = setup();
     await Promise.all([service.open({ hostId: "mini", cols: 80, rows: 24 }), service.open({ hostId: "mini", cols: 80, rows: 24 })]);
     expect(state.tabs).toHaveLength(2);
+  });
+
+  it("holds the tab limit when the last free places are asked for at once", async () => {
+    const holdCreates: (() => void)[] = [];
+    const { state, service } = setup({ holdCreates });
+    const filling = Array.from({ length: MAX_TABS - 1 }, () => service.open({ hostId: "mini", cols: 80, rows: 24 }));
+    await expect.poll(() => holdCreates.length).toBe(MAX_TABS - 1);
+    for (const release of holdCreates.splice(0)) release();
+    await Promise.all(filling);
+    // Both clients press + with one place left; bb is slow, so neither shell exists when the other checks.
+    const racing = [service.open({ hostId: "mini", cols: 80, rows: 24 }), service.open({ hostId: "mini", cols: 80, rows: 24 })];
+    const settled = Promise.allSettled(racing);
+    await expect.poll(() => holdCreates.length).toBe(1);
+    for (const release of holdCreates.splice(0)) release();
+    const results = await settled;
+    expect(results.map((result) => result.status).sort()).toEqual(["fulfilled", "rejected"]);
+    expect(state.tabs).toHaveLength(MAX_TABS);
+    expect(state.sessions.size).toBe(MAX_TABS);
+  });
+
+  it("lists a tab bb has not made the shell of yet as opening, and as ended once that has taken too long", async () => {
+    const holdCreates: (() => void)[] = [];
+    const { state, service } = setup({ holdCreates });
+    const opening = service.open({ hostId: "mini", cols: 80, rows: 24 });
+    await expect.poll(() => holdCreates.length).toBe(1);
+    expect((await service.list()).map((tab) => tab.status)).toEqual(["opening"]);
+    await service.prune();
+    expect(state.tabs).toHaveLength(1);
+    state.now += OPENING_GRACE_MS;
+    expect((await service.list()).map((tab) => tab.status)).toEqual(["ended"]);
+    holdCreates[0]!();
+    await opening;
+  });
+
+  it("ends the shell of a tab closed while bb was still opening it", async () => {
+    const holdCreates: (() => void)[] = [];
+    const { state, service } = setup({ holdCreates });
+    const opening = service.open({ hostId: "mini", cols: 80, rows: 24 });
+    await expect.poll(() => holdCreates.length).toBe(1);
+    await service.close("term_1");
+    expect(state.tabs).toEqual([]);
+    holdCreates[0]!();
+    await expect(opening).rejects.toThrow(/closed while it was opening/);
+    expect(state.closed).toEqual(["term_1"]);
   });
 });
 
@@ -204,6 +268,8 @@ describe("list", () => {
     state.sessions.get("term_1")!.status = "disconnected";
     Object.assign(state.sessions.get("term_2")!, { status: "exited", exitCode: 0 });
     state.sessions.delete("term_3");
+    // bb no longer knows term_3, and it is past the time a new tab gets to open.
+    state.now += OPENING_GRACE_MS;
     const tabs = await service.list();
     expect(tabs.map((tab) => [tab.terminalId, tab.status, tab.exitCode])).toEqual([
       ["term_1", "disconnected", null],
@@ -220,6 +286,7 @@ describe("prune", () => {
     state.sessions.get("term_2")!.status = "exited";
     state.sessions.delete("term_3");
     state.sessions.get("term_4")!.status = "disconnected";
+    state.now += OPENING_GRACE_MS;
     const before = state.published;
     await service.prune();
     expect(state.tabs.map((tab) => tab.terminalId)).toEqual(["term_1", "term_4"]);

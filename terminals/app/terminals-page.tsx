@@ -63,12 +63,24 @@ function useTabs() {
   return { rpc, tabs, setTabs, error, setError, refetch };
 }
 
-/** The tab's live connection status. */
-function useConnectionStatus(terminalId: string): ConnectionStatus {
-  const terminal = liveTerminal(terminalId);
-  const subscribe = useCallback((notify: () => void) => terminal.onStatus(notify), [terminal]);
-  return useSyncExternalStore(subscribe, () => terminal.status());
+const OPENING_STATUS: ConnectionStatus = { state: "connecting", exitCode: null };
+const noSubscription = () => () => undefined;
+
+/**
+ * The tab's live connection status. A tab whose shell bb is still opening has
+ * no terminal yet: attaching now would hear "not found" and end it.
+ */
+function useConnectionStatus(terminalId: string, opening: boolean): ConnectionStatus {
+  const terminal = opening ? null : liveTerminal(terminalId);
+  const subscribe = useCallback(
+    (notify: () => void) => (terminal === null ? noSubscription() : terminal.onStatus(notify)),
+    [terminal],
+  );
+  return useSyncExternalStore(subscribe, () => (terminal === null ? OPENING_STATUS : terminal.status()));
 }
+
+/** How often the page reads the list again while a tab's shell is still opening. */
+const OPENING_POLL_MS = 2_000;
 
 export function TerminalsPage(_props: PluginNavPanelProps) {
   const { rpc, tabs, setTabs, error, setError, refetch } = useTabs();
@@ -89,9 +101,17 @@ export function TerminalsPage(_props: PluginNavPanelProps) {
   // Start every open tab's terminal, so tabs out of sight keep their output, and let go of closed ones.
   useEffect(() => {
     if (tabs === null) return;
-    for (const id of tabIds) liveTerminal(id);
+    for (const tab of tabs) if (tab.status !== "opening") liveTerminal(tab.terminalId);
     releaseClosedTerminals(new Set(tabIds));
   }, [tabs, tabIds]);
+
+  // A shell another window (or a reloaded copy of the plugin) is opening: look again until bb has it.
+  const anyOpening = tabs?.some((tab) => tab.status === "opening") ?? false;
+  useEffect(() => {
+    if (!anyOpening) return;
+    const timer = setTimeout(refetch, OPENING_POLL_MS);
+    return () => clearTimeout(timer);
+  }, [anyOpening, tabs, refetch]);
 
   const { mode, name } = experimental_useCodeTheme();
   useEffect(() => {
@@ -231,7 +251,12 @@ export function TerminalsPage(_props: PluginNavPanelProps) {
         </div>
       ) : null}
       <div className="relative min-h-0 flex-1 bg-sidebar">
-        {shown !== null ? (
+        {shown !== null && tabs?.find((tab) => tab.terminalId === shown)?.status === "opening" ? (
+          <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground">
+            <Icon name="Spinner" />
+            Starting the shell…
+          </div>
+        ) : shown !== null ? (
           <TerminalView key={shown} terminalId={shown} onClose={() => void close(shown)} />
         ) : tabs === null ? null : (
           <EmptyState opening={opening} onOpen={() => void plus()} />
@@ -270,7 +295,8 @@ function TabButton({
   onRename: (name: string) => void;
   onClose: () => void;
 }) {
-  const status = useConnectionStatus(tab.terminalId);
+  const opening = tab.status === "opening";
+  const status = useConnectionStatus(tab.terminalId, opening);
   const [editing, setEditing] = useState(false);
   const tabButton = useRef<HTMLButtonElement>(null);
   const startEditing = useCallback(() => setEditing(true), []);
@@ -325,7 +351,7 @@ function TabButton({
               }}
               title={status.state === "ended" ? `${where} (ended)` : status.state === "offline" ? `${where} (offline)` : where}
             >
-              <StatusDot status={status} />
+              {opening ? <Icon name="Spinner" className="size-3 shrink-0" /> : <StatusDot status={status} />}
               <span className="truncate">{label}</span>
             </button>
           )}
@@ -411,7 +437,7 @@ function TabNameEditor({ initial, label, onDone }: { initial: string; label: str
 
 function TerminalView({ terminalId, onClose }: { terminalId: string; onClose: () => void }) {
   const container = useRef<HTMLDivElement>(null);
-  const status = useConnectionStatus(terminalId);
+  const status = useConnectionStatus(terminalId, false);
 
   useLayoutEffect(() => {
     const parent = container.current;
