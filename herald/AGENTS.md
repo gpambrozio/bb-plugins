@@ -24,6 +24,7 @@ what still holds and says what bb changed. The repo root `AGENTS.md` covers what
 | `server/liveness.ts` | Asks bb whether each entry's thread still exists before the list goes out; gone ones are removed. |
 | `server/timeline.ts` | Pure text: what an interaction asks, the user's last prompt, the spoken sentence. |
 | `server/say.ts` | `say` on the bb server's Mac, driven for its voices: text in on stdin, a WAV out, bytes back. |
+| `server/carry.ts` | The finished turns a newer event overtook before their sentence landed, per thread, capped; and the prompt's output that lists them with the latest. |
 | `server/writer.ts` | The optional sentence-writing tool, run as a child process through bb's host toolchain: prompt in on stdin, one line out (from the JSON summary for Claude Code and Codex); the timeout, the cap, the empty folder. |
 | `server/command-line.ts` | The user's command split into words without a shell, and the prompt template filled in. |
 | `server/ports.ts`, `server/bb-ports.ts` | The seams the logic is tested through, and their implementations over `bb.sdk`. |
@@ -145,6 +146,22 @@ no shell. What that buys, and what must stay true:
   spoken, not remembered) and its owed notification goes out plain. A question answered meanwhile is
   still withdrawn first. Only a real failure falls back to the plain
   sentence spoken; a run still going at unload is a failure (the plain notification goes out).
+- **An overtaken turn is carried, not lost** (`server/carry.ts`). A run a newer event overtakes is not
+  stopped, but its sentence is dropped (`settleSentence`), and with it what that turn said: the first
+  mate's review result went unspoken because two "Captain, shipshape." turns followed before its sentence
+  was ready. So every finished turn a tool run starts for is *held* per thread, and every later run for
+  that thread gets the held turns in its `{{output}}` (a turn the next one overtook while its lookups
+  ran, `admit`'s stale branch, is held too, when a tool would have written for it), oldest first, each under an `[Update n of m: …]`
+  header (`combinedOutput`; the template is unchanged, so a user's prompt keeps working). A run that
+  **lands** — a sentence, the plain fallback, or the tool's silence — forgets what it covered and its own
+  turn (`landed`, by a key of its own, not the event id, which is only millisecond-unique); a run that is
+  dropped or withdrawn forgets nothing. Only finished turns are held: an overtaken question was answered,
+  and an error was followed by a new turn. An event that is not announced (`off`) leaves the held turns
+  for the next announced one; a plain sentence (model switched off) and an archive forget them. At most
+  `CARRY_MAX_UPDATES` (4) earlier turns and `CARRY_MAX_CHARS` (6,000) of their text, each already cut at
+  `PROMPT_OUTPUT_MAX`, oldest dropped first and counted in the output ("left out"). In memory only: a
+  reload drops them, as it drops a sentence being written. A turn the user answers while its sentence is
+  being written is carried too, so the next sentence may mention what they already read.
 - **The prompt is bounded.** The agent's output is cut at `PROMPT_OUTPUT_MAX` and the headline, detail
   and request at `PROMPT_PART_MAX` before they go into the template — a permission's command and a
   pasted-in request can both run to kilobytes.
@@ -689,7 +706,7 @@ cover, check by hand after `bb plugin reload herald`:
    at once, and the question's card stays in the timeline.
 3. With the thread open on screen, let a turn finish: bb marks it read at once, and the sentence is still
    spoken and its card shows on the turn's answer. Send a new prompt while a sentence is being written:
-   no card comes and nothing is spoken.
+   no card comes and nothing is spoken then; with the model on, the next turn's sentence covers both.
 4. In a browser tab, nothing is spoken until **Test voice** has been pressed once.
 5. Switch a kind off in Settings → Plugins → Herald and trigger it: the row says "Not announced" and
    nothing is spoken.

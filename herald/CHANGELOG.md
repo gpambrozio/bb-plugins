@@ -5,6 +5,18 @@ Notable changes to `herald`. The other plugins in this repository version separa
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.10.0
+
+### Changed
+
+- **A turn followed quickly by another is no longer lost.** With *Write each sentence with a model* on,
+  when a thread finished a turn and then another before Herald had its sentence ready, only the last
+  turn was summarised — so a review result followed at once by two "Captain, shipshape." replies was
+  never read aloud. Herald now gives the model every turn it has not spoken for yet, oldest first, so
+  the sentence covers them all, and a prompt that skips acknowledgements still speaks the review. Turns
+  from different threads are never mixed, and only the last few are kept, with the model told when
+  older ones were left out.
+
 ## 0.9.0
 
 ### Changed
