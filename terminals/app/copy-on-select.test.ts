@@ -97,6 +97,54 @@ describe("reload, when bb says its settings were saved", () => {
   });
 });
 
+describe("a read that a newer one overtakes", () => {
+  type Config = { generalSettings: { terminalCopyOnSelect?: boolean } };
+  function controlled() {
+    const pending: { resolve: (config: Config) => void; reject: (cause: unknown) => void }[] = [];
+    const reader = {
+      config: () =>
+        new Promise<Config>((resolve, reject) => {
+          pending.push({ resolve, reject });
+        }),
+    };
+    return { reader, pending };
+  }
+  const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  it("hands its waiter the newer answer even when it finishes first", async () => {
+    const { reader, pending } = controlled();
+    const setting = new CopyOnSelectSetting(reader);
+    // A selection's press starts read A; bb then says its settings were saved, starting read B.
+    const selection = setting.refresh();
+    void setting.reload();
+    let answered: boolean | null = null;
+    void selection.then((value) => {
+      answered = value;
+    });
+    // A answers first, with the value from before the change: the selection keeps waiting.
+    pending[0]!.resolve({ generalSettings: { terminalCopyOnSelect: true } });
+    await flush();
+    expect(answered).toBeNull();
+    expect(setting.current()).toBeNull();
+    // B says the setting is now off: the selection does not copy.
+    pending[1]!.resolve({ generalSettings: { terminalCopyOnSelect: false } });
+    expect(await selection).toBe(false);
+    expect(setting.current()).toBe(false);
+  });
+
+  it("follows the newer read when it fails, too", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { reader, pending } = controlled();
+    const setting = new CopyOnSelectSetting(reader);
+    const selection = setting.refresh();
+    void setting.reload();
+    pending[0]!.reject(new Error("down"));
+    await flush();
+    pending[1]!.resolve({ generalSettings: { terminalCopyOnSelect: false } });
+    expect(await selection).toBe(false);
+  });
+});
+
 describe("a selection's answer", () => {
   it("waits for the read its press started rather than taking the older answer", async () => {
     let now = 0;

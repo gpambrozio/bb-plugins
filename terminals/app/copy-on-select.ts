@@ -56,16 +56,19 @@ export class CopyOnSelectSetting {
     this.readAt = this.now();
     // A reader that throws instead of rejecting counts as a failed read too.
     const read = new Promise<Awaited<ReturnType<AppConfigReader["config"]>>>((resolve) => resolve(this.reader.config())).then(
-      (config) => {
-        const value = config.generalSettings.terminalCopyOnSelect ?? COPY_ON_SELECT_DEFAULT;
-        if (id === this.reads) this.value = value;
-        return this.value ?? value;
+      (config): boolean | Promise<boolean> => {
+        // A newer read started after this one: its answer may postdate a change, so whoever
+        // waits on this one waits for that instead.
+        if (id !== this.reads) return this.latest();
+        this.value = config.generalSettings.terminalCopyOnSelect ?? COPY_ON_SELECT_DEFAULT;
+        return this.value;
       },
-      (cause: unknown) => {
+      (cause: unknown): boolean | Promise<boolean> => {
         if (!this.warned) {
           this.warned = true;
           console.warn("terminals: could not read bb's Copy on select setting", cause);
         }
+        if (id !== this.reads) return this.latest();
         // Keep the last answer; with none yet, bb's default.
         return this.value ?? COPY_ON_SELECT_DEFAULT;
       },
@@ -75,6 +78,11 @@ export class CopyOnSelectSetting {
     });
     this.inFlight = tracked;
     return tracked;
+  }
+
+  /** The newest read's answer: the one on its way, else the last value, else bb's default. */
+  private latest(): Promise<boolean> {
+    return this.inFlight ?? Promise.resolve(this.value ?? COPY_ON_SELECT_DEFAULT);
   }
 
   /**
