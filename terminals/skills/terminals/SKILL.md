@@ -22,6 +22,14 @@ call the plugin's `open`, `rename` or `close` RPCs. Reading a tab's output with 
 <id>` is fine when the user asks about it. For your own long-running commands, create your own
 terminal (`bb terminal create`), not a tab here.
 
+## Selections
+
+Selecting text in a tab copies it ("Selection copied") when bb's own Settings → General → Terminals →
+Copy on select is on, and shows an **Add to chat** button. That button asks the user for a thread (or a new
+thread in a project) and puts the selection, as a fenced block headed "Terminal output from <tab>
+on <machine>:", at the end of that thread's message box. Nothing is sent until the user sends it, so a
+message starting that way came from the user's terminal, by the user's choice.
+
 ## What the page shows
 
 - A dot on a tab and "This machine is offline" above it: the machine lost its connection to bb. The

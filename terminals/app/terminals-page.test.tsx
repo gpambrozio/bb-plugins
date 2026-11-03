@@ -7,7 +7,7 @@
  */
 import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import type { PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
-import { renderSlot, type PluginRpcTestHandlers } from "@get-bb/plugin-sdk/testing/app";
+import { renderSlot, type PluginRpcTestHandlers, type RenderSlotOptions } from "@get-bb/plugin-sdk/testing/app";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { RpcContract } from "../shared/contract";
@@ -16,11 +16,29 @@ import type { ConnectionStatus } from "./connection";
 
 const terminals = vi.hoisted(() => {
   type Listener = (status: ConnectionStatus) => void;
-  const entries = new Map<string, { status: ConnectionStatus; listeners: Set<Listener>; attached: number }>();
+  interface Entry {
+    status: ConnectionStatus;
+    listeners: Set<Listener>;
+    attached: number;
+    /** What xterm reports as selected. */
+    selection: string;
+    selectionListeners: Set<() => void>;
+    scrollListeners: Set<() => void>;
+    cwd: string | null;
+  }
+  const entries = new Map<string, Entry>();
   function entry(terminalId: string) {
     let found = entries.get(terminalId);
     if (found === undefined) {
-      found = { status: { state: "live", exitCode: null }, listeners: new Set(), attached: 0 };
+      found = {
+        status: { state: "live", exitCode: null },
+        listeners: new Set(),
+        attached: 0,
+        selection: "",
+        selectionListeners: new Set(),
+        scrollListeners: new Set(),
+        cwd: null,
+      };
       entries.set(terminalId, found);
     }
     return found;
@@ -33,8 +51,25 @@ const terminals = vi.hoisted(() => {
       found.status = status;
       for (const listener of found.listeners) listener(status);
     },
+    /** The selection changes, as xterm reports it — by a drag, or by output and programs. */
+    setSelection(terminalId: string, text: string) {
+      const found = entry(terminalId);
+      found.selection = text;
+      for (const listener of found.selectionListeners) listener();
+    },
+    scroll(terminalId: string) {
+      for (const listener of entry(terminalId).scrollListeners) listener();
+    },
   };
 });
+
+const toasts = vi.hoisted(() => ({ success: [] as string[], error: [] as string[] }));
+vi.mock("sonner", () => ({
+  toast: {
+    success: (message: string) => void toasts.success.push(message),
+    error: (message: string) => void toasts.error.push(message),
+  },
+}));
 
 vi.mock("./live-terminals", () => ({
   liveTerminal: (terminalId: string) => {
@@ -51,6 +86,17 @@ vi.mock("./live-terminals", () => ({
       fit: () => undefined,
       focus: () => undefined,
       applyTheme: () => undefined,
+      selection: () => found.selection,
+      clearSelection: () => terminals.setSelection(terminalId, ""),
+      onSelectionChange: (listener: () => void) => {
+        found.selectionListeners.add(listener);
+        return () => found.selectionListeners.delete(listener);
+      },
+      onScroll: (listener: () => void) => {
+        found.scrollListeners.add(listener);
+        return () => found.scrollListeners.delete(listener);
+      },
+      cwd: () => found.cwd,
     };
   },
   releaseClosedTerminals: (open: ReadonlySet<string>) => {
@@ -61,6 +107,7 @@ vi.mock("./live-terminals", () => ({
 
 const { TerminalsPage } = await import("./terminals-page");
 const { windowSelection } = await import("./selection");
+const { windowDeliveries } = await import("./chat-delivery");
 
 beforeAll(() => {
   // jsdom has neither; the compact-viewport hook and the terminal's fit ask them.
@@ -84,6 +131,10 @@ beforeAll(() => {
 beforeEach(() => {
   terminals.entries.clear();
   windowSelection.set(null);
+  toasts.success.length = 0;
+  toasts.error.length = 0;
+  const pending = windowDeliveries.get();
+  if (pending !== null) windowDeliveries.finish(pending);
 });
 
 afterEach(() => cleanup());
@@ -133,8 +184,38 @@ function server(hosts: HostChoice[], initial: TabView[] = []) {
   return { state, rpc };
 }
 
-function render(rpc: PluginRpcTestHandlers<RpcContract>) {
-  return renderSlot<PluginNavPanelProps, RpcContract>({ component: TerminalsPage }, { subPath: "" }, { rpc });
+/** What bb answers for its own settings and projects, and the sidebar's threads. */
+interface Host {
+  copyOnSelect?: boolean;
+  projects?: { id: string; sources: { hostId: string; path: string }[] }[];
+  sidebarThreads?: RenderSlotOptions<RpcContract>["sidebarThreads"];
+  configReads?: { count: number };
+  /** Filled in by the page's `system:config-changed` subscription, to say bb saved its settings. */
+  configChanged?: Set<() => void>;
+}
+
+function render(rpc: PluginRpcTestHandlers<RpcContract>, host: Host = {}) {
+  const sdk = {
+    system: {
+      config: async () => {
+        if (host.configReads !== undefined) host.configReads.count += 1;
+        return { generalSettings: { terminalCopyOnSelect: host.copyOnSelect ?? true } };
+      },
+    },
+    projects: { list: async () => host.projects ?? [] },
+    subscribe: ({ event, callback }: { event: string; callback: () => void }) => {
+      if (event !== "system:config-changed") return () => {};
+      host.configChanged ??= new Set();
+      const listeners = host.configChanged;
+      listeners.add(callback);
+      return () => listeners.delete(callback);
+    },
+  } as unknown as RenderSlotOptions<RpcContract>["sdk"];
+  return renderSlot<PluginNavPanelProps, RpcContract>(
+    { component: TerminalsPage },
+    { subPath: "" },
+    { rpc, sdk, sidebarThreads: host.sidebarThreads, experimental_copyToClipboard: async () => true },
+  );
 }
 
 function pressPlus() {
@@ -414,6 +495,256 @@ describe("the Terminals page", () => {
       render(rpc);
       const named = await screen.findByRole("tab", { name: "deploy" });
       expect(named.getAttribute("title")).toBe("deploy — Mac mini");
+    });
+  });
+
+  describe("a selection in the terminal", () => {
+    /** A drag in the shown terminal from one point to another, with `text` selected when it lets go. */
+    async function drag(terminalId: string, text: string, from = { x: 40, y: 40 }, to = { x: 120, y: 80 }) {
+      const view = document.querySelector("[data-terminal-view]") as HTMLElement;
+      fireEvent.pointerDown(view, { button: 0, clientX: from.x, clientY: from.y, pointerType: "mouse" });
+      act(() => terminals.setSelection(terminalId, text));
+      fireEvent.pointerUp(document, { button: 0, clientX: to.x, clientY: to.y, pointerType: "mouse" });
+      // The page reads the selection a frame after the release, once xterm has settled it.
+      await act(async () => {
+        await new Promise((resolve) => requestAnimationFrame(() => resolve(undefined)));
+      });
+    }
+
+    function thread(id: string, title: string, projectId: string, updatedAt: number, extra: Record<string, unknown> = {}) {
+      return {
+        id,
+        projectId,
+        title,
+        titleFallback: null,
+        displayTitle: title,
+        isArchived: false,
+        isHidden: false,
+        updatedAt,
+        environment: null,
+        host: null,
+        ...extra,
+      };
+    }
+
+    const sidebarThreads = {
+      status: "ready" as const,
+      projects: [
+        { id: "proj_personal", name: "Personal", isPersonal: true, href: "", settingsHref: "" },
+        { id: "proj_app", name: "app", isPersonal: false, href: "", settingsHref: "" },
+        { id: "proj_site", name: "site", isPersonal: false, href: "", settingsHref: "" },
+      ],
+      threads: [
+        thread("thr_old", "Fix the login form", "proj_site", 1),
+        thread("thr_new", "Speed up the build", "proj_app", 3),
+        thread("thr_archived", "Old idea", "proj_app", 5, { isArchived: true, archivedAt: 5 }),
+        thread("thr_hidden", "Helper", "proj_app", 4, { isHidden: true }),
+      ],
+    } as unknown as Host["sidebarThreads"];
+
+    async function shownTerminal(host: Host = {}) {
+      const { rpc } = server([{ id: "mini", name: "Mac mini" }], [{ ...tab("term_1", "mini", "Mac mini"), name: "build" }]);
+      // The same object, so a test can change what bb answers later.
+      host.sidebarThreads ??= sidebarThreads;
+      const view = render(rpc, host);
+      await screen.findByRole("tab", { name: "build" });
+      await waitFor(() => expect(document.querySelector("[data-terminal-view]")).not.toBeNull());
+      return view;
+    }
+
+    it("floats Add to chat by the pointer and copies the text, with bb's toast", async () => {
+      const view = await shownTerminal();
+      await drag("term_1", "$ npm test\nok");
+      const button = await screen.findByRole("button", { name: "Add to chat" });
+      const menu = button.parentElement as HTMLElement;
+      // Dragged downwards: below the pointer, as bb places it.
+      expect(menu.style.transform).toBe("translateX(-50%)");
+      await waitFor(() => expect(view.experimental_clipboardWrites).toEqual([{ text: "$ npm test\nok" }]));
+      expect(toasts.success).toEqual(["Selection copied"]);
+    });
+
+    it("puts the button above the pointer after a drag upwards", async () => {
+      await shownTerminal();
+      await drag("term_1", "ok", { x: 120, y: 80 }, { x: 40, y: 40 });
+      const button = await screen.findByRole("button", { name: "Add to chat" });
+      expect((button.parentElement as HTMLElement).style.transform).toBe("translate(-50%, -100%)");
+    });
+
+    it("copies nothing when bb's Copy on select is off, and still offers Add to chat", async () => {
+      const view = await shownTerminal({ copyOnSelect: false });
+      await drag("term_1", "ok");
+      expect(await screen.findByRole("button", { name: "Add to chat" })).toBeTruthy();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(view.experimental_clipboardWrites).toEqual([]);
+      expect(toasts.success).toEqual([]);
+    });
+
+    it("reads the setting again as a selection starts, so a change in Settings counts", async () => {
+      const host: Host = { copyOnSelect: false, configReads: { count: 0 } };
+      const view = await shownTerminal(host);
+      await waitFor(() => expect(host.configReads!.count).toBeGreaterThan(0));
+      host.copyOnSelect = true;
+      // Past the few seconds a read stays fresh.
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 2_100));
+      });
+      await drag("term_1", "ok");
+      await waitFor(() => expect(view.experimental_clipboardWrites).toEqual([{ text: "ok" }]));
+    });
+
+    it("reads the setting again at once when bb says its settings were saved", async () => {
+      const host: Host = { copyOnSelect: true, configReads: { count: 0 } };
+      const view = await shownTerminal(host);
+      await waitFor(() => expect(host.configReads!.count).toBeGreaterThan(0));
+      await waitFor(() => expect(host.configChanged?.size).toBe(1));
+      const before = host.configReads!.count;
+      host.copyOnSelect = false;
+      // Well inside the few seconds a read stays fresh: the event does not wait for them.
+      act(() => {
+        for (const listener of host.configChanged!) listener();
+      });
+      await waitFor(() => expect(host.configReads!.count).toBe(before + 1));
+      await drag("term_1", "ok");
+      expect(await screen.findByRole("button", { name: "Add to chat" })).toBeTruthy();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(view.experimental_clipboardWrites).toEqual([]);
+    });
+
+    it("does nothing for a selection the user did not make", async () => {
+      const view = await shownTerminal();
+      act(() => terminals.setSelection("term_1", "printed by a program"));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(screen.queryByRole("button", { name: "Add to chat" })).toBeNull();
+      expect(view.experimental_clipboardWrites).toEqual([]);
+    });
+
+    it("offers nothing for an empty selection, and takes the button away when the selection goes or the view scrolls", async () => {
+      const view = await shownTerminal();
+      await drag("term_1", "   ");
+      expect(screen.queryByRole("button", { name: "Add to chat" })).toBeNull();
+      expect(view.experimental_clipboardWrites).toEqual([]);
+
+      await drag("term_1", "ok");
+      await screen.findByRole("button", { name: "Add to chat" });
+      act(() => terminals.setSelection("term_1", ""));
+      await waitFor(() => expect(screen.queryByRole("button", { name: "Add to chat" })).toBeNull());
+
+      await drag("term_1", "ok");
+      await screen.findByRole("button", { name: "Add to chat" });
+      act(() => terminals.scroll("term_1"));
+      await waitFor(() => expect(screen.queryByRole("button", { name: "Add to chat" })).toBeNull());
+    });
+
+    it("does not copy the same selection twice when the mouse lets go over it again", async () => {
+      const view = await shownTerminal();
+      await drag("term_1", "ok");
+      await waitFor(() => expect(view.experimental_clipboardWrites).toHaveLength(1));
+      await drag("term_1", "ok");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(view.experimental_clipboardWrites).toHaveLength(1);
+    });
+
+    it("lists open threads, most recent first with their projects, and searches them", async () => {
+      await shownTerminal();
+      await drag("term_1", "ok");
+      fireEvent.click(await screen.findByRole("button", { name: "Add to chat" }));
+      const list = await screen.findByRole("listbox", { name: "Threads" });
+      const rows = within(list).getAllByRole("option").map((row) => row.textContent);
+      expect(rows).toEqual(["New thread", "Speed up the buildapp", "Fix the login formsite"]);
+      expect(screen.getByText(/1 line from build on Mac mini/)).toBeTruthy();
+
+      fireEvent.change(screen.getByRole("combobox", { name: "Search threads" }), { target: { value: "site" } });
+      expect(within(list).getAllByRole("option").map((row) => row.textContent)).toEqual(["New thread", "Fix the login formsite"]);
+      fireEvent.change(screen.getByRole("combobox", { name: "Search threads" }), { target: { value: "nothing like it" } });
+      expect(screen.getByText(/No thread matches/)).toBeTruthy();
+    });
+
+    it("sends the selection to the chosen thread's composer, as a fenced block saying where it came from", async () => {
+      const view = await shownTerminal();
+      await drag("term_1", "$ npm test\nok");
+      fireEvent.click(await screen.findByRole("button", { name: "Add to chat" }));
+      fireEvent.click(await screen.findByRole("option", { name: /Fix the login form/ }));
+      await waitFor(() => expect(view.navigateCalls).toContainEqual({ method: "toThread", threadId: "thr_old" }));
+      expect(windowDeliveries.get()).toMatchObject({
+        target: { kind: "thread", threadId: "thr_old" },
+        block: "Terminal output from build on Mac mini:\n\n```text\n$ npm test\nok\n```",
+      });
+      // Nothing is sent for the user.
+      expect(view.sdkCalls.filter((call) => String(call).includes("send"))).toEqual([]);
+      expect(screen.queryByRole("listbox", { name: "Threads" })).toBeNull();
+    });
+
+    it("picks a thread with the keyboard from the search field", async () => {
+      const view = await shownTerminal();
+      await drag("term_1", "ok");
+      fireEvent.click(await screen.findByRole("button", { name: "Add to chat" }));
+      const search = await screen.findByRole("combobox", { name: "Search threads" });
+      fireEvent.keyDown(search, { key: "ArrowDown" });
+      fireEvent.keyDown(search, { key: "Enter" });
+      await waitFor(() => expect(view.navigateCalls).toContainEqual({ method: "toThread", threadId: "thr_new" }));
+    });
+
+    it("keeps the row the keys move to in sight, scrolling only the list", async () => {
+      const many = {
+        ...(sidebarThreads as object),
+        threads: Array.from({ length: 12 }, (_, index) => thread(`thr_${index}`, `Thread ${index}`, "proj_app", 100 - index)),
+      } as unknown as Host["sidebarThreads"];
+      const view = await shownTerminal({ sidebarThreads: many });
+      await drag("term_1", "ok");
+      fireEvent.click(await screen.findByRole("button", { name: "Add to chat" }));
+      const search = await screen.findByRole("combobox", { name: "Search threads" });
+      const list = screen.getByRole("listbox", { name: "Threads" });
+      const rows = within(list).getAllByRole("option");
+      // jsdom lays nothing out: rows 30 px tall in a list that shows three of them.
+      const ROW = 30;
+      const SHOWN = 3;
+      list.getBoundingClientRect = () => new DOMRect(0, 100, 300, ROW * SHOWN);
+      rows.forEach((row, index) => {
+        row.getBoundingClientRect = () => new DOMRect(0, 100 + index * ROW - list.scrollTop, 300, ROW);
+      });
+      const outer = list.parentElement as HTMLElement;
+      outer.scrollTop = 0;
+
+      for (let step = 0; step < 5; step += 1) fireEvent.keyDown(search, { key: "ArrowDown" });
+      // Row 5 is the active one, named on the search field, and the list scrolled to show it whole.
+      expect(search.getAttribute("aria-activedescendant")).toBe(rows[5]!.id);
+      expect(rows[5]!.getAttribute("aria-selected")).toBe("true");
+      expect(list.scrollTop).toBe((5 + 1 - SHOWN) * ROW);
+      expect(outer.scrollTop).toBe(0);
+
+      for (let step = 0; step < 4; step += 1) fireEvent.keyDown(search, { key: "ArrowUp" });
+      expect(search.getAttribute("aria-activedescendant")).toBe(rows[1]!.id);
+      expect(list.scrollTop).toBe(1 * ROW);
+
+      fireEvent.keyDown(search, { key: "Enter" });
+      await waitFor(() => expect(view.navigateCalls).toContainEqual({ method: "toThread", threadId: "thr_0" }));
+    });
+
+    it("starts a new thread in the project whose checkout holds the shell's directory", async () => {
+      const view = await shownTerminal({
+        projects: [
+          { id: "proj_app", sources: [{ hostId: "mini", path: "/Users/me/code/app" }] },
+          { id: "proj_site", sources: [{ hostId: "mini", path: "/Users/me/code/site" }] },
+        ],
+      });
+      terminals.entry("term_1").cwd = "/Users/me/code/site/src";
+      await drag("term_1", "ok");
+      fireEvent.click(await screen.findByRole("button", { name: "Add to chat" }));
+      await screen.findByRole("button", { name: "Project: site" });
+      fireEvent.click(screen.getByRole("option", { name: /New thread/ }));
+      await waitFor(() =>
+        expect(view.navigateCalls).toContainEqual({ method: "toCompose", options: { projectId: "proj_site", focusPrompt: true } }),
+      );
+      expect(windowDeliveries.get()?.target).toEqual({ kind: "new-thread", projectId: "proj_site" });
+    });
+
+    it("starts a new thread in the last project picked when the shell has not said where it is", async () => {
+      window.localStorage.setItem("bb-plugin-terminals:last-new-thread-project", "proj_personal");
+      await shownTerminal();
+      await drag("term_1", "ok");
+      fireEvent.click(await screen.findByRole("button", { name: "Add to chat" }));
+      expect(await screen.findByRole("button", { name: "Project: Personal" })).toBeTruthy();
+      window.localStorage.removeItem("bb-plugin-terminals:last-new-thread-project");
     });
   });
 });

@@ -14,6 +14,7 @@ import "@xterm/xterm/css/xterm.css";
 
 import { TerminalConnection, terminalSocketUrl, type ConnectionStatus, type SocketLike } from "./connection";
 import { TerminalSizing } from "./sizing";
+import { directoryFromOsc7 } from "./project-match";
 import { currentFontFamily, currentTheme } from "./theme";
 import { rememberViewport, restoreViewport, type ViewportPlace } from "./viewport";
 
@@ -34,6 +35,18 @@ export interface LiveTerminal {
   fit(): void;
   focus(): void;
   applyTheme(): void;
+  /** The text selected in it now; empty when nothing is. */
+  selection(): string;
+  clearSelection(): void;
+  /** Calls `listener` whenever the selection changes, by hand or not; returns the unsubscribe. */
+  onSelectionChange(listener: () => void): () => void;
+  /** Calls `listener` whenever the view scrolls; returns the unsubscribe. */
+  onScroll(listener: () => void): () => void;
+  /**
+   * The shell's working directory as it last reported it (OSC 7, which many
+   * shells send on every prompt), or null when it never has.
+   */
+  cwd(): string | null;
 }
 
 /**
@@ -72,6 +85,13 @@ function create(terminalId: string, backend: TerminalsBackend): LiveTerminal & {
   });
   const fitAddon = new FitAddon();
   term.loadAddon(fitAddon);
+
+  let workingDirectory: string | null = null;
+  term.parser.registerOscHandler(7, (data) => {
+    workingDirectory = directoryFromOsc7(data) ?? workingDirectory;
+    // Not handled: xterm has nothing of its own to do with it.
+    return false;
+  });
 
   let opened = false;
   /** Whether the page shows this terminal in this window now. */
@@ -164,6 +184,17 @@ function create(terminalId: string, backend: TerminalsBackend): LiveTerminal & {
       term.options.theme = currentTheme();
       term.options.fontFamily = currentFontFamily();
     },
+    selection: () => term.getSelection(),
+    clearSelection: () => term.clearSelection(),
+    onSelectionChange(listener) {
+      const subscription = term.onSelectionChange(listener);
+      return () => subscription.dispose();
+    },
+    onScroll(listener) {
+      const subscription = term.onScroll(listener);
+      return () => subscription.dispose();
+    },
+    cwd: () => workingDirectory,
     dispose() {
       shown = false;
       listeners.clear();

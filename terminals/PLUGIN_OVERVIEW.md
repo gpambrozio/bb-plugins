@@ -15,6 +15,11 @@ terminal app does.
   the same shells.
 - A machine that goes offline is marked, and its shells carry on when it reconnects. A shell that ends
   keeps its output on screen with its exit code.
+- Select text and an Add to chat button appears, as in bb's own terminal. Pick an open thread, or a
+  new thread in a project (the one the shell is in, when it says), and the selection lands in that
+  chat's message box as terminal output naming its tab and machine, for you to send yourself.
+- Copy on select follows bb's own setting: a finished selection is copied with a "Selection copied"
+  notice, and nothing is copied when the setting is off.
 - Colours and font follow bb's theme.
 
 ## How it works
