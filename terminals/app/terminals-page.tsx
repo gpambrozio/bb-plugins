@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   experimental_useCodeTheme,
+  useBbNavigate,
   useRealtime,
   useRealtimeConnectionState,
   useRpc,
@@ -25,9 +26,14 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
 
+import { AddToChatDialog, type AddToChatRequest } from "./add-to-chat-dialog";
+import { DELIVERY_TIMEOUT_MS, windowDeliveries, type DeliveryTarget } from "./chat-delivery";
+import { terminalBlock } from "./chat-text";
 import type { ConnectionStatus } from "./connection";
-import { applyThemeToAll, liveTerminal, releaseClosedTerminals, type TerminalsBackend } from "./live-terminals";
+import { CopyOnSelectSetting } from "./copy-on-select";
+import { applyThemeToAll, liveTerminal, releaseClosedTerminals, type LiveTerminal, type TerminalsBackend } from "./live-terminals";
 import { resolveSelection, selectionAfterClose, windowSelection } from "./selection";
+import { SelectionMenu, useTerminalSelection } from "./terminal-selection";
 
 export const PANEL_PATH = "terminals";
 
@@ -111,6 +117,32 @@ function useTerminalsBackend(): TerminalsBackend {
   );
 }
 
+/**
+ * bb's "Copy on select" setting, read when the page opens, when the window
+ * comes back to the front and after the realtime link reconnects; each
+ * selection asks again too (app/copy-on-select.ts).
+ */
+function useCopyOnSelect(): CopyOnSelectSetting {
+  const sdk = useSdk();
+  const setting = useMemo(() => new CopyOnSelectSetting({ config: () => sdk.system.config() }), [sdk]);
+  const connection = useRealtimeConnectionState();
+  useEffect(() => {
+    if (connection === "connected") void setting.refresh();
+  }, [setting, connection]);
+  useEffect(() => {
+    const refresh = () => {
+      if (document.visibilityState === "visible") void setting.refresh();
+    };
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [setting]);
+  return setting;
+}
+
 /** How often the page reads the list again while a tab's shell is still opening. */
 const OPENING_POLL_MS = 2_000;
 
@@ -120,10 +152,12 @@ export function TerminalsPage(_props: PluginNavPanelProps) {
   const [opening, setOpening] = useState(false);
   const [hostMenu, setHostMenu] = useState<HostChoice[] | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const copyOnSelect = useCopyOnSelect();
 
   const tabIds = useMemo(() => (tabs ?? []).map((tab) => tab.terminalId), [tabs]);
   const shown = tabs === null ? null : resolveSelection(tabIds, selected);
   const labels = useMemo(() => tabLabels(tabs ?? []), [tabs]);
+  const shownTab = tabs?.find((tab) => tab.terminalId === shown) ?? null;
 
   const select = useCallback((terminalId: string | null) => {
     windowSelection.set(terminalId);
@@ -290,13 +324,21 @@ export function TerminalsPage(_props: PluginNavPanelProps) {
         </div>
       ) : null}
       <div className="relative min-h-0 flex-1 bg-sidebar">
-        {shown !== null && isPending(tabs?.find((tab) => tab.terminalId === shown)?.status ?? "running") ? (
+        {shown !== null && isPending(shownTab?.status ?? "running") ? (
           <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground">
             <Icon name="Spinner" />
             Starting the shell…
           </div>
         ) : shown !== null ? (
-          <TerminalView key={shown} terminalId={shown} onClose={() => void close(shown)} />
+          <TerminalView
+            key={shown}
+            terminalId={shown}
+            hostId={shownTab?.hostId ?? ""}
+            hostName={shownTab?.hostName ?? ""}
+            label={labels.get(shown) ?? shownTab?.hostName ?? ""}
+            copyOnSelect={copyOnSelect}
+            onClose={() => void close(shown)}
+          />
         ) : tabs === null ? null : (
           <EmptyState opening={opening} onOpen={() => void plus()} />
         )}
@@ -479,10 +521,30 @@ function TabNameEditor({ initial, label, onDone }: { initial: string; label: str
   );
 }
 
-function TerminalView({ terminalId, onClose }: { terminalId: string; onClose: () => void }) {
+function TerminalView({
+  terminalId,
+  hostId,
+  hostName,
+  label,
+  copyOnSelect,
+  onClose,
+}: {
+  terminalId: string;
+  hostId: string;
+  hostName: string;
+  /** The tab's title as the strip shows it. */
+  label: string;
+  copyOnSelect: CopyOnSelectSetting;
+  onClose: () => void;
+}) {
+  const view = useRef<HTMLDivElement>(null);
   const container = useRef<HTMLDivElement>(null);
   const status = useConnectionStatus(terminalId, false);
   const backend = useTerminalsBackend();
+  const navigate = useBbNavigate();
+  const [terminal, setTerminal] = useState<LiveTerminal | null>(null);
+  const { selection, dismiss, onPointerDown } = useTerminalSelection(terminal, view, copyOnSelect);
+  const [request, setRequest] = useState<AddToChatRequest | null>(null);
 
   useLayoutEffect(() => {
     const parent = container.current;
@@ -490,6 +552,7 @@ function TerminalView({ terminalId, onClose }: { terminalId: string; onClose: ()
     const terminal = liveTerminal(terminalId, backend);
     terminal.attach(parent);
     terminal.focus();
+    setTerminal(terminal);
     const observer = new ResizeObserver(() => terminal.fit());
     observer.observe(parent);
     // Back to this window: it is the one in use, so the shell takes its size again (app/sizing.ts).
@@ -503,11 +566,33 @@ function TerminalView({ terminalId, onClose }: { terminalId: string; onClose: ()
       window.removeEventListener("focus", refit);
       document.removeEventListener("visibilitychange", refit);
       terminal.detach();
+      setTerminal(null);
     };
   }, [terminalId, backend]);
 
+  const addToChat = useCallback(() => {
+    if (selection === null || terminal === null) return;
+    setRequest({ text: selection.text, source: { tabLabel: label, hostName }, hostId, cwd: terminal.cwd() });
+    dismiss();
+    terminal.clearSelection();
+  }, [selection, terminal, label, hostName, hostId, dismiss]);
+
+  const send = useCallback(
+    (target: DeliveryTarget) => {
+      if (request === null) return;
+      const block = terminalBlock(request.text, request.source);
+      setRequest(null);
+      if (block === null) return;
+      // The composer is not on screen yet: app/chat-delivery.tsx writes the block once it is.
+      windowDeliveries.request({ target, block, deadline: Date.now() + DELIVERY_TIMEOUT_MS });
+      if (target.kind === "thread") navigate.toThread(target.threadId);
+      else navigate.toCompose({ projectId: target.projectId, focusPrompt: true });
+    },
+    [request, navigate],
+  );
+
   return (
-    <div className="absolute inset-0 flex flex-col">
+    <div ref={view} className="absolute inset-0 flex flex-col">
       {status.state === "offline" ? (
         <div className="flex items-center gap-2 border-b border-warning px-3 py-1.5 text-xs text-warning-text">
           <Icon name="Spinner" />
@@ -524,7 +609,17 @@ function TerminalView({ terminalId, onClose }: { terminalId: string; onClose: ()
           </Button>
         </div>
       ) : null}
-      <div ref={container} className="min-h-0 flex-1 overflow-hidden p-1" />
+      <div ref={container} data-terminal-view="" className="min-h-0 flex-1 overflow-hidden p-1" onPointerDown={onPointerDown} />
+      {selection === null ? null : <SelectionMenu anchor={selection.anchor} onAddToChat={addToChat} />}
+      <AddToChatDialog
+        request={request}
+        onOpenChange={(open) => {
+          if (open) return;
+          setRequest(null);
+          terminal?.focus();
+        }}
+        onSend={send}
+      />
     </div>
   );
 }

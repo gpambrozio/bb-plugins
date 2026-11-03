@@ -388,6 +388,17 @@ against 0.5.29 keeps working on bb 0.45. `replace` takes text and mentions toget
 mention ranges for you: shift them by what the edit added before them, as `skills/app/insert.ts`
 does. bb 0.44 has no `replace`, `insert` or `draft`.
 
+**A composer that is not on screen cannot be written to.** `useComposers()` lists only the composers
+showing, and a nav panel shows none. To put text in a thread's draft from a page, hand it to an
+`app.slots.experimental_appOverlay` component, navigate (`toThread`, or `toCompose` with a
+`projectId` for a new thread), and write when the overlay's `useComposers()` lists a handle with that
+`scope`; check on every render and poll briefly, since a scope can change in place and the SDK
+harness keeps the same handle list across `setComposerScope` (`terminals/app/chat-delivery.tsx`).
+
+**bb's own app settings are readable, not observable.** `useSdk().system.config()` returns
+`generalSettings` (`terminalCopyOnSelect` and the rest of Settings → General); no event tells a plugin
+one changed, so read it again when it matters (`terminals/app/copy-on-select.ts`).
+
 Host `Markdown` takes only `content` and `className`, so it gives no say over how a body's images
 load. Where they need gating (tracking pixels, private attachments), render the body yourself, as
 `github-board` does, or defuse them in the source by parsing it as bb does (mdast with GFM) and

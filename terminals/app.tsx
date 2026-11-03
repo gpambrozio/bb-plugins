@@ -2,10 +2,13 @@
 //
 // One sidebar page, Terminals (app/terminals-page.tsx): tabs of shells on any
 // machine connected to bb, each in that machine's home folder — and an
-// invisible overlay that closes this copy's sockets when bb unloads it.
+// invisible overlay that closes this copy's sockets when bb unloads it, and
+// another that puts a selection sent with "Add to chat" into the chat's
+// composer once that composer is on screen (app/chat-delivery.tsx).
 import { useEffect } from "react";
 import { definePluginApp } from "@get-bb/plugin-sdk/app";
 
+import { ChatDelivery } from "./app/chat-delivery";
 import { releaseAllTerminals } from "./app/live-terminals";
 import { PANEL_PATH, TerminalsPage } from "./app/terminals-page";
 
@@ -29,4 +32,5 @@ export default definePluginApp((app) => {
   });
 
   app.slots.experimental_appOverlay({ id: "lifetime", component: TerminalsLifetime });
+  app.slots.experimental_appOverlay({ id: "chat-delivery", component: ChatDelivery });
 });

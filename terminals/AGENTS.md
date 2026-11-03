@@ -15,13 +15,19 @@ specific to `terminals`.
 | `shared/tabs.ts` | The stored tab (with the user's name for it, null for the default title), its status, the realtime channel, the tab and name limits, name normalising, tab labels. No SDK import, so the app may use it. |
 | `shared/host-choice.ts` | Which machines "+" offers (connected and active, the server's own first) and whether it asks. No SDK import. |
 | `shared/contract.ts` | The app ⇄ server RPC contract. The app imports it as a type only (`app/imports.test.ts`). |
-| `app.tsx` | The nav panel, and an invisible app overlay whose unmount (bb reloading or disabling the plugin) releases this copy's terminals and sockets. |
+| `app.tsx` | The nav panel; an invisible app overlay whose unmount (bb reloading or disabling the plugin) releases this copy's terminals and sockets; and the chat-delivery overlay. |
 | `app/terminals-page.tsx` | The page: tab strip, "+" and its machine menu, renaming in place (double click, F2, the tab's context menu), the shown terminal, the offline and ended notices, the empty state. |
 | `app/live-terminals.ts` | One xterm instance and one connection per open tab, in module scope for the life of the window, so leaving the page keeps them. Re-parents the element on return and restores the scrolled-to line. |
 | `app/connection.ts` | One tab's line to bb's terminal socket: replay and resume by sequence number, acknowledgement after drawing, heartbeat, reconnect (also after a failed or silent attach), the output an exited shell left, when to stop. No React, no xterm. |
 | `app/sizing.ts` | Which window sizes a shell several windows show, and drawing every window at the shell's real size. |
 | `app/selection.ts` | Which tab this window shows, and where the selection goes when a tab closes; kept in localStorage. |
 | `app/theme.ts` | The terminal's colours and font from bb's CSS variables, the ones bb's own terminal reads. |
+| `app/terminal-selection.tsx` | A selection the user makes: the floating "Add to chat" button (bb's placement and classes) and copy on select with bb's toasts. |
+| `app/copy-on-select.ts` | bb's own "Copy on select" setting, read through `useSdk().system.config()`. |
+| `app/add-to-chat-dialog.tsx` | The thread picker: open threads (searchable, most recent first) and "New thread" with its project. |
+| `app/chat-text.ts` | The fenced block "Add to chat" writes, and adding it to a draft. |
+| `app/project-match.ts` | The shell's directory from OSC 7, the project whose checkout holds it, and the default project. |
+| `app/chat-delivery.tsx` | The block on its way to a composer, and the overlay that writes it once that composer is on screen. |
 
 `npm test` runs everything. Nothing in it opens a shell or a socket: the connection runs against a
 scripted socket and a manual clock, the server against the SDK's fake host with stubbed terminals,
@@ -103,7 +109,40 @@ bounds what a stuck "+" can start.
 
 **Security.** A shell is the user's own account on that machine, so nothing here widens access: the
 RPCs and the socket are bb's authenticated ones, `open` takes only a connected machine's id, no port
-is opened, and storage and the log hold tab metadata only — never output, keystrokes or credentials.
+is opened, and storage and the log hold tab metadata only — never output, keystrokes or credentials. A
+selection sent with "Add to chat" stays in the window's memory until the chat's composer takes it; it
+is never stored or sent for the user.
+
+**Selections behave as in bb's terminal.** bb 0.48.1's `ThreadTerminalView` was read from its bundle
+and matched: on the release of a left press that started in the terminal, a frame later, the
+selection is read; a non-empty one shows "Add to chat" at the pointer (below it after a drag
+downwards of more than 4 px, above otherwise, 6 px off, kept 8 px inside the view), and is copied with
+`toast.success("Selection copied")` / `toast.error("Failed to copy selection")` when the setting is
+on. The same text is not copied twice in a row. Nothing happens on xterm's own `onSelectionChange`
+(output, programs, the terminal clearing it) except taking the button away when the selection is
+gone; a scroll or a window resize takes it away too, as bb's does.
+
+**Copy on select is bb's setting, polled.** `useSdk().system.config()` carries
+`generalSettings.terminalCopyOnSelect` (default true), but nothing tells a plugin it changed, so the
+page reads it on mount, on window focus, after a realtime reconnect and on each press in the terminal
+(at most every 2 s); the release waits for the read its press started. There is no plugin setting of
+its own: it would only disagree with bb's.
+
+**"Add to chat" fills a composer, never sends.** The SDK writes only into composers on screen
+(`useComposers()`), and the Terminals page shows none. So the page leaves the block in
+`windowDeliveries`, opens the thread (`toThread`) or the New thread screen (`toCompose` with the
+project), and the `chat-delivery` app overlay — mounted once per window, so it outlives the page —
+appends the block to that composer's draft (`replace`, keeping text, mentions and attachments, as
+bb's own "Add to chat" appends its quote) and focuses it. It looks on each render and polls every
+100 ms, because a composer's scope can change in place; the SDK test harness keeps the same handle
+list across `setComposerScope`, which is how that was found. After 15 s the block goes to the
+clipboard with an error toast instead.
+
+**The new thread's project.** The shell's directory comes from OSC 7 (`file://host/path`), which many
+shells send on each prompt; the tab's `initialCwd` is always the home folder. The deepest project
+checkout (`projects.list` sources) or thread worktree (sidebar threads' environments) holding it on
+the tab's machine wins; else the project last picked here (localStorage), else the most recent
+thread's.
 
 ## Checking it by hand
 

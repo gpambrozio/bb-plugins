@@ -31,6 +31,22 @@ machine running the bb server is listed first.
   output (30 minutes). The next time the plugin loads, tabs whose shell has ended
   are dropped.
 
+- **Select text** and an **Add to chat** button floats by the pointer, as in bb's own terminal. A
+  tab belongs to no chat, so it asks which one: an open thread (searchable by title or project, the
+  most recent first) or **New thread** in a project. The project starts on the one whose checkout or
+  worktree holds the shell's current directory, when the shell reports it (many do, with the OSC 7
+  sequence on each prompt), else on the one you picked last time in this browser, else on your most
+  recent thread's. bb then opens that chat and the selection lands at the end of its message box as a
+  fenced block headed with the tab and machine it came from. Nothing is sent: you read it over and
+  send it yourself. Should the chat not open within 15 seconds, the block goes to the clipboard
+  instead.
+- **Copy on select** follows bb's own setting, Settings → General → Terminals → **Copy on select** (on unless
+  you turned it off): finishing a selection copies it and shows "Selection copied", exactly as bb's
+  terminal does. bb does not tell plugins when a setting changes, so the page reads it as it opens,
+  when its window comes back to the front and as each selection starts; a change counts from the next
+  selection. Only a selection you make with the mouse is copied, never one a program or new output
+  makes.
+
 The colours and font follow bb's theme, as bb's own terminal does.
 
 ## What you need

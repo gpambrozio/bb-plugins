@@ -5,6 +5,20 @@ Notable changes to `terminals`. The other plugins in this repository version sep
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.2.0
+
+### Added
+
+- **Add to chat from a terminal.** Select text in a terminal and an **Add to chat** button appears by
+  the pointer, as in bb's own terminal. It asks which chat: an open thread (search them by title or
+  project; the most recent are first) or a new thread in a project you pick. A new thread starts on
+  the project whose folder the shell is in, when the shell says where it is, and otherwise on the one
+  you picked last time. The selection goes into that chat's message box as a block of terminal
+  output, saying which tab and machine it came from, for you to read over and send yourself.
+- **Copy on select**, following bb's own setting (Settings → General → Terminals → Copy on select):
+  selecting text copies it and shows "Selection copied", as bb's terminal does. Turn the setting off
+  and selecting copies nothing; the change counts from your next selection.
+
 ## 0.1.1
 
 ### Fixed
