@@ -1,7 +1,7 @@
 /** Which project "New thread" starts on, from the shell's directory and what came before. */
 import { describe, expect, it } from "vitest";
 
-import { defaultProject, directoryFromOsc7, projectForDirectory } from "./project-match";
+import { comparablePath, defaultProject, directoryFromOsc7, projectForDirectory } from "./project-match";
 
 describe("directoryFromOsc7", () => {
   it("reads the path of a file URL, decoded", () => {
@@ -44,6 +44,43 @@ describe("projectForDirectory", () => {
     expect(projectForDirectory(null, "mini", places)).toBeNull();
     expect(projectForDirectory("/tmp", "mini", places)).toBeNull();
     expect(projectForDirectory("/Users/me/code/app", "studio", places)).toBeNull();
+  });
+});
+
+describe("a Windows machine", () => {
+  const places = [
+    { projectId: "app", hostId: "pc", path: "C:\\Users\\me\\code\\app" },
+    { projectId: "app-worktree", hostId: "pc", path: "C:\\Users\\me\\code\\app\\.worktrees\\feature\\" },
+    { projectId: "data", hostId: "pc", path: "D:\\" },
+  ];
+
+  it("matches the directory a shell reports through OSC 7 to the project's native path", () => {
+    const cwd = directoryFromOsc7("file://PC/C:/Users/me/code/app/src");
+    expect(cwd).toBe("C:/Users/me/code/app/src");
+    expect(projectForDirectory(cwd, "pc", places)).toBe("app");
+  });
+
+  it("ignores case and the kind of slash, as Windows does, and prefers the deepest directory", () => {
+    expect(projectForDirectory("c:\\users\\ME\\Code\\App\\.worktrees\\feature\\lib", "pc", places)).toBe("app-worktree");
+    expect(projectForDirectory(directoryFromOsc7("file:///d:/scratch"), "pc", places)).toBe("data");
+  });
+
+  it("matches whole path segments only", () => {
+    expect(projectForDirectory("C:/Users/me/code/application", "pc", places)).toBeNull();
+    expect(projectForDirectory("E:/Users/me/code/app", "pc", places)).toBeNull();
+  });
+});
+
+describe("comparablePath", () => {
+  it("keeps POSIX paths as they are, case and backslashes included, but for a trailing slash", () => {
+    expect(comparablePath("/Users/Me/a\\b/")).toBe("/Users/Me/a\\b");
+    expect(comparablePath("/")).toBe("/");
+  });
+
+  it("spells a Windows path one way, keeping a drive's root", () => {
+    expect(comparablePath("C:\\Users\\Me\\")).toBe("c:/users/me");
+    expect(comparablePath("C:\\")).toBe("c:/");
+    expect(comparablePath("C:")).toBe("c:/");
   });
 });
 

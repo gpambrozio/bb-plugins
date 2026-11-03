@@ -395,9 +395,11 @@ showing, and a nav panel shows none. To put text in a thread's draft from a page
 `scope`; check on every render and poll briefly, since a scope can change in place and the SDK
 harness keeps the same handle list across `setComposerScope` (`terminals/app/chat-delivery.tsx`).
 
-**bb's own app settings are readable, not observable.** `useSdk().system.config()` returns
-`generalSettings` (`terminalCopyOnSelect` and the rest of Settings → General); no event tells a plugin
-one changed, so read it again when it matters (`terminals/app/copy-on-select.ts`).
+**bb's own app settings are readable and observable.** `useSdk().system.config()` returns
+`generalSettings` (`terminalCopyOnSelect` and the rest of Settings → General), and
+`useSdk().subscribe({ event: "system:config-changed", callback })` fires when bb saves them. The event
+carries no values and is lost while the realtime link is down, so read the config again on it and on a
+reconnect (`terminals/app/copy-on-select.ts`).
 
 Host `Markdown` takes only `content` and `className`, so it gives no say over how a body's images
 load. Where they need gating (tracking pixels, private attachments), render the body yourself, as

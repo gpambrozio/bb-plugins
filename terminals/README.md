@@ -42,10 +42,8 @@ machine running the bb server is listed first.
   instead.
 - **Copy on select** follows bb's own setting, Settings → General → Terminals → **Copy on select** (on unless
   you turned it off): finishing a selection copies it and shows "Selection copied", exactly as bb's
-  terminal does. bb does not tell plugins when a setting changes, so the page reads it as it opens,
-  when its window comes back to the front and as each selection starts; a change counts from the next
-  selection. Only a selection you make with the mouse is copied, never one a program or new output
-  makes.
+  terminal does. Turning it on or off in Settings counts at once. Only a selection you make with the
+  mouse is copied, never one a program or new output makes.
 
 The colours and font follow bb's theme, as bb's own terminal does.
 

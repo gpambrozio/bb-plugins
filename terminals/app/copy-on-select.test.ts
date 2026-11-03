@@ -67,6 +67,36 @@ describe("CopyOnSelectSetting", () => {
   });
 });
 
+describe("reload, when bb says its settings were saved", () => {
+  it("reads at once, inside the freshness window", async () => {
+    const now = 0;
+    const source = reader([true, false]);
+    const setting = new CopyOnSelectSetting(source, () => now);
+    expect(await setting.refresh()).toBe(true);
+    expect(await setting.reload()).toBe(false);
+    expect(setting.current()).toBe(false);
+    expect(source.config).toHaveBeenCalledTimes(2);
+  });
+
+  it("outranks a read already on its way, which may predate the change", async () => {
+    let answerFirst: (value: { generalSettings: { terminalCopyOnSelect?: boolean } }) => void = () => {};
+    const answers = [
+      new Promise<{ generalSettings: { terminalCopyOnSelect?: boolean } }>((resolve) => {
+        answerFirst = resolve;
+      }),
+      Promise.resolve({ generalSettings: { terminalCopyOnSelect: false } }),
+    ];
+    const setting = new CopyOnSelectSetting({ config: () => answers.shift()! });
+    const older = setting.refresh();
+    expect(await setting.reload()).toBe(false);
+    expect(await setting.resolve()).toBe(false);
+    // The older read answers last, with the value from before the change: it does not win.
+    answerFirst({ generalSettings: { terminalCopyOnSelect: true } });
+    expect(await older).toBe(false);
+    expect(setting.current()).toBe(false);
+  });
+});
+
 describe("a selection's answer", () => {
   it("waits for the read its press started rather than taking the older answer", async () => {
     let now = 0;

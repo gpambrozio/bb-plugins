@@ -4,7 +4,7 @@
  * project), or a new thread in a project, which starts on the project whose
  * checkout holds the shell's directory, else the one picked last time.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   experimental_useSidebarThreads,
   useSdk,
@@ -21,6 +21,7 @@ import { cn } from "@/lib/utils";
 import type { DeliveryTarget } from "./chat-delivery";
 import type { SelectionSource } from "./chat-text";
 import { defaultProject, lastProject, projectForDirectory, type ProjectPlace } from "./project-match";
+import { revealWithin } from "./scroll-within";
 
 /** At most this many threads are listed at once; searching narrows the rest. */
 export const MAX_LISTED_THREADS = 100;
@@ -107,6 +108,10 @@ export function AddToChatDialog({
   /** The user picked the project by hand: a late answer about the checkouts must not move it. */
   const pickedProject = useRef(false);
   const search = useRef<HTMLInputElement>(null);
+  const list = useRef<HTMLDivElement>(null);
+  const ids = useId();
+  const listId = `${ids}-threads`;
+  const rowId = (row: number) => `${ids}-row-${row}`;
 
   const fromDirectory = request === null ? null : projectForDirectory(request.cwd, request.hostId, places);
   const suggested = defaultProject({
@@ -132,6 +137,17 @@ export function AddToChatDialog({
   // Row 0 is "New thread"; the threads follow.
   const rowCount = shown.length + 1;
   const activeRow = Math.min(active, rowCount - 1);
+
+  // The arrow keys move the highlight while focus stays in the search field: keep the row in sight,
+  // so Enter never picks a thread the user cannot see. A hover needs nothing; the row is under the pointer.
+  const reveal = useRef(false);
+  useLayoutEffect(() => {
+    if (!reveal.current) return;
+    reveal.current = false;
+    const element = list.current;
+    const row = element?.querySelector(`[id="${rowId(activeRow)}"]`);
+    if (element != null && row != null) revealWithin(row, element);
+  });
 
   const sendNew = () => {
     if (projectId === null) return;
@@ -167,7 +183,12 @@ export function AddToChatDialog({
         </DialogHeader>
         <Input
           ref={search}
+          role="combobox"
           aria-label="Search threads"
+          aria-expanded={true}
+          aria-autocomplete="list"
+          aria-controls={listId}
+          aria-activedescendant={rowId(activeRow)}
           placeholder="Search threads"
           value={query}
           onChange={(event) => {
@@ -177,9 +198,11 @@ export function AddToChatDialog({
           onKeyDown={(event) => {
             if (event.key === "ArrowDown") {
               event.preventDefault();
+              reveal.current = true;
               setActive(Math.min(activeRow + 1, rowCount - 1));
             } else if (event.key === "ArrowUp") {
               event.preventDefault();
+              reveal.current = true;
               setActive(Math.max(activeRow - 1, 0));
             } else if (event.key === "Enter") {
               event.preventDefault();
@@ -187,8 +210,9 @@ export function AddToChatDialog({
             }
           }}
         />
-        <div role="listbox" aria-label="Threads" className="-mx-1 max-h-80 overflow-y-auto">
+        <div ref={list} id={listId} role="listbox" aria-label="Threads" className="-mx-1 max-h-80 overflow-y-auto">
           <NewThreadRow
+            id={rowId(0)}
             active={activeRow === 0}
             projects={sidebar.projects}
             projectId={projectId}
@@ -202,6 +226,7 @@ export function AddToChatDialog({
           {shown.map((thread, index) => (
             <ThreadRow
               key={thread.id}
+              id={rowId(index + 1)}
               thread={thread}
               projectName={projectNames.get(thread.projectId) ?? null}
               active={activeRow === index + 1}
@@ -228,12 +253,14 @@ export function AddToChatDialog({
 const ROW_CLASS = "flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm outline-none";
 
 function ThreadRow({
+  id,
   thread,
   projectName,
   active,
   onChoose,
   onHover,
 }: {
+  id: string;
   thread: PluginSidebarThread;
   projectName: string | null;
   active: boolean;
@@ -243,6 +270,7 @@ function ThreadRow({
   return (
     <button
       type="button"
+      id={id}
       role="option"
       aria-selected={active}
       className={cn(ROW_CLASS, active ? "bg-state-hover" : "hover:bg-state-hover")}
@@ -257,6 +285,7 @@ function ThreadRow({
 }
 
 function NewThreadRow({
+  id,
   active,
   projects,
   projectId,
@@ -264,6 +293,7 @@ function NewThreadRow({
   onChoose,
   onHover,
 }: {
+  id: string;
   active: boolean;
   projects: readonly PluginSidebarProject[];
   projectId: string | null;
@@ -276,6 +306,7 @@ function NewThreadRow({
     <div className={cn(ROW_CLASS, "p-0", active ? "bg-state-hover" : "hover:bg-state-hover")} onMouseMove={onHover}>
       <button
         type="button"
+        id={id}
         role="option"
         aria-selected={active}
         disabled={project === null}

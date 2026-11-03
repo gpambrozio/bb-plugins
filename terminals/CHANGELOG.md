@@ -17,7 +17,7 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   output, saying which tab and machine it came from, for you to read over and send yourself.
 - **Copy on select**, following bb's own setting (Settings → General → Terminals → Copy on select):
   selecting text copies it and shows "Selection copied", as bb's terminal does. Turn the setting off
-  and selecting copies nothing; the change counts from your next selection.
+  and selecting copies nothing; the change counts at once.
 
 ## 0.1.1
 

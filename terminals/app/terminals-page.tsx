@@ -118,9 +118,10 @@ function useTerminalsBackend(): TerminalsBackend {
 }
 
 /**
- * bb's "Copy on select" setting, read when the page opens, when the window
- * comes back to the front and after the realtime link reconnects; each
- * selection asks again too (app/copy-on-select.ts).
+ * bb's "Copy on select" setting, read when the page opens and again as soon
+ * as bb says its settings were saved; also when the window comes back to the
+ * front, after the realtime link reconnects (a change event may have been
+ * missed) and as each selection starts (app/copy-on-select.ts).
  */
 function useCopyOnSelect(): CopyOnSelectSetting {
   const sdk = useSdk();
@@ -129,6 +130,8 @@ function useCopyOnSelect(): CopyOnSelectSetting {
   useEffect(() => {
     if (connection === "connected") void setting.refresh();
   }, [setting, connection]);
+  // bb saved its settings: read again at once, not after the freshness window.
+  useEffect(() => sdk.subscribe({ event: "system:config-changed", callback: () => void setting.reload() }), [sdk, setting]);
   useEffect(() => {
     const refresh = () => {
       if (document.visibilityState === "visible") void setting.refresh();

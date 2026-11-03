@@ -26,7 +26,9 @@ export function normalizeSelection(text: string): string {
 
 /** A fence longer than any run of backticks in `text`, so the block cannot end early. */
 function fenceFor(text: string): string {
-  const longest = Math.max(0, ...(text.match(/`+/g) ?? []).map((run) => run.length));
+  // A loop, not Math.max(...runs): a long selection has more runs than a call takes arguments.
+  let longest = 0;
+  for (const [run] of text.matchAll(/`+/g)) longest = Math.max(longest, run.length);
   return "`".repeat(Math.max(3, longest + 1));
 }
 

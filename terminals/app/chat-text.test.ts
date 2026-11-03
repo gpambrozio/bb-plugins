@@ -34,6 +34,14 @@ describe("terminalBlock", () => {
     expect(block).toBe("Terminal output from build on Mac mini:\n\n`````text\n```js\nx\n```\n````\n`````");
   });
 
+  it("fences a long selection with more backtick runs than a function call takes arguments", () => {
+    // 75,000 separate runs (a Markdown dump within the terminal's scrollback), and one longer run at the end.
+    const text = Array.from({ length: 7_500 }, () => Array(10).fill("`value`").join(" ")).join("\n") + "\n````";
+    const block = terminalBlock(text, source);
+    expect(block?.startsWith("Terminal output from build on Mac mini:\n\n`````text\n")).toBe(true);
+    expect(block?.endsWith("\n`````")).toBe(true);
+  });
+
   it("is null for a selection of whitespace only", () => {
     expect(terminalBlock(" \n\t\n", source)).toBeNull();
   });

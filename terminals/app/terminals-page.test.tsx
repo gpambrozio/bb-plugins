@@ -190,6 +190,8 @@ interface Host {
   projects?: { id: string; sources: { hostId: string; path: string }[] }[];
   sidebarThreads?: RenderSlotOptions<RpcContract>["sidebarThreads"];
   configReads?: { count: number };
+  /** Filled in by the page's `system:config-changed` subscription, to say bb saved its settings. */
+  configChanged?: Set<() => void>;
 }
 
 function render(rpc: PluginRpcTestHandlers<RpcContract>, host: Host = {}) {
@@ -201,6 +203,13 @@ function render(rpc: PluginRpcTestHandlers<RpcContract>, host: Host = {}) {
       },
     },
     projects: { list: async () => host.projects ?? [] },
+    subscribe: ({ event, callback }: { event: string; callback: () => void }) => {
+      if (event !== "system:config-changed") return () => {};
+      host.configChanged ??= new Set();
+      const listeners = host.configChanged;
+      listeners.add(callback);
+      return () => listeners.delete(callback);
+    },
   } as unknown as RenderSlotOptions<RpcContract>["sdk"];
   return renderSlot<PluginNavPanelProps, RpcContract>(
     { component: TerminalsPage },
@@ -583,6 +592,24 @@ describe("the Terminals page", () => {
       await waitFor(() => expect(view.experimental_clipboardWrites).toEqual([{ text: "ok" }]));
     });
 
+    it("reads the setting again at once when bb says its settings were saved", async () => {
+      const host: Host = { copyOnSelect: true, configReads: { count: 0 } };
+      const view = await shownTerminal(host);
+      await waitFor(() => expect(host.configReads!.count).toBeGreaterThan(0));
+      await waitFor(() => expect(host.configChanged?.size).toBe(1));
+      const before = host.configReads!.count;
+      host.copyOnSelect = false;
+      // Well inside the few seconds a read stays fresh: the event does not wait for them.
+      act(() => {
+        for (const listener of host.configChanged!) listener();
+      });
+      await waitFor(() => expect(host.configReads!.count).toBe(before + 1));
+      await drag("term_1", "ok");
+      expect(await screen.findByRole("button", { name: "Add to chat" })).toBeTruthy();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(view.experimental_clipboardWrites).toEqual([]);
+    });
+
     it("does nothing for a selection the user did not make", async () => {
       const view = await shownTerminal();
       act(() => terminals.setSelection("term_1", "printed by a program"));
@@ -626,9 +653,9 @@ describe("the Terminals page", () => {
       expect(rows).toEqual(["New thread", "Speed up the buildapp", "Fix the login formsite"]);
       expect(screen.getByText(/1 line from build on Mac mini/)).toBeTruthy();
 
-      fireEvent.change(screen.getByRole("textbox", { name: "Search threads" }), { target: { value: "site" } });
+      fireEvent.change(screen.getByRole("combobox", { name: "Search threads" }), { target: { value: "site" } });
       expect(within(list).getAllByRole("option").map((row) => row.textContent)).toEqual(["New thread", "Fix the login formsite"]);
-      fireEvent.change(screen.getByRole("textbox", { name: "Search threads" }), { target: { value: "nothing like it" } });
+      fireEvent.change(screen.getByRole("combobox", { name: "Search threads" }), { target: { value: "nothing like it" } });
       expect(screen.getByText(/No thread matches/)).toBeTruthy();
     });
 
@@ -651,10 +678,46 @@ describe("the Terminals page", () => {
       const view = await shownTerminal();
       await drag("term_1", "ok");
       fireEvent.click(await screen.findByRole("button", { name: "Add to chat" }));
-      const search = await screen.findByRole("textbox", { name: "Search threads" });
+      const search = await screen.findByRole("combobox", { name: "Search threads" });
       fireEvent.keyDown(search, { key: "ArrowDown" });
       fireEvent.keyDown(search, { key: "Enter" });
       await waitFor(() => expect(view.navigateCalls).toContainEqual({ method: "toThread", threadId: "thr_new" }));
+    });
+
+    it("keeps the row the keys move to in sight, scrolling only the list", async () => {
+      const many = {
+        ...(sidebarThreads as object),
+        threads: Array.from({ length: 12 }, (_, index) => thread(`thr_${index}`, `Thread ${index}`, "proj_app", 100 - index)),
+      } as unknown as Host["sidebarThreads"];
+      const view = await shownTerminal({ sidebarThreads: many });
+      await drag("term_1", "ok");
+      fireEvent.click(await screen.findByRole("button", { name: "Add to chat" }));
+      const search = await screen.findByRole("combobox", { name: "Search threads" });
+      const list = screen.getByRole("listbox", { name: "Threads" });
+      const rows = within(list).getAllByRole("option");
+      // jsdom lays nothing out: rows 30 px tall in a list that shows three of them.
+      const ROW = 30;
+      const SHOWN = 3;
+      list.getBoundingClientRect = () => new DOMRect(0, 100, 300, ROW * SHOWN);
+      rows.forEach((row, index) => {
+        row.getBoundingClientRect = () => new DOMRect(0, 100 + index * ROW - list.scrollTop, 300, ROW);
+      });
+      const outer = list.parentElement as HTMLElement;
+      outer.scrollTop = 0;
+
+      for (let step = 0; step < 5; step += 1) fireEvent.keyDown(search, { key: "ArrowDown" });
+      // Row 5 is the active one, named on the search field, and the list scrolled to show it whole.
+      expect(search.getAttribute("aria-activedescendant")).toBe(rows[5]!.id);
+      expect(rows[5]!.getAttribute("aria-selected")).toBe("true");
+      expect(list.scrollTop).toBe((5 + 1 - SHOWN) * ROW);
+      expect(outer.scrollTop).toBe(0);
+
+      for (let step = 0; step < 4; step += 1) fireEvent.keyDown(search, { key: "ArrowUp" });
+      expect(search.getAttribute("aria-activedescendant")).toBe(rows[1]!.id);
+      expect(list.scrollTop).toBe(1 * ROW);
+
+      fireEvent.keyDown(search, { key: "Enter" });
+      await waitFor(() => expect(view.navigateCalls).toContainEqual({ method: "toThread", threadId: "thr_0" }));
     });
 
     it("starts a new thread in the project whose checkout holds the shell's directory", async () => {

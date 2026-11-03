@@ -37,14 +37,26 @@ export function directoryFromOsc7(data: string): string | null {
   return path === "" ? null : path;
 }
 
-function withoutTrailingSlash(path: string): string {
+const WINDOWS_DRIVE = /^[A-Za-z]:([\\/]|$)/;
+
+/**
+ * `path` in one spelling to compare by: a Windows path (`C:\Users\me`, or
+ * `C:/Users/me` as OSC 7 gives it) with forward slashes and lower case, as
+ * Windows ignores case; a POSIX path as it is. No trailing slash, except for
+ * a root (`/`, `c:/`).
+ */
+export function comparablePath(path: string): string {
+  if (WINDOWS_DRIVE.test(path)) {
+    const forward = path.replace(/\\/g, "/").toLowerCase();
+    const trimmed = forward.replace(/\/+$/, "");
+    return /^[a-z]:$/.test(trimmed) ? `${trimmed}/` : trimmed;
+  }
   return path.length > 1 ? path.replace(/\/+$/, "") : path;
 }
 
-function contains(directory: string, path: string): boolean {
-  const root = withoutTrailingSlash(directory);
-  const inner = withoutTrailingSlash(path);
-  return inner === root || inner.startsWith(root === "/" ? "/" : `${root}/`);
+/** Whether `inner` is `root` or inside it, both already `comparablePath`s. */
+function contains(root: string, inner: string): boolean {
+  return inner === root || inner.startsWith(root.endsWith("/") ? root : `${root}/`);
 }
 
 /**
@@ -54,10 +66,13 @@ function contains(directory: string, path: string): boolean {
  */
 export function projectForDirectory(cwd: string | null, hostId: string, places: readonly ProjectPlace[]): string | null {
   if (cwd === null) return null;
-  let best: ProjectPlace | null = null;
+  const inner = comparablePath(cwd);
+  let best: { projectId: string; root: string } | null = null;
   for (const place of places) {
-    if (place.hostId !== hostId || place.path === "" || !contains(place.path, cwd)) continue;
-    if (best === null || withoutTrailingSlash(place.path).length > withoutTrailingSlash(best.path).length) best = place;
+    if (place.hostId !== hostId || place.path === "") continue;
+    const root = comparablePath(place.path);
+    if (!contains(root, inner)) continue;
+    if (best === null || root.length > best.root.length) best = { projectId: place.projectId, root };
   }
   return best?.projectId ?? null;
 }

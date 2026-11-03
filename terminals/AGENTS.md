@@ -23,10 +23,10 @@ specific to `terminals`.
 | `app/selection.ts` | Which tab this window shows, and where the selection goes when a tab closes; kept in localStorage. |
 | `app/theme.ts` | The terminal's colours and font from bb's CSS variables, the ones bb's own terminal reads. |
 | `app/terminal-selection.tsx` | A selection the user makes: the floating "Add to chat" button (bb's placement and classes) and copy on select with bb's toasts. |
-| `app/copy-on-select.ts` | bb's own "Copy on select" setting, read through `useSdk().system.config()`. |
-| `app/add-to-chat-dialog.tsx` | The thread picker: open threads (searchable, most recent first) and "New thread" with its project. |
+| `app/copy-on-select.ts` | bb's own "Copy on select" setting, read through `useSdk().system.config()` and again on `system:config-changed`. |
+| `app/add-to-chat-dialog.tsx` | The thread picker: open threads (searchable, most recent first) and "New thread" with its project. The arrow keys move the highlight while focus stays in the search field (`aria-activedescendant`), and the list scrolls itself to keep it in sight (`app/scroll-within.ts`). |
 | `app/chat-text.ts` | The fenced block "Add to chat" writes, and adding it to a draft. |
-| `app/project-match.ts` | The shell's directory from OSC 7, the project whose checkout holds it, and the default project. |
+| `app/project-match.ts` | The shell's directory from OSC 7, the project whose checkout holds it (Windows paths compared without case, either slash), and the default project. |
 | `app/chat-delivery.tsx` | The block on its way to a composer, and the overlay that writes it once that composer is on screen. |
 
 `npm test` runs everything. Nothing in it opens a shell or a socket: the connection runs against a
@@ -122,11 +122,13 @@ on. The same text is not copied twice in a row. Nothing happens on xterm's own `
 (output, programs, the terminal clearing it) except taking the button away when the selection is
 gone; a scroll or a window resize takes it away too, as bb's does.
 
-**Copy on select is bb's setting, polled.** `useSdk().system.config()` carries
-`generalSettings.terminalCopyOnSelect` (default true), but nothing tells a plugin it changed, so the
-page reads it on mount, on window focus, after a realtime reconnect and on each press in the terminal
-(at most every 2 s); the release waits for the read its press started. There is no plugin setting of
-its own: it would only disagree with bb's.
+**Copy on select is bb's setting, followed live.** `useSdk().system.config()` carries
+`generalSettings.terminalCopyOnSelect` (default true), and `useSdk().subscribe({ event:
+"system:config-changed" })` fires when bb saves its settings; the page then reads it again at once
+(`reload`, which skips the freshness window and outranks a read already on its way). The event is lost
+while the realtime link is down, so the page also reads it on mount, on window focus, after a realtime
+reconnect and on each press in the terminal (at most every 2 s); the release waits for the read its
+press started. There is no plugin setting of its own: it would only disagree with bb's.
 
 **"Add to chat" fills a composer, never sends.** The SDK writes only into composers on screen
 (`useComposers()`), and the Terminals page shows none. So the page leaves the block in
