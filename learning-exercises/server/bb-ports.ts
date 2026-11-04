@@ -177,13 +177,14 @@ export function bbPorts(bb: BbPluginApi, changed: () => void): Ports {
       if (status?.outcome !== "available") return null;
       const base = status.workspace.mergeBase;
       if (base === null || base === undefined) return { commits: [], files: [] };
-      // The Git plugin lists the newest commit first.
-      return { commits: [...base.commits].reverse(), files: base.files ?? [] };
+      // The Git plugin lists them oldest first (checked against bb 0.48.1).
+      return { commits: base.commits, files: base.files ?? [] };
     },
 
     async branchCommits(environmentId) {
       const status = await git("workspaceStatus", { environmentId }, workspaceStatusSchema);
-      return status?.outcome === "available" ? (status.workspace.mergeBase?.commits ?? []) : [];
+      // Oldest first from the Git plugin; the newest first here.
+      return status?.outcome === "available" ? [...(status.workspace.mergeBase?.commits ?? [])].reverse() : [];
     },
 
     async pullRequest(environmentId): Promise<PullRequestInfo | null> {

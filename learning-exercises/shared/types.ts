@@ -128,6 +128,8 @@ export const ThreadViewSchema = z.object({
   projectNever: z.boolean(),
   /** True when the plugin's offers are turned off in its settings. */
   offersOffGlobally: z.boolean(),
+  /** Where a session started from this thread runs: a fork, unless the setting or the provider says otherwise. */
+  sessionWhere: SessionModeSchema,
 });
 export type ThreadView = z.infer<typeof ThreadViewSchema>;
 
@@ -141,6 +143,8 @@ export const CardPayloadSchema = z.object({
   type: ExerciseTypeSchema,
   question: z.string(),
   files: z.array(z.string()),
+  /** The session thread's workspace, for opening `files`; null when it has none. */
+  environmentId: z.string().nullable(),
   topic: z.string(),
   /** Question k of at most n. */
   maxQuestions: z.number(),

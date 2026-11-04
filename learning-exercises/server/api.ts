@@ -54,6 +54,7 @@ export class LearningApi {
       projectName: name,
       projectNever: store.isNever(key),
       offersOffGlobally: !this.deps.settings().offersEnabled,
+      sessionWhere: this.deps.settings().sessionLocation === "fork" && (await this.deps.ports.canFork(thread.providerId)) ? "fork" : "here",
     };
     return view;
   }

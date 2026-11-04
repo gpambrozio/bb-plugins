@@ -191,6 +191,7 @@ export class SessionService {
       type: exercise.type,
       question,
       files: exercise.files,
+      environmentId: (await this.ports.thread(threadId))?.environmentId ?? null,
       topic: session.topic,
       maxQuestions: max,
     };
@@ -382,6 +383,7 @@ export class SessionService {
         type: open.type,
         question: open.question,
         files: open.files,
+        environmentId: thread.environmentId,
         topic: session.topic,
         maxQuestions: this.settings().questionsPerSession,
       };
