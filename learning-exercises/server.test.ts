@@ -1,0 +1,169 @@
+import { fileURLToPath } from "node:url";
+
+import { createFakePluginHost, experimental_scanPublicSdkOnly, makePluginAgentConfigurationContext, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
+import { describe, expect, it } from "vitest";
+
+import plugin from "./server";
+import { BRIEF_CORE } from "./server/content";
+import { TOOL_NAMES } from "./server/tools";
+import type { ThreadView } from "./shared/types";
+
+const WORK = "thr_work";
+const FORK = "thr_fork";
+
+/**
+ * The plugin over the fake host, with bb's SDK and its Git and PR Status plugins stubbed: a Claude Code
+ * thread in `env_1` whose HEAD moves from `aaa` to `bbb` with one commit.
+ */
+async function setup(options: { providerCanFork?: boolean } = {}) {
+  const { bb, harness } = createFakePluginHost({ pluginId: "learning-exercises" });
+  const threads = new Map([[WORK, makeThreadResponse({ id: WORK, projectId: "proj_1", providerId: "claude-code", environmentId: "env_1", title: "Add median", status: "idle" })]]);
+  let head = "aaa";
+  const metadata = new Map<string, Record<string, unknown>>();
+  const stub = harness.sdk.stub.bind(harness.sdk);
+  stub("threads.get", ({ threadId }: { threadId: string }) => {
+    const thread = threads.get(threadId);
+    if (thread === undefined) throw new Error("not found");
+    return thread;
+  });
+  stub("projects.get", () => ({ id: "proj_1", name: "calc", gitRemoteUrl: "git@github.com:acme/calc.git" }));
+  stub("environments.get", () => ({ id: "env_1", path: "/work/calc" }));
+  stub("threads.events.list", ({ types }: { types: string[] }) =>
+    types[0] === "turn/completed" ? [{ scope: { kind: "turn", turnId: "t1" }, data: { status: "completed" } }] : [],
+  );
+  stub("threads.interactions.list", () => []);
+  stub("providers.list", () => [
+    { id: "claude-code", capabilities: { supportsFork: options.providerCanFork ?? true } },
+    { id: "acp-cursor", capabilities: { supportsFork: false } },
+  ]);
+  stub("plugins.callRpc", ({ pluginId, method, input }: { pluginId: string; method: string; input: { mergeBaseBranch?: string } }) => {
+    if (pluginId === "bb--github-pr-status") return {};
+    if (pluginId !== "bb--git" || method !== "workspaceStatus") throw new Error(`unexpected ${pluginId}.${method}`);
+    const mergeBase =
+      input.mergeBaseBranch === "aaa" ? { commits: [{ sha: "bbb", shortSha: "bbb", subject: "Add median" }], files: [{ path: "calc.py", status: "M" }] } : null;
+    return { outcome: "available", workspace: { checkout: { headSha: head }, mergeBase } };
+  });
+  stub("threads.fork", (request: { sourceThreadId: string; pluginMetadata: Record<string, unknown> }) => {
+    threads.set(FORK, makeThreadResponse({ id: FORK, projectId: "proj_1", providerId: "claude-code", environmentId: "env_1", originPluginId: "learning-exercises", sourceThreadId: request.sourceThreadId }));
+    metadata.set(FORK, request.pluginMetadata);
+    return threads.get(FORK);
+  });
+  stub("threads.send", () => ({ ok: true }));
+  stub("threads.getPluginMetadata", ({ threadId }: { threadId: string }) => metadata.get(threadId) ?? {});
+  await plugin(bb);
+  const commitTurn = async () => {
+    await harness.emitThreadEvent("thread.active", { thread: { ...threads.get(WORK)!, status: "active" } });
+    head = "bbb";
+    await harness.emitThreadEvent("thread.idle", { thread: threads.get(WORK)!, lastAssistantText: "Done." });
+  };
+  return { bb, harness, threads, metadata, commitTurn };
+}
+
+describe("zero context until a session starts", () => {
+  it("ships no skills and contributes no instructions", async () => {
+    const { harness } = await setup();
+    expect(harness.registrations.instructionProvider).toBeNull();
+    expect(harness.registrations.agentTools.map((tool) => tool.name).sort()).toEqual([...TOOL_NAMES].sort());
+    const plain = await harness.resolveAgentConfiguration(makePluginAgentConfigurationContext({ thread: { id: WORK } }));
+    expect(plain).toEqual({ tools: [], skills: [], instructions: null });
+  });
+
+  it("metadata naming no open session unlocks nothing", async () => {
+    const { harness } = await setup();
+    const forged = await harness.resolveAgentConfiguration(makePluginAgentConfigurationContext({ thread: { id: "thr_x" }, pluginMetadata: { session: "ses_made_up" } }));
+    expect(forged).toEqual({ tools: [], skills: [], instructions: null });
+  });
+
+  it("the package imports only public SDK entry points and has no skills folder", async () => {
+    const allow = [
+      /^@\//,
+      /^react(-dom)?(\/.*)?$/,
+      /^@radix-ui\//,
+      /^(sonner|vaul|clsx|tailwind-merge|class-variance-authority|ignore|better-sqlite3|zod)$/,
+      /^(vitest|vitest\/config|@testing-library\/react|@testing-library\/dom)$/,
+    ];
+    const scan = experimental_scanPublicSdkOnly(fileURLToPath(new URL(".", import.meta.url)), { allow });
+    expect(scan.violations).toEqual([]);
+    expect(scan.privateDependencies).toEqual([]);
+    const { existsSync } = await import("node:fs");
+    expect(existsSync(fileURLToPath(new URL("./skills", import.meta.url)))).toBe(false);
+  });
+});
+
+describe("from a commit to an answered question", () => {
+  it("offers after a commit, forks on Start, gives the fork the tools, and runs the card", async () => {
+    const { harness, commitTurn, metadata } = await setup();
+    await commitTurn();
+    const view = (await harness.callRpc("threadView", { threadId: WORK })) as ThreadView;
+    expect(view.offer).toMatchObject({ trigger: "commit", topic: '"Add median"' });
+    expect(view.eligible).toBe(true);
+
+    await harness.callRpc("offerSeen", { offerId: view.offer!.id });
+    const started = (await harness.callRpc("answerOffer", { offerId: view.offer!.id, answer: "start" })) as { threadId: string };
+    expect(started.threadId).toBe(FORK);
+    const [fork] = harness.sdk.callsTo("threads.fork") as [Record<string, unknown>][];
+    expect(fork![0]).toMatchObject({
+      sourceThreadId: WORK,
+      title: "Learning: Add median",
+      environment: { type: "reuse", environmentId: "env_1" },
+      input: [{ type: "text", text: 'Learning exercise on "Add median" (commit bbb).' }],
+    });
+    const seed = (fork![0] as { agentContextSeed: { visibility: string; text: string }[] }).agentContextSeed;
+    expect(seed).toHaveLength(1);
+    expect(seed[0]!.visibility).toBe("agent-only");
+    expect(seed[0]!.text.startsWith(BRIEF_CORE.trim())).toBe(true);
+    // The work thread was not sent anything.
+    expect(harness.sdk.callsTo("threads.send")).toEqual([]);
+
+    const forkConfig = await harness.resolveAgentConfiguration(
+      makePluginAgentConfigurationContext({ thread: { id: FORK, sourceThreadId: WORK }, pluginMetadata: metadata.get(FORK) as never }),
+    );
+    expect(forkConfig.tools.map((tool) => tool.name).sort()).toEqual([...TOOL_NAMES].sort());
+    expect(forkConfig.instructions).toContain("learning_ask");
+    // The work thread still gets nothing.
+    expect(await harness.resolveAgentConfiguration(makePluginAgentConfigurationContext({ thread: { id: WORK } }))).toEqual({ tools: [], skills: [], instructions: null });
+
+    const asked = harness.callAgentTool("learning_ask", { type: "prediction", question: "What does `median([])` do?", files: ["calc.py"] }, { threadId: FORK });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(harness.pendingInteractions).toHaveLength(1);
+    const card = harness.pendingInteractions[0]!;
+    expect(card).toMatchObject({ threadId: FORK, rendererId: "exercise", payload: { question: "What does `median([])` do?", files: ["calc.py"], ordinal: 1 } });
+    harness.submitInteraction(card.id, { action: "answer", answer: "It raises ValueError", confidence: 4 });
+    expect(await asked).toContain('"It raises ValueError"');
+
+    const after = (await harness.callRpc("threadView", { threadId: WORK })) as ThreadView;
+    expect(after.offer).toBeNull();
+    expect(after.started).toMatchObject({ state: "active", threadId: FORK, asked: 1, answered: 1 });
+  });
+
+  it("a provider that cannot fork runs the session in the work thread, through the CLI", async () => {
+    const { harness, commitTurn } = await setup({ providerCanFork: false });
+    await commitTurn();
+    const view = (await harness.callRpc("threadView", { threadId: WORK })) as ThreadView;
+    const started = (await harness.callRpc("answerOffer", { offerId: view.offer!.id, answer: "start" })) as { threadId: string };
+    expect(started.threadId).toBe(WORK);
+    expect(harness.sdk.callsTo("threads.fork")).toEqual([]);
+    const [send] = harness.sdk.callsTo("threads.send") as [{ input: { visibility?: string; text: string }[] }][];
+    expect(send![0].input.map((part) => part.visibility ?? "visible")).toEqual(["visible", "agent-only"]);
+    expect(send![0].input[1]!.text).toContain("bb learning ask");
+
+    const question = Buffer.from("What does `mean([])` return?\n").toString("base64");
+    const asked = await harness.runCli(["ask", "--type", "debug", "--question", question], { threadId: WORK });
+    expect(asked).toMatchObject({ exitCode: 0, stdout: expect.stringContaining("End your turn now") });
+    expect(harness.pendingInteractions[0]?.payload).toMatchObject({ question: "What does `mean([])` return?", type: "debug" });
+  });
+
+  it("the CLI refuses a thread with no session", async () => {
+    const { harness } = await setup();
+    const result = await harness.runCli(["feedback", "--verdict", "correct"], { threadId: WORK });
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toContain("no learning session");
+  });
+
+  it("bb learning principles prints the attributed PRINCIPLES.md", async () => {
+    const { harness } = await setup();
+    const result = await harness.runCli(["principles"], {});
+    expect(result.stdout).toContain("Dr. Cat Hicks");
+    expect(result.stdout).toContain("# Learning Principles");
+  });
+});
