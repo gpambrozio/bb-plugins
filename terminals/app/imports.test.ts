@@ -11,8 +11,8 @@ import { describe, expect, it } from "vitest";
 const root = join(import.meta.dirname, "..");
 const appFiles = [
   "app.tsx",
-  ...readdirSync(join(root, "app"))
-    .filter((name) => /\.tsx?$/.test(name) && !name.includes(".test."))
+  ...readdirSync(join(root, "app"), { recursive: true, encoding: "utf8" })
+    .filter((name) => /\.tsx?$/.test(name) && !name.includes(".test.") && !name.endsWith(".d.ts"))
     .map((name) => join("app", name)),
 ];
 

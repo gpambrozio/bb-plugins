@@ -7,9 +7,15 @@ The **Terminals** page starts empty. **+** at the end of the tab strip opens a t
 machine connected it opens there straight away; with several, it lists them and you pick one. The
 machine running the bb server is listed first.
 
-- **Tabs** are named after their machine, numbered when a machine has more than one ("Mac mini 1",
-  "Mac mini 2"). Close one with its **×**, a middle click or **Close tab** in its right-click menu;
-  closing a tab ends its shell.
+- **Tabs** look and work like the tabs in bb's own panels. They are named after their machine,
+  numbered in the order they were opened when a machine has more than one ("Mac mini 1",
+  "Mac mini 2"). Close one with the **×** that shows on the tab under the pointer, a middle click, or
+  its right-click menu, which also has **Close other tabs** and **Close tabs to the right**; closing a
+  tab ends its shell. When the tabs do not fit, arrows at either end scroll them, as does the mouse
+  wheel over the strip.
+- **Drag a tab** to move it. The order is saved with the tabs, so every window shows it and it
+  survives a reload. A tab keeps its number wherever it goes ("Mac mini 2" may sit before
+  "Mac mini 1").
 - **Rename a tab** by double-clicking its title, choosing **Rename** from its right-click menu, or
   pressing F2 on it, then type in place: Enter (or clicking elsewhere) saves, Escape keeps the old
   name, and an empty name brings back the default title. Names are saved with the tabs, so every
@@ -24,7 +30,7 @@ machine running the bb server is listed first.
   bb in a browser through getbb.app show the same tabs and type into the same shells. Which tab is
   shown is each window's own. A shell has one size: the window you are using (showing, resizing,
   returning to or typing in) sets it, and the others draw the shell at that size.
-- **A machine that goes offline** marks its tabs with a dot and says so above the terminal; when it
+- **A machine that goes offline** marks its tabs "(offline)" and says so above the terminal; when it
   reconnects, the shell carries on where it was.
 - **A shell that ends** (you typed `exit`, or its machine restarted) keeps its output on screen with
   the exit code and a **Close tab** button, also after a reload, for as long as its machine keeps that
