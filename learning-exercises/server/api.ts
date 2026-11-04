@@ -46,7 +46,7 @@ export class LearningApi {
     const started = store.openSessionFrom(threadId);
     const view: ThreadView = {
       eligible: isHumanThread(thread),
-      offer: isHumanThread(thread) ? store.liveOffer(threadId) : null,
+      offer: isHumanThread(thread) ? this.deps.offers.visibleOffer(threadId) : null,
       hosted: hosted === null ? null : publicSession(hosted),
       started: started === null || started.id === hosted?.id ? null : publicSession(started),
       offersOn: !store.thread(threadId).optOut,
@@ -85,7 +85,9 @@ export class LearningApi {
     const offer = store.liveOffer(threadId);
     if (offer !== null) choices.push({ id: "offer", label: offer.topic, topic: offer.topic, trigger: offer.trigger, refs: offer.refs });
     if (thread.environmentId !== null) {
-      const [latest, ...older] = await ports.branchCommits(thread.environmentId);
+      const branch = await ports.branchCommits(thread.environmentId);
+      // On a default branch nothing is ahead: the commits this thread's own turns made, as recorded.
+      const [latest, ...older] = branch.length > 0 ? branch : store.lastCommits(threadId);
       if (latest !== undefined) {
         const topic = `"${latest.subject}"`;
         if (!choices.some((choice) => choice.topic === topic)) {
@@ -109,8 +111,9 @@ export class LearningApi {
     return { choices };
   }
 
+  /** The view drew the offer: claim it against the caps as they are now (a refused claim drops it). */
   offerSeen({ offerId }: Input<"offerSeen">): null {
-    if (this.deps.offers.seen(offerId)) this.deps.ports.changed();
+    this.deps.offers.claim(offerId);
     return null;
   }
 
@@ -130,17 +133,27 @@ export class LearningApi {
 
   async startSession(input: Input<"startSession">): Promise<Output<"startSession">> {
     const thread = await this.requireThread(input.threadId);
-    // A manual start answers the thread's live offer, so the banner goes away.
-    const offer = this.deps.store.liveOffer(thread.id);
-    if (offer !== null) this.deps.store.answerOffer(offer.id, input.here === true ? "here" : "start", this.deps.ports.now());
+    // A manual start answers the thread's live offer the way the banner's Start does (claimed and
+    // charged once, the run of Laters reset), so the banner goes away. An offer that may no longer be
+    // answered is dropped; the user asked for this session either way.
+    const live = this.deps.store.liveOffer(thread.id);
+    let offerId: string | null = null;
+    if (live !== null) {
+      try {
+        offerId = (await this.deps.offers.answer(live.id, input.here === true ? "here" : "start")).id;
+      } catch {
+        if (this.deps.store.expireOffer(live.id)) this.deps.ports.changed();
+      }
+    }
     const started = await this.deps.sessions.start({
       sourceThreadId: thread.id,
       topic: input.topic,
       trigger: input.trigger,
       refs: input.refs,
-      offerId: offer?.id ?? null,
+      offerId,
       mode: input.here === true ? "here" : "auto",
     });
+    if (offerId === null) this.deps.offers.accepted();
     return { threadId: started.threadId };
   }
 
@@ -190,6 +203,7 @@ export class LearningApi {
     const thread = await this.requireThread(threadId);
     const { key, name } = await this.keyOf(thread);
     this.deps.store.setNever(key, name, never);
+    if (never) this.deps.store.expireLiveOffers(key);
     this.deps.ports.changed();
     return null;
   }

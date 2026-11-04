@@ -295,6 +295,7 @@ describe("settledRow", () => {
   it("keeps the question and the learner's own words, nothing else", () => {
     expect(settledRow("Q?", { action: "answer", answer: "A", confidence: 5 })).toEqual({ question: "Q?", action: "answer", answer: "A", confidence: 5 });
     expect(settledRow("Q?", { action: "skip" })).toEqual({ question: "Q?", action: "skip", answer: null, confidence: null });
-    expect(settledRow("Q?", { nonsense: true })).toEqual({ question: "Q?", action: "skip", answer: null, confidence: null });
+    // Unreadable is not a Skip (review finding 8): the session pauses and the row says so.
+    expect(settledRow("Q?", { nonsense: true })).toEqual({ question: "Q?", action: "pause", answer: null, confidence: null });
   });
 });

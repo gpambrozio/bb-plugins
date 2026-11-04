@@ -5,7 +5,7 @@
 // fork of the work thread (or in the thread itself), with the question card, pause and resume; and keeps
 // the record in the plugin's own SQLite. Nothing reaches an agent until the user starts a session: no
 // skills, no tools and no instructions for any other thread. See AGENTS.md.
-import type { BbPluginApi } from "@get-bb/plugin-sdk";
+import { experimental_PluginRpcRefusal, type BbPluginApi, type ExperimentalPluginRpcHandlerContext } from "@get-bb/plugin-sdk";
 
 import { LEARNING_TAG, rpcContract } from "./shared/contract";
 import { LearningApi } from "./server/api";
@@ -48,26 +48,37 @@ async function plugin(bb: BbPluginApi, deps: { ports?: (bb: BbPluginApi, changed
   sessions.pauseOrphanedCards();
   settingsHandle.onChange((next) => {
     current = readSettings(next);
+    // Turning offers off takes the offers already made with it.
+    if (!current.offersEnabled) store.expireLiveOffers(null);
     changed();
   });
+
+  // The changes are the user's to make from the app: another plugin calling through
+  // `bb.sdk.plugins.callRpc` (bb verifies that caller) is refused. Reads stay open.
+  const fromUser = <I, O>(work: (input: I) => O) => (input: I, ctx?: ExperimentalPluginRpcHandlerContext): O => {
+    if (ctx?.experimental_caller?.kind === "plugin") {
+      throw new experimental_PluginRpcRefusal({ code: "forbidden", message: "Learning Exercises' offers and sessions are changed from its own app only." });
+    }
+    return work(input);
+  };
 
   bb.rpc.register(rpcContract, {
     threadView: (input) => api.threadView(input),
     projectSessions: (input) => api.projectSessions(input),
     sessionDetail: (input) => api.sessionDetail(input),
     topicChoices: (input) => api.topicChoices(input),
-    offerSeen: (input) => api.offerSeen(input),
-    answerOffer: (input) => api.answerOffer(input),
-    startSession: (input) => api.startSession(input),
-    pauseSession: (input) => api.pauseSession(input),
-    resumeSession: (input) => api.resumeSession(input),
-    finishSession: (input) => api.finishSession(input),
-    deleteSession: (input) => api.deleteSession(input),
+    offerSeen: fromUser((input) => api.offerSeen(input)),
+    answerOffer: fromUser((input) => api.answerOffer(input)),
+    startSession: fromUser((input) => api.startSession(input)),
+    pauseSession: fromUser((input) => api.pauseSession(input)),
+    resumeSession: fromUser((input) => api.resumeSession(input)),
+    finishSession: fromUser((input) => api.finishSession(input)),
+    deleteSession: fromUser((input) => api.deleteSession(input)),
     threadOffers: (input) => api.threadOffers(input),
-    setThreadOffers: (input) => api.setThreadOffers(input),
-    setProjectNever: (input) => api.setProjectNever(input),
+    setThreadOffers: fromUser((input) => api.setThreadOffers(input)),
+    setProjectNever: fromUser((input) => api.setProjectNever(input)),
     neverProjects: () => api.neverProjects(),
-    removeNeverProject: (input) => api.removeNeverProject(input),
+    removeNeverProject: fromUser((input) => api.removeNeverProject(input)),
   });
 
   bb.cli.register(learningCli(sessions));

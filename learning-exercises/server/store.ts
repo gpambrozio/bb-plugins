@@ -92,6 +92,11 @@ export const MIGRATIONS: string[] = [
      key TEXT PRIMARY KEY,
      value TEXT NOT NULL
    )`,
+  // At most one open session per source thread, whatever races to create a second.
+  `CREATE UNIQUE INDEX sessions_one_open_per_source ON sessions(source_thread_id)
+     WHERE source_thread_id IS NOT NULL AND state IN ('starting', 'active', 'awaiting-answer', 'paused')`,
+  // The last commits a turn of the thread made, for the tab's topic picker on a default branch.
+  `ALTER TABLE thread_state ADD COLUMN last_commits TEXT`,
 ];
 
 /** Sessions that still count as open: not finished, not abandoned. */
@@ -308,6 +313,18 @@ export class LearningStore {
     return this.db.prepare(`UPDATE offers SET status = 'expired' WHERE thread_id = ? AND status = 'live'`).run(threadId).changes;
   }
 
+  /** Expires one live offer; true when it was live. */
+  expireOffer(offerId: string): boolean {
+    return this.db.prepare(`UPDATE offers SET status = 'expired' WHERE id = ? AND status = 'live'`).run(offerId).changes > 0;
+  }
+
+  /** Expires every live offer in a project, or everywhere when `projectKey` is null. */
+  expireLiveOffers(projectKey: string | null): number {
+    return projectKey === null
+      ? this.db.prepare(`UPDATE offers SET status = 'expired' WHERE status = 'live'`).run().changes
+      : this.db.prepare(`UPDATE offers SET status = 'expired' WHERE status = 'live' AND project_key = ?`).run(projectKey).changes;
+  }
+
   /** Expires live offers created at or before `before`; answers the threads they were in. */
   expireOffersBefore(before: number): string[] {
     const rows = this.db.prepare(`SELECT thread_id FROM offers WHERE status = 'live' AND created_at <= ?`).all(before) as { thread_id: string }[];
@@ -389,6 +406,25 @@ export class LearningStore {
   sessionsInState(states: readonly SessionState[]): SessionRow[] {
     const placeholders = states.map(() => "?").join(", ");
     return (this.db.prepare(`SELECT ${SESSION_COLUMNS} FROM sessions s WHERE s.state IN (${placeholders})`).all(...states) as SessionRecord[]).map(toSession);
+  }
+
+  /**
+   * Moves a session to `to` only while it is in one of `from`; false when something else moved it first
+   * (a pause, a card opened by an early tool call, another copy of the plugin).
+   */
+  transition(sessionId: string, from: readonly SessionState[], to: SessionState, now: number, pauseReason: string | null = null): boolean {
+    const placeholders = from.map(() => "?").join(", ");
+    const finished = to === "finished" || to === "abandoned" ? now : null;
+    return (
+      this.db
+        .prepare(`UPDATE sessions SET state = ?, pause_reason = ?, updated_at = ?, finished_at = COALESCE(?, finished_at) WHERE id = ? AND state IN (${placeholders})`)
+        .run(to, to === "paused" ? pauseReason : null, now, finished, sessionId, ...from).changes > 0
+    );
+  }
+
+  /** Binds a session to its thread unless it is bound already. */
+  bindSessionThread(sessionId: string, threadId: string, now: number): void {
+    this.db.prepare(`UPDATE sessions SET thread_id = ?, updated_at = ? WHERE id = ? AND thread_id IS NULL`).run(threadId, now, sessionId);
   }
 
   setSessionThread(sessionId: string, threadId: string, now: number): void {
@@ -493,6 +529,30 @@ export class LearningStore {
       )
       .run(threadId, changed ? 1 : 0);
     return this.thread(threadId);
+  }
+
+  /** Remembers the commits a turn made (oldest first), keeping the last five. */
+  recordCommits(threadId: string, commits: readonly { sha: string; subject: string }[]): void {
+    if (commits.length === 0) return;
+    const kept = [...this.lastCommits(threadId).reverse(), ...commits].slice(-5);
+    this.db
+      .prepare(`INSERT INTO thread_state (thread_id, last_commits) VALUES (?, ?) ON CONFLICT(thread_id) DO UPDATE SET last_commits = excluded.last_commits`)
+      .run(threadId, JSON.stringify(kept));
+  }
+
+  /** The thread's recorded commits, newest first. */
+  lastCommits(threadId: string): { sha: string; subject: string }[] {
+    const row = this.db.prepare(`SELECT last_commits FROM thread_state WHERE thread_id = ?`).get(threadId) as { last_commits: string | null } | undefined;
+    if (row?.last_commits == null) return [];
+    try {
+      const parsed: unknown = JSON.parse(row.last_commits);
+      if (!Array.isArray(parsed)) return [];
+      return parsed
+        .filter((commit): commit is { sha: string; subject: string } => typeof commit?.sha === "string" && typeof commit?.subject === "string")
+        .reverse();
+    } catch {
+      return [];
+    }
   }
 
   resetChangedTurns(threadId: string): void {

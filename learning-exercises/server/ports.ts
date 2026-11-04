@@ -73,6 +73,8 @@ export interface Ports {
   send(threadId: string, visible: string, agentOnly: string): Promise<void>;
   /** The session id seeded on a thread's metadata, for a fork bb answers before `fork` returns. */
   sessionIdOf(threadId: string): Promise<string | null>;
+  /** The fork made for a session whose id never reached the store (a reload mid-fork); null when none. */
+  forkOf(sessionId: string, sourceThreadId: string): Promise<string | null>;
   unarchive(threadId: string): Promise<void>;
   card(request: CardRequest): Promise<PluginInteractionResult>;
   /** Tells every open view that offers or sessions changed. */

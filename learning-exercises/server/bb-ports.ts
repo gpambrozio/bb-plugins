@@ -25,6 +25,7 @@ const workspaceStatusSchema = z.discriminatedUnion("outcome", [
     outcome: z.literal("available"),
     workspace: z.object({
       checkout: z.object({ headSha: z.string().nullable().optional() }),
+      branch: z.object({ currentBranch: z.string().nullable(), defaultBranch: z.string().nullable() }).partial().optional(),
       mergeBase: z
         .object({
           commits: z.array(commitSchema),
@@ -182,9 +183,17 @@ export function bbPorts(bb: BbPluginApi, changed: () => void): Ports {
     },
 
     async branchCommits(environmentId) {
+      // Without `mergeBaseBranch` the Git plugin asks for no merge base and answers `mergeBase: null`
+      // (bb 0.48.1), and it refuses revision expressions such as `HEAD~1`. So: read the branch names, then
+      // compare a feature branch with its default branch. On the default branch there is nothing ahead.
       const status = await git("workspaceStatus", { environmentId }, workspaceStatusSchema);
+      if (status?.outcome !== "available") return [];
+      const current = status.workspace.branch?.currentBranch ?? null;
+      const base = status.workspace.branch?.defaultBranch ?? null;
+      if (current === null || base === null || current === base) return [];
+      const ahead = await git("workspaceStatus", { environmentId, mergeBaseBranch: base }, workspaceStatusSchema);
       // Oldest first from the Git plugin; the newest first here.
-      return status?.outcome === "available" ? [...(status.workspace.mergeBase?.commits ?? [])].reverse() : [];
+      return ahead?.outcome === "available" ? [...(ahead.workspace.mergeBase?.commits ?? [])].reverse() : [];
     },
 
     async pullRequest(environmentId): Promise<PullRequestInfo | null> {
@@ -242,6 +251,18 @@ export function bbPorts(bb: BbPluginApi, changed: () => void): Ports {
         const metadata = await sdk().threads.getPluginMetadata({ threadId });
         const value = (metadata as Record<string, unknown> | null)?.[SESSION_METADATA_KEY];
         return typeof value === "string" ? value : null;
+      } catch {
+        return null;
+      }
+    },
+
+    async forkOf(sessionId, sourceThreadId) {
+      try {
+        const forks = await sdk().threads.list({ sourceThreadId, originKind: "fork", archived: false, limit: 50 } as never);
+        const ids = forks.map((thread) => thread.id).slice(0, 200);
+        if (ids.length === 0) return null;
+        const { threads } = await sdk().threads.experimental_listPluginMetadata({ threadIds: ids });
+        return threads.find((row) => (row.metadata as Record<string, unknown>)[SESSION_METADATA_KEY] === sessionId)?.threadId ?? null;
       } catch {
         return null;
       }

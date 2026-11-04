@@ -42,6 +42,10 @@ export class FakePorts implements Ports {
   pulls = new Map<string, PullRequestInfo>();
   forkable = new Set<string>(["claude-code", "codex"]);
   forkFails = false;
+  /** Runs after bb made the fork but before `fork` answers: the fork's agent acting early, or a held fork. */
+  duringFork: ((threadId: string) => Promise<void>) | null = null;
+  /** `card` throws instead of opening. */
+  cardThrows = false;
   metadata = new Map<string, string>();
   forks: ForkRequest[] = [];
   sends: { threadId: string; visible: string; agentOnly: string }[] = [];
@@ -110,6 +114,7 @@ export class FakePorts implements Ports {
     const source = this.threads.get(request.sourceThreadId)!;
     this.threads.set(id, { ...source, id, originPluginId: "learning-exercises", title: request.title });
     this.metadata.set(id, request.sessionId);
+    if (this.duringFork !== null) await this.duringFork(id);
     return { threadId: id };
   }
 
@@ -121,6 +126,13 @@ export class FakePorts implements Ports {
     return this.metadata.get(threadId) ?? null;
   }
 
+  async forkOf(sessionId: string, sourceThreadId: string) {
+    for (const [threadId, session] of this.metadata) {
+      if (session === sessionId && this.threads.get(threadId)?.id !== sourceThreadId) return threadId;
+    }
+    return null;
+  }
+
   async unarchive(threadId: string) {
     this.unarchived.push(threadId);
     const current = this.threads.get(threadId);
@@ -128,6 +140,7 @@ export class FakePorts implements Ports {
   }
 
   card(request: CardRequest): Promise<PluginInteractionResult> {
+    if (this.cardThrows) return Promise.reject(new Error("requestInput refused"));
     return new Promise((resolve) => {
       const open: OpenCard = { request, resolve };
       this.cards.push(open);

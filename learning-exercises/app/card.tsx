@@ -11,7 +11,7 @@ import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { CardPayloadSchema, CONFIDENCE_LABELS, type CardValue } from "../shared/types";
+import { ANSWER_MAX_CHARS, CardPayloadSchema, CONFIDENCE_LABELS, type CardValue } from "../shared/types";
 
 const LARGE_ANSWER = new Set(["generation", "teach-back", "trace"]);
 
@@ -26,7 +26,9 @@ export function ExerciseCard({ interaction, submit }: PluginPendingInteractionPr
     setSending(true);
     submit(value).catch(() => setSending(false));
   };
-  const ready = answer.trim() !== "" && confidence !== null && !sending;
+  const tooLong = answer.length > ANSWER_MAX_CHARS;
+  const ready = answer.trim() !== "" && !tooLong && confidence !== null && !sending;
+  const nearLimit = answer.length >= ANSWER_MAX_CHARS * 0.9;
 
   return (
     <div className="flex flex-col gap-3 p-3 text-sm" onMouseDown={(event) => event.stopPropagation()}>
@@ -59,9 +61,16 @@ export function ExerciseCard({ interaction, submit }: PluginPendingInteractionPr
         )}
         placeholder="Your answer, in your own words. Wrong guesses are useful data."
         value={answer}
+        maxLength={ANSWER_MAX_CHARS}
         disabled={sending}
         onChange={(event) => setAnswer(event.target.value)}
       />
+      {nearLimit && (
+        <p className={cn("text-xs", tooLong ? "text-destructive" : "text-muted-foreground")} role="status">
+          {answer.length.toLocaleString()} of {ANSWER_MAX_CHARS.toLocaleString()} characters
+          {answer.length >= ANSWER_MAX_CHARS ? ". Answers stop here; shorten it to add more." : "."}
+        </p>
+      )}
       <fieldset className="flex flex-wrap items-center gap-1.5" disabled={sending}>
         <legend className="mb-1 text-xs text-muted-foreground">How sure are you?</legend>
         {[1, 2, 3, 4, 5].map((level) => (

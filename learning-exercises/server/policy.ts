@@ -102,6 +102,49 @@ export function decideOffer(input: OfferInputs): OfferDecision {
   return first === undefined ? { skip: backingOff && input.candidates.length > 0 ? "backing off" : "nothing to offer" } : { offer: first };
 }
 
+/**
+ * Why an offer already made can no longer be shown or answered, seen or not: offers turned off, the
+ * project or the thread opted out, a session open for the thread, or the offer is a day old.
+ */
+export function offerStanding(input: {
+  now: number;
+  settings: LearningSettings;
+  projectNever: boolean;
+  optOut: boolean;
+  openSession: boolean;
+  createdAt: number;
+}): string | null {
+  if (!input.settings.offersEnabled) return "offers are off";
+  if (input.projectNever) return "never for this project";
+  if (input.optOut) return "off for this thread";
+  if (input.openSession) return "a session is open for this thread";
+  if (input.now - input.createdAt >= OFFER_TTL_MS) return "the offer is a day old";
+  return null;
+}
+
+/**
+ * Why an offer nobody has seen yet may not become visible now: the caps and the back-off, applied when
+ * it is about to show, not only when it was made (offers made in quiet threads would all show at once).
+ */
+export function offerCaps(input: {
+  now: number;
+  settings: LearningSettings;
+  trigger: Candidate["trigger"] | "manual";
+  finishedSessions: number;
+  sessionActiveInProject: boolean;
+  global: GlobalState;
+}): string | null {
+  const { now, settings, global } = input;
+  if (input.finishedSessions >= settings.sessionsPerThread) return "this thread had its sessions";
+  if (input.sessionActiveInProject) return "a session is running in this project";
+  if (seenInLastDay(global.seenAt, now) >= settings.offersPerDay) return "the daily limit is reached";
+  const lastSeen = global.seenAt.at(-1);
+  if (lastSeen !== undefined && now - lastSeen < settings.hoursBetweenOffers * HOUR) return "too soon after the last offer";
+  const backingOff = global.backoffUntil !== null && now < global.backoffUntil;
+  if (backingOff && input.trigger !== "manual" && !BACKOFF_KEEPS.includes(input.trigger)) return "backing off";
+  return null;
+}
+
 /** The snooze "Later" sets on a thread. */
 export function snoozeAfterLater(now: number, completedTurns: number): { snoozeUntil: number; snoozeUntilTurn: number } {
   return { snoozeUntil: now + SNOOZE_MS, snoozeUntilTurn: completedTurns + SNOOZE_TURNS };

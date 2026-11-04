@@ -284,7 +284,8 @@ What a port only learns by running it:
   `workspaceStatus` with `mergeBaseBranch` set to a commit SHA lists the commits since it, oldest first,
   and the files they touched with `A`/`M` status, without persisting a merge base: noting HEAD at
   `thread.active` gives a turn's own commits (`learning-exercises/server/offers.ts`). Without
-  `mergeBaseBranch`, `mergeBase` is null on the default branch.
+  `mergeBaseBranch`, `mergeBase` is null on any branch, and a revision expression such as `HEAD~1` fails
+  input validation: for a branch's commits, read `branch.defaultBranch` and pass it.
 - **Codex forks get no plugin tools** (bb 0.48.1): `configure` runs for the fork and returns them, but
   the fork's agent has none, even after a session restart; a *spawned* Codex thread gets them, and so do
   Claude Code and ACP forks. A fork that needs a plugin's capability in Codex has to reach it through

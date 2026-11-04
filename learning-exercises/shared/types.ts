@@ -57,6 +57,7 @@ export const PAUSE_REASONS = {
   restart: "bb restarted or the plugin reloaded while a question was open",
   archived: "its thread was archived",
   stopped: "its thread was stopped",
+  interrupted: "the question could not be shown or was interrupted",
 } as const;
 export type PauseReason = keyof typeof PAUSE_REASONS;
 
@@ -151,14 +152,32 @@ export const CardPayloadSchema = z.object({
 });
 export type CardPayload = z.infer<typeof CardPayloadSchema>;
 
+/** The longest answer a card takes, in characters; the card stops typing there and says so. */
+export const ANSWER_MAX_CHARS = 20_000;
+
 /** What a card submits. */
 export const CardValueSchema = z.discriminatedUnion("action", [
-  z.object({ action: z.literal("answer"), answer: z.string().min(1).max(20_000), confidence: z.number().int().min(1).max(5) }),
+  z.object({ action: z.literal("answer"), answer: z.string().min(1).max(ANSWER_MAX_CHARS), confidence: z.number().int().min(1).max(5) }),
   z.object({ action: z.literal("skip") }),
   z.object({ action: z.literal("more-specific") }),
   z.object({ action: z.literal("pause") }),
 ]);
 export type CardValue = z.infer<typeof CardValueSchema>;
+
+/**
+ * Reads what a card submitted. An answer is never turned into something else: one over the limit is
+ * cut to it (`truncated`), and a confidence out of range is clamped. Anything unreadable is null, which
+ * the server treats as an interrupted question, not as a Skip.
+ */
+export function readCardValue(raw: unknown): { value: CardValue; truncated: boolean } | null {
+  const parsed = CardValueSchema.safeParse(raw);
+  if (parsed.success) return { value: parsed.data, truncated: false };
+  if (typeof raw !== "object" || raw === null) return null;
+  const candidate = raw as { action?: unknown; answer?: unknown; confidence?: unknown };
+  if (candidate.action !== "answer" || typeof candidate.answer !== "string" || candidate.answer.trim() === "") return null;
+  const confidence = typeof candidate.confidence === "number" && Number.isFinite(candidate.confidence) ? Math.min(5, Math.max(1, Math.round(candidate.confidence))) : 3;
+  return { value: { action: "answer", answer: candidate.answer.slice(0, ANSWER_MAX_CHARS), confidence }, truncated: candidate.answer.length > ANSWER_MAX_CHARS };
+}
 
 /** What the settled row in the transcript keeps: the question and the learner's own words. */
 export const SettledRowSchema = z.object({

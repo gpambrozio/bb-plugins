@@ -1,9 +1,13 @@
 /**
  * `bb learning`: the session commands for agents that have no plugin tools (the "here" mode, and forks
- * of providers whose forks do not receive them), plus `principles`. The calling thread comes from the
- * caller's `BB_THREAD_ID`, a claim: every command checks it against the store, so a thread with no open
- * session can do nothing. Only bb's generic `plugin-commands` skill lists these commands; no thread is
- * told about them until it starts a session.
+ * of providers whose forks do not receive them), plus `principles`. Only bb's generic `plugin-commands`
+ * skill lists these commands; no thread is told about them until it starts a session.
+ *
+ * Trust: the calling thread is whatever the caller's `BB_THREAD_ID` says. bb's CLI context carries no
+ * verified identity (SDK 0.6.104 `PluginCliContext`), so this scopes cooperatively, it does not
+ * authenticate: each command acts only on the open session in the thread it names, and a process that
+ * sets another session thread's id can ask, record or finish there. That is within bb's model, where
+ * agents and plugins on the machine are trusted; it is said in AGENTS.md and the README.
  *
  * The question travels base64-encoded through `--question-base64-stdin` (bb's CLI reads one line from
  * stdin on the caller's machine), so quotes, backticks and newlines in it are never a shell's business.

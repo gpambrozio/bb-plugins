@@ -21,14 +21,33 @@ retrieval and Showboat are later phases.
 3. **Offers only in human threads** (`policy.ts` `isHumanThread`): top level, no `originPluginId`, no
    lifecycle owner, visible, not archived. That excludes crews, automations, diff-review runs, side
    chats and this plugin's own sessions.
-4. **The caps live in the server** (`policy.ts`), and count *seen* offers only: the banner and the tab
-   report `offerSeen` when the offer is on screen. An offer nobody looked at expires at the next turn or
-   after 24 h and never counted.
-5. **Every send has a visible line.** A `threads.send` with only an agent-only part shows the reply with
+4. **The caps live in the server** (`policy.ts`), and count *seen* offers only. They are applied twice:
+   when an offer is made, and again when it is about to show. Views read the offer through
+   `OfferEngine.visibleOffer` (an unseen offer shows only while the caps would let it), and the banner or
+   the tab claims it with `offerSeen` → `claim`, which re-checks the gate and the caps synchronously and
+   charges it once. Every read, claim and answer also re-checks what can end an offer at any time
+   (`offerStanding`: offers off, Never for the project, the thread opted out, a session open, a day old).
+   An offer nobody looked at expires at the next turn or after 24 h and never counted. The banner's Start
+   and the tab's Start both answer through `OfferEngine.answer`, and a tab Start with no offer still
+   resets the run of Laters (`accepted`).
+5. **Session state moves only from the state a step expects.** Start, Ask and Resume run under a per-key
+   lock (`SessionService.exclusive`) and reserve their state before any await; later steps use
+   `store.transition(id, from, to)`, so a pause, an early tool call from a fork, or another copy of the
+   plugin is never overwritten. A partial unique index allows one open session per source thread. After
+   `dispose()`, no continuation of that copy writes anything (`alive()`); a fork whose id never reached
+   the store is found again on Resume (`ports.forkOf`). A card that fails to open, or whose caller went,
+   pauses the session so Resume can show the question again.
+6. **Every send has a visible line.** A `threads.send` with only an agent-only part shows the reply with
    no user message above it (spike S5). `ports.send` always takes both.
-6. **The brief is agent-only and is the only instruction text.** It reaches the fork as
+7. **The brief is agent-only and is the only instruction text.** It reaches the fork as
    `agentContextSeed`, or the work thread as the agent-only part of one send. The standing
    `SESSION_INVARIANT` from `configure` survives a compaction in forks.
+
+8. **Who may call what.** The app's RPC mutations refuse another plugin (`experimental_caller` is
+   verified by bb); reads stay open. The `bb learning` commands act on the open session in the thread
+   the caller's `BB_THREAD_ID` names, and bb's CLI context carries no verified identity, so this scopes
+   cooperatively and does not authenticate: a process that names another session thread can act there.
+   That is within bb's model (agents and plugins on the machine are trusted); do not describe it as more.
 
 ## How it fits together
 
@@ -68,6 +87,10 @@ retrieval and Showboat are later phases.
   touched with `A`/`M` status (S4). Matching `git commit` in command text is unreliable (report v2 §1.2)
   and is not used. A commit made while another thread in the same environment had a turn running is
   not attributed (S4 reproduced the misattribution).
+- **A branch's commits need the default branch named.** `workspaceStatus` without `mergeBaseBranch`
+  answers `mergeBase: null`, and `HEAD~1` is refused, so the tab's "last commit" topic compares a feature
+  branch with `branch.defaultBranch`; on the default branch it uses the commits the thread's own turns
+  made (recorded in `thread_state.last_commits`).
 - **`fileChange` paths are absolute,** and Claude Code reports `/private/var/…` for a workspace bb knows
   as `/var/…`; `relativize` tries both.
 - **`configure` runs on a fork before `threads.fork` returns,** so the session is not bound to the fork's

@@ -106,8 +106,8 @@ describe("OfferEngine", () => {
     const { runTurn, commit, engine, store, ports } = setup();
     const offer = await runTurn(() => commit("First"));
     expect(store.global(ports.now()).seenAt).toEqual([]);
-    expect(engine.seen(offer!.id)).toBe(true);
-    expect(engine.seen(offer!.id)).toBe(false);
+    expect(engine.claim(offer!.id)).toBe(true);
+    expect(engine.claim(offer!.id)).toBe(true);
     expect(store.global(ports.now()).seenAt).toEqual([ports.now()]);
     // Seen 2 h ago at the latest: a commit an hour later is not offered.
     await engine.answer(offer!.id, "not-thread");

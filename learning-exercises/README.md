@@ -75,6 +75,10 @@ project** are listed under the settings, each with Undo.
   Learning tab to remove them.
 - Commits made in the same workspace by another thread at the same time are not offered, since the
   plugin cannot tell whose they are.
+- Answers are capped at 20,000 characters; the card says so when you reach it.
+- The `bb learning` commands act on the session of the thread they say they come from (`BB_THREAD_ID`);
+  bb gives a plugin command no way to verify that, so they trust it, like everything on your machine
+  that bb trusts. Other plugins cannot change your offers or sessions.
 
 ## How it works
 

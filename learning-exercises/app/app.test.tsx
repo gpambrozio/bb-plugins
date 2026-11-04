@@ -186,6 +186,14 @@ describe("the exercise card", () => {
     expect(submit).toHaveBeenCalledWith(value);
   });
 
+  it("caps the answer at the limit and says so (review finding 8)", () => {
+    renderCard();
+    const box = screen.getByLabelText("Your answer") as HTMLTextAreaElement;
+    expect(box.maxLength).toBe(20_000);
+    fireEvent.change(box, { target: { value: "x".repeat(20_000) } });
+    expect(screen.getByRole("status").textContent).toContain("Answers stop here");
+  });
+
   it("every button is a plain button, so none submits bb's composer form", () => {
     renderCard();
     for (const button of screen.getAllByRole("button")) expect(button.getAttribute("type")).toBe("button");

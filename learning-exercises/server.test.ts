@@ -167,3 +167,28 @@ describe("from a commit to an answered question", () => {
     expect(result.stdout).toContain("# Learning Principles");
   });
 });
+
+describe("review pass 1 (wiring)", () => {
+  it("finding 7: the last-commit topic reads a feature branch against its default branch", async () => {
+    const { harness } = await setup();
+    // bb 0.48.1's Git plugin: no `mergeBaseBranch` → `mergeBase: null`; a branch name → the commits ahead.
+    harness.sdk.stub("plugins.callRpc", ({ pluginId, input }: { pluginId: string; input: { mergeBaseBranch?: string } }) => {
+      if (pluginId === "bb--github-pr-status") return {};
+      const mergeBase =
+        input.mergeBaseBranch === "main"
+          ? { commits: [{ sha: "c1", shortSha: "c1", subject: "Add median" }, { sha: "c2", shortSha: "c2", subject: "Test median" }], files: [] }
+          : null;
+      return { outcome: "available", workspace: { checkout: { headSha: "c2" }, branch: { currentBranch: "feature", defaultBranch: "main" }, mergeBase } };
+    });
+    const { choices } = (await harness.callRpc("topicChoices", { threadId: WORK })) as { choices: { id: string; topic: string }[] };
+    expect(choices.find((choice) => choice.id === "commit")?.topic).toBe('"Test median"');
+  });
+
+  it("finding 10: another plugin cannot change offers or sessions, though it can read them", async () => {
+    const { harness } = await setup();
+    const asPlugin = { experimental_caller: { kind: "plugin" as const, pluginId: "someone-else" } };
+    await expect(harness.callRpc("setThreadOffers", { threadId: WORK, on: false }, asPlugin)).rejects.toThrow("from its own app only");
+    await expect(harness.callRpc("startSession", { threadId: WORK, topic: "x", trigger: "manual", refs: {} }, asPlugin)).rejects.toThrow("from its own app only");
+    await expect(harness.callRpc("threadView", { threadId: WORK }, asPlugin)).resolves.toMatchObject({ eligible: true });
+  });
+});

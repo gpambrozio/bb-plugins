@@ -13,7 +13,7 @@
  * (spike S4: a thread that only slept saw HEAD move when its neighbour committed).
  */
 import type { Offer, OfferAnswer } from "../shared/types";
-import { afterAnswer, decideOffer, isHumanThread, OFFER_TTL_MS, projectKey, snoozeAfterLater, type GateThread } from "./policy";
+import { afterAnswer, decideOffer, isHumanThread, OFFER_TTL_MS, offerCaps, offerStanding, projectKey, snoozeAfterLater, type GateThread } from "./policy";
 import type { Ports, ThreadInfo } from "./ports";
 import { candidates, PathRules, relativize, type Candidate, type FileChange, type TurnFacts } from "./signals";
 import type { LearningSettings } from "./settings";
@@ -42,6 +42,9 @@ interface Window {
   start: number;
   end: number | null;
 }
+
+/** A merge the hourly read saw while the thread was mid-turn, kept for the turn's end. */
+const MERGED_PENDING = "merged-pending";
 
 /** How long a finished turn's window is kept for the overlap check. */
 const WINDOW_TTL_MS = 6 * 60 * 60_000;
@@ -134,6 +137,7 @@ export class OfferEngine {
         : [];
     const readsCommits = settings.offersEnabled && (settings.triggers.commit || settings.triggers.newFiles || settings.triggers.schema);
     const commits = readsCommits ? await this.turnCommits(input.turn, input.overlapped) : { commits: [], files: [] };
+    this.store.recordCommits(thread.id, commits.commits);
     const changed = fileChanges.length > 0 || commits.commits.length > 0;
     const row = input.merged === undefined && lastTurn !== null && turnCompleted ? this.store.countTurn(thread.id, changed) : this.store.thread(thread.id);
     if (!settings.offersEnabled) return null;
@@ -195,7 +199,8 @@ export class OfferEngine {
     const before = this.store.pullRequestState(thread.environmentId);
     if (pull === null) return null;
     this.store.setPullRequestState(thread.environmentId, pull.state === "merged" || pull.state === "closed" ? null : { state: pull.state, threadId: thread.id });
-    const wasOpen = before !== null && (before.state === "open" || before.state === "draft");
+    // `merged-pending`: the hourly read saw the merge while the thread was busy (`checkPullRequests`).
+    const wasOpen = before !== null && (before.state === "open" || before.state === "draft" || before.state === MERGED_PENDING);
     return pull.state === "merged" && wasOpen ? { url: pull.url, title: pull.title } : null;
   }
 
@@ -207,13 +212,26 @@ export class OfferEngine {
     for (const watched of this.store.watchedPullRequests()) {
       const pull = await this.ports.pullRequest(watched.environmentId);
       if (pull === null || pull.state === "open" || pull.state === "draft") {
-        if (pull !== null && pull.state !== watched.state) this.store.setPullRequestState(watched.environmentId, { state: pull.state, threadId: watched.threadId });
+        if (pull !== null && pull.state !== watched.state && watched.state !== MERGED_PENDING) {
+          this.store.setPullRequestState(watched.environmentId, { state: pull.state, threadId: watched.threadId });
+        }
+        continue;
+      }
+      if (pull.state !== "merged") {
+        this.store.setPullRequestState(watched.environmentId, null);
+        continue;
+      }
+      const thread = await this.ports.thread(watched.threadId);
+      if (thread === null || !isHumanThread(thread)) {
+        this.store.setPullRequestState(watched.environmentId, null);
+        continue;
+      }
+      if (thread.status !== "idle") {
+        // Mid-turn: keep the merge for the turn's end, which reads it as news (`mergedPullRequest`).
+        this.store.setPullRequestState(watched.environmentId, { state: MERGED_PENDING, threadId: watched.threadId });
         continue;
       }
       this.store.setPullRequestState(watched.environmentId, null);
-      if (pull.state !== "merged") continue;
-      const thread = await this.ports.thread(watched.threadId);
-      if (thread === null || !isHumanThread(thread) || thread.status !== "idle") continue;
       const offer = await this.evaluate(thread, { turn: null, overlapped: false, merged: { url: pull.url, title: pull.title } });
       if (offer !== null) offered += 1;
     }
@@ -222,12 +240,77 @@ export class OfferEngine {
 
   // ── answers ───────────────────────────────────────────────────────────────
 
-  /** The banner or the tab drew the offer: from now it counts toward the caps. */
-  seen(offerId: string): boolean {
+  /** Why a live offer can no longer show or be answered at all (null: it still stands). */
+  private standing(offer: Offer & { projectKey: string }, now: number): string | null {
+    return offerStanding({
+      now,
+      settings: this.settings(),
+      projectNever: this.store.isNever(offer.projectKey),
+      optOut: this.store.thread(offer.threadId).optOut,
+      openSession: this.store.openSessionFrom(offer.threadId) !== null || this.store.sessionInThread(offer.threadId) !== null,
+      createdAt: offer.createdAt,
+    });
+  }
+
+  /** Why an unseen offer may not become visible now (the caps), null when it may. */
+  private capped(offer: Offer & { projectKey: string }, now: number): string | null {
+    return offerCaps({
+      now,
+      settings: this.settings(),
+      trigger: offer.trigger,
+      finishedSessions: this.store.finishedSessionsFrom(offer.threadId),
+      sessionActiveInProject: this.store.sessionActiveInProject(offer.projectKey),
+      global: this.store.global(now),
+    });
+  }
+
+  /**
+   * The thread's offer as a view may show it: an offer that no longer stands is expired here; one that
+   * nobody has seen is shown only while the caps would let it become visible. Synchronous, so the
+   * answer is never stale against another call in this process.
+   */
+  visibleOffer(threadId: string): Offer | null {
+    const live = this.store.liveOffer(threadId);
+    if (live === null) return null;
+    const offer = this.store.offer(live.id)!;
     const now = this.ports.now();
-    if (!this.store.markSeen(offerId, now)) return false;
+    if (this.standing(offer, now) !== null) {
+      if (this.store.expireOffer(offer.id)) this.ports.changed();
+      return null;
+    }
+    if (offer.seenAt === null && this.capped(offer, now) !== null) return null;
+    return live;
+  }
+
+  /**
+   * The banner or the tab is drawing the offer: claim it, atomically, against the gate and the caps as
+   * they are now. An offer already seen stays claimed and is not charged again. False when it may not
+   * show; the caller's views read again and drop it.
+   */
+  claim(offerId: string): boolean {
+    const offer = this.store.offer(offerId);
+    if (offer === null || offer.status !== "live") return false;
+    const now = this.ports.now();
+    if (this.standing(offer, now) !== null) {
+      this.store.expireOffer(offerId);
+      this.ports.changed();
+      return false;
+    }
+    if (offer.seenAt !== null) return true;
+    if (this.capped(offer, now) !== null) {
+      this.ports.changed();
+      return false;
+    }
+    this.store.markSeen(offerId, now);
     this.store.recordSeen(now);
+    this.ports.changed();
     return true;
+  }
+
+  /** A session the user started without answering an offer still breaks a run of Laters. */
+  accepted(): void {
+    const now = this.ports.now();
+    this.store.setBackoff(afterAnswer(this.store.global(now), "start", now));
   }
 
   /**
@@ -238,10 +321,10 @@ export class OfferEngine {
   async answer(offerId: string, answer: OfferAnswer): Promise<Offer & { projectKey: string }> {
     const offer = this.store.offer(offerId);
     if (offer === null || offer.status !== "live") throw new Error("That offer is no longer open.");
+    // An answer is a look: an offer answered before the banner claimed it is claimed (and charged) now.
+    if (!this.claim(offerId)) throw new Error("That offer is no longer open.");
     const now = this.ports.now();
     this.store.answerOffer(offerId, answer, now);
-    // An answer is a look: an offer answered from the tab before the banner reported it still counts.
-    if (offer.seenAt === null) this.store.recordSeen(now);
     const global = this.store.global(now);
     if (answer === "later") {
       const row = this.store.thread(offer.threadId);
