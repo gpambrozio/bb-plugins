@@ -264,6 +264,50 @@ describe("rename", () => {
   });
 });
 
+describe("move", () => {
+  async function three() {
+    const context = setup();
+    for (let index = 0; index < 3; index += 1) await context.service.open({ hostId: "mini", cols: 80, rows: 24 });
+    return context;
+  }
+  const order = (tabs: Tab[]) => tabs.map((tab) => tab.terminalId);
+
+  it("moves the tab to where the other one is and tells every client", async () => {
+    const { state, service } = await three();
+    const before = state.published;
+    await service.move("term_1", "term_3");
+    expect(order(state.tabs)).toEqual(["term_2", "term_3", "term_1"]);
+    expect(state.published).toBe(before + 1);
+    await service.move("term_1", "term_2");
+    expect(order(state.tabs)).toEqual(["term_1", "term_2", "term_3"]);
+    expect(order(await service.list())).toEqual(["term_1", "term_2", "term_3"]);
+  });
+
+  it("changes nothing, and says nothing, when either tab is gone or they are the same", async () => {
+    const { state, service } = await three();
+    const before = state.published;
+    await service.move("term_9", "term_1");
+    await service.move("term_1", "term_9");
+    await service.move("term_2", "term_2");
+    expect(order(state.tabs)).toEqual(["term_1", "term_2", "term_3"]);
+    expect(state.published).toBe(before);
+  });
+
+  it("keeps a tab opened while another moves", async () => {
+    const { state, service } = await three();
+    await Promise.all([service.move("term_3", "term_1"), service.open({ hostId: "mini", cols: 80, rows: 24 })]);
+    expect(order(state.tabs)).toEqual(["term_3", "term_1", "term_2", "term_4"]);
+  });
+
+  it("keeps names and the rest of each tab as they were", async () => {
+    const { state, service } = await three();
+    await service.rename("term_2", "logs");
+    const before = state.tabs.map((tab) => ({ ...tab }));
+    await service.move("term_2", "term_1");
+    expect(state.tabs).toEqual([before[1], before[0], before[2]]);
+  });
+});
+
 describe("a tab closed before bb has made its shell", () => {
   async function closedWhileOpening() {
     const holdCreates: (() => void)[] = [];

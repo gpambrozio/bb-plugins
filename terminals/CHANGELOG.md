@@ -5,6 +5,22 @@ Notable changes to `terminals`. The other plugins in this repository version sep
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.3.0
+
+### Changed
+
+- **The tabs are bb's own.** The strip of tabs is now the one bb draws in its own panels: each tab
+  has a terminal icon, the tab under the pointer shows its ×, and when the tabs do not fit, arrows
+  and faded edges at either end scroll them (the mouse wheel does too). A tab whose machine is
+  offline or whose shell has ended says so after its name.
+- A tab's right-click menu also offers **Close other tabs** and **Close tabs to the right**.
+- A machine's tabs are numbered in the order they were opened, wherever they sit in the strip.
+
+### Added
+
+- **Drag a tab to move it.** The new order is saved with the tabs, so every window shows it and it
+  is kept after a reload.
+
 ## 0.2.0
 
 ### Added

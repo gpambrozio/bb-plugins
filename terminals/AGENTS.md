@@ -11,12 +11,13 @@ specific to `terminals`.
 | File | What it owns |
 | --- | --- |
 | `server.ts` | Wires the RPCs to `bb.sdk.terminals`, `bb.sdk.hosts` and `bb.storage.kv`, and runs the once-per-load prune of ended tabs. |
-| `server/service.ts` | The tab list and the sessions behind it, over injected ports: open (store the tab, then make its shell under the tab's id), close (and keep the tab if its running shell could not be ended), list with each shell's status, prune. Every read-modify-write of the list is serialized. |
-| `shared/tabs.ts` | The stored tab (with the user's name for it, null for the default title), its status, the realtime channel, the tab and name limits, name normalising, tab labels. No SDK import, so the app may use it. |
+| `server/service.ts` | The tab list and the sessions behind it, over injected ports: open (store the tab, then make its shell under the tab's id), close (and keep the tab if its running shell could not be ended), move, list with each shell's status, prune. Every read-modify-write of the list is serialized. |
+| `shared/tabs.ts` | The stored tab (with the user's name for it, null for the default title), its status, the realtime channel, the tab and name limits, name normalising, tab labels, moving a tab in the list. No SDK import, so the app may use it. |
 | `shared/host-choice.ts` | Which machines "+" offers (connected and active, the server's own first) and whether it asks. No SDK import. |
 | `shared/contract.ts` | The app ⇄ server RPC contract. The app imports it as a type only (`app/imports.test.ts`). |
 | `app.tsx` | The nav panel; an invisible app overlay whose unmount (bb reloading or disabling the plugin) releases this copy's terminals and sockets; and the chat-delivery overlay. |
-| `app/terminals-page.tsx` | The page: tab strip, "+" and its machine menu, renaming in place (double click, F2, the tab's context menu), the shown terminal, the offline and ended notices, the empty state. |
+| `app/terminals-page.tsx` | The page: the tabs it hands the strip, "+" and its machine menu, renaming in place (double click, F2, the tab's context menu), moving a dropped tab, the shown terminal, the offline and ended notices, the empty state. |
+| `app/bb-tab-strip/` | bb's own tab strip and tab pill, copied from bb (MIT, `LICENSE` beside them): drag to reorder, overflow arrows and fades, the close button, the context menu. |
 | `app/live-terminals.ts` | One xterm instance and one connection per open tab, in module scope for the life of the window, so leaving the page keeps them. Re-parents the element on return and restores the scrolled-to line. |
 | `app/connection.ts` | One tab's line to bb's terminal socket: replay and resume by sequence number, acknowledgement after drawing, heartbeat, reconnect (also after a failed or silent attach), the output an exited shell left, when to stop. No React, no xterm. |
 | `app/sizing.ts` | Which window sizes a shell several windows show, and drawing every window at the shell's real size. |
@@ -32,7 +33,9 @@ specific to `terminals`.
 `npm test` runs everything. Nothing in it opens a shell or a socket: the connection runs against a
 scripted socket and a manual clock, the server against the SDK's fake host with stubbed terminals,
 and the page (`app/terminals-page.test.tsx`) against fake RPCs with `app/live-terminals.ts` mocked,
-since xterm needs a real layout.
+since xterm needs a real layout. The strip's drags are real dnd-kit drags over a stubbed layout
+(`layOutTabs`); after a drop dnd-kit swallows every click on the document for 50 ms, so a test that
+drags waits that out (`afterDrop`) or the next test's first click vanishes.
 
 ## Decisions
 
@@ -44,6 +47,18 @@ terminal *view*: `experimental_openTerminal` shows a terminal only in the App pa
 whose tab strip and "+" are bb's (no machine choice), and the SDK exports no terminal component. So
 the page draws its own, as the Wterm Terminal Preview plugin does: xterm.js (MIT; the emulator bb
 itself uses) as a dependency, nothing copied from Wterm.
+
+**The tab strip is bb's, copied.** The SDK exports no tab strip (checked at SDK 0.6.116 and bb's
+`main` registry), and the `@bb` registry has only its parts (`use-reorder-dnd`, `overflow-fade`,
+`use-drag-click-suppression`). So `app/bb-tab-strip/` holds bb's `SecondaryPanelTabStrip` and
+`TabPill` from desktop-v0.48.1 (commit `e003e95`), MIT, with the changes listed at the top of each
+file, on `@dnd-kit` as bb uses it. When bb exports a tab strip to plugins, swap this copy for it; until
+then, a change to bb's strip is not picked up here. Three things the copy needed that a future copy
+will too: the dragged pill is portalled to `document.body`, outside the plugin root the plugin's CSS
+is scoped to, so its portal carries `usePortalScopeProps()`; bb's custom Tailwind variants and global
+classes (`tab-pill-close-focus-visible:`, `no-scrollbar`) are not in a plugin's Tailwind, so they are
+spelled with stock utilities; and `@dnd-kit`'s typings name the global `JSX` namespace React 19
+dropped (`app/jsx-global.d.ts`). The tabs are bb's pressed buttons (`aria-pressed`), not ARIA tabs.
 
 **The stream is bb's own terminal socket, not an SDK call.** `/ws/terminals/<id>?sinceSeq=&outputAcks=1`
 on the page's origin is what bb's terminal panel and Wterm use; it is not in the SDK's typings, so a bb
@@ -78,11 +93,17 @@ the app's `useSdk()`) from the first sequence it has not drawn, then says it end
 change publishes `tabs-changed`, so every client shows the same tabs; the page refetches on that signal
 and after its realtime link reconnects. The shown tab is per window, in localStorage.
 
-**Names live with the tabs.** A tab's name is stored in the same kv list as the tab, normalised on
-the server (trimmed, whitespace collapsed, at most 80 characters, empty → null), so every client
-shows it and it survives reloads. The default title is computed in the app from the machine's name
-and the tab's position among that machine's tabs; a named tab keeps its position, so clearing the
-name brings back the title it had, and saving the default title untouched sends nothing. Renaming
+**Names and order live with the tabs.** A tab's name is stored in the same kv list as the tab,
+normalised on the server (trimmed, whitespace collapsed, at most 80 characters, empty → null), so
+every client shows it and it survives reloads. The list's order is the strip's: a drop calls `move`
+(the dragged tab to where the tab it was dropped on is, as dnd-kit's `arrayMove` does), which the
+server applies to the list it holds then, so a move from a window that has not yet seen another
+window's change still lands sensibly; a tab either one no longer finds is left alone. The page moves
+the tab at once and refetches after the call, like a rename. The default title is computed in the
+app from the machine's name and the tab's rank among that machine's tabs by opening time
+(`createdAt`, then id), not by position, so a dragged tab keeps its number ("Mac mini 2" may sit
+before "Mac mini 1") and every client numbers alike; a named tab keeps its rank, so clearing the name
+brings back the title it had, and saving the default title untouched sends nothing. Renaming
 also sets bb's own terminal title, best-effort: the tab's name is what counts.
 
 **Lifecycle.** A tab is stored *before* its shell exists: `open` picks the terminal id itself

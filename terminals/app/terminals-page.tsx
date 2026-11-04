@@ -1,5 +1,7 @@
 /**
  * The Terminals page: a strip of tabs, one shell each, with "+" at its end.
+ * The strip is bb's own (app/bb-tab-strip/): drag a tab to move it, for every
+ * window.
  *
  * The tab list comes from the server and is the same in every window; which
  * tab is shown is this window's own (app/selection.ts). Each tab's terminal
@@ -19,14 +21,15 @@ import {
 
 import type { RpcContract } from "../shared/contract";
 import { plusAction } from "../shared/host-choice";
-import { MAX_TAB_NAME, TABS_CHANGED, isPending, normalizeTabName, tabLabels, type HostChoice, type TabView } from "../shared/tabs";
+import { MAX_TAB_NAME, TABS_CHANGED, isPending, moveTab, normalizeTabName, tabLabels, type HostChoice, type TabView } from "../shared/tabs";
 import { Button } from "@/components/ui/button";
-import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/context-menu";
+import { COARSE_POINTER_COMPACT_ICON_BUTTON_CLASS, COARSE_POINTER_COMPACT_ICON_SIZE_CLASS } from "@/components/ui/coarse-pointer-sizing";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
 
 import { AddToChatDialog, type AddToChatRequest } from "./add-to-chat-dialog";
+import { TabStrip, type StripTab, type TabReorderRequest } from "./bb-tab-strip/tab-strip";
 import { DELIVERY_TIMEOUT_MS, windowDeliveries, type DeliveryTarget } from "./chat-delivery";
 import { terminalBlock } from "./chat-text";
 import type { ConnectionStatus } from "./connection";
@@ -101,6 +104,39 @@ function useConnectionStatus(terminalId: string, opening: boolean): ConnectionSt
 }
 
 /**
+ * Every tab's live connection status, for the strip, which draws the tabs
+ * from data rather than one component per tab.
+ */
+function useConnectionStatuses(tabs: readonly TabView[] | null): ReadonlyMap<string, ConnectionStatus> {
+  const backend = useTerminalsBackend();
+  const terminals = useMemo(
+    () =>
+      (tabs ?? []).map((tab) => ({
+        terminalId: tab.terminalId,
+        terminal: isPending(tab.status) ? null : liveTerminal(tab.terminalId, backend),
+      })),
+    [tabs, backend],
+  );
+  const subscribe = useCallback(
+    (notify: () => void) => {
+      const unsubscribes = terminals.map(({ terminal }) => terminal?.onStatus(notify));
+      return () => {
+        for (const unsubscribe of unsubscribes) unsubscribe?.();
+      };
+    },
+    [terminals],
+  );
+  // A status object is replaced, never changed in place, so the list of them says when any changed.
+  const key = useSyncExternalStore(subscribe, () =>
+    terminals.map(({ terminal }) => (terminal === null ? "opening" : `${terminal.status().state}:${terminal.status().exitCode}`)).join("|"),
+  );
+  return useMemo(() => {
+    void key;
+    return new Map(terminals.map(({ terminalId, terminal }) => [terminalId, terminal === null ? OPENING_STATUS : terminal.status()]));
+  }, [terminals, key]);
+}
+
+/**
  * bb's terminal calls, for the tabs' terminals. The same object on every
  * render, so the effects that take it do not reattach the terminal.
  */
@@ -157,7 +193,11 @@ export function TerminalsPage(_props: PluginNavPanelProps) {
   const [notice, setNotice] = useState<string | null>(null);
   const copyOnSelect = useCopyOnSelect();
 
+  const [renaming, setRenaming] = useState<string | null>(null);
   const tabIds = useMemo(() => (tabs ?? []).map((tab) => tab.terminalId), [tabs]);
+  // The list as it is now, for a close that finishes after others changed it ("Close other tabs").
+  const latestTabIds = useRef(tabIds);
+  latestTabIds.current = tabIds;
   const shown = tabs === null ? null : resolveSelection(tabIds, selected);
   const labels = useMemo(() => tabLabels(tabs ?? []), [tabs]);
   const shownTab = tabs?.find((tab) => tab.terminalId === shown) ?? null;
@@ -247,12 +287,32 @@ export function TerminalsPage(_props: PluginNavPanelProps) {
     [rpc, tabs, setTabs, refetch, invalidate],
   );
 
+  const move = useCallback(
+    async ({ activeTabId, overTabId }: TabReorderRequest) => {
+      setNotice(null);
+      // Moved at once, so the dropped tab stays where it was dropped; the server's signal moves it in
+      // every other window.
+      invalidate();
+      setTabs((list) => (list === null ? list : [...moveTab(list, activeTabId, overTabId)]));
+      try {
+        await rpc.call("move", { terminalId: activeTabId, toTerminalId: overTabId });
+      } catch (cause) {
+        setNotice(`Could not move the terminal: ${message(cause)}`);
+      }
+      // A read that started while the move was on its way would put the tab back.
+      refetch();
+    },
+    [rpc, setTabs, refetch, invalidate],
+  );
+
   const close = useCallback(
     async (terminalId: string) => {
       setNotice(null);
       try {
         await rpc.call("close", { terminalId });
-        select(selectionAfterClose(tabIds, terminalId, shown));
+        // The selection as it is now: closing several tabs at once moves it before each one ends.
+        const ids = latestTabIds.current;
+        select(selectionAfterClose(ids, terminalId, resolveSelection(ids, windowSelection.get())));
         setTabs((current) => current?.filter((tab) => tab.terminalId !== terminalId) ?? current);
       } catch (cause) {
         setNotice(`Could not close the terminal: ${message(cause)}`);
@@ -260,23 +320,61 @@ export function TerminalsPage(_props: PluginNavPanelProps) {
       // A read that started before the tab was removed would bring it (and its terminal) back.
       refetch();
     },
-    [rpc, select, tabIds, shown, setTabs, refetch],
+    [rpc, select, setTabs, refetch],
+  );
+
+  const statuses = useConnectionStatuses(tabs);
+  const stopRenaming = useCallback(
+    (tab: TabView, label: string, typed: string | null) => {
+      setRenaming(null);
+      // Saving the default title untouched is no rename: it would stop following the tab's number.
+      const unchanged = typed === null || (tab.name === null && normalizeTabName(typed) === label);
+      if (!unchanged) void rename(tab.terminalId, typed);
+      // Back to the tab when the field took focus with it (Enter, Escape), not to wherever the browser
+      // would put it. A frame later focus may already be somewhere the user chose — another tab's
+      // rename field, the shell — and taking it from there would close that field unsaved.
+      requestAnimationFrame(() => {
+        const active = document.activeElement;
+        if (active !== null && active !== document.body) return;
+        document.querySelector<HTMLButtonElement>(`[data-strip-tab="${tab.terminalId}"] button`)?.focus({ preventScroll: true });
+      });
+    },
+    [rename],
+  );
+  const stripTabs = useMemo<StripTab[]>(
+    () =>
+      (tabs ?? []).map((tab) => {
+        const label = labels.get(tab.terminalId) ?? tab.hostName;
+        const status = statuses.get(tab.terminalId) ?? OPENING_STATUS;
+        const pending = isPending(tab.status);
+        const statusLabel = pending ? null : status.state === "ended" ? "ended" : status.state === "offline" ? "offline" : null;
+        const where = tab.name === null ? label : `${label} — ${tab.hostName}`;
+        return {
+          id: tab.terminalId,
+          label,
+          leadingVisual: <Icon name={pending ? "Spinner" : "Terminal"} className={COARSE_POINTER_COMPACT_ICON_SIZE_CLASS} aria-hidden />,
+          statusLabel,
+          title: statusLabel === null ? where : `${where} (${statusLabel})`,
+          onSelect: () => select(tab.terminalId),
+          onClose: () => void close(tab.terminalId),
+          onRename: () => setRenaming(tab.terminalId),
+          editor:
+            renaming === tab.terminalId ? (
+              <TabNameEditor initial={tab.name ?? label} label={label} onDone={(typed) => stopRenaming(tab, label, typed)} />
+            ) : null,
+        };
+      }),
+    [tabs, labels, statuses, renaming, select, close, stopRenaming],
   );
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div role="tablist" aria-label="Terminals" className="flex min-h-10 items-stretch overflow-x-auto border-b border-border">
-        {(tabs ?? []).map((tab) => (
-          <TabButton
-            key={tab.terminalId}
-            tab={tab}
-            label={labels.get(tab.terminalId) ?? tab.hostName}
-            selected={tab.terminalId === shown}
-            onSelect={() => select(tab.terminalId)}
-            onRename={(name) => void rename(tab.terminalId, name)}
-            onClose={() => void close(tab.terminalId)}
-          />
-        ))}
+      <div
+        role="toolbar"
+        aria-label="Terminals"
+        className="flex h-10 min-w-0 shrink-0 items-center gap-1 border-b border-border bg-sidebar px-2"
+      >
+        {stripTabs.length > 0 ? <TabStrip activeTabId={shown} tabs={stripTabs} onReorderTab={(request) => void move(request)} /> : null}
         <DropdownMenu
           open={hostMenu !== null}
           onOpenChange={(open) => {
@@ -289,7 +387,11 @@ export function TerminalsPage(_props: PluginNavPanelProps) {
               type="button"
               variant="ghost"
               size="sm"
-              className="m-1 h-8 w-8 shrink-0 px-0"
+              // bb's new tab button, as its panels draw it after their tab strip.
+              className={cn(
+                COARSE_POINTER_COMPACT_ICON_BUTTON_CLASS,
+                "shrink-0 text-muted-foreground/70 hover:text-foreground focus:ring-1 focus:ring-ring",
+              )}
               aria-label="New terminal"
               disabled={opening || tabs === null}
             >
@@ -350,130 +452,6 @@ export function TerminalsPage(_props: PluginNavPanelProps) {
   );
 }
 
-function StatusDot({ status }: { status: ConnectionStatus }) {
-  if (status.state === "live") return null;
-  return (
-    <span
-      aria-hidden
-      className={cn(
-        "size-1.5 shrink-0 rounded-full",
-        status.state === "ended" ? "bg-muted-foreground" : "bg-warning",
-      )}
-    />
-  );
-}
-
-function TabButton({
-  tab,
-  label,
-  selected,
-  onSelect,
-  onRename,
-  onClose,
-}: {
-  tab: TabView;
-  label: string;
-  selected: boolean;
-  onSelect: () => void;
-  /** Saves a name; an empty one brings back the default title. */
-  onRename: (name: string) => void;
-  onClose: () => void;
-}) {
-  const opening = isPending(tab.status);
-  const status = useConnectionStatus(tab.terminalId, opening);
-  const [editing, setEditing] = useState(false);
-  const tabButton = useRef<HTMLButtonElement>(null);
-  const startEditing = useCallback(() => setEditing(true), []);
-  const stopEditing = useCallback((name: string | null) => {
-    setEditing(false);
-    // Saving the default title untouched is no rename: it would stop following the tab's number.
-    const unchanged = name === null || (tab.name === null && normalizeTabName(name) === label);
-    if (!unchanged) onRename(name);
-    // Back to the tab when the field took focus with it (Enter, Escape), not to wherever the browser
-    // would put it. A frame later focus may already be somewhere the user chose — another tab's
-    // rename field, the shell — and taking it from there would close that field unsaved.
-    requestAnimationFrame(() => {
-      const active = document.activeElement;
-      if (active === null || active === document.body) tabButton.current?.focus({ preventScroll: true });
-    });
-  }, [onRename, tab.name, label]);
-  const where = tab.name === null ? label : `${label} — ${tab.hostName}`;
-
-  return (
-    <ContextMenu>
-      <ContextMenuTrigger asChild>
-        <div
-          data-selected={selected ? "" : undefined}
-          className={cn(
-            "group relative flex max-w-56 shrink-0 items-center gap-1 border-r border-border pl-3 pr-1 text-sm",
-            // bb's own tab pills: the selected one on the "active" fill in full-strength text, the
-            // others dimmer and only tinted on hover. The bar under it marks it even at a glance.
-            selected
-              ? "bg-state-active font-medium text-foreground"
-              : "text-subtle-foreground hover:bg-state-hover hover:text-foreground",
-          )}
-        >
-          {selected ? (
-            <span aria-hidden data-tab-indicator className="pointer-events-none absolute inset-x-0 bottom-0 h-0.5 bg-primary" />
-          ) : null}
-          {editing ? (
-            <TabNameEditor initial={tab.name ?? label} label={label} onDone={stopEditing} />
-          ) : (
-            <button
-              ref={tabButton}
-              type="button"
-              role="tab"
-              aria-selected={selected}
-              className="flex min-w-0 items-center gap-2 py-2 outline-none focus-visible:underline"
-              onClick={onSelect}
-              onDoubleClick={startEditing}
-              onKeyDown={(event) => {
-                // F2 renames, as it renames a file or a terminal tab elsewhere.
-                if (event.key === "F2") {
-                  event.preventDefault();
-                  startEditing();
-                }
-              }}
-              onAuxClick={(event) => {
-                // A middle click closes the tab, as in a browser or a terminal app.
-                if (event.button === 1) onClose();
-              }}
-              title={status.state === "ended" ? `${where} (ended)` : status.state === "offline" ? `${where} (offline)` : where}
-            >
-              {opening ? <Icon name="Spinner" className="size-3 shrink-0" /> : <StatusDot status={status} />}
-              <span className="truncate">{label}</span>
-            </button>
-          )}
-          <button
-            type="button"
-            aria-label={`Close ${label}`}
-            className={cn(
-              "rounded p-0.5 text-muted-foreground hover:bg-state-hover hover:text-foreground",
-              selected ? "opacity-100" : "opacity-0 group-hover:opacity-100 focus-visible:opacity-100",
-            )}
-            onClick={onClose}
-          >
-            <Icon name="X" className="size-3.5" />
-          </button>
-        </div>
-      </ContextMenuTrigger>
-      <ContextMenuContent
-        // The editor takes focus itself; the menu must not hand it back to the tab.
-        onCloseAutoFocus={(event) => event.preventDefault()}
-      >
-        <ContextMenuItem onSelect={startEditing}>
-          <Icon name="Edit" />
-          Rename
-        </ContextMenuItem>
-        <ContextMenuItem onSelect={onClose}>
-          <Icon name="X" />
-          Close tab
-        </ContextMenuItem>
-      </ContextMenuContent>
-    </ContextMenu>
-  );
-}
-
 /**
  * The tab's title as a text field: Enter or leaving the field saves, Escape
  * keeps the old name, and an empty name brings back the default title.
@@ -505,7 +483,7 @@ function TabNameEditor({ initial, label, onDone }: { initial: string; label: str
       value={value}
       maxLength={MAX_TAB_NAME}
       size={Math.max(8, Math.min(28, value.length + 1))}
-      className="my-1 min-w-0 rounded border border-input bg-background px-1.5 py-0.5 text-sm text-foreground outline-none focus-visible:ring-1 focus-visible:ring-ring"
+      className="h-5 min-w-0 rounded-sm border border-input bg-background px-1 text-xs text-foreground outline-none focus-visible:ring-1 focus-visible:ring-ring max-md:pointer-coarse:h-7 max-md:pointer-coarse:text-sm"
       onChange={(event) => setValue(event.target.value)}
       onKeyDown={(event) => {
         // Keep Enter and Escape from bb's own shortcuts (Escape leaves the page).
