@@ -26,7 +26,8 @@ with a real answer card.
 
 Only in your own top-level threads: never in child threads, automations, other plugins' threads or
 hidden workers. Turn offers off per thread from the thread menu, per project from the offer, or
-everywhere in the settings.
+everywhere in the settings. In a sub-agent thread you can still add the Learning tab from the side
+panel and start an exercise on that thread's work by hand.
 
 ## Requirements
 

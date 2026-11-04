@@ -20,7 +20,13 @@ retrieval and Showboat are later phases.
    accepted session.
 3. **Offers only in human threads** (`policy.ts` `isHumanThread`): top level, no `originPluginId`, no
    lifecycle owner, visible, not archived. That excludes crews, automations, diff-review runs, side
-   chats and this plugin's own sessions.
+   chats and this plugin's own sessions. **Manual starts are wider** (`canStartByHand`): any visible,
+   unarchived thread except this plugin's own session threads, so a sub-agent thread can be a session's
+   source. The app mirrors that split: the fixed "Learning" tab shows where `isHumanThread` would (and in
+   session threads); everywhere else the same component is the action tab `learning-on-demand`, which the
+   learner adds from the side panel's launcher. `ThreadView.eligible` says offers are made there,
+   `canStart` that Start is shown. Never let offers, the banner or the thread menu's offer choice follow
+   `canStart`.
 4. **The caps live in the server** (`policy.ts`), and count *seen* offers only. They are applied twice:
    when an offer is made, and again when it is about to show. Views read the offer through
    `OfferEngine.visibleOffer` (an unseen offer shows only while the caps would let it), and the banner or
@@ -70,7 +76,7 @@ retrieval and Showboat are later phases.
 | `server/content.ts` | The brief from `content/` through `server/content.generated.ts` (`npm run gen:content`; a test fails when they differ) |
 | `app/banner.tsx`, `app/offer-card.tsx` | The composer banner (thread scope; only while idle) |
 | `app/card.tsx`, `app/settled-row.tsx` | The `exercise` pending interaction and its timeline row |
-| `app/tab.tsx` | The fixed "Learning" tab |
+| `app/tab.tsx` | The "Learning" tab: fixed in human threads and session threads, an action tab (on demand) elsewhere |
 | `app/thread-action.ts`, `app/settings-section.tsx` | "Learning offers" in the thread menu; the never-list under settings |
 
 ## What bb 0.48.1 does that this relies on (the spike's evidence)

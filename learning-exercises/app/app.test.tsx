@@ -12,7 +12,7 @@ import type { CardPayload, Offer, Session, ThreadView } from "../shared/types";
 import { OfferBanner } from "./banner";
 import { ExerciseCard } from "./card";
 import { SettledRow } from "./settled-row";
-import { LearningTab, useLearningTabVisible } from "./tab";
+import { LEARNING_ON_DEMAND_TAB, LearningTab, useLearningOnDemandVisible, useLearningTabVisible } from "./tab";
 import { offersItem } from "./thread-action";
 
 vi.mock("sonner", () => ({ toast: Object.assign(vi.fn(), { error: vi.fn(), success: vi.fn() }) }));
@@ -44,6 +44,7 @@ const offer: Offer = { id: "off_1", threadId: WORK, trigger: "commit", topic: '"
 function view(overrides: Partial<ThreadView> = {}): ThreadView {
   return {
     eligible: true,
+    canStart: true,
     offer,
     hosted: null,
     started: null,
@@ -99,12 +100,18 @@ function handlers(current: () => ThreadView, extra: Handlers = {}) {
 }
 
 describe("registrations", () => {
-  it("registers the banner, the card, its settled row, the fixed tab, the thread menu and the settings section", async () => {
+  it("registers the banner, the card, its settled row, the fixed and on-demand tabs, the thread menu and the settings section", async () => {
     const app = await loadPluginApp(() => import("../app"));
     expect(app.composerCustomizations.map((custom) => [custom.id, custom.scopes, custom.banners?.map((banner) => banner.id)])).toEqual([["offer", ["thread"], ["offer"]]]);
     expect(app.pendingInteractions.map((slot) => slot.id)).toEqual(["exercise"]);
     expect(app.timelineRenderers.map((slot) => slot.kind)).toEqual(["learning-exercises/exercise"]);
-    expect(app.tabs.map((tab) => [tab.id, tab.context.kind, tab.availability, tab.icon, tab.title])).toEqual([["learning", "thread", "fixed", "Brain", "Learning"]]);
+    expect(app.tabs.map((tab) => [tab.id, tab.context.kind, tab.availability, tab.icon, tab.title])).toEqual([
+      ["learning", "thread", "fixed", "Brain", "Learning"],
+      ["learning-on-demand", "thread", "action", "Brain", "Learning"],
+    ]);
+    // The on-demand tab is the same component, opened with no run hook of its own.
+    const onDemand = app.tabs.find((tab) => tab.id === LEARNING_ON_DEMAND_TAB.id)!;
+    expect(onDemand.component).toBe(app.tabs.find((tab) => tab.id === "learning")!.component);
     expect(app.threadActions.map((action) => action.id)).toEqual(["offers"]);
     expect(app.settingsSections.map((section) => section.id)).toEqual(["never-projects"]);
   });
@@ -286,6 +293,22 @@ describe("the Learning tab", () => {
     await waitFor(() => expect(slot.rpcCalls.some((call) => call.method === "deleteSession")).toBe(true));
   });
 
+  it("in a sub-agent thread: no offer and no offer controls, but Start works with that thread as the source", async () => {
+    const child = sidebarThread({ parentThreadId: "thr_mate" });
+    const slot = render(handlers(() => view({ eligible: false, canStart: true, offer: null })), child);
+    await screen.findByText("The last commit: Add median");
+    fireEvent.click(await screen.findByRole("button", { name: "Start in a side thread" }));
+    await waitFor(() => expect(slot.rpcCalls.find((call) => call.method === "startSession")?.input).toMatchObject({ threadId: WORK, trigger: "manual" }));
+    expect(screen.queryByRole("checkbox", { name: "Offers in this thread" })).toBeNull();
+    expect(screen.queryByText(/You just committed/)).toBeNull();
+  });
+
+  it("offers no Start where the server says a session cannot start", async () => {
+    render(handlers(() => view({ eligible: false, canStart: false, offer: null })));
+    await screen.findByText("Previous");
+    expect(screen.queryByText("Start an exercise")).toBeNull();
+  });
+
   it("says when the project is on the never list, with Undo", async () => {
     const slot = render(handlers(() => view({ offer: null, projectNever: true })));
     fireEvent.click(await screen.findByRole("button", { name: "Undo" }));
@@ -307,6 +330,28 @@ describe("where the tab shows", () => {
   ])("%s: %s", (_name, overrides, expected) => {
     renderSlot({ component: Probe }, { threadId: WORK }, { sidebarThreads: { status: "ready", threads: [sidebarThread(overrides)] } });
     expect(screen.getByText(expected)).toBeTruthy();
+  });
+});
+
+describe("where the on-demand tab shows", () => {
+  function Probe(props: { threadId: string }) {
+    return <span>{useLearningOnDemandVisible({ threadId: props.threadId, environment: null }) ? "offered" : "not offered"}</span>;
+  }
+
+  it.each([
+    ["a top-level thread (the fixed tab is there)", {}, "not offered"],
+    ["a session thread of this plugin (the fixed tab is there)", { originPluginId: "learning-exercises" }, "not offered"],
+    ["a child (sub-agent) thread", { parentThreadId: "thr_parent" }, "offered"],
+    ["a crew thread another plugin spawned", { parentThreadId: "thr_mate", originPluginId: "firstmate-crew" }, "offered"],
+    ["a delegated thread", { lifecycleOwnerThreadId: "thr_owner" }, "offered"],
+  ])("%s: %s", (_name, overrides, expected) => {
+    renderSlot({ component: Probe }, { threadId: WORK }, { sidebarThreads: { status: "ready", threads: [sidebarThread(overrides)] } });
+    expect(screen.getByText(expected)).toBeTruthy();
+  });
+
+  it("is not offered for a thread the sidebar does not list", () => {
+    renderSlot({ component: Probe }, { threadId: "thr_unknown" }, { sidebarThreads: { status: "ready", threads: [sidebarThread()] } });
+    expect(screen.getByText("not offered")).toBeTruthy();
   });
 });
 

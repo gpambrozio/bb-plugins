@@ -153,6 +153,37 @@ describe("from a commit to an answered question", () => {
     expect(harness.pendingInteractions[0]?.payload).toMatchObject({ question: "What does `mean([])` return?", type: "debug" });
   });
 
+  it("a sub-agent thread gets no offer, but a session started there by hand forks it and resumes there", async () => {
+    const { harness, threads, commitTurn, metadata } = await setup();
+    // A crew thread: a child of the first mate, spawned by another plugin.
+    threads.set(WORK, { ...threads.get(WORK)!, parentThreadId: "thr_mate", originPluginId: "firstmate-crew" });
+    await commitTurn();
+    const view = (await harness.callRpc("threadView", { threadId: WORK })) as ThreadView;
+    expect(view).toMatchObject({ eligible: false, canStart: true, offer: null });
+
+    const started = (await harness.callRpc("startSession", { threadId: WORK, topic: '"Add median"', trigger: "manual", refs: {} })) as { threadId: string };
+    expect(started.threadId).toBe(FORK);
+    const [fork] = harness.sdk.callsTo("threads.fork") as [Record<string, unknown>][];
+    expect(fork![0]).toMatchObject({ sourceThreadId: WORK });
+    const forkConfig = await harness.resolveAgentConfiguration(
+      makePluginAgentConfigurationContext({ thread: { id: FORK, sourceThreadId: WORK }, pluginMetadata: metadata.get(FORK) as never }),
+    );
+    expect(forkConfig.tools.map((tool) => tool.name).sort()).toEqual([...TOOL_NAMES].sort());
+    const session = ((await harness.callRpc("threadView", { threadId: WORK })) as ThreadView).started!;
+    expect(session).toMatchObject({ sourceThreadId: WORK, threadId: FORK, state: "active" });
+
+    await harness.callRpc("pauseSession", { sessionId: session.id });
+    await expect(harness.callRpc("resumeSession", { sessionId: session.id })).resolves.toEqual({ threadId: FORK });
+    expect(((await harness.callRpc("threadView", { threadId: WORK })) as ThreadView).started).toMatchObject({ state: "active" });
+  });
+
+  it("a learning session's own thread cannot start another session", async () => {
+    const { harness, threads } = await setup();
+    threads.set(WORK, { ...threads.get(WORK)!, originPluginId: "learning-exercises" });
+    expect((await harness.callRpc("threadView", { threadId: WORK })) as ThreadView).toMatchObject({ eligible: false, canStart: false });
+    await expect(harness.callRpc("startSession", { threadId: WORK, topic: "x", trigger: "manual", refs: {} })).rejects.toThrow(/learning session's own thread/);
+  });
+
   it("the CLI refuses a thread with no session", async () => {
     const { harness } = await setup();
     const result = await harness.runCli(["feedback", "--verdict", "correct"], { threadId: WORK });

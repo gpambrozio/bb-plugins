@@ -28,7 +28,7 @@ import type { PluginInteractionResult } from "@get-bb/plugin-sdk";
 
 import { PAUSE_REASONS, readCardValue, type CardPayload, type ExerciseType, type PauseReason, type Refs, type SettledRow, type TriggerKind, type Verdict } from "../shared/types";
 import { BRIEF_VERSION, buildBrief, startLine } from "./content";
-import { DAY, isHumanThread, projectKey } from "./policy";
+import { canStartByHand, DAY, projectKey } from "./policy";
 import type { Ports } from "./ports";
 import type { LearningSettings } from "./settings";
 import { OPEN_STATES, publicSession, type LearningStore, type SessionRow } from "./store";
@@ -144,7 +144,7 @@ export class SessionService {
     const source = await this.ports.thread(input.sourceThreadId);
     this.alive();
     if (source === null) throw new SessionError("That thread is gone.");
-    if (!isHumanThread(source)) throw new SessionError("Learning sessions start only from your own top-level threads.");
+    if (!canStartByHand(source)) throw new SessionError("Learning sessions start only from a thread you can see, and never from a learning session's own thread.");
     const project = await this.ports.project(source.projectId);
     const key = projectKey(project ?? { id: source.projectId, gitRemoteUrl: null });
     const settings = this.settings();

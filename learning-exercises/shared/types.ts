@@ -5,6 +5,9 @@
  */
 import { z } from "zod";
 
+/** This plugin's id; threads it starts carry it as `originPluginId`. */
+export const PLUGIN_ID = "learning-exercises";
+
 /** What made the plugin offer an exercise. Ordered from most to least worth offering. */
 export const TRIGGER_KINDS = ["pr-merged", "commit", "schema", "new-files", "streak", "manual"] as const;
 export const TriggerKindSchema = z.enum(TRIGGER_KINDS);
@@ -115,8 +118,13 @@ export type TopicChoice = z.infer<typeof TopicChoiceSchema>;
 
 /** Everything the banner and the tab show for one thread. */
 export const ThreadViewSchema = z.object({
-  /** Null when the thread is not one the plugin works with (a child, a worker, someone else's plugin thread). */
+  /** Offers are made here: a top-level thread a person drives (`isHumanThread`). */
   eligible: z.boolean(),
+  /**
+   * A session can be started here by hand: any visible thread but this plugin's own session threads, so a
+   * child (sub-agent) thread opened on demand qualifies too (`canStartByHand`).
+   */
+  canStart: z.boolean(),
   /** The live offer for this thread, if any. */
   offer: OfferSchema.nullable(),
   /** The session this thread hosts (a session thread, or "here" mode), if any. */

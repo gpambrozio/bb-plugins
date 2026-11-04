@@ -28,7 +28,7 @@ is not affiliated with or endorsed by the author; see [NOTICE.md](NOTICE.md).
 - **Caps that hold.** At most 2 finished sessions per thread, 3 offers you see per day, 2 hours between
   them; **Later** snoozes the thread for 45 minutes and 3 turns; three Laters in a row keep only
   commit and pull-request offers for a week. Offers nobody sees expire and never count.
-- **The Learning tab** in each thread's side panel shows this thread's offer or session (Pause, Resume,
+- **The Learning tab** in each top-level thread's side panel (and, on demand, in sub-agent threads) shows this thread's offer or session (Pause, Resume,
   Finish), starts an exercise on a topic taken from the thread (its last commit, its new files, its
   title) or one you type, and lists the project's paused and previous sessions with your answers.
 - **Pause and come back.** A paused session — by you, by a 30-minute timeout, or by a bb restart —
@@ -66,6 +66,10 @@ project** are listed under the settings, each with Undo.
 
 - Offers appear only in your own top-level threads: never in child threads (crew, sub-agents),
   automations, other plugins' threads or hidden workers.
+- In those threads the Learning tab is not pinned, but you can add it from the side panel's launcher
+  (it stays open with the thread) and start or resume a session by hand, with that thread as the
+  source. A session run "here" in a child thread is a turn like any other, so its parent hears when
+  it ends; the side-thread default keeps it out of the child.
 - Each question card counts as "waiting for you" like any question an agent asks, so push
   notifications and Herald announce it.
 - While a card is open it takes the composer's place in that thread: answer, skip or pause it.

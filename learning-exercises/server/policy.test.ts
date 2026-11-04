@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { afterAnswer, BACKOFF_MS, DAY, decideOffer, HOUR, isHumanThread, projectKey, SNOOZE_MS, snoozeAfterLater, type OfferInputs } from "./policy";
+import { afterAnswer, BACKOFF_MS, canStartByHand, DAY, decideOffer, HOUR, isHumanThread, projectKey, SNOOZE_MS, snoozeAfterLater, type OfferInputs } from "./policy";
 import type { Candidate } from "./signals";
 import { settingsWith } from "./testing/store";
 
@@ -38,6 +38,27 @@ describe("isHumanThread", () => {
     ["an archived thread", { archivedAt: 5 }],
   ])("refuses %s", (_name, change) => {
     expect(isHumanThread({ ...human, ...change })).toBe(false);
+  });
+});
+
+describe("canStartByHand", () => {
+  const human = { parentThreadId: null, originPluginId: null, lifecycleOwnerThreadId: null, visibility: "visible", archivedAt: null };
+
+  it.each([
+    ["a top-level thread a person drives", {}],
+    ["a child (sub-agent) thread", { parentThreadId: "thr_parent" }],
+    ["a crew thread another plugin spawned", { parentThreadId: "thr_mate", originPluginId: "firstmate-crew" }],
+    ["a delegated thread", { lifecycleOwnerThreadId: "thr_owner" }],
+  ])("takes %s", (_name, change) => {
+    expect(canStartByHand({ ...human, ...change })).toBe(true);
+  });
+
+  it.each([
+    ["this plugin's own session thread", { originPluginId: "learning-exercises" }],
+    ["a hidden worker", { visibility: "hidden" }],
+    ["an archived thread", { archivedAt: 5 }],
+  ])("refuses %s", (_name, change) => {
+    expect(canStartByHand({ ...human, ...change })).toBe(false);
   });
 });
 

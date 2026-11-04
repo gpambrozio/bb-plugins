@@ -4,6 +4,7 @@
  * server, not in an agent's memory as upstream's do.
  */
 import type { Candidate } from "./signals";
+import { PLUGIN_ID } from "../shared/types";
 import type { LearningSettings } from "./settings";
 
 export const MINUTE = 60_000;
@@ -42,6 +43,15 @@ export function isHumanThread(thread: GateThread): boolean {
     thread.visibility === "visible" &&
     thread.archivedAt === null
   );
+}
+
+/**
+ * Where the learner may start a session by hand: any visible, unarchived thread except this plugin's own
+ * session threads. Wider than `isHumanThread` on purpose: a child (sub-agent) thread gets no offers, but
+ * the learner can open the Learning tab there on demand and start one with that thread as the source.
+ */
+export function canStartByHand(thread: GateThread): boolean {
+  return thread.originPluginId !== PLUGIN_ID && thread.visibility === "visible" && thread.archivedAt === null;
 }
 
 export interface ThreadState {

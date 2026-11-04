@@ -9,29 +9,46 @@
  *   delete.
  * - The footer: offers in this thread on or off, "Never for this project" (with Undo), and the settings.
  *
- * `useTabVisible` hides it in child, worker and other plugins' threads (spike S7).
+ * `useLearningTabVisible` keeps the fixed tab to top-level threads a person drives and this plugin's
+ * session threads (spike S7). Everywhere else (child and sub-agent threads, other plugins' threads) the
+ * same component is an action tab (`LEARNING_ON_DEMAND_TAB`) the learner adds from the side panel's
+ * launcher: no offers there, but Start and Resume work with that thread as the source.
  */
-import { experimental_useTabVisible, useBbNavigate, type ExperimentalThreadTabProps } from "@get-bb/plugin-sdk/app";
+import { experimental_useTabVisible, useBbNavigate, type ExperimentalTabReference, type ExperimentalThreadTabProps } from "@get-bb/plugin-sdk/app";
 import { useState, type ReactNode } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Input } from "@/components/ui/input";
-import { CONFIDENCE_LABELS, TRIGGER_LABELS, type Session, type ThreadView, type TopicChoice } from "../shared/types";
+import { CONFIDENCE_LABELS, PLUGIN_ID, TRIGGER_LABELS, type Session, type ThreadView, type TopicChoice } from "../shared/types";
 import { errorText, useLearningRpc, useProjectSessions, useSessionDetail, useSidebarThread, useThreadView, useTopicChoices } from "./data";
 import { OfferCard } from "./offer-card";
 import { openSettings } from "./open-settings";
 
-export const PLUGIN_ID = "learning-exercises";
+export { PLUGIN_ID };
 export const UPSTREAM_URL = "https://github.com/DrCatHicks/learning-opportunities";
 
-/** The tab shows in threads a person drives, and in this plugin's session threads. */
-export function useLearningTabVisible({ threadId }: ExperimentalThreadTabProps): boolean {
-  const thread = useSidebarThread(threadId);
-  if (thread === undefined) return false;
+/** The on-demand Learning tab, as the panel controller addresses it. */
+export const LEARNING_ON_DEMAND_TAB = { id: "learning-on-demand", context: { kind: "thread" }, availability: "action" } as const satisfies ExperimentalTabReference;
+
+type SidebarThreadRow = NonNullable<ReturnType<typeof useSidebarThread>>;
+
+/** Where the fixed tab shows: threads a person drives, and this plugin's session threads. */
+export function fixedTabFor(thread: SidebarThreadRow): boolean {
   if (thread.originPluginId === PLUGIN_ID) return true;
   return thread.parentThreadId === null && thread.originPluginId === null && thread.lifecycleOwnerThreadId === null;
+}
+
+export function useLearningTabVisible({ threadId }: ExperimentalThreadTabProps): boolean {
+  const thread = useSidebarThread(threadId);
+  return thread !== undefined && fixedTabFor(thread);
+}
+
+/** The on-demand tab is offered in every listed thread the fixed one skips, so there is never two. */
+export function useLearningOnDemandVisible({ threadId }: ExperimentalThreadTabProps): boolean {
+  const thread = useSidebarThread(threadId);
+  return thread !== undefined && !fixedTabFor(thread);
 }
 
 const STATE_LABELS: Record<Session["state"], string> = {
@@ -385,7 +402,7 @@ export function LearningTab({ threadId }: ExperimentalThreadTabProps) {
   return (
     <div className="flex flex-col gap-5 text-sm">
       <Now view={data} threadId={threadId} visible={visible} />
-      {data.eligible && !sessionOpen && <Start threadId={threadId} view={data} visible={visible} />}
+      {data.canStart && !sessionOpen && <Start threadId={threadId} view={data} visible={visible} />}
       <Lists threadId={threadId} visible={visible} />
       <Footer view={data} threadId={threadId} />
       <p className="text-[11px] leading-snug text-muted-foreground">

@@ -5,7 +5,7 @@
 import type { RpcContract } from "../shared/contract";
 import type { Session, ThreadView, TopicChoice } from "../shared/types";
 import type { OfferEngine } from "./offers";
-import { isHumanThread, projectKey } from "./policy";
+import { canStartByHand, isHumanThread, projectKey } from "./policy";
 import type { Ports, ThreadInfo } from "./ports";
 import type { SessionService } from "./sessions";
 import { SessionError } from "./sessions";
@@ -46,6 +46,7 @@ export class LearningApi {
     const started = store.openSessionFrom(threadId);
     const view: ThreadView = {
       eligible: isHumanThread(thread),
+      canStart: canStartByHand(thread),
       offer: isHumanThread(thread) ? this.deps.offers.visibleOffer(threadId) : null,
       hosted: hosted === null ? null : publicSession(hosted),
       started: started === null || started.id === hosted?.id ? null : publicSession(started),

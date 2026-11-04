@@ -58,12 +58,23 @@ describe("starting a session", () => {
     expect(ports.warnings[0]).toContain("Could not fork");
   });
 
-  it("refuses a second open session for the same thread, and threads that are not the user's", async () => {
+  it("refuses a second open session for the same thread, and a learning session's own thread", async () => {
     const { start, ports, sessions } = setup();
-    await start();
+    const { threadId } = await start();
     await expect(start()).rejects.toThrow("already open");
+    expect(ports.threads.get(threadId)?.originPluginId).toBe("learning-exercises");
+    await expect(sessions.start({ sourceThreadId: threadId, topic: "x", trigger: "manual", refs: {}, offerId: null })).rejects.toBeInstanceOf(SessionError);
+    ports.threads.set("thr_hidden", thread({ id: "thr_hidden", visibility: "hidden" }));
+    await expect(sessions.start({ sourceThreadId: "thr_hidden", topic: "x", trigger: "manual", refs: {}, offerId: null })).rejects.toBeInstanceOf(SessionError);
+  });
+
+  it("starts by hand from a child (sub-agent) thread, which is the session's source", async () => {
+    const { ports, store, sessions } = setup();
     ports.threads.set("thr_child", thread({ id: "thr_child", parentThreadId: WORK }));
-    await expect(sessions.start({ sourceThreadId: "thr_child", topic: "x", trigger: "manual", refs: {}, offerId: null })).rejects.toBeInstanceOf(SessionError);
+    const started = await sessions.start({ sourceThreadId: "thr_child", topic: "x", trigger: "manual", refs: {}, offerId: null });
+    expect(started.mode).toBe("fork");
+    expect(ports.forks[0]).toMatchObject({ sourceThreadId: "thr_child" });
+    expect(store.session(started.sessionId)).toMatchObject({ sourceThreadId: "thr_child", threadId: started.threadId });
   });
 });
 
