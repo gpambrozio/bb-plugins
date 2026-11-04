@@ -2,28 +2,35 @@
  * The two RPCs, written against small ports so the tests can drive them with
  * fakes: `server.ts` binds the ports to `bb.sdk` and the host entry.
  *
- * Neither call takes a path, a provider or a directory from the app. A thread
- * id is resolved here to the thread's provider and environment; a skill id is
- * looked up in what discovery produced for that thread, and nothing else is
- * ever read.
+ * Neither call takes a path or a directory from the app. A thread id is
+ * resolved here to the thread's provider and environment; a new thread's
+ * project, machine and environment ids to the checkout it would start from;
+ * a skill id is looked up in what discovery produced for that subject, and
+ * nothing else is ever read.
  */
 import { parseFrontmatter } from "../shared/frontmatter";
 import {
   dedupeByName,
+  type NewThreadSubject,
   type ReportedSkills,
   type SkillDocument,
   type SkillEntry,
   type SkillList,
   type SkillSource,
+  type SkillSubject,
   SOURCE_KINDS,
 } from "../shared/skills";
 import { selectReported, type ReportedCommand } from "./reported";
 
-/** Where a thread runs, as the server resolved it. */
+/**
+ * Where a thread runs, as the server resolved it. A new thread that would not
+ * reuse an environment has none yet (`environmentId: null`), and runs from
+ * its project's checkout on `hostId`.
+ */
 export interface ThreadWorkspace {
   provider: string;
   projectId: string;
-  environmentId: string;
+  environmentId: string | null;
   hostId: string;
   cwd: string;
 }
@@ -50,6 +57,56 @@ export function workspaceFrom(
   };
 }
 
+/** A project as `bb.sdk.projects.get` describes it, as far as a new thread needs. */
+export interface ProjectCheckouts {
+  id: string;
+  kind: string;
+  sources: ReadonlyArray<{ hostId: string; path: string; isDefault: boolean }>;
+}
+
+/**
+ * Where a new thread would start, from what the new-thread composer has
+ * selected — or why there is nowhere to look, in words the browser shows as
+ * they are.
+ *
+ * - An environment it would reuse is that environment, if it is this
+ *   project's and still there. One left over from the project selected before
+ *   is not, and is passed over.
+ * - Otherwise it is the project's checkout on the selected machine (its
+ *   default one there), or the project's default checkout when no machine is
+ *   selected. A new worktree is made from that checkout, so its skills are the
+ *   ones the thread starts with.
+ */
+export function newThreadWorkspaceFrom(
+  subject: NewThreadSubject,
+  project: ProjectCheckouts,
+  environment: { id: string; projectId: string; hostId: string; path: string | null; status: string } | null,
+): ThreadWorkspace {
+  const base = { provider: subject.providerId, projectId: project.id };
+  if (project.kind === "personal") {
+    throw new Error("A thread outside a project has no checkout to scan. Choose a project to see its skills.");
+  }
+  if (
+    environment !== null &&
+    environment.projectId === project.id &&
+    environment.status !== "destroyed" &&
+    environment.path !== null
+  ) {
+    return { ...base, environmentId: environment.id, hostId: environment.hostId, cwd: environment.path };
+  }
+  const candidates =
+    subject.hostId === null ? project.sources : project.sources.filter((source) => source.hostId === subject.hostId);
+  const source = candidates.find((candidate) => candidate.isDefault) ?? candidates[0];
+  if (source === undefined) {
+    throw new Error(
+      subject.hostId === null
+        ? "This project has no checkout to scan."
+        : "This project has no checkout on the selected machine.",
+    );
+  }
+  return { ...base, environmentId: null, hostId: source.hostId, cwd: source.path };
+}
+
 /** One of bb's own skills, as `bb.sdk.skills.list` describes it. */
 export interface BbSkill {
   id: string;
@@ -62,8 +119,8 @@ export interface BbSkill {
 }
 
 export interface SkillsPorts {
-  /** Throws a message fit for the browser when the thread has nowhere to look. */
-  workspaceOf(threadId: string): Promise<ThreadWorkspace>;
+  /** Throws a message fit for the browser when the subject has nowhere to look. */
+  workspaceOf(subject: SkillSubject): Promise<ThreadWorkspace>;
   discover(workspace: ThreadWorkspace): Promise<{ scanned: boolean; skills: SkillEntry[] }>;
   readDiscovered(workspace: ThreadWorkspace, skillId: string): Promise<SkillDocument>;
   bbSkills(workspace: ThreadWorkspace): Promise<BbSkill[]>;
@@ -148,8 +205,8 @@ async function loadReported(
   }
 }
 
-export async function listSkills(ports: SkillsPorts, threadId: string): Promise<SkillList> {
-  const workspace = await ports.workspaceOf(threadId);
+export async function listSkills(ports: SkillsPorts, subject: SkillSubject): Promise<SkillList> {
+  const workspace = await ports.workspaceOf(subject);
   const [discovery, bb] = await Promise.all([ports.discover(workspace), bbEntries(ports, workspace)]);
   // Discovery's scopes come first, so a name both define is listed once, under
   // the copy the provider's own search path finds.
@@ -165,12 +222,12 @@ export async function listSkills(ports: SkillsPorts, threadId: string): Promise<
 
 /**
  * Takes a skill id, never a path, and reads only what discovery produced for
- * this thread: an id taken from bb's skill list must be one this thread gets
+ * this subject: an id taken from bb's skill list must be one this subject gets
  * from it again, and any other id is looked up by the host entry in a fresh
  * scan.
  */
-export async function readSkill(ports: SkillsPorts, threadId: string, skillId: string): Promise<SkillDocument> {
-  const workspace = await ports.workspaceOf(threadId);
+export async function readSkill(ports: SkillsPorts, subject: SkillSubject, skillId: string): Promise<SkillDocument> {
+  const workspace = await ports.workspaceOf(subject);
   if (!skillId.startsWith(BB_ID_PREFIX)) return ports.readDiscovered(workspace, skillId);
 
   const entry = (await bbEntries(ports, workspace)).find((candidate) => candidate.id === skillId);

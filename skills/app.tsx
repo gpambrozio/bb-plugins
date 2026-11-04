@@ -1,7 +1,8 @@
 // skills — the app entry.
 //
 // A Skills tab in each thread's side panel, a Skills button with a live count
-// in the thread composer that opens the same browser in bb's composer popup, a
+// in the thread composer and the new-thread composer that opens the same
+// browser in bb's composer popup, a
 // composer command (bindable to a key) that opens that popup, and a
 // command-palette entry that opens the tab. See AGENTS.md.
 import { definePluginApp } from "@get-bb/plugin-sdk/app";
@@ -15,7 +16,7 @@ export default definePluginApp((app) => {
 
   app.composer.customize({
     id: "skills",
-    scopes: ["thread"],
+    scopes: ["thread", "new-thread"],
     actions: [{ id: "skills", component: SkillsComposerButton }],
     experimental_popups: [{ id: SKILLS_POPUP_ID, label: "Skills", component: SkillsPopup }],
   });

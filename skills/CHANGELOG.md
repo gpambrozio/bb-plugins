@@ -5,6 +5,16 @@ Notable changes to `skills`. The other plugins in this repository version separa
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.4.0
+
+### Added
+
+- **The Skills button is in the new-thread message box too.** Before a thread has started, it lists the
+  skills of the project picked there, for the agent and machine picked there, and works as it does in a
+  thread: search, read a skill, and **Add to chat** to put it at the start of the message. Pick another
+  project, agent or machine and the list follows, without showing the previous project's skills on the
+  way. With no project picked, it says there is no project to look in.
+
 ## 0.3.2
 
 ### Fixed

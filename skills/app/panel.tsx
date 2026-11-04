@@ -14,13 +14,14 @@ export const PANEL_ACTION_ID = "skills";
  * composer, back over the panel.
  */
 export function SkillsPanel({ threadId, params }: ExperimentalThreadActionTabProps) {
-  const { state } = useSkillList(threadId);
+  const subject = { threadId };
+  const { state } = useSkillList(subject);
   const navigate = useBbNavigate();
   // `params` names the skill the popover had open, if any; the tab opens on it.
   // The composer takes focus after Add to chat, with the command in it.
   return (
     <SkillBrowser
-      threadId={threadId}
+      subject={subject}
       frame="panel"
       list={state}
       initialSelection={selectionFrom(params)}

@@ -111,3 +111,42 @@ export function dedupeByName<Entry extends { name: string }>(entries: Entry[]): 
 export function countEntries(list: SkillList): number {
   return list.skills.length + list.reported.skills.length + list.reported.commands.length;
 }
+
+const Id = z.string().min(1);
+
+/**
+ * A thread that does not exist yet: what the new-thread composer has selected.
+ * Ids only, never a path: the server finds the directory itself, from the
+ * project's checkout on the selected machine (or the environment it would
+ * reuse). `hostId` and `environmentId` are null when the selection names
+ * neither, and the project's default checkout is used.
+ */
+export const NewThreadSubjectSchema = z.object({
+  projectId: Id,
+  providerId: Id,
+  hostId: Id.nullable(),
+  environmentId: Id.nullable(),
+});
+
+export type NewThreadSubject = z.infer<typeof NewThreadSubjectSchema>;
+
+/**
+ * Whose skills a list is: a thread's, or a new thread's in the new-thread
+ * composer. It is also the RPC input, so a thread's is the `{ threadId }` it
+ * always was.
+ */
+export const SkillSubjectSchema = z.union([z.object({ threadId: Id }), z.object({ newThread: NewThreadSubjectSchema })]);
+
+export type SkillSubject = z.infer<typeof SkillSubjectSchema>;
+
+/**
+ * One string per subject, for keying answers: two subjects that would scan the
+ * same place for the same provider share it, and any change of project,
+ * provider, machine or environment is a new key — a new list, never the old
+ * one shown under it.
+ */
+export function subjectKey(subject: SkillSubject): string {
+  if ("threadId" in subject) return `thread\n${subject.threadId}`;
+  const { projectId, providerId, hostId, environmentId } = subject.newThread;
+  return `new-thread\n${projectId}\n${providerId}\n${hostId ?? ""}\n${environmentId ?? ""}`;
+}

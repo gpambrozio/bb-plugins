@@ -21,7 +21,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
-import { type ReportedSkill, type SkillEntry, type SkillList, SOURCE_KINDS } from "../shared/skills";
+import {
+  type ReportedSkill,
+  type SkillEntry,
+  type SkillList,
+  type SkillSubject,
+  SOURCE_KINDS,
+  subjectKey,
+} from "../shared/skills";
 import { copyText } from "./clipboard";
 import { discoveredCommand, reportedCommand, type SkillCommand } from "./insert";
 import { withoutImages } from "./markdown";
@@ -102,10 +109,10 @@ function BackLink({ onBack }: { onBack: () => void }) {
 
 /**
  * **Add to chat**, shared by both detail screens. Shown only where the composer
- * it would write to is this thread's.
+ * it would write to is the subject's.
  */
-function AddToChat({ threadId, command, onAdded }: { threadId: string; command: SkillCommand; onAdded: () => void }) {
-  const chat = useAddToChat(threadId, onAdded);
+function AddToChat({ subject, command, onAdded }: { subject: SkillSubject; command: SkillCommand; onAdded: () => void }) {
+  const chat = useAddToChat(subject, onAdded);
   if (!chat.canAdd) return null;
   return (
     <Button type="button" className="my-3 w-full" onClick={() => chat.add(command)}>
@@ -124,14 +131,14 @@ function copyPath(path: string): void {
 }
 
 function SkillDetail({
-  threadId,
+  subject,
   frame,
   skillId,
   entry,
   onBack,
   onAdded,
 }: {
-  threadId: string;
+  subject: SkillSubject;
   frame: SkillBrowserFrame;
   skillId: string;
   /** The skill's row in the list, or undefined while the list is loading. */
@@ -139,7 +146,7 @@ function SkillDetail({
   onBack: () => void;
   onAdded: () => void;
 }) {
-  const { state } = useSkillDocument(threadId, skillId);
+  const { state } = useSkillDocument(subject, skillId);
 
   return (
     <div>
@@ -170,7 +177,7 @@ function SkillDetail({
           ) : null}
           {(entry?.userInvocable ?? true) ? (
             <AddToChat
-              threadId={threadId}
+              subject={subject}
               command={discoveredCommand(state.data.name, entry?.source.kind)}
               onAdded={onAdded}
             />
@@ -194,13 +201,13 @@ function SkillDetail({
  * clipped to two lines, and its command can still be added to the chat.
  */
 function ReportedDetail({
-  threadId,
+  subject,
   entry,
   source,
   onBack,
   onAdded,
 }: {
-  threadId: string;
+  subject: SkillSubject;
   entry: ReportedSkill;
   /** Which of the provider's two lists it is in. */
   source: SkillCommand["source"];
@@ -213,7 +220,7 @@ function ReportedDetail({
       <h2 className="text-base font-semibold text-foreground">{entry.name}</h2>
       {entry.argumentHint ? <p className="font-mono text-xs text-muted-foreground">{entry.argumentHint}</p> : null}
       {entry.description ? <p className="mt-2 text-sm text-muted-foreground select-text">{entry.description}</p> : null}
-      <AddToChat threadId={threadId} command={reportedCommand(entry, source)} onAdded={onAdded} />
+      <AddToChat subject={subject} command={reportedCommand(entry, source)} onAdded={onAdded} />
       <p className="text-sm text-muted-foreground">
         bb's provider reported this. It has no SKILL.md on disk, so there is nothing further to show.
       </p>
@@ -250,14 +257,15 @@ function ReportedGroup({
 }
 
 export function SkillBrowser({
-  threadId,
+  subject,
   frame,
   list,
   onAdded,
   initialSelection = null,
   onSelectionChange,
 }: {
-  threadId: string;
+  /** Whose skills `list` is: a thread's, or the new thread the composer would start. */
+  subject: SkillSubject;
   frame: SkillBrowserFrame;
   list: Loaded<SkillList>;
   onAdded: () => void;
@@ -281,14 +289,17 @@ export function SkillBrowser({
     top.current?.scrollIntoView({ block: "nearest" });
   }, [selected]);
 
-  // A thread switch under an open panel or popover is a new list.
-  const shownThread = useRef(threadId);
-  useEffect(() => {
-    if (shownThread.current === threadId) return;
-    shownThread.current = threadId;
+  // A thread switch under an open panel or popover is a new list, and so is a
+  // new project, provider or machine in the new-thread composer. It is reset
+  // while rendering, not in an effect, so the old selection's detail never
+  // mounts for the new subject and asks it for a skill it does not have.
+  const key = subjectKey(subject);
+  const [shownKey, setShownKey] = useState(key);
+  if (shownKey !== key) {
+    setShownKey(key);
     setSelected(null);
     setSearch("");
-  }, [threadId]);
+  }
 
   // The selection is cleared first, so the browser is back on its list when the
   // user returns to it rather than on the detail of a skill already added.
@@ -319,7 +330,7 @@ export function SkillBrowser({
     const entry = data?.skills.find((skill) => skill.id === selected.id);
     content = (
       <SkillDetail
-        threadId={threadId}
+        subject={subject}
         frame={frame}
         skillId={selected.id}
         entry={entry}
@@ -334,7 +345,7 @@ export function SkillBrowser({
     content =
       entry === undefined ? null : (
         <ReportedDetail
-          threadId={threadId}
+          subject={subject}
           entry={entry}
           source={skill === undefined ? "command" : "skill"}
           onBack={() => setSelected(null)}

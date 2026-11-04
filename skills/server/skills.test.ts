@@ -6,7 +6,18 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 import { discoverSkills, readDiscoveredSkill, type SkillRoots } from "../host/discover";
 import { SkillListSchema } from "../shared/skills";
 import type { ReportedCommand } from "./reported";
-import { listSkills, readSkill, workspaceFrom, type BbSkill, type SkillsPorts, type ThreadWorkspace } from "./skills";
+import {
+  listSkills,
+  newThreadWorkspaceFrom,
+  readSkill,
+  workspaceFrom,
+  type BbSkill,
+  type ProjectCheckouts,
+  type SkillsPorts,
+  type ThreadWorkspace,
+} from "./skills";
+
+const THREAD = { threadId: "thr_example" };
 
 let root: string;
 let roots: SkillRoots;
@@ -89,7 +100,7 @@ describe("listSkills", () => {
   test("lists the provider's skills with the thread's provider and directory", async () => {
     await writeSkill(path.join(cwd, ".claude", "skills"), "tidy-imports", "Sorts imports");
 
-    const result = await listSkills(portsFor({}).ports, "thr_example");
+    const result = await listSkills(portsFor({}).ports, THREAD);
 
     expect(result.provider).toBe("claude-code");
     expect(result.scanned).toBe(true);
@@ -107,7 +118,7 @@ describe("listSkills", () => {
       ],
     });
 
-    const result = await listSkills(ports, "thr_example");
+    const result = await listSkills(ports, THREAD);
 
     expect(result.skills.map((skill) => [skill.name, skill.source])).toEqual([
       ["house-style", { kind: "bb", label: "bb personal", dir: "/home/me/.bb/skills" }],
@@ -129,7 +140,7 @@ describe("listSkills", () => {
       ],
     });
 
-    const result = await listSkills(ports, "thr_example");
+    const result = await listSkills(ports, THREAD);
 
     expect(result.skills).toEqual([]);
   });
@@ -147,13 +158,13 @@ describe("listSkills", () => {
       contents: { [pluginSkill.id]: "---\nname: deck\ndescription: Decks\n---\nMake a deck.\n" },
     });
 
-    const result = await listSkills(ports, "thr_example");
+    const result = await listSkills(ports, THREAD);
 
     expect(result.skills.map((skill) => [skill.name, skill.source.kind, skill.source.label])).toEqual([
       ["plugin-guide", "bb", "bb plugin · example-plugin"],
       ["slides:deck", "plugin", "slides"],
     ]);
-    const document = await readSkill(ports, "thr_example", result.skills[1]!.id);
+    const document = await readSkill(ports, THREAD, result.skills[1]!.id);
     expect(bbSkillContent).toHaveBeenCalledWith(expect.anything(), pluginSkill.id);
     expect(document.body).toBe("Make a deck.\n");
   });
@@ -164,7 +175,7 @@ describe("listSkills", () => {
       bb: [bbSkill({ name: "shared-name" }), bbSkill({ name: "shared-name", id: "skill_codex", provider: "codex", pluginId: "slides" })],
     });
 
-    const result = await listSkills(ports, "thr_example");
+    const result = await listSkills(ports, THREAD);
 
     expect(result.skills.map((skill) => skill.source.kind)).toEqual(["plugin"]);
   });
@@ -173,7 +184,7 @@ describe("listSkills", () => {
     await writeSkill(path.join(roots.claudeHome, "skills"), "plugin-guide", "The personal copy");
     const { ports } = portsFor({ bb: [bbSkill({ name: "plugin-guide" })] });
 
-    const result = await listSkills(ports, "thr_example");
+    const result = await listSkills(ports, THREAD);
 
     expect(result.skills).toHaveLength(1);
     expect(result.skills[0]!.source.kind).toBe("personal");
@@ -188,7 +199,7 @@ describe("listSkills", () => {
       commands: async () => [command("plugin-guide"), command("explain"), command("clear", "command")],
     });
 
-    const result = await listSkills(ports, "thr_example");
+    const result = await listSkills(ports, THREAD);
 
     expect(result.scanned).toBe(false);
     expect(result.skills.map((skill) => skill.name)).toEqual(["plugin-guide"]);
@@ -206,7 +217,7 @@ describe("listSkills", () => {
       commands: async () => [command("tidy-imports"), command("plugin-guide"), command("charts")],
     });
 
-    const result = await listSkills(ports, "thr_example");
+    const result = await listSkills(ports, THREAD);
 
     expect(result.reported.skills.map((entry) => entry.name)).toEqual(["charts"]);
   });
@@ -219,7 +230,7 @@ describe("listSkills", () => {
       },
     });
 
-    const result = await listSkills(ports, "thr_example");
+    const result = await listSkills(ports, THREAD);
 
     expect(result.skills.map((skill) => skill.name)).toEqual(["tidy-imports"]);
     expect(result.reported).toEqual({ error: "provider is not available", skills: [], commands: [] });
@@ -232,7 +243,7 @@ describe("listSkills", () => {
       },
     });
 
-    await expect(listSkills(ports, "thr_example")).rejects.toThrow("This thread has no environment yet.");
+    await expect(listSkills(ports, THREAD)).rejects.toThrow("This thread has no environment yet.");
   });
 });
 
@@ -240,9 +251,9 @@ describe("readSkill", () => {
   test("reads a discovered skill through the host", async () => {
     await writeSkill(path.join(cwd, ".claude", "skills"), "tidy-imports", "Sorts imports");
     const { ports } = portsFor({});
-    const listed = await listSkills(ports, "thr_example");
+    const listed = await listSkills(ports, THREAD);
 
-    const result = await readSkill(ports, "thr_example", listed.skills[0]!.id);
+    const result = await readSkill(ports, THREAD, listed.skills[0]!.id);
 
     expect(result.body).toBe("Body for tidy-imports.\n");
   });
@@ -253,9 +264,9 @@ describe("readSkill", () => {
       bb: [skill],
       contents: { [skill.id]: "---\nname: plugin-guide\ndescription: Guides\n---\n\n# Guide\n" },
     });
-    const listed = await listSkills(ports, "thr_example");
+    const listed = await listSkills(ports, THREAD);
 
-    const result = await readSkill(ports, "thr_example", listed.skills[0]!.id);
+    const result = await readSkill(ports, THREAD, listed.skills[0]!.id);
 
     expect(bbSkillContent).toHaveBeenCalledWith(expect.anything(), skill.id);
     expect(result).toEqual({
@@ -272,7 +283,7 @@ describe("readSkill", () => {
     test("refuses a bb id bb's list no longer has", async () => {
       const { ports, bbSkillContent } = portsFor({ bb: [], contents: { skill_gone: "---\n---\n" } });
 
-      await expect(readSkill(ports, "thr_example", "bb:skill_gone")).rejects.toThrow(/not available/);
+      await expect(readSkill(ports, THREAD, "bb:skill_gone")).rejects.toThrow(/not available/);
       expect(bbSkillContent).not.toHaveBeenCalled();
     });
 
@@ -280,7 +291,7 @@ describe("readSkill", () => {
       const foreign = bbSkill({ name: "codex-only", scope: "provider-user", provider: "codex", pluginId: null });
       const { ports, bbSkillContent } = portsFor({ bb: [foreign], contents: { [foreign.id]: "---\n---\n" } });
 
-      await expect(readSkill(ports, "thr_example", `bb:${foreign.id}`)).rejects.toThrow(/not available/);
+      await expect(readSkill(ports, THREAD, `bb:${foreign.id}`)).rejects.toThrow(/not available/);
       expect(bbSkillContent).not.toHaveBeenCalled();
     });
 
@@ -290,7 +301,7 @@ describe("readSkill", () => {
       const { ports } = portsFor({});
 
       for (const skillId of [path.join(secret, "notes", "SKILL.md"), `project:${secret}:notes`, "bb:"]) {
-        await expect(readSkill(ports, "thr_example", skillId)).rejects.toThrow(/not available/);
+        await expect(readSkill(ports, THREAD, skillId)).rejects.toThrow(/not available/);
       }
     });
   });
@@ -318,5 +329,95 @@ describe("workspaceFrom", () => {
     expect(() => workspaceFrom(thread, { ...environment, path: null, status: "destroyed" })).toThrow(
       "This thread's environment has been removed, so there is nothing to scan.",
     );
+  });
+});
+
+describe("newThreadWorkspaceFrom", () => {
+  const subject = { projectId: "proj_example", providerId: "codex", hostId: null, environmentId: null };
+  const project: ProjectCheckouts = {
+    id: "proj_example",
+    kind: "standard",
+    sources: [
+      { hostId: "host_laptop", path: "/laptop/example", isDefault: false },
+      { hostId: "host_mini", path: "/mini/example", isDefault: true },
+      { hostId: "host_mini", path: "/mini/example-2", isDefault: false },
+    ],
+  };
+  const environment = { id: "env_example", projectId: "proj_example", hostId: "host_laptop", path: "/work/tree", status: "ready" };
+
+  test("takes the provider from the selection and the project's default checkout when no machine is selected", () => {
+    expect(newThreadWorkspaceFrom(subject, project, null)).toEqual({
+      provider: "codex",
+      projectId: "proj_example",
+      environmentId: null,
+      hostId: "host_mini",
+      cwd: "/mini/example",
+    });
+  });
+
+  test("takes the project's checkout on the selected machine", () => {
+    expect(newThreadWorkspaceFrom({ ...subject, hostId: "host_laptop" }, project, null)).toMatchObject({
+      hostId: "host_laptop",
+      cwd: "/laptop/example",
+      environmentId: null,
+    });
+    expect(newThreadWorkspaceFrom({ ...subject, hostId: "host_mini" }, project, null)).toMatchObject({ cwd: "/mini/example" });
+  });
+
+  test("takes an environment it would reuse, when that is this project's and still there", () => {
+    expect(newThreadWorkspaceFrom({ ...subject, environmentId: "env_example" }, project, environment)).toEqual({
+      provider: "codex",
+      projectId: "proj_example",
+      environmentId: "env_example",
+      hostId: "host_laptop",
+      cwd: "/work/tree",
+    });
+  });
+
+  // A selection that still names the previous project's environment, or one
+  // that is gone, falls back to the checkout.
+  test("passes over another project's environment and one with nowhere to look", () => {
+    const withEnvironment = { ...subject, environmentId: "env_example" };
+    for (const other of [
+      { ...environment, projectId: "proj_other" },
+      { ...environment, path: null, status: "destroyed" },
+      { ...environment, path: null, status: "provisioning" },
+    ]) {
+      expect(newThreadWorkspaceFrom(withEnvironment, project, other)).toMatchObject({ environmentId: null, cwd: "/mini/example" });
+    }
+  });
+
+  test("says why there is nowhere to look", () => {
+    expect(() => newThreadWorkspaceFrom(subject, { id: "proj_personal", kind: "personal", sources: [] }, null)).toThrow(
+      "A thread outside a project has no checkout to scan. Choose a project to see its skills.",
+    );
+    expect(() => newThreadWorkspaceFrom({ ...subject, hostId: "host_elsewhere" }, project, null)).toThrow(
+      "This project has no checkout on the selected machine.",
+    );
+    expect(() => newThreadWorkspaceFrom(subject, { ...project, sources: [] }, null)).toThrow("This project has no checkout to scan.");
+  });
+});
+
+describe("a new thread's skills", () => {
+  const newThread = { projectId: "proj_example", providerId: "claude-code", hostId: "host_example", environmentId: null };
+
+  test("are listed and read from the workspace the subject resolves to", async () => {
+    await writeSkill(path.join(cwd, ".claude", "skills"), "tidy-imports", "Sorts imports");
+    const asked: unknown[] = [];
+    const { ports } = portsFor({
+      workspace: async () => ({ provider: "claude-code", projectId: "proj_example", environmentId: null, hostId: "host_example", cwd }),
+    });
+    const workspaceOf = ports.workspaceOf;
+    ports.workspaceOf = (subject) => {
+      asked.push(subject);
+      return workspaceOf(subject);
+    };
+
+    const listed = await listSkills(ports, { newThread });
+    const document = await readSkill(ports, { newThread }, listed.skills[0]!.id);
+
+    expect(listed.skills.map((skill) => skill.name)).toEqual(["tidy-imports"]);
+    expect(document.body).toBe("Body for tidy-imports.\n");
+    expect(asked).toEqual([{ newThread }, { newThread }]);
   });
 });

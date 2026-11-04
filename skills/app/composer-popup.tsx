@@ -5,7 +5,10 @@
  * closes it on Escape or a click outside, and gives the editor its focus back
  * when it closes. Inside it, `useComposer()` is the composer that opened it.
  *
- * A button at the top opens the full panel, on the skill being shown if any.
+ * In a thread's composer, a button at the top opens the full panel, on the
+ * skill being shown if any. The new-thread composer has no thread panel to
+ * open, so it has no such button; its list is the selected project's, and a
+ * change of selection under the open popup is a new list.
  */
 import { useBbNavigate, useComposer } from "@get-bb/plugin-sdk/app";
 import { type MouseEvent, useCallback, useRef } from "react";
@@ -13,8 +16,10 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 
+import type { SkillSubject } from "../shared/skills";
 import { type Selection, SkillBrowser } from "./browser";
 import { PANEL_ACTION_ID } from "./panel";
+import { showsSkills, subjectOf } from "./subject";
 import { useSkillList } from "./use-skills";
 
 /** The popup's id in this plugin's composer customization. */
@@ -30,7 +35,7 @@ export function toggleSkillsPopup(composer: {
 }): void {
   if (composer.experimental_closePopup()) return;
   if (!composer.experimental_openPopup(SKILLS_POPUP_ID)) {
-    toast.error("The Skills list opens only in a thread's own message box.");
+    toast.error("The Skills list opens only in a thread's message box or a new thread's.");
   }
 }
 
@@ -46,18 +51,24 @@ function keepPressInPopup(event: MouseEvent) {
   event.stopPropagation();
 }
 
-export function SkillsPopup() {
-  const { scope } = useComposer();
-  if (scope.kind !== "thread") return null;
-  return <SkillsPopupContent threadId={scope.threadId} />;
+/** Only a thread has a side panel with the Skills tab in it. */
+function hasPanel(subject: SkillSubject): boolean {
+  return "threadId" in subject;
 }
 
-function SkillsPopupContent({ threadId }: { threadId: string }) {
-  // Mounted each time the popup opens, so each opening scans again; the
-  // button's count follows, through the shared list.
-  const { state } = useSkillList(threadId);
+export function SkillsPopup() {
+  const { scope } = useComposer();
+  if (!showsSkills(scope)) return null;
+  return <SkillsPopupContent />;
+}
+
+function SkillsPopupContent() {
   const navigate = useBbNavigate();
   const composer = useComposer();
+  const subject = subjectOf(composer.scope, composer.selection);
+  // Mounted each time the popup opens, so each opening scans again; the
+  // button's count follows, through the shared list.
+  const { state } = useSkillList(subject);
 
   // The skill whose detail the popup shows, if any: **Open in panel** opens
   // the tab on it, as a tab of its own named after it.
@@ -103,21 +114,28 @@ function SkillsPopupContent({ threadId }: { threadId: string }) {
     >
       <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
         <span className="text-sm font-medium text-foreground">Skills</span>
-        <Button type="button" variant="link" size="sm" className="h-auto px-0" onClick={openPanel}>
-          Open in panel
-        </Button>
+        {subject !== null && hasPanel(subject) ? (
+          <Button type="button" variant="link" size="sm" className="h-auto px-0" onClick={openPanel}>
+            Open in panel
+          </Button>
+        ) : null}
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
-        {/* The composer under this popup is already the thread's, so after
+        {/* The composer under this popup is already the subject's, so after
             Add to chat the popup only has to close; bb gives the editor its
             focus back as it does. */}
-        <SkillBrowser
-          threadId={threadId}
-          frame="popup"
-          list={state}
-          onSelectionChange={handleSelectionChange}
-          onAdded={() => composer.experimental_closePopup()}
-        />
+        {subject === null ? (
+          // A new-thread composer whose project or provider bb has not resolved yet.
+          <p className="p-3 text-sm text-muted-foreground">Loading skills…</p>
+        ) : (
+          <SkillBrowser
+            subject={subject}
+            frame="popup"
+            list={state}
+            onSelectionChange={handleSelectionChange}
+            onAdded={() => composer.experimental_closePopup()}
+          />
+        )}
       </div>
     </div>
   );

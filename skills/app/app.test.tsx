@@ -100,7 +100,7 @@ function renderPanel(
 }
 
 describe("registrations", () => {
-  it("adds a thread panel, a thread-composer button with its popup, and commands", async () => {
+  it("adds a thread panel, a composer button with its popup in thread and new-thread composers, and commands", async () => {
     const app = await loadPluginApp(() => import("../app"));
     expect(app.tabs.map((tab) => [tab.id, tab.title, tab.context.kind, tab.availability, tab.icon, tab.layout])).toEqual([
       ["skills", "Skills", "thread", "action", SKILLS_ICON, "padded"],
@@ -109,7 +109,7 @@ describe("registrations", () => {
     expect(app.composerCustomizations).toEqual([
       expect.objectContaining({
         id: "skills",
-        scopes: ["thread"],
+        scopes: ["thread", "new-thread"],
         actions: [expect.objectContaining({ id: "skills" })],
         experimental_popups: [expect.objectContaining({ id: "skills", label: "Skills" })],
       }),
@@ -415,10 +415,10 @@ describe("the composer button", () => {
     expect(await screen.findByRole("button", { name: "Skills: 6" })).toBeTruthy();
   });
 
-  it("draws nothing outside a thread's own composer", () => {
+  it("draws nothing in a queued message's editor", () => {
     const { container } = renderSlot<object, RpcContract>({ component: SkillsComposerButton }, {}, {
       rpc,
-      composer: { scope: { kind: "new-thread", projectId: "proj_example" } },
+      composer: { scope: { kind: "queued-message", threadId: "thr_example", queuedMessageId: "msg_example" } },
     });
     expect(container.textContent).toBe("");
   });
@@ -600,7 +600,7 @@ describe("the composer popup", () => {
       },
     });
     expect(refused).toEqual(["skills"]);
-    expect(spy).toHaveBeenCalledWith("The Skills list opens only in a thread's own message box.");
+    expect(spy).toHaveBeenCalledWith("The Skills list opens only in a thread's message box or a new thread's.");
     spy.mockRestore();
   });
 
@@ -672,10 +672,10 @@ describe("the composer popup", () => {
     expect(inspection.navigateCalls).toEqual([{ method: "openThreadPanel", options: { actionId: "skills" } }]);
   });
 
-  it("draws nothing outside a thread's own composer", () => {
+  it("draws nothing in a queued message's editor", () => {
     const { container } = renderSlot<object, RpcContract>({ component: SkillsPopup }, {}, {
       rpc,
-      composer: { scope: { kind: "new-thread", projectId: "proj_example" } },
+      composer: { scope: { kind: "queued-message", threadId: "thr_example", queuedMessageId: "msg_example" } },
     });
     expect(container.textContent).toBe("");
   });
@@ -699,5 +699,212 @@ describe("the panel opened on a skill", () => {
   it("opens on the list for params it does not recognise", async () => {
     renderPanel({ params: { skill: { kind: "other", path: "/etc/passwd" } } });
     expect(await screen.findByLabelText("Search skills")).toBeTruthy();
+  });
+});
+
+describe("the new-thread composer", () => {
+  const SELECTION = {
+    projectId: "proj_a",
+    providerId: "claude-code",
+    environment: {
+      type: "host",
+      hostId: "host_mini",
+      workspace: { type: "managed-worktree", baseBranch: { kind: "default" } },
+    },
+  } as const;
+  const LIST_B: SkillList = {
+    ...LIST,
+    cwd: "/work/b",
+    skills: [entry("b-only", "project", "Project")],
+    reported: { error: null, skills: [], commands: [] },
+  };
+  const newThread = (projectId: string) => ({
+    newThread: { projectId, providerId: "claude-code", hostId: "host_mini", environmentId: null },
+  });
+
+  function ButtonThenPopup() {
+    const [open, setOpen] = useState(false);
+    return (
+      <>
+        <SkillsComposerButton />
+        <button type="button" onClick={() => setOpen(true)}>
+          open the popup
+        </button>
+        {open ? <SkillsPopup /> : null}
+      </>
+    );
+  }
+
+  function renderNewThread(
+    options: {
+      list?: (input: unknown) => SkillList | Promise<SkillList>;
+      projectId?: string | null;
+      selection?: Record<string, unknown>;
+      component?: ComponentType;
+    } = {},
+  ) {
+    let host: ReturnType<typeof popupHost> | undefined;
+    const Component = options.component ?? ButtonThenPopup;
+    function WithHost() {
+      const composer = useComposer();
+      host ??= popupHost(composer);
+      return <Component />;
+    }
+    const rendered = renderSlot<object, RpcContract>({ component: WithHost }, {}, {
+      rpc: { ...rpc, list: (options.list ?? rpc.list) as typeof rpc.list },
+      composer: {
+        scope: { kind: "new-thread", projectId: options.projectId === undefined ? "proj_a" : options.projectId },
+        selection: (options.selection ?? SELECTION) as never,
+      },
+    });
+    return { ...rendered, host: () => host! };
+  }
+
+  it("lists the selected project's skills for the selected provider and machine", async () => {
+    const { inspection } = renderNewThread();
+    expect(await screen.findByRole("button", { name: "Skills: 6" })).toBeTruthy();
+    expect(inspection.rpcCalls).toEqual([{ method: "list", input: newThread("proj_a") }]);
+  });
+
+  it("asks for nothing while bb has not resolved the project", async () => {
+    const { inspection } = renderNewThread({ projectId: null });
+    fireEvent.click(screen.getByRole("button", { name: "open the popup" }));
+    expect(screen.getByRole("button", { name: "Skills" })).toBeTruthy();
+    expect(screen.getByText("Loading skills…")).toBeTruthy();
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 20)));
+    expect(inspection.rpcCalls).toEqual([]);
+  });
+
+  it("opens bb's composer popup", async () => {
+    const { host } = renderNewThread({ component: SkillsComposerButton });
+    fireEvent.click(await screen.findByRole("button", { name: "Skills: 6" }));
+    expect(host().opened).toEqual(["skills"]);
+  });
+
+  it("reads a skill, and adds its pill to the new thread's draft without sending", async () => {
+    const { inspection, host } = renderNewThread({ component: SkillsPopup });
+    host().open = true;
+    fireEvent.click(await screen.findByText("tidy-imports"));
+    await screen.findByText("Do the thing.", { exact: false });
+    expect(inspection.rpcCalls.at(-1)).toEqual({
+      method: "read",
+      input: { ...newThread("proj_a"), skillId: "project:/skills:tidy-imports" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add to chat" }));
+
+    expect(inspection.composer.draft.text).toBe("/tidy-imports ");
+    expect(inspection.composer.draft.mentions).toEqual([
+      expect.objectContaining({ kind: "command", name: "tidy-imports", source: "skill", origin: "project", from: 0, to: 13 }),
+    ]);
+    expect(host().open).toBe(false);
+    expect(inspection.composer.submits).toEqual([]);
+    expect(inspection.navigateCalls).toEqual([]);
+  });
+
+  it("adds a reported entry with its argument hint", async () => {
+    const { inspection } = renderNewThread({ component: SkillsPopup });
+    fireEvent.click(await screen.findByText("explain"));
+    expect(screen.getByText("[file]")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Add to chat" }));
+    expect(inspection.composer.draft.mentions).toEqual([
+      expect.objectContaining({ kind: "command", name: "explain", argumentHint: "[file]" }),
+    ]);
+  });
+
+  // There is no thread yet, so no side panel to open.
+  it("offers no Open in panel", async () => {
+    renderNewThread({ component: SkillsPopup });
+    await screen.findByText("deploy");
+    expect(screen.queryByRole("button", { name: "Open in panel" })).toBeNull();
+  });
+
+  it("names the environment it would reuse rather than a machine", async () => {
+    const { inspection } = renderNewThread({
+      selection: { projectId: "proj_a", providerId: "codex", environment: { type: "reuse", environmentId: "env_a" } },
+    });
+    await screen.findByRole("button", { name: "Skills: 6" });
+    expect(inspection.rpcCalls).toEqual([
+      { method: "list", input: { newThread: { projectId: "proj_a", providerId: "codex", hostId: null, environmentId: "env_a" } } },
+    ]);
+  });
+
+  it("shows why there is nothing to list, as the server says it", async () => {
+    renderNewThread({
+      component: SkillsPopup,
+      list: () => {
+        throw new Error("A thread outside a project has no checkout to scan. Choose a project to see its skills.");
+      },
+    });
+    expect(await screen.findByText(/Choose a project to see its skills/)).toBeTruthy();
+  });
+
+  it("follows a project switch, never showing the old project's skills, however late its scan answers", async () => {
+    const scans = new Map<string, Array<(list: SkillList) => void>>();
+    const { behavior, inspection } = renderNewThread({
+      list: (input) => {
+        const projectId = (input as ReturnType<typeof newThread>).newThread.projectId;
+        return new Promise<SkillList>((resolve) => scans.set(projectId, [...(scans.get(projectId) ?? []), resolve]));
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "open the popup" }));
+    await waitFor(() => expect(scans.get("proj_a")).toHaveLength(2));
+    expect(screen.getByText("Loading skills…")).toBeTruthy();
+
+    // The user picks another project while the first one's scans are still out.
+    await behavior.setComposerScope({ kind: "new-thread", projectId: "proj_b" });
+    await waitFor(() => expect(scans.get("proj_b")).toHaveLength(2));
+    expect(screen.getByRole("button", { name: "Skills" })).toBeTruthy();
+    expect(screen.getByText("Loading skills…")).toBeTruthy();
+
+    for (const resolve of scans.get("proj_b")!) resolve(LIST_B);
+    expect(await screen.findByText("b-only")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Skills: 1" })).toBeTruthy();
+
+    // The old project's scans answer last, and change nothing.
+    await act(async () => {
+      for (const resolve of scans.get("proj_a")!) resolve(LIST);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect(screen.getByText("b-only")).toBeTruthy();
+    expect(screen.queryByText("deploy")).toBeNull();
+    expect(screen.getByRole("button", { name: "Skills: 1" })).toBeTruthy();
+    expect(inspection.rpcCalls.map((call) => call.input)).toEqual([
+      newThread("proj_a"),
+      newThread("proj_a"),
+      newThread("proj_b"),
+      newThread("proj_b"),
+    ]);
+  });
+
+  it("drops the old project's list, and the skill open in it, the moment the project changes", async () => {
+    let answer: SkillList = LIST;
+    const pending: Array<() => void> = [];
+    const { behavior, inspection } = renderNewThread({
+      list: () => {
+        const list = answer;
+        return list === LIST ? list : new Promise<SkillList>((resolve) => pending.push(() => resolve(list)));
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "open the popup" }));
+    fireEvent.click(await screen.findByText("deploy"));
+    await screen.findByText("Description for deploy");
+    expect(screen.getByRole("button", { name: "Skills: 6" })).toBeTruthy();
+
+    answer = LIST_B;
+    await behavior.setComposerScope({ kind: "new-thread", projectId: "proj_b" });
+    // Not the old count, not the old skill: B's list is loading.
+    expect(screen.getByRole("button", { name: "Skills" })).toBeTruthy();
+    expect(screen.queryByText("Description for deploy")).toBeNull();
+    expect(screen.getByText("Loading skills…")).toBeTruthy();
+
+    await act(async () => {
+      for (const resolve of pending) resolve();
+    });
+    expect(await screen.findByText("b-only")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Skills: 1" })).toBeTruthy();
+    // The skill open in A's list was never asked of B.
+    expect(inspection.rpcCalls.filter((call) => call.method === "read").map((call) => call.input)).toEqual([
+      { ...newThread("proj_a"), skillId: "personal:/skills:deploy" },
+    ]);
   });
 });
