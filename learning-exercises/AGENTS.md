@@ -24,7 +24,10 @@ retrieval and Showboat are later phases.
    unarchived thread except this plugin's own session threads, so a sub-agent thread can be a session's
    source. The app mirrors that split: the fixed "Learning" tab shows where `isHumanThread` would (and in
    session threads); everywhere else the same component is the action tab `learning-on-demand`, which the
-   learner adds from the side panel's launcher. `ThreadView.eligible` says offers are made there,
+   learner adds from the side panel's launcher. bb keeps an action tab's open instances when its
+   `useVisible` turns false, so `useOneLearningTab` (run by the always-mounted composer banner and by the
+   on-demand tab) closes them once the thread qualifies for the fixed tab, selecting the fixed tab first
+   when one was selected: never two Learning tabs. `ThreadView.eligible` says offers are made there,
    `canStart` that Start is shown. Never let offers, the banner or the thread menu's offer choice follow
    `canStart`.
 4. **The caps live in the server** (`policy.ts`), and count *seen* offers only. They are applied twice:

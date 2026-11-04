@@ -12,7 +12,7 @@ import type { CardPayload, Offer, Session, ThreadView } from "../shared/types";
 import { OfferBanner } from "./banner";
 import { ExerciseCard } from "./card";
 import { SettledRow } from "./settled-row";
-import { LEARNING_ON_DEMAND_TAB, LearningTab, useLearningOnDemandVisible, useLearningTabVisible } from "./tab";
+import { LEARNING_FIXED_TAB, LEARNING_ON_DEMAND_TAB, LearningOnDemandTab, LearningTab, useLearningOnDemandVisible, useLearningTabVisible, useOneLearningTab } from "./tab";
 import { offersItem } from "./thread-action";
 
 vi.mock("sonner", () => ({ toast: Object.assign(vi.fn(), { error: vi.fn(), success: vi.fn() }) }));
@@ -109,9 +109,9 @@ describe("registrations", () => {
       ["learning", "thread", "fixed", "Brain", "Learning"],
       ["learning-on-demand", "thread", "action", "Brain", "Learning"],
     ]);
-    // The on-demand tab is the same component, opened with no run hook of its own.
-    const onDemand = app.tabs.find((tab) => tab.id === LEARNING_ON_DEMAND_TAB.id)!;
-    expect(onDemand.component).toBe(app.tabs.find((tab) => tab.id === "learning")!.component);
+    // The on-demand tab wraps the same panel and hands itself over to the fixed one.
+    expect(app.tabs.find((tab) => tab.id === LEARNING_ON_DEMAND_TAB.id)!.component).toBe(LearningOnDemandTab);
+    expect(app.tabs.find((tab) => tab.id === LEARNING_FIXED_TAB.id)!.component).toBe(LearningTab);
     expect(app.threadActions.map((action) => action.id)).toEqual(["offers"]);
     expect(app.settingsSections.map((section) => section.id)).toEqual(["never-projects"]);
   });
@@ -352,6 +352,78 @@ describe("where the on-demand tab shows", () => {
   it("is not offered for a thread the sidebar does not list", () => {
     renderSlot({ component: Probe }, { threadId: "thr_unknown" }, { sidebarThreads: { status: "ready", threads: [sidebarThread()] } });
     expect(screen.getByText("not offered")).toBeTruthy();
+  });
+});
+
+describe("one Learning tab per thread", () => {
+  const onDemandOpen = (selected: boolean, panelOpen = true) => ({
+    open: panelOpen,
+    selectedKey: selected ? "tab-od" : "info",
+    tabs: [
+      { key: "info", title: "Info", status: null, closable: false, detail: { kind: "info" as const } },
+      { key: "tab-od", title: "Learning", status: null, closable: true, detail: { kind: "plugin" as const, pluginId: "learning-exercises", tab: LEARNING_ON_DEMAND_TAB, params: null } },
+    ],
+  });
+  const accept = { openTab: () => true, closeTab: () => true };
+
+  function Probe(props: { thread: unknown }) {
+    useOneLearningTab(props.thread as never);
+    return <span>probe</span>;
+  }
+
+  it("closes the open on-demand tab once the thread loses its parent, and moves the selection to the fixed tab", () => {
+    const child = sidebarThread({ parentThreadId: "thr_parent" });
+    const slot = renderSlot({ component: Probe }, { thread: child }, { experimental_panel: accept, experimental_panelTabs: onDemandOpen(true) });
+    // Still a child: the on-demand tab is the only Learning tab, so it stays.
+    expect(slot.experimental_panelCalls).toEqual([]);
+    // The parent is removed: the fixed tab now shows, so the persisted on-demand instance must go.
+    slot.rerender(<Probe thread={sidebarThread()} />);
+    expect(slot.experimental_panelCalls).toEqual([
+      { method: "openTab", options: { tab: LEARNING_FIXED_TAB } },
+      { method: "closeTab", key: "tab-od" },
+    ]);
+  });
+
+  it("closes an unselected or hidden-panel instance without opening anything", () => {
+    for (const tabs of [onDemandOpen(false), onDemandOpen(true, false)]) {
+      const slot = renderSlot({ component: Probe }, { thread: sidebarThread() }, { experimental_panel: accept, experimental_panelTabs: tabs });
+      expect(slot.experimental_panelCalls).toEqual([{ method: "closeTab", key: "tab-od" }]);
+      cleanup();
+    }
+  });
+
+  it("the composer banner reconciles, so a thread's view fixes itself without the tab being drawn", async () => {
+    const slot = renderSlot<object, RpcContract>({ component: OfferBanner }, {}, {
+      rpc: handlers(() => view({ offer: null })),
+      experimental_rpcContract: rpcContract,
+      composer: { scope: { kind: "thread", threadId: WORK } },
+      sidebarThreads: { status: "ready", threads: [sidebarThread()] },
+      experimental_panel: accept,
+      experimental_panelTabs: onDemandOpen(false),
+    });
+    await waitFor(() => expect(slot.experimental_panelCalls).toEqual([{ method: "closeTab", key: "tab-od" }]));
+  });
+
+  it("the on-demand tab hands itself over when drawn in a thread that now has the fixed tab", async () => {
+    const slot = renderSlot({ component: LearningOnDemandTab }, { threadId: WORK, environment: null, params: null }, {
+      rpc: handlers(() => view({ offer: null })) as never,
+      experimental_rpcContract: rpcContract,
+      sidebarThreads: { status: "ready", threads: [sidebarThread()] },
+      experimental_panel: accept,
+      experimental_panelTabs: onDemandOpen(true),
+    });
+    await waitFor(() => expect(slot.experimental_panelCalls.map((call) => call.method)).toEqual(["openTab", "closeTab"]));
+  });
+
+  it("leaves the on-demand tab alone in a sub-agent thread", () => {
+    const slot = renderSlot({ component: LearningOnDemandTab }, { threadId: WORK, environment: null, params: null }, {
+      rpc: handlers(() => view({ eligible: false, offer: null })) as never,
+      experimental_rpcContract: rpcContract,
+      sidebarThreads: { status: "ready", threads: [sidebarThread({ parentThreadId: "thr_mate" })] },
+      experimental_panel: accept,
+      experimental_panelTabs: onDemandOpen(true),
+    });
+    expect(slot.experimental_panelCalls).toEqual([]);
   });
 });
 

@@ -11,7 +11,7 @@ import { OfferBanner } from "./app/banner";
 import { ExerciseCard } from "./app/card";
 import { NeverProjectsSection } from "./app/settings-section";
 import { SettledRow } from "./app/settled-row";
-import { LEARNING_ON_DEMAND_TAB, LearningTab, PLUGIN_ID, useLearningOnDemandVisible, useLearningTabVisible } from "./app/tab";
+import { LEARNING_FIXED_TAB, LEARNING_ON_DEMAND_TAB, LearningOnDemandTab, LearningTab, PLUGIN_ID, useLearningOnDemandVisible, useLearningTabVisible } from "./app/tab";
 import { offersItem, useOffersData } from "./app/thread-action";
 
 export default definePluginApp((app) => {
@@ -19,9 +19,7 @@ export default definePluginApp((app) => {
   app.slots.pendingInteraction({ id: CARD_RENDERER_ID, component: ExerciseCard });
   app.slots.experimental_timelineRenderer({ kind: `${PLUGIN_ID}/${CARD_RENDERER_ID}`, component: SettledRow });
   app.slots.experimental_tab({
-    id: "learning",
-    context: { kind: "thread" },
-    availability: "fixed",
+    ...LEARNING_FIXED_TAB,
     title: "Learning",
     icon: "Brain",
     layout: "padded",
@@ -30,12 +28,13 @@ export default definePluginApp((app) => {
   });
   // The same tab on demand in the threads the fixed one skips (sub-agents, other plugins' threads): the
   // learner adds it from the side panel's launcher, and bb keeps it open with the thread. No offers there.
+  // If the thread later qualifies for the fixed tab, `useOneLearningTab` closes the leftover instance.
   app.slots.experimental_tab({
     ...LEARNING_ON_DEMAND_TAB,
     title: "Learning",
     icon: "Brain",
     layout: "padded",
-    component: LearningTab,
+    component: LearningOnDemandTab,
     useVisible: useLearningOnDemandVisible,
   });
   app.slots.experimental_threadAction({

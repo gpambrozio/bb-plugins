@@ -14,8 +14,16 @@
  * same component is an action tab (`LEARNING_ON_DEMAND_TAB`) the learner adds from the side panel's
  * launcher: no offers there, but Start and Resume work with that thread as the source.
  */
-import { experimental_useTabVisible, useBbNavigate, type ExperimentalTabReference, type ExperimentalThreadTabProps } from "@get-bb/plugin-sdk/app";
-import { useState, type ReactNode } from "react";
+import {
+  experimental_useAppPanel,
+  experimental_usePanelTabs,
+  experimental_useTabVisible,
+  useBbNavigate,
+  type ExperimentalPanelTab,
+  type ExperimentalTabReference,
+  type ExperimentalThreadTabProps,
+} from "@get-bb/plugin-sdk/app";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -28,6 +36,9 @@ import { openSettings } from "./open-settings";
 
 export { PLUGIN_ID };
 export const UPSTREAM_URL = "https://github.com/DrCatHicks/learning-opportunities";
+
+/** The fixed Learning tab, as the panel controller addresses it. */
+export const LEARNING_FIXED_TAB = { id: "learning", context: { kind: "thread" }, availability: "fixed" } as const satisfies ExperimentalTabReference;
 
 /** The on-demand Learning tab, as the panel controller addresses it. */
 export const LEARNING_ON_DEMAND_TAB = { id: "learning-on-demand", context: { kind: "thread" }, availability: "action" } as const satisfies ExperimentalTabReference;
@@ -45,10 +56,43 @@ export function useLearningTabVisible({ threadId }: ExperimentalThreadTabProps):
   return thread !== undefined && fixedTabFor(thread);
 }
 
-/** The on-demand tab is offered in every listed thread the fixed one skips, so there is never two. */
+/** The on-demand tab is offered in every listed thread the fixed one skips. */
 export function useLearningOnDemandVisible({ threadId }: ExperimentalThreadTabProps): boolean {
   const thread = useSidebarThread(threadId);
   return thread !== undefined && !fixedTabFor(thread);
+}
+
+function isOnDemandInstance(tab: ExperimentalPanelTab): boolean {
+  return tab.detail.kind === "plugin" && tab.detail.pluginId === PLUGIN_ID && tab.detail.tab.id === LEARNING_ON_DEMAND_TAB.id;
+}
+
+/**
+ * Keeps one Learning tab per thread. `useVisible` only takes the on-demand tab out of the launcher: bb
+ * keeps an action tab's open instances, persisted with the thread, when it turns false. So once the
+ * thread qualifies for the fixed tab (it lost its parent, say), close every open on-demand instance in
+ * this thread view's panel, and if one was the selected tab of an open panel, select the fixed tab
+ * first so the learner stays on Learning. Runs from the composer banner, which is mounted whenever the
+ * thread's composer is, and from the on-demand tab itself.
+ */
+export function useOneLearningTab(thread: SidebarThreadRow | undefined): void {
+  const panel = experimental_useAppPanel();
+  const panelRef = useRef(panel);
+  panelRef.current = panel;
+  const { open, selectedKey, tabs } = experimental_usePanelTabs();
+  const stale = thread !== undefined && fixedTabFor(thread) ? tabs.filter(isOnDemandInstance).map((tab) => tab.key) : [];
+  const staleKeys = stale.join("\n");
+  const moveSelection = open && selectedKey !== null && stale.includes(selectedKey);
+  useEffect(() => {
+    if (staleKeys === "") return;
+    if (moveSelection) panelRef.current.openTab({ tab: LEARNING_FIXED_TAB });
+    for (const key of staleKeys.split("\n")) panelRef.current.closeTab(key);
+  }, [staleKeys, moveSelection]);
+}
+
+/** The on-demand tab: the Learning tab, which hands itself over to the fixed one when that appears. */
+export function LearningOnDemandTab(props: ExperimentalThreadTabProps & { params: unknown }) {
+  useOneLearningTab(useSidebarThread(props.threadId));
+  return <LearningTab threadId={props.threadId} environment={props.environment} />;
 }
 
 const STATE_LABELS: Record<Session["state"], string> = {
