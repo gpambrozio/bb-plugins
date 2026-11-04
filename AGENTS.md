@@ -171,6 +171,15 @@ moves the pin backwards. Re-pin with `npm install --save-exact -D @get-bb/plugin
 - `bb plugin remove` deletes the plugin's settings, secrets and schedules. To move a local plugin,
   install the new path instead.
 - Never restart the bb server; it runs the user's threads.
+- **A dev bb for live checks** runs beside the user's, with its own data and ports, from the launcher
+  inside the app bundle: `env -u BB_CLI -u BB_SERVER_URL -u BB_THREAD_ID -u BB_PROJECT_ID -u BB_ENVIRONMENT_ID
+  -u BB_HOST_DAEMON_PORT -u BB_THREAD_STORAGE node /Applications/bb.app/Contents/Resources/app.asar.unpacked/node_modules/bb-app/dist/bb-app.js
+  --data-dir "$TMPDIR/bbdev/data" --server-port 48886 --host-daemon-port 48887 --no-in-app-updates --bundled`
+  (keep the data dir short: it holds sockets). Point a CLI at it with the same `env -u …` plus
+  `BB_SERVER_URL=http://127.0.0.1:48886 BB_HOST_DAEMON_PORT=48887 BB_DATA_DIR=…` and
+  `node …/bb-app/host-daemon/dist/bb`. Install, reload and spawn threads there, never in the user's bb. Its
+  web app is at the server URL (first load shows a setup screen with *Skip setup*); `playwright-core` with
+  a cached Chromium drives it headlessly. `learning-exercises/AGENTS.md` and its spike notes used it.
 
 ## Architecture
 
@@ -272,6 +281,25 @@ What a port only learns by running it:
   / `markViewed` / `clearViewed`). The plugin is on by default and the user can turn it off; call it
   directly and say so when it is off (`diff-review/server/git.ts`). Its contract is not published:
   keep a copy of the shapes you read.
+  `workspaceStatus` with `mergeBaseBranch` set to a commit SHA lists the commits since it, oldest first,
+  and the files they touched with `A`/`M` status, without persisting a merge base: noting HEAD at
+  `thread.active` gives a turn's own commits (`learning-exercises/server/offers.ts`). Without
+  `mergeBaseBranch`, `mergeBase` is null on the default branch.
+- **Codex forks get no plugin tools** (bb 0.48.1): `configure` runs for the fork and returns them, but
+  the fork's agent has none, even after a session restart; a *spawned* Codex thread gets them, and so do
+  Claude Code and ACP forks. A fork that needs a plugin's capability in Codex has to reach it through
+  the plugin's CLI (`learning-exercises/AGENTS.md`). `configure` also runs on a fork before
+  `threads.fork` returns its id, so a check that the session is bound to that thread id fails on the
+  first pass.
+- **A `threads.send` with only an agent-only part shows no user message**: the agent's reply appears
+  with nothing above it. Send one visible line with the agent-only text.
+- **A plugin reload cancels the plugin's open `bb.ui.requestInput` forms** (the new instance loads
+  first, then the old one's forms die), like a restart. Keep what a form asked in storage to reopen it.
+  A form opened from a tool or the server does not queue messages sent through the SDK or the CLI, but
+  in the app it takes the composer's place until it is answered; each one fires `interaction.pending`,
+  which push notifications and Herald announce.
+- **`fileChange` paths in the event log are absolute**, and on macOS Claude Code reports `/private/var/…`
+  for a workspace bb knows as `/var/…` (`learning-exercises/server/signals.ts`, `relativize`).
 
 **Settings are writable from the server** (`experimental_set`), unlike Paseo, where only the
 client could write a settings document. That erases the Paseo split between "settings document"

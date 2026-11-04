@@ -63,11 +63,11 @@ export function learningCli(sessions: SessionService): PluginCliRegistration {
           "Opens the question card in this thread and returns at once. End your turn without adding anything: the learner's answer arrives as your next message.",
         options: {
           type: { type: "enum", values: EXERCISE_TYPES, required: true, description: "The exercise type" },
-          question: {
+          // bb's CLI turns `--question-base64-stdin` into `--question-base64 <line from stdin>`.
+          "question-base64": {
             type: "string",
             required: true,
             stdin: true,
-            aliases: ["question-base64"],
             description: `The question as base64 of UTF-8 Markdown, at most ${QUESTION_MAX_BYTES} bytes decoded; pass it with --question-base64-stdin`,
             placeholder: "base64",
           },
@@ -76,7 +76,7 @@ export function learningCli(sessions: SessionService): PluginCliRegistration {
         run: (input, ctx) =>
           guarded(() => {
             const threadId = callerThread(ctx.threadId);
-            const question = decodeQuestion(input.options.question);
+            const question = decodeQuestion(input.options["question-base64"]);
             return sessions.ask(threadId, { type: input.options.type as ExerciseType, question, files: input.options.file ?? [] }, "cli");
           }),
       }),

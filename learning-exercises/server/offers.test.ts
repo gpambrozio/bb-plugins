@@ -70,6 +70,15 @@ describe("OfferEngine", () => {
     expect(await runTurn(() => commit("Mine"))).toMatchObject({ trigger: "commit" });
   });
 
+  it("a neighbour's failed turn stops counting as overlapping once it is over", async () => {
+    const { runTurn, commit, ports, engine, event } = setup();
+    ports.threads.set("thr_other", thread({ id: "thr_other" }));
+    await engine.onActive(event("thr_other", { status: "active" }));
+    engine.threadGone("thr_other");
+    ports.advance(MINUTE);
+    expect(await runTurn(() => commit("Mine"))).toMatchObject({ trigger: "commit" });
+  });
+
   it("never offers in a child, a plugin's or a hidden thread", async () => {
     const { ports, runTurn, commit } = setup();
     for (const [id, change] of [

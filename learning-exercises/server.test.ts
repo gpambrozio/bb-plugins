@@ -148,7 +148,7 @@ describe("from a commit to an answered question", () => {
     expect(send![0].input[1]!.text).toContain("bb learning ask");
 
     const question = Buffer.from("What does `mean([])` return?\n").toString("base64");
-    const asked = await harness.runCli(["ask", "--type", "debug", "--question", question], { threadId: WORK });
+    const asked = await harness.runCli(["ask", "--type", "debug", "--question-base64", question], { threadId: WORK });
     expect(asked).toMatchObject({ exitCode: 0, stdout: expect.stringContaining("End your turn now") });
     expect(harness.pendingInteractions[0]?.payload).toMatchObject({ question: "What does `mean([])` return?", type: "debug" });
   });

@@ -90,7 +90,8 @@ export class OfferEngine {
     if (thread.environmentId === null) return;
     const windows = this.windows.get(thread.environmentId) ?? [];
     windows.push({ threadId: thread.id, start: now, end: null });
-    this.windows.set(thread.environmentId, windows.filter((window) => window.end === null || now - window.end < WINDOW_TTL_MS));
+    // A window whose turn never reported its end (a crash) stops counting after the same time.
+    this.windows.set(thread.environmentId, windows.filter((window) => now - (window.end ?? window.start) < WINDOW_TTL_MS));
     if (!isHumanThread(thread) || !this.settings().offersEnabled) return;
     const turn: TurnStart = { environmentId: thread.environmentId, headSha: null, startedAt: now };
     this.turns.set(thread.id, turn);
@@ -267,8 +268,13 @@ export class OfferEngine {
     return threads.length;
   }
 
+  /** A failed, archived or deleted thread: its turn is over and its offer gone. */
   threadGone(threadId: string): void {
     this.turns.delete(threadId);
+    const now = this.ports.now();
+    for (const windows of this.windows.values()) {
+      for (const window of windows) if (window.threadId === threadId && window.end === null) window.end = now;
+    }
     if (this.store.expireThreadOffers(threadId) > 0) this.ports.changed();
   }
 }
