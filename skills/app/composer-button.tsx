@@ -1,11 +1,14 @@
 /**
- * The Skills button in a thread's composer, with a live count, opening the
- * Skills list in bb's composer popup (`./composer-popup`).
+ * The Skills button in a thread's composer and in the new-thread composer,
+ * with a live count, opening the Skills list in bb's composer popup
+ * (`./composer-popup`). In the new-thread composer the list is that of the
+ * selected project, provider and machine, and follows the selection.
  *
  * The count is asked for when the button mounts; each time the popup opens it
  * scans again and the count follows, through the list the two share. The button
- * shows `Skills` without a number until the first answer, rather than a
- * `Skills 0` that then jumps.
+ * shows `Skills` without a number until the first answer — and again after
+ * the new-thread composer's selection changes, until the new list answers —
+ * rather than a `Skills 0` that then jumps, or the previous project's count.
  *
  * `type="button"`: the button sits in the composer's form, where a button with
  * no type would send the message.
@@ -18,17 +21,18 @@ import { Icon } from "@/components/ui/icon";
 import { countEntries } from "../shared/skills";
 import { toggleSkillsPopup } from "./composer-popup";
 import { SKILLS_ICON } from "./icons";
+import { showsSkills, subjectOf } from "./subject";
 import { useSkillList } from "./use-skills";
 
 export function SkillsComposerButton() {
   const { scope } = useComposer();
-  if (scope.kind !== "thread") return null;
-  return <SkillsButton threadId={scope.threadId} />;
+  if (!showsSkills(scope)) return null;
+  return <SkillsButton />;
 }
 
-function SkillsButton({ threadId }: { threadId: string }) {
-  const { state } = useSkillList(threadId);
+function SkillsButton() {
   const composer = useComposer();
+  const { state } = useSkillList(subjectOf(composer.scope, composer.selection));
   const count = state.status === "ready" ? countEntries(state.data) : null;
 
   return (

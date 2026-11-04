@@ -1,7 +1,8 @@
 # AGENTS.md
 
 A bb plugin that lists every skill a thread's agent can use, says where each one comes from, renders
-its `SKILL.md`, and adds its command to the thread's message box. It is the port of the Paseo plugin
+its `SKILL.md`, and adds its command to the thread's message box — or, in the new-thread composer, the
+skills a thread started from it would get. It is the port of the Paseo plugin
 `skills` (0.4.0, Hermes included) — except that it never invokes a skill itself (see *Add to chat, not
 invoke*).
 
@@ -16,14 +17,15 @@ specific to `skills`.
 | `host/discover.ts` | Provider id → resolver, the homes (`~/.claude`, `$CODEX_HOME`, `~/.agents`, `/etc/codex/skills`, `$HERMES_HOME`), and `read`, which re-runs discovery and reads only an id it produced. |
 | `host/resolve/*` | Carried over from Paseo: Claude, Codex and Hermes search paths, the repo walk, one skills directory, ids; plus `read-bounded.ts`, the one way discovery reads a file. |
 | `server.ts` | Binds the ports in `server/skills.ts` to `bb.sdk` and the host entry. |
-| `server/skills.ts` | The two RPCs: thread → workspace, discovery + the skills taken from bb's list + the reported list, and `read`'s id boundary. |
+| `server/skills.ts` | The two RPCs: subject (a thread, or a new thread's selection) → workspace, discovery + the skills taken from bb's list + the reported list, and `read`'s id boundary. |
 | `server/reported.ts` | Splits bb's command list into skills and commands, minus every name already listed. |
-| `shared/skills.ts` | Zod shapes, `SOURCE_KINDS`, first-wins dedupe. No SDK import: the app uses it at run time. |
+| `shared/skills.ts` | Zod shapes (the subject among them, and its key), `SOURCE_KINDS`, first-wins dedupe. No SDK import: the app uses it at run time. |
 | `shared/frontmatter.ts` | `SKILL.md` frontmatter. Used by the host and by the server (for bb's skills). |
 | `shared/contract.ts`, `shared/host-contract.ts` | App ⇄ server and server ⇄ host contracts. The app imports them as types only. |
 | `app/browser.tsx` | List, search, both detail screens, Add to chat — drawn by the panel and the composer popup. |
 | `app/panel.tsx`, `app/composer-button.tsx`, `app/composer-popup.tsx` | The thread-panel tab and its registration (`registerSkillsTab`); the composer button with its count; the list in bb's composer popup, which the button and the composer command toggle. |
-| `app/use-skills.ts`, `app/answer-channel.ts` | The two RPC reads; the list shared by every surface showing one thread's skills. |
+| `app/subject.ts` | Which composers show Skills, and a composer's subject: its thread, or the new-thread composer's project, provider and place. |
+| `app/use-skills.ts`, `app/answer-channel.ts` | The two RPC reads; the list shared by every surface showing one subject's skills. |
 | `app/insert.ts` | Add to chat: the pill, where it goes in the draft, the text fallback, and which composers it may write to. |
 | `app/markdown.ts` | Defuses a body's images and raw HTML, by parsing it, before bb's `Markdown` draws it. |
 
@@ -77,6 +79,37 @@ path, which stays selectable text. Drop the fallback once `engines.bb` reaches 0
 thread's environment is `destroyed` with no path, and the browser says so rather than showing an empty
 list.
 
+**A new thread's directory: the checkout it would start from.** In the new-thread composer there is no
+thread or environment yet. The subject is `{ newThread: { projectId, providerId, hostId, environmentId } }`:
+the project from the composer's scope (bb's effective selection), the provider and the place from
+`useComposer().selection` (`app/subject.ts`; both in SDK 0.6.15, so bb 0.45). The server
+(`newThreadWorkspaceFrom`) takes an environment it would reuse when that is still the project's, and
+otherwise the project's checkout (`projects.get` → `sources`) on the selected machine, or its default
+checkout. A new worktree is made from that checkout, so it holds the skills the thread starts with.
+Its command list is routed by `hostId` — the routing bb's own `/` menu uses there. The app sends ids
+only, never a path.
+
+**bb's skill list cannot be routed to a machine, only to an environment.** `bb.sdk.skills.list` and
+`getContent` take `{ projectId, environmentId }`; with `environmentId: null`, bb 0.48.1
+(`resolveProjectCommandWorkspace`) scans the project's checkout on its *primary* host. So
+`bbSkillRouteFor` names the workspace's environment when it has one (every thread; a new thread that
+would reuse one), names none for a checkout on the primary host (`system.config().primaryHostId`), and
+for a checkout on any other machine keeps only the rows bb's server owns (`isServerOwned`: bb's plugins'
+skills, `scope: "plugin"` with no provider) — never the primary host's `.bb/skills` or provider rows,
+which would be listed, counted and readable under the wrong machine. `bb-user` and `bb-builtin` rows can
+come from a host's scan as well as from the server, and a row does not say which, so they are left out
+there too. In that case alone the call reaches another machine than the thread's, so its failure goes in
+the list's `bbError` (shown under its own heading) instead of failing the list. `server.test.ts` drives
+the whole server with distinct skills on two machines. The personal project ("no
+project") has no checkout, and the browser says so. A thread's subject stays the `{ threadId }` the RPCs
+always took.
+
+**A change of selection is a new list, and an answer for the old one is dropped.** `subjectKey` changes
+with the project, provider, machine and environment, and `useLoaded` starts a new key from loading (or
+the last answer another holder has for that key) and ignores whatever lands for the key it left. The
+app cannot cancel an RPC (`useRpc().call` takes no signal), so the old scan finishes on the server and
+its answer is thrown away. The browser resets its search and the open skill on a key change.
+
 **A linked worktree is its main checkout, for Claude plugins.** Claude keys a project-scoped plugin
 install (`projectPath` in `installed_plugins.json`) by the repository's main checkout and applies it in
 every worktree of it; measured live, a bb worktree thread loads a plugin whose only entry names the main
@@ -102,7 +135,8 @@ composer's `/` menu. Its `source` (`skill` | `command`) splits the two built-in 
 agrees with the composer. A failure there is shown under its own heading and never loses the rest.
 
 **Composer surfaces: an action, bb's popup and a composer command.** `app.composer.customize`
-`actions` renders a component in the thread composer's toolbar, so the button is a component that runs
+(`scopes: ["thread", "new-thread"]`, as bb's own scheduled-send and drafts plugins) `actions` renders a
+component in the composer's toolbar, so the button is a component that runs
 the list itself and shows the count; it is `Skills` without a number until the first answer. It
 toggles the list in bb's own composer popup (`experimental_popups`, opened with
 `useComposer().experimental_openPopup`, bb 0.45): bb places it like the mention menu, closes it on
@@ -130,8 +164,8 @@ desktop-v0.45.0), each with a test:
   answer is dropped once nothing shows it. Answers, failures included, are ordered by when they were
   asked for, so the button's slower first scan cannot overwrite the popup's newer one.
 
-**Open in panel** calls `useBbNavigate().openThreadPanel({ actionId: "skills" })` after closing the
-popup; the command palette entry opens the same tab. When the popup is showing a skill, **Open in
+**Open in panel** (a thread's composer only: the new-thread composer has no thread panel) calls
+`useBbNavigate().openThreadPanel({ actionId: "skills" })` after closing the popup; the command palette entry opens the same tab. When the popup is showing a skill, **Open in
 panel** passes it as the tab's `params` (`{ skill: { kind, id | name } }`, titled `Skills: <name>`),
 and the panel opens on it (`selectionFrom` in `app/browser.tsx`; anything else in `params` opens the
 list). bb persists `params` with the tab and opens a tab per distinct `params`, so each skill opened
@@ -159,8 +193,8 @@ cannot be a pill (the pill stands for `/name`), so it goes in as `/name ` text, 
 command pill all the same. `replace` takes text and mentions together and does not rebase mention ranges, so
 `withSkillCommand` (`app/insert.ts`) shifts every other mention by what it added before it. It passes
 no `attachments`, which leaves the draft's own in place. `replace` is new in SDK 0.6 (bb 0.45), which
-is why this plugin needs bb 0.45. The button is offered only when `composer.scope` is this thread's
-(`writesToThread`). After it, the panel calls `toThread` (which brings the composer back over the panel
+is why this plugin needs bb 0.45. The button is offered only when `composer.scope` is the subject's
+(`writesToSubject`): this thread's, or the new-thread composer with the subject's project. After it, the panel calls `toThread` (which brings the composer back over the panel
 on a narrow window), and the popup closes, bb handing the editor its focus.
 
 **Bodies render through bb's `Markdown`, with nothing in them that loads — conservatively.** The host
@@ -187,10 +221,10 @@ the reviews. Do not loosen this into pattern matching or re-parsing loops; each 
 
 ## Invariants
 
-- **`read` takes an id discovery produced for that thread, never a path.** It is the plugin's security
-  boundary: the app names a thread and an id, the server resolves the provider and directory itself,
-  and the id is looked up in a fresh scan (`host/discover.ts`) or in bb's list for that thread
-  (`server/skills.ts`). Both sides have tests that try paths, crafted ids, another provider's id and
+- **`read` takes an id discovery produced for that subject, never a path.** It is the plugin's security
+  boundary: the app names a thread (or a new thread's project, provider, machine and environment ids)
+  and an id, the server resolves the directory itself, and the id is looked up in a fresh scan
+  (`host/discover.ts`) or in bb's list for that subject (`server/skills.ts`). Both sides have tests that try paths, crafted ids, another provider's id and
   another provider's bb row.
 - **`read` serves the bytes discovery validated; it never opens the path again.** The scan keeps
   each body with its entry (`ScannedSkill`, host-only — `discover` strips it), so a `SKILL.md` swapped
@@ -245,5 +279,13 @@ writer, see *Copy path*) and react-query (each surface holds one small fetch).
   identical content that is the one the agent loads: from bb 0.47.1 bb no longer injects its copy into
   a Claude Code session that already loads the same name and content natively. With different content,
   which one the agent loads is still documented by neither.
+- **A new thread outside a project lists nothing.** The personal project has no checkout, and where bb
+  would run such a thread is not public, so the new-thread composer says to choose a project.
+- **A new thread on a machine bb has yet to make** (an environment provider that creates one) is listed
+  from the project's default checkout.
+- **A new thread on a machine other than bb's primary host**, with no environment to reuse, lists bb's
+  plugins' skills but not that checkout's `.bb/skills`, the server's `~/.bb/skills`, bb's built-in
+  skills or Codex's plugin skills from bb's list: bb's skill list can only be asked for the primary
+  host's checkout there. The provider's own skills on that machine are listed as ever.
 - **`user-invocable: false`** is read from scanned files only (such a skill gets no Add to chat); bb's
   rows are assumed invocable.
