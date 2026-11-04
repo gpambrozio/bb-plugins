@@ -34,8 +34,8 @@ export function registerTools(bb: BbPluginApi, sessions: SessionService): void {
     presentation: { label: { pending: "Asking an exercise question", completed: "Asked an exercise question" }, icon: { glyph: "Brain" }, suppress: true },
     parameters: z.object({
       type: z.enum(EXERCISE_TYPES).describe("The exercise type"),
-      question: z.string().min(1).max(4000).describe("The full question, in Markdown"),
-      files: z.array(z.string().min(1).max(500)).max(10).optional().describe("Workspace paths the learner should open"),
+      question: z.string().min(1).max(4000).describe("The full question, in Markdown. Write file references as workspace-relative paths in backticks, with a line or range when you mean one (`src/a.ts:42`), so they open as links"),
+      files: z.array(z.string().min(1).max(500)).max(10).optional().describe("Workspace-relative paths the learner should open, each with an optional line or range: src/a.ts, src/a.ts:42, src/a.ts:40-60"),
     }),
     execute: ({ type, question, files }, ctx) => guarded(() => sessions.ask(ctx.threadId, { type, question, files: files ?? [] }, "tool", ctx.signal)),
   });

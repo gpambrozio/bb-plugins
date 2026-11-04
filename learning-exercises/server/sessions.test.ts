@@ -304,9 +304,12 @@ describe("lifecycle", () => {
 
 describe("settledRow", () => {
   it("keeps the question and the learner's own words, nothing else", () => {
-    expect(settledRow("Q?", { action: "answer", answer: "A", confidence: 5 })).toEqual({ question: "Q?", action: "answer", answer: "A", confidence: 5 });
-    expect(settledRow("Q?", { action: "skip" })).toEqual({ question: "Q?", action: "skip", answer: null, confidence: null });
+    expect(settledRow("Q?", { action: "answer", answer: "A", confidence: 5 })).toEqual({ question: "Q?", action: "answer", answer: "A", confidence: 5, workspace: null });
+    expect(settledRow("Q?", { action: "skip" })).toEqual({ question: "Q?", action: "skip", answer: null, confidence: null, workspace: null });
     // Unreadable is not a Skip (review finding 8): the session pauses and the row says so.
-    expect(settledRow("Q?", { nonsense: true })).toEqual({ question: "Q?", action: "pause", answer: null, confidence: null });
+    expect(settledRow("Q?", { nonsense: true })).toEqual({ question: "Q?", action: "pause", answer: null, confidence: null, workspace: null });
+    // The card's workspace goes with the row, so its file references stay links in the transcript.
+    const workspace = { threadId: "thr_fork1", environmentId: "env_1", rootPath: "/work/calc" };
+    expect(settledRow("Q?", { action: "skip" }, workspace)).toMatchObject({ action: "skip", workspace });
   });
 });

@@ -1,6 +1,5 @@
 /**
- * The Learning tab (feature #9): a fixed tab in every top-level thread's side panel, and in the plugin's
- * own session threads. Top to bottom:
+ * The Learning tab (feature #9), in a thread's side panel. Top to bottom:
  *
  * - **Now**: this thread's offer, or the session it hosts or started, with Pause / Resume / Finish.
  * - **Start**: an exercise on this thread's work, on a topic taken from data (the last commit, the last
@@ -9,10 +8,15 @@
  *   delete.
  * - The footer: offers in this thread on or off, "Never for this project" (with Undo), and the settings.
  *
- * `useLearningTabVisible` keeps the fixed tab to top-level threads a person drives and this plugin's
- * session threads (spike S7). Everywhere else (child and sub-agent threads, other plugins' threads) the
- * same component is an action tab (`LEARNING_ON_DEMAND_TAB`) the learner adds from the side panel's
- * launcher: no offers there, but Start and Resume work with that thread as the source.
+ * The tab is fixed, on the tab bar, in every thread bb lists in the sidebar: top-level threads, child
+ * and sub-agent threads, other plugins' threads, and this plugin's own session threads. Hidden threads
+ * are not listed, so they get none. Offers are made only in top-level threads a person drives (the
+ * server's `isHumanThread`); elsewhere the tab is there for Start and Resume by hand, with that thread
+ * as the source (`canStartByHand`, which also keeps Start out of a session's own thread).
+ *
+ * Earlier builds put the tab in sub-agent threads only as an action tab (`LEARNING_ON_DEMAND_TAB`) added
+ * from the side panel's launcher. bb keeps an action tab's instances with the thread, so that tab stays
+ * registered, never offered, and `useOneLearningTab` closes any instance still open.
  */
 import {
   experimental_useAppPanel,
@@ -31,6 +35,7 @@ import { Icon } from "@/components/ui/icon";
 import { Input } from "@/components/ui/input";
 import { CONFIDENCE_LABELS, PLUGIN_ID, TRIGGER_LABELS, type Session, type ThreadView, type TopicChoice } from "../shared/types";
 import { errorText, useLearningRpc, useProjectSessions, useSessionDetail, useSidebarThread, useThreadView, useTopicChoices } from "./data";
+import { FileMarkdown, TextWithFileRefs } from "./file-refs";
 import { OfferCard } from "./offer-card";
 import { openSettings } from "./open-settings";
 
@@ -45,21 +50,14 @@ export const LEARNING_ON_DEMAND_TAB = { id: "learning-on-demand", context: { kin
 
 type SidebarThreadRow = NonNullable<ReturnType<typeof useSidebarThread>>;
 
-/** Where the fixed tab shows: threads a person drives, and this plugin's session threads. */
-export function fixedTabFor(thread: SidebarThreadRow): boolean {
-  if (thread.originPluginId === PLUGIN_ID) return true;
-  return thread.parentThreadId === null && thread.originPluginId === null && thread.lifecycleOwnerThreadId === null;
-}
-
+/** The fixed tab shows in every thread the sidebar lists, which leaves out hidden threads. */
 export function useLearningTabVisible({ threadId }: ExperimentalThreadTabProps): boolean {
-  const thread = useSidebarThread(threadId);
-  return thread !== undefined && fixedTabFor(thread);
+  return useSidebarThread(threadId) !== undefined;
 }
 
-/** The on-demand tab is offered in every listed thread the fixed one skips. */
-export function useLearningOnDemandVisible({ threadId }: ExperimentalThreadTabProps): boolean {
-  const thread = useSidebarThread(threadId);
-  return thread !== undefined && !fixedTabFor(thread);
+/** The retired on-demand tab is never offered in the launcher; it is registered only to close leftovers. */
+export function useLearningOnDemandVisible(_props: ExperimentalThreadTabProps): boolean {
+  return false;
 }
 
 function isOnDemandInstance(tab: ExperimentalPanelTab): boolean {
@@ -67,10 +65,10 @@ function isOnDemandInstance(tab: ExperimentalPanelTab): boolean {
 }
 
 /**
- * Keeps one Learning tab per thread. `useVisible` only takes the on-demand tab out of the launcher: bb
- * keeps an action tab's open instances, persisted with the thread, when it turns false. So once the
- * thread qualifies for the fixed tab (it lost its parent, say), close every open on-demand instance in
- * this thread view's panel, and if one was the selected tab of an open panel, select the fixed tab
+ * Keeps one Learning tab per thread. bb keeps an action tab's open instances, persisted with the thread,
+ * even once its `useVisible` is false, so an on-demand instance an earlier build opened would sit beside
+ * the fixed tab. Once the thread's row is known (and the fixed tab shows), close every on-demand instance
+ * in this thread view's panel, and if one was the selected tab of an open panel, select the fixed tab
  * first so the learner stays on Learning. Runs from the composer banner, which is mounted whenever the
  * thread's composer is, and from the on-demand tab itself.
  */
@@ -79,7 +77,7 @@ export function useOneLearningTab(thread: SidebarThreadRow | undefined): void {
   const panelRef = useRef(panel);
   panelRef.current = panel;
   const { open, selectedKey, tabs } = experimental_usePanelTabs();
-  const stale = thread !== undefined && fixedTabFor(thread) ? tabs.filter(isOnDemandInstance).map((tab) => tab.key) : [];
+  const stale = thread !== undefined ? tabs.filter(isOnDemandInstance).map((tab) => tab.key) : [];
   const staleKeys = stale.join("\n");
   const moveSelection = open && selectedKey !== null && stale.includes(selectedKey);
   useEffect(() => {
@@ -89,7 +87,7 @@ export function useOneLearningTab(thread: SidebarThreadRow | undefined): void {
   }, [staleKeys, moveSelection]);
 }
 
-/** The on-demand tab: the Learning tab, which hands itself over to the fixed one when that appears. */
+/** A leftover on-demand tab: the Learning tab, which hands itself over to the fixed one and closes. */
 export function LearningOnDemandTab(props: ExperimentalThreadTabProps & { params: unknown }) {
   useOneLearningTab(useSidebarThread(props.threadId));
   return <LearningTab threadId={props.threadId} environment={props.environment} />;
@@ -189,11 +187,13 @@ function SessionControls(props: { session: Session; currentThreadId: string }) {
   );
 }
 
-function SessionSummary(props: { session: Session }) {
+function SessionSummary(props: { session: Session; environmentId: string | null }) {
   const { session } = props;
   return (
     <div className="flex flex-col gap-0.5">
-      <span className="font-medium">{plain(session.topic)}</span>
+      <span className="font-medium">
+        <TextWithFileRefs text={session.topic.replace(/"/g, "")} environmentId={props.environmentId} />
+      </span>
       <span className="text-xs text-muted-foreground">
         {STATE_LABELS[session.state]} · {session.answered} of {session.asked} answered · {session.mode === "fork" ? "side thread" : "in its thread"}
         {session.state === "paused" && session.pauseReason !== null ? ` · ${session.pauseReason}` : ""}
@@ -208,7 +208,7 @@ function Now(props: { view: ThreadView; threadId: string; visible: boolean }) {
   if (session !== null) {
     return (
       <Section title={view.hosted !== null ? "This session" : "Session from this thread"}>
-        <SessionSummary session={session} />
+        <SessionSummary session={session} environmentId={view.workspace?.environmentId ?? null} />
         <SessionControls session={session} currentThreadId={threadId} />
       </Section>
     );
@@ -216,7 +216,7 @@ function Now(props: { view: ThreadView; threadId: string; visible: boolean }) {
   if (view.offer !== null) {
     return (
       <Section title="Now">
-        <OfferCard offer={view.offer} threadId={threadId} onScreen={props.visible} where="tab" sessionWhere={view.sessionWhere} />
+        <OfferCard offer={view.offer} threadId={threadId} onScreen={props.visible} where="tab" sessionWhere={view.sessionWhere} environmentId={view.workspace?.environmentId ?? null} />
       </Section>
     );
   }
@@ -281,13 +281,14 @@ function Start(props: { threadId: string; view: ThreadView; visible: boolean }) 
 function ExerciseList(props: { sessionId: string }) {
   const detail = useSessionDetail(props.sessionId);
   const exercises = detail.data?.exercises ?? [];
+  const workspace = detail.data?.workspace ?? null;
   if (detail.isLoading) return <p className="text-xs text-muted-foreground">Loading…</p>;
   if (exercises.length === 0) return <p className="text-xs text-muted-foreground">No questions were asked.</p>;
   return (
     <ol className="flex flex-col gap-2">
       {exercises.map((exercise) => (
         <li key={exercise.ordinal} className="flex flex-col gap-1 border-l-2 border-border pl-2 text-xs">
-          <span className="text-muted-foreground">{exercise.question}</span>
+          <FileMarkdown content={exercise.question} workspace={workspace} className="text-xs text-muted-foreground" />
           {exercise.answer !== null ? (
             <span className="whitespace-pre-wrap">{exercise.answer}</span>
           ) : (

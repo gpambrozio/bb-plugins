@@ -1,8 +1,7 @@
 // learning-exercises — the app entry.
 //
 // The offer banner above a thread's composer, the exercise card and its settled row in the transcript,
-// the Learning tab in a thread's side panel (fixed in top-level threads, on demand in sub-agent
-// threads), "Learning offers" in the thread menu, and the list of projects with no offers under the
+// the Learning tab on the tab bar of every listed thread's side panel, "Learning offers" in the thread menu, and the list of projects with no offers under the
 // plugin's settings. See AGENTS.md.
 import { definePluginApp } from "@get-bb/plugin-sdk/app";
 
@@ -26,9 +25,9 @@ export default definePluginApp((app) => {
     component: LearningTab,
     useVisible: useLearningTabVisible,
   });
-  // The same tab on demand in the threads the fixed one skips (sub-agents, other plugins' threads): the
-  // learner adds it from the side panel's launcher, and bb keeps it open with the thread. No offers there.
-  // If the thread later qualifies for the fixed tab, `useOneLearningTab` closes the leftover instance.
+  // Retired: earlier builds offered the tab in sub-agent threads only from the launcher, as an action tab.
+  // bb keeps those instances with the thread, so the registration stays to render and close them
+  // (`useOneLearningTab`); it is never offered in the launcher again.
   app.slots.experimental_tab({
     ...LEARNING_ON_DEMAND_TAB,
     title: "Learning",

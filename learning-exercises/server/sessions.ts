@@ -26,12 +26,13 @@
  */
 import type { PluginInteractionResult } from "@get-bb/plugin-sdk";
 
-import { PAUSE_REASONS, readCardValue, type CardPayload, type ExerciseType, type PauseReason, type Refs, type SettledRow, type TriggerKind, type Verdict } from "../shared/types";
+import { PAUSE_REASONS, readCardValue, type CardPayload, type ExerciseType, type PauseReason, type Refs, type SettledRow, type TriggerKind, type Verdict, type Workspace } from "../shared/types";
 import { BRIEF_VERSION, buildBrief, startLine } from "./content";
 import { canStartByHand, DAY, projectKey } from "./policy";
 import type { Ports } from "./ports";
 import type { LearningSettings } from "./settings";
 import { OPEN_STATES, publicSession, type LearningStore, type SessionRow } from "./store";
+import { workspaceOf } from "./workspace";
 
 /** A paused session nobody resumed is abandoned after this; it stays in the history. */
 export const ABANDON_AFTER_MS = 30 * DAY;
@@ -65,13 +66,13 @@ function shortTopic(topic: string): string {
 }
 
 /** What the settled row keeps for a submitted card value. */
-export function settledRow(question: string, raw: unknown): SettledRow {
+export function settledRow(question: string, raw: unknown, workspace: Workspace | null = null): SettledRow {
   const read = readCardValue(raw);
   // Unreadable is not a Skip: the row says the session paused, which is what the server does with it.
-  if (read === null) return { question, action: "pause", answer: null, confidence: null };
+  if (read === null) return { question, action: "pause", answer: null, confidence: null, workspace };
   const { value } = read;
-  if (value.action === "answer") return { question, action: "answer", answer: value.answer, confidence: value.confidence };
-  return { question, action: value.action, answer: null, confidence: null };
+  if (value.action === "answer") return { question, action: "answer", answer: value.answer, confidence: value.confidence, workspace };
+  return { question, action: value.action, answer: null, confidence: null, workspace };
 }
 
 export class SessionService {
@@ -232,7 +233,8 @@ export class SessionService {
     if (question === "") throw new SessionError("The question is empty.");
     const card = await this.exclusive(`thread:${threadId}`, async () => {
       const session = await this.requireActive(threadId);
-      const environmentId = (await this.ports.thread(threadId))?.environmentId ?? null;
+      const thread = await this.ports.thread(threadId);
+      const workspace = await workspaceOf(this.ports, thread);
       this.alive();
       const current = this.store.session(session.id);
       if (current === null || !OPEN_STATES.includes(current.state)) throw new SessionError("There is no learning session in this thread.");
@@ -251,7 +253,8 @@ export class SessionService {
         type: exercise.type,
         question,
         files: exercise.files,
-        environmentId,
+        environmentId: thread?.environmentId ?? null,
+        workspace,
         topic: current.topic,
         maxQuestions: max,
       };
@@ -287,7 +290,7 @@ export class SessionService {
     try {
       result = controller.signal.aborted
         ? { outcome: "cancelled", reason: "request-aborted" }
-        : await this.ports.card({ threadId, payload, signal: controller.signal, describe: (value) => settledRow(payload.question, value) });
+        : await this.ports.card({ threadId, payload, signal: controller.signal, describe: (value) => settledRow(payload.question, value, payload.workspace ?? null) });
     } catch (error) {
       failed = true;
       result = { outcome: "cancelled", reason: "request-aborted" };

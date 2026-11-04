@@ -57,7 +57,7 @@ function sessionSection(input: BriefInput): string {
 const CLI_BLOCK = [
   "```sh",
   "# Ask. The question goes through stdin as base64, so quotes and backticks in it are safe.",
-  "base64 <<'LEARNING_QUESTION' | tr -d '\\n' | bb learning ask --type prediction --file src/example.ts --question-base64-stdin",
+  "base64 <<'LEARNING_QUESTION' | tr -d '\\n' | bb learning ask --type prediction --file src/example.ts:40-60 --question-base64-stdin",
   "The full question, in Markdown.",
   "LEARNING_QUESTION",
   "",
@@ -72,7 +72,8 @@ const CLI_BLOCK = [
 function howToAsk(mode: SessionMode): string {
   const commands = [
     "`bb learning ask` shows the learner a card and answers at once; **end your turn right after it**. The learner's",
-    "answer arrives as your next message. `--file` is repeatable and names workspace paths to open; `--type` is one of",
+    "answer arrives as your next message. `--file` is repeatable and names a workspace path to open, with an optional",
+    "line or range (`src/a.ts:42`, `src/a.ts:40-60`); `--type` is one of",
     `${EXERCISE_TYPE_HELP}.`,
     "",
     CLI_BLOCK,
@@ -82,7 +83,8 @@ function howToAsk(mode: SessionMode): string {
       "## How to ask",
       "",
       `Ask every question with the \`learning_ask\` tool: \`type\` (${EXERCISE_TYPE_HELP}), \`question\` (the full question,`,
-      "Markdown) and `files` (workspace paths to open, optional). It shows the learner a card and returns their answer as",
+      "Markdown) and `files` (workspace paths to open, each with an optional line or range such as `src/a.ts:42` or",
+      "`src/a.ts:40-60`). It shows the learner a card and returns their answer as",
       "the tool's result. Never use any other question tool: only this card records the learner's confidence. After each",
       "answer, call `learning_feedback` with your verdict (`correct`, `partly`, `incorrect` or `skipped`), the gap you saw,",
       "and the concepts involved. When the topic is covered or the question limit is reached, call `learning_finish` with",

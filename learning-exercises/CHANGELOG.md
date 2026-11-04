@@ -15,7 +15,9 @@ First release.
 - The Learning tab in a thread's side panel starts an exercise on the thread's work, shows the
   session in progress with Pause, Resume and Finish, and lists the project's paused and earlier
   sessions with your answers; each can be deleted.
-- In sub-agent threads, which never get offers, you can add the Learning tab from the side panel and
-  start or resume an exercise there by hand.
+- In sub-agent threads, which never get offers, the Learning tab is on the side panel's tab bar too,
+  to start or resume an exercise there by hand.
+- Files named in a question open in bb with a click, at the line or range the question points to; so
+  do the files in your past answers and in an offer.
 - No skill, tool or instruction from this plugin reaches an agent until you start a session.
 - Exercises adapted from Dr. Cat Hicks's Learning Opportunities (CC BY 4.0); not affiliated.

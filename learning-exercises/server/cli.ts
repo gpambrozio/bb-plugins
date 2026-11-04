@@ -75,7 +75,7 @@ export function learningCli(sessions: SessionService): PluginCliRegistration {
             description: `The question as base64 of UTF-8 Markdown, at most ${QUESTION_MAX_BYTES} bytes decoded; pass it with --question-base64-stdin`,
             placeholder: "base64",
           },
-          file: { type: "string", repeatable: true, description: "A workspace path the learner should open (repeatable, at most 10)", placeholder: "path" },
+          file: { type: "string", repeatable: true, description: "A workspace path the learner should open, with an optional line or range (src/a.ts:42, src/a.ts:40-60); repeatable, at most 10", placeholder: "path" },
         },
         run: (input, ctx) =>
           guarded(() => {

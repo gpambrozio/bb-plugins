@@ -21,5 +21,5 @@ export function OfferBanner() {
   const view = useThreadView(threadId, idle);
   const offer = view.data?.offer ?? null;
   if (threadId === null || !idle || offer === null || view.data === undefined) return null;
-  return <OfferCard offer={offer} threadId={threadId} onScreen where="banner" sessionWhere={view.data.sessionWhere} />;
+  return <OfferCard offer={offer} threadId={threadId} onScreen where="banner" sessionWhere={view.data.sessionWhere} environmentId={view.data.workspace?.environmentId ?? null} />;
 }

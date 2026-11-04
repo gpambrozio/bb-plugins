@@ -4,6 +4,7 @@
  * the card's submissions, the Learning tab, and the thread menu's choice.
  */
 import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
+import type { MarkdownProps } from "@get-bb/plugin-sdk/app";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -11,11 +12,24 @@ import { rpcContract, type RpcContract } from "../shared/contract";
 import type { CardPayload, Offer, Session, ThreadView } from "../shared/types";
 import { OfferBanner } from "./banner";
 import { ExerciseCard } from "./card";
+import { looksLikeFileRef, markdownDocument, parseFileRef } from "./file-refs";
 import { SettledRow } from "./settled-row";
 import { LEARNING_FIXED_TAB, LEARNING_ON_DEMAND_TAB, LearningOnDemandTab, LearningTab, useLearningOnDemandVisible, useLearningTabVisible, useOneLearningTab } from "./tab";
 import { offersItem } from "./thread-action";
 
 vi.mock("sonner", () => ({ toast: Object.assign(vi.fn(), { error: vi.fn(), success: vi.fn() }) }));
+// The harness's Markdown drops `experimental_document`; this one shows what bb would resolve links against.
+vi.mock("@get-bb/plugin-sdk/app", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@get-bb/plugin-sdk/app")>();
+  return {
+    ...actual,
+    Markdown: (props: MarkdownProps) => (
+      <div data-testid="bb-markdown" className={props.className} data-document={props.experimental_document === undefined ? "none" : JSON.stringify(props.experimental_document)}>
+        {props.content}
+      </div>
+    ),
+  };
+});
 
 afterEach(cleanup);
 
@@ -54,6 +68,7 @@ function view(overrides: Partial<ThreadView> = {}): ThreadView {
     projectNever: false,
     offersOffGlobally: false,
     sessionWhere: "fork",
+    workspace: { threadId: WORK, environmentId: "env_1", rootPath: "/work/calc" },
     ...overrides,
   };
 }
@@ -81,7 +96,7 @@ function handlers(current: () => ThreadView, extra: Handlers = {}) {
   return {
     threadView: () => current(),
     projectSessions: () => ({ paused: [], previous: [], hasMore: false }),
-    sessionDetail: () => ({ session, exercises: [] }),
+    sessionDetail: () => ({ session, exercises: [], workspace: null }),
     topicChoices: () => ({ choices: [{ id: "commit", label: 'The last commit: "Add median"', topic: '"Add median"', trigger: "manual", refs: {} }] }),
     offerSeen: () => ({ visible: true }),
     answerOffer: () => ({ threadId: "thr_fork" }),
@@ -100,7 +115,7 @@ function handlers(current: () => ThreadView, extra: Handlers = {}) {
 }
 
 describe("registrations", () => {
-  it("registers the banner, the card, its settled row, the fixed and on-demand tabs, the thread menu and the settings section", async () => {
+  it("registers the banner, the card, its settled row, the fixed and retired on-demand tabs, the thread menu and the settings section", async () => {
     const app = await loadPluginApp(() => import("../app"));
     expect(app.composerCustomizations.map((custom) => [custom.id, custom.scopes, custom.banners?.map((banner) => banner.id)])).toEqual([["offer", ["thread"], ["offer"]]]);
     expect(app.pendingInteractions.map((slot) => slot.id)).toEqual(["exercise"]);
@@ -109,7 +124,7 @@ describe("registrations", () => {
       ["learning", "thread", "fixed", "Brain", "Learning"],
       ["learning-on-demand", "thread", "action", "Brain", "Learning"],
     ]);
-    // The on-demand tab wraps the same panel and hands itself over to the fixed one.
+    // The retired on-demand tab stays registered only so instances an earlier build opened can close.
     expect(app.tabs.find((tab) => tab.id === LEARNING_ON_DEMAND_TAB.id)!.component).toBe(LearningOnDemandTab);
     expect(app.tabs.find((tab) => tab.id === LEARNING_FIXED_TAB.id)!.component).toBe(LearningTab);
     expect(app.threadActions.map((action) => action.id)).toEqual(["offers"]);
@@ -330,34 +345,29 @@ describe("where the tab shows", () => {
   it.each([
     ["a top-level thread", {}, "visible"],
     ["a session thread of this plugin", { originPluginId: "learning-exercises" }, "visible"],
-    ["a child thread", { parentThreadId: "thr_parent" }, "hidden"],
-    ["another plugin's thread", { originPluginId: "automations" }, "hidden"],
-    ["a delegated thread", { lifecycleOwnerThreadId: "thr_owner" }, "hidden"],
-  ])("%s: %s", (_name, overrides, expected) => {
-    renderSlot({ component: Probe }, { threadId: WORK }, { sidebarThreads: { status: "ready", threads: [sidebarThread(overrides)] } });
-    expect(screen.getByText(expected)).toBeTruthy();
-  });
-});
-
-describe("where the on-demand tab shows", () => {
-  function Probe(props: { threadId: string }) {
-    return <span>{useLearningOnDemandVisible({ threadId: props.threadId, environment: null }) ? "offered" : "not offered"}</span>;
-  }
-
-  it.each([
-    ["a top-level thread (the fixed tab is there)", {}, "not offered"],
-    ["a session thread of this plugin (the fixed tab is there)", { originPluginId: "learning-exercises" }, "not offered"],
-    ["a child (sub-agent) thread", { parentThreadId: "thr_parent" }, "offered"],
-    ["a crew thread another plugin spawned", { parentThreadId: "thr_mate", originPluginId: "firstmate-crew" }, "offered"],
-    ["a delegated thread", { lifecycleOwnerThreadId: "thr_owner" }, "offered"],
-  ])("%s: %s", (_name, overrides, expected) => {
+    ["a child (sub-agent) thread", { parentThreadId: "thr_parent" }, "visible"],
+    ["a crew thread another plugin spawned", { parentThreadId: "thr_mate", originPluginId: "firstmate-crew" }, "visible"],
+    ["another plugin's thread", { originPluginId: "automations" }, "visible"],
+    ["a delegated thread", { lifecycleOwnerThreadId: "thr_owner" }, "visible"],
+  ])("on the tab bar in %s", (_name, overrides, expected) => {
     renderSlot({ component: Probe }, { threadId: WORK }, { sidebarThreads: { status: "ready", threads: [sidebarThread(overrides)] } });
     expect(screen.getByText(expected)).toBeTruthy();
   });
 
-  it("is not offered for a thread the sidebar does not list", () => {
-    renderSlot({ component: Probe }, { threadId: "thr_unknown" }, { sidebarThreads: { status: "ready", threads: [sidebarThread()] } });
-    expect(screen.getByText("not offered")).toBeTruthy();
+  it("not in a thread the sidebar does not list (a hidden thread)", () => {
+    renderSlot({ component: Probe }, { threadId: "thr_hidden" }, { sidebarThreads: { status: "ready", threads: [sidebarThread()] } });
+    expect(screen.getByText("hidden")).toBeTruthy();
+  });
+
+  it("never offers the retired on-demand tab in the launcher", () => {
+    function Offered(props: { threadId: string }) {
+      return <span>{useLearningOnDemandVisible({ threadId: props.threadId, environment: null }) ? "offered" : "not offered"}</span>;
+    }
+    for (const overrides of [{}, { parentThreadId: "thr_parent" }, { parentThreadId: "thr_mate", originPluginId: "firstmate-crew" }]) {
+      renderSlot({ component: Offered }, { threadId: WORK }, { sidebarThreads: { status: "ready", threads: [sidebarThread(overrides)] } });
+      expect(screen.getByText("not offered")).toBeTruthy();
+      cleanup();
+    }
   });
 });
 
@@ -377,17 +387,20 @@ describe("one Learning tab per thread", () => {
     return <span>probe</span>;
   }
 
-  it("closes the open on-demand tab once the thread loses its parent, and moves the selection to the fixed tab", () => {
-    const child = sidebarThread({ parentThreadId: "thr_parent" });
+  it("closes a leftover on-demand tab in a sub-agent thread, and moves the selection to the fixed tab", () => {
+    const child = sidebarThread({ parentThreadId: "thr_mate", originPluginId: "firstmate-crew" });
     const slot = renderSlot({ component: Probe }, { thread: child }, { experimental_panel: accept, experimental_panelTabs: onDemandOpen(true) });
-    // Still a child: the on-demand tab is the only Learning tab, so it stays.
-    expect(slot.experimental_panelCalls).toEqual([]);
-    // The parent is removed: the fixed tab now shows, so the persisted on-demand instance must go.
-    slot.rerender(<Probe thread={sidebarThread()} />);
     expect(slot.experimental_panelCalls).toEqual([
       { method: "openTab", options: { tab: LEARNING_FIXED_TAB } },
       { method: "closeTab", key: "tab-od" },
     ]);
+  });
+
+  it("waits while the thread's row is not known", () => {
+    const slot = renderSlot({ component: Probe }, { thread: undefined }, { experimental_panel: accept, experimental_panelTabs: onDemandOpen(true) });
+    expect(slot.experimental_panelCalls).toEqual([]);
+    slot.rerender(<Probe thread={sidebarThread({ parentThreadId: "thr_parent" })} />);
+    expect(slot.experimental_panelCalls.map((call) => call.method)).toEqual(["openTab", "closeTab"]);
   });
 
   it("closes an unselected or hidden-panel instance without opening anything", () => {
@@ -410,18 +423,7 @@ describe("one Learning tab per thread", () => {
     await waitFor(() => expect(slot.experimental_panelCalls).toEqual([{ method: "closeTab", key: "tab-od" }]));
   });
 
-  it("the on-demand tab hands itself over when drawn in a thread that now has the fixed tab", async () => {
-    const slot = renderSlot({ component: LearningOnDemandTab }, { threadId: WORK, environment: null, params: null }, {
-      rpc: handlers(() => view({ offer: null })) as never,
-      experimental_rpcContract: rpcContract,
-      sidebarThreads: { status: "ready", threads: [sidebarThread()] },
-      experimental_panel: accept,
-      experimental_panelTabs: onDemandOpen(true),
-    });
-    await waitFor(() => expect(slot.experimental_panelCalls.map((call) => call.method)).toEqual(["openTab", "closeTab"]));
-  });
-
-  it("leaves the on-demand tab alone in a sub-agent thread", () => {
+  it("a leftover on-demand tab hands itself over when drawn, in a sub-agent thread too", async () => {
     const slot = renderSlot({ component: LearningOnDemandTab }, { threadId: WORK, environment: null, params: null }, {
       rpc: handlers(() => view({ eligible: false, offer: null })) as never,
       experimental_rpcContract: rpcContract,
@@ -429,7 +431,118 @@ describe("one Learning tab per thread", () => {
       experimental_panel: accept,
       experimental_panelTabs: onDemandOpen(true),
     });
-    expect(slot.experimental_panelCalls).toEqual([]);
+    await waitFor(() => expect(slot.experimental_panelCalls.map((call) => call.method)).toEqual(["openTab", "closeTab"]));
+  });
+});
+
+describe("file references", () => {
+  const workspace = { threadId: "thr_fork", environmentId: "env_1", rootPath: "/work/calc" };
+  const document = { threadId: "thr_fork", rootPath: "/work/calc", target: { kind: "workspace", environmentId: "env_1", path: "learning-exercise.md" } };
+  const documentOf = (element: HTMLElement) => JSON.parse(element.getAttribute("data-document")!) as unknown;
+
+  it.each([
+    ["calc.py", "calc.py", null],
+    ["calc.py:12", "calc.py", { kind: "line", line: 12, column: null }],
+    ["calc.py:12:4", "calc.py", { kind: "line", line: 12, column: null }],
+    ["src/stats.ts:40-60", "src/stats.ts", { kind: "range", startLine: 40, endLine: 60 }],
+    ["src/stats.ts#L40", "src/stats.ts", { kind: "line", line: 40, column: null }],
+    ["src/stats.ts#L40-L60", "src/stats.ts", { kind: "range", startLine: 40, endLine: 60 }],
+    ["src/stats.ts:60-40", "src/stats.ts:60-40", null],
+    ["src/stats.ts:0", "src/stats.ts:0", null],
+  ])("reads %s as a path and a line or range", (reference, path, location) => {
+    expect(parseFileRef(reference)).toEqual({ path, location });
+  });
+
+  it.each([
+    ["calc.py", true],
+    ["src/stats.ts:40-60", true],
+    ["./Makefile", true],
+    ["median([])", false],
+    ["ValueError", false],
+    ["git log -1", false],
+    ["https://example.com/a.ts", false],
+    ["/abs/path.ts", false],
+  ])("treats %s as a file reference: %s", (text, expected) => {
+    expect(looksLikeFileRef(text)).toBe(expected);
+  });
+
+  it("resolves Markdown against a file at the workspace root, and leaves bb's own routing without a workspace", () => {
+    expect(markdownDocument(workspace)).toEqual(document);
+    expect(markdownDocument(null)).toBeUndefined();
+    expect(markdownDocument(undefined)).toBeUndefined();
+  });
+
+  it("the card's question resolves its file references in the session's workspace, and its files open at their lines", () => {
+    const payload: CardPayload = {
+      sessionId: "ses_1",
+      ordinal: 1,
+      type: "trace",
+      question: "Open `calc.py:12` and trace `median([3, 1])`.",
+      files: ["calc.py:12", "tests/test_calc.py:5-9", "README.md"],
+      environmentId: "env_1",
+      workspace,
+      topic: '"Add median"',
+      maxQuestions: 8,
+    };
+    const slot = renderSlot({ component: ExerciseCard }, { interaction: { id: "pint_1", threadId: "thr_fork", title: "Question 1", payload, createdAt: 1, expiresAt: null }, submit: vi.fn(async () => {}), cancel: vi.fn(async () => {}) });
+    const question = screen.getByTestId("bb-markdown");
+    expect(question.textContent).toBe(payload.question);
+    expect(documentOf(question)).toEqual(document);
+    for (const name of payload.files) fireEvent.click(screen.getByRole("link", { name }));
+    expect(slot.navigateCalls).toEqual([
+      { method: "experimental_openFilePreview", options: { target: { kind: "workspace", environmentId: "env_1", path: "calc.py" }, location: { kind: "line", line: 12, column: null } } },
+      { method: "experimental_openFilePreview", options: { target: { kind: "workspace", environmentId: "env_1", path: "tests/test_calc.py" }, location: { kind: "range", startLine: 5, endLine: 9 } } },
+      { method: "experimental_openFilePreview", options: { target: { kind: "workspace", environmentId: "env_1", path: "README.md" }, location: null } },
+    ]);
+  });
+
+  it("a card an earlier build opened, with no workspace, keeps bb's own routing", () => {
+    const payload = { sessionId: "ses_1", ordinal: 1, type: "trace", question: "Q?", files: [], environmentId: null, topic: "t", maxQuestions: 8 };
+    renderSlot({ component: ExerciseCard }, { interaction: { id: "pint_1", threadId: "thr_fork", title: "Question 1", payload, createdAt: 1, expiresAt: null }, submit: vi.fn(async () => {}), cancel: vi.fn(async () => {}) });
+    expect(screen.getByTestId("bb-markdown").getAttribute("data-document")).toBe("none");
+  });
+
+  it("the settled row resolves the question in the card's workspace", () => {
+    renderSlot({ component: SettledRow }, {
+      row: { id: "r", threadId: "t", turnId: null, kind: "learning-exercises/exercise", toolName: null, status: "completed", startedAt: 1, completedAt: 2 },
+      payload: { question: "Open `calc.py:12`.", action: "skip", answer: null, confidence: null, workspace },
+      presentation: null,
+      thread: { id: "t", providerId: null },
+      Original: () => <span>original</span>,
+    } as never);
+    expect(documentOf(screen.getByTestId("bb-markdown"))).toEqual(document);
+  });
+
+  it("the tab's session history shows each question as Markdown in the session's workspace", async () => {
+    const finished = { ...session, id: "ses_2", state: "finished" as const, summary: null, pauseReason: null, finishedAt: 3 };
+    const exercise = { ordinal: 1, type: "trace", question: "Open `calc.py:12`.", files: [], askedAt: 1, answer: "It sorts", confidence: 3, skipped: false, stuck: 0, answeredAt: 2, verdict: "partly", gap: null };
+    renderSlot({ component: LearningTab }, { threadId: WORK, environment: null }, {
+      rpc: handlers(() => view({ offer: null }), {
+        projectSessions: () => ({ paused: [], previous: [finished], hasMore: false }),
+        sessionDetail: () => ({ session: finished, exercises: [exercise], workspace }),
+      }),
+      experimental_rpcContract: rpcContract,
+      sidebarThreads: { status: "ready", threads: [sidebarThread()] },
+    });
+    fireEvent.click(await screen.findByRole("button", { expanded: false }));
+    const question = await screen.findByTestId("bb-markdown");
+    expect(question.textContent).toBe("Open `calc.py:12`.");
+    expect(documentOf(question)).toEqual(document);
+  });
+
+  it("the offer links the paths in its topic in this thread's workspace, and leaves other text alone", async () => {
+    const newFiles: Offer = { ...offer, trigger: "new-files", topic: "the new `stats/median.py` and `*draft*`" };
+    const slot = renderSlot<object, RpcContract>({ component: OfferBanner }, {}, {
+      rpc: handlers(() => view({ offer: newFiles })),
+      experimental_rpcContract: rpcContract,
+      composer: { scope: { kind: "thread", threadId: WORK } },
+      sidebarThreads: { status: "ready", threads: [sidebarThread()] },
+    });
+    fireEvent.click(await screen.findByRole("link", { name: "stats/median.py" }));
+    expect(slot.navigateCalls).toEqual([
+      { method: "experimental_openFilePreview", options: { target: { kind: "workspace", environmentId: "env_1", path: "stats/median.py" }, location: null } },
+    ]);
+    expect(screen.getByText("*draft*").tagName).toBe("CODE");
   });
 });
 

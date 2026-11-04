@@ -8,6 +8,14 @@ import { z } from "zod";
 /** This plugin's id; threads it starts carry it as `originPluginId`. */
 export const PLUGIN_ID = "learning-exercises";
 
+/**
+ * A thread's workspace, for turning file references in Markdown into links that open the file in bb:
+ * relative paths resolve against `rootPath`, the workspace's absolute folder on its machine. Null where
+ * the thread has no workspace or it is gone (an archived thread's).
+ */
+export const WorkspaceSchema = z.object({ threadId: z.string(), environmentId: z.string(), rootPath: z.string() });
+export type Workspace = z.infer<typeof WorkspaceSchema>;
+
 /** What made the plugin offer an exercise. Ordered from most to least worth offering. */
 export const TRIGGER_KINDS = ["pr-merged", "commit", "schema", "new-files", "streak", "manual"] as const;
 export const TriggerKindSchema = z.enum(TRIGGER_KINDS);
@@ -139,6 +147,8 @@ export const ThreadViewSchema = z.object({
   offersOffGlobally: z.boolean(),
   /** Where a session started from this thread runs: a fork, unless the setting or the provider says otherwise. */
   sessionWhere: SessionModeSchema,
+  /** This thread's workspace, for links in the offer's topic. */
+  workspace: WorkspaceSchema.nullable(),
 });
 export type ThreadView = z.infer<typeof ThreadViewSchema>;
 
@@ -154,6 +164,8 @@ export const CardPayloadSchema = z.object({
   files: z.array(z.string()),
   /** The session thread's workspace, for opening `files`; null when it has none. */
   environmentId: z.string().nullable(),
+  /** The same workspace with its folder, for links in the question; absent on cards an earlier build opened. */
+  workspace: WorkspaceSchema.nullable().optional(),
   topic: z.string(),
   /** Question k of at most n. */
   maxQuestions: z.number(),
@@ -193,6 +205,8 @@ export const SettledRowSchema = z.object({
   action: z.enum(["answer", "skip", "more-specific", "pause"]),
   answer: z.string().nullable(),
   confidence: z.number().nullable(),
+  /** The card's workspace, for links in the question; absent on rows written before it was kept. */
+  workspace: WorkspaceSchema.nullable().optional(),
 });
 export type SettledRow = z.infer<typeof SettledRowSchema>;
 

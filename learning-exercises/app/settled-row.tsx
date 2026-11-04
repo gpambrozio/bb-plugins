@@ -3,9 +3,10 @@
  * Only what `describeSubmission` kept is here (`SettledRowSchema`), never the agent's verdict, so the
  * row shows exactly what the learner said and nothing credited to them.
  */
-import { Markdown, type PluginTimelineRendererProps } from "@get-bb/plugin-sdk/app";
+import type { PluginTimelineRendererProps } from "@get-bb/plugin-sdk/app";
 
 import { CONFIDENCE_LABELS, SettledRowSchema } from "../shared/types";
+import { FileMarkdown } from "./file-refs";
 
 const ACTIONS = {
   skip: "Skipped.",
@@ -19,7 +20,7 @@ export function SettledRow({ payload, Original }: PluginTimelineRendererProps) {
   const row = parsed.data;
   return (
     <div className="flex flex-col gap-2 text-sm">
-      <Markdown content={row.question} className="text-muted-foreground" />
+      <FileMarkdown content={row.question} workspace={row.workspace} className="text-muted-foreground" />
       {row.action === "answer" ? (
         <>
           <blockquote className="whitespace-pre-wrap border-l-2 border-border pl-3">{row.answer}</blockquote>

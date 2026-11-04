@@ -22,14 +22,14 @@ retrieval and Showboat are later phases.
    lifecycle owner, visible, not archived. That excludes crews, automations, diff-review runs, side
    chats and this plugin's own sessions. **Manual starts are wider** (`canStartByHand`): any visible,
    unarchived thread except this plugin's own session threads, so a sub-agent thread can be a session's
-   source. The app mirrors that split: the fixed "Learning" tab shows where `isHumanThread` would (and in
-   session threads); everywhere else the same component is the action tab `learning-on-demand`, which the
-   learner adds from the side panel's launcher. bb keeps an action tab's open instances when its
-   `useVisible` turns false, so `useOneLearningTab` (run by the always-mounted composer banner and by the
-   on-demand tab) closes them once the thread qualifies for the fixed tab, selecting the fixed tab first
-   when one was selected: never two Learning tabs. `ThreadView.eligible` says offers are made there,
-   `canStart` that Start is shown. Never let offers, the banner or the thread menu's offer choice follow
-   `canStart`.
+   source. The fixed "Learning" tab is on the tab bar of every thread the sidebar lists (hidden threads are
+   not listed), session threads included, where it shows the session with Pause and Finish but no Start.
+   Earlier builds offered it in sub-agent threads only as the action tab `learning-on-demand`, from the
+   side panel's launcher; bb keeps an action tab's open instances with the thread, so that tab stays
+   registered, never offered, and `useOneLearningTab` (run by the always-mounted composer banner and by
+   that tab) closes every instance, selecting the fixed tab first when one was selected: never two
+   Learning tabs. `ThreadView.eligible` says offers are made there, `canStart` that Start is shown. Never
+   let offers, the banner or the thread menu's offer choice follow `canStart`.
 4. **The caps live in the server** (`policy.ts`), and count *seen* offers only. They are applied twice:
    when an offer is made, and again when it is about to show. Views read the offer through
    `OfferEngine.visibleOffer` (an unseen offer shows only while the caps would let it), and the banner or
@@ -79,8 +79,24 @@ retrieval and Showboat are later phases.
 | `server/content.ts` | The brief from `content/` through `server/content.generated.ts` (`npm run gen:content`; a test fails when they differ) |
 | `app/banner.tsx`, `app/offer-card.tsx` | The composer banner (thread scope; only while idle) |
 | `app/card.tsx`, `app/settled-row.tsx` | The `exercise` pending interaction and its timeline row |
-| `app/tab.tsx` | The "Learning" tab: fixed in human threads and session threads, an action tab (on demand) elsewhere |
+| `app/tab.tsx` | The "Learning" tab, on the tab bar of every listed thread; the retired on-demand tab's clean-up |
+| `app/file-refs.tsx` | File references as links that open the file in bb, at a line or range (below) |
 | `app/thread-action.ts`, `app/settings-section.tsx` | "Learning offers" in the thread menu; the never-list under settings |
+
+## File references
+
+Every file reference the plugin shows opens the file in bb's preview. bb's `Markdown` links a Markdown
+link to a workspace path and an inline-code path (`src/a.ts`, `src/a.ts:42`, `src/a.ts:40-60`, and the
+`#L42-L60` form) only where it knows the workspace: a chat message knows its thread's, a plugin's card or
+tab does not, so `FileMarkdown` passes `experimental_document` (a file at the workspace root; bb 0.48.1's
+`PluginMarkdown` resolves relative links from its folder and opens them with the line range). The server
+puts the workspace (environment and absolute folder, `workspaceOf`) on the card, its settled row, the
+thread view and a session's detail; history falls back to the source thread once the session thread's
+environment is destroyed. A card's `files` go through `experimental_FileLink` with the suffix parsed into
+`location`. Offer and session topics quote commit subjects verbatim, so they are not Markdown: only their
+backticked paths become links (`TextWithFileRefs`). Topic choices and session titles sit inside a radio
+label or a toggle button, where a link would fight the click, and stay plain text. The brief, the tool
+and the CLI tell the agent to write references that way.
 
 ## What bb 0.48.1 does that this relies on (the spike's evidence)
 

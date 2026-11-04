@@ -4,14 +4,16 @@
  * model to keep: the agent's turn is over while the card is open, and nothing suggests an answer.
  *
  * bb draws it where the composer is, so while it is open the user answers it, skips it or pauses the
- * session (spike S3). Every button is `type="button"`.
+ * session (spike S3). Every button is `type="button"`. File references in the question and the files to open
+ * are links that open the file in bb, at a line or range when they name one (`file-refs.tsx`).
  */
-import { experimental_FileLink as FileLink, Markdown, type PluginPendingInteractionProps } from "@get-bb/plugin-sdk/app";
+import type { PluginPendingInteractionProps } from "@get-bb/plugin-sdk/app";
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { ANSWER_MAX_CHARS, CardPayloadSchema, CONFIDENCE_LABELS, type CardValue } from "../shared/types";
+import { FileMarkdown, FileRef } from "./file-refs";
 
 const LARGE_ANSWER = new Set(["generation", "teach-back", "trace"]);
 
@@ -38,19 +40,13 @@ export function ExerciseCard({ interaction, submit }: PluginPendingInteractionPr
         </span>
         <span className="truncate">{card.topic.replace(/[`"]/g, "")}</span>
       </div>
-      <Markdown content={card.question} className="text-sm" />
+      <FileMarkdown content={card.question} workspace={card.workspace} className="text-sm" />
       {card.files.length > 0 && (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
           <span className="text-muted-foreground">Open:</span>
-          {card.files.map((path) =>
-            card.environmentId === null ? (
-              <code key={path}>{path}</code>
-            ) : (
-              <FileLink key={path} target={{ kind: "workspace", environmentId: card.environmentId, path }} className="font-mono underline-offset-2 hover:underline">
-                {path}
-              </FileLink>
-            ),
-          )}
+          {card.files.map((reference) => (
+            <FileRef key={reference} reference={reference} environmentId={card.environmentId} />
+          ))}
         </div>
       )}
       <textarea

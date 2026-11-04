@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { TRIGGER_LABELS, type Offer, type OfferAnswer } from "../shared/types";
 import { errorText, useLearningRpc } from "./data";
+import { TextWithFileRefs } from "./file-refs";
 import { openSettings } from "./open-settings";
 
 const WHAT_HAPPENED: Record<Offer["trigger"], string> = {
@@ -31,7 +32,7 @@ export function offerSentence(offer: Offer): string {
   return `${WHAT_HAPPENED[offer.trigger]} ${offer.topic}.`.trim();
 }
 
-export function OfferCard(props: { offer: Offer; threadId: string; onScreen: boolean; where: "banner" | "tab"; sessionWhere: "fork" | "here" }) {
+export function OfferCard(props: { offer: Offer; threadId: string; onScreen: boolean; where: "banner" | "tab"; sessionWhere: "fork" | "here"; environmentId: string | null }) {
   const { offer, threadId, onScreen } = props;
   const rpc = useLearningRpc();
   const navigate = useBbNavigate();
@@ -84,7 +85,8 @@ export function OfferCard(props: { offer: Offer; threadId: string; onScreen: boo
       <div className="flex items-start gap-2">
         <Icon name="Brain" className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
         <p className="min-w-0 flex-1 leading-snug">
-          <span className="font-medium">Learning:</span> {offerSentence(offer)} Want a 10–15 minute exercise on it?{" "}
+          <span className="font-medium">Learning:</span> <TextWithFileRefs text={offerSentence(offer)} environmentId={props.environmentId} /> Want a 10–15 minute
+          exercise on it?{" "}
           <span className="text-muted-foreground">
             {props.sessionWhere === "fork" ? "It runs in a side thread; this one is left alone." : "It runs here, in this thread."}
           </span>

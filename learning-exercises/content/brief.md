@@ -60,12 +60,17 @@ Pick the one that fits the work; the trigger below is a hint, not a rule.
 ## Hands-on code exploration
 
 Prefer pointing the learner at files over pasting code: finding code themselves builds familiarity and
-stronger memory than reading it. Use completion-style prompts ("Open `file` and find `component`. What
-does it do with `variable`?").
+stronger memory than reading it. Use completion-style prompts ("Open `src/file.ts` and find `component`.
+What does it do with `variable`?").
+
+**Name files so they open.** Write every file reference as a workspace-relative path in backticks, with
+a line or range when you mean one: `src/file.ts`, `src/file.ts:42`, `src/file.ts:40-60`. The card turns
+those into links that open the file at that place; a bare file name, an absolute path or "around line N"
+in prose does not link. List the same paths, with the same line suffixes, as the question's files.
 
 **Fading scaffolding.** Adjust how much you set up, never how much you give away:
 
-- Early: "Open `file`, around line N, and find `function`."
+- Early: "Open `src/file.ts:40-60` and find `function`."
 - Later: "Find where we handle `feature`."
 - Eventually: "Where would you look to change how `feature` works?"
 

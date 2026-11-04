@@ -12,6 +12,7 @@ import { SessionError } from "./sessions";
 import type { LearningSettings } from "./settings";
 import { relativize } from "./signals";
 import { OPEN_STATES, publicSession, type LearningStore } from "./store";
+import { workspaceOf } from "./workspace";
 
 type Input<M extends keyof RpcContract> = import("zod").infer<RpcContract[M]["input"]>;
 type Output<M extends keyof RpcContract> = import("zod").infer<RpcContract[M]["output"]>;
@@ -56,6 +57,7 @@ export class LearningApi {
       projectNever: store.isNever(key),
       offersOffGlobally: !this.deps.settings().offersEnabled,
       sessionWhere: this.deps.settings().sessionLocation === "fork" && (await this.deps.ports.canFork(thread.providerId)) ? "fork" : "here",
+      workspace: await workspaceOf(this.deps.ports, thread),
     };
     return view;
   }
@@ -72,10 +74,17 @@ export class LearningApi {
     };
   }
 
-  sessionDetail({ sessionId }: Input<"sessionDetail">): Output<"sessionDetail"> {
-    const session = this.deps.store.session(sessionId);
+  /**
+   * A session's questions resolve their file references against the session thread's workspace, or the
+   * source thread's once that one is gone (an archived fork's environment has no folder any more).
+   */
+  async sessionDetail({ sessionId }: Input<"sessionDetail">): Promise<Output<"sessionDetail">> {
+    const { ports, store } = this.deps;
+    const session = store.session(sessionId);
     if (session === null) throw new SessionError("That session is gone.");
-    return { session: publicSession(session), exercises: this.deps.store.exercises(sessionId) };
+    let workspace = session.threadId === null ? null : await workspaceOf(ports, session.threadId);
+    if (workspace === null && session.sourceThreadId !== null) workspace = await workspaceOf(ports, session.sourceThreadId);
+    return { session: publicSession(session), exercises: store.exercises(sessionId), workspace };
   }
 
   /** Topics from data only: the thread's live offer, the branch's latest commit, the last turn's new files, its title. */
