@@ -99,6 +99,41 @@ export const MIGRATIONS: string[] = [
   `ALTER TABLE thread_state ADD COLUMN last_commits TEXT`,
 ];
 
+/** The partial unique index migration 9 creates (one open session per source thread). */
+const ONE_OPEN_INDEX = "sessions_one_open_per_source";
+
+/**
+ * Runs before `bb.storage.migrate`. Versions before the unique index (0.1.0's first draft, e54db75)
+ * could leave two open sessions for one source thread (a Start race), and creating the index over them
+ * fails the plugin's load. So, once, before the index exists: per source thread, keep the most
+ * progressed open session (waiting for an answer, then running, then paused, then starting; then the
+ * one with the most answers; then the newest) and mark the others abandoned. Nothing is deleted: their
+ * questions and answers stay in the history. A store without the sessions table yet, or with the index
+ * already, is left alone. Kept out of `MIGRATIONS` so migration 9 stays the index statement an earlier
+ * build already recorded.
+ */
+export function reconcileOpenSessions(db: Database.Database, now: number): number {
+  const has = (type: string, name: string) => db.prepare(`SELECT 1 FROM sqlite_master WHERE type = ? AND name = ?`).get(type, name) !== undefined;
+  if (!has("table", "sessions") || has("index", ONE_OPEN_INDEX)) return 0;
+  return db
+    .prepare(
+      `UPDATE sessions SET state = 'abandoned', pause_reason = NULL, finished_at = COALESCE(finished_at, ?), updated_at = ?
+       WHERE id IN (
+         SELECT id FROM (
+           SELECT s.id, ROW_NUMBER() OVER (
+             PARTITION BY s.source_thread_id
+             ORDER BY CASE s.state WHEN 'awaiting-answer' THEN 0 WHEN 'active' THEN 1 WHEN 'paused' THEN 2 ELSE 3 END,
+                      (SELECT COUNT(*) FROM exercises e WHERE e.session_id = s.id AND e.answer IS NOT NULL) DESC,
+                      s.updated_at DESC, s.created_at DESC, s.id DESC
+           ) AS rank
+           FROM sessions s
+           WHERE s.source_thread_id IS NOT NULL AND s.state IN ('starting', 'active', 'awaiting-answer', 'paused')
+         ) WHERE rank > 1
+       )`,
+    )
+    .run(now, now).changes;
+}
+
 /** Sessions that still count as open: not finished, not abandoned. */
 export const OPEN_STATES: readonly SessionState[] = ["starting", "active", "awaiting-answer", "paused"];
 

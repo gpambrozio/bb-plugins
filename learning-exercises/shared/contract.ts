@@ -36,7 +36,8 @@ export const rpcContract = {
   sessionDetail: { input: SessionRef, output: z.object({ session: SessionSchema, exercises: z.array(ExerciseSchema) }), tags },
   /** Topics the tab offers for a manual start, from the thread's own data. */
   topicChoices: { input: ThreadRef, output: z.object({ choices: z.array(TopicChoiceSchema) }), tags },
-  offerSeen: { input: z.object({ offerId: z.string().min(1) }), output: Done },
+  /** Claims an offer for display; an unseen offer is drawn only once this answers `visible: true`. */
+  offerSeen: { input: z.object({ offerId: z.string().min(1) }), output: z.object({ visible: z.boolean() }) },
   /** Start (or Run here) starts a session and answers its thread; the others answer null. */
   answerOffer: {
     input: z.object({ offerId: z.string().min(1), answer: OfferAnswerSchema }),

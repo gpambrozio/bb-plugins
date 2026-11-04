@@ -290,3 +290,20 @@ describe("finding 9: Start from the tab breaks the run of Laters", () => {
     expect(store.global(ports.now()).seenAt).toHaveLength(1);
   });
 });
+
+describe("pass 2, finding 1: a session elsewhere in the project hides even a seen offer", () => {
+  it("hides it while the session runs, without spending or ending it, and shows it again after", async () => {
+    const { commitTurn, offers, ports, store, sessions, start } = setup();
+    ports.threads.set("thr_b", thread({ id: "thr_b" }));
+    const offer = await commitTurn();
+    expect(offers.claim(offer!.id)).toBe(true);
+    const { sessionId } = await start("thr_b");
+    expect(offers.visibleOffer(WORK)).toBeNull();
+    expect(offers.claim(offer!.id)).toBe(false);
+    await expect(offers.answer(offer!.id, "start")).rejects.toThrow("no longer open");
+    expect(store.offer(offer!.id)?.status).toBe("live");
+    sessions.pause(sessionId, "user");
+    expect(offers.visibleOffer(WORK)?.id).toBe(offer!.id);
+    expect(store.global(ports.now()).seenAt).toHaveLength(1);
+  });
+});

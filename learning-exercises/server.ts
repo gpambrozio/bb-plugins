@@ -16,7 +16,7 @@ import { OfferEngine } from "./server/offers";
 import type { Ports } from "./server/ports";
 import { SessionService } from "./server/sessions";
 import { readSettings, SETTINGS } from "./server/settings";
-import { LearningStore, MIGRATIONS, OPEN_STATES } from "./server/store";
+import { LearningStore, MIGRATIONS, OPEN_STATES, reconcileOpenSessions } from "./server/store";
 import { registerTools, TOOL_NAMES } from "./server/tools";
 
 export { rpcContract };
@@ -35,6 +35,8 @@ async function plugin(bb: BbPluginApi, deps: { ports?: (bb: BbPluginApi, changed
   const settings = () => current;
 
   const db = bb.storage.database();
+  const reconciled = reconcileOpenSessions(db, Date.now());
+  if (reconciled > 0) bb.log.warn(`Closed ${reconciled} duplicate open learning session(s) left by an earlier version; their answers are kept.`);
   bb.storage.migrate(db, MIGRATIONS);
   const store = new LearningStore(db);
   const changed = () => bb.rpc.experimental_invalidate([LEARNING_TAG]);

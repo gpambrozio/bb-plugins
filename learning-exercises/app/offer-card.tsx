@@ -36,13 +36,26 @@ export function OfferCard(props: { offer: Offer; threadId: string; onScreen: boo
   const [busy, setBusy] = useState<OfferAnswer | null>(null);
   const [more, setMore] = useState(false);
   const reported = useRef<string | null>(null);
+  // The offer id whose claim the server accepted. An unseen offer is drawn only after that, so two
+  // panes or clients that read different queued offers never both show one (the server grants one).
+  const [claimed, setClaimed] = useState<string | null>(null);
 
   useEffect(() => {
     if (!onScreen || offer.seenAt !== null || reported.current === offer.id) return;
     reported.current = offer.id;
-    rpc.call("offerSeen", { offerId: offer.id }).catch(() => {
-      reported.current = null;
-    });
+    let live = true;
+    rpc.call("offerSeen", { offerId: offer.id }).then(
+      ({ visible }) => {
+        if (live && visible) setClaimed(offer.id);
+      },
+      () => {
+        reported.current = null;
+      },
+    );
+    return () => {
+      live = false;
+      if (reported.current === offer.id) reported.current = null;
+    };
   }, [offer.id, offer.seenAt, onScreen, rpc]);
 
   const answer = async (choice: OfferAnswer) => {
@@ -58,6 +71,8 @@ export function OfferCard(props: { offer: Offer; threadId: string; onScreen: boo
       setBusy(null);
     }
   };
+
+  if (offer.seenAt === null && claimed !== offer.id) return null;
 
   return (
     <div className="flex flex-col gap-2 text-sm" data-testid={`offer-${props.where}`}>

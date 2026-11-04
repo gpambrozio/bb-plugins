@@ -259,9 +259,16 @@ export class OfferEngine {
       settings: this.settings(),
       trigger: offer.trigger,
       finishedSessions: this.store.finishedSessionsFrom(offer.threadId),
-      sessionActiveInProject: this.store.sessionActiveInProject(offer.projectKey),
       global: this.store.global(now),
     });
+  }
+
+  /**
+   * Eligibility that applies to every offer, seen or not, without ending it: no offer shows while a
+   * session is starting, running or waiting for an answer elsewhere in the project. It comes back after.
+   */
+  private suppressed(offer: Offer & { projectKey: string }): boolean {
+    return this.store.sessionActiveInProject(offer.projectKey);
   }
 
   /**
@@ -278,6 +285,7 @@ export class OfferEngine {
       if (this.store.expireOffer(offer.id)) this.ports.changed();
       return null;
     }
+    if (this.suppressed(offer)) return null;
     if (offer.seenAt === null && this.capped(offer, now) !== null) return null;
     return live;
   }
@@ -293,6 +301,11 @@ export class OfferEngine {
     const now = this.ports.now();
     if (this.standing(offer, now) !== null) {
       this.store.expireOffer(offerId);
+      this.ports.changed();
+      return false;
+    }
+    // Always applies; only the caps' accounting is skipped for an offer already seen.
+    if (this.suppressed(offer)) {
       this.ports.changed();
       return false;
     }

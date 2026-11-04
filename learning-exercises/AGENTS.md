@@ -25,7 +25,10 @@ retrieval and Showboat are later phases.
    when an offer is made, and again when it is about to show. Views read the offer through
    `OfferEngine.visibleOffer` (an unseen offer shows only while the caps would let it), and the banner or
    the tab claims it with `offerSeen` → `claim`, which re-checks the gate and the caps synchronously and
-   charges it once. Every read, claim and answer also re-checks what can end an offer at any time
+   charges it once. The app draws an unseen offer only after that claim answers `visible: true`, so two
+   panes that read different queued offers never both show one. A session starting, running or waiting
+   for an answer elsewhere in the project hides every offer in it, seen or not, without ending or
+   charging it (`suppressed`); only the caps' accounting is skipped for an offer already seen. Every read, claim and answer also re-checks what can end an offer at any time
    (`offerStanding`: offers off, Never for the project, the thread opted out, a session open, a day old).
    An offer nobody looked at expires at the next turn or after 24 h and never counted. The banner's Start
    and the tab's Start both answer through `OfferEngine.answer`, and a tab Start with no offer still
@@ -33,7 +36,11 @@ retrieval and Showboat are later phases.
 5. **Session state moves only from the state a step expects.** Start, Ask and Resume run under a per-key
    lock (`SessionService.exclusive`) and reserve their state before any await; later steps use
    `store.transition(id, from, to)`, so a pause, an early tool call from a fork, or another copy of the
-   plugin is never overwritten. A partial unique index allows one open session per source thread. After
+   plugin is never overwritten. A partial unique index (migration 9) allows one open session per source
+   thread. Stores from before it (e54db75) may hold duplicates, so `reconcileOpenSessions` runs before
+   `bb.storage.migrate` and keeps the most progressed one, marking the rest abandoned with their answers.
+   `migration.test.ts` pins the migrations bb has already recorded by their SHA-256 (bb's statement hash):
+   never edit or reorder them. After
    `dispose()`, no continuation of that copy writes anything (`alive()`); a fork whose id never reached
    the store is found again on Resume (`ports.forkOf`). A card that fails to open, or whose caller went,
    pauses the session so Resume can show the question again.

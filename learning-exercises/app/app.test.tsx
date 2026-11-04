@@ -82,7 +82,7 @@ function handlers(current: () => ThreadView, extra: Handlers = {}) {
     projectSessions: () => ({ paused: [], previous: [], hasMore: false }),
     sessionDetail: () => ({ session, exercises: [] }),
     topicChoices: () => ({ choices: [{ id: "commit", label: 'The last commit: "Add median"', topic: '"Add median"', trigger: "manual", refs: {} }] }),
-    offerSeen: () => null,
+    offerSeen: () => ({ visible: true }),
     answerOffer: () => ({ threadId: "thr_fork" }),
     startSession: () => ({ threadId: "thr_fork" }),
     pauseSession: () => null,
@@ -124,6 +124,34 @@ describe("the banner", () => {
     await screen.findByText(/You just committed "Add median"\./);
     await waitFor(() => expect(slot.rpcCalls.filter((call) => call.method === "offerSeen")).toEqual([expect.objectContaining({ input: { offerId: "off_1" } })]));
     expect(screen.getByText(/It runs in a side thread/)).toBeTruthy();
+  });
+
+  it("draws an unseen offer only after the server grants its claim: two panes, delayed claims, one card (review pass 2)", async () => {
+    const claims = new Map<string, (visible: boolean) => void>();
+    const pane = (threadId: string, offerId: string) =>
+      renderSlot<object, RpcContract>({ component: OfferBanner }, {}, {
+        rpc: handlers(() => view({ offer: { ...offer, id: offerId, threadId, topic: `"${offerId}"` } }), {
+          offerSeen: ({ offerId: claimed }: { offerId: string }) => new Promise((resolve) => claims.set(claimed, (visible) => resolve({ visible }))),
+        } as never),
+        experimental_rpcContract: rpcContract,
+        composer: { scope: { kind: "thread", threadId } },
+        sidebarThreads: { status: "ready", threads: [sidebarThread({ id: threadId })] },
+      });
+    pane("thr_a", "off_a");
+    pane("thr_b", "off_b");
+    await waitFor(() => expect([...claims.keys()].sort()).toEqual(["off_a", "off_b"]));
+    // Both reads returned an offer, and both claims are pending: nothing is drawn yet.
+    expect(screen.queryByText(/You just committed/)).toBeNull();
+    claims.get("off_b")!(false);
+    claims.get("off_a")!(true);
+    await screen.findByText(/You just committed "off_a"\./);
+    expect(screen.queryByText(/You just committed "off_b"/)).toBeNull();
+  });
+
+  it("draws an offer already seen at once, without claiming it again", async () => {
+    const slot = render(handlers(() => view({ offer: { ...offer, seenAt: 5 } })));
+    await screen.findByText(/You just committed "Add median"\./);
+    expect(slot.rpcCalls.filter((call) => call.method === "offerSeen")).toEqual([]);
   });
 
   it("shows nothing while a turn runs, and nothing without an offer", async () => {

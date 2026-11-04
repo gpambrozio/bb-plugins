@@ -131,12 +131,10 @@ export function offerCaps(input: {
   settings: LearningSettings;
   trigger: Candidate["trigger"] | "manual";
   finishedSessions: number;
-  sessionActiveInProject: boolean;
   global: GlobalState;
 }): string | null {
   const { now, settings, global } = input;
   if (input.finishedSessions >= settings.sessionsPerThread) return "this thread had its sessions";
-  if (input.sessionActiveInProject) return "a session is running in this project";
   if (seenInLastDay(global.seenAt, now) >= settings.offersPerDay) return "the daily limit is reached";
   const lastSeen = global.seenAt.at(-1);
   if (lastSeen !== undefined && now - lastSeen < settings.hoursBetweenOffers * HOUR) return "too soon after the last offer";
