@@ -33,7 +33,9 @@ specific to `terminals`.
 `npm test` runs everything. Nothing in it opens a shell or a socket: the connection runs against a
 scripted socket and a manual clock, the server against the SDK's fake host with stubbed terminals,
 and the page (`app/terminals-page.test.tsx`) against fake RPCs with `app/live-terminals.ts` mocked,
-since xterm needs a real layout.
+since xterm needs a real layout. The strip's drags are real dnd-kit drags over a stubbed layout
+(`layOutTabs`); after a drop dnd-kit swallows every click on the document for 50 ms, so a test that
+drags waits that out (`afterDrop`) or the next test's first click vanishes.
 
 ## Decisions
 

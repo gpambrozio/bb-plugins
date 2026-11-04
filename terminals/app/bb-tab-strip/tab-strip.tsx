@@ -23,7 +23,11 @@
  *   containers around the page.
  * - On a compact (phone-sized) viewport bb turns the context menu off and
  *   drags by touch; here the context menu stays, since it holds Rename and the
- *   close actions, and touch does not drag.
+ *   close actions, and touch does not drag: the strip has no touch sensor
+ *   there (nor with one tab), where bb gives it one that still activates.
+ * - The active tab is brought back into sight when the order changes too, as
+ *   a move in another window can carry it away; bb's strip only reorders
+ *   from its own drags.
  */
 import {
   type CSSProperties,
@@ -75,12 +79,6 @@ const TAB_STRIP_SCROLL_BUTTON_CLASS =
 const EDGE_EPSILON_PX = 1;
 
 const TAB_STRIP_FADE_TONE: OverflowFadeTone = "sidebar";
-
-class InertTouchSensor extends TouchSensor {
-  static override setup(): () => void {
-    return () => {};
-  }
-}
 
 interface TabStripOverflowState {
   hasOverflow: boolean;
@@ -167,10 +165,12 @@ export function TabStrip({ activeTabId, tabs, onReorderTab }: TabStripProps) {
   const mouseSensor = useSensor(MouseSensor, {
     activationConstraint: { distance: TAB_DRAG_DISTANCE_PX },
   });
-  const touchSensor = useSensor(!dragDisabled && !isCompactViewport ? TouchSensor : InertTouchSensor, {
+  const touchSensor = useSensor(TouchSensor, {
     activationConstraint: { delay: 200, tolerance: 6 },
   });
-  const sensors = useSensors(mouseSensor, touchSensor);
+  // No touch sensor at all where touch must not drag: a sensor class that only skips `setup` (bb's
+  // `InertTouchSensor`) still activates on a 200 ms hold, before the context menu's long press.
+  const sensors = useSensors(mouseSensor, dragDisabled || isCompactViewport ? null : touchSensor);
   const tabIds = useMemo(() => tabs.map((tab) => tab.id), [tabs]);
   const draggingTab = draggingTabId === null ? null : (tabs.find((tab) => tab.id === draggingTabId) ?? null);
 
@@ -246,14 +246,18 @@ export function TabStrip({ activeTabId, tabs, onReorderTab }: TabStripProps) {
     void document.fonts?.ready?.then(() => measureCapacity());
   }, [measureCapacity]);
 
+  // Also when the order changes (a move in another window can carry the active tab out of sight), but
+  // not during a drag, which moves the tabs under the pointer.
+  const tabOrder = tabIds.join("\n");
+  const isDragging = draggingTabId !== null;
   useLayoutEffect(() => {
     const activeTabElement = activeTabRef.current;
     const viewport = viewportRef.current;
-    if (activeTabElement === null || viewport === null) {
+    if (activeTabElement === null || viewport === null || isDragging) {
       return;
     }
     revealWithinX(activeTabElement, viewport);
-  }, [activeTabId, overflow.hasOverflow]);
+  }, [activeTabId, overflow.hasOverflow, tabOrder, isDragging]);
 
   useLayoutEffect(() => {
     const focusedElement = document.activeElement;

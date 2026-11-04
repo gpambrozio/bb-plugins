@@ -63,6 +63,9 @@ const terminals = vi.hoisted(() => {
   };
 });
 
+/** Whether the window is phone-sized: what the stubbed `(max-width: 767px)` query answers. */
+const viewport = vi.hoisted(() => ({ compact: false }));
+
 const toasts = vi.hoisted(() => ({ success: [] as string[], error: [] as string[] }));
 vi.mock("sonner", () => ({
   toast: {
@@ -112,7 +115,9 @@ const { windowDeliveries } = await import("./chat-delivery");
 beforeAll(() => {
   // jsdom has neither; the compact-viewport hook and the terminal's fit ask them.
   window.matchMedia ??= ((query: string) => ({
-    matches: false,
+    get matches() {
+      return viewport.compact && query === "(max-width: 767px)";
+    },
     media: query,
     onchange: null,
     addEventListener: () => {},
@@ -129,6 +134,7 @@ beforeAll(() => {
 });
 
 beforeEach(() => {
+  viewport.compact = false;
   terminals.entries.clear();
   windowSelection.set(null);
   toasts.success.length = 0;
@@ -519,32 +525,59 @@ describe("the Terminals page", () => {
       );
     const shownTabs = () => tabButtons().map((element) => element.textContent);
 
-    /** Lays the strip's tabs out side by side, 100 px each, as a browser would; jsdom lays out nothing. */
-    function layOutTabs() {
+    /** The strip's scrolling viewport, around the row of tabs. */
+    const stripViewport = () => document.querySelector("[data-tab-strip-content]")!.parentElement as HTMLElement;
+
+    /**
+     * Lays the strip's tabs out side by side, 100 px each, in a viewport `width` wide, as a browser
+     * would; jsdom lays out nothing.
+     */
+    function layOutTabs(width = 1000) {
       const original = Element.prototype.getBoundingClientRect;
       const spy = vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+        if (this === stripViewport()) return new DOMRect(0, 0, width, 28);
         const id = this.getAttribute("data-strip-tab");
         if (id === null) return original.call(this);
         const index = Array.from(document.querySelectorAll("[data-strip-tab]")).indexOf(this);
         // Where it shows, moved by any transform the drag gave it; dnd-kit takes that back out.
         const shift = /translate3d\((-?[\d.]+)px/.exec((this as HTMLElement).style.transform)?.[1];
-        return new DOMRect(index * 100 + Number(shift ?? 0), 0, 100, 28);
+        return new DOMRect(index * 100 + Number(shift ?? 0) - stripViewport().scrollLeft, 0, 100, 28);
       });
       return () => spy.mockRestore();
+    }
+
+    /** Holds a finger on the tab past dnd-kit's 200 ms touch delay, slides it `dx` pixels and lifts it. */
+    async function touchDragTab(name: string, dx: number) {
+      const button = screen.getByRole("button", { name });
+      const at = (x: number) => ({ touches: [{ clientX: x, clientY: 10 }], changedTouches: [{ clientX: x, clientY: 10 }] });
+      fireEvent.touchStart(button, at(50));
+      await act(() => new Promise((resolve) => setTimeout(resolve, 260)));
+      fireEvent.touchMove(button, at(60));
+      await act(async () => undefined);
+      fireEvent.touchMove(button, at(50 + dx));
+      await act(async () => undefined);
+      fireEvent.touchEnd(button, { touches: [], changedTouches: [{ clientX: 50 + dx, clientY: 10 }] });
+      await afterDrop();
     }
 
     /** Drags the tab with the mouse by `dx` pixels and lets go, as dnd-kit's mouse sensor reads it. */
     async function dragTab(name: string, dx: number) {
       const button = screen.getByRole("button", { name });
       fireEvent.mouseDown(button, { button: 0, clientX: 50, clientY: 10 });
-      // Past bb's 8 px before a press becomes a drag, then on to the drop.
-      fireEvent.mouseMove(document, { clientX: 50 + Math.sign(dx) * 10, clientY: 10 });
+      // Past bb's 8 px before a press becomes a drag (when it goes that far), then on to the drop.
+      fireEvent.mouseMove(document, { clientX: 50 + Math.sign(dx) * Math.min(Math.abs(dx), 10), clientY: 10 });
       await act(async () => undefined);
       fireEvent.mouseMove(document, { clientX: 50 + dx, clientY: 10 });
       await act(async () => undefined);
       fireEvent.mouseUp(document, { clientX: 50 + dx, clientY: 10 });
-      await act(async () => undefined);
+      await afterDrop();
     }
+
+    /**
+     * Waits out the 50 ms after a drop in which dnd-kit swallows clicks on the whole document (so the
+     * drop is no click), which would otherwise swallow the next test's clicks.
+     */
+    const afterDrop = () => act(() => new Promise((resolve) => setTimeout(resolve, 60)));
 
     it("moves a dragged tab where it is dropped, for every window, and keeps each tab's number", async () => {
       const { state, rpc } = threeTabs();
@@ -562,6 +595,41 @@ describe("the Terminals page", () => {
       expect(shownTabs()).toEqual(["Mac mini 2", "MacBook Air", "Mac mini 1"]);
       // The drop is no click: the selection stays where it was.
       expect(screen.getByRole("button", { name: "Mac mini 1" }).getAttribute("aria-pressed")).toBe("true");
+    });
+
+    it("drags a held tab by touch in a wide window", async () => {
+      const { state, rpc } = threeTabs();
+      render(rpc);
+      await screen.findByRole("button", { name: "Mac mini 1" });
+      const restore = layOutTabs();
+      try {
+        await touchDragTab("Mac mini 1", 240);
+      } finally {
+        restore();
+      }
+      await waitFor(() => expect(state.moved).toEqual([["term_1", "term_3"]]));
+    });
+
+    it("does not drag by touch on a phone, where a held tab opens its menu instead", async () => {
+      viewport.compact = true;
+      const { state, rpc } = threeTabs();
+      render(rpc);
+      await screen.findByRole("button", { name: "Mac mini 1" });
+      const restore = layOutTabs();
+      try {
+        await touchDragTab("Mac mini 1", 240);
+      } finally {
+        restore();
+      }
+      expect(state.moved).toEqual([]);
+      expect(shownTabs()).toEqual(["Mac mini 1", "Mac mini 2", "MacBook Air"]);
+
+      // Radix opens a context menu after a 700 ms touch press.
+      const second = screen.getByRole("button", { name: "Mac mini 2" });
+      fireEvent.pointerDown(second, { pointerType: "touch", button: 0, clientX: 150, clientY: 10 });
+      expect(await screen.findByRole("menuitem", { name: "Rename" }, { timeout: 2_000 })).toBeTruthy();
+      fireEvent.pointerUp(second, { pointerType: "touch", button: 0 });
+      expect(state.moved).toEqual([]);
     });
 
     it("leaves the order alone for a press that does not move far enough to drag", async () => {
@@ -585,6 +653,25 @@ describe("the Terminals page", () => {
       state.tabs = [state.tabs[2]!, state.tabs[0]!, state.tabs[1]!];
       await view.emitRealtime("tabs-changed", {});
       await waitFor(() => expect(shownTabs()).toEqual(["MacBook Air", "Mac mini 1", "Mac mini 2"]));
+    });
+
+    it("keeps the shown tab in sight when another window moves it out of view", async () => {
+      const { state, rpc } = threeTabs();
+      windowSelection.set("term_1");
+      const view = render(rpc);
+      await screen.findByRole("button", { name: "Mac mini 1" });
+      // A strip 150 px wide showing the first tab and half the second.
+      const restore = layOutTabs(150);
+      try {
+        expect(stripViewport().scrollLeft).toBe(0);
+        state.tabs = [state.tabs[1]!, state.tabs[2]!, state.tabs[0]!];
+        await view.emitRealtime("tabs-changed", {});
+        await waitFor(() => expect(shownTabs()).toEqual(["Mac mini 2", "MacBook Air", "Mac mini 1"]));
+        // Now at 200–300 px: scrolled just far enough to show it whole.
+        await waitFor(() => expect(stripViewport().scrollLeft).toBe(150));
+      } finally {
+        restore();
+      }
     });
 
     it("puts a moved tab back where the server has it when the move fails", async () => {
