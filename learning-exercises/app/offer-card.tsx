@@ -25,6 +25,8 @@ const WHAT_HAPPENED: Record<Offer["trigger"], string> = {
   manual: "",
 };
 
+const BOX = "flex flex-col gap-2 text-sm";
+
 export function offerSentence(offer: Offer): string {
   return `${WHAT_HAPPENED[offer.trigger]} ${offer.topic}.`.trim();
 }
@@ -75,7 +77,10 @@ export function OfferCard(props: { offer: Offer; threadId: string; onScreen: boo
   if (offer.seenAt === null && claimed !== offer.id) return null;
 
   return (
-    <div className="flex flex-col gap-2 text-sm" data-testid={`offer-${props.where}`}>
+    // bb's "card" banner chrome draws only the border, so the banner pads itself as bb's own composer
+    // banners pad their rows (px-3, a little more vertically for two lines of buttons). In the tab the
+    // offer sits in the tab's own padding, with no border around it.
+    <div className={props.where === "banner" ? `${BOX} px-3 py-2.5` : BOX} data-testid={`offer-${props.where}`}>
       <div className="flex items-start gap-2">
         <Icon name="Brain" className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
         <p className="min-w-0 flex-1 leading-snug">

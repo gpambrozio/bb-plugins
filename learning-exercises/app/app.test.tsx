@@ -133,6 +133,12 @@ describe("the banner", () => {
     expect(screen.getByText(/It runs in a side thread/)).toBeTruthy();
   });
 
+  it("pads its content inside the banner's card chrome, which draws only the border", async () => {
+    render(handlers(() => view()));
+    const banner = await screen.findByTestId("offer-banner");
+    expect(banner.className.split(" ")).toEqual(expect.arrayContaining(["px-3", "py-2.5"]));
+  });
+
   it("draws an unseen offer only after the server grants its claim: two panes, delayed claims, one card (review pass 2)", async () => {
     const claims = new Map<string, (visible: boolean) => void>();
     const pane = (threadId: string, offerId: string) =>
