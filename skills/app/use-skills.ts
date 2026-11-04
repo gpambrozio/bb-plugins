@@ -2,8 +2,8 @@ import { useComposer, useRpc } from "@get-bb/plugin-sdk/app";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { RpcContract } from "../server";
-import type { SkillDocument, SkillList } from "../shared/skills";
-import { type SkillCommand, withSkillCommand, writesToThread } from "./insert";
+import { type SkillDocument, type SkillList, type SkillSubject, subjectKey } from "../shared/skills";
+import { type SkillCommand, withSkillCommand, writesToSubject } from "./insert";
 import { createAnswerChannel, type AnswerChannel } from "./answer-channel";
 
 export type Loaded<T> =
@@ -18,7 +18,9 @@ function messageOf(error: unknown): string {
 /**
  * One RPC answer for `key`, asked again by `reload`. A refetch keeps the last
  * answer on screen until the new one lands; a new key starts from loading, so
- * one thread's skills never show under another's.
+ * one subject's skills never show under another's, and an answer still on its
+ * way for the old key is dropped when it lands. A null key asks for nothing
+ * and stays loading.
  *
  * With a `channel`, every holder of the same key shares its answers, failures
  * included: one that mounts starts from the last answer another holder has,
@@ -26,22 +28,23 @@ function messageOf(error: unknown): string {
  * before one already out.
  */
 function useLoaded<T>(
-  key: string,
+  key: string | null,
   load: () => Promise<T>,
   channel?: AnswerChannel<Loaded<T>>,
 ): { state: Loaded<T>; reload: () => void } {
-  const initial = (): Loaded<T> => channel?.last(key) ?? { status: "loading" };
-  const [answer, setAnswer] = useState<{ key: string; state: Loaded<T> }>(() => ({ key, state: initial() }));
+  const initial = (): Loaded<T> => (key === null ? undefined : channel?.last(key)) ?? { status: "loading" };
+  const [answer, setAnswer] = useState<{ key: string | null; state: Loaded<T> }>(() => ({ key, state: initial() }));
   const [generation, setGeneration] = useState(0);
   const loadRef = useRef(load);
   loadRef.current = load;
 
   useEffect(() => {
-    if (channel === undefined) return;
+    if (channel === undefined || key === null) return;
     return channel.subscribe(key, (state) => setAnswer({ key, state }));
   }, [channel, key]);
 
   useEffect(() => {
+    if (key === null) return;
     let live = true;
     const ticket = channel?.ticket() ?? 0;
     // Through the channel, this holder hears its own answer as a subscriber,
@@ -67,33 +70,40 @@ function useLoaded<T>(
 const skillLists = createAnswerChannel<Loaded<SkillList>>();
 
 /**
- * Everything one thread's agent can run. The composer button, its popup and the
- * panel each hold one and share their answers, so the popup opens on the list
- * the button already counted while its own scan refreshes both.
+ * Everything one thread's agent can run — or, in the new-thread composer, the
+ * thread its selection would start; null while that is not known yet. The
+ * composer button, its popup and the panel each hold one and share their
+ * answers, so the popup opens on the list the button already counted while
+ * its own scan refreshes both.
  */
-export function useSkillList(threadId: string) {
+export function useSkillList(subject: SkillSubject | null) {
   const rpc = useRpc<RpcContract>();
-  return useLoaded<SkillList>(threadId, () => rpc.call("list", { threadId }), skillLists);
+  const load = () => {
+    // useLoaded asks for nothing under a null key, so this never runs then.
+    if (subject === null) throw new Error("There is no thread to list skills for yet.");
+    return rpc.call("list", subject);
+  };
+  return useLoaded<SkillList>(subject === null ? null : subjectKey(subject), load, skillLists);
 }
 
-export function useSkillDocument(threadId: string, skillId: string) {
+export function useSkillDocument(subject: SkillSubject, skillId: string) {
   const rpc = useRpc<RpcContract>();
-  return useLoaded<SkillDocument>(`${threadId}\n${skillId}`, () => rpc.call("read", { threadId, skillId }));
+  return useLoaded<SkillDocument>(`${subjectKey(subject)}\n${skillId}`, () => rpc.call("read", { ...subject, skillId }));
 }
 
 /**
  * **Add to chat**: puts the skill's command pill — the one bb's own `/` menu
- * inserts — at the start of the thread's composer draft without sending it,
- * then hands the screen back and focuses the composer. The draft's other
- * mentions and its attachments stay as they were. `useComposer()` writes to
- * the thread a slot is mounted for — the composer that opened the popup, the
+ * inserts — at the start of the composer draft without sending it, then
+ * hands the screen back and focuses the composer. The draft's other mentions
+ * and its attachments stay as they were. `useComposer()` writes to the
+ * composer a slot is mounted for — the composer that opened the popup, the
  * thread's draft for the side panel — so the button is offered only when that
- * is this thread.
+ * is the subject's.
  */
-export function useAddToChat(threadId: string, onAdded: () => void) {
+export function useAddToChat(subject: SkillSubject, onAdded: () => void) {
   const composer = useComposer();
   return {
-    canAdd: writesToThread(composer.scope, threadId),
+    canAdd: writesToSubject(composer.scope, subject),
     add(command: SkillCommand) {
       composer.replace((draft) => withSkillCommand(draft, command));
       onAdded();

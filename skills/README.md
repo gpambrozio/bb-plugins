@@ -28,6 +28,9 @@ bb plugin install 'git:github.com/gpambrozio/bb-plugins@>=0.3.0' --plugin skills
   list them above the message box, in the same pop-up bb uses for its `/` menu (a sheet in a narrow
   window): search, pick one to read it, and press **Add to chat**. **Open in panel** opens the full tab —
   on the skill you were reading, if one was open.
+- **In the new-thread message box** the same button lists what a thread started from it would get: the
+  skills of the project, agent and machine picked there, following each change of pick. There is no
+  thread panel yet, so it has no **Open in panel**.
 - **A keyboard shortcut**: *Skills: browse this thread's skills* opens and closes the same list from
   whichever message box has the cursor. It has no key until you give it one in bb's keyboard
   settings, and it is in the command palette.
@@ -65,7 +68,7 @@ what it deliberately does not do. Read it before changing discovery.
 | Path | Owns |
 | --- | --- |
 | `host.ts`, `host/` | Discovery on the thread's machine: the provider resolvers and `read`. |
-| `server.ts`, `server/` | Thread → workspace, bb's own skills, the reported list, the RPCs. |
+| `server.ts`, `server/` | Thread or new-thread selection → workspace, bb's own skills, the reported list, the RPCs. |
 | `shared/` | Shapes, frontmatter, and the two contracts. |
 | `app.tsx`, `app/` | The panel, the composer button and its pop-up, and the browser they share. |
 

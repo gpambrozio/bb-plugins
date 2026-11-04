@@ -9,6 +9,7 @@ import {
   reportedCommand,
   type SkillCommand,
   withSkillCommand,
+  writesToSubject,
   writesToThread,
 } from "./insert";
 
@@ -145,5 +146,21 @@ describe("writesToThread", () => {
     expect(writesToThread({ kind: "thread", threadId: "thr_b" }, "thr_a")).toBe(false);
     expect(writesToThread({ kind: "side-chat" }, "thr_a")).toBe(false);
     expect(writesToThread({ kind: "new-thread" }, "thr_a")).toBe(false);
+  });
+});
+
+describe("writesToSubject", () => {
+  const newThread = { projectId: "proj_a", providerId: "codex", hostId: null, environmentId: null };
+
+  it("takes a thread's composers for a thread", () => {
+    expect(writesToSubject({ kind: "thread", threadId: "thr_a" }, { threadId: "thr_a" })).toBe(true);
+    expect(writesToSubject({ kind: "new-thread", projectId: "proj_a" }, { threadId: "thr_a" })).toBe(false);
+  });
+
+  it("takes the new-thread composer with the same project selected for a new thread", () => {
+    expect(writesToSubject({ kind: "new-thread", projectId: "proj_a" }, { newThread })).toBe(true);
+    expect(writesToSubject({ kind: "new-thread", projectId: "proj_b" }, { newThread })).toBe(false);
+    expect(writesToSubject({ kind: "new-thread", projectId: null }, { newThread })).toBe(false);
+    expect(writesToSubject({ kind: "thread", threadId: "thr_a" }, { newThread })).toBe(false);
   });
 });

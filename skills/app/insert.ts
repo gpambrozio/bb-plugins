@@ -4,7 +4,7 @@
  */
 import type { ComposerDraftReplacement, ComposerMention } from "@get-bb/plugin-sdk/app";
 
-import type { SkillSourceKind } from "../shared/skills";
+import type { SkillSourceKind, SkillSubject } from "../shared/skills";
 
 /**
  * Everything bb needs to draw a skill or command as the pill its own `/` menu
@@ -88,4 +88,14 @@ export function withSkillCommand(draft: Draft, command: SkillCommand): ComposerD
  */
 export function writesToThread(scope: { kind: string; threadId?: string }, threadId: string): boolean {
   return (scope.kind === "thread" || scope.kind === "queued-message") && scope.threadId === threadId;
+}
+
+/**
+ * Whether the composer a component writes to is the subject's: a thread's own
+ * (above), or, for a new thread, the new-thread composer with the subject's
+ * project selected.
+ */
+export function writesToSubject(scope: { kind: string; threadId?: string; projectId?: string | null }, subject: SkillSubject): boolean {
+  if ("threadId" in subject) return writesToThread(scope, subject.threadId);
+  return scope.kind === "new-thread" && scope.projectId === subject.newThread.projectId;
 }

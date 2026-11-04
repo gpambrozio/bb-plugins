@@ -417,6 +417,16 @@ against 0.5.29 keeps working on bb 0.45. `replace` takes text and mentions toget
 mention ranges for you: shift them by what the edit added before them, as `skills/app/insert.ts`
 does. bb 0.44 has no `replace`, `insert` or `draft`.
 
+**The new-thread composer is a composer scope too.** `app.composer.customize({ scopes: ["thread",
+"new-thread"], … })` draws a contribution there (bb's own drafts and scheduled-send do). There,
+`useComposer().scope` is `{ kind: "new-thread", projectId }` (null only while bb resolves it) and
+`useComposer().selection` carries the picked `providerId` and `environment` (a `reuse` environment, or
+a `host` with its `hostId`), reactively: both are in SDK 0.6.15. With no environment yet, a project's
+directory is its checkout on that host (`projects.get` → `sources`), and `projects.commands` is routed
+by `hostId`, as bb's own `/` menu does there (`skills/app/subject.ts`, `skills/server/skills.ts`).
+`bb.sdk.skills.list` and `getContent` take no `hostId`: with `environmentId: null` bb 0.48.1 scans the
+primary host's checkout, whatever machine was picked (`skills/AGENTS.md`).
+
 **A composer that is not on screen cannot be written to.** `useComposers()` lists only the composers
 showing, and a nav panel shows none. To put text in a thread's draft from a page, hand it to an
 `app.slots.experimental_appOverlay` component, navigate (`toThread`, or `toCompose` with a
