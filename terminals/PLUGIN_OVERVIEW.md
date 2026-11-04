@@ -6,6 +6,9 @@ terminal app does.
 
 - Press + at the end of the tab strip to open a terminal. With one machine connected it opens there at
   once; with several, pick one from the list.
+- Tabs look and work like bb's own: drag one to move it, close it with its ×, a middle click or its
+  right-click menu (which can also close the others, or those to its right), and scroll them with the
+  arrows when they do not fit. The order is shared by every window and kept across reloads.
 - Tabs are named after their machine; rename one by double-clicking its title, from its right-click
   menu or with F2, and every window shows the new name. Closing a tab ends its shell.
 - Leave the page and come back to find every tab, the one you were on, and each terminal's scrollback

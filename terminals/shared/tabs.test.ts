@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { MAX_TAB_NAME, TabSchema, normalizeTabName, tabLabels, tabStatus } from "./tabs";
+import { MAX_TAB_NAME, TabSchema, moveTab, normalizeTabName, tabLabels, tabStatus } from "./tabs";
 
-const tab = (terminalId: string, hostId: string, hostName: string) => ({ terminalId, hostId, hostName });
+let clock = 0;
+/** A tab opened after every one made before it. */
+const tab = (terminalId: string, hostId: string, hostName: string) => ({ terminalId, hostId, hostName, createdAt: ++clock });
 
 describe("tabLabels", () => {
   it("names a machine's only tab after the machine", () => {
@@ -27,6 +29,21 @@ describe("tabLabels", () => {
     ]);
     expect(labels.get("t1")).toBe("logs");
     expect(labels.get("t2")).toBe("Mac mini 2");
+  });
+
+  it("keeps each tab's number wherever the tab sits in the strip", () => {
+    const first = tab("t1", "mini", "Mac mini");
+    const second = tab("t2", "mini", "Mac mini");
+    const labels = tabLabels([second, first]);
+    expect(labels.get("t2")).toBe("Mac mini 2");
+    expect(labels.get("t1")).toBe("Mac mini 1");
+  });
+
+  it("numbers tabs opened in the same millisecond alike in every order", () => {
+    const a = { ...tab("term_a", "mini", "Mac mini"), createdAt: 5 };
+    const b = { ...tab("term_b", "mini", "Mac mini"), createdAt: 5 };
+    expect([...tabLabels([a, b])].sort()).toEqual([...tabLabels([b, a])].sort());
+    expect(tabLabels([b, a]).get("term_a")).toBe("Mac mini 1");
   });
 
   it("falls back to Terminal for a machine with no name", () => {
@@ -67,5 +84,24 @@ describe("normalizeTabName", () => {
 describe("TabSchema", () => {
   it("reads a tab saved before tabs had names", () => {
     expect(TabSchema.parse({ terminalId: "t", hostId: "h", hostName: "Mac", createdAt: 1 }).name).toBeNull();
+  });
+});
+
+describe("moveTab", () => {
+  const list = ["a", "b", "c", "d"].map((terminalId) => ({ terminalId }));
+  const ids = (tabs: readonly { terminalId: string }[]) => tabs.map((entry) => entry.terminalId);
+
+  it("drops a tab moved right after the tab it was dropped on", () => {
+    expect(ids(moveTab(list, "a", "c"))).toEqual(["b", "c", "a", "d"]);
+  });
+
+  it("drops a tab moved left before the tab it was dropped on", () => {
+    expect(ids(moveTab(list, "d", "b"))).toEqual(["a", "d", "b", "c"]);
+  });
+
+  it("returns the same list when nothing moves", () => {
+    expect(moveTab(list, "b", "b")).toBe(list);
+    expect(moveTab(list, "gone", "b")).toBe(list);
+    expect(moveTab(list, "b", "gone")).toBe(list);
   });
 });

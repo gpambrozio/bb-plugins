@@ -182,6 +182,19 @@ describe("terminals server", () => {
     expect(await harness.callRpc("list", {})).toEqual({ tabs: [] });
   });
 
+  it("keeps the order the user dragged the tabs into, across a reload", async () => {
+    const { harness } = await start();
+    const opened: TabView[] = [];
+    for (const hostId of ["mini", "air", "mini"]) opened.push((await harness.callRpc("open", { hostId, cols: 80, rows: 24 })) as TabView);
+    const [first, second, third] = opened.map((tab) => tab.terminalId);
+    const signals = harness.realtimeSignals.length;
+    await harness.callRpc("move", { terminalId: third, toTerminalId: first });
+    expect(harness.realtimeSignals.slice(signals).map((entry) => entry.channel)).toEqual([TABS_CHANGED]);
+    expect((await tabs(harness)).map((tab) => tab.terminalId)).toEqual([third, first, second]);
+    const next = (await harness.reload(plugin)).harness;
+    expect((await tabs(next)).map((tab) => tab.terminalId)).toEqual([third, first, second]);
+  });
+
   it("drops the tabs of ended shells when it loads again", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     const { harness, sessions } = await start();

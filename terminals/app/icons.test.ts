@@ -13,8 +13,8 @@ const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as
 
 const sources = [
   "app.tsx",
-  ...readdirSync(join(root, "app"))
-    .filter((name) => /\.tsx?$/.test(name) && !name.includes(".test."))
+  ...readdirSync(join(root, "app"), { recursive: true, encoding: "utf8" })
+    .filter((name) => /\.tsx?$/.test(name) && !name.includes(".test.") && !name.endsWith(".d.ts"))
     .map((name) => join("app", name)),
 ];
 
@@ -34,7 +34,7 @@ describe("icon names", () => {
   ];
 
   it("finds the names it checks", () => {
-    expect(used).toEqual(expect.arrayContaining(["Terminal", "Plus", "Spinner", "X", "Laptop"]));
+    expect(used).toEqual(expect.arrayContaining(["Terminal", "Plus", "Spinner", "X", "Laptop", "ChevronLeft", "ChevronRight"]));
   });
 
   it.each(used)("%s is a bb built-in", (name) => {

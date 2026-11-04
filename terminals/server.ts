@@ -89,6 +89,10 @@ export default async function plugin(bb: BbPluginApi) {
       await service.rename(terminalId, name);
       return {};
     },
+    move: async ({ terminalId, toTerminalId }) => {
+      await service.move(terminalId, toTerminalId);
+      return {};
+    },
     close: async ({ terminalId }) => {
       await service.close(terminalId);
       wakeSettler();
