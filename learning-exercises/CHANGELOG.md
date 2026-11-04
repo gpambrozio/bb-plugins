@@ -1,0 +1,19 @@
+# Changelog
+
+## 0.1.0
+
+First release.
+
+- After a commit, new source files, a schema change or a merged pull request in one of your threads,
+  an offer appears above the composer: Start a 10–15 minute exercise on it, ask again Later, or turn
+  offers off for the thread or the project. Offers are decided from bb's own data, not by an AI, and
+  stop at 3 a day, 2 hours apart, 2 sessions per thread.
+- Start opens the exercise in a side thread forked from your work, so the work thread is left as it
+  was. Agents that cannot fork run it in the same thread.
+- Each question is a card: write your answer, say how sure you are, or ask for a more specific
+  question, skip it or pause. Your answers stay in the transcript in your own words.
+- The Learning tab in a thread's side panel starts an exercise on the thread's work, shows the
+  session in progress with Pause, Resume and Finish, and lists the project's paused and earlier
+  sessions with your answers; each can be deleted.
+- No skill, tool or instruction from this plugin reaches an agent until you start a session.
+- Exercises adapted from Dr. Cat Hicks's Learning Opportunities (CC BY 4.0); not affiliated.

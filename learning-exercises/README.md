@@ -1,142 +1,81 @@
-# bb-plugin-learning-exercises
+# Learning Exercises
 
-A BB plugin that keeps a todo list. It shows every surface a plugin can own:
+A [bb](https://getbb.app) plugin that offers you a short exercise on work you just did with an agent —
+after a commit, new files, a schema change or a merged pull request — and runs it in a side thread
+with a real answer card, so you keep learning the code your agents write.
 
-- `server.ts` — the backend: a todo store in `bb.storage.kv`, RPC methods
-  for the page, a `bb learning-exercises` CLI command, a setting, and a realtime signal
-  that keeps every open page current.
-- `app.tsx` — the frontend: an **Example todos** page in the left sidebar
-  (`app.slots.navPanel`) built from the vendored components.
-- `skills/example-todos/SKILL.md` — a skill that tells agents how to keep the list
-  with `bb learning-exercises`. BB imports it into agent threads automatically.
-- `PLUGIN_OVERVIEW.md` — the store listing text: a longer version of
-  `bb.description` that the plugin detail page shows under it. See
-  [Store listing](#store-listing).
+The exercises are adapted from Dr. Cat Hicks's
+[Learning Opportunities](https://github.com/DrCatHicks/learning-opportunities) (CC BY 4.0). This plugin
+is not affiliated with or endorsed by the author; see [NOTICE.md](NOTICE.md).
 
-Try it: install the plugin, open **Example todos** in the sidebar, then run
-`bb learning-exercises add "Ship it"` in a terminal. The page updates at once.
+## What it does
 
-## UI components
-
-`components/ui/` is vendored source you own (the shadcn model): edit the
-files freely — they never update out from under you. Add more from the BB
-component registry (the full shadcn set, version-matched to your BB install
-via the pinned ref in `components.json`):
-
-```
-npx shadcn add @bb/select @bb/table
-```
-
-Run `npm install` once before `bb plugin build` — the vendored components'
-npm deps bundle into your dist. React, and BB-shimmed packages like the
-radix portal primitives and `sonner` (`import { toast } from "sonner"`
-reaches BB's own toaster), are provided by the BB app at runtime and never
-bundled. Every shimmed package is declared in `devDependencies` at the
-host's version so those imports typecheck; keep them there (never in
-`dependencies`, which would bundle a second copy), and `bb plugin types`
-repins declared packages alongside the SDK; unused packages may be removed. Ship `dist/` (npm tarball or committed for
-git installs) so people installing your plugin never need npm.
-
-## Manifest
-
-`package.json` is the plugin manifest. Notable fields:
-
-- `bb.server` — backend entry (required).
-- `bb.app` — frontend entry. Delete it, `app.tsx`, `components/`,
-  `hooks/`, and `lib/` for a headless plugin.
-- `bb.skills` — skill roots; omitted here, so BB reads `skills/`. Each
-  directory with a `SKILL.md` is one skill, named after the directory.
-- `bb.name` and `bb.description` — required human-facing identity.
-- `bb.branding` — required; declare `icon` as a BB icon name or a
-  plugin-relative compact SVG, or declare `logo.light` (with optional
-  `logo.dark`). Logo assets must be relative `.svg`, `.png`, or
-  `.webp` files.
-- `engines.bb` — supported bb app version range.
-- `engines.bbPluginSdk` — the lowest plugin SDK you need (scaffold:
-  `>=0.6.104`). BB reads this as a floor, not a ceiling: a later
-  SDK in the same major still loads your plugin.
-- `dependencies` — every package your source imports that BB does not provide.
-  `bb plugin build` inlines them into `dist/`, and git installs resolve this
-  list alone, so a build-required package here rather than in
-  `devDependencies` is what keeps your plugin installable. `devDependencies`
-  is for types and tooling only (BB shims React, the portal primitives, and
-  `@get-bb/plugin-sdk` at runtime — never bundle them).
-
-Run `bb plugin build` before publishing git/npm installs. It writes
-`dist/server.js` + `server.meta.json` and `app.js` / `app.css` /
-`app.meta.json`. Each `*.meta.json` stamps SDK major/version,
-`artifactFormatVersion`, `pluginId`, `pluginVersion`, and
-`builtWith` so managed installs can verify the artifacts. `app.meta.json`
-also lists `runtimeSlots`, the shimmed host modules the bundle imports.
-
-## Store listing
-
-Two texts describe the plugin in the store. `bb.description` in package.json
-is the one-sentence hook on every browse card and the lead paragraph on the
-detail page; keep it under about 140 characters. `PLUGIN_OVERVIEW.md` is the
-same claim at length, shown in an Overview section under that paragraph.
-Rewrite the scaffold's copy for your plugin, and update it whenever
-`bb.description` changes, so the two never disagree.
-
-The submission to the public BB Community marketplace requires the file. Keep
-it under 4000 characters (aim for 700 to 1800) and use headings, paragraphs,
-emphasis, code, blockquotes, lists, thematic breaks, and absolute https links
-only — raw HTML, images, tables, footnotes, and task lists are rejected. Do
-not open with a `#` title or repeat `bb.description` verbatim; the page
-shows both directly above.
+- **Offers at the right moment, and only then.** When a turn in one of your threads ends after a
+  commit, new source files, a schema or interface change, or when the thread's pull request merges,
+  a one-line offer appears above the composer: *"Learning: you just committed "Retry turns after a
+  rate limit". Want a 10–15 minute exercise on it?"* with **Start**, **Later** and **Not in this
+  thread**. The decision is made from bb's own data (HEAD, the turn's file changes, PR Status), never
+  by a model, so offers cost no tokens.
+- **Nothing reaches an agent until you say Start.** The plugin ships no skill and adds no
+  instructions or tools to your threads. Only a session you start gets the exercise instructions.
+- **Sessions run beside your work.** Start forks the thread: the session's agent sees what was just
+  built, and the work thread is left alone. A provider that cannot fork runs it in the thread itself
+  (or choose **Run it in this thread** under More).
+- **A real pause.** Each question is a card with your answer, how sure you are (1–5), **Make it more
+  specific**, **Skip** and **Pause session**. The agent's turn is over while the card is open, so
+  there are no hints after the question. Your answer and confidence stay in the transcript as your
+  own words.
+- **Caps that hold.** At most 2 finished sessions per thread, 3 offers you see per day, 2 hours between
+  them; **Later** snoozes the thread for 45 minutes and 3 turns; three Laters in a row keep only
+  commit and pull-request offers for a week. Offers nobody sees expire and never count.
+- **The Learning tab** in each thread's side panel shows this thread's offer or session (Pause, Resume,
+  Finish), starts an exercise on a topic taken from the thread (its last commit, its new files, its
+  title) or one you type, and lists the project's paused and previous sessions with your answers.
+- **Pause and come back.** A paused session — by you, by a 30-minute timeout, or by a bb restart —
+  resumes in its thread, with the open question shown again.
 
 ## Install
 
-From this directory (`bb plugin new` already ran the install; a fresh clone
-needs it):
-
-```
-npm install
-bb plugin install .
+```bash
+bb plugin install 'git:github.com/gpambrozio/bb-plugins@>=0.1.0' --plugin learning-exercises --tag-prefix learning-exercises/
 ```
 
-After editing sources, reload:
+Needs bb 0.48 or later, with bb's bundled **Git** plugin on (it reads commits) and, for pull-request
+offers, **GitHub PR Status**.
 
-```
-bb plugin reload learning-exercises
-```
+## Settings
 
-Or let `bb plugin dev` rebuild and reload on every save.
+Settings → Plugins → Learning Exercises:
 
-## Configure
+| Setting | Default | |
+| --- | --- | --- |
+| Offer exercises | On | Off: no offers; the Learning tab still starts sessions |
+| After a commit / new files / a schema change / a pull request merges | On | Each trigger on its own |
+| After a working streak | Off | After *Turns in a streak* turns with file changes |
+| Sessions per thread, Offers per day, Hours between offers | 2, 3, 2 | The caps |
+| Questions per session | 8 | The card refuses more |
+| Where a session runs | A side thread | Or the work thread |
+| About you | — | Your experience and goals; every session reads it |
+| Files that are not new work | lockfiles, docs, generated, vendored, snapshots | gitignore patterns |
+| Schema and interface files | `migrations/`, `*.sql`, `schema.prisma`, `*.proto`, `*.graphql`, `openapi.*` | gitignore patterns |
 
-```
-bb plugin config learning-exercises
-bb plugin config learning-exercises set showDone false
-bb plugin reload learning-exercises
-```
+The thread menu has **Learning offers: On / Off** per thread. Projects marked **Never for this
+project** are listed under the settings, each with Undo.
 
-## Types & API reference
+## Good to know
 
-The plugin API ships as the npm package `@get-bb/plugin-sdk`, pinned to an
-exact version in `devDependencies` (`0.6.104` — the SDK of the BB
-that scaffolded this plugin). After `npm install`, the full surface is on disk
-at:
+- Offers appear only in your own top-level threads: never in child threads (crew, sub-agents),
+  automations, other plugins' threads or hidden workers.
+- Each question card counts as "waiting for you" like any question an agent asks, so push
+  notifications and Herald announce it.
+- While a card is open it takes the composer's place in that thread: answer, skip or pause it.
+- In a thread run "here", the session's instructions stay in that thread's history (even after a
+  compaction) until the session finishes; the side-thread default avoids that.
+- Your answers are stored on this machine only, in the plugin's database. Delete a session from the
+  Learning tab to remove them.
+- Commits made in the same workspace by another thread at the same time are not offered, since the
+  plugin cannot tell whose they are.
 
-```
-node_modules/@get-bb/plugin-sdk/bundled-types/bb-plugin-sdk.d.ts      # backend
-node_modules/@get-bb/plugin-sdk/bundled-types/bb-plugin-sdk-app.d.ts  # frontend
-```
+## How it works
 
-Your editor and `tsc` resolve `@get-bb/plugin-sdk` there through ordinary node
-resolution — no path mapping. These are readable declarations: open them for an
-exact signature.
-
-The SDK surface grows with every BB release, so the pin has to track the BB you
-actually run:
-
-```
-bb plugin types          # sync this plugin's SDK surface to the running BB
-bb plugin types --check  # CI: fail when it does not match
-```
-
-Ask BB to write plugins for you: the `bb-plugin-authoring` skill documents
-the whole surface with examples.
-
-Confused by the API, or need something the types don't explain? Clone the BB
-repo and read the source: <https://github.com/get-bb/bb>.
+See [AGENTS.md](AGENTS.md).

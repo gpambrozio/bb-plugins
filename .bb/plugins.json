@@ -11,6 +11,7 @@
     { "name": "skills", "source": "./skills" },
     { "name": "screen-sharing", "source": "./screen-sharing" },
     { "name": "diff-review", "source": "./diff-review" },
-    { "name": "terminals", "source": "./terminals" }
+    { "name": "terminals", "source": "./terminals" },
+    { "name": "learning-exercises", "source": "./learning-exercises" }
   ]
 }

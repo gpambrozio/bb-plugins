@@ -32,16 +32,19 @@
     "components/",
     "lib/",
     "hooks/",
+    "content/",
+    "scripts/",
     "dist/",
     "PLUGIN_OVERVIEW.md",
     "CHANGELOG.md",
     "NOTICE.md",
     "!**/*.test.ts",
-    "!**/*.test.tsx"
+    "!**/*.test.tsx",
+    "!server/testing/"
   ],
   "bb": {
     "name": "Learning Exercises",
-    "description": "Offer a short learning exercise on work you just did.",
+    "description": "Get a short exercise on work you just did with an agent, offered after commits and run in a side thread with an answer card.",
     "branding": {
       "icon": "Brain"
     },

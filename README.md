@@ -3,7 +3,7 @@
 Plugins for [bb](https://getbb.app). One folder per plugin, each self-contained.
 
 Most are ports of the plugins in [`gpambrozio/paseo-plugins`](https://github.com/gpambrozio/paseo-plugins),
-each tracked by its own issue; `screen-sharing`, `diff-review` and `terminals` are new here.
+each tracked by its own issue; `screen-sharing`, `diff-review`, `terminals` and `learning-exercises` are new here.
 
 | Plugin | What it does | Status |
 | --- | --- | --- |
@@ -16,6 +16,7 @@ each tracked by its own issue; `screen-sharing`, `diff-review` and `terminals` a
 | [`screen-sharing`](screen-sharing) | See and control the bb server Mac's screen from inside bb, at home or through getbb.app. | New — 0.1.0 |
 | [`diff-review`](diff-review) | Comment on a thread's changes line by line and send the comments to its agent, which answers each one. | New — 0.1.0 |
 | [`terminals`](terminals) | Tabs of shells on any machine connected to bb, each in its home folder, with no project needed. | New — 0.1.0 |
+| [`learning-exercises`](learning-exercises) | Offers a short exercise on work you just did, and runs it in a side thread with an answer card. Adapted from Dr. Cat Hicks's Learning Opportunities (CC BY 4.0). | New — 0.1.0 |
 
 ## Install
 
@@ -48,4 +49,5 @@ See [`AGENTS.md`](AGENTS.md) for how the plugins are built and released.
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE), except text adapted from other works, which keeps its licence; see each plugin's
+notices (`learning-exercises/NOTICE.md`: CC BY 4.0).
