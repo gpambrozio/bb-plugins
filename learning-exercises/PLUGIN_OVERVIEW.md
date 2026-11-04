@@ -31,7 +31,7 @@ bar, to start an exercise on that thread's work by hand.
 
 ## Requirements
 
-- bb 0.48 or later.
+- bb 0.48.1 or later.
 - bb's bundled Git plugin on, to see commits; GitHub PR Status for pull request offers.
 - Your answers are kept on this machine, in the plugin's own database, and can be deleted per session.
 

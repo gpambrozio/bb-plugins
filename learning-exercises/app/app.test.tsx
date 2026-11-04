@@ -4,7 +4,7 @@
  * the card's submissions, the Learning tab, and the thread menu's choice.
  */
 import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
-import type { MarkdownProps } from "@get-bb/plugin-sdk/app";
+import { experimental_FileLink as FileLink, type MarkdownProps } from "@get-bb/plugin-sdk/app";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -12,7 +12,7 @@ import { rpcContract, type RpcContract } from "../shared/contract";
 import type { CardPayload, Offer, Session, ThreadView } from "../shared/types";
 import { OfferBanner } from "./banner";
 import { ExerciseCard } from "./card";
-import { looksLikeFileRef, markdownDocument, parseFileRef } from "./file-refs";
+import { FileRef, looksLikeFileRef, markdownDocument, parseFileRef, workspacePath } from "./file-refs";
 import { SettledRow } from "./settled-row";
 import { LEARNING_FIXED_TAB, LEARNING_ON_DEMAND_TAB, LearningOnDemandTab, LearningTab, useLearningOnDemandVisible, useLearningTabVisible, useOneLearningTab } from "./tab";
 import { offersItem } from "./thread-action";
@@ -462,8 +462,48 @@ describe("file references", () => {
     ["git log -1", false],
     ["https://example.com/a.ts", false],
     ["/abs/path.ts", false],
+    ["../outside.py", false],
   ])("treats %s as a file reference: %s", (text, expected) => {
     expect(looksLikeFileRef(text)).toBe(expected);
+  });
+
+  it.each([
+    ["./src/a.ts", "src/a.ts"],
+    ["src/./a.ts", "src/a.ts"],
+    ["src/../calc.py", "calc.py"],
+    ["src//a.ts", "src/a.ts"],
+    ["../outside.py", null],
+    ["src/../../outside.py", null],
+    ["/abs/a.ts", null],
+    ["~/a.ts", null],
+    [".", null],
+  ])("normalizes %s to a workspace path: %s", (path, expected) => {
+    expect(workspacePath(path)).toBe(expected);
+  });
+
+  it("the harness's FileLink runs the SDK's file-target validator, which leaves a raw ./ path inert", () => {
+    const slot = renderSlot({ component: () => <FileLink target={{ kind: "workspace", environmentId: "env_1", path: "./src/a.ts" }}>raw</FileLink> }, {});
+    const raw = screen.getByText("raw");
+    expect(raw.getAttribute("href")).toBeNull();
+    fireEvent.click(raw);
+    expect(slot.navigateCalls).toEqual([]);
+  });
+
+  it("./ references open through the real FileLink at their line, keep their text as the label, and escapes stay code", () => {
+    const references = ["./src/a.ts:42", "./Makefile", "src/../calc.py:3-5", "../outside.py:1"];
+    const slot = renderSlot({ component: () => <>{references.map((reference) => <FileRef key={reference} reference={reference} environmentId="env_1" />)}</> }, {});
+    for (const name of references.slice(0, 3)) {
+      const link = screen.getByRole("link", { name });
+      expect(link.getAttribute("href")).not.toBeNull();
+      fireEvent.click(link);
+    }
+    expect(screen.queryByRole("link", { name: "../outside.py:1" })).toBeNull();
+    expect(screen.getByText("../outside.py:1").tagName).toBe("CODE");
+    expect(slot.navigateCalls).toEqual([
+      { method: "experimental_openFilePreview", options: { target: { kind: "workspace", environmentId: "env_1", path: "src/a.ts" }, location: { kind: "line", line: 42, column: null } } },
+      { method: "experimental_openFilePreview", options: { target: { kind: "workspace", environmentId: "env_1", path: "Makefile" }, location: null } },
+      { method: "experimental_openFilePreview", options: { target: { kind: "workspace", environmentId: "env_1", path: "calc.py" }, location: { kind: "range", startLine: 3, endLine: 5 } } },
+    ]);
   });
 
   it("resolves Markdown against a file at the workspace root, and leaves bb's own routing without a workspace", () => {

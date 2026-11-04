@@ -65,10 +65,30 @@ export function parseFileRef(ref: string): { path: string; location: Experimenta
   return location === null ? { path: text, location: null } : { path: text.slice(0, match.index), location };
 }
 
-/** One of a card's `files`, as a link that opens it (at its line or range) in the session's workspace. */
+/**
+ * A path as bb's workspace file target takes it: relative, with no `.` or `..` segments (bb leaves a
+ * target with them inert). `./src/a.ts` and `src/../src/a.ts` become `src/a.ts`; null for an absolute or
+ * home path, an empty one, and one that climbs out of the workspace.
+ */
+export function workspacePath(path: string): string | null {
+  if (path.startsWith("/") || path.startsWith("~") || path.includes("\\")) return null;
+  const segments: string[] = [];
+  for (const segment of path.split("/")) {
+    if (segment === "" || segment === ".") continue;
+    if (segment !== "..") segments.push(segment);
+    else if (segments.pop() === undefined) return null;
+  }
+  return segments.length === 0 ? null : segments.join("/");
+}
+
+/**
+ * One file reference (a card's `files` entry, or a path in a topic) as a link that opens it, at its line
+ * or range, in the workspace; the reference as written stays the label. Plain code where it cannot open.
+ */
 export function FileRef(props: { reference: string; environmentId: string | null }) {
-  const { path, location } = parseFileRef(props.reference);
-  if (props.environmentId === null || path === "") return <code>{props.reference}</code>;
+  const { path: written, location } = parseFileRef(props.reference);
+  const path = workspacePath(written);
+  if (props.environmentId === null || path === null) return <code>{props.reference}</code>;
   return (
     <FileLink target={{ kind: "workspace", environmentId: props.environmentId, path }} location={location} className="font-mono underline-offset-2 hover:underline">
       {props.reference}
@@ -78,13 +98,13 @@ export function FileRef(props: { reference: string; environmentId: string | null
 
 /**
  * Whether bb would link this inline code in a chat message: no spaces, not a URL, and either a path
- * that starts with `./` or `../`, a name with an extension, or a line suffix. Absolute paths are left
- * as code here, since a workspace link takes a path inside the workspace.
+ * that starts with `./` or `../`, a name with an extension, or a line suffix. Absolute paths and paths
+ * that climb out of the workspace are left as code, since a workspace link takes a path inside it.
  */
 export function looksLikeFileRef(text: string): boolean {
-  if (text === "" || /\s/u.test(text) || text.includes("://") || text.startsWith("/") || text.startsWith("~")) return false;
+  if (text === "" || /\s/u.test(text) || text.includes("://")) return false;
   const { path, location } = parseFileRef(text);
-  if (path === "" || path.endsWith("/")) return false;
+  if (path.endsWith("/") || workspacePath(path) === null) return false;
   return location !== null || /^\.{1,2}\//u.test(path) || /\.[\p{L}\p{N}_-]+$/u.test(path);
 }
 

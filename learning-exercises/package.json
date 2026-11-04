@@ -14,8 +14,8 @@
   },
   "type": "module",
   "engines": {
-    "bb": ">=0.48",
-    "bbPluginSdk": ">=0.6.88"
+    "bb": ">=0.48.1",
+    "bbPluginSdk": ">=0.6.104"
   },
   "scripts": {
     "test": "vitest run",

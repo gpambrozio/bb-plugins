@@ -42,7 +42,7 @@ is not affiliated with or endorsed by the author; see [NOTICE.md](NOTICE.md).
 bb plugin install 'git:github.com/gpambrozio/bb-plugins@>=0.1.0' --plugin learning-exercises --tag-prefix learning-exercises/
 ```
 
-Needs bb 0.48 or later, with bb's bundled **Git** plugin on (it reads commits) and, for pull-request
+Needs bb 0.48.1 or later, with bb's bundled **Git** plugin on (it reads commits) and, for pull-request
 offers, **GitHub PR Status**.
 
 ## Settings

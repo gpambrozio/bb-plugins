@@ -93,12 +93,19 @@ tab does not, so `FileMarkdown` passes `experimental_document` (a file at the wo
 puts the workspace (environment and absolute folder, `workspaceOf`) on the card, its settled row, the
 thread view and a session's detail; history falls back to the source thread once the session thread's
 environment is destroyed. A card's `files` go through `experimental_FileLink` with the suffix parsed into
-`location`. Offer and session topics quote commit subjects verbatim, so they are not Markdown: only their
+`location`, and the path normalized first (`workspacePath`): bb leaves a workspace target with `.` or
+`..` segments inert, so `./src/a.ts` becomes `src/a.ts` and a path climbing out of the workspace stays
+code. Offer and session topics quote commit subjects verbatim, so they are not Markdown: only their
 backticked paths become links (`TextWithFileRefs`). Topic choices and session titles sit inside a radio
 label or a toggle button, where a link would fight the click, and stay plain text. The brief, the tool
 and the CLI tell the agent to write references that way.
 
 ## What bb 0.48.1 does that this relies on (the spike's evidence)
+
+- **The minimum is bb 0.48.1 (SDK 0.6.104).** bb 0.48.0 ships SDK 0.6.94 (0.6.88 was never published):
+  it has `experimental_FileLink` with `location` and `Markdown`'s `experimental_document`, but not
+  `experimental_usePanelTabs` or the panel controller's `getTabs` / `closeTab`, which
+  `useOneLearningTab` calls from the composer banner.
 
 - **Codex forks get no plugin tools** (spike S2): `configure` runs and returns them, but a Codex fork's
   agent has none, even after a session restart. A spawned Codex thread does get them. So the brief in
