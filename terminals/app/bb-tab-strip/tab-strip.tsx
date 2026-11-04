@@ -23,8 +23,8 @@
  *   containers around the page.
  * - On a compact (phone-sized) viewport bb turns the context menu off and
  *   drags by touch; here the context menu stays, since it holds Rename and the
- *   close actions, and touch does not drag: the strip has no touch sensor
- *   there (nor with one tab), where bb gives it one that still activates.
+ *   close actions, and touch does not drag: the touch sensor there (and with
+ *   one tab) has no activators, where bb's stand-in still activates.
  * - The active tab is brought back into sight when the order changes too, as
  *   a move in another window can carry it away; bb's strip only reorders
  *   from its own drags.
@@ -52,6 +52,9 @@ import {
   useSensors,
   type DragEndEvent,
   type DragStartEvent,
+  type Sensor,
+  type SensorInstance,
+  type TouchSensorOptions,
 } from "@dnd-kit/core";
 import { horizontalListSortingStrategy, SortableContext, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -79,6 +82,20 @@ const TAB_STRIP_SCROLL_BUTTON_CLASS =
 const EDGE_EPSILON_PX = 1;
 
 const TAB_STRIP_FADE_TONE: OverflowFadeTone = "sidebar";
+
+/**
+ * The touch sensor's stand-in where touch must not drag: no activators, so nothing starts a drag, and
+ * no `setup`. It keeps the sensor list one length, as dnd-kit runs `setup` and its teardown from an
+ * effect keyed on the list's entries (6.3.1, `useSensorSetup`): a list that grew from one sensor to
+ * two would never set the touch sensor up. bb's `InertTouchSensor` only skips `setup`, so it still
+ * activates on a 200 ms hold.
+ */
+class InertTouchSensor implements SensorInstance {
+  static activators: Sensor<TouchSensorOptions>["activators"] = [];
+  autoScrollEnabled = false;
+}
+
+const TOUCH_SENSOR_OPTIONS: TouchSensorOptions = { activationConstraint: { delay: 200, tolerance: 6 } };
 
 interface TabStripOverflowState {
   hasOverflow: boolean;
@@ -165,12 +182,10 @@ export function TabStrip({ activeTabId, tabs, onReorderTab }: TabStripProps) {
   const mouseSensor = useSensor(MouseSensor, {
     activationConstraint: { distance: TAB_DRAG_DISTANCE_PX },
   });
-  const touchSensor = useSensor(TouchSensor, {
-    activationConstraint: { delay: 200, tolerance: 6 },
-  });
-  // No touch sensor at all where touch must not drag: a sensor class that only skips `setup` (bb's
-  // `InertTouchSensor`) still activates on a 200 ms hold, before the context menu's long press.
-  const sensors = useSensors(mouseSensor, dragDisabled || isCompactViewport ? null : touchSensor);
+  // Touch drags only in a wide window with tabs to move; a phone's long press opens the tab's menu.
+  const touchDrags = !dragDisabled && !isCompactViewport;
+  const touchSensor = useSensor(touchDrags ? TouchSensor : InertTouchSensor, TOUCH_SENSOR_OPTIONS);
+  const sensors = useSensors(mouseSensor, touchSensor);
   const tabIds = useMemo(() => tabs.map((tab) => tab.id), [tabs]);
   const draggingTab = draggingTabId === null ? null : (tabs.find((tab) => tab.id === draggingTabId) ?? null);
 

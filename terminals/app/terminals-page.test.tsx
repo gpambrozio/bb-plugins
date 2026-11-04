@@ -8,6 +8,7 @@
 import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import type { PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 import { renderSlot, type PluginRpcTestHandlers, type RenderSlotOptions } from "@get-bb/plugin-sdk/testing/app";
+import { TouchSensor } from "@dnd-kit/core";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { RpcContract } from "../shared/contract";
@@ -64,7 +65,18 @@ const terminals = vi.hoisted(() => {
 });
 
 /** Whether the window is phone-sized: what the stubbed `(max-width: 767px)` query answers. */
-const viewport = vi.hoisted(() => ({ compact: false }));
+const viewport = vi.hoisted(() => {
+  const listeners = new Set<() => void>();
+  return {
+    compact: false,
+    listeners,
+    /** Resizes the window across the phone breakpoint, telling the query's listeners. */
+    setCompact(compact: boolean) {
+      this.compact = compact;
+      for (const listener of listeners) listener();
+    },
+  };
+});
 
 const toasts = vi.hoisted(() => ({ success: [] as string[], error: [] as string[] }));
 vi.mock("sonner", () => ({
@@ -120,8 +132,8 @@ beforeAll(() => {
     },
     media: query,
     onchange: null,
-    addEventListener: () => {},
-    removeEventListener: () => {},
+    addEventListener: (_type: string, listener: () => void) => void viewport.listeners.add(listener),
+    removeEventListener: (_type: string, listener: () => void) => void viewport.listeners.delete(listener),
     addListener: () => {},
     removeListener: () => {},
     dispatchEvent: () => false,
@@ -630,6 +642,76 @@ describe("the Terminals page", () => {
       expect(await screen.findByRole("menuitem", { name: "Rename" }, { timeout: 2_000 })).toBeTruthy();
       fireEvent.pointerUp(second, { pointerType: "touch", button: 0 });
       expect(state.moved).toEqual([]);
+    });
+
+    /** Counts dnd-kit's touch sensor setups (its iOS Safari `touchmove` listener) and their teardowns. */
+    function countTouchSetups() {
+      const counts = { setups: 0, teardowns: 0 };
+      const original = TouchSensor.setup.bind(TouchSensor);
+      const spy = vi.spyOn(TouchSensor, "setup").mockImplementation(() => {
+        counts.setups += 1;
+        const teardown = original();
+        return () => {
+          counts.teardowns += 1;
+          teardown();
+        };
+      });
+      return { counts, restore: () => spy.mockRestore() };
+    }
+
+    it("sets touch dragging up when a second tab opens, and drags by touch then", async () => {
+      const touch = countTouchSetups();
+      try {
+        const { state, rpc } = server([{ id: "mini", name: "Mac mini" }], [tab("term_1", "mini", "Mac mini")]);
+        const view = render(rpc);
+        await screen.findByRole("button", { name: "Mac mini" });
+        expect(touch.counts.setups).toBe(0);
+        state.tabs = [...state.tabs, tab("term_2", "mini", "Mac mini")];
+        await view.emitRealtime("tabs-changed", {});
+        await screen.findByRole("button", { name: "Mac mini 2" });
+        await waitFor(() => expect(touch.counts.setups).toBe(1));
+        expect(touch.counts.teardowns).toBe(0);
+        const restore = layOutTabs();
+        try {
+          await touchDragTab("Mac mini 1", 140);
+        } finally {
+          restore();
+        }
+        await waitFor(() => expect(state.moved).toEqual([["term_1", "term_2"]]));
+        // Back to one tab: nothing to drag, so the listener goes.
+        state.tabs = [state.tabs[0]!];
+        await view.emitRealtime("tabs-changed", {});
+        await waitFor(() => expect(touch.counts.teardowns).toBe(1));
+      } finally {
+        touch.restore();
+      }
+    });
+
+    it("sets touch dragging up when a phone-sized window widens, and takes it down when it narrows", async () => {
+      viewport.compact = true;
+      const touch = countTouchSetups();
+      try {
+        const { state, rpc } = threeTabs();
+        render(rpc);
+        await screen.findByRole("button", { name: "Mac mini 1" });
+        expect(touch.counts.setups).toBe(0);
+        act(() => viewport.setCompact(false));
+        await waitFor(() => expect(touch.counts.setups).toBe(1));
+        const restore = layOutTabs();
+        try {
+          await touchDragTab("Mac mini 1", 240);
+          await waitFor(() => expect(state.moved).toEqual([["term_1", "term_3"]]));
+          act(() => viewport.setCompact(true));
+          await waitFor(() => expect(touch.counts.teardowns).toBe(1));
+          await touchDragTab("Mac mini 2", 140);
+        } finally {
+          restore();
+        }
+        expect(state.moved).toEqual([["term_1", "term_3"]]);
+        expect(touch.counts.setups).toBe(1);
+      } finally {
+        touch.restore();
+      }
     });
 
     it("leaves the order alone for a press that does not move far enough to drag", async () => {
