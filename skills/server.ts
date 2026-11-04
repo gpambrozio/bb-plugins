@@ -47,13 +47,16 @@ export default async function plugin(bb: BbPluginApi) {
       host.call("discover", { provider: workspace.provider, cwd: workspace.cwd }, { hostId: workspace.hostId }),
     readDiscovered: (workspace, skillId) =>
       host.call("read", { provider: workspace.provider, cwd: workspace.cwd, skillId }, { hostId: workspace.hostId }),
-    async bbSkills(workspace) {
-      const { skills } = await bb.sdk.skills.list(scopeOf(workspace));
+    async bbSkills(scope) {
+      const { skills } = await bb.sdk.skills.list(scope);
       return skills;
     },
-    async bbSkillContent(workspace, skillId) {
-      const { content } = await bb.sdk.skills.getContent({ ...scopeOf(workspace), skillId, path: "SKILL.md" });
+    async bbSkillContent(scope, skillId) {
+      const { content } = await bb.sdk.skills.getContent({ ...scope, skillId, path: "SKILL.md" });
       return content;
+    },
+    async primaryHostId() {
+      return (await bb.sdk.system.config()).primaryHostId;
     },
     async commands(workspace) {
       // A new thread with no environment yet asks for its checkout's machine,
@@ -73,8 +76,4 @@ export default async function plugin(bb: BbPluginApi) {
     list: (subject) => listSkills(ports, subject),
     read: ({ skillId, ...subject }) => readSkill(ports, subject, skillId),
   });
-}
-
-function scopeOf(workspace: ThreadWorkspace) {
-  return { projectId: workspace.projectId, environmentId: workspace.environmentId };
 }

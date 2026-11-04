@@ -7,11 +7,13 @@ import { discoverSkills, readDiscoveredSkill, type SkillRoots } from "../host/di
 import { SkillListSchema } from "../shared/skills";
 import type { ReportedCommand } from "./reported";
 import {
+  bbSkillRouteFor,
   listSkills,
   newThreadWorkspaceFrom,
   readSkill,
   workspaceFrom,
   type BbSkill,
+  type BbSkillScope,
   type ProjectCheckouts,
   type SkillsPorts,
   type ThreadWorkspace,
@@ -67,7 +69,7 @@ function portsFor(options: {
     hostId: "host_example",
     cwd,
   };
-  const bbSkillContent = vi.fn(async (_workspace: ThreadWorkspace, id: string) => {
+  const bbSkillContent = vi.fn(async (_scope: BbSkillScope, id: string) => {
     const content = options.contents?.[id];
     if (content === undefined) throw new Error(`no content for ${id}`);
     return content;
@@ -79,6 +81,7 @@ function portsFor(options: {
     bbSkills: async () => options.bb ?? [],
     bbSkillContent,
     commands: options.commands ?? (async () => []),
+    primaryHostId: async () => "host_example",
   };
   return { ports, bbSkillContent };
 }
@@ -419,5 +422,85 @@ describe("a new thread's skills", () => {
     expect(listed.skills.map((skill) => skill.name)).toEqual(["tidy-imports"]);
     expect(document.body).toBe("Body for tidy-imports.\n");
     expect(asked).toEqual([{ newThread }, { newThread }]);
+  });
+});
+
+describe("bbSkillRouteFor", () => {
+  const base: ThreadWorkspace = { provider: "codex", projectId: "proj_example", environmentId: null, hostId: "host_a", cwd: "/a" };
+
+  test("names a workspace's environment, and keeps every row", () => {
+    expect(bbSkillRouteFor({ ...base, environmentId: "env_b", hostId: "host_b" }, "host_a")).toEqual({
+      scope: { projectId: "proj_example", environmentId: "env_b" },
+      serverOwnedOnly: false,
+    });
+  });
+
+  test("names none for a checkout on the primary host, and keeps every row", () => {
+    expect(bbSkillRouteFor(base, "host_a")).toEqual({
+      scope: { projectId: "proj_example", environmentId: null },
+      serverOwnedOnly: false,
+    });
+  });
+
+  test("keeps only the server's rows for a checkout on another machine", () => {
+    expect(bbSkillRouteFor({ ...base, hostId: "host_b" }, "host_a").serverOwnedOnly).toBe(true);
+    expect(bbSkillRouteFor({ ...base, hostId: "host_b" }, null).serverOwnedOnly).toBe(true);
+  });
+});
+
+describe("bb's rows for a new thread off the primary host", () => {
+  const offPrimary = async (): Promise<ThreadWorkspace> => ({
+    provider: "claude-code",
+    projectId: "proj_example",
+    environmentId: null,
+    hostId: "host_b",
+    cwd,
+  });
+  const plugin = bbSkill({ name: "plugin-guide" });
+  const hostLocal = [
+    bbSkill({ name: "primary-only", scope: "bb-project", pluginId: null, filePath: "/a/example/.bb/skills/primary-only/SKILL.md" }),
+    bbSkill({ name: "primary-personal", scope: "bb-user", pluginId: null }),
+    bbSkill({ name: "primary-builtin", scope: "bb-builtin", pluginId: null }),
+    bbSkill({ name: "primary-plugin", scope: "plugin", provider: "claude-code", pluginId: "some-plugin" }),
+  ];
+
+  test("lists bb's plugins' skills and none of the primary host's", async () => {
+    const { ports } = portsFor({ workspace: offPrimary, bb: [plugin, ...hostLocal] });
+    const result = await listSkills(ports, { newThread: { projectId: "proj_example", providerId: "claude-code", hostId: "host_b", environmentId: null } });
+    expect(result.skills.map((skill) => skill.name)).toEqual(["plugin-guide"]);
+    expect(result.bbError).toBeNull();
+  });
+
+  test("reads a plugin's skill, and refuses a primary host's row", async () => {
+    const { ports, bbSkillContent } = portsFor({
+      workspace: offPrimary,
+      bb: [plugin, ...hostLocal],
+      contents: { [plugin.id]: "---\n---\nGuide\n", [hostLocal[0]!.id]: "---\n---\nPrimary\n" },
+    });
+    const subject = { threadId: "unused" };
+    expect((await readSkill(ports, subject, `bb:${plugin.id}`)).body).toBe("Guide\n");
+    await expect(readSkill(ports, subject, `bb:${hostLocal[0]!.id}`)).rejects.toThrow(/not available/);
+    expect(bbSkillContent).toHaveBeenCalledTimes(1);
+    expect(bbSkillContent).toHaveBeenCalledWith({ projectId: "proj_example", environmentId: null }, plugin.id);
+  });
+
+  test("keeps the rest of the list when bb's list cannot be had, and says why", async () => {
+    await writeSkill(path.join(cwd, ".claude", "skills"), "tidy-imports", "Sorts imports");
+    const { ports } = portsFor({ workspace: offPrimary });
+    ports.bbSkills = async () => {
+      throw new Error("Host host_a is offline.");
+    };
+    const result = await listSkills(ports, { threadId: "unused" });
+    expect(result.skills.map((skill) => skill.name)).toEqual(["tidy-imports"]);
+    expect(result.bbError).toBe("Host host_a is offline.");
+  });
+
+  // A thread's list is the same as it always was.
+  test("still fails a thread's list when bb's list fails", async () => {
+    const { ports } = portsFor({});
+    ports.bbSkills = async () => {
+      throw new Error("bb is down");
+    };
+    await expect(listSkills(ports, THREAD)).rejects.toThrow("bb is down");
   });
 });

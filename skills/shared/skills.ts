@@ -81,6 +81,12 @@ export const SkillListSchema = z.object({
   scanned: z.boolean(),
   cwd: z.string(),
   skills: z.array(SkillEntrySchema),
+  /**
+   * Why bb's own skills could not be listed, when they come from another
+   * machine than the thread's (a new thread off bb's primary host) and that
+   * machine did not answer; null otherwise. The rest of the list stands.
+   */
+  bbError: z.string().nullable(),
   reported: ReportedSkillsSchema,
 });
 

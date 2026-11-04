@@ -86,8 +86,21 @@ the project from the composer's scope (bb's effective selection), the provider a
 (`newThreadWorkspaceFrom`) takes an environment it would reuse when that is still the project's, and
 otherwise the project's checkout (`projects.get` → `sources`) on the selected machine, or its default
 checkout. A new worktree is made from that checkout, so it holds the skills the thread starts with.
-bb's skill list is asked with `environmentId: null` and its command list routed by `hostId` — the
-routing bb's own `/` menu uses there. The app sends ids only, never a path. The personal project ("no
+Its command list is routed by `hostId` — the routing bb's own `/` menu uses there. The app sends ids
+only, never a path.
+
+**bb's skill list cannot be routed to a machine, only to an environment.** `bb.sdk.skills.list` and
+`getContent` take `{ projectId, environmentId }`; with `environmentId: null`, bb 0.48.1
+(`resolveProjectCommandWorkspace`) scans the project's checkout on its *primary* host. So
+`bbSkillRouteFor` names the workspace's environment when it has one (every thread; a new thread that
+would reuse one), names none for a checkout on the primary host (`system.config().primaryHostId`), and
+for a checkout on any other machine keeps only the rows bb's server owns (`isServerOwned`: bb's plugins'
+skills, `scope: "plugin"` with no provider) — never the primary host's `.bb/skills` or provider rows,
+which would be listed, counted and readable under the wrong machine. `bb-user` and `bb-builtin` rows can
+come from a host's scan as well as from the server, and a row does not say which, so they are left out
+there too. In that case alone the call reaches another machine than the thread's, so its failure goes in
+the list's `bbError` (shown under its own heading) instead of failing the list. `server.test.ts` drives
+the whole server with distinct skills on two machines. The personal project ("no
 project") has no checkout, and the browser says so. A thread's subject stays the `{ threadId }` the RPCs
 always took.
 
@@ -270,5 +283,9 @@ writer, see *Copy path*) and react-query (each surface holds one small fetch).
   would run such a thread is not public, so the new-thread composer says to choose a project.
 - **A new thread on a machine bb has yet to make** (an environment provider that creates one) is listed
   from the project's default checkout.
+- **A new thread on a machine other than bb's primary host**, with no environment to reuse, lists bb's
+  plugins' skills but not that checkout's `.bb/skills`, the server's `~/.bb/skills`, bb's built-in
+  skills or Codex's plugin skills from bb's list: bb's skill list can only be asked for the primary
+  host's checkout there. The provider's own skills on that machine are listed as ever.
 - **`user-invocable: false`** is read from scanned files only (such a skill gets no Add to chat); bb's
   rows are assumed invocable.

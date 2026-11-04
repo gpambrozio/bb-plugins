@@ -380,6 +380,7 @@ export function SkillBrowser({
           {filtered.length === 0 &&
           reportedSkills.length === 0 &&
           reportedCommands.length === 0 &&
+          list.data.bbError === null &&
           list.data.reported.error === null ? (
             <p className="mt-3 text-sm text-muted-foreground">
               {term.length > 0 ? "No skills match that search." : "No skills found."}
@@ -398,6 +399,12 @@ export function SkillBrowser({
               ))}
             </section>
           ))}
+          {list.data.bbError ? (
+            <section>
+              <GroupLabel>bb's own skills</GroupLabel>
+              <p className="text-sm text-destructive">{list.data.bbError}</p>
+            </section>
+          ) : null}
           {list.data.reported.error ? (
             <section>
               <GroupLabel>Reported by the provider</GroupLabel>

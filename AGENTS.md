@@ -395,6 +395,8 @@ does. bb 0.44 has no `replace`, `insert` or `draft`.
 a `host` with its `hostId`), reactively: both are in SDK 0.6.15. With no environment yet, a project's
 directory is its checkout on that host (`projects.get` → `sources`), and `projects.commands` is routed
 by `hostId`, as bb's own `/` menu does there (`skills/app/subject.ts`, `skills/server/skills.ts`).
+`bb.sdk.skills.list` and `getContent` take no `hostId`: with `environmentId: null` bb 0.48.1 scans the
+primary host's checkout, whatever machine was picked (`skills/AGENTS.md`).
 
 **A composer that is not on screen cannot be written to.** `useComposers()` lists only the composers
 showing, and a nav panel shows none. To put text in a thread's draft from a page, hand it to an

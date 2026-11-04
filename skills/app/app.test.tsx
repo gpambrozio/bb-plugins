@@ -53,6 +53,7 @@ const LIST: SkillList = {
   provider: "claude-code",
   scanned: true,
   cwd: "/work/example",
+  bbError: null,
   skills: [
     entry("bb-helper", "bb", "bb plugin · example-plugin"),
     entry("deploy", "personal", "Personal"),
@@ -210,6 +211,13 @@ describe("the panel", () => {
   it("shows a reported-list error under its own heading, keeping the rest", async () => {
     renderPanel({ list: () => ({ ...LIST, reported: { error: "provider is not available", skills: [], commands: [] } }) });
     expect(await screen.findByText("provider is not available")).toBeTruthy();
+    expect(screen.getByText("tidy-imports")).toBeTruthy();
+  });
+
+  it("shows why bb's own skills are missing under their own heading, keeping the rest", async () => {
+    renderPanel({ list: () => ({ ...LIST, bbError: "Host mini is offline." }) });
+    expect(await screen.findByText("Host mini is offline.")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "bb's own skills" })).toBeTruthy();
     expect(screen.getByText("tidy-imports")).toBeTruthy();
   });
 

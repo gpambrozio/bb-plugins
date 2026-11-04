@@ -14,6 +14,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   thread: search, read a skill, and **Add to chat** to put it at the start of the message. Pick another
   project, agent or machine and the list follows, without showing the previous project's skills on the
   way. With no project picked, it says there is no project to look in.
+- On a machine other than the one running bb, before a thread has started, the list leaves out bb's
+  own project and personal skills rather than show another machine's; bb's plugins' skills and the
+  agent's own skills on that machine are listed.
 
 ## 0.3.2
 

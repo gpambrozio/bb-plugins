@@ -123,9 +123,57 @@ export interface SkillsPorts {
   workspaceOf(subject: SkillSubject): Promise<ThreadWorkspace>;
   discover(workspace: ThreadWorkspace): Promise<{ scanned: boolean; skills: SkillEntry[] }>;
   readDiscovered(workspace: ThreadWorkspace, skillId: string): Promise<SkillDocument>;
-  bbSkills(workspace: ThreadWorkspace): Promise<BbSkill[]>;
-  bbSkillContent(workspace: ThreadWorkspace, bbSkillId: string): Promise<string>;
+  bbSkills(scope: BbSkillScope): Promise<BbSkill[]>;
+  bbSkillContent(scope: BbSkillScope, bbSkillId: string): Promise<string>;
   commands(workspace: ThreadWorkspace): Promise<ReportedCommand[]>;
+  /** bb's primary host, where bb's skill calls land when they name no environment. */
+  primaryHostId(): Promise<string | null>;
+}
+
+/** What `bb.sdk.skills.list` and `getContent` take: a project, and an environment or none. */
+export interface BbSkillScope {
+  projectId: string;
+  environmentId: string | null;
+}
+
+/**
+ * How bb's skill list is asked for a workspace, and which of its rows belong
+ * to it. bb's skill calls take an environment or none, never a machine; with
+ * none, bb scans the project's checkout on its primary host.
+ *
+ * - A workspace with an environment (every thread's, and a new thread that
+ *   would reuse one) names it, and every row is that environment's.
+ * - A new thread's checkout on the primary host names none, and gets the same
+ *   checkout.
+ * - A new thread's checkout on any other machine cannot be named. Asking with
+ *   none would scan the primary host's checkout, so only the rows bb's server
+ *   owns — the same for a thread on any machine — are kept (`serverOwnedOnly`),
+ *   and none of the primary host's own.
+ */
+export interface BbSkillRoute {
+  scope: BbSkillScope;
+  serverOwnedOnly: boolean;
+}
+
+export function bbSkillRouteFor(workspace: ThreadWorkspace, primaryHostId: string | null): BbSkillRoute {
+  const scope = { projectId: workspace.projectId, environmentId: workspace.environmentId };
+  return { scope, serverOwnedOnly: workspace.environmentId === null && workspace.hostId !== primaryHostId };
+}
+
+async function bbSkillRoute(ports: SkillsPorts, workspace: ThreadWorkspace): Promise<BbSkillRoute> {
+  // A thread always has an environment, so it never asks for the primary host.
+  const primaryHostId = workspace.environmentId === null ? await ports.primaryHostId() : null;
+  return bbSkillRouteFor(workspace, primaryHostId);
+}
+
+/**
+ * bb's plugins' skills, read from bb's server whatever the machine. Other
+ * scopes (`bb-user`, `bb-builtin`) can come from a host's scan as well as from
+ * the server, and nothing in a row tells the two apart, so they are not
+ * counted as the server's.
+ */
+function isServerOwned(skill: BbSkill): boolean {
+  return skill.scope === "plugin" && skill.provider === null && skill.pluginId !== null;
 }
 
 /** Marks an id taken from bb's skill list; its content is read through bb. */
@@ -167,9 +215,10 @@ function skillsDirOf(filePath: string): string {
   return filePath.split(separator).slice(0, -2).join(separator);
 }
 
-async function bbEntries(ports: SkillsPorts, workspace: ThreadWorkspace): Promise<SkillEntry[]> {
+async function bbEntries(ports: SkillsPorts, workspace: ThreadWorkspace, route: BbSkillRoute): Promise<SkillEntry[]> {
   const entries: SkillEntry[] = [];
-  for (const skill of await ports.bbSkills(workspace)) {
+  for (const skill of await ports.bbSkills(route.scope)) {
+    if (route.serverOwnedOnly && !isServerOwned(skill)) continue;
     const source = sourceFor(skill, workspace.provider);
     if (source === null) continue;
     entries.push({
@@ -205,17 +254,37 @@ async function loadReported(
   }
 }
 
+/**
+ * bb's rows for the list. When they come from another machine than the
+ * workspace's (`serverOwnedOnly`), that machine being out of reach must not
+ * lose the rest of the list, so the failure travels with the list instead;
+ * otherwise it fails the list, as discovery's would.
+ */
+async function loadBbEntries(
+  ports: SkillsPorts,
+  workspace: ThreadWorkspace,
+): Promise<{ entries: SkillEntry[]; error: string | null }> {
+  const route = await bbSkillRoute(ports, workspace);
+  if (!route.serverOwnedOnly) return { entries: await bbEntries(ports, workspace, route), error: null };
+  try {
+    return { entries: await bbEntries(ports, workspace, route), error: null };
+  } catch (error) {
+    return { entries: [], error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 export async function listSkills(ports: SkillsPorts, subject: SkillSubject): Promise<SkillList> {
   const workspace = await ports.workspaceOf(subject);
-  const [discovery, bb] = await Promise.all([ports.discover(workspace), bbEntries(ports, workspace)]);
+  const [discovery, bb] = await Promise.all([ports.discover(workspace), loadBbEntries(ports, workspace)]);
   // Discovery's scopes come first, so a name both define is listed once, under
   // the copy the provider's own search path finds.
-  const skills = dedupeByName([...discovery.skills, ...bb]).sort((a, b) => a.name.localeCompare(b.name));
+  const skills = dedupeByName([...discovery.skills, ...bb.entries]).sort((a, b) => a.name.localeCompare(b.name));
   return {
     provider: workspace.provider,
     scanned: discovery.scanned,
     cwd: workspace.cwd,
     skills,
+    bbError: bb.error,
     reported: await loadReported(ports, workspace, skills),
   };
 }
@@ -230,8 +299,9 @@ export async function readSkill(ports: SkillsPorts, subject: SkillSubject, skill
   const workspace = await ports.workspaceOf(subject);
   if (!skillId.startsWith(BB_ID_PREFIX)) return ports.readDiscovered(workspace, skillId);
 
-  const entry = (await bbEntries(ports, workspace)).find((candidate) => candidate.id === skillId);
+  const route = await bbSkillRoute(ports, workspace);
+  const entry = (await bbEntries(ports, workspace, route)).find((candidate) => candidate.id === skillId);
   if (entry === undefined) throw new Error(`Skill not available: ${skillId}`);
-  const content = await ports.bbSkillContent(workspace, skillId.slice(BB_ID_PREFIX.length));
+  const content = await ports.bbSkillContent(route.scope, skillId.slice(BB_ID_PREFIX.length));
   return { name: entry.name, description: entry.description, path: entry.path, body: parseFrontmatter(content).body };
 }
