@@ -8,6 +8,7 @@
 import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import type { PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 import { renderSlot, type PluginRpcTestHandlers, type RenderSlotOptions } from "@get-bb/plugin-sdk/testing/app";
+import { TouchSensor } from "@dnd-kit/core";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { RpcContract } from "../shared/contract";
@@ -63,6 +64,20 @@ const terminals = vi.hoisted(() => {
   };
 });
 
+/** Whether the window is phone-sized: what the stubbed `(max-width: 767px)` query answers. */
+const viewport = vi.hoisted(() => {
+  const listeners = new Set<() => void>();
+  return {
+    compact: false,
+    listeners,
+    /** Resizes the window across the phone breakpoint, telling the query's listeners. */
+    setCompact(compact: boolean) {
+      this.compact = compact;
+      for (const listener of listeners) listener();
+    },
+  };
+});
+
 const toasts = vi.hoisted(() => ({ success: [] as string[], error: [] as string[] }));
 vi.mock("sonner", () => ({
   toast: {
@@ -112,11 +127,13 @@ const { windowDeliveries } = await import("./chat-delivery");
 beforeAll(() => {
   // jsdom has neither; the compact-viewport hook and the terminal's fit ask them.
   window.matchMedia ??= ((query: string) => ({
-    matches: false,
+    get matches() {
+      return viewport.compact && query === "(max-width: 767px)";
+    },
     media: query,
     onchange: null,
-    addEventListener: () => {},
-    removeEventListener: () => {},
+    addEventListener: (_type: string, listener: () => void) => void viewport.listeners.add(listener),
+    removeEventListener: (_type: string, listener: () => void) => void viewport.listeners.delete(listener),
     addListener: () => {},
     removeListener: () => {},
     dispatchEvent: () => false,
@@ -129,6 +146,7 @@ beforeAll(() => {
 });
 
 beforeEach(() => {
+  viewport.compact = false;
   terminals.entries.clear();
   windowSelection.set(null);
   toasts.success.length = 0;
@@ -150,6 +168,7 @@ function server(hosts: HostChoice[], initial: TabView[] = []) {
     opened: [] as string[],
     closed: [] as string[],
     renamed: [] as [string, string | null][],
+    moved: [] as [string, string][],
     /** While set, each list call answers only when the test calls the function it leaves in `heldLists`. */
     holdLists: false,
     heldLists: [] as (() => void)[],
@@ -173,6 +192,15 @@ function server(hosts: HostChoice[], initial: TabView[] = []) {
     rename: ({ terminalId, name }: { terminalId: string; name: string | null }) => {
       state.renamed.push([terminalId, name]);
       state.tabs = state.tabs.map((entry) => (entry.terminalId === terminalId ? { ...entry, name } : entry));
+      return {};
+    },
+    move: ({ terminalId, toTerminalId }: { terminalId: string; toTerminalId: string }) => {
+      state.moved.push([terminalId, toTerminalId]);
+      const from = state.tabs.findIndex((entry) => entry.terminalId === terminalId);
+      const to = state.tabs.findIndex((entry) => entry.terminalId === toTerminalId);
+      const tabs = [...state.tabs];
+      tabs.splice(to, 0, ...tabs.splice(from, 1));
+      state.tabs = tabs;
       return {};
     },
     close: ({ terminalId }: { terminalId: string }) => {
@@ -218,8 +246,13 @@ function render(rpc: PluginRpcTestHandlers<RpcContract>, host: Host = {}) {
   );
 }
 
+/** The strip's tabs in the order it shows them: each pill's own button, not its close button. */
+function tabButtons(): HTMLButtonElement[] {
+  return Array.from(document.querySelectorAll<HTMLButtonElement>("[data-strip-tab] [data-tab-pill] > button:not([data-tab-pill-close])"));
+}
+
 function pressPlus() {
-  const plus = within(screen.getByRole("tablist")).getByRole("button", { name: "New terminal" });
+  const plus = within(screen.getByRole("toolbar", { name: "Terminals" })).getByRole("button", { name: "New terminal" });
   fireEvent.pointerDown(plus, { button: 0, ctrlKey: false, pointerType: "mouse" });
 }
 
@@ -229,10 +262,10 @@ describe("the Terminals page", () => {
     render(rpc);
     expect(await screen.findByText(/No terminals open/)).toBeTruthy();
     pressPlus();
-    expect(await screen.findByRole("tab", { name: /Mac mini/ })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Mac mini" })).toBeTruthy();
     expect(state.opened).toEqual(["mini"]);
     expect(screen.queryByText("Open a terminal on")).toBeNull();
-    expect(screen.getByRole("tab", { name: /Mac mini/ }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("button", { name: "Mac mini" }).getAttribute("aria-pressed")).toBe("true");
     expect(terminals.entry("term_1").attached).toBeGreaterThan(0);
   });
 
@@ -247,7 +280,7 @@ describe("the Terminals page", () => {
     const air = await screen.findByRole("menuitem", { name: /MacBook Air/ });
     expect(screen.getByRole("menuitem", { name: /Mac mini/ })).toBeTruthy();
     fireEvent.click(air);
-    expect(await screen.findByRole("tab", { name: /MacBook Air/ })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "MacBook Air" })).toBeTruthy();
     expect(state.opened).toEqual(["air"]);
   });
 
@@ -267,14 +300,14 @@ describe("the Terminals page", () => {
     );
     windowSelection.set("term_2");
     render(rpc);
-    const second = await screen.findByRole("tab", { name: "Mac mini 2" });
-    expect(second.getAttribute("aria-selected")).toBe("true");
+    const second = await screen.findByRole("button", { name: "Mac mini 2" });
+    expect(second.getAttribute("aria-pressed")).toBe("true");
     fireEvent.click(screen.getByRole("button", { name: "Close Mac mini 2" }));
-    await waitFor(() => expect(screen.queryByRole("tab", { name: /Mac mini 2/ })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Mac mini 2" })).toBeNull());
     expect(state.closed).toEqual(["term_2"]);
-    expect(screen.getByRole("tab", { name: "MacBook Air" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("button", { name: "MacBook Air" }).getAttribute("aria-pressed")).toBe("true");
     // One Mac mini tab left, so it is no longer numbered.
-    expect(screen.getByRole("tab", { name: "Mac mini" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Mac mini" })).toBeTruthy();
   });
 
   it("marks only the selected tab, the way bb marks its own, and moves the mark with the selection", async () => {
@@ -284,26 +317,24 @@ describe("the Terminals page", () => {
     );
     windowSelection.set("term_1");
     render(rpc);
-    const first = await screen.findByRole("tab", { name: "Mac mini 1" });
-    const second = screen.getByRole("tab", { name: "Mac mini 2" });
-    // The tab's frame is the element around its button and its close button.
-    const frame = (button: HTMLElement) => button.parentElement as HTMLElement;
-    const marked = (button: HTMLElement) => frame(button).querySelector("[data-tab-indicator]") !== null;
+    const first = await screen.findByRole("button", { name: "Mac mini 1" });
+    const second = screen.getByRole("button", { name: "Mac mini 2" });
+    // bb's tab pill: the element around the tab's button and its close button.
+    const pill = (button: HTMLElement) => button.closest("[data-tab-pill]") as HTMLElement;
 
-    // bb's "active" fill and full-strength text, against dimmer text on the others; the
-    // old fill (bg-sidebar) was all but the page's own background in dark mode.
-    expect(frame(first).className).toMatch(/\bbg-state-active\b/);
-    expect(frame(first).className).toMatch(/\btext-foreground\b/);
-    expect(frame(first).className).not.toMatch(/\bbg-sidebar\b/);
-    expect(frame(second).className).not.toMatch(/\bbg-state-active\b/);
-    expect(frame(second).className).toMatch(/\btext-subtle-foreground\b/);
-    expect([marked(first), marked(second)]).toEqual([true, false]);
+    // bb's "active" fill and full-strength text, against dimmer text on the others.
+    expect(pill(first).className).toMatch(/\bbg-state-active\b/);
+    expect(pill(first).className).toMatch(/\btext-foreground\b/);
+    expect(pill(second).className).not.toMatch(/\bbg-state-active\b/);
+    expect(pill(second).className).toMatch(/\btext-muted-foreground\b/);
+    expect([first.getAttribute("aria-pressed"), second.getAttribute("aria-pressed")]).toEqual(["true", "false"]);
 
     fireEvent.click(second);
-    await waitFor(() => expect(second.getAttribute("aria-selected")).toBe("true"));
-    expect([marked(first), marked(second)]).toEqual([false, true]);
-    expect(frame(second).className).toMatch(/\bbg-state-active\b/);
-    expect(frame(first).className).not.toMatch(/\bbg-state-active\b/);  });
+    await waitFor(() => expect(second.getAttribute("aria-pressed")).toBe("true"));
+    expect(first.getAttribute("aria-pressed")).toBe("false");
+    expect(pill(second).className).toMatch(/\bbg-state-active\b/);
+    expect(pill(first).className).not.toMatch(/\bbg-state-active\b/);
+  });
 
   it.each(["opening", "starting"] as const)("waits for a shell that is %s before attaching to it", async (status) => {
     const { state, rpc } = server([{ id: "mini", name: "Mac mini" }], [{ ...tab("term_1", "mini", "Mac mini"), status }]);
@@ -317,12 +348,12 @@ describe("the Terminals page", () => {
   });
 
   describe("reading the tab list", () => {
-    const visibleTabs = () => screen.queryAllByRole("tab").map((element) => element.textContent);
+    const visibleTabs = () => tabButtons().map((element) => element.textContent);
 
     it("keeps the newest list when two reads answer in the reverse order", async () => {
       const { state, rpc } = server([{ id: "mini", name: "Mac mini" }], [tab("term_1", "mini", "Mac mini")]);
       const view = render(rpc);
-      await screen.findByRole("tab", { name: "Mac mini" });
+      await screen.findByRole("button", { name: "Mac mini" });
       state.holdLists = true;
       await view.emitRealtime("tabs-changed", {});
       // Another window opens a tab; its signal starts a second read.
@@ -331,7 +362,7 @@ describe("the Terminals page", () => {
       expect(state.heldLists).toHaveLength(2);
       const [older, newer] = state.heldLists.splice(0);
       await act(async () => newer!());
-      await screen.findByRole("tab", { name: "Mac mini 2" });
+      await screen.findByRole("button", { name: "Mac mini 2" });
       await act(async () => older!());
       expect(visibleTabs()).toEqual(["Mac mini 1", "Mac mini 2"]);
       expect(terminals.entries.has("term_2")).toBe(true);
@@ -343,7 +374,7 @@ describe("the Terminals page", () => {
         [tab("term_1", "mini", "Mac mini"), tab("term_2", "mini", "Mac mini")],
       );
       const view = render(rpc);
-      await screen.findByRole("tab", { name: "Mac mini 2" });
+      await screen.findByRole("button", { name: "Mac mini 2" });
       state.holdLists = true;
       await view.emitRealtime("tabs-changed", {});
       fireEvent.click(screen.getByRole("button", { name: "Close Mac mini 2" }));
@@ -359,7 +390,7 @@ describe("the Terminals page", () => {
   it("says when a shell has ended and offers to close its tab", async () => {
     const { state, rpc } = server([{ id: "mini", name: "Mac mini" }], [tab("term_1", "mini", "Mac mini")]);
     render(rpc);
-    await screen.findByRole("tab", { name: "Mac mini" });
+    await screen.findByRole("button", { name: "Mac mini" });
     act(() => terminals.setStatus("term_1", { state: "ended", exitCode: 130 }));
     expect(await screen.findByText("This shell exited with code 130.")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Close tab" }));
@@ -370,7 +401,7 @@ describe("the Terminals page", () => {
   it("says when a machine is offline", async () => {
     const { rpc } = server([{ id: "mini", name: "Mac mini" }], [tab("term_1", "mini", "Mac mini")]);
     render(rpc);
-    await screen.findByRole("tab", { name: "Mac mini" });
+    await screen.findByRole("button", { name: "Mac mini" });
     act(() => terminals.setStatus("term_1", { state: "offline", exitCode: null }));
     expect(await screen.findByText(/This machine is offline/)).toBeTruthy();
   });
@@ -380,7 +411,7 @@ describe("the Terminals page", () => {
       server([{ id: "mini", name: "Mac mini" }], [tab("term_1", "mini", "Mac mini"), tab("term_2", "mini", "Mac mini")]);
 
     async function editByDoubleClick(name: string) {
-      fireEvent.doubleClick(await screen.findByRole("tab", { name }));
+      fireEvent.doubleClick(await screen.findByRole("button", { name }));
       return (await screen.findByRole("textbox", { name: `Rename ${name}` })) as HTMLInputElement;
     }
 
@@ -391,10 +422,10 @@ describe("the Terminals page", () => {
       expect(input.value).toBe("Mac mini 2");
       fireEvent.change(input, { target: { value: "  dev server " } });
       fireEvent.keyDown(input, { key: "Enter" });
-      expect(await screen.findByRole("tab", { name: "dev server" })).toBeTruthy();
+      expect(await screen.findByRole("button", { name: "dev server" })).toBeTruthy();
       expect(state.renamed).toEqual([["term_2", "dev server"]]);
       // The other tab keeps its number.
-      expect(screen.getByRole("tab", { name: "Mac mini 1" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "Mac mini 1" })).toBeTruthy();
     });
 
     it("keeps the old title on Escape", async () => {
@@ -403,7 +434,7 @@ describe("the Terminals page", () => {
       const input = await editByDoubleClick("Mac mini 1");
       fireEvent.change(input, { target: { value: "scratch" } });
       fireEvent.keyDown(input, { key: "Escape" });
-      expect(await screen.findByRole("tab", { name: "Mac mini 1" })).toBeTruthy();
+      expect(await screen.findByRole("button", { name: "Mac mini 1" })).toBeTruthy();
       expect(screen.queryByRole("textbox")).toBeNull();
       expect(state.renamed).toEqual([]);
     });
@@ -415,7 +446,7 @@ describe("the Terminals page", () => {
       expect(input.value).toBe("logs");
       fireEvent.change(input, { target: { value: "   " } });
       fireEvent.keyDown(input, { key: "Enter" });
-      expect(await screen.findByRole("tab", { name: "Mac mini" })).toBeTruthy();
+      expect(await screen.findByRole("button", { name: "Mac mini" })).toBeTruthy();
       expect(state.renamed).toEqual([["term_1", null]]);
     });
 
@@ -424,29 +455,29 @@ describe("the Terminals page", () => {
       render(rpc);
       let input = await editByDoubleClick("Mac mini 1");
       fireEvent.blur(input);
-      await screen.findByRole("tab", { name: "Mac mini 1" });
+      await screen.findByRole("button", { name: "Mac mini 1" });
       expect(state.renamed).toEqual([]);
       input = await editByDoubleClick("Mac mini 1");
       fireEvent.change(input, { target: { value: "build" } });
       fireEvent.blur(input);
-      expect(await screen.findByRole("tab", { name: "build" })).toBeTruthy();
+      expect(await screen.findByRole("button", { name: "build" })).toBeTruthy();
       expect(state.renamed).toEqual([["term_1", "build"]]);
     });
 
     it("renames from the tab's context menu and with F2", async () => {
       const { state, rpc } = twoTabs();
       render(rpc);
-      fireEvent.contextMenu(await screen.findByRole("tab", { name: "Mac mini 1" }));
+      fireEvent.contextMenu(await screen.findByRole("button", { name: "Mac mini 1" }));
       fireEvent.click(await screen.findByRole("menuitem", { name: /Rename/ }));
       let input = (await screen.findByRole("textbox", { name: "Rename Mac mini 1" })) as HTMLInputElement;
       fireEvent.change(input, { target: { value: "one" } });
       fireEvent.keyDown(input, { key: "Enter" });
-      await screen.findByRole("tab", { name: "one" });
-      fireEvent.keyDown(screen.getByRole("tab", { name: "Mac mini 2" }), { key: "F2" });
+      await screen.findByRole("button", { name: "one" });
+      fireEvent.keyDown(screen.getByRole("button", { name: "Mac mini 2" }), { key: "F2" });
       input = (await screen.findByRole("textbox", { name: "Rename Mac mini 2" })) as HTMLInputElement;
       fireEvent.change(input, { target: { value: "two" } });
       fireEvent.keyDown(input, { key: "Enter" });
-      await screen.findByRole("tab", { name: "two" });
+      await screen.findByRole("button", { name: "two" });
       expect(state.renamed).toEqual([
         ["term_1", "one"],
         ["term_2", "two"],
@@ -462,7 +493,7 @@ describe("the Terminals page", () => {
       const input = await editByDoubleClick("Mac mini 1");
       fireEvent.change(input, { target: { value: "one" } });
       fireEvent.keyDown(input, { key: "Enter" });
-      const renamed = await screen.findByRole("tab", { name: "one" });
+      const renamed = await screen.findByRole("button", { name: "one" });
       await waitFor(() => expect(document.activeElement).toBe(renamed));
     });
 
@@ -473,7 +504,7 @@ describe("the Terminals page", () => {
       let input = await editByDoubleClick("Mac mini 1");
       fireEvent.change(input, { target: { value: "one" } });
       fireEvent.keyDown(input, { key: "Enter" });
-      fireEvent.keyDown(await screen.findByRole("tab", { name: "Mac mini 2" }), { key: "F2" });
+      fireEvent.keyDown(await screen.findByRole("button", { name: "Mac mini 2" }), { key: "F2" });
       input = (await screen.findByRole("textbox", { name: "Rename Mac mini 2" })) as HTMLInputElement;
       await waitFor(() => expect(document.activeElement).toBe(input));
       await nextFrame();
@@ -485,16 +516,313 @@ describe("the Terminals page", () => {
     it("closes a tab from its context menu", async () => {
       const { state, rpc } = twoTabs();
       render(rpc);
-      fireEvent.contextMenu(await screen.findByRole("tab", { name: "Mac mini 2" }));
-      fireEvent.click(await screen.findByRole("menuitem", { name: /Close tab/ }));
+      fireEvent.contextMenu(await screen.findByRole("button", { name: "Mac mini 2" }));
+      fireEvent.click(await screen.findByRole("menuitem", { name: "Close tab" }));
       await waitFor(() => expect(state.closed).toEqual(["term_2"]));
     });
 
     it("shows a name another client gave", async () => {
       const { rpc } = server([{ id: "mini", name: "Mac mini" }], [{ ...tab("term_1", "mini", "Mac mini"), name: "deploy" }]);
       render(rpc);
-      const named = await screen.findByRole("tab", { name: "deploy" });
-      expect(named.getAttribute("title")).toBe("deploy — Mac mini");
+      const named = await screen.findByRole("button", { name: "deploy" });
+      expect(named.querySelector("[title]")?.getAttribute("title")).toBe("deploy — Mac mini");
+    });
+  });
+
+  describe("the tab strip", () => {
+    const threeTabs = () =>
+      server(
+        [{ id: "mini", name: "Mac mini" }],
+        [tab("term_1", "mini", "Mac mini"), tab("term_2", "mini", "Mac mini"), tab("term_3", "air", "MacBook Air")],
+      );
+    const shownTabs = () => tabButtons().map((element) => element.textContent);
+
+    /** The strip's scrolling viewport, around the row of tabs. */
+    const stripViewport = () => document.querySelector("[data-tab-strip-content]")!.parentElement as HTMLElement;
+
+    /**
+     * Lays the strip's tabs out side by side, 100 px each, in a viewport `width` wide, as a browser
+     * would; jsdom lays out nothing.
+     */
+    function layOutTabs(width = 1000) {
+      const original = Element.prototype.getBoundingClientRect;
+      const spy = vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+        if (this === stripViewport()) return new DOMRect(0, 0, width, 28);
+        const id = this.getAttribute("data-strip-tab");
+        if (id === null) return original.call(this);
+        const index = Array.from(document.querySelectorAll("[data-strip-tab]")).indexOf(this);
+        // Where it shows, moved by any transform the drag gave it; dnd-kit takes that back out.
+        const shift = /translate3d\((-?[\d.]+)px/.exec((this as HTMLElement).style.transform)?.[1];
+        return new DOMRect(index * 100 + Number(shift ?? 0) - stripViewport().scrollLeft, 0, 100, 28);
+      });
+      return () => spy.mockRestore();
+    }
+
+    /** Holds a finger on the tab past dnd-kit's 200 ms touch delay, slides it `dx` pixels and lifts it. */
+    async function touchDragTab(name: string, dx: number) {
+      const button = screen.getByRole("button", { name });
+      const at = (x: number) => ({ touches: [{ clientX: x, clientY: 10 }], changedTouches: [{ clientX: x, clientY: 10 }] });
+      fireEvent.touchStart(button, at(50));
+      await act(() => new Promise((resolve) => setTimeout(resolve, 260)));
+      fireEvent.touchMove(button, at(60));
+      await act(async () => undefined);
+      fireEvent.touchMove(button, at(50 + dx));
+      await act(async () => undefined);
+      fireEvent.touchEnd(button, { touches: [], changedTouches: [{ clientX: 50 + dx, clientY: 10 }] });
+      await afterDrop();
+    }
+
+    /** Drags the tab with the mouse by `dx` pixels and lets go, as dnd-kit's mouse sensor reads it. */
+    async function dragTab(name: string, dx: number) {
+      const button = screen.getByRole("button", { name });
+      fireEvent.mouseDown(button, { button: 0, clientX: 50, clientY: 10 });
+      // Past bb's 8 px before a press becomes a drag (when it goes that far), then on to the drop.
+      fireEvent.mouseMove(document, { clientX: 50 + Math.sign(dx) * Math.min(Math.abs(dx), 10), clientY: 10 });
+      await act(async () => undefined);
+      fireEvent.mouseMove(document, { clientX: 50 + dx, clientY: 10 });
+      await act(async () => undefined);
+      fireEvent.mouseUp(document, { clientX: 50 + dx, clientY: 10 });
+      await afterDrop();
+    }
+
+    /**
+     * Waits out the 50 ms after a drop in which dnd-kit swallows clicks on the whole document (so the
+     * drop is no click), which would otherwise swallow the next test's clicks.
+     */
+    const afterDrop = () => act(() => new Promise((resolve) => setTimeout(resolve, 60)));
+
+    it("moves a dragged tab where it is dropped, for every window, and keeps each tab's number", async () => {
+      const { state, rpc } = threeTabs();
+      windowSelection.set("term_1");
+      render(rpc);
+      await screen.findByRole("button", { name: "Mac mini 1" });
+      const restore = layOutTabs();
+      try {
+        // Onto MacBook Air's middle (250 px), whether the dragged pill is measured whole or as a point.
+        await dragTab("Mac mini 1", 240);
+      } finally {
+        restore();
+      }
+      await waitFor(() => expect(state.moved).toEqual([["term_1", "term_3"]]));
+      expect(shownTabs()).toEqual(["Mac mini 2", "MacBook Air", "Mac mini 1"]);
+      // The drop is no click: the selection stays where it was.
+      expect(screen.getByRole("button", { name: "Mac mini 1" }).getAttribute("aria-pressed")).toBe("true");
+    });
+
+    it("drags a held tab by touch in a wide window", async () => {
+      const { state, rpc } = threeTabs();
+      render(rpc);
+      await screen.findByRole("button", { name: "Mac mini 1" });
+      const restore = layOutTabs();
+      try {
+        await touchDragTab("Mac mini 1", 240);
+      } finally {
+        restore();
+      }
+      await waitFor(() => expect(state.moved).toEqual([["term_1", "term_3"]]));
+    });
+
+    it("does not drag by touch on a phone, where a held tab opens its menu instead", async () => {
+      viewport.compact = true;
+      const { state, rpc } = threeTabs();
+      render(rpc);
+      await screen.findByRole("button", { name: "Mac mini 1" });
+      const restore = layOutTabs();
+      try {
+        await touchDragTab("Mac mini 1", 240);
+      } finally {
+        restore();
+      }
+      expect(state.moved).toEqual([]);
+      expect(shownTabs()).toEqual(["Mac mini 1", "Mac mini 2", "MacBook Air"]);
+
+      // Radix opens a context menu after a 700 ms touch press.
+      const second = screen.getByRole("button", { name: "Mac mini 2" });
+      fireEvent.pointerDown(second, { pointerType: "touch", button: 0, clientX: 150, clientY: 10 });
+      expect(await screen.findByRole("menuitem", { name: "Rename" }, { timeout: 2_000 })).toBeTruthy();
+      fireEvent.pointerUp(second, { pointerType: "touch", button: 0 });
+      expect(state.moved).toEqual([]);
+    });
+
+    /** Counts dnd-kit's touch sensor setups (its iOS Safari `touchmove` listener) and their teardowns. */
+    function countTouchSetups() {
+      const counts = { setups: 0, teardowns: 0 };
+      const original = TouchSensor.setup.bind(TouchSensor);
+      const spy = vi.spyOn(TouchSensor, "setup").mockImplementation(() => {
+        counts.setups += 1;
+        const teardown = original();
+        return () => {
+          counts.teardowns += 1;
+          teardown();
+        };
+      });
+      return { counts, restore: () => spy.mockRestore() };
+    }
+
+    it("sets touch dragging up when a second tab opens, and drags by touch then", async () => {
+      const touch = countTouchSetups();
+      try {
+        const { state, rpc } = server([{ id: "mini", name: "Mac mini" }], [tab("term_1", "mini", "Mac mini")]);
+        const view = render(rpc);
+        await screen.findByRole("button", { name: "Mac mini" });
+        expect(touch.counts.setups).toBe(0);
+        state.tabs = [...state.tabs, tab("term_2", "mini", "Mac mini")];
+        await view.emitRealtime("tabs-changed", {});
+        await screen.findByRole("button", { name: "Mac mini 2" });
+        await waitFor(() => expect(touch.counts.setups).toBe(1));
+        expect(touch.counts.teardowns).toBe(0);
+        const restore = layOutTabs();
+        try {
+          await touchDragTab("Mac mini 1", 140);
+        } finally {
+          restore();
+        }
+        await waitFor(() => expect(state.moved).toEqual([["term_1", "term_2"]]));
+        // Back to one tab: nothing to drag, so the listener goes.
+        state.tabs = [state.tabs[0]!];
+        await view.emitRealtime("tabs-changed", {});
+        await waitFor(() => expect(touch.counts.teardowns).toBe(1));
+      } finally {
+        touch.restore();
+      }
+    });
+
+    it("sets touch dragging up when a phone-sized window widens, and takes it down when it narrows", async () => {
+      viewport.compact = true;
+      const touch = countTouchSetups();
+      try {
+        const { state, rpc } = threeTabs();
+        render(rpc);
+        await screen.findByRole("button", { name: "Mac mini 1" });
+        expect(touch.counts.setups).toBe(0);
+        act(() => viewport.setCompact(false));
+        await waitFor(() => expect(touch.counts.setups).toBe(1));
+        const restore = layOutTabs();
+        try {
+          await touchDragTab("Mac mini 1", 240);
+          await waitFor(() => expect(state.moved).toEqual([["term_1", "term_3"]]));
+          act(() => viewport.setCompact(true));
+          await waitFor(() => expect(touch.counts.teardowns).toBe(1));
+          await touchDragTab("Mac mini 2", 140);
+        } finally {
+          restore();
+        }
+        expect(state.moved).toEqual([["term_1", "term_3"]]);
+        expect(touch.counts.setups).toBe(1);
+      } finally {
+        touch.restore();
+      }
+    });
+
+    it("leaves the order alone for a press that does not move far enough to drag", async () => {
+      const { state, rpc } = threeTabs();
+      render(rpc);
+      await screen.findByRole("button", { name: "Mac mini 1" });
+      const restore = layOutTabs();
+      try {
+        await dragTab("Mac mini 1", 4);
+      } finally {
+        restore();
+      }
+      expect(state.moved).toEqual([]);
+      expect(shownTabs()).toEqual(["Mac mini 1", "Mac mini 2", "MacBook Air"]);
+    });
+
+    it("shows the order another window moved the tabs into", async () => {
+      const { state, rpc } = threeTabs();
+      const view = render(rpc);
+      await screen.findByRole("button", { name: "Mac mini 1" });
+      state.tabs = [state.tabs[2]!, state.tabs[0]!, state.tabs[1]!];
+      await view.emitRealtime("tabs-changed", {});
+      await waitFor(() => expect(shownTabs()).toEqual(["MacBook Air", "Mac mini 1", "Mac mini 2"]));
+    });
+
+    it("keeps the shown tab in sight when another window moves it out of view", async () => {
+      const { state, rpc } = threeTabs();
+      windowSelection.set("term_1");
+      const view = render(rpc);
+      await screen.findByRole("button", { name: "Mac mini 1" });
+      // A strip 150 px wide showing the first tab and half the second.
+      const restore = layOutTabs(150);
+      try {
+        expect(stripViewport().scrollLeft).toBe(0);
+        state.tabs = [state.tabs[1]!, state.tabs[2]!, state.tabs[0]!];
+        await view.emitRealtime("tabs-changed", {});
+        await waitFor(() => expect(shownTabs()).toEqual(["Mac mini 2", "MacBook Air", "Mac mini 1"]));
+        // Now at 200–300 px: scrolled just far enough to show it whole.
+        await waitFor(() => expect(stripViewport().scrollLeft).toBe(150));
+      } finally {
+        restore();
+      }
+    });
+
+    it("puts a moved tab back where the server has it when the move fails", async () => {
+      const { state, rpc } = threeTabs();
+      (rpc as unknown as { move: () => never }).move = () => {
+        throw new Error("storage is full");
+      };
+      render(rpc);
+      await screen.findByRole("button", { name: "Mac mini 1" });
+      const restore = layOutTabs();
+      try {
+        // Onto MacBook Air's middle (250 px), whether the dragged pill is measured whole or as a point.
+        await dragTab("Mac mini 1", 240);
+      } finally {
+        restore();
+      }
+      expect(await screen.findByText(/Could not move the terminal: storage is full/)).toBeTruthy();
+      await waitFor(() => expect(shownTabs()).toEqual(["Mac mini 1", "Mac mini 2", "MacBook Air"]));
+      expect(state.tabs.map((entry) => entry.terminalId)).toEqual(["term_1", "term_2", "term_3"]);
+    });
+
+    it("closes the other tabs from a tab's context menu and shows that tab", async () => {
+      const { state, rpc } = threeTabs();
+      windowSelection.set("term_3");
+      render(rpc);
+      fireEvent.contextMenu(await screen.findByRole("button", { name: "Mac mini 2" }));
+      fireEvent.click(await screen.findByRole("menuitem", { name: "Close other tabs" }));
+      await waitFor(() => expect([...state.closed].sort()).toEqual(["term_1", "term_3"]));
+      await waitFor(() => expect(shownTabs()).toEqual(["Mac mini"]));
+      expect(screen.getByRole("button", { name: "Mac mini" }).getAttribute("aria-pressed")).toBe("true");
+      expect(windowSelection.get()).toBe("term_2");
+    });
+
+    it("closes the tabs to the right of a tab from its context menu", async () => {
+      const { state, rpc } = threeTabs();
+      windowSelection.set("term_3");
+      render(rpc);
+      fireEvent.contextMenu(await screen.findByRole("button", { name: "Mac mini 1" }));
+      fireEvent.click(await screen.findByRole("menuitem", { name: "Close tabs to the right" }));
+      await waitFor(() => expect([...state.closed].sort()).toEqual(["term_2", "term_3"]));
+      await waitFor(() => expect(shownTabs()).toEqual(["Mac mini"]));
+      expect(windowSelection.get()).toBe("term_1");
+    });
+
+    it("offers nothing to close to the right of the last tab", async () => {
+      const { rpc } = threeTabs();
+      render(rpc);
+      fireEvent.contextMenu(await screen.findByRole("button", { name: "MacBook Air" }));
+      const item = await screen.findByRole("menuitem", { name: "Close tabs to the right" });
+      expect(item.getAttribute("aria-disabled")).toBe("true");
+    });
+
+    it("says in the tab when its machine is offline or its shell has ended", async () => {
+      const { rpc } = threeTabs();
+      render(rpc);
+      await screen.findByRole("button", { name: "Mac mini 1" });
+      act(() => terminals.setStatus("term_2", { state: "offline", exitCode: null }));
+      act(() => terminals.setStatus("term_3", { state: "ended", exitCode: 0 }));
+      // bb's pill sets the status apart by a margin, not a space.
+      expect(await screen.findByRole("button", { name: "Mac mini 2(offline)" })).toBeTruthy();
+      expect(screen.getByRole("button", { name: "MacBook Air(ended)" })).toBeTruthy();
+    });
+
+    it("closes a tab on a middle click", async () => {
+      const { state, rpc } = threeTabs();
+      render(rpc);
+      const second = await screen.findByRole("button", { name: "Mac mini 2" });
+      fireEvent(second, new MouseEvent("auxclick", { bubbles: true, button: 1 }));
+      await waitFor(() => expect(state.closed).toEqual(["term_2"]));
     });
   });
 
@@ -547,7 +875,7 @@ describe("the Terminals page", () => {
       // The same object, so a test can change what bb answers later.
       host.sidebarThreads ??= sidebarThreads;
       const view = render(rpc, host);
-      await screen.findByRole("tab", { name: "build" });
+      await screen.findByRole("button", { name: "build" });
       await waitFor(() => expect(document.querySelector("[data-terminal-view]")).not.toBeNull());
       return view;
     }

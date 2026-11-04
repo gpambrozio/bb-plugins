@@ -8,7 +8,7 @@
  */
 import { z } from "zod";
 
-/** Published, with no payload, whenever a tab is opened, renamed or closed. */
+/** Published, with no payload, whenever a tab is opened, renamed, moved or closed. */
 export const TABS_CHANGED = "tabs-changed";
 
 /** At most this many tabs at once, so a stuck "+" cannot fill a machine with shells. */
@@ -100,22 +100,49 @@ export function tabStatus(session: { status: "starting" | "running" | "disconnec
 /**
  * Each tab's label: the name the user gave it, else its default title — its
  * machine's name, numbered in opening order when the machine has more than
- * one tab ("Mac mini", or "Mac mini 1", "Mac mini 2"). A renamed tab keeps its
- * number, so clearing its name brings back the title it had.
+ * one tab ("Mac mini", or "Mac mini 1", "Mac mini 2"). The number follows
+ * when the tab was opened, not where it sits in the strip, so a tab dragged
+ * elsewhere keeps it ("Mac mini 2" may sit before "Mac mini 1"). A renamed
+ * tab keeps its number too, so clearing its name brings back the title it had.
  */
 export function tabLabels(
-  tabs: readonly (Pick<Tab, "terminalId" | "hostId" | "hostName"> & { name?: string | null })[],
+  tabs: readonly (Pick<Tab, "terminalId" | "hostId" | "hostName" | "createdAt"> & { name?: string | null })[],
 ): Map<string, string> {
   const perHost = new Map<string, number>();
   for (const tab of tabs) perHost.set(tab.hostId, (perHost.get(tab.hostId) ?? 0) + 1);
+  // Opening order: the server's clock, then the id for two tabs opened in the same millisecond, so
+  // every client numbers alike whatever order the strip shows.
+  const opened = [...tabs].sort(
+    (a, b) => a.createdAt - b.createdAt || (a.terminalId < b.terminalId ? -1 : a.terminalId > b.terminalId ? 1 : 0),
+  );
   const seen = new Map<string, number>();
-  const labels = new Map<string, string>();
-  for (const tab of tabs) {
+  const numbers = new Map<string, number>();
+  for (const tab of opened) {
     const index = (seen.get(tab.hostId) ?? 0) + 1;
     seen.set(tab.hostId, index);
+    numbers.set(tab.terminalId, index);
+  }
+  const labels = new Map<string, string>();
+  for (const tab of tabs) {
     const name = tab.hostName.trim() === "" ? "Terminal" : tab.hostName;
-    const fallback = (perHost.get(tab.hostId) ?? 0) > 1 ? `${name} ${index}` : name;
+    const fallback = (perHost.get(tab.hostId) ?? 0) > 1 ? `${name} ${numbers.get(tab.terminalId)}` : name;
     labels.set(tab.terminalId, tab.name ?? fallback);
   }
   return labels;
+}
+
+/**
+ * The list with the tab `terminalId` moved to where `toTerminalId` is, as a
+ * drag in the strip drops it: after that tab when moving right, before it
+ * when moving left. The list unchanged (the same array) when either tab is
+ * not in it or they are the same tab.
+ */
+export function moveTab<T extends { terminalId: string }>(tabs: readonly T[], terminalId: string, toTerminalId: string): readonly T[] {
+  const from = tabs.findIndex((tab) => tab.terminalId === terminalId);
+  const to = tabs.findIndex((tab) => tab.terminalId === toTerminalId);
+  if (from === -1 || to === -1 || from === to) return tabs;
+  const moved = [...tabs];
+  const [tab] = moved.splice(from, 1);
+  moved.splice(to, 0, tab!);
+  return moved;
 }

@@ -434,6 +434,15 @@ operating system's. The app also has a compact viewport (`isCompactViewport` on 
 narrow window too. A throwing slot collapses to a "plugin crashed" chip instead of taking the app down,
 so a blank area is a crash to look for in the console, not a layout bug.
 
+**A bb component the SDK does not export can be copied from bb** (MIT; `get-bb/bb`'s
+`apps/app/src`), with its source, commit and licence noted — `terminals/app/bb-tab-strip/` holds bb's
+tab strip that way (the SDK and the `@bb` registry have only its parts, at bb 0.48.1). A copy meets
+what bb's app gives its own code and a plugin does not get: a portal to `document.body` is outside the
+plugin root its CSS is scoped to (spread `usePortalScopeProps()` from the vendored `lib/portal-scope`
+on it), bb's custom Tailwind variants and global classes (`tab-pill-close-focus-visible:`,
+`no-scrollbar`) are not in a plugin's Tailwind and silently do nothing (check `dist/app.css`), and
+`@dnd-kit`'s typings need a global `JSX` namespace under React 19 (`terminals/app/jsx-global.d.ts`).
+
 **Scroll your own scroll area, not with `scrollIntoView`.** It scrolls every ancestor that can scroll,
 bb's containers around a tab or panel included (an `overflow: hidden` one too), so a tab's toolbar
 slides out of sight. Set the scroll container's `scrollTop` from the two boxes instead

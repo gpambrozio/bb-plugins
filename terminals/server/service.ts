@@ -7,7 +7,7 @@
  * and keep their output whatever the app does. This file only remembers which
  * sessions are tabs, in which order.
  */
-import { MAX_TABS, OPENING_GRACE_MS, normalizeTabName, tabStatus, type Closing, type HostChoice, type Tab, type TabView } from "../shared/tabs";
+import { MAX_TABS, OPENING_GRACE_MS, moveTab, normalizeTabName, tabStatus, type Closing, type HostChoice, type Tab, type TabView } from "../shared/tabs";
 
 /** The fields of a bb terminal session this file reads. */
 export interface TerminalSessionInfo {
@@ -17,7 +17,7 @@ export interface TerminalSessionInfo {
 }
 
 export interface TerminalsPorts {
-  /** The stored tabs, in opening order; [] before the first one. */
+  /** The stored tabs, in the order the strip shows them; [] before the first one. */
   load(): Promise<Tab[]>;
   save(tabs: Tab[]): Promise<void>;
   /** Tabs closed before bb had made their shell ([] when there are none); see `ClosingSchema`. */
@@ -46,6 +46,11 @@ export interface TerminalsService {
   open(args: { hostId: string; cols: number; rows: number }): Promise<TabView>;
   /** Names the tab; an empty name or null brings back its default title. */
   rename(terminalId: string, name: string | null): Promise<void>;
+  /**
+   * Moves the tab to where `toTerminalId` is, for every client. Nothing moves
+   * when either tab is gone: the list another client changed wins.
+   */
+  move(terminalId: string, toTerminalId: string): Promise<void>;
   close(terminalId: string): Promise<void>;
   /** Drops the tabs whose shell has ended; a tab still opening stays. */
   prune(): Promise<void>;
@@ -154,6 +159,17 @@ export function createTerminalsService(ports: TerminalsPorts): TerminalsService 
       await ports.renameTerminal(terminalId, normalized ?? renamed.hostName).catch((error: unknown) => {
         ports.warn(`could not retitle terminal ${terminalId}: ${String(error)}`);
       });
+    },
+
+    async move(terminalId, toTerminalId) {
+      const moved = await serialized(async () => {
+        const tabs = await ports.load();
+        const next = moveTab(tabs, terminalId, toTerminalId);
+        if (next === tabs) return false;
+        await ports.save([...next]);
+        return true;
+      });
+      if (moved) ports.publish();
     },
 
     async close(terminalId) {
