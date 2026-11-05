@@ -71,7 +71,7 @@ describe("saving a draft", () => {
     const { sessions, sessionId, ask, db } = await setup(EVERY_KIND);
     await ask();
     db.prepare(`UPDATE exercises SET draft = ? WHERE session_id = ? AND ordinal = 1`).run(JSON.stringify({ fields: { name: 42, count: 99, module: "calc" }, confidence: 4 }), sessionId);
-    expect(sessions.cardDraft(sessionId, 1)).toEqual({ fields: { ...initialValues(EVERY_KIND), name: "", count: 10, module: "calc" }, confidence: 4 });
+    expect(sessions.cardDraft(sessionId, 1)).toEqual({ fields: { ...initialValues(EVERY_KIND), name: "", count: 10, module: "calc" }, confidence: 4, revision: 0 });
     db.prepare(`UPDATE exercises SET draft = ? WHERE session_id = ? AND ordinal = 1`).run(JSON.stringify({ confidence: 9 }), sessionId);
     expect(sessions.cardDraft(sessionId, 1)).toBeNull();
     db.prepare(`UPDATE exercises SET draft = 'not json' WHERE session_id = ? AND ordinal = 1`).run(sessionId);
@@ -81,10 +81,31 @@ describe("saving a draft", () => {
   it("a question without a form keeps only the text and the confidence, cut at the answer's limit", async () => {
     const { sessions, sessionId, ask } = await setup();
     await ask();
-    sessions.saveDraft(sessionId, 1, { answer: "It raises", fields: { name: "x" }, confidence: null });
-    expect(sessions.cardDraft(sessionId, 1)).toEqual({ answer: "It raises", confidence: null });
-    sessions.saveDraft(sessionId, 1, { answer: "y".repeat(20_000) });
+    sessions.saveDraft(sessionId, 1, { answer: "It raises", fields: { name: "x" }, confidence: null, revision: 1 });
+    expect(sessions.cardDraft(sessionId, 1)).toEqual({ answer: "It raises", confidence: null, revision: 1 });
+    sessions.saveDraft(sessionId, 1, { answer: "y".repeat(20_000), revision: 2 });
     expect(sessions.cardDraft(sessionId, 1)?.answer).toHaveLength(20_000);
+  });
+
+  it("keeps the newest revision whatever order saves arrive in (review pass 1 of 41aa14a)", async () => {
+    const { sessions, sessionId, ask } = await setup();
+    await ask();
+    sessions.saveDraft(sessionId, 1, { answer: "newer", revision: 20 });
+    // An older save that was still in flight lands afterwards: it is ignored.
+    sessions.saveDraft(sessionId, 1, { answer: "older", revision: 10 });
+    expect(sessions.cardDraft(sessionId, 1)).toMatchObject({ answer: "newer", revision: 20 });
+    sessions.saveDraft(sessionId, 1, { answer: "same revision again", revision: 20 });
+    expect(sessions.cardDraft(sessionId, 1)?.answer).toBe("newer");
+    sessions.saveDraft(sessionId, 1, { answer: "newest", revision: 21 });
+    expect(sessions.cardDraft(sessionId, 1)?.answer).toBe("newest");
+  });
+
+  it("replaces a stored draft that does not read, whatever its revision", async () => {
+    const { sessions, sessionId, ask, db } = await setup();
+    await ask();
+    db.prepare(`UPDATE exercises SET draft = 'not json' WHERE session_id = ? AND ordinal = 1`).run(sessionId);
+    sessions.saveDraft(sessionId, 1, { answer: "fresh", revision: 1 });
+    expect(sessions.cardDraft(sessionId, 1)?.answer).toBe("fresh");
   });
 
   it("a list left with no entries comes back with the one empty entry a fresh card shows", () => {

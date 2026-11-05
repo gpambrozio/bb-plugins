@@ -17,11 +17,14 @@ import { memoryStore, settingsWith } from "../server/testing/store";
 import { rpcContract } from "../shared/contract";
 import type { CardPayload } from "../shared/types";
 import { ExerciseCard } from "./card";
-import { DRAFT_SAVE_DELAY_MS } from "./draft";
+import { DRAFT_SAVE_DELAY_MS, draftStorageKey } from "./draft";
 
 vi.mock("sonner", () => ({ toast: Object.assign(vi.fn(), { error: vi.fn(), success: vi.fn() }) }));
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  window.localStorage.clear();
+});
 
 /** A session waiting on question 1, asked with `form` (or none), and the RPCs the card calls. */
 async function server(form?: unknown) {
@@ -163,6 +166,124 @@ describe("an unsent answer", () => {
     mount(payload, rpc);
     fireEvent.change(screen.getByLabelText("Your answer"), { target: { value: "half an answer" } });
     fireEvent.click(screen.getByRole("button", { name: "Pause session" }));
-    await waitFor(() => expect(saves).toEqual([{ answer: "half an answer", confidence: null }]));
+    await waitFor(() => expect(saves).toEqual([{ answer: "half an answer", confidence: null, revision: expect.any(Number) }]));
+  });
+});
+
+/**
+ * The saves as the network delivers them: each one waits in `queue` until the test delivers it (it then
+ * reaches the server) or drops it (the request dies, as on an unload). `mode` "auto" delivers at once.
+ */
+function network(rpc: { cardDraft: (input: { sessionId: string; ordinal: number }) => unknown; saveDraft: (input: { sessionId: string; ordinal: number; draft: never }) => unknown }) {
+  const queue: { draft: { answer?: string; revision?: number }; deliver: () => void; drop: () => void }[] = [];
+  const net = { mode: "hold" as "hold" | "auto" | "fail", queue };
+  const wrapped = {
+    cardDraft: rpc.cardDraft,
+    saveDraft: (input: { sessionId: string; ordinal: number; draft: never }) => {
+      if (net.mode === "auto") return rpc.saveDraft(input);
+      if (net.mode === "fail") return Promise.reject(new Error("request killed"));
+      return new Promise((resolve, reject) => {
+        queue.push({ draft: input.draft, deliver: () => resolve(rpc.saveDraft(input)), drop: () => reject(new Error("request killed")) });
+      });
+    },
+  };
+  return { net, wrapped };
+}
+
+const typeAnswer = (text: string) => fireEvent.change(screen.getByLabelText("Your answer"), { target: { value: text } });
+const stored = (sessionId: string) => window.localStorage.getItem(draftStorageKey(sessionId, 1));
+
+describe("an unsent answer, when the network and the page misbehave (review pass 1 of 41aa14a)", () => {
+  it("an older save delivered after a newer one does not replace it", async () => {
+    const { payload, rpc, sessions, sessionId } = await server();
+    const { net, wrapped } = network(rpc);
+    mount(payload, wrapped);
+    typeAnswer("first words");
+    await waitFor(() => expect(net.queue).toHaveLength(1), { timeout: DRAFT_SAVE_DELAY_MS * 4 });
+    typeAnswer("first words, then more");
+    // The learner switches threads: the newer edit goes at once, and arrives first.
+    cleanup();
+    await waitFor(() => expect(net.queue).toHaveLength(2));
+    net.queue[1]!.deliver();
+    net.queue[0]!.deliver();
+    await flush();
+    expect(sessions.cardDraft(sessionId, 1)?.answer).toBe("first words, then more");
+    net.mode = "auto";
+    mount(payload, wrapped);
+    await waitFor(() => expect(value("Your answer")).toBe("first words, then more"));
+  });
+
+  it("a card mounted again while its saves are still on their way restores the latest edit and sends it again", async () => {
+    const { payload, rpc, sessions, sessionId } = await server();
+    const { net, wrapped } = network(rpc);
+    mount(payload, wrapped);
+    typeAnswer("typed, not yet saved");
+    cleanup();
+    await waitFor(() => expect(net.queue).toHaveLength(1));
+    // Back before the save landed: the server has nothing yet, this browser has the edit.
+    expect(JSON.parse(stored(sessionId)!)).toMatchObject({ answer: "typed, not yet saved" });
+    mount(payload, wrapped);
+    await waitFor(() => expect(value("Your answer")).toBe("typed, not yet saved"));
+    await waitFor(() => expect(net.queue).toHaveLength(2));
+    expect(net.queue[1]!.draft.answer).toBe("typed, not yet saved");
+    // Both arrive (the same revision twice); the copy in storage goes once the server has it.
+    net.queue[1]!.deliver();
+    net.queue[0]!.deliver();
+    await flush();
+    expect(sessions.cardDraft(sessionId, 1)?.answer).toBe("typed, not yet saved");
+    await waitFor(() => expect(stored(sessionId)).toBeNull());
+  });
+
+  it("saves at once when the page is hidden, before the wait is over", async () => {
+    const { payload, rpc } = await server();
+    const { net, wrapped } = network(rpc);
+    mount(payload, wrapped);
+    typeAnswer("then the app went to the background");
+    expect(net.queue).toHaveLength(0);
+    const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    document.dispatchEvent(new Event("visibilitychange"));
+    visibility.mockRestore();
+    // At once, not after the wait.
+    await flush();
+    expect(net.queue).toHaveLength(1);
+    expect(net.queue[0]!.draft.answer).toBe("then the app went to the background");
+  });
+
+  it("an unload that kills the save loses nothing: the next card restores the edit and saves it", async () => {
+    const { payload, rpc, sessions, sessionId } = await server();
+    const { net, wrapped } = network(rpc);
+    net.mode = "fail";
+    mount(payload, wrapped);
+    typeAnswer("written just before closing");
+    window.dispatchEvent(new Event("pagehide"));
+    cleanup();
+    await flush();
+    expect(sessions.cardDraft(sessionId, 1)).toBeNull();
+    expect(stored(sessionId)).not.toBeNull();
+    // The page loads again.
+    net.mode = "auto";
+    mount(payload, wrapped);
+    await waitFor(() => expect(value("Your answer")).toBe("written just before closing"));
+    await waitFor(() => expect(sessions.cardDraft(sessionId, 1)?.answer).toBe("written just before closing"));
+    await waitFor(() => expect(stored(sessionId)).toBeNull());
+  });
+
+  it.each(["Submit", "Skip"])("a %s that fails keeps the unsent edit and saves it", async (button) => {
+    const { payload, rpc, sessions, sessionId } = await server();
+    const { net, wrapped } = network(rpc);
+    net.mode = "auto";
+    const submit = vi.fn(async () => {
+      throw new Error("offline");
+    });
+    renderSlot({ component: ExerciseCard }, { interaction: { id: "pint_1", threadId: "thr_fork", title: "Question 1", payload, createdAt: 1, expiresAt: null }, submit, cancel: vi.fn(async () => {}) }, {
+      rpc: wrapped as never,
+      experimental_rpcContract: rpcContract,
+    });
+    fireEvent.click(screen.getByRole("button", { name: "3 · Fairly sure" }));
+    typeAnswer("my answer, sent too soon");
+    fireEvent.click(screen.getByRole("button", { name: button }));
+    await waitFor(() => expect(submit).toHaveBeenCalled());
+    await waitFor(() => expect(sessions.cardDraft(sessionId, 1)?.answer).toBe("my answer, sent too soon"));
+    expect((screen.getByRole("button", { name: "Submit" }) as HTMLButtonElement).disabled).toBe(false);
   });
 });

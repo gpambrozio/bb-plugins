@@ -192,9 +192,17 @@ Leaving a thread unmounts its card, and a reload or a restart cancels it, so wha
 lives on the server with the question (`exercises.draft`, migration 15), not in the card.
 
 - **The card saves its whole answer state** (the text box, or the form's values by field id, and the
-  confidence) 500 ms after the last edit, and at once when it unmounts or the page is hidden
-  (`app/draft.ts`, `saveDraft`). On mount it asks for the draft (`cardDraft`) and restores it unless the
-  learner typed first.
+  confidence) 500 ms after the last edit, and at once when it unmounts, the page is hidden
+  (`visibilitychange`: a backgrounded mobile app sends no `pagehide`) or unloaded (`app/draft.ts`,
+  `saveDraft`). On mount it asks for the draft (`cardDraft`) and restores it unless the learner typed first.
+- **Saves are ordered by revision, not by arrival.** Each edit gets a revision higher than any the card
+  made or restored; `recordDraft` writes only over a lower one (or one that does not read), so a slow
+  save that lands after a newer one is ignored.
+- **The newest unacknowledged edit is also in `localStorage`** (`draftStorageKey`: session and question)
+  from the edit until a save of it is acknowledged, every access in try/catch. An unload kills an
+  ordinary RPC and bb's SDK has no keepalive transport, so the next card on this device restores the
+  newer of that copy and the server's, and sends the copy again. A Submit or Skip that fails puts the
+  unsent edit back and saves it.
 - **A draft is read against the stored form like an answer**, when saved and again when handed back
   (`draftValues`: `sanitizeValues`, then a text field or list left empty starts as on a fresh card). A
   question without a form keeps only text, cut at `ANSWER_MAX_CHARS`; the RPC input is capped too.

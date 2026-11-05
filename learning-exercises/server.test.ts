@@ -131,7 +131,7 @@ describe("from a commit to an answered question", () => {
     // The card saves what the learner typed and gets it back; the answer clears it.
     const question = { sessionId: (card.payload as { sessionId: string }).sessionId, ordinal: 1 };
     await harness.callRpc("saveDraft", { ...question, draft: { answer: "It raises", confidence: 4 } });
-    expect(await harness.callRpc("cardDraft", question)).toEqual({ answer: "It raises", confidence: 4 });
+    expect(await harness.callRpc("cardDraft", question)).toEqual({ answer: "It raises", confidence: 4, revision: 0 });
     harness.submitInteraction(card.id, { action: "answer", answer: "It raises ValueError", confidence: 4 });
     expect(await asked).toContain('"It raises ValueError"');
 

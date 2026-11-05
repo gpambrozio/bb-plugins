@@ -604,12 +604,19 @@ export class LearningStore {
     this.db.prepare(`UPDATE exercises SET reply_progress = ? WHERE session_id = ? AND ordinal = ? AND reply IS NULL`).run(JSON.stringify(progress), sessionId, ordinal);
   }
 
-  /** Saves an open question's draft; a question answered or skipped meanwhile keeps none. Answers whether it was saved. */
+  /**
+   * Saves an open question's draft over one with a lower revision (or none, or one that does not read), so
+   * saves that arrive out of order keep the newest; a question answered or skipped meanwhile keeps none.
+   * Answers whether it was saved.
+   */
   recordDraft(sessionId: string, ordinal: number, draft: CardDraft): boolean {
     return (
       this.db
-        .prepare(`UPDATE exercises SET draft = ? WHERE session_id = ? AND ordinal = ? AND answered_at IS NULL AND skipped = 0`)
-        .run(JSON.stringify(draft), sessionId, ordinal).changes > 0
+        .prepare(
+          `UPDATE exercises SET draft = ? WHERE session_id = ? AND ordinal = ? AND answered_at IS NULL AND skipped = 0
+             AND (draft IS NULL OR NOT json_valid(draft) OR COALESCE(json_extract(draft, '$.revision'), 0) < ?)`,
+        )
+        .run(JSON.stringify(draft), sessionId, ordinal, draft.revision ?? 0).changes > 0
     );
   }
 

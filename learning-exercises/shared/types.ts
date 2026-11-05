@@ -215,6 +215,11 @@ export const CardDraftSchema = z.object({
     .refine((fields) => JSON.stringify(fields).length <= DRAFT_FIELDS_MAX_CHARS, "The draft is too large.")
     .optional(),
   confidence: z.number().int().min(1).max(5).nullable().optional(),
+  /**
+   * The card's revision of this draft, rising with every edit (`app/draft.ts`): the server keeps a draft
+   * only over a lower one, so a save that arrives late never replaces a newer one.
+   */
+  revision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
 });
 export type CardDraft = z.infer<typeof CardDraftSchema>;
 

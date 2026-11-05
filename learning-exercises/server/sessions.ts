@@ -723,9 +723,9 @@ export class SessionService {
   }
 
   private readDraft(form: AnswerForm | null, draft: CardDraft): CardDraft {
-    const confidence = draft.confidence ?? null;
-    if (form !== null) return { fields: draftValues(form, draft.fields ?? {}), confidence };
-    return { answer: (draft.answer ?? "").slice(0, ANSWER_MAX_CHARS), confidence };
+    const kept = { confidence: draft.confidence ?? null, revision: draft.revision ?? 0 };
+    if (form !== null) return { fields: draftValues(form, draft.fields ?? {}), ...kept };
+    return { answer: (draft.answer ?? "").slice(0, ANSWER_MAX_CHARS), ...kept };
   }
 
   deleteSession(sessionId: string): void {
