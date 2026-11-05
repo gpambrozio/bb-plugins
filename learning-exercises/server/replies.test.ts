@@ -15,7 +15,7 @@ import { OfferEngine } from "./offers";
 import { questionProblem, unclosedFence } from "./question";
 import { SessionService } from "./sessions";
 import { FakePorts, flush, thread } from "./testing/fake-ports";
-import { memoryStore, settingsWith } from "./testing/store";
+import { memoryStore, memoryStoreWithDb, settingsWith } from "./testing/store";
 
 const WORK = "thr_work";
 const Q1 = { type: "trace" as const, question: "Trace `crownMoved` with -0.35.", files: [] };
@@ -208,18 +208,18 @@ describe("a session already running when the fix is installed (thr_f6iewpgi7a)",
     await flush();
     ports.messagesUnreadable = false;
     expect(store.unreadReplies(sessionId)).toEqual([1]);
-    expect(await sessions.backfillReplies(sessionId)).toBe(true);
+    expect((await sessions.backfillReplies(sessionId)).kept).toBe(true);
     expect(store.unreadReplies(sessionId)).toEqual([]);
     expect(store.exercises(sessionId)[0]?.reply).toBeNull();
     // Question 2 answered, nothing written yet: its window is open, so it stays unread until something is.
     ports.advance(1);
     ports.answer({ action: "answer", answer: "y", confidence: 2 });
     await flush();
-    expect(await sessions.backfillReplies(sessionId)).toBe(false);
+    expect((await sessions.backfillReplies(sessionId)).kept).toBe(false);
     expect(store.unreadReplies(sessionId)).toEqual([2]);
     ports.advance(1);
     ports.say(threadId, "Right.");
-    expect(await sessions.backfillReplies(sessionId)).toBe(true);
+    expect((await sessions.backfillReplies(sessionId)).kept).toBe(true);
     expect(store.exercises(sessionId)[1]?.reply).toBe("Right.");
   });
 });
@@ -280,11 +280,11 @@ describe("a question stands on its own", () => {
 type Row = { seq: number; createdAt: number; data: { item: Record<string, unknown> } };
 
 /** The fake host's events.list over `rows` (read when called, so a test can add rows), newest first, paged by `beforeSeq` as bb pages it. */
-function host(rows: Row[], fail = false) {
+function host(rows: Row[], fail: boolean | (() => boolean) = false) {
   const { bb, harness } = createFakePluginHost({ pluginId: "learning-exercises" });
   const calls: { beforeSeq?: string; limit?: string }[] = [];
   harness.sdk.stub("threads.events.list", (input: { beforeSeq?: string; limit?: string; types: string[]; order: string }) => {
-    if (fail) throw new Error("log unavailable");
+    if (typeof fail === "function" ? fail() : fail) throw new Error("log unavailable");
     calls.push({ beforeSeq: input.beforeSeq, limit: input.limit });
     expect(input).toMatchObject({ types: ["item/completed"], order: "desc" });
     const before = input.beforeSeq === undefined ? Infinity : Number(input.beforeSeq);
@@ -336,7 +336,8 @@ describe("a backfill that runs out of pages (review pass 1 of 4ccc177)", () => {
   /** FakePorts whose event log is the real reader over the fake host's `rows`. */
   async function logged() {
     const rows: Row[] = [];
-    const reader = host(rows);
+    const log = { broken: false };
+    const reader = host(rows, () => log.broken);
     class LogPorts extends FakePorts {
       override agentMessages(threadId: string, window: Parameters<FakePorts["agentMessages"]>[1]) {
         return reader.ports.agentMessages(threadId, window);
@@ -344,7 +345,7 @@ describe("a backfill that runs out of pages (review pass 1 of 4ccc177)", () => {
     }
     const ports = new LogPorts();
     ports.threads.set(WORK, thread({ id: WORK }));
-    const store = memoryStore();
+    const { store, db } = memoryStoreWithDb();
     const sessions = new SessionService(ports, store, () => settingsWith());
     const { threadId, sessionId } = await sessions.start({ sourceThreadId: WORK, topic: "t", trigger: "manual", refs: {}, offerId: null });
     // Question 1 answered at T, question 2 asked at T + 20, the session finished at T + 30, with nothing
@@ -362,7 +363,7 @@ describe("a backfill that runs out of pages (review pass 1 of 4ccc177)", () => {
     await flush();
     expect(store.unreadReplies(sessionId)).toEqual([1]);
     reader.calls.length = 0;
-    return { rows, calls: reader.calls, store, sessions, sessionId, answeredAt };
+    return { rows, calls: reader.calls, store, db, sessions, sessionId, answeredAt, ports, log };
   }
 
   it("an empty partial read is not stored: the answer stays unread, and the next read goes on from the saved place", async () => {
@@ -371,19 +372,19 @@ describe("a backfill that runs out of pages (review pass 1 of 4ccc177)", () => {
     rows.push(message(1, answeredAt + 10, FEEDBACK), message(2, answeredAt + 21, "waiting"));
     for (let seq = 3; seq <= 2102; seq += 1) rows.push(tool(seq, answeredAt + 40 + seq));
 
-    expect(await sessions.backfillReplies(sessionId)).toBe(false);
+    expect((await sessions.backfillReplies(sessionId)).kept).toBe(false);
     expect(calls).toHaveLength(10);
     expect(store.unreadReplies(sessionId)).toEqual([1]);
     expect(store.exercises(sessionId)[0]?.reply).toBeNull();
-    expect(store.replyProgress(sessionId, 1)).toEqual({ before: "103", texts: [] });
+    expect(store.replyProgress(sessionId, 1)).toEqual({ before: "103", text: "", truncated: false });
 
-    expect(await sessions.backfillReplies(sessionId)).toBe(true);
+    expect((await sessions.backfillReplies(sessionId)).kept).toBe(true);
     expect(calls.slice(10).map((call) => call.beforeSeq)).toEqual(["103"]);
     expect(store.exercises(sessionId)[0]?.reply).toBe(FEEDBACK);
     expect(store.unreadReplies(sessionId)).toEqual([]);
     expect(store.replyProgress(sessionId, 1)).toBeNull();
     // Read for good: nothing is read again.
-    expect(await sessions.backfillReplies(sessionId)).toBe(false);
+    expect((await sessions.backfillReplies(sessionId)).kept).toBe(false);
     expect(calls).toHaveLength(11);
   });
 
@@ -394,14 +395,88 @@ describe("a backfill that runs out of pages (review pass 1 of 4ccc177)", () => {
     for (let seq = 2; seq <= 2101; seq += 1) rows.push(tool(seq, answeredAt + 1 + seq / 1000));
     rows.push(message(2102, answeredAt + 15, "And one more thing."));
 
-    expect(await sessions.backfillReplies(sessionId)).toBe(false);
+    expect((await sessions.backfillReplies(sessionId)).kept).toBe(false);
     expect(store.exercises(sessionId)[0]?.reply).toBeNull();
     expect(store.unreadReplies(sessionId)).toEqual([1]);
-    expect(store.replyProgress(sessionId, 1)).toEqual({ before: "103", texts: ["And one more thing."] });
+    expect(store.replyProgress(sessionId, 1)).toEqual({ before: "103", text: "And one more thing.", truncated: false });
 
-    expect(await sessions.backfillReplies(sessionId)).toBe(true);
+    expect((await sessions.backfillReplies(sessionId)).kept).toBe(true);
     expect(calls.map((call) => call.beforeSeq).at(-1)).toBe("103");
     expect(store.exercises(sessionId)[0]?.reply).toBe(`${FEEDBACK}\n\nAnd one more thing.`);
+  });
+
+  it("one history open goes on reading in the background, then refreshes the history with the feedback (review pass 2)", async () => {
+    const { rows, calls, store, sessions, sessionId, answeredAt, ports } = await logged();
+    // The feedback lies past three budgets: 6,100 later tool calls above it.
+    rows.push(message(1, answeredAt + 10, FEEDBACK));
+    for (let seq = 2; seq <= 6101; seq += 1) rows.push(tool(seq, answeredAt + 40 + seq));
+    const api = new LearningApi({ ports, store, offers: new OfferEngine({ ports, store, settings: () => settingsWith() }), sessions, settings: () => settingsWith() });
+    const changes = ports.changes;
+
+    // The open: its read stops at the budget and answers no feedback yet.
+    expect((await api.sessionDetail({ sessionId })).exercises[0]?.reply).toBeNull();
+    const running = sessions.recovering(sessionId);
+    expect(running).toBeDefined();
+    // A refetch while it runs reads nothing more.
+    await api.sessionDetail({ sessionId });
+    await running;
+    // Three budgets of 10 pages over the later work, then one page to the feedback; the views are told once.
+    expect(calls).toHaveLength(31);
+    expect(ports.changes).toBe(changes + 1);
+    expect((await api.sessionDetail({ sessionId })).exercises[0]?.reply).toBe(FEEDBACK);
+    expect(sessions.recovering(sessionId)).toBeUndefined();
+  });
+
+  it("stops going on when the log becomes unreadable", async () => {
+    const { rows, calls, store, sessions, sessionId, answeredAt, log } = await logged();
+    rows.push(message(1, answeredAt + 10, FEEDBACK));
+    for (let seq = 2; seq <= 6101; seq += 1) rows.push(tool(seq, answeredAt + 40 + seq));
+    await sessions.recoverReplies(sessionId);
+    const running = sessions.recovering(sessionId);
+    log.broken = true;
+    await running;
+    // Stopped at the first unreadable page: the question stays unread with its saved place.
+    expect(calls.length).toBeLessThan(20);
+    expect(store.unreadReplies(sessionId)).toEqual([1]);
+    expect(store.exercises(sessionId)[0]?.reply).toBeNull();
+    expect(store.replyProgress(sessionId, 1)).not.toBeNull();
+  });
+
+  it("keeps saved progress within the reply's limit: the oldest-first start, with a mark that it was cut (review pass 2)", async () => {
+    const { rows, calls, store, sessions, sessionId, answeredAt, db } = await logged();
+    // Three long messages, each in its own budget's reach, all before question 2.
+    const [a, b, c] = ["a", "b", "c"].map((letter) => letter.repeat(15_000));
+    rows.push(message(1, answeredAt + 1, a!));
+    for (let seq = 2; seq <= 2101; seq += 1) rows.push(tool(seq, answeredAt + 1 + seq / 1000));
+    rows.push(message(2102, answeredAt + 4, b!));
+    for (let seq = 2103; seq <= 4202; seq += 1) rows.push(tool(seq, answeredAt + 4 + (seq - 2102) / 1000));
+    rows.push(message(4203, answeredAt + 8, c!));
+
+    await sessions.backfillReplies(sessionId);
+    const stored = () => (db.prepare(`SELECT reply_progress AS p FROM exercises WHERE session_id = ? AND ordinal = 1`).get(sessionId) as { p: string | null }).p;
+    // After one budget: only c, whole.
+    expect(store.replyProgress(sessionId, 1)).toEqual({ before: "2204", text: c, truncated: false });
+    await sessions.backfillReplies(sessionId);
+    // After two: b then c, cut to 20,000 characters, marked as cut; the stored value stays that size.
+    expect(store.replyProgress(sessionId, 1)).toEqual({ before: "204", text: `${b}\n\n${c}`.slice(0, 20_000), truncated: true });
+    expect(stored()!.length).toBeLessThan(20_100);
+    await sessions.backfillReplies(sessionId);
+    const reply = store.exercises(sessionId)[0]!.reply!;
+    expect(reply).toBe(`${a}\n\n${b!.slice(0, 20_000 - 15_002 - 1)}…`);
+    expect(reply).toHaveLength(20_000);
+    expect(stored()).toBeNull();
+    expect(calls).toHaveLength(22);
+  });
+
+  it("reads an oversized or misshapen saved value as none, and starts again from the newest event", async () => {
+    const { store, sessionId, db } = await logged();
+    const save = (value: unknown) => db.prepare(`UPDATE exercises SET reply_progress = ? WHERE session_id = ? AND ordinal = 1`).run(JSON.stringify(value), sessionId);
+    save({ before: "5", text: "x".repeat(20_001), truncated: true });
+    expect(store.replyProgress(sessionId, 1)).toBeNull();
+    save({ before: "5", texts: ["old shape"] });
+    expect(store.replyProgress(sessionId, 1)).toBeNull();
+    save({ before: "5; DROP", text: "", truncated: false });
+    expect(store.replyProgress(sessionId, 1)).toBeNull();
   });
 
   it("a capture that runs out of pages keeps the reply an earlier read kept", async () => {

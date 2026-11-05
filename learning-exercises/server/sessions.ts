@@ -42,6 +42,9 @@ export const ABANDON_AFTER_MS = 30 * DAY;
 /** The most event-log pages one read of the agent's replies reads (200 rows each, so 2,000 rows). */
 export const REPLY_READ_PAGES = 10;
 
+/** The most reads one history open goes on for in the background (so 100,000 rows of later work). */
+export const REPLY_READ_CHUNKS = 50;
+
 /** A refusal the agent or the user should read as it is. */
 export class SessionError extends Error {}
 
@@ -102,6 +105,8 @@ export class SessionService {
   private readonly cards = new Map<string, AbortController>();
   /** Set when this copy of the plugin goes: its store and its `bb` handle are closed from then on. */
   private disposed = false;
+  /** The background continuation of each session's reply backfill (`recoverReplies`). */
+  private readonly recoveries = new Map<string, Promise<void>>();
   /** The tail of each key's queue (`exclusive`). */
   private readonly locks = new Map<string, Promise<unknown>>();
 
@@ -612,37 +617,69 @@ export class SessionService {
    * a session followed by long work in the same thread is reached over a few reads, never stored as empty.
    * Answers whether anything was kept.
    */
-  async backfillReplies(sessionId: string): Promise<boolean> {
+  async backfillReplies(sessionId: string): Promise<{ kept: boolean; more: boolean }> {
+    const done = { kept: false, more: false };
     const session = this.store.session(sessionId);
-    if (session === null || session.threadId === null) return false;
+    if (session === null || session.threadId === null) return done;
     const unread = new Set(this.store.unreadReplies(sessionId));
-    if (unread.size === 0) return false;
+    if (unread.size === 0) return done;
     const exercises = this.store.exercises(sessionId);
     const open = OPEN_STATES.includes(session.state);
     let budget = REPLY_READ_PAGES;
     let kept = false;
     for (const exercise of [...exercises].reverse()) {
-      if (budget <= 0) break;
       if (!unread.has(exercise.ordinal) || exercise.answeredAt === null) continue;
+      if (budget <= 0) return { kept, more: true };
       const next = exercises.find((other) => other.ordinal === exercise.ordinal + 1);
       const end = next?.askedAt ?? (open ? null : (session.finishedAt ?? session.updatedAt));
       // An open window grows at the top, so it is read from the newest event every time.
       const progress = end === null ? null : this.store.replyProgress(sessionId, exercise.ordinal);
       const read = await this.ports.agentMessages(session.threadId, { from: exercise.answeredAt, to: end, before: progress?.before ?? null, pages: budget });
-      if (this.disposed || read === null) return kept;
+      if (this.disposed || read === null) return { kept, more: false };
       budget -= read.pages;
       // The rows read now are older than those read before, so their messages come first.
-      const texts = [...read.texts, ...(progress?.texts ?? [])];
+      const found = boundReply([...read.texts, ...(progress === null || progress.text === "" ? [] : [progress.text])], progress?.truncated ?? false);
       if (!read.complete) {
-        if (end !== null && read.before !== null) this.store.recordReplyProgress(sessionId, exercise.ordinal, { before: read.before, texts });
-        break;
+        // An open window's read starts again at the top next time; only a closed one has a place to keep.
+        if (end === null || read.before === null) return { kept, more: false };
+        this.store.recordReplyProgress(sessionId, exercise.ordinal, { before: read.before, ...found });
+        return { kept, more: true };
       }
-      const reply = joinReply(texts);
+      const reply = finalReply(found);
       if (reply === "" && end === null) continue;
       this.store.recordReply(sessionId, exercise.ordinal, reply);
       kept = true;
     }
-    return kept;
+    return { kept, more: false };
+  }
+
+  /**
+   * Backfills a session's replies, and when a read stops on its page budget with more to read, goes on in
+   * the background, one budget at a time, up to `REPLY_READ_CHUNKS` reads, then tells the open views
+   * (the history refetches its detail). It stops at once on an unreadable log or a reload. One
+   * continuation per session at a time; while one runs, a read of the detail adds none.
+   */
+  async recoverReplies(sessionId: string): Promise<void> {
+    if (this.recoveries.has(sessionId)) return;
+    const first = await this.backfillReplies(sessionId);
+    if (!first.more || this.disposed || this.recoveries.has(sessionId)) return;
+    const run = (async () => {
+      let kept = first.kept;
+      for (let chunk = 1; chunk < REPLY_READ_CHUNKS; chunk += 1) {
+        const step = await this.backfillReplies(sessionId);
+        if (this.disposed) return;
+        kept ||= step.kept;
+        if (!step.more) break;
+      }
+      if (kept) this.ports.changed();
+    })().finally(() => this.recoveries.delete(sessionId));
+    this.recoveries.set(sessionId, run);
+    this.background(run, `Reading the replies of ${sessionId}`);
+  }
+
+  /** The background continuation of a session's backfill, while one runs (tests wait on it). */
+  recovering(sessionId: string): Promise<void> | undefined {
+    return this.recoveries.get(sessionId);
   }
 
   /** Reads the agent's reply to the last settled question and keeps it; an empty read keeps the earlier one. */
@@ -721,13 +758,27 @@ export class SessionService {
   }
 }
 
-/** The agent's messages as one reply: each trimmed, empty ones dropped, cut at `REPLY_MAX_CHARS`. */
-function joinReply(texts: readonly string[]): string {
-  const reply = texts
-    .map((text) => text.trim())
-    .filter((text) => text !== "")
+/**
+ * The agent's messages joined oldest first (each trimmed, empty ones dropped) and cut to the
+ * `REPLY_MAX_CHARS` the reply keeps: only its start can be kept, so a longer one loses its end. `truncated`
+ * says something was cut, now or before (`wasCut`, from saved progress).
+ */
+function boundReply(texts: readonly string[], wasCut = false): { text: string; truncated: boolean } {
+  const text = texts
+    .map((part) => part.trim())
+    .filter((part) => part !== "")
     .join("\n\n");
-  return reply.length > REPLY_MAX_CHARS ? `${reply.slice(0, REPLY_MAX_CHARS - 1)}…` : reply;
+  return text.length > REPLY_MAX_CHARS ? { text: text.slice(0, REPLY_MAX_CHARS), truncated: true } : { text, truncated: wasCut };
+}
+
+/** The reply as kept: a cut one ends in "…" within `REPLY_MAX_CHARS`. */
+function finalReply({ text, truncated }: { text: string; truncated: boolean }): string {
+  return truncated ? `${text.slice(0, REPLY_MAX_CHARS - 1)}…` : text;
+}
+
+/** The agent's messages as one reply, cut at `REPLY_MAX_CHARS`. */
+function joinReply(texts: readonly string[]): string {
+  return finalReply(boundReply(texts));
 }
 
 export function cleanConcepts(concepts: readonly string[]): string[] {

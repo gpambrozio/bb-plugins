@@ -163,8 +163,14 @@ so only "I'm waiting for your answer" stayed in view. Its next question then sai
   below. An incomplete read is never stored as the reply, empty or shortened: a capture keeps what an
   earlier read kept, and the backfill leaves the question unread and saves where it stopped and the
   messages found so far (`reply_progress`, migration 14), so the next call goes on from there. One
-  backfill call shares one budget across its questions, newest first, so a session followed by long
-  work in the same thread is reached over a few reads at a bounded cost each.
+  backfill call shares one budget across its questions, newest first. Saved progress is bounded like
+  the reply: its messages joined oldest first and cut to `REPLY_MAX_CHARS` with a `truncated` mark, since
+  only the start of a reply is kept; a stored value of another shape or size reads as none.
+- **One history open finishes the job.** `sessionDetail` calls `recoverReplies`: one budget in the
+  request, and when that read stopped short, a background continuation (one per session) of at most
+  `REPLY_READ_CHUNKS` more budgets, which stops on an unreadable log or a reload and calls `changed()`
+  when it kept a reply, so the open history refetches and shows it. This only matters for sessions
+  recorded before replies were kept; do not grow it further.
 - **A question must stand on its own.** The card is all the learner sees while answering, so the brief,
   the tool's description and parameter, the CLI and `SESSION_INVARIANT` say to put any code a question
   relies on inside it as a fenced block (above all code the files do not hold now) and never to point

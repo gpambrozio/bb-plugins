@@ -18,6 +18,7 @@ import {
   type ExerciseType,
   type Offer,
   type OfferAnswer,
+  REPLY_MAX_CHARS,
   type Refs,
   type Session,
   type SessionMode,
@@ -108,8 +109,16 @@ export const MIGRATIONS: string[] = [
   `ALTER TABLE exercises ADD COLUMN reply_progress TEXT`,
 ];
 
-const ReplyProgressSchema = z.object({ before: z.string(), texts: z.array(z.string()) });
-/** An unfinished read of a reply: rows at or above `before` were read, and `texts` (oldest first) found there. */
+const ReplyProgressSchema = z.object({
+  before: z.string().regex(/^\d{1,20}$/),
+  text: z.string().max(REPLY_MAX_CHARS),
+  truncated: z.boolean(),
+});
+/**
+ * An unfinished read of a reply: rows at or above `before` were read, and `text` is what they held, joined
+ * oldest first and cut to the `REPLY_MAX_CHARS` the final reply can use (`truncated` when something was
+ * cut). A value of another shape or size reads as none, and the read starts again from the newest event.
+ */
 export type ReplyProgress = z.infer<typeof ReplyProgressSchema>;
 
 /** The partial unique index migration 9 creates (one open session per source thread). */

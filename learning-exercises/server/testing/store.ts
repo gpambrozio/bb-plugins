@@ -5,10 +5,15 @@ import { readSettings, type LearningSettings } from "../settings";
 import { LearningStore, MIGRATIONS } from "../store";
 
 export function memoryStore(): LearningStore {
+  return memoryStoreWithDb().store;
+}
+
+/** An in-memory store and its database, for a test that checks a stored value as it is. */
+export function memoryStoreWithDb(): { store: LearningStore; db: Database.Database } {
   const db = new Database(":memory:");
   db.pragma("foreign_keys = ON");
   for (const statement of MIGRATIONS) db.exec(statement);
-  return new LearningStore(db);
+  return { store: new LearningStore(db), db };
 }
 
 /** The default settings with `overrides` (in their stored, flat shape). */
