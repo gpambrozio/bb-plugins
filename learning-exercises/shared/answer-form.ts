@@ -390,14 +390,16 @@ function initialValue(field: FormField): FieldValue {
       return field.default ?? null;
     case "multi-choice":
       return [...(field.default ?? [])];
+    // Untouched until the learner moves an item or keeps the order shown (`isAnswered`).
     case "ranking":
-      return field.items.map((item) => item.value);
+      return null;
     case "matching":
       return Object.fromEntries(field.left.map((item) => [item.value, null]));
     case "list":
       return [""];
+    // A checkbox cell is null until the learner ticks a box or confirms the unticked ones (`checkboxesDecided`).
     case "table":
-      return Object.fromEntries(field.rows.map((row) => [row.id, Object.fromEntries(field.columns.map((column) => [column.id, column.control === "checkbox" ? false : null]))]));
+      return Object.fromEntries(field.rows.map((row) => [row.id, Object.fromEntries(field.columns.map((column) => [column.id, null]))]));
   }
 }
 
@@ -415,7 +417,38 @@ function filled(cell: TableCell): boolean {
   return cell !== null && cell !== "";
 }
 
-/** Whether the learner gave this field anything. A ranking always has an order, so it counts once seen. */
+type TableField = Extract<FormField, { kind: "table" }>;
+
+function checkboxColumns(field: TableField): TableColumn[] {
+  return field.columns.filter((column) => column.control === "checkbox");
+}
+
+/**
+ * Whether the learner decided a table's checkboxes: ticked or unticked any of them, or confirmed the
+ * unticked ones (`confirmUnticked`). Once decided, a box never touched counts as unticked; before, an
+ * unticked box is no answer, so a table left alone never reads as "no" everywhere.
+ */
+export function checkboxesDecided(field: TableField, value: FieldValue): boolean {
+  return checkboxColumns(field).some((column) => field.rows.some((row) => typeof cellOf(value, row.id, column.id) === "boolean"));
+}
+
+/** The table with every checkbox not ticked set to unticked: the learner's "none of the others". */
+export function confirmUnticked(field: TableField, value: FieldValue): Record<string, Record<string, TableCell>> {
+  return Object.fromEntries(
+    field.rows.map((row) => [
+      row.id,
+      Object.fromEntries(field.columns.map((column) => {
+        const cell = cellOf(value, row.id, column.id);
+        return [column.id, column.control === "checkbox" ? cell === true : cell];
+      })),
+    ]),
+  );
+}
+
+/**
+ * Whether the learner gave this field anything. A ranking counts once its order was moved or kept, a
+ * table once a cell is filled or its checkboxes are decided.
+ */
 export function isAnswered(field: FormField, value: FieldValue): boolean {
   if (value === null || value === undefined) return false;
   switch (field.kind) {
@@ -435,7 +468,7 @@ export function isAnswered(field: FormField, value: FieldValue): boolean {
       return (
         typeof value === "object" &&
         !Array.isArray(value) &&
-        field.columns.some((column) => column.control !== "checkbox" && field.rows.some((row) => filled(cellOf(value, row.id, column.id))))
+        (field.columns.some((column) => column.control !== "checkbox" && field.rows.some((row) => filled(cellOf(value, row.id, column.id)))) || checkboxesDecided(field, value))
       );
     default:
       return true;
@@ -453,7 +486,12 @@ function cellOf(value: FieldValue, rowId: string, columnId: string): TableCell {
 /** Why the card cannot send this field yet, in a few words; null when it can. */
 export function fieldProblem(field: FormField, value: FieldValue): string | null {
   const answered = isAnswered(field, value);
-  if (!answered) return isRequired(field) ? "needs an answer" : null;
+  if (!answered) {
+    if (!isRequired(field)) return null;
+    if (field.kind === "ranking") return "needs an order: move an item, or keep this order";
+    if (field.kind === "table" && checkboxColumns(field).length === field.columns.length) return "needs its boxes ticked, or the unticked ones confirmed";
+    return "needs an answer";
+  }
   switch (field.kind) {
     case "text":
     case "long-text": {
@@ -494,7 +532,8 @@ export function fieldProblem(field: FormField, value: FieldValue): string | null
     case "table": {
       if (!isRequired(field)) return null;
       const empty = field.columns.some((column) => column.control !== "checkbox" && field.rows.some((row) => !filled(cellOf(value, row.id, column.id))));
-      return empty ? "needs every cell filled" : null;
+      if (empty) return "needs every cell filled";
+      return checkboxColumns(field).length > 0 && !checkboxesDecided(field, value) ? "needs its boxes ticked, or the unticked ones confirmed" : null;
     }
     default:
       return null;
@@ -513,7 +552,7 @@ export function formProblems(form: AnswerForm, values: FormValues): Map<string, 
 
 /** Whether the learner answered anything at all. */
 export function hasAnyAnswer(form: AnswerForm, values: FormValues): boolean {
-  return formFields(form).some((field) => field.kind !== "ranking" && isAnswered(field, values[field.id] ?? null));
+  return formFields(form).some((field) => isAnswered(field, values[field.id] ?? null));
 }
 
 function cutText(value: unknown, max: number): string | null {
@@ -564,6 +603,7 @@ function sanitizeValue(field: FormField, value: unknown): FieldValue {
     case "ranking": {
       const known = field.items.map((item) => item.value);
       const given = Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string" && known.includes(entry)) : [];
+      if (given.length === 0) return null;
       const order = [...new Set(given)];
       return [...order, ...known.filter((item) => !order.includes(item))];
     }
@@ -585,13 +625,15 @@ function sanitizeValue(field: FormField, value: unknown): FieldValue {
         .filter((entry) => entry.trim() !== "")
         .slice(0, field.maxEntries ?? FORM_LIMITS.listEntries);
     }
-    case "table":
-      return Object.fromEntries(
+    case "table": {
+      const table = Object.fromEntries(
         field.rows.map((row) => [
           row.id,
           Object.fromEntries(field.columns.map((column) => [column.id, sanitizeCell(column, cellOf(value as FieldValue, row.id, column.id))])),
         ]),
       );
+      return checkboxesDecided(field, table) ? confirmUnticked(field, table) : table;
+    }
   }
 }
 
@@ -604,7 +646,7 @@ function sanitizeCell(column: TableColumn, cell: TableCell): TableCell {
     case "choice":
       return typeof cell === "string" && (column.options ?? []).some((option) => option.value === cell) ? cell : null;
     case "checkbox":
-      return cell === true;
+      return typeof cell === "boolean" ? cell : null;
   }
 }
 
@@ -622,7 +664,7 @@ export function withUnit(value: number, unit: string | undefined): string {
 }
 
 function cellText(column: TableColumn, cell: TableCell): string {
-  if (column.control === "checkbox") return cell === true ? "yes" : "no";
+  if (column.control === "checkbox") return cell === true ? "yes" : cell === false ? "no" : "(not answered)";
   if (cell === null || cell === "") return "(empty)";
   if (column.control === "choice") return optionLabel(column.options ?? [], String(cell));
   return String(cell);

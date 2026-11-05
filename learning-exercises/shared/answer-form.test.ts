@@ -5,6 +5,8 @@ import { BRIEF_CORE } from "../server/content";
 import { EVERY_KIND, EVERY_KIND_ANSWER } from "../server/testing/forms";
 import {
   AnswerFormSchema,
+  checkboxesDecided,
+  confirmUnticked,
   FIELD_KINDS,
   FORM_LIMITS,
   choiceDisplay,
@@ -104,18 +106,95 @@ describe("checking a form", () => {
   });
 });
 
+describe("rankings and checkbox tables (review pass 1 of dfb630d)", () => {
+  const RANKING: AnswerForm = {
+    items: [
+      {
+        kind: "ranking",
+        id: "order",
+        label: "Put them in order",
+        items: [
+          { value: "parse", label: "Parse" },
+          { value: "sort", label: "Sort" },
+        ],
+      },
+    ],
+  };
+  const CHECKS: AnswerForm = {
+    items: [
+      {
+        kind: "table",
+        id: "mutates",
+        label: "Which mutate their input?",
+        columns: [{ id: "yes", label: "Mutates", control: "checkbox" }],
+        rows: [
+          { id: "sort", label: "list.sort" },
+          { id: "sorted", label: "sorted" },
+        ],
+      },
+    ],
+  };
+  const ranking = RANKING.items[0] as Extract<FormField, { kind: "ranking" }>;
+  const table = CHECKS.items[0] as Extract<FormField, { kind: "table" }>;
+
+  it("a ranking-only form can be answered: a moved or kept order is an answer", () => {
+    const untouched = initialValues(RANKING);
+    expect(hasAnyAnswer(RANKING, untouched)).toBe(false);
+    expect(fieldProblem(ranking, untouched.order!)).toBe("needs an order: move an item, or keep this order");
+    // The order shown first, kept as it is, is as good an answer as a moved one.
+    for (const order of [["parse", "sort"], ["sort", "parse"]]) {
+      expect(hasAnyAnswer(RANKING, { order })).toBe(true);
+      expect(formProblems(RANKING, { order }).size).toBe(0);
+    }
+    expect(summarizeAnswer(RANKING, sanitizeValues(RANKING, { order: ["sort"] }))).toBe("- Put them in order:\n    1. Sort\n    2. Parse");
+    expect(sanitizeValues(RANKING, { order: "nope" })).toEqual({ order: null });
+  });
+
+  it("a ticked box answers a checkbox table, and the boxes left alone are then unticked", () => {
+    const ticked = { mutates: { sort: { yes: true }, sorted: { yes: null } } };
+    expect(hasAnyAnswer(CHECKS, ticked)).toBe(true);
+    expect(formProblems(CHECKS, ticked).size).toBe(0);
+    const read = sanitizeValues(CHECKS, ticked);
+    expect(read).toEqual({ mutates: { sort: { yes: true }, sorted: { yes: false } } });
+    expect(summarizeAnswer(CHECKS, read)).toBe("- Which mutate their input?:\n    list.sort: Mutates yes\n    sorted: Mutates no");
+  });
+
+  it("all unticked is an answer once confirmed, and only then", () => {
+    const untouched = initialValues(CHECKS);
+    expect(fieldProblem(table, untouched.mutates!)).toBe("needs its boxes ticked, or the unticked ones confirmed");
+    expect(sanitizeValues(CHECKS, untouched)).toEqual({ mutates: { sort: { yes: null }, sorted: { yes: null } } });
+    expect(summarizeAnswer(CHECKS, sanitizeValues(CHECKS, untouched))).toBe("- Which mutate their input?: (no answer)");
+    const confirmed = confirmUnticked(table, untouched.mutates!);
+    expect(confirmed).toEqual({ sort: { yes: false }, sorted: { yes: false } });
+    expect(checkboxesDecided(table, confirmed)).toBe(true);
+    expect(formProblems(CHECKS, { mutates: confirmed }).size).toBe(0);
+    expect(summarizeAnswer(CHECKS, sanitizeValues(CHECKS, { mutates: confirmed }))).toBe("- Which mutate their input?:\n    list.sort: Mutates no\n    sorted: Mutates no");
+  });
+
+  it("a mixed table needs its other cells filled and its boxes decided when required, and reads the same either way", () => {
+    const mixed: Extract<FormField, { kind: "table" }> = { ...table, columns: [...table.columns, { id: "cost", label: "Cost", control: "number" }] };
+    const filledOnly = { sort: { yes: null, cost: 1 }, sorted: { yes: null, cost: 2 } };
+    expect(fieldProblem(mixed, filledOnly)).toBe("needs its boxes ticked, or the unticked ones confirmed");
+    expect(fieldProblem({ ...mixed, required: false }, filledOnly)).toBeNull();
+    const form: AnswerForm = { items: [{ kind: "text", id: "why", label: "Why?" }, { ...mixed, required: false }] };
+    const summary = summarizeAnswer(form, sanitizeValues(form, { why: "x", mutates: { sort: { yes: true, cost: 1 }, sorted: { yes: null, cost: null } } }));
+    expect(summary).toContain("list.sort: Mutates yes; Cost 1");
+    expect(summary).toContain("sorted: Mutates no; Cost (empty)");
+  });
+});
+
 describe("values", () => {
-  it("starts from the defaults, with a ranking in the order given and an empty table", () => {
+  it("starts from the defaults, with an untouched ranking and table", () => {
     const values = initialValues(EVERY_KIND);
-    expect(values).toMatchObject({ name: "", count: null, callers: [], safe: null, order: ["parse", "sort", "pick"], pairs: { empty: null, one: null }, edges: [""] });
-    expect(values.compare).toEqual({ sort: { cost: null, stable: false, grade: null }, heap: { cost: null, stable: false, grade: null } });
+    expect(values).toMatchObject({ name: "", count: null, callers: [], safe: null, order: null, pairs: { empty: null, one: null }, edges: [""] });
+    expect(values.compare).toEqual({ sort: { cost: null, stable: null, grade: null }, heap: { cost: null, stable: null, grade: null } });
     expect(hasAnyAnswer(EVERY_KIND, values)).toBe(false);
   });
 
   it("says what each field still needs", () => {
     const problems = formProblems(EVERY_KIND, initialValues(EVERY_KIND));
-    // Optional fields need nothing; a ranking always has an order.
-    expect([...problems.keys()].sort()).toEqual(["callers", "clarity", "compare", "count", "edges", "module", "name", "outcome", "pairs", "risk", "safe"]);
+    // Optional fields need nothing.
+    expect([...problems.keys()].sort()).toEqual(["callers", "clarity", "compare", "count", "edges", "module", "name", "order", "outcome", "pairs", "risk", "safe"]);
     expect(formProblems(EVERY_KIND, EVERY_KIND_ANSWER).size).toBe(0);
     expect(fieldProblem(field(EVERY_KIND, "number"), 11)).toBe("is above 10");
     expect(fieldProblem(field(EVERY_KIND, "number"), 1.5)).toBe("is not a multiple of 1");
@@ -157,7 +236,8 @@ describe("values", () => {
       order: ["pick", "parse", "sort"],
       pairs: { empty: "three", one: null },
       edges: ["a", "x".repeat(500)],
-      compare: { sort: { cost: null, stable: false, grade: "good" }, heap: { cost: null, stable: false, grade: null } },
+      // No box was ticked or unticked ("yes" is not one), so the checkboxes stay undecided.
+      compare: { sort: { cost: null, stable: null, grade: "good" }, heap: { cost: null, stable: null, grade: null } },
     });
     for (const junk of [null, "text", 3, [], { name: { deep: true } }]) expect(() => sanitizeValues(EVERY_KIND, junk)).not.toThrow();
   });

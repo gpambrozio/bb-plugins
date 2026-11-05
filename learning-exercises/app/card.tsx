@@ -13,7 +13,7 @@ import { useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { formProblems, hasAnyAnswer, initialValues, readAnswerForm, summarizeAnswer, type AnswerForm, type FormValues } from "../shared/answer-form";
+import { formProblems, hasAnyAnswer, initialValues, readAnswerForm, sanitizeValues, summarizeAnswer, type AnswerForm, type FormValues } from "../shared/answer-form";
 import { ANSWER_MAX_CHARS, CardPayloadSchema, CONFIDENCE_LABELS, type CardValue } from "../shared/types";
 import { AnswerFormFields } from "./answer-form";
 import { FileMarkdown, FileRef } from "./file-refs";
@@ -45,7 +45,9 @@ export function ExerciseCard({ interaction, submit }: PluginPendingInteractionPr
   const ready = answered && confidence !== null && !sending;
   const submit_ = () => {
     if (form !== null && formValues !== null) {
-      send({ action: "answer", answer: summarizeAnswer(form, formValues).slice(0, ANSWER_MAX_CHARS), confidence: confidence ?? 3, fields: formValues });
+      // What the server will keep: unticked boxes of a decided table as false, empty list entries dropped.
+      const fields = sanitizeValues(form, formValues);
+      send({ action: "answer", answer: summarizeAnswer(form, fields).slice(0, ANSWER_MAX_CHARS), confidence: confidence ?? 3, fields });
     } else {
       send({ action: "answer", answer: answer.trim(), confidence: confidence ?? 3 });
     }

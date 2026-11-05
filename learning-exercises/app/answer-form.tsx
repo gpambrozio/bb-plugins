@@ -17,7 +17,9 @@ import { Icon } from "@/components/ui/icon";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import {
+  checkboxesDecided,
   choiceDisplay,
+  confirmUnticked,
   describeValue,
   fieldProblem,
   isAnswered,
@@ -467,7 +469,9 @@ function Scale(props: ControlProps<Extract<FormField, { kind: "scale" }>>) {
 
 function Ranking(props: ControlProps<Extract<FormField, { kind: "ranking" }>>) {
   const { field } = props;
-  const order = asStrings(props.value);
+  // Untouched, the items show in the order given; moving one, or Keep this order, makes it the answer.
+  const kept = Array.isArray(props.value) && props.value.length > 0;
+  const order = kept ? asStrings(props.value) : field.items.map((item) => item.value);
   const labelOf = (value: string) => field.items.find((item) => item.value === value)?.label ?? value;
   const move = (index: number, by: -1 | 1) => {
     const next = [...order];
@@ -477,30 +481,47 @@ function Ranking(props: ControlProps<Extract<FormField, { kind: "ranking" }>>) {
   return (
     <FieldGroup {...props}>
       {() => (
-        <ol className="flex flex-col gap-1">
-          {order.map((value, index) => (
-            <li key={value} className="flex items-center gap-2 rounded-md border border-border px-2 py-1 text-sm">
-              <span className="w-5 shrink-0 text-right tabular-nums text-muted-foreground">{index + 1}.</span>
-              <span className="min-w-0 flex-1">{labelOf(value)}</span>
-              <Button type="button" size="icon" variant="ghost" className="size-7" aria-label={`Move ${labelOf(value)} up`} disabled={props.disabled || index === 0} onClick={() => move(index, -1)}>
-                <Icon name="ChevronUp" className="size-4" />
-              </Button>
-              <Button
-                type="button"
-                size="icon"
-                variant="ghost"
-                className="size-7"
-                aria-label={`Move ${labelOf(value)} down`}
-                disabled={props.disabled || index === order.length - 1}
-                onClick={() => move(index, 1)}
-              >
-                <Icon name="ChevronDown" className="size-4" />
-              </Button>
-            </li>
-          ))}
-        </ol>
+        <>
+          <ol className="flex flex-col gap-1">
+            {order.map((value, index) => (
+              <li key={value} className="flex items-center gap-2 rounded-md border border-border px-2 py-1 text-sm">
+                <span className="w-5 shrink-0 text-right tabular-nums text-muted-foreground">{index + 1}.</span>
+                <span className="min-w-0 flex-1">{labelOf(value)}</span>
+                <Button type="button" size="icon" variant="ghost" className="size-7" aria-label={`Move ${labelOf(value)} up`} disabled={props.disabled || index === 0} onClick={() => move(index, -1)}>
+                  <Icon name="ChevronUp" className="size-4" />
+                </Button>
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="ghost"
+                  className="size-7"
+                  aria-label={`Move ${labelOf(value)} down`}
+                  disabled={props.disabled || index === order.length - 1}
+                  onClick={() => move(index, 1)}
+                >
+                  <Icon name="ChevronDown" className="size-4" />
+                </Button>
+              </li>
+            ))}
+          </ol>
+          <ConfirmButton pressed={kept} disabled={props.disabled} onClick={() => props.onChange(order)}>
+            Keep this order
+          </ConfirmButton>
+        </>
       )}
     </FieldGroup>
+  );
+}
+
+/** A button that makes what is on screen the answer; it stays in place, pressed, so focus is kept. */
+function ConfirmButton(props: { pressed: boolean; disabled: boolean; onClick: () => void; children: string }) {
+  return (
+    <div>
+      <Button type="button" size="sm" variant="outline" aria-pressed={props.pressed} disabled={props.disabled} onClick={props.onClick}>
+        {props.pressed && <Icon name="Check" className="size-4" />}
+        {props.children}
+      </Button>
+    </div>
   );
 }
 
@@ -591,37 +612,46 @@ function Table(props: ControlProps<Extract<FormField, { kind: "table" }>>) {
   const { field } = props;
   const table = props.value !== null && typeof props.value === "object" && !Array.isArray(props.value) ? (props.value as Record<string, Record<string, TableCell>>) : {};
   const setCell = (rowId: string, columnId: string, cell: TableCell) => props.onChange({ ...table, [rowId]: { ...(table[rowId] ?? {}), [columnId]: cell } });
+  const hasCheckboxes = field.columns.some((column) => column.control === "checkbox");
   return (
     <FieldGroup {...props}>
       {() => (
-        <div className="overflow-x-auto">
-          <table className="w-full border-collapse text-sm">
-            <thead>
-              <tr>
-                <td />
-                {field.columns.map((column) => (
-                  <th key={column.id} scope="col" className="px-1.5 pb-1 text-left text-xs font-medium text-muted-foreground">
-                    {column.label}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {field.rows.map((row) => (
-                <tr key={row.id} className="border-t border-border">
-                  <th scope="row" className="py-1 pr-2 text-left align-middle font-normal">
-                    {row.label}
-                  </th>
+        <>
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-sm">
+              <thead>
+                <tr>
+                  <td />
                   {field.columns.map((column) => (
-                    <td key={column.id} className="px-1 py-1 align-middle">
-                      <Cell column={column} label={`${row.label}, ${column.label}`} value={table[row.id]?.[column.id] ?? null} disabled={props.disabled} onChange={(cell) => setCell(row.id, column.id, cell)} />
-                    </td>
+                    <th key={column.id} scope="col" className="px-1.5 pb-1 text-left text-xs font-medium text-muted-foreground">
+                      {column.label}
+                    </th>
                   ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {field.rows.map((row) => (
+                  <tr key={row.id} className="border-t border-border">
+                    <th scope="row" className="py-1 pr-2 text-left align-middle font-normal">
+                      {row.label}
+                    </th>
+                    {field.columns.map((column) => (
+                      <td key={column.id} className="px-1 py-1 align-middle">
+                        <Cell column={column} label={`${row.label}, ${column.label}`} value={table[row.id]?.[column.id] ?? null} disabled={props.disabled} onChange={(cell) => setCell(row.id, column.id, cell)} />
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {hasCheckboxes && (
+            // An unticked box is no answer until the learner ticks one or confirms them: "none" is an answer too.
+            <ConfirmButton pressed={checkboxesDecided(field, table)} disabled={props.disabled} onClick={() => props.onChange(confirmUnticked(field, table))}>
+              Confirm unticked boxes
+            </ConfirmButton>
+          )}
+        </>
       )}
     </FieldGroup>
   );
@@ -746,7 +776,7 @@ function ValueView(props: { field: FormField; value: FieldValue }) {
 }
 
 function cellView(column: TableColumn, cell: TableCell): string {
-  if (column.control === "checkbox") return cell === true ? "✓" : "—";
+  if (column.control === "checkbox") return cell === true ? "yes" : cell === false ? "no" : "—";
   if (cell === null || cell === "") return "—";
   if (column.control === "choice") return column.options?.find((option) => option.value === cell)?.label ?? String(cell);
   return String(cell);

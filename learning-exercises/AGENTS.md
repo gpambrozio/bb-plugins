@@ -121,6 +121,13 @@ bb's `requestInput` hosts it as it is; no other surface is involved.
   dropped) and writes its own summary (`summarizeAnswer`) as the exercise's `answer`, so history,
   counts and the agent read the same thing. The agent gets the summary and the fields as JSON, both
   quoted as data. An answer with no `fields` (the fallback text box) is taken as text.
+- **Untouched is not an answer, and the first state can be one.** A ranking starts `null` and becomes
+  the answer when the learner moves an item or presses *Keep this order* (the order shown first may be
+  the right one). A table's checkbox cells start `null`; ticking or unticking any box, or *Confirm
+  unticked boxes*, decides them all (`checkboxesDecided`), and the boxes left alone then read as
+  unticked (`confirmUnticked`), so "none of them" is an answer. `isAnswered`, `fieldProblem`,
+  `hasAnyAnswer`, `sanitizeValues` and the summary all use that one rule, and the card sends the
+  sanitized values, so readiness, the JSON, the summary and the history never disagree.
 - **Agent text is text.** Labels and option names are rendered as React text, `help` and `note` through
   bb's `Markdown` (with `FileMarkdown`'s workspace), never as HTML.
 - **The CLI's form is an argument, not stdin**: the question already uses the command's one stdin line,

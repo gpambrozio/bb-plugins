@@ -43,6 +43,7 @@ function fillEveryKind() {
   fireEvent.click(screen.getByLabelText("The tests"));
   fireEvent.click(within(group("Safe to call twice?")).getByLabelText("Yes"));
   fireEvent.click(within(group("How clear is the code?")).getByRole("radio", { name: "4" }));
+  fireEvent.click(within(group("Order the steps")).getByRole("button", { name: "Keep this order" }));
   fireEvent.change(screen.getByLabelText("[]"), { target: { value: "error" } });
   fireEvent.change(screen.getByLabelText("[3]"), { target: { value: "three" } });
   fireEvent.change(screen.getByLabelText("Edge cases, entry 1"), { target: { value: "empty list" } });
@@ -71,7 +72,7 @@ describe("an answer form in the card", () => {
       action: "answer",
       answer: summarizeAnswer(EVERY_KIND, sanitizeValues(EVERY_KIND, EVERY_KIND_ANSWER)),
       confidence: 3,
-      fields: { ...EVERY_KIND_ANSWER, why: "", fix: "" },
+      fields: sanitizeValues(EVERY_KIND, EVERY_KIND_ANSWER),
     });
   });
 
@@ -179,6 +180,100 @@ describe("an answer form in the card", () => {
     renderCard({ items: [{ kind: "choice", id: "c", label: "<b>bold</b>", options: [{ value: "a", label: "<img src=x onerror=alert(1)>" }, { value: "b", label: "B" }] }] });
     expect(document.querySelector("img")).toBeNull();
     expect(screen.getByText("<img src=x onerror=alert(1)>")).toBeTruthy();
+  });
+});
+
+describe("rankings and checkbox tables, alone (review pass 1 of dfb630d)", () => {
+  const ranking = { kind: "ranking", id: "order", label: "Put them in order", items: [{ value: "parse", label: "Parse" }, { value: "sort", label: "Sort" }, { value: "pick", label: "Pick" }] };
+  const checks = {
+    kind: "table",
+    id: "mutates",
+    label: "Which mutate their input?",
+    columns: [{ id: "yes", label: "Mutates", control: "checkbox" }],
+    rows: [
+      { id: "sort", label: "list.sort" },
+      { id: "sorted", label: "sorted" },
+    ],
+  };
+  const sure = () => fireEvent.click(screen.getByRole("button", { name: "4 · Sure" }));
+
+  it("a ranking-only form submits once the learner reorders it", () => {
+    const submit = renderCard({ items: [ranking] });
+    sure();
+    expect(submitButton().disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Move Pick up" }));
+    expect(submitButton().disabled).toBe(false);
+    fireEvent.click(submitButton());
+    expect(submit).toHaveBeenCalledWith({ action: "answer", answer: "- Put them in order:\n    1. Parse\n    2. Pick\n    3. Sort", confidence: 4, fields: { order: ["parse", "pick", "sort"] } });
+  });
+
+  it("a ranking already in the right order submits once the learner keeps it", () => {
+    const submit = renderCard({ items: [ranking, { kind: "text", id: "note", label: "Anything else?", required: false }] });
+    sure();
+    expect(screen.getByText(/needs an order: move an item, or keep this order/)).toBeTruthy();
+    const keep = screen.getByRole("button", { name: "Keep this order" });
+    expect(keep.getAttribute("aria-pressed")).toBe("false");
+    fireEvent.click(keep);
+    expect(keep.getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(submitButton());
+    expect(submit).toHaveBeenCalledWith(expect.objectContaining({ fields: { order: ["parse", "sort", "pick"], note: "" } }));
+  });
+
+  it("a required checkbox-only table submits once a box is ticked, the others as unticked", () => {
+    const submit = renderCard({ items: [checks] });
+    sure();
+    expect(submitButton().disabled).toBe(true);
+    fireEvent.click(screen.getByLabelText("list.sort, Mutates"));
+    expect(submitButton().disabled).toBe(false);
+    fireEvent.click(submitButton());
+    expect(submit).toHaveBeenCalledWith({
+      action: "answer",
+      answer: "- Which mutate their input?:\n    list.sort: Mutates yes\n    sorted: Mutates no",
+      confidence: 4,
+      fields: { mutates: { sort: { yes: true }, sorted: { yes: false } } },
+    });
+  });
+
+  it("all unticked is an answer once the learner confirms it", () => {
+    const submit = renderCard({ items: [checks] });
+    sure();
+    expect(screen.getByText(/needs its boxes ticked, or the unticked ones confirmed/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm unticked boxes" }));
+    expect(submitButton().disabled).toBe(false);
+    fireEvent.click(submitButton());
+    expect(submit).toHaveBeenCalledWith(expect.objectContaining({ answer: "- Which mutate their input?:\n    list.sort: Mutates no\n    sorted: Mutates no", fields: { mutates: { sort: { yes: false }, sorted: { yes: false } } } }));
+  });
+
+  it("an optional mixed table beside answered text: the ticks show in the summary as in the JSON", () => {
+    const submit = renderCard({
+      items: [
+        { kind: "text", id: "why", label: "Why?" },
+        { ...checks, required: false, columns: [...checks.columns, { id: "note", label: "Note", control: "text" }] },
+      ],
+    });
+    sure();
+    fireEvent.change(screen.getByLabelText("Why?"), { target: { value: "In place" } });
+    fireEvent.click(screen.getByLabelText("list.sort, Mutates"));
+    fireEvent.click(submitButton());
+    const sent = (submit.mock.calls as unknown as [{ answer: string; fields: Record<string, unknown> }][])[0]![0];
+    expect(sent.fields.mutates).toEqual({ sort: { yes: true, note: null }, sorted: { yes: false, note: null } });
+    expect(sent.answer).toContain("list.sort: Mutates yes; Note (empty)");
+    expect(sent.answer).not.toContain("(no answer)");
+  });
+
+  it("the history shows an all-unticked table as no, not as no answer", () => {
+    const form = { items: [checks] } as never;
+    renderSlot({ component: SettledRow }, {
+      row: { id: "r", threadId: "t", turnId: null, kind: "learning-exercises/exercise", toolName: null, status: "completed", startedAt: 1, completedAt: 2 },
+      payload: { question: "Q?", action: "answer", answer: "x", confidence: 3, form, fields: { mutates: { sort: { yes: false }, sorted: { yes: false } } } },
+      presentation: null,
+      thread: { id: "t", providerId: null },
+      Original: () => <span>original</span>,
+    } as never);
+    const view = document.querySelector("[data-answer-view]") as HTMLElement;
+    expect(within(view).queryByText("No answer.")).toBeNull();
+    const body = view.querySelector("tbody") as HTMLElement;
+    expect(within(body).getAllByRole("cell").map((cell) => cell.textContent)).toEqual(["no", "no"]);
   });
 });
 
