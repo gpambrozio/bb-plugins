@@ -555,7 +555,7 @@ describe("file references", () => {
 
   it("the tab's session history shows each question as Markdown in the session's workspace", async () => {
     const finished = { ...session, id: "ses_2", state: "finished" as const, summary: null, pauseReason: null, finishedAt: 3 };
-    const exercise = { ordinal: 1, type: "trace", question: "Open `calc.py:12`.", files: [], askedAt: 1, answer: "It sorts", confidence: 3, skipped: false, stuck: 0, answeredAt: 2, verdict: "partly", gap: null };
+    const exercise = { ordinal: 1, type: "trace", question: "Open `calc.py:12`.", files: [], askedAt: 1, answer: "It sorts", confidence: 3, skipped: false, stuck: 0, answeredAt: 2, verdict: "partly", gap: null, form: null, fields: null };
     renderSlot({ component: LearningTab }, { threadId: WORK, environment: null }, {
       rpc: handlers(() => view({ offer: null }), {
         projectSessions: () => ({ paused: [], previous: [finished], hasMore: false }),

@@ -131,9 +131,18 @@ describe("from a commit to an answered question", () => {
     harness.submitInteraction(card.id, { action: "answer", answer: "It raises ValueError", confidence: 4 });
     expect(await asked).toContain('"It raises ValueError"');
 
+    // The same tool with an answer form: its parameters accept one, and the answer comes back by field id.
+    const form = { items: [{ kind: "choice", id: "outcome", label: "What happens?", options: [{ value: "raise", label: "It raises" }, { value: "none", label: "None" }] }] };
+    const withForm = harness.callAgentTool("learning_ask", { type: "prediction", question: "And `median([1])`?", form }, { threadId: FORK });
+    await new Promise((resolve) => setImmediate(resolve));
+    const formCard = harness.pendingInteractions.at(-1)!;
+    expect(formCard.payload).toMatchObject({ ordinal: 2, form });
+    harness.submitInteraction(formCard.id, { action: "answer", answer: "x", confidence: 2, fields: { outcome: "none" } });
+    expect(await withForm).toContain('{"outcome":"none"}');
+
     const after = (await harness.callRpc("threadView", { threadId: WORK })) as ThreadView;
     expect(after.offer).toBeNull();
-    expect(after.started).toMatchObject({ state: "active", threadId: FORK, asked: 1, answered: 1 });
+    expect(after.started).toMatchObject({ state: "active", threadId: FORK, asked: 2, answered: 2 });
   });
 
   it("a provider that cannot fork runs the session in the work thread, through the CLI", async () => {
@@ -151,6 +160,30 @@ describe("from a commit to an answered question", () => {
     const asked = await harness.runCli(["ask", "--type", "debug", "--question-base64", question], { threadId: WORK });
     expect(asked).toMatchObject({ exitCode: 0, stdout: expect.stringContaining("End your turn now") });
     expect(harness.pendingInteractions[0]?.payload).toMatchObject({ question: "What does `mean([])` return?", type: "debug" });
+  });
+
+  it("bb learning ask takes an answer form, and refuses an invalid one before showing anything", async () => {
+    const { harness, commitTurn } = await setup({ providerCanFork: false });
+    await commitTurn();
+    const view = (await harness.callRpc("threadView", { threadId: WORK })) as ThreadView;
+    await harness.callRpc("answerOffer", { offerId: view.offer!.id, answer: "start" });
+    const question = Buffer.from("Is `mean` safe to call twice?").toString("base64");
+    const encode = (form: unknown) => Buffer.from(JSON.stringify(form)).toString("base64");
+
+    const refused = await harness.runCli(["ask", "--type", "prediction", "--question-base64", question, "--form-base64", encode({ items: [{ kind: "scale", id: "s", label: "S", max: 40 }] })], { threadId: WORK });
+    expect(refused.exitCode).not.toBe(0);
+    expect(refused.stderr).toContain("answer form was refused");
+    expect(harness.pendingInteractions).toHaveLength(0);
+
+    const form = { items: [{ kind: "yes-no", id: "safe", label: "Safe?" }, { kind: "long-text", id: "why", label: "Why?" }] };
+    const asked = await harness.runCli(["ask", "--type", "prediction", "--question-base64", question, "--form-base64", encode(form)], { threadId: WORK });
+    expect(asked.exitCode).toBe(0);
+    const card = harness.pendingInteractions[0]!;
+    expect(card.payload).toMatchObject({ form });
+    harness.submitInteraction(card.id, { action: "answer", answer: "x", confidence: 3, fields: { safe: true, why: "No state" } });
+    await new Promise((resolve) => setImmediate(resolve));
+    const sends = harness.sdk.callsTo("threads.send") as [{ input: { text: string }[] }][];
+    expect(sends.at(-1)![0].input[1]!.text).toContain('{"safe":true,"why":"No state"}');
   });
 
   it("a sub-agent thread gets no offer, but a session started there by hand forks it and resumes there", async () => {

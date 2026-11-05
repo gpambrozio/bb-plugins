@@ -81,6 +81,7 @@ retrieval and Showboat are later phases.
 | `app/card.tsx`, `app/settled-row.tsx` | The `exercise` pending interaction and its timeline row |
 | `app/tab.tsx` | The "Learning" tab, on the tab bar of every listed thread; the retired on-demand tab's clean-up |
 | `app/file-refs.tsx` | File references as links that open the file in bb, at a line or range (below) |
+| `shared/answer-form.ts`, `app/answer-form.tsx` | Answer forms: the schema, its checks and limits, reading and summarising an answer; the controls in the card and the read-only view (below) |
 | `app/thread-action.ts`, `app/settings-section.tsx` | "Learning offers" in the thread menu; the never-list under settings |
 
 ## File references
@@ -99,6 +100,37 @@ code. Offer and session topics quote commit subjects verbatim, so they are not M
 backticked paths become links (`TextWithFileRefs`). Topic choices and session titles sit inside a radio
 label or a toggle button, where a link would fight the click, and stay plain text. The brief, the tool
 and the CLI tell the agent to write references that way.
+
+## Answer forms
+
+A question can carry an answer form (`shared/answer-form.ts`): `learning_ask`'s `form` and `bb learning
+ask --form-base64` take the same JSON. The card is this plugin's own `pendingInteraction` renderer, so
+bb's `requestInput` hosts it as it is; no other surface is involved.
+
+- **Flat, not nested.** A form is a list of items; `section` and `note` are items, and `width` (`half`,
+  `third`) puts fields side by side. Containers of fields would make the schema recursive, and bb
+  rejects a tool schema with a recursive `$ref` (some providers then refuse the whole tool list). The
+  tool's JSON Schema is about 16 KB with no `$ref`; a test keeps it so.
+- **The server checks every form when asked** (`parseAnswerForm`: the zod shape, then `checkForm` for
+  unique ids, ranges, defaults and the limits in `FORM_LIMITS`) and refuses a bad one with its reasons,
+  before anything is stored or shown. The card reads the payload's `form` with `readAnswerForm` and
+  falls back to the plain text box when it cannot, so a form never breaks the card; `CardPayload`
+  types it as JSON for that reason.
+- **The server never trusts the card's answer.** It re-reads `fields` against the stored form
+  (`sanitizeValues`: wrong shapes become no answer, numbers are clamped, texts cut, unknown keys
+  dropped) and writes its own summary (`summarizeAnswer`) as the exercise's `answer`, so history,
+  counts and the agent read the same thing. The agent gets the summary and the fields as JSON, both
+  quoted as data. An answer with no `fields` (the fallback text box) is taken as text.
+- **Agent text is text.** Labels and option names are rendered as React text, `help` and `note` through
+  bb's `Markdown` (with `FileMarkdown`'s workspace), never as HTML.
+- **The CLI's form is an argument, not stdin**: the question already uses the command's one stdin line,
+  and base64 keeps the JSON away from the shell.
+- Stored in two columns added to `exercises` (`form`, `fields`; migrations 11 and 12). The settled row
+  carries the form and the fields so the transcript shows the answer part by part (`AnswerView`).
+- Controls are native elements with bb's theme tokens (`accent-foreground`, `border-input`), so they
+  are keyboard-operable and labelled without a component library; the grid collapses under a
+  container query (`@md`, 28rem of card width), not the window's width. A live look in a dev bb has not
+  been done yet: the checks are jsdom tests and the compiled CSS.
 
 ## What bb 0.48.1 does that this relies on (the spike's evidence)
 
@@ -140,5 +172,6 @@ and the CLI tell the agent to write references that way.
 
 `npm test` runs the pure logic (`signals`, `policy`), the engine and the sessions over `FakePorts` and an
 in-memory SQLite, the server wiring over the SDK's fake host with the real `bb-ports` (the zero-context
-checks, a commit → offer → fork → card round trip, the "here" path through the CLI), and the app in
-jsdom. Live checks run in a dev bb (see the root `AGENTS.md`), never in the owner's.
+checks, a commit → offer → fork → card round trip, the "here" path through the CLI, both with and
+without an answer form), the form schema (`shared/answer-form.test.ts`), and the app in jsdom
+(`app/answer-form.test.tsx` drives every control by its accessible name). Live checks run in a dev bb (see the root `AGENTS.md`), never in the owner's.

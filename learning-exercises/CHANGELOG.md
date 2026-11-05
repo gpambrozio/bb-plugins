@@ -12,6 +12,10 @@ First release.
   was. Agents that cannot fork run it in the same thread.
 - Each question is a card: write your answer, say how sure you are, or ask for a more specific
   question, skip it or pause. Your answers stay in the transcript in your own words.
+- When a question has several parts, the card can ask for the answer in a form: short and long
+  text, code, a number, a slider, one or several choices, yes/no, a scale, putting items in order,
+  matching pairs, a list or a table to fill in. A simple question keeps its single text box. Form
+  answers appear part by part in the transcript and in the Learning tab, and survive a pause.
 - The Learning tab in a thread's side panel starts an exercise on the thread's work, shows the
   session in progress with Pause, Resume and Finish, and lists the project's paused and earlier
   sessions with your answers; each can be deleted.

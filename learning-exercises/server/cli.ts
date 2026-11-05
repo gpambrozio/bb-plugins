@@ -21,22 +21,50 @@ import { SessionError, type SessionService } from "./sessions";
 /** The longest question, in UTF-8 bytes; its base64 still fits bb's one 16 KiB stdin line. */
 export const QUESTION_MAX_BYTES = 8_000;
 
-/** Strict base64 of UTF-8 text; one trailing newline (a heredoc's) is dropped. */
-export function decodeQuestion(encoded: string): string {
+/** The longest answer form, as UTF-8 JSON bytes (`FORM_LIMITS.json` characters, most of them ASCII). */
+export const FORM_MAX_BYTES = 32_000;
+
+/** Strict base64 of UTF-8 text, at most `maxBytes` decoded; one trailing newline (a heredoc's) is dropped. */
+function decodeBase64Text(encoded: string, what: { name: string; option: string; maxBytes: number; tooLong: string; hint: string }): string {
   const compact = encoded.trim();
-  if (compact.length > Math.ceil((QUESTION_MAX_BYTES + 1) / 3) * 4) {
-    throw new PluginCliError(`The question is longer than ${QUESTION_MAX_BYTES} bytes.`, { code: "question_too_long" });
-  }
+  const tooLong = () => new PluginCliError(`The ${what.name} is longer than ${what.maxBytes} bytes.`, { code: what.tooLong });
+  if (compact.length > Math.ceil((what.maxBytes + 1) / 3) * 4) throw tooLong();
   if (compact.length === 0 || compact.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(compact)) {
-    throw new PluginCliError("--question-base64 is not valid base64.", { code: "invalid_value", hint: "Pipe the question through `base64 | tr -d '\\n'` into --question-base64-stdin." });
+    throw new PluginCliError(`${what.option} is not valid base64.`, { code: "invalid_value", hint: what.hint });
   }
   const decoded = Buffer.from(compact, "base64");
   const bytes = decoded.at(-1) === 0x0a ? decoded.subarray(0, -1) : decoded;
-  if (bytes.byteLength > QUESTION_MAX_BYTES) throw new PluginCliError(`The question is longer than ${QUESTION_MAX_BYTES} bytes.`, { code: "question_too_long" });
+  if (bytes.byteLength > what.maxBytes) throw tooLong();
   try {
     return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   } catch {
-    throw new PluginCliError("--question-base64 does not decode to UTF-8 text.", { code: "invalid_value" });
+    throw new PluginCliError(`${what.option} does not decode to UTF-8 text.`, { code: "invalid_value" });
+  }
+}
+
+export function decodeQuestion(encoded: string): string {
+  return decodeBase64Text(encoded, {
+    name: "question",
+    option: "--question-base64",
+    maxBytes: QUESTION_MAX_BYTES,
+    tooLong: "question_too_long",
+    hint: "Pipe the question through `base64 | tr -d '\\n'` into --question-base64-stdin.",
+  });
+}
+
+/** The answer form's JSON, from base64; its content is checked by the session (`parseAnswerForm`). */
+export function decodeForm(encoded: string): unknown {
+  const text = decodeBase64Text(encoded, {
+    name: "answer form",
+    option: "--form-base64",
+    maxBytes: FORM_MAX_BYTES,
+    tooLong: "form_too_long",
+    hint: "Pass the form's JSON as --form-base64 \"$(base64 < form.json | tr -d '\\n')\".",
+  });
+  try {
+    return JSON.parse(text) as unknown;
+  } catch (error) {
+    throw new PluginCliError(`--form-base64 is not JSON: ${error instanceof Error ? error.message : String(error)}`, { code: "invalid_value" });
   }
 }
 
@@ -76,12 +104,20 @@ export function learningCli(sessions: SessionService): PluginCliRegistration {
             placeholder: "base64",
           },
           file: { type: "string", repeatable: true, description: "A workspace path the learner should open, with an optional line or range (src/a.ts:42, src/a.ts:40-60); repeatable, at most 10", placeholder: "path" },
+          // Not stdin: the question has the one stdin line. Base64 keeps the JSON out of the shell's hands.
+          "form-base64": {
+            type: "string",
+            description: `Optional answer form as base64 of its JSON, at most ${FORM_MAX_BYTES} bytes decoded (see the brief's "Answer forms"); leave it out for a plain text answer`,
+            placeholder: "base64",
+          },
         },
         run: (input, ctx) =>
           guarded(() => {
             const threadId = callerThread(ctx.threadId);
             const question = decodeQuestion(input.options["question-base64"]);
-            return sessions.ask(threadId, { type: input.options.type as ExerciseType, question, files: input.options.file ?? [] }, "cli");
+            const encodedForm = input.options["form-base64"];
+            const form = encodedForm === undefined ? undefined : decodeForm(encodedForm);
+            return sessions.ask(threadId, { type: input.options.type as ExerciseType, question, files: input.options.file ?? [], form }, "cli");
           }),
       }),
       feedback: cliCommand({

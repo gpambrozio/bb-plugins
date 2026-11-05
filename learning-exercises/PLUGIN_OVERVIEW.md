@@ -15,6 +15,8 @@ with a real answer card.
 - **A real pause.** Each question is a card: your answer, how sure you are from 1 to 5, Make it more
   specific, Skip and Pause. The agent's turn is over while the card is open, so it cannot hint.
   Your answers stay in the transcript in your own words.
+- **Answer forms.** A question with several parts can come with a form instead of one text box:
+  text, code, numbers, sliders, choices, yes/no, a scale, ordering, matching, lists and tables.
 - **The Learning tab.** In each thread's side panel: the offer or the session in progress, with
   Pause, Resume and Finish; start an exercise on the thread's last commit, its new files or a topic
   you type; and the project's paused and earlier sessions with your answers.

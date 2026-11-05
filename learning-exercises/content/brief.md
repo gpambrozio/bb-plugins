@@ -82,6 +82,62 @@ find a parallel one. Show code directly only when it is 1–3 lines and needs no
 introduces syntax they have not met, when searching a large file would frustrate rather than teach,
 or when they are stuck and need to move on.
 
+## Answer forms
+
+By default the card gives the learner one text box, and most questions need nothing more. When a
+question has several parts, or its answer has a shape a text box serves badly, attach an answer form
+(the ask tool's `form`, or the ask command's `--form-base64`). Build the form that makes replying
+easiest, and no bigger:
+
+- Pick the simplest control that fits. One open answer stays a text box: leave the form out.
+- Use a form when the question has several parts (a prediction *and* the reason for it), when the
+  answer is a choice, an order, a pairing or a comparison, or when a number on a scale says it best.
+- Use a scale or a slider for confidence-like or degree answers, a table for comparing a few things
+  along a few dimensions, a ranking for "put these in order", matching for "which goes with which".
+- Keep the reasoning in words: pair a choice with a short `long-text` "Why?" field. A form must never
+  give the answer away: options are plausible, and ranking items start in an order that is not the
+  answer.
+- Do not ask for confidence: the card always asks how sure they are.
+
+A form is `{"items": [...]}`, at most 30 items and 24 fields. Each field has `kind`, an `id` (a letter,
+then letters, digits, `-` or `_`; the answer is keyed by it), a `label`, and optionally `help`
+(Markdown, file references link), `required` (default true; false for an optional part) and `width`
+(`full`, default; `half` or `third` put neighbours on one line, stacked again when the card is narrow).
+The kinds, with their own keys:
+
+- `text` — one line: `placeholder`, `default`, `minLength`, `maxLength` (≤ 2000).
+- `long-text` — paragraphs: `placeholder`, `default`, `minLength`, `maxLength`, `rows`.
+- `code` — a monospace snippet: `language`, `placeholder`, `default`, `maxLength`, `rows`.
+- `number` — `min`, `max`, `step`, `unit`, `placeholder`, `default`.
+- `slider` — `min` and `max` (required), `step`, `unit`, `minLabel`, `maxLabel`, `default`; shows its value.
+- `choice` — one of `options` (2–20 `{"value", "label"}`): radio buttons, a dropdown above six
+  (`display`: `auto`, `radio` or `dropdown`); `default`.
+- `multi-choice` — checkboxes over `options`; `minSelected`, `maxSelected`, `default` (values).
+- `yes-no` — `yesLabel`, `noLabel`, `default`.
+- `scale` — points from `min` (default 1) to `max` (default 5), at most 11; `minLabel`, `maxLabel`,
+  `pointLabels` (one per point).
+- `ranking` — `items` (2–12 options) the learner puts in order.
+- `matching` — each of `left` (options) gets one of `right` (options); `oneToOne` uses each once.
+- `list` — several short entries: `placeholder`, `minEntries`, `maxEntries` (≤ 12), `maxLength` per entry.
+- `table` — `rows` (`{"id", "label"}`, ≤ 12) by `columns` (`{"id", "label", "control"}`, ≤ 6, ≤ 60
+  cells), `control` one of `text`, `number`, `choice` (with `options`) or `checkbox`.
+
+Two items are not fields: `{"kind": "section", "title", "help"}` starts a group with a heading, and
+`{"kind": "note", "text"}` puts Markdown between fields. A form that breaks a rule is refused with the
+reasons and nothing is shown: fix it and ask again, or ask without it. The answer comes back as a
+summary, field by field, and as JSON keyed by field id.
+
+For example, a prediction with its reason:
+
+```json
+{"items": [
+  {"kind": "choice", "id": "outcome", "label": "What does the second call return?",
+   "options": [{"value": "cached", "label": "The cached value"}, {"value": "fresh", "label": "A fresh read"},
+               {"value": "error", "label": "It throws"}]},
+  {"kind": "long-text", "id": "why", "label": "Why?", "rows": 3}
+]}
+```
+
 ## Facilitation
 
 - Honour their response time; never rush or fill the silence.

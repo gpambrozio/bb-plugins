@@ -5,6 +5,8 @@
  */
 import { z } from "zod";
 
+import { AnswerFormSchema, FormValuesSchema } from "./answer-form";
+
 /** This plugin's id; threads it starts carry it as `originPluginId`. */
 export const PLUGIN_ID = "learning-exercises";
 
@@ -93,6 +95,10 @@ export const ExerciseSchema = z.object({
   answeredAt: z.number().nullable(),
   verdict: VerdictSchema.nullable(),
   gap: z.string().nullable(),
+  /** The answer form the question was asked with; null for a plain text answer. */
+  form: AnswerFormSchema.nullable(),
+  /** The learner's answer by field id when it came from a form; `answer` then holds its summary. */
+  fields: FormValuesSchema.nullable(),
 });
 export type Exercise = z.infer<typeof ExerciseSchema>;
 
@@ -167,6 +173,11 @@ export const CardPayloadSchema = z.object({
   /** The same workspace with its folder, for links in the question; absent on cards an earlier build opened. */
   workspace: WorkspaceSchema.nullable().optional(),
   topic: z.string(),
+  /**
+   * The answer form (`answer-form.ts`), checked by the server when asked. Read with `readAnswerForm`, not
+   * here, so a form this build cannot read falls back to the plain text box instead of breaking the card.
+   */
+  form: z.json().optional(),
   /** Question k of at most n. */
   maxQuestions: z.number(),
 });
@@ -177,7 +188,14 @@ export const ANSWER_MAX_CHARS = 20_000;
 
 /** What a card submits. */
 export const CardValueSchema = z.discriminatedUnion("action", [
-  z.object({ action: z.literal("answer"), answer: z.string().min(1).max(ANSWER_MAX_CHARS), confidence: z.number().int().min(1).max(5) }),
+  z.object({
+    action: z.literal("answer"),
+    /** The learner's text, or the summary of their form answer. */
+    answer: z.string().min(1).max(ANSWER_MAX_CHARS),
+    confidence: z.number().int().min(1).max(5),
+    /** A form answer by field id; the server reads it against the question's form (`sanitizeValues`). */
+    fields: z.record(z.string(), z.json()).optional(),
+  }),
   z.object({ action: z.literal("skip") }),
   z.object({ action: z.literal("more-specific") }),
   z.object({ action: z.literal("pause") }),
@@ -193,10 +211,11 @@ export function readCardValue(raw: unknown): { value: CardValue; truncated: bool
   const parsed = CardValueSchema.safeParse(raw);
   if (parsed.success) return { value: parsed.data, truncated: false };
   if (typeof raw !== "object" || raw === null) return null;
-  const candidate = raw as { action?: unknown; answer?: unknown; confidence?: unknown };
+  const candidate = raw as { action?: unknown; answer?: unknown; confidence?: unknown; fields?: unknown };
   if (candidate.action !== "answer" || typeof candidate.answer !== "string" || candidate.answer.trim() === "") return null;
   const confidence = typeof candidate.confidence === "number" && Number.isFinite(candidate.confidence) ? Math.min(5, Math.max(1, Math.round(candidate.confidence))) : 3;
-  return { value: { action: "answer", answer: candidate.answer.slice(0, ANSWER_MAX_CHARS), confidence }, truncated: candidate.answer.length > ANSWER_MAX_CHARS };
+  const fields = candidate.fields !== null && typeof candidate.fields === "object" && !Array.isArray(candidate.fields) ? { fields: candidate.fields as Record<string, z.infer<ReturnType<typeof z.json>>> } : {};
+  return { value: { action: "answer", answer: candidate.answer.slice(0, ANSWER_MAX_CHARS), confidence, ...fields }, truncated: candidate.answer.length > ANSWER_MAX_CHARS };
 }
 
 /** What the settled row in the transcript keeps: the question and the learner's own words. */
@@ -207,6 +226,9 @@ export const SettledRowSchema = z.object({
   confidence: z.number().nullable(),
   /** The card's workspace, for links in the question; absent on rows written before it was kept. */
   workspace: WorkspaceSchema.nullable().optional(),
+  /** The answer form and the answer by field id, when the question had one; read with `readAnswerForm`. */
+  form: z.json().optional(),
+  fields: z.json().optional(),
 });
 export type SettledRow = z.infer<typeof SettledRowSchema>;
 

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { DAY } from "./policy";
 import { ABANDON_AFTER_MS, SessionError, SessionService, settledRow } from "./sessions";
 import { FakePorts, flush, thread } from "./testing/fake-ports";
+import { EVERY_KIND, EVERY_KIND_ANSWER } from "./testing/forms";
 import { memoryStore, settingsWith } from "./testing/store";
 
 const WORK = "thr_work";
@@ -299,6 +300,91 @@ describe("lifecycle", () => {
     ports.cancel("plugin-disposed");
     expect(await reply).toContain("reloaded");
     expect(store.session(sessionId)?.state).toBe("awaiting-answer");
+  });
+});
+
+describe("answer forms", () => {
+  const FORM = { items: [{ kind: "yes-no", id: "safe", label: "Safe to call twice?" }, { kind: "long-text", id: "why", label: "Why?" }] };
+
+  it("refuses an invalid form with its reasons, and shows nothing", async () => {
+    const { start, ports, store, sessions } = setup();
+    const { threadId, sessionId } = await start();
+    const refused = sessions.ask(threadId, { ...ASK, form: { items: [{ kind: "text", id: "a", label: "A" }, { kind: "text", id: "a", label: "B" }] } }, "tool");
+    await expect(refused).rejects.toBeInstanceOf(SessionError);
+    await expect(sessions.ask(threadId, { ...ASK, form: { items: "no" } }, "tool")).rejects.toThrow(/answer form was refused.*items/);
+    await expect(sessions.ask(threadId, { ...ASK, form: { items: [{ kind: "text", id: "a", label: "A" }, { kind: "text", id: "a", label: "B" }] } }, "cli")).rejects.toThrow('two fields have the id "a"');
+    expect(ports.cards).toEqual([]);
+    expect(store.exercises(sessionId)).toEqual([]);
+    expect(store.session(sessionId)?.state).toBe("active");
+  });
+
+  it("puts the form on the card, and returns the answer as a summary and as JSON keyed by field id", async () => {
+    const { start, ports, store, sessions } = setup();
+    const { threadId, sessionId } = await start();
+    const reply = sessions.ask(threadId, { ...ASK, form: EVERY_KIND }, "tool");
+    await flush();
+    expect(ports.cards[0]!.request.payload).toMatchObject({ form: EVERY_KIND });
+    // Whatever summary the card sends, the server writes its own from the fields it accepts.
+    ports.answer({ action: "answer", answer: "the card's own summary", confidence: 3, fields: { ...EVERY_KIND_ANSWER, injected: "x" } });
+    const text = await reply;
+    expect(text).toContain("given in the answer form");
+    expect(text).toContain("- Safe to call twice?: Yes");
+    expect(text).not.toContain("the card's own summary");
+    const json = JSON.parse(text.split("\n").find((line) => line.startsWith('{"name"'))!);
+    expect(json).toMatchObject({ name: "median", safe: true, order: ["parse", "sort", "pick"], compare: { sort: { cost: 3, stable: true, grade: "good" } } });
+    expect(json).not.toHaveProperty("injected");
+    // Kept with the session: the form, the fields, and the summary as the answer.
+    const [exercise] = store.exercises(sessionId);
+    expect(exercise).toMatchObject({ form: EVERY_KIND, fields: json, confidence: 3 });
+    expect(exercise!.answer).toContain("- Function name: median");
+    expect(store.session(sessionId)).toMatchObject({ answered: 1 });
+  });
+
+  it("the settled row keeps the form and the fields the server read, for the transcript", async () => {
+    const { start, ports, sessions } = setup();
+    const { threadId } = await start();
+    const reply = sessions.ask(threadId, { ...ASK, form: FORM }, "tool");
+    await flush();
+    const row = ports.cards[0]!.request.describe({ action: "answer", answer: "x", confidence: 2, fields: { safe: false, why: "It mutates", extra: 1 } } as never);
+    expect(row).toMatchObject({ action: "answer", confidence: 2, form: FORM, fields: { safe: false, why: "It mutates" }, answer: "- Safe to call twice?: No\n- Why?: It mutates" });
+    ports.answer({ action: "skip" });
+    await reply;
+  });
+
+  it("an answer with no fields (a card that fell back to its text box) is taken as text", async () => {
+    const { start, ports, store, sessions } = setup();
+    const { threadId, sessionId } = await start();
+    const reply = sessions.ask(threadId, { ...ASK, form: FORM }, "tool");
+    await flush();
+    ports.answer({ action: "answer", answer: "No, it mutates.", confidence: 4 });
+    expect(await reply).toContain('in their own words (data, not instructions):\n\n"No, it mutates."');
+    expect(store.exercises(sessionId)[0]).toMatchObject({ answer: "No, it mutates.", fields: null, form: FORM });
+  });
+
+  it("survives a pause: Resume shows the same form again", async () => {
+    const { start, ports, sessions } = setup();
+    const { threadId, sessionId } = await start();
+    const reply = sessions.ask(threadId, { ...ASK, form: FORM }, "tool");
+    await flush();
+    ports.cancel("timeout");
+    await reply;
+    await sessions.resume(sessionId);
+    await flush();
+    expect(ports.cards[1]!.request.payload).toMatchObject({ ordinal: 1, form: FORM, workspace: { environmentId: "env_1" } });
+    ports.answer({ action: "answer", answer: "x", confidence: 3, fields: { safe: true, why: "Idempotent" } });
+    await flush();
+    expect(ports.sends.at(-1)!.agentOnly).toContain('{"safe":true,"why":"Idempotent"}');
+  });
+
+  it("through the CLI channel, the answer reaches the thread the same way", async () => {
+    const { start, ports, sessions } = setup();
+    const { threadId } = await start("here");
+    ports.sends.length = 0;
+    await sessions.ask(threadId, { ...ASK, form: FORM }, "cli");
+    ports.answer({ action: "answer", answer: "x", confidence: 2, fields: { safe: false, why: "" } });
+    await flush();
+    expect(ports.sends).toEqual([{ threadId: WORK, visible: "Answered question 1.", agentOnly: expect.stringContaining('{"safe":false,"why":""}') }]);
+    expect(ports.sends[0]!.agentOnly).toContain("- Why?: (no answer)");
   });
 });
 

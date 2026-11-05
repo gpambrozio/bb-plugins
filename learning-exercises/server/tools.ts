@@ -8,6 +8,7 @@
 import type { BbPluginApi, PluginAgentToolResult } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
+import { AnswerFormSchema } from "../shared/answer-form";
 import { EXERCISE_TYPES, VERDICTS } from "../shared/types";
 import { SessionError, type SessionService } from "./sessions";
 
@@ -36,8 +37,11 @@ export function registerTools(bb: BbPluginApi, sessions: SessionService): void {
       type: z.enum(EXERCISE_TYPES).describe("The exercise type"),
       question: z.string().min(1).max(4000).describe("The full question, in Markdown. Write file references as workspace-relative paths in backticks, with a line or range when you mean one (`src/a.ts:42`), so they open as links"),
       files: z.array(z.string().min(1).max(500)).max(10).optional().describe("Workspace-relative paths the learner should open, each with an optional line or range: src/a.ts, src/a.ts:42, src/a.ts:40-60"),
+      form: AnswerFormSchema.optional().describe(
+        "Optional answer form, for a question with several parts or a shape a text box serves badly. Leave it out for one plain text answer (the default). Pick the simplest control that fits; see the brief's 'Answer forms'. An invalid form is refused with the reasons and nothing is shown",
+      ),
     }),
-    execute: ({ type, question, files }, ctx) => guarded(() => sessions.ask(ctx.threadId, { type, question, files: files ?? [] }, "tool", ctx.signal)),
+    execute: ({ type, question, files, form }, ctx) => guarded(() => sessions.ask(ctx.threadId, { type, question, files: files ?? [], form }, "tool", ctx.signal)),
   });
 
   bb.agents.registerTool({

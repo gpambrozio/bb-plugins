@@ -34,6 +34,7 @@ import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Input } from "@/components/ui/input";
 import { CONFIDENCE_LABELS, PLUGIN_ID, TRIGGER_LABELS, type Session, type ThreadView, type TopicChoice } from "../shared/types";
+import { AnswerView } from "./answer-form";
 import { errorText, useLearningRpc, useProjectSessions, useSessionDetail, useSidebarThread, useThreadView, useTopicChoices } from "./data";
 import { FileMarkdown, TextWithFileRefs } from "./file-refs";
 import { OfferCard } from "./offer-card";
@@ -289,7 +290,9 @@ function ExerciseList(props: { sessionId: string }) {
       {exercises.map((exercise) => (
         <li key={exercise.ordinal} className="flex flex-col gap-1 border-l-2 border-border pl-2 text-xs">
           <FileMarkdown content={exercise.question} workspace={workspace} className="text-xs text-muted-foreground" />
-          {exercise.answer !== null ? (
+          {exercise.answer !== null && exercise.form !== null && exercise.fields !== null ? (
+            <AnswerView form={exercise.form} fields={exercise.fields} workspace={workspace} />
+          ) : exercise.answer !== null ? (
             <span className="whitespace-pre-wrap">{exercise.answer}</span>
           ) : (
             <span className="text-muted-foreground">{exercise.stuck > 0 ? "Asked for a more specific question." : exercise.skipped ? "Skipped." : "Not answered."}</span>

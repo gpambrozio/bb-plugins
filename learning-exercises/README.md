@@ -25,6 +25,12 @@ is not affiliated with or endorsed by the author; see [NOTICE.md](NOTICE.md).
   specific**, **Skip** and **Pause session**. The agent's turn is over while the card is open, so
   there are no hints after the question. Your answer and confidence stay in the transcript as your
   own words.
+- **Answers in the shape the question asks for.** A question with several parts can come with an
+  answer form instead of one text box: short and long text, code, numbers, sliders, single and
+  multiple choice, yes/no, a 1–5 scale, putting items in order, matching pairs, a list of entries, or
+  a table to fill in, laid out in sections and side by side when the card is wide enough. The agent
+  is told to keep forms small and use one only when it makes answering easier; a plain question
+  stays a text box. Form answers show part by part in the transcript and in the Learning tab.
 - **Caps that hold.** At most 2 finished sessions per thread, 3 offers you see per day, 2 hours between
   them; **Later** snoozes the thread for 45 minutes and 3 turns; three Laters in a row keep only
   commit and pull-request offers for a week. Offers nobody sees expire and never count.
@@ -80,7 +86,8 @@ project** are listed under the settings, each with Undo.
   Learning tab to remove them.
 - Commits made in the same workspace by another thread at the same time are not offered, since the
   plugin cannot tell whose they are.
-- Answers are capped at 20,000 characters; the card says so when you reach it.
+- Answers are capped at 20,000 characters; the card says so when you reach it. A form's text fields
+  have their own, smaller limits, and a form has at most 24 fields and tables of at most 60 cells.
 - The `bb learning` commands act on the session of the thread they say they come from (`BB_THREAD_ID`);
   bb gives a plugin command no way to verify that, so they trust it, like everything on your machine
   that bb trusts. Other plugins cannot change your offers or sessions.

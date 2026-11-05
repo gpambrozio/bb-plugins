@@ -10,6 +10,7 @@ import { randomBytes } from "node:crypto";
 
 import type Database from "better-sqlite3";
 
+import { FormValuesSchema, readAnswerForm, type AnswerForm, type FormValues } from "../shared/answer-form";
 import {
   RefsSchema,
   type Exercise,
@@ -97,6 +98,9 @@ export const MIGRATIONS: string[] = [
      WHERE source_thread_id IS NOT NULL AND state IN ('starting', 'active', 'awaiting-answer', 'paused')`,
   // The last commits a turn of the thread made, for the tab's topic picker on a default branch.
   `ALTER TABLE thread_state ADD COLUMN last_commits TEXT`,
+  // The answer form a question was asked with, and the learner's answer to it by field id (JSON).
+  `ALTER TABLE exercises ADD COLUMN form TEXT`,
+  `ALTER TABLE exercises ADD COLUMN fields TEXT`,
 ];
 
 /** The partial unique index migration 9 creates (one open session per source thread). */
@@ -226,6 +230,18 @@ interface ExerciseRecord {
   answered_at: number | null;
   verdict: Verdict | null;
   gap: string | null;
+  form: string | null;
+  fields: string | null;
+}
+
+/** Stored JSON read back through its schema; null when it is missing or no longer reads. */
+function parseJson<T>(text: string | null, read: (value: unknown) => T | null): T | null {
+  if (text === null) return null;
+  try {
+    return read(JSON.parse(text));
+  } catch {
+    return null;
+  }
 }
 
 const SESSION_COLUMNS = `s.*,
@@ -282,6 +298,11 @@ function toExercise(row: ExerciseRecord): Exercise {
     answeredAt: row.answered_at,
     verdict: row.verdict,
     gap: row.gap,
+    form: parseJson(row.form, readAnswerForm),
+    fields: parseJson(row.fields, (value) => {
+      const parsed = FormValuesSchema.safeParse(value);
+      return parsed.success ? parsed.data : null;
+    }),
   };
 }
 
@@ -509,20 +530,23 @@ export class LearningStore {
     return row === undefined ? null : toExercise(row);
   }
 
-  addExercise(sessionId: string, input: { type: ExerciseType; question: string; files: readonly string[]; now: number }): Exercise {
+  addExercise(sessionId: string, input: { type: ExerciseType; question: string; files: readonly string[]; form?: AnswerForm | null; now: number }): Exercise {
     const next = (this.db.prepare(`SELECT COALESCE(MAX(ordinal), 0) + 1 AS n FROM exercises WHERE session_id = ?`).get(sessionId) as { n: number }).n;
     this.db
-      .prepare(`INSERT INTO exercises (session_id, ordinal, type, question, files, asked_at) VALUES (?, ?, ?, ?, ?, ?)`)
-      .run(sessionId, next, input.type, input.question, JSON.stringify(input.files), input.now);
+      .prepare(`INSERT INTO exercises (session_id, ordinal, type, question, files, form, asked_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .run(sessionId, next, input.type, input.question, JSON.stringify(input.files), input.form == null ? null : JSON.stringify(input.form), input.now);
     return this.exercises(sessionId).find((exercise) => exercise.ordinal === next)!;
   }
 
-  recordAnswer(sessionId: string, ordinal: number, answer: { text: string; confidence: number } | "skip", now: number): void {
+  /** `fields` is a form answer by field id; `text` is then its summary. */
+  recordAnswer(sessionId: string, ordinal: number, answer: { text: string; confidence: number; fields?: FormValues | null } | "skip", now: number): void {
     if (answer === "skip") {
       this.db.prepare(`UPDATE exercises SET skipped = 1, answered_at = ? WHERE session_id = ? AND ordinal = ?`).run(now, sessionId, ordinal);
       return;
     }
-    this.db.prepare(`UPDATE exercises SET answer = ?, confidence = ?, answered_at = ? WHERE session_id = ? AND ordinal = ?`).run(answer.text, answer.confidence, now, sessionId, ordinal);
+    this.db
+      .prepare(`UPDATE exercises SET answer = ?, confidence = ?, fields = ?, answered_at = ? WHERE session_id = ? AND ordinal = ?`)
+      .run(answer.text, answer.confidence, answer.fields == null ? null : JSON.stringify(answer.fields), now, sessionId, ordinal);
   }
 
   recordStuck(sessionId: string, ordinal: number): void {
