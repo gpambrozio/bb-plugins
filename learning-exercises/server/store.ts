@@ -9,6 +9,7 @@
 import { randomBytes } from "node:crypto";
 
 import type Database from "better-sqlite3";
+import { z } from "zod";
 
 import { FormValuesSchema, readAnswerForm, type AnswerForm, type FormValues } from "../shared/answer-form";
 import {
@@ -103,7 +104,13 @@ export const MIGRATIONS: string[] = [
   `ALTER TABLE exercises ADD COLUMN fields TEXT`,
   // What the agent wrote after the answer and before the next question (its feedback), from the event log.
   `ALTER TABLE exercises ADD COLUMN reply TEXT`,
+  // How far an unfinished read of that reply got in the log (JSON: the seq to go on below, the texts so far).
+  `ALTER TABLE exercises ADD COLUMN reply_progress TEXT`,
 ];
+
+const ReplyProgressSchema = z.object({ before: z.string(), texts: z.array(z.string()) });
+/** An unfinished read of a reply: rows at or above `before` were read, and `texts` (oldest first) found there. */
+export type ReplyProgress = z.infer<typeof ReplyProgressSchema>;
 
 /** The partial unique index migration 9 creates (one open session per source thread). */
 const ONE_OPEN_INDEX = "sessions_one_open_per_source";
@@ -561,9 +568,26 @@ export class LearningStore {
     );
   }
 
-  /** Keeps the agent's reply to a question (its feedback), replacing an earlier read of it; "" when it wrote nothing. */
+  /**
+   * Keeps the agent's reply to a question (its feedback), from a complete read, replacing an earlier one
+   * and ending any unfinished read; "" when it wrote nothing.
+   */
   recordReply(sessionId: string, ordinal: number, reply: string): void {
-    this.db.prepare(`UPDATE exercises SET reply = ? WHERE session_id = ? AND ordinal = ?`).run(reply, sessionId, ordinal);
+    this.db.prepare(`UPDATE exercises SET reply = ?, reply_progress = NULL WHERE session_id = ? AND ordinal = ?`).run(reply, sessionId, ordinal);
+  }
+
+  /** Where an unfinished read of a question's reply stopped, and what it had found; null when none is under way. */
+  replyProgress(sessionId: string, ordinal: number): ReplyProgress | null {
+    const row = this.db.prepare(`SELECT reply_progress FROM exercises WHERE session_id = ? AND ordinal = ?`).get(sessionId, ordinal) as { reply_progress: string | null } | undefined;
+    return parseJson(row?.reply_progress ?? null, (value) => {
+      const parsed = ReplyProgressSchema.safeParse(value);
+      return parsed.success ? parsed.data : null;
+    });
+  }
+
+  /** Saves how far a read that ran out of pages got; the reply stays unread. */
+  recordReplyProgress(sessionId: string, ordinal: number, progress: ReplyProgress): void {
+    this.db.prepare(`UPDATE exercises SET reply_progress = ? WHERE session_id = ? AND ordinal = ? AND reply IS NULL`).run(JSON.stringify(progress), sessionId, ordinal);
   }
 
   recordStuck(sessionId: string, ordinal: number): void {

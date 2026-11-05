@@ -158,12 +158,21 @@ so only "I'm waiting for your answer" stayed in view. Its next question then sai
   be read, which is not "no messages"; a closed window with no messages is stored as `""` so it is read
   once, and the app sees `""` as no reply. A session already under way when this build is installed gets
   its feedback back with no new message: the history at once, the card on Resume.
+- **Only a complete read is a reply.** A read is at most `REPLY_READ_PAGES` pages (2,000 rows), and says
+  whether it reached the window's start (`complete`) or stopped on its budget, with the seq to go on
+  below. An incomplete read is never stored as the reply, empty or shortened: a capture keeps what an
+  earlier read kept, and the backfill leaves the question unread and saves where it stopped and the
+  messages found so far (`reply_progress`, migration 14), so the next call goes on from there. One
+  backfill call shares one budget across its questions, newest first, so a session followed by long
+  work in the same thread is reached over a few reads at a bounded cost each.
 - **A question must stand on its own.** The card is all the learner sees while answering, so the brief,
   the tool's description and parameter, the CLI and `SESSION_INVARIANT` say to put any code a question
   relies on inside it as a fenced block (above all code the files do not hold now) and never to point
   "above". Whether a question leans on something it lacks cannot be told from its text, so the server
   checks only what it can (`server/question.ts`): at most `QUESTION_MAX_CHARS` (8,000, room for code)
-  and no code fence left open (CommonMark's rules), refusing before anything is stored or shown.
+  and no code fence left open, refusing before anything is stored or shown. Fences are found by
+  micromark, the CommonMark parser bb's own Markdown is built on, so fences in list items and block quotes
+  are read with their container's indentation; a block with one `codeFencedFence` token never closed.
 
 ## What bb 0.48.1 does that this relies on (the spike's evidence)
 

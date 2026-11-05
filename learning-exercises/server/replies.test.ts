@@ -257,36 +257,55 @@ describe("a question stands on its own", () => {
     expect(unclosedFence("Text\r\n```\r\ncode\r\n```\r\n")).toBeNull();
     expect(questionProblem("Fine `inline` code.")).toBeNull();
   });
+
+  it("reads fences inside Markdown containers: list items, their indentation, block quotes (review pass 1 of 4ccc177)", () => {
+    // A fence right after a list marker, closed at the item's indentation.
+    expect(unclosedFence("Read this code:\n\n- ```ts\n  const x = 1;\n  ```\n\nWhat is x?")).toBeNull();
+    expect(unclosedFence("1. ```ts\n   const x = 1;\n   ```\n2. Then?")).toBeNull();
+    // Opened on its own line in an item, closed four spaces in: past three absolute, within three of the item.
+    expect(unclosedFence("1.  Look:\n\n    ```py\n    x = 1\n    ```\n\nWhat is x?")).toBeNull();
+    expect(unclosedFence("- Outer\n  - Inner:\n\n    ```\n    code\n     ```\n")).toBeNull();
+    // Block quotes, plain and nested in a list.
+    expect(unclosedFence("> ```js\n> let a;\n> ```\n\nWhy?")).toBeNull();
+    expect(unclosedFence("- > ```\n  > x\n  > ```")).toBeNull();
+    // Really unclosed: the block ends with its container.
+    expect(unclosedFence("- ```ts\n  const x = 1;\n- What is x?")).toBe(1);
+    expect(unclosedFence("> ```js\n> let a;\n\nWhy?")).toBe(1);
+    expect(unclosedFence("Intro\n\n1. Fine:\n   ```\n   ok\n   ```\n2. Not:\n   ~~~\n   left open")).toBe(8);
+    // A fence-like line in an item's content is content, so it closes nothing.
+    expect(unclosedFence("- ```\n  x\n```")).toBe(1);
+  });
 });
 
+type Row = { seq: number; createdAt: number; data: { item: Record<string, unknown> } };
+
+/** The fake host's events.list over `rows` (read when called, so a test can add rows), newest first, paged by `beforeSeq` as bb pages it. */
+function host(rows: Row[], fail = false) {
+  const { bb, harness } = createFakePluginHost({ pluginId: "learning-exercises" });
+  const calls: { beforeSeq?: string; limit?: string }[] = [];
+  harness.sdk.stub("threads.events.list", (input: { beforeSeq?: string; limit?: string; types: string[]; order: string }) => {
+    if (fail) throw new Error("log unavailable");
+    calls.push({ beforeSeq: input.beforeSeq, limit: input.limit });
+    expect(input).toMatchObject({ types: ["item/completed"], order: "desc" });
+    const before = input.beforeSeq === undefined ? Infinity : Number(input.beforeSeq);
+    return [...rows]
+      .sort((a, b) => b.seq - a.seq)
+      .filter((row) => row.seq < before)
+      .slice(0, Number(input.limit))
+      .map((row) => ({ id: `evt_${row.seq}`, scope: { kind: "turn", turnId: "t" }, threadId: WORK, type: "item/completed", ...row }));
+  });
+  return { ports: bbPorts(bb, () => {}), calls };
+}
+
+const message = (seq: number, createdAt: number, text: string): Row => ({ seq, createdAt, data: { item: { type: "agentMessage", id: `m${seq}`, text } } });
+const tool = (seq: number, createdAt: number): Row => ({ seq, createdAt, data: { item: { type: "toolCall", id: `t${seq}`, tool: "learning_feedback" } } });
+const all = (from: number, to: number | null) => ({ from, to, before: null, pages: 10 });
+
 describe("reading the agent's messages from bb's event log", () => {
-  type Row = { seq: number; createdAt: number; data: { item: Record<string, unknown> } };
-
-  /** The fake host's events.list over `rows`, newest first, paged by `beforeSeq` as bb pages it. */
-  function host(rows: Row[], fail = false) {
-    const { bb, harness } = createFakePluginHost({ pluginId: "learning-exercises" });
-    const calls: { beforeSeq?: string; limit?: string }[] = [];
-    harness.sdk.stub("threads.events.list", (input: { beforeSeq?: string; limit?: string; types: string[]; order: string }) => {
-      if (fail) throw new Error("log unavailable");
-      calls.push({ beforeSeq: input.beforeSeq, limit: input.limit });
-      expect(input).toMatchObject({ types: ["item/completed"], order: "desc" });
-      const before = input.beforeSeq === undefined ? Infinity : Number(input.beforeSeq);
-      return [...rows]
-        .sort((a, b) => b.seq - a.seq)
-        .filter((row) => row.seq < before)
-        .slice(0, Number(input.limit))
-        .map((row) => ({ id: `evt_${row.seq}`, scope: { kind: "turn", turnId: "t" }, threadId: WORK, type: "item/completed", ...row }));
-    });
-    return { ports: bbPorts(bb, () => {}), calls };
-  }
-
-  const message = (seq: number, createdAt: number, text: string): Row => ({ seq, createdAt, data: { item: { type: "agentMessage", id: `m${seq}`, text } } });
-  const tool = (seq: number, createdAt: number): Row => ({ seq, createdAt, data: { item: { type: "toolCall", id: `t${seq}`, tool: "learning_feedback" } } });
-
   it("answers the agent's messages inside the window, oldest first, and skips other items", async () => {
     const { ports } = host([message(1, 100, "waiting"), message(2, 200, FEEDBACK), tool(3, 210), message(4, 220, "  "), message(5, 300, "waiting for 2")]);
-    expect(await ports.agentMessages(WORK, 150, 300)).toEqual([FEEDBACK]);
-    expect(await ports.agentMessages(WORK, 150, null)).toEqual([FEEDBACK, "waiting for 2"]);
+    expect(await ports.agentMessages(WORK, all(150, 300))).toEqual({ texts: [FEEDBACK], complete: true, before: null, pages: 1 });
+    expect((await ports.agentMessages(WORK, all(150, null)))?.texts).toEqual([FEEDBACK, "waiting for 2"]);
   });
 
   it("pages back through a long turn until it passes the window's start", async () => {
@@ -294,12 +313,125 @@ describe("reading the agent's messages from bb's event log", () => {
     for (let seq = 3; seq < 450; seq += 1) rows.push(tool(seq, 10 + seq));
     rows.push(message(450, 500, "last"));
     const { ports, calls } = host(rows);
-    expect(await ports.agentMessages(WORK, 5, null)).toEqual(["first", "last"]);
+    expect(await ports.agentMessages(WORK, all(5, null))).toEqual({ texts: ["first", "last"], complete: true, before: null, pages: 3 });
+    expect(calls.map((call) => call.beforeSeq)).toEqual([undefined, "251", "51"]);
+  });
+
+  it("out of pages, says the read is incomplete and where to go on, and goes on from there", async () => {
+    const rows: Row[] = [message(1, 10, "first")];
+    for (let seq = 2; seq <= 450; seq += 1) rows.push(tool(seq, 10 + seq));
+    const { ports, calls } = host(rows);
+    expect(await ports.agentMessages(WORK, { from: 5, to: null, before: null, pages: 2 })).toEqual({ texts: [], complete: false, before: "51", pages: 2 });
+    expect(await ports.agentMessages(WORK, { from: 5, to: null, before: "51", pages: 2 })).toEqual({ texts: ["first"], complete: true, before: null, pages: 1 });
     expect(calls.map((call) => call.beforeSeq)).toEqual([undefined, "251", "51"]);
   });
 
   it("says when the log cannot be read, which is not the same as no messages", async () => {
-    expect(await host([], true).ports.agentMessages(WORK, 0, null)).toBeNull();
-    expect(await host([]).ports.agentMessages(WORK, 0, null)).toEqual([]);
+    expect(await host([], true).ports.agentMessages(WORK, all(0, null))).toBeNull();
+    expect(await host([]).ports.agentMessages(WORK, all(0, null))).toEqual({ texts: [], complete: true, before: null, pages: 1 });
+  });
+});
+
+describe("a backfill that runs out of pages (review pass 1 of 4ccc177)", () => {
+  /** FakePorts whose event log is the real reader over the fake host's `rows`. */
+  async function logged() {
+    const rows: Row[] = [];
+    const reader = host(rows);
+    class LogPorts extends FakePorts {
+      override agentMessages(threadId: string, window: Parameters<FakePorts["agentMessages"]>[1]) {
+        return reader.ports.agentMessages(threadId, window);
+      }
+    }
+    const ports = new LogPorts();
+    ports.threads.set(WORK, thread({ id: WORK }));
+    const store = memoryStore();
+    const sessions = new SessionService(ports, store, () => settingsWith());
+    const { threadId, sessionId } = await sessions.start({ sourceThreadId: WORK, topic: "t", trigger: "manual", refs: {}, offerId: null });
+    // Question 1 answered at T, question 2 asked at T + 20, the session finished at T + 30, with nothing
+    // in the log yet: as a build that kept no replies left it.
+    void sessions.ask(threadId, Q1, "tool");
+    await flush();
+    const answeredAt = ports.clock;
+    ports.answer({ action: "answer", answer: "x", confidence: 2 });
+    await flush();
+    ports.advance(20);
+    void sessions.ask(threadId, Q2, "tool");
+    await flush();
+    ports.advance(10);
+    await sessions.finishFromUser(sessionId);
+    await flush();
+    expect(store.unreadReplies(sessionId)).toEqual([1]);
+    reader.calls.length = 0;
+    return { rows, calls: reader.calls, store, sessions, sessionId, answeredAt };
+  }
+
+  it("an empty partial read is not stored: the answer stays unread, and the next read goes on from the saved place", async () => {
+    const { rows, calls, store, sessions, sessionId, answeredAt } = await logged();
+    // The feedback, then the agent's "waiting" after question 2, then 2,100 tool calls of later work.
+    rows.push(message(1, answeredAt + 10, FEEDBACK), message(2, answeredAt + 21, "waiting"));
+    for (let seq = 3; seq <= 2102; seq += 1) rows.push(tool(seq, answeredAt + 40 + seq));
+
+    expect(await sessions.backfillReplies(sessionId)).toBe(false);
+    expect(calls).toHaveLength(10);
+    expect(store.unreadReplies(sessionId)).toEqual([1]);
+    expect(store.exercises(sessionId)[0]?.reply).toBeNull();
+    expect(store.replyProgress(sessionId, 1)).toEqual({ before: "103", texts: [] });
+
+    expect(await sessions.backfillReplies(sessionId)).toBe(true);
+    expect(calls.slice(10).map((call) => call.beforeSeq)).toEqual(["103"]);
+    expect(store.exercises(sessionId)[0]?.reply).toBe(FEEDBACK);
+    expect(store.unreadReplies(sessionId)).toEqual([]);
+    expect(store.replyProgress(sessionId, 1)).toBeNull();
+    // Read for good: nothing is read again.
+    expect(await sessions.backfillReplies(sessionId)).toBe(false);
+    expect(calls).toHaveLength(11);
+  });
+
+  it("a nonempty partial read is not stored as a shortened reply: the parts found are kept until the read completes", async () => {
+    const { rows, calls, store, sessions, sessionId, answeredAt } = await logged();
+    // The feedback in two messages with 2,100 tool calls between them, all before question 2.
+    rows.push(message(1, answeredAt + 1, FEEDBACK));
+    for (let seq = 2; seq <= 2101; seq += 1) rows.push(tool(seq, answeredAt + 1 + seq / 1000));
+    rows.push(message(2102, answeredAt + 15, "And one more thing."));
+
+    expect(await sessions.backfillReplies(sessionId)).toBe(false);
+    expect(store.exercises(sessionId)[0]?.reply).toBeNull();
+    expect(store.unreadReplies(sessionId)).toEqual([1]);
+    expect(store.replyProgress(sessionId, 1)).toEqual({ before: "103", texts: ["And one more thing."] });
+
+    expect(await sessions.backfillReplies(sessionId)).toBe(true);
+    expect(calls.map((call) => call.beforeSeq).at(-1)).toBe("103");
+    expect(store.exercises(sessionId)[0]?.reply).toBe(`${FEEDBACK}\n\nAnd one more thing.`);
+  });
+
+  it("a capture that runs out of pages keeps the reply an earlier read kept", async () => {
+    const rows: Row[] = [];
+    const reader = host(rows);
+    class LogPorts extends FakePorts {
+      override agentMessages(threadId: string, window: Parameters<FakePorts["agentMessages"]>[1]) {
+        return reader.ports.agentMessages(threadId, window);
+      }
+    }
+    const ports = new LogPorts();
+    ports.threads.set(WORK, thread({ id: WORK }));
+    const store = memoryStore();
+    const sessions = new SessionService(ports, store, () => settingsWith());
+    const { threadId, sessionId } = await sessions.start({ sourceThreadId: WORK, topic: "t", trigger: "manual", refs: {}, offerId: null });
+    void sessions.ask(threadId, Q1, "tool");
+    await flush();
+    const answeredAt = ports.clock;
+    ports.answer({ action: "answer", answer: "x", confidence: 2 });
+    await flush();
+    rows.push(message(1, answeredAt + 1, FEEDBACK));
+    ports.advance(5);
+    await sessions.feedback(threadId, { verdict: "partly", gap: null, concepts: [] });
+    expect(store.exercises(sessionId)[0]?.reply).toBe(FEEDBACK);
+    // A long stretch of tool calls before the next question: that read cannot reach the answer.
+    for (let seq = 2; seq <= 2101; seq += 1) rows.push(tool(seq, answeredAt + 2 + seq / 1000));
+    ports.advance(5);
+    void sessions.ask(threadId, Q2, "tool");
+    await flush();
+    expect(store.exercises(sessionId)[0]?.reply).toBe(FEEDBACK);
+    expect(ports.cards.at(-1)!.request.payload.previous?.reply).toBe(FEEDBACK);
   });
 });

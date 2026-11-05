@@ -41,6 +41,27 @@ export interface ForkRequest {
   visible: string;
 }
 
+export interface MessageWindow {
+  from: number;
+  to: number | null;
+  /** Continue below this seq: every row at or above it was read already. Null starts at the newest. */
+  before: string | null;
+  /** The most pages to read. */
+  pages: number;
+}
+
+/** What one read of the event log found. */
+export interface MessageRead {
+  /** The messages inside the window among the rows read, oldest first. */
+  texts: string[];
+  /** True when the read reached the window's start (or the log's); false when it stopped on its page budget. */
+  complete: boolean;
+  /** Where to continue an incomplete read; null when complete. */
+  before: string | null;
+  /** Pages read. */
+  pages: number;
+}
+
 export interface CardRequest {
   threadId: string;
   payload: CardPayload;
@@ -60,9 +81,10 @@ export interface Ports {
   turnFileChanges(threadId: string, turnId: string): Promise<FileChange[]>;
   /**
    * The text of the agent's messages completed in the thread from `from` (inclusive) to `to` (exclusive,
-   * null for now), oldest first, from its event log; null when the log cannot be read.
+   * null for now), oldest first, from its event log, reading newest first from `before` (a seq; null for
+   * the newest) at most `pages` pages. Null when the log cannot be read.
    */
-  agentMessages(threadId: string, from: number, to: number | null): Promise<string[] | null>;
+  agentMessages(threadId: string, window: MessageWindow): Promise<MessageRead | null>;
   interactionPending(threadId: string): Promise<boolean>;
   /** The workspace's HEAD, or null when the Git plugin cannot say (off, not a repository). */
   headSha(environmentId: string): Promise<string | null>;

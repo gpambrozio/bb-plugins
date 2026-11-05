@@ -39,6 +39,9 @@ import { workspaceOf } from "./workspace";
 /** A paused session nobody resumed is abandoned after this; it stays in the history. */
 export const ABANDON_AFTER_MS = 30 * DAY;
 
+/** The most event-log pages one read of the agent's replies reads (200 rows each, so 2,000 rows). */
+export const REPLY_READ_PAGES = 10;
+
 /** A refusal the agent or the user should read as it is. */
 export class SessionError extends Error {}
 
@@ -588,17 +591,26 @@ export class SessionService {
     const settled = exercises.filter((exercise) => exercise.answeredAt !== null).at(-1);
     if (settled === undefined || settled.answeredAt === null) return null;
     const next = exercises.find((exercise) => exercise.ordinal === settled.ordinal + 1);
-    const texts = await this.ports.agentMessages(session.threadId, settled.answeredAt, next?.askedAt ?? null);
-    const reply = texts === null ? "" : joinReply(texts);
+    const read = await this.ports.agentMessages(session.threadId, { from: settled.answeredAt, to: next?.askedAt ?? null, before: null, pages: REPLY_READ_PAGES });
+    // A read that ran out of pages is not the reply: keep what an earlier read kept, and leave the rest to
+    // `backfillReplies`.
+    if (read === null || !read.complete) return null;
+    const reply = joinReply(read.texts);
     return reply === "" ? null : { ordinal: settled.ordinal, reply };
   }
 
   /**
    * Reads, from the event log, every reply no read has kept: a session that was already running when this
    * build was installed, or a read that failed. Its messages are still in the thread's log, so the card
-   * and the history show them with no new message. A question whose window has closed (the next one was
-   * asked, or the session ended) is marked read even when the agent wrote nothing; the last question of an
-   * open session is kept only once something was written. Answers whether anything was kept.
+   * and the history show them with no new message. Only a complete read is kept as the reply: a question
+   * whose window has closed (the next one was asked, or the session ended) is marked read even when the
+   * agent wrote nothing, and the last question of an open session is kept only once something was written.
+   *
+   * One call reads at most `REPLY_READ_PAGES` pages, newest questions first. A read that runs out of
+   * pages leaves its question unread and, for a closed window, saves where it stopped and what it found
+   * (`reply_progress`), so the next call goes on from there instead of starting at the newest event again:
+   * a session followed by long work in the same thread is reached over a few reads, never stored as empty.
+   * Answers whether anything was kept.
    */
   async backfillReplies(sessionId: string): Promise<boolean> {
     const session = this.store.session(sessionId);
@@ -607,14 +619,24 @@ export class SessionService {
     if (unread.size === 0) return false;
     const exercises = this.store.exercises(sessionId);
     const open = OPEN_STATES.includes(session.state);
+    let budget = REPLY_READ_PAGES;
     let kept = false;
-    for (const exercise of exercises) {
+    for (const exercise of [...exercises].reverse()) {
+      if (budget <= 0) break;
       if (!unread.has(exercise.ordinal) || exercise.answeredAt === null) continue;
       const next = exercises.find((other) => other.ordinal === exercise.ordinal + 1);
       const end = next?.askedAt ?? (open ? null : (session.finishedAt ?? session.updatedAt));
-      const texts = await this.ports.agentMessages(session.threadId, exercise.answeredAt, end);
-      if (this.disposed) return kept;
-      if (texts === null) continue;
+      // An open window grows at the top, so it is read from the newest event every time.
+      const progress = end === null ? null : this.store.replyProgress(sessionId, exercise.ordinal);
+      const read = await this.ports.agentMessages(session.threadId, { from: exercise.answeredAt, to: end, before: progress?.before ?? null, pages: budget });
+      if (this.disposed || read === null) return kept;
+      budget -= read.pages;
+      // The rows read now are older than those read before, so their messages come first.
+      const texts = [...read.texts, ...(progress?.texts ?? [])];
+      if (!read.complete) {
+        if (end !== null && read.before !== null) this.store.recordReplyProgress(sessionId, exercise.ordinal, { before: read.before, texts });
+        break;
+      }
       const reply = joinReply(texts);
       if (reply === "" && end === null) continue;
       this.store.recordReply(sessionId, exercise.ordinal, reply);

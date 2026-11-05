@@ -5,29 +5,32 @@
  * not contain cannot be told from its text; what can be told is that its code blocks close and that it
  * fits.
  */
+import { parse, postprocess, preprocess } from "micromark";
+
 import { QUESTION_MAX_CHARS } from "../shared/types";
 
-/** A CommonMark fence line: up to three spaces, then three or more backticks or tildes. */
-const FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
-
-/** The line a fenced code block opens on (1-based) when it never closes; null when every block closes. */
+/**
+ * The line a fenced code block opens on (1-based) when it never closes; null when every block closes.
+ * micromark parses the question as CommonMark does, containers included (list items, block quotes, their
+ * indentation), and marks each fence of a fenced block with a `codeFencedFence` token: a block that
+ * closes has two, one left open (it runs to the end of its container) has only its opening fence.
+ */
 export function unclosedFence(markdown: string): number | null {
-  let open: { char: string; length: number; line: number } | null = null;
-  const lines = markdown.split(/\r?\n/);
-  for (const [index, line] of lines.entries()) {
-    const match = FENCE.exec(line);
-    if (match === null) continue;
-    const marker = match[1]!;
-    const rest = match[2]!;
-    if (open === null) {
-      // A backtick fence's info string may not hold a backtick; then it is inline code, not a fence.
-      if (marker[0] === "`" && rest.includes("`")) continue;
-      open = { char: marker[0]!, length: marker.length, line: index + 1 };
-    } else if (marker[0] === open.char && marker.length >= open.length && rest.trim() === "") {
-      open = null;
+  const events = postprocess(parse().document().write(preprocess()(markdown, undefined, true)));
+  const open: { line: number; fences: number }[] = [];
+  for (const [kind, token] of events) {
+    if (token.type === "codeFenced") {
+      if (kind === "enter") open.push({ line: token.start.line, fences: 0 });
+      else {
+        const block = open.pop();
+        if (block !== undefined && block.fences < 2) return block.line;
+      }
+    } else if (token.type === "codeFencedFence" && kind === "enter") {
+      const block = open.at(-1);
+      if (block !== undefined) block.fences += 1;
     }
   }
-  return open?.line ?? null;
+  return null;
 }
 
 /** Why a question cannot be shown as it is, said to the agent; null when it can. */

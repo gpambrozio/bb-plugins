@@ -79,7 +79,7 @@ describe("zero context until a session starts", () => {
       /^@\//,
       /^react(-dom)?(\/.*)?$/,
       /^@radix-ui\//,
-      /^(sonner|vaul|clsx|tailwind-merge|class-variance-authority|ignore|better-sqlite3|zod)$/,
+      /^(sonner|vaul|clsx|tailwind-merge|class-variance-authority|ignore|better-sqlite3|zod|micromark)$/,
       /^(vitest|vitest\/config|@testing-library\/react|@testing-library\/dom)$/,
     ];
     const scan = experimental_scanPublicSdkOnly(fileURLToPath(new URL(".", import.meta.url)), { allow });

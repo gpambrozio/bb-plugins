@@ -4,7 +4,7 @@
  */
 import type { PluginInteractionResult } from "@get-bb/plugin-sdk";
 
-import type { CardRequest, ForkRequest, Ports, ProjectInfo, PullRequestInfo, ThreadInfo } from "../ports";
+import type { CardRequest, ForkRequest, MessageRead, MessageWindow, Ports, ProjectInfo, PullRequestInfo, ThreadInfo } from "../ports";
 import type { Commit, CommittedFile, FileChange } from "../signals";
 
 export interface OpenCard {
@@ -92,9 +92,11 @@ export class FakePorts implements Ports {
     this.messages.set(threadId, [...(this.messages.get(threadId) ?? []), { at: this.clock, text }]);
   }
 
-  async agentMessages(threadId: string, from: number, to: number | null) {
+  /** Every read always completes here; `replies.test.ts` pages the real reader over the SDK's fake host. */
+  async agentMessages(threadId: string, { from, to }: MessageWindow): Promise<MessageRead | null> {
     if (this.messagesUnreadable) return null;
-    return (this.messages.get(threadId) ?? []).filter((message) => message.at >= from && (to === null || message.at < to)).map((message) => message.text);
+    const texts = (this.messages.get(threadId) ?? []).filter((message) => message.at >= from && (to === null || message.at < to)).map((message) => message.text);
+    return { texts, complete: true, before: null, pages: 1 };
   }
 
   async interactionPending(threadId: string) {

@@ -11,7 +11,7 @@ import type { BbPluginApi, PluginInteractionResult } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
 import { CARD_RENDERER_ID, type SettledRow } from "../shared/types";
-import type { CardRequest, ForkRequest, Ports, ProjectInfo, PullRequestInfo, ThreadInfo } from "./ports";
+import type { CardRequest, ForkRequest, MessageRead, Ports, ProjectInfo, PullRequestInfo, ThreadInfo } from "./ports";
 import type { FileChange } from "./signals";
 
 export const GIT_PLUGIN_ID = "bb--git";
@@ -56,9 +56,8 @@ const fileChangeItemSchema = z.object({
 
 const agentMessageItemSchema = z.object({ type: z.literal("agentMessage"), text: z.string() });
 
-/** `item/completed` rows read per page, and the most pages read, newest first, looking for a window's start. */
-const EVENT_PAGE = 200;
-const EVENT_PAGES = 10;
+/** `item/completed` rows read per page of the event log. */
+export const EVENT_PAGE = 200;
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -164,13 +163,15 @@ export function bbPorts(bb: BbPluginApi, changed: () => void): Ports {
       }
     },
 
-    async agentMessages(threadId, from, to) {
-      // Newest first, a page at a time, until a row older than the window; bb normalizes every provider's
-      // assistant text to an `agentMessage` item (Claude Code and Codex alike in bb 0.48.1).
+    async agentMessages(threadId, { from, to, before, pages }): Promise<MessageRead | null> {
+      // Newest first, a page at a time, until a row older than the window or the log's first row; bb
+      // normalizes every provider's assistant text to an `agentMessage` item (Claude Code and Codex alike
+      // in bb 0.48.1). Out of pages first, the read is incomplete and says where to go on.
       try {
         const found: string[] = [];
-        let beforeSeq: string | undefined;
-        for (let page = 0; page < EVENT_PAGES; page += 1) {
+        let beforeSeq = before ?? undefined;
+        let read = 0;
+        while (read < pages) {
           const rows = await sdk().threads.events.list({
             threadId,
             types: ["item/completed"],
@@ -178,17 +179,18 @@ export function bbPorts(bb: BbPluginApi, changed: () => void): Ports {
             limit: String(EVENT_PAGE),
             ...(beforeSeq === undefined ? {} : { beforeSeq }),
           });
+          read += 1;
           for (const row of rows) {
-            if (row.createdAt < from) return found.reverse();
+            if (row.createdAt < from) return { texts: found.reverse(), complete: true, before: null, pages: read };
             if (to !== null && row.createdAt >= to) continue;
             const item = agentMessageItemSchema.safeParse((row.data as { item?: unknown }).item);
             if (item.success && item.data.text.trim() !== "") found.push(item.data.text);
           }
           const last = rows.at(-1);
-          if (rows.length < EVENT_PAGE || last === undefined) break;
+          if (rows.length < EVENT_PAGE || last === undefined) return { texts: found.reverse(), complete: true, before: null, pages: read };
           beforeSeq = String(last.seq);
         }
-        return found.reverse();
+        return { texts: found.reverse(), complete: false, before: beforeSeq ?? null, pages: read };
       } catch (error) {
         bb.log.debug(`Reading ${threadId}'s messages failed: ${message(error)}`);
         return null;
