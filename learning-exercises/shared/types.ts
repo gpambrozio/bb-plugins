@@ -200,6 +200,24 @@ export const QUESTION_MAX_CHARS = 8_000;
 /** The longest agent reply kept with a question, in characters; a longer one is cut there. */
 export const REPLY_MAX_CHARS = 20_000;
 
+/** The longest draft form answer the server takes, as JSON characters; a form's own limits keep real ones far below. */
+export const DRAFT_FIELDS_MAX_CHARS = 200_000;
+
+/**
+ * A card's unsent answer, saved as the learner types so it survives leaving the thread, a reload or another
+ * device: the text box's answer, or the form's values by field id, and the confidence picked. The server
+ * reads `fields` against the question's form (`draftValues`) when it saves and when it hands a draft back.
+ */
+export const CardDraftSchema = z.object({
+  answer: z.string().max(ANSWER_MAX_CHARS).optional(),
+  fields: z
+    .record(z.string(), z.json())
+    .refine((fields) => JSON.stringify(fields).length <= DRAFT_FIELDS_MAX_CHARS, "The draft is too large.")
+    .optional(),
+  confidence: z.number().int().min(1).max(5).nullable().optional(),
+});
+export type CardDraft = z.infer<typeof CardDraftSchema>;
+
 /** What a card submits. */
 export const CardValueSchema = z.discriminatedUnion("action", [
   z.object({

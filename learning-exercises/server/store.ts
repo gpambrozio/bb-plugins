@@ -18,7 +18,9 @@ import {
   type ExerciseType,
   type Offer,
   type OfferAnswer,
+  CardDraftSchema,
   REPLY_MAX_CHARS,
+  type CardDraft,
   type Refs,
   type Session,
   type SessionMode,
@@ -107,6 +109,8 @@ export const MIGRATIONS: string[] = [
   `ALTER TABLE exercises ADD COLUMN reply TEXT`,
   // How far an unfinished read of that reply got in the log (JSON: the seq to go on below, the texts so far).
   `ALTER TABLE exercises ADD COLUMN reply_progress TEXT`,
+  // The learner's unsent answer to an open question (JSON `CardDraft`), until they answer or skip it.
+  `ALTER TABLE exercises ADD COLUMN draft TEXT`,
 ];
 
 const ReplyProgressSchema = z.object({
@@ -561,12 +565,13 @@ export class LearningStore {
 
   /** `fields` is a form answer by field id; `text` is then its summary. */
   recordAnswer(sessionId: string, ordinal: number, answer: { text: string; confidence: number; fields?: FormValues | null } | "skip", now: number): void {
+    // The draft goes with the question: an answered or skipped question has nothing left unsent.
     if (answer === "skip") {
-      this.db.prepare(`UPDATE exercises SET skipped = 1, answered_at = ? WHERE session_id = ? AND ordinal = ?`).run(now, sessionId, ordinal);
+      this.db.prepare(`UPDATE exercises SET skipped = 1, answered_at = ?, draft = NULL WHERE session_id = ? AND ordinal = ?`).run(now, sessionId, ordinal);
       return;
     }
     this.db
-      .prepare(`UPDATE exercises SET answer = ?, confidence = ?, fields = ?, answered_at = ? WHERE session_id = ? AND ordinal = ?`)
+      .prepare(`UPDATE exercises SET answer = ?, confidence = ?, fields = ?, answered_at = ?, draft = NULL WHERE session_id = ? AND ordinal = ?`)
       .run(answer.text, answer.confidence, answer.fields == null ? null : JSON.stringify(answer.fields), now, sessionId, ordinal);
   }
 
@@ -597,6 +602,26 @@ export class LearningStore {
   /** Saves how far a read that ran out of pages got; the reply stays unread. */
   recordReplyProgress(sessionId: string, ordinal: number, progress: ReplyProgress): void {
     this.db.prepare(`UPDATE exercises SET reply_progress = ? WHERE session_id = ? AND ordinal = ? AND reply IS NULL`).run(JSON.stringify(progress), sessionId, ordinal);
+  }
+
+  /** Saves an open question's draft; a question answered or skipped meanwhile keeps none. Answers whether it was saved. */
+  recordDraft(sessionId: string, ordinal: number, draft: CardDraft): boolean {
+    return (
+      this.db
+        .prepare(`UPDATE exercises SET draft = ? WHERE session_id = ? AND ordinal = ? AND answered_at IS NULL AND skipped = 0`)
+        .run(JSON.stringify(draft), sessionId, ordinal).changes > 0
+    );
+  }
+
+  /** An open question's saved draft, as stored; null when there is none or it no longer reads. */
+  draft(sessionId: string, ordinal: number): CardDraft | null {
+    const row = this.db.prepare(`SELECT draft FROM exercises WHERE session_id = ? AND ordinal = ? AND answered_at IS NULL AND skipped = 0`).get(sessionId, ordinal) as
+      | { draft: string | null }
+      | undefined;
+    return parseJson(row?.draft ?? null, (value) => {
+      const parsed = CardDraftSchema.safeParse(value);
+      return parsed.success ? parsed.data : null;
+    });
   }
 
   recordStuck(sessionId: string, ordinal: number): void {

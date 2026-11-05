@@ -26,8 +26,8 @@
  */
 import type { PluginInteractionResult } from "@get-bb/plugin-sdk";
 
-import { parseAnswerForm, readAnswerForm, sanitizeValues, summarizeAnswer, type AnswerForm, type FormValues } from "../shared/answer-form";
-import { ANSWER_MAX_CHARS, PAUSE_REASONS, readCardValue, REPLY_MAX_CHARS, type CardPayload, type ExerciseType, type PauseReason, type Refs, type SettledRow, type TriggerKind, type Verdict, type Workspace } from "../shared/types";
+import { draftValues, parseAnswerForm, readAnswerForm, sanitizeValues, summarizeAnswer, type AnswerForm, type FormValues } from "../shared/answer-form";
+import { ANSWER_MAX_CHARS, PAUSE_REASONS, readCardValue, REPLY_MAX_CHARS, type CardDraft, type CardPayload, type ExerciseType, type PauseReason, type Refs, type SettledRow, type TriggerKind, type Verdict, type Workspace } from "../shared/types";
 import { BRIEF_VERSION, buildBrief, startLine } from "./content";
 import { canStartByHand, DAY, projectKey } from "./policy";
 import type { Ports } from "./ports";
@@ -696,6 +696,36 @@ export class SessionService {
     const before = this.store.exercises(sessionId).find((exercise) => exercise.ordinal === ordinal - 1);
     if (before === undefined || before.reply === null) return {};
     return { previous: { ordinal: before.ordinal, answered: before.answer !== null, reply: before.reply } };
+  }
+
+  // ── unsent answers ────────────────────────────────────────────────────────
+
+  /**
+   * Saves the learner's unsent answer to an open question as they type, so it outlives the card: leaving
+   * the thread unmounts it, a reload or a restart cancels it, and another device draws its own. Read against
+   * the question's stored form like a submitted answer (`draftValues`); for a question without one, only
+   * the text. Ignored for a question that is answered or skipped, or a session that is over, so a save
+   * still in flight when the learner submits leaves nothing behind.
+   */
+  saveDraft(sessionId: string, ordinal: number, draft: CardDraft): void {
+    const session = this.store.session(sessionId);
+    if (session === null || !OPEN_STATES.includes(session.state)) return;
+    const exercise = this.store.exercises(sessionId).find((candidate) => candidate.ordinal === ordinal);
+    if (exercise === undefined || exercise.answeredAt !== null || exercise.skipped) return;
+    this.store.recordDraft(sessionId, ordinal, this.readDraft(exercise.form, draft));
+  }
+
+  /** An open question's saved draft, read against its form again; null when there is none. */
+  cardDraft(sessionId: string, ordinal: number): CardDraft | null {
+    const exercise = this.store.exercises(sessionId).find((candidate) => candidate.ordinal === ordinal);
+    const draft = this.store.draft(sessionId, ordinal);
+    return exercise === undefined || draft === null ? null : this.readDraft(exercise.form, draft);
+  }
+
+  private readDraft(form: AnswerForm | null, draft: CardDraft): CardDraft {
+    const confidence = draft.confidence ?? null;
+    if (form !== null) return { fields: draftValues(form, draft.fields ?? {}), confidence };
+    return { answer: (draft.answer ?? "").slice(0, ANSWER_MAX_CHARS), confidence };
   }
 
   deleteSession(sessionId: string): void {

@@ -569,6 +569,22 @@ function clampNumber(value: unknown, min: number | undefined, max: number | unde
  * its own shape: anything else in a field is "no answer", a number is clamped to its range, a text cut
  * to its limit, a choice outside the options dropped. It never throws.
  */
+/**
+ * An unsent answer (a draft) read against the form, as `sanitizeValues` reads a submitted one: whatever does
+ * not fit the form is dropped. Where that leaves a text field with no text or a list with no entries, the
+ * field starts as a fresh card has it (its default, or one empty entry), since those controls hold text.
+ */
+export function draftValues(form: AnswerForm, raw: unknown): FormValues {
+  const values = sanitizeValues(form, raw);
+  const fresh = initialValues(form);
+  for (const field of formFields(form)) {
+    const value = values[field.id];
+    const holdsText = field.kind === "text" || field.kind === "long-text" || field.kind === "code";
+    if ((holdsText && value === null) || (field.kind === "list" && Array.isArray(value) && value.length === 0)) values[field.id] = fresh[field.id]!;
+  }
+  return values;
+}
+
 export function sanitizeValues(form: AnswerForm, raw: unknown): FormValues {
   const source = raw !== null && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
   const values: FormValues = {};

@@ -89,6 +89,15 @@ export class LearningApi {
     return { session: publicSession(session), exercises: store.exercises(sessionId), workspace };
   }
 
+  cardDraft({ sessionId, ordinal }: Input<"cardDraft">): Output<"cardDraft"> {
+    return this.deps.sessions.cardDraft(sessionId, ordinal);
+  }
+
+  saveDraft({ sessionId, ordinal, draft }: Input<"saveDraft">): Output<"saveDraft"> {
+    this.deps.sessions.saveDraft(sessionId, ordinal, draft);
+    return null;
+  }
+
   /** Topics from data only: the thread's live offer, the branch's latest commit, the last turn's new files, its title. */
   async topicChoices({ threadId }: Input<"topicChoices">): Promise<Output<"topicChoices">> {
     const { ports, store } = this.deps;

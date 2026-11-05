@@ -11,7 +11,7 @@
 import type { PluginRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
-import { ExerciseSchema, OfferAnswerSchema, SessionSchema, ThreadViewSchema, TopicChoiceSchema, TriggerKindSchema, RefsSchema, WorkspaceSchema } from "./types";
+import { CardDraftSchema, ExerciseSchema, OfferAnswerSchema, SessionSchema, ThreadViewSchema, TopicChoiceSchema, TriggerKindSchema, RefsSchema, WorkspaceSchema } from "./types";
 
 export const LEARNING_TAG = "learning";
 
@@ -53,6 +53,10 @@ export const rpcContract = {
     }),
     output: z.object({ threadId: z.string() }),
   },
+  /** An open question's unsent answer, for its card to restore; null when there is none. */
+  cardDraft: { input: SessionRef.extend({ ordinal: z.number().int().min(1) }), output: CardDraftSchema.nullable() },
+  /** Saves an open question's unsent answer as the learner types (the card debounces). */
+  saveDraft: { input: SessionRef.extend({ ordinal: z.number().int().min(1), draft: CardDraftSchema }), output: Done },
   pauseSession: { input: SessionRef, output: Done },
   resumeSession: { input: SessionRef, output: z.object({ threadId: z.string() }) },
   finishSession: { input: SessionRef, output: Done },

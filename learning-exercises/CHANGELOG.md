@@ -12,6 +12,9 @@ First release.
   was. Agents that cannot fork run it in the same thread.
 - Each question is a card: write your answer, say how sure you are, or ask for a more specific
   question, skip it or pause. Your answers stay in the transcript in your own words.
+- What you have typed in a card but not sent is kept as you go: leave the thread, reload or open it
+  on another device and the card comes back as you left it, every field included. It is cleared once
+  you answer or skip the question.
 - When a question has several parts, the card can ask for the answer in a form: short and long
   text, code, a number, a slider, one or several choices, yes/no, a scale, putting items in order,
   matching pairs, a list or a table to fill in. A simple question keeps its single text box. Form

@@ -79,6 +79,7 @@ retrieval and Showboat are later phases.
 | `server/content.ts` | The brief from `content/` through `server/content.generated.ts` (`npm run gen:content`; a test fails when they differ) |
 | `app/banner.tsx`, `app/offer-card.tsx` | The composer banner (thread scope; only while idle) |
 | `app/card.tsx`, `app/settled-row.tsx` | The `exercise` pending interaction and its timeline row |
+| `app/draft.ts` | The card's unsent answer: restored on mount, saved as the learner types (below) |
 | `app/tab.tsx` | The "Learning" tab, on the tab bar of every listed thread; the retired on-demand tab's clean-up |
 | `app/file-refs.tsx` | File references as links that open the file in bb, at a line or range (below) |
 | `server/question.ts` | What the server checks of a question before showing it: its length and that its code blocks close |
@@ -179,6 +180,24 @@ so only "I'm waiting for your answer" stayed in view. Its next question then sai
   and no code fence left open, refusing before anything is stored or shown. Fences are found by
   micromark, the CommonMark parser bb's own Markdown is built on, so fences in list items and block quotes
   are read with their container's indentation; a block with one `codeFencedFence` token never closed.
+
+## Unsent answers
+
+Leaving a thread unmounts its card, and a reload or a restart cancels it, so what the learner has typed
+lives on the server with the question (`exercises.draft`, migration 15), not in the card.
+
+- **The card saves its whole answer state** (the text box, or the form's values by field id, and the
+  confidence) 500 ms after the last edit, and at once when it unmounts or the page is hidden
+  (`app/draft.ts`, `saveDraft`). On mount it asks for the draft (`cardDraft`) and restores it unless the
+  learner typed first.
+- **A draft is read against the stored form like an answer**, when saved and again when handed back
+  (`draftValues`: `sanitizeValues`, then a text field or list left empty starts as on a fresh card). A
+  question without a form keeps only text, cut at `ANSWER_MAX_CHARS`; the RPC input is capped too.
+- **It goes with the question.** `recordAnswer` clears it on an answer, a skip and "more specific"; a save
+  for a question answered or skipped, or a session that is over, is ignored, so a save in flight when the
+  learner submits leaves nothing. A pause keeps it (the card saves first), and Resume's card gets it back.
+- `saveDraft` is a change, so another plugin is refused; `cardDraft` is a read and stays open, like the
+  history's answers. Neither invalidates `LEARNING_TAG`: typing must not refetch every view.
 
 ## What bb 0.48.1 does that this relies on (the spike's evidence)
 

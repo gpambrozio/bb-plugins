@@ -128,6 +128,10 @@ describe("from a commit to an answered question", () => {
     expect(harness.pendingInteractions).toHaveLength(1);
     const card = harness.pendingInteractions[0]!;
     expect(card).toMatchObject({ threadId: FORK, rendererId: "exercise", payload: { question: "What does `median([])` do?", files: ["calc.py"], ordinal: 1 } });
+    // The card saves what the learner typed and gets it back; the answer clears it.
+    const question = { sessionId: (card.payload as { sessionId: string }).sessionId, ordinal: 1 };
+    await harness.callRpc("saveDraft", { ...question, draft: { answer: "It raises", confidence: 4 } });
+    expect(await harness.callRpc("cardDraft", question)).toEqual({ answer: "It raises", confidence: 4 });
     harness.submitInteraction(card.id, { action: "answer", answer: "It raises ValueError", confidence: 4 });
     expect(await asked).toContain('"It raises ValueError"');
 
@@ -139,6 +143,7 @@ describe("from a commit to an answered question", () => {
     expect(formCard.payload).toMatchObject({ ordinal: 2, form });
     harness.submitInteraction(formCard.id, { action: "answer", answer: "x", confidence: 2, fields: { outcome: "none" } });
     expect(await withForm).toContain('{"outcome":"none"}');
+    expect(await harness.callRpc("cardDraft", question)).toBeNull();
 
     const after = (await harness.callRpc("threadView", { threadId: WORK })) as ThreadView;
     expect(after.offer).toBeNull();
@@ -253,6 +258,7 @@ describe("review pass 1 (wiring)", () => {
     const asPlugin = { experimental_caller: { kind: "plugin" as const, pluginId: "someone-else" } };
     await expect(harness.callRpc("setThreadOffers", { threadId: WORK, on: false }, asPlugin)).rejects.toThrow("from its own app only");
     await expect(harness.callRpc("startSession", { threadId: WORK, topic: "x", trigger: "manual", refs: {} }, asPlugin)).rejects.toThrow("from its own app only");
+    await expect(harness.callRpc("saveDraft", { sessionId: "ses_x", ordinal: 1, draft: { answer: "x" } }, asPlugin)).rejects.toThrow("from its own app only");
     await expect(harness.callRpc("threadView", { threadId: WORK }, asPlugin)).resolves.toMatchObject({ eligible: true });
   });
 });

@@ -8,6 +8,9 @@
  * replace the text box (`answer-form.tsx`); a form this build cannot read falls back to the text box. File references in the question and the files to open
  * are links that open the file in bb, at a line or range when they name one (`file-refs.tsx`).
  *
+ * What the learner has typed but not sent is saved with the question as they go and restored when the card
+ * mounts again (`draft.ts`): leaving the thread, a reload or another device keeps it.
+ *
  * Above the question, the agent's reply to the previous one (`previous`): its feedback, which bb folds
  * away with the turn that wrote it once the turn ends with this card. It is open, and can be closed.
  */
@@ -16,9 +19,10 @@ import { useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { formProblems, hasAnyAnswer, initialValues, readAnswerForm, sanitizeValues, summarizeAnswer, type AnswerForm, type FormValues } from "../shared/answer-form";
-import { ANSWER_MAX_CHARS, CardPayloadSchema, CONFIDENCE_LABELS, type CardValue } from "../shared/types";
+import { draftValues, formProblems, hasAnyAnswer, initialValues, readAnswerForm, sanitizeValues, summarizeAnswer, type AnswerForm, type FormValues } from "../shared/answer-form";
+import { ANSWER_MAX_CHARS, CardPayloadSchema, CONFIDENCE_LABELS, type CardDraft, type CardValue } from "../shared/types";
 import { AnswerFormFields } from "./answer-form";
+import { useCardDraft } from "./draft";
 import { FileMarkdown, FileRef } from "./file-refs";
 
 const LARGE_ANSWER = new Set(["generation", "teach-back", "trace"]);
@@ -34,11 +38,25 @@ export function ExerciseCard({ interaction, submit }: PluginPendingInteractionPr
   const [answer, setAnswer] = useState("");
   const [confidence, setConfidence] = useState<number | null>(null);
   const [sending, setSending] = useState(false);
+  const question = parsed.success ? { sessionId: parsed.data.sessionId, ordinal: parsed.data.ordinal } : { sessionId: "", ordinal: 0 };
+  const draft: CardDraft = form === null ? { answer, confidence } : { fields: values ?? initialValues(form), confidence };
+  const drafts = useCardDraft(question, draft, (saved) => {
+    // The server read it against the form already; reading it again here keeps a bad value off the controls.
+    if (form !== null && saved.fields !== undefined) setValues(draftValues(form, saved.fields));
+    if (form === null && saved.answer !== undefined) setAnswer(saved.answer.slice(0, ANSWER_MAX_CHARS));
+    if (saved.confidence !== undefined) setConfidence(saved.confidence);
+  });
   if (!parsed.success) return <div className="p-3 text-sm text-destructive">This exercise card cannot be shown.</div>;
   const card = parsed.data;
   const send = (value: CardValue) => {
+    // A pause keeps the question, so its draft is saved first; anything else ends the question and its draft.
+    if (value.action === "pause") drafts.flush();
+    else drafts.stop();
     setSending(true);
-    submit(value).catch(() => setSending(false));
+    submit(value).catch(() => {
+      drafts.resume();
+      setSending(false);
+    });
   };
   const tooLong = answer.length > ANSWER_MAX_CHARS;
   const nearLimit = answer.length >= ANSWER_MAX_CHARS * 0.9;
@@ -85,7 +103,10 @@ export function ExerciseCard({ interaction, submit }: PluginPendingInteractionPr
       )}
       {form !== null && formValues !== null && formState !== null ? (
         <>
-          <AnswerFormFields form={form} values={formValues} disabled={sending} workspace={card.workspace ?? null} onChange={(id, value) => setValues({ ...formValues, [id]: value })} />
+          <AnswerFormFields form={form} values={formValues} disabled={sending} workspace={card.workspace ?? null} onChange={(id, value) => {
+              drafts.edited();
+              setValues({ ...formValues, [id]: value });
+            }} />
           {formState.waiting.length > 0 && (
             <p className="text-xs text-muted-foreground">
               Still to answer: {formState.waiting.join("; ")}.
@@ -104,7 +125,10 @@ export function ExerciseCard({ interaction, submit }: PluginPendingInteractionPr
             value={answer}
             maxLength={ANSWER_MAX_CHARS}
             disabled={sending}
-            onChange={(event) => setAnswer(event.target.value)}
+            onChange={(event) => {
+              drafts.edited();
+              setAnswer(event.target.value);
+            }}
           />
           {nearLimit && (
             <p className={cn("text-xs", tooLong ? "text-destructive" : "text-muted-foreground")} role="status">
@@ -123,7 +147,10 @@ export function ExerciseCard({ interaction, submit }: PluginPendingInteractionPr
             size="sm"
             variant={confidence === level ? "default" : "outline"}
             aria-pressed={confidence === level}
-            onClick={() => setConfidence(level)}
+            onClick={() => {
+              drafts.edited();
+              setConfidence(level);
+            }}
           >
             {level} · {CONFIDENCE_LABELS[level]}
           </Button>

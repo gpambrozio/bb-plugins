@@ -24,7 +24,8 @@ is not affiliated with or endorsed by the author; see [NOTICE.md](NOTICE.md).
 - **A real pause.** Each question is a card with your answer, how sure you are (1–5), **Make it more
   specific**, **Skip** and **Pause session**. The agent's turn is over while the card is open, so
   there are no hints after the question. Your answer and confidence stay in the transcript as your
-  own words.
+  own words. What you have typed but not sent is saved as you go, so leaving the thread, a reload or
+  another device brings the card back as you left it.
 - **Feedback you can still read.** bb folds a turn's earlier messages away when the turn ends, so the
   agent's feedback on your answer would vanish once the next card opens. The card shows it above the
   next question instead, and the Learning tab keeps it with each question, read from the thread's own
