@@ -56,8 +56,14 @@ const fileChangeItemSchema = z.object({
 
 const agentMessageItemSchema = z.object({ type: z.literal("agentMessage"), text: z.string() });
 
-/** `item/completed` rows read per page of the event log. */
-export const EVENT_PAGE = 200;
+/**
+ * Rows per page of the event log: the most bb takes. bb 0.48.1 refuses a larger `limit` with "HTTP 400:
+ * Thread event limit cannot exceed 100" (`THREAD_EVENT_LIST_PAGE_SIZE`), so every read pages.
+ */
+export const EVENT_PAGE = 100;
+
+/** The most pages a turn's file changes are looked for in (300 rows, newest first). */
+const FILE_CHANGE_PAGES = 3;
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -147,18 +153,37 @@ export function bbPorts(bb: BbPluginApi, changed: () => void): Ports {
     },
 
     async turnFileChanges(threadId, turnId) {
+      // The turn just ended, so its rows are the newest: read back until past them.
       try {
-        const rows = await sdk().threads.events.list({ threadId, types: ["item/completed"], order: "desc", limit: "300" });
         const changes: FileChange[] = [];
-        for (const row of rows) {
-          const scope = row.scope as { turnId?: unknown } | null | undefined;
-          if (scope?.turnId !== turnId) continue;
-          const item = fileChangeItemSchema.safeParse((row.data as { item?: unknown }).item);
-          if (!item.success) continue;
-          for (const change of item.data.changes ?? []) changes.push({ kind: change.kind, path: change.path });
+        let beforeSeq: string | undefined;
+        let inTurn = false;
+        for (let page = 0; page < FILE_CHANGE_PAGES; page += 1) {
+          const rows = await sdk().threads.events.list({
+            threadId,
+            types: ["item/completed"],
+            order: "desc",
+            limit: String(EVENT_PAGE),
+            ...(beforeSeq === undefined ? {} : { beforeSeq }),
+          });
+          for (const row of rows) {
+            const scope = row.scope as { turnId?: unknown } | null | undefined;
+            if (scope?.turnId !== turnId) {
+              if (inTurn) return changes;
+              continue;
+            }
+            inTurn = true;
+            const item = fileChangeItemSchema.safeParse((row.data as { item?: unknown }).item);
+            if (!item.success) continue;
+            for (const change of item.data.changes ?? []) changes.push({ kind: change.kind, path: change.path });
+          }
+          const last = rows.at(-1);
+          if (rows.length < EVENT_PAGE || last === undefined) break;
+          beforeSeq = String(last.seq);
         }
         return changes;
-      } catch {
+      } catch (error) {
+        bb.log.warn(`Reading the files ${threadId}'s turn changed failed: ${message(error)}`);
         return [];
       }
     },
@@ -192,7 +217,7 @@ export function bbPorts(bb: BbPluginApi, changed: () => void): Ports {
         }
         return { texts: found.reverse(), complete: false, before: beforeSeq ?? null, pages: read };
       } catch (error) {
-        bb.log.debug(`Reading ${threadId}'s messages failed: ${message(error)}`);
+        bb.log.warn(`Reading ${threadId}'s messages failed: ${message(error)}`);
         return null;
       }
     },

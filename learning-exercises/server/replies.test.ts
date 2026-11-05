@@ -14,6 +14,7 @@ import { bbPorts } from "./bb-ports";
 import { OfferEngine } from "./offers";
 import { questionProblem, unclosedFence } from "./question";
 import { SessionService } from "./sessions";
+import { listEvents, type LogRow } from "./testing/event-log";
 import { FakePorts, flush, thread } from "./testing/fake-ports";
 import { memoryStore, memoryStoreWithDb, settingsWith } from "./testing/store";
 
@@ -277,7 +278,7 @@ describe("a question stands on its own", () => {
   });
 });
 
-type Row = { seq: number; createdAt: number; data: { item: Record<string, unknown> } };
+type Row = LogRow;
 
 /** The fake host's events.list over `rows` (read when called, so a test can add rows), newest first, paged by `beforeSeq` as bb pages it. */
 function host(rows: Row[], fail: boolean | (() => boolean) = false) {
@@ -287,14 +288,9 @@ function host(rows: Row[], fail: boolean | (() => boolean) = false) {
     if (typeof fail === "function" ? fail() : fail) throw new Error("log unavailable");
     calls.push({ beforeSeq: input.beforeSeq, limit: input.limit });
     expect(input).toMatchObject({ types: ["item/completed"], order: "desc" });
-    const before = input.beforeSeq === undefined ? Infinity : Number(input.beforeSeq);
-    return [...rows]
-      .sort((a, b) => b.seq - a.seq)
-      .filter((row) => row.seq < before)
-      .slice(0, Number(input.limit))
-      .map((row) => ({ id: `evt_${row.seq}`, scope: { kind: "turn", turnId: "t" }, threadId: WORK, type: "item/completed", ...row }));
+    return listEvents(rows, { ...input, threadId: WORK, order: "desc" });
   });
-  return { ports: bbPorts(bb, () => {}), calls };
+  return { ports: bbPorts(bb, () => {}), calls, harness };
 }
 
 const message = (seq: number, createdAt: number, text: string): Row => ({ seq, createdAt, data: { item: { type: "agentMessage", id: `m${seq}`, text } } });
@@ -313,17 +309,50 @@ describe("reading the agent's messages from bb's event log", () => {
     for (let seq = 3; seq < 450; seq += 1) rows.push(tool(seq, 10 + seq));
     rows.push(message(450, 500, "last"));
     const { ports, calls } = host(rows);
-    expect(await ports.agentMessages(WORK, all(5, null))).toEqual({ texts: ["first", "last"], complete: true, before: null, pages: 3 });
-    expect(calls.map((call) => call.beforeSeq)).toEqual([undefined, "251", "51"]);
+    expect(await ports.agentMessages(WORK, all(5, null))).toEqual({ texts: ["first", "last"], complete: true, before: null, pages: 5 });
+    expect(calls.map((call) => call.beforeSeq)).toEqual([undefined, "351", "251", "151", "51"]);
+    // Never more than bb takes per page.
+    expect(calls.every((call) => call.limit === "100")).toBe(true);
   });
 
   it("out of pages, says the read is incomplete and where to go on, and goes on from there", async () => {
     const rows: Row[] = [message(1, 10, "first")];
     for (let seq = 2; seq <= 450; seq += 1) rows.push(tool(seq, 10 + seq));
     const { ports, calls } = host(rows);
-    expect(await ports.agentMessages(WORK, { from: 5, to: null, before: null, pages: 2 })).toEqual({ texts: [], complete: false, before: "51", pages: 2 });
-    expect(await ports.agentMessages(WORK, { from: 5, to: null, before: "51", pages: 2 })).toEqual({ texts: ["first"], complete: true, before: null, pages: 1 });
-    expect(calls.map((call) => call.beforeSeq)).toEqual([undefined, "251", "51"]);
+    expect(await ports.agentMessages(WORK, { from: 5, to: null, before: null, pages: 2 })).toEqual({ texts: [], complete: false, before: "251", pages: 2 });
+    expect(await ports.agentMessages(WORK, { from: 5, to: null, before: "251", pages: 3 })).toEqual({ texts: ["first"], complete: true, before: null, pages: 3 });
+    expect(calls.map((call) => call.beforeSeq)).toEqual([undefined, "351", "251", "151", "51"]);
+  });
+
+  it("asks bb for pages it takes: a limit over 100 is refused live (bb 0.48.1), and here", async () => {
+    expect(() => listEvents([], { threadId: WORK, order: "desc", limit: "101" })).toThrow("HTTP 400: Thread event limit cannot exceed 100");
+    expect(listEvents([], { threadId: WORK, order: "desc", limit: "100" })).toEqual([]);
+  });
+
+  it("logs a read that fails as a warning", async () => {
+    const { ports, harness } = host([], true);
+    expect(await ports.agentMessages(WORK, all(0, null))).toBeNull();
+    expect(await ports.turnFileChanges(WORK, "t")).toEqual([]);
+    expect(harness.logEntries.filter((entry) => entry.level === "warn").map((entry) => entry.message)).toEqual([
+      "Reading thr_work's messages failed: log unavailable",
+      "Reading the files thr_work's turn changed failed: log unavailable",
+    ]);
+  });
+
+  it("finds a turn's file changes over pages of 100, and stops once past the turn", async () => {
+    const change = (seq: number, turnId: string, path: string): Row => ({ seq, createdAt: seq, turnId, data: { item: { type: "fileChange", changes: [{ kind: "add", path }] } } });
+    const rows: Row[] = [];
+    for (let seq = 1; seq <= 50; seq += 1) rows.push(seq === 10 ? change(seq, "t1", "old.ts") : { ...tool(seq, seq), turnId: "t1" });
+    for (let seq = 51; seq <= 200; seq += 1) rows.push(seq === 60 || seq === 190 ? change(seq, "t2", `new${seq}.ts`) : { ...tool(seq, seq), turnId: "t2" });
+    const { ports, calls } = host(rows);
+    expect(await ports.turnFileChanges(WORK, "t2")).toEqual([
+      { kind: "add", path: "new190.ts" },
+      { kind: "add", path: "new60.ts" },
+    ]);
+    expect(calls).toEqual([
+      { beforeSeq: undefined, limit: "100" },
+      { beforeSeq: "101", limit: "100" },
+    ]);
   });
 
   it("says when the log cannot be read, which is not the same as no messages", async () => {
@@ -373,19 +402,19 @@ describe("a backfill that runs out of pages (review pass 1 of 4ccc177)", () => {
     for (let seq = 3; seq <= 2102; seq += 1) rows.push(tool(seq, answeredAt + 40 + seq));
 
     expect((await sessions.backfillReplies(sessionId)).kept).toBe(false);
-    expect(calls).toHaveLength(10);
+    expect(calls).toHaveLength(20);
     expect(store.unreadReplies(sessionId)).toEqual([1]);
     expect(store.exercises(sessionId)[0]?.reply).toBeNull();
     expect(store.replyProgress(sessionId, 1)).toEqual({ before: "103", text: "", truncated: false });
 
     expect((await sessions.backfillReplies(sessionId)).kept).toBe(true);
-    expect(calls.slice(10).map((call) => call.beforeSeq)).toEqual(["103"]);
+    expect(calls.slice(20).map((call) => call.beforeSeq)).toEqual(["103", "3"]);
     expect(store.exercises(sessionId)[0]?.reply).toBe(FEEDBACK);
     expect(store.unreadReplies(sessionId)).toEqual([]);
     expect(store.replyProgress(sessionId, 1)).toBeNull();
     // Read for good: nothing is read again.
     expect((await sessions.backfillReplies(sessionId)).kept).toBe(false);
-    expect(calls).toHaveLength(11);
+    expect(calls).toHaveLength(22);
   });
 
   it("a nonempty partial read is not stored as a shortened reply: the parts found are kept until the read completes", async () => {
@@ -401,7 +430,7 @@ describe("a backfill that runs out of pages (review pass 1 of 4ccc177)", () => {
     expect(store.replyProgress(sessionId, 1)).toEqual({ before: "103", text: "And one more thing.", truncated: false });
 
     expect((await sessions.backfillReplies(sessionId)).kept).toBe(true);
-    expect(calls.map((call) => call.beforeSeq).at(-1)).toBe("103");
+    expect(calls.slice(20).map((call) => call.beforeSeq)).toEqual(["103", "3"]);
     expect(store.exercises(sessionId)[0]?.reply).toBe(`${FEEDBACK}\n\nAnd one more thing.`);
   });
 
@@ -420,8 +449,8 @@ describe("a backfill that runs out of pages (review pass 1 of 4ccc177)", () => {
     // A refetch while it runs reads nothing more.
     await api.sessionDetail({ sessionId });
     await running;
-    // Three budgets of 10 pages over the later work, then one page to the feedback; the views are told once.
-    expect(calls).toHaveLength(31);
+    // Three budgets of 20 pages over the later work, then two pages to the feedback; the views are told once.
+    expect(calls).toHaveLength(62);
     expect(ports.changes).toBe(changes + 1);
     expect((await api.sessionDetail({ sessionId })).exercises[0]?.reply).toBe(FEEDBACK);
     expect(sessions.recovering(sessionId)).toBeUndefined();
@@ -436,7 +465,7 @@ describe("a backfill that runs out of pages (review pass 1 of 4ccc177)", () => {
     log.broken = true;
     await running;
     // Stopped at the first unreadable page: the question stays unread with its saved place.
-    expect(calls.length).toBeLessThan(20);
+    expect(calls.length).toBeLessThan(40);
     expect(store.unreadReplies(sessionId)).toEqual([1]);
     expect(store.exercises(sessionId)[0]?.reply).toBeNull();
     expect(store.replyProgress(sessionId, 1)).not.toBeNull();
@@ -465,7 +494,7 @@ describe("a backfill that runs out of pages (review pass 1 of 4ccc177)", () => {
     expect(reply).toBe(`${a}\n\n${b!.slice(0, 20_000 - 15_002 - 1)}…`);
     expect(reply).toHaveLength(20_000);
     expect(stored()).toBeNull();
-    expect(calls).toHaveLength(22);
+    expect(calls).toHaveLength(43);
   });
 
   it("reads an oversized or misshapen saved value as none, and starts again from the newest event", async () => {

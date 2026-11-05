@@ -39,8 +39,8 @@ import { workspaceOf } from "./workspace";
 /** A paused session nobody resumed is abandoned after this; it stays in the history. */
 export const ABANDON_AFTER_MS = 30 * DAY;
 
-/** The most event-log pages one read of the agent's replies reads (200 rows each, so 2,000 rows). */
-export const REPLY_READ_PAGES = 10;
+/** The most event-log pages one read of the agent's replies reads (100 rows each, bb's cap, so 2,000 rows). */
+export const REPLY_READ_PAGES = 20;
 
 /** The most reads one history open goes on for in the background (so 100,000 rows of later work). */
 export const REPLY_READ_CHUNKS = 50;

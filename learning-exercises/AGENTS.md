@@ -150,7 +150,7 @@ so only "I'm waiting for your answer" stayed in view. Its next question then sai
 
 - **A reply is what the agent wrote between an answer and the next question.** `exercises.reply`
   (migration 13) keeps it, read from the thread's event log (`ports.agentMessages`: `item/completed`
-  rows of type `agentMessage`, paged newest first by `beforeSeq`), from the exercise's `answered_at` to
+  rows of type `agentMessage`, paged newest first by `beforeSeq` in pages of 100, the most bb takes), from the exercise's `answered_at` to
   the next one's `asked_at`. It is read when the verdict is recorded, when the next question is asked
   (and goes on that card as `previous`, shown open above the question), and when the session finishes.
   It is the log, not live streaming, so it survives a reload, and Resume puts it back on a reopened card.
@@ -159,7 +159,12 @@ so only "I'm waiting for your answer" stayed in view. Its next question then sai
   be read, which is not "no messages"; a closed window with no messages is stored as `""` so it is read
   once, and the app sees `""` as no reply. A session already under way when this build is installed gets
   its feedback back with no new message: the history at once, the card on Resume.
-- **Only a complete read is a reply.** A read is at most `REPLY_READ_PAGES` pages (2,000 rows), and says
+- **bb caps an event page at 100 rows.** bb 0.48.1 answers a larger `limit` with "HTTP 400: Thread event
+  limit cannot exceed 100", and the first build of this asked for 200: every read failed in the live
+  session, so no reply was kept. `EVENT_PAGE` is 100, both event reads page (`turnFileChanges` too, at
+  most 3 pages), a failed read is a warning in the plugin log, and the tests' event log
+  (`server/testing/event-log.ts`) refuses a larger page the same way.
+- **Only a complete read is a reply.** A read is at most `REPLY_READ_PAGES` pages (20, so 2,000 rows), and says
   whether it reached the window's start (`complete`) or stopped on its budget, with the seq to go on
   below. An incomplete read is never stored as the reply, empty or shortened: a capture keeps what an
   earlier read kept, and the backfill leaves the question unread and saves where it stopped and the

@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import plugin from "./server";
 import { BRIEF_CORE } from "./server/content";
+import { listEvents, type EventListInput } from "./server/testing/event-log";
 import { TOOL_NAMES } from "./server/tools";
 import type { ThreadView } from "./shared/types";
 
@@ -28,9 +29,8 @@ async function setup(options: { providerCanFork?: boolean } = {}) {
   });
   stub("projects.get", () => ({ id: "proj_1", name: "calc", gitRemoteUrl: "git@github.com:acme/calc.git" }));
   stub("environments.get", () => ({ id: "env_1", path: "/work/calc" }));
-  stub("threads.events.list", ({ types }: { types: string[] }) =>
-    types[0] === "turn/completed" ? [{ scope: { kind: "turn", turnId: "t1" }, data: { status: "completed" } }] : [],
-  );
+  const events = [{ seq: 1, createdAt: 1, turnId: "t1", type: "turn/completed", data: { status: "completed" } }];
+  stub("threads.events.list", (input: EventListInput) => listEvents(events, input));
   stub("threads.interactions.list", () => []);
   stub("providers.list", () => [
     { id: "claude-code", capabilities: { supportsFork: options.providerCanFork ?? true } },

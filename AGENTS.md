@@ -263,6 +263,10 @@ What a port only learns by running it:
   `hasPendingInteraction` and the `activity` counts; a get row has `queuedMessageCount` and
   `activeBackgroundAgentCount` instead, and neither says whether an interaction is pending (read
   `threads.interactions.list`). Both carry `runtime.displayStatus`, which adds "waiting-for-host" to `status`.
+- **A thread event page is at most 100 rows.** `bb.sdk.threads.events.list` with a `limit` over 100 fails
+  with "HTTP 400: Thread event limit cannot exceed 100" (bb 0.48.1, `THREAD_EVENT_LIST_PAGE_SIZE`); the
+  typings take any string. Page with `beforeSeq` (newest first) or `afterSeq`, and make a test fake refuse
+  more, as `learning-exercises/server/testing/event-log.ts` does: its first build read nothing live.
 - **When a turn ended is in the thread's event log.** `bb.sdk.threads.events.list({ threadId, types:
   ["turn/completed"], order: "desc", limit: "1" })` gives the last one, with `createdAt` in epoch
   milliseconds; `threads.context` gives context usage, which may be marked `estimated` (a live Claude Code thread's was in bb 0.46.1). A
