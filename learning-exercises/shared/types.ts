@@ -99,6 +99,12 @@ export const ExerciseSchema = z.object({
   form: AnswerFormSchema.nullable(),
   /** The learner's answer by field id when it came from a form; `answer` then holds its summary. */
   fields: FormValuesSchema.nullable(),
+  /**
+   * What the agent wrote in the thread after the learner answered (or skipped) and before the next
+   * question: its feedback. Read from the thread's event log, since bb folds a turn's earlier messages
+   * away once the turn ends; null when it wrote nothing or the log could not be read.
+   */
+  reply: z.string().nullable(),
 });
 export type Exercise = z.infer<typeof ExerciseSchema>;
 
@@ -180,11 +186,19 @@ export const CardPayloadSchema = z.object({
   form: z.json().optional(),
   /** Question k of at most n. */
   maxQuestions: z.number(),
+  /** The agent's reply to the previous question (its `reply`), shown above this one; absent when there is none. */
+  previous: z.object({ ordinal: z.number(), answered: z.boolean(), reply: z.string() }).optional(),
 });
 export type CardPayload = z.infer<typeof CardPayloadSchema>;
 
 /** The longest answer a card takes, in characters; the card stops typing there and says so. */
 export const ANSWER_MAX_CHARS = 20_000;
+
+/** The longest question, in characters: room for the code a question must carry itself. */
+export const QUESTION_MAX_CHARS = 8_000;
+
+/** The longest agent reply kept with a question, in characters; a longer one is cut there. */
+export const REPLY_MAX_CHARS = 20_000;
 
 /** What a card submits. */
 export const CardValueSchema = z.discriminatedUnion("action", [

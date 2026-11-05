@@ -54,6 +54,12 @@ const fileChangeItemSchema = z.object({
   changes: z.array(z.object({ kind: z.enum(["add", "update", "delete"]), path: z.string() }).passthrough()).optional(),
 });
 
+const agentMessageItemSchema = z.object({ type: z.literal("agentMessage"), text: z.string() });
+
+/** `item/completed` rows read per page, and the most pages read, newest first, looking for a window's start. */
+const EVENT_PAGE = 200;
+const EVENT_PAGES = 10;
+
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -155,6 +161,37 @@ export function bbPorts(bb: BbPluginApi, changed: () => void): Ports {
         return changes;
       } catch {
         return [];
+      }
+    },
+
+    async agentMessages(threadId, from, to) {
+      // Newest first, a page at a time, until a row older than the window; bb normalizes every provider's
+      // assistant text to an `agentMessage` item (Claude Code and Codex alike in bb 0.48.1).
+      try {
+        const found: string[] = [];
+        let beforeSeq: string | undefined;
+        for (let page = 0; page < EVENT_PAGES; page += 1) {
+          const rows = await sdk().threads.events.list({
+            threadId,
+            types: ["item/completed"],
+            order: "desc",
+            limit: String(EVENT_PAGE),
+            ...(beforeSeq === undefined ? {} : { beforeSeq }),
+          });
+          for (const row of rows) {
+            if (row.createdAt < from) return found.reverse();
+            if (to !== null && row.createdAt >= to) continue;
+            const item = agentMessageItemSchema.safeParse((row.data as { item?: unknown }).item);
+            if (item.success && item.data.text.trim() !== "") found.push(item.data.text);
+          }
+          const last = rows.at(-1);
+          if (rows.length < EVENT_PAGE || last === undefined) break;
+          beforeSeq = String(last.seq);
+        }
+        return found.reverse();
+      } catch (error) {
+        bb.log.debug(`Reading ${threadId}'s messages failed: ${message(error)}`);
+        return null;
       }
     },
 

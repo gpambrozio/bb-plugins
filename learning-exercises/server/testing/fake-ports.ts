@@ -36,6 +36,10 @@ export class FakePorts implements Ports {
   turns = new Map<string, { turnId: string; status: string }>();
   fileChanges = new Map<string, FileChange[]>();
   pending = new Set<string>();
+  /** The agent's messages per thread, with the time each completed. */
+  messages = new Map<string, { at: number; text: string }[]>();
+  /** `agentMessages` answers nothing, as when the event log cannot be read. */
+  messagesUnreadable = false;
   heads = new Map<string, string>([["env_1", "aaa111"]]);
   commits = new Map<string, { commits: Commit[]; files: CommittedFile[] }>();
   branch = new Map<string, Commit[]>();
@@ -81,6 +85,16 @@ export class FakePorts implements Ports {
 
   async turnFileChanges(threadId: string, turnId: string) {
     return this.fileChanges.get(`${threadId}:${turnId}`) ?? [];
+  }
+
+  /** The agent writes a message in a thread now. */
+  say(threadId: string, text: string): void {
+    this.messages.set(threadId, [...(this.messages.get(threadId) ?? []), { at: this.clock, text }]);
+  }
+
+  async agentMessages(threadId: string, from: number, to: number | null) {
+    if (this.messagesUnreadable) return null;
+    return (this.messages.get(threadId) ?? []).filter((message) => message.at >= from && (to === null || message.at < to)).map((message) => message.text);
   }
 
   async interactionPending(threadId: string) {

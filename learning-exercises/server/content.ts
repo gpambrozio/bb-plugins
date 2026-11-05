@@ -124,7 +124,7 @@ export function buildBrief(input: BriefInput): string {
 
 /** The standing rule for a session thread, from `configure` (it outlives a compaction). */
 export const SESSION_INVARIANT =
-  "This thread is a learning session run by the Learning Exercises plugin. Ask every question with the learning_ask tool (or `bb learning ask` if that tool is missing), then end your turn and add nothing after it. Never answer your own question or hint at the answer. After each answer give direct feedback and call learning_feedback; end with learning_finish.";
+  "This thread is a learning session run by the Learning Exercises plugin. Ask every question with the learning_ask tool (or `bb learning ask` if that tool is missing), then end your turn and add nothing after it. Never answer your own question or hint at the answer. Every question stands on its own: code it relies on goes inside it as a fenced code block, and it never refers to \"above\" or an earlier message. After each answer give direct feedback as a message and call learning_feedback; end with learning_finish.";
 
 /** The line the user sees as a session's first message. */
 export function startLine(topic: string, trigger: TriggerKind, refs: Refs): string {

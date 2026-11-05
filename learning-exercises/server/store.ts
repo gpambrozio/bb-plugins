@@ -101,6 +101,8 @@ export const MIGRATIONS: string[] = [
   // The answer form a question was asked with, and the learner's answer to it by field id (JSON).
   `ALTER TABLE exercises ADD COLUMN form TEXT`,
   `ALTER TABLE exercises ADD COLUMN fields TEXT`,
+  // What the agent wrote after the answer and before the next question (its feedback), from the event log.
+  `ALTER TABLE exercises ADD COLUMN reply TEXT`,
 ];
 
 /** The partial unique index migration 9 creates (one open session per source thread). */
@@ -232,6 +234,7 @@ interface ExerciseRecord {
   gap: string | null;
   form: string | null;
   fields: string | null;
+  reply: string | null;
 }
 
 /** Stored JSON read back through its schema; null when it is missing or no longer reads. */
@@ -303,6 +306,8 @@ function toExercise(row: ExerciseRecord): Exercise {
       const parsed = FormValuesSchema.safeParse(value);
       return parsed.success ? parsed.data : null;
     }),
+    // "" is a reply read and found empty (`unreadReplies`); the app sees no reply either way.
+    reply: row.reply === null || row.reply === "" ? null : row.reply,
   };
 }
 
@@ -547,6 +552,18 @@ export class LearningStore {
     this.db
       .prepare(`UPDATE exercises SET answer = ?, confidence = ?, fields = ?, answered_at = ? WHERE session_id = ? AND ordinal = ?`)
       .run(answer.text, answer.confidence, answer.fields == null ? null : JSON.stringify(answer.fields), now, sessionId, ordinal);
+  }
+
+  /** Questions answered or skipped whose reply was never read (a store from before replies were kept, a failed read). */
+  unreadReplies(sessionId: string): number[] {
+    return (this.db.prepare(`SELECT ordinal FROM exercises WHERE session_id = ? AND answered_at IS NOT NULL AND reply IS NULL ORDER BY ordinal`).all(sessionId) as { ordinal: number }[]).map(
+      (row) => row.ordinal,
+    );
+  }
+
+  /** Keeps the agent's reply to a question (its feedback), replacing an earlier read of it; "" when it wrote nothing. */
+  recordReply(sessionId: string, ordinal: number, reply: string): void {
+    this.db.prepare(`UPDATE exercises SET reply = ? WHERE session_id = ? AND ordinal = ?`).run(reply, sessionId, ordinal);
   }
 
   recordStuck(sessionId: string, ordinal: number): void {

@@ -58,6 +58,11 @@ export interface Ports {
   lastTurn(threadId: string): Promise<{ turnId: string; status: string } | null>;
   /** The `fileChange` changes of one turn, with the paths as the provider reported them. */
   turnFileChanges(threadId: string, turnId: string): Promise<FileChange[]>;
+  /**
+   * The text of the agent's messages completed in the thread from `from` (inclusive) to `to` (exclusive,
+   * null for now), oldest first, from its event log; null when the log cannot be read.
+   */
+  agentMessages(threadId: string, from: number, to: number | null): Promise<string[] | null>;
   interactionPending(threadId: string): Promise<boolean>;
   /** The workspace's HEAD, or null when the Git plugin cannot say (off, not a repository). */
   headSha(environmentId: string): Promise<string | null>;

@@ -312,7 +312,7 @@ describe("a form answer read back", () => {
 
   it("the tab's history shows a form answer part by part", async () => {
     const session: Session = { id: "ses_2", mode: "fork", state: "finished", topic: '"Add median"', trigger: "commit", sourceThreadId: "thr_work", threadId: "thr_fork", pauseReason: null, summary: null, createdAt: 1, updatedAt: 2, finishedAt: 3, asked: 1, answered: 1 };
-    const exercise = { ordinal: 1, type: "trace", question: "Q?", files: [], askedAt: 1, answer: summarizeAnswer(EVERY_KIND, fields), confidence: 3, skipped: false, stuck: 0, answeredAt: 2, verdict: "partly", gap: null, form: EVERY_KIND, fields };
+    const exercise = { ordinal: 1, type: "trace", question: "Q?", files: [], askedAt: 1, answer: summarizeAnswer(EVERY_KIND, fields), confidence: 3, skipped: false, stuck: 0, answeredAt: 2, verdict: "partly", gap: null, form: EVERY_KIND, fields, reply: null };
     const threadView = { eligible: true, canStart: true, offer: null, hosted: null, started: null, offersOn: true, projectKey: "k", projectName: "calc", projectNever: false, offersOffGlobally: false, sessionWhere: "fork", workspace } satisfies ThreadView;
     renderSlot({ component: LearningTab }, { threadId: "thr_work", environment: null }, {
       rpc: {

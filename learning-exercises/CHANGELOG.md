@@ -16,9 +16,14 @@ First release.
   text, code, a number, a slider, one or several choices, yes/no, a scale, putting items in order,
   matching pairs, a list or a table to fill in. A simple question keeps its single text box. Form
   answers appear part by part in the transcript and in the Learning tab, and survive a pause.
+- The agent's feedback on your answer shows on the next question's card, above the question, so it
+  stays readable after bb folds the turn that wrote it. It is kept with each question, read from the
+  thread's own messages, so it also comes back after a reload and in sessions already under way.
+- Questions carry the code they ask about, such as an earlier version of a function, instead of
+  pointing at a message "above"; a question with a code block left open is refused before you see it.
 - The Learning tab in a thread's side panel starts an exercise on the thread's work, shows the
-  session in progress with Pause, Resume and Finish, and lists the project's paused and earlier
-  sessions with your answers; each can be deleted.
+  session in progress with Pause, Resume and Finish and its questions and feedback so far, and lists
+  the project's paused and earlier sessions with your answers and the feedback; each can be deleted.
 - In sub-agent threads, which never get offers, the Learning tab is on the side panel's tab bar too,
   to start or resume an exercise there by hand.
 - Files named in a question open in bb with a click, at the line or range the question points to; so

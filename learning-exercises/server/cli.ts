@@ -92,7 +92,7 @@ export function learningCli(sessions: SessionService): PluginCliRegistration {
       ask: cliCommand({
         summary: "Show the learner one exercise question in a card; end your turn right after",
         description:
-          "Opens the question card in this thread and returns at once. End your turn without adding anything: the learner's answer arrives as your next message.",
+          "Opens the question card in this thread and returns at once. End your turn without adding anything: the learner's answer arrives as your next message. The question must stand on its own: put any code it relies on inside it as a fenced code block, and never refer to \"above\" or an earlier message.",
         options: {
           type: { type: "enum", values: EXERCISE_TYPES, required: true, description: "The exercise type" },
           // bb's CLI turns `--question-base64-stdin` into `--question-base64 <line from stdin>`.

@@ -84,6 +84,8 @@ export class LearningApi {
     if (session === null) throw new SessionError("That session is gone.");
     let workspace = session.threadId === null ? null : await workspaceOf(ports, session.threadId);
     if (workspace === null && session.sourceThreadId !== null) workspace = await workspaceOf(ports, session.sourceThreadId);
+    // The history is built from the thread's stored messages too: a reply no read kept is read now.
+    await this.deps.sessions.backfillReplies(sessionId);
     return { session: publicSession(session), exercises: store.exercises(sessionId), workspace };
   }
 

@@ -81,6 +81,7 @@ retrieval and Showboat are later phases.
 | `app/card.tsx`, `app/settled-row.tsx` | The `exercise` pending interaction and its timeline row |
 | `app/tab.tsx` | The "Learning" tab, on the tab bar of every listed thread; the retired on-demand tab's clean-up |
 | `app/file-refs.tsx` | File references as links that open the file in bb, at a line or range (below) |
+| `server/question.ts` | What the server checks of a question before showing it: its length and that its code blocks close |
 | `shared/answer-form.ts`, `app/answer-form.tsx` | Answer forms: the schema, its checks and limits, reading and summarising an answer; the controls in the card and the read-only view (below) |
 | `app/thread-action.ts`, `app/settings-section.tsx` | "Learning offers" in the thread menu; the never-list under settings |
 
@@ -138,6 +139,31 @@ bb's `requestInput` hosts it as it is; no other surface is involved.
   are keyboard-operable and labelled without a component library; the grid collapses under a
   container query (`@md`, 28rem of card width), not the window's width. A live look in a dev bb has not
   been done yet: the checks are jsdom tests and the compiled CSS.
+
+## The agent's replies, and questions that stand on their own
+
+A real session (thread thr_f6iewpgi7a) lost its feedback: the agent wrote it as a message mid-turn, then
+asked the next question, and when that turn ended bb folded the turn's earlier messages into the turn,
+so only "I'm waiting for your answer" stayed in view. Its next question then said "the earlier version
+… shown above" about code no message held.
+
+- **A reply is what the agent wrote between an answer and the next question.** `exercises.reply`
+  (migration 13) keeps it, read from the thread's event log (`ports.agentMessages`: `item/completed`
+  rows of type `agentMessage`, paged newest first by `beforeSeq`), from the exercise's `answered_at` to
+  the next one's `asked_at`. It is read when the verdict is recorded, when the next question is asked
+  (and goes on that card as `previous`, shown open above the question), and when the session finishes.
+  It is the log, not live streaming, so it survives a reload, and Resume puts it back on a reopened card.
+- **Replies no read kept are backfilled** (`backfillReplies`, from `sessionDetail` and Resume): a store
+  from before replies were kept, or a read that failed. `agentMessages` answers null when the log cannot
+  be read, which is not "no messages"; a closed window with no messages is stored as `""` so it is read
+  once, and the app sees `""` as no reply. A session already under way when this build is installed gets
+  its feedback back with no new message: the history at once, the card on Resume.
+- **A question must stand on its own.** The card is all the learner sees while answering, so the brief,
+  the tool's description and parameter, the CLI and `SESSION_INVARIANT` say to put any code a question
+  relies on inside it as a fenced block (above all code the files do not hold now) and never to point
+  "above". Whether a question leans on something it lacks cannot be told from its text, so the server
+  checks only what it can (`server/question.ts`): at most `QUESTION_MAX_CHARS` (8,000, room for code)
+  and no code fence left open (CommonMark's rules), refusing before anything is stored or shown.
 
 ## What bb 0.48.1 does that this relies on (the spike's evidence)
 

@@ -21,11 +21,26 @@ Inside the question itself you may add only:
 
 After the learner answers:
 
-1. Give feedback that connects their thinking to the actual behaviour.
+1. Give feedback that connects their thinking to the actual behaviour, as a message, before you ask
+   again. The card shows that message above the next question and keeps it in the session's history.
 2. If they were wrong, say clearly what is wrong, then explore the gap. This is the most valuable part.
 3. Do not credit them with insight they did not express. If they said *what* happens but not *why*,
    acknowledge the what without crediting causal understanding.
 4. Record your verdict (see "How to ask").
+
+## Every question stands on its own
+
+The card is all the learner sees while answering. bb folds a turn's earlier messages away once the
+turn ends, and a message can be lost to an error, so a question that leans on one points at nothing.
+
+- Put everything the question relies on inside it. Code it asks about goes in the question as a fenced
+  code block, above all code the files do not hold as they are now: an earlier version, a change you
+  propose, a variant you made up. The learner cannot open a file to find that.
+- Never write "shown above", "the earlier version", "as I said" or anything else that points to another
+  message, your feedback included. Quote or restate what you mean instead.
+- Close every code block you open; the card refuses a question with one left open. A question can be up
+  to 8,000 characters, so keep only the lines that matter.
+- File references are fine: the files are there to open.
 
 ## Exercise types
 
@@ -80,7 +95,8 @@ specific"), move back *up* the ladder — a more specific question — rather th
 After they locate code, ask them to explain it before you say anything. After one instance, have them
 find a parallel one. Show code directly only when it is 1–3 lines and needs no context, when it
 introduces syntax they have not met, when searching a large file would frustrate rather than teach,
-or when they are stuck and need to move on.
+or when they are stuck and need to move on. Code that is not in the files as they are now always goes in
+the question, fenced (see "Every question stands on its own").
 
 ## Answer forms
 

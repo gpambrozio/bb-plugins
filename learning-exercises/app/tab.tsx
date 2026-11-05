@@ -1,7 +1,8 @@
 /**
  * The Learning tab (feature #9), in a thread's side panel. Top to bottom:
  *
- * - **Now**: this thread's offer, or the session it hosts or started, with Pause / Resume / Finish.
+ * - **Now**: this thread's offer, or the session it hosts or started, with Pause / Resume / Finish, and
+ *   its questions so far with the learner's answers and the agent's feedback.
  * - **Start**: an exercise on this thread's work, on a topic taken from data (the last commit, the last
  *   turn's new files, the thread's title) or typed.
  * - **Paused** and **Previous**: this project's sessions, with Resume, the learner's own answers, and
@@ -203,6 +204,20 @@ function SessionSummary(props: { session: Session; environmentId: string | null 
   );
 }
 
+/** The open session's questions so far, with the answers and the agent's feedback; folded until asked for. */
+function SoFar(props: { session: Session }) {
+  const [open, setOpen] = useState(false);
+  if (props.session.asked === 0) return null;
+  return (
+    <div className="flex flex-col gap-2">
+      <Button type="button" size="sm" variant="ghost" className="self-start" aria-expanded={open} onClick={() => setOpen((current) => !current)}>
+        <Icon name={open ? "ChevronUp" : "ChevronDown"} /> Questions and feedback so far ({props.session.asked})
+      </Button>
+      {open && <ExerciseList sessionId={props.session.id} />}
+    </div>
+  );
+}
+
 function Now(props: { view: ThreadView; threadId: string; visible: boolean }) {
   const { view, threadId } = props;
   const session = view.hosted ?? view.started;
@@ -211,6 +226,7 @@ function Now(props: { view: ThreadView; threadId: string; visible: boolean }) {
       <Section title={view.hosted !== null ? "This session" : "Session from this thread"}>
         <SessionSummary session={session} environmentId={view.workspace?.environmentId ?? null} />
         <SessionControls session={session} currentThreadId={threadId} />
+        <SoFar session={session} />
       </Section>
     );
   }
@@ -302,6 +318,12 @@ function ExerciseList(props: { sessionId: string }) {
             {exercise.verdict !== null ? ` · ${exercise.verdict}` : ""}
             {exercise.gap !== null ? ` · ${exercise.gap}` : ""}
           </span>
+          {exercise.reply !== null && (
+            <div className="flex flex-col gap-0.5 rounded-md border border-border px-2 py-1.5">
+              <span className="font-medium text-muted-foreground">{exercise.answer !== null ? "Feedback" : "After this question"}</span>
+              <FileMarkdown content={exercise.reply} workspace={workspace} className="text-xs" />
+            </div>
+          )}
         </li>
       ))}
     </ol>

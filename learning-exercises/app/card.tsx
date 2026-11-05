@@ -7,6 +7,9 @@
  * session (spike S3). Every button is `type="button"`. When the agent sent an answer form, its controls
  * replace the text box (`answer-form.tsx`); a form this build cannot read falls back to the text box. File references in the question and the files to open
  * are links that open the file in bb, at a line or range when they name one (`file-refs.tsx`).
+ *
+ * Above the question, the agent's reply to the previous one (`previous`): its feedback, which bb folds
+ * away with the turn that wrote it once the turn ends with this card. It is open, and can be closed.
  */
 import type { PluginPendingInteractionProps } from "@get-bb/plugin-sdk/app";
 import { useMemo, useState } from "react";
@@ -61,6 +64,16 @@ export function ExerciseCard({ interaction, submit }: PluginPendingInteractionPr
         </span>
         <span className="truncate">{card.topic.replace(/[`"]/g, "")}</span>
       </div>
+      {card.previous !== undefined && (
+        <details open className="group rounded-md border border-border">
+          <summary className="cursor-pointer select-none px-2 py-1.5 text-xs font-medium text-muted-foreground">
+            {card.previous.answered ? `Feedback on question ${card.previous.ordinal}` : `After question ${card.previous.ordinal}`}
+          </summary>
+          <div className="max-h-72 overflow-y-auto border-t border-border px-2 py-1.5">
+            <FileMarkdown content={card.previous.reply} workspace={card.workspace} className="text-sm" />
+          </div>
+        </details>
+      )}
       <FileMarkdown content={card.question} workspace={card.workspace} className="text-sm" />
       {card.files.length > 0 && (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">

@@ -14,7 +14,8 @@ with a real answer card.
   built and your work thread is left as it was. Agents that cannot fork run it in the same thread.
 - **A real pause.** Each question is a card: your answer, how sure you are from 1 to 5, Make it more
   specific, Skip and Pause. The agent's turn is over while the card is open, so it cannot hint.
-  Your answers stay in the transcript in your own words.
+  Your answers stay in the transcript in your own words, and the agent's feedback on each answer
+  shows above the next question, so it never scrolls away.
 - **Answer forms.** A question with several parts can come with a form instead of one text box:
   text, code, numbers, sliders, choices, yes/no, a scale, ordering, matching, lists and tables.
 - **The Learning tab.** In each thread's side panel: the offer or the session in progress, with

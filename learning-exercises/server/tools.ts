@@ -9,7 +9,7 @@ import type { BbPluginApi, PluginAgentToolResult } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
 import { AnswerFormSchema } from "../shared/answer-form";
-import { EXERCISE_TYPES, VERDICTS } from "../shared/types";
+import { EXERCISE_TYPES, QUESTION_MAX_CHARS, VERDICTS } from "../shared/types";
 import { SessionError, type SessionService } from "./sessions";
 
 export const TOOL_NAMES = ["learning_ask", "learning_feedback", "learning_finish"] as const;
@@ -29,13 +29,19 @@ export function registerTools(bb: BbPluginApi, sessions: SessionService): void {
   bb.agents.registerTool({
     name: "learning_ask",
     description:
-      "Show the learner one exercise question in a card and wait for their answer, which comes back as this tool's result. Ask exactly one question per call, then end your turn and add nothing.",
+      "Show the learner one exercise question in a card and wait for their answer, which comes back as this tool's result. Ask exactly one question per call, then end your turn and add nothing. The question must stand on its own: the card is all the learner sees while answering.",
     instructions:
-      "In this learning session every question goes through learning_ask. Write nothing after calling it: no hints, no example answers, no second question.",
+      "In this learning session every question goes through learning_ask. Write nothing after calling it: no hints, no example answers, no second question. Make every question self-contained: put any code it relies on inside the question as a fenced code block, above all code the files do not hold as they are now (an earlier version, a proposed change), and never refer to \"above\", \"earlier\" or a previous message.",
     presentation: { label: { pending: "Asking an exercise question", completed: "Asked an exercise question" }, icon: { glyph: "Brain" }, suppress: true },
     parameters: z.object({
       type: z.enum(EXERCISE_TYPES).describe("The exercise type"),
-      question: z.string().min(1).max(4000).describe("The full question, in Markdown. Write file references as workspace-relative paths in backticks, with a line or range when you mean one (`src/a.ts:42`), so they open as links"),
+      question: z
+        .string()
+        .min(1)
+        .max(QUESTION_MAX_CHARS)
+        .describe(
+          "The full question, in Markdown, self-contained: include any code it relies on as a fenced code block (code not in the files as they are now, such as an earlier version, must be here), and never point to \"above\" or an earlier message. Write file references as workspace-relative paths in backticks, with a line or range when you mean one (`src/a.ts:42`), so they open as links",
+        ),
       files: z.array(z.string().min(1).max(500)).max(10).optional().describe("Workspace-relative paths the learner should open, each with an optional line or range: src/a.ts, src/a.ts:42, src/a.ts:40-60"),
       form: AnswerFormSchema.optional().describe(
         "Optional answer form, for a question with several parts or a shape a text box serves badly. Leave it out for one plain text answer (the default). Pick the simplest control that fits; see the brief's 'Answer forms'. An invalid form is refused with the reasons and nothing is shown",
@@ -46,7 +52,8 @@ export function registerTools(bb: BbPluginApi, sessions: SessionService): void {
 
   bb.agents.registerTool({
     name: "learning_feedback",
-    description: "Record your verdict on the learner's last answer, the gap you saw, and the concepts involved. Call it after giving them your feedback.",
+    description:
+      "Record your verdict on the learner's last answer, the gap you saw, and the concepts involved. Call it after giving them your feedback as a message; the plugin keeps that message with the question and shows it above the next one.",
     presentation: { label: { pending: "Recording feedback", completed: "Recorded feedback" }, icon: { glyph: "Brain" }, suppress: true },
     parameters: z.object({
       verdict: z.enum(VERDICTS),

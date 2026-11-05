@@ -555,7 +555,7 @@ describe("file references", () => {
 
   it("the tab's session history shows each question as Markdown in the session's workspace", async () => {
     const finished = { ...session, id: "ses_2", state: "finished" as const, summary: null, pauseReason: null, finishedAt: 3 };
-    const exercise = { ordinal: 1, type: "trace", question: "Open `calc.py:12`.", files: [], askedAt: 1, answer: "It sorts", confidence: 3, skipped: false, stuck: 0, answeredAt: 2, verdict: "partly", gap: null, form: null, fields: null };
+    const exercise = { ordinal: 1, type: "trace", question: "Open `calc.py:12`.", files: [], askedAt: 1, answer: "It sorts", confidence: 3, skipped: false, stuck: 0, answeredAt: 2, verdict: "partly", gap: null, form: null, fields: null, reply: null };
     renderSlot({ component: LearningTab }, { threadId: WORK, environment: null }, {
       rpc: handlers(() => view({ offer: null }), {
         projectSessions: () => ({ paused: [], previous: [finished], hasMore: false }),
@@ -605,5 +605,58 @@ describe("the thread menu", () => {
     const data = { off: new Set<string>(), set: vi.fn() };
     expect(offersItem({ thread: { ...(target as object), parentThreadId: "thr_p" }, data } as never)).toBeNull();
     expect(offersItem({ thread: { ...(target as object), archivedAt: 5 }, data } as never)).toBeNull();
+  });
+});
+
+describe("the agent's reply between questions (thread thr_f6iewpgi7a)", () => {
+  const workspace = { threadId: "thr_fork", environmentId: "env_1", rootPath: "/work/calc" };
+  const feedback = "You got all three right. What your walkthrough leaves out is *why there's no spill*.";
+  const payload: CardPayload = { sessionId: "ses_1", ordinal: 2, type: "debug", question: "When does the map jump back?", files: [], environmentId: "env_1", workspace, topic: "t", maxQuestions: 8 };
+  const renderCard = (card: CardPayload) =>
+    renderSlot({ component: ExerciseCard }, { interaction: { id: "pint_2", threadId: "thr_fork", title: "Question 2", payload: card, createdAt: 1, expiresAt: null }, submit: vi.fn(async () => {}), cancel: vi.fn(async () => {}) });
+
+  it("the card shows the feedback on the previous answer above the question, open, in the session's workspace", () => {
+    renderCard({ ...payload, previous: { ordinal: 1, answered: true, reply: feedback } });
+    const summary = screen.getByText("Feedback on question 1");
+    const details = summary.closest("details")!;
+    expect(details.open).toBe(true);
+    const [reply, question] = screen.getAllByTestId("bb-markdown");
+    expect(reply!.textContent).toBe(feedback);
+    expect(details.contains(reply!)).toBe(true);
+    expect(question!.textContent).toBe("When does the map jump back?");
+    expect(reply!.compareDocumentPosition(question!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(reply!.getAttribute("data-document")).toBe(question!.getAttribute("data-document"));
+    // It folds away on request, and its toggle is not a button that could submit bb's composer form.
+    fireEvent.click(summary);
+    for (const button of screen.getAllByRole("button")) expect(button.getAttribute("type")).toBe("button");
+  });
+
+  it("after a skipped question it says so, and the first question has nothing above it", () => {
+    renderCard({ ...payload, previous: { ordinal: 1, answered: false, reply: "No problem." } });
+    expect(screen.getByText("After question 1")).toBeTruthy();
+    cleanup();
+    renderCard(payload);
+    expect(screen.queryByText(/question 1/)).toBeNull();
+    expect(screen.getAllByTestId("bb-markdown")).toHaveLength(1);
+  });
+
+  it("the tab keeps every reply: the open session's questions so far, and a finished session's history", async () => {
+    const hosted: Session = { ...session, state: "awaiting-answer", pauseReason: null, asked: 2, answered: 1 };
+    const exercises = [
+      { ordinal: 1, type: "trace", question: "Trace it.", files: [], askedAt: 1, answer: "Focus ends at 2", confidence: 4, skipped: false, stuck: 0, answeredAt: 2, verdict: "correct", gap: null, form: null, fields: null, reply: feedback },
+      { ordinal: 2, type: "debug", question: "When does it jump?", files: [], askedAt: 3, answer: null, confidence: null, skipped: false, stuck: 0, answeredAt: null, verdict: null, gap: null, form: null, fields: null, reply: null },
+    ];
+    renderSlot({ component: LearningTab }, { threadId: "thr_fork", environment: null }, {
+      rpc: handlers(() => view({ offer: null, hosted, canStart: false }), { sessionDetail: () => ({ session: hosted, exercises, workspace }) }),
+      experimental_rpcContract: rpcContract,
+      sidebarThreads: { status: "ready", threads: [sidebarThread({ id: "thr_fork" })] },
+    });
+    const toggle = await screen.findByRole("button", { name: /Questions and feedback so far \(2\)/ });
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(toggle);
+    const label = await screen.findByText("Feedback");
+    expect(label.parentElement!.textContent).toContain(feedback);
+    expect(screen.getAllByText("Feedback")).toHaveLength(1);
+    expect(screen.getByText("Not answered.")).toBeTruthy();
   });
 });

@@ -25,6 +25,13 @@ is not affiliated with or endorsed by the author; see [NOTICE.md](NOTICE.md).
   specific**, **Skip** and **Pause session**. The agent's turn is over while the card is open, so
   there are no hints after the question. Your answer and confidence stay in the transcript as your
   own words.
+- **Feedback you can still read.** bb folds a turn's earlier messages away when the turn ends, so the
+  agent's feedback on your answer would vanish once the next card opens. The card shows it above the
+  next question instead, and the Learning tab keeps it with each question, read from the thread's own
+  messages (a session started before this version gets its feedback back too).
+- **Questions that stand on their own.** The agent is told to put any code a question relies on in the
+  question itself (an earlier version of a function, say), never to point "above"; a question with a
+  code block left open is refused before you see it.
 - **Answers in the shape the question asks for.** A question with several parts can come with an
   answer form instead of one text box: short and long text, code, numbers, sliders, single and
   multiple choice, yes/no, a 1–5 scale, putting items in order, matching pairs, a list of entries, or
@@ -36,7 +43,8 @@ is not affiliated with or endorsed by the author; see [NOTICE.md](NOTICE.md).
   commit and pull-request offers for a week. Offers nobody sees expire and never count.
 - **The Learning tab** on the side panel's tab bar, in every thread, shows this thread's offer or session (Pause, Resume,
   Finish), starts an exercise on a topic taken from the thread (its last commit, its new files, its
-  title) or one you type, and lists the project's paused and previous sessions with your answers.
+  title) or one you type, and lists the project's paused and previous sessions with your answers and the
+  agent's feedback; the session in progress lists its questions and feedback so far.
 - **Files open from the question.** File names in a question, its list of files to open, your past
   answers and an offer are links that open the file in bb, at the line or range the question points to.
 - **Pause and come back.** A paused session — by you, by a 30-minute timeout, or by a bb restart —
