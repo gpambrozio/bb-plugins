@@ -5,6 +5,7 @@
  * terminals themselves (xterm and bb's socket) are replaced by a stub whose
  * status the test sets.
  */
+import { fireEvent as domFireEvent } from "@testing-library/dom";
 import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import type { PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
 import { renderSlot, type PluginRpcTestHandlers, type RenderSlotOptions } from "@get-bb/plugin-sdk/testing/app";
@@ -712,6 +713,30 @@ describe("the Terminals page", () => {
       } finally {
         touch.restore();
       }
+    });
+
+    it("takes clicks again after a flick released before the drag's start was drawn", async () => {
+      const { state, rpc } = threeTabs();
+      windowSelection.set("term_1");
+      render(rpc);
+      await screen.findByRole("button", { name: "Mac mini 1" });
+      const restore = layOutTabs();
+      try {
+        // One act for the move that starts the drag and the release, so React draws neither in between:
+        // dnd-kit 6.3.1 then calls neither onDragEnd nor onDragCancel (get-bb/bb#6847).
+        fireEvent.mouseDown(screen.getByRole("button", { name: "Mac mini 1" }), { button: 0, clientX: 50, clientY: 10 });
+        act(() => {
+          domFireEvent.mouseMove(document, { clientX: 70, clientY: 10 });
+          domFireEvent.mouseUp(document, { clientX: 70, clientY: 10 });
+        });
+        // Past the 350 ms after a drag's end in which the strip still swallows a click.
+        await act(() => new Promise((resolve) => setTimeout(resolve, 400)));
+      } finally {
+        restore();
+      }
+      expect(state.moved).toEqual([]);
+      fireEvent.click(screen.getByRole("button", { name: "MacBook Air" }));
+      expect(screen.getByRole("button", { name: "MacBook Air" }).getAttribute("aria-pressed")).toBe("true");
     });
 
     it("leaves the order alone for a press that does not move far enough to drag", async () => {

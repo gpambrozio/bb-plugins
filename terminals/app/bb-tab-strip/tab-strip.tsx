@@ -28,6 +28,10 @@
  * - The active tab is brought back into sight when the order changes too, as
  *   a move in another window can carry it away; bb's strip only reorders
  *   from its own drags.
+ * - A release that dnd-kit does not report still ends the drag
+ *   (`watchForRelease`). bb fixed the same bug from desktop-v0.49.0 with a
+ *   patch to its own copy of dnd-kit (get-bb/bb#6847), which this page's
+ *   bundled dnd-kit does not get.
  */
 import {
   type CSSProperties,
@@ -93,6 +97,29 @@ const TAB_STRIP_FADE_TONE: OverflowFadeTone = "sidebar";
 class InertTouchSensor implements SensorInstance {
   static activators: Sensor<TouchSensorOptions>["activators"] = [];
   autoScrollEnabled = false;
+}
+
+/** What lets a drag go: a mouse button, or a finger lifted or taken by the system. */
+const RELEASE_EVENTS = ["mouseup", "touchend", "touchcancel"] as const;
+
+/**
+ * Calls `onRelease` on the next release that reaches the window, and returns what stops listening. A
+ * drag listens from its start until dnd-kit reports its end. dnd-kit 6.3.1 reports neither the end nor
+ * a cancel for a release that arrives before the render of its DragStart commits, which would leave a
+ * tab drawn as dragging and every click swallowed until a reload (get-bb/bb#6847; bb patches dnd-kit,
+ * which a plugin's bundle cannot). dnd-kit's own listeners (the document for the mouse, the tab for
+ * touch) hear a release before the window does and report the end at once, so a release that reaches
+ * the window while the drag is still open is one dnd-kit dropped.
+ */
+function watchForRelease(onRelease: () => void): () => void {
+  for (const type of RELEASE_EVENTS) {
+    window.addEventListener(type, onRelease);
+  }
+  return () => {
+    for (const type of RELEASE_EVENTS) {
+      window.removeEventListener(type, onRelease);
+    }
+  };
 }
 
 const TOUCH_SENSOR_OPTIONS: TouchSensorOptions = { activationConstraint: { delay: 200, tolerance: 6 } };
@@ -321,19 +348,27 @@ export function TabStrip({ activeTabId, tabs, onReorderTab }: TabStripProps) {
     });
   }, []);
 
+  const stopReleaseWatchRef = useRef<(() => void) | null>(null);
+  const handleDragCancel = useCallback(() => {
+    stopReleaseWatchRef.current?.();
+    stopReleaseWatchRef.current = null;
+    setDraggingTabId(null);
+    clearDragClickSuppressionSoon();
+  }, [clearDragClickSuppressionSoon]);
   const handleDragStart = useCallback(
     (event: DragStartEvent) => {
       setDraggingTabId(String(event.active.id));
       beginDragClickSuppression();
+      stopReleaseWatchRef.current?.();
+      stopReleaseWatchRef.current = watchForRelease(handleDragCancel);
     },
-    [beginDragClickSuppression],
+    [beginDragClickSuppression, handleDragCancel],
   );
-  const handleDragCancel = useCallback(() => {
-    setDraggingTabId(null);
-    clearDragClickSuppressionSoon();
-  }, [clearDragClickSuppressionSoon]);
+  useEffect(() => () => stopReleaseWatchRef.current?.(), []);
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
+      stopReleaseWatchRef.current?.();
+      stopReleaseWatchRef.current = null;
       setDraggingTabId(null);
       clearDragClickSuppressionSoon();
       if (!event.over) {

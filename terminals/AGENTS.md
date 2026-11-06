@@ -18,6 +18,7 @@ specific to `terminals`.
 | `app.tsx` | The nav panel; an invisible app overlay whose unmount (bb reloading or disabling the plugin) releases this copy's terminals and sockets; and the chat-delivery overlay. |
 | `app/terminals-page.tsx` | The page: the tabs it hands the strip, "+" and its machine menu, renaming in place (double click, F2, the tab's context menu), moving a dropped tab, the shown terminal, the offline and ended notices, the empty state. |
 | `app/bb-tab-strip/` | bb's own tab strip and tab pill, copied from bb (MIT, `LICENSE` beside them): drag to reorder, overflow arrows and fades, the close button, the context menu. |
+| `app/bb-late-ime/` | bb's `forwardLateImeInput` and its test, copied from bb (MIT, `LICENSE` beside them): sends text an iOS keyboard (the system Pinyin one) inserts after xterm stopped listening for it. Installed right after each xterm's `open()`. |
 | `app/live-terminals.ts` | One xterm instance and one connection per open tab, in module scope for the life of the window, so leaving the page keeps them. Re-parents the element on return and restores the scrolled-to line. |
 | `app/connection.ts` | One tab's line to bb's terminal socket: replay and resume by sequence number, acknowledgement after drawing, heartbeat, reconnect (also after a failed or silent attach), the output an exited shell left, when to stop. No React, no xterm. |
 | `app/sizing.ts` | Which window sizes a shell several windows show, and drawing every window at the shell's real size. |
@@ -59,6 +60,14 @@ is scoped to, so its portal carries `usePortalScopeProps()`; bb's custom Tailwin
 classes (`tab-pill-close-focus-visible:`, `no-scrollbar`) are not in a plugin's Tailwind, so they are
 spelled with stock utilities; and `@dnd-kit`'s typings name the global `JSX` namespace React 19
 dropped (`app/jsx-global.d.ts`). The tabs are bb's pressed buttons (`aria-pressed`), not ARIA tabs.
+
+**bb's fixes to its terminal and to dnd-kit do not reach this page.** The page draws its own xterm and
+bundles its own `@dnd-kit/core` and `@xterm/xterm`, so a fix in bb's terminal component, or a pnpm patch
+to a dependency in bb, reaches only bb's own copy. Two from bb 0.49.0 are carried here by hand: iOS's
+late input-method text, by `app/bb-late-ime/` (get-bb/bb#6815), and a release that dnd-kit 6.3.1
+reports neither as an end nor as a cancel (it arrives before the render of the drag's start commits),
+by the strip's own release listener (`watchForRelease` in `app/bb-tab-strip/`, get-bb/bb#6847). Check
+bb's `patches/` and `apps/app/src/components/thread/terminal/` at each release for more.
 
 **The stream is bb's own terminal socket, not an SDK call.** `/ws/terminals/<id>?sinceSeq=&outputAcks=1`
 on the page's origin is what bb's terminal panel and Wterm use; it is not in the SDK's typings, so a bb
