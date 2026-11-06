@@ -96,6 +96,20 @@ describe("saving a draft", () => {
     expect(sessions.saveDraft(sessionId, 2, { answer: "no such question" })).toBe(false);
   });
 
+  it("stamps each stored draft with a token that rises with every save, within the same millisecond too", async () => {
+    const { ports, sessions, sessionId, ask } = await setup();
+    await ask();
+    expect(sessions.draftToken(sessionId, 1)).toBeNull();
+    sessions.saveDraft(sessionId, 1, { answer: "a" });
+    const first = sessions.draftToken(sessionId, 1)!;
+    expect(first).toBe(ports.now());
+    sessions.saveDraft(sessionId, 1, { answer: "b" });
+    expect(sessions.draftToken(sessionId, 1)).toBe(first + 1);
+    ports.answer({ action: "skip" });
+    await flush();
+    expect(sessions.draftToken(sessionId, 1)).toBeNull();
+  });
+
   it("says which questions are still open, for the app's sweep of its local copies", async () => {
     const { ports, sessions, sessionId, ask } = await setup();
     await ask();

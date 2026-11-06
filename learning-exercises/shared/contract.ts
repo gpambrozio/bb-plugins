@@ -19,6 +19,8 @@ const ThreadRef = z.object({ threadId: z.string().min(1) });
 const SessionRef = z.object({ sessionId: z.string().min(1) });
 const Done = z.null();
 const tags = () => [LEARNING_TAG];
+/** A stored draft's token (`SessionService.draftToken`); null when there is none. */
+const DraftToken = z.number().int().nullable();
 
 /** At most this many questions per `openQuestions` read: this browser keeps no more drafts than that. */
 export const DRAFT_SWEEP_MAX = 20;
@@ -57,9 +59,12 @@ export const rpcContract = {
     output: z.object({ threadId: z.string() }),
   },
   /** An open question's unsent answer, for its card to restore; null when there is none. */
-  cardDraft: { input: SessionRef.extend({ ordinal: z.number().int().min(1) }), output: CardDraftSchema.nullable() },
+  cardDraft: {
+    input: SessionRef.extend({ ordinal: z.number().int().min(1) }),
+    output: z.object({ draft: CardDraftSchema.nullable(), token: DraftToken }),
+  },
   /** Saves an open question's unsent answer as the learner types; `saved` is false once the question is closed. */
-  saveDraft: { input: SessionRef.extend({ ordinal: z.number().int().min(1), draft: CardDraftSchema }), output: z.object({ saved: z.boolean() }) },
+  saveDraft: { input: SessionRef.extend({ ordinal: z.number().int().min(1), draft: CardDraftSchema }), output: z.object({ saved: z.boolean(), token: DraftToken }) },
   /** Which of these questions are still open, for clearing this browser's copies of closed ones. */
   openQuestions: {
     input: z.object({ questions: z.array(QuestionRefSchema).max(DRAFT_SWEEP_MAX) }),

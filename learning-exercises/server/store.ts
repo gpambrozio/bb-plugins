@@ -111,6 +111,8 @@ export const MIGRATIONS: string[] = [
   `ALTER TABLE exercises ADD COLUMN reply_progress TEXT`,
   // The learner's unsent answer to an open question (JSON `CardDraft`), until they answer or skip it.
   `ALTER TABLE exercises ADD COLUMN draft TEXT`,
+  // When that draft was stored, rising per question: the token a card's backup is checked against.
+  `ALTER TABLE exercises ADD COLUMN draft_saved_at INTEGER`,
 ];
 
 const ReplyProgressSchema = z.object({
@@ -608,12 +610,23 @@ export class LearningStore {
    * Saves an open question's draft: the last save wins (the app sends one question's saves one at a time,
    * in order). A question answered or skipped meanwhile keeps none. Answers whether it was saved.
    */
-  recordDraft(sessionId: string, ordinal: number, draft: CardDraft): boolean {
+  recordDraft(sessionId: string, ordinal: number, draft: CardDraft, now: number): boolean {
     return (
       this.db
-        .prepare(`UPDATE exercises SET draft = ? WHERE session_id = ? AND ordinal = ? AND answered_at IS NULL AND skipped = 0`)
-        .run(JSON.stringify(draft), sessionId, ordinal).changes > 0
+        .prepare(
+          `UPDATE exercises SET draft = ?, draft_saved_at = MAX(?, COALESCE(draft_saved_at, 0) + 1)
+             WHERE session_id = ? AND ordinal = ? AND answered_at IS NULL AND skipped = 0`,
+        )
+        .run(JSON.stringify(draft), now, sessionId, ordinal).changes > 0
     );
+  }
+
+  /** The stored draft's token (when it was saved, rising per question); null when the question has none. */
+  draftToken(sessionId: string, ordinal: number): number | null {
+    const row = this.db
+      .prepare(`SELECT draft_saved_at AS token FROM exercises WHERE session_id = ? AND ordinal = ? AND answered_at IS NULL AND skipped = 0 AND draft IS NOT NULL`)
+      .get(sessionId, ordinal) as { token: number | null } | undefined;
+    return row?.token ?? null;
   }
 
   /** An open question's saved draft, as stored; null when there is none or it no longer reads. */

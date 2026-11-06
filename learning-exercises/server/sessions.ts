@@ -712,7 +712,16 @@ export class SessionService {
     if (session === null || !OPEN_STATES.includes(session.state)) return false;
     const exercise = this.store.exercises(sessionId).find((candidate) => candidate.ordinal === ordinal);
     if (exercise === undefined || exercise.answeredAt !== null || exercise.skipped) return false;
-    return this.store.recordDraft(sessionId, ordinal, this.readDraft(exercise.form, draft));
+    return this.store.recordDraft(sessionId, ordinal, this.readDraft(exercise.form, draft), this.ports.now());
+  }
+
+  /**
+   * The token of an open question's stored draft: when it was saved, rising with every save. A card's
+   * backup records the token it built on, and is dropped on mount when the server's has moved since
+   * (another device saved meanwhile). Null when there is no draft.
+   */
+  draftToken(sessionId: string, ordinal: number): number | null {
+    return this.store.draftToken(sessionId, ordinal);
   }
 
   /** Which of these questions are still open (their session open, the question neither answered nor skipped). */

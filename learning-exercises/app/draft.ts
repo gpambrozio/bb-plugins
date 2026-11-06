@@ -11,8 +11,13 @@
  *   the snapshot and the mount that wrote it, and a confirmation removes it only if storage still holds
  *   exactly that snapshot from that mount, so an old card's late callback never removes a newer edit.
  *   An unload that kills the request, or a page closed inside the wait, loses nothing on this device:
- *   the next card restores the backup and sends it again. A backup exists only while unconfirmed, so it
- *   is newer than anything the server has, and it wins over the server's draft.
+ *   the next card restores the backup and sends it again.
+ * - **A backup knows what it was built on**: the token of the last server draft this page saw confirmed
+ *   or read (`base`; the server's saved-at time, rising per question). On mount the card reads the
+ *   server first. If the server's token is still the backup's base, the backup is newer and wins: it is
+ *   restored and sent again. If the token has moved (another device saved since), the server's draft wins
+ *   and the backup is dropped. A confirmation that finds a newer edit of this page in storage moves that
+ *   backup's base along, since the server's change was this page's own.
  * - **Saves go** `DRAFT_SAVE_DELAY_MS` after the last edit, and at once when the card unmounts or the
  *   page is hidden (`visibilitychange`, which a backgrounded mobile app sends without `pagehide`) or
  *   unloaded. An edit made before the server's draft arrives wins over it.
@@ -20,7 +25,7 @@
  *   that submission fails, the unsent edit is put back and saved. A pause saves first.
  * - **Backups of closed questions are swept** (`sweepDrafts`, when a card or the Learning tab mounts):
  *   ones the server says are closed, ones older than `DRAFT_KEEP_MS`, and all but the newest
- *   `DRAFT_SWEEP_MAX`. Finishing or deleting a session in this browser drops its backups at once
+ *   `DRAFT_SWEEP_MAX`. A card prunes by age and count before it looks for its own backup. Finishing or deleting a session in this browser drops its backups at once
  *   (`forgetSessionDrafts`).
  *
  * Saving is best effort: a failed save is logged, its backup kept, and the card keeps working.
@@ -43,9 +48,12 @@ export function draftStorageKey(sessionId: string, ordinal: number): string {
   return `${PREFIX}${sessionId}:${ordinal}`;
 }
 
-const BackupSchema = z.object({ mount: z.string(), at: z.number(), draft: CardDraftSchema });
+const BackupSchema = z.object({ mount: z.string(), at: z.number(), base: z.number().int().nullable(), draft: CardDraftSchema });
 type Backup = z.infer<typeof BackupSchema>;
-type Snapshot = { mount: string; draft: CardDraft };
+type Snapshot = { mount: string; draft: CardDraft; base: number | null };
+
+/** Per question, the token of the last server draft this page saw confirmed or read. */
+const baselines = new Map<string, number | null>();
 type Call = ReturnType<typeof useLearningRpc>["call"];
 
 function warn(what: string, error: unknown): void {
@@ -80,7 +88,7 @@ function removeKey(key: string): void {
 }
 
 /** Removes a backup only if it still holds exactly `snapshot`, written by its mount. */
-function removeBackupIf(key: string, snapshot: Snapshot): void {
+function removeBackupIf(key: string, snapshot: Pick<Snapshot, "mount" | "draft">): void {
   const backup = readBackup(key);
   if (backup !== null && backup.mount === snapshot.mount && JSON.stringify(backup.draft) === JSON.stringify(snapshot.draft)) removeKey(key);
 }
@@ -141,10 +149,17 @@ function pump(key: string, queue: Queue): void {
   queue.busy = true;
   queue
     .call("saveDraft", { sessionId: queue.sessionId, ordinal: queue.ordinal, draft: snapshot.draft })
-    .then(({ saved }) => {
+    .then(({ saved, token }) => {
       // Not saved: the question is closed, and so is any backup of it.
-      if (saved) removeBackupIf(key, snapshot);
-      else removeKey(key);
+      if (!saved) {
+        removeKey(key);
+        return;
+      }
+      baselines.set(key, token);
+      removeBackupIf(key, snapshot);
+      // A newer edit of this page built on the same draft: the server's change is this page's own.
+      const newer = readBackup(key);
+      if (newer !== null && newer.base === snapshot.base) writeBackup(key, { mount: newer.mount, draft: newer.draft, base: token });
     })
     .catch((error: unknown) => warn(`save the unsent answer to question ${queue.ordinal}`, error))
     .finally(() => {
@@ -161,6 +176,19 @@ function pump(key: string, queue: Queue): void {
  * more.
  */
 export async function sweepDrafts(call: Call, now = Date.now()): Promise<void> {
+  const kept = pruneBackups(now);
+  if (kept.length === 0) return;
+  try {
+    const { open } = await call("openQuestions", { questions: kept.map((entry) => entry.question) });
+    const isOpen = new Set(open.map((question) => draftStorageKey(question.sessionId, question.ordinal)));
+    for (const entry of kept) if (!isOpen.has(entry.key) && !queues.has(entry.key)) removeKey(entry.key);
+  } catch (error) {
+    warn("check which unsent answers are still open", error);
+  }
+}
+
+/** Drops unreadable backups, ones older than `DRAFT_KEEP_MS` and all but the newest `DRAFT_SWEEP_MAX`; answers the rest. */
+function pruneBackups(now = Date.now()): { key: string; question: QuestionRef; at: number }[] {
   const kept: { key: string; question: QuestionRef; at: number }[] = [];
   for (const key of backupKeys()) {
     const backup = readBackup(key);
@@ -170,14 +198,7 @@ export async function sweepDrafts(call: Call, now = Date.now()): Promise<void> {
   }
   kept.sort((a, b) => b.at - a.at);
   for (const extra of kept.splice(DRAFT_SWEEP_MAX)) removeKey(extra.key);
-  if (kept.length === 0) return;
-  try {
-    const { open } = await call("openQuestions", { questions: kept.map((entry) => entry.question) });
-    const isOpen = new Set(open.map((question) => draftStorageKey(question.sessionId, question.ordinal)));
-    for (const entry of kept) if (!isOpen.has(entry.key) && !queues.has(entry.key)) removeKey(entry.key);
-  } catch (error) {
-    warn("check which unsent answers are still open", error);
-  }
+  return kept;
 }
 
 /** Drops a session's backups in this browser (it was finished or deleted here). */
@@ -235,24 +256,40 @@ export function useCardDraft(question: QuestionRef, draft: CardDraft, restore: (
     state.timer = null;
     if (!state.waiting || state.latest === null || state.stopped) return;
     state.waiting = false;
-    enqueue(callRef.current, { sessionId, ordinal }, { mount: state.mount, draft: state.latest });
+    enqueue(callRef.current, { sessionId, ordinal }, { mount: state.mount, draft: state.latest, base: baselines.get(key) ?? null });
   }).current;
 
-  // On mount: this browser's backup if there is one (it is newer than the server's), sent again; otherwise
-  // the server's draft, unless the learner has typed by the time it arrives.
+  // On mount, after pruning old and excess backups: the server's draft first. This browser's backup wins
+  // only if it was built on that very draft (its base is the server's token); otherwise the server moved
+  // on (another device saved) and the backup goes. An edit made before the read returns beats both.
   useEffect(() => {
     let live = true;
+    pruneBackups();
     const backup = readBackup(key);
-    if (backup !== null) {
-      restoreRef.current(backup.draft);
-      enqueue(callRef.current, { sessionId, ordinal }, { mount: backup.mount, draft: backup.draft });
-    }
     void sweepDrafts(callRef.current);
     callRef.current("cardDraft", { sessionId, ordinal })
-      .then((saved) => {
-        if (live && backup === null && saved !== null && !state.touched && !state.stopped) restoreRef.current(saved);
+      .then(({ draft: saved, token }) => {
+        if (!live) return;
+        baselines.set(key, token);
+        if (state.touched || state.stopped) {
+          // The learner's edit came first and now builds on what the server holds.
+          const mine = readBackup(key);
+          if (mine !== null && mine.mount === state.mount) writeBackup(key, { mount: mine.mount, draft: mine.draft, base: token });
+          return;
+        }
+        if (backup !== null && backup.base === token) {
+          restoreRef.current(backup.draft);
+          enqueue(callRef.current, { sessionId, ordinal }, { mount: backup.mount, draft: backup.draft, base: backup.base });
+          return;
+        }
+        if (backup !== null) removeBackupIf(key, backup);
+        if (saved !== null) restoreRef.current(saved);
       })
-      .catch((error: unknown) => warn(`read the unsent answer to question ${ordinal}`, error));
+      .catch((error: unknown) => {
+        warn(`read the unsent answer to question ${ordinal}`, error);
+        // The server cannot say: what this browser kept is shown, and kept, but not sent.
+        if (live && backup !== null && !state.touched && !state.stopped) restoreRef.current(backup.draft);
+      });
     return () => {
       live = false;
     };
@@ -264,7 +301,7 @@ export function useCardDraft(question: QuestionRef, draft: CardDraft, restore: (
     if (!state.touched || state.stopped) return;
     state.latest = JSON.parse(serialized) as CardDraft;
     state.waiting = true;
-    writeBackup(key, { mount: state.mount, draft: state.latest });
+    writeBackup(key, { mount: state.mount, draft: state.latest, base: baselines.get(key) ?? null });
     if (state.timer !== null) clearTimeout(state.timer);
     state.timer = setTimeout(flush, DRAFT_SAVE_DELAY_MS);
   }, [serialized, key, flush, state]);
@@ -298,7 +335,7 @@ export function useCardDraft(question: QuestionRef, draft: CardDraft, restore: (
     resume: () => {
       state.stopped = false;
       if (state.latest === null) return;
-      writeBackup(key, { mount: state.mount, draft: state.latest });
+      writeBackup(key, { mount: state.mount, draft: state.latest, base: baselines.get(key) ?? null });
       state.waiting = true;
       flush();
     },

@@ -131,7 +131,7 @@ describe("from a commit to an answered question", () => {
     // The card saves what the learner typed and gets it back; the answer clears it.
     const question = { sessionId: (card.payload as { sessionId: string }).sessionId, ordinal: 1 };
     await harness.callRpc("saveDraft", { ...question, draft: { answer: "It raises", confidence: 4 } });
-    expect(await harness.callRpc("cardDraft", question)).toEqual({ answer: "It raises", confidence: 4 });
+    expect(await harness.callRpc("cardDraft", question)).toEqual({ draft: { answer: "It raises", confidence: 4 }, token: expect.any(Number) });
     harness.submitInteraction(card.id, { action: "answer", answer: "It raises ValueError", confidence: 4 });
     expect(await asked).toContain('"It raises ValueError"');
 
@@ -143,7 +143,7 @@ describe("from a commit to an answered question", () => {
     expect(formCard.payload).toMatchObject({ ordinal: 2, form });
     harness.submitInteraction(formCard.id, { action: "answer", answer: "x", confidence: 2, fields: { outcome: "none" } });
     expect(await withForm).toContain('{"outcome":"none"}');
-    expect(await harness.callRpc("cardDraft", question)).toBeNull();
+    expect(await harness.callRpc("cardDraft", question)).toEqual({ draft: null, token: null });
 
     const after = (await harness.callRpc("threadView", { threadId: WORK })) as ThreadView;
     expect(after.offer).toBeNull();

@@ -268,22 +268,64 @@ describe("an unsent answer, when the network and the page misbehave (review pass
     expect(backup(sessionId)?.draft.answer).toBe("typed at once");
   });
 
-  it("a backup is restored at once and sent again; the learner's next edit outlives that save's confirmation", async () => {
-    const { payload, rpc, sessions, sessionId } = await server();
-    sessions.saveDraft(sessionId, 1, { answer: "older, on the server" });
-    window.localStorage.setItem(draftStorageKey(sessionId, 1), JSON.stringify({ mount: "an-earlier-page", at: Date.now(), draft: { answer: "kept in this browser" } }));
+  it("a backup built on the server's current draft is restored and sent again; the next edit outlives that save", async () => {
+    const { payload, rpc, sessions, sessionId, store } = await server();
+    sessions.saveDraft(sessionId, 1, { answer: "on the server" });
+    const base = store.draftToken(sessionId, 1);
+    window.localStorage.setItem(draftStorageKey(sessionId, 1), JSON.stringify({ mount: "an-earlier-page", at: Date.now(), base, draft: { answer: "kept in this browser" } }));
     const { net, wrapped } = network(rpc);
-    net.slowRead = () => {};
     mount(payload, wrapped);
     await waitFor(() => expect(value("Your answer")).toBe("kept in this browser"));
-    typeAnswer("kept in this browser, and more");
-    // The server's older draft arrives late, and the backup's own save is confirmed: neither undoes the edit.
-    net.slowRead();
     await waitFor(() => expect(net.queue).toHaveLength(1));
+    typeAnswer("kept in this browser, and more");
+    // The backup's own save is confirmed: the newer edit's backup stays, now built on that save.
     net.queue[0]!.deliver();
     await flush();
     expect(value("Your answer")).toBe("kept in this browser, and more");
     expect(backup(sessionId)?.draft.answer).toBe("kept in this browser, and more");
+    expect((backup(sessionId) as unknown as { base: number }).base).toBe(store.draftToken(sessionId, 1));
+  });
+
+  it("a stale backup on one device does not overwrite what another device saved later (review pass 3, finding 7)", async () => {
+    const { payload, rpc, sessions, sessionId, store, saves } = await server();
+    // Device A typed, saw its draft confirmed at token T0, typed more, and the page died before saving.
+    sessions.saveDraft(sessionId, 1, { answer: "device A, saved" });
+    const t0 = store.draftToken(sessionId, 1);
+    window.localStorage.setItem(draftStorageKey(sessionId, 1), JSON.stringify({ mount: "device-a", at: Date.now(), base: t0, draft: { answer: "device A, never sent" } }));
+    // Later, device B answers further and saves.
+    sessions.saveDraft(sessionId, 1, { answer: "device B, later" });
+    expect(store.draftToken(sessionId, 1)).toBeGreaterThan(t0!);
+    // Opening the card again on device A: the server moved on, so its draft wins and A's backup goes.
+    mount(payload, rpc);
+    await waitFor(() => expect(value("Your answer")).toBe("device B, later"));
+    expect(backup(sessionId)).toBeNull();
+    await flush();
+    expect(saves).toEqual([]);
+    expect(sessions.cardDraft(sessionId, 1)?.answer).toBe("device B, later");
+  });
+
+  it("a backup too old to keep is never restored or sent (review pass 3, finding 8)", async () => {
+    const { payload, rpc, sessionId, saves } = await server();
+    window.localStorage.setItem(draftStorageKey(sessionId, 1), JSON.stringify({ mount: "m", at: Date.now() - DRAFT_KEEP_MS - 1, base: null, draft: { answer: "expired" } }));
+    mount(payload, rpc);
+    await flush();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(value("Your answer")).toBe("");
+    expect(backup(sessionId)).toBeNull();
+    expect(saves).toEqual([]);
+  });
+
+  it("nor is a backup past the newest 20", async () => {
+    const { payload, rpc, sessionId, saves } = await server();
+    const now = Date.now();
+    window.localStorage.setItem(draftStorageKey(sessionId, 1), JSON.stringify({ mount: "m", at: now - 60_000, base: null, draft: { answer: "the oldest" } }));
+    for (let index = 0; index < 20; index += 1) window.localStorage.setItem(draftStorageKey(`ses_${index}`, 1), JSON.stringify({ mount: "m", at: now - index, base: null, draft: { answer: "x" } }));
+    mount(payload, rpc);
+    await flush();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(value("Your answer")).toBe("");
+    expect(backup(sessionId)).toBeNull();
+    expect(saves).toEqual([]);
   });
 
   it("saves at once when the page is hidden, before the wait is over", async () => {
@@ -341,7 +383,7 @@ describe("an unsent answer, when the network and the page misbehave (review pass
 });
 
 describe("backups of closed questions (review pass 2 of the drafts, finding 6)", () => {
-  const put = (key: string, at: number, answer = "x") => window.localStorage.setItem(key, JSON.stringify({ mount: "m", at, draft: { answer } }));
+  const put = (key: string, at: number, answer = "x") => window.localStorage.setItem(key, JSON.stringify({ mount: "m", at, base: null, draft: { answer } }));
   const keys = () => Object.keys(window.localStorage).sort();
 
   it("a card's mount drops backups of closed questions and keeps its own", async () => {
