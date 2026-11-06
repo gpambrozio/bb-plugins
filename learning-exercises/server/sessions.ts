@@ -707,19 +707,24 @@ export class SessionService {
    * the text. Ignored for a question that is answered or skipped, or a session that is over, so a save
    * still in flight when the learner submits leaves nothing behind.
    */
-  saveDraft(sessionId: string, ordinal: number, draft: CardDraft): boolean {
+  saveDraft(sessionId: string, ordinal: number, draft: CardDraft, writer: string | null = null): boolean {
     const session = this.store.session(sessionId);
     if (session === null || !OPEN_STATES.includes(session.state)) return false;
     const exercise = this.store.exercises(sessionId).find((candidate) => candidate.ordinal === ordinal);
     if (exercise === undefined || exercise.answeredAt !== null || exercise.skipped) return false;
-    return this.store.recordDraft(sessionId, ordinal, this.readDraft(exercise.form, draft), this.ports.now());
+    return this.store.recordDraft(sessionId, ordinal, this.readDraft(exercise.form, draft), this.ports.now(), writer);
   }
 
   /**
-   * The token of an open question's stored draft: when it was saved, rising with every save. A card's
-   * backup records the token it built on, and is dropped on mount when the server's has moved since
-   * (another device saved meanwhile). Null when there is no draft.
+   * An open question's stored draft's stamp: its token (when it was saved, rising with every save) and
+   * the browser that saved it last (`writer`). A card keeps a backup of its own unconfirmed edit over a
+   * draft its own browser saved; over another browser's, only if it had read that very draft (its token).
+   * Nulls when there is no draft.
    */
+  draftStamp(sessionId: string, ordinal: number): { token: number | null; writer: string | null } {
+    return this.store.draftStamp(sessionId, ordinal);
+  }
+
   draftToken(sessionId: string, ordinal: number): number | null {
     return this.store.draftToken(sessionId, ordinal);
   }

@@ -113,6 +113,8 @@ export const MIGRATIONS: string[] = [
   `ALTER TABLE exercises ADD COLUMN draft TEXT`,
   // When that draft was stored, rising per question: the token a card's backup is checked against.
   `ALTER TABLE exercises ADD COLUMN draft_saved_at INTEGER`,
+  // Which browser saved that draft last (the app's writer id), so a card tells its own saves from others'.
+  `ALTER TABLE exercises ADD COLUMN draft_writer TEXT`,
 ];
 
 const ReplyProgressSchema = z.object({
@@ -610,23 +612,34 @@ export class LearningStore {
    * Saves an open question's draft: the last save wins (the app sends one question's saves one at a time,
    * in order). A question answered or skipped meanwhile keeps none. Answers whether it was saved.
    */
-  recordDraft(sessionId: string, ordinal: number, draft: CardDraft, now: number): boolean {
+  recordDraft(sessionId: string, ordinal: number, draft: CardDraft, now: number, writer: string | null = null): boolean {
     return (
       this.db
         .prepare(
-          `UPDATE exercises SET draft = ?, draft_saved_at = MAX(?, COALESCE(draft_saved_at, 0) + 1)
+          `UPDATE exercises SET draft = ?, draft_saved_at = MAX(?, COALESCE(draft_saved_at, 0) + 1), draft_writer = ?
              WHERE session_id = ? AND ordinal = ? AND answered_at IS NULL AND skipped = 0`,
         )
-        .run(JSON.stringify(draft), now, sessionId, ordinal).changes > 0
+        .run(JSON.stringify(draft), now, writer, sessionId, ordinal).changes > 0
     );
   }
 
-  /** The stored draft's token (when it was saved, rising per question); null when the question has none. */
-  draftToken(sessionId: string, ordinal: number): number | null {
+  /**
+   * The stored draft's token (when it was saved, rising per question) and the browser that saved it last;
+   * nulls when the question has none.
+   */
+  draftStamp(sessionId: string, ordinal: number): { token: number | null; writer: string | null } {
     const row = this.db
-      .prepare(`SELECT draft_saved_at AS token FROM exercises WHERE session_id = ? AND ordinal = ? AND answered_at IS NULL AND skipped = 0 AND draft IS NOT NULL`)
-      .get(sessionId, ordinal) as { token: number | null } | undefined;
-    return row?.token ?? null;
+      .prepare(
+        `SELECT draft_saved_at AS token, draft_writer AS writer FROM exercises
+           WHERE session_id = ? AND ordinal = ? AND answered_at IS NULL AND skipped = 0 AND draft IS NOT NULL`,
+      )
+      .get(sessionId, ordinal) as { token: number | null; writer: string | null } | undefined;
+    return { token: row?.token ?? null, writer: row?.writer ?? null };
+  }
+
+  /** The stored draft's token alone. */
+  draftToken(sessionId: string, ordinal: number): number | null {
+    return this.draftStamp(sessionId, ordinal).token;
   }
 
   /** An open question's saved draft, as stored; null when there is none or it no longer reads. */

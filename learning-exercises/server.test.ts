@@ -130,8 +130,8 @@ describe("from a commit to an answered question", () => {
     expect(card).toMatchObject({ threadId: FORK, rendererId: "exercise", payload: { question: "What does `median([])` do?", files: ["calc.py"], ordinal: 1 } });
     // The card saves what the learner typed and gets it back; the answer clears it.
     const question = { sessionId: (card.payload as { sessionId: string }).sessionId, ordinal: 1 };
-    await harness.callRpc("saveDraft", { ...question, draft: { answer: "It raises", confidence: 4 } });
-    expect(await harness.callRpc("cardDraft", question)).toEqual({ draft: { answer: "It raises", confidence: 4 }, token: expect.any(Number) });
+    await harness.callRpc("saveDraft", { ...question, draft: { answer: "It raises", confidence: 4 }, writer: "browser-1" });
+    expect(await harness.callRpc("cardDraft", question)).toEqual({ draft: { answer: "It raises", confidence: 4 }, token: expect.any(Number), writer: "browser-1" });
     harness.submitInteraction(card.id, { action: "answer", answer: "It raises ValueError", confidence: 4 });
     expect(await asked).toContain('"It raises ValueError"');
 
@@ -143,7 +143,7 @@ describe("from a commit to an answered question", () => {
     expect(formCard.payload).toMatchObject({ ordinal: 2, form });
     harness.submitInteraction(formCard.id, { action: "answer", answer: "x", confidence: 2, fields: { outcome: "none" } });
     expect(await withForm).toContain('{"outcome":"none"}');
-    expect(await harness.callRpc("cardDraft", question)).toEqual({ draft: null, token: null });
+    expect(await harness.callRpc("cardDraft", question)).toEqual({ draft: null, token: null, writer: null });
 
     const after = (await harness.callRpc("threadView", { threadId: WORK })) as ThreadView;
     expect(after.offer).toBeNull();
@@ -258,7 +258,7 @@ describe("review pass 1 (wiring)", () => {
     const asPlugin = { experimental_caller: { kind: "plugin" as const, pluginId: "someone-else" } };
     await expect(harness.callRpc("setThreadOffers", { threadId: WORK, on: false }, asPlugin)).rejects.toThrow("from its own app only");
     await expect(harness.callRpc("startSession", { threadId: WORK, topic: "x", trigger: "manual", refs: {} }, asPlugin)).rejects.toThrow("from its own app only");
-    await expect(harness.callRpc("saveDraft", { sessionId: "ses_x", ordinal: 1, draft: { answer: "x" } }, asPlugin)).rejects.toThrow("from its own app only");
+    await expect(harness.callRpc("saveDraft", { sessionId: "ses_x", ordinal: 1, draft: { answer: "x" }, writer: "w" }, asPlugin)).rejects.toThrow("from its own app only");
     await expect(harness.callRpc("threadView", { threadId: WORK }, asPlugin)).resolves.toMatchObject({ eligible: true });
   });
 });

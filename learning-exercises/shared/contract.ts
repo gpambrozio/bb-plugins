@@ -61,10 +61,14 @@ export const rpcContract = {
   /** An open question's unsent answer, for its card to restore; null when there is none. */
   cardDraft: {
     input: SessionRef.extend({ ordinal: z.number().int().min(1) }),
-    output: z.object({ draft: CardDraftSchema.nullable(), token: DraftToken }),
+    output: z.object({ draft: CardDraftSchema.nullable(), token: DraftToken, writer: z.string().nullable() }),
   },
   /** Saves an open question's unsent answer as the learner types; `saved` is false once the question is closed. */
-  saveDraft: { input: SessionRef.extend({ ordinal: z.number().int().min(1), draft: CardDraftSchema }), output: z.object({ saved: z.boolean(), token: DraftToken }) },
+  saveDraft: {
+    /** `writer`: the saving browser's id (`app/draft.ts`), kept with the draft. */
+    input: SessionRef.extend({ ordinal: z.number().int().min(1), draft: CardDraftSchema, writer: z.string().min(1).max(100) }),
+    output: z.object({ saved: z.boolean(), token: DraftToken }),
+  },
   /** Which of these questions are still open, for clearing this browser's copies of closed ones. */
   openQuestions: {
     input: z.object({ questions: z.array(QuestionRefSchema).max(DRAFT_SWEEP_MAX) }),

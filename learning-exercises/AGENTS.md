@@ -204,15 +204,17 @@ lives on the server with the question (`exercises.draft`, migration 15), not in 
   from the edit until a save of it is confirmed. An entry holds the snapshot, the mount that wrote it and
   when; a confirmation removes it only if storage still holds exactly that snapshot from that mount, so a
   late callback of an old card never removes a newer edit.
-- **A backup records the server draft it built on** (`base`: the token `saveDraft` and `cardDraft` answer,
-  the draft's saved-at time, rising per question; `draft_saved_at`, migration 16). On mount the card
-  prunes by age and count, then reads the server first: a backup whose base is still the server's
-  token is newer and is restored and sent again; one whose base has moved (another device saved since)
-  is dropped and the server's draft is restored. An edit made before that read returns beats both, and
-  takes the server's token as its base. A confirmation moves the base of a newer edit of this page that
-  built on the same draft, since that server change was its own. An unload kills an ordinary RPC and bb's SDK has no
-  keepalive transport, so this is the recovery on the same device. A Submit or Skip that fails puts the
-  unsent edit back and saves it.
+- **The server knows which browser saved last.** Each browser has a stable random writer id (`writerId`,
+  in `localStorage`; one per page when storage fails), sent with every save and stored with the draft
+  (`draft_writer`, migration 17) beside its token (the saved-at time, rising per question;
+  `draft_saved_at`, migration 16); `cardDraft` answers both. On mount the card prunes by age and count,
+  then reads the server first. A backup exists only while unconfirmed, so it is at least as new as
+  anything this browser sent: it wins (restored, sent again) over no draft and over a draft this browser
+  saved last, an own save that landed with its answer lost included. Only over another browser's draft
+  does the backup's `base` count: the token of the draft its card read on mount. Still that token, the
+  backup is newer and wins; moved on, the other browser's draft wins and the backup goes. An edit made
+  before the read returns beats both. Do not track tokens through acknowledgments or the queue: an
+  earlier round did, and this page's own saves kept looking like another device's.
 - **Backups are swept** (`sweepDrafts`, when a card or the Learning tab mounts): unreadable ones, ones
   older than 7 days, all but the newest 20 (a card does this part before choosing its backup), then
   those `openQuestions` says are closed; a failed read

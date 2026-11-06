@@ -91,12 +91,12 @@ export class LearningApi {
 
   cardDraft({ sessionId, ordinal }: Input<"cardDraft">): Output<"cardDraft"> {
     const { sessions } = this.deps;
-    return { draft: sessions.cardDraft(sessionId, ordinal), token: sessions.draftToken(sessionId, ordinal) };
+    return { draft: sessions.cardDraft(sessionId, ordinal), ...sessions.draftStamp(sessionId, ordinal) };
   }
 
-  saveDraft({ sessionId, ordinal, draft }: Input<"saveDraft">): Output<"saveDraft"> {
+  saveDraft({ sessionId, ordinal, draft, writer }: Input<"saveDraft">): Output<"saveDraft"> {
     const { sessions } = this.deps;
-    const saved = sessions.saveDraft(sessionId, ordinal, draft);
+    const saved = sessions.saveDraft(sessionId, ordinal, draft, writer);
     return { saved, token: saved ? sessions.draftToken(sessionId, ordinal) : null };
   }
 

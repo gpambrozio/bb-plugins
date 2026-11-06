@@ -12,12 +12,14 @@
  *   exactly that snapshot from that mount, so an old card's late callback never removes a newer edit.
  *   An unload that kills the request, or a page closed inside the wait, loses nothing on this device:
  *   the next card restores the backup and sends it again.
- * - **A backup knows what it was built on**: the token of the last server draft this page saw confirmed
- *   or read (`base`; the server's saved-at time, rising per question). On mount the card reads the
- *   server first. If the server's token is still the backup's base, the backup is newer and wins: it is
- *   restored and sent again. If the token has moved (another device saved since), the server's draft wins
- *   and the backup is dropped. A confirmation that finds a newer edit of this page in storage moves that
- *   backup's base along, since the server's change was this page's own.
+ * - **The server knows which browser saved last.** Each browser has a stable random writer id
+ *   (`writerId`, in `localStorage`), sent with every save and returned by `cardDraft`. On mount the card
+ *   reads the server first. A backup exists only while unconfirmed, so it is at least as new as anything
+ *   this browser sent: it wins, and is restored and sent again, when the server has no draft or this
+ *   browser saved it last (an own save that landed with its answer lost included). Only when another
+ *   browser saved last does the backup's `base` matter: the token (the draft's saved-at time, rising per
+ *   question) of the server draft its card had read. Still that token, the backup is newer and wins;
+ *   moved on, the other browser's draft wins and the backup goes.
  * - **Saves go** `DRAFT_SAVE_DELAY_MS` after the last edit, and at once when the card unmounts or the
  *   page is hidden (`visibilitychange`, which a backgrounded mobile app sends without `pagehide`) or
  *   unloaded. An edit made before the server's draft arrives wins over it.
@@ -52,8 +54,27 @@ const BackupSchema = z.object({ mount: z.string(), at: z.number(), base: z.numbe
 type Backup = z.infer<typeof BackupSchema>;
 type Snapshot = { mount: string; draft: CardDraft; base: number | null };
 
-/** Per question, the token of the last server draft this page saw confirmed or read. */
-const baselines = new Map<string, number | null>();
+const WRITER_KEY = "learning-exercises:writer";
+let pageWriter: string | null = null;
+
+/** This browser's writer id: random, kept in `localStorage`; one per page when storage does not work. */
+export function writerId(): string {
+  try {
+    const stored = window.localStorage.getItem(WRITER_KEY);
+    if (stored !== null && stored !== "") return stored;
+    const fresh = newId();
+    window.localStorage.setItem(WRITER_KEY, fresh);
+    if (window.localStorage.getItem(WRITER_KEY) === fresh) return fresh;
+  } catch {
+    // Fall through to a page's own id.
+  }
+  pageWriter ??= newId();
+  return pageWriter;
+}
+
+function newId(): string {
+  return typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
+}
 type Call = ReturnType<typeof useLearningRpc>["call"];
 
 function warn(what: string, error: unknown): void {
@@ -148,18 +169,11 @@ function pump(key: string, queue: Queue): void {
   queue.next = null;
   queue.busy = true;
   queue
-    .call("saveDraft", { sessionId: queue.sessionId, ordinal: queue.ordinal, draft: snapshot.draft })
-    .then(({ saved, token }) => {
-      // Not saved: the question is closed, and so is any backup of it.
-      if (!saved) {
-        removeKey(key);
-        return;
-      }
-      baselines.set(key, token);
-      removeBackupIf(key, snapshot);
-      // A newer edit of this page built on the same draft: the server's change is this page's own.
-      const newer = readBackup(key);
-      if (newer !== null && newer.base === snapshot.base) writeBackup(key, { mount: newer.mount, draft: newer.draft, base: token });
+    .call("saveDraft", { sessionId: queue.sessionId, ordinal: queue.ordinal, draft: snapshot.draft, writer: writerId() })
+    .then(({ saved }) => {
+      // Saved: this backup is confirmed, unless a newer edit replaced it. Not saved: the question is closed.
+      if (saved) removeBackupIf(key, snapshot);
+      else removeKey(key);
     })
     .catch((error: unknown) => warn(`save the unsent answer to question ${queue.ordinal}`, error))
     .finally(() => {
@@ -228,9 +242,6 @@ export interface CardDraftHandle {
   resume(): void;
 }
 
-function newMountId(): string {
-  return typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
-}
 
 export function useCardDraft(question: QuestionRef, draft: CardDraft, restore: (draft: CardDraft) => void): CardDraftHandle {
   const rpc = useLearningRpc();
@@ -242,7 +253,9 @@ export function useCardDraft(question: QuestionRef, draft: CardDraft, restore: (
   const key = draftStorageKey(sessionId, ordinal);
 
   const state = useRef({
-    mount: newMountId(),
+    mount: newId(),
+    /** The token of the server draft this card read on mount: the base of its backups. */
+    base: null as number | null,
     touched: false,
     stopped: false,
     /** The learner's latest edit on this card, and whether it still has to be handed to the queue. */
@@ -256,28 +269,24 @@ export function useCardDraft(question: QuestionRef, draft: CardDraft, restore: (
     state.timer = null;
     if (!state.waiting || state.latest === null || state.stopped) return;
     state.waiting = false;
-    enqueue(callRef.current, { sessionId, ordinal }, { mount: state.mount, draft: state.latest, base: baselines.get(key) ?? null });
+    enqueue(callRef.current, { sessionId, ordinal }, { mount: state.mount, draft: state.latest, base: state.base });
   }).current;
 
   // On mount, after pruning old and excess backups: the server's draft first. This browser's backup wins
-  // only if it was built on that very draft (its base is the server's token); otherwise the server moved
-  // on (another device saved) and the backup goes. An edit made before the read returns beats both.
+  // over no draft, over one this browser saved last, and over another browser's draft it had read (its
+  // base is still the server's token); otherwise the other browser's newer draft wins and the backup goes.
+  // An edit made before the read returns beats both.
   useEffect(() => {
     let live = true;
     pruneBackups();
     const backup = readBackup(key);
     void sweepDrafts(callRef.current);
     callRef.current("cardDraft", { sessionId, ordinal })
-      .then(({ draft: saved, token }) => {
+      .then(({ draft: saved, token, writer }) => {
         if (!live) return;
-        baselines.set(key, token);
-        if (state.touched || state.stopped) {
-          // The learner's edit came first and now builds on what the server holds.
-          const mine = readBackup(key);
-          if (mine !== null && mine.mount === state.mount) writeBackup(key, { mount: mine.mount, draft: mine.draft, base: token });
-          return;
-        }
-        if (backup !== null && backup.base === token) {
+        state.base = token;
+        if (state.touched || state.stopped) return;
+        if (backup !== null && (saved === null || writer === writerId() || backup.base === token)) {
           restoreRef.current(backup.draft);
           enqueue(callRef.current, { sessionId, ordinal }, { mount: backup.mount, draft: backup.draft, base: backup.base });
           return;
@@ -301,7 +310,7 @@ export function useCardDraft(question: QuestionRef, draft: CardDraft, restore: (
     if (!state.touched || state.stopped) return;
     state.latest = JSON.parse(serialized) as CardDraft;
     state.waiting = true;
-    writeBackup(key, { mount: state.mount, draft: state.latest, base: baselines.get(key) ?? null });
+    writeBackup(key, { mount: state.mount, draft: state.latest, base: state.base });
     if (state.timer !== null) clearTimeout(state.timer);
     state.timer = setTimeout(flush, DRAFT_SAVE_DELAY_MS);
   }, [serialized, key, flush, state]);
@@ -335,7 +344,7 @@ export function useCardDraft(question: QuestionRef, draft: CardDraft, restore: (
     resume: () => {
       state.stopped = false;
       if (state.latest === null) return;
-      writeBackup(key, { mount: state.mount, draft: state.latest, base: baselines.get(key) ?? null });
+      writeBackup(key, { mount: state.mount, draft: state.latest, base: state.base });
       state.waiting = true;
       flush();
     },
