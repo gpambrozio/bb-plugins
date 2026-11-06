@@ -5,6 +5,23 @@ Notable changes to `terminals`. The other plugins in this repository version sep
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.4.0
+
+### Fixed
+
+- **Chinese and other late input on iPhone and iPad.** Text from the system Pinyin keyboard (and other
+  keyboards that put in a chosen word a moment after the key) now reaches the shell. Before, the
+  terminal missed it. bb 0.49 fixed the same thing in its own terminal.
+- **A very quick drag of a tab no longer leaves the tabs stuck.** Letting go of a tab just as it began
+  to drag could leave it drawn mid-drag and every later click on the tabs ignored until the page was
+  reloaded.
+
+### Changed
+
+- **Agents use bb 0.49's terminal commands.** On bb 0.49 or later, agents told about the Terminals page
+  read a tab as plain text, without colours and progress redraws, and run a command of their own in one
+  step that gives back its output and exit code. On bb 0.48 they work as before.
+
 ## 0.3.0
 
 ### Changed

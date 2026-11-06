@@ -19,9 +19,20 @@ title is the machine's name) and `bb terminal show <id>` describes it.
 
 A Terminals tab is the user's own interactive shell. Unless the user asks you to in this
 conversation, do not type into it (`bb terminal send`), resize, restart, rename or close it, and do not
-call the plugin's `open`, `rename`, `move` or `close` RPCs. Reading a tab's output with `bb terminal output
-<id>` is fine when the user asks about it. For your own long-running commands, create your own
-terminal (`bb terminal create`), not a tab here.
+call the plugin's `open`, `rename`, `move` or `close` RPCs. Reading a tab's output is fine when the
+user asks about it.
+
+For commands of your own, use a terminal of your own, never a tab here. Which `bb terminal` commands
+to use depends on the bb version (`bb --version`), since the plugin also runs on bb 0.48:
+
+- **bb 0.49 or later:** read a tab with `bb terminal output <id> --plain`, plain text without colours
+  and progress redraws. For a command whose result you need, `bb terminal run [scope] -- <command>`
+  (scope: `--machine <name>`, `--thread <id>` or `--environment <id>`) runs it in a new terminal and
+  returns its output and exit code in one call; it stops waiting after `--timeout` (30 s by default)
+  and leaves the command running. For a long-running command you come back to, create a terminal
+  (`bb terminal create`).
+- **bb 0.48:** `--plain` and `bb terminal run` do not exist there. Read a tab with
+  `bb terminal output <id>`, and create a terminal (`bb terminal create`) for your commands.
 
 ## Selections
 

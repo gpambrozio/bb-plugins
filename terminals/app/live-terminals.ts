@@ -12,6 +12,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 
+import { forwardLateImeInput } from "./bb-late-ime/terminal-late-ime-input";
 import { TerminalConnection, terminalSocketUrl, type ConnectionStatus, type SocketLike } from "./connection";
 import { TerminalSizing } from "./sizing";
 import { directoryFromOsc7 } from "./project-match";
@@ -94,6 +95,8 @@ function create(terminalId: string, backend: TerminalsBackend): LiveTerminal & {
   });
 
   let opened = false;
+  /** Sends what an iOS keyboard inserts too late for xterm; set up once the terminal is open. */
+  let lateImeInput: { dispose(): void } | null = null;
   /** Whether the page shows this terminal in this window now. */
   let shown = false;
 
@@ -163,6 +166,7 @@ function create(terminalId: string, backend: TerminalsBackend): LiveTerminal & {
       if (element.parentElement !== parent) parent.appendChild(element);
       if (!opened) {
         term.open(element);
+        lateImeInput = forwardLateImeInput(term);
         opened = true;
       }
       fit();
@@ -199,6 +203,7 @@ function create(terminalId: string, backend: TerminalsBackend): LiveTerminal & {
       shown = false;
       listeners.clear();
       connection.dispose();
+      lateImeInput?.dispose();
       term.dispose();
       element.remove();
     },
