@@ -19,9 +19,11 @@ First release.
   text, code, a number, a slider, one or several choices, yes/no, a scale, putting items in order,
   matching pairs, a list or a table to fill in. A simple question keeps its single text box. Form
   answers appear part by part in the transcript and in the Learning tab, and survive a pause.
-- The agent's feedback on your answer shows on the next question's card, above the question, so it
-  stays readable after bb folds the turn that wrote it. It is kept with each question, read from the
-  thread's own messages, so it also comes back after a reload and in sessions already under way.
+- The agent's feedback on each answer shows in the chat as a card with its verdict, above the last
+  message of the turn that gave it, so bb's "Worked for" fold no longer hides it, the last answer's
+  included. The next question's card shows it above the question too, and it is kept with each
+  question, so it comes back after a reload and on other devices. Sessions already under way get
+  their feedback back from the thread's own messages.
 - Questions carry the code they ask about, such as an earlier version of a function, instead of
   pointing at a message "above"; a question with a code block left open is refused before you see it.
 - The Learning tab in a thread's side panel starts an exercise on the thread's work, shows the

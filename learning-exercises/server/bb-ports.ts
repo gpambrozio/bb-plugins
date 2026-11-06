@@ -138,6 +138,17 @@ export function bbPorts(bb: BbPluginApi, changed: () => void): Ports {
       }
     },
 
+    async currentTurn(threadId) {
+      try {
+        const rows = await sdk().threads.events.list({ threadId, types: ["turn/started"], order: "desc", limit: "1" });
+        const scope = rows[0]?.scope as { turnId?: unknown } | null | undefined;
+        return typeof scope?.turnId === "string" ? scope.turnId : null;
+      } catch (error) {
+        bb.log.warn(`Reading ${threadId}'s current turn failed: ${message(error)}`);
+        return null;
+      }
+    },
+
     async lastTurn(threadId) {
       try {
         const rows = await sdk().threads.events.list({ threadId, types: ["turn/completed"], order: "desc", limit: "1" });

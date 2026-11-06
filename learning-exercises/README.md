@@ -26,10 +26,13 @@ is not affiliated with or endorsed by the author; see [NOTICE.md](NOTICE.md).
   there are no hints after the question. Your answer and confidence stay in the transcript as your
   own words. What you have typed but not sent is saved as you go, so leaving the thread, a reload or
   another device brings the card back as you left it.
-- **Feedback you can still read.** bb folds a turn's earlier messages away when the turn ends, so the
-  agent's feedback on your answer would vanish once the next card opens. The card shows it above the
-  next question instead, and the Learning tab keeps it with each question, read from the thread's own
-  messages (a session started before this version gets its feedback back too).
+- **Feedback you can still read.** bb folds a turn's work and earlier messages into "Worked for" when
+  the turn ends, so feedback written as an ordinary message would vanish from view. The agent hands its
+  feedback over with its verdict instead, and the chat shows it as a card, with the verdict, just above
+  the last message of that turn: above "I've asked the next question", and above the closing line after
+  the last answer. The next question's card shows it above the question too, and the Learning tab keeps
+  it with each question. It is stored by the plugin, so it is still there after a reload or on another
+  device. A session started before this version gets its feedback back from the thread's own messages.
 - **Questions that stand on their own.** The agent is told to put any code a question relies on in the
   question itself (an earlier version of a function, say), never to point "above"; a question with a
   code block left open is refused before you see it.

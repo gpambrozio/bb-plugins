@@ -34,6 +34,8 @@ export class FakePorts implements Ports {
   projects = new Map<string, ProjectInfo>([["proj_1", { id: "proj_1", name: "calc", gitRemoteUrl: "git@github.com:acme/calc.git" }]]);
   paths = new Map<string, string>([["env_1", "/work/calc"]]);
   turns = new Map<string, { turnId: string; status: string }>();
+  /** The turn running (or last run) per thread, as `currentTurn` reads it. */
+  running = new Map<string, string>();
   fileChanges = new Map<string, FileChange[]>();
   pending = new Set<string>();
   /** The agent's messages per thread, with the time each completed. */
@@ -77,6 +79,10 @@ export class FakePorts implements Ports {
 
   async environmentPath(environmentId: string) {
     return this.paths.get(environmentId) ?? null;
+  }
+
+  async currentTurn(threadId: string) {
+    return this.running.get(threadId) ?? null;
   }
 
   async lastTurn(threadId: string) {

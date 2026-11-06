@@ -27,7 +27,7 @@
 import type { PluginInteractionResult } from "@get-bb/plugin-sdk";
 
 import { draftValues, parseAnswerForm, readAnswerForm, sanitizeValues, summarizeAnswer, type AnswerForm, type FormValues } from "../shared/answer-form";
-import { ANSWER_MAX_CHARS, PAUSE_REASONS, readCardValue, REPLY_MAX_CHARS, type CardDraft, type CardPayload, type QuestionRef, type ExerciseType, type PauseReason, type Refs, type SettledRow, type TriggerKind, type Verdict, type Workspace } from "../shared/types";
+import { ANSWER_MAX_CHARS, FEEDBACK_MAX_CHARS, PAUSE_REASONS, readCardValue, REPLY_MAX_CHARS, type CardDraft, type CardPayload, type QuestionRef, type ExerciseType, type PauseReason, type Refs, type SettledRow, type TriggerKind, type Verdict, type Workspace } from "../shared/types";
 import { BRIEF_VERSION, buildBrief, startLine } from "./content";
 import { canStartByHand, DAY, projectKey } from "./policy";
 import type { Ports } from "./ports";
@@ -416,7 +416,7 @@ export class SessionService {
           "",
           `Their confidence: ${value.confidence}/5.`,
           "",
-          "Give direct feedback now, as a message: say plainly what is right and what is wrong, and credit only what they actually said. The plugin shows that message on the next question's card, above the question, and keeps it in the session's history. Then record your verdict with learning_feedback (or `bb learning feedback`), and ask the next question or finish the session.",
+          "Give direct feedback now, in the `feedback` argument of learning_feedback (or `--feedback-base64-stdin` of `bb learning feedback`), together with your verdict: say plainly what is right and what is wrong, and credit only what they actually said. Do not write it as a message as well: the plugin shows it in the chat as a card, above the next question and in the session's history. Then ask the next question or finish the session.",
         ].join("\n");
       }
       case "skip":
@@ -459,13 +459,27 @@ export class SessionService {
 
   // ── the agent's reports ───────────────────────────────────────────────────
 
-  async feedback(threadId: string, input: { verdict: Verdict; gap: string | null; concepts: readonly string[] }): Promise<string> {
+  /**
+   * Records the agent's verdict on the last answer, with its feedback. The feedback text (`feedback`) is
+   * kept with the question and the turn this call runs in, so the chat shows it as a card above that turn's
+   * last message (bb folds the rest of the turn away), the next card shows it above its question, and the
+   * history keeps it. An agent that passes no text (one briefed before the argument existed) wrote its
+   * feedback as a message: that is read from the log instead, as before.
+   */
+  async feedback(threadId: string, input: { verdict: Verdict; gap: string | null; concepts: readonly string[]; feedback?: string | null }): Promise<string> {
     const session = await this.sessionIn(threadId);
     if (session === null) throw new SessionError("There is no learning session in this thread.");
-    const ordinal = this.store.recordVerdict(session.id, input.verdict, input.gap?.trim() || null);
+    const text = input.feedback?.trim() || null;
+    if (text !== null && text.length > FEEDBACK_MAX_CHARS) {
+      throw new SessionError(`The feedback is ${text.length.toLocaleString("en-US")} characters; at most ${FEEDBACK_MAX_CHARS.toLocaleString("en-US")} are kept. Shorten it and record the verdict again.`);
+    }
+    const turnId = session.threadId === null ? null : await this.ports.currentTurn(session.threadId);
+    this.alive();
+    const ordinal = this.store.recordVerdict(session.id, input.verdict, input.gap?.trim() || null, undefined, { text, turnId });
     this.store.addConcepts(session.id, cleanConcepts(input.concepts));
-    // The feedback is written by now, as a rule: keep it, so the history has it even if no question follows.
-    await this.captureReply(session.id);
+    // Without the text, the feedback was written as a message by now, as a rule: keep it from the log, so
+    // the chat card and the history have it even if no question follows.
+    if (text === null) await this.captureReply(session.id);
     this.ports.changed();
     if (ordinal === null) return "Recorded the concepts. No answered question to attach the verdict to yet.";
     const left = this.settings().questionsPerSession - session.asked;
@@ -595,6 +609,8 @@ export class SessionService {
     const exercises = this.store.exercises(session.id);
     const settled = exercises.filter((exercise) => exercise.answeredAt !== null).at(-1);
     if (settled === undefined || settled.answeredAt === null) return null;
+    // Feedback passed with the verdict is the reply; the log has nothing to add to it.
+    if (this.store.hasFeedback(session.id, settled.ordinal)) return null;
     const next = exercises.find((exercise) => exercise.ordinal === settled.ordinal + 1);
     const read = await this.ports.agentMessages(session.threadId, { from: settled.answeredAt, to: next?.askedAt ?? null, before: null, pages: REPLY_READ_PAGES });
     // A read that ran out of pages is not the reply: keep what an earlier read kept, and leave the rest to

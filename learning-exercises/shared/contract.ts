@@ -11,7 +11,7 @@
 import type { PluginRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
-import { CardDraftSchema, QuestionRefSchema, ExerciseSchema, OfferAnswerSchema, SessionSchema, ThreadViewSchema, TopicChoiceSchema, TriggerKindSchema, RefsSchema, WorkspaceSchema } from "./types";
+import { CardDraftSchema, QuestionRefSchema, ExerciseSchema, FeedbackCardSchema, OfferAnswerSchema, SessionSchema, ThreadViewSchema, TopicChoiceSchema, TriggerKindSchema, RefsSchema, WorkspaceSchema } from "./types";
 
 export const LEARNING_TAG = "learning";
 
@@ -40,6 +40,8 @@ export const rpcContract = {
   /** One session's questions and the learner's answers. */
   /** A session and its questions, with the workspace their file references resolve against. */
   sessionDetail: { input: SessionRef, output: z.object({ session: SessionSchema, exercises: z.array(ExerciseSchema), workspace: WorkspaceSchema.nullable() }), tags },
+  /** The feedback cards of the sessions run in a thread, for its chat (`app/feedback.tsx`). */
+  feedbackCards: { input: ThreadRef, output: z.object({ cards: z.array(FeedbackCardSchema) }), tags },
   /** Topics the tab offers for a manual start, from the thread's own data. */
   topicChoices: { input: ThreadRef, output: z.object({ choices: z.array(TopicChoiceSchema) }), tags },
   /** Claims an offer for display; an unseen offer is drawn only once this answers `visible: true`. */

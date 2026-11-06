@@ -9,8 +9,9 @@
  * sets another session thread's id can ask, record or finish there. That is within bb's model, where
  * agents and plugins on the machine are trusted; it is said in AGENTS.md and the README.
  *
- * The question travels base64-encoded through `--question-base64-stdin` (bb's CLI reads one line from
- * stdin on the caller's machine), so quotes, backticks and newlines in it are never a shell's business.
+ * The question and the feedback travel base64-encoded through `--question-base64-stdin` and
+ * `--feedback-base64-stdin` (bb's CLI reads one line from stdin on the caller's machine), so quotes,
+ * backticks and newlines in them are never a shell's business.
  */
 import { PluginCliError, cliCommand, defineCli, type PluginCliRegistration } from "@get-bb/plugin-sdk";
 
@@ -20,6 +21,9 @@ import { SessionError, type SessionService } from "./sessions";
 
 /** The longest question, in UTF-8 bytes; its base64 still fits bb's one 16 KiB stdin line. */
 export const QUESTION_MAX_BYTES = 8_000;
+
+/** The longest feedback, in UTF-8 bytes; like the question's, its base64 fits bb's one stdin line. */
+export const FEEDBACK_MAX_BYTES = 8_000;
 
 /** The longest answer form, as UTF-8 JSON bytes (`FORM_LIMITS.json` characters, most of them ASCII). */
 export const FORM_MAX_BYTES = 32_000;
@@ -49,6 +53,16 @@ export function decodeQuestion(encoded: string): string {
     maxBytes: QUESTION_MAX_BYTES,
     tooLong: "question_too_long",
     hint: "Pipe the question through `base64 | tr -d '\\n'` into --question-base64-stdin.",
+  });
+}
+
+export function decodeFeedback(encoded: string): string {
+  return decodeBase64Text(encoded, {
+    name: "feedback",
+    option: "--feedback-base64",
+    maxBytes: FEEDBACK_MAX_BYTES,
+    tooLong: "feedback_too_long",
+    hint: "Pipe the feedback through `base64 | tr -d '\\n'` into --feedback-base64-stdin.",
   });
 }
 
@@ -121,9 +135,18 @@ export function learningCli(sessions: SessionService): PluginCliRegistration {
           }),
       }),
       feedback: cliCommand({
-        summary: "Record your verdict on the learner's last answer",
+        summary: "Give your feedback on the learner's last answer and record your verdict",
+        description:
+          "Put the feedback in --feedback-base64-stdin, not in a message: the plugin shows it in the chat as a card with the verdict, above the next question, and in the session's history.",
         options: {
           verdict: { type: "enum", values: VERDICTS, required: true, description: "correct, partly, incorrect or skipped" },
+          // bb's CLI turns `--feedback-base64-stdin` into `--feedback-base64 <line from stdin>`.
+          "feedback-base64": {
+            type: "string",
+            stdin: true,
+            description: `Your feedback to the learner as base64 of UTF-8 Markdown, at most ${FEEDBACK_MAX_BYTES} bytes decoded; pass it with --feedback-base64-stdin. Required for an answered question; leave it out for a skipped one`,
+            placeholder: "base64",
+          },
           gap: { type: "string", description: "What was missing or wrong, one sentence (at most 500 characters)", placeholder: "text" },
           concept: { type: "string", repeatable: true, description: "A concept the question exercised (repeatable, at most 20)", placeholder: "name" },
         },
@@ -131,6 +154,7 @@ export function learningCli(sessions: SessionService): PluginCliRegistration {
           guarded(() =>
             sessions.feedback(callerThread(ctx.threadId), {
               verdict: input.options.verdict as Verdict,
+              feedback: input.options["feedback-base64"] === undefined ? null : decodeFeedback(input.options["feedback-base64"]),
               gap: input.options.gap?.slice(0, 500) ?? null,
               concepts: input.options.concept ?? [],
             }),

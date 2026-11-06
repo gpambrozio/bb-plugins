@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import plugin from "./server";
 import { BRIEF_CORE } from "./server/content";
-import { listEvents, type EventListInput } from "./server/testing/event-log";
+import { listEvents, type EventListInput, type LogRow } from "./server/testing/event-log";
 import { TOOL_NAMES } from "./server/tools";
 import type { ThreadView } from "./shared/types";
 
@@ -29,7 +29,7 @@ async function setup(options: { providerCanFork?: boolean } = {}) {
   });
   stub("projects.get", () => ({ id: "proj_1", name: "calc", gitRemoteUrl: "git@github.com:acme/calc.git" }));
   stub("environments.get", () => ({ id: "env_1", path: "/work/calc" }));
-  const events = [{ seq: 1, createdAt: 1, turnId: "t1", type: "turn/completed", data: { status: "completed" } }];
+  const events: LogRow[] = [{ seq: 1, createdAt: 1, turnId: "t1", type: "turn/completed", data: { status: "completed" } }];
   stub("threads.events.list", (input: EventListInput) => listEvents(events, input));
   stub("threads.interactions.list", () => []);
   stub("providers.list", () => [
@@ -56,7 +56,9 @@ async function setup(options: { providerCanFork?: boolean } = {}) {
     head = "bbb";
     await harness.emitThreadEvent("thread.idle", { thread: threads.get(WORK)!, lastAssistantText: "Done." });
   };
-  return { bb, harness, threads, metadata, commitTurn };
+  /** The agent starts a turn in a thread: bb logs a `turn/started` row in that turn. */
+  const startTurn = (turnId: string) => events.push({ seq: events.length + 1, createdAt: events.length + 1, turnId, type: "turn/started", data: {} });
+  return { bb, harness, threads, metadata, commitTurn, startTurn };
 }
 
 describe("zero context until a session starts", () => {
@@ -189,6 +191,59 @@ describe("from a commit to an answered question", () => {
     await new Promise((resolve) => setImmediate(resolve));
     const sends = harness.sdk.callsTo("threads.send") as [{ input: { text: string }[] }][];
     expect(sends.at(-1)![0].input[1]!.text).toContain('{"safe":true,"why":"No state"}');
+  });
+
+  it("the feedback passed with the verdict becomes a card in the turn that recorded it, through the tool and through the CLI", async () => {
+    const { harness, commitTurn, startTurn } = await setup({ providerCanFork: false });
+    await commitTurn();
+    const view = (await harness.callRpc("threadView", { threadId: WORK })) as ThreadView;
+    await harness.callRpc("answerOffer", { offerId: view.offer!.id, answer: "start" });
+    const ask = async (question: string) => {
+      await harness.runCli(["ask", "--type", "debug", "--question-base64", Buffer.from(question).toString("base64")], { threadId: WORK });
+      const card = harness.pendingInteractions.at(-1)!;
+      harness.submitInteraction(card.id, { action: "answer", answer: "It raises", confidence: 3 });
+      await new Promise((resolve) => setImmediate(resolve));
+      return card.payload;
+    };
+    await ask("What does `mean([])` return?");
+    // The answer starts the agent's next turn; its feedback goes with the verdict, through stdin as base64.
+    startTurn("turn_2");
+    const feedback = "Right that it raises, but it is `ZeroDivisionError`, from `sum([]) / len([])`.\n\n```py\nmean([])\n```";
+    const recorded = await harness.runCli(["feedback", "--verdict", "partly", "--feedback-base64", Buffer.from(`${feedback}\n`).toString("base64")], { threadId: WORK });
+    expect(recorded).toMatchObject({ exitCode: 0, stdout: expect.stringContaining("Recorded your verdict on question 1") });
+    const workspace = { threadId: WORK, environmentId: "env_1", rootPath: "/work/calc" };
+    expect(await harness.callRpc("feedbackCards", { threadId: WORK })).toEqual({
+      cards: [{ sessionId: expect.any(String), ordinal: 1, turnId: "turn_2", verdict: "partly", feedback, workspace }],
+    });
+    // The next card carries it above the question too.
+    expect(await ask("And `mean([1])`?")).toMatchObject({ previous: { ordinal: 1, answered: true, reply: feedback } });
+
+    // The tool takes the same argument; the last answer's feedback, recorded just before finishing, gets its card.
+    startTurn("turn_3");
+    const tool = harness.registrations.agentTools.find((registered) => registered.name === "learning_feedback")!;
+    expect(tool.inputSchema).toMatchObject({ properties: { feedback: { type: "string", maxLength: 8_000 } }, required: ["verdict"] });
+    expect(await harness.callAgentTool("learning_feedback", { verdict: "correct", feedback: "Yes: **1.0**." }, { threadId: WORK })).toContain("question 2");
+    await harness.runCli(["finish", "--summary", "Mean and empty lists."], { threadId: WORK });
+    const cards = ((await harness.callRpc("feedbackCards", { threadId: WORK })) as { cards: { ordinal: number; turnId: string; feedback: string }[] }).cards;
+    expect(cards.map(({ ordinal, turnId, feedback: text }) => [ordinal, turnId, text])).toEqual([
+      [1, "turn_2", feedback],
+      [2, "turn_3", "Yes: **1.0**."],
+    ]);
+    // A thread with no session has none, and reads nothing from bb for them.
+    expect(await harness.callRpc("feedbackCards", { threadId: "thr_other" })).toEqual({ cards: [] });
+  });
+
+  it("bb learning feedback refuses feedback that is not base64 or too long", async () => {
+    const { harness, commitTurn } = await setup({ providerCanFork: false });
+    await commitTurn();
+    const view = (await harness.callRpc("threadView", { threadId: WORK })) as ThreadView;
+    await harness.callRpc("answerOffer", { offerId: view.offer!.id, answer: "start" });
+    const bad = await harness.runCli(["feedback", "--verdict", "correct", "--feedback-base64", "not base64!"], { threadId: WORK });
+    expect(bad.exitCode).not.toBe(0);
+    expect(bad.stderr).toContain("--feedback-base64 is not valid base64");
+    const long = await harness.runCli(["feedback", "--verdict", "correct", "--feedback-base64", Buffer.from("x".repeat(8_001)).toString("base64")], { threadId: WORK });
+    expect(long.exitCode).not.toBe(0);
+    expect(long.stderr).toContain("feedback is longer than 8000 bytes");
   });
 
   it("a sub-agent thread gets no offer, but a session started there by hand forks it and resumes there", async () => {

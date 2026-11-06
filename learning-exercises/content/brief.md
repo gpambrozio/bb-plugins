@@ -21,12 +21,13 @@ Inside the question itself you may add only:
 
 After the learner answers:
 
-1. Give feedback that connects their thinking to the actual behaviour, as a message, before you ask
-   again. The card shows that message above the next question and keeps it in the session's history.
+1. Give feedback that connects their thinking to the actual behaviour, before you ask again. Put it
+   in the feedback you record with your verdict (see "How to ask"), not in a message: bb folds a
+   turn's messages away once it ends, and the plugin shows the recorded feedback in the chat as a
+   card, above the next question and in the session's history. Then ask the next question or finish.
 2. If they were wrong, say clearly what is wrong, then explore the gap. This is the most valuable part.
 3. Do not credit them with insight they did not express. If they said *what* happens but not *why*,
    acknowledge the what without crediting causal understanding.
-4. Record your verdict (see "How to ask").
 
 ## Every question stands on its own
 

@@ -115,6 +115,10 @@ export const MIGRATIONS: string[] = [
   `ALTER TABLE exercises ADD COLUMN draft_saved_at INTEGER`,
   // Which browser saved that draft last (the app's writer id), so a card tells its own saves from others'.
   `ALTER TABLE exercises ADD COLUMN draft_writer TEXT`,
+  // The feedback the agent passed with its verdict (Markdown), which the chat and the next card show.
+  `ALTER TABLE exercises ADD COLUMN feedback TEXT`,
+  // The bb turn that verdict was recorded in: the chat's feedback card sits above that turn's last message.
+  `ALTER TABLE exercises ADD COLUMN feedback_turn TEXT`,
 ];
 
 const ReplyProgressSchema = z.object({
@@ -259,6 +263,8 @@ interface ExerciseRecord {
   form: string | null;
   fields: string | null;
   reply: string | null;
+  feedback: string | null;
+  feedback_turn: string | null;
 }
 
 /** Stored JSON read back through its schema; null when it is missing or no longer reads. */
@@ -330,8 +336,9 @@ function toExercise(row: ExerciseRecord): Exercise {
       const parsed = FormValuesSchema.safeParse(value);
       return parsed.success ? parsed.data : null;
     }),
-    // "" is a reply read and found empty (`unreadReplies`); the app sees no reply either way.
-    reply: row.reply === null || row.reply === "" ? null : row.reply,
+    // The feedback the agent passed wins; a reply read from the log stands in for it. "" is a reply read
+    // and found empty (`unreadReplies`); the app sees no reply either way.
+    reply: row.feedback ?? (row.reply === null || row.reply === "" ? null : row.reply),
   };
 }
 
@@ -579,9 +586,12 @@ export class LearningStore {
       .run(answer.text, answer.confidence, answer.fields == null ? null : JSON.stringify(answer.fields), now, sessionId, ordinal);
   }
 
-  /** Questions answered or skipped whose reply was never read (a store from before replies were kept, a failed read). */
+  /**
+   * Questions answered or skipped whose reply was never read (a store from before replies were kept, a
+   * failed read) and that have no feedback passed with the verdict.
+   */
   unreadReplies(sessionId: string): number[] {
-    return (this.db.prepare(`SELECT ordinal FROM exercises WHERE session_id = ? AND answered_at IS NOT NULL AND reply IS NULL ORDER BY ordinal`).all(sessionId) as { ordinal: number }[]).map(
+    return (this.db.prepare(`SELECT ordinal FROM exercises WHERE session_id = ? AND answered_at IS NOT NULL AND reply IS NULL AND feedback IS NULL ORDER BY ordinal`).all(sessionId) as { ordinal: number }[]).map(
       (row) => row.ordinal,
     );
   }
@@ -592,6 +602,27 @@ export class LearningStore {
    */
   recordReply(sessionId: string, ordinal: number, reply: string): void {
     this.db.prepare(`UPDATE exercises SET reply = ?, reply_progress = NULL WHERE session_id = ? AND ordinal = ?`).run(reply, sessionId, ordinal);
+  }
+
+  /** Whether the agent passed feedback text with its verdict on this question. */
+  hasFeedback(sessionId: string, ordinal: number): boolean {
+    return this.db.prepare(`SELECT 1 FROM exercises WHERE session_id = ? AND ordinal = ? AND feedback IS NOT NULL`).get(sessionId, ordinal) !== undefined;
+  }
+
+  /**
+   * The feedback cards of a thread's sessions, oldest first: every question whose verdict was recorded in a
+   * known turn and that has feedback, passed with the verdict or read from the log.
+   */
+  feedbackCards(threadId: string): { sessionId: string; ordinal: number; turnId: string; verdict: Verdict | null; feedback: string }[] {
+    const rows = this.db
+      .prepare(
+        `SELECT e.session_id AS sessionId, e.ordinal, e.feedback_turn AS turnId, e.verdict, COALESCE(e.feedback, NULLIF(e.reply, '')) AS feedback
+           FROM exercises e JOIN sessions s ON s.id = e.session_id
+           WHERE s.thread_id = ? AND e.feedback_turn IS NOT NULL AND COALESCE(e.feedback, NULLIF(e.reply, '')) IS NOT NULL
+           ORDER BY s.created_at, e.ordinal`,
+      )
+      .all(threadId) as { sessionId: string; ordinal: number; turnId: string; verdict: Verdict | null; feedback: string }[];
+    return rows;
   }
 
   /** Where an unfinished read of a question's reply stopped, and what it had found; null when none is under way. */
@@ -657,13 +688,25 @@ export class LearningStore {
     this.db.prepare(`UPDATE exercises SET stuck = stuck + 1 WHERE session_id = ? AND ordinal = ?`).run(sessionId, ordinal);
   }
 
-  /** The agent's verdict on the latest answered question (or `ordinal`). */
-  recordVerdict(sessionId: string, verdict: Verdict, gap: string | null, ordinal?: number): number | null {
+  /**
+   * The agent's verdict on the latest answered question (or `ordinal`), with the feedback it passed and the
+   * turn it was recorded in. A later verdict on the same question replaces the earlier one; one with no
+   * feedback or no known turn keeps what an earlier call stored.
+   */
+  recordVerdict(
+    sessionId: string,
+    verdict: Verdict,
+    gap: string | null,
+    ordinal?: number,
+    feedback: { text: string | null; turnId: string | null } = { text: null, turnId: null },
+  ): number | null {
     const target =
       ordinal ??
       (this.db.prepare(`SELECT MAX(ordinal) AS n FROM exercises WHERE session_id = ? AND answered_at IS NOT NULL`).get(sessionId) as { n: number | null }).n;
     if (target === null) return null;
-    const changed = this.db.prepare(`UPDATE exercises SET verdict = ?, gap = ? WHERE session_id = ? AND ordinal = ?`).run(verdict, gap, sessionId, target).changes;
+    const changed = this.db
+      .prepare(`UPDATE exercises SET verdict = ?, gap = ?, feedback = COALESCE(?, feedback), feedback_turn = COALESCE(?, feedback_turn) WHERE session_id = ? AND ordinal = ?`)
+      .run(verdict, gap, feedback.text, feedback.turnId, sessionId, target).changes;
     return changed > 0 ? target : null;
   }
 

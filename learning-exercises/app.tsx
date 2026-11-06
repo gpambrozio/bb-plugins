@@ -1,13 +1,14 @@
 // learning-exercises — the app entry.
 //
 // The offer banner above a thread's composer, the exercise card and its settled row in the transcript,
-// the Learning tab on the tab bar of every listed thread's side panel, "Learning offers" in the thread menu, and the list of projects with no offers under the
+// the agent's feedback as a card above its turn's last message, the Learning tab on the tab bar of every listed thread's side panel, "Learning offers" in the thread menu, and the list of projects with no offers under the
 // plugin's settings. See AGENTS.md.
 import { definePluginApp } from "@get-bb/plugin-sdk/app";
 
 import { CARD_RENDERER_ID } from "./shared/types";
 import { OfferBanner } from "./app/banner";
 import { ExerciseCard } from "./app/card";
+import { FEEDBACK_METADATA_ID, FeedbackAboveMessage } from "./app/feedback";
 import { NeverProjectsSection } from "./app/settings-section";
 import { SettledRow } from "./app/settled-row";
 import { LEARNING_FIXED_TAB, LEARNING_ON_DEMAND_TAB, LearningOnDemandTab, LearningTab, PLUGIN_ID, useLearningOnDemandVisible, useLearningTabVisible } from "./app/tab";
@@ -17,6 +18,7 @@ export default definePluginApp((app) => {
   app.composer.customize({ id: "offer", scopes: ["thread"], banners: [{ id: "offer", chrome: "card", component: OfferBanner }] });
   app.slots.pendingInteraction({ id: CARD_RENDERER_ID, component: ExerciseCard });
   app.slots.experimental_timelineRenderer({ kind: `${PLUGIN_ID}/${CARD_RENDERER_ID}`, component: SettledRow });
+  app.slots.experimental_messageMetadata({ id: FEEDBACK_METADATA_ID, placement: "above", component: FeedbackAboveMessage });
   app.slots.experimental_tab({
     ...LEARNING_FIXED_TAB,
     title: "Learning",

@@ -9,7 +9,7 @@ import type { BbPluginApi, PluginAgentToolResult } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
 import { AnswerFormSchema } from "../shared/answer-form";
-import { EXERCISE_TYPES, QUESTION_MAX_CHARS, VERDICTS } from "../shared/types";
+import { EXERCISE_TYPES, FEEDBACK_MAX_CHARS, QUESTION_MAX_CHARS, VERDICTS } from "../shared/types";
 import { SessionError, type SessionService } from "./sessions";
 
 export const TOOL_NAMES = ["learning_ask", "learning_feedback", "learning_finish"] as const;
@@ -53,14 +53,21 @@ export function registerTools(bb: BbPluginApi, sessions: SessionService): void {
   bb.agents.registerTool({
     name: "learning_feedback",
     description:
-      "Record your verdict on the learner's last answer, the gap you saw, and the concepts involved. Call it after giving them your feedback as a message; the plugin keeps that message with the question and shows it above the next one.",
+      "Give the learner your feedback on their last answer and record your verdict, the gap you saw, and the concepts involved. Put the feedback itself in `feedback`, not in a message: the plugin shows it in the chat as a card with the verdict, above the next question, and in the session's history. Then ask the next question or finish the session.",
     presentation: { label: { pending: "Recording feedback", completed: "Recorded feedback" }, icon: { glyph: "Brain" }, suppress: true },
     parameters: z.object({
       verdict: z.enum(VERDICTS),
+      feedback: z
+        .string()
+        .max(FEEDBACK_MAX_CHARS)
+        .optional()
+        .describe(
+          "Your feedback to the learner, in Markdown: what is right, what is wrong and why, crediting only what they said. Required for an answered question; leave it out for a skipped one. Write file references as workspace-relative paths in backticks so they open",
+        ),
       gap: z.string().max(500).optional().describe("What was missing or wrong, in one sentence"),
       concepts,
     }),
-    execute: ({ verdict, gap, concepts: named }, ctx) => guarded(() => sessions.feedback(ctx.threadId, { verdict, gap: gap ?? null, concepts: named ?? [] })),
+    execute: ({ verdict, feedback, gap, concepts: named }, ctx) => guarded(() => sessions.feedback(ctx.threadId, { verdict, feedback: feedback ?? null, gap: gap ?? null, concepts: named ?? [] })),
   });
 
   bb.agents.registerTool({

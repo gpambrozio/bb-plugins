@@ -68,6 +68,7 @@ async function plugin(bb: BbPluginApi, deps: { ports?: (bb: BbPluginApi, changed
     threadView: (input) => api.threadView(input),
     projectSessions: (input) => api.projectSessions(input),
     sessionDetail: (input) => api.sessionDetail(input),
+    feedbackCards: (input) => api.feedbackCards(input),
     topicChoices: (input) => api.topicChoices(input),
     offerSeen: fromUser((input) => api.offerSeen(input)),
     answerOffer: fromUser((input) => api.answerOffer(input)),

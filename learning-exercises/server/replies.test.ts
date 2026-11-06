@@ -8,13 +8,13 @@
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import { describe, expect, it } from "vitest";
 
-import { QUESTION_MAX_CHARS } from "../shared/types";
+import { FEEDBACK_MAX_CHARS, QUESTION_MAX_CHARS } from "../shared/types";
 import { LearningApi } from "./api";
 import { bbPorts } from "./bb-ports";
 import { OfferEngine } from "./offers";
 import { questionProblem, unclosedFence } from "./question";
 import { SessionService } from "./sessions";
-import { listEvents, type LogRow } from "./testing/event-log";
+import { listEvents, type EventListInput, type LogRow } from "./testing/event-log";
 import { FakePorts, flush, thread } from "./testing/fake-ports";
 import { memoryStore, memoryStoreWithDb, settingsWith } from "./testing/store";
 
@@ -149,6 +149,100 @@ describe("the agent's reply between questions", () => {
     const reply = store.exercises(sessionId)[0]!.reply!;
     expect(reply).toHaveLength(20_000);
     expect(reply.endsWith("…")).toBe(true);
+  });
+});
+
+describe("feedback passed with the verdict (thr_9fuduh4nry)", () => {
+  // There the last answer's feedback was a message in the turn that finished the session, folded into
+  // "Worked for": only the closing line stayed in view. The feedback now travels with the verdict, and the
+  // chat shows it as a card in the turn that recorded it.
+  const LAST = "You named testability, but not why one model keeps the rules in one place.";
+
+  it("is the question's reply, with the turn it was recorded in, over anything the agent wrote as a message", async () => {
+    const { ports, store, sessions, threadId, sessionId, askAndAnswer } = await setup();
+    await askAndAnswer(Q1, { action: "answer", answer: "Focus ends at 2", confidence: 4 });
+    ports.running.set(threadId, "turn_2");
+    ports.advance(1);
+    ports.say(threadId, "Let me check the code.");
+    await expect(sessions.feedback(threadId, { verdict: "correct", feedback: `  ${FEEDBACK}\n`, gap: null, concepts: [] })).resolves.toContain("question 1");
+    expect(store.exercises(sessionId)[0]).toMatchObject({ verdict: "correct", reply: FEEDBACK });
+    expect(store.feedbackCards(threadId)).toEqual([{ sessionId, ordinal: 1, turnId: "turn_2", verdict: "correct", feedback: FEEDBACK }]);
+    // The next card and the history show the same text; asking does not replace it with the log's messages.
+    ports.advance(1);
+    void sessions.ask(threadId, Q2, "tool");
+    await flush();
+    expect(ports.cards.at(-1)!.request.payload.previous).toEqual({ ordinal: 1, answered: true, reply: FEEDBACK });
+    expect(store.exercises(sessionId)[0]?.reply).toBe(FEEDBACK);
+    expect(store.unreadReplies(sessionId)).toEqual([]);
+  });
+
+  it("the last answer's feedback gets its card in the turn that finishes the session", async () => {
+    const { ports, store, sessions, threadId, sessionId, askAndAnswer } = await setup();
+    await askAndAnswer(Q1, { action: "answer", answer: "x", confidence: 2 });
+    ports.running.set(threadId, "turn_8");
+    await sessions.feedback(threadId, { verdict: "partly", feedback: LAST, gap: "Missed the single source of truth", concepts: [] });
+    ports.advance(1);
+    ports.say(threadId, "Thanks for working through these.");
+    await sessions.finishFromAgent(threadId, { summary: "Crown maths.", concepts: [] });
+    expect(store.feedbackCards(threadId)).toEqual([{ sessionId, ordinal: 1, turnId: "turn_8", verdict: "partly", feedback: LAST }]);
+    expect(store.exercises(sessionId)[0]?.reply).toBe(LAST);
+  });
+
+  it("an agent that passes no text falls back to its message, read from the log, and its card shows that", async () => {
+    const { ports, store, sessions, threadId, sessionId, askAndAnswer } = await setup();
+    await askAndAnswer(Q1, { action: "answer", answer: "x", confidence: 2 });
+    ports.running.set(threadId, "turn_2");
+    ports.advance(1);
+    ports.say(threadId, FEEDBACK);
+    ports.advance(1);
+    await sessions.feedback(threadId, { verdict: "incorrect", gap: null, concepts: [] });
+    expect(store.feedbackCards(threadId)).toEqual([{ sessionId, ordinal: 1, turnId: "turn_2", verdict: "incorrect", feedback: FEEDBACK }]);
+  });
+
+  it("a later verdict on the same question keeps the text and the turn it does not replace, and an unknown turn draws no card", async () => {
+    const { ports, store, sessions, threadId, sessionId, askAndAnswer } = await setup();
+    await askAndAnswer(Q1, { action: "answer", answer: "x", confidence: 2 });
+    // The log cannot say which turn this is: the feedback is kept for the next card and the history.
+    await sessions.feedback(threadId, { verdict: "partly", feedback: LAST, gap: null, concepts: [] });
+    expect(store.feedbackCards(threadId)).toEqual([]);
+    expect(store.exercises(sessionId)[0]?.reply).toBe(LAST);
+    ports.running.set(threadId, "turn_2");
+    await sessions.feedback(threadId, { verdict: "incorrect", gap: null, concepts: [] });
+    expect(store.feedbackCards(threadId)).toEqual([{ sessionId, ordinal: 1, turnId: "turn_2", verdict: "incorrect", feedback: LAST }]);
+    ports.running.set(threadId, "turn_3");
+    await sessions.feedback(threadId, { verdict: "correct", feedback: "On reflection, right.", gap: null, concepts: [] });
+    expect(store.feedbackCards(threadId)).toEqual([{ sessionId, ordinal: 1, turnId: "turn_3", verdict: "correct", feedback: "On reflection, right." }]);
+  });
+
+  it("refuses feedback longer than the card takes, and records nothing", async () => {
+    const { ports, store, sessions, threadId, sessionId, askAndAnswer } = await setup();
+    await askAndAnswer(Q1, { action: "answer", answer: "x", confidence: 2 });
+    ports.running.set(threadId, "turn_2");
+    await expect(sessions.feedback(threadId, { verdict: "correct", feedback: "y".repeat(FEEDBACK_MAX_CHARS + 1), gap: null, concepts: [] })).rejects.toThrow(
+      "The feedback is 8,001 characters; at most 8,000 are kept.",
+    );
+    expect(store.exercises(sessionId)[0]).toMatchObject({ verdict: null, reply: null });
+    expect(store.feedbackCards(threadId)).toEqual([]);
+  });
+
+  it("reads the current turn from bb's log: the newest turn/started row's turn", async () => {
+    const { bb, harness } = createFakePluginHost({ pluginId: "learning-exercises" });
+    const rows: Row[] = [
+      { seq: 1, createdAt: 1, turnId: "turn_1", type: "turn/started", data: {} },
+      { seq: 2, createdAt: 2, turnId: "turn_1", type: "turn/completed", data: { status: "completed" } },
+      { seq: 3, createdAt: 3, turnId: "turn_2", type: "turn/started", data: {} },
+      message(4, 4, FEEDBACK),
+    ];
+    let fail = false;
+    harness.sdk.stub("threads.events.list", (input: EventListInput) => {
+      if (fail) throw new Error("log unavailable");
+      return listEvents(rows, input);
+    });
+    const ports = bbPorts(bb, () => {});
+    expect(await ports.currentTurn(WORK)).toBe("turn_2");
+    fail = true;
+    expect(await ports.currentTurn(WORK)).toBeNull();
+    expect(harness.logEntries.filter((entry) => entry.level === "warn").map((entry) => entry.message)).toEqual(["Reading thr_work's current turn failed: log unavailable"]);
   });
 });
 

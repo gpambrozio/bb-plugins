@@ -79,6 +79,7 @@ retrieval and Showboat are later phases.
 | `server/content.ts` | The brief from `content/` through `server/content.generated.ts` (`npm run gen:content`; a test fails when they differ) |
 | `app/banner.tsx`, `app/offer-card.tsx` | The composer banner (thread scope; only while idle) |
 | `app/card.tsx`, `app/settled-row.tsx` | The `exercise` pending interaction and its timeline row |
+| `app/feedback.tsx` | The agent's feedback as a card above the last message of the turn that recorded it (below) |
 | `app/draft.ts` | The card's unsent answer: restored on mount, saved as the learner types (below) |
 | `app/tab.tsx` | The "Learning" tab, on the tab bar of every listed thread; the retired on-demand tab's clean-up |
 | `app/file-refs.tsx` | File references as links that open the file in bb, at a line or range (below) |
@@ -141,6 +142,40 @@ bb's `requestInput` hosts it as it is; no other surface is involved.
   container query (`@md`, 28rem of card width), not the window's width. A live look in a dev bb has not
   been done yet: the checks are jsdom tests and the compiled CSS.
 
+## The agent's feedback in the chat
+
+A second real session (thread thr_9fuduh4nry) showed the captured reply was not enough: the feedback on
+the last answer was a message in the turn that finished the session, folded into "Worked for" with the
+rest of it, and only the closing line ("Thanks for working through these…") stayed in view. No next card
+existed to carry it.
+
+- **The feedback travels with the verdict.** `learning_feedback`'s `feedback` (Markdown, at most
+  `FEEDBACK_MAX_CHARS`, 8,000) and `bb learning feedback --feedback-base64-stdin` take it, and the brief,
+  the answer the agent gets back, the tool, the CLI and `SESSION_INVARIANT` say to put it there and not in
+  a message. It is optional in the schema: a skip needs none, and an agent briefed before the argument
+  existed (a session under way at the upgrade) passes none and still writes a message, which the log
+  capture below keeps reading. Stored as `exercises.feedback` (migration 18); `Exercise.reply` is the
+  feedback when there is one, else the captured reply, so the next card's `previous`, the history and the
+  chat read one value. A question with feedback is never read from the log again (`readReply`,
+  `unreadReplies`).
+- **Where the card goes.** bb draws a plugin nowhere below a message and gives no plugin-written row, and
+  the question card's own row is no help: a `bb.ui.requestInput` form's row is a work row placed where the
+  form opened (bb 0.48.1 `buildPluginFormLifecycleMessage`, upserted by interaction id, never moved), so it
+  folds with the turn too. What stays in view of a finished turn is its prompt and its last message. So
+  `feedback()` stores the id of the turn it runs in (`feedback_turn`, migration 19; `ports.currentTurn`, the
+  newest `turn/started` row's `scope.turnId`, which is the `turnId` bb gives message metadata), and
+  `app/feedback.tsx` draws the card through `experimental_messageMetadata` ("above") on that turn's newest
+  message on screen. Every message of a turn with a card registers in a module-level map (counted, since
+  two panes can show one message); the newest assistant message wins, the turn's prompt only when the
+  turn wrote none. While the turn runs the card follows its newest message; once it folds, only the last
+  message is mounted (an expanded fold mounts older ones, which never win).
+- **It survives a reload** and shows on every device: the card is the stored feedback and bb's own turn
+  ids, read through `feedbackCards` (a read, tagged `LEARNING_TAG`, so `feedback()`'s `changed()` brings
+  it at once). A verdict whose turn could not be read has no card; the next card and the history still
+  have the feedback. A later verdict on the same question replaces the text and the turn it passes.
+- **The finish summary stays a message.** It is the turn's last message, so it is what the last card
+  sits above.
+
 ## The agent's replies, and questions that stand on their own
 
 A real session (thread thr_f6iewpgi7a) lost its feedback: the agent wrote it as a message mid-turn, then
@@ -148,7 +183,8 @@ asked the next question, and when that turn ended bb folded the turn's earlier m
 so only "I'm waiting for your answer" stayed in view. Its next question then said "the earlier version
 … shown above" about code no message held.
 
-- **A reply is what the agent wrote between an answer and the next question.** `exercises.reply`
+- **A reply is what the agent wrote between an answer and the next question**, now only the fallback for
+  feedback passed with no text (above). `exercises.reply`
   (migration 13) keeps it, read from the thread's event log (`ports.agentMessages`: `item/completed`
   rows of type `agentMessage`, paged newest first by `beforeSeq` in pages of 100, the most bb takes), from the exercise's `answered_at` to
   the next one's `asked_at`. It is read when the verdict is recorded, when the next question is asked

@@ -100,13 +100,27 @@ export const ExerciseSchema = z.object({
   /** The learner's answer by field id when it came from a form; `answer` then holds its summary. */
   fields: FormValuesSchema.nullable(),
   /**
-   * What the agent wrote in the thread after the learner answered (or skipped) and before the next
-   * question: its feedback. Read from the thread's event log, since bb folds a turn's earlier messages
-   * away once the turn ends; null when it wrote nothing or the log could not be read.
+   * The agent's feedback on the answer: the text it passed with its verdict, or, when it passed none (an
+   * agent from before the feedback argument), what it wrote in the thread after the answer and before the
+   * next question, read from the event log. Null when there is neither.
    */
   reply: z.string().nullable(),
 });
 export type Exercise = z.infer<typeof ExerciseSchema>;
+
+/**
+ * One feedback card in a session thread's chat: the verdict and the feedback on one question, drawn above
+ * the last message of the turn that recorded it (`turnId`, bb's id for that turn).
+ */
+export const FeedbackCardSchema = z.object({
+  sessionId: z.string(),
+  ordinal: z.number(),
+  turnId: z.string(),
+  verdict: VerdictSchema.nullable(),
+  feedback: z.string(),
+  workspace: WorkspaceSchema.nullable(),
+});
+export type FeedbackCard = z.infer<typeof FeedbackCardSchema>;
 
 export const SessionSchema = z.object({
   id: z.string(),
@@ -196,6 +210,9 @@ export const ANSWER_MAX_CHARS = 20_000;
 
 /** The longest question, in characters: room for the code a question must carry itself. */
 export const QUESTION_MAX_CHARS = 8_000;
+
+/** The longest feedback the agent passes with its verdict, in characters: as long as a question. */
+export const FEEDBACK_MAX_CHARS = 8_000;
 
 /** The longest agent reply kept with a question, in characters; a longer one is cut there. */
 export const REPLY_MAX_CHARS = 20_000;

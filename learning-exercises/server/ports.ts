@@ -75,6 +75,8 @@ export interface Ports {
   thread(threadId: string): Promise<ThreadInfo | null>;
   project(projectId: string): Promise<ProjectInfo | null>;
   environmentPath(environmentId: string): Promise<string | null>;
+  /** The id of the thread's newest turn, finished or running (its last `turn/started`); null when it cannot be read. */
+  currentTurn(threadId: string): Promise<string | null>;
   /** The thread's last finished turn, from its event log. */
   lastTurn(threadId: string): Promise<{ turnId: string; status: string } | null>;
   /** The `fileChange` changes of one turn, with the paths as the provider reported them. */

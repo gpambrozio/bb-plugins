@@ -70,8 +70,11 @@ const CLI_BLOCK = [
   "Open `src/example.ts:40-60`. What happens when `save` runs twice?",
   "LEARNING_QUESTION",
   "",
-  "# After each answer: your verdict (correct, partly, incorrect or skipped), the gap, the concepts.",
-  "bb learning feedback --verdict partly --gap 'Mixed up X and Y' --concept 'X' --concept 'Y'",
+  "# After each answer: your feedback (through stdin as base64, like the question), your verdict (correct,",
+  "# partly, incorrect or skipped), the gap, the concepts. Leave the feedback out only for a skipped question.",
+  "base64 <<'LEARNING_FEEDBACK' | tr -d '\\n' | bb learning feedback --verdict partly --gap 'Mixed up X and Y' --concept 'X' --concept 'Y' --feedback-base64-stdin",
+  "Your feedback, in Markdown: what is right, what is wrong and why.",
+  "LEARNING_FEEDBACK",
   "",
   "# At the end: a two-sentence summary and the concepts covered.",
   "bb learning finish --summary 'What we covered and how it went.' --concept 'X'",
@@ -96,9 +99,9 @@ function howToAsk(mode: SessionMode): string {
       "`src/a.ts:40-60`), and optionally `form` (an answer form, see \"Answer forms\"). It shows the learner a card and",
       "returns their answer as",
       "the tool's result. Never use any other question tool: only this card records the learner's confidence. After each",
-      "answer, call `learning_feedback` with your verdict (`correct`, `partly`, `incorrect` or `skipped`), the gap you saw,",
-      "and the concepts involved. When the topic is covered or the question limit is reached, call `learning_finish` with",
-      "a two-sentence summary.",
+      "answer, call `learning_feedback` with your feedback in `feedback` (Markdown; not as a message), your verdict",
+      "(`correct`, `partly`, `incorrect` or `skipped`), the gap you saw, and the concepts involved. When the topic is",
+      "covered or the question limit is reached, call `learning_finish` with a two-sentence summary.",
       "",
       "If `learning_ask` is not among your tools (some providers' forks do not receive plugin tools), use the same",
       "commands from the shell instead:",
@@ -124,7 +127,7 @@ export function buildBrief(input: BriefInput): string {
 
 /** The standing rule for a session thread, from `configure` (it outlives a compaction). */
 export const SESSION_INVARIANT =
-  "This thread is a learning session run by the Learning Exercises plugin. Ask every question with the learning_ask tool (or `bb learning ask` if that tool is missing), then end your turn and add nothing after it. Never answer your own question or hint at the answer. Every question stands on its own: code it relies on goes inside it as a fenced code block, and it never refers to \"above\" or an earlier message. After each answer give direct feedback as a message and call learning_feedback; end with learning_finish.";
+  "This thread is a learning session run by the Learning Exercises plugin. Ask every question with the learning_ask tool (or `bb learning ask` if that tool is missing), then end your turn and add nothing after it. Never answer your own question or hint at the answer. Every question stands on its own: code it relies on goes inside it as a fenced code block, and it never refers to \"above\" or an earlier message. After each answer give direct feedback in learning_feedback's `feedback` argument (or `bb learning feedback --feedback-base64-stdin`), not as a message; end with learning_finish.";
 
 /** The line the user sees as a session's first message. */
 export function startLine(topic: string, trigger: TriggerKind, refs: Refs): string {

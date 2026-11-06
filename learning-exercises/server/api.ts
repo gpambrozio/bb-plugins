@@ -89,6 +89,15 @@ export class LearningApi {
     return { session: publicSession(session), exercises: store.exercises(sessionId), workspace };
   }
 
+  async feedbackCards({ threadId }: Input<"feedbackCards">): Promise<Output<"feedbackCards">> {
+    const { ports, store } = this.deps;
+    const cards = store.feedbackCards(threadId);
+    // Most threads ran no session: they cost one query and no bb read.
+    if (cards.length === 0) return { cards: [] };
+    const workspace = await workspaceOf(ports, threadId);
+    return { cards: cards.map((card) => ({ ...card, workspace })) };
+  }
+
   cardDraft({ sessionId, ordinal }: Input<"cardDraft">): Output<"cardDraft"> {
     const { sessions } = this.deps;
     return { draft: sessions.cardDraft(sessionId, ordinal), ...sessions.draftStamp(sessionId, ordinal) };
