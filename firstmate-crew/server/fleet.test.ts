@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { CREW_METADATA, type BacklogItem, type CrewSummary, type ThreadStatus, type WatchSummary } from "../shared/types";
+import { CREW_METADATA, type BacklogItem, type CrewReport, type CrewSummary, type ThreadStatus, type WatchSummary } from "../shared/types";
 import { parseBacklog } from "./backlog";
 import { ReportCache, backlogColumn, buildCards, crewColumn, loadFleet, type FleetDeps } from "./fleet";
 import { defaultSettings, type FirstmateSettings } from "./settings";
@@ -187,9 +187,46 @@ describe("ReportCache", () => {
     expect(await cache.report(crew({ updatedAt: 9 }))).toEqual({ state: "done", text: "shipped" });
     expect(threads.callsTo("lastText")).toEqual([]);
 
-    cache.remember("thr_1", 10, null);
+    cache.remember("thr_1", 10, "Looked around; nothing to report.");
     expect(await cache.report(crew({ updatedAt: 10 }))).toBeNull();
     expect(threads.callsTo("lastText")).toEqual([]);
+  });
+
+  it("keeps the status line through a turn that said nothing, such as a compaction (bb 0.49)", async () => {
+    const threads = fakeThreads();
+    threads.add({ id: "thr_1" });
+    const cache = new ReportCache(threads);
+    cache.remember("thr_1", 9, "blocked: need a key");
+    const blocked: CrewReport = { state: "blocked", text: "need a key" };
+
+    cache.remember("thr_1", 10, null);
+    expect(await cache.report(crew({ updatedAt: 10 }))).toEqual(blocked);
+    cache.remember("thr_1", 11, "  \n");
+    expect(await cache.report(crew({ updatedAt: 11 }))).toEqual(blocked);
+    expect(crewColumn(crew({ updatedAt: 11 }), await cache.report(crew({ updatedAt: 11 })))).toBe("blocked");
+
+    // Read again with nothing from the latest turn: still the cached line, and no log read.
+    expect(await cache.report(crew({ updatedAt: 12 }))).toEqual(blocked);
+    expect(threads.callsTo("lastText")).toHaveLength(1);
+    expect(threads.callsTo("lastAgentMessage")).toEqual([]);
+  });
+
+  it("with nothing cached, reads the status line from the thread's last message when its latest turn said nothing", async () => {
+    const threads = fakeThreads();
+    threads.add({ id: "thr_1" });
+    threads.setAgentMessage("thr_1", "Waiting on the captain.\nneeds-decision: which API version?");
+    const cache = new ReportCache(threads);
+
+    // A turn that said nothing, as after a restart: no fetch until the board asks, then the log.
+    cache.remember("thr_1", 10, null);
+    expect(threads.calls).toEqual([]);
+    expect(await cache.report(crew({ updatedAt: 10 }))).toEqual({ state: "needs-decision", text: "which API version?" });
+    expect(threads.callsTo("lastAgentMessage")).toHaveLength(1);
+
+    // A turn that did say something is read from bb's reply, not the log.
+    threads.setText("thr_1", "done: shipped");
+    expect(await cache.report(crew({ updatedAt: 11 }))).toEqual({ state: "done", text: "shipped" });
+    expect(threads.callsTo("lastAgentMessage")).toHaveLength(1);
   });
 
   it("forgets crewmates no longer aboard", async () => {

@@ -215,7 +215,10 @@ describe("prepareHome and the charter", () => {
     expect(agents).not.toContain("firstmate-charter");
     expect(fingerprint(await read(home, CHARTER_FILE))).toBe(fingerprint(await readTemplate(TEMPLATES.charter)));
     // Pinned so a charter change is deliberate: every untouched home follows it, and every edited one is
-    // offered it as charter.new.md. 4d4203adc1f0d594 is the charter telling the first mate that a crewmate
+    // offered it as charter.new.md. 0a31a8a6bc6822c7 is the charter for bb 0.49: a crewmate's last message
+    // from its log when `bb thread output` prints nothing (a compaction-only turn), the crew listing with or
+    // without archived threads by bb version, and `bb git status` for a thread's git state;
+    // 4d4203adc1f0d594 told the first mate that a crewmate
     // whose Notify parent is not `auto` sends it no notice for a finished turn (or none at all), to watch
     // such a crewmate itself and never change the setting back; d34bbcd8b84ee0f9 told it to link the
     // message a worker reported in (`@thread:<id>#msg=<seq>`), to reread one message with
@@ -237,7 +240,7 @@ describe("prepareHome and the charter", () => {
     // mate to always title its crew; 79b5a4bc6315ef40 the charter rewritten for bb; 09fd534b24db4e75 was Paseo's text
     // with only its placeholders renamed, e0b749cb695c5df6 the charter as it moved into templates/, and
     // 8b6df21d082df6e6 Paseo's before {{crewModeRule}} became {{crewReasoningRule}}.
-    expect(fingerprint(await readTemplate(TEMPLATES.charter))).toBe("4d4203adc1f0d594");
+    expect(fingerprint(await readTemplate(TEMPLATES.charter))).toBe("0a31a8a6bc6822c7");
 
     await editCopy(home, "# My first mate\n\n<!-- a note to myself -->\nYour home is {{home}}; keep it tidy.");
     await prepareHome(home, homeConfig);

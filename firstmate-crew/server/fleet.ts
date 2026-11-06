@@ -29,6 +29,10 @@ interface CachedReport {
   report: CrewReport | null;
 }
 
+function isBlank(text: string | null): boolean {
+  return text === null || text.trim() === "";
+}
+
 /** Each crewmate's last status line, read again only when the thread has moved. */
 export class ReportCache {
   private readonly reports = new Map<string, CachedReport>();
@@ -41,13 +45,33 @@ export class ReportCache {
     // stays on the card until it does.
     if (crew.status !== "idle" && crew.status !== "error") return cached?.report ?? null;
     if (cached !== undefined && cached.updatedAt === crew.updatedAt) return cached.report;
-    const report = parseCrewReport(await this.threads.lastText(crew.threadId));
+    // Since bb 0.49 the latest turn's reply is all bb hands over, and a turn that wrote nothing — crew
+    // autocompact's compaction, a turn stopped before its reply — has none. The status line is then the
+    // one before it: the one cached, or the thread's last message of its own in its event log.
+    let text = await this.threads.lastText(crew.threadId);
+    if (isBlank(text)) {
+      if (cached !== undefined) {
+        this.reports.set(crew.threadId, { updatedAt: crew.updatedAt, report: cached.report });
+        return cached.report;
+      }
+      text = await this.threads.lastAgentMessage(crew.threadId);
+    }
+    const report = parseCrewReport(text);
     this.reports.set(crew.threadId, { updatedAt: crew.updatedAt, report });
     return report;
   }
 
-  /** Records a turn's closing text the caller already has (`thread.idle` carries it), so the next read needs no fetch. */
+  /**
+   * Records a turn's closing text the caller already has (`thread.idle` carries it), so the next read
+   * needs no fetch. A turn that said nothing keeps the status line before it; with none cached, the next
+   * read looks for it.
+   */
   remember(threadId: string, updatedAt: number, text: string | null): void {
+    if (isBlank(text)) {
+      const cached = this.reports.get(threadId);
+      if (cached !== undefined) this.reports.set(threadId, { updatedAt, report: cached.report });
+      return;
+    }
     this.reports.set(threadId, { updatedAt, report: parseCrewReport(text) });
   }
 

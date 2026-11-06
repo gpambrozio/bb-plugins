@@ -38,6 +38,8 @@ export class FakeThreads implements ThreadsPort {
   readonly sent: { id: string; text: string; mode: SendMode }[] = [];
   private readonly metadataById = new Map<string, Record<string, unknown>>();
   private readonly texts = new Map<string, string>();
+  /** Each thread's last message of its own in its event log, which `lastText` may no longer return. */
+  private readonly agentMessages = new Map<string, string>();
   private readonly pending = new Map<string, number>();
   private readonly workspaces = new Map<string, string>();
   private readonly origins = new Map<string, ThreadOrigin>();
@@ -79,6 +81,11 @@ export class FakeThreads implements ThreadsPort {
   setText(id: string, text: string | null): void {
     if (text === null) this.texts.delete(id);
     else this.texts.set(id, text);
+  }
+
+  setAgentMessage(id: string, text: string | null): void {
+    if (text === null) this.agentMessages.delete(id);
+    else this.agentMessages.set(id, text);
   }
 
   /** Where an environment works; one never set answers null, as one on another machine does. */
@@ -214,6 +221,13 @@ export class FakeThreads implements ThreadsPort {
     await tick();
     this.throwIfFailing("lastText");
     return this.texts.get(id) ?? null;
+  }
+
+  async lastAgentMessage(id: string): Promise<string | null> {
+    this.record("lastAgentMessage", id);
+    await tick();
+    this.throwIfFailing("lastAgentMessage");
+    return this.agentMessages.get(id) ?? null;
   }
 
   async workspacePath(environmentId: string): Promise<string | null> {

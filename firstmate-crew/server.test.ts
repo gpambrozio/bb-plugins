@@ -153,6 +153,45 @@ describe("server wiring", () => {
     expect(harness.sdk.callsTo("threads.output")).toEqual([]);
   });
 
+  it("keeps a blocked crewmate's status line and column through a turn that said nothing, such as autocompact's", async () => {
+    // bb 0.49: thread.idle's lastAssistantText and threads.output are the latest turn's reply only, so a
+    // compaction-only turn ends with none.
+    const { harness } = await load({ mateId: "thr_mate" });
+    const mate = makeThreadResponse({ id: "thr_mate", status: "idle" });
+    let child = makeThreadResponse({ id: "thr_child", parentThreadId: "thr_mate", status: "idle", updatedAt: 5_000 });
+    harness.sdk.stub("threads.get", () => mate);
+    harness.sdk.stub("threads.list", () => [child]);
+    harness.sdk.stub("threads.getPluginMetadata", () => ({}));
+    harness.sdk.stub("threads.interactions.list", () => []);
+    harness.sdk.stub("threads.output", () => ({ output: null }));
+    harness.sdk.stub("threads.events.list", () => []);
+
+    await harness.emitThreadEvent("thread.idle", { thread: child, lastAssistantText: "Stuck on credentials.\nblocked: need a deploy key" });
+    child = makeThreadResponse({ id: "thr_child", parentThreadId: "thr_mate", status: "idle", updatedAt: 6_000 });
+    const { errors } = await harness.emitThreadEvent("thread.idle", { thread: child, lastAssistantText: null });
+    expect(errors).toEqual([]);
+    const fleet = (await harness.callRpc("fleet.load", {})) as Fleet;
+
+    expect(fleet.cards.map((card) => [card.report, card.column])).toEqual([[{ state: "blocked", text: "need a deploy key" }, "blocked"]]);
+  });
+
+  it("after a restart, reads a crewmate's status line from its log when its latest turn said nothing", async () => {
+    const { harness } = await load({ mateId: "thr_mate" });
+    const mate = makeThreadResponse({ id: "thr_mate", status: "idle" });
+    const child = makeThreadResponse({ id: "thr_child", parentThreadId: "thr_mate", status: "idle", updatedAt: 6_000 });
+    harness.sdk.stub("threads.get", () => mate);
+    harness.sdk.stub("threads.list", () => [child]);
+    harness.sdk.stub("threads.getPluginMetadata", () => ({}));
+    harness.sdk.stub("threads.interactions.list", () => []);
+    harness.sdk.stub("threads.output", () => ({ output: null }));
+    harness.sdk.stub("threads.events.list", () => [
+      { seq: 9, createdAt: 6_000, type: "item/completed", data: { item: { type: "agentMessage", id: "m2", text: "paused: until the release" } } },
+    ]);
+
+    const fleet = (await harness.callRpc("fleet.load", {})) as Fleet;
+    expect(fleet.cards.map((card) => [card.report, card.column])).toEqual([[{ state: "paused", text: "until the release" }, "parked"]]);
+  });
+
   describe("no notification for the first mate's shipshape", () => {
     async function idleMate(settings: { mateQuietShipshape: boolean }) {
       const loaded = await load({ mateId: "thr_mate" });
