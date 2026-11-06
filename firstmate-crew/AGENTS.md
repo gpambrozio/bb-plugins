@@ -129,7 +129,8 @@ Do not break these; each was paid for.
   Paseo plugin's first mate; keep them as they are.
 - **Only the card's main button sends a suggestion.** The chevron that opens the whole text and the trash
   are its siblings, not its children, so neither can press it (`app/suggestions.tsx`).
-- **A backlog item's `(actions: …)` are its card's buttons; a held item also gets an Answer box.** Both
+- **A backlog item's `(actions: …)` are its card's buttons; every card, held or not, gets an Answer box**,
+  named by the backlog id, else the task id, else the crewmate's thread id (`cardSubject`). Both
   send through `useMateSender` like a suggestion, so they share the one send in flight, and nothing in the
   plugin edits the backlog afterwards: the first mate rewrites or drops the actions. The field's syntax
   and escapes are `takeActions` in `server/backlog.ts`; the charter teaches the same ones and quotes the

@@ -114,7 +114,8 @@ Press **FirstMate** on the first mate's thread. Each card is a worker, a backlog
   typed it, as a suggestion does, and brings its chat into view. For anything else, type in the card's
   **Answer** box and press Send: the first mate gets your words with the task's id and title in front, so
   it knows what they answer. Buttons the first mate adds to a card that is not waiting on you work the
-  same way.
+  same way, and every card has the box, so you can tell the first mate something about any task or
+  worker; a worker with no task id is named by its thread id.
 - **Notify parent.** FirstMate starts every worker with bb's Notify parent on Auto, so the first mate
   hears about each turn it finishes. bb lets you change that from any thread's menu; a card whose worker
   is set to When stuck or Off says so, because the first mate then isn't told when that worker finishes

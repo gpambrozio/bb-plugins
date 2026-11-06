@@ -1,5 +1,5 @@
 /** Words and small pure helpers the board shares. */
-import type { BacklogItem, ColumnId, CrewState, ParentNotifications, ThreadStatus, WatchResult, WatchSummary } from "../shared/types";
+import type { BacklogItem, ColumnId, CrewState, FleetCard, ParentNotifications, ThreadStatus, WatchResult, WatchSummary } from "../shared/types";
 
 export const COLUMN_TITLES: Readonly<Record<ColumnId, string>> = {
   queued: "Queued",
@@ -88,7 +88,17 @@ export function shortUrl(url: string): string {
   return url.replace(/^https?:\/\/(www\.)?github\.com\//, "");
 }
 
-/** What a held card's Answer box sends: the captain's words under the task they answer. The charter quotes it. */
+/** What a card's Answer box sends: the captain's words under the task they are about. The charter quotes it. */
 export function answerText(item: Pick<BacklogItem, "id" | "title">, text: string): string {
   return `${item.id} — ${item.title}: ${text}`;
+}
+
+/**
+ * What a card's Answer box names its words by: the backlog item's id, else the crewmate's task id, else —
+ * for a crewmate that matches no backlog item and has no task — its thread id, which the first mate can
+ * look up. A card is always one or the other, so there is always an id.
+ */
+export function cardSubject(card: Pick<FleetCard, "taskId" | "title" | "backlog" | "crew">): { id: string; title: string } {
+  const id = card.backlog?.id ?? card.taskId ?? card.crew?.threadId ?? card.title;
+  return { id, title: card.title };
 }

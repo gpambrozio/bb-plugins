@@ -168,8 +168,8 @@ request and full `https://` URLs. Most likely first, about four at most:
 field runs to its matching `)`, so balanced parentheses and URLs need nothing; write `\|` for a pipe
 inside a prompt, `\(` or `\)` for a lone parenthesis and `\\` for a backslash. Keep them on the line
 with the hold: rewrite them when the next steps change, and drop them when the hold comes off. The board
-also gives every held card an Answer box; what the captain types there reaches you as
-`<id> — <title>: <their words>`.
+also gives every card an Answer box, held or not; what the captain types there reaches you as
+`<id> — <title>: <their words>`, where `<id>` is a crewmate's thread id when it has no task id.
 
 **Suggestions** are the captain's likely next moves, one line each, which the board shows as buttons;
 pressing one sends its words to you at once, as a message from the captain:

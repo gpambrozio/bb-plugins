@@ -5,8 +5,8 @@
  * task is not Done is only ended after the captain has said so.
  *
  * A backlog item's `(actions: …)` are buttons that send their prompt to the first mate, as a suggestion
- * does; a held item — the captain's call — also gets an Answer box, whose words go to the first mate
- * under the task's id and title. Both share the one send in flight (`./send-gate`).
+ * does; every card also gets an Answer box, whose words go to the first mate under the card's id and title
+ * (`cardSubject`). Both share the one send in flight (`./send-gate`).
  */
 import { UrlLink, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 import { useState } from "react";
@@ -17,9 +17,9 @@ import { Input } from "../components/ui/input";
 import { Textarea } from "../components/ui/textarea";
 import { cn } from "../lib/utils";
 import type { rpcContract } from "../server";
-import type { BacklogAction, BacklogItem, ColumnId, FleetCard } from "../shared/types";
+import type { BacklogAction, ColumnId, FleetCard } from "../shared/types";
 import { ConfirmDialog } from "./confirm-dialog";
-import { STATE_WORDS, STATUS_WORDS, answerText, isRunning, parentNotificationsWarning, relativeTime, shortUrl } from "./format";
+import { STATE_WORDS, STATUS_WORDS, answerText, cardSubject, isRunning, parentNotificationsWarning, relativeTime, shortUrl } from "./format";
 import { reportError } from "./notify";
 import { useMateSender } from "./use-mate-sender";
 
@@ -138,7 +138,7 @@ export function Card({
       {backlog === null || backlog.actions.length === 0 ? null : (
         <BacklogActions actions={backlog.actions} sending={mate.sending} onPick={(action) => tellMate(action.prompt)} />
       )}
-      {backlog?.hold ? <AnswerBox item={backlog} sending={mate.sending} onSend={tellMate} /> : null}
+      <AnswerBox subject={cardSubject(card)} held={Boolean(backlog?.hold)} sending={mate.sending} onSend={tellMate} />
       {crew === null && backlog?.section === "in-flight" ? (
         <div className="text-xs text-muted-foreground">No worker is running for this item.</div>
       ) : null}
@@ -241,16 +241,19 @@ function BacklogActions({
 }
 
 /**
- * A line for the captain's own answer to a hold, sent under the task's id and title. The line is shut while
- * a send is out: a landed send clears it and may bring the first mate's thread into view, which unmounts a
- * worker's panel, so words typed meanwhile would be lost either way.
+ * A line for the captain's own words about a card — an answer to its hold, or anything else — sent under the
+ * card's id and title. The line is shut while a send is out: a landed send clears it and may bring the first
+ * mate's thread into view, which unmounts a worker's panel, so words typed meanwhile would be lost either way.
  */
 function AnswerBox({
-  item,
+  subject,
+  held,
   sending,
   onSend,
 }: {
-  item: BacklogItem;
+  subject: { id: string; title: string };
+  /** A held card asks the captain something, so its line reads as an answer. */
+  held: boolean;
   sending: boolean;
   onSend: (text: string, onSent: () => void) => void;
 }) {
@@ -263,14 +266,14 @@ function AnswerBox({
       onSubmit={(event) => {
         event.preventDefault();
         if (answer === "" || sending) return;
-        onSend(answerText(item, answer), () => setText(""));
+        onSend(answerText(subject, answer), () => setText(""));
       }}
     >
       <Input
         value={text}
         onChange={(event) => setText(event.target.value)}
-        placeholder="Answer the first mate…"
-        aria-label={`Answer for ${item.id}`}
+        placeholder={held ? "Answer the first mate…" : "Tell the first mate about this…"}
+        aria-label={`Answer for ${subject.id}`}
         disabled={sending}
         className="h-8 min-w-0 flex-1 text-xs"
       />
