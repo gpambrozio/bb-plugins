@@ -11,7 +11,7 @@
 import type { PluginRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
-import { CardDraftSchema, ExerciseSchema, OfferAnswerSchema, SessionSchema, ThreadViewSchema, TopicChoiceSchema, TriggerKindSchema, RefsSchema, WorkspaceSchema } from "./types";
+import { CardDraftSchema, QuestionRefSchema, ExerciseSchema, OfferAnswerSchema, SessionSchema, ThreadViewSchema, TopicChoiceSchema, TriggerKindSchema, RefsSchema, WorkspaceSchema } from "./types";
 
 export const LEARNING_TAG = "learning";
 
@@ -19,6 +19,9 @@ const ThreadRef = z.object({ threadId: z.string().min(1) });
 const SessionRef = z.object({ sessionId: z.string().min(1) });
 const Done = z.null();
 const tags = () => [LEARNING_TAG];
+
+/** At most this many questions per `openQuestions` read: this browser keeps no more drafts than that. */
+export const DRAFT_SWEEP_MAX = 20;
 
 /** At most this many threads per `threadOffers` read. */
 export const THREAD_OFFERS_BATCH_MAX = 200;
@@ -55,8 +58,13 @@ export const rpcContract = {
   },
   /** An open question's unsent answer, for its card to restore; null when there is none. */
   cardDraft: { input: SessionRef.extend({ ordinal: z.number().int().min(1) }), output: CardDraftSchema.nullable() },
-  /** Saves an open question's unsent answer as the learner types (the card debounces). */
-  saveDraft: { input: SessionRef.extend({ ordinal: z.number().int().min(1), draft: CardDraftSchema }), output: Done },
+  /** Saves an open question's unsent answer as the learner types; `saved` is false once the question is closed. */
+  saveDraft: { input: SessionRef.extend({ ordinal: z.number().int().min(1), draft: CardDraftSchema }), output: z.object({ saved: z.boolean() }) },
+  /** Which of these questions are still open, for clearing this browser's copies of closed ones. */
+  openQuestions: {
+    input: z.object({ questions: z.array(QuestionRefSchema).max(DRAFT_SWEEP_MAX) }),
+    output: z.object({ open: z.array(QuestionRefSchema) }),
+  },
   pauseSession: { input: SessionRef, output: Done },
   resumeSession: { input: SessionRef, output: z.object({ threadId: z.string() }) },
   finishSession: { input: SessionRef, output: Done },

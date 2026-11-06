@@ -193,24 +193,33 @@ lives on the server with the question (`exercises.draft`, migration 15), not in 
 
 - **The card saves its whole answer state** (the text box, or the form's values by field id, and the
   confidence) 500 ms after the last edit, and at once when it unmounts, the page is hidden
-  (`visibilitychange`: a backgrounded mobile app sends no `pagehide`) or unloaded (`app/draft.ts`,
-  `saveDraft`). On mount it asks for the draft (`cardDraft`) and restores it unless the learner typed first.
-- **Saves are ordered by revision, not by arrival.** Each edit gets a revision higher than any the card
-  made or restored; `recordDraft` writes only over a lower one (or one that does not read), so a slow
-  save that lands after a newer one is ignored.
-- **The newest unacknowledged edit is also in `localStorage`** (`draftStorageKey`: session and question)
-  from the edit until a save of it is acknowledged, every access in try/catch. An unload kills an
-  ordinary RPC and bb's SDK has no keepalive transport, so the next card on this device restores the
-  newer of that copy and the server's, and sends the copy again. A Submit or Skip that fails puts the
+  (`visibilitychange`: a backgrounded mobile app sends no `pagehide`) or unloaded (`app/draft.ts`).
+- **One question's saves go one at a time, in order.** A module-level queue per session and question
+  (so it holds across mounts of the card) keeps one `saveDraft` in flight and only the latest snapshot
+  waiting. The server stores whatever arrives and answers `saved`, false once the question is closed:
+  the last save wins. Two devices typing into one question at once is out of scope; the last save wins.
+  Do not bring back a client-side revision clock (an earlier round had one: clocks and counters disagreed
+  across devices and remounts).
+- **A backup of the newest edit lives in `localStorage`** (`draftStorageKey`, every access in try/catch)
+  from the edit until a save of it is confirmed. An entry holds the snapshot, the mount that wrote it and
+  when; a confirmation removes it only if storage still holds exactly that snapshot from that mount, so a
+  late callback of an old card never removes a newer edit. A backup is unconfirmed by definition, so on
+  mount it wins over the server's draft and is sent again; otherwise the server's draft is restored
+  unless the learner typed before it arrived. An unload kills an ordinary RPC and bb's SDK has no
+  keepalive transport, so this is the recovery on the same device. A Submit or Skip that fails puts the
   unsent edit back and saves it.
+- **Backups are swept** (`sweepDrafts`, when a card or the Learning tab mounts): unreadable ones, ones
+  older than 7 days, all but the newest 20, then those `openQuestions` says are closed; a failed read
+  drops nothing more. Finishing or deleting a session in the tab drops its backups at once
+  (`forgetSessionDrafts`).
 - **A draft is read against the stored form like an answer**, when saved and again when handed back
   (`draftValues`: `sanitizeValues`, then a text field or list left empty starts as on a fresh card). A
   question without a form keeps only text, cut at `ANSWER_MAX_CHARS`; the RPC input is capped too.
 - **It goes with the question.** `recordAnswer` clears it on an answer, a skip and "more specific"; a save
   for a question answered or skipped, or a session that is over, is ignored, so a save in flight when the
   learner submits leaves nothing. A pause keeps it (the card saves first), and Resume's card gets it back.
-- `saveDraft` is a change, so another plugin is refused; `cardDraft` is a read and stays open, like the
-  history's answers. Neither invalidates `LEARNING_TAG`: typing must not refetch every view.
+- `saveDraft` is a change, so another plugin is refused; `cardDraft` and `openQuestions` are reads and
+  stay open, like the history's answers. Neither invalidates `LEARNING_TAG`: typing must not refetch every view.
 
 ## What bb 0.48.1 does that this relies on (the spike's evidence)
 

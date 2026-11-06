@@ -2,29 +2,199 @@
  * A card's unsent answer, kept on the server with its question (`saveDraft`, `cardDraft`), so it survives
  * leaving the thread (which unmounts the card), a reload and another device.
  *
- * - **Every edit is a new revision**, higher than any before it on this card or restored from the server.
- *   The server keeps a draft only over a lower revision, so saves that arrive out of order keep the newest.
- * - **The newest unacknowledged edit is also in this browser's storage** (`localStorage`, by session and
- *   question) from the moment it is made until the server has acknowledged a save of it. An unload that
- *   kills the request, or a page closed inside the 500 ms wait, loses nothing on this device: the next
- *   card restores it and sends it again. Storage that throws or is missing (a private window) only loses
- *   that safety net.
- * - **Saves go** `DRAFT_SAVE_DELAY_MS` after the last edit, and at once when the card unmounts, the page
- *   is hidden (`visibilitychange`, which a backgrounded mobile app sends without `pagehide`) or unloaded.
- * - **On mount** the card restores whichever of the server's draft and the stored one is newer, unless the
- *   learner has already typed, and sends the stored one again when the server's is older.
- * - **After an answer, a skip or "more specific"** nothing more is saved and the stored copy goes: the
- *   server clears the draft with the question and refuses a later save. If that submission fails, the
- *   unsent edit comes back and is saved. A pause saves first: the question will come back.
+ * - **One question's saves go one at a time, in order** (`enqueue`, module level, so it holds across
+ *   mounts of the card): one request in flight at most, and while it runs only the latest snapshot
+ *   waits, then goes. The server keeps whatever arrives, so the last save wins. Two devices typing into
+ *   the same question at once is out of scope: the last save wins there too.
+ * - **A backup of the newest edit stays in this browser's storage** (`localStorage`, by session and
+ *   question, every access in try/catch) from the edit until a save of it is confirmed. Each entry holds
+ *   the snapshot and the mount that wrote it, and a confirmation removes it only if storage still holds
+ *   exactly that snapshot from that mount, so an old card's late callback never removes a newer edit.
+ *   An unload that kills the request, or a page closed inside the wait, loses nothing on this device:
+ *   the next card restores the backup and sends it again. A backup exists only while unconfirmed, so it
+ *   is newer than anything the server has, and it wins over the server's draft.
+ * - **Saves go** `DRAFT_SAVE_DELAY_MS` after the last edit, and at once when the card unmounts or the
+ *   page is hidden (`visibilitychange`, which a backgrounded mobile app sends without `pagehide`) or
+ *   unloaded. An edit made before the server's draft arrives wins over it.
+ * - **After an answer, a skip or "more specific"** nothing more is saved and this card's backup goes. If
+ *   that submission fails, the unsent edit is put back and saved. A pause saves first.
+ * - **Backups of closed questions are swept** (`sweepDrafts`, when a card or the Learning tab mounts):
+ *   ones the server says are closed, ones older than `DRAFT_KEEP_MS`, and all but the newest
+ *   `DRAFT_SWEEP_MAX`. Finishing or deleting a session in this browser drops its backups at once
+ *   (`forgetSessionDrafts`).
  *
- * Saving is best effort: a failed save is logged, kept in storage, and the card keeps working.
+ * Saving is best effort: a failed save is logged, its backup kept, and the card keeps working.
  */
 import { useEffect, useRef } from "react";
+import { z } from "zod";
 
-import { CardDraftSchema, type CardDraft } from "../shared/types";
+import { DRAFT_SWEEP_MAX } from "../shared/contract";
+import { CardDraftSchema, type CardDraft, type QuestionRef } from "../shared/types";
 import { useLearningRpc } from "./data";
 
 export const DRAFT_SAVE_DELAY_MS = 500;
+/** A backup older than this is dropped whatever the server says. */
+export const DRAFT_KEEP_MS = 7 * 24 * 60 * 60 * 1000;
+
+const PREFIX = "learning-exercises:draft:";
+
+/** Where this browser keeps a question's unconfirmed edit. */
+export function draftStorageKey(sessionId: string, ordinal: number): string {
+  return `${PREFIX}${sessionId}:${ordinal}`;
+}
+
+const BackupSchema = z.object({ mount: z.string(), at: z.number(), draft: CardDraftSchema });
+type Backup = z.infer<typeof BackupSchema>;
+type Snapshot = { mount: string; draft: CardDraft };
+type Call = ReturnType<typeof useLearningRpc>["call"];
+
+function warn(what: string, error: unknown): void {
+  console.warn(`Learning Exercises: could not ${what}: ${error instanceof Error ? error.message : String(error)}`);
+}
+
+function readBackup(key: string): Backup | null {
+  try {
+    const text = window.localStorage.getItem(key);
+    if (text === null) return null;
+    const parsed = BackupSchema.safeParse(JSON.parse(text));
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeBackup(key: string, snapshot: Snapshot): void {
+  try {
+    window.localStorage.setItem(key, JSON.stringify({ ...snapshot, at: Date.now() } satisfies Backup));
+  } catch {
+    // Storage is full, blocked or missing: the server save still runs.
+  }
+}
+
+function removeKey(key: string): void {
+  try {
+    window.localStorage.removeItem(key);
+  } catch {
+    // Nothing to do without storage.
+  }
+}
+
+/** Removes a backup only if it still holds exactly `snapshot`, written by its mount. */
+function removeBackupIf(key: string, snapshot: Snapshot): void {
+  const backup = readBackup(key);
+  if (backup !== null && backup.mount === snapshot.mount && JSON.stringify(backup.draft) === JSON.stringify(snapshot.draft)) removeKey(key);
+}
+
+function backupKeys(): string[] {
+  try {
+    const keys: string[] = [];
+    for (let index = 0; index < window.localStorage.length; index += 1) {
+      const key = window.localStorage.key(index);
+      if (key?.startsWith(PREFIX) === true) keys.push(key);
+    }
+    return keys;
+  } catch {
+    return [];
+  }
+}
+
+function questionOf(key: string): QuestionRef | null {
+  const match = /^(.+):(\d+)$/.exec(key.slice(PREFIX.length));
+  return match === null ? null : { sessionId: match[1]!, ordinal: Number(match[2]) };
+}
+
+// ── one question's saves, in order ─────────────────────────────────────────
+
+interface Queue {
+  sessionId: string;
+  ordinal: number;
+  call: Call;
+  busy: boolean;
+  next: Snapshot | null;
+}
+
+const queues = new Map<string, Queue>();
+
+/** Sends `snapshot` once the save in flight for its question, if any, is done; only the latest waiting one goes. */
+function enqueue(call: Call, question: QuestionRef, snapshot: Snapshot): void {
+  const key = draftStorageKey(question.sessionId, question.ordinal);
+  const queue = queues.get(key) ?? { ...question, call, busy: false, next: null };
+  queue.call = call;
+  queue.next = snapshot;
+  queues.set(key, queue);
+  if (!queue.busy) pump(key, queue);
+}
+
+/** Drops a question's waiting snapshot (the one in flight still lands). */
+function dropWaiting(question: QuestionRef): void {
+  const queue = queues.get(draftStorageKey(question.sessionId, question.ordinal));
+  if (queue !== undefined) queue.next = null;
+}
+
+function pump(key: string, queue: Queue): void {
+  const snapshot = queue.next;
+  if (snapshot === null) {
+    queues.delete(key);
+    return;
+  }
+  queue.next = null;
+  queue.busy = true;
+  queue
+    .call("saveDraft", { sessionId: queue.sessionId, ordinal: queue.ordinal, draft: snapshot.draft })
+    .then(({ saved }) => {
+      // Not saved: the question is closed, and so is any backup of it.
+      if (saved) removeBackupIf(key, snapshot);
+      else removeKey(key);
+    })
+    .catch((error: unknown) => warn(`save the unsent answer to question ${queue.ordinal}`, error))
+    .finally(() => {
+      queue.busy = false;
+      pump(key, queue);
+    });
+}
+
+// ── backups of closed questions ────────────────────────────────────────────
+
+/**
+ * Drops this browser's backups that are unreadable, older than `DRAFT_KEEP_MS`, past the newest
+ * `DRAFT_SWEEP_MAX`, or of questions the server says are closed. A failed read of the server drops nothing
+ * more.
+ */
+export async function sweepDrafts(call: Call, now = Date.now()): Promise<void> {
+  const kept: { key: string; question: QuestionRef; at: number }[] = [];
+  for (const key of backupKeys()) {
+    const backup = readBackup(key);
+    const question = questionOf(key);
+    if (backup === null || question === null || now - backup.at > DRAFT_KEEP_MS) removeKey(key);
+    else kept.push({ key, question, at: backup.at });
+  }
+  kept.sort((a, b) => b.at - a.at);
+  for (const extra of kept.splice(DRAFT_SWEEP_MAX)) removeKey(extra.key);
+  if (kept.length === 0) return;
+  try {
+    const { open } = await call("openQuestions", { questions: kept.map((entry) => entry.question) });
+    const isOpen = new Set(open.map((question) => draftStorageKey(question.sessionId, question.ordinal)));
+    for (const entry of kept) if (!isOpen.has(entry.key) && !queues.has(entry.key)) removeKey(entry.key);
+  } catch (error) {
+    warn("check which unsent answers are still open", error);
+  }
+}
+
+/** Drops a session's backups in this browser (it was finished or deleted here). */
+export function forgetSessionDrafts(sessionId: string): void {
+  for (const key of backupKeys()) if (questionOf(key)?.sessionId === sessionId) removeKey(key);
+}
+
+/** Runs `sweepDrafts` once when the calling component mounts. */
+export function useDraftSweep(): void {
+  const rpc = useLearningRpc();
+  const call = useRef(rpc.call).current;
+  useEffect(() => {
+    void sweepDrafts(call);
+  }, [call]);
+}
+
+// ── the card's hook ────────────────────────────────────────────────────────
 
 export interface CardDraftHandle {
   /** Marks the learner's own edit: from now on the draft is theirs, and a late restore is dropped. */
@@ -33,154 +203,104 @@ export interface CardDraftHandle {
   flush(): void;
   /** No more saves: the question is being answered or skipped. */
   stop(): void;
-  /** The submission failed and the card is still open: what was unsent is kept and saved again. */
+  /** The submission failed and the card is still open: the unsent edit is kept and saved. */
   resume(): void;
 }
 
-/** Where this browser keeps a question's unacknowledged edit. */
-export function draftStorageKey(sessionId: string, ordinal: number): string {
-  return `learning-exercises:draft:${sessionId}:${ordinal}`;
+function newMountId(): string {
+  return typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
 }
 
-function readStored(key: string): CardDraft | null {
-  try {
-    const text = window.localStorage.getItem(key);
-    if (text === null) return null;
-    const parsed = CardDraftSchema.safeParse(JSON.parse(text));
-    return parsed.success ? parsed.data : null;
-  } catch {
-    return null;
-  }
-}
-
-function writeStored(key: string, draft: CardDraft | null): void {
-  try {
-    if (draft === null) window.localStorage.removeItem(key);
-    else window.localStorage.setItem(key, JSON.stringify(draft));
-  } catch {
-    // Storage is full, blocked or missing: the server save still runs.
-  }
-}
-
-function warn(what: string, error: unknown): void {
-  console.warn(`Learning Exercises: could not ${what}: ${error instanceof Error ? error.message : String(error)}`);
-}
-
-export function useCardDraft(question: { sessionId: string; ordinal: number }, draft: CardDraft, restore: (draft: CardDraft) => void): CardDraftHandle {
+export function useCardDraft(question: QuestionRef, draft: CardDraft, restore: (draft: CardDraft) => void): CardDraftHandle {
   const rpc = useLearningRpc();
-  const rpcRef = useRef(rpc);
-  rpcRef.current = rpc;
+  const callRef = useRef<Call>(rpc.call);
+  callRef.current = rpc.call;
   const restoreRef = useRef(restore);
   restoreRef.current = restore;
   const { sessionId, ordinal } = question;
   const key = draftStorageKey(sessionId, ordinal);
 
   const state = useRef({
+    mount: newMountId(),
     touched: false,
     stopped: false,
-    /** The highest revision this card has made or seen. */
-    revision: 0,
-    /** The newest edit the server has not acknowledged yet; null when there is none. */
-    unsent: null as CardDraft | null,
+    /** The learner's latest edit on this card, and whether it still has to be handed to the queue. */
+    latest: null as CardDraft | null,
+    waiting: false,
     timer: null as ReturnType<typeof setTimeout> | null,
   }).current;
 
-  const nextRevision = () => {
-    state.revision = Math.max(Date.now(), state.revision + 1);
-    return state.revision;
-  };
-
-  const send = useRef(() => {
+  const flush = useRef(() => {
     if (state.timer !== null) clearTimeout(state.timer);
     state.timer = null;
-    const draft = state.unsent;
-    if (draft === null || state.stopped) return;
-    rpcRef.current
-      .call("saveDraft", { sessionId, ordinal, draft })
-      .then(() => {
-        // The server now holds this revision or a newer one; a newer edit made meanwhile stays unsent.
-        if (state.unsent?.revision === draft.revision) {
-          state.unsent = null;
-          writeStored(key, null);
-        }
-      })
-      .catch((error: unknown) => warn(`save the unsent answer to question ${ordinal}`, error));
+    if (!state.waiting || state.latest === null || state.stopped) return;
+    state.waiting = false;
+    enqueue(callRef.current, { sessionId, ordinal }, { mount: state.mount, draft: state.latest });
   }).current;
 
-  // On mount: the newer of the server's draft and this browser's, and the stored one sent again if the
-  // server's is older.
+  // On mount: this browser's backup if there is one (it is newer than the server's), sent again; otherwise
+  // the server's draft, unless the learner has typed by the time it arrives.
   useEffect(() => {
     let live = true;
-    const stored = readStored(key);
-    if (stored !== null) state.revision = Math.max(state.revision, stored.revision ?? 0);
-    const settle = (server: CardDraft | null) => {
-      if (!live) return;
-      const serverRevision = server?.revision ?? 0;
-      state.revision = Math.max(state.revision, serverRevision);
-      const storedIsNewer = stored !== null && (server === null || (stored.revision ?? 0) > serverRevision);
-      const newest = storedIsNewer ? stored : server;
-      if (newest !== null && !state.touched && !state.stopped) restoreRef.current(newest);
-      if (storedIsNewer && !state.touched) {
-        state.unsent = stored;
-        send();
-      } else if (!storedIsNewer && stored !== null) {
-        writeStored(key, null);
-      }
-    };
-    rpcRef.current
-      .call("cardDraft", { sessionId, ordinal })
-      .then(settle)
-      .catch((error: unknown) => {
-        warn(`read the unsent answer to question ${ordinal}`, error);
-        // The server cannot say: what this browser kept is still the learner's latest.
-        if (live && stored !== null && !state.touched && !state.stopped) restoreRef.current(stored);
-      });
+    const backup = readBackup(key);
+    if (backup !== null) {
+      restoreRef.current(backup.draft);
+      enqueue(callRef.current, { sessionId, ordinal }, { mount: backup.mount, draft: backup.draft });
+    }
+    void sweepDrafts(callRef.current);
+    callRef.current("cardDraft", { sessionId, ordinal })
+      .then((saved) => {
+        if (live && backup === null && saved !== null && !state.touched && !state.stopped) restoreRef.current(saved);
+      })
+      .catch((error: unknown) => warn(`read the unsent answer to question ${ordinal}`, error));
     return () => {
       live = false;
     };
-  }, [key, sessionId, ordinal, send, state]);
+  }, [key, sessionId, ordinal, state]);
 
-  // Each edit is a new revision, kept in storage at once and saved after the wait.
+  // Each edit is backed up at once and saved after the wait.
   const serialized = JSON.stringify(draft);
   useEffect(() => {
     if (!state.touched || state.stopped) return;
-    const next: CardDraft = { ...(JSON.parse(serialized) as CardDraft), revision: nextRevision() };
-    state.unsent = next;
-    writeStored(key, next);
+    state.latest = JSON.parse(serialized) as CardDraft;
+    state.waiting = true;
+    writeBackup(key, { mount: state.mount, draft: state.latest });
     if (state.timer !== null) clearTimeout(state.timer);
-    state.timer = setTimeout(send, DRAFT_SAVE_DELAY_MS);
-  }, [serialized, key, send, state]);
+    state.timer = setTimeout(flush, DRAFT_SAVE_DELAY_MS);
+  }, [serialized, key, flush, state]);
 
   // Leaving the thread unmounts the card; hiding or unloading the page may end it. Save what is waiting.
   useEffect(() => {
     const hidden = () => {
-      if (document.visibilityState === "hidden") send();
+      if (document.visibilityState === "hidden") flush();
     };
-    window.addEventListener("pagehide", send);
+    window.addEventListener("pagehide", flush);
     document.addEventListener("visibilitychange", hidden);
     return () => {
-      window.removeEventListener("pagehide", send);
+      window.removeEventListener("pagehide", flush);
       document.removeEventListener("visibilitychange", hidden);
-      send();
+      flush();
     };
-  }, [send]);
+  }, [flush]);
 
   return {
     edited: () => {
       state.touched = true;
     },
-    flush: send,
+    flush,
     stop: () => {
       state.stopped = true;
       if (state.timer !== null) clearTimeout(state.timer);
       state.timer = null;
-      writeStored(key, null);
+      dropWaiting({ sessionId, ordinal });
+      if (state.latest !== null) removeBackupIf(key, { mount: state.mount, draft: state.latest });
     },
     resume: () => {
       state.stopped = false;
-      if (state.unsent === null) return;
-      writeStored(key, state.unsent);
-      send();
+      if (state.latest === null) return;
+      writeBackup(key, { mount: state.mount, draft: state.latest });
+      state.waiting = true;
+      flush();
     },
   };
 }

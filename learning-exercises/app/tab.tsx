@@ -36,6 +36,7 @@ import { Icon } from "@/components/ui/icon";
 import { Input } from "@/components/ui/input";
 import { CONFIDENCE_LABELS, PLUGIN_ID, TRIGGER_LABELS, type Session, type ThreadView, type TopicChoice } from "../shared/types";
 import { AnswerView } from "./answer-form";
+import { forgetSessionDrafts, useDraftSweep } from "./draft";
 import { errorText, useLearningRpc, useProjectSessions, useSessionDetail, useSidebarThread, useThreadView, useTopicChoices } from "./data";
 import { FileMarkdown, TextWithFileRefs } from "./file-refs";
 import { OfferCard } from "./offer-card";
@@ -171,7 +172,18 @@ function SessionControls(props: { session: Session; currentThreadId: string }) {
         )
       )}
       {open && (
-        <Button type="button" size="sm" variant="ghost" disabled={busy !== null} onClick={() => void act("finish", () => rpc.call("finishSession", { sessionId: session.id }))}>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          disabled={busy !== null}
+          onClick={() =>
+            void act("finish", async () => {
+              await rpc.call("finishSession", { sessionId: session.id });
+              forgetSessionDrafts(session.id);
+            })
+          }
+        >
           Finish
         </Button>
       )}
@@ -363,7 +375,13 @@ function SessionRow(props: { session: Session; currentThreadId: string }) {
             )}
             {confirming ? (
               <>
-                <Button type="button" size="sm" variant="destructive" disabled={busy !== null} onClick={() => void act("delete", () => rpc.call("deleteSession", { sessionId: session.id }))}>
+                <Button type="button" size="sm" variant="destructive" disabled={busy !== null} onClick={() =>
+                    void act("delete", async () => {
+                      await rpc.call("deleteSession", { sessionId: session.id });
+                      forgetSessionDrafts(session.id);
+                    })
+                  }
+                >
                   Delete it and its answers
                 </Button>
                 <Button type="button" size="sm" variant="ghost" onClick={() => setConfirming(false)}>
@@ -463,6 +481,8 @@ function Footer(props: { view: ThreadView; threadId: string }) {
 
 export function LearningTab({ threadId }: ExperimentalThreadTabProps) {
   const visible = experimental_useTabVisible();
+  // This browser's unsent answers to questions that have closed since (finished elsewhere, deleted).
+  useDraftSweep();
   const navigate = useBbNavigate();
   const view = useThreadView(threadId, visible);
   if (view.error !== null && view.data === undefined) return <p className="p-3 text-sm text-destructive">Learning Exercises: {view.error.message}</p>;

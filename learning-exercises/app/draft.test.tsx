@@ -15,9 +15,10 @@ import { FakePorts, flush, thread } from "../server/testing/fake-ports";
 import { EVERY_KIND } from "../server/testing/forms";
 import { memoryStore, settingsWith } from "../server/testing/store";
 import { rpcContract } from "../shared/contract";
-import type { CardPayload } from "../shared/types";
+import type { CardPayload, Session, ThreadView } from "../shared/types";
 import { ExerciseCard } from "./card";
-import { DRAFT_SAVE_DELAY_MS, draftStorageKey } from "./draft";
+import { DRAFT_KEEP_MS, DRAFT_SAVE_DELAY_MS, draftStorageKey, sweepDrafts } from "./draft";
+import { LearningTab } from "./tab";
 
 vi.mock("sonner", () => ({ toast: Object.assign(vi.fn(), { error: vi.fn(), success: vi.fn() }) }));
 
@@ -40,6 +41,7 @@ async function server(form?: unknown) {
   const payload = ports.cards[0]!.request.payload;
   const saves: unknown[] = [];
   const rpc = {
+    openQuestions: (input: { questions: { sessionId: string; ordinal: number }[] }) => api.openQuestions(input),
     cardDraft: (input: { sessionId: string; ordinal: number }) => api.cardDraft(input),
     saveDraft: (input: { sessionId: string; ordinal: number; draft: never }) => {
       saves.push(input.draft);
@@ -166,7 +168,7 @@ describe("an unsent answer", () => {
     mount(payload, rpc);
     fireEvent.change(screen.getByLabelText("Your answer"), { target: { value: "half an answer" } });
     fireEvent.click(screen.getByRole("button", { name: "Pause session" }));
-    await waitFor(() => expect(saves).toEqual([{ answer: "half an answer", confidence: null, revision: expect.any(Number) }]));
+    await waitFor(() => expect(saves).toEqual([{ answer: "half an answer", confidence: null }]));
   });
 });
 
@@ -175,10 +177,13 @@ describe("an unsent answer", () => {
  * reaches the server) or drops it (the request dies, as on an unload). `mode` "auto" delivers at once.
  */
 function network(rpc: { cardDraft: (input: { sessionId: string; ordinal: number }) => unknown; saveDraft: (input: { sessionId: string; ordinal: number; draft: never }) => unknown }) {
-  const queue: { draft: { answer?: string; revision?: number }; deliver: () => void; drop: () => void }[] = [];
-  const net = { mode: "hold" as "hold" | "auto" | "fail", queue };
+  const queue: { draft: { answer?: string }; deliver: () => void; drop: () => void }[] = [];
+  const net = { mode: "hold" as "hold" | "auto" | "fail", queue, slowRead: null as null | (() => void) };
   const wrapped = {
-    cardDraft: rpc.cardDraft,
+    cardDraft: (input: { sessionId: string; ordinal: number }) => {
+      if (net.slowRead === null) return rpc.cardDraft(input);
+      return new Promise((resolve) => (net.slowRead = () => resolve(rpc.cardDraft(input))));
+    },
     saveDraft: (input: { sessionId: string; ordinal: number; draft: never }) => {
       if (net.mode === "auto") return rpc.saveDraft(input);
       if (net.mode === "fail") return Promise.reject(new Error("request killed"));
@@ -186,52 +191,99 @@ function network(rpc: { cardDraft: (input: { sessionId: string; ordinal: number 
         queue.push({ draft: input.draft, deliver: () => resolve(rpc.saveDraft(input)), drop: () => reject(new Error("request killed")) });
       });
     },
+    openQuestions: (input: { questions: { sessionId: string; ordinal: number }[] }) => (rpc as unknown as { openQuestions: (i: typeof input) => unknown }).openQuestions(input),
   };
   return { net, wrapped };
 }
 
 const typeAnswer = (text: string) => fireEvent.change(screen.getByLabelText("Your answer"), { target: { value: text } });
-const stored = (sessionId: string) => window.localStorage.getItem(draftStorageKey(sessionId, 1));
+const backup = (sessionId: string, ordinal = 1) => {
+  const text = window.localStorage.getItem(draftStorageKey(sessionId, ordinal));
+  return text === null ? null : (JSON.parse(text) as { mount: string; at: number; draft: { answer?: string } });
+};
 
-describe("an unsent answer, when the network and the page misbehave (review pass 1 of 41aa14a)", () => {
-  it("an older save delivered after a newer one does not replace it", async () => {
+describe("an unsent answer, when the network and the page misbehave (review passes 1 and 2 of the drafts)", () => {
+  it("one question's saves go one at a time, and only the latest waiting edit goes next", async () => {
     const { payload, rpc, sessions, sessionId } = await server();
     const { net, wrapped } = network(rpc);
     mount(payload, wrapped);
-    typeAnswer("first words");
+    typeAnswer("one");
     await waitFor(() => expect(net.queue).toHaveLength(1), { timeout: DRAFT_SAVE_DELAY_MS * 4 });
-    typeAnswer("first words, then more");
-    // The learner switches threads: the newer edit goes at once, and arrives first.
+    typeAnswer("one two");
+    await new Promise((resolve) => setTimeout(resolve, DRAFT_SAVE_DELAY_MS + 50));
+    typeAnswer("one two three");
+    // The learner switches threads: the newest edit waits behind the save in flight; "one two" never goes.
     cleanup();
-    await waitFor(() => expect(net.queue).toHaveLength(2));
-    net.queue[1]!.deliver();
-    net.queue[0]!.deliver();
     await flush();
-    expect(sessions.cardDraft(sessionId, 1)?.answer).toBe("first words, then more");
+    expect(net.queue).toHaveLength(1);
+    net.queue[0]!.deliver();
+    await waitFor(() => expect(net.queue).toHaveLength(2));
+    expect(net.queue[1]!.draft.answer).toBe("one two three");
+    net.queue[1]!.deliver();
+    await waitFor(() => expect(sessions.cardDraft(sessionId, 1)?.answer).toBe("one two three"));
+    await waitFor(() => expect(backup(sessionId)).toBeNull());
     net.mode = "auto";
     mount(payload, wrapped);
-    await waitFor(() => expect(value("Your answer")).toBe("first words, then more"));
+    await waitFor(() => expect(value("Your answer")).toBe("one two three"));
   });
 
-  it("a card mounted again while its saves are still on their way restores the latest edit and sends it again", async () => {
+  it("an old card's late confirmation never removes a newer card's backup", async () => {
     const { payload, rpc, sessions, sessionId } = await server();
     const { net, wrapped } = network(rpc);
     mount(payload, wrapped);
-    typeAnswer("typed, not yet saved");
+    typeAnswer("A");
     cleanup();
     await waitFor(() => expect(net.queue).toHaveLength(1));
-    // Back before the save landed: the server has nothing yet, this browser has the edit.
-    expect(JSON.parse(stored(sessionId)!)).toMatchObject({ answer: "typed, not yet saved" });
+    // Back while A is still on its way: the backup brings A back; the learner goes on.
     mount(payload, wrapped);
-    await waitFor(() => expect(value("Your answer")).toBe("typed, not yet saved"));
+    await waitFor(() => expect(value("Your answer")).toBe("A"));
+    typeAnswer("A, then B");
+    expect(backup(sessionId)?.draft.answer).toBe("A, then B");
+    // A's confirmation arrives for the old card, then for the new card's resend of A: B's backup stays.
+    net.queue[0]!.deliver();
     await waitFor(() => expect(net.queue).toHaveLength(2));
-    expect(net.queue[1]!.draft.answer).toBe("typed, not yet saved");
-    // Both arrive (the same revision twice); the copy in storage goes once the server has it.
+    expect(net.queue[1]!.draft.answer).toBe("A");
+    expect(backup(sessionId)?.draft.answer).toBe("A, then B");
+    cleanup();
     net.queue[1]!.deliver();
+    await flush();
+    expect(backup(sessionId)?.draft.answer).toBe("A, then B");
+    // B goes next, and its own confirmation removes it.
+    await waitFor(() => expect(net.queue.at(-1)?.draft.answer).toBe("A, then B"));
+    net.queue.at(-1)!.deliver();
+    await waitFor(() => expect(backup(sessionId)).toBeNull());
+    expect(sessions.cardDraft(sessionId, 1)?.answer).toBe("A, then B");
+  });
+
+  it("an edit made before the server's draft arrives wins over it, and keeps its backup", async () => {
+    const { payload, rpc, sessions, sessionId } = await server();
+    sessions.saveDraft(sessionId, 1, { answer: "from the server" });
+    const { net, wrapped } = network(rpc);
+    net.slowRead = () => {};
+    mount(payload, wrapped);
+    typeAnswer("typed at once");
+    net.slowRead();
+    await flush();
+    expect(value("Your answer")).toBe("typed at once");
+    expect(backup(sessionId)?.draft.answer).toBe("typed at once");
+  });
+
+  it("a backup is restored at once and sent again; the learner's next edit outlives that save's confirmation", async () => {
+    const { payload, rpc, sessions, sessionId } = await server();
+    sessions.saveDraft(sessionId, 1, { answer: "older, on the server" });
+    window.localStorage.setItem(draftStorageKey(sessionId, 1), JSON.stringify({ mount: "an-earlier-page", at: Date.now(), draft: { answer: "kept in this browser" } }));
+    const { net, wrapped } = network(rpc);
+    net.slowRead = () => {};
+    mount(payload, wrapped);
+    await waitFor(() => expect(value("Your answer")).toBe("kept in this browser"));
+    typeAnswer("kept in this browser, and more");
+    // The server's older draft arrives late, and the backup's own save is confirmed: neither undoes the edit.
+    net.slowRead();
+    await waitFor(() => expect(net.queue).toHaveLength(1));
     net.queue[0]!.deliver();
     await flush();
-    expect(sessions.cardDraft(sessionId, 1)?.answer).toBe("typed, not yet saved");
-    await waitFor(() => expect(stored(sessionId)).toBeNull());
+    expect(value("Your answer")).toBe("kept in this browser, and more");
+    expect(backup(sessionId)?.draft.answer).toBe("kept in this browser, and more");
   });
 
   it("saves at once when the page is hidden, before the wait is over", async () => {
@@ -259,13 +311,13 @@ describe("an unsent answer, when the network and the page misbehave (review pass
     cleanup();
     await flush();
     expect(sessions.cardDraft(sessionId, 1)).toBeNull();
-    expect(stored(sessionId)).not.toBeNull();
+    expect(backup(sessionId)?.draft.answer).toBe("written just before closing");
     // The page loads again.
     net.mode = "auto";
     mount(payload, wrapped);
     await waitFor(() => expect(value("Your answer")).toBe("written just before closing"));
     await waitFor(() => expect(sessions.cardDraft(sessionId, 1)?.answer).toBe("written just before closing"));
-    await waitFor(() => expect(stored(sessionId)).toBeNull());
+    await waitFor(() => expect(backup(sessionId)).toBeNull());
   });
 
   it.each(["Submit", "Skip"])("a %s that fails keeps the unsent edit and saves it", async (button) => {
@@ -285,5 +337,76 @@ describe("an unsent answer, when the network and the page misbehave (review pass
     await waitFor(() => expect(submit).toHaveBeenCalled());
     await waitFor(() => expect(sessions.cardDraft(sessionId, 1)?.answer).toBe("my answer, sent too soon"));
     expect((screen.getByRole("button", { name: "Submit" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+});
+
+describe("backups of closed questions (review pass 2 of the drafts, finding 6)", () => {
+  const put = (key: string, at: number, answer = "x") => window.localStorage.setItem(key, JSON.stringify({ mount: "m", at, draft: { answer } }));
+  const keys = () => Object.keys(window.localStorage).sort();
+
+  it("a card's mount drops backups of closed questions and keeps its own", async () => {
+    const { payload, rpc, sessionId } = await server();
+    put(draftStorageKey(sessionId, 1), Date.now(), "mine");
+    put(draftStorageKey("ses_finished", 3), Date.now());
+    put(draftStorageKey(sessionId, 7), Date.now());
+    window.localStorage.setItem("someone-else", "untouched");
+    mount(payload, network(rpc).wrapped);
+    await waitFor(() => expect(keys()).toEqual([draftStorageKey(sessionId, 1), "someone-else"].sort()));
+    expect(value("Your answer")).toBe("mine");
+  });
+
+  it("drops backups older than a week, unreadable ones, and all but the newest 20, before asking the server", async () => {
+    const now = Date.now();
+    put(draftStorageKey("ses_old", 1), now - DRAFT_KEEP_MS - 1);
+    window.localStorage.setItem(draftStorageKey("ses_bad", 1), "{not json");
+    for (let index = 0; index < 25; index += 1) put(draftStorageKey(`ses_${index}`, 1), now - index * 1000);
+    const asked: unknown[] = [];
+    const call = (async (_method: string, input: { questions: { sessionId: string; ordinal: number }[] }) => {
+      asked.push(...input.questions);
+      return { open: input.questions };
+    }) as never;
+    await sweepDrafts(call, now);
+    expect(asked).toHaveLength(20);
+    expect(keys()).toEqual(Array.from({ length: 20 }, (_, index) => draftStorageKey(`ses_${index}`, 1)).sort());
+  });
+
+  it("keeps everything the server could not be asked about", async () => {
+    put(draftStorageKey("ses_a", 1), Date.now());
+    await sweepDrafts((async () => {
+      throw new Error("offline");
+    }) as never);
+    expect(keys()).toEqual([draftStorageKey("ses_a", 1)]);
+  });
+
+  it("finishing or deleting a session in the Learning tab drops its backups at once", async () => {
+    const { rpc } = await server();
+    const hosted: Session = { id: "ses_mine", mode: "fork", state: "active", topic: "t", trigger: "manual", sourceThreadId: "thr_work", threadId: "thr_fork", pauseReason: null, summary: null, createdAt: 1, updatedAt: 2, finishedAt: null, asked: 2, answered: 1 };
+    const finished: Session = { ...hosted, id: "ses_done", state: "finished", finishedAt: 3 };
+    const view: ThreadView = { eligible: false, canStart: false, offer: null, hosted, started: null, offersOn: true, projectKey: "k", projectName: "calc", projectNever: false, offersOffGlobally: false, sessionWhere: "fork", workspace: null };
+    put(draftStorageKey("ses_mine", 2), Date.now());
+    put(draftStorageKey("ses_done", 1), Date.now());
+    put(draftStorageKey("ses_other", 1), Date.now());
+    renderSlot({ component: LearningTab }, { threadId: "thr_fork", environment: null }, {
+      rpc: {
+        threadView: () => view,
+        projectSessions: () => ({ paused: [], previous: [finished], hasMore: false }),
+        sessionDetail: () => ({ session: finished, exercises: [], workspace: null }),
+        topicChoices: () => ({ choices: [] }),
+        finishSession: () => null,
+        deleteSession: () => null,
+        // The sweep: everything is open as far as the server knows.
+        openQuestions: (input: { questions: unknown[] }) => ({ open: input.questions }),
+        saveDraft: rpc.saveDraft,
+        cardDraft: rpc.cardDraft,
+      } as never,
+      experimental_rpcContract: rpcContract,
+      sidebarThreads: { status: "ready", threads: [{ id: "thr_fork", projectId: "proj_1", title: "t", titleFallback: null, displayTitle: "t", parentThreadId: null, lifecycleOwnerThreadId: null, originPluginId: "learning-exercises", originKind: null, sourceThreadId: "thr_work", status: "idle", hasPendingInteraction: false }] } as never,
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "Finish" }));
+    await waitFor(() => expect(keys()).toEqual([draftStorageKey("ses_done", 1), draftStorageKey("ses_other", 1)].sort()));
+    fireEvent.click(await screen.findByRole("button", { name: /Add median|^t/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete…" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete it and its answers" }));
+    await waitFor(() => expect(keys()).toEqual([draftStorageKey("ses_other", 1)]));
   });
 });

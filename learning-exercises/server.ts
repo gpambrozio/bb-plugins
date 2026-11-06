@@ -74,6 +74,7 @@ async function plugin(bb: BbPluginApi, deps: { ports?: (bb: BbPluginApi, changed
     startSession: fromUser((input) => api.startSession(input)),
     cardDraft: (input) => api.cardDraft(input),
     saveDraft: fromUser((input) => api.saveDraft(input)),
+    openQuestions: (input) => api.openQuestions(input),
     pauseSession: fromUser((input) => api.pauseSession(input)),
     resumeSession: fromUser((input) => api.resumeSession(input)),
     finishSession: fromUser((input) => api.finishSession(input)),

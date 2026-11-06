@@ -27,7 +27,7 @@
 import type { PluginInteractionResult } from "@get-bb/plugin-sdk";
 
 import { draftValues, parseAnswerForm, readAnswerForm, sanitizeValues, summarizeAnswer, type AnswerForm, type FormValues } from "../shared/answer-form";
-import { ANSWER_MAX_CHARS, PAUSE_REASONS, readCardValue, REPLY_MAX_CHARS, type CardDraft, type CardPayload, type ExerciseType, type PauseReason, type Refs, type SettledRow, type TriggerKind, type Verdict, type Workspace } from "../shared/types";
+import { ANSWER_MAX_CHARS, PAUSE_REASONS, readCardValue, REPLY_MAX_CHARS, type CardDraft, type CardPayload, type QuestionRef, type ExerciseType, type PauseReason, type Refs, type SettledRow, type TriggerKind, type Verdict, type Workspace } from "../shared/types";
 import { BRIEF_VERSION, buildBrief, startLine } from "./content";
 import { canStartByHand, DAY, projectKey } from "./policy";
 import type { Ports } from "./ports";
@@ -707,12 +707,22 @@ export class SessionService {
    * the text. Ignored for a question that is answered or skipped, or a session that is over, so a save
    * still in flight when the learner submits leaves nothing behind.
    */
-  saveDraft(sessionId: string, ordinal: number, draft: CardDraft): void {
+  saveDraft(sessionId: string, ordinal: number, draft: CardDraft): boolean {
     const session = this.store.session(sessionId);
-    if (session === null || !OPEN_STATES.includes(session.state)) return;
+    if (session === null || !OPEN_STATES.includes(session.state)) return false;
     const exercise = this.store.exercises(sessionId).find((candidate) => candidate.ordinal === ordinal);
-    if (exercise === undefined || exercise.answeredAt !== null || exercise.skipped) return;
-    this.store.recordDraft(sessionId, ordinal, this.readDraft(exercise.form, draft));
+    if (exercise === undefined || exercise.answeredAt !== null || exercise.skipped) return false;
+    return this.store.recordDraft(sessionId, ordinal, this.readDraft(exercise.form, draft));
+  }
+
+  /** Which of these questions are still open (their session open, the question neither answered nor skipped). */
+  openQuestions(questions: readonly QuestionRef[]): QuestionRef[] {
+    return questions.filter(({ sessionId, ordinal }) => {
+      const session = this.store.session(sessionId);
+      if (session === null || !OPEN_STATES.includes(session.state)) return false;
+      const exercise = this.store.exercises(sessionId).find((candidate) => candidate.ordinal === ordinal);
+      return exercise !== undefined && exercise.answeredAt === null && !exercise.skipped;
+    });
   }
 
   /** An open question's saved draft, read against its form again; null when there is none. */
@@ -723,7 +733,7 @@ export class SessionService {
   }
 
   private readDraft(form: AnswerForm | null, draft: CardDraft): CardDraft {
-    const kept = { confidence: draft.confidence ?? null, revision: draft.revision ?? 0 };
+    const kept = { confidence: draft.confidence ?? null };
     if (form !== null) return { fields: draftValues(form, draft.fields ?? {}), ...kept };
     return { answer: (draft.answer ?? "").slice(0, ANSWER_MAX_CHARS), ...kept };
   }

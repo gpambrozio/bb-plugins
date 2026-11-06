@@ -94,8 +94,11 @@ export class LearningApi {
   }
 
   saveDraft({ sessionId, ordinal, draft }: Input<"saveDraft">): Output<"saveDraft"> {
-    this.deps.sessions.saveDraft(sessionId, ordinal, draft);
-    return null;
+    return { saved: this.deps.sessions.saveDraft(sessionId, ordinal, draft) };
+  }
+
+  openQuestions({ questions }: Input<"openQuestions">): Output<"openQuestions"> {
+    return { open: this.deps.sessions.openQuestions(questions) };
   }
 
   /** Topics from data only: the thread's live offer, the branch's latest commit, the last turn's new files, its title. */
