@@ -171,6 +171,15 @@ moves the pin backwards. Re-pin with `npm install --save-exact -D @get-bb/plugin
 - `bb plugin remove` deletes the plugin's settings, secrets and schedules. To move a local plugin,
   install the new path instead.
 - Never restart the bb server; it runs the user's threads.
+- **A dev bb for live checks** runs beside the user's, with its own data and ports, from the launcher
+  inside the app bundle: `env -u BB_CLI -u BB_SERVER_URL -u BB_THREAD_ID -u BB_PROJECT_ID -u BB_ENVIRONMENT_ID
+  -u BB_HOST_DAEMON_PORT -u BB_THREAD_STORAGE node /Applications/bb.app/Contents/Resources/app.asar.unpacked/node_modules/bb-app/dist/bb-app.js
+  --data-dir "$TMPDIR/bbdev/data" --server-port 48886 --host-daemon-port 48887 --no-in-app-updates --bundled`
+  (keep the data dir short: it holds sockets). Point a CLI at it with the same `env -u …` plus
+  `BB_SERVER_URL=http://127.0.0.1:48886 BB_HOST_DAEMON_PORT=48887 BB_DATA_DIR=…` and
+  `node …/bb-app/host-daemon/dist/bb`. Install, reload and spawn threads there, never in the user's bb. Its
+  web app is at the server URL (first load shows a setup screen with *Skip setup*); `playwright-core` with
+  a cached Chromium drives it headlessly. `learning-exercises/AGENTS.md` and its spike notes used it.
 
 ## Architecture
 
@@ -254,6 +263,10 @@ What a port only learns by running it:
   `hasPendingInteraction` and the `activity` counts; a get row has `queuedMessageCount` and
   `activeBackgroundAgentCount` instead, and neither says whether an interaction is pending (read
   `threads.interactions.list`). Both carry `runtime.displayStatus`, which adds "waiting-for-host" to `status`.
+- **A thread event page is at most 100 rows.** `bb.sdk.threads.events.list` with a `limit` over 100 fails
+  with "HTTP 400: Thread event limit cannot exceed 100" (bb 0.48.1, `THREAD_EVENT_LIST_PAGE_SIZE`); the
+  typings take any string. Page with `beforeSeq` (newest first) or `afterSeq`, and make a test fake refuse
+  more, as `learning-exercises/server/testing/event-log.ts` does: its first build read nothing live.
 - **When a turn ended is in the thread's event log.** `bb.sdk.threads.events.list({ threadId, types:
   ["turn/completed"], order: "desc", limit: "1" })` gives the last one, with `createdAt` in epoch
   milliseconds; `threads.context` gives context usage, which may be marked `estimated` (a live Claude Code thread's was in bb 0.46.1). A
@@ -272,6 +285,26 @@ What a port only learns by running it:
   / `markViewed` / `clearViewed`). The plugin is on by default and the user can turn it off; call it
   directly and say so when it is off (`diff-review/server/git.ts`). Its contract is not published:
   keep a copy of the shapes you read.
+  `workspaceStatus` with `mergeBaseBranch` set to a commit SHA lists the commits since it, oldest first,
+  and the files they touched with `A`/`M` status, without persisting a merge base: noting HEAD at
+  `thread.active` gives a turn's own commits (`learning-exercises/server/offers.ts`). Without
+  `mergeBaseBranch`, `mergeBase` is null on any branch, and a revision expression such as `HEAD~1` fails
+  input validation: for a branch's commits, read `branch.defaultBranch` and pass it.
+- **Codex forks get no plugin tools** (bb 0.48.1): `configure` runs for the fork and returns them, but
+  the fork's agent has none, even after a session restart; a *spawned* Codex thread gets them, and so do
+  Claude Code and ACP forks. A fork that needs a plugin's capability in Codex has to reach it through
+  the plugin's CLI (`learning-exercises/AGENTS.md`). `configure` also runs on a fork before
+  `threads.fork` returns its id, so a check that the session is bound to that thread id fails on the
+  first pass.
+- **A `threads.send` with only an agent-only part shows no user message**: the agent's reply appears
+  with nothing above it. Send one visible line with the agent-only text.
+- **A plugin reload cancels the plugin's open `bb.ui.requestInput` forms** (the new instance loads
+  first, then the old one's forms die), like a restart. Keep what a form asked in storage to reopen it.
+  A form opened from a tool or the server does not queue messages sent through the SDK or the CLI, but
+  in the app it takes the composer's place until it is answered; each one fires `interaction.pending`,
+  which push notifications and Herald announce.
+- **`fileChange` paths in the event log are absolute**, and on macOS Claude Code reports `/private/var/…`
+  for a workspace bb knows as `/var/…` (`learning-exercises/server/signals.ts`, `relativize`).
 
 **Settings are writable from the server** (`experimental_set`), unlike Paseo, where only the
 client could write a settings document. That erases the Paseo split between "settings document"
@@ -357,7 +390,7 @@ mounted once per window. Paseo contribution → bb slot:
 | `addSettingsScreen` | host-rendered form from `bb.settings.define`, plus `app.slots.settingsSection` for anything custom |
 | `addCommandCenterItem` | `app.commands.register` — its `run` gets no navigation; hand it `useBbNavigate()` from an `app.slots.experimental_appOverlay` component that renders nothing (`github-board/app.tsx`) |
 | slash commands, composer pills | `app.composer.customize` (`actions` draws a component in the thread composer's toolbar; a pop-up over the composer is `experimental_popups`, opened with `useComposer().experimental_openPopup` — drawn *inside the composer's `<form>`*, so give every button `type="button"` and stop `mousedown` at its root, see `skills/AGENTS.md`), `app.composer.experimental_registerCommand` for a bindable key, a `{ kind: "command" }` mention through `composer.replace` for the pill bb's `/` menu inserts, `app.slots.pendingInteraction` |
-| `addTimelineRenderer` | `app.slots.experimental_timelineRenderer` (kind `<pluginId>/<name>`), or `messageDirective` — but only for rows a provider bridge or `bb.ui.requestInput` writes. **A plugin cannot append a row to a thread's timeline** (no `timeline.append`); put the context in the prompt and `pluginMetadata` instead. What it can do, from bb 0.48.1, is draw beside every message: `app.slots.experimental_messageMetadata({ id, placement: "above" \| "actionRow", component })` gets each message's `id`, `threadId`, `createdAt`, `turnId` and `role` — above it, never below (the `actionRow` is drawn after the message but only while it is hovered or focused, on one 20 px line) — and the ids are the row ids `bb.sdk.threads.timeline` returns (pages of twenty turns, `timelinePage.olderCursor`; a finished turn folds its messages into a `kind: "turn"` row). `herald/server/placement.ts` places a sentence that way |
+| `addTimelineRenderer` | `app.slots.experimental_timelineRenderer` (kind `<pluginId>/<name>`), or `messageDirective` — but only for rows a provider bridge or `bb.ui.requestInput` writes. **A plugin cannot append a row to a thread's timeline** (no `timeline.append`); put the context in the prompt and `pluginMetadata` instead. What it can do, from bb 0.48.1, is draw beside every message: `app.slots.experimental_messageMetadata({ id, placement: "above" \| "actionRow", component })` gets each message's `id`, `threadId`, `createdAt`, `turnId` and `role` — above it, never below (the `actionRow` is drawn after the message but only while it is hovered or focused, on one 20 px line) — and the ids are the row ids `bb.sdk.threads.timeline` returns (pages of twenty turns, `timelinePage.olderCursor`; a finished turn folds its messages into a `kind: "turn"` row). `herald/server/placement.ts` places a sentence that way. A `bb.ui.requestInput` form's own row is a work row kept where the form opened, so it folds with its turn as well. `turnId` is the event log's `scope.turnId`: a tool or CLI call learns its own turn from the newest `turn/started` row (`learning-exercises/app/feedback.tsx` draws a card above that turn's last message) |
 | `useRpc(contract)` | `useRpc<typeof rpcContract>().call(method, input)`, the contract imported *as a type* from `./server` |
 | `usePaseo()` | `useSdk()` — prefer it over a plugin RPC for anything that only reads or changes bb state |
 | `navigation.openAgent`, `openExternalUrl` | `useBbNavigate()` — `toThread`, `toProject`, `toPluginPanel`, `openUrl` (follows the user's in-app/external browser preference; there is no "open a browser tab here"), `experimental_openFilePreview` (a workspace file, at `experimental_ref` `HEAD` or a SHA from bb 0.48); a thread's panel tab opens through the panel controller (above) |
