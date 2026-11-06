@@ -40,14 +40,20 @@ one). Add `--json` whenever you will read the output, and pass anything longer t
 | To find out | Run |
 | --- | --- |
 | The captain's projects, with their ids, names and checkouts | `bb project list --json` |
-| Your crew — every thread you started, archived ones included (each has an `archivedAt` in the JSON, and a `parentNotifications`: §7) | `bb thread list --parent-thread $BB_THREAD_ID --json` |
-| One thread in detail: its status, its environment id and branch, its pull request | `bb thread show <id>` (`--work-status` adds its git state) |
-| What a thread said at the end of its last turn | `bb thread output <id>` |
+| Your crew — the threads you started (each has a `parentNotifications` in the JSON: §7). Archived ones are listed, with an `archivedAt`, up to bb 0.48, and left out from bb 0.49 on unless you add `--include-archived` | `bb thread list --parent-thread $BB_THREAD_ID --json` |
+| One thread in detail: its status, its environment id and branch, its pull request | `bb thread show <id>` |
+| A thread's git state: its branch, its changes, ahead and behind | `bb git status <environment-id>` (bb 0.48 and later; before that, `bb thread show <id> --work-status`) |
+| What a thread said at the end of its last turn | `bb thread output <id>`, and its last message when that prints nothing (below) |
 | Everything a thread has been doing | `bb thread log <id>` |
 | One message again, with a few around it | `bb thread log <id> --message <seq> --context 3` (the seq: §7) |
 | What a thread is waiting on — a permission, a question, a plan | `bb thread interactions list <id>` |
 | Providers, and the models of one | `bb provider list`, `bb provider models <provider>` |
 | Anything else | `bb guide`, and `--help` on any command |
+
+`bb thread output <id>` prints nothing when the thread's latest turn wrote nothing — a compaction, a turn
+stopped before its reply — from bb 0.49 on. Its last message is then the one before, whatever turn wrote
+it:
+`bb thread log <id> --json --all | jq -r '[.[] | select(.type == "item/completed" and .data.item.type == "agentMessage" and .data.item.parentToolCallId == null)] | last | .data.item.text'`.
 
 | To act on a crewmate | Run |
 | --- | --- |
@@ -208,9 +214,9 @@ At the start of every session, and whenever you are unsure what is going on:
 2. Run `bb project list --json` for the captain's projects, as they are in bb right now.
 3. Run `bb thread list --parent-thread $BB_THREAD_ID --json` for the crew. For every In flight item,
    find its crewmate by the item's `(thread: …)` and see where it stands — mid-turn, finished with a
-   last word to read (`bb thread output <id>`), waiting on a permission or a question
-   (`bb thread interactions list <id>`), errored, or gone. Note any whose `parentNotifications` is not
-   `auto`: you watch those yourself (§7).
+   last word to read (`bb thread output <id>`, or its last message when that prints nothing: §0),
+   waiting on a permission or a question (`bb thread interactions list <id>`), errored, or gone. Note
+   any whose `parentNotifications` is not `auto`: you watch those yourself (§7).
 4. For every item with a pull request, read `gh pr view <url> --json state` — a watch usually tells you
    what changed, but it can be switched off or failing — and act on it: a merged one is cleaned up,
    moved to Done and unblocks Queued work (§8); a closed one holds unlanded work, so hold it for the
@@ -382,8 +388,9 @@ Nothing needs you to poll, and nothing wakes you on a timer. What wakes you:
   Each crewmate's `parentNotifications` in `bb thread list --parent-thread $BB_THREAD_ID --json` says
   which, and the board flags it. Never change it back — the captain may have chosen it. Watch such a
   crewmate yourself instead: whenever you are awake, see whether its turn has ended and read its status
-  line with `bb thread output <id>`. Nothing wakes you when its turn ends, so before you end a turn of
-  yours while one is still working, tell the captain you are waiting on it.
+  line with `bb thread output <id>` (or its last message when that prints nothing: §0). Nothing wakes
+  you when its turn ends, so before you end a turn of yours while one is still working, tell the captain
+  you are waiting on it.
 - **A `<firstmate-board>` note** when the captain wrote about a crewmate from the FirstMate board. It
   names the crewmate by title and thread id and carries what they said. The captain's words are
   authoritative: reconcile the brief and the backlog with them.
@@ -419,9 +426,10 @@ before acting on it — and ask too when the log does not settle the cause — u
 during a step of the stuck-crewmate ladder.
 
 Read the crewmate's **status line** — the last line of its last message (`bb thread output <id>` when
-you need it again, or `bb thread log <id> --message <seq> --context 3` for that message and the few
-before it, rather than the whole log; that message's number, its seq, is
-`bb thread log <id> --json --all | jq '[.[] | select(.type == "item/completed" and .data.item.type == "agentMessage")] | last | .seq'`):
+you need it again, its last message as §0 reads it when that prints nothing, or
+`bb thread log <id> --message <seq> --context 3` for that message and the few before it, rather than the
+whole log; that message's number, its seq, is
+`bb thread log <id> --json --all | jq '[.[] | select(.type == "item/completed" and .data.item.type == "agentMessage" and .data.item.parentToolCallId == null)] | last | .seq'`):
 
 - `working`, `paused`: the turn has ended, so the crewmate has stopped. Unless it says what outside
   itself it is waiting on, that is a stall: nudge it once with `bb thread tell` to carry on. If it is
@@ -461,7 +469,7 @@ joins a turn under way, or starts one when the crewmate is idle.
 
 **The stuck-crewmate ladder:**
 
-1. Look at what it has been doing (`bb thread log <id>`, `bb thread output <id>`).
+1. Look at what it has been doing (`bb thread log <id>`, `bb thread output <id>`, its last message: §0).
 2. If it is waiting on a question its brief already answers, answer in one line.
 3. If it is confused or looping: `bb thread stop <id>`, then send one corrective line.
 4. If it is truly wedged: **relaunch** — read its environment id from `bb thread show <id>`, stop it

@@ -272,10 +272,20 @@ Do not break these; each was paid for.
   for a prepared home and stops with it; autocompact concerns threads, not the home. Its first check is a
   minute after load, so a reload's new instance does not check while the old one is being disposed. Its
   log is the plugin's log only: the board has no activity feed, and adding one was out of scope.
-- **A crewmate's compaction wakes the first mate.** bb 0.46.1 reports every root turn of a child to its
-  parent, the compaction's included (`addParentTurnNotificationFollowUp` has no exemption), so the first
-  mate gets a `completed` notice with nothing new in it. The charter does not mention autocompact: the
-  captain chose to leave it unchanged, so the first mate reads that notice like any other.
+- **A crewmate's compaction wakes the first mate up to bb 0.48.** bb 0.46.1–0.48 report every root turn
+  of a child to its parent, the compaction's included (`addParentTurnNotificationFollowUp` has no
+  exemption), so the first mate gets a `completed` notice with nothing new in it; bb 0.49 sends none for a
+  compaction-only turn (get-bb/bb#7028). The charter does not mention autocompact: the captain chose to
+  leave it unchanged, so the first mate reads that notice like any other.
+- **A turn that wrote nothing keeps the status line before it.** From bb 0.49 (get-bb/bb#6893),
+  `thread.idle`'s `lastAssistantText` and `threads.output` are the latest turn's reply only, so crew
+  autocompact's compaction turn — and a turn stopped before its reply — gives null. `ReportCache` keeps
+  the report it has on a blank text, and with none cached reads the crewmate's last root `agentMessage`
+  (no `parentToolCallId`) from `threads.events.list`, 100 rows a page, five pages at most
+  (`lastAgentMessage` in `server/bb-ports.ts`). Otherwise a blocked, needs-decision, failed or paused
+  crewmate — the ones idle long enough to be compacted — would drop to Idle. `lastText` stays the latest
+  turn's reply: quiet shipshape needs exactly that. The charter's §0 gives the first mate the same
+  fallback as a `bb thread log … | jq` query.
 - **Relaunch is a message to the first mate**, which spawns the replacement with `--environment` set to
   the old worker's environment. The old thread stays stopped, not archived, so the shared worktree lives.
 
@@ -332,9 +342,10 @@ charter tells the first mate to always pass `--title`.
   running first mate depends on. That bb passes Claude Code the typed `/fm …` unchanged was read from bb
   0.44's provider code. `agents/openai.yaml` is Codex's skill policy and is untested here.
 
-- **An interrupted turn keeps the previous status line.** `threads.output` returns the last assistant text
-  of an earlier turn, so a worker interrupted before writing anything stays where its old line put it
-  (say, Parked). Telling "this turn wrote nothing" apart needs the timeline.
+- **An interrupted turn keeps the previous status line.** A worker interrupted before writing anything
+  stays where its old line put it (say, Parked): up to bb 0.48 because `threads.output` returned an
+  earlier turn's text, from bb 0.49 because `ReportCache` keeps it (above). Telling "this turn wrote
+  nothing" apart needs the timeline.
 - **Changing the crew settings does not re-render the first mate's `AGENTS.md`** until the next launch,
   restart or plugin reload. Settings changes do not reload a plugin.
 - **The board UI has not yet been looked at** wide and narrow, light and dark. The live run had no display;

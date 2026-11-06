@@ -315,6 +315,35 @@ describe("bbThreads, autocompact's reads", () => {
     expect(harness.callsTo("threads.events.list")[0]).toEqual([{ threadId: "thr_1", types: ["turn/completed"], order: "desc", limit: "1" }]);
   });
 
+  it("reads the last message of the thread's own from its log, skipping subagents' and paging 100 rows at a time", async () => {
+    const { sdk, harness } = fakeSdk();
+    const message = (seq: number, item: Record<string, unknown>) => ({ seq, createdAt: seq, type: "item/completed", data: { item } });
+    const tools = Array.from({ length: 100 }, (_, index) => message(300 - index, { type: "commandExecution", id: `c${index}` }));
+    harness.stub("threads.events.list", (input: { limit: string; beforeSeq?: string }) => {
+      if (Number(input.limit) > 100) throw new Error("HTTP 400: Thread event limit cannot exceed 100");
+      if (input.beforeSeq === undefined) return tools;
+      return [
+        message(150, { type: "agentMessage", id: "s", text: "done: the subagent's", parentToolCallId: "tool_1" }),
+        message(149, { type: "agentMessage", id: "e", text: "  " }),
+        message(148, { type: "agentMessage", id: "m", text: "blocked: need a key" }),
+        message(147, { type: "agentMessage", id: "o", text: "working: older" }),
+      ];
+    });
+
+    expect(await bbThreads(sdk).lastAgentMessage("thr_1")).toBe("blocked: need a key");
+    expect(harness.callsTo("threads.events.list").map(([input]) => input)).toEqual([
+      { threadId: "thr_1", types: ["item/completed"], order: "desc", limit: "100" },
+      { threadId: "thr_1", types: ["item/completed"], order: "desc", limit: "100", beforeSeq: "201" },
+    ]);
+  });
+
+  it("has no last message when the log holds none, and stops at its first row", async () => {
+    const { sdk, harness } = fakeSdk();
+    harness.stub("threads.events.list", () => [{ seq: 3, createdAt: 3, type: "item/completed", data: { item: { type: "reasoning", id: "r" } } }]);
+    expect(await bbThreads(sdk).lastAgentMessage("thr_1")).toBeNull();
+    expect(harness.callsTo("threads.events.list")).toHaveLength(1);
+  });
+
   it("has no last turn for a thread that has never finished one", async () => {
     const { sdk, harness } = fakeSdk();
     harness.stub("threads.events.list", () => []);

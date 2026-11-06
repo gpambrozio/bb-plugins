@@ -146,8 +146,17 @@ export interface ThreadsPort {
   metadataOf(ids: readonly string[]): Promise<Map<string, Record<string, unknown>>>;
   /** How many interactions (questions, permissions, plans) wait on the thread. */
   pendingInteractions(id: string): Promise<number>;
-  /** The thread's latest assistant text, or null when it has none. */
+  /**
+   * What the thread said at the end of its latest turn, or null when that turn said nothing. Since bb
+   * 0.49 this is the latest turn's reply only: a turn that wrote nothing — a compaction, a turn stopped
+   * before its reply — has none, and an earlier turn's reply is not offered in its place.
+   */
   lastText(id: string): Promise<string | null>;
+  /**
+   * The text of the thread's last message of its own (not a subagent's), from its event log, whichever
+   * turn wrote it; null when the pages read hold none.
+   */
+  lastAgentMessage(id: string): Promise<string | null>;
   /** The directory the environment works in, when it is on the bb server's machine; null otherwise. */
   workspacePath(environmentId: string): Promise<string | null>;
   /** The thread's project and branch, archived or not; null when bb has no such thread. */

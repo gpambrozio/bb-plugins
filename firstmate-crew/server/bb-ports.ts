@@ -111,6 +111,17 @@ function reasoningOf(level: string | undefined): ReasoningLevel | undefined {
 
 /** The most threads bb answers for in one `experimental_listPluginMetadata` request. */
 const METADATA_BATCH = 200;
+/** bb refuses a thread event page of more than 100 rows (`THREAD_EVENT_LIST_PAGE_SIZE`). */
+const EVENT_PAGE = 100;
+/** How far back `lastAgentMessage` looks: completed items, a page at a time, newest first. */
+const AGENT_MESSAGE_PAGES = 5;
+
+/** A completed item's text when it is a message of the thread's own, not a subagent's. */
+function ownAgentMessage(data: unknown): string | null {
+  const item = (data as { item?: { type?: unknown; text?: unknown; parentToolCallId?: unknown } } | null)?.item;
+  if (item?.type !== "agentMessage" || typeof item.text !== "string" || typeof item.parentToolCallId === "string") return null;
+  return item.text.trim() === "" ? null : item.text;
+}
 
 /** Empty strings mean "bb's default", which the SDK expresses by leaving the field out. */
 function optional(value: string | undefined): string | undefined {
@@ -175,6 +186,26 @@ export function bbThreads(sdk: PluginBbSdk): ThreadsPort {
     },
     async lastText(id) {
       return (await sdk.threads.output({ threadId: id })).output;
+    },
+    async lastAgentMessage(id) {
+      let beforeSeq: string | undefined;
+      for (let page = 0; page < AGENT_MESSAGE_PAGES; page += 1) {
+        const rows = await sdk.threads.events.list({
+          threadId: id,
+          types: ["item/completed"],
+          order: "desc",
+          limit: String(EVENT_PAGE),
+          ...(beforeSeq === undefined ? {} : { beforeSeq }),
+        });
+        for (const row of rows) {
+          const text = ownAgentMessage(row.data);
+          if (text !== null) return text;
+        }
+        const last = rows.at(-1);
+        if (rows.length < EVENT_PAGE || last === undefined) return null;
+        beforeSeq = String(last.seq);
+      }
+      return null;
     },
     async workspacePath(environmentId) {
       const [serverHost, environment] = await Promise.all([serverHostId(sdk), sdk.environments.get({ environmentId })]);

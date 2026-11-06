@@ -5,6 +5,20 @@ Notable changes to `firstmate`. The other plugins in this repository version sep
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.9.1
+
+### Fixed
+
+- **A worker keeps its status on the board after it is compacted, with bb 0.49.** bb 0.49 no longer
+  repeats a worker's earlier reply after a turn that said nothing, such as the one FirstMate's automatic
+  compaction runs on a worker that has sat idle. A worker that was blocked, waiting on a decision, failed
+  or paused lost its last status and moved to Idle. FirstMate now keeps the last status it saw, and after
+  a restart finds it in the worker's history.
+- **The first mate's charter is up to date with bb 0.49.** It reads a worker's last message from its
+  history when bb shows nothing for its latest turn, knows that bb 0.49 leaves archived workers out of
+  the crew list unless asked, and checks a worker's git state with bb's newer command, keeping the older
+  one for bb 0.47. If you have edited your charter, the new one is offered beside it to compare.
+
 ## 0.9.0
 
 ### Added

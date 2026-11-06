@@ -270,8 +270,11 @@ What a port only learns by running it:
 - **When a turn ended is in the thread's event log.** `bb.sdk.threads.events.list({ threadId, types:
   ["turn/completed"], order: "desc", limit: "1" })` gives the last one, with `createdAt` in epoch
   milliseconds; `threads.context` gives context usage, which may be marked `estimated` (a live Claude Code thread's was in bb 0.46.1). A
-  compaction (`threads.compact`) is a turn of its own, and a child's compaction turn notifies its parent
-  like any other (`firstmate-crew/AGENTS.md`).
+  compaction (`threads.compact`) is a turn of its own. Up to bb 0.48 a child's compaction turn notified its
+  parent like any other; bb 0.49 no longer does (get-bb/bb#7028). From bb 0.49 (get-bb/bb#6893) `thread.idle`'s
+  `lastAssistantText` and `threads.output` are the latest turn's reply only, so a turn that wrote nothing
+  (a compaction, a turn stopped first) has none: an earlier reply is the last root `agentMessage` item
+  (no `parentToolCallId`) in `threads.events.list` (`firstmate-crew/server/fleet.ts`, `ReportCache`).
 - **`bb.status.needsConfiguration(message)` lasts until the next load.** Fixing the cause does not
   clear it; tell the user to `bb plugin reload <id>`.
 - **The server's PATH may lack Homebrew.** The server takes the login shell's PATH, but keeps the one
