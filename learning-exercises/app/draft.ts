@@ -285,7 +285,13 @@ export function useCardDraft(question: QuestionRef, draft: CardDraft, restore: (
       .then(({ draft: saved, token, writer }) => {
         if (!live) return;
         state.base = token;
-        if (state.touched || state.stopped) return;
+        if (state.stopped) return;
+        if (state.touched) {
+          // The learner typed first: this mount's backup was written before the base was known.
+          const mine = readBackup(key);
+          if (mine !== null && mine.mount === state.mount) writeBackup(key, { mount: mine.mount, draft: mine.draft, base: token });
+          return;
+        }
         if (backup !== null && (saved === null || writer === writerId() || backup.base === token)) {
           restoreRef.current(backup.draft);
           enqueue(callRef.current, { sessionId, ordinal }, { mount: backup.mount, draft: backup.draft, base: backup.base });

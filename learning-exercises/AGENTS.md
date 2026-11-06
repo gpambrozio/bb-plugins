@@ -213,7 +213,8 @@ lives on the server with the question (`exercises.draft`, migration 15), not in 
   saved last, an own save that landed with its answer lost included. Only over another browser's draft
   does the backup's `base` count: the token of the draft its card read on mount. Still that token, the
   backup is newer and wins; moved on, the other browser's draft wins and the backup goes. An edit made
-  before the read returns beats both. Do not track tokens through acknowledgments or the queue: an
+  before the read returns beats both, and when the read arrives this mount's own backup takes its token
+  as base (another mount's backup, or a stopped card's, is left alone). Do not track tokens through acknowledgments or the queue: an
   earlier round did, and this page's own saves kept looking like another device's.
 - **Backups are swept** (`sweepDrafts`, when a card or the Learning tab mounts): unreadable ones, ones
   older than 7 days, all but the newest 20 (a card does this part before choosing its backup), then

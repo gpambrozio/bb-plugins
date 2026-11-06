@@ -428,6 +428,51 @@ describe("an unsent answer, when the network and the page misbehave (review pass
     await waitFor(() => expect(sessions.cardDraft(sessionId, 1)?.answer).toBe("device B's draft, edited here"));
   });
 
+  it("an edit made before the first read of another browser's draft returns keeps it after a failed save (finding 12)", async () => {
+    const { payload, rpc, sessions, sessionId, store } = await server();
+    sessions.saveDraft(sessionId, 1, { answer: "device B, earlier" }, "device-b");
+    const { net, wrapped } = network(rpc);
+    net.mode = "fail";
+    net.slowRead = () => {};
+    mount(payload, wrapped);
+    // The read is on its way (answered, held back) when the learner types.
+    await flush();
+    typeAnswer("device A, new answer");
+    expect(backup(sessionId)).toMatchObject({ base: null });
+    // The read arrives after the edit: the backup now builds on device B's draft.
+    net.slowRead();
+    await flush();
+    expect(backup(sessionId)).toMatchObject({ base: store.draftToken(sessionId, 1), draft: { answer: "device A, new answer" } });
+    // The save fails; the learner switches threads and comes back.
+    cleanup();
+    await flush();
+    expect(sessions.cardDraft(sessionId, 1)?.answer).toBe("device B, earlier");
+    net.slowRead = null;
+    net.mode = "auto";
+    mount(payload, wrapped);
+    await waitFor(() => expect(value("Your answer")).toBe("device A, new answer"));
+    await waitFor(() => expect(sessions.cardDraft(sessionId, 1)?.answer).toBe("device A, new answer"));
+  });
+
+  it("a late first read leaves another mount's backup alone, and does not bring back a stopped card's", async () => {
+    const { payload, rpc, sessionId } = await server();
+    const { net, wrapped } = network(rpc);
+    net.mode = "auto";
+    net.slowRead = () => {};
+    const submit = mount(payload, wrapped);
+    await flush();
+    typeAnswer("sent");
+    fireEvent.click(screen.getByRole("button", { name: "3 · Fairly sure" }));
+    fireEvent.click(screen.getByRole("button", { name: "Submit" }));
+    expect(submit).toHaveBeenCalled();
+    expect(backup(sessionId)).toBeNull();
+    // Another card (another tab of this browser) has written its own backup meanwhile.
+    window.localStorage.setItem(draftStorageKey(sessionId, 1), JSON.stringify({ mount: "another-tab", at: Date.now(), base: null, draft: { answer: "theirs" } }));
+    net.slowRead();
+    await flush();
+    expect(backup(sessionId)).toMatchObject({ mount: "another-tab", base: null, draft: { answer: "theirs" } });
+  });
+
   it("saves at once when the page is hidden, before the wait is over", async () => {
     const { payload, rpc } = await server();
     const { net, wrapped } = network(rpc);
