@@ -5,6 +5,16 @@ Notable changes to `firstmate`. The other plugins in this repository version sep
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.10.0
+
+### Changed
+
+- **Every card on the board has the Answer box,** not only the cards waiting on your call. Type anything
+  about a task or a worker there and press Send: the first mate gets your words with the card's id and
+  title in front, so it knows which card they are about. A worker with no task id is named by its thread.
+  The first mate's charter says so; if you have edited your charter, the new one is offered beside it to
+  compare.
+
 ## 0.9.1
 
 ### Fixed

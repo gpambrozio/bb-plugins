@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 /**
- * A card's backlog actions and its Answer box: an action sends its prompt to the first mate, the Answer box
- * sends the typed words under the task's id and title, and both wait while another send is out.
+ * A card's backlog actions and its Answer box: an action sends its prompt to the first mate, the Answer box —
+ * on every card — sends the typed words under the card's id and title, and both wait while another send is out.
  */
 import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { renderSlot } from "@get-bb/plugin-sdk/testing/app";
@@ -92,10 +92,10 @@ describe("Card actions", () => {
     expect(view.navigateCalls).toEqual([{ method: "toThread", threadId: "thr_mate" }]);
   });
 
-  it("shows actions on a card with no hold, and no Answer box there", () => {
+  it("shows actions on a card with no hold, and the Answer box there too", () => {
     renderCard(backlog({ hold: null, kind: "ship", actions: [MERGE] }));
     expect(actionButton(MERGE)).toBeTruthy();
-    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(answerBox().placeholder).toBe("Tell the first mate about this…");
   });
 
   it("draws no actions where the item has none", () => {
@@ -168,6 +168,20 @@ describe("Answer box", () => {
     expect(view.rpcCalls).toEqual([{ method: "mate.ask", input: { text: answerText(backlog(), "Postgres") } }]);
   });
 
+  it("asks a held card's question back as an answer", () => {
+    renderCard(backlog());
+    expect(answerBox().placeholder).toBe("Answer the first mate…");
+  });
+
+  it("is on a backlog card with no hold and no actions, and sends under its id and title", async () => {
+    const view = renderCard(backlog({ hold: null, actions: [] }));
+    expect(screen.queryByRole("button", { name: /to the first mate$/ })).toBeNull();
+    fireEvent.change(answerBox(), { target: { value: "Start this one next" } });
+    fireEvent.click(sendButton());
+    await waitFor(() => expect(view.changed).toHaveLength(1));
+    expect(view.rpcCalls).toEqual([{ method: "mate.ask", input: { text: "pick-db — Choose the database: Start this one next" } }]);
+  });
+
   it("sends nothing for blank words", () => {
     const view = renderCard(backlog());
     fireEvent.change(answerBox(), { target: { value: "   " } });
@@ -214,5 +228,72 @@ describe("Notify parent", () => {
   it("flags a worker the first mate hears nothing from", () => {
     renderCrewCard("off");
     expect(screen.getByText("Notify parent is Off: the first mate isn't told anything about this worker.")).toBeTruthy();
+  });
+});
+
+describe("Answer box on a crewmate card", () => {
+  function workerCard(overrides: { taskId: string | null; backlog: BacklogItem | null; title: string }): FleetCard {
+    return {
+      key: "thr_worker",
+      column: "idle",
+      taskId: overrides.taskId,
+      title: overrides.title,
+      project: "web",
+      kind: "ship",
+      backlog: overrides.backlog,
+      crew: {
+        threadId: "thr_worker",
+        title: overrides.title,
+        status: "idle",
+        pendingInteractions: 0,
+        parentNotifications: "auto",
+        projectId: "proj_web",
+        environmentId: "env_w",
+        updatedAt: 0,
+        task: overrides.taskId,
+        kind: "ship",
+        project: "web",
+      },
+      report: { state: "done", text: "PR https://github.com/you/web/pull/42" },
+      url: "https://github.com/you/web/pull/42",
+    };
+  }
+
+  function renderWorker(card: FleetCard) {
+    const changed: unknown[] = [];
+    const view = renderSlot(
+      { component: Card },
+      { card, mateThreadId: "thr_mate", onChanged: () => changed.push(null) },
+      { rpc: { "mate.ask": () => null } },
+    );
+    return { ...view, changed };
+  }
+
+  async function send(view: ReturnType<typeof renderWorker>, name: string, words: string) {
+    const box = screen.getByRole("textbox", { name }) as HTMLInputElement;
+    expect(box.placeholder).toBe("Tell the first mate about this…");
+    fireEvent.change(box, { target: { value: words } });
+    fireEvent.click(sendButton());
+    await waitFor(() => expect(view.changed).toHaveLength(1));
+  }
+
+  it("is on a worker's card with no actions, and sends under its backlog item", async () => {
+    const item = backlog({ section: "in-flight", hold: null, actions: [], threadId: "thr_worker" });
+    const view = renderWorker(workerCard({ taskId: "pick-db", backlog: item, title: item.title }));
+    expect(screen.queryByRole("button", { name: /to the first mate$/ })).toBeNull();
+    await send(view, "Answer for pick-db", "Is the PR green?");
+    expect(view.rpcCalls).toEqual([{ method: "mate.ask", input: { text: "pick-db — Choose the database: Is the PR green?" } }]);
+  });
+
+  it("sends under the worker's task id when no backlog item matches it", async () => {
+    const view = renderWorker(workerCard({ taskId: "crw-picker", backlog: null, title: "Pick the review agent" }));
+    await send(view, "Answer for crw-picker", "Merge it");
+    expect(view.rpcCalls).toEqual([{ method: "mate.ask", input: { text: "crw-picker — Pick the review agent: Merge it" } }]);
+  });
+
+  it("sends under the worker's thread id when it has no task id", async () => {
+    const view = renderWorker(workerCard({ taskId: null, backlog: null, title: "A loose worker" }));
+    await send(view, "Answer for thr_worker", "What is this one doing?");
+    expect(view.rpcCalls).toEqual([{ method: "mate.ask", input: { text: "thr_worker — A loose worker: What is this one doing?" } }]);
   });
 });
