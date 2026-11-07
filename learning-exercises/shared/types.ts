@@ -152,7 +152,7 @@ export type TopicChoice = z.infer<typeof TopicChoiceSchema>;
 
 /** Everything the banner and the tab show for one thread. */
 export const ThreadViewSchema = z.object({
-  /** Offers are made here: a top-level thread a person drives (`isHumanThread`). */
+  /** Offers are made here: a top-level thread, not on the never-offer list (`isHumanThread`). */
   eligible: z.boolean(),
   /**
    * A session can be started here by hand: any visible thread but this plugin's own session threads, so a

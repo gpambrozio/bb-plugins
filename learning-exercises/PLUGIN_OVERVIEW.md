@@ -21,14 +21,15 @@ with a real answer card.
 - **The Learning tab.** In each thread's side panel: the offer or the session in progress, with
   Pause, Resume and Finish; start an exercise on the thread's last commit, its new files or a topic
   you type; and the project's paused and earlier sessions with your answers.
-- **Caps that hold.** At most 3 offers a day, 2 hours apart, 2 sessions per thread; Later snoozes a
-  thread; three Laters in a row keep only commit and pull request offers for a week. Offers you never
-  see expire without counting.
+- **Caps that hold.** At most 3 answered offers a day, 2 hours apart, 2 sessions per thread; Later
+  snoozes a thread; three Laters in a row keep only commit and pull request offers for a week. Offers
+  you leave unanswered expire without counting.
 
 ## Where offers appear
 
-Only in your own top-level threads: never in child threads, automations, other plugins' threads or
-hidden workers. Turn offers off per thread from the thread menu, per project from the offer, or
+Only in top-level threads, including ones another plugin starts for you, such as a GitHub board
+card's: never in child threads, automations (or other plugins you list in the settings), sessions'
+own threads or hidden workers. Turn offers off per thread from the thread menu, per project from the offer, or
 everywhere in the settings. In a sub-agent thread the Learning tab is still on the side panel's tab
 bar, to start an exercise on that thread's work by hand.
 

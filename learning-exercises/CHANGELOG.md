@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.2.0
+
+- Threads another plugin starts for you at the top level now get offers like your own. A thread
+  started from a GitHub board card, for example, got no offer even when its first turn made a
+  commit. Child threads still get none, whoever started them, and neither do the exercise
+  sessions' own threads.
+- A new setting, *Plugins whose threads get no offers*, lists the plugins whose threads never get
+  offers. It starts with automations; add any other plugin's id, one per line.
+- Only an offer you answer counts toward the limits now: offers per day, the hours between offers,
+  and the count of busy turns before a streak offer. An offer you leave alone, even one you saw,
+  expires and counts for nothing, so several offers in different threads can show at once until you
+  answer one. Once an answer reaches the day's limit or starts the wait before the next offer, the
+  other offers go away. Answers you gave before this update still count toward today's limit.
+- Adding a plugin to that list removes the offers already waiting in its threads.
+
 ## 0.1.0
 
 First release.

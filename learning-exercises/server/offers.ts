@@ -95,7 +95,7 @@ export class OfferEngine {
     windows.push({ threadId: thread.id, start: now, end: null });
     // A window whose turn never reported its end (a crash) stops counting after the same time.
     this.windows.set(thread.environmentId, windows.filter((window) => now - (window.end ?? window.start) < WINDOW_TTL_MS));
-    if (!isHumanThread(thread) || !this.settings().offersEnabled) return;
+    if (!isHumanThread(thread, this.settings().noOfferPlugins) || !this.settings().offersEnabled) return;
     const turn: TurnStart = { environmentId: thread.environmentId, headSha: null, startedAt: now };
     this.turns.set(thread.id, turn);
     turn.headSha = await this.ports.headSha(thread.environmentId);
@@ -107,7 +107,7 @@ export class OfferEngine {
     const turn = this.turns.get(thread.id) ?? null;
     this.turns.delete(thread.id);
     const overlapped = thread.environmentId === null ? false : this.closeWindow(thread.environmentId, thread.id, turn?.startedAt ?? null, now);
-    if (!isHumanThread(thread)) return null;
+    if (!isHumanThread(thread, this.settings().noOfferPlugins)) return null;
     return this.evaluate(thread, { turn, overlapped });
   }
 
@@ -176,7 +176,7 @@ export class OfferEngine {
     });
     if ("skip" in decision) return null;
     const offer = this.store.createOffer({ threadId: thread.id, projectKey: key, trigger: decision.offer.trigger, topic: decision.offer.topic, refs: decision.offer.refs, now });
-    this.store.resetChangedTurns(thread.id);
+    // The streak's count restarts on an answer (`answer`), not here: an offer nobody answers counts for nothing.
     this.ports.changed();
     return offer;
   }
@@ -222,7 +222,7 @@ export class OfferEngine {
         continue;
       }
       const thread = await this.ports.thread(watched.threadId);
-      if (thread === null || !isHumanThread(thread)) {
+      if (thread === null || !isHumanThread(thread, settings.noOfferPlugins)) {
         this.store.setPullRequestState(watched.environmentId, null);
         continue;
       }
@@ -292,8 +292,8 @@ export class OfferEngine {
 
   /**
    * The banner or the tab is drawing the offer: claim it, atomically, against the gate and the caps as
-   * they are now. An offer already seen stays claimed and is not charged again. False when it may not
-   * show; the caller's views read again and drop it.
+   * they are now. An offer already seen stays claimed. Seeing charges nothing: only an answer counts
+   * toward the caps (`answer`). False when it may not show; the caller's views read again and drop it.
    */
   claim(offerId: string): boolean {
     const offer = this.store.offer(offerId);
@@ -304,7 +304,7 @@ export class OfferEngine {
       this.ports.changed();
       return false;
     }
-    // Always applies; only the caps' accounting is skipped for an offer already seen.
+    // Always applies; only the caps' check is skipped for an offer already seen.
     if (this.suppressed(offer)) {
       this.ports.changed();
       return false;
@@ -315,9 +315,52 @@ export class OfferEngine {
       return false;
     }
     this.store.markSeen(offerId, now);
-    this.store.recordSeen(now);
     this.ports.changed();
     return true;
+  }
+
+  /**
+   * Whether the offer's thread may still have offers: the never-offer list can have changed since it was
+   * made, and a client holding it from before must not show or answer it.
+   */
+  private async threadStillEligible(offer: Offer): Promise<boolean> {
+    const thread = await this.ports.thread(offer.threadId);
+    return thread !== null && isHumanThread(thread, this.settings().noOfferPlugins);
+  }
+
+  /** `claim`, after checking the thread still takes offers; an offer whose thread no longer does expires. */
+  async claimChecked(offerId: string): Promise<boolean> {
+    const offer = this.store.offer(offerId);
+    if (offer === null || offer.status !== "live") return false;
+    if (!(await this.threadStillEligible(offer))) {
+      if (this.store.expireOffer(offerId)) this.ports.changed();
+      return false;
+    }
+    return this.claim(offerId);
+  }
+
+  /**
+   * After a settings change: offers in threads that no longer take any (their plugin was added to the
+   * never-offer list) expire, so they disappear from every view. Answers how many expired.
+   */
+  async dropIneligible(): Promise<number> {
+    let dropped = 0;
+    for (const offer of this.store.liveOffers()) {
+      if (!(await this.threadStillEligible(offer)) && this.store.expireOffer(offer.id)) dropped += 1;
+    }
+    if (dropped > 0) this.ports.changed();
+    return dropped;
+  }
+
+  /**
+   * After an answer: every other live offer the caps would now hold back (the answer filled the daily
+   * limit, started the gap, or began a back-off) expires, seen or not, so none is shown or answered past
+   * the cap.
+   */
+  private expireCapped(now: number): void {
+    for (const offer of this.store.liveOffers()) {
+      if (this.capped(offer, now) !== null) this.store.expireOffer(offer.id);
+    }
   }
 
   /** A session the user started without answering an offer still breaks a run of Laters. */
@@ -329,15 +372,31 @@ export class OfferEngine {
   /**
    * Answers an offer. `start` and `here` are recorded here and started by the caller; the others apply
    * at once: Later snoozes the thread and counts toward the back-off, "Not in this thread" turns the
-   * thread's offers off, "Never for this project" adds the project to the never list.
+   * thread's offers off, "Never for this project" adds the project to the never list. Every answer, and
+   * only an answer, counts toward the daily limit and the gap between offers, and restarts the thread's
+   * streak count.
    */
   async answer(offerId: string, answer: OfferAnswer): Promise<Offer & { projectKey: string }> {
     const offer = this.store.offer(offerId);
     if (offer === null || offer.status !== "live") throw new Error("That offer is no longer open.");
-    // An answer is a look: an offer answered before the banner claimed it is claimed (and charged) now.
+    if (!(await this.threadStillEligible(offer))) {
+      if (this.store.expireOffer(offerId)) this.ports.changed();
+      throw new Error("That offer is no longer open.");
+    }
+    // From here on nothing awaits until the answer is recorded, so the caps checked are the caps applied.
+    // An answer is a look: an offer answered before the banner claimed it is claimed now.
     if (!this.claim(offerId)) throw new Error("That offer is no longer open.");
     const now = this.ports.now();
+    // The answer is what counts, so the caps apply to it, to an offer already seen too (seeing is free,
+    // so several can be on screen at once). One the caps now hold back is gone.
+    if (this.capped(offer, now) !== null) {
+      this.store.expireOffer(offerId);
+      this.ports.changed();
+      throw new Error("That offer is no longer open.");
+    }
     this.store.answerOffer(offerId, answer, now);
+    this.store.recordAnswered(now);
+    this.store.resetChangedTurns(offer.threadId);
     const global = this.store.global(now);
     if (answer === "later") {
       const row = this.store.thread(offer.threadId);
@@ -348,7 +407,10 @@ export class OfferEngine {
       this.store.setBackoff(afterAnswer(global, "start", now));
     } else if (answer === "not-thread") {
       this.store.setOptOut(offer.threadId, true);
-    } else if (answer === "never-project") {
+    }
+    // Before any await: an offer the caps now hold back is gone before another answer can reach it.
+    this.expireCapped(now);
+    if (answer === "never-project") {
       const thread = await this.ports.thread(offer.threadId);
       const project = thread === null ? null : await this.ports.project(thread.projectId);
       this.store.setNever(offer.projectKey, project?.name ?? offer.projectKey, true);

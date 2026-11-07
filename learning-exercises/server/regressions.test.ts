@@ -45,26 +45,32 @@ function setup(overrides: Record<string, unknown> = {}) {
 }
 
 describe("finding 1: the caps hold when a queued offer becomes visible", () => {
-  it("of four offers made in quiet threads, only the first one claimed shows", async () => {
+  it("offers made in quiet threads all show until one is answered; the answer's gap takes the others", async () => {
+    // Only an answer counts toward the caps (an unanswered offer, seen or not, counts for nothing), so
+    // seeing several at once spends nothing; the first answer starts the gap, and every other live
+    // offer, seen or not, expires with it.
     const { commitTurn, offers, store, ports } = setup();
     const made = [];
     for (const id of ["thr_a", "thr_b", "thr_c", "thr_d"]) made.push(await commitTurn(id));
     expect(made.every((offer) => offer !== null)).toBe(true);
-    expect(made.map((offer) => offers.claim(offer!.id))).toEqual([true, false, false, false]);
-    expect(store.global(ports.now()).seenAt).toHaveLength(1);
+    expect(made.slice(0, 3).map((offer) => offers.claim(offer!.id))).toEqual([true, true, true]);
+    expect(store.global(ports.now()).answeredAt).toEqual([]);
+    await offers.answer(made[0]!.id, "later");
+    expect(store.global(ports.now()).answeredAt).toHaveLength(1);
+    expect(made.slice(1).map((offer) => store.offer(offer!.id)?.status)).toEqual(["expired", "expired", "expired"]);
     expect(offers.visibleOffer("thr_b")).toBeNull();
-    // Two hours on, the next one may show.
-    ports.advance(2 * HOUR);
-    expect(offers.visibleOffer("thr_b")?.id).toBe(made[1]!.id);
+    expect(offers.visibleOffer("thr_d")).toBeNull();
+    await expect(offers.answer(made[1]!.id, "start")).rejects.toThrow("no longer open");
+    expect(store.global(ports.now()).answeredAt).toHaveLength(1);
   });
 
-  it("an offer already seen stays visible and is not charged twice", async () => {
+  it("an offer already seen stays visible, and seeing it charges nothing", async () => {
     const { commitTurn, offers, store, ports } = setup();
     const offer = await commitTurn();
     expect(offers.claim(offer!.id)).toBe(true);
     expect(offers.claim(offer!.id)).toBe(true);
     expect(offers.visibleOffer(WORK)?.id).toBe(offer!.id);
-    expect(store.global(ports.now()).seenAt).toHaveLength(1);
+    expect(store.global(ports.now()).answeredAt).toEqual([]);
   });
 
   it("an unseen offer does not show once a session runs elsewhere in the project", async () => {
@@ -287,7 +293,7 @@ describe("finding 9: Start from the tab breaks the run of Laters", () => {
     const offer = await commitTurn();
     await api.startSession({ threadId: WORK, topic: offer!.topic, trigger: "commit", refs: {} });
     expect(store.offer(offer!.id)).toMatchObject({ status: "answered" });
-    expect(store.global(ports.now()).seenAt).toHaveLength(1);
+    expect(store.global(ports.now()).answeredAt).toHaveLength(1);
   });
 });
 
@@ -304,6 +310,67 @@ describe("pass 2, finding 1: a session elsewhere in the project hides even a see
     expect(store.offer(offer!.id)?.status).toBe("live");
     sessions.pause(sessionId, "user");
     expect(offers.visibleOffer(WORK)?.id).toBe(offer!.id);
-    expect(store.global(ports.now()).seenAt).toHaveLength(1);
+    expect(store.global(ports.now()).answeredAt).toEqual([]);
+  });
+});
+
+describe("PR #103 review pass 1", () => {
+  it("finding 1: offers seen before any answer cannot be answered past the daily cap", async () => {
+    const { commitTurn, offers, store, ports } = setup({ offersPerDay: 1, hoursBetweenOffers: 0 });
+    const a = await commitTurn("thr_a");
+    const b = await commitTurn("thr_b");
+    // Both on screen first: seeing is free.
+    expect(offers.claim(a!.id)).toBe(true);
+    expect(offers.claim(b!.id)).toBe(true);
+    await offers.answer(a!.id, "not-thread");
+    // The answer filled the cap: the other offer, already seen, is gone, and a late answer fails.
+    expect(store.offer(b!.id)?.status).toBe("expired");
+    expect(offers.visibleOffer("thr_b")).toBeNull();
+    await expect(offers.answer(b!.id, "later")).rejects.toThrow("no longer open");
+    expect(store.global(ports.now()).answeredAt).toHaveLength(1);
+    expect(store.thread("thr_b").snoozeUntil).toBeNull();
+  });
+
+  it("finding 1: an answer that fills neither the cap nor a gap leaves the other offers", async () => {
+    const { commitTurn, offers, store } = setup({ offersPerDay: 3, hoursBetweenOffers: 0 });
+    const a = await commitTurn("thr_a");
+    const b = await commitTurn("thr_b");
+    await offers.answer(a!.id, "not-thread");
+    expect(store.offer(b!.id)?.status).toBe("live");
+    await offers.answer(b!.id, "not-thread");
+    expect(store.offer(b!.id)?.status).toBe("answered");
+  });
+
+  it("finding 3: a plugin added to the never-offer list takes its threads' offers, and stale clients cannot show or answer them", async () => {
+    const { commitTurn, offers, api, store, ports, setSettings } = setup({ hoursBetweenOffers: 0 });
+    ports.threads.set("thr_board", thread({ id: "thr_board", environmentId: "env_board", originPluginId: "github-board" }));
+    ports.threads.set("thr_board2", thread({ id: "thr_board2", environmentId: "env_board2", originPluginId: "github-board" }));
+    const swept = await commitTurn("thr_board");
+    const stale = await commitTurn("thr_board2");
+    const own = await commitTurn(WORK);
+    expect([swept, stale, own].every((offer) => offer !== null)).toBe(true);
+    setSettings({ hoursBetweenOffers: 0, noOfferPlugins: "automations\ngithub-board" });
+    // A client holding an offer from before the change: the claim and the answer re-check the thread.
+    expect(await api.offerSeen({ offerId: stale!.id })).toEqual({ visible: false });
+    expect(store.offer(stale!.id)?.status).toBe("expired");
+    // The settings change's sweep takes the rest and leaves the user's own thread's offer alone.
+    expect(await offers.dropIneligible()).toBe(1);
+    expect(store.offer(swept!.id)?.status).toBe("expired");
+    expect(store.offer(own!.id)?.status).toBe("live");
+    await expect(api.answerOffer({ offerId: swept!.id, answer: "later" })).rejects.toThrow("no longer open");
+    expect(store.global(ports.now()).answeredAt).toEqual([]);
+    expect(store.thread("thr_board").snoozeUntil).toBeNull();
+  });
+
+  it("finding 3: an offer whose thread was listed after a stale read cannot be answered, and a manual start still runs", async () => {
+    const { commitTurn, api, store, ports, setSettings } = setup({ hoursBetweenOffers: 0 });
+    ports.threads.set("thr_board", thread({ id: "thr_board", environmentId: "env_board", originPluginId: "github-board" }));
+    const offer = await commitTurn("thr_board");
+    setSettings({ hoursBetweenOffers: 0, noOfferPlugins: "github-board" });
+    await expect(api.answerOffer({ offerId: offer!.id, answer: "later" })).rejects.toThrow("no longer open");
+    expect(store.offer(offer!.id)?.status).toBe("expired");
+    expect(store.global(ports.now()).answeredAt).toEqual([]);
+    const started = await api.startSession({ threadId: "thr_board", topic: '"Add median"', trigger: "commit", refs: {} });
+    expect(started.threadId).not.toBeNull();
   });
 });

@@ -1,13 +1,17 @@
 /**
  * Upgrading a store from e54db75 (the build the owner first installed), whose Start race could leave
- * two open sessions for one source thread (review pass 2, finding 11).
+ * two open sessions for one source thread (review pass 2, finding 11), and from 0.1.0, whose caps
+ * counted seen offers (PR #103 review pass 1, finding 2).
  */
 import { createHash } from "node:crypto";
 
+import Database from "better-sqlite3";
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import { describe, expect, it } from "vitest";
 
 import plugin from "../server";
+import { offerCaps } from "./policy";
+import { readSettings } from "./settings";
 import { LearningStore, MIGRATIONS, reconcileOpenSessions } from "./store";
 
 const sha = (statement: string) => createHash("sha256").update(statement).digest("hex");
@@ -92,5 +96,52 @@ describe("migrations", () => {
     expect(reconcileOpenSessions(db, 1)).toBe(0);
     bb.storage.migrate(db, MIGRATIONS);
     expect(reconcileOpenSessions(db, 1)).toBe(0);
+  });
+});
+
+describe("upgrading from 0.1.0: the answered-offer history", () => {
+  const HOUR_MS = 3_600_000;
+  const NOW = 100 * 24 * HOUR_MS;
+
+  function v010Store() {
+    const db = new Database(":memory:");
+    for (const statement of MIGRATIONS.slice(0, -1)) db.exec(statement);
+    const offer = db.prepare(
+      `INSERT INTO offers (id, thread_id, project_key, trigger, topic, refs, status, answer, created_at, seen_at, answered_at) VALUES (?, ?, 'k', 'commit', 't', '{}', ?, ?, ?, ?, ?)`,
+    );
+    // Answered an hour ago, and a day and a half ago; one only seen, after the last answer; one never seen.
+    offer.run("off_a", "thr_a", "answered", "later", NOW - 2 * HOUR_MS, NOW - 2 * HOUR_MS, NOW - HOUR_MS);
+    offer.run("off_b", "thr_b", "answered", "start", NOW - 37 * HOUR_MS, NOW - 37 * HOUR_MS, NOW - 36 * HOUR_MS);
+    offer.run("off_c", "thr_c", "expired", null, NOW - 40 * 60_000, NOW - 30 * 60_000, null);
+    offer.run("off_d", "thr_d", "live", null, NOW - 10 * 60_000, null, null);
+    // 0.1.0 counted what was seen.
+    db.prepare(`INSERT INTO global_state (key, value) VALUES ('seenAt', ?)`).run(JSON.stringify([NOW - 37 * HOUR_MS, NOW - 2 * HOUR_MS, NOW - 30 * 60_000]));
+    return db;
+  }
+
+  it("seeds the answers once from the offers 0.1.0 answered, leaving out offers only seen", () => {
+    const db = v010Store();
+    db.exec(MIGRATIONS.at(-1)!);
+    const store = new LearningStore(db);
+    expect(store.global(NOW).answeredAt).toEqual([NOW - 36 * HOUR_MS, NOW - HOUR_MS]);
+    // The caps read the answer's time: the gap runs from it, not from the later look.
+    const caps = (now: number, offersPerDay: number) =>
+      offerCaps({ now, settings: readSettings({ offersPerDay, hoursBetweenOffers: 2 }), trigger: "commit", finishedSessions: 0, global: store.global(now) });
+    expect(caps(NOW, 1)).toBe("the daily limit is reached");
+    expect(caps(NOW, 3)).toBe("too soon after the last offer");
+    expect(caps(NOW + HOUR_MS, 3)).toBeNull();
+    // An answer after the upgrade is added once.
+    store.recordAnswered(NOW + HOUR_MS);
+    expect(store.global(NOW + HOUR_MS).answeredAt).toEqual([NOW - 36 * HOUR_MS, NOW - HOUR_MS, NOW + HOUR_MS]);
+  });
+
+  it("never overwrites answers already kept, and a store with no answers starts empty", () => {
+    const db = v010Store();
+    db.prepare(`INSERT INTO global_state (key, value) VALUES ('answeredAt', ?)`).run(JSON.stringify([NOW - 5 * 60_000]));
+    db.exec(MIGRATIONS.at(-1)!);
+    expect(new LearningStore(db).global(NOW).answeredAt).toEqual([NOW - 5 * 60_000]);
+    const empty = new Database(":memory:");
+    for (const statement of MIGRATIONS) empty.exec(statement);
+    expect(new LearningStore(empty).global(NOW).answeredAt).toEqual([]);
   });
 });

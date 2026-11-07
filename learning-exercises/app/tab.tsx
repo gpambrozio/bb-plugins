@@ -11,8 +11,9 @@
  *
  * The tab is fixed, on the tab bar, in every thread bb lists in the sidebar: top-level threads, child
  * and sub-agent threads, other plugins' threads, and this plugin's own session threads. Hidden threads
- * are not listed, so they get none. Offers are made only in top-level threads a person drives (the
- * server's `isHumanThread`); elsewhere the tab is there for Start and Resume by hand, with that thread
+ * are not listed, so they get none. Offers are made only in top-level threads (the server's
+ * `isHumanThread`: another plugin's top-level thread counts unless that plugin is on the never-offer
+ * list, and this plugin's own threads never do); elsewhere the tab is there for Start and Resume by hand, with that thread
  * as the source (`canStartByHand`, which also keeps Start out of a session's own thread).
  *
  * Earlier builds put the tab in sub-agent threads only as an action tab (`LEARNING_ON_DEMAND_TAB`) added

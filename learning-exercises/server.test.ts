@@ -92,6 +92,23 @@ describe("zero context until a session starts", () => {
   });
 });
 
+describe("the never-offer list", () => {
+  it("offers in a top-level thread a plugin started, and adding the plugin to the list takes the offer away for good", async () => {
+    const { harness, threads, commitTurn } = await setup();
+    threads.set(WORK, { ...threads.get(WORK)!, originPluginId: "github-board" });
+    await commitTurn();
+    const view = (await harness.callRpc("threadView", { threadId: WORK })) as ThreadView;
+    expect(view.eligible).toBe(true);
+    expect(view.offer).toMatchObject({ trigger: "commit" });
+    await harness.setSettings({ noOfferPlugins: "automations\ngithub-board" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // The change's sweep expired it: taking the plugin off the list again does not bring it back.
+    await harness.setSettings({ noOfferPlugins: "automations" });
+    expect(((await harness.callRpc("threadView", { threadId: WORK })) as ThreadView).offer).toBeNull();
+    expect(await harness.callRpc("offerSeen", { offerId: view.offer!.id })).toEqual({ visible: false });
+  });
+});
+
 describe("from a commit to an answered question", () => {
   it("offers after a commit, forks on Start, gives the fork the tools, and runs the card", async () => {
     const { harness, commitTurn, metadata } = await setup();

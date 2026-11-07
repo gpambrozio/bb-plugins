@@ -42,9 +42,11 @@ is not affiliated with or endorsed by the author; see [NOTICE.md](NOTICE.md).
   a table to fill in, laid out in sections and side by side when the card is wide enough. The agent
   is told to keep forms small and use one only when it makes answering easier; a plain question
   stays a text box. Form answers show part by part in the transcript and in the Learning tab.
-- **Caps that hold.** At most 2 finished sessions per thread, 3 offers you see per day, 2 hours between
-  them; **Later** snoozes the thread for 45 minutes and 3 turns; three Laters in a row keep only
-  commit and pull-request offers for a week. Offers nobody sees expire and never count.
+- **Caps that hold.** At most 2 finished sessions per thread, 3 answered offers per day, 2 hours after
+  an answer before the next; **Later** snoozes the thread for 45 minutes and 3 turns; three Laters in a
+  row keep only commit and pull-request offers for a week. Only an answer counts: offers you leave
+  unanswered, seen or not, expire and count toward nothing. Several can show at once; when an answer
+  reaches the limit or starts the wait, the others go away.
 - **The Learning tab** on the side panel's tab bar, in every thread, shows this thread's offer or session (Pause, Resume,
   Finish), starts an exercise on a topic taken from the thread (its last commit, its new files, its
   title) or one you type, and lists the project's paused and previous sessions with your answers and the
@@ -70,9 +72,10 @@ Settings → Plugins → Learning Exercises:
 | Setting | Default | |
 | --- | --- | --- |
 | Offer exercises | On | Off: no offers; the Learning tab still starts sessions |
+| Plugins whose threads get no offers | `automations` | One plugin id per line; its top-level threads get no offers. The plugin's own session threads never do, whatever it says |
 | After a commit / new files / a schema change / a pull request merges | On | Each trigger on its own |
 | After a working streak | Off | After *Turns in a streak* turns with file changes |
-| Sessions per thread, Offers per day, Hours between offers | 2, 3, 2 | The caps |
+| Sessions per thread, Offers per day, Hours between offers | 2, 3, 2 | The caps; only answered offers count toward them |
 | Questions per session | 8 | The card refuses more |
 | Where a session runs | A side thread | Or the work thread |
 | About you | — | Your experience and goals; every session reads it |
@@ -84,8 +87,11 @@ project** are listed under the settings, each with Undo.
 
 ## Good to know
 
-- Offers appear only in your own top-level threads: never in child threads (crew, sub-agents),
-  automations, other plugins' threads or hidden workers.
+- Offers appear only in top-level threads, and that includes a top-level thread another plugin
+  started for you, such as one from a GitHub board card or a diff-review run. Never in child threads
+  (crew, sub-agents, whoever started them), hidden workers or side chats, the plugin's own session
+  threads, or the threads of plugins listed under *Plugins whose threads get no offers* (automations
+  by default; add any plugin's id there).
 - In those threads the Learning tab is still on the tab bar, so you can start or resume a session by
   hand, with that thread as the source. A session run "here" in a child thread is a turn like any other, so its parent hears when
   it ends; the side-thread default keeps it out of the child.

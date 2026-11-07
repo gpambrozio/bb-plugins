@@ -46,9 +46,9 @@ export class LearningApi {
     const hosted = store.sessionInThread(threadId);
     const started = store.openSessionFrom(threadId);
     const view: ThreadView = {
-      eligible: isHumanThread(thread),
+      eligible: isHumanThread(thread, this.deps.settings().noOfferPlugins),
       canStart: canStartByHand(thread),
-      offer: isHumanThread(thread) ? this.deps.offers.visibleOffer(threadId) : null,
+      offer: isHumanThread(thread, this.deps.settings().noOfferPlugins) ? this.deps.offers.visibleOffer(threadId) : null,
       hosted: hosted === null ? null : publicSession(hosted),
       started: started === null || started.id === hosted?.id ? null : publicSession(started),
       offersOn: !store.thread(threadId).optOut,
@@ -148,8 +148,8 @@ export class LearningApi {
   }
 
   /** The view drew the offer: claim it against the caps as they are now (a refused claim drops it). */
-  offerSeen({ offerId }: Input<"offerSeen">): Output<"offerSeen"> {
-    return { visible: this.deps.offers.claim(offerId) };
+  async offerSeen({ offerId }: Input<"offerSeen">): Promise<Output<"offerSeen">> {
+    return { visible: await this.deps.offers.claimChecked(offerId) };
   }
 
   async answerOffer({ offerId, answer }: Input<"answerOffer">): Promise<Output<"answerOffer">> {
@@ -168,8 +168,8 @@ export class LearningApi {
 
   async startSession(input: Input<"startSession">): Promise<Output<"startSession">> {
     const thread = await this.requireThread(input.threadId);
-    // A manual start answers the thread's live offer the way the banner's Start does (claimed and
-    // charged once, the run of Laters reset), so the banner goes away. An offer that may no longer be
+    // A manual start answers the thread's live offer the way the banner's Start does (claimed, counted
+    // once as an answer, the run of Laters reset), so the banner goes away. An offer that may no longer be
     // answered is dropped; the user asked for this session either way.
     const live = this.deps.store.liveOffer(thread.id);
     let offerId: string | null = null;

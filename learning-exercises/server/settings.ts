@@ -27,6 +27,9 @@ export const DEFAULT_EXCLUDE_PATTERNS = [
 /** Paths whose change counts as a schema or interface change (gitignore syntax, one per line). */
 export const DEFAULT_SCHEMA_PATTERNS = ["migrations/", "*.sql", "schema.prisma", "*.proto", "*.graphql", "openapi.*"].join("\n");
 
+/** Plugins whose top-level threads get no offers unless the user changes it: scheduled runs nobody is driving. */
+export const DEFAULT_NO_OFFER_PLUGINS = "automations";
+
 export const SETTINGS = {
   offersEnabled: {
     type: "boolean",
@@ -34,6 +37,14 @@ export const SETTINGS = {
     description:
       "Offer a short exercise above a thread's composer after a commit, new files, a schema change or a merged pull request. Turn it off to start sessions only from the Learning tab.",
     default: true,
+  },
+  noOfferPlugins: {
+    type: "string",
+    label: "Plugins whose threads get no offers",
+    description:
+      "Threads another plugin starts at the top level get offers like your own (a GitHub board card's thread, say), except those of the plugins listed here: one plugin id per line. Learning Exercises' own session threads never get offers, whatever this says. Threads a plugin starts as a child of another thread never get offers either.",
+    experimental_multiline: true,
+    default: DEFAULT_NO_OFFER_PLUGINS,
   },
   triggerCommit: { type: "boolean", label: "After a commit", description: "Offer when a turn made a commit.", default: true },
   triggerNewFiles: { type: "boolean", label: "After new files", description: "Offer when a turn added source files.", default: true },
@@ -62,11 +73,11 @@ export const SETTINGS = {
     description: "Stop offering in a thread after this many finished sessions (1–10). You can still start one from the Learning tab.",
     default: 2,
   },
-  offersPerDay: { type: "number", label: "Offers per day", description: "The most offers you see in 24 hours, across threads (1–20).", default: 3 },
+  offersPerDay: { type: "number", label: "Offers per day", description: "The most offers you answer in 24 hours, across threads (1–20). An offer you leave unanswered does not count.", default: 3 },
   hoursBetweenOffers: {
     type: "number",
     label: "Hours between offers",
-    description: "The least time between two offers you see, across threads (0–24).",
+    description: "After you answer an offer, the least time before the next one shows, across threads (0–24). An offer you leave unanswered does not count.",
     default: 2,
   },
   questionsPerSession: {
@@ -109,6 +120,8 @@ export const SETTINGS = {
 
 export interface LearningSettings {
   offersEnabled: boolean;
+  /** Plugin ids whose top-level threads get no offers (`isHumanThread`); this plugin is kept out on top. */
+  noOfferPlugins: string[];
   triggers: { commit: boolean; newFiles: boolean; schema: boolean; prMerged: boolean; streak: boolean };
   streakTurns: number;
   sessionsPerThread: number;
@@ -141,10 +154,16 @@ function text(raw: Raw, key: keyof typeof SETTINGS): string {
   return typeof value === "string" ? value : (SETTINGS[key].default as string);
 }
 
+/** Plugin ids, one per line (commas and spaces separate them too), trimmed, without repeats. */
+export function pluginIds(value: string): string[] {
+  return [...new Set(value.split(/[\s,]+/).filter((id) => id !== ""))];
+}
+
 export function readSettings(values: object): LearningSettings {
   const raw = values as Raw;
   return {
     offersEnabled: bool(raw, "offersEnabled"),
+    noOfferPlugins: pluginIds(text(raw, "noOfferPlugins")),
     triggers: {
       commit: bool(raw, "triggerCommit"),
       newFiles: bool(raw, "triggerNewFiles"),

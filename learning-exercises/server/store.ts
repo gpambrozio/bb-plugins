@@ -119,6 +119,11 @@ export const MIGRATIONS: string[] = [
   `ALTER TABLE exercises ADD COLUMN feedback TEXT`,
   // The bb turn that verdict was recorded in: the chat's feedback card sits above that turn's last message.
   `ALTER TABLE exercises ADD COLUMN feedback_turn TEXT`,
+  // 0.2.0: the caps count answered offers, under their own key. Seeded once, here, from the answers
+  // 0.1.0 recorded on its offers (offers only seen are left out), so an upgrade keeps today's cap and gap.
+  `INSERT OR IGNORE INTO global_state (key, value)
+     SELECT 'answeredAt', json_group_array(answered_at)
+     FROM (SELECT answered_at FROM offers WHERE status = 'answered' AND answered_at IS NOT NULL ORDER BY answered_at DESC LIMIT 50)`,
 ];
 
 const ReplyProgressSchema = z.object({
@@ -388,6 +393,12 @@ export class LearningStore {
         .run(id, input.threadId, input.projectKey, input.trigger, input.topic, JSON.stringify(input.refs), input.now);
     })();
     return this.liveOffer(input.threadId)!;
+  }
+
+  /** Every live offer, oldest first. */
+  liveOffers(): (Offer & { projectKey: string })[] {
+    const rows = this.db.prepare(`SELECT * FROM offers WHERE status = 'live' ORDER BY created_at`).all() as OfferRecord[];
+    return rows.map((row) => ({ ...toOffer(row), projectKey: row.project_key }));
   }
 
   /** Marks an offer seen once; answers true only the first time. */
@@ -803,21 +814,27 @@ export class LearningStore {
     this.db.prepare(`INSERT INTO global_state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(key, JSON.stringify(value));
   }
 
+  /**
+   * The values the caps read. Answers are kept under `answeredAt`, which the last migration seeds once
+   * from the answered offers 0.1.0 stored; the `seenAt` key 0.1.0 wrote (offers shown, answered or not)
+   * is no longer read, so what was only shown counts for nothing.
+   */
   global(now: number): GlobalState {
-    const seen = this.getValue<unknown>("seenAt", []);
-    const seenAt = Array.isArray(seen) ? seen.filter((at): at is number => typeof at === "number" && now - at < 2 * 24 * 3_600_000).sort((a, b) => a - b) : [];
+    const answered = this.getValue<unknown>("answeredAt", []);
+    const answeredAt = Array.isArray(answered) ? answered.filter((at): at is number => typeof at === "number" && now - at < 2 * 24 * 3_600_000).sort((a, b) => a - b) : [];
     const laters = this.getValue<unknown>("consecutiveLaters", 0);
     const backoff = this.getValue<unknown>("backoffUntil", null);
     return {
-      seenAt,
+      answeredAt,
       consecutiveLaters: typeof laters === "number" ? laters : 0,
       backoffUntil: typeof backoff === "number" ? backoff : null,
     };
   }
 
-  recordSeen(now: number): void {
-    const { seenAt } = this.global(now);
-    this.setValue("seenAt", [...seenAt, now].slice(-50));
+  /** An offer was answered: it counts toward the daily limit and the gap between offers. */
+  recordAnswered(now: number): void {
+    const { answeredAt } = this.global(now);
+    this.setValue("answeredAt", [...answeredAt, now].slice(-50));
   }
 
   setBackoff(state: Pick<GlobalState, "consecutiveLaters" | "backoffUntil">): void {
