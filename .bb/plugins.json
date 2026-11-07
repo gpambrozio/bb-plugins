@@ -12,6 +12,7 @@
     { "name": "screen-sharing", "source": "./screen-sharing" },
     { "name": "diff-review", "source": "./diff-review" },
     { "name": "terminals", "source": "./terminals" },
-    { "name": "learning-exercises", "source": "./learning-exercises" }
+    { "name": "learning-exercises", "source": "./learning-exercises" },
+    { "name": "codex-realtime", "source": "./codex-realtime" }
   ]
 }
