@@ -1,0 +1,56 @@
+{
+  "name": "@gpambrozio/bb-plugin-codex-realtime",
+  "version": "0.1.0",
+  "license": "MIT",
+  "author": "gpambrozio (https://github.com/gpambrozio)",
+  "homepage": "https://github.com/gpambrozio/bb-plugins/tree/main/codex-realtime#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gpambrozio/bb-plugins.git",
+    "directory": "codex-realtime"
+  },
+  "bugs": {
+    "url": "https://github.com/gpambrozio/bb-plugins/issues"
+  },
+  "type": "module",
+  "engines": {
+    "bb": ">=0.46",
+    "bbPluginSdk": ">=0.6.49"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "build": "bb plugin build",
+    "live-check": "node scripts/live-check.ts"
+  },
+  "files": [
+    "server.ts",
+    "server/",
+    "dist/",
+    "PLUGIN_OVERVIEW.md",
+    "CHANGELOG.md",
+    "!**/*.test.ts"
+  ],
+  "bb": {
+    "name": "ChatGPT Realtime Connection",
+    "description": "Run Voice Mode on your ChatGPT subscription instead of an OpenAI API key, using the sign-in `codex login` already keeps on this Mac.",
+    "branding": {
+      "icon": "Mic"
+    },
+    "server": "./server.ts"
+  },
+  "dependencies": {
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@get-bb/plugin-sdk": "0.6.49",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.20.5",
+    "@types/react": "^19.3.0",
+    "better-sqlite3": "^12.11.1",
+    "cron-parser": "^5.10.4",
+    "hono": "^4.13.16",
+    "typescript": "^5.9.3",
+    "vitest": "^5.1.0"
+  }
+}
