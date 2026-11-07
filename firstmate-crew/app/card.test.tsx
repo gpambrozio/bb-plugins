@@ -17,6 +17,8 @@ vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  // Unsent words outlive a card (`./drafts`); each test starts with none.
+  window.localStorage.clear();
 });
 
 const MERGE = { label: "Merge", prompt: "Merge https://github.com/you/web/pull/42 once its checks are green" };

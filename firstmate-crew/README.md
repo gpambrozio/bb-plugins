@@ -123,7 +123,8 @@ Press **FirstMate** on the first mate's thread. Each card is a worker, a backlog
   whenever it is awake, and tells you when it is waiting on one. A relaunched worker starts on Auto again.
 
 The sections are stacked and foldable, empty ones are hidden, and the arrows on each section's header
-move it up or down; this browser remembers the folds and the order. On a worker's own thread the
+move it up or down; this browser remembers the folds and the order, and anything you have typed on a
+card but not sent yet. On a worker's own thread the
 FirstMate tab shows just its card, with a note box that tells the first mate something about that worker
 without touching the worker; on any other thread it offers to adopt it (when it works in the home), or a
 way to the first mate.

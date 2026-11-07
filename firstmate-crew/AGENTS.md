@@ -138,6 +138,11 @@ Do not break these; each was paid for.
   parses the charter's examples, so change the three together. The Paseo plugin's port parses the same
   lines by the same rules; keep the two in step. The field is taken out of the line before
   anything else is read, so a prompt's URLs and parentheses never reach the card's title, URL or fields.
+- **Unsent words on a card outlive its unmount** — the Answer box, an open Steer or Relaunch line, a
+  worker's Note. Leaving the first mate's thread unmounts the board, so they are kept in `localStorage`
+  under the card's `cardSubject` id (`app/drafts.ts`), written on every edit, removed when emptied,
+  cancelled or sent (even when the send lands after the card is gone), and dropped after a week or when
+  the board shows a fleet without that card. Every storage access is in try/catch.
 - **Watch output reaches the first mate only between turns**, at most 32,000 characters in one message,
   `<` of anything tag-shaped escaped. Failures are queued once until the watch succeeds.
 - **Titles never change; status lives in the section, the status line and `(hold: …)`.** The board's

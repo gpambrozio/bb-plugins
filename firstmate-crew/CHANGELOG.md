@@ -5,6 +5,15 @@ Notable changes to `firstmate`. The other plugins in this repository version sep
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.10.1
+
+### Fixed
+
+- **What you type on a card stays there when you switch threads.** Words in a card's Answer box, in an
+  open Steer or Relaunch box, or in a worker's note were lost when you went to another thread and came
+  back. The board now keeps them in this browser until you send them, cancel, or clear the box. Words
+  for a card that has left the board, or left untouched for a week, are dropped.
+
 ## 0.10.0
 
 ### Changed

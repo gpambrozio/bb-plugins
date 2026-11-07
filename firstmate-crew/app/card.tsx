@@ -6,7 +6,8 @@
  *
  * A backlog item's `(actions: …)` are buttons that send their prompt to the first mate, as a suggestion
  * does; every card also gets an Answer box, whose words go to the first mate under the card's id and title
- * (`cardSubject`). Both share the one send in flight (`./send-gate`).
+ * (`cardSubject`). Both share the one send in flight (`./send-gate`). Unsent words in the Answer box and an
+ * open Steer or Relaunch line outlive the card's unmount (`./drafts`).
  */
 import { UrlLink, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 import { useState } from "react";
@@ -19,6 +20,7 @@ import { cn } from "../lib/utils";
 import type { rpcContract } from "../server";
 import type { BacklogAction, ColumnId, FleetCard } from "../shared/types";
 import { ConfirmDialog } from "./confirm-dialog";
+import { useCardDraft } from "./drafts";
 import { STATE_WORDS, STATUS_WORDS, answerText, cardSubject, isRunning, parentNotificationsWarning, relativeTime, shortUrl } from "./format";
 import { reportError } from "./notify";
 import { useMateSender } from "./use-mate-sender";
@@ -36,7 +38,7 @@ const TONES: Readonly<Record<ColumnId, string>> = {
 const END_WARNING =
   "This worker's task isn't Done. Archiving removes its worktree after bb's grace period; only committed work can be restored.";
 
-type Draft = { kind: "steer" | "relaunch"; text: string };
+type WorkerLine = { kind: "steer" | "relaunch"; text: string };
 
 export function Card({
   card,
@@ -55,7 +57,9 @@ export function Card({
   const rpc = useRpc<typeof rpcContract>();
   const navigate = useBbNavigate();
   const mate = useMateSender();
-  const [draft, setDraft] = useState<Draft | null>(null);
+  const subject = cardSubject(card);
+  const [stored, setDraft] = useCardDraft(subject.id, "worker");
+  const draft: WorkerLine | null = stored?.kind === undefined ? null : { kind: stored.kind, text: stored.text };
   const [busy, setBusy] = useState(false);
   const [confirmEnd, setConfirmEnd] = useState(false);
 
@@ -138,7 +142,7 @@ export function Card({
       {backlog === null || backlog.actions.length === 0 ? null : (
         <BacklogActions actions={backlog.actions} sending={mate.sending} onPick={(action) => tellMate(action.prompt)} />
       )}
-      <AnswerBox subject={cardSubject(card)} held={Boolean(backlog?.hold)} sending={mate.sending} onSend={tellMate} />
+      <AnswerBox subject={subject} held={Boolean(backlog?.hold)} sending={mate.sending} onSend={tellMate} />
       {crew === null && backlog?.section === "in-flight" ? (
         <div className="text-xs text-muted-foreground">No worker is running for this item.</div>
       ) : null}
@@ -244,6 +248,7 @@ function BacklogActions({
  * A line for the captain's own words about a card — an answer to its hold, or anything else — sent under the
  * card's id and title. The line is shut while a send is out: a landed send clears it and may bring the first
  * mate's thread into view, which unmounts a worker's panel, so words typed meanwhile would be lost either way.
+ * Unsent words are kept under the card's id until they are sent (`./drafts`).
  */
 function AnswerBox({
   subject,
@@ -257,7 +262,9 @@ function AnswerBox({
   sending: boolean;
   onSend: (text: string, onSent: () => void) => void;
 }) {
-  const [text, setText] = useState("");
+  const [stored, store] = useCardDraft(subject.id, "answer");
+  const text = stored?.text ?? "";
+  const setText = (next: string) => store(next === "" ? null : { text: next });
   const answer = text.trim();
 
   return (
