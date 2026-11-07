@@ -67,7 +67,14 @@ export function parseCodexLogin(text: string, path: string, now: number): CodexL
     // An API-key login (`auth_mode: "apikey"`) has no ChatGPT token either.
     throw new CodexLoginError("missing", `The Codex login at ${path} has no ChatGPT sign-in. ${SIGN_IN_HINT}.`);
   }
-  const expiresAt = tokenExpiry(accessToken.trim());
+  const token = accessToken.trim();
+  // The token goes into an HTTP header. Anything outside JWT syntax (a line
+  // break, a space, a control character) would make Headers or WebSocket throw
+  // an error that quotes the whole header, token included, so it stops here.
+  if (!JWT_SYNTAX.test(token)) {
+    throw new CodexLoginError("malformed", `The ChatGPT token in ${path} is not a well-formed token. ${SIGN_IN_HINT}.`);
+  }
+  const expiresAt = tokenExpiry(token);
   if (expiresAt === null) {
     throw new CodexLoginError("malformed", `The ChatGPT token in ${path} has no readable expiry. ${SIGN_IN_HINT}.`);
   }
@@ -77,10 +84,16 @@ export function parseCodexLogin(text: string, path: string, now: number): CodexL
       `The ChatGPT sign-in in ${path} expired on ${new Date(expiresAt).toISOString()}. Run \`codex\` once to refresh it, or \`codex login\` to sign in again.`,
     );
   }
-  return { accessToken: accessToken.trim(), expiresAt };
+  return { accessToken: token, expiresAt };
 }
 
-/** The `exp` claim of a JWT, in epoch milliseconds, or null when there is none to read. */
+/** Three base64url parts separated by dots; the signature may be empty. */
+const JWT_SYNTAX = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*$/u;
+
+/** The largest epoch milliseconds a Date can hold, either side of 1970. */
+const MAX_DATE_MS = 8.64e15;
+
+/** The `exp` claim of a JWT, in epoch milliseconds, or null when there is none to read or it is out of range. */
 function tokenExpiry(token: string): number | null {
   const parts = token.split(".");
   if (parts.length !== 3) return null;
@@ -91,7 +104,9 @@ function tokenExpiry(token: string): number | null {
     return null;
   }
   const exp = isRecord(claims) ? claims.exp : undefined;
-  return typeof exp === "number" && Number.isFinite(exp) ? exp * 1000 : null;
+  if (typeof exp !== "number") return null;
+  const expiresAt = exp * 1000;
+  return Number.isFinite(expiresAt) && Math.abs(expiresAt) <= MAX_DATE_MS ? expiresAt : null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

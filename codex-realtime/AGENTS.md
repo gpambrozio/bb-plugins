@@ -45,7 +45,9 @@ one may take over.
   context at all is refused too.
 - **The token is never logged, thrown or put in a fixture.** Error messages name the file and the
   problem only. Tests build fake tokens in `testing/fake-login.ts` and check that no part of one reaches
-  the log or an error.
+  the log or an error. A token that is not three base64url parts is refused as malformed before it
+  is returned: Node's `Headers` and `WebSocket` quote the whole header value when they reject one (a line
+  break inside it, say), and Voice Mode logs and shows that error.
 - **Read on every call, no cache.** A token Codex refreshed since the last session is picked up at once,
   which is all `refresh: true` asks for.
 

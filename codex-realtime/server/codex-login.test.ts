@@ -99,4 +99,36 @@ describe("readCodexLogin", () => {
     made.write(chatgptLogin(fakeToken(NOW + EXPIRY_MARGIN_MS - 1000)));
     expect((await problemOf(made.authPath)).problem).toBe("expired");
   });
+
+  it("refuses a token with an embedded line break, which a header cannot carry, and never quotes it", async () => {
+    const made = home();
+    const [header, payload, signature] = fakeToken(NOW + HOUR).split(".");
+    for (const broken of [`${header}.${payload}.${signature.slice(0, 5)}\r\n${signature.slice(5)}`, `${header}.${payload}.${signature}\nX-Injected: yes`]) {
+      made.write(chatgptLogin(broken));
+      const error = await problemOf(made.authPath);
+      expect(error.problem).toBe("malformed");
+      expect(error.message).toContain("codex login");
+      for (const part of [header, payload, signature, signature.slice(5)]) expect(error.message).not.toContain(part);
+    }
+  });
+
+  it("refuses a token with spaces or control characters inside it", async () => {
+    const made = home();
+    const [header, payload, signature] = fakeToken(NOW + HOUR).split(".");
+    for (const broken of [`${header}.${payload} .${signature}`, `${header}.${payload}.${signature}\u0000`, `${header}.${payload}.sig+nature`]) {
+      made.write(chatgptLogin(broken));
+      expect((await problemOf(made.authPath)).problem).toBe("malformed");
+    }
+  });
+
+  it("calls an expiry outside what a date can hold malformed", async () => {
+    const made = home();
+    const part = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
+    for (const exp of [1e20, -1e20]) {
+      made.write(chatgptLogin(`${part({ alg: "none" })}.${part({ exp })}.fake-signature`));
+      const error = await problemOf(made.authPath);
+      expect(error.problem).toBe("malformed");
+      expect(error.message).toContain("codex login");
+    }
+  });
 });

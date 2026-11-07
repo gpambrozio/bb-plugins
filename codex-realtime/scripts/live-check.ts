@@ -71,7 +71,15 @@ const result = {
 
 await new Promise<void>((resolve) => {
   // Node's WebSocket takes headers in its init object, as Voice Mode uses it.
-  const socket = new WebSocket(connection.url, { headers: connection.headers } as unknown as string[]);
+  // A header it refuses throws an error quoting the header, token included, so
+  // only the error's name is printed. readCodexLogin already refuses such a token.
+  let socket: WebSocket;
+  try {
+    socket = new WebSocket(connection.url, { headers: connection.headers } as unknown as string[]);
+  } catch (error) {
+    console.error(`Could not open the WebSocket (${error instanceof Error ? error.name : "unknown error"}).`);
+    process.exit(1);
+  }
   const send = (event: unknown) => socket.send(JSON.stringify(event));
   let transcribed = false;
   let replied = false;
