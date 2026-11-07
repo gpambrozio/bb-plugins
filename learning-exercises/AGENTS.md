@@ -18,9 +18,16 @@ retrieval and Showboat are later phases.
 2. **Offers are deterministic.** No model decides an offer or writes a topic. Topics are commit
    subjects, paths and pull request titles, quoted. The exercise type is the agent's choice inside an
    accepted session.
-3. **Offers only in human threads** (`policy.ts` `isHumanThread`): top level, no `originPluginId`, no
-   lifecycle owner, visible, not archived. That excludes crews, automations, diff-review runs, side
-   chats and this plugin's own sessions. **Manual starts are wider** (`canStartByHand`): any visible,
+3. **Offers only in human threads** (`policy.ts` `isHumanThread`): top level, no lifecycle owner,
+   visible, not archived, and not started by a plugin on the never-offer list. A plugin-started thread is
+   kept out only when it is a child (as every child is) or its plugin is listed: the `noOfferPlugins`
+   setting (default `automations`, one id per line) plus this plugin, whose session threads never get
+   offers whatever the setting says. A top-level thread another plugin started is the user's work: a
+   GitHub board card's thread (thr_58q9ui4bvc got no offer for its first-turn commit under the old "no
+   `originPluginId`" rule), a diff-review run, a Reclaim clean-up, a voice thread. bb marks nothing else on
+   a background thread (every spawn's `initiator` is `"user"`), so a plugin that starts top-level
+   background work belongs on that list. Side chats and code-review workers are hidden and owned, crews
+   are children, and workflows set a lifecycle owner, so the other checks keep them out. **Manual starts are wider** (`canStartByHand`): any visible,
    unarchived thread except this plugin's own session threads, so a sub-agent thread can be a session's
    source. The fixed "Learning" tab is on the tab bar of every thread the sidebar lists (hidden threads are
    not listed), session threads included, where it shows the session with Pause and Finish but no Start.
@@ -30,16 +37,20 @@ retrieval and Showboat are later phases.
    that tab) closes every instance, selecting the fixed tab first when one was selected: never two
    Learning tabs. `ThreadView.eligible` says offers are made there, `canStart` that Start is shown. Never
    let offers, the banner or the thread menu's offer choice follow `canStart`.
-4. **The caps live in the server** (`policy.ts`), and count *seen* offers only. They are applied twice:
-   when an offer is made, and again when it is about to show. Views read the offer through
-   `OfferEngine.visibleOffer` (an unseen offer shows only while the caps would let it), and the banner or
-   the tab claims it with `offerSeen` → `claim`, which re-checks the gate and the caps synchronously and
-   charges it once. The app draws an unseen offer only after that claim answers `visible: true`, so two
-   panes that read different queued offers never both show one. A session starting, running or waiting
-   for an answer elsewhere in the project hides every offer in it, seen or not, without ending or
-   charging it (`suppressed`); only the caps' accounting is skipped for an offer already seen. Every read, claim and answer also re-checks what can end an offer at any time
+4. **The caps live in the server** (`policy.ts`), and count *answered* offers only. An offer nobody
+   answers, shown or not, counts toward nothing: not the daily limit or the gap (`answeredAt`, stored
+   under its own key so the `seenAt` of earlier builds counts for nothing), not the snooze or the
+   back-off (set by Later), not sessions per thread (finished sessions), and not the streak, whose count
+   restarts on an answer, not when an offer is made. So several offers in quiet threads can show at once
+   until one is answered. The caps are applied twice: when an offer is made, and again when it is about
+   to show. Views read the offer through `OfferEngine.visibleOffer` (an unseen offer shows only while the
+   caps would let it), and the banner or the tab claims it with `offerSeen` → `claim`, which re-checks the
+   gate and the caps synchronously and marks it seen, charging nothing. The app draws an unseen offer only
+   after that claim answers `visible: true`, so an offer the caps now hold back is never drawn from a
+   stale read; one already seen keeps showing. A session starting, running or waiting for an answer
+   elsewhere in the project hides every offer in it, seen or not, without ending it (`suppressed`). Every read, claim and answer also re-checks what can end an offer at any time
    (`offerStanding`: offers off, Never for the project, the thread opted out, a session open, a day old).
-   An offer nobody looked at expires at the next turn or after 24 h and never counted. The banner's Start
+   An offer nobody answered expires at the next turn or after 24 h and never counted. The banner's Start
    and the tab's Start both answer through `OfferEngine.answer`, and a tab Start with no offer still
    resets the run of Laters (`accepted`).
 5. **Session state moves only from the state a step expects.** Start, Ask and Resume run under a per-key

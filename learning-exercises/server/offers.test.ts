@@ -79,16 +79,44 @@ describe("OfferEngine", () => {
     expect(await runTurn(() => commit("Mine"))).toMatchObject({ trigger: "commit" });
   });
 
-  it("never offers in a child, a plugin's or a hidden thread", async () => {
-    const { ports, runTurn, commit } = setup();
+  it("never offers in a child, an automation's, our own or a hidden thread", async () => {
+    const { ports, runTurn, commit, setSettings } = setup();
+    setSettings({ hoursBetweenOffers: 0 });
     for (const [id, change] of [
       ["thr_child", { parentThreadId: WORK }],
-      ["thr_plugin", { originPluginId: "automations" }],
+      ["thr_plugin_child", { parentThreadId: WORK, originPluginId: "firstmate-crew" }],
+      ["thr_automation", { originPluginId: "automations" }],
+      ["thr_session", { originPluginId: "learning-exercises" }],
       ["thr_hidden", { visibility: "hidden" }],
     ] as const) {
       ports.threads.set(id, thread({ id, ...change }));
       expect(await runTurn(() => commit("x"), id)).toBeNull();
     }
+  });
+
+  it("offers on the first turn of a top-level thread another plugin started (thr_58q9ui4bvc, a GitHub board card)", async () => {
+    // The observed case: a thread a GitHub board card started in bb's personal workspace, one turn,
+    // a commit in it. bb stamps `originPluginId: "github-board"` on it; the old rule refused every
+    // plugin's thread, so the turn was never weighed and nothing was recorded.
+    const { ports, runTurn, commit, store } = setup();
+    const id = "thr_58q9ui4bvc";
+    ports.threads.set(id, thread({ id, projectId: "proj_personal", originPluginId: "github-board" }));
+    const offer = await runTurn(() => commit("Address review feedback on font extraction"), id);
+    expect(offer).toMatchObject({ threadId: id, trigger: "commit", topic: '"Address review feedback on font extraction"' });
+    expect(store.thread(id).completedTurns).toBe(1);
+  });
+
+  it("never offers in a plugin's top-level thread once that plugin is on the never-offer list", async () => {
+    const { ports, runTurn, commit, setSettings } = setup();
+    setSettings({ noOfferPlugins: "automations\ngithub-board" });
+    ports.threads.set("thr_board", thread({ id: "thr_board", originPluginId: "github-board" }));
+    expect(await runTurn(() => commit("x"), "thr_board")).toBeNull();
+    // Our own session threads stay out even when the list is emptied.
+    setSettings({ noOfferPlugins: "" });
+    ports.threads.set("thr_session", thread({ id: "thr_session", originPluginId: "learning-exercises" }));
+    expect(await runTurn(() => commit("y"), "thr_session")).toBeNull();
+    ports.threads.set("thr_automation", thread({ id: "thr_automation", originPluginId: "automations" }));
+    expect(await runTurn(() => commit("z"), "thr_automation")).toMatchObject({ trigger: "commit" });
   });
 
   it("keeps one live offer per thread: a newer one supersedes it", async () => {
@@ -102,15 +130,17 @@ describe("OfferEngine", () => {
     expect(store.offer(first!.id)?.status).toBe("expired");
   });
 
-  it("an offer counts toward the caps only once seen", async () => {
+  it("an offer counts toward the caps only once answered", async () => {
     const { runTurn, commit, engine, store, ports } = setup();
     const offer = await runTurn(() => commit("First"));
-    expect(store.global(ports.now()).seenAt).toEqual([]);
+    expect(store.global(ports.now()).answeredAt).toEqual([]);
     expect(engine.claim(offer!.id)).toBe(true);
     expect(engine.claim(offer!.id)).toBe(true);
-    expect(store.global(ports.now()).seenAt).toEqual([ports.now()]);
-    // Seen 2 h ago at the latest: a commit an hour later is not offered.
+    // Seen is not answered: nothing counts yet.
+    expect(store.global(ports.now()).answeredAt).toEqual([]);
     await engine.answer(offer!.id, "not-thread");
+    expect(store.global(ports.now()).answeredAt).toEqual([ports.now()]);
+    // Answered 2 h ago at the latest: a commit an hour later is not offered.
     ports.threads.set("thr_b", thread({ id: "thr_b" }));
     ports.advance(HOUR);
     expect(await runTurn(() => commit("Later work"), "thr_b")).toBeNull();
@@ -192,6 +222,64 @@ describe("OfferEngine", () => {
     expect(await runTurn(() => addFile("a.ts"))).toBeNull();
     expect(await runTurn(() => addFile("b.ts"))).toBeNull();
     expect(await runTurn(() => addFile("c.ts"))).toMatchObject({ trigger: "streak", topic: '"Add retries"' });
+  });
+
+  describe("an offer nobody answers counts toward no limit, shown or not", () => {
+    it("not the daily limit, the gap, the snooze or the back-off", async () => {
+      const { runTurn, commit, addFile, engine, ports, store } = setup({ offersPerDay: 1, hoursBetweenOffers: 24 });
+      // Ten offers in ten threads, every one shown, none answered; each expires with its thread's next turn.
+      for (let i = 0; i < 10; i += 1) {
+        const id = `thr_${i}`;
+        ports.threads.set(id, thread({ id }));
+        const offer = await runTurn(() => commit(`c${i}`), id);
+        expect(offer).not.toBeNull();
+        expect(engine.claim(offer!.id)).toBe(true);
+        expect(await runTurn(() => {}, id)).toBeNull();
+        expect(store.offer(offer!.id)?.status).toBe("expired");
+      }
+      expect(store.global(ports.now())).toEqual({ answeredAt: [], consecutiveLaters: 0, backoffUntil: null });
+      // A one-a-day cap with a 24 h gap still lets the next one through, and new files still count
+      // (a back-off would keep only commits), at once and in a thread that just had one (no snooze).
+      expect(await runTurn(() => addFile("src/fresh.ts"))).toMatchObject({ trigger: "new-files" });
+      expect(await runTurn(() => addFile("src/again.ts"))).toMatchObject({ trigger: "new-files" });
+      expect(store.thread(WORK)).toMatchObject({ snoozeUntil: null, snoozeUntilTurn: null });
+    });
+
+    it("an answer is what counts: one answer fills a one-a-day cap", async () => {
+      const { runTurn, commit, engine, ports } = setup({ offersPerDay: 1, hoursBetweenOffers: 0 });
+      ports.threads.set("thr_b", thread({ id: "thr_b" }));
+      const offer = await runTurn(() => commit("A"));
+      // Made before the answer, so it was allowed; it may not show once the answer fills the cap.
+      const queued = await runTurn(() => commit("B"), "thr_b");
+      await engine.answer(offer!.id, "not-thread");
+      expect(engine.visibleOffer("thr_b")).toBeNull();
+      expect(engine.claim(queued!.id)).toBe(false);
+      expect(await runTurn(() => commit("C"), "thr_b")).toBeNull();
+    });
+
+    it("not the streak's count: it restarts on an answer only", async () => {
+      const { runTurn, addFile, engine, store } = setup({ triggerStreak: true, triggerNewFiles: false, streakTurns: 2, hoursBetweenOffers: 0, offersPerDay: 20 });
+      expect(await runTurn(() => addFile("a.ts"))).toBeNull();
+      const first = await runTurn(() => addFile("b.ts"));
+      expect(first).toMatchObject({ trigger: "streak" });
+      expect(engine.claim(first!.id)).toBe(true);
+      // Unanswered: the next changed turn still has its streak.
+      const second = await runTurn(() => addFile("c.ts"));
+      expect(second).toMatchObject({ trigger: "streak" });
+      expect(store.thread(WORK).changedTurnsSinceOffer).toBe(3);
+      await engine.answer(second!.id, "start");
+      expect(store.thread(WORK).changedTurnsSinceOffer).toBe(0);
+    });
+
+    it("not sessions per thread: only finished sessions count there", async () => {
+      const { runTurn, commit, engine, ports } = setup({ sessionsPerThread: 1, hoursBetweenOffers: 0, offersPerDay: 20 });
+      for (let i = 0; i < 3; i += 1) {
+        const offer = await runTurn(() => commit(`c${i}`));
+        expect(offer).not.toBeNull();
+        expect(engine.claim(offer!.id)).toBe(true);
+        ports.advance(MINUTE);
+      }
+    });
   });
 
   it("does nothing when offers are off, beyond counting the turn", async () => {

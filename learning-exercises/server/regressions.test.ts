@@ -45,26 +45,33 @@ function setup(overrides: Record<string, unknown> = {}) {
 }
 
 describe("finding 1: the caps hold when a queued offer becomes visible", () => {
-  it("of four offers made in quiet threads, only the first one claimed shows", async () => {
+  it("offers made in quiet threads all show until one is answered; then an unseen one waits for the gap", async () => {
+    // Only an answer counts toward the caps (an unanswered offer, seen or not, counts for nothing), so
+    // seeing several at once spends nothing; the first answer starts the gap for the ones not seen yet.
     const { commitTurn, offers, store, ports } = setup();
     const made = [];
     for (const id of ["thr_a", "thr_b", "thr_c", "thr_d"]) made.push(await commitTurn(id));
     expect(made.every((offer) => offer !== null)).toBe(true);
-    expect(made.map((offer) => offers.claim(offer!.id))).toEqual([true, false, false, false]);
-    expect(store.global(ports.now()).seenAt).toHaveLength(1);
-    expect(offers.visibleOffer("thr_b")).toBeNull();
-    // Two hours on, the next one may show.
-    ports.advance(2 * HOUR);
+    expect(made.slice(0, 3).map((offer) => offers.claim(offer!.id))).toEqual([true, true, true]);
+    expect(store.global(ports.now()).answeredAt).toEqual([]);
+    await offers.answer(made[0]!.id, "later");
+    expect(store.global(ports.now()).answeredAt).toHaveLength(1);
+    // Seen before the answer: it stays. Not seen: it waits.
     expect(offers.visibleOffer("thr_b")?.id).toBe(made[1]!.id);
+    expect(offers.visibleOffer("thr_d")).toBeNull();
+    expect(offers.claim(made[3]!.id)).toBe(false);
+    // Two hours on, it may show.
+    ports.advance(2 * HOUR);
+    expect(offers.visibleOffer("thr_d")?.id).toBe(made[3]!.id);
   });
 
-  it("an offer already seen stays visible and is not charged twice", async () => {
+  it("an offer already seen stays visible, and seeing it charges nothing", async () => {
     const { commitTurn, offers, store, ports } = setup();
     const offer = await commitTurn();
     expect(offers.claim(offer!.id)).toBe(true);
     expect(offers.claim(offer!.id)).toBe(true);
     expect(offers.visibleOffer(WORK)?.id).toBe(offer!.id);
-    expect(store.global(ports.now()).seenAt).toHaveLength(1);
+    expect(store.global(ports.now()).answeredAt).toEqual([]);
   });
 
   it("an unseen offer does not show once a session runs elsewhere in the project", async () => {
@@ -287,7 +294,7 @@ describe("finding 9: Start from the tab breaks the run of Laters", () => {
     const offer = await commitTurn();
     await api.startSession({ threadId: WORK, topic: offer!.topic, trigger: "commit", refs: {} });
     expect(store.offer(offer!.id)).toMatchObject({ status: "answered" });
-    expect(store.global(ports.now()).seenAt).toHaveLength(1);
+    expect(store.global(ports.now()).answeredAt).toHaveLength(1);
   });
 });
 
@@ -304,6 +311,6 @@ describe("pass 2, finding 1: a session elsewhere in the project hides even a see
     expect(store.offer(offer!.id)?.status).toBe("live");
     sessions.pause(sessionId, "user");
     expect(offers.visibleOffer(WORK)?.id).toBe(offer!.id);
-    expect(store.global(ports.now()).seenAt).toHaveLength(1);
+    expect(store.global(ports.now()).answeredAt).toEqual([]);
   });
 });

@@ -3,8 +3,8 @@
  * Start, Later and Not in this thread, and under More: Run here, Never for this project, and the
  * settings. Nothing is said about the exercise itself, and ignoring it costs nothing.
  *
- * The offer counts toward the caps once it is on screen (`offerSeen`), never before: an offer in a
- * thread nobody looks at expires without counting.
+ * The card claims the offer once it is on screen (`offerSeen`), which re-checks the caps; only an answer
+ * counts toward them, so an offer left unanswered, seen or not, expires without counting.
  */
 import { useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { useEffect, useRef, useState } from "react";
@@ -39,8 +39,8 @@ export function OfferCard(props: { offer: Offer; threadId: string; onScreen: boo
   const [busy, setBusy] = useState<OfferAnswer | null>(null);
   const [more, setMore] = useState(false);
   const reported = useRef<string | null>(null);
-  // The offer id whose claim the server accepted. An unseen offer is drawn only after that, so two
-  // panes or clients that read different queued offers never both show one (the server grants one).
+  // The offer id whose claim the server accepted. An unseen offer is drawn only after that, so one the
+  // caps hold back (an answer elsewhere started the gap) is never drawn from a stale read.
   const [claimed, setClaimed] = useState<string | null>(null);
 
   useEffect(() => {

@@ -319,6 +319,10 @@ keeps a background worker out of the sidebar and out of bb's unread attention. T
 it in a `finally` and archive it when done. Hidden is not silent: bb delivers a hidden thread's events
 to every plugin's `bb.events` handlers, the spawning plugin's included. Recognise your own by
 `thread.originPluginId === bb.pluginId`, which bb stamps on every thread spawned with `pluginMetadata`.
+Nothing else on a thread says whether a person asked for it: bb stamps `originPluginId` on a GitHub
+board card's thread as on an automation's run, and the first `client/turn/requested` event's `initiator`
+is `"user"` for both (bb 0.49), so a rule over "threads the user drives" needs a list of plugin ids
+(`learning-exercises`' `noOfferPlugins`).
 Do not make a helper a child of the thread it works for: a child notifies its parent when it finishes,
 which puts a message in that thread. **A helper thread cannot be made tool-free**: bb's least
 privileged `permissionMode` is `accept-edits` (Claude Code reads and edits files in the workspace without

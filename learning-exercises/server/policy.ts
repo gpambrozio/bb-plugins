@@ -32,13 +32,17 @@ export interface GateThread {
 }
 
 /**
- * A top-level thread a person drives: not a child, not started by a plugin (automations, diff-review
- * runs, side chats, this plugin's own sessions), not owned by another thread, not hidden, not archived.
+ * A top-level thread a person drives: not a child (whoever started it), not owned by another thread, not
+ * hidden, not archived. A top-level thread a plugin started counts (a GitHub board card's thread is the
+ * user's work), unless the plugin is on the never-offer list (`noOfferPlugins`, automations by default)
+ * or is this plugin, whose session threads never get offers whatever the setting says.
  */
-export function isHumanThread(thread: GateThread): boolean {
+export function isHumanThread(thread: GateThread, noOfferPlugins: readonly string[]): boolean {
+  const plugin = thread.originPluginId;
+  const pluginKeptOut = plugin !== null && (plugin === PLUGIN_ID || noOfferPlugins.includes(plugin));
   return (
     thread.parentThreadId === null &&
-    thread.originPluginId === null &&
+    !pluginKeptOut &&
     thread.lifecycleOwnerThreadId === null &&
     thread.visibility === "visible" &&
     thread.archivedAt === null
@@ -66,8 +70,11 @@ export interface ThreadState {
 }
 
 export interface GlobalState {
-  /** When each seen offer was first seen, newest last. */
-  seenAt: readonly number[];
+  /**
+   * When each answered offer was answered, newest last. Only an answer counts toward the caps: an offer
+   * nobody answered, shown or not, counts for nothing.
+   */
+  answeredAt: readonly number[];
   consecutiveLaters: number;
   backoffUntil: number | null;
 }
@@ -87,8 +94,8 @@ export interface OfferInputs {
 
 export type OfferDecision = { offer: Candidate } | { skip: string };
 
-export function seenInLastDay(seenAt: readonly number[], now: number): number {
-  return seenAt.filter((at) => now - at < DAY).length;
+export function answeredInLastDay(answeredAt: readonly number[], now: number): number {
+  return answeredAt.filter((at) => now - at < DAY).length;
 }
 
 export function decideOffer(input: OfferInputs): OfferDecision {
@@ -103,9 +110,9 @@ export function decideOffer(input: OfferInputs): OfferDecision {
   if (thread.finishedSessions >= settings.sessionsPerThread) return { skip: "this thread had its sessions" };
   if (thread.snoozeUntil !== null && now < thread.snoozeUntil) return { skip: "snoozed" };
   if (thread.snoozeUntilTurn !== null && thread.completedTurns < thread.snoozeUntilTurn) return { skip: "snoozed" };
-  if (seenInLastDay(global.seenAt, now) >= settings.offersPerDay) return { skip: "the daily limit is reached" };
-  const lastSeen = global.seenAt.at(-1);
-  if (lastSeen !== undefined && now - lastSeen < settings.hoursBetweenOffers * HOUR) return { skip: "too soon after the last offer" };
+  if (answeredInLastDay(global.answeredAt, now) >= settings.offersPerDay) return { skip: "the daily limit is reached" };
+  const lastAnswered = global.answeredAt.at(-1);
+  if (lastAnswered !== undefined && now - lastAnswered < settings.hoursBetweenOffers * HOUR) return { skip: "too soon after the last offer" };
   const backingOff = global.backoffUntil !== null && now < global.backoffUntil;
   const allowed = backingOff ? input.candidates.filter((candidate) => BACKOFF_KEEPS.includes(candidate.trigger)) : input.candidates;
   const first = allowed[0];
@@ -134,7 +141,7 @@ export function offerStanding(input: {
 
 /**
  * Why an offer nobody has seen yet may not become visible now: the caps and the back-off, applied when
- * it is about to show, not only when it was made (offers made in quiet threads would all show at once).
+ * it is about to show, not only when it was made (an offer made before another was answered).
  */
 export function offerCaps(input: {
   now: number;
@@ -145,9 +152,9 @@ export function offerCaps(input: {
 }): string | null {
   const { now, settings, global } = input;
   if (input.finishedSessions >= settings.sessionsPerThread) return "this thread had its sessions";
-  if (seenInLastDay(global.seenAt, now) >= settings.offersPerDay) return "the daily limit is reached";
-  const lastSeen = global.seenAt.at(-1);
-  if (lastSeen !== undefined && now - lastSeen < settings.hoursBetweenOffers * HOUR) return "too soon after the last offer";
+  if (answeredInLastDay(global.answeredAt, now) >= settings.offersPerDay) return "the daily limit is reached";
+  const lastAnswered = global.answeredAt.at(-1);
+  if (lastAnswered !== undefined && now - lastAnswered < settings.hoursBetweenOffers * HOUR) return "too soon after the last offer";
   const backingOff = global.backoffUntil !== null && now < global.backoffUntil;
   if (backingOff && input.trigger !== "manual" && !BACKOFF_KEEPS.includes(input.trigger)) return "backing off";
   return null;

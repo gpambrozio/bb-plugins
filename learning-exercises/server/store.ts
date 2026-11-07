@@ -803,21 +803,26 @@ export class LearningStore {
     this.db.prepare(`INSERT INTO global_state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(key, JSON.stringify(value));
   }
 
+  /**
+   * The values the caps read. Answers are kept under `answeredAt`; the `seenAt` key earlier builds wrote
+   * (offers shown, answered or not) is no longer read, so what was only shown counts for nothing.
+   */
   global(now: number): GlobalState {
-    const seen = this.getValue<unknown>("seenAt", []);
-    const seenAt = Array.isArray(seen) ? seen.filter((at): at is number => typeof at === "number" && now - at < 2 * 24 * 3_600_000).sort((a, b) => a - b) : [];
+    const answered = this.getValue<unknown>("answeredAt", []);
+    const answeredAt = Array.isArray(answered) ? answered.filter((at): at is number => typeof at === "number" && now - at < 2 * 24 * 3_600_000).sort((a, b) => a - b) : [];
     const laters = this.getValue<unknown>("consecutiveLaters", 0);
     const backoff = this.getValue<unknown>("backoffUntil", null);
     return {
-      seenAt,
+      answeredAt,
       consecutiveLaters: typeof laters === "number" ? laters : 0,
       backoffUntil: typeof backoff === "number" ? backoff : null,
     };
   }
 
-  recordSeen(now: number): void {
-    const { seenAt } = this.global(now);
-    this.setValue("seenAt", [...seenAt, now].slice(-50));
+  /** An offer was answered: it counts toward the daily limit and the gap between offers. */
+  recordAnswered(now: number): void {
+    const { answeredAt } = this.global(now);
+    this.setValue("answeredAt", [...answeredAt, now].slice(-50));
   }
 
   setBackoff(state: Pick<GlobalState, "consecutiveLaters" | "backoffUntil">): void {
