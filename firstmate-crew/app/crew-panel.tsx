@@ -1,4 +1,7 @@
-/** What a crewmate's own thread shows: its card, and a place to leave a note for it and the first mate. */
+/**
+ * What a crewmate's own thread shows: its card, and a place to leave a note for it and the first mate. An
+ * unsaved note outlives a thread switch, kept under the card's id (`./drafts`).
+ */
 import { useRpc } from "@get-bb/plugin-sdk/app";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -8,6 +11,8 @@ import { Textarea } from "../components/ui/textarea";
 import type { rpcContract } from "../server";
 import type { FleetCard } from "../shared/types";
 import { Card } from "./card";
+import { useCardDraft } from "./drafts";
+import { cardSubject } from "./format";
 import { reportError } from "./notify";
 
 export function CrewPanel({
@@ -22,7 +27,9 @@ export function CrewPanel({
   onChanged: () => void;
 }) {
   const rpc = useRpc<typeof rpcContract>();
-  const [note, setNote] = useState("");
+  const [stored, store] = useCardDraft(cardSubject(card).id, "note");
+  const note = stored?.text ?? "";
+  const setNote = (next: string) => store(next === "" ? null : { text: next });
   const [busy, setBusy] = useState(false);
 
   function send(): void {

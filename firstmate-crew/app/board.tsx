@@ -3,9 +3,10 @@
  * Bearings button beside the first mate's own controls (Compact, Restart, settings), the first
  * mate's suggestions, the seven columns in the captain's order — each a collapsible section with its
  * count and arrows that move it past its shown neighbour, empty ones left out — and the home's watches.
+ * Each fleet it shows drops the unsent words of cards that have left it (`./drafts`).
  */
 import { useRpc } from "@get-bb/plugin-sdk/app";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "../components/ui/button";
@@ -15,7 +16,8 @@ import type { rpcContract } from "../server";
 import type { ColumnId, Fleet } from "../shared/types";
 import { Card } from "./card";
 import { moveColumn, readColumnOrder } from "./column-order";
-import { COLUMN_TITLES } from "./format";
+import { browserStorage, pruneDrafts } from "./drafts";
+import { COLUMN_TITLES, cardSubject } from "./format";
 import { readFolds, toggleFold } from "./folds";
 import { MateActions } from "./mate-actions";
 import { reportError } from "./notify";
@@ -31,6 +33,10 @@ export function Board({ fleet, mateThreadId, onChanged }: { fleet: Fleet; mateTh
   const [folds, setFolds] = useState<Set<ColumnId>>(() => readFolds(window.localStorage));
   const [order, setOrder] = useState<ColumnId[]>(() => readColumnOrder(window.localStorage));
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    pruneDrafts(browserStorage(), new Set(fleet.cards.map((card) => cardSubject(card).id)));
+  }, [fleet.cards]);
 
   function run(action: () => Promise<unknown>, success?: string): void {
     setBusy(true);
