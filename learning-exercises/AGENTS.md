@@ -26,7 +26,10 @@ retrieval and Showboat are later phases.
    GitHub board card's thread (thr_58q9ui4bvc got no offer for its first-turn commit under the old "no
    `originPluginId`" rule), a diff-review run, a Reclaim clean-up, a voice thread. bb marks nothing else on
    a background thread (every spawn's `initiator` is `"user"`), so a plugin that starts top-level
-   background work belongs on that list. Side chats and code-review workers are hidden and owned, crews
+   background work belongs on that list. Adding a plugin there expires the live offers in its threads
+   (`dropIneligible`, on the settings change), and `offerSeen` and `answerOffer` re-check the thread
+   first, so a client holding the offer from before cannot show or answer it; a manual start from the
+   Learning tab still runs (it drops the offer). Side chats and code-review workers are hidden and owned, crews
    are children, and workflows set a lifecycle owner, so the other checks keep them out. **Manual starts are wider** (`canStartByHand`): any visible,
    unarchived thread except this plugin's own session threads, so a sub-agent thread can be a session's
    source. The fixed "Learning" tab is on the tab bar of every thread the sidebar lists (hidden threads are
@@ -42,8 +45,12 @@ retrieval and Showboat are later phases.
    under its own key so the `seenAt` of earlier builds counts for nothing), not the snooze or the
    back-off (set by Later), not sessions per thread (finished sessions), and not the streak, whose count
    restarts on an answer, not when an offer is made. So several offers in quiet threads can show at once
-   until one is answered. The caps are applied twice: when an offer is made, and again when it is about
-   to show. Views read the offer through `OfferEngine.visibleOffer` (an unseen offer shows only while the
+   until one is answered. The caps are applied three times: when an offer is made, when it is about to
+   show, and when it is answered, seen or not (`answer` checks them synchronously before recording, so two
+   offers on screen cannot both be answered past a one-a-day cap). An answer that fills the cap, starts the
+   gap or begins a back-off expires every other live offer the caps now hold back, seen or not
+   (`expireCapped`), and a late answer on one fails as "no longer open". The last migration seeds
+   `answeredAt` once from 0.1.0's answered offers (`answered_at`), so an upgrade keeps today's cap. Views read the offer through `OfferEngine.visibleOffer` (an unseen offer shows only while the
    caps would let it), and the banner or the tab claims it with `offerSeen` → `claim`, which re-checks the
    gate and the caps synchronously and marks it seen, charging nothing. The app draws an unseen offer only
    after that claim answers `visible: true`, so an offer the caps now hold back is never drawn from a

@@ -148,8 +148,8 @@ export class LearningApi {
   }
 
   /** The view drew the offer: claim it against the caps as they are now (a refused claim drops it). */
-  offerSeen({ offerId }: Input<"offerSeen">): Output<"offerSeen"> {
-    return { visible: this.deps.offers.claim(offerId) };
+  async offerSeen({ offerId }: Input<"offerSeen">): Promise<Output<"offerSeen">> {
+    return { visible: await this.deps.offers.claimChecked(offerId) };
   }
 
   async answerOffer({ offerId, answer }: Input<"answerOffer">): Promise<Output<"answerOffer">> {

@@ -45,7 +45,8 @@ is not affiliated with or endorsed by the author; see [NOTICE.md](NOTICE.md).
 - **Caps that hold.** At most 2 finished sessions per thread, 3 answered offers per day, 2 hours after
   an answer before the next; **Later** snoozes the thread for 45 minutes and 3 turns; three Laters in a
   row keep only commit and pull-request offers for a week. Only an answer counts: offers you leave
-  unanswered, seen or not, expire and count toward nothing.
+  unanswered, seen or not, expire and count toward nothing. Several can show at once; when an answer
+  reaches the limit or starts the wait, the others go away.
 - **The Learning tab** on the side panel's tab bar, in every thread, shows this thread's offer or session (Pause, Resume,
   Finish), starts an exercise on a topic taken from the thread (its last commit, its new files, its
   title) or one you type, and lists the project's paused and previous sessions with your answers and the

@@ -11,7 +11,9 @@
 - Only an offer you answer counts toward the limits now: offers per day, the hours between offers,
   and the count of busy turns before a streak offer. An offer you leave alone, even one you saw,
   expires and counts for nothing, so several offers in different threads can show at once until you
-  answer one.
+  answer one. Once an answer reaches the day's limit or starts the wait before the next offer, the
+  other offers go away. Answers you gave before this update still count toward today's limit.
+- Adding a plugin to that list removes the offers already waiting in its threads.
 
 ## 0.1.0
 

@@ -119,6 +119,11 @@ export const MIGRATIONS: string[] = [
   `ALTER TABLE exercises ADD COLUMN feedback TEXT`,
   // The bb turn that verdict was recorded in: the chat's feedback card sits above that turn's last message.
   `ALTER TABLE exercises ADD COLUMN feedback_turn TEXT`,
+  // 0.2.0: the caps count answered offers, under their own key. Seeded once, here, from the answers
+  // 0.1.0 recorded on its offers (offers only seen are left out), so an upgrade keeps today's cap and gap.
+  `INSERT OR IGNORE INTO global_state (key, value)
+     SELECT 'answeredAt', json_group_array(answered_at)
+     FROM (SELECT answered_at FROM offers WHERE status = 'answered' AND answered_at IS NOT NULL ORDER BY answered_at DESC LIMIT 50)`,
 ];
 
 const ReplyProgressSchema = z.object({
@@ -388,6 +393,12 @@ export class LearningStore {
         .run(id, input.threadId, input.projectKey, input.trigger, input.topic, JSON.stringify(input.refs), input.now);
     })();
     return this.liveOffer(input.threadId)!;
+  }
+
+  /** Every live offer, oldest first. */
+  liveOffers(): (Offer & { projectKey: string })[] {
+    const rows = this.db.prepare(`SELECT * FROM offers WHERE status = 'live' ORDER BY created_at`).all() as OfferRecord[];
+    return rows.map((row) => ({ ...toOffer(row), projectKey: row.project_key }));
   }
 
   /** Marks an offer seen once; answers true only the first time. */
@@ -804,8 +815,9 @@ export class LearningStore {
   }
 
   /**
-   * The values the caps read. Answers are kept under `answeredAt`; the `seenAt` key earlier builds wrote
-   * (offers shown, answered or not) is no longer read, so what was only shown counts for nothing.
+   * The values the caps read. Answers are kept under `answeredAt`, which the last migration seeds once
+   * from the answered offers 0.1.0 stored; the `seenAt` key 0.1.0 wrote (offers shown, answered or not)
+   * is no longer read, so what was only shown counts for nothing.
    */
   global(now: number): GlobalState {
     const answered = this.getValue<unknown>("answeredAt", []);

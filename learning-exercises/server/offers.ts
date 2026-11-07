@@ -319,6 +319,50 @@ export class OfferEngine {
     return true;
   }
 
+  /**
+   * Whether the offer's thread may still have offers: the never-offer list can have changed since it was
+   * made, and a client holding it from before must not show or answer it.
+   */
+  private async threadStillEligible(offer: Offer): Promise<boolean> {
+    const thread = await this.ports.thread(offer.threadId);
+    return thread !== null && isHumanThread(thread, this.settings().noOfferPlugins);
+  }
+
+  /** `claim`, after checking the thread still takes offers; an offer whose thread no longer does expires. */
+  async claimChecked(offerId: string): Promise<boolean> {
+    const offer = this.store.offer(offerId);
+    if (offer === null || offer.status !== "live") return false;
+    if (!(await this.threadStillEligible(offer))) {
+      if (this.store.expireOffer(offerId)) this.ports.changed();
+      return false;
+    }
+    return this.claim(offerId);
+  }
+
+  /**
+   * After a settings change: offers in threads that no longer take any (their plugin was added to the
+   * never-offer list) expire, so they disappear from every view. Answers how many expired.
+   */
+  async dropIneligible(): Promise<number> {
+    let dropped = 0;
+    for (const offer of this.store.liveOffers()) {
+      if (!(await this.threadStillEligible(offer)) && this.store.expireOffer(offer.id)) dropped += 1;
+    }
+    if (dropped > 0) this.ports.changed();
+    return dropped;
+  }
+
+  /**
+   * After an answer: every other live offer the caps would now hold back (the answer filled the daily
+   * limit, started the gap, or began a back-off) expires, seen or not, so none is shown or answered past
+   * the cap.
+   */
+  private expireCapped(now: number): void {
+    for (const offer of this.store.liveOffers()) {
+      if (this.capped(offer, now) !== null) this.store.expireOffer(offer.id);
+    }
+  }
+
   /** A session the user started without answering an offer still breaks a run of Laters. */
   accepted(): void {
     const now = this.ports.now();
@@ -335,9 +379,21 @@ export class OfferEngine {
   async answer(offerId: string, answer: OfferAnswer): Promise<Offer & { projectKey: string }> {
     const offer = this.store.offer(offerId);
     if (offer === null || offer.status !== "live") throw new Error("That offer is no longer open.");
-    // An answer is a look: an offer answered before the banner claimed it is claimed now, and the answer counts.
+    if (!(await this.threadStillEligible(offer))) {
+      if (this.store.expireOffer(offerId)) this.ports.changed();
+      throw new Error("That offer is no longer open.");
+    }
+    // From here on nothing awaits until the answer is recorded, so the caps checked are the caps applied.
+    // An answer is a look: an offer answered before the banner claimed it is claimed now.
     if (!this.claim(offerId)) throw new Error("That offer is no longer open.");
     const now = this.ports.now();
+    // The answer is what counts, so the caps apply to it, to an offer already seen too (seeing is free,
+    // so several can be on screen at once). One the caps now hold back is gone.
+    if (this.capped(offer, now) !== null) {
+      this.store.expireOffer(offerId);
+      this.ports.changed();
+      throw new Error("That offer is no longer open.");
+    }
     this.store.answerOffer(offerId, answer, now);
     this.store.recordAnswered(now);
     this.store.resetChangedTurns(offer.threadId);
@@ -351,7 +407,10 @@ export class OfferEngine {
       this.store.setBackoff(afterAnswer(global, "start", now));
     } else if (answer === "not-thread") {
       this.store.setOptOut(offer.threadId, true);
-    } else if (answer === "never-project") {
+    }
+    // Before any await: an offer the caps now hold back is gone before another answer can reach it.
+    this.expireCapped(now);
+    if (answer === "never-project") {
       const thread = await this.ports.thread(offer.threadId);
       const project = thread === null ? null : await this.ports.project(thread.projectId);
       this.store.setNever(offer.projectKey, project?.name ?? offer.projectKey, true);

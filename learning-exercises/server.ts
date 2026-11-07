@@ -52,6 +52,8 @@ async function plugin(bb: BbPluginApi, deps: { ports?: (bb: BbPluginApi, changed
     current = readSettings(next);
     // Turning offers off takes the offers already made with it.
     if (!current.offersEnabled) store.expireLiveOffers(null);
+    // A plugin added to the never-offer list takes the offers in its threads with it.
+    else void guard("Dropping offers the never-offer list now rules out", () => offers.dropIneligible())();
     changed();
   });
 
