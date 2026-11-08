@@ -9,6 +9,8 @@ import { CARD_RENDERER_ID } from "./shared/types";
 import { OfferBanner } from "./app/banner";
 import { ExerciseCard } from "./app/card";
 import { FEEDBACK_METADATA_ID, FeedbackAboveMessage } from "./app/feedback";
+import { ORIENTATION_TAB_ID } from "./app/orientation-ids";
+import { OrientationTab } from "./app/orientation-tab";
 import { NeverProjectsSection } from "./app/settings-section";
 import { SettledRow } from "./app/settled-row";
 import { LEARNING_FIXED_TAB, LEARNING_ON_DEMAND_TAB, LearningOnDemandTab, LearningTab, PLUGIN_ID, useLearningOnDemandVisible, useLearningTabVisible } from "./app/tab";
@@ -37,6 +39,15 @@ export default definePluginApp((app) => {
     layout: "padded",
     component: LearningOnDemandTab,
     useVisible: useLearningOnDemandVisible,
+  });
+  app.slots.experimental_tab({
+    id: ORIENTATION_TAB_ID,
+    context: { kind: "thread" },
+    availability: "action",
+    title: "Walkthrough",
+    icon: "FileText",
+    layout: "padded",
+    component: OrientationTab,
   });
   app.slots.experimental_threadAction({
     id: "offers",

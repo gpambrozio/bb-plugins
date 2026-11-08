@@ -39,3 +39,7 @@ export function useSidebarThread(threadId: string | null) {
   const { threads } = experimental_useSidebarThreads();
   return threadId === null ? undefined : threads.find((thread) => thread.id === threadId);
 }
+
+export function useOrientationDocument(orientationId: string) {
+  return experimental_useRpcQuery({ contract: rpcContract, method: "orientationDocument", input: { orientationId } });
+}

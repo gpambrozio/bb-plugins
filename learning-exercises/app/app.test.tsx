@@ -124,6 +124,7 @@ describe("registrations", () => {
     expect(app.tabs.map((tab) => [tab.id, tab.context.kind, tab.availability, tab.icon, tab.title])).toEqual([
       ["learning", "thread", "fixed", "Brain", "Learning"],
       ["learning-on-demand", "thread", "action", "Brain", "Learning"],
+      ["orientation", "thread", "action", "FileText", "Walkthrough"],
     ]);
     // The retired on-demand tab stays registered only so instances an earlier build opened can close.
     expect(app.tabs.find((tab) => tab.id === LEARNING_ON_DEMAND_TAB.id)!.component).toBe(LearningOnDemandTab);

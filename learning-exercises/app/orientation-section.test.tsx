@@ -128,10 +128,11 @@ describe("the Orientation section", () => {
     expect(screen.queryByRole("button", { name: "Read walkthrough" })).toBeNull();
   });
 
-  it("Export to repo… opens nothing yet but toggles", async () => {
+  it("Export to repo… opens the export dialog", async () => {
     render({ current: orientation() });
     fireEvent.click(await screen.findByRole("button", { name: "Export to repo…" }));
-    expect(screen.getByRole("button", { name: "Export to repo…" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Export" })).toBeTruthy();
+    expect((screen.getByRole("textbox") as HTMLInputElement).value).toBe("ORIENTATION.md");
   });
 
   it("rebuilding a ready orientation shows the live state and keeps the summary", async () => {

@@ -10,7 +10,7 @@
  * - failed or cancelled (`last`): its error and **Rebuild**, above the ready summary when there is one;
  * - ready: the summary (the purpose open, the rest folded) and its buttons.
  *
- * **Export to repo…** only toggles `exportOpen` here; the export dialog is rendered where it is checked.
+ * **Export to repo…** toggles `exportOpen`, which renders the export dialog under the buttons.
  */
 import { experimental_useAppPanel, useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { useState, type ReactNode } from "react";
@@ -19,6 +19,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import type { Orientation, OrientationSummary } from "../shared/orientation";
 import { errorText, useLearningRpc, useOrientation } from "./data";
+import { ExportDialog } from "./export-dialog";
 import { FileRef, TextWithFileRefs } from "./file-refs";
 import { ORIENTATION_TAB_ID } from "./orientation-ids";
 import { Section, useAct } from "./tab";
@@ -180,7 +181,7 @@ function ReadyBlock(props: { threadId: string; orientation: Orientation; buildin
           </Button>
         )}
       </div>
-      {/* The export dialog (a later task) renders here while `exportOpen` is set. */}
+      {exportOpen && <ExportDialog orientationId={orientation.id} onDone={() => setExportOpen(false)} />}
     </div>
   );
 }
@@ -204,7 +205,6 @@ function StartBlock(props: { threadId: string; state: OrientationState }) {
       >
         Orient me to this project
       </Button>
-      {props.state.cleaning && <p className="text-xs text-muted-foreground">Cleaning up after an earlier run; a new orientation can start in a moment.</p>}
       <p className="text-xs text-muted-foreground">{PERMISSION_LINE}</p>
     </div>
   );
@@ -227,6 +227,7 @@ export function OrientationSection(props: { threadId: string; visible: boolean }
   const startable = state.canStart && !state.cleaning;
   return (
     <Section title="Orientation">
+      {state.cleaning && <p className="text-xs text-muted-foreground">Cleaning up after an earlier run; a new orientation can start in a moment.</p>}
       {live !== null && (
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-sm">
