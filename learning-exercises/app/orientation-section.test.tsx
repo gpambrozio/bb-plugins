@@ -157,6 +157,30 @@ describe("the Orientation section", () => {
     expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
   });
 
+  it("Rebuild can upgrade a summary-only orientation to a walkthrough while the old guide stays visible", async () => {
+    const summaryOnly = orientation({ depth: "summary", blocks: 0, listings: 0 });
+    const slot = render({ current: summaryOnly });
+    await screen.findByText("A calculator library.");
+    const box = screen.getByRole("checkbox", { name: "Include a walkthrough" }) as HTMLInputElement;
+    expect(box.checked).toBe(false);
+    fireEvent.click(box);
+    fireEvent.click(screen.getByRole("button", { name: "Rebuild" }));
+    await waitFor(() => expect(slot.rpcCalls.find((c) => c.method === "startOrientation")?.input).toEqual({ threadId: WORK, depth: "walkthrough" }));
+    cleanup();
+    render({ current: summaryOnly, live: orientation({ id: "ori_live", status: "building", depth: "walkthrough", summary: null, blocks: 0, readyAt: null }) });
+    await screen.findByText(/Building · 0 blocks/);
+    expect(screen.getByText("A calculator library.")).toBeTruthy();
+  });
+
+  it("a walkthrough's Rebuild defaults to a walkthrough, and the box can lower it", async () => {
+    const slot = render({ current: orientation() });
+    await screen.findByText("A calculator library.");
+    expect((screen.getByRole("checkbox", { name: "Include a walkthrough" }) as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(screen.getByRole("checkbox", { name: "Include a walkthrough" }));
+    fireEvent.click(screen.getByRole("button", { name: "Rebuild" }));
+    await waitFor(() => expect(slot.rpcCalls.find((c) => c.method === "startOrientation")?.input).toEqual({ threadId: WORK, depth: "summary" }));
+  });
+
   it("failed: the error and Rebuild; with a ready one, the note sits above its summary", async () => {
     const failed = orientation({ id: "ori_f", status: "failed", summary: null, error: "The agent stopped early.", readyAt: null, blocks: 0, depth: "summary" });
     const slot = render({ last: failed });

@@ -8,7 +8,8 @@
  * - live: "Building · N blocks · M min" and **Cancel**; a rebuild of a ready orientation keeps the
  *   ready summary below it;
  * - failed or cancelled (`last`): its error and **Rebuild**, above the ready summary when there is one;
- * - ready: the summary (the purpose open, the rest folded) and its buttons.
+ * - ready: the summary (the purpose open, the rest folded) and its buttons; **Rebuild** has its own
+ *   "Include a walkthrough" checkbox, set to the current depth, so a summary can be rebuilt as a walkthrough.
  *
  * **Export to repo…** toggles `exportOpen`, which renders the export dialog under the buttons.
  */
@@ -102,6 +103,8 @@ function ReadyBlock(props: { threadId: string; orientation: Orientation; buildin
   const { busy, act } = useAct();
   const [confirming, setConfirming] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  // Rebuild's depth: the current guide's, unless the user asks for more (a summary can become a walkthrough).
+  const [walkthrough, setWalkthrough] = useState(orientation.depth === "walkthrough");
   const environmentId = orientation.workspace?.environmentId ?? null;
   return (
     <div className="flex flex-col gap-2">
@@ -151,10 +154,14 @@ function ReadyBlock(props: { threadId: string; orientation: Orientation; buildin
           size="sm"
           variant="ghost"
           disabled={busy !== null || props.building || !props.startable}
-          onClick={() => void act("rebuild", () => rpc.call("startOrientation", { threadId, depth: orientation.depth }))}
+          onClick={() => void act("rebuild", () => rpc.call("startOrientation", { threadId, depth: walkthrough ? "walkthrough" : "summary" }))}
         >
           Rebuild
         </Button>
+        <label className="flex cursor-pointer items-center gap-1 text-xs">
+          <input type="checkbox" checked={walkthrough} onChange={(event) => setWalkthrough(event.target.checked)} />
+          Include a walkthrough
+        </label>
         {confirming ? (
           <>
             <Button
