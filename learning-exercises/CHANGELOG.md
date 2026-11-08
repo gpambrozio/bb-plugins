@@ -9,7 +9,8 @@
   finished one or delete it. Start says up front that the agent has permission to read and edit files,
   and that it is told not to edit.
 - **A walkthrough, if you want one.** Tick the walkthrough option and the build also writes a linear tour
-  of the code, in chapters. Every code listing is copied from your files by the plugin, never typed by
+  of the code, in chapters, with a section menu at the top of its tab that jumps to a chapter and follows
+  the one you are reading. Every code listing is copied from your files by the plugin, never typed by
   the agent. Verify re-reads the files and tells you which listings are unchanged, which have changed
   and which files are gone; the tab opens with a check of its own when the orientation is more than
   five minutes old.

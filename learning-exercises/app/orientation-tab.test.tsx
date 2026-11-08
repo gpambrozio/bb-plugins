@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { rpcContract } from "../shared/contract";
 import type { Orientation, OrientationBlock } from "../shared/orientation";
 import { ExportDialog } from "./export-dialog";
-import { OrientationTab, verifyMessage } from "./orientation-tab";
+import { OrientationTab, chapterInView, verifyMessage } from "./orientation-tab";
 
 vi.mock("sonner", () => ({ toast: Object.assign(vi.fn(), { error: vi.fn(), success: vi.fn() }) }));
 
@@ -25,7 +25,30 @@ const blocks: OrientationBlock[] = [
   { kind: "note", ordinal: 1, markdown: "See Listing 1 and Listing 2." },
   { kind: "listing", ordinal: 2, number: 1, caption: "The lexer", path: "src/lex.ts", startLine: 10, endLine: 40, text: "const a = 1;", ref: "abcdef0123", check: { state: "moved", startLine: 52, endLine: 84, checkedAt: 5 } },
   { kind: "listing", ordinal: 3, number: 2, caption: "The parser", path: "src/parse.ts", startLine: 1, endLine: 5, text: "let b;", ref: "1234567890", check: { state: "changed", startLine: null, endLine: null, checkedAt: 5 } },
+  { kind: "chapter", ordinal: 4, title: "Evaluating" },
+  { kind: "note", ordinal: 5, markdown: "The evaluator walks the tree." },
+  { kind: "chapter", ordinal: 6, title: "Printing" },
 ];
+
+const rect = (top: number, height: number) => () => ({ top, bottom: top + height, height, left: 0, right: 0, width: 0, x: 0, y: top, toJSON() {} }) as DOMRect;
+const target = (root: HTMLElement, id: string) => root.querySelector<HTMLElement>(`[data-scroll-id="${id}"]`) as HTMLElement;
+/**
+ * Lays a scroller out: its box at 0 with 500 px showing of 2000, and each chapter heading at its offset in
+ * the content, so a heading's box moves as the scroller's `scrollTop` does.
+ */
+function layout(root: HTMLElement, offsets: Record<number, number>) {
+  root.getBoundingClientRect = rect(0, 500);
+  Object.defineProperty(root, "scrollHeight", { configurable: true, value: 2_000 });
+  Object.defineProperty(root, "clientHeight", { configurable: true, value: 500 });
+  for (const [ordinal, offset] of Object.entries(offsets)) target(root, `chapter-${ordinal}`).getBoundingClientRect = () => rect(offset - root.scrollTop, 20)();
+}
+/** The user scrolling `root` to `scrollTop`. */
+function userScroll(root: HTMLElement, scrollTop: number) {
+  fireEvent.wheel(root);
+  root.scrollTop = scrollTop;
+  fireEvent.scroll(root);
+}
+const sectionBox = (scope: { getByRole: typeof screen.getByRole } = screen) => scope.getByRole("combobox", { name: "Section" }) as HTMLSelectElement;
 
 function renderTab(params: unknown, extra: Record<string, (input: never) => unknown> = {}, options: { tabVisible?: boolean } = {}) {
   return renderSlot({ component: OrientationTab }, { threadId: "thr_work", environment: null, params }, {
@@ -46,39 +69,78 @@ describe("the walkthrough tab", () => {
     expect(link).toBeTruthy();
   });
 
-  it("scrolls its own container from Contents, never scrollIntoView", async () => {
+  it("pins a Section selector of the chapters above its own scroller, in place of a Contents list", async () => {
+    renderTab({ orientationId: "ori_1" });
+    await screen.findByText("Listing 1: The lexer");
+    const box = sectionBox();
+    expect(Array.from(box.options, (option) => option.textContent)).toEqual(["Lexing", "Evaluating", "Printing"]);
+    expect(box.value).toBe("0");
+    expect(screen.getByTestId("walkthrough-scroll").contains(box)).toBe(false);
+    expect(screen.queryByText("Contents")).toBeNull();
+  });
+
+  it("choosing a section scrolls its own container there, never scrollIntoView", async () => {
     const spy = vi.fn();
     (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView = spy;
     renderTab({ orientationId: "ori_1" });
     await screen.findByText("Listing 1: The lexer");
     const root = screen.getByTestId("walkthrough-scroll");
-    const heading = root.querySelector<HTMLElement>('[data-scroll-id="chapter-0"]') as HTMLElement;
-    root.getBoundingClientRect = () => ({ top: 0, bottom: 500, height: 500, left: 0, right: 0, width: 0, x: 0, y: 0, toJSON() {} }) as DOMRect;
-    heading.getBoundingClientRect = () => ({ top: 300, bottom: 320, height: 20, left: 0, right: 0, width: 0, x: 0, y: 300, toJSON() {} }) as DOMRect;
-    fireEvent.click(screen.getByRole("button", { name: "Lexing" }));
+    layout(root, { 0: 0, 4: 300, 6: 900 });
+    fireEvent.change(sectionBox(), { target: { value: "4" } });
     expect(root.scrollTop).toBe(300);
+    expect(sectionBox().value).toBe("4");
     expect(spy).not.toHaveBeenCalled();
   });
 
-  it("two viewers at once: each scrolls its own container with its own elements", async () => {
+  it("follows the chapter in view as the user scrolls", async () => {
+    renderTab({ orientationId: "ori_1" });
+    await screen.findByText("Listing 1: The lexer");
+    const root = screen.getByTestId("walkthrough-scroll");
+    layout(root, { 0: 0, 4: 400, 6: 1_000 });
+    userScroll(root, 400);
+    await waitFor(() => expect(sectionBox().value).toBe("4"));
+    userScroll(root, 995);
+    await waitFor(() => expect(sectionBox().value).toBe("6"));
+    userScroll(root, 0);
+    await waitFor(() => expect(sectionBox().value).toBe("0"));
+  });
+
+  it("a chapter chosen near the end stays chosen until the user scrolls themselves", async () => {
+    renderTab({ orientationId: "ori_1" });
+    await screen.findByText("Listing 1: The lexer");
+    const root = screen.getByTestId("walkthrough-scroll");
+    // Evaluating reaches the top only at the very bottom, with Printing in view below it.
+    layout(root, { 0: 0, 4: 1_500, 6: 1_600 });
+    fireEvent.change(sectionBox(), { target: { value: "4" } });
+    expect(root.scrollTop).toBe(1_500);
+    fireEvent.scroll(root);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(sectionBox().value).toBe("4");
+    userScroll(root, 1_500);
+    await waitFor(() => expect(sectionBox().value).toBe("6"));
+  });
+
+  it("two viewers at once: each scrolls and follows its own container with its own elements", async () => {
     renderTab({ orientationId: "ori_1" });
     renderTab({ orientationId: "ori_1" });
     await waitFor(() => expect(screen.getAllByTestId("walkthrough-scroll")).toHaveLength(2));
     await waitFor(() => expect(screen.getAllByText("Listing 1: The lexer")).toHaveLength(2));
     const [first, second] = screen.getAllByTestId("walkthrough-scroll");
-    const rect = (top: number, height: number) => () => ({ top, bottom: top + height, height, left: 0, right: 0, width: 0, x: 0, y: top, toJSON() {} }) as DOMRect;
-    for (const root of [first, second]) root.getBoundingClientRect = rect(0, 500);
-    const target = (root: HTMLElement, id: string) => root.querySelector<HTMLElement>(`[data-scroll-id="${id}"]`) as HTMLElement;
-    target(first, "chapter-0").getBoundingClientRect = rect(100, 20);
-    target(second, "chapter-0").getBoundingClientRect = rect(300, 20);
-    target(first, "listing-2").getBoundingClientRect = rect(50, 20);
-    target(second, "listing-2").getBoundingClientRect = rect(400, 20);
-    fireEvent.click(within(second).getByRole("button", { name: "Lexing" }));
-    expect(second.scrollTop).toBe(300);
-    expect(first.scrollTop).toBe(0);
-    fireEvent.click(within(second).getByRole("button", { name: "2" }));
-    expect(second.scrollTop).toBe(700);
-    expect(first.scrollTop).toBe(0);
+    const [firstBox, secondBox] = screen.getAllByRole("combobox", { name: "Section" }) as HTMLSelectElement[];
+    layout(first!, { 0: 100, 4: 600, 6: 900 });
+    layout(second!, { 0: 0, 4: 300, 6: 900 });
+    target(first!, "listing-2").getBoundingClientRect = rect(50, 20);
+    target(second!, "listing-2").getBoundingClientRect = () => rect(700 - second!.scrollTop, 20)();
+    fireEvent.change(secondBox!, { target: { value: "4" } });
+    expect(second!.scrollTop).toBe(300);
+    expect(first!.scrollTop).toBe(0);
+    expect(firstBox!.value).toBe("0");
+    fireEvent.click(within(second!).getByRole("button", { name: "2" }));
+    expect(second!.scrollTop).toBe(700);
+    expect(first!.scrollTop).toBe(0);
+    userScroll(second!, 900);
+    await waitFor(() => expect(secondBox!.value).toBe("6"));
+    expect(firstBox!.value).toBe("0");
   });
 
   it("reads the walkthrough only while the tab shows: each read may check the listings", async () => {
@@ -150,6 +212,27 @@ function renderExport(rpc: Record<string, (input: never) => unknown> = {}) {
 const entries = () => within(screen.getByRole("list", { name: "Folders and files" }));
 const nameBox = () => screen.getByRole("textbox", { name: "File name" }) as HTMLInputElement;
 const exportCalls = (slot: ReturnType<typeof renderExport>) => slot.rpcCalls.filter((c) => c.method === "exportOrientation").map((c) => c.input);
+
+describe("chapterInView", () => {
+  const view = { top: 100, bottom: 600 };
+  const chapters = [{ ordinal: 0, top: 100 }, { ordinal: 4, top: 300 }, { ordinal: 6, top: 500 }];
+
+  it("is the last chapter whose heading reached the top, the first before any has", () => {
+    expect(chapterInView(chapters, view, false)).toBe(0);
+    expect(chapterInView([{ ordinal: 0, top: 150 }, { ordinal: 4, top: 300 }], view, false)).toBe(0);
+    expect(chapterInView([{ ordinal: 0, top: -300 }, { ordinal: 4, top: 105 }, { ordinal: 6, top: 500 }], view, false)).toBe(4);
+    expect(chapterInView([{ ordinal: 0, top: -300 }, { ordinal: 4, top: 120 }], view, false)).toBe(0);
+  });
+
+  it("at the bottom, the last heading in view", () => {
+    expect(chapterInView(chapters, view, true)).toBe(6);
+    expect(chapterInView([{ ordinal: 0, top: -300 }, { ordinal: 4, top: 300 }, { ordinal: 6, top: 650 }], view, true)).toBe(4);
+  });
+
+  it("is null without chapters", () => {
+    expect(chapterInView([], view, false)).toBeNull();
+  });
+});
 
 describe("the export dialog", () => {
   it("starts at the project root with ORIENTATION.md, listing its folders and files", async () => {

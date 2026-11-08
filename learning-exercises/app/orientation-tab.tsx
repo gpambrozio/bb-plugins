@@ -4,13 +4,20 @@
  * badge. `params` is unknown and parsed with zod; a bad one, or an orientation that is gone, reads
  * "This walkthrough is no longer available."
  *
- * The tab scrolls its own container (`scrollWithin`, never `scrollIntoView`). Notes render through
+ * A header pinned above the scroll area holds the title, Verify, Export and the **Section** selector: a
+ * native select of the chapters (it replaced the Contents list, which listed the same chapters and
+ * scrolled away). Choosing one scrolls there; scrolling sets it to the chapter in view (`chapterInView`),
+ * except that a chapter just chosen stays chosen until the user scrolls, clicks or types in the area
+ * (near the end, a chosen chapter may not reach the top, and the last one would otherwise take over).
+ *
+ * The tab scrolls its own container (`scrollWithin`, never `scrollIntoView`), and every scroll target is
+ * looked up inside it, so two open walkthroughs stay independent. Notes render through
  * `FileMarkdown`; a note that mentions `Listing N` gets a small row of buttons under it that scroll to
  * those listings (splitting the text around mentions before Markdown would break lists and emphasis).
  * Listing paths link into the orientation's workspace, or are plain code when it is gone.
  */
 import { experimental_FileLink as FileLink, experimental_useTabVisible, type ExperimentalThreadTabProps } from "@get-bb/plugin-sdk/app";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
 
@@ -64,6 +71,24 @@ export function verifyMessage(result: { checked: number; drift: readonly string[
   return drift.length === 0 ? `${counted}; none have drifted.` : `${counted}; ${drift.length} drifted: ${drift.join(", ")}`;
 }
 
+/** How far below the view's top a heading may sit and still count as reached (a scroll lands within a pixel or two). */
+const REACHED_PX = 8;
+
+/**
+ * The chapter in view, by its ordinal: the last whose heading has reached the view's top, the first when
+ * none has yet. At the very bottom of the area, where the last chapters may never reach the top, the last
+ * heading in view. Null with no chapters. `top`s are viewport coordinates, as `getBoundingClientRect` gives.
+ */
+export function chapterInView(chapters: readonly { ordinal: number; top: number }[], view: { top: number; bottom: number }, atBottom: boolean): number | null {
+  if (chapters.length === 0) return null;
+  let current = chapters[0]!.ordinal;
+  for (const chapter of chapters) {
+    const reached = chapter.top <= view.top + REACHED_PX || (atBottom && chapter.top < view.bottom);
+    if (reached) current = chapter.ordinal;
+  }
+  return current;
+}
+
 /** The listing numbers a note mentions, in order, once each. */
 export function mentionedListings(markdown: string): number[] {
   const numbers = [...markdown.matchAll(/\bListing (\d+)\b/gu)].map((match) => Number(match[1]));
@@ -114,6 +139,13 @@ function Walkthrough(props: { orientationId: string }) {
   const scroller = useRef<HTMLDivElement | null>(null);
   const [verifying, setVerifying] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  const [section, setSection] = useState<number | null>(null);
+  // False from a choice in the selector until the user scrolls, clicks or types in the area themselves.
+  const following = useRef(true);
+  const frame = useRef(0);
+  useEffect(() => () => {
+    if (typeof cancelAnimationFrame === "function") cancelAnimationFrame(frame.current);
+  }, []);
   const data = query.data;
   if (data === undefined) {
     return query.error === null || query.error === undefined ? null : <p className="text-sm text-muted-foreground">This walkthrough is no longer available.</p>;
@@ -121,6 +153,34 @@ function Walkthrough(props: { orientationId: string }) {
   const { orientation, blocks } = data;
   const environmentId = orientation.workspace?.environmentId ?? null;
   const chapters = blocks.flatMap((block) => (block.kind === "chapter" ? [block] : []));
+
+  /** Sets the selector to the chapter in view, read from this tab's own scroller. */
+  function track() {
+    const root = scroller.current;
+    if (root === null || !following.current) return;
+    const headings = Array.from(root.querySelectorAll<HTMLElement>('[data-scroll-id^="chapter-"]'), (element) => ({
+      ordinal: Number(element.dataset.scrollId!.slice("chapter-".length)),
+      top: element.getBoundingClientRect().top,
+    }));
+    const atBottom = root.scrollTop > 0 && root.scrollTop + root.clientHeight >= root.scrollHeight - 2;
+    setSection(chapterInView(headings, root.getBoundingClientRect(), atBottom));
+  }
+
+  function onScroll() {
+    if (typeof requestAnimationFrame !== "function") return track();
+    cancelAnimationFrame(frame.current);
+    frame.current = requestAnimationFrame(track);
+  }
+
+  function choose(ordinal: number) {
+    following.current = false;
+    setSection(ordinal);
+    scrollTo(`chapter-${ordinal}`);
+  }
+
+  const userTookOver = () => {
+    following.current = true;
+  };
 
   function scrollTo(elementId: string) {
     const root = scroller.current;
@@ -140,56 +200,76 @@ function Walkthrough(props: { orientationId: string }) {
     }
   }
 
+  const selected = chapters.some((chapter) => chapter.ordinal === section) ? section : (chapters[0]?.ordinal ?? null);
   return (
-    <div ref={scroller} data-testid="walkthrough-scroll" className="flex h-full flex-col gap-3 overflow-y-auto">
-      <div className="flex flex-wrap items-center gap-2">
-        <h2 className="text-base font-medium">{orientation.title}</h2>
-        <Button type="button" size="sm" variant="ghost" disabled={verifying} onClick={() => void verify()}>
-          Verify
-        </Button>
-        <Button type="button" size="sm" variant="ghost" aria-expanded={exportOpen} onClick={() => setExportOpen((open) => !open)}>
-          Export to repo…
-        </Button>
+    <div className="flex h-full flex-col">
+      <div className="flex shrink-0 flex-col gap-2 border-b border-border pb-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <h2 className="text-base font-medium">{orientation.title}</h2>
+          <Button type="button" size="sm" variant="ghost" disabled={verifying} onClick={() => void verify()}>
+            Verify
+          </Button>
+          <Button type="button" size="sm" variant="ghost" aria-expanded={exportOpen} onClick={() => setExportOpen((open) => !open)}>
+            Export to repo…
+          </Button>
+        </div>
+        {selected !== null && (
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            Section
+            <select
+              value={selected}
+              onChange={(event) => choose(Number(event.target.value))}
+              className="h-8 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-sm text-foreground"
+            >
+              {chapters.map((chapter) => (
+                <option key={chapter.ordinal} value={chapter.ordinal}>
+                  {chapter.title}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        {exportOpen && <ExportDialog orientationId={orientationId} onDone={() => setExportOpen(false)} />}
       </div>
-      {exportOpen && <ExportDialog orientationId={orientationId} onDone={() => setExportOpen(false)} />}
-      {chapters.length > 0 && (
-        <nav className="flex flex-col gap-0.5">
-          <h3 className="text-xs font-medium text-muted-foreground">Contents</h3>
-          {chapters.map((chapter) => (
-            <Button key={chapter.ordinal} type="button" size="sm" variant="ghost" className="justify-start" onClick={() => scrollTo(`chapter-${chapter.ordinal}`)}>
-              {chapter.title}
-            </Button>
-          ))}
-        </nav>
-      )}
-      {blocks.map((block) => {
-        if (block.kind === "chapter") {
-          return (
-            <h2 key={block.ordinal} data-scroll-id={`chapter-${block.ordinal}`} className="pt-2 text-base font-medium">
-              {block.title}
-            </h2>
-          );
-        }
-        if (block.kind === "note") {
-          const mentions = mentionedListings(block.markdown);
-          return (
-            <div key={block.ordinal} className="flex flex-col gap-1">
-              <FileMarkdown content={block.markdown} workspace={orientation.workspace} />
-              {mentions.length > 0 && (
-                <div className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
-                  Listings in this note:
-                  {mentions.map((number) => (
-                    <Button key={number} type="button" size="sm" variant="ghost" onClick={() => scrollTo(`listing-${number}`)}>
-                      {number}
-                    </Button>
-                  ))}
-                </div>
-              )}
-            </div>
-          );
-        }
-        return <ListingView key={block.ordinal} listing={block} environmentId={environmentId} elementId={`listing-${block.number}`} />;
-      })}
+      <div
+        ref={scroller}
+        data-testid="walkthrough-scroll"
+        className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pt-3"
+        onScroll={onScroll}
+        onWheel={userTookOver}
+        onTouchStart={userTookOver}
+        onPointerDown={userTookOver}
+        onKeyDown={userTookOver}
+      >
+        {blocks.map((block) => {
+          if (block.kind === "chapter") {
+            return (
+              <h2 key={block.ordinal} data-scroll-id={`chapter-${block.ordinal}`} className="pt-2 text-base font-medium">
+                {block.title}
+              </h2>
+            );
+          }
+          if (block.kind === "note") {
+            const mentions = mentionedListings(block.markdown);
+            return (
+              <div key={block.ordinal} className="flex flex-col gap-1">
+                <FileMarkdown content={block.markdown} workspace={orientation.workspace} />
+                {mentions.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
+                    Listings in this note:
+                    {mentions.map((number) => (
+                      <Button key={number} type="button" size="sm" variant="ghost" onClick={() => scrollTo(`listing-${number}`)}>
+                        {number}
+                      </Button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          }
+          return <ListingView key={block.ordinal} listing={block} environmentId={environmentId} elementId={`listing-${block.number}`} />;
+        })}
+      </div>
     </div>
   );
 }
