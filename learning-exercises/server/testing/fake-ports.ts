@@ -4,7 +4,21 @@
  */
 import type { PluginInteractionResult } from "@get-bb/plugin-sdk";
 
-import type { CardRequest, ForkRequest, MessageRead, MessageWindow, Ports, ProjectInfo, PullRequestInfo, ThreadInfo } from "../ports";
+import {
+  FileConflict,
+  type CardRequest,
+  type FileRead,
+  type FileRoot,
+  type ForkRequest,
+  type MessageRead,
+  type MessageWindow,
+  type PluginThread,
+  type Ports,
+  type ProjectInfo,
+  type PullRequestInfo,
+  type SpawnRequest,
+  type ThreadInfo,
+} from "../ports";
 import type { Commit, CommittedFile, FileChange } from "../signals";
 
 export interface OpenCard {
@@ -53,6 +67,26 @@ export class FakePorts implements Ports {
   /** `card` throws instead of opening. */
   cardThrows = false;
   metadata = new Map<string, string>();
+  /** Other plugin metadata per thread: `${threadId}` to key to value (the session id stays in `metadata`). */
+  threadMetadata = new Map<string, Record<string, string>>();
+  spawned: SpawnRequest[] = [];
+  spawnFails = false;
+  /** Runs after bb made the thread but before `spawn` answers. */
+  duringSpawn: ((threadId: string) => Promise<void>) | null = null;
+  stopped: string[] = [];
+  archived: string[] = [];
+  archiveFails = false;
+  /** Environment roots, by environment id. */
+  roots = new Map<string, FileRoot>([["env_1", { hostId: "host_1", rootPath: "/work/calc" }]]);
+  /** Project checkouts, `${projectId}:${hostId}`. */
+  checkouts = new Map<string, string>([["proj_1:host_1", "/work/calc"]]);
+  /** Files by `${rootPath}/${path}`. */
+  files = new Map<string, string>();
+  /** Every `writeFile`, in order. */
+  writes: { root: FileRoot; path: string; content: string; expectedSha256: string | null }[] = [];
+  /** `pluginThreadsWith` answers null, as when bb cannot list. */
+  pluginThreadsUnreadable = false;
+  private nextSpawn = 1;
   forks: ForkRequest[] = [];
   sends: { threadId: string; visible: string; agentOnly: string }[] = [];
   cards: OpenCard[] = [];
@@ -79,6 +113,34 @@ export class FakePorts implements Ports {
 
   async environmentPath(environmentId: string) {
     return this.paths.get(environmentId) ?? null;
+  }
+
+  async environmentRoot(environmentId: string) {
+    return this.roots.get(environmentId) ?? null;
+  }
+
+  async projectCheckout(projectId: string, hostId: string) {
+    return this.checkouts.get(`${projectId}:${hostId}`) ?? null;
+  }
+
+  /** The hash a file has in this fake: its text, so a test can predict it. */
+  static sha(text: string): string {
+    return `sha:${text}`;
+  }
+
+  async readFile(root: FileRoot, relativePath: string): Promise<FileRead | null> {
+    const text = this.files.get(`${root.rootPath}/${relativePath}`);
+    if (text === undefined) return { kind: "missing" };
+    return { kind: "text", text, sha256: FakePorts.sha(text), sizeBytes: Buffer.byteLength(text) };
+  }
+
+  async writeFile(root: FileRoot, relativePath: string, content: string, expectedSha256: string | null) {
+    const key = `${root.rootPath}/${relativePath}`;
+    const current = this.files.get(key);
+    const currentSha = current === undefined ? null : FakePorts.sha(current);
+    if (currentSha !== expectedSha256) throw new FileConflict(relativePath);
+    this.writes.push({ root, path: relativePath, content, expectedSha256 });
+    this.files.set(key, content);
   }
 
   async currentTurn(threadId: string) {
@@ -142,6 +204,44 @@ export class FakePorts implements Ports {
 
   async send(threadId: string, visible: string, agentOnly: string) {
     this.sends.push({ threadId, visible, agentOnly });
+  }
+
+  async spawn(request: SpawnRequest) {
+    if (this.spawnFails) throw new Error("spawn refused");
+    this.spawned.push(request);
+    const id = `thr_spawn${this.nextSpawn++}`;
+    this.threads.set(id, thread({ id, projectId: request.projectId, providerId: request.providerId, environmentId: request.environmentId, title: request.title, originPluginId: "learning-exercises", visibility: request.hidden ? "hidden" : "visible" }));
+    this.threadMetadata.set(id, request.metadata);
+    if (this.duringSpawn !== null) await this.duringSpawn(id);
+    return { threadId: id };
+  }
+
+  async stopThread(threadId: string) {
+    this.stopped.push(threadId);
+  }
+
+  async archiveThread(threadId: string) {
+    if (this.archiveFails) throw new Error("archive refused");
+    this.archived.push(threadId);
+    const current = this.threads.get(threadId);
+    if (current !== undefined) this.threads.set(threadId, { ...current, archivedAt: this.clock });
+  }
+
+  async pluginThreadsWith(metadataKey: string): Promise<PluginThread[] | null> {
+    if (this.pluginThreadsUnreadable) return null;
+    const found: PluginThread[] = [];
+    for (const [threadId, values] of this.threadMetadata) {
+      const value = values[metadataKey];
+      const row = this.threads.get(threadId);
+      if (value === undefined || row === undefined || row.originPluginId !== "learning-exercises") continue;
+      found.push({ threadId, value, archived: row.archivedAt !== null, status: row.status });
+    }
+    return found;
+  }
+
+  async metadataValue(threadId: string, key: string) {
+    if (key === "session") return this.metadata.get(threadId) ?? null;
+    return this.threadMetadata.get(threadId)?.[key] ?? null;
   }
 
   async sessionIdOf(threadId: string) {

@@ -8,10 +8,25 @@
  * worth failing a thread event for.
  */
 import type { BbPluginApi, PluginInteractionResult } from "@get-bb/plugin-sdk";
+import { posix } from "node:path";
+
 import { z } from "zod";
 
-import { CARD_RENDERER_ID, type SettledRow } from "../shared/types";
-import type { CardRequest, ForkRequest, MessageRead, Ports, ProjectInfo, PullRequestInfo, ThreadInfo } from "./ports";
+import { ORIENT_LIMITS } from "../shared/orientation";
+import { CARD_RENDERER_ID, PLUGIN_ID, type SettledRow } from "../shared/types";
+import {
+  FileConflict,
+  type CardRequest,
+  type FileRead,
+  type FileRoot,
+  type ForkRequest,
+  type MessageRead,
+  type Ports,
+  type ProjectInfo,
+  type PullRequestInfo,
+  type SpawnRequest,
+  type ThreadInfo,
+} from "./ports";
 import type { FileChange } from "./signals";
 
 export const GIT_PLUGIN_ID = "bb--git";
@@ -67,6 +82,31 @@ const FILE_CHANGE_PAGES = 3;
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** The most threads bb lists in one call. */
+const THREAD_LIST_LIMIT = 200;
+
+/**
+ * Whether a failed `files.read` says the file is not there. bb's file calls are not documented to
+ * fail in a typed way, so this accepts a `not_found` code (the SDK's RPC error code) or an ENOENT /
+ * "not found" / "no such file" message. Hash mismatches on write are not errors: `files.write`
+ * answers `{ outcome: "conflict" }`, which `diff-review/server/edits.ts` (`written`) checks the same way.
+ */
+function isNotFound(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  if (code === "not_found" || code === "ENOENT") return true;
+  return /not found|no such file|enoent|does not exist/i.test(message(error));
+}
+
+/** UTF-8 text from file bytes, or null when they are not valid UTF-8 or hold a NUL. */
+function utf8Text(bytes: Uint8Array): string | null {
+  try {
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    return text.includes("\u0000") ? null : text;
+  } catch {
+    return null;
+  }
 }
 
 function settledDetail(row: SettledRow): string {
@@ -136,6 +176,51 @@ export function bbPorts(bb: BbPluginApi, changed: () => void): Ports {
       } catch {
         return null;
       }
+    },
+
+    async environmentRoot(environmentId): Promise<FileRoot | null> {
+      try {
+        const environment = await sdk().environments.get({ environmentId });
+        return environment.path === null || environment.path === undefined ? null : { hostId: environment.hostId, rootPath: environment.path };
+      } catch {
+        return null;
+      }
+    },
+
+    async projectCheckout(projectId, hostId) {
+      try {
+        const project = await sdk().projects.get({ projectId });
+        return project.sources.find((source) => source.hostId === hostId)?.path ?? null;
+      } catch {
+        return null;
+      }
+    },
+
+    async readFile(root, relativePath): Promise<FileRead | null> {
+      let file;
+      try {
+        file = await sdk().files.read({ hostId: root.hostId, rootPath: root.rootPath, path: posix.join(root.rootPath, relativePath) });
+      } catch (error) {
+        if (isNotFound(error)) return { kind: "missing" };
+        bb.log.debug(`Reading ${relativePath} failed: ${message(error)}`);
+        return null;
+      }
+      if (file.sizeBytes > ORIENT_LIMITS.fileBytes) return { kind: "too-large" };
+      const text = file.contentEncoding === "base64" ? utf8Text(Buffer.from(file.content, "base64")) : utf8Text(Buffer.from(file.content, "utf8"));
+      return text === null ? { kind: "binary" } : { kind: "text", text, sha256: file.sha256, sizeBytes: file.sizeBytes };
+    },
+
+    async writeFile(root, relativePath, content, expectedSha256) {
+      const result = await sdk().files.write({
+        hostId: root.hostId,
+        rootPath: root.rootPath,
+        path: posix.join(root.rootPath, relativePath),
+        content,
+        contentEncoding: "utf8",
+        createParents: true,
+        expectedSha256,
+      });
+      if (result.outcome === "conflict") throw new FileConflict(relativePath);
     },
 
     async currentTurn(threadId) {
@@ -321,14 +406,64 @@ export function bbPorts(bb: BbPluginApi, changed: () => void): Ports {
       });
     },
 
-    async sessionIdOf(threadId) {
+    async spawn(request: SpawnRequest) {
+      const spawned = await sdk().threads.spawn({
+        projectId: request.projectId,
+        title: request.title,
+        visibility: request.hidden ? "hidden" : "visible",
+        environment: { type: "reuse", environmentId: request.environmentId },
+        providerId: request.providerId,
+        input: [
+          { type: "text", text: request.visible, mentions: [] },
+          { type: "text", text: request.agentOnly, visibility: "agent-only", mentions: [] },
+        ],
+        pluginMetadata: request.metadata,
+      });
+      return { threadId: spawned.id };
+    },
+
+    async stopThread(threadId) {
+      await sdk().threads.stop({ threadId });
+    },
+
+    async archiveThread(threadId) {
+      await sdk().threads.archive({ threadId });
+    },
+
+    async pluginThreadsWith(metadataKey) {
+      // `originPluginId` filters on the server; hidden threads (the helpers) are listed only with
+      // `includeHidden`. Callers only put leftovers away, so one page of the newest 200 is enough.
+      try {
+        const rows = await sdk().threads.list({ originPluginId: PLUGIN_ID, includeHidden: true, limit: THREAD_LIST_LIMIT });
+        if (rows.length === 0) return [];
+        const { threads } = await sdk().threads.experimental_listPluginMetadata({ threadIds: rows.map((row) => row.id).slice(0, THREAD_LIST_LIMIT) });
+        const byId = new Map(rows.map((row) => [row.id, row]));
+        const found: { threadId: string; value: string; archived: boolean; status: string }[] = [];
+        for (const entry of threads) {
+          const value = (entry.metadata as Record<string, unknown>)[metadataKey];
+          const row = byId.get(entry.threadId);
+          if (typeof value !== "string" || row === undefined) continue;
+          found.push({ threadId: entry.threadId, value, archived: row.archivedAt !== null && row.archivedAt !== undefined, status: row.status });
+        }
+        return found;
+      } catch (error) {
+        bb.log.warn(`Listing the plugin's threads failed: ${message(error)}`);
+        return null;
+      }
+    },
+
+    async metadataValue(threadId, key) {
       try {
         const metadata = await sdk().threads.getPluginMetadata({ threadId });
-        const value = (metadata as Record<string, unknown> | null)?.[SESSION_METADATA_KEY];
+        const value = (metadata as Record<string, unknown> | null)?.[key];
         return typeof value === "string" ? value : null;
       } catch {
         return null;
       }
+    },
+
+    sessionIdOf(threadId) {
+      return this.metadataValue(threadId, SESSION_METADATA_KEY);
     },
 
     async forkOf(sessionId, sourceThreadId) {

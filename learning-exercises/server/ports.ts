@@ -41,6 +41,49 @@ export interface ForkRequest {
   visible: string;
 }
 
+/** What `spawn` starts: a thread in an existing environment, with the plugin's metadata on it. */
+export interface SpawnRequest {
+  projectId: string;
+  environmentId: string;
+  providerId: string;
+  title: string;
+  hidden: boolean;
+  /** The one line the user sees as the first message. */
+  visible: string;
+  /** Agent-only: the brief. */
+  agentOnly: string;
+  metadata: Record<string, string>;
+}
+
+/** A directory on a machine, the base files are read and written under. */
+export interface FileRoot {
+  hostId: string;
+  rootPath: string;
+}
+
+/** What reading one file found: its text, or why there is none. */
+export type FileRead =
+  | { kind: "text"; text: string; sha256: string; sizeBytes: number }
+  | { kind: "missing" }
+  | { kind: "binary" }
+  | { kind: "too-large" };
+
+/** One of this plugin's threads that carries a metadata key. */
+export interface PluginThread {
+  threadId: string;
+  value: string;
+  archived: boolean;
+  status: string;
+}
+
+/** `writeFile` found the file changed since the hash it was given (or present when it expected none). */
+export class FileConflict extends Error {
+  constructor(path: string) {
+    super(`${path} changed since it was read.`);
+    this.name = "FileConflict";
+  }
+}
+
 export interface MessageWindow {
   from: number;
   to: number | null;
@@ -75,6 +118,21 @@ export interface Ports {
   thread(threadId: string): Promise<ThreadInfo | null>;
   project(projectId: string): Promise<ProjectInfo | null>;
   environmentPath(environmentId: string): Promise<string | null>;
+  /** The machine and directory of an environment; null when it has no checkout (destroyed) or cannot be read. */
+  environmentRoot(environmentId: string): Promise<FileRoot | null>;
+  /** The project's checkout on a host, as an absolute path; null when it has none there or cannot be read. */
+  projectCheckout(projectId: string, hostId: string): Promise<string | null>;
+  /**
+   * One file under a root, by a normalized relative path. Null when the read fails for a reason other
+   * than the file being absent; `too-large` above `ORIENT_LIMITS.fileBytes`; `binary` for bytes that are
+   * not UTF-8 or hold a NUL.
+   */
+  readFile(root: FileRoot, relativePath: string): Promise<FileRead | null>;
+  /**
+   * Writes UTF-8 text, creating parent folders. `expectedSha256` is the hash of the file as it was read,
+   * or null to require that it does not exist. Throws `FileConflict` when it changed; anything else as is.
+   */
+  writeFile(root: FileRoot, relativePath: string, content: string, expectedSha256: string | null): Promise<void>;
   /** The id of the thread's newest turn, finished or running (its last `turn/started`); null when it cannot be read. */
   currentTurn(threadId: string): Promise<string | null>;
   /** The thread's last finished turn, from its event log. */
@@ -100,6 +158,16 @@ export interface Ports {
   fork(request: ForkRequest): Promise<{ threadId: string }>;
   /** Sends one visible line and an agent-only part; starts a turn, or joins the running one. */
   send(threadId: string, visible: string, agentOnly: string): Promise<void>;
+  /** Starts a thread; throws when bb refuses. */
+  spawn(request: SpawnRequest): Promise<{ threadId: string }>;
+  /** Stops a thread's running turn; throws on failure. */
+  stopThread(threadId: string): Promise<void>;
+  /** Archives a thread; throws on failure. */
+  archiveThread(threadId: string): Promise<void>;
+  /** This plugin's (unarchived) threads whose metadata holds `metadataKey`; null when either read fails. */
+  pluginThreadsWith(metadataKey: string): Promise<PluginThread[] | null>;
+  /** One string value of a thread's plugin metadata; null when absent, not a string or unreadable. */
+  metadataValue(threadId: string, key: string): Promise<string | null>;
   /** The session id seeded on a thread's metadata, for a fork bb answers before `fork` returns. */
   sessionIdOf(threadId: string): Promise<string | null>;
   /** The fork made for a session whose id never reached the store (a reload mid-fork); null when none. */
