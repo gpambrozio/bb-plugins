@@ -157,6 +157,18 @@ describe("a builder that goes idle", () => {
   });
 });
 
+describe("bb's events never reject", () => {
+  it("logs a store that throws instead of rejecting onIdle or onFailed", async () => {
+    const { ports, store, service: orient } = await building();
+    store.byBuilder = () => {
+      throw new Error("database is closed");
+    };
+    await expect(orient.onIdle(BUILDER)).resolves.toBeUndefined();
+    await expect(orient.onFailed(BUILDER)).resolves.toBeUndefined();
+    expect(ports.warnings.filter((line) => line.includes("database is closed"))).toHaveLength(2);
+  });
+});
+
 describe("a builder whose turn fails", () => {
   it("is failed at once, stopped and archived", async () => {
     const { ports, store, service, id } = await building();
@@ -237,13 +249,23 @@ describe("reload safety", () => {
     first.dispose();
   });
 
-  it("fails a row whose builder thread is gone, and one whose builder was archived", async () => {
+  it("fails a row whose builder thread is gone or archived without putting it away again, and stays clean", async () => {
     for (const change of ["gone", "archived"] as const) {
       const { ports, store, id } = await building();
       if (change === "gone") ports.threads.delete(BUILDER);
       else ports.threads.set(BUILDER, { ...ports.threads.get(BUILDER)!, status: "active", archivedAt: 5 });
-      await service(ports, store).reconcile();
+      // As bb would: a deleted thread cannot be stopped or archived.
+      const archive = ports.archiveThread.bind(ports);
+      ports.archiveThread = async (threadId) => {
+        if (!ports.threads.has(threadId)) throw new Error("thread not found");
+        await archive(threadId);
+      };
+      const next = service(ports, store);
+      await next.reconcile();
       expect(store.get(id)).toMatchObject({ status: "failed", error: "Interrupted by a reload." });
+      expect(ports.stopped).toEqual([]);
+      expect(ports.archived).toEqual([]);
+      expect(next.clean).toBe(true);
     }
   });
 
@@ -367,6 +389,61 @@ describe("reload safety", () => {
       expect(ports.archived).toEqual([BUILDER]);
       expect(leftovers(ports, store)).toEqual([]);
       expect(store.allLive()).toEqual([]);
+    });
+
+    /** A reload mid-spawn whose thread bb makes only after the new copy's next sweep has made it clean. */
+    async function lateThread() {
+      const { ports, store, db, service: a } = await setup();
+      let b: OrientationService | null = null;
+      ports.beforeSpawn = async () => {
+        a.dispose();
+        b = service(ports, store);
+        await b.reconcile();
+        await b.sweep();
+      };
+      await expect(a.start({ sourceThreadId: SOURCE, depth: "summary" })).rejects.toThrow("reloaded");
+      ports.beforeSpawn = null;
+      const next = b as unknown as OrientationService;
+      expect(next.clean).toBe(true);
+      expect(leftovers(ports, store)).toEqual([BUILDER]);
+      return { ports, store, db, next };
+    }
+
+    it("puts away a thread bb made after the sweep on its first tool call", async () => {
+      const { ports, store, next } = await lateThread();
+      await expect(next.summary(BUILDER, SUMMARY)).rejects.toThrow("This thread is not building an orientation.");
+      await flush();
+      expect(ports.stopped).toEqual([BUILDER]);
+      expect(ports.archived).toEqual([BUILDER]);
+      expect(leftovers(ports, store)).toEqual([]);
+      expect(store.allLive()).toEqual([]);
+    });
+
+    it("puts away a thread bb made after the sweep on its first idle, or its first failed turn", async () => {
+      for (const event of ["onIdle", "onFailed"] as const) {
+        const { ports, store, next } = await lateThread();
+        await next[event](BUILDER);
+        expect(ports.stopped).toEqual([BUILDER]);
+        expect(ports.archived).toEqual([BUILDER]);
+        expect(leftovers(ports, store)).toEqual([]);
+        expect(ports.sends).toEqual([]);
+      }
+    });
+
+    it("leaves alone an unbound thread whose row is still starting, and another plugin's thread", async () => {
+      const { ports, store, service: orient } = await setup();
+      ports.duringSpawn = async (threadId) => {
+        await orient.onIdle(threadId);
+        await expect(orient.builderFor("thr_theirs")).rejects.toThrow("This thread is not building an orientation.");
+      };
+      ports.threads.set("thr_theirs", thread({ id: "thr_theirs", originPluginId: "other-plugin" }));
+      ports.threadMetadata.set("thr_theirs", { [ORIENTATION_METADATA_KEY]: "ori_nothing" });
+      await orient.onIdle("thr_theirs");
+      await orient.start({ sourceThreadId: SOURCE, depth: "summary" });
+      await flush();
+      expect(ports.stopped).toEqual([]);
+      expect(ports.archived).toEqual([]);
+      expect(store.allLive()[0]).toMatchObject({ status: "building", builderThreadId: BUILDER });
     });
 
     it("leaves at most one live row and no unowned thread whichever way it goes", async () => {

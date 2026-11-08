@@ -32,8 +32,11 @@
  * works, fails the rest ("Interrupted by a reload.") and puts their threads away, then archives every
  * thread of this plugin whose orientation id no live row has it building (finished builders among them).
  * A `starting` row with no thread yet is failed but leaves `clean` false: a spawn the old copy sent may
- * still answer, and the next sweep's reconcile archives that thread. Reconcile runs only at load and from
- * sweeps while `clean` is false, when starts are refused, so it never meets a spawn of its own copy.
+ * still answer, and the next sweep's reconcile archives that thread if bb has made it by then. A thread bb
+ * makes later still is listed by no reconcile until the next load, so it is put away on its first tool call
+ * (`builderFor`) or its first idle or failed turn (`onIdle`, `onFailed`): this plugin started it and its
+ * metadata names an orientation that is not live. Reconcile runs only at load and from sweeps while
+ * `clean` is false, when starts are refused, so it never meets a spawn of its own copy.
  */
 import { LIVE_ORIENTATION_STATUSES, ORIENT_LIMITS, OrientationSummarySchema, parseLineRange, type OrientationDepth, type OrientationStatus } from "../shared/orientation";
 import { PLUGIN_ID } from "../shared/types";
@@ -302,7 +305,13 @@ export class OrientationService {
     this.alive();
     if (info === null || info.originPluginId !== PLUGIN_ID) throw new OrientationError(NOT_BUILDING);
     const row = this.store.get(orientationId);
-    if (row === null || !isLive(row.status) || row.builderThreadId !== null) throw new OrientationError(NOT_BUILDING);
+    if (row === null || !isLive(row.status)) {
+      // A thread bb made for a build that has ended, as when a reload landed while it was being spawned.
+      // Put away in the background: this is the thread's own tool call, and a stop may wait for its answer.
+      if (info.archivedAt === null) this.observe(this.putAwayStray(threadId, orientationId), threadId);
+      throw new OrientationError(NOT_BUILDING);
+    }
+    if (row.builderThreadId !== null) throw new OrientationError(NOT_BUILDING);
     if (!this.store.bindBuilder(row.id, threadId, this.ports.now())) throw new OrientationError(NOT_BUILDING);
     this.store.transition(row.id, ["starting"], "building", this.ports.now());
     this.ports.changed();
@@ -620,9 +629,9 @@ export class OrientationService {
    */
   private async settleBuilder(threadId: string, whileBuilding: (row: OrientationRow) => Promise<void>): Promise<void> {
     if (this.disposed) return;
-    const found = this.store.byBuilder(threadId);
-    if (found === null) return;
     try {
+      const found = this.store.byBuilder(threadId);
+      if (found === null) return await this.settleStray(threadId);
       await this.exclusive(`orientation:${found.id}`, async () => {
         if (this.disposed) return;
         const row = this.store.get(found.id);
@@ -636,6 +645,33 @@ export class OrientationService {
     } catch (error) {
       this.warn(`Handling orientation builder ${threadId} failed: ${errorText(error)}`);
     }
+  }
+
+  /**
+   * A thread no row has bound: put away when this plugin started it and its metadata names an orientation
+   * that is not live (ended, purged or unknown). One whose row is still `starting` is left for its spawn.
+   */
+  private async settleStray(threadId: string): Promise<void> {
+    const orientationId = await this.ports.metadataValue(threadId, ORIENTATION_METADATA_KEY);
+    if (this.disposed || orientationId === null) return;
+    const info = await this.ports.thread(threadId);
+    if (this.disposed || info === null || info.originPluginId !== PLUGIN_ID || info.archivedAt !== null) return;
+    await this.putAwayStray(threadId, orientationId);
+  }
+
+  /** Puts `threadId` away under the orientation's lock, unless that orientation is live by then. */
+  private putAwayStray(threadId: string, orientationId: string): Promise<void> {
+    return this.exclusive(`orientation:${orientationId}`, async () => {
+      if (this.disposed) return;
+      const row = this.store.get(orientationId);
+      if (row !== null && isLive(row.status)) return;
+      await this.putAway(threadId);
+    });
+  }
+
+  /** Work nobody awaits: a failure is logged, never left as an unhandled rejection. */
+  private observe(work: Promise<unknown>, threadId: string): void {
+    void work.catch((error: unknown) => this.warn(`Putting away orientation thread ${threadId} failed: ${errorText(error)}`));
   }
 
   /** Fails a `building` row with `message` and puts its builder away. Runs under the orientation's lock. */
@@ -742,11 +778,11 @@ export class OrientationService {
       return false;
     }
     handled.add(threadId);
-    const working = await this.isWorking(threadId);
+    const state = await this.builderState(threadId);
     if (this.disposed) return true;
     const current = this.store.get(id);
     if (current === null || !isLive(current.status)) return true;
-    if (working) {
+    if (state === "working") {
       if (current.builderThreadId === null && this.store.bindBuilder(id, threadId, this.ports.now())) {
         this.store.transition(id, ["starting"], "building", this.ports.now());
         this.ports.changed();
@@ -754,20 +790,21 @@ export class OrientationService {
       return true;
     }
     if (this.store.transition(id, ["starting", "building"], "failed", this.ports.now(), INTERRUPTED)) this.ports.changed();
-    return this.putAway(threadId);
+    // A thread that is gone or already archived has nothing to put away (bb would refuse the archive).
+    return state === "gone" ? true : this.putAway(threadId);
   }
 
   /**
-   * A builder at work: its thread is there, not archived, and running a turn, or idle after one (between
-   * turns, its idle handled by whichever copy heard it; the cap bounds it). Idle with no turn ever started,
-   * errored, stopping, archived or gone is not.
+   * `working`: the builder's thread is there, not archived, and running a turn, or idle after one (between
+   * turns, its idle handled by whichever copy heard it; the cap bounds it). `gone`: deleted or archived
+   * (or unreadable). `stopped`: idle with no turn ever started, errored or stopping.
    */
-  private async isWorking(threadId: string): Promise<boolean> {
+  private async builderState(threadId: string): Promise<"working" | "stopped" | "gone"> {
     const info = await this.ports.thread(threadId);
-    if (this.disposed || info === null || info.archivedAt !== null) return false;
-    if (WORKING.has(info.status)) return true;
-    if (info.status !== "idle") return false;
-    return (await this.ports.currentTurn(threadId)) !== null;
+    if (this.disposed || info === null || info.archivedAt !== null) return "gone";
+    if (WORKING.has(info.status)) return "working";
+    if (info.status !== "idle") return "stopped";
+    return (await this.ports.currentTurn(threadId)) !== null ? "working" : "stopped";
   }
 
   /** One of this plugin's threads with an orientation id, under that id's lock: archived unless a live row has it building. */
