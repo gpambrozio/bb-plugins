@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 /** The walkthrough tab and the export dialog. */
-import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { toast } from "sonner";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -52,12 +52,33 @@ describe("the walkthrough tab", () => {
     renderTab({ orientationId: "ori_1" });
     await screen.findByText("Listing 1: The lexer");
     const root = screen.getByTestId("walkthrough-scroll");
-    const heading = document.getElementById("chapter-0") as HTMLElement;
+    const heading = root.querySelector<HTMLElement>('[data-scroll-id="chapter-0"]') as HTMLElement;
     root.getBoundingClientRect = () => ({ top: 0, bottom: 500, height: 500, left: 0, right: 0, width: 0, x: 0, y: 0, toJSON() {} }) as DOMRect;
     heading.getBoundingClientRect = () => ({ top: 300, bottom: 320, height: 20, left: 0, right: 0, width: 0, x: 0, y: 300, toJSON() {} }) as DOMRect;
     fireEvent.click(screen.getByRole("button", { name: "Lexing" }));
     expect(root.scrollTop).toBe(300);
     expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("two viewers at once: each scrolls its own container with its own elements", async () => {
+    renderTab({ orientationId: "ori_1" });
+    renderTab({ orientationId: "ori_1" });
+    await waitFor(() => expect(screen.getAllByTestId("walkthrough-scroll")).toHaveLength(2));
+    await waitFor(() => expect(screen.getAllByText("Listing 1: The lexer")).toHaveLength(2));
+    const [first, second] = screen.getAllByTestId("walkthrough-scroll");
+    const rect = (top: number, height: number) => () => ({ top, bottom: top + height, height, left: 0, right: 0, width: 0, x: 0, y: top, toJSON() {} }) as DOMRect;
+    for (const root of [first, second]) root.getBoundingClientRect = rect(0, 500);
+    const target = (root: HTMLElement, id: string) => root.querySelector<HTMLElement>(`[data-scroll-id="${id}"]`) as HTMLElement;
+    target(first, "chapter-0").getBoundingClientRect = rect(100, 20);
+    target(second, "chapter-0").getBoundingClientRect = rect(300, 20);
+    target(first, "listing-2").getBoundingClientRect = rect(50, 20);
+    target(second, "listing-2").getBoundingClientRect = rect(400, 20);
+    fireEvent.click(within(second).getByRole("button", { name: "Lexing" }));
+    expect(second.scrollTop).toBe(300);
+    expect(first.scrollTop).toBe(0);
+    fireEvent.click(within(second).getByRole("button", { name: "2" }));
+    expect(second.scrollTop).toBe(700);
+    expect(first.scrollTop).toBe(0);
   });
 
   it("reads the walkthrough only while the tab shows: each read may check the listings", async () => {

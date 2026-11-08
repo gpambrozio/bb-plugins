@@ -77,7 +77,7 @@ function ListingView(props: { listing: Listing; environmentId: string | null; el
   const label = `${listing.path}:${range.start}–${range.end}`;
   const badge = badgeText(listing);
   return (
-    <section id={props.elementId} className="flex flex-col gap-1">
+    <section data-scroll-id={props.elementId} className="flex flex-col gap-1">
       <h3 className="text-sm font-medium">{`Listing ${listing.number}: ${listing.caption}`}</h3>
       <div className="flex flex-wrap items-center gap-2 text-xs">
         {environmentId === null || path === null ? (
@@ -124,7 +124,8 @@ function Walkthrough(props: { orientationId: string }) {
 
   function scrollTo(elementId: string) {
     const root = scroller.current;
-    const target = document.getElementById(elementId);
+    // Looked up inside this tab's own scroller: another mounted walkthrough has the same ids.
+    const target = root?.querySelector<HTMLElement>(`[data-scroll-id="${elementId}"]`) ?? null;
     if (root !== null && target !== null) scrollWithin(root, target, "start");
   }
 
@@ -164,7 +165,7 @@ function Walkthrough(props: { orientationId: string }) {
       {blocks.map((block) => {
         if (block.kind === "chapter") {
           return (
-            <h2 key={block.ordinal} id={`chapter-${block.ordinal}`} className="pt-2 text-base font-medium">
+            <h2 key={block.ordinal} data-scroll-id={`chapter-${block.ordinal}`} className="pt-2 text-base font-medium">
               {block.title}
             </h2>
           );
