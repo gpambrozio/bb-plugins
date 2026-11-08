@@ -30,7 +30,9 @@ The upstream hook (`learning-opportunities-auto`) is not reproduced: the plugin'
 - **Work:** `orient`, by Dr. Michael Mullarkey, in the same repository
   ([`orient/skills/orient/SKILL.md`](https://github.com/DrCatHicks/learning-opportunities/blob/main/orient/skills/orient/SKILL.md)
   and `orient/skills/orient/resources/orient-bibliography.md`).
-- **Version used:** commit `3862d2e` of that repository.
+- **Version used:** commit `3862d2e` of that repository, the source this plugin adapts and links to.
+  Upstream's own `SKILL.md` names [mcmullarkey/orient](https://github.com/mcmullarkey/orient) as the
+  author's home for the skill.
 - **Licence:** CC BY 4.0. © Dr. Michael Mullarkey.
 - **Not affiliated:** this plugin is not made, endorsed or reviewed by the author.
 
@@ -41,7 +43,9 @@ The upstream hook (`learning-opportunities-auto`) is not reproduced: the plugin'
 
 ### Orient bibliography
 
-`content/orient-builder.md` credits the sources of `orient-bibliography.md`:
+`content/orient-builder.md` draws on the sources of `orient-bibliography.md`, and cites four of them inline
+in its exploration steps (Spinellis 2003, Hermans 2021, Storey et al. 2006 and Spolsky); the other two
+(Storey et al. 2021, Dagenais et al. 2010) inform it without an inline citation:
 
 - Spinellis, D. (2003). *Code Reading: The Open Source Perspective*. Addison-Wesley.
 - Hermans, F. (2021). *The Programmer's Brain*. Manning Publications.

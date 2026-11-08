@@ -55,11 +55,13 @@ is not affiliated with or endorsed by the author; see [NOTICE.md](NOTICE.md).
   the background, a short guide to the repository: its purpose, languages, stages, key files, concepts
   and gotchas, and two exercises on the files to read first. Optionally it also writes a **walkthrough**,
   a linear tour in chapters whose code listings the plugin copies from your files itself and can
-  **Verify** later (unchanged, changed or missing). **Start orientation session** runs the two exercises
+  **Verify** later (current, moved, changed or missing). **Start orientation session** runs the two exercises
   in a thread of their own; **Export to repo…** saves it as a Markdown file in the repository (the
   walkthrough in the format of [showboat](https://github.com/simonw/showboat), so `showboat verify`
   can check it). The builder is a hidden agent thread with permission to read and edit files in your
   checkout; it is told not to edit, and Start says so. Orientations are never offered, only started.
+  A file with Windows (CRLF) line endings will not pass `showboat verify`: listings are captured
+  without the `\r`, so showboat's output never matches (the plugin's own Verify ignores line endings).
 - **Files open from the question.** File names in a question, its list of files to open, your past
   answers and an offer are links that open the file in bb, at the line or range the question points to.
 - **Pause and come back.** A paused session — by you, by a 30-minute timeout, or by a bb restart —

@@ -93,6 +93,9 @@ describe("orientation briefs", () => {
       expect(text).toContain("CC BY 4.0");
       expect(text).toContain("Not affiliated");
     }
+    // The source NOTICE.md names: orient/ in Learning Opportunities at the pinned commit.
+    expect(ORIENT_BUILDER).toContain("https://github.com/DrCatHicks/learning-opportunities/tree/main/orient");
+    expect(ORIENT_BUILDER).not.toContain("github.com/mcmullarkey/orient");
   });
 
   it("a summary build is told to call only orient_summary and orient_finish", () => {
