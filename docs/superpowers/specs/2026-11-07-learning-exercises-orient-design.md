@@ -206,7 +206,8 @@ The guarantees from issue #11, simpler here because builds are started by hand a
   "hidden", environment: { type: "reuse", environmentId }, providerId, input: [visible line, builder brief
   as an `agent-only` part], pluginMetadata: { orientation: <id> } })` with no `parentThreadId` (a visible line
   with every agent-only part, invariant 6). On success bind the thread and move to
-  `building` (unless already bound by a first tool call). On failure → `failed` with the error.
+  `building` (unless already bound by its first tool call, idle or failed turn, which can come first; an
+  early idle or failure is then handled as any builder's). On failure → `failed` with the error.
 - **Finish and Cancel.** **Cancel** moves the row, then stops the builder and archives it. `orient_finish`
   moves the row and leaves the builder running (R5): it runs inside the builder's own tool call, where a
   stop that waits for the turn would wait for its own answer, so the builder's next `thread.idle` puts it

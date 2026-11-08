@@ -133,11 +133,13 @@ made while implementing):
 - **Reserve, then spawn; one live build per project.** `start` reserves the row (`starting`) under the
   project's lock before the spawn, so two starts cannot both spawn. A builder is told apart by the
   orientation row, the plugin metadata on its thread (key `orientation`) and `originPluginId`. It is bound
-  when the spawn answers, on its first tool call (when that comes first), or by a reconcile (a `starting`
-  row and the thread bb made for it, found by that metadata). An idle or a failure never binds: they only
-  put away a late (stray) thread, one this plugin started for a row that has ended (spawn answered after
-  the row ended), as its first tool call does too. **Known gap:** an early idle or failure before a builder is bound is lost until the
-  30-minute cap ends the build.
+  when the spawn answers, on its first tool call or its first idle or failed turn (when one comes first),
+  or by a reconcile (a `starting` row and the thread bb made for it, found by that metadata). An early idle
+  or failure binds under the orientation's lock as a first tool call does (same metadata and
+  `originPluginId` checks, only a live row with no builder) and is then handled as any builder's: the one
+  reminder, or the build failed and the thread put away at once (PR #104 review, finding 3; it used to be
+  lost until the 30-minute cap). A late (stray) thread, one this plugin started for a row that is not live
+  (spawn answered after the row ended), is put away by its first tool call, idle or failed turn.
 - **`clean` starts false** and only a fully successful `reconcile()` sets it. Until then `start` is refused
   (R1), so a sweep can never fail this instance's own in-flight spawn. Reconcile runs **only at load and
   from the 5-minute sweep (`*/5 * * * *`, not hourly as spec §7 first said)**, and the sweep reconciles

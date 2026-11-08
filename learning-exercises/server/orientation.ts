@@ -11,7 +11,9 @@
  * Reserve, then spawn: under the project's lock a `starting` row is inserted with no await between the
  * check and the insert (a partial unique index refuses a second live row whatever races), then bb is asked
  * for the hidden thread. The builder may call before `spawn` answers; its first call binds it by the
- * orientation id bb stamped on its metadata, only when this plugin started that thread (`builderFor`).
+ * orientation id bb stamped on its metadata, only when this plugin started that thread (`builderFor`). Its
+ * first idle or failed turn binds it the same way when that comes first (`settleBuilder`), so an early
+ * event is handled, not lost.
  *
  * Every builder write runs under the orientation's lock and re-reads the row after each await, so nothing
  * lands on a row that left `starting`/`building` meanwhile (the store's `updated_at` drives the purge of
@@ -701,23 +703,31 @@ export class OrientationService {
 
   /**
    * Runs `whileBuilding` under the orientation's lock when `threadId` is the builder of a `building` row.
-   * A builder whose row has ended (finish leaves it running) is put away instead, unless it already is.
-   * Never rejects: it runs from bb's events.
+   * A thread no row has bound yet, which this plugin started with the id of a live row that has no builder
+   * either, is bound first, as its first tool call would bind it (`builderFor`): an idle or a failed turn
+   * can come before `spawn` answers and before any tool call, and is then handled as any builder's, not
+   * lost. A thread whose row has ended (finish leaves it running), or whose metadata names an orientation
+   * that is not live (purged, unknown, ended before the spawn answered), is put away instead, unless it
+   * already is. Never rejects: it runs from bb's events.
    */
   private async settleBuilder(threadId: string, whileBuilding: (row: OrientationRow) => Promise<void>): Promise<void> {
     if (this.disposed) return;
     try {
-      const found = this.store.byBuilder(threadId);
-      if (found === null) return await this.settleStray(threadId);
-      await this.exclusive(`orientation:${found.id}`, async () => {
+      const bound = this.store.byBuilder(threadId);
+      const orientationId = bound?.id ?? (await this.claimedOrientation(threadId));
+      if (this.disposed || orientationId === null) return;
+      await this.exclusive(`orientation:${orientationId}`, async () => {
         if (this.disposed) return;
-        const row = this.store.get(found.id);
-        if (row === null || row.builderThreadId !== threadId) return;
-        if (row.status === "building") return whileBuilding(row);
-        if (isLive(row.status)) return;
+        let row = this.store.get(orientationId);
+        if (bound === null && row !== null && isLive(row.status) && row.builderThreadId === null) row = this.bindAsBuilder(row.id, threadId);
+        if (row !== null && isLive(row.status)) {
+          // Another thread builds it, or this one does: only then does the event count.
+          if (row.builderThreadId === threadId && row.status === "building") await whileBuilding(row);
+          return;
+        }
         const info = await this.ports.thread(threadId);
         if (this.disposed || info === null || info.archivedAt !== null) return;
-        await this.putAway(threadId, found.id);
+        await this.putAway(threadId, orientationId);
       });
     } catch (error) {
       this.warn(`Handling orientation builder ${threadId} failed: ${errorText(error)}`);
@@ -725,15 +735,24 @@ export class OrientationService {
   }
 
   /**
-   * A thread no row has bound: put away when this plugin started it and its metadata names an orientation
-   * that is not live (ended, purged or unknown). One whose row is still `starting` is left for its spawn.
+   * The orientation id on a thread no row has bound, when this plugin started that thread and it is not
+   * archived (another plugin could stamp the same key); null otherwise.
    */
-  private async settleStray(threadId: string): Promise<void> {
+  private async claimedOrientation(threadId: string): Promise<string | null> {
     const orientationId = await this.ports.metadataValue(threadId, ORIENTATION_METADATA_KEY);
-    if (this.disposed || orientationId === null) return;
+    if (this.disposed || orientationId === null) return null;
     const info = await this.ports.thread(threadId);
-    if (this.disposed || info === null || info.originPluginId !== PLUGIN_ID || info.archivedAt !== null) return;
-    await this.putAwayStray(threadId, orientationId);
+    if (this.disposed || info === null || info.originPluginId !== PLUGIN_ID || info.archivedAt !== null) return null;
+    return orientationId;
+  }
+
+  /** Binds `threadId` as the builder of a live row that has none and moves it to `building`; the row then. */
+  private bindAsBuilder(id: string, threadId: string): OrientationRow | null {
+    if (this.store.bindBuilder(id, threadId, this.ports.now())) {
+      this.store.transition(id, ["starting"], "building", this.ports.now());
+      this.ports.changed();
+    }
+    return this.store.get(id);
   }
 
   /** Puts `threadId` away under the orientation's lock, unless that orientation is live by then. */

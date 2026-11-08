@@ -157,6 +157,58 @@ describe("a builder that goes idle", () => {
   });
 });
 
+describe("an idle or a failed turn before the spawn answers (review finding 3)", () => {
+  it("fails a builder whose first turn failed at once, and puts it away, with no wait for the cap", async () => {
+    const { ports, store, service: orient } = await setup();
+    ports.duringSpawn = (threadId) => orient.onFailed(threadId);
+    const { orientationId } = await orient.start({ sourceThreadId: SOURCE, depth: "summary" });
+    expect(store.get(orientationId)).toMatchObject({ status: "failed", error: "The builder's turn failed.", builderThreadId: BUILDER });
+    expect(ports.stopped).toEqual([BUILDER]);
+    expect(ports.archived).toEqual([BUILDER]);
+    expect(orient.clean).toBe(true);
+    await orient.start({ sourceThreadId: SOURCE, depth: "summary" });
+    expect(ports.spawned).toHaveLength(2);
+  });
+
+  it("reminds a builder that went idle first, and fails it on its next idle", async () => {
+    const { ports, store, service: orient } = await setup();
+    ports.duringSpawn = (threadId) => orient.onIdle(threadId);
+    const { orientationId } = await orient.start({ sourceThreadId: SOURCE, depth: "summary" });
+    expect(store.get(orientationId)).toMatchObject({ status: "building", builderThreadId: BUILDER, reminded: true });
+    expect(ports.sends).toEqual([{ threadId: BUILDER, visible: "Reminder: finish the orientation.", agentOnly: expect.stringContaining("orient_finish") }]);
+    expect(ports.stopped).toEqual([]);
+    await orient.onIdle(BUILDER);
+    expect(store.get(orientationId)).toMatchObject({ status: "failed", error: "The builder stopped before finishing." });
+    expect(ports.archived).toEqual([BUILDER]);
+  });
+
+  it("handles a failure that was still reading the thread when the spawn answered", async () => {
+    const { ports, store, service: orient } = await setup();
+    let event: Promise<void> | null = null;
+    ports.duringSpawn = async (threadId) => {
+      event = orient.onFailed(threadId);
+    };
+    const { orientationId } = await orient.start({ sourceThreadId: SOURCE, depth: "summary" });
+    await event;
+    expect(store.get(orientationId)).toMatchObject({ status: "failed", builderThreadId: BUILDER });
+    expect(ports.archived).toEqual([BUILDER]);
+  });
+
+  it("puts away the thread of a build cancelled before it bound, on that thread's failed turn", async () => {
+    const { ports, store, service: orient } = await setup();
+    let id = "";
+    ports.duringSpawn = async (threadId) => {
+      id = store.allLive()[0]!.id;
+      await orient.cancel(id);
+      await orient.onFailed(threadId);
+    };
+    await orient.start({ sourceThreadId: SOURCE, depth: "summary" });
+    expect(store.get(id)).toMatchObject({ status: "cancelled" });
+    expect(ports.archived).toContain(BUILDER);
+    expect(orient.clean).toBe(true);
+  });
+});
+
 describe("bb's events never reject", () => {
   it("logs a store that throws instead of rejecting onIdle or onFailed", async () => {
     const { ports, store, service: orient } = await building();
@@ -571,7 +623,7 @@ describe("reload safety", () => {
       }
     });
 
-    it("leaves alone an unbound thread whose row is still starting, and another plugin's thread", async () => {
+    it("never puts away an unbound thread whose row is still starting, nor another plugin's thread", async () => {
       const { ports, store, service: orient } = await setup();
       ports.duringSpawn = async (threadId) => {
         await orient.onIdle(threadId);
@@ -580,6 +632,7 @@ describe("reload safety", () => {
       ports.threads.set("thr_theirs", thread({ id: "thr_theirs", originPluginId: "other-plugin" }));
       ports.threadMetadata.set("thr_theirs", { [ORIENTATION_METADATA_KEY]: "ori_nothing" });
       await orient.onIdle("thr_theirs");
+      await orient.onFailed("thr_theirs");
       await orient.start({ sourceThreadId: SOURCE, depth: "summary" });
       await flush();
       expect(ports.stopped).toEqual([]);
