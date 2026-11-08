@@ -33,3 +33,26 @@ describe("sliceLines", () => {
   });
   it("is null when end exceeds the line count", () => expect(sliceLines("a", 1, 2)).toBeNull());
 });
+
+describe("captures ending in a blank line", () => {
+  const original = "one\ntwo\n\nfour\n";
+  const capture = (start: number, end: number) => {
+    const text = sliceLines(original, start, end);
+    if (text === null) throw new Error("capture failed");
+    return { startLine: start, endLine: end, text, sha256: sha256(text) };
+  };
+  it("stores the blank last line", () => expect(capture(2, 3).text).toBe("two\n"));
+  it("is changed when the blank line became text", () =>
+    expect(checkListing("zero\none\ntwo\nCHANGED\nfour\n", capture(2, 3)).state).toBe("changed"));
+  it("is changed when a single blank line became text", () =>
+    expect(checkListing("one\ntwo\nX\nfour\n", capture(3, 3))).toEqual({ state: "changed", startLine: null, endLine: null }));
+  it("is moved with the full range when lines were inserted above", () =>
+    expect(checkListing("a\nb\none\ntwo\n\nfour\n", capture(2, 3))).toEqual({ state: "moved", startLine: 4, endLine: 5 }));
+  it("moves and changes an all-blank multi-line capture", () => {
+    const blanks = sliceLines("x\n\n\n\ny\n", 2, 4);
+    expect(blanks).toBe("\n\n");
+    const blankListing = { startLine: 2, endLine: 4, text: blanks ?? "", sha256: sha256(blanks ?? "") };
+    expect(checkListing("p\nq\nx\n\n\n\ny\n", blankListing)).toEqual({ state: "moved", startLine: 4, endLine: 6 });
+    expect(checkListing("p\nq\nx\n\n\nz\ny\n", blankListing).state).toBe("changed");
+  });
+});

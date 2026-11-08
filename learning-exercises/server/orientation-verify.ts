@@ -17,11 +17,21 @@ export function sha256(text: string): string {
   return createHash("sha256").update(text).digest("hex");
 }
 
-/** Split on `\n`, strip a trailing `\r` from each line, and drop the empty element a final newline leaves. */
+/** Split on `\n` and strip a trailing `\r` from each line. Keeps every element, a final empty one included. */
+function splitLines(text: string): string[] {
+  return text.split("\n").map((line) => (line.endsWith("\r") ? line.slice(0, -1) : line));
+}
+
+/** A whole file's lines: the empty element a final newline leaves is a sentinel, not a line. */
 function toLines(text: string): string[] {
-  const lines = text.split("\n").map((line) => (line.endsWith("\r") ? line.slice(0, -1) : line));
+  const lines = splitLines(text);
   if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
   return lines;
+}
+
+/** A captured listing's lines: it has no sentinel, so a trailing newline is a real blank last line. */
+function capturedLines(text: string): string[] {
+  return splitLines(text);
 }
 
 /**
@@ -44,7 +54,7 @@ export function checkListing(
     return { state: "current", startLine: listing.startLine, endLine: listing.endLine };
   }
   const lines = toLines(fileText);
-  const wanted = toLines(listing.text);
+  const wanted = capturedLines(listing.text);
   let best: number | null = null;
   for (let i = 0; i + wanted.length <= lines.length; i++) {
     if (!wanted.every((line, j) => lines[i + j] === line)) continue;
