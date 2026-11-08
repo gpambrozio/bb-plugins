@@ -2,6 +2,7 @@
 /** The Learning tab's Orientation section: each state's named controls and the calls they make. */
 import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { renderSlot } from "@get-bb/plugin-sdk/testing/app";
+import { toast } from "sonner";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { rpcContract } from "../shared/contract";
@@ -112,6 +113,20 @@ describe("the Orientation section", () => {
     await waitFor(() => expect(slot.rpcCalls.find((c) => c.method === "verifyOrientation")?.input).toEqual({ orientationId: "ori_1" }));
     fireEvent.click(screen.getByRole("button", { name: "Rebuild" }));
     await waitFor(() => expect(slot.rpcCalls.find((c) => c.method === "startOrientation")?.input).toEqual({ threadId: WORK, depth: "walkthrough" }));
+  });
+
+  it("ready: Verify's toast says when no listing could be checked, rather than that none drifted", async () => {
+    const said = vi.mocked(toast);
+    said.mockClear();
+    render({ current: orientation() }, { verifyOrientation: () => ({ checked: 0, drift: [] }) });
+    fireEvent.click(await screen.findByRole("button", { name: "Verify" }));
+    await waitFor(() => expect(said).toHaveBeenCalledWith("Could not reach this project's files to check the listings."));
+    expect(said).not.toHaveBeenCalledWith(expect.stringContaining("none have drifted"));
+    cleanup();
+    said.mockClear();
+    render({ current: orientation() });
+    fireEvent.click(await screen.findByRole("button", { name: "Verify" }));
+    await waitFor(() => expect(said).toHaveBeenCalledWith("Checked 4 listings; none have drifted."));
   });
 
   it("ready: Delete asks once more", async () => {

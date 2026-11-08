@@ -22,6 +22,7 @@ import { errorText, useLearningRpc, useOrientation } from "./data";
 import { ExportDialog } from "./export-dialog";
 import { FileRef, TextWithFileRefs } from "./file-refs";
 import { ORIENTATION_TAB_ID } from "./orientation-ids";
+import { verifyMessage } from "./orientation-tab";
 import { Section, useAct } from "./tab";
 
 const PERMISSION_LINE = "A background agent reads this project for a few minutes in this checkout. bb gives it permission to read and edit files; it is told not to edit anything.";
@@ -136,8 +137,7 @@ function ReadyBlock(props: { threadId: string; orientation: Orientation; buildin
           disabled={busy !== null}
           onClick={() =>
             void act("verify", async () => {
-              const { checked, drift } = await rpc.call("verifyOrientation", { orientationId: orientation.id });
-              toast(drift.length === 0 ? `Checked ${checked} listings; none have drifted.` : `Checked ${checked} listings; ${drift.length} drifted: ${drift.join(", ")}`);
+              toast(verifyMessage(await rpc.call("verifyOrientation", { orientationId: orientation.id }), orientation.listings));
             })
           }
         >

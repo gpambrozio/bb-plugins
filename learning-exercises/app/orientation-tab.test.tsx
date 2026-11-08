@@ -2,12 +2,13 @@
 /** The walkthrough tab and the export dialog. */
 import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { renderSlot } from "@get-bb/plugin-sdk/testing/app";
+import { toast } from "sonner";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { rpcContract } from "../shared/contract";
 import type { Orientation, OrientationBlock } from "../shared/orientation";
 import { ExportDialog } from "./export-dialog";
-import { OrientationTab } from "./orientation-tab";
+import { OrientationTab, verifyMessage } from "./orientation-tab";
 
 vi.mock("sonner", () => ({ toast: Object.assign(vi.fn(), { error: vi.fn(), success: vi.fn() }) }));
 
@@ -78,6 +79,27 @@ describe("the walkthrough tab", () => {
     const slot = renderTab({ orientationId: "ori_1" });
     fireEvent.click(await screen.findByRole("button", { name: "Verify" }));
     await waitFor(() => expect(slot.rpcCalls.find((c) => c.method === "verifyOrientation")?.input).toEqual({ orientationId: "ori_1" }));
+  });
+});
+
+describe("Verify's toast", () => {
+  it("says the files could not be reached when nothing was checked, and the count otherwise", async () => {
+    const said = vi.mocked(toast);
+    said.mockClear();
+    renderTab({ orientationId: "ori_1" }, { verifyOrientation: () => ({ checked: 0, drift: [] }) });
+    fireEvent.click(await screen.findByRole("button", { name: "Verify" }));
+    await waitFor(() => expect(said).toHaveBeenCalledWith("Could not reach this project's files to check the listings."));
+    cleanup();
+    said.mockClear();
+    renderTab({ orientationId: "ori_1" }, { verifyOrientation: () => ({ checked: 2, drift: ["Listing 2 (`src/parse.ts:1-5`) missing"] }) });
+    fireEvent.click(await screen.findByRole("button", { name: "Verify" }));
+    await waitFor(() => expect(said).toHaveBeenCalledWith("Checked 2 listings; 1 drifted: Listing 2 (`src/parse.ts:1-5`) missing"));
+  });
+
+  it("says a summary-only orientation has no listings to check", () => {
+    expect(verifyMessage({ checked: 0, drift: [] }, 0)).toBe("This orientation has no listings to check.");
+    expect(verifyMessage({ checked: 0, drift: [] }, 3)).toBe("Could not reach this project's files to check the listings.");
+    expect(verifyMessage({ checked: 1, drift: [] }, 1)).toBe("Checked 1 listing; none have drifted.");
   });
 });
 

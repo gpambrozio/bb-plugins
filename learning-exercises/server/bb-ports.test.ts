@@ -210,9 +210,9 @@ describe("pluginThreadsWith and metadataValue", () => {
     harness.sdk.stub("threads.list", (input: unknown) => {
       listed.push(input);
       return [
-        { id: "thr_a", status: "running", archivedAt: null },
-        { id: "thr_b", status: "idle", archivedAt: 5 },
-        { id: "thr_c", status: "idle", archivedAt: null },
+        { id: "thr_a", status: "running", archivedAt: null, originPluginId: "learning-exercises" },
+        { id: "thr_b", status: "idle", archivedAt: 5, originPluginId: "learning-exercises" },
+        { id: "thr_c", status: "idle", archivedAt: null, originPluginId: "learning-exercises" },
       ];
     });
     harness.sdk.stub("threads.experimental_listPluginMetadata", () => ({
@@ -229,13 +229,30 @@ describe("pluginThreadsWith and metadataValue", () => {
     expect(listed).toEqual([{ originPluginId: "learning-exercises", includeHidden: true, archived: false, limit: 200 }]);
   });
 
+  it("keeps only threads this plugin started, whatever the server's filter let through", async () => {
+    // Reconcile archives what this answers, so a row of another plugin (or of none) must never be in it.
+    const { ports, harness } = setup();
+    harness.sdk.stub("threads.list", () => [
+      { id: "thr_mine", status: "idle", archivedAt: null, originPluginId: "learning-exercises" },
+      { id: "thr_theirs", status: "idle", archivedAt: null, originPluginId: "someone-else" },
+      { id: "thr_user", status: "idle", archivedAt: null, originPluginId: null },
+    ]);
+    const asked: string[][] = [];
+    harness.sdk.stub("threads.experimental_listPluginMetadata", ({ threadIds }: { threadIds: string[] }) => {
+      asked.push(threadIds);
+      return { threads: threadIds.map((threadId) => ({ threadId, metadata: { orientation: "o1" } })) };
+    });
+    expect(await ports.pluginThreadsWith("orientation")).toEqual([{ threadId: "thr_mine", value: "o1", archived: false, status: "idle" }]);
+    expect(asked).toEqual([["thr_mine"]]);
+  });
+
   it("answers null when listing or reading metadata fails", async () => {
     const { ports, harness } = setup();
     harness.sdk.stub("threads.list", () => {
       throw new Error("down");
     });
     expect(await ports.pluginThreadsWith("orientation")).toBeNull();
-    harness.sdk.stub("threads.list", () => [{ id: "thr_a", status: "idle", archivedAt: null }]);
+    harness.sdk.stub("threads.list", () => [{ id: "thr_a", status: "idle", archivedAt: null, originPluginId: "learning-exercises" }]);
     harness.sdk.stub("threads.experimental_listPluginMetadata", () => {
       throw new Error("down");
     });

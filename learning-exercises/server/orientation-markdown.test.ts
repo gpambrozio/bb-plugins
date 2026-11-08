@@ -91,6 +91,11 @@ describe("renderOrientationMarkdown", () => {
     const md = renderOrientationMarkdown({ ...doc, blocks });
     expect(md).toContain("- [Retries & Limits](#retries--limits)\n- [Retries & Limits](#retries--limits-1)");
   });
+
+  it("keeps underscores in chapter slugs, as GitHub does", () => {
+    const md = renderOrientationMarkdown({ ...doc, blocks: [{ kind: "chapter", ordinal: 1, title: "The retry_policy module" }] });
+    expect(md).toContain("- [The retry_policy module](#the-retry_policy-module)");
+  });
 });
 
 describe("a hostile summary", () => {

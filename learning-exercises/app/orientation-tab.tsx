@@ -53,6 +53,17 @@ function badgeClass(listing: Listing): string {
   return "text-warning-text";
 }
 
+/**
+ * What Verify's toast says. `checked: 0` with listings to check means no checkout was reachable (or every
+ * read failed): saying "none have drifted" then would claim a check that did not happen.
+ */
+export function verifyMessage(result: { checked: number; drift: readonly string[] }, listings: number): string {
+  const { checked, drift } = result;
+  if (checked === 0) return listings === 0 ? "This orientation has no listings to check." : "Could not reach this project's files to check the listings.";
+  const counted = `Checked ${checked} ${checked === 1 ? "listing" : "listings"}`;
+  return drift.length === 0 ? `${counted}; none have drifted.` : `${counted}; ${drift.length} drifted: ${drift.join(", ")}`;
+}
+
 /** The listing numbers a note mentions, in order, once each. */
 export function mentionedListings(markdown: string): number[] {
   const numbers = [...markdown.matchAll(/\bListing (\d+)\b/gu)].map((match) => Number(match[1]));
@@ -120,8 +131,7 @@ function Walkthrough(props: { orientationId: string }) {
   async function verify() {
     setVerifying(true);
     try {
-      const { checked, drift } = await rpc.call("verifyOrientation", { orientationId });
-      toast(drift.length === 0 ? `Checked ${checked} listings; none have drifted.` : `Checked ${checked} listings; ${drift.length} drifted: ${drift.join(", ")}`);
+      toast(verifyMessage(await rpc.call("verifyOrientation", { orientationId }), orientation.listings));
     } catch (error) {
       toast.error(errorText(error));
     } finally {

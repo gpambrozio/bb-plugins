@@ -53,6 +53,31 @@ const V0_2_0_HASHES = [
   "b1ebe58fcd850b346f3de9d7ddb382cc4c4804d48c2c52afeee777a333ce7e85",
   "25f08393a3aaf56a73ddf2225d6fa993875b87e84abfb5fb6bc1cd52181d2656",
 ];
+/**
+ * 0.3.0's statements, after 0.2.0's 21: the orientation tables and indexes, the `sessions` rebuild for
+ * mode `spawn` (R8/R9), and `orientations.verified_at`. Pinned before release like the rest: once a 0.3.0
+ * store has recorded them, an edit would leave that store on different SQL than a fresh one.
+ */
+const V0_3_0_HASHES = [
+  "b6445a740f7308cb2c2e8963e7459ef965ce04b7d73e017863e07271de6da0dd", // orientations
+  "676bcaf883b55b9ee8c51f04ba33e2e570ff5f5ad88ad0b151c0b4f397da2a3d", // orientation_blocks
+  "a97e6441a70d267728ba58392a82015a5c659dce296a3b5f6a29079a7a21864d", // orientations_one_live_per_project
+  "db70f8d8d37fd7b439ee1f20d81205ede47fedbd15be180b71322a21fcd73d81", // orientations_builder
+  "e0d873c699a4a149349917e299fb5ddda7616826f50d437887a2c5a00d192da2", // sessions_keep
+  "a80bb6f8dce4f83146d7126d6a7d271202011850a664c238ea8cf193d1b0b26f", // exercises_keep
+  "dafbde3e50c530df176c3ec9c1d1e29353c5ec7a45542b5c64d8770a8ed4c2fb", // DELETE FROM exercises
+  "c8e2dedaad374c21f85a29a5be5b642ab81308287ef79bb95d0e20ac54244ef6", // DROP TABLE sessions
+  "2fb9a734b48573d99bcc9c7c5da2eda0bf1d781652388304084b7b923283389e", // CREATE TABLE sessions (mode spawn)
+  "052dafff193ec7fd67e9c122cdd9e55926642605387932bc5993216c8f80091c", // sessions_thread (as 0.2.0's)
+  "d5f150bec94417b626bd0316236f2e4a67149860c1179324462fb09a234767fb", // sessions_source (as 0.2.0's)
+  "1d460cbba6193a28b4c29fc45606646c401eaf2f2e5a3488f042bfc06633ae15", // sessions_project (as 0.2.0's)
+  "c76591abb425d1ee705490d6edb6c4f802d15c4ad9361badce89a66eec0e43af", // sessions_one_open_per_source (as 0.2.0's)
+  "f881e2b40423598425aeed0251484dbe38f1ab9711a33f496be22babd0608f9c", // INSERT INTO sessions
+  "b7619fe664c8de4487148cd107c4cb674404895090a7619ccf641c1330236e5f", // INSERT INTO exercises
+  "26403547082a9aeee2ede166072b185b748452400cb2722803a24d676ebff8da", // DROP TABLE sessions_keep
+  "2f7df58714cb7aaee4f6b170778895192b41ced9a01e6274b6b0bd16c58f5a2c", // DROP TABLE exercises_keep
+  "57778c47ae2ac356927f1906c783954e0813964c3490d3d9ac2bb97e8c4c8130", // orientations.verified_at
+];
 /** 0.2.0's last statement (the answered-offer seed); everything after it is newer. */
 const SEED_INDEX = 20;
 
@@ -82,6 +107,11 @@ describe("migrations", () => {
 
   it("keeps 0.2.0's 21 statements unchanged", () => {
     expect(MIGRATIONS.slice(0, 21).map(sha)).toEqual(V0_2_0_HASHES);
+  });
+
+  it("keeps 0.3.0's statements unchanged, and adds nothing unpinned after them", () => {
+    expect(MIGRATIONS.slice(21).map(sha)).toEqual(V0_3_0_HASHES);
+    expect(MIGRATIONS.at(-1)).toBe("ALTER TABLE orientations ADD COLUMN verified_at INTEGER");
   });
 
   it("an e54db75 store with duplicate open sessions loads: one survives, the others are kept as history", async () => {

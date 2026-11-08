@@ -26,9 +26,9 @@ function shellQuote(path: string): string {
   return `'${path.replaceAll("'", `'\\''`)}'`;
 }
 
-/** GitHub-style heading slug: lowercase, spaces to `-`, anything but letters, digits and `-` dropped. */
+/** GitHub-style heading slug: lowercase, spaces to `-`, anything but letters, digits, `-` and `_` dropped. */
 function slugify(title: string): string {
-  return title.toLowerCase().replaceAll(" ", "-").replace(/[^\p{L}\p{N}-]/gu, "");
+  return title.toLowerCase().replaceAll(" ", "-").replace(/[^\p{L}\p{N}_-]/gu, "");
 }
 
 /**
