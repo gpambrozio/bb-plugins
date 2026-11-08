@@ -80,8 +80,9 @@ export class OrientationApi {
     const { key } = await projectOf(ports, thread);
     const { current, live } = orientations.view(key);
     const ended = live === null ? orientationStore.latestEnded(key) : null;
-    // Started after the ready one: compared by creation, since a ready row's `updatedAt` moves on every verify.
-    const last = ended !== null && (current === null || ended.createdAt > current.createdAt) ? ended : null;
+    // Started once the ready one was ready (one build at a time, so a rebuild cannot start earlier); not
+    // compared by `updatedAt`, which a verify moves on the ready row.
+    const last = ended !== null && (current === null || ended.createdAt >= (current.readyAt ?? current.createdAt)) ? ended : null;
     const workspace = await workspaceOf(ports, thread);
     const cleaning = !orientations.clean;
     return {

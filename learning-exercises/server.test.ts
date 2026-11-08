@@ -510,6 +510,8 @@ describe("orientations", () => {
     expect(await read()).toMatchObject({ current: null, live: null, last: { id: failed, status: "failed", error: "The builder's turn failed." } });
 
     // Rebuild: while it is live, the failure is not shown; once it is ready, it is older than the ready one.
+    // (Times are milliseconds; a real build takes minutes, so the failure and the rebuild's end differ.)
+    await new Promise((resolve) => setTimeout(resolve, 3));
     const { orientationId: rebuilt } = (await harness.callRpc("startOrientation", { threadId: WORK, depth: "summary" })) as { orientationId: string };
     expect(await read()).toMatchObject({ live: { id: rebuilt }, last: null });
     const rebuilder = builders[1]!;
