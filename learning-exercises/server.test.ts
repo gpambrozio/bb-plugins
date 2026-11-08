@@ -486,9 +486,11 @@ describe("orientations", () => {
   });
 
   it("a builder's idle gets no offer and one reminder", async () => {
-    const { harness, threads } = await setup();
+    const { harness, threads, startTurn } = await setup();
     await harness.callRpc("startOrientation", { threadId: WORK, depth: "summary" });
     await harness.emitThreadEvent("thread.active", { thread: threads.get(BUILDER)! });
+    // An idle counts once a turn has run.
+    startTurn("turn_builder");
     await harness.emitThreadEvent("thread.idle", { thread: { ...threads.get(BUILDER)!, status: "idle" }, lastAssistantText: "I looked around." });
     const sends = harness.sdk.callsTo("threads.send") as [{ threadId: string; input: { text: string; visibility?: string }[] }][];
     expect(sends).toHaveLength(1);

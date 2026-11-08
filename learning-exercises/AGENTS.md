@@ -136,10 +136,17 @@ made while implementing):
   when the spawn answers, on its first tool call or its first idle or failed turn (when one comes first),
   or by a reconcile (a `starting` row and the thread bb made for it, found by that metadata). An early idle
   or failure binds under the orientation's lock as a first tool call does (same metadata and
-  `originPluginId` checks, only a live row with no builder) and is then handled as any builder's: the one
-  reminder, or the build failed and the thread put away at once (PR #104 review, finding 3; it used to be
-  lost until the 30-minute cap). A late (stray) thread, one this plugin started for a row that is not live
-  (spawn answered after the row ended), is put away by its first tool call, idle or failed turn.
+  `originPluginId` checks, only a live row with no builder) and is then handled as any builder's (PR #104
+  review, finding 3; it used to be lost until the 30-minute cap): a failure fails the build and puts the
+  thread away at once, and an idle counts only once a turn is known to have run. A late (stray) thread,
+  one this plugin started for a row that is not live (spawn answered after the row ended), is put away by
+  its first tool call, idle or failed turn.
+- **An idle spends the one reminder only after a turn** (PR #104 review pass 2, finding 7). bb can report a
+  builder idle before its first turn starts, with the brief still queued; `onIdle` reads `currentTurn`
+  first and does nothing (no reminder, no failure) when it is null. The first idle with a turn known sends
+  the reminder, the next fails the build. `currentTurn` also answers null when the read fails, so a builder
+  whose turns can never be read is never reminded or failed by its idles: the 30-minute cap is the
+  backstop there. A failed turn still fails at once.
 - **`clean` starts false** and only a fully successful `reconcile()` sets it. Until then `start` is refused
   (R1), so a sweep can never fail this instance's own in-flight spawn. Reconcile runs **only at load and
   from the 5-minute sweep (`*/5 * * * *`, not hourly as spec §7 first said)**, and the sweep reconciles

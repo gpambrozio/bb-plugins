@@ -25,8 +25,9 @@
  * tries it again (`retryPutAways`) until bb confirms the thread archived or gone. After `dispose()` no
  * continuation of this copy touches the store (`alive()`).
  *
- * The builder's lifecycle (§7). Its first idle gets one reminder (a visible line and an agent-only part,
- * invariant 6), its second fails the row, and a failed turn fails it at once (`onIdle`, `onFailed`). The
+ * The builder's lifecycle (§7). Its first idle after a turn gets one reminder (a visible line and an
+ * agent-only part, invariant 6), the next fails the row, and a failed turn fails it at once (`onIdle`,
+ * `onFailed`); an idle with no turn known yet counts for nothing. The
  * sweep cancels builds older than 30 minutes and purges failed and cancelled rows after 7 days. Every path
  * that ends a row takes the orientation's lock, as the builder's writes do, so nothing writes to a row
  * once it has ended (a write would bump its `updated_at` and put off its purge).
@@ -680,9 +681,18 @@ export class OrientationService {
     return this.store.byBuilder(threadId) !== null;
   }
 
-  /** `thread.idle` of a thread: the first idle of a builder reminds it, the second fails the build. */
+  /**
+   * `thread.idle` of a thread: the first idle of a builder after a turn reminds it, the next fails the
+   * build. An idle with no turn known (bb can report one before the builder's first turn starts, and a
+   * turn read that fails is taken as none) changes nothing, so it cannot spend the reminder while the
+   * original work is still queued; the 30-minute cap ends a builder whose turns can never be read.
+   */
   onIdle(threadId: string): Promise<void> {
     return this.settleBuilder(threadId, async (row) => {
+      const turn = await this.ports.currentTurn(threadId);
+      if (this.disposed || turn === null) return;
+      const current = this.store.get(row.id);
+      if (current === null || current.status !== "building" || current.builderThreadId !== threadId) return;
       if (this.store.markReminded(row.id, this.ports.now())) {
         try {
           await this.ports.send(threadId, REMINDER, REMINDER_AGENT);

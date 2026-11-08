@@ -110,6 +110,7 @@ function disposeDuring(ports: FakePorts, method: keyof FakePorts, target: () => 
 describe("a builder that goes idle", () => {
   it("is reminded once with a visible line and an agent-only part, then failed, stopped and archived", async () => {
     const { ports, store, service, id } = await building();
+    ports.running.set(BUILDER, "turn_1");
     await service.onIdle(BUILDER);
     expect(ports.sends).toEqual([
       {
@@ -146,6 +147,17 @@ describe("a builder that goes idle", () => {
     expect(ports.archived).toEqual([BUILDER]);
   });
 
+  it("neither reminds nor fails a builder whose turn cannot be read, however often it goes idle", async () => {
+    const { ports, store, service, id } = await building();
+    // `currentTurn` answers null for a read that failed, as for no turn: the cap is the backstop.
+    await service.onIdle(BUILDER);
+    await service.onIdle(BUILDER);
+    expect(ports.sends).toEqual([]);
+    expect(store.get(id)).toMatchObject({ status: "building", reminded: false });
+    expect(ports.stopped).toEqual([]);
+    expect(ports.archived).toEqual([]);
+  });
+
   it("ignores a thread that builds nothing", async () => {
     const { ports, service } = await building();
     await service.onIdle(SOURCE);
@@ -170,9 +182,36 @@ describe("an idle or a failed turn before the spawn answers (review finding 3)",
     expect(ports.spawned).toHaveLength(2);
   });
 
-  it("reminds a builder that went idle first, and fails it on its next idle", async () => {
+  it("binds a builder idle before its first turn without spending the reminder (review pass 2, finding 7)", async () => {
     const { ports, store, service: orient } = await setup();
     ports.duringSpawn = (threadId) => orient.onIdle(threadId);
+    const { orientationId } = await orient.start({ sourceThreadId: SOURCE, depth: "summary" });
+    expect(store.get(orientationId)).toMatchObject({ status: "building", builderThreadId: BUILDER, reminded: false });
+    expect(ports.sends).toEqual([]);
+    expect(ports.stopped).toEqual([]);
+
+    // The first real turn ends unfinished: that idle gets the one reminder.
+    ports.running.set(BUILDER, "turn_first");
+    await orient.onIdle(BUILDER);
+    expect(store.get(orientationId)).toMatchObject({ status: "building", reminded: true });
+    expect(ports.sends).toEqual([{ threadId: BUILDER, visible: "Reminder: finish the orientation.", agentOnly: expect.stringContaining("orient_finish") }]);
+    expect(ports.stopped).toEqual([]);
+
+    // The reminded turn ends unfinished too: the build fails and the builder is put away.
+    ports.running.set(BUILDER, "turn_reminded");
+    await orient.onIdle(BUILDER);
+    expect(ports.sends).toHaveLength(1);
+    expect(store.get(orientationId)).toMatchObject({ status: "failed", error: "The builder stopped before finishing." });
+    expect(ports.stopped).toEqual([BUILDER]);
+    expect(ports.archived).toEqual([BUILDER]);
+  });
+
+  it("reminds a builder whose first turn ended before the spawn answered, and fails it on its next idle", async () => {
+    const { ports, store, service: orient } = await setup();
+    ports.duringSpawn = (threadId) => {
+      ports.running.set(threadId, "turn_first");
+      return orient.onIdle(threadId);
+    };
     const { orientationId } = await orient.start({ sourceThreadId: SOURCE, depth: "summary" });
     expect(store.get(orientationId)).toMatchObject({ status: "building", builderThreadId: BUILDER, reminded: true });
     expect(ports.sends).toEqual([{ threadId: BUILDER, visible: "Reminder: finish the orientation.", agentOnly: expect.stringContaining("orient_finish") }]);
@@ -324,6 +363,7 @@ describe("a put-away that fails (review finding 1)", () => {
 
   it("on the second idle", async () => {
     const context = await building();
+    context.ports.running.set(BUILDER, "turn_1");
     await context.service.onIdle(BUILDER);
     putAwaysFail(context.ports, true);
     await context.service.onIdle(BUILDER);
