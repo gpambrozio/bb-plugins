@@ -182,7 +182,9 @@ made while implementing):
   each by the schema (no CR, LF, U+2028 or U+2029) and capped, so no field can start a line of the export
   with a fence that `showboat verify` would run; the renderer escapes a leading backtick or `!` of the
   purpose, the only field that starts a line. The test-only `server/testing/showboat-grammar.ts` ports
-  showboat's block rules and checks the exporter against them.
+  showboat's block rules and checks the exporter against them. Both it and the shipped image-line test are
+  ports of showboat (Apache-2.0, commit `d531261`): `NOTICE.md` names them and `licenses/showboat-LICENSE`
+  (listed in `files`) ships the licence text, so keep the three in step when porting more.
 - **Verify** reads each listing's file again and records one of `current`, `moved` (with the new range),
   `changed` or `missing`; a failed read leaves that listing's state as it was. Opening the walkthrough
   (`orientationDocument`) verifies only when the orientation's `verified_at` (migration 0.3.0, set at the

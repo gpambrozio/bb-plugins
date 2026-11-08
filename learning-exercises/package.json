@@ -38,6 +38,7 @@
     "PLUGIN_OVERVIEW.md",
     "CHANGELOG.md",
     "NOTICE.md",
+    "licenses/",
     "!**/*.test.ts",
     "!**/*.test.tsx",
     "!server/testing/"

@@ -59,14 +59,21 @@ in its exploration steps (Spinellis 2003, Hermans 2021, Storey et al. 2006 and S
 
 ## showboat
 
-- **Work:** [showboat](https://github.com/simonw/showboat), by Simon Willison, commit `d531261`,
-  Apache-2.0.
+- **Work:** [showboat](https://github.com/simonw/showboat), by Simon Willison, commit `d531261`.
+- **Licence:** Apache License 2.0. © Simon Willison. The full licence text ships with the plugin as
+  `licenses/showboat-LICENSE`.
 - **Use:** the walkthrough export follows showboat's document format (commentary, code blocks and their
   output blocks) and the plugin's Verify follows `showboat verify`'s behaviour: re-read the listed source
-  and compare. No showboat code or text is shipped, so no Apache licence text ships with the plugin.
-- **Test code:** `server/testing/showboat-grammar.ts` is a test-only port of the block rules of showboat's
-  `markdown/parser.go` (`Parse`), so the exporter is checked against showboat's grammar. It is Apache-2.0
-  derived code and carries the attribution in its header. Tests are not part of the built plugin.
+  and compare.
+- **Shipped code:** `server/orientation-markdown.ts` includes a small port of showboat's `parseImageRef`
+  line test (`markdown/parser.go`), as `showboatImageTarget` and `isShowboatImageLine`; the builder's notes
+  are refused when a line of them is one showboat would read as an image.
+- **Test code:** `server/testing/showboat-grammar.ts` ports the block rules of showboat's
+  `markdown/parser.go` (`Parse`), so the exporter is checked against showboat's grammar. Tests are not
+  part of the built plugin.
+- **Changes:** both are translations from Go to TypeScript, reduced to what the plugin needs; the
+  differences from upstream are listed in each file's header. Each file names its source, the commit and
+  the licence.
 - **Not affiliated:** this plugin is not made or endorsed by the author.
 
 ### Not included

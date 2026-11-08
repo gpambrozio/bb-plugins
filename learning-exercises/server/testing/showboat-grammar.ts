@@ -2,7 +2,9 @@
  * Test-only port of showboat's block rules, so the exporter is checked against the grammar that
  * `showboat verify` reads rather than against itself.
  *
- * Source: https://github.com/simonw/showboat, `markdown/parser.go` (`Parse`), Apache-2.0.
+ * Source: https://github.com/simonw/showboat, `markdown/parser.go` (`Parse`), commit `d531261`. Apache
+ * License 2.0, © Simon Willison; the licence text is `licenses/showboat-LICENSE` (see `NOTICE.md`).
+ * Modified: translated from Go to TypeScript, with the differences below.
  * Ported: a fenced block opens with a line starting with three or more backticks and closes at the
  * first line that is exactly that many backticks; the info string `output` makes an output block, any
  * other info string a code block (its language); a line starting with `![` that holds `](…)` with a

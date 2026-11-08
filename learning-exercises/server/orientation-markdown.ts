@@ -32,8 +32,12 @@ function slugify(title: string): string {
 }
 
 /**
- * showboat's `parseImageRef` (`markdown/parser.go`, Apache-2.0): the target of the first `![alt](target)`
- * on the line, or "" for none.
+ * Port of showboat's `parseImageRef`: the target of the first `![alt](target)` on the line, or "" for
+ * none.
+ *
+ * Source: https://github.com/simonw/showboat, `markdown/parser.go`, commit `d531261`. Apache License 2.0,
+ * © Simon Willison; the licence text is `licenses/showboat-LICENSE` (see `NOTICE.md`). Modified:
+ * translated from Go to TypeScript. `isShowboatImageLine` below is part of the same port.
  */
 export function showboatImageTarget(line: string): string {
   const start = line.indexOf("![");
@@ -47,9 +51,10 @@ export function showboatImageTarget(line: string): string {
 }
 
 /**
- * Whether showboat reads `line` as an image block: it starts with `![` and holds an image reference with
- * a non-empty target, whatever follows it on the line (showboat drops that text). An image after other
- * text on the line is commentary. The note check and the test-only grammar port both use this.
+ * Whether showboat reads `line` as an image block (ported from `Parse` in the same file, Apache-2.0, see
+ * above): it starts with `![` and holds an image reference with a non-empty target, whatever follows it
+ * on the line (showboat drops that text). An image after other text on the line is commentary. The note
+ * check and the test-only grammar port both use this.
  */
 export function isShowboatImageLine(line: string): boolean {
   return line.startsWith("![") && showboatImageTarget(line) !== "";
