@@ -110,7 +110,7 @@ the real code.
 4. **Reference listings as `Listing N`** in your notes:
    use the number each `orient_listing` call returns (a pop leaves a gap). The listing's text appears with
    that number, and finishing is refused while a note names a listing that does not exist.
-5. **No fenced code blocks in notes**, and no line that is only an image. Use inline backticks
+5. **No fenced code blocks in notes**, and no line that starts with an image. Use inline backticks
    (`like_this`). Never type code yourself: the plugin reads the file and captures the listing's text.
 6. Keep to the limits: a listing is at most 200 lines, and a walkthrough has at most 60 listings.
 7. End the walkthrough, then give the summary, then finish.

@@ -5,6 +5,7 @@ import { buildBuilderBrief, builderStartLine } from "./content";
 import { ORIENTATION_METADATA_KEY, OrientationError, OrientationService } from "./orientation";
 import { sha256 } from "./orientation-verify";
 import { FakePorts, thread } from "./testing/fake-ports";
+import { parseShowboat } from "./testing/showboat-grammar";
 import { memoryOrientationStore, settingsWith } from "./testing/store";
 
 const SOURCE = "thr_src";
@@ -208,15 +209,53 @@ describe("writing blocks", () => {
     expect(ports.changes).toBeGreaterThan(changes);
   });
 
-  it("refuses a note with a fenced code block, a lone image line, or too long, and keeps a good one", async () => {
+  it("refuses a note with a fenced code block, a line starting with an image, or too long, and keeps a good one", async () => {
     const { store, service, id } = await building();
     await expect(service.note(BUILDER, "See:\n```ts\nx\n```")).rejects.toThrow("fenced code block");
     await expect(service.note(BUILDER, "See:\n  ~~~\nx\n~~~")).rejects.toThrow("fenced code block");
     await expect(service.note(BUILDER, "Look:\n![diagram](img.png)\nabove")).rejects.toThrow("image");
+    // showboat reads the whole line as an image block and drops the sentence after it.
+    await expect(service.note(BUILDER, "![Architecture](docs/architecture.png) The diagram shows the request flow.")).rejects.toThrow("image");
     await expect(service.note(BUILDER, "x".repeat(8_001))).rejects.toThrow("8000");
     await expect(service.note(BUILDER, "  ")).rejects.toThrow(OrientationError);
     await service.note(BUILDER, "Listing 1 shows ![inline](a.png) in a sentence, and `code` is fine.");
     expect(store.blocks(id)).toHaveLength(1);
+  });
+
+  it("exports every note it accepts with no image block, as showboat parses the file (review finding 6)", async () => {
+    const { ports, store, service, id } = await building();
+    await service.chapter(BUILDER, "Retries");
+    await service.listing(BUILDER, { path: "src/retry.ts", lines: "2-3", caption: "loop" });
+    await service.note(BUILDER, "Listing 1 is the loop.");
+    const candidates = [
+      "![Architecture](docs/architecture.png) The diagram shows the request flow.",
+      "Intro\n![Architecture](docs/architecture.png) The diagram.",
+      "![x](y)",
+      "Windows lines\r\n![x](y)\r\nmore",
+      "The diagram ![Architecture](docs/a.png) shows the flow.",
+      "Intro\n  ![indented](a.png) stays commentary",
+      "![]() has no target, then ![b](c)",
+      "![alt] (not a reference)",
+      "!\\[escaped](x.png)",
+      "Ends on an image: ![Architecture](docs/a.png)",
+    ];
+    const accepted: string[] = [];
+    for (const note of candidates) {
+      try {
+        await service.note(BUILDER, note);
+        accepted.push(note);
+      } catch (error) {
+        expect(error).toBeInstanceOf(OrientationError);
+      }
+    }
+    expect(accepted).toEqual(candidates.slice(4));
+    await service.summary(BUILDER, SUMMARY);
+    await service.finish(BUILDER);
+    await service.export(id, { path: "ORIENTATION.md", replace: false });
+    const exported = ports.writes[0]!.content;
+    for (const note of accepted) expect(exported).toContain(note);
+    expect(parseShowboat(exported).filter((block) => block.type === "image")).toEqual([]);
+    expect(store.blocks(id).filter((block) => block.kind === "note")).toHaveLength(accepted.length + 1);
   });
 
   it("refuses chapters, notes and listings in a summary-only build", async () => {

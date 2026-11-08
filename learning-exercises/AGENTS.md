@@ -155,12 +155,16 @@ made while implementing):
   builder sees. `isNotFound` in `bb-ports.ts` is a heuristic (code `not_found`/`ENOENT` or the message).
   bb 0.49.0 answers a missing file with "HTTP 404: Path does not exist: <absolute path>" (code `ENOENT` in
   the CLI's JSON), and the builder sees "`path` does not exist in the workspace.", not the retry text.
-- **Notes refuse fenced code and image-only lines (R4)**, so the export stays showboat-verifiable: a fence
-  would be parsed as a block, a lone `![](…)` line as an image block. Summary strings are held to one line
+- **Notes refuse fenced code and lines starting with an image (R4)**, so the export stays
+  showboat-verifiable: a fence would be parsed as a block, and a line starting with `![…](…)` (a non-empty
+  target) as an image block, whatever text follows it on the line (showboat drops that text). An image
+  after other text on the line is commentary and allowed. The rule is showboat's own `parseImageRef` line
+  test, `isShowboatImageLine` in `server/orientation-markdown.ts`, which the note check and the grammar port
+  both import; a test exports every note the service accepts and finds no image block. Summary strings are held to one line
   each by the schema (no CR, LF, U+2028 or U+2029) and capped, so no field can start a line of the export
   with a fence that `showboat verify` would run; the renderer escapes a leading backtick or `!` of the
   purpose, the only field that starts a line. The test-only `server/testing/showboat-grammar.ts` ports
-  showboat's block rules (its image-line rule included) and checks the exporter against them.
+  showboat's block rules and checks the exporter against them.
 - **Verify** reads each listing's file again and records one of `current`, `moved` (with the new range),
   `changed` or `missing`; a failed read leaves that listing's state as it was. Opening the walkthrough
   (`orientationDocument`) verifies only when the orientation's `verified_at` (migration 0.3.0, set at the

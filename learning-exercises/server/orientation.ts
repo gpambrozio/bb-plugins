@@ -42,7 +42,7 @@ import { LIVE_ORIENTATION_STATUSES, ORIENT_LIMITS, OrientationSummarySchema, par
 import { PLUGIN_ID } from "../shared/types";
 import { workspacePath } from "../shared/workspace-path";
 import { buildBuilderBrief, builderStartLine } from "./content";
-import { renderOrientationMarkdown } from "./orientation-markdown";
+import { isShowboatImageLine, renderOrientationMarkdown } from "./orientation-markdown";
 import type { BlockRow, OrientationRow, OrientationStore } from "./orientation-store";
 import { checkListing, sha256, sliceLines, type ListingCheck } from "./orientation-verify";
 import { canStartByHand, projectKey } from "./policy";
@@ -63,8 +63,6 @@ const SUMMARY_ONLY =
 
 /** A fenced code block's opening line (CommonMark: up to three spaces, then three backticks or tildes). */
 const FENCE = /^\s{0,3}(`{3,}|~{3,})/m;
-/** A line that is only a Markdown image, which showboat would read as an image block on export. */
-const IMAGE_LINE = /^\s*!\[[^\]]*\]\([^)]*\)\s*$/m;
 /** The thread statuses of a builder at work: bb runs, queues or starts its turn. */
 const WORKING = new Set(["active", "pending", "starting"]);
 const INTERRUPTED = "Interrupted by a reload.";
@@ -363,7 +361,10 @@ export class OrientationService {
       if (text === "") throw new OrientationError("The note is empty.");
       if (text.length > ORIENT_LIMITS.noteChars) throw new OrientationError(`The note is ${text.length} characters; the most is ${ORIENT_LIMITS.noteChars}. Split it.`);
       if (FENCE.test(text)) throw new OrientationError('A note may not contain a fenced code block. Show code with orient_listing and refer to it as "Listing N".');
-      if (IMAGE_LINE.test(text)) throw new OrientationError("A note may not have a line that is only an image: orientations keep no images, and an export would read that line as one.");
+      // showboat's own rule: a line starting with an image reference is an image block, text after it and all.
+      if (text.split("\n").some(isShowboatImageLine)) {
+        throw new OrientationError("A note may not start a line with an image (`![…](…)`): orientations keep no images, and an export would read that whole line as one.");
+      }
       this.store.appendNote(row.id, text, this.ports.now());
       this.ports.changed();
       return `Note added (${text.length} characters).`;

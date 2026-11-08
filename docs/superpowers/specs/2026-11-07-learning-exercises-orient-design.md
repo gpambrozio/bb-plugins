@@ -158,7 +158,7 @@ Registered with `bb.agents.registerTool` beside `learning_*`, granted per §2.
 | Tool | Input | Behaviour |
 | --- | --- | --- |
 | `orient_chapter` | `title` | Appends a chapter; the table of contents is the chapters |
-| `orient_note` | `markdown` (≤ 8,000) | Appends prose. Refused if it contains a fenced code block (code belongs in listings) or a line that is only an image (R4) |
+| `orient_note` | `markdown` (≤ 8,000) | Appends prose. Refused if it contains a fenced code block (code belongs in listings) or a line that starts with an image, as showboat reads one (R4) |
 | `orient_listing` | `path`, `lines` (`"40-72"` or `"40"`), `caption` (≤ 200) | Server reads the file in the orientation's environment, slices the lines, stores text, hash and HEAD, and **returns the captured text** with its number. Refused, with the reason, for: a path outside the workspace, a missing or unreadable or binary file, a file over 1 MiB, a range past the end, more than 200 lines, more than 60 listings |
 | `orient_pop` | — | Undoes the last block added (a note, listing or chapter); returns what was removed. A popped listing's number is not reused, so the brief says to use the number each `orient_listing` call returns |
 | `orient_summary` | the §5 object | Sets or replaces the summary; refused with zod's reasons |

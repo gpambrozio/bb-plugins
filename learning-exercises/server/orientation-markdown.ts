@@ -32,6 +32,30 @@ function slugify(title: string): string {
 }
 
 /**
+ * showboat's `parseImageRef` (`markdown/parser.go`, Apache-2.0): the target of the first `![alt](target)`
+ * on the line, or "" for none.
+ */
+export function showboatImageTarget(line: string): string {
+  const start = line.indexOf("![");
+  if (start === -1) return "";
+  const rest = line.slice(start + 2);
+  const close = rest.indexOf("](");
+  if (close === -1) return "";
+  const after = rest.slice(close + 2);
+  const paren = after.indexOf(")");
+  return paren === -1 ? "" : after.slice(0, paren);
+}
+
+/**
+ * Whether showboat reads `line` as an image block: it starts with `![` and holds an image reference with
+ * a non-empty target, whatever follows it on the line (showboat drops that text). An image after other
+ * text on the line is commentary. The note check and the test-only grammar port both use this.
+ */
+export function isShowboatImageLine(line: string): boolean {
+  return line.startsWith("![") && showboatImageTarget(line) !== "";
+}
+
+/**
  * A line of text that must stay commentary at the start of a line: a leading backtick or `!` is
  * escaped, since showboat reads a line starting with three backticks as a fence (a code block that
  * `showboat verify` runs) and one starting with `![…](…)` as an image block. CommonMark shows `\`` and

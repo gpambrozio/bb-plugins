@@ -33,7 +33,7 @@ export function registerOrientationTools(bb: BbPluginApi, orientations: Orientat
   bb.agents.registerTool({
     name: "orient_note",
     description:
-      "Add a prose note to the walkthrough, in Markdown. A note takes no fenced code (use orient_listing for code) and no line that is only an image.",
+      "Add a prose note to the walkthrough, in Markdown. A note takes no fenced code (use orient_listing for code) and no line that starts with an image.",
     presentation: { label: { pending: "Adding a note", completed: "Added a note" }, icon: { glyph: "Brain" } },
     parameters: z.object({ markdown: z.string().min(1).max(ORIENT_LIMITS.noteChars).describe("The note, in Markdown, without fenced code") }),
     execute: ({ markdown }, ctx) => guarded(() => orientations.note(ctx.threadId, markdown)),

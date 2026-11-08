@@ -9,27 +9,19 @@
  * non-empty target (`parseImageRef`) is an image output block, whatever follows it on the line;
  * everything else, outside fences, is commentary. The timestamp header is not ported: this plugin never
  * writes one as showboat does. One deliberate difference: an output block's content has no trailing
- * newline, so it compares equal to the text that was captured.
+ * newline, so it compares equal to the text that was captured. The image-line rule is imported from the
+ * exporter's module, where the note check uses it too, so the two cannot drift apart.
  */
+import { isShowboatImageLine, showboatImageTarget } from "../orientation-markdown";
+
 export type ShowboatBlock =
   | { type: "commentary" }
   | { type: "code"; lang: string; code: string }
   | { type: "output"; content: string }
   | { type: "image"; filename: string };
 
-/** showboat's `parseImageRef`: the target of the first `![alt](target)` on the line, or "" for none. */
-function imageTarget(line: string): string {
-  const start = line.indexOf("![");
-  if (start === -1) return "";
-  const rest = line.slice(start + 2);
-  const close = rest.indexOf("](");
-  if (close === -1) return "";
-  const after = rest.slice(close + 2);
-  const paren = after.indexOf(")");
-  return paren === -1 ? "" : after.slice(0, paren);
-}
-
-const isImageLine = (line: string) => line.startsWith("![") && imageTarget(line) !== "";
+const isImageLine = isShowboatImageLine;
+const imageTarget = showboatImageTarget;
 
 export function parseShowboat(markdown: string): ShowboatBlock[] {
   const lines = markdown.split("\n");

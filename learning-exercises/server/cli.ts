@@ -205,7 +205,7 @@ export function learningCli(sessions: SessionService, orientations: OrientationS
         run: (input, ctx) => guarded(() => orientations.chapter(callerThread(ctx.threadId), decodeOrientText(input.options["title-base64"], "title", ORIENT_TITLE_MAX_BYTES))),
       }),
       "orient note": cliCommand({
-        summary: "Add a Markdown note, without fenced code or an image-only line (builder only)",
+        summary: "Add a Markdown note, without fenced code or a line starting with an image (builder only)",
         options: {
           "markdown-base64": { type: "string", required: true, stdin: true, description: `The note as base64 of UTF-8 Markdown, at most ${ORIENT_MARKDOWN_MAX_BYTES} bytes decoded; pass it with --markdown-base64-stdin`, placeholder: "base64" },
         },

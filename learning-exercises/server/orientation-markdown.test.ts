@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import type { OrientationBlock, OrientationSummary } from "../shared/orientation";
-import { renderOrientationMarkdown, renderSummaryMarkdown } from "./orientation-markdown";
+import { isShowboatImageLine, renderOrientationMarkdown, renderSummaryMarkdown, showboatImageTarget } from "./orientation-markdown";
 import { parseShowboat } from "./testing/showboat-grammar";
 
 const summary: OrientationSummary = {
@@ -95,6 +95,20 @@ describe("renderOrientationMarkdown", () => {
   it("keeps underscores in chapter slugs, as GitHub does", () => {
     const md = renderOrientationMarkdown({ ...doc, blocks: [{ kind: "chapter", ordinal: 1, title: "The retry_policy module" }] });
     expect(md).toContain("- [The retry_policy module](#the-retry_policy-module)");
+  });
+});
+
+describe("showboat's image-line rule", () => {
+  it("matches upstream parseImageRef: a line starting with an image reference, trailing text and all", () => {
+    expect(isShowboatImageLine("![x](y)")).toBe(true);
+    expect(isShowboatImageLine("![Architecture](docs/a.png) The diagram shows the flow.")).toBe(true);
+    expect(isShowboatImageLine("![x](y)\r")).toBe(true);
+    expect(showboatImageTarget("![Architecture](docs/a.png) more")).toBe("docs/a.png");
+    expect(isShowboatImageLine("The diagram ![x](y)")).toBe(false);
+    expect(isShowboatImageLine(" ![x](y)")).toBe(false);
+    expect(isShowboatImageLine("![x]()")).toBe(false);
+    expect(isShowboatImageLine("![x] (y)")).toBe(false);
+    expect(isShowboatImageLine("![x](y")).toBe(false);
   });
 });
 
