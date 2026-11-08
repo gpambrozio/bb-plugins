@@ -143,8 +143,9 @@ made while implementing):
   yet; `thread.active`, `idle` and `failed` skip them.
 - **Listings are captured by the server**, from `files.read`, at the file and line range the builder names;
   the agent never types code. The plugin runs nothing. A file missing or unreadable is a refusal the
-  builder sees. `isNotFound` in `bb-ports.ts` is a heuristic (code `not_found`/`ENOENT` or the message);
-  bb 0.48.1's real answer is still to be confirmed.
+  builder sees. `isNotFound` in `bb-ports.ts` is a heuristic (code `not_found`/`ENOENT` or the message).
+  bb 0.49.0 answers a missing file with "HTTP 404: Path does not exist: <absolute path>" (code `ENOENT` in
+  the CLI's JSON), and the builder sees "`path` does not exist in the workspace.", not the retry text.
 - **Notes refuse fenced code and image-only lines (R4)**, so the export stays showboat-verifiable: a fence
   would be parsed as a block, a lone `![](…)` line as an image block. The test-only
   `server/testing/showboat-grammar.ts` ports showboat's block rules and checks the exporter against them.
@@ -170,8 +171,15 @@ made while implementing):
   is newer than `current` and nothing is live, so the tab can show its reason and Rebuild.
 - **The builder has permission to read and edit** in the user's checkout (bb has no tool-free thread). It is
   told not to edit, the brief treats repository text as data, and Start says so. A recorded decision.
-- **Unverified on a real bb** until the live check (Task 15): the status of a freshly spawned thread,
-  `files.read` missing-file errors, a 0.2.0 store upgrade and the dialog in the real app.
+- **Checked live on bb 0.49.0** (a dev bb, Claude Code builders). A hidden builder is `starting` right
+  after the spawn and `active` during its first turn, both kept by reconcile. After `orient_finish` its turn
+  ends and it is archived within half a second. `threads.list` filters on `originPluginId` and
+  `archived: false`. A 0.2.0 store with a paused session upgrades with no log error and the session is
+  still listed. A file exported twice asks to replace it, and `uvx showboat verify` passes on the export.
+- **A reload mid-build does not end the build.** On bb 0.49.0 the new copy's reconcile finds the builder
+  `active` and keeps it. The builder's next `orient_*` call in the same session reaches the new copy, and
+  the row became `ready`. "Interrupted by a reload." is only for a builder that is not working (stopped,
+  errored, or a `starting` row with no thread).
 
 ## File references
 
