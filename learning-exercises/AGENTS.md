@@ -220,6 +220,12 @@ made while implementing):
   `active` and keeps it. The builder's next `orient_*` call in the same session reaches the new copy, and
   the row became `ready`. "Interrupted by a reload." is only for a builder that is not working (stopped,
   errored, or a `starting` row with no thread).
+- **Checked live on bb 0.48.1 too** (an isolated dev bb, 2026-11-08), the minimum: `threads.list({
+  originPluginId, includeHidden, archived: false })` filters as on 0.49 (this plugin's threads only,
+  hidden ones included, archived ones excluded); `experimental_listPluginMetadata` returns the
+  `orientation` key for a hidden builder; a hidden spawn with a reused environment, then stop and archive,
+  works; and a reload mid-build keeps the active builder with `cleaning: false`. So `engines.bb >=0.48.1`
+  stands.
 
 ## File references
 
