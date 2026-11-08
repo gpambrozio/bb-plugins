@@ -76,6 +76,9 @@ export interface PluginThread {
   status: string;
 }
 
+/** A folder's entries, as `listFolder` answers them. */
+export type FolderListing = { directory: string; entries: { kind: "directory" | "file"; name: string }[] };
+
 /** `writeFile` found the file changed since the hash it was given (or present when it expected none). */
 export class FileConflict extends Error {
   constructor(path: string) {
@@ -133,6 +136,12 @@ export interface Ports {
    * or null to require that it does not exist. Throws `FileConflict` when it changed; anything else as is.
    */
   writeFile(root: FileRoot, relativePath: string, content: string, expectedSha256: string | null): Promise<void>;
+  /**
+   * One folder under a root, by a normalized relative path ("" for the root): bb's host directory listing,
+   * which leaves out hidden names and `node_modules` and follows links. `directory` is the absolute path
+   * bb listed, links resolved. Null when the folder cannot be listed (absent, not a folder, unreachable).
+   */
+  listFolder(root: FileRoot, relativeDir: string): Promise<FolderListing | null>;
   /** The id of the thread's newest turn, finished or running (its last `turn/started`); null when it cannot be read. */
   currentTurn(threadId: string): Promise<string | null>;
   /** The thread's last finished turn, from its event log. */

@@ -131,6 +131,14 @@ export const rpcContract = {
     input: OrientationRef.extend({ path: z.string().trim().min(1).max(500), replace: z.boolean(), expectedSha256: z.string().nullable().optional() }),
     output: z.union([z.object({ exists: z.literal(true), sha256: z.string() }), z.object({ written: z.string() })]),
   },
+  /**
+   * One folder of the orientation's checkout for the export picker (`dir` "" is the root): its folders and
+   * files by name, hidden names and `node_modules` left out. A path outside the workspace is refused.
+   */
+  browseOrientationFolder: {
+    input: OrientationRef.extend({ dir: z.string().max(500) }),
+    output: z.object({ dir: z.string(), folders: z.array(z.string()), files: z.array(z.string()) }),
+  },
   /** Starts a session on the project's ready orientation in a new visible thread, and answers that thread. */
   startOrientationSession: { input: ThreadRef.extend({ orientationId: z.string().min(1) }), output: z.object({ threadId: z.string() }) },
 } satisfies PluginRpcContract;

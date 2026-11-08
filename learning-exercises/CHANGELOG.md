@@ -19,8 +19,9 @@
   limit.
 - **Export to a Markdown file in the repository.** The orientation can be saved as a document in your
   repository. A walkthrough exports in the format of Simon Willison's showboat, so it can be checked
-  with `showboat verify`. An existing file is never overwritten unless you confirm, and a file that
-  changed while you were deciding is left alone.
+  with `showboat verify`. You choose where by browsing the project's folders and naming the file
+  (`ORIENTATION.md` at the top of the project unless you change it). An existing file is never overwritten
+  unless you confirm, and a file that changed while you were deciding is left alone.
 - Orientations are never offered; you start them yourself. Existing sessions and answers are kept when
   the plugin updates.
 

@@ -203,6 +203,28 @@ describe("writeFile", () => {
   });
 });
 
+describe("listFolder", () => {
+  it("lists one folder through bb's host directory listing, by absolute path", async () => {
+    const { ports, harness } = setup();
+    const seen: unknown[] = [];
+    harness.sdk.stub("hosts.directory", (input: { path: string }) => {
+      seen.push(input);
+      return { directory: input.path, parent: "/work", roots: ["/"], entries: [{ kind: "directory", name: "docs", path: `${input.path}/docs` }, { kind: "file", name: "a.md", path: `${input.path}/a.md` }] };
+    });
+    expect(await ports.listFolder(ROOT, "")).toEqual({ directory: "/work/calc", entries: [{ kind: "directory", name: "docs" }, { kind: "file", name: "a.md" }] });
+    expect((await ports.listFolder(ROOT, "docs"))?.directory).toBe("/work/calc/docs");
+    expect(seen).toEqual([{ hostId: "host_1", path: "/work/calc" }, { hostId: "host_1", path: "/work/calc/docs" }]);
+  });
+
+  it("answers null when bb cannot list it", async () => {
+    const { ports, harness } = setup();
+    harness.sdk.stub("hosts.directory", () => {
+      throw new Error("ENOENT");
+    });
+    expect(await ports.listFolder(ROOT, "gone")).toBeNull();
+  });
+});
+
 describe("pluginThreadsWith and metadataValue", () => {
   it("lists this plugin's threads that carry the key, with their value, state and status", async () => {
     const { ports, harness } = setup();

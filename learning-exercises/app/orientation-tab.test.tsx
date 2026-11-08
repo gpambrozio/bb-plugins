@@ -124,27 +124,103 @@ describe("Verify's toast", () => {
   });
 });
 
+/** A project tree for the picker: folders and files by folder ("" is the root). */
+const TREE: Record<string, { folders: string[]; files: string[] }> = {
+  "": { folders: ["docs", "src"], files: ["ORIENTATION.md", "README.md"] },
+  docs: { folders: ["api"], files: ["guide.md"] },
+  "docs/api": { folders: [], files: [] },
+  src: { folders: [], files: ["a.ts"] },
+};
+
+function renderExport(rpc: Record<string, (input: never) => unknown> = {}) {
+  return renderSlot({ component: ExportDialog }, { orientationId: "ori_1", onDone: vi.fn() }, {
+    rpc: {
+      browseOrientationFolder: (input: { dir: string }) => {
+        const folder = TREE[input.dir];
+        if (folder === undefined) throw new Error(`${input.dir} links outside its place in the project; choose another folder.`);
+        return { dir: input.dir, ...folder };
+      },
+      exportOrientation: (input: { path: string }) => ({ written: input.path }),
+      ...rpc,
+    } as never,
+    experimental_rpcContract: rpcContract,
+  });
+}
+
+const entries = () => within(screen.getByRole("list", { name: "Folders and files" }));
+const nameBox = () => screen.getByRole("textbox", { name: "File name" }) as HTMLInputElement;
+const exportCalls = (slot: ReturnType<typeof renderExport>) => slot.rpcCalls.filter((c) => c.method === "exportOrientation").map((c) => c.input);
+
 describe("the export dialog", () => {
-  it("asks before replacing, then sends the hash with replace", async () => {
-    const answers: unknown[] = [{ exists: true, sha256: "h1" }, { written: "ORIENTATION.md" }];
-    const slot = renderSlot({ component: ExportDialog }, { orientationId: "ori_1", onDone: vi.fn() }, {
-      rpc: { exportOrientation: () => answers.shift() } as never,
-      experimental_rpcContract: rpcContract,
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Export" }));
-    await screen.findByText("ORIENTATION.md already exists. Replace it?");
-    fireEvent.click(screen.getByRole("button", { name: "Replace" }));
-    await screen.findByText("Wrote ORIENTATION.md.");
-    const calls = slot.rpcCalls.filter((c) => c.method === "exportOrientation").map((c) => c.input);
-    expect(calls[0]).toEqual({ orientationId: "ori_1", path: "ORIENTATION.md", replace: false });
-    expect(calls[1]).toEqual({ orientationId: "ori_1", path: "ORIENTATION.md", replace: true, expectedSha256: "h1" });
+  it("starts at the project root with ORIENTATION.md, listing its folders and files", async () => {
+    const slot = renderExport();
+    await screen.findByRole("button", { name: "README.md" });
+    expect(screen.getByTestId("export-folder").textContent).toBe("Project root");
+    expect((screen.getByRole("button", { name: "Up one folder" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(entries().getAllByRole("button").map((b) => b.textContent)).toEqual(["docs", "src", "ORIENTATION.md", "README.md"]);
+    expect(nameBox().value).toBe("ORIENTATION.md");
+    expect(entries().getByRole("button", { name: "ORIENTATION.md" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByText("Exports to ORIENTATION.md")).toBeTruthy();
+    expect(slot.rpcCalls.find((c) => c.method === "browseOrientationFolder")?.input).toEqual({ orientationId: "ori_1", dir: "" });
   });
 
-  it("shows a refusal and stays open", async () => {
-    renderSlot({ component: ExportDialog }, { orientationId: "ori_1", onDone: vi.fn() }, {
-      rpc: { exportOrientation: () => { throw new Error("changed while you were deciding"); } } as never,
-      experimental_rpcContract: rpcContract,
-    });
+  it("opens folders and goes back up, exporting into the folder shown", async () => {
+    const slot = renderExport();
+    fireEvent.click(await screen.findByRole("button", { name: "docs" }));
+    await screen.findByRole("button", { name: "guide.md" });
+    expect(screen.getByTestId("export-folder").textContent).toBe("docs/");
+    fireEvent.click(screen.getByRole("button", { name: "api" }));
+    await screen.findByText("This folder is empty.");
+    expect(screen.getByText("Exports to docs/api/ORIENTATION.md")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Up one folder" }));
+    await screen.findByRole("button", { name: "guide.md" });
+    fireEvent.click(screen.getByRole("button", { name: "Export" }));
+    await screen.findByText("Wrote docs/ORIENTATION.md.");
+    expect(exportCalls(slot)).toEqual([{ orientationId: "ori_1", path: "docs/ORIENTATION.md", replace: false }]);
+  });
+
+  it("picking an existing file takes its name and leads to the overwrite prompt, which sends its hash", async () => {
+    const answers: unknown[] = [{ exists: true, sha256: "h1" }, { written: "docs/guide.md" }];
+    const slot = renderExport({ exportOrientation: () => answers.shift() });
+    fireEvent.click(await screen.findByRole("button", { name: "docs" }));
+    fireEvent.click(await screen.findByRole("button", { name: "guide.md" }));
+    expect(nameBox().value).toBe("guide.md");
+    fireEvent.click(screen.getByRole("button", { name: "Export" }));
+    await screen.findByText("docs/guide.md already exists. Replace it?");
+    fireEvent.click(screen.getByRole("button", { name: "Replace" }));
+    await screen.findByText("Wrote docs/guide.md.");
+    expect(exportCalls(slot)).toEqual([
+      { orientationId: "ori_1", path: "docs/guide.md", replace: false },
+      { orientationId: "ori_1", path: "docs/guide.md", replace: true, expectedSha256: "h1" },
+    ]);
+  });
+
+  it("takes a file name only: a folder in it, or . and .., disables Export", async () => {
+    renderExport();
+    await screen.findByRole("button", { name: "README.md" });
+    const exportButton = screen.getByRole("button", { name: "Export" }) as HTMLButtonElement;
+    for (const name of ["../x.md", "docs/x.md", "..", "  "]) {
+      fireEvent.change(nameBox(), { target: { value: name } });
+      expect(exportButton.disabled).toBe(true);
+    }
+    fireEvent.change(nameBox(), { target: { value: "NOTES.md" } });
+    expect(exportButton.disabled).toBe(false);
+    expect(screen.getByText("Exports to NOTES.md")).toBeTruthy();
+  });
+
+  it("shows a folder's refusal in the list, and Up still leaves it", async () => {
+    renderExport({ browseOrientationFolder: (input: { dir: string }) => {
+      if (input.dir === "src") throw new Error("src links outside its place in the project; choose another folder.");
+      return { dir: input.dir, ...TREE[input.dir]! };
+    } });
+    fireEvent.click(await screen.findByRole("button", { name: "src" }));
+    await screen.findByText(/src links outside its place in the project/);
+    fireEvent.click(screen.getByRole("button", { name: "Up one folder" }));
+    await screen.findByRole("button", { name: "README.md" });
+  });
+
+  it("shows an export refusal and stays open", async () => {
+    renderExport({ exportOrientation: () => { throw new Error("changed while you were deciding"); } });
     fireEvent.click(screen.getByRole("button", { name: "Export" }));
     await screen.findByText(/changed while you were deciding/);
     expect(screen.getByRole("button", { name: "Export" })).toBeTruthy();

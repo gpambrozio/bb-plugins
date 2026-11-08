@@ -528,3 +528,33 @@ describe("export", () => {
     await expect(building2.service.export(building2.id, { path: "ORIENTATION.md", replace: false })).rejects.toBeInstanceOf(OrientationError);
   });
 });
+
+describe("browse (the export picker's folders)", () => {
+  it("lists the root and a folder by name, folders apart from files", async () => {
+    const { ports, service, id } = await ready();
+    ports.files.set("/work/calc/README.md", "# calc");
+    ports.files.set("/work/calc/docs/guide.md", "guide");
+    ports.files.set("/work/calc/docs/api/index.md", "api");
+    expect(await service.browse(id, "")).toEqual({ dir: "", folders: ["docs", "src"], files: ["README.md"] });
+    expect(await service.browse(id, "./docs/")).toEqual({ dir: "docs", folders: ["api"], files: ["guide.md"] });
+  });
+
+  it("refuses a folder outside the workspace without listing it", async () => {
+    const { service, id } = await ready();
+    for (const dir of ["..", "../other", "/etc", "~/x", "docs/../../x"]) await expect(service.browse(id, dir)).rejects.toThrow("That path is outside the workspace.");
+  });
+
+  it("refuses a folder that is a link to somewhere else", async () => {
+    const { ports, service, id } = await ready();
+    ports.folderListings.set("/work/calc/out", { directory: "/elsewhere/out", entries: [{ kind: "file", name: "secret.md" }] });
+    await expect(service.browse(id, "out")).rejects.toThrow("out links outside its place in the project; choose another folder.");
+  });
+
+  it("says when a folder cannot be listed or the checkout cannot be reached", async () => {
+    const { ports, service, id } = await ready();
+    await expect(service.browse(id, "missing")).rejects.toThrow("Could not list missing; try again.");
+    ports.roots.clear();
+    ports.checkouts.clear();
+    await expect(service.browse(id, "")).rejects.toThrow("The project's checkout cannot be reached.");
+  });
+});

@@ -114,6 +114,7 @@ async function plugin(bb: BbPluginApi, deps: { ports?: (bb: BbPluginApi, changed
     deleteOrientation: fromUser(refusing((input) => orientationApi.deleteOrientation(input))),
     verifyOrientation: fromUser(refusing((input) => orientationApi.verifyOrientation(input))),
     exportOrientation: fromUser(refusing((input) => orientationApi.exportOrientation(input))),
+    browseOrientationFolder: refusing((input) => orientationApi.browseOrientationFolder(input)),
     startOrientationSession: fromUser(refusing((input) => orientationApi.startOrientationSession(input))),
   });
 

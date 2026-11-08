@@ -19,6 +19,7 @@ import {
   type CardRequest,
   type FileRead,
   type FileRoot,
+  type FolderListing,
   type ForkRequest,
   type MessageRead,
   type Ports,
@@ -221,6 +222,16 @@ export function bbPorts(bb: BbPluginApi, changed: () => void): Ports {
         expectedSha256,
       });
       if (result.outcome === "conflict") throw new FileConflict(relativePath);
+    },
+
+    async listFolder(root, relativeDir): Promise<FolderListing | null> {
+      try {
+        const listing = await sdk().hosts.directory({ hostId: root.hostId, path: relativeDir === "" ? root.rootPath : posix.join(root.rootPath, relativeDir) });
+        return { directory: listing.directory, entries: listing.entries.map(({ kind, name }) => ({ kind, name })) };
+      } catch (error) {
+        bb.log.debug(`Listing ${relativeDir === "" ? "the workspace" : relativeDir} failed: ${message(error)}`);
+        return null;
+      }
     },
 
     async currentTurn(threadId) {

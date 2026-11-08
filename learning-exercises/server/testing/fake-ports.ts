@@ -9,6 +9,7 @@ import {
   type CardRequest,
   type FileRead,
   type FileRoot,
+  type FolderListing,
   type ForkRequest,
   type MessageRead,
   type MessageWindow,
@@ -92,6 +93,11 @@ export class FakePorts implements Ports {
   reads: string[] = [];
   /** Runs after `readFile` read a file and before it answers: the file changing under the reader. */
   afterRead: ((key: string) => void) | null = null;
+  /**
+   * What `listFolder` answers for a folder, by its absolute path, instead of the listing derived from
+   * `files` (a link's resolved `directory`, or null for a folder that cannot be listed).
+   */
+  folderListings = new Map<string, FolderListing | null>();
   /** Every `writeFile`, in order. */
   writes: { root: FileRoot; path: string; content: string; expectedSha256: string | null }[] = [];
   /**
@@ -160,6 +166,24 @@ export class FakePorts implements Ports {
     if (currentSha !== expectedSha256) throw new FileConflict(relativePath);
     this.writes.push({ root, path: relativePath, content, expectedSha256 });
     this.files.set(key, content);
+  }
+
+  /** The folder's direct children among `files`, folders first, unless `folderListings` says otherwise. */
+  async listFolder(root: FileRoot, relativeDir: string): Promise<FolderListing | null> {
+    const directory = relativeDir === "" ? root.rootPath : `${root.rootPath}/${relativeDir}`;
+    if (this.folderListings.has(directory)) return this.folderListings.get(directory)!;
+    const folders = new Set<string>();
+    const files = new Set<string>();
+    for (const key of this.files.keys()) {
+      if (!key.startsWith(`${directory}/`)) continue;
+      const [name, ...rest] = key.slice(directory.length + 1).split("/");
+      (rest.length > 0 ? folders : files).add(name!);
+    }
+    if (folders.size === 0 && files.size === 0 && relativeDir !== "") return null;
+    return {
+      directory,
+      entries: [...[...folders].sort().map((name) => ({ kind: "directory" as const, name })), ...[...files].sort().map((name) => ({ kind: "file" as const, name }))],
+    };
   }
 
   async currentTurn(threadId: string) {

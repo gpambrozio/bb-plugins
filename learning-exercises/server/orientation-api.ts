@@ -138,6 +138,10 @@ export class OrientationApi {
     return this.deps.orientations.export(orientationId, { path, replace, expectedSha256 });
   }
 
+  browseOrientationFolder({ orientationId, dir }: Input<"browseOrientationFolder">): Promise<Output<"browseOrientationFolder">> {
+    return this.deps.orientations.browse(orientationId, dir);
+  }
+
   /**
    * Checks the project's ready orientation again (no skip window: the session's brief carries the drift),
    * then starts the session on it in a new visible thread. An id that is not the ready orientation of

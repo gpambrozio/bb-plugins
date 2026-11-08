@@ -591,6 +591,32 @@ export class OrientationService {
     return { written: path };
   }
 
+  /**
+   * One folder of the orientation's checkout for the export picker: `dir` is a workspace path, or "" for
+   * the root. Its folders and files by name; the picker builds every path from these, so a path it offers
+   * stays inside the workspace. A folder whose listing resolves anywhere but under the root's own (a link
+   * out, or to elsewhere) is refused rather than shown.
+   */
+  async browse(orientationId: string, dir: string): Promise<{ dir: string; folders: string[]; files: string[] }> {
+    const trimmed = dir.trim();
+    const relative = trimmed === "" ? "" : workspacePath(trimmed);
+    if (relative === null) throw new OrientationError(OUTSIDE);
+    const row = this.store.get(orientationId);
+    if (row === null) throw new OrientationError("That orientation is gone.");
+    const root = await this.rootOf(row);
+    this.alive();
+    if (root === null) throw new OrientationError("The project's checkout cannot be reached.");
+    const [top, here] = await Promise.all([this.ports.listFolder(root, ""), relative === "" ? null : this.ports.listFolder(root, relative)]);
+    this.alive();
+    const listing = relative === "" ? top : here;
+    if (top === null || listing === null) throw new OrientationError(`Could not list ${relative === "" ? "the project's folder" : relative}; try again.`);
+    if (relative !== "" && listing.directory !== `${top.directory.replace(/\/+$/, "")}/${relative}`) {
+      throw new OrientationError(`${relative} links outside its place in the project; choose another folder.`);
+    }
+    const names = (kind: "directory" | "file") => listing.entries.filter((entry) => entry.kind === kind && workspacePath(entry.name) === entry.name).map((entry) => entry.name);
+    return { dir: relative, folders: names("directory"), files: names("file") };
+  }
+
   // ── reads for the API ─────────────────────────────────────────────────────
 
   view(key: string): { current: OrientationRow | null; live: OrientationRow | null } {

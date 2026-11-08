@@ -44,6 +44,11 @@ export function useSidebarThread(threadId: string | null) {
  * The walkthrough. Each read of a ready orientation may check its listings against the files (at most
  * once per five minutes, server side), so it is read only while its tab shows.
  */
+/** One folder of an orientation's checkout, for the export picker ("" is the project root). */
+export function useOrientationFolder(orientationId: string, dir: string) {
+  return experimental_useRpcQuery({ contract: rpcContract, method: "browseOrientationFolder", input: { orientationId, dir } });
+}
+
 export function useOrientationDocument(orientationId: string, enabled = true) {
   return experimental_useRpcQuery({ contract: rpcContract, method: "orientationDocument", input: { orientationId }, enabled });
 }

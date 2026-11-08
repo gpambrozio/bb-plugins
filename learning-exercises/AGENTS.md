@@ -201,6 +201,14 @@ made while implementing):
   `{ exists: true, sha256 }` and nothing is written; the dialog then sends that sha256 back as
   `expectedSha256` with `replace` (R6), so a file that changed during the confirmation is not overwritten.
   Null or absent means the file must not exist.
+- **The export dialog picks the place in a folder browser of its own** (`browseOrientationFolder`, one
+  folder at a time through `bb.sdk.hosts.directory`) plus a file-name box, because bb offers plugins no
+  native save dialog: `experimental_saveFile` downloads to the viewer's machine, and `hosts.pickFolder`
+  is a macOS "Choose a project folder" picker that bb's server allows only when the client and the work
+  host are the same machine, which a plugin cannot tell (SDK 0.6.104, bb 0.49). `files.listPaths` walks
+  a whole tree and cuts it off at `limit`, so it is not a folder listing. Paths are built from listed names
+  and a name without `/`; the server refuses a folder outside the workspace and one whose listing resolves
+  anywhere but under the root (a link out), and `export` checks the path again.
 - **The `"spawn"` session mode.** An orientation session is a *spawned* thread (Codex forks lack plugin
   tools) with at most 3 questions, and it does not count toward the per-thread cap of finished sessions.
   `startSession` refuses the orientation trigger; only `startOrientationSession` makes one. **Known gap:**
