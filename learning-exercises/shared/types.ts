@@ -22,6 +22,8 @@ export type Workspace = z.infer<typeof WorkspaceSchema>;
 export const TRIGGER_KINDS = ["pr-merged", "commit", "schema", "new-files", "streak", "manual", "orientation"] as const;
 export const TriggerKindSchema = z.enum(TRIGGER_KINDS);
 export type TriggerKind = z.infer<typeof TriggerKindSchema>;
+/** The triggers a session from an offer or the tab's Start may have: all but `orientation` (`startOrientationSession` only). */
+export const StartTriggerSchema = TriggerKindSchema.exclude(["orientation"]);
 
 export const TRIGGER_LABELS: Record<TriggerKind, string> = {
   "pr-merged": "pull request merged",
@@ -149,7 +151,7 @@ export const TopicChoiceSchema = z.object({
   id: z.string(),
   label: z.string(),
   topic: z.string(),
-  trigger: TriggerKindSchema,
+  trigger: StartTriggerSchema,
   refs: RefsSchema,
 });
 export type TopicChoice = z.infer<typeof TopicChoiceSchema>;
