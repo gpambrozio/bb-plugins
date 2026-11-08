@@ -147,6 +147,10 @@ export const ORIENT_TOOL_INVARIANT =
 
 const WALKTHROUGH_BLOCK = /<!-- walkthrough:start -->\n[\s\S]*?<!-- walkthrough:end -->\n?/;
 
+if ((ORIENT_BUILDER.match(/<!-- walkthrough:start -->/g) ?? []).length !== 1 || (ORIENT_BUILDER.match(/<!-- walkthrough:end -->/g) ?? []).length !== 1 || !WALKTHROUGH_BLOCK.test(ORIENT_BUILDER)) {
+  throw new Error("content/orient-builder.md must hold exactly one <!-- walkthrough:start --> ... <!-- walkthrough:end --> pair");
+}
+
 /** `orient-builder.md` for a depth: a summary build drops the walkthrough step, markers removed either way. */
 function builderText(depth: OrientationDepth): string {
   const text = depth === "summary" ? ORIENT_BUILDER.replace(WALKTHROUGH_BLOCK, "") : ORIENT_BUILDER;
@@ -216,6 +220,8 @@ function howToWrite(depth: OrientationDepth): string {
     "## How to write",
     "",
     ...tools,
+    "",
+    "If an `orient_*` call is refused, read the reason, fix the call and try again; do not stop.",
     "",
     "If the `orient_*` tools are not among your tools, use the same commands from the shell instead, in the same order:",
     "",

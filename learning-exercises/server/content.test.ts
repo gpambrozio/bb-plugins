@@ -100,6 +100,9 @@ describe("orientation briefs", () => {
     expect(brief).toContain("orient_summary");
     expect(brief).toContain("orient_finish");
     expect(brief).not.toContain("orient_listing");
+    for (const leaked of ["## Step 4", "Listing N", "walkthrough:start", "walkthrough:end"]) expect(brief).not.toContain(leaked);
+    expect(brief).toContain("## Step 3");
+    expect(brief).toContain("## Rules");
     expect(brief).toContain("calc");
   });
 
@@ -111,6 +114,14 @@ describe("orientation briefs", () => {
     expect(brief.indexOf("orient_listing")).toBeLessThan(brief.indexOf("bb learning orient listing"));
     expect(brief).toContain("bb learning orient listing");
     expect(brief).toContain("bb learning orient finish");
+    for (const kept of ["## Step 3", "## Step 4", "## Rules", "Listing N"]) expect(brief).toContain(kept);
+    expect(brief).not.toContain("walkthrough:");
+    expect(brief).toContain("is refused, read the reason");
+  });
+
+  it("orient-builder.md holds exactly one walkthrough marker pair", () => {
+    expect(ORIENT_BUILDER.match(/<!-- walkthrough:start -->/g)).toHaveLength(1);
+    expect(ORIENT_BUILDER.match(/<!-- walkthrough:end -->/g)).toHaveLength(1);
   });
 
   it("names the start line and the standing rule", () => {
