@@ -82,6 +82,12 @@ export class FakePorts implements Ports {
   checkouts = new Map<string, string>([["proj_1:host_1", "/work/calc"]]);
   /** Files by `${rootPath}/${path}`. */
   files = new Map<string, string>();
+  /** What `readFile` answers for a file instead of its text (`binary`, `too-large`, or null for a failed read). */
+  fileReads = new Map<string, FileRead | null>();
+  /** Every `readFile`, as `${rootPath}/${path}`, in order. */
+  reads: string[] = [];
+  /** Runs after `readFile` read a file and before it answers: the file changing under the reader. */
+  afterRead: ((key: string) => void) | null = null;
   /** Every `writeFile`, in order. */
   writes: { root: FileRoot; path: string; content: string; expectedSha256: string | null }[] = [];
   /** `pluginThreadsWith` answers null, as when bb cannot list. */
@@ -129,9 +135,15 @@ export class FakePorts implements Ports {
   }
 
   async readFile(root: FileRoot, relativePath: string): Promise<FileRead | null> {
-    const text = this.files.get(`${root.rootPath}/${relativePath}`);
-    if (text === undefined) return { kind: "missing" };
-    return { kind: "text", text, sha256: FakePorts.sha(text), sizeBytes: Buffer.byteLength(text) };
+    const key = `${root.rootPath}/${relativePath}`;
+    this.reads.push(key);
+    const text = this.files.get(key);
+    let read: FileRead | null;
+    if (this.fileReads.has(key)) read = this.fileReads.get(key)!;
+    else if (text === undefined) read = { kind: "missing" };
+    else read = { kind: "text", text, sha256: FakePorts.sha(text), sizeBytes: Buffer.byteLength(text) };
+    this.afterRead?.(key);
+    return read;
   }
 
   async writeFile(root: FileRoot, relativePath: string, content: string, expectedSha256: string | null) {
