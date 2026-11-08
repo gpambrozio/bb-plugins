@@ -41,6 +41,7 @@ import { forgetSessionDrafts, useDraftSweep } from "./draft";
 import { errorText, useLearningRpc, useProjectSessions, useSessionDetail, useSidebarThread, useThreadView, useTopicChoices } from "./data";
 import { FileMarkdown, TextWithFileRefs } from "./file-refs";
 import { OfferCard } from "./offer-card";
+import { OrientationSection } from "./orientation-section";
 import { openSettings } from "./open-settings";
 
 export { PLUGIN_ID };
@@ -114,7 +115,7 @@ function plain(topic: string): string {
   return topic.replace(/[`"]/g, "");
 }
 
-function Section(props: { title: string; children: ReactNode; aside?: ReactNode }) {
+export function Section(props: { title: string; children: ReactNode; aside?: ReactNode }) {
   return (
     <section className="flex flex-col gap-2">
       <div className="flex items-center justify-between gap-2">
@@ -127,7 +128,7 @@ function Section(props: { title: string; children: ReactNode; aside?: ReactNode 
 }
 
 /** Runs a write with a toast on failure; answers its result, or undefined when it failed. */
-function useAct() {
+export function useAct() {
   const [busy, setBusy] = useState<string | null>(null);
   const act = async <T,>(key: string, work: () => Promise<T>): Promise<T | undefined> => {
     setBusy(key);
@@ -193,7 +194,7 @@ function SessionControls(props: { session: Session; currentThreadId: string }) {
           Open session thread
         </Button>
       )}
-      {session.mode === "fork" && session.sourceThreadId !== null && session.sourceThreadId !== currentThreadId && (
+      {(session.mode === "fork" || session.mode === "spawn") && session.sourceThreadId !== null && session.sourceThreadId !== currentThreadId && (
         <Button type="button" size="sm" variant="ghost" onClick={() => navigate.toThread(session.sourceThreadId!)}>
           Open source thread
         </Button>
@@ -210,7 +211,7 @@ function SessionSummary(props: { session: Session; environmentId: string | null 
         <TextWithFileRefs text={session.topic.replace(/"/g, "")} environmentId={props.environmentId} />
       </span>
       <span className="text-xs text-muted-foreground">
-        {STATE_LABELS[session.state]} · {session.answered} of {session.asked} answered · {session.mode === "fork" ? "side thread" : "in its thread"}
+        {STATE_LABELS[session.state]} · {session.answered} of {session.asked} answered · {session.mode === "fork" || session.mode === "spawn" ? "side thread" : "in its thread"}
         {session.state === "paused" && session.pauseReason !== null ? ` · ${session.pauseReason}` : ""}
       </span>
     </div>
@@ -494,6 +495,7 @@ export function LearningTab({ threadId }: ExperimentalThreadTabProps) {
     <div className="flex flex-col gap-5 text-sm">
       <Now view={data} threadId={threadId} visible={visible} />
       {data.canStart && !sessionOpen && <Start threadId={threadId} view={data} visible={visible} />}
+      <OrientationSection threadId={threadId} visible={visible} />
       <Lists threadId={threadId} visible={visible} />
       <Footer view={data} threadId={threadId} />
       <p className="text-[11px] leading-snug text-muted-foreground">

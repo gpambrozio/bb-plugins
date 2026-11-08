@@ -108,6 +108,7 @@ function handlers(current: () => ThreadView, extra: Handlers = {}) {
     threadOffers: () => ({ off: [] }),
     setThreadOffers: () => null,
     setProjectNever: () => null,
+    orientation: () => ({ current: null, live: null, last: null, canStart: true, cleaning: false }),
     neverProjects: () => ({ projects: [] }),
     removeNeverProject: () => null,
     ...extra,

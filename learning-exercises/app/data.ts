@@ -22,6 +22,10 @@ export function useProjectSessions(threadId: string, limit: number, enabled = tr
   return experimental_useRpcQuery({ contract: rpcContract, method: "projectSessions", input: { threadId, limit }, enabled });
 }
 
+export function useOrientation(threadId: string, enabled: boolean) {
+  return experimental_useRpcQuery({ contract: rpcContract, method: "orientation", input: { threadId }, enabled });
+}
+
 export function useSessionDetail(sessionId: string | null) {
   return experimental_useRpcQuery({ contract: rpcContract, method: "sessionDetail", input: { sessionId: sessionId ?? "" }, enabled: sessionId !== null });
 }
