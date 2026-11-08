@@ -124,6 +124,54 @@ export const MIGRATIONS: string[] = [
   `INSERT OR IGNORE INTO global_state (key, value)
      SELECT 'answeredAt', json_group_array(answered_at)
      FROM (SELECT answered_at FROM offers WHERE status = 'answered' AND answered_at IS NOT NULL ORDER BY answered_at DESC LIMIT 50)`,
+  // 0.3.0: repo orientations (spec §4). `next_ordinal` and `next_listing` only rise, so a popped block
+  // frees neither its ordinal nor its listing number.
+  `CREATE TABLE orientations (
+     id TEXT PRIMARY KEY,
+     project_key TEXT NOT NULL,
+     project_id TEXT NOT NULL,
+     status TEXT NOT NULL CHECK (status IN ('starting', 'building', 'ready', 'failed', 'cancelled')),
+     depth TEXT NOT NULL CHECK (depth IN ('summary', 'walkthrough')),
+     source_thread_id TEXT NOT NULL,
+     environment_id TEXT,
+     host_id TEXT,
+     workspace_path TEXT,
+     provider_id TEXT NOT NULL,
+     builder_thread_id TEXT,
+     head_sha TEXT,
+     title TEXT NOT NULL,
+     summary TEXT,
+     reminded INTEGER NOT NULL DEFAULT 0,
+     error TEXT,
+     next_ordinal INTEGER NOT NULL DEFAULT 1,
+     next_listing INTEGER NOT NULL DEFAULT 1,
+     created_at INTEGER NOT NULL,
+     updated_at INTEGER NOT NULL,
+     ready_at INTEGER
+   )`,
+  `CREATE TABLE orientation_blocks (
+     orientation_id TEXT NOT NULL REFERENCES orientations(id) ON DELETE CASCADE,
+     ordinal INTEGER NOT NULL,
+     kind TEXT NOT NULL CHECK (kind IN ('chapter', 'note', 'listing')),
+     text TEXT,
+     listing_no INTEGER,
+     caption TEXT,
+     path TEXT,
+     start_line INTEGER,
+     end_line INTEGER,
+     captured TEXT,
+     captured_sha256 TEXT,
+     captured_ref TEXT,
+     check_state TEXT,
+     check_start INTEGER,
+     check_end INTEGER,
+     checked_at INTEGER,
+     PRIMARY KEY (orientation_id, ordinal)
+   )`,
+  // One orientation being built per project, whatever races to start a second.
+  `CREATE UNIQUE INDEX orientations_one_live_per_project ON orientations(project_key)
+     WHERE status IN ('starting', 'building')`,
+  `CREATE INDEX orientations_builder ON orientations(builder_thread_id)`,
 ];
 
 const ReplyProgressSchema = z.object({
@@ -488,7 +536,7 @@ export class LearningStore {
   }
 
   finishedSessionsFrom(threadId: string): number {
-    return (this.db.prepare(`SELECT COUNT(*) AS n FROM sessions WHERE source_thread_id = ? AND state = 'finished'`).get(threadId) as { n: number }).n;
+    return (this.db.prepare(`SELECT COUNT(*) AS n FROM sessions WHERE source_thread_id = ? AND state = 'finished' AND trigger <> 'orientation'`).get(threadId) as { n: number }).n;
   }
 
   /** A session in the project is starting, mid-turn or waiting for an answer. */

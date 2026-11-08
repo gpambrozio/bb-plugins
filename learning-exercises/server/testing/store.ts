@@ -2,6 +2,7 @@
 import Database from "better-sqlite3";
 
 import { readSettings, type LearningSettings } from "../settings";
+import { OrientationStore } from "../orientation-store";
 import { LearningStore, MIGRATIONS } from "../store";
 
 export function memoryStore(): LearningStore {
@@ -14,6 +15,12 @@ export function memoryStoreWithDb(): { store: LearningStore; db: Database.Databa
   db.pragma("foreign_keys = ON");
   for (const statement of MIGRATIONS) db.exec(statement);
   return { store: new LearningStore(db), db };
+}
+
+/** An in-memory orientation store beside the learning store, on one database with every migration. */
+export function memoryOrientationStore(): { orientations: OrientationStore; store: LearningStore; db: Database.Database } {
+  const { store, db } = memoryStoreWithDb();
+  return { orientations: new OrientationStore(db), store, db };
 }
 
 /** The default settings with `overrides` (in their stored, flat shape). */

@@ -30,6 +30,32 @@ const E54DB75_HASHES = [
 ];
 const INDEX_HASH = "c76591abb425d1ee705490d6edb6c4f802d15c4ad9361badce89a66eec0e43af";
 
+const V0_2_0_HASHES = [
+  "932906ce983caef1fbf3480a4288321764ef5ab9b97755fffcd0edc072ab4e95",
+  "af55c76195c80512bda89328c3045f57e0148a4d82638cc75e655bbd01650048",
+  "6b278ac6880d91bc5061c68dda786ce55a9d23f0dae8527834265bfd387af057",
+  "052dafff193ec7fd67e9c122cdd9e55926642605387932bc5993216c8f80091c",
+  "d5f150bec94417b626bd0316236f2e4a67149860c1179324462fb09a234767fb",
+  "1d460cbba6193a28b4c29fc45606646c401eaf2f2e5a3488f042bfc06633ae15",
+  "52b296b7a75a3e0cc3e2489432779981e1addd024fd57ce3131f97ff4c8e1475",
+  "3aa935a349b1078a9f224a246500aad4d733555aa93b11e5b0a2e88902ac123e",
+  "439cb7a9798ad88faa4a032890648875dc4358ce1eecb1beb6d6fc6344509b4e",
+  "c76591abb425d1ee705490d6edb6c4f802d15c4ad9361badce89a66eec0e43af",
+  "a1e093012ff7c797ce7081fc1c68b2578c50fe37ce1e1d8512678352b9d86b7c",
+  "732841ff9dff60930335088ec67b89966e60e265250756551c6d8b974eaad3bf",
+  "dd0b6b766144d1dd6dcd6c94cafcfadab2519b83fcb7cd6cfcedc9656f7f3bbd",
+  "26bc96f48fc706443dc2f593c24c6d73169b922403014ce1bf281430f7d62e59",
+  "390168484fc8078319dab8c0c81cb7aec8f4aea741da233c5da4ddb53cdb1bfc",
+  "654658416c0451155573d5c58ce27b98edd2a92edd5bafe7936a7bfcaa950fe8",
+  "990f14ed3027644679911114cf82e9bf6a0d39eedd20e4646bacd4790800752a",
+  "b18275964018da443b8abd8cab42921b6f8999cb463a7a89e45867f62bfc819d",
+  "4e8b97038cc6a20a88ef73946ff0ab96f983a2f002a1792f09d7167056c9ccd7",
+  "b1ebe58fcd850b346f3de9d7ddb382cc4c4804d48c2c52afeee777a333ce7e85",
+  "25f08393a3aaf56a73ddf2225d6fa993875b87e84abfb5fb6bc1cd52181d2656",
+];
+/** 0.2.0's last statement (the answered-offer seed); everything after it is newer. */
+const SEED_INDEX = 20;
+
 type Db = ReturnType<ReturnType<typeof createFakePluginHost>["bb"]["storage"]["database"]>;
 
 function insertSession(db: Db, id: string, state: string, updatedAt: number) {
@@ -52,6 +78,10 @@ describe("migrations", () => {
   it("keep e54db75's nine statements as an unchanged prefix, and the index at position 9", () => {
     expect(MIGRATIONS.slice(0, 9).map(sha)).toEqual(E54DB75_HASHES);
     expect(sha(MIGRATIONS[9]!)).toBe(INDEX_HASH);
+  });
+
+  it("keeps 0.2.0's 21 statements unchanged", () => {
+    expect(MIGRATIONS.slice(0, 21).map(sha)).toEqual(V0_2_0_HASHES);
   });
 
   it("an e54db75 store with duplicate open sessions loads: one survives, the others are kept as history", async () => {
@@ -105,7 +135,7 @@ describe("upgrading from 0.1.0: the answered-offer history", () => {
 
   function v010Store() {
     const db = new Database(":memory:");
-    for (const statement of MIGRATIONS.slice(0, -1)) db.exec(statement);
+    for (const statement of MIGRATIONS.slice(0, SEED_INDEX)) db.exec(statement);
     const offer = db.prepare(
       `INSERT INTO offers (id, thread_id, project_key, trigger, topic, refs, status, answer, created_at, seen_at, answered_at) VALUES (?, ?, 'k', 'commit', 't', '{}', ?, ?, ?, ?, ?)`,
     );
@@ -121,7 +151,7 @@ describe("upgrading from 0.1.0: the answered-offer history", () => {
 
   it("seeds the answers once from the offers 0.1.0 answered, leaving out offers only seen", () => {
     const db = v010Store();
-    db.exec(MIGRATIONS.at(-1)!);
+    db.exec(MIGRATIONS[SEED_INDEX]!);
     const store = new LearningStore(db);
     expect(store.global(NOW).answeredAt).toEqual([NOW - 36 * HOUR_MS, NOW - HOUR_MS]);
     // The caps read the answer's time: the gap runs from it, not from the later look.
@@ -138,7 +168,7 @@ describe("upgrading from 0.1.0: the answered-offer history", () => {
   it("never overwrites answers already kept, and a store with no answers starts empty", () => {
     const db = v010Store();
     db.prepare(`INSERT INTO global_state (key, value) VALUES ('answeredAt', ?)`).run(JSON.stringify([NOW - 5 * 60_000]));
-    db.exec(MIGRATIONS.at(-1)!);
+    db.exec(MIGRATIONS[SEED_INDEX]!);
     expect(new LearningStore(db).global(NOW).answeredAt).toEqual([NOW - 5 * 60_000]);
     const empty = new Database(":memory:");
     for (const statement of MIGRATIONS) empty.exec(statement);
