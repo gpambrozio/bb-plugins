@@ -5,21 +5,27 @@ An event-driven take on Dr. Cat Hicks's
 `NOTICE.md`). The design is the first mate's scout report v2 (`report-v2.md`, decisions D1–D16) with one
 change: sessions are placed by provider capability, not by provider id. The phase 0 spike that shaped
 it ran in an isolated dev bb (`spike.md` beside the report). This is phase 1: features #1–#10 of the
-report's §6.1. Orientation, resume in a new thread, the sidebar journal, "Quiz me on this", spaced
-retrieval and Showboat are later phases.
+report's §6.1, plus Orient (0.3.0, below). Resume in a new thread, the sidebar journal, "Quiz me on
+this" and spaced retrieval are later phases.
 
 ## The invariants
 
 1. **Zero context upfront.** No `skills/` folder (`server.test.ts` checks), no `contributeInstructions`,
-   and `configure` returns `{ tools: [], skills: [] }` unless the thread's metadata names a session
-   the store has as open, in fork mode, bound to that thread (or not bound yet and forked from the
-   session's source thread). The CLI shows up only in bb's generic `plugin-commands` skill body. Do not
-   add a skill, an instruction or a tool that reaches threads with no session.
+   and `configure` returns `{ tools: [], skills: [] }` unless the thread is (a) a session thread the
+   store has as open, in mode `fork` **or `spawn`**, bound to that thread (or, in fork mode, not bound yet
+   and forked from the session's source thread), or (b) the builder of a live orientation (`starting` or
+   `building`), bound to that thread. A builder gets the orientation tools, a spawn session the session
+   tools; a failed, cancelled or finished builder gets nothing. The CLI shows up only in bb's generic
+   `plugin-commands` skill body. Do not add a skill, an instruction or a tool that reaches threads with
+   no session or builder.
 2. **Offers are deterministic.** No model decides an offer or writes a topic. Topics are commit
    subjects, paths and pull request titles, quoted. The exercise type is the agent's choice inside an
    accepted session.
 3. **Offers only in human threads** (`policy.ts` `isHumanThread`): top level, no lifecycle owner,
-   visible, not archived, and not started by a plugin on the never-offer list. A plugin-started thread is
+   visible, not archived, and not started by a plugin on the never-offer list. Builder threads are hidden,
+   so this refuses them already; the offer engine also ignores any thread carrying an `orientationId`
+   and, since the pre-bind window (R11), any hidden thread of this plugin (`originPluginId` is this
+   plugin and `visibility` is hidden), so a builder never opens an overlap that suppresses commit offers. A plugin-started thread is
    kept out only when it is a child (as every child is) or its plugin is listed: the `noOfferPlugins`
    setting (default `automations`, one id per line) plus this plugin, whose session threads never get
    offers whatever the setting says. A top-level thread another plugin started is the user's work: a
@@ -104,6 +110,68 @@ retrieval and Showboat are later phases.
 | `server/question.ts` | What the server checks of a question before showing it: its length and that its code blocks close |
 | `shared/answer-form.ts`, `app/answer-form.tsx` | Answer forms: the schema, its checks and limits, reading and summarising an answer; the controls in the card and the read-only view (below) |
 | `app/thread-action.ts`, `app/settings-section.tsx` | "Learning offers" in the thread menu; the never-list under settings |
+| `shared/orientation.ts`, `shared/workspace-path.ts` | The orientation summary schema and its limits; the workspace-path rules shared by server and app (no SDK root import) |
+| `server/orientation.ts`, `server/orientation-store.ts` | `OrientationService` (start, cancel, rebuild, verify, export, reconcile, builder events) and its SQLite access |
+| `server/orientation-tools.ts`, `server/orientation-verify.ts`, `server/orientation-markdown.ts`, `server/orientation-api.ts` | The builder's tools (`orient_*`) and `bb learning orient …`; verify; the showboat-format export; the orientation RPCs |
+| `app/orientation-section.tsx`, `app/orientation-tab.tsx`, `app/export-dialog.tsx` | The Learning tab's Orientation section; the walkthrough tab; the export dialog |
+| `app/scroll-within.ts`, `app/orientation-ids.ts` | Scrolling inside the walkthrough's own container; the tab id |
+| `content/orient-builder.md`, `content/orientation-session.md` | The builder's brief and the orientation session's instructions (generated into `server/content.generated.ts`) |
+
+## Orientation
+
+Orient (0.3.0) builds a repository guide with a hidden builder thread; spec:
+`docs/superpowers/specs/2026-11-07-learning-exercises-orient-design.md`. Decisions not to break (R = rulings
+made while implementing):
+
+- **Reserve, then spawn; one live build per project.** `start` reserves the row (`starting`) under the
+  project's lock before the spawn, so two starts cannot both spawn. A builder is told apart by the
+  orientation row, the plugin metadata on its thread and `originPluginId`; `bind` happens on the thread's
+  first tool call, idle or failure. A late builder thread (spawn answered after the row ended) is put away
+  on that first event. **Known gap:** an early idle or failure before a builder is bound is lost until the
+  30-minute cap ends the build.
+- **`clean` starts false** and only a fully successful `reconcile()` sets it. Until then `start` is refused
+  (R1), so a sweep can never fail this instance's own in-flight spawn. Reconcile runs **only at load and
+  from the 5-minute sweep (`*/5 * * * *`, not hourly as spec §7 first said)**, and the sweep reconciles
+  only when not clean. Reconcile keeps a builder that is active, pending or starting, or idle with a
+  current turn; any other leftover is archived. Put-away of a gone or archived builder must not make
+  reconcile unclean (R7).
+- **`finish` does not put its own builder away (R5).** It runs inside the builder's own tool call and marks
+  the row ready; stopping or archiving that thread from there may deadlock or drop the tool result. The
+  builder's next `thread.idle` puts it away (row ready, failed or cancelled and thread bound), with
+  reconcile as the fallback. `cancel`, a user action from another thread, awaits the put-away.
+- **Hidden threads of this plugin never reach the offer engine (R11)**, whether or not the row is bound
+  yet; `thread.active`, `idle` and `failed` skip them.
+- **Listings are captured by the server**, from `files.read`, at the file and line range the builder names;
+  the agent never types code. The plugin runs nothing. A file missing or unreadable is a refusal the
+  builder sees. `isNotFound` in `bb-ports.ts` is a heuristic (code `not_found`/`ENOENT` or the message);
+  bb 0.48.1's real answer is still to be confirmed.
+- **Notes refuse fenced code and image-only lines (R4)**, so the export stays showboat-verifiable: a fence
+  would be parsed as a block, a lone `![](…)` line as an image block. The test-only
+  `server/testing/showboat-grammar.ts` ports showboat's block rules and checks the exporter against them.
+- **Verify** reads each listing's file again and reports `unchanged`, `changed` or `missing`. Opening the
+  walkthrough tab verifies when the last check is more than 5 minutes old (or none); never in between.
+- **Export** writes `<path>` in the repository through `files.write`. An existing file answers
+  `{ exists: true, sha256 }` and nothing is written; the dialog then sends that sha256 back as
+  `expectedSha256` with `replace` (R6), so a file that changed during the confirmation is not overwritten.
+  Null or absent means the file must not exist.
+- **The `"spawn"` session mode.** An orientation session is a *spawned* thread (Codex forks lack plugin
+  tools) with at most 3 questions, and it does not count toward the per-thread cap of finished sessions.
+  `startSession` refuses the orientation trigger; only `startOrientationSession` makes one. **Known gap:**
+  Resume cannot recover a spawn session whose thread id never reached the store: `forkOf` cannot find a
+  spawned thread, so it is abandoned (harmless, not a recovery).
+- **Migration 0.3.0 rebuilds `sessions`** (R8, R9). SQLite cannot loosen a CHECK in place, and the new
+  `mode` values need `CHECK mode IN ('fork','here','spawn')`. The rebuild copies sessions and exercises
+  aside, drops, recreates and restores; `bb.storage.migrate` applies unapplied statements in one
+  transaction, so a crash rolls back; the columns match the 0.2.0 schema exactly. It is independent of
+  `foreign_keys` (it deletes `exercises` before dropping `sessions` rather than relying on the cascade).
+  `migration.test.ts` pins it. Never edit it after release.
+- **Mutations refuse other plugins** (`experimental_caller`); orientation RPCs answer refusals with code
+  `conflict`. The `orientation` read also returns `last` (R10): the newest failed or cancelled build when it
+  is newer than `current` and nothing is live, so the tab can show its reason and Rebuild.
+- **The builder has permission to read and edit** in the user's checkout (bb has no tool-free thread). It is
+  told not to edit, the brief treats repository text as data, and Start says so. A recorded decision.
+- **Unverified on a real bb** until the live check (Task 15): the status of a freshly spawned thread,
+  `files.read` missing-file errors, a 0.2.0 store upgrade and the dialog in the real app.
 
 ## File references
 

@@ -21,6 +21,11 @@ with a real answer card.
 - **The Learning tab.** In each thread's side panel: the offer or the session in progress, with
   Pause, Resume and Finish; start an exercise on the thread's last commit, its new files or a topic
   you type; and the project's paused and earlier sessions with your answers.
+- **Orient yourself in a project.** The Learning tab builds a guide to a repository in the background:
+  purpose, languages, stages, key files, concepts, gotchas and two exercises on the files to read first.
+  Optionally it adds a walkthrough whose code is copied from your files and can be verified later. Run
+  the exercises in a thread of their own, or export the orientation to a Markdown file in the repo. The
+  builder is a hidden agent with permission to read and edit files, told not to edit.
 - **Caps that hold.** At most 3 answered offers a day, 2 hours apart, 2 sessions per thread; Later
   snoozes a thread; three Laters in a row keep only commit and pull request offers for a week. Offers
   you leave unanswered expire without counting.
@@ -42,5 +47,7 @@ bar, to start an exercise on that thread's work by hand.
 ## Credits
 
 The exercises, the pause rule and the learning science are adapted from Dr. Cat Hicks's Learning
-Opportunities (https://github.com/DrCatHicks/learning-opportunities), CC BY 4.0. Not affiliated with
+Opportunities (https://github.com/DrCatHicks/learning-opportunities), CC BY 4.0; orientation from Dr. Michael
+Mullarkey's orient skill in the same repository (CC BY 4.0), with a walkthrough format after Simon
+Willison's showboat (https://github.com/simonw/showboat). Not affiliated with
 or endorsed by the author.
