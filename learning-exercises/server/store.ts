@@ -172,6 +172,42 @@ export const MIGRATIONS: string[] = [
   `CREATE UNIQUE INDEX orientations_one_live_per_project ON orientations(project_key)
      WHERE status IN ('starting', 'building')`,
   `CREATE INDEX orientations_builder ON orientations(builder_thread_id)`,
+  // 0.3.0: orientation sessions run in a thread of their own, mode 'spawn'. SQLite cannot loosen a CHECK in
+  // place, so `sessions` is rebuilt. Dropping it cascades away `exercises`, so both tables' rows are kept
+  // aside first (a table made by SELECT * keeps the column order) and put back after.
+  `CREATE TABLE sessions_keep AS SELECT * FROM sessions`,
+  `CREATE TABLE exercises_keep AS SELECT * FROM exercises`,
+  `DROP TABLE sessions`,
+  `CREATE TABLE sessions (
+     id TEXT PRIMARY KEY,
+     kind TEXT NOT NULL DEFAULT 'exercise',
+     mode TEXT NOT NULL CHECK (mode IN ('fork', 'here', 'spawn')),
+     state TEXT NOT NULL CHECK (state IN ('starting', 'active', 'awaiting-answer', 'paused', 'finished', 'abandoned')),
+     project_key TEXT NOT NULL,
+     project_id TEXT NOT NULL,
+     source_thread_id TEXT,
+     thread_id TEXT,
+     topic TEXT NOT NULL,
+     trigger TEXT NOT NULL,
+     refs TEXT NOT NULL,
+     offer_id TEXT,
+     pause_reason TEXT,
+     summary TEXT,
+     concepts TEXT NOT NULL DEFAULT '[]',
+     brief_version TEXT NOT NULL,
+     created_at INTEGER NOT NULL,
+     updated_at INTEGER NOT NULL,
+     finished_at INTEGER
+   )`,
+  `CREATE INDEX sessions_thread ON sessions(thread_id)`,
+  `CREATE INDEX sessions_source ON sessions(source_thread_id)`,
+  `CREATE INDEX sessions_project ON sessions(project_key, state)`,
+  `CREATE UNIQUE INDEX sessions_one_open_per_source ON sessions(source_thread_id)
+     WHERE source_thread_id IS NOT NULL AND state IN ('starting', 'active', 'awaiting-answer', 'paused')`,
+  `INSERT INTO sessions SELECT * FROM sessions_keep`,
+  `INSERT INTO exercises SELECT * FROM exercises_keep`,
+  `DROP TABLE sessions_keep`,
+  `DROP TABLE exercises_keep`,
 ];
 
 const ReplyProgressSchema = z.object({

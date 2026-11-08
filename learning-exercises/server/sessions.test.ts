@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import { DAY } from "./policy";
-import { ABANDON_AFTER_MS, SessionError, SessionService, settledRow } from "./sessions";
+import type { OrientationSummary } from "../shared/orientation";
+import { ABANDON_AFTER_MS, ORIENTATION_MAX_QUESTIONS, SessionError, SessionService, settledRow } from "./sessions";
 import { FakePorts, flush, thread } from "./testing/fake-ports";
 import { EVERY_KIND, EVERY_KIND_ANSWER } from "./testing/forms";
 import { memoryStore, settingsWith } from "./testing/store";
@@ -397,5 +398,108 @@ describe("settledRow", () => {
     // The card's workspace goes with the row, so its file references stay links in the transcript.
     const workspace = { threadId: "thr_fork1", environmentId: "env_1", rootPath: "/work/calc" };
     expect(settledRow("Q?", { action: "skip" }, workspace)).toMatchObject({ action: "skip", workspace });
+  });
+});
+
+describe("orientation sessions", () => {
+  const summary: OrientationSummary = {
+    purpose: "A calculator with a REPL.",
+    languages: ["Python"],
+    stages: ["parse", "evaluate"],
+    keyFiles: Array.from({ length: 6 }, (_, i) => ({ path: `src/f${i}.py`, does: "does", why: "why" })),
+    concepts: Array.from({ length: 3 }, (_, i) => ({ name: `C${i}`, definition: "def", where: "src/f0.py" })),
+    gotchas: ["one", "two"],
+    exercises: [
+      { file: "README.md", read: "Features", question: "Explain it." },
+      { file: "src/f0.py", read: "the top", question: "What is it for?" },
+    ],
+    sources: ["README.md"],
+  };
+  const orient = (sessions: SessionService) => sessions.startOrientationSession({ sourceThreadId: WORK, orientationId: "ori_1", summary, drift: [], projectName: "calc" });
+
+  it("starts a visible spawned thread with the session metadata, the brief agent-only and the start line", async () => {
+    const { ports, store, sessions } = setup();
+    const started = await orient(sessions);
+    expect(ports.spawned).toHaveLength(1);
+    expect(ports.spawned[0]).toMatchObject({
+      projectId: "proj_1",
+      environmentId: "env_1",
+      title: "Orientation: calc",
+      hidden: false,
+      metadata: { session: started.sessionId },
+    });
+    expect(ports.spawned[0]!.visible).toMatch(/^Learning exercise on Orientation: calc/);
+    expect(ports.spawned[0]!.agentOnly).toContain("learning_ask");
+    expect(ports.sends).toEqual([]);
+    expect(store.session(started.sessionId)).toMatchObject({ state: "active", mode: "spawn", trigger: "orientation", threadId: started.threadId, sourceThreadId: WORK, topic: "Orientation: calc" });
+    expect(store.session(started.sessionId)?.refs.paths).toEqual(["README.md", "src/f0.py"]);
+  });
+
+  it("refuses the 4th question", async () => {
+    const { ports, sessions } = setup();
+    const { threadId } = await orient(sessions);
+    for (let i = 0; i < ORIENTATION_MAX_QUESTIONS; i++) {
+      const reply = sessions.ask(threadId, ASK, "tool");
+      await flush();
+      ports.answer({ action: "skip" });
+      await reply;
+    }
+    await expect(sessions.ask(threadId, ASK, "tool")).rejects.toThrow("asked its 3 questions");
+  });
+
+  it("starts even when the source thread already has the cap of finished sessions, and does not count", async () => {
+    const { start, ports, store, sessions } = setup({ sessionLocation: "here" });
+    for (let i = 0; i < 2; i++) {
+      const { threadId } = await start();
+      await sessions.finishFromAgent(threadId, { summary: null, concepts: [] });
+    }
+    expect(store.finishedSessionsFrom(WORK)).toBe(2);
+    const started = await orient(sessions);
+    expect(ports.spawned).toHaveLength(1);
+    await sessions.finishFromAgent(started.threadId, { summary: null, concepts: [] });
+    expect(store.finishedSessionsFrom(WORK)).toBe(2);
+  });
+
+  it("refuses a second one while one is open, with the existing message", async () => {
+    const { sessions, ports } = setup();
+    await orient(sessions);
+    await expect(orient(sessions)).rejects.toThrow("already open");
+    expect(ports.spawned).toHaveLength(1);
+  });
+
+  it("refuses a source thread without an environment", async () => {
+    const { sessions, ports } = setup();
+    ports.threads.set(WORK, thread({ id: WORK, environmentId: null }));
+    await expect(orient(sessions)).rejects.toBeInstanceOf(SessionError);
+    expect(ports.spawned).toEqual([]);
+  });
+
+  it("a failed spawn leaves no session row", async () => {
+    const { sessions, ports, store } = setup();
+    ports.spawnFails = true;
+    await expect(orient(sessions)).rejects.toThrow("Could not start the session");
+    expect(store.openSessionFrom(WORK)).toBeNull();
+    // Nothing blocks a retry.
+    ports.spawnFails = false;
+    await orient(sessions);
+  });
+
+  it("resume unarchives the archived session thread", async () => {
+    const { sessions, ports, store } = setup();
+    const { sessionId, threadId } = await orient(sessions);
+    sessions.pause(sessionId, "archived");
+    ports.threads.set(threadId, { ...ports.threads.get(threadId)!, archivedAt: 5 });
+    await sessions.resume(sessionId);
+    expect(ports.unarchived).toContain(threadId);
+    expect(store.session(sessionId)?.state).toBe("active");
+  });
+
+  it("an unbound spawn session binds itself to the thread its metadata names", async () => {
+    const { sessions, ports, store } = setup();
+    const lost = store.createSession({ mode: "spawn", projectKey: "k", projectId: "proj_1", sourceThreadId: WORK, topic: "Orientation: calc", trigger: "orientation", refs: {}, offerId: null, briefVersion: "v", now: 1 });
+    ports.threads.set("thr_x", thread({ id: "thr_x" }));
+    ports.metadata.set("thr_x", lost.id);
+    expect((await sessions.sessionIn("thr_x"))?.id).toBe(lost.id);
+    expect(store.session(lost.id)?.threadId).toBe("thr_x");
   });
 });

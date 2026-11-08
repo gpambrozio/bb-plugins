@@ -241,7 +241,7 @@ export function builderStartLine(projectName: string, depth: OrientationDepth): 
 }
 
 /** The questions an orientation session may ask: two exercises and the closing question. */
-const ORIENTATION_MAX_QUESTIONS = 3;
+export const ORIENTATION_MAX_QUESTIONS = 3;
 
 /** The brief for a session that runs an orientation's exercises (a fork's agent-only seed). */
 export function buildOrientationSessionBrief(input: {

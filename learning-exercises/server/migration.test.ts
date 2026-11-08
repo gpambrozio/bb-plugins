@@ -175,3 +175,21 @@ describe("upgrading from 0.1.0: the answered-offer history", () => {
     expect(new LearningStore(empty).global(NOW).answeredAt).toEqual([]);
   });
 });
+
+describe("the orientation migration rebuilds sessions", () => {
+  it("keeps sessions, exercises and the one-open index, and accepts mode spawn", () => {
+    const { bb } = createFakePluginHost({ pluginId: "learning-exercises" });
+    const db = bb.storage.database();
+    bb.storage.migrate(db, MIGRATIONS.slice(0, MIGRATIONS.length - 12));
+    insertSession(db, "ses_a", "paused", 10);
+    answer(db, "ses_a", 1, "kept");
+    bb.storage.migrate(db, MIGRATIONS);
+    const store = new LearningStore(db);
+    expect(store.session("ses_a")?.state).toBe("paused");
+    expect(store.exercises("ses_a")[0]?.answer).toBe("kept");
+    expect(() => insertSession(db, "ses_b", "paused", 20)).toThrow(/UNIQUE/);
+    db.prepare(`UPDATE sessions SET mode = 'spawn' WHERE id = 'ses_a'`).run();
+    expect(store.session("ses_a")?.mode).toBe("spawn");
+    expect(db.prepare(`SELECT name FROM sqlite_master WHERE name LIKE '%_keep'`).all()).toEqual([]);
+  });
+});
