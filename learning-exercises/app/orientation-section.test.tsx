@@ -120,6 +120,25 @@ describe("the Orientation section", () => {
     await waitFor(() => expect(slot.rpcCalls.find((c) => c.method === "startOrientation")?.input).toEqual({ threadId: WORK, depth: "walkthrough" }));
   });
 
+  it("ready: each fold is a button with a chevron on its right that flips as it opens and closes", async () => {
+    render({ current: orientation() });
+    await screen.findByText("A calculator library.");
+    for (const title of ["Languages", "Stages", "Key files", "Concepts", "Gotchas"]) {
+      const fold = screen.getByRole("button", { name: title });
+      expect(fold.tagName).toBe("BUTTON");
+      const chevron = () => fold.lastElementChild;
+      expect(fold.getAttribute("aria-expanded")).toBe("false");
+      expect(chevron()?.getAttribute("data-icon")).toBe("ChevronDown");
+      expect(chevron()?.getAttribute("class")).toBe("size-4 shrink-0 text-muted-foreground");
+      fireEvent.click(fold);
+      expect(fold.getAttribute("aria-expanded")).toBe("true");
+      expect(chevron()?.getAttribute("data-icon")).toBe("ChevronUp");
+      fireEvent.click(fold);
+      expect(fold.getAttribute("aria-expanded")).toBe("false");
+      expect(chevron()?.getAttribute("data-icon")).toBe("ChevronDown");
+    }
+  });
+
   it("ready: Verify's toast says when no listing could be checked, rather than that none drifted", async () => {
     const said = vi.mocked(toast);
     said.mockClear();

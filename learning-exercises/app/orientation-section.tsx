@@ -35,13 +35,14 @@ function minutesSince(at: number): number {
   return Math.max(0, Math.floor((Date.now() - at) / 60_000));
 }
 
-/** A folded part of the summary, opened by its heading. */
+/** A folded part of the summary, opened by its heading; a chevron after the heading shows which way it will go. */
 function Fold(props: { title: string; children: ReactNode }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="flex flex-col gap-1">
       <Button type="button" size="sm" variant="ghost" className="self-start" aria-expanded={open} onClick={() => setOpen((current) => !current)}>
         {props.title}
+        <Icon name={open ? "ChevronUp" : "ChevronDown"} className="size-4 shrink-0 text-muted-foreground" />
       </Button>
       {open && <div className="flex flex-col gap-1 pl-2 text-xs">{props.children}</div>}
     </div>
