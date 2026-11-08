@@ -432,9 +432,10 @@ export function bbPorts(bb: BbPluginApi, changed: () => void): Ports {
 
     async pluginThreadsWith(metadataKey) {
       // `originPluginId` filters on the server; hidden threads (the helpers) are listed only with
-      // `includeHidden`. Callers only put leftovers away, so one page of the newest 200 is enough.
+      // `includeHidden`, and `archived: false` keeps the builders already put away from filling the page.
+      // Callers only put leftovers away, so one page of the newest 200 is enough.
       try {
-        const rows = await sdk().threads.list({ originPluginId: PLUGIN_ID, includeHidden: true, limit: THREAD_LIST_LIMIT });
+        const rows = await sdk().threads.list({ originPluginId: PLUGIN_ID, includeHidden: true, archived: false, limit: THREAD_LIST_LIMIT });
         if (rows.length === 0) return [];
         const { threads } = await sdk().threads.experimental_listPluginMetadata({ threadIds: rows.map((row) => row.id).slice(0, THREAD_LIST_LIMIT) });
         const byId = new Map(rows.map((row) => [row.id, row]));

@@ -226,7 +226,7 @@ describe("pluginThreadsWith and metadataValue", () => {
       { threadId: "thr_a", value: "o1", archived: false, status: "running" },
       { threadId: "thr_b", value: "o2", archived: true, status: "idle" },
     ]);
-    expect(listed).toEqual([{ originPluginId: "learning-exercises", includeHidden: true, limit: 200 }]);
+    expect(listed).toEqual([{ originPluginId: "learning-exercises", includeHidden: true, archived: false, limit: 200 }]);
   });
 
   it("answers null when listing or reading metadata fails", async () => {

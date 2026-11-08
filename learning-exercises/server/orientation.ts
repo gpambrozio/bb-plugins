@@ -17,11 +17,23 @@
  * lands on a row that left `starting`/`building` meanwhile (the store's `updated_at` drives the purge of
  * old failed rows, so a terminal row is never touched). Cancel puts the builder away (stopped, then
  * archived), logging errors rather than throwing them into the user's action. Finish does not: it runs
- * inside the builder's own tool call, so the builder is put away once it goes idle, or by the sweep. After `dispose()` no
- * continuation of this copy touches the store (`alive()`).
+ * inside the builder's own tool call, so the builder is put away once it goes idle (`onIdle`), or by a
+ * reconcile. After `dispose()` no continuation of this copy touches the store (`alive()`).
  *
- * Reload safety (finding builders a reload interrupted) is `reconcile`, added beside this; until it has
- * run, `clean` keeps starts refused.
+ * The builder's lifecycle (§7). Its first idle gets one reminder (a visible line and an agent-only part,
+ * invariant 6), its second fails the row, and a failed turn fails it at once (`onIdle`, `onFailed`). The
+ * sweep cancels builds older than 30 minutes and purges failed and cancelled rows after 7 days. Every path
+ * that ends a row takes the orientation's lock, as the builder's writes do, so nothing writes to a row
+ * once it has ended (a write would bump its `updated_at` and put off its purge).
+ *
+ * Reload safety fails closed: `clean` starts false, and only a reconcile that read and settled everything
+ * sets it, so no start is allowed before the load-time check. `reconcile` keeps a live row whose builder
+ * is working, binds a `starting` row to the thread bb made for it (found by its metadata) when that thread
+ * works, fails the rest ("Interrupted by a reload.") and puts their threads away, then archives every
+ * thread of this plugin whose orientation id no live row has it building (finished builders among them).
+ * A `starting` row with no thread yet is failed but leaves `clean` false: a spawn the old copy sent may
+ * still answer, and the next sweep's reconcile archives that thread. Reconcile runs only at load and from
+ * sweeps while `clean` is false, when starts are refused, so it never meets a spawn of its own copy.
  */
 import { LIVE_ORIENTATION_STATUSES, ORIENT_LIMITS, OrientationSummarySchema, parseLineRange, type OrientationDepth, type OrientationStatus } from "../shared/orientation";
 import { PLUGIN_ID } from "../shared/types";
@@ -31,7 +43,7 @@ import { renderOrientationMarkdown } from "./orientation-markdown";
 import type { BlockRow, OrientationRow, OrientationStore } from "./orientation-store";
 import { checkListing, sha256, sliceLines } from "./orientation-verify";
 import { canStartByHand, projectKey } from "./policy";
-import { FileConflict, type FileRead, type FileRoot, type Ports } from "./ports";
+import { FileConflict, type FileRead, type FileRoot, type PluginThread, type Ports } from "./ports";
 import type { LearningSettings } from "./settings";
 import { newId } from "./store";
 
@@ -50,6 +62,16 @@ const SUMMARY_ONLY =
 const FENCE = /^\s{0,3}(`{3,}|~{3,})/m;
 /** A line that is only a Markdown image, which showboat would read as an image block on export. */
 const IMAGE_LINE = /^\s*!\[[^\]]*\]\([^)]*\)\s*$/m;
+/** The thread statuses of a builder at work: bb runs, queues or starts its turn. */
+const WORKING = new Set(["active", "pending", "starting"]);
+const INTERRUPTED = "Interrupted by a reload.";
+const REMINDER = "Reminder: finish the orientation.";
+const REMINDER_AGENT =
+  "You stopped without finishing the orientation. Call orient_finish now, or fix what it refused and call it again. Do not edit files. If you stop again without finishing, the build fails.";
+/** A build still live after this long is cancelled by the sweep. */
+const BUILD_CAP_MS = 30 * 60_000;
+/** Failed and cancelled rows are purged this long after they last changed. */
+const PURGE_AFTER_MS = 7 * 24 * 60 * 60_000;
 /** A listing named in prose, as the finish check and the reader's links read it. */
 const LISTING_REF = /\bListing (\d+)\b/g;
 
@@ -124,8 +146,10 @@ function oneLine(value: string, what: string, max: number): string {
 export class OrientationService {
   /** Set when this copy of the plugin goes: its store and its `bb` handle are closed from then on. */
   private disposed = false;
-  /** False while builders an earlier copy left may still be running; starts are refused meanwhile. */
-  private clean = true;
+  /** False until a reconcile has settled what an earlier copy left; starts are refused meanwhile. */
+  private isClean = false;
+  /** The reconcile under way, so a sweep does not start a second one beside it. */
+  private reconciling: Promise<void> | null = null;
   /** The tail of each key's queue (`exclusive`). */
   private readonly locks = new Map<string, Promise<unknown>>();
 
@@ -175,7 +199,7 @@ export class OrientationService {
     const key = projectKey(project ?? { id: source.projectId, gitRemoteUrl: null });
     const projectName = project?.name ?? source.projectId;
     return this.exclusive(`orient:${key}`, async () => {
-      if (!this.clean) throw new OrientationError("Cleaning up an earlier build; try again shortly.");
+      if (!this.isClean) throw new OrientationError("Cleaning up an earlier build; try again shortly.");
       if (!canStartByHand(source)) throw new OrientationError("Orientations start only from a thread you can see, and never from one of this plugin's own threads.");
       const environmentId = source.environmentId;
       if (environmentId === null) throw new OrientationError("This thread has no checkout to orient in.");
@@ -541,20 +565,217 @@ export class OrientationService {
 
   // ── putting a builder away ────────────────────────────────────────────────
 
-  /** Stops the thread, then archives it whatever the stop did; failures are logged, never thrown. */
-  private async putAway(threadId: string | null): Promise<void> {
-    if (threadId === null) return;
+  /**
+   * Stops the thread, then archives it whatever the stop did; failures are logged, never thrown. True
+   * when the thread is archived (or there is none), so a reconcile knows whether it is done.
+   */
+  private async putAway(threadId: string | null): Promise<boolean> {
+    if (threadId === null) return true;
     try {
       await this.ports.stopThread(threadId);
     } catch (error) {
       this.warn(`Could not stop orientation builder ${threadId}: ${errorText(error)}`);
-    } finally {
-      try {
-        await this.ports.archiveThread(threadId);
-      } catch (error) {
-        this.warn(`Could not archive orientation builder ${threadId}: ${errorText(error)}`);
-      }
     }
+    try {
+      await this.ports.archiveThread(threadId);
+      return true;
+    } catch (error) {
+      this.warn(`Could not archive orientation builder ${threadId}: ${errorText(error)}`);
+      return false;
+    }
+  }
+
+  // ── the builder's lifecycle ───────────────────────────────────────────────
+
+  /** Whether `threadId` builds (or built) an orientation in the store. */
+  isBuilderThread(threadId: string): boolean {
+    return this.store.byBuilder(threadId) !== null;
+  }
+
+  /** `thread.idle` of a thread: the first idle of a builder reminds it, the second fails the build. */
+  onIdle(threadId: string): Promise<void> {
+    return this.settleBuilder(threadId, async (row) => {
+      if (this.store.markReminded(row.id, this.ports.now())) {
+        try {
+          await this.ports.send(threadId, REMINDER, REMINDER_AGENT);
+        } catch (error) {
+          // It stays building, and the cap ends it if nothing else does.
+          this.warn(`Could not remind orientation builder ${threadId}: ${errorText(error)}`);
+        }
+        return;
+      }
+      await this.failBuild(row.id, threadId, "The builder stopped before finishing.");
+    });
+  }
+
+  /** `thread.failed` of a thread: a builder's failed turn fails the build at once. */
+  onFailed(threadId: string): Promise<void> {
+    return this.settleBuilder(threadId, (row) => this.failBuild(row.id, threadId, "The builder's turn failed."));
+  }
+
+  /**
+   * Runs `whileBuilding` under the orientation's lock when `threadId` is the builder of a `building` row.
+   * A builder whose row has ended (finish leaves it running) is put away instead, unless it already is.
+   * Never rejects: it runs from bb's events.
+   */
+  private async settleBuilder(threadId: string, whileBuilding: (row: OrientationRow) => Promise<void>): Promise<void> {
+    if (this.disposed) return;
+    const found = this.store.byBuilder(threadId);
+    if (found === null) return;
+    try {
+      await this.exclusive(`orientation:${found.id}`, async () => {
+        if (this.disposed) return;
+        const row = this.store.get(found.id);
+        if (row === null || row.builderThreadId !== threadId) return;
+        if (row.status === "building") return whileBuilding(row);
+        if (isLive(row.status)) return;
+        const info = await this.ports.thread(threadId);
+        if (this.disposed || info === null || info.archivedAt !== null) return;
+        await this.putAway(threadId);
+      });
+    } catch (error) {
+      this.warn(`Handling orientation builder ${threadId} failed: ${errorText(error)}`);
+    }
+  }
+
+  /** Fails a `building` row with `message` and puts its builder away. Runs under the orientation's lock. */
+  private async failBuild(id: string, threadId: string, message: string): Promise<void> {
+    if (!this.store.transition(id, ["building"], "failed", this.ports.now(), message)) return;
+    this.ports.changed();
+    await this.putAway(threadId);
+  }
+
+  /**
+   * Run every 5 minutes: cancels builds older than 30 minutes and puts their builders away, purges failed
+   * and cancelled rows older than 7 days, and reconciles again while the plugin is not clean. Never rejects.
+   */
+  async sweep(): Promise<void> {
+    try {
+      const now = this.ports.now();
+      for (const { id, createdAt } of this.store.allLive()) {
+        if (this.disposed) return;
+        if (now - createdAt <= BUILD_CAP_MS) continue;
+        await this.exclusive(`orientation:${id}`, async () => {
+          if (this.disposed) return;
+          const row = this.store.get(id);
+          if (row === null || !this.store.transition(id, ["starting", "building"], "cancelled", this.ports.now(), "Took longer than 30 minutes.")) return;
+          this.ports.changed();
+          await this.putAway(row.builderThreadId);
+        });
+      }
+      if (this.disposed) return;
+      if (this.store.purge(now - PURGE_AFTER_MS) > 0) this.ports.changed();
+      if (!this.isClean) await this.reconcile();
+    } catch (error) {
+      this.warn(`The orientation sweep failed: ${errorText(error)}`);
+    }
+  }
+
+  // ── reload safety ─────────────────────────────────────────────────────────
+
+  /** Whether starts are allowed: a reconcile has settled every builder an earlier copy left. */
+  get clean(): boolean {
+    return this.isClean;
+  }
+
+  /**
+   * Settles what an earlier copy of the plugin left (see the module header). `clean` becomes true only
+   * when every read and every archive succeeded; otherwise it is false and the reason is logged. Never
+   * rejects, and writes nothing once this copy is disposed.
+   */
+  reconcile(): Promise<void> {
+    if (this.reconciling !== null) return this.reconciling;
+    const run = this.reconcileOnce().finally(() => {
+      this.reconciling = null;
+    });
+    this.reconciling = run;
+    return run;
+  }
+
+  private async reconcileOnce(): Promise<void> {
+    try {
+      if (this.disposed) return;
+      const listed = await this.ports.pluginThreadsWith(ORIENTATION_METADATA_KEY);
+      if (this.disposed) return;
+      if (listed === null) {
+        this.isClean = false;
+        this.warn("Could not list this plugin's threads to find orientation builders an earlier copy left; orientations stay refused until a sweep can.");
+        return;
+      }
+      // bb's port lists unarchived threads only; the flag is checked as well, so none is archived twice.
+      const threads = listed.filter((entry) => !entry.archived);
+      const handled = new Set<string>();
+      let complete = true;
+      for (const { id } of this.store.allLive()) {
+        const settled = await this.exclusive(`orientation:${id}`, () => this.reconcileRow(id, threads, handled));
+        if (this.disposed) return;
+        if (!settled) complete = false;
+      }
+      for (const entry of threads) {
+        if (handled.has(entry.threadId)) continue;
+        const settled = await this.exclusive(`orientation:${entry.value}`, () => this.reconcileThread(entry.threadId, entry.value));
+        if (this.disposed) return;
+        if (!settled) complete = false;
+      }
+      this.isClean = complete;
+      if (!complete) this.warn("Some orientation builders an earlier copy left are not settled yet; orientations stay refused until a sweep settles them.");
+    } catch (error) {
+      if (this.disposed) return;
+      this.isClean = false;
+      this.warn(`Reconciling orientation builders failed: ${errorText(error)}`);
+    }
+  }
+
+  /**
+   * One live row, under its lock: kept (and bound, when bb made its thread but no copy bound it) while its
+   * builder works, otherwise failed and its thread put away. False when it is not settled yet.
+   */
+  private async reconcileRow(id: string, threads: readonly PluginThread[], handled: Set<string>): Promise<boolean> {
+    if (this.disposed) return true;
+    const row = this.store.get(id);
+    if (row === null || !isLive(row.status)) return true;
+    const threadId = row.builderThreadId ?? threads.find((entry) => entry.value === id)?.threadId ?? null;
+    if (threadId === null) {
+      // Its copy is gone and bb has no thread for it yet; a spawn still on its way leaves one behind for
+      // the next reconcile to archive, so this one does not count as clean.
+      if (this.store.transition(id, ["starting", "building"], "failed", this.ports.now(), INTERRUPTED)) this.ports.changed();
+      return false;
+    }
+    handled.add(threadId);
+    const working = await this.isWorking(threadId);
+    if (this.disposed) return true;
+    const current = this.store.get(id);
+    if (current === null || !isLive(current.status)) return true;
+    if (working) {
+      if (current.builderThreadId === null && this.store.bindBuilder(id, threadId, this.ports.now())) {
+        this.store.transition(id, ["starting"], "building", this.ports.now());
+        this.ports.changed();
+      }
+      return true;
+    }
+    if (this.store.transition(id, ["starting", "building"], "failed", this.ports.now(), INTERRUPTED)) this.ports.changed();
+    return this.putAway(threadId);
+  }
+
+  /**
+   * A builder at work: its thread is there, not archived, and running a turn, or idle after one (between
+   * turns, its idle handled by whichever copy heard it; the cap bounds it). Idle with no turn ever started,
+   * errored, stopping, archived or gone is not.
+   */
+  private async isWorking(threadId: string): Promise<boolean> {
+    const info = await this.ports.thread(threadId);
+    if (this.disposed || info === null || info.archivedAt !== null) return false;
+    if (WORKING.has(info.status)) return true;
+    if (info.status !== "idle") return false;
+    return (await this.ports.currentTurn(threadId)) !== null;
+  }
+
+  /** One of this plugin's threads with an orientation id, under that id's lock: archived unless a live row has it building. */
+  private async reconcileThread(threadId: string, orientationId: string): Promise<boolean> {
+    if (this.disposed) return true;
+    const row = this.store.get(orientationId);
+    if (row !== null && isLive(row.status) && row.builderThreadId === threadId) return true;
+    return this.putAway(threadId);
   }
 
   /** Nothing in this copy touches the store afterwards. */

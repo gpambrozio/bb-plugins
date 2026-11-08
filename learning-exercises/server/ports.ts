@@ -164,7 +164,10 @@ export interface Ports {
   stopThread(threadId: string): Promise<void>;
   /** Archives a thread; throws on failure. */
   archiveThread(threadId: string): Promise<void>;
-  /** This plugin's (unarchived) threads whose metadata holds `metadataKey`; null when either read fails. */
+  /**
+   * This plugin's unarchived threads whose metadata holds `metadataKey`; null when either read fails.
+   * Each carries bb's `archived` flag as well, which callers check before archiving.
+   */
   pluginThreadsWith(metadataKey: string): Promise<PluginThread[] | null>;
   /** One string value of a thread's plugin metadata; null when absent, not a string or unreadable. */
   metadataValue(threadId: string, key: string): Promise<string | null>;

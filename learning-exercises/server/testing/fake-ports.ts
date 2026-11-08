@@ -71,6 +71,8 @@ export class FakePorts implements Ports {
   threadMetadata = new Map<string, Record<string, string>>();
   spawned: SpawnRequest[] = [];
   spawnFails = false;
+  /** Runs before bb made the thread: a reload that lands while the spawn request is still on its way. */
+  beforeSpawn: (() => Promise<void>) | null = null;
   /** Runs after bb made the thread but before `spawn` answers. */
   duringSpawn: ((threadId: string) => Promise<void>) | null = null;
   stopped: string[] = [];
@@ -90,7 +92,10 @@ export class FakePorts implements Ports {
   afterRead: ((key: string) => void) | null = null;
   /** Every `writeFile`, in order. */
   writes: { root: FileRoot; path: string; content: string; expectedSha256: string | null }[] = [];
-  /** `pluginThreadsWith` answers null, as when bb cannot list. */
+  /**
+   * `pluginThreadsWith` answers null, as when bb cannot list. Unlike bb's port (which asks for unarchived
+   * threads only), the fake lists archived ones too, flagged, so the callers' own check is exercised.
+   */
   pluginThreadsUnreadable = false;
   private nextSpawn = 1;
   forks: ForkRequest[] = [];
@@ -219,6 +224,7 @@ export class FakePorts implements Ports {
   }
 
   async spawn(request: SpawnRequest) {
+    if (this.beforeSpawn !== null) await this.beforeSpawn();
     if (this.spawnFails) throw new Error("spawn refused");
     this.spawned.push(request);
     const id = `thr_spawn${this.nextSpawn++}`;

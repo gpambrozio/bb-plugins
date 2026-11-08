@@ -26,18 +26,20 @@ const SUMMARY: OrientationSummary = {
   sources: ["README.md"],
 };
 
-function setup() {
+/** A service over a fresh store, reconciled as the plugin does at load, so starts are allowed. */
+async function setup() {
   const ports = new FakePorts();
   ports.threads.set(SOURCE, thread({ id: SOURCE }));
   ports.files.set(RETRY, RETRY_TEXT);
   const { orientations } = memoryOrientationStore();
   const service = new OrientationService(ports, orientations, () => settingsWith());
+  await service.reconcile();
   return { ports, store: orientations, service };
 }
 
 /** A build started and bound to `BUILDER`. */
 async function building(depth: OrientationDepth = "walkthrough") {
-  const context = setup();
+  const context = await setup();
   const { orientationId } = await context.service.start({ sourceThreadId: SOURCE, depth });
   return { ...context, id: orientationId };
 }
@@ -80,7 +82,7 @@ describe("starting a build", () => {
   });
 
   it("leaves the row failed with the message when the spawn fails, and allows a new start", async () => {
-    const { ports, store, service } = setup();
+    const { ports, store, service } = await setup();
     ports.spawnFails = true;
     let failedId = "";
     const create = store.create.bind(store);
@@ -99,21 +101,38 @@ describe("starting a build", () => {
     expect(store.get(orientationId)?.status).toBe("building");
   });
 
-  it("refuses a hidden or plugin thread, a thread with no environment, and starts before the plugin is clean", async () => {
-    const { ports, service } = setup();
+  it("refuses a hidden or plugin thread and a thread with no environment", async () => {
+    const { ports, service } = await setup();
     ports.threads.set("thr_hidden", thread({ id: "thr_hidden", visibility: "hidden" }));
     ports.threads.set("thr_mine", thread({ id: "thr_mine", originPluginId: "learning-exercises" }));
     ports.threads.set("thr_noenv", thread({ id: "thr_noenv", environmentId: null }));
     for (const sourceThreadId of ["thr_hidden", "thr_mine", "thr_noenv", "thr_gone"]) {
       await expect(service.start({ sourceThreadId, depth: "summary" })).rejects.toBeInstanceOf(OrientationError);
     }
-    (service as unknown as { clean: boolean }).clean = false;
-    await expect(service.start({ sourceThreadId: SOURCE, depth: "summary" })).rejects.toThrow("Cleaning up an earlier build; try again shortly.");
     expect(ports.spawned).toEqual([]);
   });
 
+  it("refuses every start until a reconcile has read this plugin's threads", async () => {
+    const ports = new FakePorts();
+    ports.threads.set(SOURCE, thread({ id: SOURCE }));
+    const { orientations } = memoryOrientationStore();
+    const service = new OrientationService(ports, orientations, () => settingsWith());
+    expect(service.clean).toBe(false);
+    await expect(service.start({ sourceThreadId: SOURCE, depth: "summary" })).rejects.toThrow("Cleaning up an earlier build; try again shortly.");
+    ports.pluginThreadsUnreadable = true;
+    await service.reconcile();
+    expect(service.clean).toBe(false);
+    await expect(service.start({ sourceThreadId: SOURCE, depth: "summary" })).rejects.toThrow("Cleaning up an earlier build; try again shortly.");
+    expect(ports.spawned).toEqual([]);
+    ports.pluginThreadsUnreadable = false;
+    await service.reconcile();
+    expect(service.clean).toBe(true);
+    await service.start({ sourceThreadId: SOURCE, depth: "summary" });
+    expect(ports.spawned).toHaveLength(1);
+  });
+
   it("puts the new thread away when the build was cancelled while bb spawned it", async () => {
-    const { ports, store, service } = setup();
+    const { ports, store, service } = await setup();
     let id = "";
     ports.duringSpawn = async () => {
       id = store.allLive()[0]!.id;
@@ -126,7 +145,7 @@ describe("starting a build", () => {
   });
 
   it("writes nothing after it was disposed while bb spawned the builder", async () => {
-    const { ports, store, service } = setup();
+    const { ports, store, service } = await setup();
     ports.duringSpawn = async () => service.dispose();
     await expect(service.start({ sourceThreadId: SOURCE, depth: "summary" })).rejects.toThrow("reloaded");
     expect(store.allLive()[0]).toMatchObject({ status: "starting", builderThreadId: null });
@@ -135,7 +154,7 @@ describe("starting a build", () => {
 
 describe("who is the builder", () => {
   it("binds an unbound thread only when its metadata names the row and this plugin started it", async () => {
-    const { ports, store, service } = setup();
+    const { ports, store, service } = await setup();
     let id = "";
     const results: string[] = [];
     ports.duringSpawn = async (threadId) => {
