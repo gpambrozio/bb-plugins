@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import plugin from "./server";
 import { BRIEF_CORE } from "./server/content";
 import { listEvents, type EventListInput, type LogRow } from "./server/testing/event-log";
+import { ORIENT_TOOL_NAMES } from "./server/orientation-tools";
 import { TOOL_NAMES } from "./server/tools";
 import type { ThreadView } from "./shared/types";
 
@@ -65,7 +66,8 @@ describe("zero context until a session starts", () => {
   it("ships no skills and contributes no instructions", async () => {
     const { harness } = await setup();
     expect(harness.registrations.instructionProvider).toBeNull();
-    expect(harness.registrations.agentTools.map((tool) => tool.name).sort()).toEqual([...TOOL_NAMES].sort());
+    // The orient tools are registered but granted to no thread until the builder is configured.
+    expect(harness.registrations.agentTools.map((tool) => tool.name).sort()).toEqual([...TOOL_NAMES, ...ORIENT_TOOL_NAMES].sort());
     const plain = await harness.resolveAgentConfiguration(makePluginAgentConfigurationContext({ thread: { id: WORK } }));
     expect(plain).toEqual({ tools: [], skills: [], instructions: null });
   });

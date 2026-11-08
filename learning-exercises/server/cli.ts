@@ -17,6 +17,7 @@ import { PluginCliError, cliCommand, defineCli, type PluginCliRegistration } fro
 
 import { EXERCISE_TYPES, VERDICTS, type ExerciseType, type Verdict } from "../shared/types";
 import { PRINCIPLES } from "./content";
+import { OrientationError, type OrientationService } from "./orientation";
 import { SessionError, type SessionService } from "./sessions";
 
 /** The longest question, in UTF-8 bytes; its base64 still fits bb's one 16 KiB stdin line. */
@@ -94,11 +95,38 @@ async function guarded(work: () => Promise<string>): Promise<{ exitCode: number;
     return { exitCode: 0, stdout: `${await work()}\n` };
   } catch (error) {
     if (error instanceof SessionError) throw new PluginCliError(error.message, { code: "session_refused" });
+    if (error instanceof OrientationError) throw new PluginCliError(error.message, { code: "orientation_refused" });
     throw error;
   }
 }
 
-export function learningCli(sessions: SessionService): PluginCliRegistration {
+/** The orient commands' byte caps: title, markdown, caption and summary JSON, before base64. */
+export const ORIENT_TITLE_MAX_BYTES = 1_000;
+export const ORIENT_MARKDOWN_MAX_BYTES = 8_000;
+export const ORIENT_CAPTION_MAX_BYTES = 1_000;
+export const ORIENT_SUMMARY_MAX_BYTES = 32_000;
+
+function decodeOrientText(encoded: string, name: string, maxBytes: number): string {
+  return decodeBase64Text(encoded, {
+    name,
+    option: `--${name}-base64`,
+    maxBytes,
+    tooLong: `${name}_too_long`,
+    hint: `Pipe the ${name} through \`base64 | tr -d '\\n'\` into --${name}-base64-stdin.`,
+  });
+}
+
+/** The summary's JSON, from base64; its content is checked by the service. */
+export function decodeOrientSummary(encoded: string): unknown {
+  const text = decodeOrientText(encoded, "summary", ORIENT_SUMMARY_MAX_BYTES);
+  try {
+    return JSON.parse(text) as unknown;
+  } catch (error) {
+    throw new PluginCliError(`--summary-base64 is not JSON: ${error instanceof Error ? error.message : String(error)}`, { code: "invalid_value" });
+  }
+}
+
+export function learningCli(sessions: SessionService, orientations: OrientationService): PluginCliRegistration {
   return defineCli({
     name: "learning",
     summary: "Learning Exercises session commands (only inside a learning session)",
@@ -168,6 +196,51 @@ export function learningCli(sessions: SessionService): PluginCliRegistration {
         },
         run: (input, ctx) =>
           guarded(() => sessions.finishFromAgent(callerThread(ctx.threadId), { summary: input.options.summary?.slice(0, 1000) ?? null, concepts: input.options.concept ?? [] })),
+      }),
+      "orient chapter": cliCommand({
+        summary: "Start a new chapter of the orientation walkthrough (builder only)",
+        options: {
+          "title-base64": { type: "string", required: true, stdin: true, description: `The title as base64 of UTF-8 text, at most ${ORIENT_TITLE_MAX_BYTES} bytes decoded; pass it with --title-base64-stdin`, placeholder: "base64" },
+        },
+        run: (input, ctx) => guarded(() => orientations.chapter(callerThread(ctx.threadId), decodeOrientText(input.options["title-base64"], "title", ORIENT_TITLE_MAX_BYTES))),
+      }),
+      "orient note": cliCommand({
+        summary: "Add a Markdown note, without fenced code or an image-only line (builder only)",
+        options: {
+          "markdown-base64": { type: "string", required: true, stdin: true, description: `The note as base64 of UTF-8 Markdown, at most ${ORIENT_MARKDOWN_MAX_BYTES} bytes decoded; pass it with --markdown-base64-stdin`, placeholder: "base64" },
+        },
+        run: (input, ctx) => guarded(() => orientations.note(callerThread(ctx.threadId), decodeOrientText(input.options["markdown-base64"], "markdown", ORIENT_MARKDOWN_MAX_BYTES))),
+      }),
+      "orient listing": cliCommand({
+        summary: "Add a listing; the plugin captures the code from the file, never paste it (builder only)",
+        options: {
+          path: { type: "string", required: true, description: "Workspace-relative path of the file", placeholder: "path" },
+          lines: { type: "string", required: true, description: 'The lines to show, "40-72" or "40"', placeholder: "A-B" },
+          "caption-base64": { type: "string", required: true, stdin: true, description: `The caption as base64 of UTF-8 text, at most ${ORIENT_CAPTION_MAX_BYTES} bytes decoded; pass it with --caption-base64-stdin`, placeholder: "base64" },
+        },
+        run: (input, ctx) =>
+          guarded(() =>
+            orientations.listing(callerThread(ctx.threadId), {
+              path: input.options.path,
+              lines: input.options.lines,
+              caption: decodeOrientText(input.options["caption-base64"], "caption", ORIENT_CAPTION_MAX_BYTES),
+            }),
+          ),
+      }),
+      "orient pop": cliCommand({
+        summary: "Remove the last block added to the walkthrough (builder only)",
+        run: (_input, ctx) => guarded(() => orientations.pop(callerThread(ctx.threadId))),
+      }),
+      "orient summary": cliCommand({
+        summary: "Record the orientation's summary (builder only)",
+        options: {
+          "summary-base64": { type: "string", required: true, description: `The summary as base64 of its JSON, at most ${ORIENT_SUMMARY_MAX_BYTES} bytes decoded`, placeholder: "base64" },
+        },
+        run: (input, ctx) => guarded(() => orientations.summary(callerThread(ctx.threadId), decodeOrientSummary(input.options["summary-base64"]))),
+      }),
+      "orient finish": cliCommand({
+        summary: "Finish the orientation; call this last (builder only)",
+        run: (_input, ctx) => guarded(() => orientations.finish(callerThread(ctx.threadId))),
       }),
       principles: cliCommand({
         summary: "Print the learning science behind the exercises (PRINCIPLES.md, CC BY 4.0)",

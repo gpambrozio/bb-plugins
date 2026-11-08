@@ -13,6 +13,9 @@ import { bbPorts, SESSION_METADATA_KEY } from "./server/bb-ports";
 import { learningCli } from "./server/cli";
 import { SESSION_INVARIANT } from "./server/content";
 import { OfferEngine } from "./server/offers";
+import { OrientationService } from "./server/orientation";
+import { registerOrientationTools } from "./server/orientation-tools";
+import { OrientationStore } from "./server/orientation-store";
 import type { Ports } from "./server/ports";
 import { SessionService } from "./server/sessions";
 import { readSettings, SETTINGS } from "./server/settings";
@@ -41,7 +44,9 @@ async function plugin(bb: BbPluginApi, deps: { ports?: (bb: BbPluginApi, changed
   const store = new LearningStore(db);
   const changed = () => bb.rpc.experimental_invalidate([LEARNING_TAG]);
   const ports = (deps.ports ?? bbPorts)(bb, changed);
+  const orientationStore = new OrientationStore(db);
   const sessions = new SessionService(ports, store, settings);
+  const orientations = new OrientationService(ports, orientationStore, settings);
   const offers = new OfferEngine({ ports, store, settings });
   const api = new LearningApi({ ports, store, offers, sessions, settings });
   bb.onDispose(() => sessions.dispose());
@@ -89,8 +94,9 @@ async function plugin(bb: BbPluginApi, deps: { ports?: (bb: BbPluginApi, changed
     removeNeverProject: fromUser((input) => api.removeNeverProject(input)),
   });
 
-  bb.cli.register(learningCli(sessions));
+  bb.cli.register(learningCli(sessions, orientations));
   registerTools(bb, sessions);
+  registerOrientationTools(bb, orientations);
 
   // Zero context upfront: no skill folder, no instructions, and the tools only for a session's thread.
   // The metadata is only a hint (any client can write it); the store decides, and the tools check the

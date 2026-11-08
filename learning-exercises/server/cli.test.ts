@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { decodeForm, decodeQuestion, FORM_MAX_BYTES, QUESTION_MAX_BYTES } from "./cli";
+import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
+
+import { decodeForm, decodeQuestion, FORM_MAX_BYTES, learningCli, QUESTION_MAX_BYTES } from "./cli";
+import { OrientationService } from "./orientation";
+import type { SessionService } from "./sessions";
+import { FakePorts } from "./testing/fake-ports";
+import { memoryOrientationStore, settingsWith } from "./testing/store";
 
 const b64 = (text: string) => Buffer.from(text, "utf8").toString("base64");
 
@@ -28,5 +34,29 @@ describe("decodeForm", () => {
     expect(() => decodeForm("{not base64}")).toThrow("--form-base64 is not valid base64");
     expect(() => decodeForm(b64("x".repeat(FORM_MAX_BYTES + 1)))).toThrow("answer form is longer than");
     expect(() => decodeForm(b64("{items: []}"))).toThrow("--form-base64 is not JSON");
+  });
+});
+
+describe("bb learning orient", () => {
+  async function run(args: string[], threadId: string | undefined = "thr_other") {
+    const { bb, harness } = createFakePluginHost({ pluginId: "learning-exercises" });
+    const { orientations } = memoryOrientationStore();
+    bb.cli.register(learningCli({} as SessionService, new OrientationService(new FakePorts(), orientations, () => settingsWith())));
+    return harness.runCli(args, { threadId });
+  }
+  const b64 = (text: string) => Buffer.from(text).toString("base64");
+
+  it("listing from a thread that is not building is refused with the service's text", async () => {
+    const result = await run(["orient", "listing", "--path", "a.ts", "--lines", "nope", "--caption-base64", b64("x")]);
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toContain("not building an orientation");
+  });
+
+  it("summary refuses invalid base64 and non-JSON with invalid_value", async () => {
+    for (const value of ["!!!", b64("not json")]) {
+      const result = await run(["orient", "summary", "--summary-base64", value]);
+      expect(result.exitCode).not.toBe(0);
+      expect(result.stderr).toContain("--summary-base64");
+    }
   });
 });
