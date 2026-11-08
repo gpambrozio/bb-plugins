@@ -32,7 +32,7 @@ import type { OrientationSummary } from "../shared/orientation";
 import { SESSION_METADATA_KEY } from "./bb-ports";
 import { BRIEF_VERSION, buildBrief, buildOrientationSessionBrief, ORIENTATION_MAX_QUESTIONS, startLine } from "./content";
 import { canStartByHand, DAY, projectKey } from "./policy";
-import type { Ports } from "./ports";
+import type { Ports, ThreadInfo } from "./ports";
 import { questionProblem } from "./question";
 import type { LearningSettings } from "./settings";
 import { OPEN_STATES, publicSession, type LearningStore, type SessionRow } from "./store";
@@ -49,6 +49,8 @@ export const REPLY_READ_CHUNKS = 50;
 
 /** A refusal the agent or the user should read as it is. */
 export class SessionError extends Error {}
+
+const ALREADY_OPEN = "A learning session is already open for this thread. Resume or finish it from the Learning tab.";
 
 export { ORIENTATION_MAX_QUESTIONS };
 
@@ -173,44 +175,43 @@ export class SessionService {
 
   // ── start ─────────────────────────────────────────────────────────────────
 
+  /** The thread a session starts from, if it may start one, and its project's key. */
+  private async startSource(sourceThreadId: string): Promise<{ source: ThreadInfo; key: string }> {
+    const source = await this.ports.thread(sourceThreadId);
+    this.alive();
+    if (source === null) throw new SessionError("That thread is gone.");
+    if (!canStartByHand(source)) throw new SessionError("Learning sessions start only from a thread you can see, and never from a learning session's own thread.");
+    const project = await this.ports.project(source.projectId);
+    this.alive();
+    return { source, key: projectKey(project ?? { id: source.projectId, gitRemoteUrl: null }) };
+  }
+
+  /**
+   * Checks the source thread has no open session and creates the `starting` row, with no await between
+   * the two; the unique index refuses a second open session even from another copy of the plugin.
+   */
+  private reserve(source: ThreadInfo, key: string, fields: { mode: SessionRow["mode"]; topic: string; trigger: TriggerKind; refs: Refs; offerId: string | null }): SessionRow {
+    if ((this.store.openSessionFrom(source.id) ?? this.store.sessionInThread(source.id)) !== null) throw new SessionError(ALREADY_OPEN);
+    try {
+      return this.store.createSession({ ...fields, projectKey: key, projectId: source.projectId, sourceThreadId: source.id, briefVersion: BRIEF_VERSION, now: this.ports.now() });
+    } catch (error) {
+      if (String(error).includes("UNIQUE")) throw new SessionError(ALREADY_OPEN);
+      throw error;
+    }
+  }
+
   start(input: StartInput): Promise<{ sessionId: string; threadId: string; mode: "fork" | "here" }> {
     return this.exclusive(`start:${input.sourceThreadId}`, () => this.startLocked(input));
   }
 
   private async startLocked(input: StartInput): Promise<{ sessionId: string; threadId: string; mode: "fork" | "here" }> {
-    const source = await this.ports.thread(input.sourceThreadId);
-    this.alive();
-    if (source === null) throw new SessionError("That thread is gone.");
-    if (!canStartByHand(source)) throw new SessionError("Learning sessions start only from a thread you can see, and never from a learning session's own thread.");
-    const project = await this.ports.project(source.projectId);
-    const key = projectKey(project ?? { id: source.projectId, gitRemoteUrl: null });
+    if (input.trigger === "orientation") throw new SessionError("Orientation sessions are started from the Orient tab, not here.");
+    const { source, key } = await this.startSource(input.sourceThreadId);
     const settings = this.settings();
     const wantsFork = input.mode !== "here" && settings.sessionLocation === "fork";
     let mode: "fork" | "here" = wantsFork && (await this.ports.canFork(source.providerId)) ? "fork" : "here";
     this.alive();
-    // Checked and created with no await between them; the unique index refuses a second open session
-    // even from another copy of the plugin.
-    if ((this.store.openSessionFrom(source.id) ?? this.store.sessionInThread(source.id)) !== null) {
-      throw new SessionError("A learning session is already open for this thread. Resume or finish it from the Learning tab.");
-    }
-    let session: SessionRow;
-    try {
-      session = this.store.createSession({
-        mode,
-        projectKey: key,
-        projectId: source.projectId,
-        sourceThreadId: source.id,
-        topic: input.topic,
-        trigger: input.trigger,
-        refs: input.refs,
-        offerId: input.offerId,
-        briefVersion: BRIEF_VERSION,
-        now: this.ports.now(),
-      });
-    } catch (error) {
-      if (String(error).includes("UNIQUE")) throw new SessionError("A learning session is already open for this thread. Resume or finish it from the Learning tab.");
-      throw error;
-    }
+    const session = this.reserve(source, key, { mode, topic: input.topic, trigger: input.trigger, refs: input.refs, offerId: input.offerId });
     const visible = startLine(input.topic, input.trigger, input.refs);
     const brief = (forMode: "fork" | "here") =>
       buildBrief({ mode: forMode, topic: input.topic, trigger: input.trigger, refs: input.refs, learnerProfile: settings.learnerProfile, maxQuestions: settings.questionsPerSession });
@@ -279,36 +280,11 @@ export class SessionService {
     drift: readonly string[];
     projectName: string;
   }): Promise<{ sessionId: string; threadId: string }> {
-    const source = await this.ports.thread(input.sourceThreadId);
-    this.alive();
-    if (source === null) throw new SessionError("That thread is gone.");
-    if (!canStartByHand(source)) throw new SessionError("Learning sessions start only from a thread you can see, and never from a learning session's own thread.");
+    const { source, key } = await this.startSource(input.sourceThreadId);
     if (source.environmentId === null) throw new SessionError("That thread has no environment to start the orientation session in.");
-    const project = await this.ports.project(source.projectId);
-    this.alive();
-    const key = projectKey(project ?? { id: source.projectId, gitRemoteUrl: null });
-    const alreadyOpen = "A learning session is already open for this thread. Resume or finish it from the Learning tab.";
-    if ((this.store.openSessionFrom(source.id) ?? this.store.sessionInThread(source.id)) !== null) throw new SessionError(alreadyOpen);
     const topic = `Orientation: ${input.projectName}`;
     const refs: Refs = { paths: input.summary.exercises.map((exercise) => exercise.file) };
-    let session: SessionRow;
-    try {
-      session = this.store.createSession({
-        mode: "spawn",
-        projectKey: key,
-        projectId: source.projectId,
-        sourceThreadId: source.id,
-        topic,
-        trigger: "orientation",
-        refs,
-        offerId: null,
-        briefVersion: BRIEF_VERSION,
-        now: this.ports.now(),
-      });
-    } catch (error) {
-      if (String(error).includes("UNIQUE")) throw new SessionError(alreadyOpen);
-      throw error;
-    }
+    const session = this.reserve(source, key, { mode: "spawn", topic, trigger: "orientation", refs, offerId: null });
     let threadId: string;
     try {
       const spawned = await this.ports.spawn({

@@ -177,19 +177,43 @@ describe("upgrading from 0.1.0: the answered-offer history", () => {
 });
 
 describe("the orientation migration rebuilds sessions", () => {
-  it("keeps sessions, exercises and the one-open index, and accepts mode spawn", () => {
-    const { bb } = createFakePluginHost({ pluginId: "learning-exercises" });
-    const db = bb.storage.database();
-    bb.storage.migrate(db, MIGRATIONS.slice(0, MIGRATIONS.length - 12));
+  const FIRST = MIGRATIONS.indexOf("CREATE TABLE sessions_keep AS SELECT * FROM sessions");
+
+  function seed(db: Db) {
     insertSession(db, "ses_a", "paused", 10);
+    insertSession(db, "ses_done", "finished", 5);
+    db.prepare(`UPDATE sessions SET source_thread_id = 'thr_other', summary = 'Covered it.', concepts = '["iterators"]', pause_reason = 'x', finished_at = 6 WHERE id = 'ses_done'`).run();
     answer(db, "ses_a", 1, "kept");
-    bb.storage.migrate(db, MIGRATIONS);
-    const store = new LearningStore(db);
-    expect(store.session("ses_a")?.state).toBe("paused");
-    expect(store.exercises("ses_a")[0]?.answer).toBe("kept");
-    expect(() => insertSession(db, "ses_b", "paused", 20)).toThrow(/UNIQUE/);
-    db.prepare(`UPDATE sessions SET mode = 'spawn' WHERE id = 'ses_a'`).run();
-    expect(store.session("ses_a")?.mode).toBe("spawn");
-    expect(db.prepare(`SELECT name FROM sqlite_master WHERE name LIKE '%_keep'`).all()).toEqual([]);
+    db.prepare(
+      `UPDATE exercises SET form = '{"f":1}', fields = '{"a":"b"}', reply = 'r', reply_progress = '{"p":1}', draft = 'd', draft_saved_at = 7, draft_writer = 'w', feedback = 'fb', feedback_turn = 'turn_1', skipped = 1, stuck = 1, verdict = 'got-it', gap = 'g'
+       WHERE session_id = 'ses_a'`,
+    ).run();
+    answer(db, "ses_done", 1, "done");
+  }
+
+  const dump = (db: Db) => ({
+    sessions: db.prepare(`SELECT * FROM sessions ORDER BY id`).all(),
+    exercises: db.prepare(`SELECT * FROM exercises ORDER BY session_id, ordinal`).all(),
   });
+
+  for (const foreignKeys of ["ON", "OFF"]) {
+    it(`keeps every row and column, the indexes, and accepts mode spawn (foreign keys ${foreignKeys})`, () => {
+      const { bb } = createFakePluginHost({ pluginId: "learning-exercises" });
+      const db = bb.storage.database();
+      db.pragma(`foreign_keys = ${foreignKeys}`);
+      bb.storage.migrate(db, MIGRATIONS.slice(0, FIRST));
+      seed(db);
+      const before = dump(db);
+      expect(before.exercises).toHaveLength(2);
+      bb.storage.migrate(db, MIGRATIONS);
+      expect(dump(db)).toEqual(before);
+      const store = new LearningStore(db);
+      expect(() => insertSession(db, "ses_b", "paused", 20)).toThrow(/UNIQUE/);
+      db.prepare(`UPDATE sessions SET mode = 'spawn' WHERE id = 'ses_a'`).run();
+      expect(store.session("ses_a")?.mode).toBe("spawn");
+      const names = (db.prepare(`SELECT name FROM sqlite_master WHERE tbl_name = 'sessions' AND type = 'index' AND name NOT LIKE 'sqlite_%'`).all() as { name: string }[]).map((row) => row.name).sort();
+      expect(names).toEqual(["sessions_one_open_per_source", "sessions_project", "sessions_source", "sessions_thread"]);
+      expect(db.prepare(`SELECT name FROM sqlite_master WHERE name LIKE '%_keep'`).all()).toEqual([]);
+    });
+  }
 });

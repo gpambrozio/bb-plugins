@@ -401,6 +401,14 @@ describe("settledRow", () => {
   });
 });
 
+describe("orientation trigger", () => {
+  it("cannot be started through the ordinary start", async () => {
+    const { sessions, ports } = setup();
+    await expect(sessions.start({ sourceThreadId: WORK, topic: "x", trigger: "orientation", refs: {}, offerId: null })).rejects.toBeInstanceOf(SessionError);
+    expect(ports.forks).toEqual([]);
+  });
+});
+
 describe("orientation sessions", () => {
   const summary: OrientationSummary = {
     purpose: "A calculator with a REPL.",

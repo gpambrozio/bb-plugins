@@ -177,6 +177,8 @@ export const MIGRATIONS: string[] = [
   // aside first (a table made by SELECT * keeps the column order) and put back after.
   `CREATE TABLE sessions_keep AS SELECT * FROM sessions`,
   `CREATE TABLE exercises_keep AS SELECT * FROM exercises`,
+  // With foreign keys off the drop would not cascade, and the restore would hit the primary key.
+  `DELETE FROM exercises`,
   `DROP TABLE sessions`,
   `CREATE TABLE sessions (
      id TEXT PRIMARY KEY,
