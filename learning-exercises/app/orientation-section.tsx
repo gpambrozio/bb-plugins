@@ -5,7 +5,7 @@
  *
  * - none: **Orient me to this project**, with a "Include a walkthrough" checkbox and what the background
  *   agent is allowed to do;
- * - live: "Building · N blocks · M min" and **Cancel**; a rebuild of a ready orientation keeps the
+ * - live: a spinner, "Building · N blocks · M min" and **Cancel**; a rebuild of a ready orientation keeps the
  *   ready summary below it;
  * - failed or cancelled (`last`): its error and **Rebuild**, above the ready summary when there is one;
  * - ready: the summary (the purpose open, the rest folded) and its buttons; **Rebuild** has its own
@@ -18,6 +18,7 @@ import { useState, type ReactNode } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { Icon } from "@/components/ui/icon";
 import type { Orientation, OrientationSummary } from "../shared/orientation";
 import { errorText, useLearningRpc, useOrientation } from "./data";
 import { ExportDialog } from "./export-dialog";
@@ -237,7 +238,8 @@ export function OrientationSection(props: { threadId: string; visible: boolean }
       {state.cleaning && <p className="text-xs text-muted-foreground">Cleaning up after an earlier run; a new orientation can start in a moment.</p>}
       {live !== null && (
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-sm">
+          <span className="flex items-center gap-1.5 text-sm">
+            <Icon name="Spinner" aria-hidden className="size-3.5 shrink-0 animate-spin text-muted-foreground motion-reduce:animate-none" />
             Building · {live.blocks} blocks · {minutesSince(live.createdAt)} min
           </span>
           <Button type="button" size="sm" variant="outline" disabled={busy !== null} onClick={() => void act("cancel", () => rpc.call("cancelOrientation", { orientationId: live.id }))}>

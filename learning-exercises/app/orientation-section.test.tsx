@@ -84,10 +84,14 @@ describe("the Orientation section", () => {
     expect(screen.getByText(/clean/i)).toBeTruthy();
   });
 
-  it("live: blocks and minutes, and Cancel", async () => {
+  it("live: a spinner, blocks and minutes, and Cancel", async () => {
     vi.spyOn(Date, "now").mockReturnValue(1_000 + 3 * 60_000 + 5_000);
     const slot = render({ live: orientation({ id: "ori_live", status: "building", summary: null, blocks: 7, createdAt: 1_000, readyAt: null }) });
-    await screen.findByText("Building · 7 blocks · 3 min");
+    const building = await screen.findByText("Building · 7 blocks · 3 min");
+    const spinner = building.querySelector('[data-icon="Spinner"]');
+    expect(spinner?.getAttribute("aria-hidden")).toBe("true");
+    expect(spinner?.getAttribute("class")).toContain("animate-spin");
+    expect(spinner?.getAttribute("class")).toContain("motion-reduce:animate-none");
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(slot.rpcCalls.find((c) => c.method === "cancelOrientation")?.input).toEqual({ orientationId: "ori_live" }));
     vi.restoreAllMocks();
@@ -96,6 +100,7 @@ describe("the Orientation section", () => {
   it("ready: the summary, key files as links, and every button", async () => {
     const slot = render({ current: orientation() });
     await screen.findByText("A calculator library.");
+    expect(document.querySelector('[data-icon="Spinner"]')).toBeNull();
     for (const name of ["Start orientation session", "Read walkthrough", "Verify", "Export to repo…", "Rebuild", "Delete"]) expect(screen.getByRole("button", { name })).toBeTruthy();
     // Collapsed by default except the purpose.
     expect(screen.queryByText("src/file0.ts")).toBeNull();
