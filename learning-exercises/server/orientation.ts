@@ -15,8 +15,9 @@
  *
  * Every builder write runs under the orientation's lock and re-reads the row after each await, so nothing
  * lands on a row that left `starting`/`building` meanwhile (the store's `updated_at` drives the purge of
- * old failed rows, so a terminal row is never touched). A builder is put away (stopped, then archived) on
- * finish and cancel; those errors are logged, never thrown into the user's action. After `dispose()` no
+ * old failed rows, so a terminal row is never touched). Cancel puts the builder away (stopped, then
+ * archived), logging errors rather than throwing them into the user's action. Finish does not: it runs
+ * inside the builder's own tool call, so the builder is put away once it goes idle, or by the sweep. After `dispose()` no
  * continuation of this copy touches the store (`alive()`).
  *
  * Reload safety (finding builders a reload interrupted) is `reconcile`, added beside this; until it has
@@ -244,8 +245,8 @@ export class OrientationService {
     this.alive();
     const current = this.store.get(row.id);
     if (current === null || !isLive(current.status)) {
-      // Cancelled (or failed) while bb spawned it. A builder that bound itself was put away by whoever
-      // ended the row; one that never called is put away here.
+      // Ended while bb spawned it. A builder that bound itself is put away by whoever ended the row (or,
+      // after a finish, once it goes idle); one that never called is put away here.
       if (current?.builderThreadId !== threadId) await this.putAway(threadId);
       return { orientationId: row.id };
     }
@@ -390,7 +391,8 @@ export class OrientationService {
       this.live(row.id, threadId);
       this.store.promoteReady(row.id, this.ports.now());
       this.ports.changed();
-      await this.putAway(threadId);
+      // The builder is not stopped here: this runs inside its own tool call, and a stop that waits for
+      // the turn would wait for this answer. It is put away when it goes idle, or by the sweep.
       return "The orientation is ready.";
     });
   }
@@ -491,10 +493,15 @@ export class OrientationService {
   }
 
   /**
-   * Writes the orientation as Markdown at a workspace path. An existing file is replaced only with
-   * `replace`, and only if it is still the file that was read (`FileConflict` otherwise).
+   * Writes the orientation as Markdown at a workspace path. Without `replace`, an existing file is left
+   * alone and its hash answered (`{ exists, sha256 }`), so the app can ask; the replace call passes that
+   * hash back as `expectedSha256`, and the write is refused (`FileConflict`) if the file changed while the
+   * user decided. Null or absent `expectedSha256` means the file must not exist.
    */
-  async export(orientationId: string, input: { path: string; replace: boolean }): Promise<{ exists: true } | { written: string }> {
+  async export(
+    orientationId: string,
+    input: { path: string; replace: boolean; expectedSha256?: string | null },
+  ): Promise<{ exists: true; sha256: string } | { written: string }> {
     const path = workspacePath(input.path.trim());
     if (path === null) throw new OrientationError(OUTSIDE);
     const row = this.store.get(orientationId);
@@ -507,9 +514,11 @@ export class OrientationService {
     this.alive();
     if (current === null) throw new OrientationError(`Could not read ${path}, so nothing was written; try again.`);
     if (current.kind === "binary" || current.kind === "too-large") throw new OrientationError(`${path} exists and is not a text file this can replace; choose another path.`);
-    if (current.kind === "text" && !input.replace) return { exists: true };
+    if (current.kind === "text" && !input.replace) return { exists: true, sha256: current.sha256 };
+    // On a replace, the caller's hash, not this read's: the file must still be the one the user saw.
+    const expected = input.replace ? (input.expectedSha256 ?? null) : null;
     try {
-      await this.ports.writeFile(root, path, markdown, current.kind === "text" ? current.sha256 : null);
+      await this.ports.writeFile(root, path, markdown, expected);
     } catch (error) {
       this.alive();
       if (error instanceof FileConflict) throw new OrientationError(`${path} changed while you were deciding; export again.`);

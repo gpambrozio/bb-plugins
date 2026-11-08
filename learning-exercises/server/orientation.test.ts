@@ -258,13 +258,14 @@ describe("finishing", () => {
     expect(message).not.toMatch(/Listing 1\b/);
   });
 
-  it("marks the orientation ready, replaces the previous one, checks its listings and puts the builder away", async () => {
+  it("marks the orientation ready, replaces the previous one, checks its listings and leaves the builder running", async () => {
     const first = await building("summary");
     await first.service.summary(BUILDER, SUMMARY);
     expect(await first.service.finish(BUILDER)).toBe("The orientation is ready.");
     expect(first.store.get(first.id)).toMatchObject({ status: "ready" });
-    expect(first.ports.stopped).toEqual([BUILDER]);
-    expect(first.ports.archived).toEqual([BUILDER]);
+    // Not stopped from inside its own tool call (R5): it is put away when it goes idle.
+    expect(first.ports.stopped).toEqual([]);
+    expect(first.ports.archived).toEqual([]);
 
     const { orientationId: second } = await first.service.start({ sourceThreadId: SOURCE, depth: "walkthrough" });
     const builder2 = "thr_spawn2";
@@ -277,8 +278,8 @@ describe("finishing", () => {
     expect(first.store.get(first.id)).toBeNull();
     const [, listing] = first.store.blocks(second);
     expect(listing).toMatchObject({ kind: "listing", check: { state: "current", startLine: 2, endLine: 3 } });
-    expect(first.ports.stopped).toEqual([BUILDER, builder2]);
-    expect(first.ports.archived).toEqual([BUILDER, builder2]);
+    expect(first.ports.stopped).toEqual([]);
+    expect(first.ports.archived).toEqual([]);
     await expect(first.service.note(builder2, "more")).rejects.toThrow("This thread is not building an orientation.");
     expect(first.service.view(first.store.get(second)!.projectKey)).toEqual({ current: first.store.get(second), live: null });
   });
@@ -377,23 +378,43 @@ describe("export", () => {
     expect(ports.writes[0]!.content).toContain("sed -n '2,3p' 'src/retry.ts'");
   });
 
-  it("asks before replacing an existing file, and replaces it with the hash it read", async () => {
+  it("asks before replacing an existing file, answering its hash, and replaces it with that hash", async () => {
     const { ports, service, id } = await ready();
     ports.files.set("/work/calc/docs/ORIENTATION.md", "old");
-    expect(await service.export(id, { path: "docs/ORIENTATION.md", replace: false })).toEqual({ exists: true });
+    const asked = await service.export(id, { path: "docs/ORIENTATION.md", replace: false });
+    expect(asked).toEqual({ exists: true, sha256: FakePorts.sha("old") });
     expect(ports.writes).toEqual([]);
-    expect(await service.export(id, { path: "./docs/ORIENTATION.md", replace: true })).toEqual({ written: "docs/ORIENTATION.md" });
+    const sha256 = "sha256" in asked ? asked.sha256 : null;
+    expect(await service.export(id, { path: "./docs/ORIENTATION.md", replace: true, expectedSha256: sha256 })).toEqual({ written: "docs/ORIENTATION.md" });
     expect(ports.writes[0]).toMatchObject({ path: "docs/ORIENTATION.md", expectedSha256: FakePorts.sha("old") });
   });
 
-  it("refuses when the file changed between the read and the write", async () => {
+  it("refuses a replace when the file changed while the user was deciding, keeping the edit", async () => {
     const { ports, service, id } = await ready();
-    ports.files.set("/work/calc/ORIENTATION.md", "old");
-    ports.afterRead = (key) => {
-      if (key === "/work/calc/ORIENTATION.md") ports.files.set(key, "edited meanwhile");
+    const key = "/work/calc/ORIENTATION.md";
+    ports.files.set(key, "old");
+    const asked = await service.export(id, { path: "ORIENTATION.md", replace: false });
+    expect(asked).toEqual({ exists: true, sha256: FakePorts.sha("old") });
+    // Edited between the question and the user's answer.
+    ports.files.set(key, "edited meanwhile");
+    const sha256 = "sha256" in asked ? asked.sha256 : null;
+    await expect(service.export(id, { path: "ORIENTATION.md", replace: true, expectedSha256: sha256 })).rejects.toThrow("ORIENTATION.md changed while you were deciding; export again.");
+    expect(ports.files.get(key)).toBe("edited meanwhile");
+    expect(ports.writes).toEqual([]);
+  });
+
+  it("refuses a replace with no hash when a file is there, and a write that races a new file", async () => {
+    const { ports, service, id } = await ready();
+    const key = "/work/calc/ORIENTATION.md";
+    ports.files.set(key, "old");
+    await expect(service.export(id, { path: "ORIENTATION.md", replace: true })).rejects.toThrow("changed while you were deciding");
+    expect(ports.files.get(key)).toBe("old");
+    ports.files.delete(key);
+    ports.afterRead = (read) => {
+      if (read === key) ports.files.set(key, "created meanwhile");
     };
-    await expect(service.export(id, { path: "ORIENTATION.md", replace: true })).rejects.toThrow("ORIENTATION.md changed while you were deciding; export again.");
-    expect(ports.files.get("/work/calc/ORIENTATION.md")).toBe("edited meanwhile");
+    await expect(service.export(id, { path: "ORIENTATION.md", replace: false })).rejects.toThrow("changed while you were deciding");
+    expect(ports.files.get(key)).toBe("created meanwhile");
   });
 
   it("refuses a path outside the workspace and an orientation that is not ready", async () => {
