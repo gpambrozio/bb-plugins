@@ -5,7 +5,7 @@ import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import { decodeForm, decodeQuestion, FORM_MAX_BYTES, learningCli, QUESTION_MAX_BYTES } from "./cli";
 import { OrientationService } from "./orientation";
 import type { SessionService } from "./sessions";
-import { FakePorts } from "./testing/fake-ports";
+import { FakePorts, thread } from "./testing/fake-ports";
 import { memoryOrientationStore, settingsWith } from "./testing/store";
 
 const b64 = (text: string) => Buffer.from(text, "utf8").toString("base64");
@@ -38,25 +38,44 @@ describe("decodeForm", () => {
 });
 
 describe("bb learning orient", () => {
-  async function run(args: string[], threadId: string | undefined = "thr_other") {
+  const BUILDER = "thr_spawn1";
+
+  /** A builder thread bound to a walkthrough build (the fake ports name the first spawn `thr_spawn1`). */
+  async function run(args: string[], threadId = "thr_other") {
     const { bb, harness } = createFakePluginHost({ pluginId: "learning-exercises" });
+    const ports = new FakePorts();
+    ports.threads.set("thr_src", thread({ id: "thr_src" }));
     const { orientations } = memoryOrientationStore();
-    bb.cli.register(learningCli({} as SessionService, new OrientationService(new FakePorts(), orientations, () => settingsWith())));
+    const service = new OrientationService(ports, orientations, () => settingsWith());
+    await service.reconcile();
+    await service.start({ sourceThreadId: "thr_src", depth: "walkthrough" });
+    bb.cli.register(learningCli({} as SessionService, service));
     return harness.runCli(args, { threadId });
   }
-  const b64 = (text: string) => Buffer.from(text).toString("base64");
 
   it("listing from a thread that is not building is refused with the service's text", async () => {
-    const result = await run(["orient", "listing", "--path", "a.ts", "--lines", "nope", "--caption-base64", b64("x")]);
+    const result = await run(["orient", "listing", "--path", "a.ts", "--lines", "40-41", "--caption-base64", b64("x")]);
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr).toContain("not building an orientation");
   });
 
-  it("summary refuses invalid base64 and non-JSON with invalid_value", async () => {
-    for (const value of ["!!!", b64("not json")]) {
+  it("listing with a bad --lines from the builder exits with the lines refusal", async () => {
+    const result = await run(["orient", "listing", "--path", "a.ts", "--lines", "nope", "--caption-base64", b64("x")], BUILDER);
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toContain('"nope" is not a line range');
+  });
+
+  it("chapter from the builder succeeds", async () => {
+    const result = await run(["orient", "chapter", "--title-base64", b64("Parsing")], BUILDER);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.length).toBeGreaterThan(1);
+  });
+
+  it("summary refuses invalid base64 and non-JSON with its message", async () => {
+    for (const [value, text] of [["!!!", "not valid base64"], [b64("not json"), "is not JSON"]] as const) {
       const result = await run(["orient", "summary", "--summary-base64", value]);
       expect(result.exitCode).not.toBe(0);
-      expect(result.stderr).toContain("--summary-base64");
+      expect(result.stderr).toContain(text);
     }
   });
 });

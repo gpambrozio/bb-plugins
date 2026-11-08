@@ -106,19 +106,19 @@ export const ORIENT_MARKDOWN_MAX_BYTES = 8_000;
 export const ORIENT_CAPTION_MAX_BYTES = 1_000;
 export const ORIENT_SUMMARY_MAX_BYTES = 32_000;
 
-function decodeOrientText(encoded: string, name: string, maxBytes: number): string {
+function decodeOrientText(encoded: string, name: string, maxBytes: number, hint = `Pipe the ${name} through \`base64 | tr -d '\\n'\` into --${name}-base64-stdin.`): string {
   return decodeBase64Text(encoded, {
     name,
     option: `--${name}-base64`,
     maxBytes,
     tooLong: `${name}_too_long`,
-    hint: `Pipe the ${name} through \`base64 | tr -d '\\n'\` into --${name}-base64-stdin.`,
+    hint,
   });
 }
 
 /** The summary's JSON, from base64; its content is checked by the service. */
 export function decodeOrientSummary(encoded: string): unknown {
-  const text = decodeOrientText(encoded, "summary", ORIENT_SUMMARY_MAX_BYTES);
+  const text = decodeOrientText(encoded, "summary", ORIENT_SUMMARY_MAX_BYTES, "Pass the summary's JSON as --summary-base64 \"$(base64 < summary.json | tr -d '\\n')\".");
   try {
     return JSON.parse(text) as unknown;
   } catch (error) {
