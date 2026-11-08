@@ -19,7 +19,7 @@ export const WorkspaceSchema = z.object({ threadId: z.string(), environmentId: z
 export type Workspace = z.infer<typeof WorkspaceSchema>;
 
 /** What made the plugin offer an exercise. Ordered from most to least worth offering. */
-export const TRIGGER_KINDS = ["pr-merged", "commit", "schema", "new-files", "streak", "manual"] as const;
+export const TRIGGER_KINDS = ["pr-merged", "commit", "schema", "new-files", "streak", "manual", "orientation"] as const;
 export const TriggerKindSchema = z.enum(TRIGGER_KINDS);
 export type TriggerKind = z.infer<typeof TriggerKindSchema>;
 
@@ -30,6 +30,7 @@ export const TRIGGER_LABELS: Record<TriggerKind, string> = {
   "new-files": "new files",
   streak: "working streak",
   manual: "started by you",
+  orientation: "an orientation",
 };
 
 /** What the plugin points at for a trigger: the commits, paths or pull request the topic came from. */
@@ -55,8 +56,11 @@ export const OfferSchema = z.object({
 });
 export type Offer = z.infer<typeof OfferSchema>;
 
-/** Where a session runs: its own thread forked from the work, or the work thread itself. */
-export const SessionModeSchema = z.enum(["fork", "here"]);
+/**
+ * Where a session runs: its own thread forked from the work, the work thread itself, or a thread the
+ * plugin spawned fresh (an orientation's, which has no work thread to fork).
+ */
+export const SessionModeSchema = z.enum(["fork", "here", "spawn"]);
 export type SessionMode = z.infer<typeof SessionModeSchema>;
 
 export const SESSION_STATES = ["starting", "active", "awaiting-answer", "paused", "finished", "abandoned"] as const;
