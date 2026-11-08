@@ -107,8 +107,8 @@ the real code.
    code path one level at a time. A reader who goes top to bottom should never meet a term before it is
    explained.
 3. **Explain why, not just what.** Say why the code is structured this way and what the reader should notice.
-4. **Reference listings as `Listing N`** in your notes. The listing's text appears with the same number,
-   because the plugin numbers listings in the order you add them. Count carefully.
+4. **Reference listings as `Listing N`** in your notes: use the number each `orient_listing` call returns (a pop leaves a gap).
+   The listing's text appears with that number, and finishing is refused while a note names a listing that does not exist.
 5. **No fenced code blocks in notes**, and no line that is only an image. Use inline backticks
    (`like_this`). Never type code yourself: the plugin reads the file and captures the listing's text.
 6. Keep to the limits: a listing is at most 200 lines, and a walkthrough has at most 60 listings.

@@ -95,8 +95,9 @@ export class OrientationApi {
   }
 
   /**
-   * The walkthrough. A ready orientation's listings are checked again first when the last check is over
-   * five minutes old; the states come back in each listing's `check`. Links resolve against the source
+   * The walkthrough. A ready orientation's listings are checked again first when its last verify that
+   * reached the checkout is over five minutes old (`verifiedAt`; a file whose read fails does not reopen
+   * the window); the states come back in each listing's `check`. Links resolve against the source
    * thread's workspace (the input names no thread).
    */
   async orientationDocument({ orientationId }: Input<"orientationDocument">): Promise<Output<"orientationDocument">> {

@@ -31,10 +31,23 @@ function slugify(title: string): string {
   return title.toLowerCase().replaceAll(" ", "-").replace(/[^\p{L}\p{N}-]/gu, "");
 }
 
-/** The summary sections of §8, from `## One-line purpose` to `## Sources consulted`. */
+/**
+ * A line of text that must stay commentary at the start of a line: a leading backtick or `!` is
+ * escaped, since showboat reads a line starting with three backticks as a fence (a code block that
+ * `showboat verify` runs) and one starting with `![…](…)` as an image block. CommonMark shows `\`` and
+ * `\!` as the characters themselves.
+ */
+function lineStart(text: string): string {
+  return /^[`!]/.test(text) ? `\\${text}` : text;
+}
+
+/**
+ * The summary sections of §8, from `## One-line purpose` to `## Sources consulted`. Every field is one
+ * line (the schema says so), and only the purpose starts a line; the rest follow a list marker or `**`.
+ */
 export function renderSummaryMarkdown(summary: OrientationSummary): string {
   const sections: string[] = [
-    `## One-line purpose\n\n${summary.purpose}`,
+    `## One-line purpose\n\n${lineStart(summary.purpose)}`,
     `## Primary language(s)\n\n${summary.languages.map((l) => `- ${l}`).join("\n")}`,
     `## Pipeline / workflow stages\n\n${summary.stages.map((s, i) => `${i + 1}. ${s}`).join("\n")}`,
     `## Key files\n\n${summary.keyFiles.map((f) => `- \`${f.path}\` — ${f.does} | ${f.why}`).join("\n")}`,

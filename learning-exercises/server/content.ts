@@ -178,8 +178,8 @@ function orientCliBlock(depth: OrientationDepth): string {
       "What the listing shows",
       "ORIENT_CAPTION",
       "",
-      "# Close the current chapter before the next one.",
-      "bb learning orient pop",
+      "# Only to undo a mistake: removes the last block you added (a note, listing or chapter).",
+      "# bb learning orient pop",
       "",
     );
   }
@@ -206,7 +206,7 @@ function howToWrite(depth: OrientationDepth): string {
           "",
           "- `orient_chapter(title)` starts a chapter; `orient_note(markdown)` adds commentary to it (no fenced code, no line that is only an image).",
           "- `orient_listing(path, lines, caption)` adds a listing: `lines` is a range such as `40-72`. The plugin reads the file and returns the captured text, so never type code yourself. At most 200 lines a listing and 60 listings.",
-          "- `orient_pop()` closes the current chapter.",
+          "- `orient_pop()` undoes the last block you added (a note, listing or chapter). Use it only to undo a mistake; a chapter ends where the next one starts.",
           `- \`orient_summary({...})\` gives the summary, with ${SUMMARY_SCHEMA_HINT}. Call it once, after the walkthrough.`,
           "- `orient_finish()` ends the build. Call it last.",
         ]

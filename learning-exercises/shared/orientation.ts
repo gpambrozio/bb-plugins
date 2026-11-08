@@ -15,6 +15,10 @@ export const ORIENT_LIMITS = {
   listings: 60,
   fileBytes: 1_048_576,
   purposeChars: 300,
+  /** Each other prose string of the summary: a stage, what a key file does and why, a gotcha, … */
+  summaryText: 500,
+  /** Each name or path in the summary: a language, a key file's path, a concept's name and where, a source. */
+  summaryName: 200,
   chapterChars: 120,
   languages: { min: 1, max: 6 },
   stages: { min: 1, max: 10 },
@@ -33,27 +37,43 @@ export const LIVE_ORIENTATION_STATUSES = ["starting", "building"] as const;
 export const OrientationDepthSchema = z.enum(["summary", "walkthrough"]);
 export type OrientationDepth = z.infer<typeof OrientationDepthSchema>;
 
+/** No line break of any kind: LF, CR, and the Unicode line and paragraph separators. */
+const ONE_LINE = /^[^\n\r\u2028\u2029]*$/;
+
+/**
+ * One summary string: non-empty, within `max`, and one line. The export puts each one on a line of its
+ * own or after a list marker, so a line break would let a field start a line of the file, where showboat
+ * reads a fence as a code block that `showboat verify` runs (and `![…](…)` as an image).
+ */
+function summaryLine(max: number) {
+  return z.string().min(1).max(max).regex(ONE_LINE, "Must be one line: no line breaks.");
+}
+
+const prose = () => summaryLine(ORIENT_LIMITS.summaryText);
+const name = () => summaryLine(ORIENT_LIMITS.summaryName);
+
 /**
  * The structured summary of a repository. Flat on purpose: no `.refine`, nothing that converts to a
- * JSON Schema `$ref`, because it is also an agent tool's input schema.
+ * JSON Schema `$ref`, because it is also an agent tool's input schema. Every string is one line, so the
+ * tool, the CLI and a stored row read alike (a stored row that fails reads as no summary).
  */
 export const OrientationSummarySchema = z.object({
-  purpose: z.string().min(1).max(ORIENT_LIMITS.purposeChars),
-  languages: z.array(z.string().min(1)).min(ORIENT_LIMITS.languages.min).max(ORIENT_LIMITS.languages.max),
-  stages: z.array(z.string().min(1)).min(ORIENT_LIMITS.stages.min).max(ORIENT_LIMITS.stages.max),
+  purpose: summaryLine(ORIENT_LIMITS.purposeChars),
+  languages: z.array(name()).min(ORIENT_LIMITS.languages.min).max(ORIENT_LIMITS.languages.max),
+  stages: z.array(prose()).min(ORIENT_LIMITS.stages.min).max(ORIENT_LIMITS.stages.max),
   keyFiles: z
-    .array(z.object({ path: z.string().min(1), does: z.string().min(1), why: z.string().min(1) }))
+    .array(z.object({ path: name(), does: prose(), why: prose() }))
     .min(ORIENT_LIMITS.keyFiles.min)
     .max(ORIENT_LIMITS.keyFiles.max),
   concepts: z
-    .array(z.object({ name: z.string().min(1), definition: z.string().min(1), where: z.string().min(1) }))
+    .array(z.object({ name: name(), definition: prose(), where: name() }))
     .min(ORIENT_LIMITS.concepts.min)
     .max(ORIENT_LIMITS.concepts.max),
-  gotchas: z.array(z.string().min(1)).min(ORIENT_LIMITS.gotchas.min).max(ORIENT_LIMITS.gotchas.max),
+  gotchas: z.array(prose()).min(ORIENT_LIMITS.gotchas.min).max(ORIENT_LIMITS.gotchas.max),
   exercises: z
-    .array(z.object({ file: z.string().min(1), read: z.string().min(1), question: z.string().min(1) }))
+    .array(z.object({ file: name(), read: prose(), question: prose() }))
     .length(ORIENT_LIMITS.exercises),
-  sources: z.array(z.string().min(1)).min(ORIENT_LIMITS.sources.min).max(ORIENT_LIMITS.sources.max),
+  sources: z.array(name()).min(ORIENT_LIMITS.sources.min).max(ORIENT_LIMITS.sources.max),
 });
 export type OrientationSummary = z.infer<typeof OrientationSummarySchema>;
 

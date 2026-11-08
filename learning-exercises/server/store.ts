@@ -210,6 +210,9 @@ export const MIGRATIONS: string[] = [
   `INSERT INTO exercises SELECT * FROM exercises_keep`,
   `DROP TABLE sessions_keep`,
   `DROP TABLE exercises_keep`,
+  // 0.3.0: when the orientation's listings were last checked against a reachable checkout, whatever each
+  // listing's read did; opening the walkthrough checks again only once this is five minutes old.
+  `ALTER TABLE orientations ADD COLUMN verified_at INTEGER`,
 ];
 
 const ReplyProgressSchema = z.object({

@@ -44,7 +44,7 @@ import { workspacePath } from "../shared/workspace-path";
 import { buildBuilderBrief, builderStartLine } from "./content";
 import { renderOrientationMarkdown } from "./orientation-markdown";
 import type { BlockRow, OrientationRow, OrientationStore } from "./orientation-store";
-import { checkListing, sha256, sliceLines } from "./orientation-verify";
+import { checkListing, sha256, sliceLines, type ListingCheck } from "./orientation-verify";
 import { canStartByHand, projectKey } from "./policy";
 import { FileConflict, type FileRead, type FileRoot, type PluginThread, type Ports } from "./ports";
 import type { LearningSettings } from "./settings";
@@ -125,6 +125,11 @@ function driftLine(listing: ListingRow): string | null {
   if (check.state === "moved") return `${where} moved to ${check.startLine}-${check.endLine}`;
   if (check.state === "changed") return `${where} changed since ${listing.ref === null ? "capture" : listing.ref.slice(0, 7)}`;
   return `${where} missing`;
+}
+
+/** Whether a new check says what the stored one said: the same state at the same range. */
+function sameCheck(before: ListingRow["check"], after: ListingCheck): boolean {
+  return before !== null && before.state === after.state && before.startLine === after.startLine && before.endLine === after.endLine;
 }
 
 /** Why a read gave no text, as the builder reads it; null for text. */
@@ -430,7 +435,10 @@ export class OrientationService {
     });
   }
 
-  /** Refuses a walkthrough with no chapter, or with listings no note names as `Listing N`. */
+  /**
+   * Refuses a walkthrough with no chapter, with listings no note names as `Listing N`, or with a note that
+   * names a listing that does not exist (a pop leaves a gap in the numbers, so counting goes wrong).
+   */
   private walkthroughProblems(id: string): void {
     const blocks = this.store.blocks(id);
     if (!blocks.some((block) => block.kind === "chapter")) throw new OrientationError("A walkthrough needs at least one chapter; add one with orient_chapter.");
@@ -439,9 +447,18 @@ export class OrientationService {
       if (block.kind !== "note") continue;
       for (const match of block.markdown.matchAll(LISTING_REF)) named.add(Number(match[1]));
     }
-    const unnamed = blocks.filter((block): block is ListingRow => block.kind === "listing" && !named.has(block.number)).map((block) => `Listing ${block.number}`);
+    const listings = blocks.filter((block): block is ListingRow => block.kind === "listing");
+    const unnamed = listings.filter((block) => !named.has(block.number)).map((block) => `Listing ${block.number}`);
     if (unnamed.length > 0) {
       throw new OrientationError(`Every listing must be referenced as "Listing N" in a note. Not referenced: ${unnamed.join(", ")}. Mention them in a note, or remove them.`);
+    }
+    const numbers = new Set(listings.map((block) => block.number));
+    const dangling = [...named].filter((number) => !numbers.has(number)).sort((a, b) => a - b);
+    if (dangling.length > 0) {
+      const there = listings.length === 0 ? "This walkthrough has no listings." : `This walkthrough's listings are numbered ${listings.map((block) => block.number).join(", ")}.`;
+      throw new OrientationError(
+        `A note mentions a listing that does not exist: ${dangling.map((number) => `no Listing ${number}`).join(", ")}. ${there} Use the number each orient_listing call returned (a pop leaves a gap); remove the note with orient_pop and add it again with the right numbers.`,
+      );
     }
   }
 
@@ -467,9 +484,13 @@ export class OrientationService {
   }
 
   /**
-   * Re-checks every listing against its file. With `ifOlderThanMs`, does nothing when every listing was
-   * checked more recently than that (the tab opening). Answers `checked: 0` and no drift, changing nothing,
-   * when neither the orientation's environment nor the project's checkout on its host can be reached.
+   * Re-checks every listing against its file. With `ifOlderThanMs`, does nothing when the last verify that
+   * reached the checkout is more recent than that (the tab opening): the window is the orientation's own
+   * `verifiedAt`, not each listing's check, so a file whose read keeps failing cannot make every opening
+   * check again. Answers `checked: 0` and no drift, changing nothing, when neither the orientation's
+   * environment nor the project's checkout on its host can be reached. Tells the app to refetch
+   * (`changed`) only when a listing's state or range changed, since the app's refetch of the walkthrough
+   * is what calls this again.
    */
   verify(orientationId: string, opts: { ifOlderThanMs?: number } = {}): Promise<{ checked: number; drift: string[] }> {
     return this.exclusive(`orientation:${orientationId}`, async () => {
@@ -482,10 +503,7 @@ export class OrientationService {
   private async verifyRows(row: OrientationRow, ifOlderThanMs?: number): Promise<{ checked: number; drift: string[] }> {
     const listings = this.store.blocks(row.id).filter((block): block is ListingRow => block.kind === "listing");
     if (listings.length === 0) return { checked: 0, drift: [] };
-    if (ifOlderThanMs !== undefined) {
-      const since = this.ports.now() - ifOlderThanMs;
-      if (listings.every((listing) => listing.check !== null && listing.check.checkedAt > since)) return { checked: 0, drift: [] };
-    }
+    if (ifOlderThanMs !== undefined && row.verifiedAt !== null && row.verifiedAt > this.ports.now() - ifOlderThanMs) return { checked: 0, drift: [] };
     const root = await this.rootOf(row);
     this.alive();
     if (root === null) return { checked: 0, drift: [] };
@@ -498,14 +516,18 @@ export class OrientationService {
     }
     if (this.store.get(row.id) === null) return { checked: 0, drift: [] };
     let checked = 0;
+    let anyChanged = false;
     const now = this.ports.now();
     for (const listing of listings) {
       const text = texts.get(listing.path);
       if (text === undefined) continue;
-      this.store.setCheck(row.id, listing.ordinal, checkListing(text, listing), now);
+      const check = checkListing(text, listing);
+      this.store.setCheck(row.id, listing.ordinal, check, now);
       checked += 1;
+      if (!sameCheck(listing.check, check)) anyChanged = true;
     }
-    this.ports.changed();
+    this.store.setVerified(row.id, now);
+    if (anyChanged) this.ports.changed();
     const drift = this.store
       .blocks(row.id)
       .filter((block): block is ListingRow => block.kind === "listing")

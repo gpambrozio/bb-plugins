@@ -40,6 +40,10 @@ export function useSidebarThread(threadId: string | null) {
   return threadId === null ? undefined : threads.find((thread) => thread.id === threadId);
 }
 
-export function useOrientationDocument(orientationId: string) {
-  return experimental_useRpcQuery({ contract: rpcContract, method: "orientationDocument", input: { orientationId } });
+/**
+ * The walkthrough. Each read of a ready orientation may check its listings against the files (at most
+ * once per five minutes, server side), so it is read only while its tab shows.
+ */
+export function useOrientationDocument(orientationId: string, enabled = true) {
+  return experimental_useRpcQuery({ contract: rpcContract, method: "orientationDocument", input: { orientationId }, enabled });
 }

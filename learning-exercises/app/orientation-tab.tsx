@@ -9,7 +9,7 @@
  * those listings (splitting the text around mentions before Markdown would break lists and emphasis).
  * Listing paths link into the orientation's workspace, or are plain code when it is gone.
  */
-import { experimental_FileLink as FileLink, type ExperimentalThreadTabProps } from "@get-bb/plugin-sdk/app";
+import { experimental_FileLink as FileLink, experimental_useTabVisible, type ExperimentalThreadTabProps } from "@get-bb/plugin-sdk/app";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
@@ -97,7 +97,8 @@ export function OrientationTab(props: ExperimentalThreadTabProps & { params: unk
 
 function Walkthrough(props: { orientationId: string }) {
   const { orientationId } = props;
-  const query = useOrientationDocument(orientationId);
+  // Not read while the tab is hidden: a read can check the listings, and a refetch on every change would.
+  const query = useOrientationDocument(orientationId, experimental_useTabVisible());
   const rpc = useLearningRpc();
   const scroller = useRef<HTMLDivElement | null>(null);
   const [verifying, setVerifying] = useState(false);

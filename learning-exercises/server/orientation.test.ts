@@ -277,6 +277,25 @@ describe("finishing", () => {
     expect(message).not.toMatch(/Listing 1\b/);
   });
 
+  it("refuses a note that mentions a listing that does not exist, naming the numbers there are", async () => {
+    const { store, service, id } = await building();
+    await service.summary(BUILDER, SUMMARY);
+    await service.chapter(BUILDER, "Retries");
+    await service.listing(BUILDER, { path: "src/retry.ts", lines: "1", caption: "imports" });
+    await service.listing(BUILDER, { path: "src/retry.ts", lines: "2-3", caption: "loop" });
+    // A pop leaves a gap: Listing 2 is gone, and the next one is 3.
+    await service.pop(BUILDER);
+    await service.listing(BUILDER, { path: "src/retry.ts", lines: "2-3", caption: "loop again" });
+    await service.note(BUILDER, "Listing 1 imports sleep; Listing 2 loops, and Listing 3 too.");
+    const message = await service.finish(BUILDER).catch((error: Error) => error.message);
+    expect(message).toContain("no Listing 2");
+    expect(message).toContain("numbered 1, 3");
+    expect(store.get(id)?.status).toBe("building");
+    await service.note(BUILDER, "Listing 3 is the loop.");
+    // Still refused while the first note names Listing 2.
+    await expect(service.finish(BUILDER)).rejects.toThrow("no Listing 2");
+  });
+
   it("marks the orientation ready, replaces the previous one, checks its listings and leaves the builder running", async () => {
     const first = await building("summary");
     await first.service.summary(BUILDER, SUMMARY);
@@ -359,7 +378,7 @@ describe("verify", () => {
     expect((await service.verify(id)).drift).toEqual(["Listing 1 (`src/retry.ts:2-3`) missing"]);
   });
 
-  it("reads nothing when every listing was checked inside the window", async () => {
+  it("reads nothing when the last verify was inside the window", async () => {
     const { ports, service, id } = await ready();
     const reads = ports.reads.length;
     ports.advance(1_000);
@@ -368,6 +387,32 @@ describe("verify", () => {
     ports.advance(60_001);
     expect((await service.verify(id, { ifOlderThanMs: 60_000 })).checked).toBe(1);
     expect(ports.reads).toHaveLength(reads + 1);
+  });
+
+  it("keeps the window when a listed file cannot be read, and calls changed only when a check changed", async () => {
+    const { ports, store, service, id } = await ready();
+    // A failed read (not a missing file) leaves the listing's state, and its check time, as they were.
+    ports.fileReads.set(RETRY, null);
+    ports.advance(60_001);
+    const reads = ports.reads.length;
+    const changes = ports.changes;
+    expect(await service.verify(id, { ifOlderThanMs: 60_000 })).toEqual({ checked: 0, drift: [] });
+    expect(ports.reads).toHaveLength(reads + 1);
+    expect(ports.changes).toBe(changes);
+    expect(store.get(id)?.verifiedAt).toBe(ports.now());
+    // Inside the window again, though the listing's own check is still old: nothing is read.
+    ports.advance(1_000);
+    expect(await service.verify(id, { ifOlderThanMs: 60_000 })).toEqual({ checked: 0, drift: [] });
+    expect(ports.reads).toHaveLength(reads + 1);
+    expect(ports.changes).toBe(changes);
+    // A verify that reads the file and finds it as it was changes no state: no changed().
+    ports.fileReads.delete(RETRY);
+    expect(await service.verify(id)).toEqual({ checked: 1, drift: [] });
+    expect(ports.changes).toBe(changes);
+    // One that finds it moved does.
+    ports.files.set(RETRY, `// a header\n${RETRY_TEXT}`);
+    expect((await service.verify(id)).drift).toEqual(["Listing 1 (`src/retry.ts:2-3`) moved to 3-4"]);
+    expect(ports.changes).toBe(changes + 1);
   });
 
   it("reads the project's checkout when the environment is gone, and changes nothing with neither", async () => {

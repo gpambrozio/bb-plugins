@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 import { createFakePluginHost, experimental_scanPublicSdkOnly, makePluginAgentConfigurationContext, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import plugin from "./server";
 import { BRIEF_CORE, ORIENT_TOOL_INVARIANT } from "./server/content";
@@ -104,7 +104,10 @@ async function setup(options: { providerCanFork?: boolean; threadListFails?: boo
     threads: threadIds.map((threadId) => ({ threadId, metadata: metadata.get(threadId) ?? {} })),
   }));
   const files = new Map([["/work/calc/src/median.ts", MEDIAN]]);
+  /** Paths whose read fails as a busy host's does (not a missing file). */
+  const unreadable = new Set<string>();
   stub("files.read", ({ path }: { path: string }) => {
+    if (unreadable.has(path)) throw new Error("host busy");
     const content = files.get(path);
     if (content === undefined) throw Object.assign(new Error("not found"), { code: "not_found" });
     return { content, contentEncoding: "utf8", sizeBytes: Buffer.byteLength(content), sha256: createHash("sha256").update(content).digest("hex") };
@@ -123,7 +126,7 @@ async function setup(options: { providerCanFork?: boolean; threadListFails?: boo
   };
   /** The agent starts a turn in a thread: bb logs a `turn/started` row in that turn. */
   const startTurn = (turnId: string) => events.push({ seq: events.length + 1, createdAt: events.length + 1, turnId, type: "turn/started", data: {} });
-  return { bb, harness, threads, metadata, files, listing, builders, configuredAtSpawn, commitTurn, startTurn };
+  return { bb, harness, threads, metadata, files, unreadable, listing, builders, configuredAtSpawn, commitTurn, startTurn };
 }
 
 type OrientationRead = {
@@ -562,6 +565,28 @@ describe("orientations", () => {
     expect(asked).toEqual({ exists: true, sha256: expect.any(String) });
     expect(await harness.callRpc("exportOrientation", { orientationId, path: "ORIENTATION.md", replace: true, expectedSha256: asked.sha256 })).toEqual({ written: "ORIENTATION.md" });
     await expect(harness.callRpc("exportOrientation", { orientationId, path: "../x.md", replace: false })).rejects.toMatchObject({ code: "conflict" });
+  });
+
+  it("opening the walkthrough checks at most once per five minutes, even while a listed file cannot be read", async () => {
+    const { harness, unreadable } = await setup();
+    const orientationId = await buildWalkthrough(harness);
+    unreadable.add("/work/calc/src/median.ts");
+    const reads = () => harness.sdk.callsTo("files.read").length;
+    const start = Date.now();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(start + 6 * 60_000);
+    try {
+      const before = { reads: reads(), invalidations: harness.experimental_rpcInvalidations.length };
+      await harness.callRpc("orientationDocument", { orientationId });
+      // Past the window: it reads (and the read fails), but no check changed, so the app is not told to refetch.
+      expect(reads()).toBe(before.reads + 1);
+      expect(harness.experimental_rpcInvalidations).toHaveLength(before.invalidations);
+      clock.mockReturnValue(start + 7 * 60_000);
+      await harness.callRpc("orientationDocument", { orientationId });
+      expect(reads()).toBe(before.reads + 1);
+      expect(harness.experimental_rpcInvalidations).toHaveLength(before.invalidations);
+    } finally {
+      clock.mockRestore();
+    }
   });
 
   it("verifies, refuses deleting a live build, and deletes a ready one", async () => {

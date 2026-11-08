@@ -35,6 +35,8 @@ export interface OrientationRow {
   createdAt: number;
   updatedAt: number;
   readyAt: number | null;
+  /** When a verify last reached the checkout (whether or not each file read), for the tab's window. */
+  verifiedAt: number | null;
 }
 
 /** A stored block; a listing also carries the hash of the lines captured (`sha256`). */
@@ -43,7 +45,7 @@ export type BlockRow = (
   | (Extract<OrientationBlock, { kind: "listing" }> & { sha256: string })
 ) & { orientationId: string };
 
-export type NewOrientation = Omit<OrientationRow, "status" | "builderThreadId" | "summary" | "reminded" | "error" | "updatedAt" | "readyAt">;
+export type NewOrientation = Omit<OrientationRow, "status" | "builderThreadId" | "summary" | "reminded" | "error" | "updatedAt" | "readyAt" | "verifiedAt">;
 
 export interface NewListing {
   caption: string;
@@ -75,6 +77,7 @@ interface OrientationRecord {
   created_at: number;
   updated_at: number;
   ready_at: number | null;
+  verified_at: number | null;
 }
 
 interface BlockRecord {
@@ -130,6 +133,7 @@ function toOrientation(row: OrientationRecord): OrientationRow {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     readyAt: row.ready_at,
+    verifiedAt: row.verified_at,
   };
 }
 
@@ -296,6 +300,14 @@ export class OrientationStore {
     this.db
       .prepare(`UPDATE orientation_blocks SET check_state = ?, check_start = ?, check_end = ?, checked_at = ? WHERE orientation_id = ? AND ordinal = ? AND kind = 'listing'`)
       .run(check.state, check.startLine, check.endLine, now, id, ordinal);
+  }
+
+  /**
+   * Records that a verify reached the orientation's checkout. `updated_at` is left alone: it drives the
+   * purge of ended rows, and a check is not a change to the orientation.
+   */
+  setVerified(id: string, now: number): void {
+    this.db.prepare(`UPDATE orientations SET verified_at = ? WHERE id = ?`).run(now, id);
   }
 
   /** Makes the row ready and deletes the project's older ready rows with their blocks, in one transaction. */

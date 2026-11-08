@@ -119,6 +119,19 @@ describe("orientation briefs", () => {
     expect(brief).toContain("is refused, read the reason");
   });
 
+  it("describes pop as undoing the last block, never as closing a chapter, and numbers listings by the call's answer", () => {
+    const brief = buildBuilderBrief({ depth: "walkthrough", projectName: "calc" });
+    expect(brief).toContain("`orient_pop()` undoes the last block you added (a note, listing or chapter)");
+    expect(brief).not.toContain("closes the current chapter");
+    expect(brief).not.toMatch(/close the current chapter/i);
+    // The CLI fallback has no pop step: a builder that copied one deleted its last listing. Pop is named
+    // there only as a comment, for undoing a mistake.
+    expect(brief.split("\n")).not.toContain("bb learning orient pop");
+    expect(brief).toContain("# bb learning orient pop");
+    expect(brief).toContain("use the number each `orient_listing` call returns (a pop leaves a gap)");
+    expect(brief).not.toContain("Count carefully");
+  });
+
   it("orient-builder.md holds exactly one walkthrough marker pair", () => {
     expect(ORIENT_BUILDER.match(/<!-- walkthrough:start -->/g)).toHaveLength(1);
     expect(ORIENT_BUILDER.match(/<!-- walkthrough:end -->/g)).toHaveLength(1);

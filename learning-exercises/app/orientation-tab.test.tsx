@@ -26,10 +26,11 @@ const blocks: OrientationBlock[] = [
   { kind: "listing", ordinal: 3, number: 2, caption: "The parser", path: "src/parse.ts", startLine: 1, endLine: 5, text: "let b;", ref: "1234567890", check: { state: "changed", startLine: null, endLine: null, checkedAt: 5 } },
 ];
 
-function renderTab(params: unknown, extra: Record<string, (input: never) => unknown> = {}) {
+function renderTab(params: unknown, extra: Record<string, (input: never) => unknown> = {}, options: { tabVisible?: boolean } = {}) {
   return renderSlot({ component: OrientationTab }, { threadId: "thr_work", environment: null, params }, {
     rpc: { orientationDocument: () => ({ orientation: ori, blocks }), verifyOrientation: () => ({ checked: 2, drift: [] }), ...extra } as never,
     experimental_rpcContract: rpcContract,
+    ...options,
   });
 }
 
@@ -56,6 +57,16 @@ describe("the walkthrough tab", () => {
     fireEvent.click(screen.getByRole("button", { name: "Lexing" }));
     expect(root.scrollTop).toBe(300);
     expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("reads the walkthrough only while the tab shows: each read may check the listings", async () => {
+    const hidden = renderTab({ orientationId: "ori_1" }, {}, { tabVisible: false });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(hidden.rpcCalls.filter((c) => c.method === "orientationDocument")).toEqual([]);
+    cleanup();
+    const shown = renderTab({ orientationId: "ori_1" });
+    await screen.findByText("Listing 1: The lexer");
+    expect(shown.rpcCalls.filter((c) => c.method === "orientationDocument")).toHaveLength(1);
   });
 
   it("an invalid param says the walkthrough is gone", () => {
