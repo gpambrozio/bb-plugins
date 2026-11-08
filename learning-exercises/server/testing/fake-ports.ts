@@ -75,8 +75,10 @@ export class FakePorts implements Ports {
   beforeSpawn: (() => Promise<void>) | null = null;
   /** Runs after bb made the thread but before `spawn` answers. */
   duringSpawn: ((threadId: string) => Promise<void>) | null = null;
+  /** Threads stopped and archived, each only when the call worked. */
   stopped: string[] = [];
   archived: string[] = [];
+  stopFails = false;
   archiveFails = false;
   /** Environment roots, by environment id. */
   roots = new Map<string, FileRoot>([["env_1", { hostId: "host_1", rootPath: "/work/calc" }]]);
@@ -235,6 +237,7 @@ export class FakePorts implements Ports {
   }
 
   async stopThread(threadId: string) {
+    if (this.stopFails) throw new Error("stop refused");
     this.stopped.push(threadId);
   }
 

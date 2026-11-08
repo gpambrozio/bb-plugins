@@ -55,8 +55,8 @@ const V0_2_0_HASHES = [
 ];
 /**
  * 0.3.0's statements, after 0.2.0's 21: the orientation tables and indexes, the `sessions` rebuild for
- * mode `spawn` (R8/R9), and `orientations.verified_at`. Pinned before release like the rest: once a 0.3.0
- * store has recorded them, an edit would leave that store on different SQL than a fresh one.
+ * mode `spawn` (R8/R9), `orientations.verified_at`, and `orientation_putaways` (PR #104 review pass 1,
+ * finding 1). Pinned before release like the rest: once a 0.3.0 store has recorded them, an edit would leave that store on different SQL than a fresh one.
  */
 const V0_3_0_HASHES = [
   "b6445a740f7308cb2c2e8963e7459ef965ce04b7d73e017863e07271de6da0dd", // orientations
@@ -77,6 +77,7 @@ const V0_3_0_HASHES = [
   "26403547082a9aeee2ede166072b185b748452400cb2722803a24d676ebff8da", // DROP TABLE sessions_keep
   "2f7df58714cb7aaee4f6b170778895192b41ced9a01e6274b6b0bd16c58f5a2c", // DROP TABLE exercises_keep
   "57778c47ae2ac356927f1906c783954e0813964c3490d3d9ac2bb97e8c4c8130", // orientations.verified_at
+  "fab1b3ac1299851bdc13b4452993486792c9fe59c2601dd985453316cd2cf4ca", // orientation_putaways
 ];
 /** 0.2.0's last statement (the answered-offer seed); everything after it is newer. */
 const SEED_INDEX = 20;
@@ -111,7 +112,7 @@ describe("migrations", () => {
 
   it("keeps 0.3.0's statements unchanged, and adds nothing unpinned after them", () => {
     expect(MIGRATIONS.slice(21).map(sha)).toEqual(V0_3_0_HASHES);
-    expect(MIGRATIONS.at(-1)).toBe("ALTER TABLE orientations ADD COLUMN verified_at INTEGER");
+    expect(MIGRATIONS.at(-1)).toMatch(/^CREATE TABLE orientation_putaways \(/);
   });
 
   it("an e54db75 store with duplicate open sessions loads: one survives, the others are kept as history", async () => {

@@ -213,6 +213,14 @@ export const MIGRATIONS: string[] = [
   // 0.3.0: when the orientation's listings were last checked against a reachable checkout, whatever each
   // listing's read did; opening the walkthrough checks again only once this is five minutes old.
   `ALTER TABLE orientations ADD COLUMN verified_at INTEGER`,
+  // 0.3.0: builder threads whose put-away (stop, then archive) has not been confirmed, by thread. Starts are
+  // refused while any is here, and the sweep retries them. No foreign key: the orientation may be deleted,
+  // purged or replaced (or never have existed, for a stray thread) while its thread still needs putting away.
+  `CREATE TABLE orientation_putaways (
+     thread_id TEXT PRIMARY KEY,
+     orientation_id TEXT NOT NULL,
+     failed_at INTEGER NOT NULL
+   )`,
 ];
 
 const ReplyProgressSchema = z.object({

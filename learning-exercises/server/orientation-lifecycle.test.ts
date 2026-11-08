@@ -223,6 +223,147 @@ describe("the sweep", () => {
   });
 });
 
+describe("a put-away that fails (review finding 1)", () => {
+  const CLEANING = "Cleaning up an earlier build; try again shortly.";
+
+  function putAwaysFail(ports: FakePorts, fail: boolean): void {
+    ports.stopFails = fail;
+    ports.archiveFails = fail;
+  }
+
+  /**
+   * The builder is not put away: starts are refused, and a sweep while bb still refuses changes nothing.
+   * Once bb answers again, the next sweep puts it away and starts are allowed.
+   */
+  async function refusedUntilASweepPutsItAway(context: { ports: FakePorts; service: OrientationService }): Promise<void> {
+    const { ports, service: orient } = context;
+    expect(orient.clean).toBe(false);
+    expect(ports.threads.get(BUILDER)?.archivedAt).toBeNull();
+    await expect(orient.start({ sourceThreadId: SOURCE, depth: "summary" })).rejects.toThrow(CLEANING);
+    await orient.sweep();
+    expect(orient.clean).toBe(false);
+    expect(ports.archived).toEqual([]);
+
+    putAwaysFail(ports, false);
+    await orient.sweep();
+    expect(ports.stopped).toEqual([BUILDER]);
+    expect(ports.archived).toEqual([BUILDER]);
+    expect(ports.threads.get(BUILDER)?.archivedAt).not.toBeNull();
+    expect(orient.clean).toBe(true);
+    await orient.start({ sourceThreadId: SOURCE, depth: "summary" });
+    expect(ports.spawned).toHaveLength(2);
+  }
+
+  it("on Cancel", async () => {
+    const context = await building();
+    putAwaysFail(context.ports, true);
+    await context.service.cancel(context.id);
+    expect(context.store.get(context.id)?.status).toBe("cancelled");
+    await refusedUntilASweepPutsItAway(context);
+  });
+
+  it("on a failed turn", async () => {
+    const context = await building();
+    putAwaysFail(context.ports, true);
+    await context.service.onFailed(BUILDER);
+    expect(context.store.get(context.id)?.status).toBe("failed");
+    await refusedUntilASweepPutsItAway(context);
+  });
+
+  it("on the second idle", async () => {
+    const context = await building();
+    await context.service.onIdle(BUILDER);
+    putAwaysFail(context.ports, true);
+    await context.service.onIdle(BUILDER);
+    expect(context.store.get(context.id)?.status).toBe("failed");
+    await refusedUntilASweepPutsItAway(context);
+  });
+
+  it("at the 30-minute cap", async () => {
+    const context = await building();
+    putAwaysFail(context.ports, true);
+    context.ports.advance(31 * MINUTE);
+    await context.service.sweep();
+    expect(context.store.get(context.id)).toMatchObject({ status: "cancelled", error: "Took longer than 30 minutes." });
+    await refusedUntilASweepPutsItAway(context);
+  });
+
+  it("on the idle after a finish", async () => {
+    const context = await building();
+    await context.service.summary(BUILDER, SUMMARY);
+    await context.service.finish(BUILDER);
+    putAwaysFail(context.ports, true);
+    await context.service.onIdle(BUILDER);
+    expect(context.store.get(context.id)?.status).toBe("ready");
+    await refusedUntilASweepPutsItAway(context);
+  });
+
+  it("is done when the stop fails but bb confirms the archive", async () => {
+    const { ports, store, service: orient, id } = await building();
+    ports.stopFails = true;
+    await orient.cancel(id);
+    expect(store.get(id)?.status).toBe("cancelled");
+    expect(ports.archived).toEqual([BUILDER]);
+    expect(orient.clean).toBe(true);
+  });
+
+  it("stays pending when the stop fails and the archive answers but the thread is not archived", async () => {
+    const { ports, service: orient, id } = await building();
+    ports.stopFails = true;
+    const archive = ports.archiveThread.bind(ports);
+    ports.archiveThread = async () => {};
+    await orient.cancel(id);
+    expect(orient.clean).toBe(false);
+    ports.stopFails = false;
+    ports.archiveThread = archive;
+    await orient.sweep();
+    expect(ports.archived).toEqual([BUILDER]);
+    expect(orient.clean).toBe(true);
+  });
+
+  it("is kept across a reload, and the new copy puts the builder away once bb answers", async () => {
+    const { ports, store, service: first, id } = await building();
+    putAwaysFail(ports, true);
+    await first.cancel(id);
+    first.dispose();
+    const second = service(ports, store);
+    await second.reconcile();
+    expect(second.clean).toBe(false);
+    putAwaysFail(ports, false);
+    await second.sweep();
+    expect(ports.archived).toEqual([BUILDER]);
+    expect(second.clean).toBe(true);
+  });
+
+  it("is kept when the user deletes the orientation, and ends once bb no longer has the thread", async () => {
+    const { ports, store, service: orient, id } = await building();
+    putAwaysFail(ports, true);
+    await orient.cancel(id);
+    orient.delete(id);
+    expect(store.get(id)).toBeNull();
+    await orient.sweep();
+    expect(orient.clean).toBe(false);
+    // Deleted in bb: stop and archive keep failing, but no thread by that id and none listed confirms it gone.
+    ports.threads.delete(BUILDER);
+    await orient.sweep();
+    expect(orient.clean).toBe(true);
+    expect(ports.archived).toEqual([]);
+  });
+
+  it("stays pending while bb cannot be read to confirm a thread it cannot find", async () => {
+    const { ports, service: orient, id } = await building();
+    putAwaysFail(ports, true);
+    await orient.cancel(id);
+    ports.threads.delete(BUILDER);
+    ports.pluginThreadsUnreadable = true;
+    await orient.sweep();
+    expect(orient.clean).toBe(false);
+    ports.pluginThreadsUnreadable = false;
+    await orient.sweep();
+    expect(orient.clean).toBe(true);
+  });
+});
+
 describe("reload safety", () => {
   it("keeps a building row whose builder is working, and fails one whose builder is gone, idle with no turn, or errored", async () => {
     const { ports, store, service: first, id } = await building();

@@ -372,12 +372,13 @@ describe("cancelling and deleting", () => {
     await expect(service.chapter(BUILDER, "Intro")).rejects.toThrow("This thread is not building an orientation.");
   });
 
-  it("only warns when the builder cannot be archived", async () => {
+  it("does not throw when the builder cannot be archived, but warns and refuses starts until it is", async () => {
     const { ports, store, service, id } = await building();
     ports.archiveFails = true;
     await service.cancel(id);
     expect(store.get(id)?.status).toBe("cancelled");
     expect(ports.warnings.join("\n")).toContain("archive refused");
+    expect(service.clean).toBe(false);
   });
 
   it("refuses to delete a live orientation and deletes a finished one with its blocks", async () => {

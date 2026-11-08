@@ -339,6 +339,41 @@ export class OrientationStore {
     })();
   }
 
+  /**
+   * Records that putting away `threadId` failed (or was not confirmed); true when it was not recorded yet.
+   * The `orientations` row is not touched, so an ended row's purge is not put off.
+   */
+  markPutAwayPending(threadId: string, orientationId: string, now: number): boolean {
+    const known = this.isPutAwayPending(threadId);
+    this.db
+      .prepare(`INSERT INTO orientation_putaways (thread_id, orientation_id, failed_at) VALUES (?, ?, ?) ON CONFLICT (thread_id) DO UPDATE SET failed_at = excluded.failed_at`)
+      .run(threadId, orientationId, now);
+    return !known;
+  }
+
+  /** Forgets a pending put-away; true when there was one. */
+  clearPutAway(threadId: string): boolean {
+    return this.db.prepare(`DELETE FROM orientation_putaways WHERE thread_id = ?`).run(threadId).changes === 1;
+  }
+
+  isPutAwayPending(threadId: string): boolean {
+    return this.db.prepare(`SELECT 1 FROM orientation_putaways WHERE thread_id = ?`).get(threadId) !== undefined;
+  }
+
+  /** Every put-away still to do, oldest failure first. */
+  pendingPutAways(): { threadId: string; orientationId: string; failedAt: number }[] {
+    const rows = this.db.prepare(`SELECT thread_id, orientation_id, failed_at FROM orientation_putaways ORDER BY failed_at, thread_id`).all() as {
+      thread_id: string;
+      orientation_id: string;
+      failed_at: number;
+    }[];
+    return rows.map((row) => ({ threadId: row.thread_id, orientationId: row.orientation_id, failedAt: row.failed_at }));
+  }
+
+  hasPendingPutAways(): boolean {
+    return this.db.prepare(`SELECT 1 FROM orientation_putaways LIMIT 1`).get() !== undefined;
+  }
+
   /** Takes the next ordinal (which only rises), runs `insert` with it and returns the stored block. */
   private append(id: string, now: number, insert: (ordinal: number) => void): BlockRow {
     return this.db.transaction((): BlockRow => {

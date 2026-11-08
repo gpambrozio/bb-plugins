@@ -87,8 +87,10 @@ spaced retrieval and the journal.
 New migrations only; `migration.test.ts` pins their SHA-256 like the others. Besides the two tables and
 their indexes, 0.3.0 rebuilds `sessions` (R8/R9): SQLite cannot loosen its `mode` CHECK in place to admit
 `spawn`, so the statements copy `sessions` and `exercises` aside, delete `exercises`, drop and recreate
-`sessions` with the same columns and indexes, and put both back, independent of `foreign_keys`. The last
-0.3.0 statement adds `orientations.verified_at` (§6.3).
+`sessions` with the same columns and indexes, and put both back, independent of `foreign_keys`. Then
+0.3.0 adds `orientations.verified_at` (§6.3), and last `orientation_putaways` (`thread_id` primary key,
+`orientation_id`, `failed_at`): builder threads whose put-away bb has not confirmed (§7), with no foreign
+key, so deleting, purging or replacing their orientation does not lose them.
 
 `orientations`
 
@@ -209,7 +211,9 @@ The guarantees from issue #11, simpler here because builds are started by hand a
   moves the row and leaves the builder running (R5): it runs inside the builder's own tool call, where a
   stop that waits for the turn would wait for its own answer, so the builder's next `thread.idle` puts it
   away (a reconcile is the fallback). Errors from stop or archive are logged, never thrown into the user's
-  action.
+  action. A put-away bb does not confirm (the thread archived, or gone) is recorded in the store; while any
+  is, starts are refused with "Cleaning up an earlier build; try again shortly", and each sweep tries it
+  again until it is confirmed.
 - **A builder that stops early.** On `thread.idle` of a `building` builder: the first time, send one
   visible line plus an agent-only reminder ("call `orient_finish`, or fix what it refused"); the second time,
   `failed` ("The builder stopped before finishing"), keep its blocks for the message, stop and archive.

@@ -144,6 +144,15 @@ made while implementing):
   only when not clean. Reconcile keeps a builder that is active, pending or starting, or idle with a
   current turn; any other leftover is archived. Put-away of a gone or archived builder must not make
   reconcile unclean (R7).
+- **A put-away that bb does not confirm keeps starts refused** (PR #104 review, finding 1). Every put-away
+  (Cancel, a failed build, the cap, the idle after a finish, a stray, a reconcile) stops, then archives,
+  and is done only when both worked or bb confirms the thread archived, or gone (no thread by its id and
+  none of this plugin's unarchived threads lists it). A stop that failed before an archive that answered is
+  done only once a read shows it archived. Anything else is recorded in `orientation_putaways` (migration
+  0.3.0, by thread, no foreign key: Delete, the purge and a newer ready build do not lose it), `clean` is
+  false while a record exists (`start` and the tab's "Cleaning up" read it), and the sweep retries each
+  under its orientation's lock (a reconcile does so first). This does not make reconcile run again: that
+  stays load-and-unclean only, so it never meets this copy's own in-flight spawn (R1).
 - **`finish` does not put its own builder away (R5).** It runs inside the builder's own tool call and marks
   the row ready; stopping or archiving that thread from there may deadlock or drop the tool result. The
   builder's next `thread.idle` puts it away (row ready, failed or cancelled and thread bound), with

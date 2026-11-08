@@ -18,7 +18,10 @@
  * old failed rows, so a terminal row is never touched). Cancel puts the builder away (stopped, then
  * archived), logging errors rather than throwing them into the user's action. Finish does not: it runs
  * inside the builder's own tool call, so the builder is put away once it goes idle (`onIdle`), or by a
- * reconcile. After `dispose()` no continuation of this copy touches the store (`alive()`).
+ * reconcile. A put-away bb does not confirm (`putAway`) is recorded in the store, outside the row, so a
+ * reload sees it too; while any is recorded `clean` is false and starts are refused, and every sweep
+ * tries it again (`retryPutAways`) until bb confirms the thread archived or gone. After `dispose()` no
+ * continuation of this copy touches the store (`alive()`).
  *
  * The builder's lifecycle (§7). Its first idle gets one reminder (a visible line and an agent-only part,
  * invariant 6), its second fails the row, and a failed turn fails it at once (`onIdle`, `onFailed`). The
@@ -27,7 +30,7 @@
  * once it has ended (a write would bump its `updated_at` and put off its purge).
  *
  * Reload safety fails closed: `clean` starts false, and only a reconcile that read and settled everything
- * sets it, so no start is allowed before the load-time check. `reconcile` keeps a live row whose builder
+ * (pending put-aways first) sets it, so no start is allowed before the load-time check. `reconcile` keeps a live row whose builder
  * is working, binds a `starting` row to the thread bb made for it (found by its metadata) when that thread
  * works, fails the rest ("Interrupted by a reload.") and puts their threads away, then archives every
  * thread of this plugin whose orientation id no live row has it building (finished builders among them).
@@ -205,7 +208,7 @@ export class OrientationService {
     const key = projectKey(project ?? { id: source.projectId, gitRemoteUrl: null });
     const projectName = project?.name ?? source.projectId;
     return this.exclusive(`orient:${key}`, async () => {
-      if (!this.isClean) throw new OrientationError("Cleaning up an earlier build; try again shortly.");
+      if (!this.clean) throw new OrientationError("Cleaning up an earlier build; try again shortly.");
       if (!canStartByHand(source)) throw new OrientationError("Orientations start only from a thread you can see, and never from one of this plugin's own threads.");
       const environmentId = source.environmentId;
       if (environmentId === null) throw new OrientationError("This thread has no checkout to orient in.");
@@ -277,7 +280,7 @@ export class OrientationService {
     if (current === null || !isLive(current.status)) {
       // Ended while bb spawned it. A builder that bound itself is put away by whoever ended the row (or,
       // after a finish, once it goes idle); one that never called is put away here.
-      if (current?.builderThreadId !== threadId) await this.putAway(threadId);
+      if (current?.builderThreadId !== threadId) await this.putAway(threadId, row.id);
       return { orientationId: row.id };
     }
     // Unless the builder bound itself on an early call.
@@ -472,7 +475,8 @@ export class OrientationService {
         throw new OrientationError("That orientation is not being built.");
       }
       this.ports.changed();
-      await this.putAway(row.builderThreadId);
+      // A put-away that fails is recorded and retried by the sweep; starts stay refused until then.
+      await this.putAway(row.builderThreadId, orientationId);
     });
   }
 
@@ -598,22 +602,72 @@ export class OrientationService {
   // ── putting a builder away ────────────────────────────────────────────────
 
   /**
-   * Stops the thread, then archives it whatever the stop did; failures are logged, never thrown. True
-   * when the thread is archived (or there is none), so a reconcile knows whether it is done.
+   * Stops the thread, then archives it whatever the stop did; failures are logged, never thrown. True when
+   * the thread is put away (or there is none): both calls worked, or bb confirms it archived or gone
+   * (`confirmedPutAway`: a stop that failed before an archive that worked, an archive refused because it
+   * already was). Otherwise the thread is recorded as pending in the store, which keeps starts refused
+   * (`clean`) until a sweep puts it away (`retryPutAways`); success forgets that record. Once this copy is
+   * disposed nothing is recorded: the next copy's reconcile lists the thread instead.
    */
-  private async putAway(threadId: string | null): Promise<boolean> {
+  private async putAway(threadId: string | null, orientationId: string): Promise<boolean> {
     if (threadId === null) return true;
+    let stopped = true;
     try {
       await this.ports.stopThread(threadId);
     } catch (error) {
+      stopped = false;
       this.warn(`Could not stop orientation builder ${threadId}: ${errorText(error)}`);
     }
+    let archived = true;
     try {
       await this.ports.archiveThread(threadId);
-      return true;
     } catch (error) {
+      archived = false;
       this.warn(`Could not archive orientation builder ${threadId}: ${errorText(error)}`);
-      return false;
+    }
+    if (this.disposed) return stopped && archived;
+    const done = (stopped && archived) || (await this.confirmedPutAway(threadId));
+    if (this.disposed) return done;
+    if (done) {
+      if (this.store.clearPutAway(threadId)) this.ports.changed();
+    } else {
+      if (this.store.markPutAwayPending(threadId, orientationId, this.ports.now())) this.ports.changed();
+      this.warn(`Orientation builder ${threadId} is not put away yet; orientations stay refused until a sweep puts it away.`);
+    }
+    return done;
+  }
+
+  /**
+   * Whether bb confirms the thread put away: archived, or gone (no thread by its id, and none of this
+   * plugin's unarchived threads). A read that fails confirms nothing.
+   */
+  private async confirmedPutAway(threadId: string): Promise<boolean> {
+    const info = await this.ports.thread(threadId);
+    if (info !== null) return info.archivedAt !== null;
+    if (this.disposed) return false;
+    const listed = await this.ports.pluginThreadsWith(ORIENTATION_METADATA_KEY);
+    return listed !== null && !listed.some((entry) => entry.threadId === threadId && !entry.archived);
+  }
+
+  /**
+   * Puts away again, each under its orientation's lock, every builder whose put-away was not confirmed. A
+   * record whose thread a live row builds with is stale and forgotten (a put-away is recorded only for an
+   * ended build's thread or a stray, so this should not happen).
+   */
+  private async retryPutAways(): Promise<void> {
+    for (const { threadId, orientationId } of this.store.pendingPutAways()) {
+      if (this.disposed) return;
+      await this.exclusive(`orientation:${orientationId}`, async () => {
+        if (this.disposed || !this.store.isPutAwayPending(threadId)) return;
+        const row = this.store.get(orientationId);
+        const stale = row !== null && isLive(row.status) && row.builderThreadId === threadId;
+        if (stale || (await this.confirmedPutAway(threadId))) {
+          if (!this.disposed && this.store.clearPutAway(threadId)) this.ports.changed();
+          return;
+        }
+        if (this.disposed) return;
+        await this.putAway(threadId, orientationId);
+      });
     }
   }
 
@@ -663,7 +717,7 @@ export class OrientationService {
         if (isLive(row.status)) return;
         const info = await this.ports.thread(threadId);
         if (this.disposed || info === null || info.archivedAt !== null) return;
-        await this.putAway(threadId);
+        await this.putAway(threadId, found.id);
       });
     } catch (error) {
       this.warn(`Handling orientation builder ${threadId} failed: ${errorText(error)}`);
@@ -688,7 +742,7 @@ export class OrientationService {
       if (this.disposed) return;
       const row = this.store.get(orientationId);
       if (row !== null && isLive(row.status)) return;
-      await this.putAway(threadId);
+      await this.putAway(threadId, orientationId);
     });
   }
 
@@ -701,7 +755,7 @@ export class OrientationService {
   private async failBuild(id: string, threadId: string, message: string): Promise<void> {
     if (!this.store.transition(id, ["building"], "failed", this.ports.now(), message)) return;
     this.ports.changed();
-    await this.putAway(threadId);
+    await this.putAway(threadId, id);
   }
 
   /**
@@ -719,12 +773,14 @@ export class OrientationService {
           const row = this.store.get(id);
           if (row === null || !this.store.transition(id, ["starting", "building"], "cancelled", this.ports.now(), "Took longer than 30 minutes.")) return;
           this.ports.changed();
-          await this.putAway(row.builderThreadId);
+          await this.putAway(row.builderThreadId, id);
         });
       }
       if (this.disposed) return;
       if (this.store.purge(now - PURGE_AFTER_MS) > 0) this.ports.changed();
+      // A reconcile retries the pending put-aways first; a clean copy retries them on its own.
       if (!this.isClean) await this.reconcile();
+      else await this.retryPutAways();
     } catch (error) {
       this.warn(`The orientation sweep failed: ${errorText(error)}`);
     }
@@ -732,9 +788,12 @@ export class OrientationService {
 
   // ── reload safety ─────────────────────────────────────────────────────────
 
-  /** Whether starts are allowed: a reconcile has settled every builder an earlier copy left. */
+  /**
+   * Whether starts are allowed: a reconcile has settled every builder an earlier copy left, and no builder's
+   * put-away is still pending (a stop or archive that failed, retried by the sweep).
+   */
   get clean(): boolean {
-    return this.isClean;
+    return this.isClean && !this.store.hasPendingPutAways();
   }
 
   /**
@@ -753,6 +812,9 @@ export class OrientationService {
 
   private async reconcileOnce(): Promise<void> {
     try {
+      if (this.disposed) return;
+      // Before the list, so a thread put away here is not listed and archived twice.
+      await this.retryPutAways();
       if (this.disposed) return;
       const listed = await this.ports.pluginThreadsWith(ORIENTATION_METADATA_KEY);
       if (this.disposed) return;
@@ -814,7 +876,7 @@ export class OrientationService {
     }
     if (this.store.transition(id, ["starting", "building"], "failed", this.ports.now(), INTERRUPTED)) this.ports.changed();
     // A thread that is gone or already archived has nothing to put away (bb would refuse the archive).
-    return state === "gone" ? true : this.putAway(threadId);
+    return state === "gone" ? true : this.putAway(threadId, id);
   }
 
   /**
@@ -835,7 +897,7 @@ export class OrientationService {
     if (this.disposed) return true;
     const row = this.store.get(orientationId);
     if (row !== null && isLive(row.status) && row.builderThreadId === threadId) return true;
-    return this.putAway(threadId);
+    return this.putAway(threadId, orientationId);
   }
 
   /** Nothing in this copy touches the store afterwards. */
