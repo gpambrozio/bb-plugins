@@ -68,20 +68,26 @@ export class OrientationApi {
   }
 
   /**
-   * The project's ready and live orientations, linked against this thread's workspace (the reader's
-   * checkout). `canStart` mirrors what `start` would refuse: a thread that may start by hand, with an
-   * environment, no build under way for the project, and the load-time clean-up done.
+   * The project's ready and live orientations, and the last failed or cancelled build when the section
+   * should show its reason: no build is live, and it was started after the ready one (a rebuild that did
+   * not make it). All linked against this thread's workspace (the reader's checkout). `canStart` mirrors
+   * what `start` would refuse: a thread that may start by hand, with an environment, no build under way
+   * for the project, and the load-time clean-up done.
    */
   async orientation({ threadId }: Input<"orientation">): Promise<Output<"orientation">> {
-    const { ports, orientations } = this.deps;
+    const { ports, orientations, orientationStore } = this.deps;
     const thread = await requireThread(ports, threadId);
     const { key } = await projectOf(ports, thread);
     const { current, live } = orientations.view(key);
+    const ended = live === null ? orientationStore.latestEnded(key) : null;
+    // Started after the ready one: compared by creation, since a ready row's `updatedAt` moves on every verify.
+    const last = ended !== null && (current === null || ended.createdAt > current.createdAt) ? ended : null;
     const workspace = await workspaceOf(ports, thread);
     const cleaning = !orientations.clean;
     return {
       current: this.present(current, workspace),
       live: this.present(live, workspace),
+      last: this.present(last, workspace),
       canStart: canStartByHand(thread) && thread.environmentId !== null && live === null && !cleaning,
       cleaning,
     };

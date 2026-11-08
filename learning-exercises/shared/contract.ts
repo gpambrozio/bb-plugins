@@ -96,13 +96,20 @@ export const rpcContract = {
   removeNeverProject: { input: z.object({ key: z.string().min(1) }), output: Done },
 
   /**
-   * The thread's project's orientations: the ready one (`current`) and the one being built (`live`).
-   * `canStart`: a build may start from this thread now; `cleaning`: starts wait for the clean-up of
-   * builders an earlier copy of the plugin left.
+   * The thread's project's orientations: the ready one (`current`), the one being built (`live`), and
+   * the build that failed or was cancelled last (`last`, with its `error`), only while none is live and
+   * it was started after `current`. `canStart`: a build may start from this thread now; `cleaning`:
+   * starts wait for the clean-up of builders an earlier copy of the plugin left.
    */
   orientation: {
     input: ThreadRef,
-    output: z.object({ current: OrientationSchema.nullable(), live: OrientationSchema.nullable(), canStart: z.boolean(), cleaning: z.boolean() }),
+    output: z.object({
+      current: OrientationSchema.nullable(),
+      live: OrientationSchema.nullable(),
+      last: OrientationSchema.nullable(),
+      canStart: z.boolean(),
+      cleaning: z.boolean(),
+    }),
     tags,
   },
   /** An orientation and its blocks, its listings checked against their files at most every 5 minutes. */

@@ -201,6 +201,14 @@ export class OrientationStore {
     return this.one(`SELECT * FROM orientations WHERE project_key = ? AND status = 'ready' ORDER BY ready_at DESC, created_at DESC LIMIT 1`, projectKey);
   }
 
+  /** The project's failed or cancelled orientation that ended last, if any. */
+  latestEnded(projectKey: string): OrientationRow | null {
+    return this.one(
+      `SELECT * FROM orientations WHERE project_key = ? AND status IN ('failed', 'cancelled') ORDER BY updated_at DESC, created_at DESC LIMIT 1`,
+      projectKey,
+    );
+  }
+
   byBuilder(threadId: string): OrientationRow | null {
     return this.one(`SELECT * FROM orientations WHERE builder_thread_id = ? ORDER BY created_at DESC LIMIT 1`, threadId);
   }

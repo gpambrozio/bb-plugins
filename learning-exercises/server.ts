@@ -159,27 +159,31 @@ async function plugin(bb: BbPluginApi, deps: { ports?: (bb: BbPluginApi, changed
     }
   };
 
-  // A builder never reaches the offer engine. Only a thread this plugin may have started goes to the
-  // orientation service (a bound builder, or one of this plugin's threads it has not bound yet), so an
-  // idle in any other thread costs no bb read.
-  const mayBuild = (thread: { id: string; originPluginId: string | null }) => orientations.isBuilderThread(thread.id) || thread.originPluginId === PLUGIN_ID;
+  // Only a thread this plugin may have started goes to the orientation service (a bound builder, or one
+  // of this plugin's threads it has not bound yet), so an idle in any other thread costs no bb read.
+  type EventThread = { id: string; originPluginId: string | null; visibility: string };
+  const mayBuild = (thread: EventThread) => orientations.isBuilderThread(thread.id) || thread.originPluginId === PLUGIN_ID;
+  // A builder never reaches the offer engine (invariant 3), not even before it is bound: bb can report
+  // its first turn before `spawn` answers, and that turn's window would hide commits in its checkout. Its
+  // hidden visibility and this plugin's origin say what it is; this plugin's session threads are visible.
+  const builderLike = (thread: EventThread) => orientations.isBuilderThread(thread.id) || (thread.originPluginId === PLUGIN_ID && thread.visibility === "hidden");
   bb.events.on("thread.active", ({ thread }) =>
     guard("Noting a turn's start", () => {
-      if (orientations.isBuilderThread(thread.id)) return;
+      if (builderLike(thread)) return;
       return offers.onActive(thread);
     })(),
   );
   bb.events.on("thread.idle", ({ thread }) =>
     guard("Weighing an offer", async () => {
       if (mayBuild(thread)) await orientations.onIdle(thread.id);
-      if (orientations.isBuilderThread(thread.id)) return;
+      if (builderLike(thread)) return;
       await offers.onIdle(thread);
     })(),
   );
   bb.events.on("thread.failed", ({ thread }) =>
     guard("Clearing a failed turn", async () => {
       if (mayBuild(thread)) await orientations.onFailed(thread.id);
-      if (orientations.isBuilderThread(thread.id)) return;
+      if (builderLike(thread)) return;
       offers.threadGone(thread.id);
     })(),
   );

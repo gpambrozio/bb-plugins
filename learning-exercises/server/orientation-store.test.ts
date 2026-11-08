@@ -146,6 +146,24 @@ describe("OrientationStore", () => {
     expect(orientations.blocks("ori_f")).toEqual([]);
   });
 
+  it("latestEnded answers the project's most recently ended failed or cancelled row", () => {
+    const { orientations } = memoryOrientationStore();
+    expect(orientations.latestEnded("k")).toBeNull();
+    orientations.create(input("ori_f", "k", { createdAt: 1 }));
+    orientations.transition("ori_f", ["starting"], "failed", 10, "boom");
+    orientations.create(input("ori_c", "k", { createdAt: 11 }));
+    orientations.transition("ori_c", ["starting"], "cancelled", 20, "Cancelled.");
+    orientations.create(input("ori_r", "k", { createdAt: 21 }));
+    orientations.promoteReady("ori_r", 30);
+    orientations.create(input("ori_live", "k", { createdAt: 31 }));
+    orientations.create(input("ori_other", "other", { createdAt: 40 }));
+    orientations.transition("ori_other", ["starting"], "failed", 50);
+    // Ready and live rows never count, nor another project's.
+    expect(orientations.latestEnded("k")).toMatchObject({ id: "ori_c", status: "cancelled", error: "Cancelled." });
+    orientations.transition("ori_live", ["starting"], "failed", 60, "late");
+    expect(orientations.latestEnded("k")).toMatchObject({ id: "ori_live", error: "late" });
+  });
+
   it("delete removes a row and its blocks", () => {
     const { orientations } = memoryOrientationStore();
     orientations.create(input("ori_1"));
