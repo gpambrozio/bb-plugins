@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.3.0
+
+- **Orient a project.** The Learning tab has a new Orientation section. Start builds a short guide to the
+  repository: what it is for, its languages, the stages its work flows through, the key files, the
+  concepts and the gotchas, and two exercises on files you are sent to read. A background agent in the
+  project's own checkout writes it and the tab shows its progress. You can cancel a build, rebuild a
+  finished one or delete it. Start says up front that the agent has permission to read and edit files,
+  and that it is told not to edit.
+- **A walkthrough, if you want one.** Tick the walkthrough option and the build also writes a linear tour
+  of the code, in chapters, with a section menu at the top of its tab that jumps to a chapter and follows
+  the one you are reading. Every code listing is copied from your files by the plugin, never typed by
+  the agent. Verify re-reads the files and tells you which listings are unchanged, which have changed
+  and which files are gone; the tab opens with a check of its own when the orientation is more than
+  five minutes old.
+- **An orientation session.** Start the exercises from the orientation in a thread of their own: two
+  questions on the files the guide points to, then a closing question, with the usual answer cards.
+  Sessions count apart from the exercises offered after your work, and they do not use up a thread's
+  limit.
+- **Export to a Markdown file in the repository.** The orientation can be saved as a document in your
+  repository. A walkthrough exports in the format of Simon Willison's showboat, so it can be checked
+  with `showboat verify`. You choose where by browsing the project's folders and naming the file
+  (`ORIENTATION.md` at the top of the project unless you change it). An existing file is never overwritten
+  unless you confirm, and a file that changed while you were deciding is left alone.
+- Orientations are never offered; you start them yourself. Existing sessions and answers are kept when
+  the plugin updates.
+
 ## 0.2.0
 
 - Threads another plugin starts for you at the top level now get offers like your own. A thread

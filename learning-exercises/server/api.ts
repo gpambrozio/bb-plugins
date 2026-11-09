@@ -25,18 +25,28 @@ export interface ApiDeps {
   settings: () => LearningSettings;
 }
 
+/** The thread, or a refusal when it is gone. */
+export async function requireThread(ports: Pick<Ports, "thread">, threadId: string): Promise<ThreadInfo> {
+  const thread = await ports.thread(threadId);
+  if (thread === null) throw new SessionError("That thread is gone.");
+  return thread;
+}
+
+/** The thread's project's key and name (`projectKey`), as the store files sessions and orientations. */
+export async function projectOf(ports: Pick<Ports, "project">, thread: ThreadInfo): Promise<{ key: string; name: string }> {
+  const project = await ports.project(thread.projectId);
+  return { key: projectKey(project ?? { id: thread.projectId, gitRemoteUrl: null }), name: project?.name ?? "this project" };
+}
+
 export class LearningApi {
   constructor(private readonly deps: ApiDeps) {}
 
-  private async requireThread(threadId: string): Promise<ThreadInfo> {
-    const thread = await this.deps.ports.thread(threadId);
-    if (thread === null) throw new SessionError("That thread is gone.");
-    return thread;
+  private requireThread(threadId: string): Promise<ThreadInfo> {
+    return requireThread(this.deps.ports, threadId);
   }
 
-  private async keyOf(thread: ThreadInfo): Promise<{ key: string; name: string }> {
-    const project = await this.deps.ports.project(thread.projectId);
-    return { key: projectKey(project ?? { id: thread.projectId, gitRemoteUrl: null }), name: project?.name ?? "this project" };
+  private keyOf(thread: ThreadInfo): Promise<{ key: string; name: string }> {
+    return projectOf(this.deps.ports, thread);
   }
 
   async threadView({ threadId }: Input<"threadView">): Promise<Output<"threadView">> {
@@ -119,7 +129,7 @@ export class LearningApi {
     const thread = await this.requireThread(threadId);
     const choices: TopicChoice[] = [];
     const offer = store.liveOffer(threadId);
-    if (offer !== null) choices.push({ id: "offer", label: offer.topic, topic: offer.topic, trigger: offer.trigger, refs: offer.refs });
+    if (offer !== null && offer.trigger !== "orientation") choices.push({ id: "offer", label: offer.topic, topic: offer.topic, trigger: offer.trigger, refs: offer.refs });
     if (thread.environmentId !== null) {
       const branch = await ports.branchCommits(thread.environmentId);
       // On a default branch nothing is ahead: the commits this thread's own turns made, as recorded.
@@ -254,4 +264,3 @@ export class LearningApi {
     return null;
   }
 }
-

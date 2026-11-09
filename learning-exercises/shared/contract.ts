@@ -5,18 +5,20 @@
  * root to the server bundle only, and a git install builds the app without it. `satisfies` gives the
  * checks `defineRpcContract` would.
  *
- * Every read carries `LEARNING_TAG`; the server invalidates it whenever an offer or a session changes,
- * and every open banner, tab and menu reads again.
+ * Every read carries `LEARNING_TAG`; the server invalidates it whenever an offer, a session or an
+ * orientation changes, and every open banner, tab and menu reads again.
  */
 import type { PluginRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
-import { CardDraftSchema, QuestionRefSchema, ExerciseSchema, FeedbackCardSchema, OfferAnswerSchema, SessionSchema, ThreadViewSchema, TopicChoiceSchema, TriggerKindSchema, RefsSchema, WorkspaceSchema } from "./types";
+import { OrientationBlockSchema, OrientationDepthSchema, OrientationSchema } from "./orientation";
+import { CardDraftSchema, QuestionRefSchema, ExerciseSchema, FeedbackCardSchema, OfferAnswerSchema, SessionSchema, ThreadViewSchema, TopicChoiceSchema, StartTriggerSchema, RefsSchema, WorkspaceSchema } from "./types";
 
 export const LEARNING_TAG = "learning";
 
 const ThreadRef = z.object({ threadId: z.string().min(1) });
 const SessionRef = z.object({ sessionId: z.string().min(1) });
+const OrientationRef = z.object({ orientationId: z.string().min(1) });
 const Done = z.null();
 const tags = () => [LEARNING_TAG];
 /** A stored draft's token (`SessionService.draftToken`); null when there is none. */
@@ -54,7 +56,8 @@ export const rpcContract = {
   startSession: {
     input: ThreadRef.extend({
       topic: z.string().trim().min(1).max(300),
-      trigger: TriggerKindSchema,
+      // Orientation sessions start only through `startOrientationSession`.
+      trigger: StartTriggerSchema,
       refs: RefsSchema,
       here: z.boolean().optional(),
     }),
@@ -91,6 +94,53 @@ export const rpcContract = {
   setProjectNever: { input: ThreadRef.extend({ never: z.boolean() }), output: Done },
   neverProjects: { input: z.object({}), output: z.object({ projects: z.array(z.object({ key: z.string(), name: z.string() })) }), tags },
   removeNeverProject: { input: z.object({ key: z.string().min(1) }), output: Done },
+
+  /**
+   * The thread's project's orientations: the ready one (`current`), the one being built (`live`), and
+   * the build that failed or was cancelled last (`last`, with its `error`), only while none is live and
+   * it was started after `current`. `canStart`: a build may start from this thread now; `cleaning`:
+   * starts wait for the clean-up of builders an earlier copy of the plugin left.
+   */
+  orientation: {
+    input: ThreadRef,
+    output: z.object({
+      current: OrientationSchema.nullable(),
+      live: OrientationSchema.nullable(),
+      last: OrientationSchema.nullable(),
+      canStart: z.boolean(),
+      cleaning: z.boolean(),
+    }),
+    tags,
+  },
+  /** An orientation and its blocks, its listings checked against their files at most every 5 minutes. */
+  orientationDocument: { input: OrientationRef, output: z.object({ orientation: OrientationSchema, blocks: z.array(OrientationBlockSchema) }), tags },
+  startOrientation: { input: ThreadRef.extend({ depth: OrientationDepthSchema }), output: z.object({ orientationId: z.string() }) },
+  cancelOrientation: { input: OrientationRef, output: Done },
+  deleteOrientation: { input: OrientationRef, output: Done },
+  /**
+   * Re-checks every listing. `checked` counts the listings whose file could be read: 0 says nothing was
+   * checked (no listings, or no checkout reachable), never that everything is current.
+   */
+  verifyOrientation: { input: OrientationRef, output: z.object({ checked: z.number(), drift: z.array(z.string()) }) },
+  /**
+   * Writes the orientation as Markdown at a workspace path. Without `replace`, an existing file is left
+   * alone and answered with its hash; the replace call passes that hash back as `expectedSha256`, so a
+   * file changed in between is not overwritten.
+   */
+  exportOrientation: {
+    input: OrientationRef.extend({ path: z.string().trim().min(1).max(500), replace: z.boolean(), expectedSha256: z.string().nullable().optional() }),
+    output: z.union([z.object({ exists: z.literal(true), sha256: z.string() }), z.object({ written: z.string() })]),
+  },
+  /**
+   * One folder of the orientation's checkout for the export picker (`dir` "" is the root): its folders and
+   * files by name, hidden names and `node_modules` left out. A path outside the workspace is refused.
+   */
+  browseOrientationFolder: {
+    input: OrientationRef.extend({ dir: z.string().max(500) }),
+    output: z.object({ dir: z.string(), folders: z.array(z.string()), files: z.array(z.string()) }),
+  },
+  /** Starts a session on the project's ready orientation in a new visible thread, and answers that thread. */
+  startOrientationSession: { input: ThreadRef.extend({ orientationId: z.string().min(1) }), output: z.object({ threadId: z.string() }) },
 } satisfies PluginRpcContract;
 
 export type RpcContract = typeof rpcContract;

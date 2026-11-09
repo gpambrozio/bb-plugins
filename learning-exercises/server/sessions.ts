@@ -28,9 +28,11 @@ import type { PluginInteractionResult } from "@get-bb/plugin-sdk";
 
 import { draftValues, parseAnswerForm, readAnswerForm, sanitizeValues, summarizeAnswer, type AnswerForm, type FormValues } from "../shared/answer-form";
 import { ANSWER_MAX_CHARS, FEEDBACK_MAX_CHARS, PAUSE_REASONS, readCardValue, REPLY_MAX_CHARS, type CardDraft, type CardPayload, type QuestionRef, type ExerciseType, type PauseReason, type Refs, type SettledRow, type TriggerKind, type Verdict, type Workspace } from "../shared/types";
-import { BRIEF_VERSION, buildBrief, startLine } from "./content";
+import type { OrientationSummary } from "../shared/orientation";
+import { SESSION_METADATA_KEY } from "./bb-ports";
+import { BRIEF_VERSION, buildBrief, buildOrientationSessionBrief, ORIENTATION_MAX_QUESTIONS, startLine } from "./content";
 import { canStartByHand, DAY, projectKey } from "./policy";
-import type { Ports } from "./ports";
+import type { Ports, ThreadInfo } from "./ports";
 import { questionProblem } from "./question";
 import type { LearningSettings } from "./settings";
 import { OPEN_STATES, publicSession, type LearningStore, type SessionRow } from "./store";
@@ -47,6 +49,10 @@ export const REPLY_READ_CHUNKS = 50;
 
 /** A refusal the agent or the user should read as it is. */
 export class SessionError extends Error {}
+
+const ALREADY_OPEN = "A learning session is already open for this thread. Resume or finish it from the Learning tab.";
+
+export { ORIENTATION_MAX_QUESTIONS };
 
 export type AskChannel = "tool" | "cli";
 
@@ -131,6 +137,11 @@ export class SessionService {
     return run;
   }
 
+  /** How many questions a session may ask: an orientation session has its own small limit. */
+  private questionLimit(session: SessionRow): number {
+    return session.trigger === "orientation" ? ORIENTATION_MAX_QUESTIONS : this.settings().questionsPerSession;
+  }
+
   /** Throws when this copy of the plugin was disposed while it awaited. */
   private alive(): void {
     if (this.disposed) throw new SessionError("Learning Exercises reloaded while this was running. Try again.");
@@ -148,7 +159,7 @@ export class SessionService {
     const sessionId = await this.ports.sessionIdOf(threadId);
     if (sessionId === null) return null;
     const session = this.store.session(sessionId);
-    if (session === null || session.threadId !== null || session.mode !== "fork" || !OPEN_STATES.includes(session.state)) return null;
+    if (session === null || session.threadId !== null || !hasOwnThread(session) || !OPEN_STATES.includes(session.state)) return null;
     this.alive();
     this.store.bindSessionThread(session.id, threadId, this.ports.now());
     const bound2 = this.store.session(session.id);
@@ -164,44 +175,43 @@ export class SessionService {
 
   // ── start ─────────────────────────────────────────────────────────────────
 
+  /** The thread a session starts from, if it may start one, and its project's key. */
+  private async startSource(sourceThreadId: string): Promise<{ source: ThreadInfo; key: string }> {
+    const source = await this.ports.thread(sourceThreadId);
+    this.alive();
+    if (source === null) throw new SessionError("That thread is gone.");
+    if (!canStartByHand(source)) throw new SessionError("Learning sessions start only from a thread you can see, and never from a learning session's own thread.");
+    const project = await this.ports.project(source.projectId);
+    this.alive();
+    return { source, key: projectKey(project ?? { id: source.projectId, gitRemoteUrl: null }) };
+  }
+
+  /**
+   * Checks the source thread has no open session and creates the `starting` row, with no await between
+   * the two; the unique index refuses a second open session even from another copy of the plugin.
+   */
+  private reserve(source: ThreadInfo, key: string, fields: { mode: SessionRow["mode"]; topic: string; trigger: TriggerKind; refs: Refs; offerId: string | null }): SessionRow {
+    if ((this.store.openSessionFrom(source.id) ?? this.store.sessionInThread(source.id)) !== null) throw new SessionError(ALREADY_OPEN);
+    try {
+      return this.store.createSession({ ...fields, projectKey: key, projectId: source.projectId, sourceThreadId: source.id, briefVersion: BRIEF_VERSION, now: this.ports.now() });
+    } catch (error) {
+      if (String(error).includes("UNIQUE")) throw new SessionError(ALREADY_OPEN);
+      throw error;
+    }
+  }
+
   start(input: StartInput): Promise<{ sessionId: string; threadId: string; mode: "fork" | "here" }> {
     return this.exclusive(`start:${input.sourceThreadId}`, () => this.startLocked(input));
   }
 
   private async startLocked(input: StartInput): Promise<{ sessionId: string; threadId: string; mode: "fork" | "here" }> {
-    const source = await this.ports.thread(input.sourceThreadId);
-    this.alive();
-    if (source === null) throw new SessionError("That thread is gone.");
-    if (!canStartByHand(source)) throw new SessionError("Learning sessions start only from a thread you can see, and never from a learning session's own thread.");
-    const project = await this.ports.project(source.projectId);
-    const key = projectKey(project ?? { id: source.projectId, gitRemoteUrl: null });
+    if (input.trigger === "orientation") throw new SessionError("Orientation sessions are started from the Orient tab, not here.");
+    const { source, key } = await this.startSource(input.sourceThreadId);
     const settings = this.settings();
     const wantsFork = input.mode !== "here" && settings.sessionLocation === "fork";
     let mode: "fork" | "here" = wantsFork && (await this.ports.canFork(source.providerId)) ? "fork" : "here";
     this.alive();
-    // Checked and created with no await between them; the unique index refuses a second open session
-    // even from another copy of the plugin.
-    if ((this.store.openSessionFrom(source.id) ?? this.store.sessionInThread(source.id)) !== null) {
-      throw new SessionError("A learning session is already open for this thread. Resume or finish it from the Learning tab.");
-    }
-    let session: SessionRow;
-    try {
-      session = this.store.createSession({
-        mode,
-        projectKey: key,
-        projectId: source.projectId,
-        sourceThreadId: source.id,
-        topic: input.topic,
-        trigger: input.trigger,
-        refs: input.refs,
-        offerId: input.offerId,
-        briefVersion: BRIEF_VERSION,
-        now: this.ports.now(),
-      });
-    } catch (error) {
-      if (String(error).includes("UNIQUE")) throw new SessionError("A learning session is already open for this thread. Resume or finish it from the Learning tab.");
-      throw error;
-    }
+    const session = this.reserve(source, key, { mode, topic: input.topic, trigger: input.trigger, refs: input.refs, offerId: input.offerId });
     const visible = startLine(input.topic, input.trigger, input.refs);
     const brief = (forMode: "fork" | "here") =>
       buildBrief({ mode: forMode, topic: input.topic, trigger: input.trigger, refs: input.refs, learnerProfile: settings.learnerProfile, maxQuestions: settings.questionsPerSession });
@@ -247,6 +257,61 @@ export class SessionService {
     return { sessionId: session.id, threadId, mode };
   }
 
+  /**
+   * Starts an orientation session: a new visible thread in the source thread's environment, briefed with
+   * the orientation, that asks at most `ORIENTATION_MAX_QUESTIONS` questions through the exercise cards.
+   * The source-thread checks and the lock are `start`'s; offer caps are not applied (offers are a
+   * separate engine, and `finishedSessionsFrom` ignores this trigger).
+   */
+  startOrientationSession(input: {
+    sourceThreadId: string;
+    orientationId: string;
+    summary: OrientationSummary;
+    drift: readonly string[];
+    projectName: string;
+  }): Promise<{ sessionId: string; threadId: string }> {
+    return this.exclusive(`start:${input.sourceThreadId}`, () => this.startOrientationLocked(input));
+  }
+
+  private async startOrientationLocked(input: {
+    sourceThreadId: string;
+    orientationId: string;
+    summary: OrientationSummary;
+    drift: readonly string[];
+    projectName: string;
+  }): Promise<{ sessionId: string; threadId: string }> {
+    const { source, key } = await this.startSource(input.sourceThreadId);
+    if (source.environmentId === null) throw new SessionError("That thread has no environment to start the orientation session in.");
+    const topic = `Orientation: ${input.projectName}`;
+    const refs: Refs = { paths: input.summary.exercises.map((exercise) => exercise.file) };
+    const session = this.reserve(source, key, { mode: "spawn", topic, trigger: "orientation", refs, offerId: null });
+    let threadId: string;
+    try {
+      const spawned = await this.ports.spawn({
+        projectId: source.projectId,
+        environmentId: source.environmentId,
+        providerId: source.providerId,
+        title: topic,
+        hidden: false,
+        visible: startLine(topic, "orientation", refs),
+        agentOnly: buildOrientationSessionBrief({ summary: input.summary, drift: input.drift, learnerProfile: this.settings().learnerProfile }),
+        metadata: { [SESSION_METADATA_KEY]: session.id },
+      });
+      threadId = spawned.threadId;
+    } catch (error) {
+      this.alive();
+      this.store.deleteSession(session.id);
+      this.ports.changed();
+      throw new SessionError(`Could not start the session: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    // Reloaded meanwhile: the thread binds itself on its first call (`sessionIn`) or on Resume.
+    this.alive();
+    this.store.bindSessionThread(session.id, threadId, this.ports.now());
+    this.store.transition(session.id, ["starting"], "active", this.ports.now());
+    this.ports.changed();
+    return { sessionId: session.id, threadId };
+  }
+
   // ── asking ────────────────────────────────────────────────────────────────
 
   /**
@@ -283,7 +348,7 @@ export class SessionService {
       if (current.state === "awaiting-answer" || this.cards.has(current.id)) {
         throw new SessionError("A question is already waiting for the learner. End your turn now and add nothing.");
       }
-      const max = this.settings().questionsPerSession;
+      const max = this.questionLimit(current);
       if (current.asked >= max) {
         throw new SessionError(`This session has asked its ${max} questions. Give your feedback on the last answer, then finish the session.`);
       }
@@ -482,7 +547,7 @@ export class SessionService {
     if (text === null) await this.captureReply(session.id);
     this.ports.changed();
     if (ordinal === null) return "Recorded the concepts. No answered question to attach the verdict to yet.";
-    const left = this.settings().questionsPerSession - session.asked;
+    const left = this.questionLimit(session) - session.asked;
     return left > 0 ? `Recorded your verdict on question ${ordinal}. ${left} question${left === 1 ? "" : "s"} left at most.` : `Recorded your verdict on question ${ordinal}. That was the last question: finish the session now.`;
   }
 
@@ -538,7 +603,7 @@ export class SessionService {
     if (session === null) throw new SessionError("That session is gone.");
     if (session.state !== "paused") throw new SessionError("Only a paused session can be resumed.");
     let threadId = session.threadId;
-    if (threadId === null && session.mode === "fork" && session.sourceThreadId !== null) {
+    if (threadId === null && hasOwnThread(session) && session.sourceThreadId !== null) {
       threadId = await this.ports.forkOf(sessionId, session.sourceThreadId);
       this.alive();
       if (threadId !== null) this.store.bindSessionThread(sessionId, threadId, this.ports.now());
@@ -577,7 +642,7 @@ export class SessionService {
         workspace,
         topic: session.topic,
         ...(open.form === null ? {} : { form: open.form }),
-        maxQuestions: this.settings().questionsPerSession,
+        maxQuestions: this.questionLimit(current),
         ...this.previousReply(sessionId, open.ordinal),
       };
       const card = this.reserveCard(current, payload, ["paused"]);
@@ -849,6 +914,11 @@ function finalReply({ text, truncated }: { text: string; truncated: boolean }): 
 /** The agent's messages as one reply, cut at `REPLY_MAX_CHARS`. */
 function joinReply(texts: readonly string[]): string {
   return finalReply(boundReply(texts));
+}
+
+/** A fork or an orientation session runs in a thread of its own; a "here" session borrows the work thread. */
+function hasOwnThread(session: SessionRow): boolean {
+  return session.mode === "fork" || session.mode === "spawn";
 }
 
 export function cleanConcepts(concepts: readonly string[]): string[] {

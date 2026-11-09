@@ -4,7 +4,22 @@
  */
 import type { PluginInteractionResult } from "@get-bb/plugin-sdk";
 
-import type { CardRequest, ForkRequest, MessageRead, MessageWindow, Ports, ProjectInfo, PullRequestInfo, ThreadInfo } from "../ports";
+import {
+  FileConflict,
+  type CardRequest,
+  type FileRead,
+  type FileRoot,
+  type FolderListing,
+  type ForkRequest,
+  type MessageRead,
+  type MessageWindow,
+  type PluginThread,
+  type Ports,
+  type ProjectInfo,
+  type PullRequestInfo,
+  type SpawnRequest,
+  type ThreadInfo,
+} from "../ports";
 import type { Commit, CommittedFile, FileChange } from "../signals";
 
 export interface OpenCard {
@@ -53,6 +68,44 @@ export class FakePorts implements Ports {
   /** `card` throws instead of opening. */
   cardThrows = false;
   metadata = new Map<string, string>();
+  /** Other plugin metadata per thread: `${threadId}` to key to value (the session id stays in `metadata`). */
+  threadMetadata = new Map<string, Record<string, string>>();
+  spawned: SpawnRequest[] = [];
+  spawnFails = false;
+  /** Runs before bb made the thread: a reload that lands while the spawn request is still on its way. */
+  beforeSpawn: (() => Promise<void>) | null = null;
+  /** Runs after bb made the thread but before `spawn` answers. */
+  duringSpawn: ((threadId: string) => Promise<void>) | null = null;
+  /** Threads stopped and archived, each only when the call worked. */
+  stopped: string[] = [];
+  archived: string[] = [];
+  stopFails = false;
+  archiveFails = false;
+  /** Environment roots, by environment id. */
+  roots = new Map<string, FileRoot>([["env_1", { hostId: "host_1", rootPath: "/work/calc" }]]);
+  /** Project checkouts, `${projectId}:${hostId}`. */
+  checkouts = new Map<string, string>([["proj_1:host_1", "/work/calc"]]);
+  /** Files by `${rootPath}/${path}`. */
+  files = new Map<string, string>();
+  /** What `readFile` answers for a file instead of its text (`binary`, `too-large`, or null for a failed read). */
+  fileReads = new Map<string, FileRead | null>();
+  /** Every `readFile`, as `${rootPath}/${path}`, in order. */
+  reads: string[] = [];
+  /** Runs after `readFile` read a file and before it answers: the file changing under the reader. */
+  afterRead: ((key: string) => void) | null = null;
+  /**
+   * What `listFolder` answers for a folder, by its absolute path, instead of the listing derived from
+   * `files` (a link's resolved `directory`, or null for a folder that cannot be listed).
+   */
+  folderListings = new Map<string, FolderListing | null>();
+  /** Every `writeFile`, in order. */
+  writes: { root: FileRoot; path: string; content: string; expectedSha256: string | null }[] = [];
+  /**
+   * `pluginThreadsWith` answers null, as when bb cannot list. Unlike bb's port (which asks for unarchived
+   * threads only), the fake lists archived ones too, flagged, so the callers' own check is exercised.
+   */
+  pluginThreadsUnreadable = false;
+  private nextSpawn = 1;
   forks: ForkRequest[] = [];
   sends: { threadId: string; visible: string; agentOnly: string }[] = [];
   cards: OpenCard[] = [];
@@ -79,6 +132,58 @@ export class FakePorts implements Ports {
 
   async environmentPath(environmentId: string) {
     return this.paths.get(environmentId) ?? null;
+  }
+
+  async environmentRoot(environmentId: string) {
+    return this.roots.get(environmentId) ?? null;
+  }
+
+  async projectCheckout(projectId: string, hostId: string) {
+    return this.checkouts.get(`${projectId}:${hostId}`) ?? null;
+  }
+
+  /** The hash a file has in this fake: its text, so a test can predict it. */
+  static sha(text: string): string {
+    return `sha:${text}`;
+  }
+
+  async readFile(root: FileRoot, relativePath: string): Promise<FileRead | null> {
+    const key = `${root.rootPath}/${relativePath}`;
+    this.reads.push(key);
+    const text = this.files.get(key);
+    let read: FileRead | null;
+    if (this.fileReads.has(key)) read = this.fileReads.get(key)!;
+    else if (text === undefined) read = { kind: "missing" };
+    else read = { kind: "text", text, sha256: FakePorts.sha(text), sizeBytes: Buffer.byteLength(text) };
+    this.afterRead?.(key);
+    return read;
+  }
+
+  async writeFile(root: FileRoot, relativePath: string, content: string, expectedSha256: string | null) {
+    const key = `${root.rootPath}/${relativePath}`;
+    const current = this.files.get(key);
+    const currentSha = current === undefined ? null : FakePorts.sha(current);
+    if (currentSha !== expectedSha256) throw new FileConflict(relativePath);
+    this.writes.push({ root, path: relativePath, content, expectedSha256 });
+    this.files.set(key, content);
+  }
+
+  /** The folder's direct children among `files`, folders first, unless `folderListings` says otherwise. */
+  async listFolder(root: FileRoot, relativeDir: string): Promise<FolderListing | null> {
+    const directory = relativeDir === "" ? root.rootPath : `${root.rootPath}/${relativeDir}`;
+    if (this.folderListings.has(directory)) return this.folderListings.get(directory)!;
+    const folders = new Set<string>();
+    const files = new Set<string>();
+    for (const key of this.files.keys()) {
+      if (!key.startsWith(`${directory}/`)) continue;
+      const [name, ...rest] = key.slice(directory.length + 1).split("/");
+      (rest.length > 0 ? folders : files).add(name!);
+    }
+    if (folders.size === 0 && files.size === 0 && relativeDir !== "") return null;
+    return {
+      directory,
+      entries: [...[...folders].sort().map((name) => ({ kind: "directory" as const, name })), ...[...files].sort().map((name) => ({ kind: "file" as const, name }))],
+    };
   }
 
   async currentTurn(threadId: string) {
@@ -142,6 +247,46 @@ export class FakePorts implements Ports {
 
   async send(threadId: string, visible: string, agentOnly: string) {
     this.sends.push({ threadId, visible, agentOnly });
+  }
+
+  async spawn(request: SpawnRequest) {
+    if (this.beforeSpawn !== null) await this.beforeSpawn();
+    if (this.spawnFails) throw new Error("spawn refused");
+    this.spawned.push(request);
+    const id = `thr_spawn${this.nextSpawn++}`;
+    this.threads.set(id, thread({ id, projectId: request.projectId, providerId: request.providerId, environmentId: request.environmentId, title: request.title, originPluginId: "learning-exercises", visibility: request.hidden ? "hidden" : "visible" }));
+    this.threadMetadata.set(id, request.metadata);
+    if (this.duringSpawn !== null) await this.duringSpawn(id);
+    return { threadId: id };
+  }
+
+  async stopThread(threadId: string) {
+    if (this.stopFails) throw new Error("stop refused");
+    this.stopped.push(threadId);
+  }
+
+  async archiveThread(threadId: string) {
+    if (this.archiveFails) throw new Error("archive refused");
+    this.archived.push(threadId);
+    const current = this.threads.get(threadId);
+    if (current !== undefined) this.threads.set(threadId, { ...current, archivedAt: this.clock });
+  }
+
+  async pluginThreadsWith(metadataKey: string): Promise<PluginThread[] | null> {
+    if (this.pluginThreadsUnreadable) return null;
+    const found: PluginThread[] = [];
+    for (const [threadId, values] of this.threadMetadata) {
+      const value = values[metadataKey];
+      const row = this.threads.get(threadId);
+      if (value === undefined || row === undefined || row.originPluginId !== "learning-exercises") continue;
+      found.push({ threadId, value, archived: row.archivedAt !== null, status: row.status });
+    }
+    return found;
+  }
+
+  async metadataValue(threadId: string, key: string) {
+    if (key === "session") return this.metadata.get(threadId) ?? null;
+    return this.threadMetadata.get(threadId)?.[key] ?? null;
   }
 
   async sessionIdOf(threadId: string) {

@@ -22,6 +22,10 @@ export function useProjectSessions(threadId: string, limit: number, enabled = tr
   return experimental_useRpcQuery({ contract: rpcContract, method: "projectSessions", input: { threadId, limit }, enabled });
 }
 
+export function useOrientation(threadId: string, enabled: boolean) {
+  return experimental_useRpcQuery({ contract: rpcContract, method: "orientation", input: { threadId }, enabled });
+}
+
 export function useSessionDetail(sessionId: string | null) {
   return experimental_useRpcQuery({ contract: rpcContract, method: "sessionDetail", input: { sessionId: sessionId ?? "" }, enabled: sessionId !== null });
 }
@@ -34,4 +38,17 @@ export function useTopicChoices(threadId: string, enabled: boolean) {
 export function useSidebarThread(threadId: string | null) {
   const { threads } = experimental_useSidebarThreads();
   return threadId === null ? undefined : threads.find((thread) => thread.id === threadId);
+}
+
+/**
+ * The walkthrough. Each read of a ready orientation may check its listings against the files (at most
+ * once per five minutes, server side), so it is read only while its tab shows.
+ */
+/** One folder of an orientation's checkout, for the export picker ("" is the project root). */
+export function useOrientationFolder(orientationId: string, dir: string) {
+  return experimental_useRpcQuery({ contract: rpcContract, method: "browseOrientationFolder", input: { orientationId, dir } });
+}
+
+export function useOrientationDocument(orientationId: string, enabled = true) {
+  return experimental_useRpcQuery({ contract: rpcContract, method: "orientationDocument", input: { orientationId }, enabled });
 }

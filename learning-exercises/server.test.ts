@@ -1,22 +1,44 @@
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 import { createFakePluginHost, experimental_scanPublicSdkOnly, makePluginAgentConfigurationContext, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import plugin from "./server";
-import { BRIEF_CORE } from "./server/content";
+import { BRIEF_CORE, ORIENT_TOOL_INVARIANT } from "./server/content";
 import { listEvents, type EventListInput, type LogRow } from "./server/testing/event-log";
+import { ORIENT_TOOL_NAMES } from "./server/orientation-tools";
 import { TOOL_NAMES } from "./server/tools";
+import type { OrientationSummary } from "./shared/orientation";
 import type { ThreadView } from "./shared/types";
 
 const WORK = "thr_work";
 const FORK = "thr_fork";
+/** The hidden builder thread and the visible orientation session thread `threads.spawn` makes. */
+const BUILDER = "thr_builder";
+const SPAWNED = "thr_spawned";
+
+const MEDIAN = "export function median(xs: number[]): number {\n  const sorted = [...xs].sort((a, b) => a - b);\n  return sorted[sorted.length >> 1]!;\n}\n";
+
+const SUMMARY: OrientationSummary = {
+  purpose: "A calculator.",
+  languages: ["TypeScript"],
+  stages: ["Parse", "Evaluate"],
+  keyFiles: [1, 2, 3, 4, 5, 6].map((n) => ({ path: `src/f${n}.ts`, does: "does", why: "why" })),
+  concepts: [1, 2, 3].map((n) => ({ name: `c${n}`, definition: "d", where: "w" })),
+  gotchas: ["g1", "g2"],
+  exercises: [
+    { file: "src/median.ts", read: "the median", question: "What does it return for an even count?" },
+    { file: "src/f2.ts", read: "the evaluator", question: "How?" },
+  ],
+  sources: ["README.md"],
+};
 
 /**
  * The plugin over the fake host, with bb's SDK and its Git and PR Status plugins stubbed: a Claude Code
  * thread in `env_1` whose HEAD moves from `aaa` to `bbb` with one commit.
  */
-async function setup(options: { providerCanFork?: boolean } = {}) {
+async function setup(options: { providerCanFork?: boolean; threadListFails?: boolean; builderActiveDuringSpawn?: boolean } = {}) {
   const { bb, harness } = createFakePluginHost({ pluginId: "learning-exercises" });
   const threads = new Map([[WORK, makeThreadResponse({ id: WORK, projectId: "proj_1", providerId: "claude-code", environmentId: "env_1", title: "Add median", status: "idle" })]]);
   let head = "aaa";
@@ -28,7 +50,7 @@ async function setup(options: { providerCanFork?: boolean } = {}) {
     return thread;
   });
   stub("projects.get", () => ({ id: "proj_1", name: "calc", gitRemoteUrl: "git@github.com:acme/calc.git" }));
-  stub("environments.get", () => ({ id: "env_1", path: "/work/calc" }));
+  stub("environments.get", () => ({ id: "env_1", hostId: "host_1", path: "/work/calc" }));
   const events: LogRow[] = [{ seq: 1, createdAt: 1, turnId: "t1", type: "turn/completed", data: { status: "completed" } }];
   stub("threads.events.list", (input: EventListInput) => listEvents(events, input));
   stub("threads.interactions.list", () => []);
@@ -50,7 +72,53 @@ async function setup(options: { providerCanFork?: boolean } = {}) {
   });
   stub("threads.send", () => ({ ok: true }));
   stub("threads.getPluginMetadata", ({ threadId }: { threadId: string }) => metadata.get(threadId) ?? {});
+  // Orientations: a hidden builder and a visible session thread, both spawned; bb resolves a new
+  // thread's configuration before `spawn` answers, so the stub asks for it first.
+  const builders: string[] = [];
+  const configuredAtSpawn = new Map<string, Awaited<ReturnType<typeof harness.resolveAgentConfiguration>>>();
+  stub("threads.spawn", async (request: { visibility: "hidden" | "visible"; pluginMetadata: Record<string, unknown> }) => {
+    // Each build gets its own builder thread: the first is BUILDER, a rebuild's BUILDER_2 and so on.
+    const id = request.visibility === "hidden" ? (builders.length === 0 ? BUILDER : `${BUILDER}_${builders.length + 1}`) : SPAWNED;
+    if (request.visibility === "hidden") builders.push(id);
+    metadata.set(id, request.pluginMetadata);
+    configuredAtSpawn.set(id, await harness.resolveAgentConfiguration(makePluginAgentConfigurationContext({ thread: { id }, pluginMetadata: request.pluginMetadata as never })));
+    threads.set(id, makeThreadResponse({ id, projectId: "proj_1", providerId: "claude-code", environmentId: "env_1", originPluginId: "learning-exercises", visibility: request.visibility, status: "active" }));
+    // bb can report the builder's first turn before `spawn` answers, before the plugin has bound it.
+    if (options.builderActiveDuringSpawn === true && id === BUILDER) await harness.emitThreadEvent("thread.active", { thread: threads.get(id)! });
+    return threads.get(id);
+  });
+  stub("threads.stop", ({ threadId }: { threadId: string }) => {
+    threads.set(threadId, { ...threads.get(threadId)!, status: "idle" });
+    return { ok: true };
+  });
+  stub("threads.archive", ({ threadId }: { threadId: string }) => {
+    threads.set(threadId, { ...threads.get(threadId)!, archivedAt: 1 });
+    return { ok: true };
+  });
+  const listing = { fails: options.threadListFails === true };
+  stub("threads.list", () => {
+    if (listing.fails) throw new Error("bb is busy");
+    return [...threads.values()].filter((thread) => thread.originPluginId === "learning-exercises" && thread.archivedAt === null);
+  });
+  stub("threads.experimental_listPluginMetadata", ({ threadIds }: { threadIds: string[] }) => ({
+    threads: threadIds.map((threadId) => ({ threadId, metadata: metadata.get(threadId) ?? {} })),
+  }));
+  const files = new Map([["/work/calc/src/median.ts", MEDIAN]]);
+  /** Paths whose read fails as a busy host's does (not a missing file). */
+  const unreadable = new Set<string>();
+  stub("files.read", ({ path }: { path: string }) => {
+    if (unreadable.has(path)) throw new Error("host busy");
+    const content = files.get(path);
+    if (content === undefined) throw Object.assign(new Error("not found"), { code: "not_found" });
+    return { content, contentEncoding: "utf8", sizeBytes: Buffer.byteLength(content), sha256: createHash("sha256").update(content).digest("hex") };
+  });
+  stub("files.write", ({ path, content }: { path: string; content: string }) => {
+    files.set(path, content);
+    return { outcome: "written" };
+  });
   await plugin(bb);
+  // The load-time reconcile runs in the background; starts wait for it.
+  await new Promise((resolve) => setImmediate(resolve));
   const commitTurn = async () => {
     await harness.emitThreadEvent("thread.active", { thread: { ...threads.get(WORK)!, status: "active" } });
     head = "bbb";
@@ -58,14 +126,35 @@ async function setup(options: { providerCanFork?: boolean } = {}) {
   };
   /** The agent starts a turn in a thread: bb logs a `turn/started` row in that turn. */
   const startTurn = (turnId: string) => events.push({ seq: events.length + 1, createdAt: events.length + 1, turnId, type: "turn/started", data: {} });
-  return { bb, harness, threads, metadata, commitTurn, startTurn };
+  return { bb, harness, threads, metadata, files, unreadable, listing, builders, configuredAtSpawn, commitTurn, startTurn };
+}
+
+type OrientationRead = {
+  current: { id: string; status: string; blocks: number; listings: number } | null;
+  live: { id: string; status: string } | null;
+  last: { id: string; status: string; error: string | null } | null;
+  canStart: boolean;
+  cleaning: boolean;
+};
+
+/** Builds a walkthrough through the builder's tools, as an agent would, and answers its id. */
+async function buildWalkthrough(harness: Awaited<ReturnType<typeof setup>>["harness"]): Promise<string> {
+  const { orientationId } = (await harness.callRpc("startOrientation", { threadId: WORK, depth: "walkthrough" })) as { orientationId: string };
+  const tool = (name: string, input: Record<string, unknown>) => harness.callAgentTool(name, input, { threadId: BUILDER });
+  expect(await tool("orient_chapter", { title: "The median" })).toContain("Chapter added");
+  expect(await tool("orient_note", { markdown: "The median sorts a copy first; see Listing 1." })).toContain("Note added");
+  expect(await tool("orient_listing", { path: "src/median.ts", lines: "1-3", caption: "Sorting a copy" })).toContain("Listing 1 captured");
+  expect(await tool("orient_summary", SUMMARY)).toContain("Summary saved");
+  expect(await tool("orient_finish", {})).toBe("The orientation is ready.");
+  return orientationId;
 }
 
 describe("zero context until a session starts", () => {
   it("ships no skills and contributes no instructions", async () => {
     const { harness } = await setup();
     expect(harness.registrations.instructionProvider).toBeNull();
-    expect(harness.registrations.agentTools.map((tool) => tool.name).sort()).toEqual([...TOOL_NAMES].sort());
+    // The orient tools are registered but granted to no thread until the builder is configured.
+    expect(harness.registrations.agentTools.map((tool) => tool.name).sort()).toEqual([...TOOL_NAMES, ...ORIENT_TOOL_NAMES].sort());
     const plain = await harness.resolveAgentConfiguration(makePluginAgentConfigurationContext({ thread: { id: WORK } }));
     expect(plain).toEqual({ tools: [], skills: [], instructions: null });
   });
@@ -332,5 +421,192 @@ describe("review pass 1 (wiring)", () => {
     await expect(harness.callRpc("startSession", { threadId: WORK, topic: "x", trigger: "manual", refs: {} }, asPlugin)).rejects.toThrow("from its own app only");
     await expect(harness.callRpc("saveDraft", { sessionId: "ses_x", ordinal: 1, draft: { answer: "x" }, writer: "w" }, asPlugin)).rejects.toThrow("from its own app only");
     await expect(harness.callRpc("threadView", { threadId: WORK }, asPlugin)).resolves.toMatchObject({ eligible: true });
+  });
+});
+
+describe("orientations", () => {
+  const configure = (harness: Awaited<ReturnType<typeof setup>>["harness"], id: string, pluginMetadata: Record<string, unknown> = {}) =>
+    harness.resolveAgentConfiguration(makePluginAgentConfigurationContext({ thread: { id }, pluginMetadata: pluginMetadata as never }));
+  const names = (config: { tools: { name: string }[] }) => config.tools.map((tool) => tool.name).sort();
+  const NONE = { tools: [], skills: [], instructions: null };
+
+  it("grants the orient tools only to the builder bound to a live build, from before spawn answers until it is ready", async () => {
+    const { harness, metadata, configuredAtSpawn } = await setup();
+    expect(await harness.callRpc("orientation", { threadId: WORK })).toEqual({ current: null, live: null, last: null, canStart: true, cleaning: false });
+    const { orientationId } = (await harness.callRpc("startOrientation", { threadId: WORK, depth: "walkthrough" })) as { orientationId: string };
+    const [spawn] = harness.sdk.callsTo("threads.spawn") as [Record<string, unknown>][];
+    expect(spawn![0]).toMatchObject({ visibility: "hidden", pluginMetadata: { orientation: orientationId }, environment: { type: "reuse", environmentId: "env_1" } });
+    // Resolved while the row was `starting` with no builder bound yet.
+    expect(names(configuredAtSpawn.get(BUILDER)!)).toEqual([...ORIENT_TOOL_NAMES].sort());
+
+    const builder = await configure(harness, BUILDER, metadata.get(BUILDER));
+    expect(names(builder)).toEqual([...ORIENT_TOOL_NAMES].sort());
+    expect(builder.instructions).toBe(ORIENT_TOOL_INVARIANT);
+    // Another thread naming the same build, an unknown id, and the work thread get nothing.
+    expect(await configure(harness, "thr_other", { orientation: orientationId })).toEqual(NONE);
+    expect(await configure(harness, "thr_other", { orientation: "ori_made_up" })).toEqual(NONE);
+    expect(await configure(harness, WORK)).toEqual(NONE);
+    const view = (await harness.callRpc("orientation", { threadId: WORK })) as OrientationRead;
+    expect(view).toMatchObject({ current: null, live: { id: orientationId, status: "building" }, canStart: false, cleaning: false });
+  });
+
+  it("builds a walkthrough through the tools, puts the builder away, and runs an orientation session in a spawned thread", async () => {
+    const { harness, threads, metadata, configuredAtSpawn } = await setup();
+    const orientationId = await buildWalkthrough(harness);
+    // Ready: the builder's own metadata no longer unlocks anything.
+    expect(await configure(harness, BUILDER, metadata.get(BUILDER))).toEqual(NONE);
+    // Finish leaves the builder running (it is inside its own tool call); its idle puts it away.
+    expect(harness.sdk.callsTo("threads.archive")).toEqual([]);
+    await harness.emitThreadEvent("thread.idle", { thread: threads.get(BUILDER)!, lastAssistantText: "Done." });
+    expect(harness.sdk.callsTo("threads.archive")).toEqual([[{ threadId: BUILDER }]]);
+    expect(harness.sdk.callsTo("threads.send")).toEqual([]);
+
+    const view = (await harness.callRpc("orientation", { threadId: WORK })) as OrientationRead;
+    expect(view).toMatchObject({ current: { id: orientationId, status: "ready", blocks: 3, listings: 1 }, live: null, canStart: true, cleaning: false });
+    expect(view.current).toMatchObject({ workspace: { threadId: WORK, environmentId: "env_1", rootPath: "/work/calc" }, summary: SUMMARY });
+    const document = (await harness.callRpc("orientationDocument", { orientationId })) as { blocks: Record<string, unknown>[] };
+    expect(document.blocks.map((block) => block.kind)).toEqual(["chapter", "note", "listing"]);
+    expect(document.blocks[2]).toMatchObject({ number: 1, path: "src/median.ts", startLine: 1, endLine: 3, check: { state: "current" } });
+    expect(document.blocks[2]).not.toHaveProperty("sha256");
+
+    const started = (await harness.callRpc("startOrientationSession", { threadId: WORK, orientationId })) as { threadId: string };
+    expect(started.threadId).toBe(SPAWNED);
+    const spawns = harness.sdk.callsTo("threads.spawn") as [Record<string, unknown>][];
+    expect(spawns[1]![0]).toMatchObject({ visibility: "visible", title: "Orientation: calc", pluginMetadata: { session: expect.any(String) } });
+    // An unbound `spawn` session that is still `starting` gets the session tools, and so does the bound one.
+    expect(names(configuredAtSpawn.get(SPAWNED)!)).toEqual([...TOOL_NAMES].sort());
+    expect(names(await configure(harness, SPAWNED, metadata.get(SPAWNED)))).toEqual([...TOOL_NAMES].sort());
+
+    const asked = harness.callAgentTool("learning_ask", { type: "prediction", question: "What does `median([2, 1])` return?", files: ["src/median.ts"] }, { threadId: SPAWNED });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(harness.pendingInteractions).toHaveLength(1);
+    expect(harness.pendingInteractions[0]).toMatchObject({ threadId: SPAWNED, rendererId: "exercise", payload: { ordinal: 1 } });
+    harness.submitInteraction(harness.pendingInteractions[0]!.id, { action: "answer", answer: "2", confidence: 3 });
+    await asked;
+  });
+
+  it("a builder's idle gets no offer and one reminder", async () => {
+    const { harness, threads, startTurn } = await setup();
+    await harness.callRpc("startOrientation", { threadId: WORK, depth: "summary" });
+    await harness.emitThreadEvent("thread.active", { thread: threads.get(BUILDER)! });
+    // An idle counts once a turn has run.
+    startTurn("turn_builder");
+    await harness.emitThreadEvent("thread.idle", { thread: { ...threads.get(BUILDER)!, status: "idle" }, lastAssistantText: "I looked around." });
+    const sends = harness.sdk.callsTo("threads.send") as [{ threadId: string; input: { text: string; visibility?: string }[] }][];
+    expect(sends).toHaveLength(1);
+    expect(sends[0]![0]).toMatchObject({ threadId: BUILDER, input: [{ text: "Reminder: finish the orientation." }, { visibility: "agent-only" }] });
+    expect(((await harness.callRpc("threadView", { threadId: BUILDER })) as ThreadView).offer).toBeNull();
+    expect((await harness.callRpc("orientation", { threadId: WORK })) as OrientationRead).toMatchObject({ live: { status: "building" } });
+  });
+
+  it("a builder's failed turn fails the build and puts the builder away", async () => {
+    const { harness, threads } = await setup();
+    await harness.callRpc("startOrientation", { threadId: WORK, depth: "summary" });
+    await harness.emitThreadEvent("thread.failed", { thread: threads.get(BUILDER)! });
+    expect(harness.sdk.callsTo("threads.archive")).toEqual([[{ threadId: BUILDER }]]);
+    expect((await harness.callRpc("orientation", { threadId: WORK })) as OrientationRead).toMatchObject({ current: null, live: null, canStart: true });
+  });
+
+  it("a failed build shows as `last` with its reason, until a new build is live or a newer one is ready", async () => {
+    const { harness, threads, builders } = await setup();
+    const read = async () => (await harness.callRpc("orientation", { threadId: WORK })) as OrientationRead;
+    const { orientationId: failed } = (await harness.callRpc("startOrientation", { threadId: WORK, depth: "summary" })) as { orientationId: string };
+    await harness.emitThreadEvent("thread.failed", { thread: threads.get(BUILDER)! });
+    expect(await read()).toMatchObject({ current: null, live: null, last: { id: failed, status: "failed", error: "The builder's turn failed." } });
+
+    // Rebuild: while it is live, the failure is not shown; once it is ready, it is older than the ready one.
+    // (Times are milliseconds; a real build takes minutes, so the failure and the rebuild's end differ.)
+    await new Promise((resolve) => setTimeout(resolve, 3));
+    const { orientationId: rebuilt } = (await harness.callRpc("startOrientation", { threadId: WORK, depth: "summary" })) as { orientationId: string };
+    expect(await read()).toMatchObject({ live: { id: rebuilt }, last: null });
+    const rebuilder = builders[1]!;
+    expect(await harness.callAgentTool("orient_summary", SUMMARY, { threadId: rebuilder })).toContain("Summary saved");
+    expect(await harness.callAgentTool("orient_finish", {}, { threadId: rebuilder })).toBe("The orientation is ready.");
+    expect(await read()).toMatchObject({ current: { id: rebuilt, status: "ready" }, live: null, last: null });
+
+    // A rebuild cancelled after a ready one shows as `last`, beside the ready one.
+    const { orientationId: cancelled } = (await harness.callRpc("startOrientation", { threadId: WORK, depth: "summary" })) as { orientationId: string };
+    await harness.callRpc("cancelOrientation", { orientationId: cancelled });
+    expect(await read()).toMatchObject({ current: { id: rebuilt }, live: null, last: { id: cancelled, status: "cancelled", error: "Cancelled." } });
+  });
+
+  it("a builder's turn reported before it is bound opens no overlap window: a commit in the same checkout still gets its offer", async () => {
+    const { harness, commitTurn } = await setup({ builderActiveDuringSpawn: true });
+    await harness.callRpc("startOrientation", { threadId: WORK, depth: "summary" });
+    expect((await harness.callRpc("orientation", { threadId: WORK })) as OrientationRead).toMatchObject({ live: { status: "building" } });
+    // The overlap check compares clock times: let the builder's turn start strictly before the commit's end.
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await commitTurn();
+    expect(((await harness.callRpc("threadView", { threadId: WORK })) as ThreadView).offer).toMatchObject({ trigger: "commit" });
+  });
+
+  it("starts stay refused while the load-time clean-up cannot read bb, until the 5-minute sweep can", async () => {
+    const { harness, listing } = await setup({ threadListFails: true });
+    expect(await harness.callRpc("orientation", { threadId: WORK })).toEqual({ current: null, live: null, last: null, canStart: false, cleaning: true });
+    // A refusal, not a plugin crash.
+    await expect(harness.callRpc("startOrientation", { threadId: WORK, depth: "summary" })).rejects.toMatchObject({ code: "conflict", message: expect.stringContaining("Cleaning up") });
+    expect(harness.sdk.callsTo("threads.spawn")).toEqual([]);
+    expect(harness.registrations.schedules.find((schedule) => schedule.name === "orientation-sweep")).toMatchObject({ cron: "*/5 * * * *" });
+    listing.fails = false;
+    await harness.runSchedule("orientation-sweep");
+    expect(await harness.callRpc("orientation", { threadId: WORK })).toMatchObject({ canStart: true, cleaning: false });
+  });
+
+  it("exports a ready orientation, asks before replacing, and refuses another plugin", async () => {
+    const { harness, files } = await setup();
+    const orientationId = await buildWalkthrough(harness);
+    const asPlugin = { experimental_caller: { kind: "plugin" as const, pluginId: "someone-else" } };
+    await expect(harness.callRpc("exportOrientation", { orientationId, path: "ORIENTATION.md", replace: false }, asPlugin)).rejects.toThrow("from its own app only");
+    await expect(harness.callRpc("startOrientation", { threadId: WORK, depth: "summary" }, asPlugin)).rejects.toThrow("from its own app only");
+    await expect(harness.callRpc("deleteOrientation", { orientationId }, asPlugin)).rejects.toThrow("from its own app only");
+    expect(files.has("/work/calc/ORIENTATION.md")).toBe(false);
+
+    expect(await harness.callRpc("exportOrientation", { orientationId, path: "ORIENTATION.md", replace: false })).toEqual({ written: "ORIENTATION.md" });
+    expect(files.get("/work/calc/ORIENTATION.md")).toContain("# Repo Orientation: calc");
+    const asked = (await harness.callRpc("exportOrientation", { orientationId, path: "ORIENTATION.md", replace: false })) as { exists: true; sha256: string };
+    expect(asked).toEqual({ exists: true, sha256: expect.any(String) });
+    expect(await harness.callRpc("exportOrientation", { orientationId, path: "ORIENTATION.md", replace: true, expectedSha256: asked.sha256 })).toEqual({ written: "ORIENTATION.md" });
+    await expect(harness.callRpc("exportOrientation", { orientationId, path: "../x.md", replace: false })).rejects.toMatchObject({ code: "conflict" });
+  });
+
+  it("opening the walkthrough checks at most once per five minutes, even while a listed file cannot be read", async () => {
+    const { harness, unreadable } = await setup();
+    const orientationId = await buildWalkthrough(harness);
+    unreadable.add("/work/calc/src/median.ts");
+    const reads = () => harness.sdk.callsTo("files.read").length;
+    const start = Date.now();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(start + 6 * 60_000);
+    try {
+      const before = { reads: reads(), invalidations: harness.experimental_rpcInvalidations.length };
+      await harness.callRpc("orientationDocument", { orientationId });
+      // Past the window: it reads (and the read fails), but no check changed, so the app is not told to refetch.
+      expect(reads()).toBe(before.reads + 1);
+      expect(harness.experimental_rpcInvalidations).toHaveLength(before.invalidations);
+      clock.mockReturnValue(start + 7 * 60_000);
+      await harness.callRpc("orientationDocument", { orientationId });
+      expect(reads()).toBe(before.reads + 1);
+      expect(harness.experimental_rpcInvalidations).toHaveLength(before.invalidations);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it("verifies, refuses deleting a live build, and deletes a ready one", async () => {
+    const { harness, files } = await setup();
+    const orientationId = await buildWalkthrough(harness);
+    files.set("/work/calc/src/median.ts", `// moved down\n${MEDIAN}`);
+    expect(await harness.callRpc("verifyOrientation", { orientationId })).toEqual({ checked: 1, drift: ["Listing 1 (`src/median.ts:1-3`) moved to 2-4"] });
+    const { orientationId: rebuild } = (await harness.callRpc("startOrientation", { threadId: WORK, depth: "summary" })) as { orientationId: string };
+    await expect(harness.callRpc("deleteOrientation", { orientationId: rebuild })).rejects.toMatchObject({ code: "conflict", message: expect.stringContaining("cancel it first") });
+    await harness.callRpc("cancelOrientation", { orientationId: rebuild });
+    await harness.callRpc("deleteOrientation", { orientationId });
+    expect((await harness.callRpc("orientation", { threadId: WORK })) as OrientationRead).toMatchObject({ current: null, live: null });
+  });
+
+  it("an orientation session starts only from a ready orientation of the thread's project, and not through startSession", async () => {
+    const { harness } = await setup();
+    const { orientationId } = (await harness.callRpc("startOrientation", { threadId: WORK, depth: "summary" })) as { orientationId: string };
+    await expect(harness.callRpc("startOrientationSession", { threadId: WORK, orientationId })).rejects.toMatchObject({ code: "conflict" });
+    await expect(harness.callRpc("startSession", { threadId: WORK, topic: "x", trigger: "orientation", refs: {} })).rejects.toMatchObject({ code: "invalid_input" });
   });
 });

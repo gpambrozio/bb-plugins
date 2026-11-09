@@ -12,7 +12,7 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
-import { TRIGGER_LABELS, type Offer, type OfferAnswer } from "../shared/types";
+import { TRIGGER_LABELS, type Offer, type OfferAnswer, type SessionMode } from "../shared/types";
 import { errorText, useLearningRpc } from "./data";
 import { TextWithFileRefs } from "./file-refs";
 import { openSettings } from "./open-settings";
@@ -24,6 +24,7 @@ const WHAT_HAPPENED: Record<Offer["trigger"], string> = {
   "pr-merged": "Your pull request merged:",
   streak: "You have been at it for a while on",
   manual: "",
+  orientation: "",
 };
 
 const BOX = "flex flex-col gap-2 text-sm";
@@ -32,7 +33,7 @@ export function offerSentence(offer: Offer): string {
   return `${WHAT_HAPPENED[offer.trigger]} ${offer.topic}.`.trim();
 }
 
-export function OfferCard(props: { offer: Offer; threadId: string; onScreen: boolean; where: "banner" | "tab"; sessionWhere: "fork" | "here"; environmentId: string | null }) {
+export function OfferCard(props: { offer: Offer; threadId: string; onScreen: boolean; where: "banner" | "tab"; sessionWhere: SessionMode; environmentId: string | null }) {
   const { offer, threadId, onScreen } = props;
   const rpc = useLearningRpc();
   const navigate = useBbNavigate();
@@ -88,7 +89,7 @@ export function OfferCard(props: { offer: Offer; threadId: string; onScreen: boo
           <span className="font-medium">Learning:</span> <TextWithFileRefs text={offerSentence(offer)} environmentId={props.environmentId} /> Want a 10–15 minute
           exercise on it?{" "}
           <span className="text-muted-foreground">
-            {props.sessionWhere === "fork" ? "It runs in a side thread; this one is left alone." : "It runs here, in this thread."}
+            {props.sessionWhere !== "here" ? "It runs in a side thread; this one is left alone." : "It runs here, in this thread."}
           </span>
         </p>
       </div>
@@ -108,7 +109,7 @@ export function OfferCard(props: { offer: Offer; threadId: string; onScreen: boo
       </div>
       {more && (
         <div className="flex flex-wrap items-center gap-1.5 pl-6">
-          {props.sessionWhere === "fork" && (
+          {props.sessionWhere !== "here" && (
             <Button type="button" size="sm" variant="outline" disabled={busy !== null} onClick={() => void answer("here")}>
               Run it in this thread
             </Button>

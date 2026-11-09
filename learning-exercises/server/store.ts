@@ -124,6 +124,103 @@ export const MIGRATIONS: string[] = [
   `INSERT OR IGNORE INTO global_state (key, value)
      SELECT 'answeredAt', json_group_array(answered_at)
      FROM (SELECT answered_at FROM offers WHERE status = 'answered' AND answered_at IS NOT NULL ORDER BY answered_at DESC LIMIT 50)`,
+  // 0.3.0: repo orientations (spec §4). `next_ordinal` and `next_listing` only rise, so a popped block
+  // frees neither its ordinal nor its listing number.
+  `CREATE TABLE orientations (
+     id TEXT PRIMARY KEY,
+     project_key TEXT NOT NULL,
+     project_id TEXT NOT NULL,
+     status TEXT NOT NULL CHECK (status IN ('starting', 'building', 'ready', 'failed', 'cancelled')),
+     depth TEXT NOT NULL CHECK (depth IN ('summary', 'walkthrough')),
+     source_thread_id TEXT NOT NULL,
+     environment_id TEXT,
+     host_id TEXT,
+     workspace_path TEXT,
+     provider_id TEXT NOT NULL,
+     builder_thread_id TEXT,
+     head_sha TEXT,
+     title TEXT NOT NULL,
+     summary TEXT,
+     reminded INTEGER NOT NULL DEFAULT 0,
+     error TEXT,
+     next_ordinal INTEGER NOT NULL DEFAULT 1,
+     next_listing INTEGER NOT NULL DEFAULT 1,
+     created_at INTEGER NOT NULL,
+     updated_at INTEGER NOT NULL,
+     ready_at INTEGER
+   )`,
+  `CREATE TABLE orientation_blocks (
+     orientation_id TEXT NOT NULL REFERENCES orientations(id) ON DELETE CASCADE,
+     ordinal INTEGER NOT NULL,
+     kind TEXT NOT NULL CHECK (kind IN ('chapter', 'note', 'listing')),
+     text TEXT,
+     listing_no INTEGER,
+     caption TEXT,
+     path TEXT,
+     start_line INTEGER,
+     end_line INTEGER,
+     captured TEXT,
+     captured_sha256 TEXT,
+     captured_ref TEXT,
+     check_state TEXT,
+     check_start INTEGER,
+     check_end INTEGER,
+     checked_at INTEGER,
+     PRIMARY KEY (orientation_id, ordinal)
+   )`,
+  // One orientation being built per project, whatever races to start a second.
+  `CREATE UNIQUE INDEX orientations_one_live_per_project ON orientations(project_key)
+     WHERE status IN ('starting', 'building')`,
+  `CREATE INDEX orientations_builder ON orientations(builder_thread_id)`,
+  // 0.3.0: orientation sessions run in a thread of their own, mode 'spawn'. SQLite cannot loosen a CHECK in
+  // place, so `sessions` is rebuilt. Dropping it cascades away `exercises`, so both tables' rows are kept
+  // aside first (a table made by SELECT * keeps the column order) and put back after.
+  `CREATE TABLE sessions_keep AS SELECT * FROM sessions`,
+  `CREATE TABLE exercises_keep AS SELECT * FROM exercises`,
+  // With foreign keys off the drop would not cascade, and the restore would hit the primary key.
+  `DELETE FROM exercises`,
+  `DROP TABLE sessions`,
+  `CREATE TABLE sessions (
+     id TEXT PRIMARY KEY,
+     kind TEXT NOT NULL DEFAULT 'exercise',
+     mode TEXT NOT NULL CHECK (mode IN ('fork', 'here', 'spawn')),
+     state TEXT NOT NULL CHECK (state IN ('starting', 'active', 'awaiting-answer', 'paused', 'finished', 'abandoned')),
+     project_key TEXT NOT NULL,
+     project_id TEXT NOT NULL,
+     source_thread_id TEXT,
+     thread_id TEXT,
+     topic TEXT NOT NULL,
+     trigger TEXT NOT NULL,
+     refs TEXT NOT NULL,
+     offer_id TEXT,
+     pause_reason TEXT,
+     summary TEXT,
+     concepts TEXT NOT NULL DEFAULT '[]',
+     brief_version TEXT NOT NULL,
+     created_at INTEGER NOT NULL,
+     updated_at INTEGER NOT NULL,
+     finished_at INTEGER
+   )`,
+  `CREATE INDEX sessions_thread ON sessions(thread_id)`,
+  `CREATE INDEX sessions_source ON sessions(source_thread_id)`,
+  `CREATE INDEX sessions_project ON sessions(project_key, state)`,
+  `CREATE UNIQUE INDEX sessions_one_open_per_source ON sessions(source_thread_id)
+     WHERE source_thread_id IS NOT NULL AND state IN ('starting', 'active', 'awaiting-answer', 'paused')`,
+  `INSERT INTO sessions SELECT * FROM sessions_keep`,
+  `INSERT INTO exercises SELECT * FROM exercises_keep`,
+  `DROP TABLE sessions_keep`,
+  `DROP TABLE exercises_keep`,
+  // 0.3.0: when the orientation's listings were last checked against a reachable checkout, whatever each
+  // listing's read did; opening the walkthrough checks again only once this is five minutes old.
+  `ALTER TABLE orientations ADD COLUMN verified_at INTEGER`,
+  // 0.3.0: builder threads whose put-away (stop, then archive) has not been confirmed, by thread. Starts are
+  // refused while any is here, and the sweep retries them. No foreign key: the orientation may be deleted,
+  // purged or replaced (or never have existed, for a stray thread) while its thread still needs putting away.
+  `CREATE TABLE orientation_putaways (
+     thread_id TEXT PRIMARY KEY,
+     orientation_id TEXT NOT NULL,
+     failed_at INTEGER NOT NULL
+   )`,
 ];
 
 const ReplyProgressSchema = z.object({
@@ -488,7 +585,7 @@ export class LearningStore {
   }
 
   finishedSessionsFrom(threadId: string): number {
-    return (this.db.prepare(`SELECT COUNT(*) AS n FROM sessions WHERE source_thread_id = ? AND state = 'finished'`).get(threadId) as { n: number }).n;
+    return (this.db.prepare(`SELECT COUNT(*) AS n FROM sessions WHERE source_thread_id = ? AND state = 'finished' AND trigger <> 'orientation'`).get(threadId) as { n: number }).n;
   }
 
   /** A session in the project is starting, mid-turn or waiting for an answer. */

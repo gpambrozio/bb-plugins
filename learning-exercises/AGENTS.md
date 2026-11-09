@@ -5,41 +5,54 @@ An event-driven take on Dr. Cat Hicks's
 `NOTICE.md`). The design is the first mate's scout report v2 (`report-v2.md`, decisions D1–D16) with one
 change: sessions are placed by provider capability, not by provider id. The phase 0 spike that shaped
 it ran in an isolated dev bb (`spike.md` beside the report). This is phase 1: features #1–#10 of the
-report's §6.1. Orientation, resume in a new thread, the sidebar journal, "Quiz me on this", spaced
-retrieval and Showboat are later phases.
+report's §6.1, plus Orient (0.3.0, below). Resume in a new thread, the sidebar journal, "Quiz me on
+this" and spaced retrieval are later phases.
 
 ## The invariants
 
 1. **Zero context upfront.** No `skills/` folder (`server.test.ts` checks), no `contributeInstructions`,
-   and `configure` returns `{ tools: [], skills: [] }` unless the thread's metadata names a session
-   the store has as open, in fork mode, bound to that thread (or not bound yet and forked from the
-   session's source thread). The CLI shows up only in bb's generic `plugin-commands` skill body. Do not
-   add a skill, an instruction or a tool that reaches threads with no session.
+   and `configure` returns `{ tools: [], skills: [] }` unless the thread is (a) a session thread the
+   store has as open, in mode `fork` **or `spawn`**, bound to that thread (or not bound yet: in fork mode,
+   forked from the session's source thread; in spawn mode, while the session is still `starting`), or (b)
+   the builder of a live orientation (`starting` or `building`), bound to that thread, or still `starting`
+   and not yet bound (a thread can resolve its tools before `spawn` answers). A builder gets the
+   orientation tools, a spawn session the session tools; a failed, cancelled or finished builder gets
+   nothing. The CLI shows up only in bb's generic `plugin-commands` skill body. Do not add a skill, an
+   instruction or a tool that reaches threads with no session or builder.
 2. **Offers are deterministic.** No model decides an offer or writes a topic. Topics are commit
    subjects, paths and pull request titles, quoted. The exercise type is the agent's choice inside an
    accepted session.
 3. **Offers only in human threads** (`policy.ts` `isHumanThread`): top level, no lifecycle owner,
-   visible, not archived, and not started by a plugin on the never-offer list. A plugin-started thread is
-   kept out only when it is a child (as every child is) or its plugin is listed: the `noOfferPlugins`
-   setting (default `automations`, one id per line) plus this plugin, whose session threads never get
-   offers whatever the setting says. A top-level thread another plugin started is the user's work: a
-   GitHub board card's thread (thr_58q9ui4bvc got no offer for its first-turn commit under the old "no
-   `originPluginId`" rule), a diff-review run, a Reclaim clean-up, a voice thread. bb marks nothing else on
-   a background thread (every spawn's `initiator` is `"user"`), so a plugin that starts top-level
-   background work belongs on that list. Adding a plugin there expires the live offers in its threads
-   (`dropIneligible`, on the settings change), and `offerSeen` and `answerOffer` re-check the thread
-   first, so a client holding the offer from before cannot show or answer it; a manual start from the
-   Learning tab still runs (it drops the offer). Side chats and code-review workers are hidden and owned, crews
-   are children, and workflows set a lifecycle owner, so the other checks keep them out. **Manual starts are wider** (`canStartByHand`): any visible,
-   unarchived thread except this plugin's own session threads, so a sub-agent thread can be a session's
-   source. The fixed "Learning" tab is on the tab bar of every thread the sidebar lists (hidden threads are
-   not listed), session threads included, where it shows the session with Pause and Finish but no Start.
-   Earlier builds offered it in sub-agent threads only as the action tab `learning-on-demand`, from the
-   side panel's launcher; bb keeps an action tab's open instances with the thread, so that tab stays
-   registered, never offered, and `useOneLearningTab` (run by the always-mounted composer banner and by
-   that tab) closes every instance, selecting the fixed tab first when one was selected: never two
-   Learning tabs. `ThreadView.eligible` says offers are made there, `canStart` that Start is shown. Never
-   let offers, the banner or the thread menu's offer choice follow `canStart`.
+   visible, not archived, and not started by a plugin on the never-offer list.
+   - **Builders.** Builder threads are hidden, so this refuses them already. The event wiring
+     (`server.ts`) also keeps from the offer engine every thread bound as a builder (`isBuilderThread`)
+     and, since the pre-bind window (R11), any hidden thread of this plugin (`originPluginId` is this
+     plugin and `visibility` is hidden), so a builder never opens an overlap that suppresses commit
+     offers. Neither check reads the builder's metadata (key `orientation`).
+   - **Plugin-started threads.** One is kept out only when it is a child (as every child is) or its
+     plugin is listed: the `noOfferPlugins` setting (default `automations`, one id per line) plus this
+     plugin, whose session threads never get offers whatever the setting says. A top-level thread another
+     plugin started is the user's work: a GitHub board card's thread (thr_58q9ui4bvc got no offer for its
+     first-turn commit under the old "no `originPluginId`" rule), a diff-review run, a Reclaim clean-up, a
+     voice thread. bb marks nothing else on a background thread (every spawn's `initiator` is `"user"`),
+     so a plugin that starts top-level background work belongs on that list.
+   - **Changing the list.** Adding a plugin there expires the live offers in its threads
+     (`dropIneligible`, on the settings change), and `offerSeen` and `answerOffer` re-check the thread
+     first, so a client holding the offer from before cannot show or answer it; a manual start from the
+     Learning tab still runs (it drops the offer).
+   - **Other background threads.** Side chats and code-review workers are hidden and owned, crews are
+     children, and workflows set a lifecycle owner, so the other checks keep them out.
+   - **Manual starts are wider** (`canStartByHand`): any visible, unarchived thread except this plugin's
+     own session threads, so a sub-agent thread can be a session's source.
+   - **The Learning tab.** The fixed "Learning" tab is on the tab bar of every thread the sidebar lists
+     (hidden threads are not listed), session threads included, where it shows the session with Pause and
+     Finish but no Start. Earlier builds offered it in sub-agent threads only as the action tab
+     `learning-on-demand`, from the side panel's launcher; bb keeps an action tab's open instances with the
+     thread, so that tab stays registered, never offered, and `useOneLearningTab` (run by the
+     always-mounted composer banner and by that tab) closes every instance, selecting the fixed tab first
+     when one was selected: never two Learning tabs.
+   - `ThreadView.eligible` says offers are made there, `canStart` that Start is shown. Never let offers,
+     the banner or the thread menu's offer choice follow `canStart`.
 4. **The caps live in the server** (`policy.ts`), and count *answered* offers only. An offer nobody
    answers, shown or not, counts toward nothing: not the daily limit or the gap (`answeredAt`, stored
    under its own key so the `seenAt` of earlier builds counts for nothing), not the snooze or the
@@ -104,6 +117,132 @@ retrieval and Showboat are later phases.
 | `server/question.ts` | What the server checks of a question before showing it: its length and that its code blocks close |
 | `shared/answer-form.ts`, `app/answer-form.tsx` | Answer forms: the schema, its checks and limits, reading and summarising an answer; the controls in the card and the read-only view (below) |
 | `app/thread-action.ts`, `app/settings-section.tsx` | "Learning offers" in the thread menu; the never-list under settings |
+| `shared/orientation.ts`, `shared/workspace-path.ts` | The orientation summary schema and its limits; the workspace-path rules shared by server and app (no SDK root import) |
+| `server/orientation.ts`, `server/orientation-store.ts` | `OrientationService` (start, cancel, rebuild, verify, export, reconcile, builder events) and its SQLite access |
+| `server/orientation-tools.ts`, `server/orientation-verify.ts`, `server/orientation-markdown.ts`, `server/orientation-api.ts` | The builder's tools (`orient_*`) and `bb learning orient …`; verify; the showboat-format export; the orientation RPCs |
+| `app/orientation-section.tsx`, `app/orientation-tab.tsx`, `app/export-dialog.tsx` | The Learning tab's Orientation section; the walkthrough tab; the export dialog |
+| `app/scroll-within.ts`, `app/orientation-ids.ts` | Scrolling inside the walkthrough's own container; the tab id |
+| `content/orient-builder.md`, `content/orientation-session.md` | The builder's brief and the orientation session's instructions (generated into `server/content.generated.ts`) |
+
+## Orientation
+
+Orient (0.3.0) builds a repository guide with a hidden builder thread; spec:
+`docs/superpowers/specs/2026-11-07-learning-exercises-orient-design.md`. Decisions not to break (R = rulings
+made while implementing):
+
+- **Reserve, then spawn; one live build per project.** `start` reserves the row (`starting`) under the
+  project's lock before the spawn, so two starts cannot both spawn. A builder is told apart by the
+  orientation row, the plugin metadata on its thread (key `orientation`) and `originPluginId`. It is bound
+  when the spawn answers, on its first tool call or its first idle or failed turn (when one comes first),
+  or by a reconcile (a `starting` row and the thread bb made for it, found by that metadata). An early idle
+  or failure binds under the orientation's lock as a first tool call does (same metadata and
+  `originPluginId` checks, only a live row with no builder) and is then handled as any builder's (PR #104
+  review, finding 3; it used to be lost until the 30-minute cap): a failure fails the build and puts the
+  thread away at once, and an idle counts only once a turn is known to have run. A late (stray) thread,
+  one this plugin started for a row that is not live (spawn answered after the row ended), is put away by
+  its first tool call, idle or failed turn.
+- **An idle spends the one reminder only after a turn** (PR #104 review pass 2, finding 7). bb can report a
+  builder idle before its first turn starts, with the brief still queued; `onIdle` reads `currentTurn`
+  first and does nothing (no reminder, no failure) when it is null. The first idle with a turn known sends
+  the reminder, the next fails the build. `currentTurn` also answers null when the read fails, so a builder
+  whose turns can never be read is never reminded or failed by its idles: the 30-minute cap is the
+  backstop there. A failed turn still fails at once.
+- **`clean` starts false** and only a fully successful `reconcile()` sets it. Until then `start` is refused
+  (R1), so a sweep can never fail this instance's own in-flight spawn. Reconcile runs **only at load and
+  from the 5-minute sweep (`*/5 * * * *`, not hourly as spec §7 first said)**, and the sweep reconciles
+  only when not clean. Reconcile keeps a builder that is active, pending or starting, or idle with a
+  current turn; any other leftover is archived. Put-away of a gone or archived builder must not make
+  reconcile unclean (R7).
+- **A put-away that bb does not confirm keeps starts refused** (PR #104 review, finding 1). Every put-away
+  (Cancel, a failed build, the cap, the idle after a finish, a stray, a reconcile) stops, then archives,
+  and is done only when both worked or bb confirms the thread archived, or gone (no thread by its id and
+  none of this plugin's unarchived threads lists it). A stop that failed before an archive that answered is
+  done only once a read shows it archived. Anything else is recorded in `orientation_putaways` (migration
+  0.3.0, by thread, no foreign key: Delete, the purge and a newer ready build do not lose it), `clean` is
+  false while a record exists (`start` and the tab's "Cleaning up" read it), and the sweep retries each
+  under its orientation's lock (a reconcile does so first). This does not make reconcile run again: that
+  stays load-and-unclean only, so it never meets this copy's own in-flight spawn (R1).
+- **`finish` does not put its own builder away (R5).** It runs inside the builder's own tool call and marks
+  the row ready; stopping or archiving that thread from there may deadlock or drop the tool result. The
+  builder's next `thread.idle` puts it away (row ready, failed or cancelled and thread bound), with
+  reconcile as the fallback. `cancel`, a user action from another thread, awaits the put-away.
+- **Hidden threads of this plugin never reach the offer engine (R11)**, whether or not the row is bound
+  yet; `thread.active`, `idle` and `failed` skip them.
+- **Listings are captured by the server**, from `files.read`, at the file and line range the builder names;
+  the agent never types code. The plugin runs nothing. A file missing or unreadable is a refusal the
+  builder sees. `isNotFound` in `bb-ports.ts` is a heuristic (code `not_found`/`ENOENT` or the message).
+  bb 0.49.0 answers a missing file with "HTTP 404: Path does not exist: <absolute path>" (code `ENOENT` in
+  the CLI's JSON), and the builder sees "`path` does not exist in the workspace.", not the retry text.
+- **Notes refuse fenced code and lines starting with an image (R4)**, so the export stays
+  showboat-verifiable: a fence would be parsed as a block, and a line starting with `![…](…)` (a non-empty
+  target) as an image block, whatever text follows it on the line (showboat drops that text). An image
+  after other text on the line is commentary and allowed. The rule is showboat's own `parseImageRef` line
+  test, `isShowboatImageLine` in `server/orientation-markdown.ts`, which the note check and the grammar port
+  both import; a test exports every note the service accepts and finds no image block. Summary strings are held to one line
+  each by the schema (no CR, LF, U+2028 or U+2029) and capped, so no field can start a line of the export
+  with a fence that `showboat verify` would run; the renderer escapes a leading backtick or `!` of the
+  purpose, the only field that starts a line. The test-only `server/testing/showboat-grammar.ts` ports
+  showboat's block rules and checks the exporter against them. Both it and the shipped image-line test are
+  ports of showboat (Apache-2.0, commit `d531261`): `NOTICE.md` names them and `licenses/showboat-LICENSE`
+  (listed in `files`) ships the licence text, so keep the three in step when porting more.
+- **Verify** reads each listing's file again and records one of `current`, `moved` (with the new range),
+  `changed` or `missing`; a failed read leaves that listing's state as it was. Opening the walkthrough
+  (`orientationDocument`) verifies only when the orientation's `verified_at` (migration 0.3.0, set at the
+  end of every verify that reached a checkout, whatever each file's read did) is more than 5 minutes old
+  or unset; never in between, so one unreadable file cannot make each opening check again. A verify calls
+  `changed()` only when a listing's state or range changed (`changed()` refetches the tab, which would
+  verify again), and the tab reads the walkthrough only while it is visible (`experimental_useTabVisible`).
+- **`finish` checks the walkthrough's listing references**: at least one chapter, every listing named as
+  `Listing N` in some note, and no note naming a listing that does not exist. A pop leaves a gap in the
+  numbers (they are never reused), so the brief says to use the number each `orient_listing` call
+  returns, and `orient_pop` is described as undoing the last block added (an early brief called it
+  "close the chapter", and a live builder popped a listing that way).
+- **Export** writes `<path>` in the repository through `files.write`. An existing file answers
+  `{ exists: true, sha256 }` and nothing is written; the dialog then sends that sha256 back as
+  `expectedSha256` with `replace` (R6), so a file that changed during the confirmation is not overwritten.
+  Null or absent means the file must not exist.
+- **The export dialog picks the place in a folder browser of its own** (`browseOrientationFolder`, one
+  folder at a time through `bb.sdk.hosts.directory`) plus a file-name box, because bb offers plugins no
+  native save dialog: `experimental_saveFile` downloads to the viewer's machine, and `hosts.pickFolder`
+  is a macOS "Choose a project folder" picker that bb's server allows only when the client and the work
+  host are the same machine, which a plugin cannot tell (SDK 0.6.104, bb 0.49). `files.listPaths` walks
+  a whole tree and cuts it off at `limit`, so it is not a folder listing. Paths are built from listed names
+  and a name without `/`; the server refuses a folder outside the workspace and one whose listing resolves
+  anywhere but under the root (a link out), and `export` checks the path again.
+- **The `"spawn"` session mode.** An orientation session is a *spawned* thread (Codex forks lack plugin
+  tools) with at most 3 questions, and it does not count toward the per-thread cap of finished sessions.
+  `startSession` refuses the orientation trigger; only `startOrientationSession` makes one. **Known gap:**
+  Resume cannot recover a spawn session whose thread id never reached the store: `forkOf` cannot find a
+  spawned thread, so it is abandoned (harmless, not a recovery).
+- **Migration 0.3.0 rebuilds `sessions`** (R8, R9). SQLite cannot loosen a CHECK in place, and the new
+  `mode` values need `CHECK mode IN ('fork','here','spawn')`. The rebuild copies sessions and exercises
+  aside, drops, recreates and restores; `bb.storage.migrate` applies unapplied statements in one
+  transaction, so a crash rolls back; the columns match the 0.2.0 schema exactly. It is independent of
+  `foreign_keys` (it deletes `exercises` before dropping `sessions` rather than relying on the cascade).
+  `migration.test.ts` pins it. Never edit it after release.
+- **Mutations refuse other plugins** (`experimental_caller`); orientation RPCs answer refusals with code
+  `conflict`. The `orientation` read also returns `last` (R10): the newest failed or cancelled build when it
+  is newer than `current` and nothing is live, so the tab can show its reason and Rebuild.
+- **The builder has permission to read and edit** in the user's checkout (bb has no tool-free thread). It is
+  told not to edit, the brief treats repository text as data, and Start says so. A recorded decision.
+- **Checked live on bb 0.49.0** (a dev bb, Claude Code builders). A hidden builder is `starting` right
+  after the spawn and `active` during its first turn; a reconcile was observed keeping only an `active`
+  one (a `starting` one is kept by the same rule, not seen live). The walkthrough tab's UI had not been
+  opened live as of the Task 15 check (its data was read through `orientationDocument`); a later live UI
+  check will update this. After `orient_finish` its turn
+  ends and it is archived within half a second. `threads.list` filters on `originPluginId` and
+  `archived: false`. A 0.2.0 store with a paused session upgrades with no log error and the session is
+  still listed. A file exported twice asks to replace it, and `uvx showboat verify` passes on the export.
+- **A reload mid-build does not end the build.** On bb 0.49.0 the new copy's reconcile finds the builder
+  `active` and keeps it. The builder's next `orient_*` call in the same session reaches the new copy, and
+  the row became `ready`. "Interrupted by a reload." is only for a builder that is not working (stopped,
+  errored, or a `starting` row with no thread).
+- **Checked live on bb 0.48.1 too** (an isolated dev bb, 2026-11-08), the minimum: `threads.list({
+  originPluginId, includeHidden, archived: false })` filters as on 0.49 (this plugin's threads only,
+  hidden ones included, archived ones excluded); `experimental_listPluginMetadata` returns the
+  `orientation` key for a hidden builder; a hidden spawn with a reused environment, then stop and archive,
+  works; and a reload mid-build keeps the active builder with `cleaning: false`. So `engines.bb >=0.48.1`
+  stands.
 
 ## File references
 

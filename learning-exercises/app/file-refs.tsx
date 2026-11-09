@@ -17,6 +17,10 @@ import {
 import { Fragment } from "react";
 
 import type { Workspace } from "../shared/types";
+import { workspacePath } from "../shared/workspace-path";
+
+// Moved to `shared/` so the server normalizes paths the same way; re-exported for the app's imports.
+export { workspacePath };
 
 /**
  * The document the Markdown is resolved as: a file at the workspace's root, so relative paths resolve
@@ -63,22 +67,6 @@ export function parseFileRef(ref: string): { path: string; location: Experimenta
   if (match === null) return { path: text, location: null };
   const location = rangeOf(lineNumber(match[1]), lineNumber(match[2]));
   return location === null ? { path: text, location: null } : { path: text.slice(0, match.index), location };
-}
-
-/**
- * A path as bb's workspace file target takes it: relative, with no `.` or `..` segments (bb leaves a
- * target with them inert). `./src/a.ts` and `src/../src/a.ts` become `src/a.ts`; null for an absolute or
- * home path, an empty one, and one that climbs out of the workspace.
- */
-export function workspacePath(path: string): string | null {
-  if (path.startsWith("/") || path.startsWith("~") || path.includes("\\")) return null;
-  const segments: string[] = [];
-  for (const segment of path.split("/")) {
-    if (segment === "" || segment === ".") continue;
-    if (segment !== "..") segments.push(segment);
-    else if (segments.pop() === undefined) return null;
-  }
-  return segments.length === 0 ? null : segments.join("/");
 }
 
 /**

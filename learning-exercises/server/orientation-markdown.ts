@@ -1,0 +1,142 @@
+/**
+ * Renders an orientation as Markdown (spec §8): the summary sections, then, for a walkthrough, a
+ * Contents list, the chapters with their notes, and the code listings as showboat's own `exec`
+ * block pair (a `bash` block with the `sed` command, then an `output` block with the captured text),
+ * so `showboat verify` can re-check the file. Pure: no I/O, no clock. The same summary renderer is
+ * what a session brief quotes.
+ */
+import type { OrientationBlock, OrientationSummary } from "../shared/orientation";
+
+type ListingBlock = Extract<OrientationBlock, { kind: "listing" }>;
+
+/** A fence one backtick longer than the longest run inside `content`, at least three. */
+function fenceFor(content: string): string {
+  let longest = 0;
+  for (const run of content.match(/`+/g) ?? []) longest = Math.max(longest, run.length);
+  return "`".repeat(Math.max(3, longest + 1));
+}
+
+function fenced(info: string, content: string): string {
+  const fence = fenceFor(content);
+  return `${fence}${info}\n${content}\n${fence}`;
+}
+
+/** Single-quotes a path for a shell, escaping each `'` as `'\''`. */
+function shellQuote(path: string): string {
+  return `'${path.replaceAll("'", `'\\''`)}'`;
+}
+
+/** GitHub-style heading slug: lowercase, spaces to `-`, anything but letters, digits, `-` and `_` dropped. */
+function slugify(title: string): string {
+  return title.toLowerCase().replaceAll(" ", "-").replace(/[^\p{L}\p{N}_-]/gu, "");
+}
+
+/**
+ * Port of showboat's `parseImageRef`: the target of the first `![alt](target)` on the line, or "" for
+ * none.
+ *
+ * Source: https://github.com/simonw/showboat, `markdown/parser.go`, commit `d531261`. Apache License 2.0,
+ * © Simon Willison; the licence text is `licenses/showboat-LICENSE` (see `NOTICE.md`). Modified:
+ * translated from Go to TypeScript. `isShowboatImageLine` below is part of the same port.
+ */
+export function showboatImageTarget(line: string): string {
+  const start = line.indexOf("![");
+  if (start === -1) return "";
+  const rest = line.slice(start + 2);
+  const close = rest.indexOf("](");
+  if (close === -1) return "";
+  const after = rest.slice(close + 2);
+  const paren = after.indexOf(")");
+  return paren === -1 ? "" : after.slice(0, paren);
+}
+
+/**
+ * Whether showboat reads `line` as an image block (ported from `Parse` in the same file, Apache-2.0, see
+ * above): it starts with `![` and holds an image reference with a non-empty target, whatever follows it
+ * on the line (showboat drops that text). An image after other text on the line is commentary. The note
+ * check and the test-only grammar port both use this.
+ */
+export function isShowboatImageLine(line: string): boolean {
+  return line.startsWith("![") && showboatImageTarget(line) !== "";
+}
+
+/**
+ * A line of text that must stay commentary at the start of a line: a leading backtick or `!` is
+ * escaped, since showboat reads a line starting with three backticks as a fence (a code block that
+ * `showboat verify` runs) and one starting with `![…](…)` as an image block. CommonMark shows `\`` and
+ * `\!` as the characters themselves.
+ */
+function lineStart(text: string): string {
+  return /^[`!]/.test(text) ? `\\${text}` : text;
+}
+
+/**
+ * The summary sections of §8, from `## One-line purpose` to `## Sources consulted`. Every field is one
+ * line (the schema says so), and only the purpose starts a line; the rest follow a list marker or `**`.
+ */
+export function renderSummaryMarkdown(summary: OrientationSummary): string {
+  const sections: string[] = [
+    `## One-line purpose\n\n${lineStart(summary.purpose)}`,
+    `## Primary language(s)\n\n${summary.languages.map((l) => `- ${l}`).join("\n")}`,
+    `## Pipeline / workflow stages\n\n${summary.stages.map((s, i) => `${i + 1}. ${s}`).join("\n")}`,
+    `## Key files\n\n${summary.keyFiles.map((f) => `- \`${f.path}\` — ${f.does} | ${f.why}`).join("\n")}`,
+    `## Core concepts\n\n${summary.concepts.map((c) => `**${c.name}**: ${c.definition} (${c.where})`).join("\n\n")}`,
+    `## Common gotchas\n\n${summary.gotchas.map((g) => `- ${g}`).join("\n")}`,
+    `## Suggested exercise sequence\n\n${summary.exercises
+      .map((e, i) => `${i + 1}. Open \`${e.file}\`. Read: ${e.read}. Then: ${e.question}`)
+      .join("\n")}`,
+    `## Sources consulted\n\n${summary.sources.map((s) => `- \`${s}\``).join("\n")}`,
+  ];
+  return sections.join("\n\n");
+}
+
+function renderListing(listing: ListingBlock): string {
+  const command = `sed -n '${listing.startLine},${listing.endLine}p' ${shellQuote(listing.path)}`;
+  return [
+    `### Listing ${listing.number}: ${listing.caption}`,
+    `<a id="listing-${listing.number}"></a>`,
+    fenced("bash", command),
+    fenced("output", listing.text),
+  ].join("\n\n");
+}
+
+export function renderOrientationMarkdown(doc: {
+  title: string;
+  readyAt: number;
+  headSha: string | null;
+  summary: OrientationSummary;
+  blocks: readonly OrientationBlock[];
+}): string {
+  const blocks = [...doc.blocks].sort((a, b) => a.ordinal - b.ordinal);
+  const built = doc.headSha ? ` · built at \`${doc.headSha.slice(0, 7)}\`` : "";
+  const parts: string[] = [
+    `# ${doc.title}`,
+    `*${new Date(doc.readyAt).toISOString()}*${built}`,
+    "> Generated by the Learning Exercises plugin. Rebuild it there to update.",
+    renderSummaryMarkdown(doc.summary),
+  ];
+
+  if (blocks.length > 0) {
+    const used = new Map<string, number>();
+    const contents: string[] = [];
+    const body: string[] = [];
+    const listings: ListingBlock[] = [];
+    for (const block of blocks) {
+      if (block.kind === "chapter") {
+        const base = slugify(block.title);
+        const seen = used.get(base) ?? 0;
+        used.set(base, seen + 1);
+        contents.push(`- [${block.title}](#${seen === 0 ? base : `${base}-${seen}`})`);
+        body.push(`## ${block.title}`);
+      } else if (block.kind === "note") {
+        body.push(block.markdown);
+      } else {
+        listings.push(block);
+      }
+    }
+    if (contents.length > 0) parts.push(`## Contents\n\n${contents.join("\n")}`);
+    parts.push(...body);
+    if (listings.length > 0) parts.push("## Code Listings", ...listings.map(renderListing));
+  }
+  return `${parts.join("\n\n")}\n`;
+}
