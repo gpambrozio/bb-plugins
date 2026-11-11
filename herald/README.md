@@ -224,8 +224,9 @@ way, write the sentence but do not speak it.* What it does depends on the event:
   with *Send Herald's sentences as push notifications* on, Herald sends no notification for it; bb's own
   is muted for that thread, so no one notifies you of that turn. *Read again* still reads it aloud on
   request.
-- **A question, a plan or a permission waiting for you, or a failed turn** — `speak: false` is ignored:
-  it is spoken and notified as any other sentence, so nothing that needs you can be kept from you.
+- **A question, a plan or a permission waiting for you, or a failed turn** — `speak: false` with a
+  sentence is ignored: it is spoken and notified as any other sentence, so nothing that needs you can be
+  kept from you. A null summary still means what it says above (listed and notified, not spoken).
 
 gemini and a custom command answer in plain text, so they can speak a sentence or say nothing, but cannot
 write one down unspoken.

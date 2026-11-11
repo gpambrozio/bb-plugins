@@ -164,10 +164,14 @@ no shell. What that buys, and what must stay true:
 - **`{{request}}` is the turn's own message** (`turnRequest`, `server/timeline.ts`). bb's prompt history
   leaves out what bb or another thread sent — a child's `[bb system] … completed:` report starts its
   parent's turn — so for such a turn the prompt named an older request and the model judged the report
-  against it. The newest `turn/input/accepted` row names its `client/turn/requested` row (one page of the
-  newest 20 of the two types, desc): its visible text, prefixed when its `initiator` is another thread
-  (`agent`). A row queued after the turn took its input is skipped. When the log cannot say (no accepted
-  row, its request off the page, a read that fails), the prompt history's last prompt stands in. The
+  against it. The newest row that settles a request — `turn/input/accepted` (`clientRequestId`), or
+  `client/turn/rejected` (`requestId`) for one refused before it started, such as a rate limit, which
+  ends in `thread.failed` with no acceptance — names its `client/turn/requested` row (one page of the
+  newest 20 of the three types, desc): its visible text, prefixed when its `initiator` is another thread
+  (`agent`). A request still queued has neither row, so it is skipped. Taking the newest acceptance alone
+  described a rejected request's failure with the turn before it (review pass 1). When the log cannot
+  say (no settling row, its request off the page, a read that fails), the prompt history's last prompt
+  stands in. The
   entry's `lastRequest`, the page's preview of what the user asked, still comes from the prompt history.
 - **An overtaken turn is carried, not lost** (`server/carry.ts`). A sentence a newer event overtakes
   can no longer land (`settleSentence`), and with it went what that turn said: the first mate's review

@@ -109,9 +109,10 @@ function visibleText(input: ReadonlyArray<{ type: string; text?: string; visibil
 }
 
 /** The event-log rows `turnRequest` reads. */
-export const TURN_REQUEST_EVENT_TYPES = ["turn/input/accepted", "client/turn/requested"] as const;
+export const TURN_REQUEST_EVENT_TYPES = ["turn/input/accepted", "client/turn/rejected", "client/turn/requested"] as const;
 
 const AcceptedSchema = z.object({ clientRequestId: z.string() });
+const RejectedSchema = z.object({ requestId: z.string() });
 const RequestedSchema = z.object({
   requestId: z.string(),
   initiator: z.string().nullish(),
@@ -119,22 +120,41 @@ const RequestedSchema = z.object({
 });
 
 /**
+ * The request the thread's newest turn settled: the newest row that ends a
+ * request's wait — `turn/input/accepted` (`clientRequestId`), or
+ * `client/turn/rejected` (`requestId`) for one bb refused at the door, an
+ * auth or rate-limit failure, which never gets an acceptance. A request
+ * still queued has neither, so it is never taken for the turn.
+ */
+function settledRequest(rows: readonly ThreadEventRow[]): { id: string; seq: number } | null {
+  for (const row of rows) {
+    if (row.type === "turn/input/accepted") {
+      const accepted = AcceptedSchema.safeParse(row.data);
+      if (accepted.success) return { id: accepted.data.clientRequestId, seq: row.seq };
+    } else if (row.type === "client/turn/rejected") {
+      const rejected = RejectedSchema.safeParse(row.data);
+      if (rejected.success) return { id: rejected.data.requestId, seq: row.seq };
+    }
+  }
+  return null;
+}
+
+/**
  * The message the thread's newest turn took in, from its event log: the
- * newest `turn/input/accepted` names its `client/turn/requested` row, whose
- * visible text this is. Unlike the prompt history, it includes what bb or
- * another thread sent — a child's completion report starts its parent's turn
- * — and one from another thread is marked as such, since the prompt calls it
- * the developer's request. `rows` are newest first; null when the accepted
- * input or its request is not among them.
+ * newest accepted or rejected input (`settledRequest`) names its
+ * `client/turn/requested` row, whose visible text this is. Unlike the prompt
+ * history, it includes what bb or another thread sent — a child's completion
+ * report starts its parent's turn — and one from another thread is marked as
+ * such, since the prompt calls it the developer's request. `rows` are newest
+ * first; null when the settled input or its request is not among them.
  */
 export function turnRequest(rows: readonly ThreadEventRow[]): string | null {
-  const accepted = rows.find((row) => row.type === "turn/input/accepted" && AcceptedSchema.safeParse(row.data).success);
-  if (accepted === undefined) return null;
-  const { clientRequestId } = AcceptedSchema.parse(accepted.data);
+  const settled = settledRequest(rows);
+  if (settled === null) return null;
   for (const row of rows) {
-    if (row.type !== "client/turn/requested" || row.seq > accepted.seq) continue;
+    if (row.type !== "client/turn/requested" || row.seq > settled.seq) continue;
     const request = RequestedSchema.safeParse(row.data);
-    if (!request.success || request.data.requestId !== clientRequestId) continue;
+    if (!request.success || request.data.requestId !== settled.id) continue;
     const text = visibleText(request.data.input);
     if (text === null) return null;
     return request.data.initiator === "agent" ? `[Sent by another agent thread] ${text}` : text;

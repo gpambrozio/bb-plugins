@@ -14,15 +14,17 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   mate's "a worker is on it" and review-loop progress, say. Such a turn keeps its card in the
   conversation, its line in the thread's Herald tab and the recent sentences, and its row on the Herald
   page, but nothing is spoken and Herald sends no push notification for it. Before, the only way to keep
-  a turn from being spoken was to drop it from everywhere. A question, plan, permission or error is
-  always spoken and notified, whatever the prompt asks. Gemini and custom commands cannot do this.
+  a turn from being spoken was to drop it from everywhere. A question, plan, permission or error whose
+  sentence is written with "don't speak" is still spoken and notified; one the model says nothing about
+  is listed and notified with the plain sentence, as before. Gemini and custom commands cannot do this.
 
 ### Changed
 
 - **The model sees the message that started the turn.** When another thread's report started a turn —
   a worker finishing and telling the first mate — the model writing the sentence was shown the last
   thing you typed instead, often long before. It now sees that report, and a message from another
-  thread is marked as such. When bb cannot say, it falls back to your last message, as before.
+  thread is marked as such. A message bb refused before it started (a rate limit, say) is described as
+  the one that failed, not the turn before it. When bb cannot say, it falls back to your last message, as before.
 
 ## 0.10.0
 

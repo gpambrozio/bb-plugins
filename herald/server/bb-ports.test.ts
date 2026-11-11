@@ -6,16 +6,19 @@
 import type { PluginBbSdk } from "@get-bb/plugin-sdk";
 import { describe, expect, it, vi } from "vitest";
 
+import { NO_CHOICE } from "../shared/thread-choice";
 import { bbEvents } from "./bb-ports";
-import { recordingLog, thread } from "./testing/fixtures";
+import { createHooks, type HeraldConfig } from "./hooks";
+import { AttentionStore } from "./store";
+import { recordingLog, settle, thread } from "./testing/fixtures";
 
-function fakeSdk(eventRows: () => Promise<unknown[]>) {
+function fakeSdk(eventRows: () => Promise<unknown[]>, typed = "Run a review loop") {
   const list = vi.fn((_input: { threadId: string; types?: string[]; order?: string; limit?: string }) => eventRows());
-  const promptHistory = vi.fn(async () => [{ id: "m1", createdAt: 1, input: [{ type: "text", text: "Run a review loop", mentions: [] }] }]);
+  const promptHistory = vi.fn(async () => [{ id: "m1", createdAt: 1, input: [{ type: "text", text: typed, mentions: [] }] }]);
   const sdk = {
     projects: { get: async () => ({ name: "Shop" }) },
     environments: { get: async () => ({ path: "/work/repo" }) },
-    threads: { promptHistory, events: { list } },
+    threads: { promptHistory, events: { list }, interactions: { list: async () => [] } },
   } as unknown as PluginBbSdk;
   return { sdk, list, promptHistory };
 }
@@ -40,7 +43,7 @@ describe("bbEvents.context", () => {
       turnRequest: "[bb system]\n\n@thread:thr_c completed:\n\nPass 1 is clean.",
     });
     const input = list.mock.calls[0]?.[0];
-    expect(input).toMatchObject({ threadId: "t1", types: ["turn/input/accepted", "client/turn/requested"], order: "desc" });
+    expect(input).toMatchObject({ threadId: "t1", types: ["turn/input/accepted", "client/turn/rejected", "client/turn/requested"], order: "desc" });
     expect(Number(input?.limit)).toBeLessThanOrEqual(100);
   });
 
@@ -61,5 +64,41 @@ describe("bbEvents.context", () => {
     expect(context).toMatchObject({ lastRequest: null, turnRequest: null });
     expect(list).not.toHaveBeenCalled();
     expect(promptHistory).not.toHaveBeenCalled();
+  });
+});
+
+describe("the failed event's prompt, over the event log", () => {
+  it("names the request bb rejected before accepting it, not the turn before it", async () => {
+    // "Review PR 104" ran and finished; "Review PR 105" was refused at the door (a rate limit), so it was never accepted.
+    const rows = [
+      { seq: 22, type: "client/turn/rejected", data: { requestId: "creq_105", reason: "rate_limited", message: "Rate limited" } },
+      { seq: 21, type: "client/turn/requested", data: { requestId: "creq_105", initiator: "user", input: [{ type: "text", text: "Review PR 105" }] } },
+      { seq: 12, type: "turn/input/accepted", data: { clientRequestId: "creq_104" } },
+      { seq: 11, type: "client/turn/requested", data: { requestId: "creq_104", initiator: "user", input: [{ type: "text", text: "Review PR 104" }] } },
+    ];
+    const { sdk } = fakeSdk(async () => rows, "Review PR 105");
+    const prompts: string[] = [];
+    const config: HeraldConfig = {
+      announce: { question: true, plan: true, permission: true, finished: true, error: true },
+      announceSubagents: false,
+      sentence: { command: "my-llm", prompt: "Request: {{request}}", reply: "claude-json" },
+      push: false,
+    };
+    const hooks = createHooks({
+      store: new AttentionStore(null, recordingLog()),
+      readConfig: async () => config,
+      events: bbEvents(sdk, recordingLog()),
+      choiceOf: async () => NO_CHOICE,
+      publish: vi.fn(),
+      log: recordingLog(),
+      writeSentence: async (_command, prompt) => {
+        prompts.push(prompt);
+        return { kind: "sentence", text: "Login fix hit a rate limit." };
+      },
+      remember: vi.fn(),
+    });
+    await hooks.failed(thread(), "Rate limited");
+    await settle();
+    expect(prompts).toEqual(["Request: Review PR 105"]);
   });
 });

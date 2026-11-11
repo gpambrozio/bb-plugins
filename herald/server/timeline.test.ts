@@ -118,6 +118,12 @@ describe("turnRequest", () => {
     expect(turnRequest(rows)).toBe("[Sent by another agent thread] Done: PR ready");
   });
 
+  it("is the request bb rejected before accepting it, not the turn before", () => {
+    const rejected: ThreadEventRow = { seq: 22, type: "client/turn/rejected", data: { requestId: "creq_105", reason: "rate_limited", message: "Rate limited" } };
+    const rows = [rejected, requested(21, "creq_105", "Review PR 105"), accepted(12, "creq_104"), requested(11, "creq_104", "Review PR 104")];
+    expect(turnRequest(rows)).toBe("Review PR 105");
+  });
+
   it("skips a message queued after the turn took its input in", () => {
     const rows = [requested(20, "creq_queued", "Next task"), accepted(12, "creq_b"), requested(11, "creq_b", "This task")];
     expect(turnRequest(rows)).toBe("This task");
