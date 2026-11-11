@@ -35,7 +35,11 @@ export interface ThreadEventRow {
 }
 
 export interface EventsPort {
-  context(thread: ThreadDto, options: { withRequest: boolean }): Promise<ThreadContext>;
+  /**
+   * `failed`: the request is read for a failed turn, which a request bb
+   * rejected before accepting it may have been (`turnRequest`).
+   */
+  context(thread: ThreadDto, options: { withRequest: boolean; failed?: boolean }): Promise<ThreadContext>;
   /**
    * Whether one of the thread's interactions was interrupted within `withinMs`
    * — the user stopped the turn while it waited on them — which is why a

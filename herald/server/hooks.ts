@@ -759,7 +759,7 @@ export function createHooks(deps: HookDeps): Hooks {
           const generation = generationOf(thread.id);
           const [config, context, interrupted, choice] = await Promise.all([
             deps.readConfig(),
-            deps.events.context(thread, { withRequest: true }),
+            deps.events.context(thread, { withRequest: true, failed: true }),
             deps.events.interruptedRecently(thread.id, INTERRUPT_GRACE_MS),
             choiceOf(thread),
           ]);

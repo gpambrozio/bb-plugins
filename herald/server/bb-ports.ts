@@ -95,7 +95,7 @@ export function bbEvents(sdk: PluginBbSdk, log: Log): EventsPort {
   }
 
   return {
-    async context(thread, { withRequest }) {
+    async context(thread, { withRequest, failed = false }) {
       const [name, where, request, turn] = await Promise.all([
         orNull(`project ${thread.projectId}`, () => projectName(thread.projectId)),
         thread.environmentId === null
@@ -110,6 +110,7 @@ export function bbEvents(sdk: PluginBbSdk, log: Log): EventsPort {
           ? orNull(`thread ${thread.id}'s turn request`, async () =>
               turnRequest(
                 await sdk.threads.events.list({ threadId: thread.id, types: [...TURN_REQUEST_EVENT_TYPES], order: "desc", limit: TURN_REQUEST_ROWS }),
+                { failed },
               ),
             )
           : Promise.resolve(null),

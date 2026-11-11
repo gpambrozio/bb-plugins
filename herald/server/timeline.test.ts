@@ -86,6 +86,7 @@ describe("lastPrompt", () => {
 });
 
 describe("turnRequest", () => {
+  const FINISHED = { failed: false };
   const requested = (seq: number, requestId: string, text: string, extra: Record<string, unknown> = {}): ThreadEventRow => ({
     seq,
     type: "client/turn/requested",
@@ -104,29 +105,38 @@ describe("turnRequest", () => {
       requested(59364, "creq_child", report, { initiator: "system", systemMessageKind: "child-completed" }),
       requested(59300, "creq_typed", "Run a review loop"),
     ];
-    expect(turnRequest(rows)).toBe(report);
+    expect(turnRequest(rows, FINISHED)).toBe(report);
   });
 
   it("is what the user typed for a typed turn", () => {
-    expect(turnRequest([accepted(12, "creq_b"), requested(11, "creq_b", "Figure out why"), accepted(8, "creq_a"), requested(7, "creq_a", "Older")])).toBe(
+    expect(turnRequest([accepted(12, "creq_b"), requested(11, "creq_b", "Figure out why"), accepted(8, "creq_a"), requested(7, "creq_a", "Older")], FINISHED)).toBe(
       "Figure out why",
     );
   });
 
   it("names another thread's message as such", () => {
     const rows = [accepted(5, "creq_a"), requested(4, "creq_a", "Done: PR ready", { initiator: "agent", senderThreadId: "thr_crew" })];
-    expect(turnRequest(rows)).toBe("[Sent by another agent thread] Done: PR ready");
+    expect(turnRequest(rows, FINISHED)).toBe("[Sent by another agent thread] Done: PR ready");
   });
 
   it("is the request bb rejected before accepting it, not the turn before", () => {
     const rejected: ThreadEventRow = { seq: 22, type: "client/turn/rejected", data: { requestId: "creq_105", reason: "rate_limited", message: "Rate limited" } };
     const rows = [rejected, requested(21, "creq_105", "Review PR 105"), accepted(12, "creq_104"), requested(11, "creq_104", "Review PR 104")];
-    expect(turnRequest(rows)).toBe("Review PR 105");
+    expect(turnRequest(rows, { failed: true })).toBe("Review PR 105");
+    // A finished turn never ran it: its request is the one it accepted.
+    expect(turnRequest(rows, { failed: false })).toBe("Review PR 104");
+  });
+
+  it("never takes a steer the turn ended before confirming, for a finished or a failed turn", () => {
+    const steer: ThreadEventRow = { seq: 15, type: "client/turn/rejected", data: { requestId: "creq_b", reason: "steer_unconfirmed", message: "Turn completed" } };
+    const rows = [steer, requested(14, "creq_b", "Also migrate the database"), accepted(12, "creq_a"), requested(11, "creq_a", "Fix login")];
+    expect(turnRequest(rows, { failed: false })).toBe("Fix login");
+    expect(turnRequest(rows, { failed: true })).toBe("Fix login");
   });
 
   it("skips a message queued after the turn took its input in", () => {
     const rows = [requested(20, "creq_queued", "Next task"), accepted(12, "creq_b"), requested(11, "creq_b", "This task")];
-    expect(turnRequest(rows)).toBe("This task");
+    expect(turnRequest(rows, FINISHED)).toBe("This task");
   });
 
   it("leaves out agent-only text", () => {
@@ -145,22 +155,22 @@ describe("turnRequest", () => {
         },
       },
     ];
-    expect(turnRequest(rows)).toBe("Approve the plan");
+    expect(turnRequest(rows, FINISHED)).toBe("Approve the plan");
   });
 
   it("is null when the log does not say, so the prompt history is used instead", () => {
     // No accepted input yet, or its request is beyond the page read.
-    expect(turnRequest([requested(1, "creq_a", "Hello")])).toBeNull();
-    expect(turnRequest([accepted(9, "creq_gone"), requested(8, "creq_other", "Other")])).toBeNull();
-    expect(turnRequest([])).toBeNull();
+    expect(turnRequest([requested(1, "creq_a", "Hello")], FINISHED)).toBeNull();
+    expect(turnRequest([accepted(9, "creq_gone"), requested(8, "creq_other", "Other")], FINISHED)).toBeNull();
+    expect(turnRequest([], FINISHED)).toBeNull();
     // A row whose shape bb changed is skipped, not thrown on.
-    expect(turnRequest([accepted(3, "creq_a"), { seq: 2, type: "client/turn/requested", data: { requestId: "creq_a" } }])).toBeNull();
+    expect(turnRequest([accepted(3, "creq_a"), { seq: 2, type: "client/turn/requested", data: { requestId: "creq_a" } }], FINISHED)).toBeNull();
     // Only agent-only text: nothing the user could see.
     expect(
       turnRequest([
         accepted(2, "creq_a"),
         { seq: 1, type: "client/turn/requested", data: { requestId: "creq_a", input: [{ type: "text", text: "x", visibility: "agent-only" }] } },
-      ]),
+      ], FINISHED),
     ).toBeNull();
   });
 });

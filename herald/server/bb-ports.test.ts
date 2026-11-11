@@ -67,8 +67,48 @@ describe("bbEvents.context", () => {
   });
 });
 
-describe("the failed event's prompt, over the event log", () => {
-  it("names the request bb rejected before accepting it, not the turn before it", async () => {
+const PROMPT_CONFIG: HeraldConfig = {
+  announce: { question: true, plan: true, permission: true, finished: true, error: true },
+  announceSubagents: false,
+  sentence: { command: "my-llm", prompt: "Request: {{request}}", reply: "claude-json" },
+  push: false,
+};
+
+/** Hooks over the bb adapter and a fake `bb.sdk`, recording each prompt the tool is given. */
+function hooksOver(sdk: PluginBbSdk) {
+  const prompts: string[] = [];
+  const hooks = createHooks({
+    store: new AttentionStore(null, recordingLog()),
+    readConfig: async () => PROMPT_CONFIG,
+    events: bbEvents(sdk, recordingLog()),
+    choiceOf: async () => NO_CHOICE,
+    publish: vi.fn(),
+    log: recordingLog(),
+    writeSentence: async (_command, prompt) => {
+      prompts.push(prompt);
+      return { kind: "sentence", text: "Login fix is done." };
+    },
+    remember: vi.fn(),
+  });
+  return { hooks, prompts };
+}
+
+describe("the prompt's request, over the event log", () => {
+  it("is a finished turn's accepted input, not a steer the turn ended before confirming", async () => {
+    // "Fix login" ran; "Also migrate the database" was sent as a steer and rejected as the turn completed.
+    const rows = [
+      { seq: 15, type: "client/turn/rejected", data: { requestId: "creq_b", reason: "steer_unconfirmed", message: "Turn completed" } },
+      { seq: 14, type: "client/turn/requested", data: { requestId: "creq_b", initiator: "user", input: [{ type: "text", text: "Also migrate the database" }] } },
+      { seq: 12, type: "turn/input/accepted", data: { clientRequestId: "creq_a" } },
+      { seq: 11, type: "client/turn/requested", data: { requestId: "creq_a", initiator: "user", input: [{ type: "text", text: "Fix login" }] } },
+    ];
+    const { hooks, prompts } = hooksOver(fakeSdk(async () => rows, "Also migrate the database").sdk);
+    await hooks.idle(thread(), "Login is fixed.");
+    await settle();
+    expect(prompts).toEqual(["Request: Fix login"]);
+  });
+
+  it("names the request bb rejected before accepting it, not the turn before it, for the failed event", async () => {
     // "Review PR 104" ran and finished; "Review PR 105" was refused at the door (a rate limit), so it was never accepted.
     const rows = [
       { seq: 22, type: "client/turn/rejected", data: { requestId: "creq_105", reason: "rate_limited", message: "Rate limited" } },
@@ -76,27 +116,7 @@ describe("the failed event's prompt, over the event log", () => {
       { seq: 12, type: "turn/input/accepted", data: { clientRequestId: "creq_104" } },
       { seq: 11, type: "client/turn/requested", data: { requestId: "creq_104", initiator: "user", input: [{ type: "text", text: "Review PR 104" }] } },
     ];
-    const { sdk } = fakeSdk(async () => rows, "Review PR 105");
-    const prompts: string[] = [];
-    const config: HeraldConfig = {
-      announce: { question: true, plan: true, permission: true, finished: true, error: true },
-      announceSubagents: false,
-      sentence: { command: "my-llm", prompt: "Request: {{request}}", reply: "claude-json" },
-      push: false,
-    };
-    const hooks = createHooks({
-      store: new AttentionStore(null, recordingLog()),
-      readConfig: async () => config,
-      events: bbEvents(sdk, recordingLog()),
-      choiceOf: async () => NO_CHOICE,
-      publish: vi.fn(),
-      log: recordingLog(),
-      writeSentence: async (_command, prompt) => {
-        prompts.push(prompt);
-        return { kind: "sentence", text: "Login fix hit a rate limit." };
-      },
-      remember: vi.fn(),
-    });
+    const { hooks, prompts } = hooksOver(fakeSdk(async () => rows, "Review PR 105").sdk);
     await hooks.failed(thread(), "Rate limited");
     await settle();
     expect(prompts).toEqual(["Request: Review PR 105"]);
