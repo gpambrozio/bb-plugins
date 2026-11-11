@@ -6,6 +6,11 @@
  * trip; Herald's entries add the reason and the sentence. A thread bb flags
  * that Herald has no entry for (an event from before the plugin was watching,
  * say) is still listed, with what bb knows.
+ *
+ * A finished turn whose sentence the tool wrote but asked not to speak
+ * (`written`) is listed exactly as a spoken one is — while bb flags the
+ * thread, or while fresh — so the page and its badge do not depend on the
+ * voice. Only a turn the tool kept `quiet` hides bb's flag for it.
  */
 import type { PluginSidebarThreadIndicator } from "@get-bb/plugin-sdk/app";
 

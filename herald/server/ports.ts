@@ -19,6 +19,19 @@ export interface ThreadContext {
   folder: string | null;
   /** The user's last message, when the caller asked for it. */
   lastRequest: string | null;
+  /**
+   * The message the thread's newest turn took in, from its event log, when
+   * the caller asked for the request: a child's report or another thread's
+   * message too, which the prompt history leaves out. Null when bb cannot say.
+   */
+  turnRequest: string | null;
+}
+
+/** One row of a thread's event log, as much of it as Herald reads. */
+export interface ThreadEventRow {
+  seq: number;
+  type: string;
+  data: unknown;
 }
 
 export interface EventsPort {

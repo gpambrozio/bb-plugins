@@ -106,6 +106,16 @@ describe("Announcer", () => {
     expect(deps.render).not.toHaveBeenCalled();
   });
 
+  it("never speaks a sentence written down unspoken, nor one that lands that way after being written", async () => {
+    const { announcer, deps } = setup();
+    announcer.onEntries([]);
+    announcer.onEntries([entry("w", { summary: { status: "written", text: "A worker is on it." } })]);
+    announcer.onEntries([entry("p", { summary: { status: "pending", fallback: "Plain." } })]);
+    announcer.onEntries([entry("p", { summary: { status: "written", text: "Still working." } })]);
+    await settle();
+    expect(deps.render).not.toHaveBeenCalled();
+  });
+
   it("speaks each new settled entry once, oldest first, in the server's voice", async () => {
     const { announcer, order } = setup();
     announcer.onEntries([]);

@@ -26,7 +26,7 @@ import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
 
 import type { RpcContract } from "../shared/contract";
-import { ENTRIES_CHANNEL, speechText, type AttentionEntry, type RecentHistoryItem } from "../shared/herald";
+import { ENTRIES_CHANNEL, sentenceText, type AttentionEntry, type RecentHistoryItem } from "../shared/herald";
 import type { PushStatus } from "../shared/push";
 import { getAnnouncer, isMutedHere, onMuteChange, setMutedHere } from "./announcer";
 import { useEntries } from "./entries";
@@ -134,7 +134,9 @@ export async function readAgain(sentence: string): Promise<void> {
 
 function Sentence({ entry }: { entry: AttentionEntry | null }): ReactNode {
   if (entry === null) return <p className="text-sm text-muted-foreground">No sentence from Herald for this one.</p>;
-  if (entry.summary.status === "ready") return <p className="text-sm italic text-foreground">{entry.summary.text}</p>;
+  if (entry.summary.status === "ready" || entry.summary.status === "written") {
+    return <p className="text-sm italic text-foreground">{entry.summary.text}</p>;
+  }
   if (entry.summary.status === "pending") return <p className="text-sm italic text-muted-foreground">Writing the sentence…</p>;
   return (
     <p className="text-xs text-muted-foreground">
@@ -162,9 +164,10 @@ function StatusGlyph({ threadId, indicator }: { threadId: string; indicator: Row
 function RowCard({ row, now, onOpen }: { row: Row; now: number; onOpen: (threadId: string) => void }) {
   const look = lookOf(row.reason);
   const entry = row.entry;
-  // The sentence that would be announced: none while it is being written,
-  // none for a kind that is switched off or a thread Herald has no entry for.
-  const sentence = entry === null ? null : speechText(entry);
+  // The sentence to read again — spoken, or written down unspoken: none
+  // while it is being written, none for a kind that is switched off or a
+  // thread Herald has no entry for.
+  const sentence = entry === null ? null : sentenceText(entry);
   const open = () => onOpen(row.threadId);
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.target !== event.currentTarget) return;

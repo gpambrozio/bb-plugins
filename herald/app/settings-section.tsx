@@ -133,6 +133,12 @@ function ModelSentence({ config, onSave }: { config: StoredConfig; onSave: (next
           spoken. For example: &ldquo;If the agent&apos;s last output only acknowledges, such as &lsquo;Captain, shipshape.&rsquo;,
           say nothing.&rdquo;
         </p>
+        <p className="text-xs text-muted-foreground">
+          Claude Code and Codex can also write a sentence down without speaking it, with speak set to false: a finished turn then gets
+          its card and history as usual, with no voice and no notification from Herald. A question, plan, permission or error is
+          spoken all the same. For example: &ldquo;If the agent only reports that work it dispatched is under way, write the sentence
+          but do not speak it.&rdquo; {"{{request}}"} is the message that started the turn, a report from another thread included.
+        </p>
         <TextField
           label="Sentence prompt"
           stored={config.sentencePrompt}

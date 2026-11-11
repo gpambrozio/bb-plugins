@@ -9,7 +9,8 @@
  * sentence, and nothing more. A tool that runs and answers nothing — an empty
  * reply, or an empty summary where it answers in JSON (`ReplyFormat`) — has
  * chosen silence, which is not a failure (`WrittenSentence`); JSON that is
- * missing or not the schema's is. At most `MAX_IN_FLIGHT` processes run at
+ * missing or not the schema's is. In JSON a tool can also write a sentence
+ * and ask that it not be spoken (`speak: false`). At most `MAX_IN_FLIGHT` processes run at
  * once; a request beyond that is refused at once.
  */
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -117,13 +118,15 @@ function killGroup(pid: number | undefined, fallback: () => void): void {
 }
 
 /**
- * What a tool that ran to the end gave: one line to speak, or nothing at
- * all. A prompt may ask the model to say nothing to keep an event quiet
- * ("Captain, shipshape."): an empty reply, or a null or empty summary in
- * JSON. That is an answer, not a failure, and a failure is a rejection,
- * never `silent`.
+ * What a tool that ran to the end gave: one line to speak, one line to keep
+ * without speaking it, or nothing at all. A prompt may ask the model to say
+ * nothing to keep an event quiet ("Captain, shipshape."): an empty reply, or
+ * a null or empty summary in JSON. A JSON answer can also carry a summary
+ * with `speak: false` ("a worker is on it"): `unspoken`, which the hooks
+ * remember but do not speak for a finished turn. Each is an answer, not a
+ * failure, and a failure is a rejection, never `silent`.
  */
-export type WrittenSentence = { kind: "sentence"; text: string } | { kind: "silent" };
+export type WrittenSentence = { kind: "sentence"; text: string } | { kind: "unspoken"; text: string } | { kind: "silent" };
 
 /**
  * The reply as one spoken line: the last paragraph (a tool may print
@@ -139,7 +142,7 @@ export function cleanSentence(raw: string): WrittenSentence {
 }
 
 /** Markdown and wrapping quotes gone, cut to `MAX_SENTENCE_CHARS`; `silent` when nothing is left. */
-function cleanLine(text: string): WrittenSentence {
+function cleanLine(text: string): { kind: "sentence"; text: string } | { kind: "silent" } {
   let line = plainText(text);
   line = line.replace(/^["'“”‘’]+/, "").replace(/["'“”‘’]+$/, "").trim();
   if (line === "") return { kind: "silent" };
@@ -149,8 +152,9 @@ function cleanLine(text: string): WrittenSentence {
 
 /**
  * What Claude Code and Codex are held to. Every field required and no others,
- * as strict-mode schemas need; the description reaches the model with it, so
- * a prompt that asks for "nothing" has a way to say so.
+ * as strict-mode schemas need; the descriptions reach the model with it, so
+ * a prompt that asks for "nothing", or for a summary that is only written
+ * down, has a way to say so.
  */
 export const SUMMARY_SCHEMA = {
   type: "object",
@@ -159,12 +163,18 @@ export const SUMMARY_SCHEMA = {
       type: ["string", "null"],
       description: "The one spoken sentence, or null (or an empty string) to say nothing about this event.",
     },
+    speak: {
+      type: "boolean",
+      description:
+        "true to speak the summary aloud, as usual. false only when the instructions ask for this event to be written down without being spoken: the summary is then kept in the thread's history, unspoken.",
+    },
   },
-  required: ["summary"],
+  required: ["summary", "speak"],
   additionalProperties: false,
 } as const;
 
-const SummarySchema = z.strictObject({ summary: z.string().nullable() });
+/** `speak` may be missing (an answer to the schema before it had one): the summary is then spoken. */
+const SummarySchema = z.strictObject({ summary: z.string().nullable(), speak: z.boolean().optional() });
 
 /** Claude Code's `--output-format json` result; the schema's object is in `structured_output`. */
 const ClaudeResultSchema = z.object({ is_error: z.boolean().optional(), structured_output: z.unknown().optional() });
@@ -213,8 +223,10 @@ export function readReply(stdout: string, reply: ReplyFormat): WrittenSentence {
     structured = result.data.structured_output;
   }
   const answer = SummarySchema.safeParse(structured);
-  if (!answer.success) throw new Error(`${tool}'s answer is not { summary }: ${JSON.stringify(structured ?? null).slice(0, 200)}`);
-  return answer.data.summary === null ? { kind: "silent" } : cleanLine(answer.data.summary);
+  if (!answer.success) throw new Error(`${tool}'s answer is not { summary, speak }: ${JSON.stringify(structured ?? null).slice(0, 200)}`);
+  if (answer.data.summary === null) return { kind: "silent" };
+  const line = cleanLine(answer.data.summary);
+  return line.kind === "sentence" && answer.data.speak === false ? { kind: "unspoken", text: line.text } : line;
 }
 
 export class SentenceWriter {
@@ -225,8 +237,9 @@ export class SentenceWriter {
   constructor(private readonly log: Log) {}
 
   /**
-   * Runs `command` with `prompt` on stdin and returns the cleaned sentence,
-   * or `silent` when the tool exits 0 with nothing to say. `reply` says how
+   * Runs `command` with `prompt` on stdin and returns the cleaned sentence —
+   * `unspoken` when a JSON answer says `speak: false` — or `silent` when the
+   * tool exits 0 with nothing to say. `reply` says how
    * its answer is read (`readReply`). Rejects when the writer is busy or
    * disposed, the tool is missing, fails, outlives `WRITE_TIMEOUT_MS`, or
    * answers JSON that is not the schema's — and when `signal` aborts, which

@@ -117,9 +117,11 @@ no shell. What that buys, and what must stay true:
   A Claude run measured about 10 s end to end.
 - **Claude Code and Codex answer in JSON; the others in plain text.** A model asked to "reply with
   nothing" does not: it writes a note such as *[Empty output: … so nothing is spoken.]*, which Herald then
-  spoke. So the claude and codex presets get the CLI's own structured output, `{"summary": string | null}`
-  (`SUMMARY_SCHEMA`: every field required, no others, as strict mode needs; the field's description tells
-  the model null means silence), and always have something to return. `commandFor` adds the switches at run
+  spoke. So the claude and codex presets get the CLI's own structured output, `{"summary": string | null,
+  "speak": boolean}` (`SUMMARY_SCHEMA`: every field required, no others, as strict mode needs; the fields'
+  descriptions tell the model null means silence and `speak: false` means written down, unspoken), and
+  always have something to return. A missing `speak` is read as spoken, so an answer to the older schema
+  still lands. `commandFor` adds the switches at run
   time — `--output-format json --json-schema '<schema>'` for Claude Code, whose answer is the result's
   `structured_output`; `--output-schema <file>` before the trailing `-` for Codex, whose stdout is then the
   object itself — and `readReply` reads it. They are not in `TOOL_COMMANDS` because the custom command is
@@ -146,6 +148,27 @@ no shell. What that buys, and what must stay true:
   spoken, not remembered) and its owed notification goes out plain. A question answered meanwhile is
   still withdrawn first. Only a real failure falls back to the plain
   sentence spoken; a run still going at unload is a failure (the plain notification goes out).
+- **`speak: false` writes a finished turn down; it never lowers anything that waits on the user.** A JSON
+  summary with `speak: false` is the writer's `unspoken` outcome (a blank summary is still `silent`). A
+  **finished** turn lands as `written`: the entry carries the sentence, is listed by `joinRows` exactly as
+  a `ready` one is (while bb flags the thread, or while fresh; no `attentionAt` rule, which is `quiet`'s
+  alone), shows on the banner, and is remembered, so it gets its history item and its timeline card. It
+  is never spoken: `speechText`, which the announcer uses, answers only for `ready`; what is shown and
+  read on a button press is `sentenceText`. `pushSentence` gives it null, so `sendOwed` sends nothing and
+  only drains the decision — with push on and the thread taken over, bb was muted and **no one notifies
+  that turn**, as for `quiet`. A **question, plan, permission or error** with `speak: false` is treated as
+  a spoken sentence (`ready`, announced, notified with the tool's words), so the flag can never keep
+  something that needs the user from them. The owner wanted the first mate's progress turns ("a worker is
+  on it", review-loop passes) on record without hearing them; `quiet` dropped them from everywhere. Text
+  replies (gemini, custom) cannot express it.
+- **`{{request}}` is the turn's own message** (`turnRequest`, `server/timeline.ts`). bb's prompt history
+  leaves out what bb or another thread sent — a child's `[bb system] … completed:` report starts its
+  parent's turn — so for such a turn the prompt named an older request and the model judged the report
+  against it. The newest `turn/input/accepted` row names its `client/turn/requested` row (one page of the
+  newest 20 of the two types, desc): its visible text, prefixed when its `initiator` is another thread
+  (`agent`). A row queued after the turn took its input is skipped. When the log cannot say (no accepted
+  row, its request off the page, a read that fails), the prompt history's last prompt stands in. The
+  entry's `lastRequest`, the page's preview of what the user asked, still comes from the prompt history.
 - **An overtaken turn is carried, not lost** (`server/carry.ts`). A sentence a newer event overtakes
   can no longer land (`settleSentence`), and with it went what that turn said: the first mate's review
   result went unspoken because two "Captain, shipshape." turns followed before its sentence was ready.
@@ -680,7 +703,7 @@ as soon as it is written. What must stay true:
   bb 0.47; the SDK is pinned at 0.6.104 for its typings.
 - **What it shows is the history**: exactly the sentences the Herald tab lists. A finished turn the
   tool kept quiet, and a waiting event it answered with silence, are not remembered, so they show
-  nothing here either. A sentence still being written has no card; the Herald page says *Writing the
+  nothing here either; one it wrote down unspoken (`written`) is remembered and has its card. A sentence still being written has no card; the Herald page says *Writing the
   sentence…* meanwhile.
 - **Known limits.** A message edited away or hidden by a context clear takes its cards with it. A
   sentence's time is taken as its event is recorded, a moment after the event, so an answer written in

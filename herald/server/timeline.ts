@@ -4,8 +4,10 @@
  * sentence that is spoken. Nothing here touches the network, which is what
  * makes it the part with tests.
  */
+import { z } from "zod";
+
 import type { AttentionReason } from "../shared/herald";
-import type { Interaction, PromptRecord } from "./ports";
+import type { Interaction, PromptRecord, ThreadEventRow } from "./ports";
 
 export interface InteractionDescription {
   reason: AttentionReason;
@@ -94,11 +96,50 @@ export function lastPrompt(history: readonly PromptRecord[]): string | null {
     if (newest === null || record.createdAt > newest.createdAt) newest = record;
   }
   if (newest === null) return null;
-  const text = newest.input
+  return visibleText(newest.input);
+}
+
+/** The text parts of a message the user could see; agent-only context is left out. */
+function visibleText(input: ReadonlyArray<{ type: string; text?: string; visibility?: string | null }>): string | null {
+  const text = input
     .filter((part) => part.type === "text" && part.visibility !== "agent-only")
-    .map((part) => (part.type === "text" ? part.text : ""))
+    .map((part) => part.text ?? "")
     .join("\n");
   return nonEmpty(text);
+}
+
+/** The event-log rows `turnRequest` reads. */
+export const TURN_REQUEST_EVENT_TYPES = ["turn/input/accepted", "client/turn/requested"] as const;
+
+const AcceptedSchema = z.object({ clientRequestId: z.string() });
+const RequestedSchema = z.object({
+  requestId: z.string(),
+  initiator: z.string().nullish(),
+  input: z.array(z.object({ type: z.string(), text: z.string().optional(), visibility: z.string().nullish() })),
+});
+
+/**
+ * The message the thread's newest turn took in, from its event log: the
+ * newest `turn/input/accepted` names its `client/turn/requested` row, whose
+ * visible text this is. Unlike the prompt history, it includes what bb or
+ * another thread sent — a child's completion report starts its parent's turn
+ * — and one from another thread is marked as such, since the prompt calls it
+ * the developer's request. `rows` are newest first; null when the accepted
+ * input or its request is not among them.
+ */
+export function turnRequest(rows: readonly ThreadEventRow[]): string | null {
+  const accepted = rows.find((row) => row.type === "turn/input/accepted" && AcceptedSchema.safeParse(row.data).success);
+  if (accepted === undefined) return null;
+  const { clientRequestId } = AcceptedSchema.parse(accepted.data);
+  for (const row of rows) {
+    if (row.type !== "client/turn/requested" || row.seq > accepted.seq) continue;
+    const request = RequestedSchema.safeParse(row.data);
+    if (!request.success || request.data.requestId !== clientRequestId) continue;
+    const text = visibleText(request.data.input);
+    if (text === null) return null;
+    return request.data.initiator === "agent" ? `[Sent by another agent thread] ${text}` : text;
+  }
+  return null;
 }
 
 /** Markdown and code punctuation read aloud is noise; strip what a voice would spell out. */

@@ -5,6 +5,25 @@ Notable changes to `herald`. The other plugins in this repository version separa
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.11.0
+
+### Added
+
+- **A sentence can be written down without being spoken.** With Claude Code or Codex writing the
+  sentences, your prompt can now ask for a finished turn to be recorded but not read aloud — the first
+  mate's "a worker is on it" and review-loop progress, say. Such a turn keeps its card in the
+  conversation, its line in the thread's Herald tab and the recent sentences, and its row on the Herald
+  page, but nothing is spoken and Herald sends no push notification for it. Before, the only way to keep
+  a turn from being spoken was to drop it from everywhere. A question, plan, permission or error is
+  always spoken and notified, whatever the prompt asks. Gemini and custom commands cannot do this.
+
+### Changed
+
+- **The model sees the message that started the turn.** When another thread's report started a turn —
+  a worker finishing and telling the first mate — the model writing the sentence was shown the last
+  thing you typed instead, often long before. It now sees that report, and a message from another
+  thread is marked as such. When bb cannot say, it falls back to your last message, as before.
+
 ## 0.10.0
 
 ### Changed

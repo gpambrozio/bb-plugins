@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import type { Interaction, PromptRecord } from "./ports";
+import type { Interaction, PromptRecord, ThreadEventRow } from "./ports";
 import { commandApproval, planApproval, question, toolApproval } from "./testing/fixtures";
-import { describeInteraction, fallbackSpeech, firstWords, lastPrompt, plainText, preview } from "./timeline";
+import { describeInteraction, fallbackSpeech, firstWords, lastPrompt, plainText, preview, turnRequest } from "./timeline";
 
 describe("describeInteraction", () => {
   it("reads a question's prompt and options", () => {
@@ -82,6 +82,80 @@ describe("lastPrompt", () => {
     ).toBe("Ship it");
     expect(lastPrompt([prompt(1, { type: "text", text: "  ", mentions: [] })])).toBeNull();
     expect(lastPrompt([])).toBeNull();
+  });
+});
+
+describe("turnRequest", () => {
+  const requested = (seq: number, requestId: string, text: string, extra: Record<string, unknown> = {}): ThreadEventRow => ({
+    seq,
+    type: "client/turn/requested",
+    data: { direction: "outbound", requestId, source: "tell", initiator: "user", input: [{ type: "text", text, mentions: [] }], ...extra },
+  });
+  const accepted = (seq: number, clientRequestId: string): ThreadEventRow => ({
+    seq,
+    type: "turn/input/accepted",
+    data: { providerThreadId: "pt1", clientRequestId },
+  });
+
+  it("is the child's report that started the turn, which the prompt history leaves out", () => {
+    const report = "[bb system]\n\n@thread:thr_child completed:\n\nPass 1 found two problems.";
+    const rows = [
+      accepted(59366, "creq_child"),
+      requested(59364, "creq_child", report, { initiator: "system", systemMessageKind: "child-completed" }),
+      requested(59300, "creq_typed", "Run a review loop"),
+    ];
+    expect(turnRequest(rows)).toBe(report);
+  });
+
+  it("is what the user typed for a typed turn", () => {
+    expect(turnRequest([accepted(12, "creq_b"), requested(11, "creq_b", "Figure out why"), accepted(8, "creq_a"), requested(7, "creq_a", "Older")])).toBe(
+      "Figure out why",
+    );
+  });
+
+  it("names another thread's message as such", () => {
+    const rows = [accepted(5, "creq_a"), requested(4, "creq_a", "Done: PR ready", { initiator: "agent", senderThreadId: "thr_crew" })];
+    expect(turnRequest(rows)).toBe("[Sent by another agent thread] Done: PR ready");
+  });
+
+  it("skips a message queued after the turn took its input in", () => {
+    const rows = [requested(20, "creq_queued", "Next task"), accepted(12, "creq_b"), requested(11, "creq_b", "This task")];
+    expect(turnRequest(rows)).toBe("This task");
+  });
+
+  it("leaves out agent-only text", () => {
+    const rows = [
+      accepted(2, "creq_a"),
+      {
+        seq: 1,
+        type: "client/turn/requested",
+        data: {
+          requestId: "creq_a",
+          initiator: "user",
+          input: [
+            { type: "text", text: "Approve the plan", mentions: [] },
+            { type: "text", text: "<board-context/>", mentions: [], visibility: "agent-only" },
+          ],
+        },
+      },
+    ];
+    expect(turnRequest(rows)).toBe("Approve the plan");
+  });
+
+  it("is null when the log does not say, so the prompt history is used instead", () => {
+    // No accepted input yet, or its request is beyond the page read.
+    expect(turnRequest([requested(1, "creq_a", "Hello")])).toBeNull();
+    expect(turnRequest([accepted(9, "creq_gone"), requested(8, "creq_other", "Other")])).toBeNull();
+    expect(turnRequest([])).toBeNull();
+    // A row whose shape bb changed is skipped, not thrown on.
+    expect(turnRequest([accepted(3, "creq_a"), { seq: 2, type: "client/turn/requested", data: { requestId: "creq_a" } }])).toBeNull();
+    // Only agent-only text: nothing the user could see.
+    expect(
+      turnRequest([
+        accepted(2, "creq_a"),
+        { seq: 1, type: "client/turn/requested", data: { requestId: "creq_a", input: [{ type: "text", text: "x", visibility: "agent-only" }] } },
+      ]),
+    ).toBeNull();
   });
 });
 

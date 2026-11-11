@@ -24,7 +24,7 @@ const CONFIG: HeraldConfig = {
 let questionAnswered = false;
 const events: EventsPort = {
   async context(_thread, { withRequest }) {
-    return { projectName: "Shop", folder: "repo", lastRequest: withRequest ? "Review the PR" : null };
+    return { projectName: "Shop", folder: "repo", lastRequest: withRequest ? "Review the PR" : null, turnRequest: null };
   },
   async interruptedRecently() {
     return false;

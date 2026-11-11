@@ -23,8 +23,9 @@ know which thread to go back to without watching the sidebar.
   own, installed on the Mac running bb, runs once per announcement with no tools or read-only. Off by
   default; the plain sentence is spoken whenever the tool fails or is slow. Your prompt can have the
   tool say nothing to keep an event quiet, such as a turn that only says "Captain, shipshape." (Claude
-  Code and Codex answer in JSON, so an empty summary is never mistaken for a sentence);
-  a question or anything else waiting for you is still listed and notified.
+  Code and Codex answer in JSON, so an empty summary is never mistaken for a sentence), or, with Claude
+  Code and Codex, write a finished turn's sentence down without speaking or notifying it;
+  a question or anything else waiting for you is still listed, spoken or notified as before.
 
 ## Beside bb's push notifications
 
