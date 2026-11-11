@@ -25,9 +25,11 @@ let answered = false;
 /** When set, the pending lookup waits on it instead of answering. */
 let lookupGate: Promise<boolean> | null = null;
 let lookupFails = false;
+/** What the event log says the turn took in; null falls back to the prompt history. */
+let turnRequestText: string | null = null;
 const events: EventsPort = {
   async context(_thread, { withRequest }) {
-    return { projectName: "Shop", folder: "repo", lastRequest: withRequest ? "Fix the login bug" : null };
+    return { projectName: "Shop", folder: "repo", lastRequest: withRequest ? "Fix the login bug" : null, turnRequest: withRequest ? turnRequestText : null };
   },
   async interruptedRecently() {
     return false;
@@ -65,6 +67,8 @@ function heldWriter() {
     calls,
     release: (text: string) => release({ kind: "sentence", text }),
     silence: () => release({ kind: "silent" }),
+    /** A sentence the tool asked Herald not to speak (`speak: false`). */
+    unspoken: (text: string) => release({ kind: "unspoken", text }),
     fail: (error: Error) => fail(error),
   };
 }
@@ -165,7 +169,7 @@ describe("hooks with a model-written sentence", () => {
     const longEvents: EventsPort = {
       ...events,
       async context() {
-        return { projectName: "Shop", folder: "repo", lastRequest: "r".repeat(20_000) };
+        return { projectName: "Shop", folder: "repo", lastRequest: "r".repeat(20_000), turnRequest: null };
       },
     };
     const store = new AttentionStore(null, recordingLog());
@@ -302,6 +306,106 @@ describe("hooks with a model-written sentence", () => {
     }
   });
 
+  it("writes down a finished turn the tool asked not to speak: listed and remembered, never spoken", async () => {
+    const w = heldWriter();
+    const { hooks, store, publish, remembered, log } = setup(w.write);
+    await hooks.idle(thread(), "Aye, captain, a worker is on it.");
+    w.unspoken("A worker is on the login fix; nothing for you yet.");
+    await settle();
+    expect(store.get("t1")?.summary).toEqual({ status: "written", text: "A worker is on the login fix; nothing for you yet." });
+    expect(publish).toHaveBeenCalledTimes(2);
+    // In the thread's history, so its Herald tab and its timeline card show it.
+    expect(remembered).toHaveBeenCalledTimes(1);
+    expect(remembered).toHaveBeenCalledWith("t1", expect.objectContaining({ reason: "finished", text: "A worker is on the login fix; nothing for you yet." }));
+    expect([...hooks.inFlightEventIds()]).toEqual([]);
+    expect(log.lines.some((line) => line.startsWith("info:") && line.includes("without speaking it"))).toBe(true);
+  });
+
+  it("speaks an event that waits on the user even when the tool asked not to", async () => {
+    type Fire = (hooks: ReturnType<typeof setup>["hooks"]) => Promise<void>;
+    const cases: Array<{ name: string; fire: Fire }> = [
+      { name: "question", fire: (hooks) => hooks.interactionPending(thread(), question()) },
+      { name: "plan", fire: (hooks) => hooks.interactionPending(thread(), planApproval("1. Add a test.")) },
+      { name: "permission", fire: (hooks) => hooks.interactionPending(thread(), commandApproval("npm test")) },
+      { name: "error", fire: (hooks) => hooks.failed(thread(), "Rate limited") },
+    ];
+    for (const { name, fire } of cases) {
+      const w = heldWriter();
+      const { hooks, store, remembered, log } = setup(w.write);
+      await fire(hooks);
+      w.unspoken("Login fix needs you.");
+      await settle();
+      // As a sentence the tool wanted spoken: `ready`, announced, remembered.
+      expect(store.get("t1")?.summary, name).toEqual({ status: "ready", text: "Login fix needs you." });
+      expect(remembered, name).toHaveBeenCalledWith("t1", expect.objectContaining({ text: "Login fix needs you." }));
+      expect(log.lines.some((line) => line.includes("speaks it all the same")), name).toBe(true);
+    }
+  });
+
+  it("still drops a question the user answered while the tool asked not to speak it", async () => {
+    answered = false;
+    const w = heldWriter();
+    const { hooks, store, remembered } = setup(w.write);
+    await hooks.interactionPending(thread(), question());
+    answered = true;
+    w.unspoken("Login fix needs you.");
+    await settle();
+    answered = false;
+    expect(store.get("t1")).toBeNull();
+    expect(remembered).not.toHaveBeenCalled();
+  });
+
+  it("drops an unspoken sentence that arrives after the thread moved on", async () => {
+    const w = heldWriter();
+    const { hooks, store, remembered } = setup(w.write);
+    await hooks.idle(thread(), "Aye, a worker is on it.");
+    hooks.active(thread());
+    w.unspoken("A worker is on it.");
+    await settle();
+    expect(store.get("t1")).toBeNull();
+    expect(remembered).not.toHaveBeenCalled();
+  });
+
+  describe("the request in the prompt", () => {
+    it("is the message that started the turn, a child's report included, over the user's last prompt", async () => {
+      turnRequestText = "[bb system]\n\n@thread:thr_child completed:\n\nPass 1 found two problems; the author is fixing them.";
+      const w = heldWriter();
+      const { hooks, store } = setup(w.write);
+      await hooks.idle(thread(), "Captain, pass 1 found two problems.");
+      turnRequestText = null;
+      expect(w.calls[0]?.prompt).toContain("Request: [bb system]\n\n@thread:thr_child completed:\n\nPass 1 found two problems; the author is fixing them.\n");
+      // The page's preview still names what the user last asked.
+      expect(store.get("t1")?.lastRequest).toBe("Fix the login bug");
+    });
+
+    it("is the turn's message for a failed turn too", async () => {
+      turnRequestText = "Run the migration";
+      const w = heldWriter();
+      const { hooks } = setup(w.write);
+      await hooks.failed(thread(), "Rate limited");
+      turnRequestText = null;
+      expect(w.calls[0]?.prompt).toContain("Request: Run the migration\n");
+    });
+
+    it("falls back to the user's last prompt when the event log has none", async () => {
+      turnRequestText = null;
+      const w = heldWriter();
+      const { hooks } = setup(w.write);
+      await hooks.idle(thread(), "Done.");
+      expect(w.calls[0]?.prompt).toContain("Request: Fix the login bug\n");
+    });
+
+    it("is cut to keep the prompt bounded", async () => {
+      turnRequestText = "q".repeat(20_000);
+      const w = heldWriter();
+      const { hooks } = setup(w.write);
+      await hooks.idle(thread(), "Done.");
+      turnRequestText = null;
+      const request = /Request: (q+…)\n/.exec(w.calls[0]?.prompt ?? "")?.[1] ?? "";
+      expect(request.length).toBe(1_001);
+    });
+  });
+
   it("still drops a question the user answered while the tool chose silence", async () => {
     answered = false;
     const w = heldWriter();
@@ -379,6 +483,18 @@ describe("hooks with a model-written sentence", () => {
       await settle();
       const rows = joinRows(store.list(), sidebar({ latestAttentionAt: T + 5_000, hasPendingInteraction: true, indicator: "waiting-for-input" }), T + 6_000);
       expect(rows.map((row) => [row.reason, row.entry?.summary.status])).toEqual([["question", "off"]]);
+    });
+
+    it("lists a written-down finished turn as a spoken one is: while bb flags it, and not once read", async () => {
+      const w = heldWriter();
+      const { hooks, store } = setup(w.write);
+      await hooks.idle(thread({ latestAttentionAt: T }), "Aye, a worker is on it.");
+      w.unspoken("A worker is on it.");
+      await settle();
+      const createdAt = Date.parse(store.get("t1")?.createdAt ?? "");
+      const unread = joinRows(store.list(), sidebar({ latestAttentionAt: T }), createdAt + 60_000);
+      expect(unread.map((row) => [row.reason, row.entry?.summary.status])).toEqual([["finished", "written"]]);
+      expect(joinRows(store.list(), sidebar({ latestAttentionAt: T, isUnread: false, indicator: "none" }), createdAt + 60_000)).toEqual([]);
     });
 
     it("lists a later turn Herald missed, restored from storage after it was off, however soon after the quiet one", async () => {

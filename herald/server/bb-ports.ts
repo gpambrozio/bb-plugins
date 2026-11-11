@@ -22,13 +22,21 @@ import {
 } from "../shared/push";
 import { CHOICE_METADATA_KEY, ownChoiceOf, type ThreadChoice } from "../shared/thread-choice";
 import type { EventsPort, LivenessPort, Log, NamesPort, PushPort, ThreadChoicesPort, TimelineMark, TimelineMessage, TimelinePort } from "./ports";
-import { lastPrompt } from "./timeline";
+import { lastPrompt, TURN_REQUEST_EVENT_TYPES, turnRequest } from "./timeline";
 
 /** How long a project's name or an environment's folder is trusted; both change rarely. */
 const NAME_TTL_MS = 5 * 60_000;
 
 /** How many recent prompts are read to find the user's last one. */
 const PROMPT_HISTORY_LIMIT = "5";
+
+/**
+ * How many of the newest request and accepted-input rows are read to find the
+ * newest turn's message: one page, well under bb's 100. A turn whose request
+ * is further back than this — a long queue of messages behind it — falls back
+ * to the prompt history.
+ */
+const TURN_REQUEST_ROWS = "20";
 
 /**
  * The SDK rejects a failed request with its internal `BbHttpError`, which
@@ -87,8 +95,8 @@ export function bbEvents(sdk: PluginBbSdk, log: Log): EventsPort {
   }
 
   return {
-    async context(thread, { withRequest }) {
-      const [name, where, request] = await Promise.all([
+    async context(thread, { withRequest, failed = false }) {
+      const [name, where, request, turn] = await Promise.all([
         orNull(`project ${thread.projectId}`, () => projectName(thread.projectId)),
         thread.environmentId === null
           ? Promise.resolve(null)
@@ -98,8 +106,16 @@ export function bbEvents(sdk: PluginBbSdk, log: Log): EventsPort {
               lastPrompt(await sdk.threads.promptHistory({ threadId: thread.id, limit: PROMPT_HISTORY_LIMIT })),
             )
           : Promise.resolve(null),
+        withRequest
+          ? orNull(`thread ${thread.id}'s turn request`, async () =>
+              turnRequest(
+                await sdk.threads.events.list({ threadId: thread.id, types: [...TURN_REQUEST_EVENT_TYPES], order: "desc", limit: TURN_REQUEST_ROWS }),
+                { failed },
+              ),
+            )
+          : Promise.resolve(null),
       ]);
-      return { projectName: name, folder: where, lastRequest: request };
+      return { projectName: name, folder: where, lastRequest: request, turnRequest: turn };
     },
     interactionPending: (threadId, interactionId) => interactionPending(sdk, threadId, interactionId),
     async interruptedRecently(threadId, withinMs) {

@@ -148,20 +148,39 @@ describe("readReply", () => {
     }
   });
 
+  it("keeps a summary with speak false as written, not spoken; true, or no speak at all, is spoken", () => {
+    expect(readReply(claude({ summary: "**A worker** is on it.", speak: false }), "claude-json")).toEqual({ kind: "unspoken", text: "A worker is on it." });
+    expect(readReply(JSON.stringify({ summary: "A worker is on it.", speak: false }), "codex-json")).toEqual({ kind: "unspoken", text: "A worker is on it." });
+    expect(readReply(claude({ summary: "The PR is ready.", speak: true }), "claude-json")).toEqual({ kind: "sentence", text: "The PR is ready." });
+    expect(readReply(JSON.stringify({ summary: "The PR is ready." }), "codex-json")).toEqual({ kind: "sentence", text: "The PR is ready." });
+  });
+
+  it("takes a null or blank summary as silence whatever speak says", () => {
+    for (const speak of [true, false]) {
+      expect(readReply(claude({ summary: null, speak }), "claude-json")).toEqual({ kind: "silent" });
+      expect(readReply(JSON.stringify({ summary: "  ", speak }), "codex-json")).toEqual({ kind: "silent" });
+    }
+  });
+
+  it("asks for speak in the schema, as a boolean", () => {
+    expect(SUMMARY_SCHEMA.properties.speak.type).toBe("boolean");
+    expect(SUMMARY_SCHEMA.required).toContain("speak");
+  });
+
   it("fails, not silence, on an answer that is not the schema's", () => {
     // Not JSON at all, as a model writing a note instead of an answer would.
     expect(() => readReply("[Empty output: nothing is spoken.]", "codex-json")).toThrow(/did not answer in JSON/);
     expect(() => readReply("", "claude-json")).toThrow(/did not answer in JSON/);
     expect(() => readReply('"hello"', "claude-json")).toThrow(/not a JSON result/);
     // A result with no structured output, or an error result.
-    expect(() => readReply(JSON.stringify({ type: "result", is_error: false, result: "hi" }), "claude-json")).toThrow(/not \{ summary \}/);
+    expect(() => readReply(JSON.stringify({ type: "result", is_error: false, result: "hi" }), "claude-json")).toThrow(/not \{ summary, speak \}/);
     expect(() => readReply(JSON.stringify({ type: "result", is_error: true, structured_output: { summary: "x" } }), "claude-json")).toThrow(
       /error/,
     );
     // The wrong shape: no summary, the wrong type, or a field the schema does not have.
-    for (const wrong of [{}, { summary: 3 }, { summary: "x", extra: true }, ["x"], "x", null]) {
-      expect(() => readReply(claude(wrong), "claude-json"), JSON.stringify(wrong)).toThrow(/not \{ summary \}/);
-      expect(() => readReply(JSON.stringify(wrong), "codex-json"), JSON.stringify(wrong)).toThrow(/not \{ summary \}/);
+    for (const wrong of [{}, { summary: 3 }, { summary: "x", extra: true }, { summary: "x", speak: "no" }, ["x"], "x", null]) {
+      expect(() => readReply(claude(wrong), "claude-json"), JSON.stringify(wrong)).toThrow(/not \{ summary, speak \}/);
+      expect(() => readReply(JSON.stringify(wrong), "codex-json"), JSON.stringify(wrong)).toThrow(/not \{ summary, speak \}/);
     }
   });
 });
@@ -265,8 +284,8 @@ describe("SentenceWriter", () => {
   });
 
   it("fails, not silence, when Claude Code exits 0 without a structured summary", async () => {
-    await expect(writer().write(fakeClaude(undefined), "p", "claude-json")).rejects.toThrow(/not \{ summary \}/);
-    await expect(writer().write(fakeClaude({ sentence: "hi" }), "p", "claude-json")).rejects.toThrow(/not \{ summary \}/);
+    await expect(writer().write(fakeClaude(undefined), "p", "claude-json")).rejects.toThrow(/not \{ summary, speak \}/);
+    await expect(writer().write(fakeClaude({ sentence: "hi" }), "p", "claude-json")).rejects.toThrow(/not \{ summary, speak \}/);
   });
 
   it("gives Codex the schema in a file of the run's own and reads its summary", async () => {
@@ -281,7 +300,7 @@ describe("SentenceWriter", () => {
   it("fails, not silence, when Codex exits 0 with an answer that is not the schema's", async () => {
     await expect(writer().write(fakeCodex(""), "p", "codex-json")).rejects.toThrow(/did not answer in JSON/);
     await expect(writer().write(fakeCodex("[Empty output: nothing is spoken.]"), "p", "codex-json")).rejects.toThrow(/did not answer in JSON/);
-    await expect(writer().write(fakeCodex('{"text":"hi"}'), "p", "codex-json")).rejects.toThrow(/not \{ summary \}/);
+    await expect(writer().write(fakeCodex('{"text":"hi"}'), "p", "codex-json")).rejects.toThrow(/not \{ summary, speak \}/);
   });
 
   it("removes Codex's schema file with the run's folder", async () => {

@@ -21,7 +21,10 @@ export const AttentionReasonSchema = z.enum(ATTENTION_REASONS);
 /**
  * The entry's sentence. `ready` is announced; `pending` is being written by a
  * model and becomes `ready` with its sentence, or with the plain `fallback`
- * when that fails; `off` is listed but never spoken — the event kind is
+ * when that fails; `written` is a finished turn's sentence the tool wrote but
+ * asked Herald not to speak (`speak: false`) — listed, on the banner and in
+ * the history like `ready`, never spoken and never pushed; `off` is listed but
+ * never spoken — the event kind is
  * switched off, the thread is a subagent its parent speaks for, or the tool
  * chose to say nothing about an event that waits on the user; `quiet` is a
  * finished turn the tool chose to say nothing about — not spoken, not listed,
@@ -31,6 +34,7 @@ export const AttentionReasonSchema = z.enum(ATTENTION_REASONS);
  */
 export const SummaryStateSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("ready"), text: z.string() }),
+  z.object({ status: z.literal("written"), text: z.string() }),
   z.object({ status: z.literal("pending"), fallback: z.string() }),
   z.object({ status: z.literal("off"), fallback: z.string() }),
   z.object({ status: z.literal("quiet"), attentionAt: z.number() }),
@@ -146,6 +150,15 @@ export const HISTORY_HEADLINE_MAX = 200;
  */
 export function speechText(entry: AttentionEntry): string | null {
   return entry.summary.status === "ready" ? clipSpeech(entry.summary.text) : null;
+}
+
+/**
+ * What is shown for an entry, and read on a button press: the spoken
+ * sentence, or one written to be read rather than heard (`written`). Null
+ * while it is being written, and for an entry with nothing of its own to say.
+ */
+export function sentenceText(entry: AttentionEntry): string | null {
+  return entry.summary.status === "ready" || entry.summary.status === "written" ? clipSpeech(entry.summary.text) : null;
 }
 
 function clipSpeech(text: string): string {

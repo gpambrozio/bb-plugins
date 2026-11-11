@@ -141,8 +141,9 @@ function choiceFor(thread: ThreadDto, config: HeraldConfig, choice: ChoiceInputs
 
 /**
  * Whether the event waits on the user. A tool's silence keeps such an event
- * from being spoken, never from being listed or notified; a finished turn it
- * keeps quiet is gone altogether.
+ * from being spoken, never from being listed or notified, and its
+ * `speak: false` changes nothing for it; a finished turn it keeps quiet is
+ * gone altogether, and one it asks not to speak is only written down.
  */
 function waitsOnUser(reason: AttentionReason): boolean {
   return reason !== "finished";
@@ -303,11 +304,22 @@ export function createHooks(deps: HookDeps): Hooks {
     else pushWhen(owed.owes, owed.subject, sentence);
   }
 
-  /** What a written event's notification says: the tool's sentence, the plain one, or nothing for a quiet finished turn. */
+  /**
+   * What a written event's notification says: the tool's sentence, the plain
+   * one, or nothing for a finished turn the tool kept quiet or asked not to
+   * speak. An event that waits on the user is always notified.
+   */
   function pushSentence(reason: AttentionReason, outcome: WriteOutcome, fallback: string): string | null {
-    if (outcome.kind === "sentence") return outcome.text;
-    if (outcome.kind === "silent" && !waitsOnUser(reason)) return null;
-    return fallback;
+    switch (outcome.kind) {
+      case "sentence":
+        return outcome.text;
+      case "unspoken":
+        return waitsOnUser(reason) ? outcome.text : null;
+      case "silent":
+        return waitsOnUser(reason) ? fallback : null;
+      case "failed":
+        return fallback;
+    }
   }
 
   /** Marks the start of a recording; `isLatest` later says whether a newer one began since. */
@@ -360,6 +372,11 @@ export function createHooks(deps: HookDeps): Hooks {
     lastUser: string | null;
     /** The whole of what the agent last said, for the prompt; the entry keeps only its start. */
     output: string | null;
+    /**
+     * What the prompt's `{{request}}` gets: the message the turn took in (a
+     * child's report included), else the user's last prompt (`lastUser`).
+     */
+    request: string | null;
     /** When the event arrived, before any lookup. */
     at: number;
     /** Its arrival (`arrive`). */
@@ -521,12 +538,19 @@ export function createHooks(deps: HookDeps): Hooks {
         event: EVENT_PHRASES[base.reason],
         headline: cut(base.headline, PROMPT_PART_MAX),
         detail: cut(base.detail, PROMPT_PART_MAX),
-        request: cut(recording.lastUser, PROMPT_PART_MAX),
+        request: cut(recording.request, PROMPT_PART_MAX),
         output: combinedOutput(earlier, { event: EVENT_PHRASES[base.reason], output: cut(recording.output, PROMPT_OUTPUT_MAX) }),
       });
       const written = await deps.writeSentence(command, prompt, sentence.reply, signal);
       if (signal.aborted) throw new Error("overtaken");
       if (written.kind === "silent") deps.log.info(`The tool chose to say nothing for ${base.threadId}'s ${base.reason} event; Herald does not speak it.`);
+      if (written.kind === "unspoken") {
+        deps.log.info(
+          waitsOnUser(base.reason)
+            ? `The tool asked not to speak ${base.threadId}'s ${base.reason} event; it waits on the user, so Herald speaks it all the same.`
+            : `The tool wrote ${base.threadId}'s ${base.reason} event down without speaking it; Herald remembers it, unspoken.`,
+        );
+      }
       return { outcome: written, given: earlier };
     } catch (error) {
       if (signal.aborted) deps.log.info(`The sentence for ${base.threadId}'s ${base.reason} event was stopped: a newer event's sentence covers it.`);
@@ -554,6 +578,9 @@ export function createHooks(deps: HookDeps): Hooks {
    * the page to leave bb's unread flag for it alone, up to `attentionAt` (bb's
    * attention time for the thread as the event arrived); an event that waits
    * on the user stays listed with the plain sentence, as one not announced (`off`).
+   * A sentence the tool asked not to speak lands on a finished turn as
+   * `written` — listed and remembered like a spoken one, never spoken — and
+   * on an event that waits on the user as `ready`, spoken as before.
    *
    * Resolves whether something landed — a sentence, the plain one, or the
    * tool's silence — rather than being dropped or withdrawn.
@@ -578,7 +605,13 @@ export function createHooks(deps: HookDeps): Hooks {
       deps.publish();
       return true;
     }
-    const text = outcome.kind === "sentence" ? outcome.text : fallback;
+    if (outcome.kind === "unspoken" && !waitsOnUser(current.reason)) {
+      deps.store.upsert({ ...current, summary: { status: "written", text: outcome.text } });
+      deps.publish();
+      remember(current, outcome.text);
+      return true;
+    }
+    const text = outcome.kind === "failed" ? fallback : outcome.text;
     deps.store.upsert({ ...current, summary: { status: "ready", text } });
     deps.publish();
     remember(current, text);
@@ -704,6 +737,7 @@ export function createHooks(deps: HookDeps): Hooks {
             folder: context.folder,
             lastUser: context.lastRequest,
             output,
+            request: context.turnRequest ?? context.lastRequest,
             at,
             token,
             seq,
@@ -725,7 +759,7 @@ export function createHooks(deps: HookDeps): Hooks {
           const generation = generationOf(thread.id);
           const [config, context, interrupted, choice] = await Promise.all([
             deps.readConfig(),
-            deps.events.context(thread, { withRequest: true }),
+            deps.events.context(thread, { withRequest: true, failed: true }),
             deps.events.interruptedRecently(thread.id, INTERRUPT_GRACE_MS),
             choiceOf(thread),
           ]);
@@ -744,6 +778,7 @@ export function createHooks(deps: HookDeps): Hooks {
             folder: context.folder,
             lastUser: context.lastRequest,
             output: null,
+            request: context.turnRequest ?? context.lastRequest,
             at,
             token,
             seq,
@@ -783,6 +818,7 @@ export function createHooks(deps: HookDeps): Hooks {
             folder: context.folder,
             lastUser: null,
             output: null,
+            request: null,
             at,
             token,
             seq,

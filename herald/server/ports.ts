@@ -19,10 +19,27 @@ export interface ThreadContext {
   folder: string | null;
   /** The user's last message, when the caller asked for it. */
   lastRequest: string | null;
+  /**
+   * The message the thread's newest turn took in, from its event log, when
+   * the caller asked for the request: a child's report or another thread's
+   * message too, which the prompt history leaves out. Null when bb cannot say.
+   */
+  turnRequest: string | null;
+}
+
+/** One row of a thread's event log, as much of it as Herald reads. */
+export interface ThreadEventRow {
+  seq: number;
+  type: string;
+  data: unknown;
 }
 
 export interface EventsPort {
-  context(thread: ThreadDto, options: { withRequest: boolean }): Promise<ThreadContext>;
+  /**
+   * `failed`: the request is read for a failed turn, which a request bb
+   * rejected before accepting it may have been (`turnRequest`).
+   */
+  context(thread: ThreadDto, options: { withRequest: boolean; failed?: boolean }): Promise<ThreadContext>;
   /**
    * Whether one of the thread's interactions was interrupted within `withinMs`
    * — the user stopped the turn while it waited on them — which is why a

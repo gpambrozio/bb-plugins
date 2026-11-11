@@ -11,7 +11,7 @@ import { useComposer } from "@get-bb/plugin-sdk/app";
 
 import { Icon } from "@/components/ui/icon";
 
-import { speechText } from "../shared/herald";
+import { sentenceText } from "../shared/herald";
 import { HERALD_ICONS } from "./icons";
 import { useEntries } from "./entries";
 import { readAgain } from "./panel";
@@ -38,7 +38,8 @@ export function HeraldBanner() {
   // until the next event replaces it.
   const entry = threadId === null ? undefined : entries?.find((candidate) => candidate.threadId === threadId);
   if (entry === undefined || entry.summary.status === "off" || entry.summary.status === "quiet") return null;
-  const sentence = speechText(entry);
+  // A sentence written to be read, not heard, shows here like a spoken one.
+  const sentence = sentenceText(entry);
   return (
     <div className="flex items-start gap-2 px-3 py-2 text-sm">
       <Icon name={HERALD_ICONS.megaphone} className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />

@@ -213,6 +213,29 @@ What an empty answer (blank, or only quotes or markdown) does depends on the eve
   but never dropped: it stays listed as waiting on the Herald page, marked *Not announced*, and its
   notification still goes out, with the plain sentence, when Herald sends them.
 
+**A sentence can also be written down without being spoken** (claude and codex only). Their JSON
+answer has a `speak` field next to the summary; your prompt can ask for `speak: false` for turns worth a
+record but not your attention, for example: *If the agent only reports that work it dispatched is under
+way, write the sentence but do not speak it.* What it does depends on the event:
+
+- **A finished turn** — written down, not spoken: its card in the conversation, the line above the
+  composer on older bb, its row on the Herald page while bb shows the thread unread, and its place in the
+  recent sentences and the thread's Herald tab are all as for a spoken sentence. Nothing is spoken, and
+  with *Send Herald's sentences as push notifications* on, Herald sends no notification for it; bb's own
+  is muted for that thread, so no one notifies you of that turn. *Read again* still reads it aloud on
+  request.
+- **A question, a plan or a permission waiting for you, or a failed turn** — `speak: false` with a
+  sentence is ignored: it is spoken and notified as any other sentence, so nothing that needs you can be
+  kept from you. A null summary still means what it says above (listed and notified, not spoken).
+
+gemini and a custom command answer in plain text, so they can speak a sentence or say nothing, but cannot
+write one down unspoken.
+
+**`{{request}}` is the message that started the turn.** Herald reads it from the thread's event log, so
+a turn that another thread's report started — a worker's completion reaching the first mate, say — is
+described with that report, and a message from another thread is marked as such. When bb cannot say, it
+is the last message you typed, as before. It is cut to its first 1,000 characters.
+
 While the tool runs, the row (and on older bb the banner) says *Writing the sentence…*; the card appears
 once the sentence is written; the plain sentence is spoken
 instead if the tool fails (exits with an error, or claude or codex answers without its JSON), is missing, or takes longer than 45 seconds. A sentence still being written
@@ -222,8 +245,8 @@ when Herald itself is reloaded is dropped rather than spoken late.
 before the sentence for its last one is ready — a review result followed at once by two "Captain,
 shipshape." replies, say — Herald stops writing that sentence and carries the turn forward: the next
 sentence the tool writes for that thread is given every such turn, oldest first, each marked as a
-separate update, in place of the agent's output alone. Once a sentence is spoken (or the tool chooses to
-stay quiet), they are forgotten; if the tool fails and the plain sentence is spoken instead, they wait
+separate update, in place of the agent's output alone. Once a sentence is spoken or written down (or the
+tool chooses to stay quiet), they are forgotten; if the tool fails and the plain sentence is spoken instead, they wait
 for the next one. So a prompt that skips acknowledgements still speaks the review, and
 stays quiet when every update was one. Threads are never mixed. At most four earlier turns and 6,000
 characters of them are carried, oldest dropped first, and the tool is told when some were left out.

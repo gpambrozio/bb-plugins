@@ -188,6 +188,15 @@ describe("Herald's app", () => {
     expect(screen.queryByText(/Herald ·/)).toBeNull();
   });
 
+  it("shows a sentence written down unspoken above the composer, like a spoken one", async () => {
+    const calls = { list: 0 };
+    const written = entry({ eventId: "t1:idle:4", summary: { status: "written", text: "A worker is on the login fix." } });
+    renderSlot<object, RpcContract>({ component: HeraldBridge }, {}, { rpc: rpc(() => [written], calls) });
+    const options = { sidebarThreads: { status: "ready" as const, threads: [sidebarThread] } };
+    renderSlot({ component: HeraldBanner }, {}, { ...options, composer: { scope: { kind: "thread", threadId: "t1" } } });
+    await screen.findByText("A worker is on the login fix.");
+  });
+
   it("keeps the sentence above the composer once the thread is read and working again", async () => {
     const calls = { list: 0 };
     renderSlot<object, RpcContract>({ component: HeraldBridge }, {}, { rpc: rpc(() => [entry({ eventId: "t1:idle:5" })], calls) });

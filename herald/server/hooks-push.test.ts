@@ -29,7 +29,7 @@ const events: EventsPort = {
     const hold = holdNextContext;
     holdNextContext = null;
     if (hold !== null) await hold;
-    return { projectName: "Shop", folder: "repo", lastRequest: withRequest ? "Fix the login bug" : null };
+    return { projectName: "Shop", folder: "repo", lastRequest: withRequest ? "Fix the login bug" : null, turnRequest: null };
   },
   interruptedRecently: async () => false,
   interactionPending: async () => !answered,
@@ -94,6 +94,8 @@ function heldWriter() {
     release: (text: string, index = runs.length - 1) => runs[index]?.resolve({ kind: "sentence", text }),
     /** The tool ran and replied with nothing. */
     silence: (index = runs.length - 1) => runs[index]?.resolve({ kind: "silent" }),
+    /** The tool wrote a sentence and asked Herald not to speak it. */
+    unspoken: (text: string, index = runs.length - 1) => runs[index]?.resolve({ kind: "unspoken", text }),
     fail: (index = runs.length - 1) => runs[index]?.reject(new Error("my-llm exited with 1")),
   };
 }
@@ -345,6 +347,78 @@ describe("hooks with push notifications", () => {
       await settle();
       expect(real.sent).toEqual([{ threadId: "t1", body: "Login fix has a question: Which DB? Options: Postgres / SQLite." }]);
       expect([...real.rows.keys()].filter((key) => key.startsWith(OUTBOX_PREFIX))).toEqual([]);
+    });
+  });
+
+  describe("when the tool asks not to speak its sentence", () => {
+    const MODEL: HeraldConfig = { ...CONFIG, sentence: { command: "my-llm", prompt: "x", reply: "claude-json" } };
+    type Fire = (hooks: ReturnType<typeof setup>["hooks"]) => Promise<void>;
+    const WAITING: Array<{ name: string; fire: Fire }> = [
+      { name: "question", fire: (hooks) => hooks.interactionPending(thread(), question()) },
+      { name: "plan", fire: (hooks) => hooks.interactionPending(thread(), planApproval("1. Add a test.")) },
+      { name: "permission", fire: (hooks) => hooks.interactionPending(thread(), commandApproval("npm test")) },
+      { name: "error", fire: (hooks) => hooks.failed(thread(), "Rate limited") },
+    ];
+
+    it("sends nothing for a finished turn, though bb was muted for it, and the decision still drains on unload", async () => {
+      const w = heldWriter();
+      const { hooks, push, store } = setup({ config: MODEL, write: w.write });
+      await hooks.idle(thread(), "Aye, a worker is on it.");
+      await settle();
+      w.unspoken("A worker is on it.");
+      await settle();
+      expect(push.decisions.map((d) => d.reason)).toEqual(["finished"]);
+      expect(push.sent).toEqual([]);
+      expect(store.get("t1")?.summary).toEqual({ status: "written", text: "A worker is on it." });
+      await hooks.dispose();
+      expect(push.sent).toEqual([]);
+    });
+
+    it("sends the tool's sentence for every event that waits on the user", async () => {
+      for (const { name, fire } of WAITING) {
+        const w = heldWriter();
+        const { hooks, push } = setup({ config: MODEL, write: w.write });
+        await fire(hooks);
+        await settle();
+        w.unspoken("Login fix needs you.");
+        await settle();
+        expect(push.sent.map((s) => s.sentence), name).toEqual(["Login fix needs you."]);
+      }
+    });
+
+    it("sends nothing when Herald owes nothing (push off, or bb never muted)", async () => {
+      const w = heldWriter();
+      const { hooks, push } = setup({ config: { ...MODEL, push: false }, write: w.write });
+      push.owes = false;
+      await hooks.interactionPending(thread(), question());
+      w.unspoken("Login fix needs you.");
+      await settle();
+      await hooks.idle(thread({ id: "t2" }), "Aye, a worker is on it.");
+      w.unspoken("A worker is on it.");
+      await settle();
+      expect(push.sent).toEqual([]);
+    });
+
+    it("with the real takeover: a written-down finished turn is notified by no one; a question goes out with its sentence", async () => {
+      const real = realPush(new Set(), { value: false });
+      const w = heldWriter();
+      const { hooks } = setup({ config: MODEL, write: w.write, push: real.push });
+      hooks.active(thread());
+      await settle();
+      expect(real.own.get("t1")).toBe("muted");
+      await hooks.idle(thread(), "Aye, a worker is on it.");
+      await settle();
+      w.unspoken("A worker is on it.");
+      await settle();
+      expect(real.sent).toEqual([]);
+      expect([...real.rows.keys()].filter((key) => key.startsWith(OUTBOX_PREFIX))).toEqual([]);
+
+      hooks.active(thread());
+      await hooks.interactionPending(thread(), question());
+      await settle();
+      w.unspoken("Login fix needs you.");
+      await settle();
+      expect(real.sent).toEqual([{ threadId: "t1", body: "Login fix needs you." }]);
     });
   });
 

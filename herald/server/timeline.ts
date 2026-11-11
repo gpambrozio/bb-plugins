@@ -4,8 +4,10 @@
  * sentence that is spoken. Nothing here touches the network, which is what
  * makes it the part with tests.
  */
+import { z } from "zod";
+
 import type { AttentionReason } from "../shared/herald";
-import type { Interaction, PromptRecord } from "./ports";
+import type { Interaction, PromptRecord, ThreadEventRow } from "./ports";
 
 export interface InteractionDescription {
   reason: AttentionReason;
@@ -94,11 +96,76 @@ export function lastPrompt(history: readonly PromptRecord[]): string | null {
     if (newest === null || record.createdAt > newest.createdAt) newest = record;
   }
   if (newest === null) return null;
-  const text = newest.input
+  return visibleText(newest.input);
+}
+
+/** The text parts of a message the user could see; agent-only context is left out. */
+function visibleText(input: ReadonlyArray<{ type: string; text?: string; visibility?: string | null }>): string | null {
+  const text = input
     .filter((part) => part.type === "text" && part.visibility !== "agent-only")
-    .map((part) => (part.type === "text" ? part.text : ""))
+    .map((part) => part.text ?? "")
     .join("\n");
   return nonEmpty(text);
+}
+
+/** The event-log rows `turnRequest` reads. */
+export const TURN_REQUEST_EVENT_TYPES = ["turn/input/accepted", "client/turn/rejected", "client/turn/requested"] as const;
+
+const AcceptedSchema = z.object({ clientRequestId: z.string() });
+const RejectedSchema = z.object({ requestId: z.string(), reason: z.string().nullish() });
+
+/** bb's reason for a steer the turn ended before confirming: it never reached the agent, and caused nothing. */
+const UNCONFIRMED_STEER = "steer_unconfirmed";
+const RequestedSchema = z.object({
+  requestId: z.string(),
+  initiator: z.string().nullish(),
+  input: z.array(z.object({ type: z.string(), text: z.string().optional(), visibility: z.string().nullish() })),
+});
+
+/**
+ * The request behind the event: the newest `turn/input/accepted`
+ * (`clientRequestId`) — the input the turn worked on. For a failed turn, a
+ * newer `client/turn/rejected` (`requestId`) counts too: a request bb refused
+ * at the door, an auth or rate-limit failure, never gets an acceptance, and
+ * it is what failed. A steer the turn ended before confirming is rejected as
+ * well (`steer_unconfirmed`, written before the turn's completion), but it
+ * reached no agent and is never the request, for either event. A request
+ * still queued has neither row, so it is never taken.
+ */
+function settledRequest(rows: readonly ThreadEventRow[], failed: boolean): { id: string; seq: number } | null {
+  for (const row of rows) {
+    if (row.type === "turn/input/accepted") {
+      const accepted = AcceptedSchema.safeParse(row.data);
+      if (accepted.success) return { id: accepted.data.clientRequestId, seq: row.seq };
+    } else if (failed && row.type === "client/turn/rejected") {
+      const rejected = RejectedSchema.safeParse(row.data);
+      if (rejected.success && rejected.data.reason !== UNCONFIRMED_STEER) return { id: rejected.data.requestId, seq: row.seq };
+    }
+  }
+  return null;
+}
+
+/**
+ * The message behind a finished or failed turn (`failed`), from the thread's
+ * event log: the request `settledRequest` picks names its
+ * `client/turn/requested` row, whose visible text this is. Unlike the prompt
+ * history, it includes what bb or another thread sent — a child's completion
+ * report starts its parent's turn — and one from another thread is marked as
+ * such, since the prompt calls it the developer's request. `rows` are newest
+ * first; null when the settled input or its request is not among them.
+ */
+export function turnRequest(rows: readonly ThreadEventRow[], { failed }: { failed: boolean }): string | null {
+  const settled = settledRequest(rows, failed);
+  if (settled === null) return null;
+  for (const row of rows) {
+    if (row.type !== "client/turn/requested" || row.seq > settled.seq) continue;
+    const request = RequestedSchema.safeParse(row.data);
+    if (!request.success || request.data.requestId !== settled.id) continue;
+    const text = visibleText(request.data.input);
+    if (text === null) return null;
+    return request.data.initiator === "agent" ? `[Sent by another agent thread] ${text}` : text;
+  }
+  return null;
 }
 
 /** Markdown and code punctuation read aloud is noise; strip what a voice would spell out. */

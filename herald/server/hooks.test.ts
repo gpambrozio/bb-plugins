@@ -25,7 +25,7 @@ function fakeEvents(): FakeEvents {
     during: null,
     async context(_thread, { withRequest }) {
       events.during?.();
-      return { projectName: "Shop", folder: "repo", lastRequest: withRequest ? "Fix the login bug" : null };
+      return { projectName: "Shop", folder: "repo", lastRequest: withRequest ? "Fix the login bug" : null, turnRequest: null };
     },
     async interruptedRecently() {
       return events.interrupted;
