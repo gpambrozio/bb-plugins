@@ -1,5 +1,6 @@
-// Shot list for the skills plugin: the Skills pop-up in the new-thread composer, light and dark,
-// and a demo of searching it and adding a skill to the chat. Run with
+// Shot list for the skills plugin: the Skills pop-up in the new-thread composer, light and dark, on
+// a desktop window and as bb's bottom sheet at phone width, and a demo of searching it and adding a
+// skill to the chat. Run with
 // `npm run shots -- skills` in tools/shots; it writes into skills/docs/screenshots/.
 //
 // The composer is set to Claude Code so the pop-up lists the fixture skills from the demo project
@@ -76,6 +77,17 @@ export async function shoot({ shots, VARIANTS }) {
     const around = [page.locator("form").first()];
     if (await popup.count()) around.push(popup);
     await shots.still(page, file, { around });
+    await shots.closePage(page);
+  }
+
+  // At phone width bb draws the pop-up as its bottom sheet; the whole screen is the shot.
+  for (const [variant, file] of [
+    [VARIANTS.phoneLight, "composer-popup-phone-light.png"],
+    [VARIANTS.phoneDark, "composer-popup-phone-dark.png"],
+  ]) {
+    const page = await shots.page(variant);
+    await openPopup(page);
+    await shots.still(page, file);
     await shots.closePage(page);
   }
 

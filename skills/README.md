@@ -21,6 +21,13 @@ _The Skills button in the composer opens a searchable list of the skills the thr
 grouped by where they come from. In the new-thread composer it follows the project and agent you
 pick._
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/composer-popup-phone-dark.png">
+  <img width="240" alt="The Skills list as a bottom sheet on a phone-width screen, with its search box and project and personal skills" src="docs/screenshots/composer-popup-phone-light.png">
+</picture>
+
+_In a narrow window or on a phone, the same list opens as a sheet from the bottom of the screen._
+
 ![Searching the Skills pop-up, opening a skill and adding it to the chat as a command pill](docs/screenshots/composer-popup-demo.gif)
 
 _Search, open a skill, and **Add to chat** puts its command at the start of the message._
