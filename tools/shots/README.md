@@ -131,7 +131,8 @@ export async function shoot({ shots, VARIANTS }) {
   - `claudePrint` (`claude -p`'s canned replies), and `launchd` and `launchctlCalls` (the stub launchd);
   - `installPlugin`.
 
-  `skillFile` and `writeTree` are exported for fixtures. `bb.cli([...])` and `bb.cliJson` run the dev
+  `skillFile`, `writeTree` and `THREAD_EVENTS` are exported for fixtures; a plugin whose tests scan every file
+  for imports that leave the package (`learning-exercises`) spells out what it needs instead. `bb.cli([...])` and `bb.cliJson` run the dev
   bb's CLI. Keep fixtures in the shot list as data rather than as files in the repo: a checked-in
   `.claude/skills/*/SKILL.md` would be picked up by agents working in this repository.
 - **`shots`** (`tools/shots/lib/browser.mjs`) offers:

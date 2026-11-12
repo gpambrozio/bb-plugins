@@ -19,7 +19,10 @@
 // The export dialog is opened and closed; nothing is exported. Nothing is sent from the browser.
 import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
-import { THREAD_EVENTS } from "../../tools/shots/lib/seed.mjs";
+
+// The harness's THREAD_EVENTS, spelled out: server.test.ts scans every file of this package for
+// imports that leave it, so this list imports nothing from tools/shots.
+const THREAD_EVENTS = { turnStarted: "turn/started", turnEnded: "turn/completed" };
 
 const PLUGIN = "learning-exercises";
 const API = "Acme API";
