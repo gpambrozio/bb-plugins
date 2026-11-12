@@ -7,6 +7,16 @@ thread's agent. It fixes the code and answers in each comment thread, and the ta
 It is a bb take on [diffity](https://github.com/nilbuild/diffity)'s review loop, and reuses its prompts
 (MIT; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)).
 
+## Screenshots
+
+![Diff Review's Review tab with an AI review's comment on a changed line, and the Send to an agent dialog](docs/screenshots/review-and-send.png)
+
+_The Review tab with a comment from an AI review, and **Send to agent** picking which comments go to the agent._
+
+![Diff Review's Review tab showing a branch's diff, and the AI review dialog with focus choices](docs/screenshots/diff-and-ai-review.png)
+
+_A branch's diff in the Review tab, and the **AI review** dialog choosing what the reviewing agent focuses on._
+
 ## What you get
 
 - **A Review tab** in each thread's side panel, opened from the **Review** icon button in the thread's

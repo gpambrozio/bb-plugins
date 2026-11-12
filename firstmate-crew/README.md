@@ -20,6 +20,12 @@ This is a bb port of the Paseo `firstmate` plugin in
 its machine dropped or its setup failed) and already has a chat, so the plugin is the charter, the
 board, the dispatch command and the watch runner, and nothing else.
 
+## Screenshots
+
+![The FirstMate board beside the first mate's chat, with a suggestion, working and blocked cards, and a watch](docs/screenshots/board.png)
+
+_The board beside the first mate's chat: suggestions, workers grouped by state, and watches._
+
 ## What you need
 
 - bb 0.47 or newer. On bb 0.46, install with `@^0.6.0` instead of `@>=0.7.0`; on bb 0.45, with `@^0.4.0`.

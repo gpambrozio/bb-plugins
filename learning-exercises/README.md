@@ -8,6 +8,24 @@ The exercises are adapted from Dr. Cat Hicks's
 [Learning Opportunities](https://github.com/DrCatHicks/learning-opportunities) (CC BY 4.0). This plugin
 is not affiliated with or endorsed by the author; see [NOTICE.md](NOTICE.md).
 
+## Screenshots
+
+![A Learning offer above the thread composer proposing an exercise on the commits just made](docs/screenshots/offer.png)
+
+_An offer after real work: start an exercise on what was just committed, in a side thread._
+
+![A Learning Exercises question card asking to predict what a function returns, with a confidence scale](docs/screenshots/question-card.png)
+
+_A question card: predict, explain, and say how sure you are._
+
+![The Learning tab with a paused session and its Resume, Finish and Open source thread buttons](docs/screenshots/learning-tab-session.png)
+
+_The thread's Learning tab with the current session and paused ones._
+
+![The Learning tab's Start an exercise form with topic choices and earlier sessions](docs/screenshots/start-exercise.png)
+
+_Starting an exercise by hand: pick the last commit, the thread, or your own topic._
+
 ## What it does
 
 - **Offers at the right moment, and only then.** When a turn in one of your threads ends after a

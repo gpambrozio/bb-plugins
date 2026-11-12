@@ -35,6 +35,12 @@ of what was done — and the bb app speaks it.
   you pressed them.
 - Herald speaks whatever page you are on, with the Herald page open or not.
 
+## Screenshots
+
+![The Herald page with a finished thread and the sentence Herald spoke about it](docs/screenshots/page.png)
+
+_The Herald page: a thread waiting on you and the sentence Herald said about it._
+
 ## What Herald adds to bb's push notifications
 
 bb's built-in Push notifications plugin already tells you when a thread finishes, fails or waits for

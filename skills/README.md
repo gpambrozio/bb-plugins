@@ -10,6 +10,20 @@ opens each one's `SKILL.md`, rendered, with its path. Claude Code, Codex and Her
 skill files read off disk, in the order that provider reads them, so the copy listed is the copy the
 agent uses. Threads on any other provider list bb's own skills and what bb's `/` menu reports for them.
 
+## Screenshots
+
+![The Skills button in the thread composer with its searchable list of skills open](docs/screenshots/composer-popover.png)
+
+_The Skills button in the composer opens a searchable list of the thread's skills._
+
+![The Skills tab in a thread's side panel listing personal and plugin skills](docs/screenshots/panel-list.png)
+
+_The Skills tab lists every skill the thread's agent can use, grouped by where it comes from._
+
+![A skill's page in the Skills tab with its path, Copy path, Add to chat and its rendered text](docs/screenshots/panel-detail.png)
+
+_A skill's page: where it lives, **Add to chat**, and its full text._
+
 ## What you need
 
 - bb 0.45 or later. On bb 0.44, install with `@^0.1.0` instead of `@>=0.3.0`.
