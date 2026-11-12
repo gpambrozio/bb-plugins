@@ -33,9 +33,30 @@ source of truth, and the page reads them back every time.
 
 ## Screenshots
 
-![The Scheduled jobs page listing a Mac's jobs, with one failing job's schedule, command and recent runs](docs/screenshots/jobs.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/jobs-dark.png">
+  <img alt="The Scheduled jobs page listing a Mac's jobs, with a failing job open on its schedule, command and recent runs, and a failure count on the sidebar entry" src="docs/screenshots/jobs-light.png">
+</picture>
 
-_The Scheduled jobs page: each job's state, and a failing job's schedule, command and recent runs._
+_The Scheduled jobs page: each job's state — OK, running, disabled, or how its last run failed — and a
+failing job's schedule, command and recent runs. The sidebar entry counts the failing jobs you have
+not opened yet._
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/jobs-phone-dark.png">
+  <img width="240" alt="The list of scheduled jobs on a phone-width screen, each with its state, schedule and last run" src="docs/screenshots/jobs-phone-light.png">
+</picture>
+
+_In a narrow window or on a phone, the list fills the screen._
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/new-job-dark.png">
+  <img alt="The New job form with a name, a command and a cron expression, which it reads back as At 09:00, 11:00, 13:00, 15:00 and 17:00 on Mon–Fri" src="docs/screenshots/new-job-light.png">
+</picture>
+
+_**New job** says the schedule in words as you type, and how many launchd entries it takes._
+
+![Typing a cron expression into the New job form, with the sentence under it following each key](docs/screenshots/new-job-demo.gif)
 
 ## What you need
 

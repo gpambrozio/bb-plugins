@@ -37,9 +37,48 @@ of what was done — and the bb app speaks it.
 
 ## Screenshots
 
-![The Herald page with a finished thread and the sentence Herald spoke about it](docs/screenshots/page.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/page-dark.png">
+  <img alt="The Herald page listing four threads waiting on you — a permission, an error and two finished turns — each with its sentence, above Recent sentences" src="docs/screenshots/page-light.png">
+</picture>
 
-_The Herald page: a thread waiting on you and the sentence Herald said about it._
+_The Herald page: every thread waiting on you — a permission to approve, an error, finished turns — with
+what happened and the sentence Herald said about it, and below them the recent sentences from every
+project._
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/page-phone-dark.png">
+  <img width="240" alt="The Herald page on a phone-width screen, with the same waiting threads and sentences" src="docs/screenshots/page-phone-light.png">
+</picture>
+
+_The same page on a phone._
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/thread-dark.png">
+  <img alt="A thread with a Herald card above each turn's answer, and the Herald tab open beside it listing the thread's sentences, newest first" src="docs/screenshots/thread-light.png">
+</picture>
+
+_In the thread, each sentence is a card above the answer it is about. The megaphone in the thread's
+header opens the Herald tab, the thread's sentences newest first._
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/thread-phone-dark.png">
+  <img width="240" alt="A thread on a phone-width screen with a Herald card above each turn's answer" src="docs/screenshots/thread-phone-light.png">
+</picture>
+
+_The cards on a phone._
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/thread-menu-dark.png">
+  <img width="360" alt="A thread's menu with Herald open on Default, Announce, Questions only and Silent" src="docs/screenshots/thread-menu-light.png">
+</picture>
+
+_**Herald** in a thread's menu chooses what Herald announces for that thread._
+
+![From the Herald page to a thread: its cards, then the Herald tab opened from the header](docs/screenshots/demo.gif)
+
+_The sentences in these images are model-written (*Write each sentence with a model* on); without it,
+Herald says the start of the agent's reply instead._
 
 ## What Herald adds to bb's push notifications
 
