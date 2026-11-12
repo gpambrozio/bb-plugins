@@ -282,12 +282,16 @@ export class DevBb {
     writeFileSync(this.pidFile, JSON.stringify({ launcher: this.pid, descendants }));
   }
 
-  /** Runs the bb CLI against the dev bb. Throws with its output on failure. */
-  cli(args, { input } = {}) {
+  /**
+   * Runs the bb CLI against the dev bb. Throws with its output on failure. `threadId` sets
+   * BB_THREAD_ID, the thread a plugin's command takes as its caller (see Seeder.cliAs).
+   */
+  cli(args, { input, threadId } = {}) {
     const { cfg } = this;
+    const caller = threadId ? { BB_THREAD_ID: threadId } : {};
     try {
       return execFileSync(process.execPath, [cfg.cliEntry, ...args], {
-        env: devBbEnv(cfg, { BB_SERVER_URL: cfg.url, BB_HOST_DAEMON_PORT: String(cfg.daemonPort), BB_DATA_DIR: cfg.data }),
+        env: devBbEnv(cfg, { BB_SERVER_URL: cfg.url, BB_HOST_DAEMON_PORT: String(cfg.daemonPort), BB_DATA_DIR: cfg.data, ...caller }),
         encoding: "utf8",
         input,
         stdio: ["pipe", "pipe", "pipe"],
@@ -298,8 +302,8 @@ export class DevBb {
     }
   }
 
-  cliJson(args) {
-    return JSON.parse(this.cli(args));
+  cliJson(args, options) {
+    return JSON.parse(this.cli(args, options));
   }
 
   async waitFor(what, test, { timeoutMs = 30_000, intervalMs = 300 } = {}) {

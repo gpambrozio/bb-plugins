@@ -4,12 +4,18 @@
 // `acp-demo` through provider-acp's `customAgents` setting.
 //
 // SHOTS_SCRIPT names a JSON file: [{ "match": "regex", "reply": "markdown", "tools": [{ "title", "kind" }],
-// "permission": { "title", "kind", "command" }, "error": "message" }]. The first entry whose `match`
-// finds the prompt's text answers it: its tool calls, then its reply, then, with `permission`, a
-// permission request the turn waits on (bb approves it by itself unless the thread runs in its
-// accept-edits mode; then nothing answers it and the thread stays waiting for the user), or, with `error`, the turn fails with that message. SHOTS_ACP_LOG, when set, logs
-// the protocol to that file.
-import { appendFileSync, readFileSync } from "node:fs";
+// "permission": { "title", "kind", "command" }, "waitFor": "token", "error": "message" }]. The first entry
+// whose `match` finds the prompt's text answers it: its tool calls, then its reply, then, with
+// `permission`, a permission request the turn waits on (bb approves it by itself unless the thread runs
+// in its accept-edits mode; then nothing answers it and the thread stays waiting for the user). With
+// `waitFor`, the turn then stays in flight until a file of that name exists in SHOTS_RELEASE_DIR (the
+// seed's `release`) or bb cancels it; a token nobody releases keeps the thread working. With `error`,
+// the turn finally fails with that message. SHOTS_ACP_LOG, when set, logs the protocol to that file.
+//
+// It never runs a command: bb starts it with no thread id and no dev-bb address, so a `bb` started from
+// here would address the default server, which is the owner's.
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { createInterface } from "node:readline";
 
 const LOG = process.env.SHOTS_ACP_LOG;
@@ -20,6 +26,8 @@ const script = process.env.SHOTS_SCRIPT ? JSON.parse(readFileSync(process.env.SH
 const fallback = { reply: "Done." };
 const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\n");
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+/** Turns in flight that a session/cancel ends, by session id. */
+const cancels = new Map();
 let toolCalls = 0;
 let requests = 0;
 /** Requests this agent sent the client, by id: resolved with the client's response. */
@@ -30,6 +38,23 @@ const request = (method, params) =>
     waiting.set(id, resolve);
     send({ id, method, params });
   });
+
+/** Resolves false once SHOTS_RELEASE_DIR/<token> exists, or true when bb cancels the turn first. */
+function released(sessionId, token) {
+  if (!/^[\w.-]+$/.test(token)) throw new Error(`waitFor token "${token}" must be a plain file name`);
+  const file = process.env.SHOTS_RELEASE_DIR ? join(process.env.SHOTS_RELEASE_DIR, token) : null;
+  return new Promise((resolve) => {
+    const done = (cancelled) => {
+      clearInterval(timer);
+      cancels.delete(sessionId);
+      resolve(cancelled);
+    };
+    const timer = setInterval(() => {
+      if (file && existsSync(file)) done(false);
+    }, 100);
+    cancels.set(sessionId, () => done(true));
+  });
+}
 
 async function prompt(id, { sessionId, prompt: parts }) {
   const text = (parts ?? []).map((part) => part.text ?? "").join("\n");
@@ -61,6 +86,10 @@ async function prompt(id, { sessionId, prompt: parts }) {
     });
     update({ sessionUpdate: "tool_call_update", toolCallId, status: answer?.outcome?.optionId === "allow" ? "completed" : "failed" });
   }
+  if (step.waitFor) {
+    const cancelled = await released(sessionId, step.waitFor);
+    if (cancelled) return send({ id, result: { stopReason: "cancelled" } });
+  }
   if (step.error) return send({ id, error: { code: -32603, message: step.error } });
   send({ id, result: { stopReason: "end_turn" } });
 }
@@ -74,8 +103,11 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     waiting.delete(message.id);
     return;
   }
-  // Notifications (session/cancel) need no answer.
-  if (message.id === undefined) return;
+  // Notifications need no answer; session/cancel ends a turn held by `waitFor`.
+  if (message.id === undefined) {
+    if (message.method === "session/cancel") cancels.get(message.params?.sessionId)?.();
+    return;
+  }
   switch (message.method) {
     case "initialize":
       return send({

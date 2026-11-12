@@ -10,21 +10,69 @@ is not affiliated with or endorsed by the author; see [NOTICE.md](NOTICE.md).
 
 ## Screenshots
 
-![A Learning offer above the thread composer proposing an exercise on the commits just made](docs/screenshots/offer.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/offer-dark.png">
+  <img alt="A Learning offer above the thread composer: you just committed “Retry requests after a rate limit”, want a 10–15 minute exercise on it? With Start, Later and Not in this thread" src="docs/screenshots/offer-light.png">
+</picture>
 
-_An offer after real work: start an exercise on what was just committed, in a side thread._
+_An offer after real work: an exercise on what was just committed. These screenshots come from an agent
+that cannot fork a thread, so the session runs in the thread itself; with a provider that can fork, such
+as Claude Code, it runs in a side thread, and the offer says so._
 
-![A Learning Exercises question card asking to predict what a function returns, with a confidence scale](docs/screenshots/question-card.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/question-card-dark.png">
+  <img alt="The feedback on question 1, marked Correct, above question 2's card: a table asking what touch does for three requests, a box for why, a 1 to 5 confidence scale, and Submit, Make it more specific, Skip and Pause session" src="docs/screenshots/question-card-light.png">
+</picture>
 
-_A question card: predict, explain, and say how sure you are._
+_A question card with an answer form, and the feedback on the answer before it, which stays in the
+chat as a card._
 
-![The Learning tab with a paused session and its Resume, Finish and Open source thread buttons](docs/screenshots/learning-tab-session.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/learning-tab-session-dark.png">
+  <img alt="The thread beside its Learning tab, which shows the session in progress, 1 of 2 answered, with the questions, the answer and the feedback so far" src="docs/screenshots/learning-tab-session-light.png">
+</picture>
 
-_The thread's Learning tab with the current session and paused ones._
+_The Learning tab with the session in progress: Pause, Finish, and the questions and feedback so far._
 
-![The Learning tab's Start an exercise form with topic choices and earlier sessions](docs/screenshots/start-exercise.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/orientation-dark.png">
+  <img alt="The Learning tab's Orientation section for Acme API: its purpose, its key files open, and Start orientation session, Read walkthrough, Verify and Export to repo" src="docs/screenshots/orientation-light.png">
+</picture>
 
-_Starting an exercise by hand: pick the last commit, the thread, or your own topic._
+_An orientation of the project: its purpose, languages, stages, key files, concepts and gotchas, and an
+orientation session of two exercises on the files to read first._
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/walkthrough-dark.png">
+  <img alt="The Walkthrough tab: the chapter How a request flows, a note, and Listing 1 from src/server.ts marked current" src="docs/screenshots/walkthrough-light.png">
+</picture>
+
+_The walkthrough, chapter by chapter, with listings the plugin copied from the files and checks against
+them._
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/export-dark.png">
+  <img width="480" alt="The Export to repo dialog under the Orientation section: a folder browser at the project root and the file name ORIENTATION.md" src="docs/screenshots/export-light.png">
+</picture>
+
+_Exporting the orientation as a Markdown file in a folder of the project you browse to._
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/question-card-phone-dark.png">
+  <img width="240" alt="A question card on a phone-width screen" src="docs/screenshots/question-card-phone-light.png">
+</picture>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/learning-tab-session-phone-dark.png">
+  <img width="240" alt="The Learning tab with the session in progress on a phone-width screen" src="docs/screenshots/learning-tab-session-phone-light.png">
+</picture>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/walkthrough-phone-dark.png">
+  <img width="240" alt="The walkthrough on a phone-width screen" src="docs/screenshots/walkthrough-phone-light.png">
+</picture>
+
+_A question card, the Learning tab and the walkthrough on a phone._
+
+![From the Learning tab's Orientation section to the walkthrough, through its chapters](docs/screenshots/orientation-demo.gif)
 
 ## What it does
 

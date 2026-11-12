@@ -231,12 +231,15 @@ describe("the scripted ACP agent", () => {
     JSON.stringify([
       { match: "upgrade", reply: "Needs an install.", permission: { title: "npm install", command: "npm install" } },
       { match: "nightly", reply: "Running.", error: "Out of memory." },
+      { match: "dark mode", reply: "Adding a theme toggle.", waitFor: "dark-mode" },
     ]),
   );
+  const releaseDir = join(scratch, "release");
+  mkdirSync(releaseDir, { recursive: true });
 
   /** Runs one prompt; `answer` replies to the agent's own requests. Resolves with every message. */
-  function prompt(text, answer = () => undefined) {
-    const child = spawn(process.execPath, [agent], { env: { PATH: process.env.PATH, SHOTS_SCRIPT: script } });
+  function prompt(text, answer = () => undefined, { onReply } = {}) {
+    const child = spawn(process.execPath, [agent], { env: { PATH: process.env.PATH, SHOTS_SCRIPT: script, SHOTS_RELEASE_DIR: releaseDir } });
     const messages = [];
     const send = (message) => child.stdin.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\n");
     return new Promise((resolve) => {
@@ -244,6 +247,7 @@ describe("the scripted ACP agent", () => {
         const message = JSON.parse(line);
         messages.push(message);
         if (message.method && message.id !== undefined) send({ id: message.id, result: answer(message) });
+        if (message.params?.update?.sessionUpdate === "agent_message_chunk") onReply?.(send);
         if (message.id === 3) {
           child.kill();
           resolve(messages);
@@ -261,6 +265,32 @@ describe("the scripted ACP agent", () => {
     assert.equal(asked.params.toolCall.rawInput.command, "npm install");
     assert.ok(messages.indexOf(asked) < messages.findIndex((m) => m.id === 3));
     assert.equal(messages.at(-1).result.stopReason, "end_turn");
+  });
+
+  test("holds a turn until its token is released", async () => {
+    let releasedAt = 0;
+    const messages = await prompt("Add dark mode", undefined, {
+      onReply: () => {
+        if (releasedAt) return;
+        releasedAt = Date.now() + 400;
+        setTimeout(() => writeFileSync(join(releaseDir, "dark-mode"), ""), 400);
+      },
+    });
+    assert.equal(messages.at(-1).result.stopReason, "end_turn");
+    assert.ok(Date.now() >= releasedAt, "the turn ended before its token was released");
+    rmSync(join(releaseDir, "dark-mode"));
+  });
+
+  test("ends a held turn as cancelled when bb cancels it", async () => {
+    let cancelled = false;
+    const messages = await prompt("Add dark mode", undefined, {
+      onReply: (send) => {
+        if (cancelled) return;
+        cancelled = true;
+        setTimeout(() => send({ method: "session/cancel", params: { sessionId: "s" } }), 200);
+      },
+    });
+    assert.equal(messages.at(-1).result.stopReason, "cancelled");
   });
 
   test("fails a turn scripted to fail", async () => {
