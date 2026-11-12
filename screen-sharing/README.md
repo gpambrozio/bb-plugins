@@ -43,6 +43,20 @@ extra is installed on any Mac and no port is opened to the internet.
 - A session also ends after 30 minutes without keyboard or mouse use (whether or not it is on screen),
   after 8 hours, and when you close the bb window.
 
+## Screenshots
+
+![The Screen Sharing page with the Mac picker open, listing which Macs are live or have Screen Sharing off](docs/screenshots/mac-picker.png)
+
+_Pick a Mac: each enrolled Mac shows whether it is live or has Screen Sharing off._
+
+![A Screen Sharing session showing a MacBook's desktop inside bb](docs/screenshots/macbook-session.png)
+
+_A session with a MacBook, with View only, Full screen, Send keys and Disconnect._
+
+![A Screen Sharing session showing a Mac mini's desktop with Finder and Terminal windows](docs/screenshots/macmini-session.png)
+
+_A second session open at the same time, with a Mac mini._
+
 ## What you need
 
 - bb 0.47 or later (on bb 0.46, install with `@^0.4.0` instead of `@>=0.5.0`). The other Macs need bb's host daemon connected to this bb (they are in Settings →

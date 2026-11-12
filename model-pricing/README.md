@@ -15,6 +15,20 @@ three, together with Ollama Cloud, are read from [models.dev](https://models.dev
 of model specifications. OpenRouter publishes its own, so it is read directly from OpenRouter. The bb
 server does the fetching; nothing is sent anywhere.
 
+## Screenshots
+
+![The Model pricing table listing models with context, output, price, capabilities and relative cost](docs/screenshots/table.png)
+
+_The table of agent-capable models, sorted by relative cost._
+
+![Model pricing as cards in a narrow panel beside a model's provider page](docs/screenshots/cards-and-model-page.png)
+
+_In a narrow panel the table becomes cards; a model opens its provider's page._
+
+![Model Pricing's settings with a switch per provider, the input/output blend and the tool-calling filter](docs/screenshots/settings.png)
+
+_Settings: which providers to fetch, the input/output blend, and whether to list only models that can call tools._
+
 ## What you need
 
 - bb 0.44 or later.

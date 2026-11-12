@@ -31,6 +31,12 @@ with how long each took and how it exited, and the tail of its log.
 It is a front for launchd, not a scheduler of its own: the plists in `~/Library/LaunchAgents` are the
 source of truth, and the page reads them back every time.
 
+## Screenshots
+
+![The Scheduled jobs page listing a Mac's jobs, with one failing job's schedule, command and recent runs](docs/screenshots/jobs.png)
+
+_The Scheduled jobs page: each job's state, and a failing job's schedule, command and recent runs._
+
 ## What you need
 
 - bb 0.47 or later. On bb 0.44 to 0.46, install with `@^0.1.0` instead of `@>=0.3.0`.

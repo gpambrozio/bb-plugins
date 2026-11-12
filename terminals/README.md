@@ -53,6 +53,16 @@ machine running the bb server is listed first.
 
 The colours and font follow bb's theme, as bb's own terminal does.
 
+## Screenshots
+
+![The Terminals page with tabs for several shells and a log streaming in one of them](docs/screenshots/terminals-log.png)
+
+_The Terminals page: one tab per shell, on any enrolled machine._
+
+![The Terminals page's new-tab menu listing the machines a terminal can open on](docs/screenshots/terminals-new-tab-menu.png)
+
+_The **+** menu opens a new terminal on any enrolled machine._
+
 ## What you need
 
 - bb 0.48 or later.

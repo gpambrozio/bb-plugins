@@ -29,6 +29,16 @@ whatever is open on repositories you own, and what is assigned to you anywhere.
   which opens it on GitHub, and the title. On bb 0.48, with bb's thread row metadata experiment on and
   Organize → Rows → Metadata enabled, the sidebar row shows it too.
 
+## Screenshots
+
+![GitHub Board showing issues, draft pull requests and open pull requests in three columns](docs/screenshots/board.png)
+
+_The board: issues, draft pull requests and open pull requests across the repositories you picked._
+
+![GitHub Board's Send to chat dialog with a pull request's review prompt and bb's new-thread pickers](docs/screenshots/send-to-chat.png)
+
+_**Send to chat** starts a thread from a card with its column's prompt template._
+
 ## What you need
 
 - bb 0.47 or later. On bb 0.46, install with `@^0.5.0` instead of `@>=0.6.0`; on bb 0.45, with
