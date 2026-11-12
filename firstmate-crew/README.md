@@ -22,9 +22,30 @@ board, the dispatch command and the watch runner, and nothing else.
 
 ## Screenshots
 
-![The FirstMate board beside the first mate's chat, with a suggestion, working and blocked cards, and a watch](docs/screenshots/board.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/board-dark.png">
+  <img alt="The FirstMate board beside the first mate's chat: three suggestions, then two blocked cards, one with Merge and Hold buttons and one with Postgres and SQLite, each with an Answer box" src="docs/screenshots/board-light.png">
+</picture>
 
-_The board beside the first mate's chat: suggestions, workers grouped by state, and watches._
+_The board beside the first mate's chat: suggestions to send with one press, then the cards waiting on
+you, each with a button for every answer the first mate expects and a box for any other._
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/crew-dark.png">
+  <img width="560" alt="Two crew cards: Add dark mode, working, and Upgrade the date library, parked, with the warning that Notify parent is Off" src="docs/screenshots/crew-light.png">
+</picture>
+
+_Crew cards: Steer, Interrupt, Relaunch and End for each worker, and a warning when a worker's Notify
+parent is set so that the first mate isn't told when it finishes._
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/board-phone-dark.png">
+  <img width="240" alt="The FirstMate board on a phone-width screen, with suggestions and a blocked card's Merge and Hold buttons" src="docs/screenshots/board-phone-light.png">
+</picture>
+
+_The board on a phone, where it takes the screen over the chat._
+
+![Opening the board from the thread's panel, reading a long suggestion whole, and typing an answer on a card waiting for the captain](docs/screenshots/board-demo.gif)
 
 ## What you need
 

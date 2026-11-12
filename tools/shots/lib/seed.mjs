@@ -40,6 +40,30 @@ export class Seeder {
     return this.bb.cfg.home;
   }
 
+  /** Where `release` drops the files that end turns scripted with `waitFor`. */
+  get releaseDir() {
+    return join(this.bb.cfg.root, "release");
+  }
+
+  /** Ends every turn held by `waitFor: token` (see scripted-acp-agent.mjs), now and later. */
+  release(token) {
+    if (!/^[\w.-]+$/.test(token)) throw new Error(`release token "${token}" must be a plain file name`);
+    mkdirSync(this.releaseDir, { recursive: true });
+    writeFileSync(join(this.releaseDir, token), "");
+  }
+
+  /**
+   * Runs the dev bb's CLI as if from `threadId`: a plugin command takes its caller's thread from
+   * BB_THREAD_ID and cannot verify it, so this is how a seed does what a thread's agent would (the
+   * scripted agent runs nothing). Only threads on the scripted provider: a plugin command could start
+   * a turn in the thread it is told it came from.
+   */
+  cliAs(threadId, args) {
+    const { thread } = this.bb.cliJson(["thread", "show", threadId, "--json"]);
+    if (thread.providerId !== DEMO_PROVIDER) throw new Error(`refusing to act as ${threadId} on ${thread.providerId}: only ${DEMO_PROVIDER} is scripted`);
+    return this.bb.cli(args, { threadId });
+  }
+
   /** Writes fixture files into the dev bb's fake HOME. */
   homeFiles(files) {
     writeTree(this.home, files);
@@ -67,7 +91,7 @@ export class Seeder {
         displayName: "Demo agent",
         command: join(this.bb.cfg.bin, "node"),
         args: [SCRIPTED_AGENT],
-        env: { SHOTS_SCRIPT: scriptPath, SHOTS_ACP_LOG: join(root, "acp-demo.log") },
+        env: { SHOTS_SCRIPT: scriptPath, SHOTS_ACP_LOG: join(root, "acp-demo.log"), SHOTS_RELEASE_DIR: this.releaseDir },
       },
     ];
     this.bb.cli(["plugin", "config", "provider-acp", "set", "customAgents", JSON.stringify(agents)]);
@@ -173,6 +197,8 @@ export class Seeder {
 
 /** Thread log event types a seed waits for. */
 export const THREAD_EVENTS = {
+  /** A turn started; with `waitFor` it stays in flight until released. */
+  turnStarted: "turn/started",
   /** A turn ended, finished or failed (`data.status`). */
   turnEnded: "turn/completed",
   /** A permission or question the turn waits on was asked. */

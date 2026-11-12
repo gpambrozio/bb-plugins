@@ -19,7 +19,8 @@ A run:
 
 The copy happens only if every shot succeeded, so a failed run leaves the old images alone. The dev bb
 is stopped and its folder deleted on success, on failure and on Ctrl+C. `skills` takes about 30 s,
-`launchd-jobs` about 35 s and `herald` about 50 s.
+`launchd-jobs` about 35 s, `herald` about 50 s, `firstmate-crew` about 65 s and `learning-exercises` about
+95 s.
 
 | Option | Effect |
 | --- | --- |
@@ -68,8 +69,12 @@ The run checks these first and says what is missing:
 - **Two providers, neither real:**
   - `acp-demo`, the default and first in order, is `scripted-acp-agent.mjs`. This Agent Client Protocol
     agent replays the shot list's `turns`, so a thread gets content in under a second. A turn can end
-    in a `permission` request the thread then waits on, or fail with an `error`. bb hands it no MCP
-    tools, so plugin tools cannot be called from its turns: seed the plugin's state instead.
+    in a `permission` request the thread then waits on, or fail with an `error`, and `waitFor: "<token>"`
+    keeps it in flight until the seed calls `seed.release(token)` (or bb cancels it): a token nobody
+    releases leaves the thread working. bb hands it no MCP tools, and no thread id or dev-bb address
+    either, so it runs nothing: a `bb` started from it would address the default server, the owner's.
+    The seed does what the agent would instead, through the plugin's CLI as that thread (`seed.cliAs`)
+    or its RPCs, usually while the turn is held.
   - `claude-code` sees `claude-stub.mjs` as its CLI. The stub answers `--version` and the `initialize`
     handshake bb reads models from, so the composer shows Claude Code with its skills. A one-shot
     `claude -p` (a plugin's helper call, such as Herald's sentence writer) gets the first canned reply
@@ -115,7 +120,13 @@ export async function shoot({ shots, VARIANTS }) {
   - `project` (a git repo with one commit, plus its bb project);
   - `thread` (spawns on `acp-demo` and waits for the turn; `until: THREAD_EVENTS.interaction` with
     `permissionMode: "accept-edits"` for a turn that asks a permission, which bb approves by itself
-    otherwise) and `send` (another prompt to such a thread);
+    otherwise, or `until: THREAD_EVENTS.turnStarted` for one held by `waitFor`) and `send` (another
+    prompt to such a thread);
+  - `release(token)` (ends the turns held by `waitFor: token`) and `waitForEvent` / `events` (a thread's
+    log);
+  - `cliAs(threadId, args)` (the dev bb's CLI with `BB_THREAD_ID` set: a plugin command takes its caller's
+    thread from it and cannot check it, so this is how a seed acts for a thread's agent; scripted threads
+    only);
   - `rpc(pluginId, method, input)` (a plugin's RPC, to read its state or wait for it);
   - `claudePrint` (`claude -p`'s canned replies), and `launchd` and `launchctlCalls` (the stub launchd);
   - `installPlugin`.
@@ -157,5 +168,17 @@ export async function shoot({ shots, VARIANTS }) {
   `launchd-jobs/shots/shots.mjs` does.
 - **Opening a thread in the browser marks it read.** Shoot a page that lists unread threads first, or
   mark one unread again with `bb.cli(["thread", "unread", id])`.
+- **bb steers a child's outcome into its parent's turn.** While a parent's turn is in flight, its children's
+  finished turns reach it as one `child-outcome-batch` message joined to that turn, not as a turn of
+  their own. Hold the parent's turn (`waitFor`) while the children finish to get one batch, and wait for
+  the parent to stay idle for a moment (`firstmate-crew/shots/shots.mjs`).
+- **The CLI reaches what the browser must not.** `bb thread interactions respond <id> <thread> --value
+  '<json>'` answers a plugin's form as its card would, `bb thread update --parent-notifications` sets a
+  thread's Notify parent, and a plugin's RPCs are `seed.rpc`.
+- **Plugin tabs open from the side panel.** `Show right panel (⌘ J)` opens it; a fixed tab is a
+  `Show <name> panel` button, and an action tab is in the launcher behind `Open new tab (⌘ T)` (click its
+  title with `.last()`, the composer has one too). At phone width the panel takes the screen.
+- **A plugin's per-browser preferences are `localStorage`.** Set them with `page.evaluate` on the first
+  page, then `goto` the page to shoot, as `firstmate-crew` does for its section order and folds.
 - **Panels need a thread.** A thread on `acp-demo` has a real worktree and panel tabs. A thread on any
   other provider would run that provider, so the harness has no way to make one.
