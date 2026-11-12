@@ -12,9 +12,25 @@ agent uses. Threads on any other provider list bb's own skills and what bb's `/`
 
 ## Screenshots
 
-![The Skills button in the thread composer with its searchable list of skills open](docs/screenshots/composer-popover.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/composer-popup-dark.png">
+  <img alt="The Skills pop-up open above the new-thread composer, listing project and personal skills under a search box" src="docs/screenshots/composer-popup-light.png">
+</picture>
 
-_The Skills button in the composer opens a searchable list of the thread's skills._
+_The Skills button in the composer opens a searchable list of the skills the thread's agent gets,
+grouped by where they come from. In the new-thread composer it follows the project and agent you
+pick._
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/composer-popup-phone-dark.png">
+  <img width="240" alt="The Skills list as a bottom sheet on a phone-width screen, with its search box and project and personal skills" src="docs/screenshots/composer-popup-phone-light.png">
+</picture>
+
+_In a narrow window or on a phone, the same list opens as a sheet from the bottom of the screen._
+
+![Searching the Skills pop-up, opening a skill and adding it to the chat as a command pill](docs/screenshots/composer-popup-demo.gif)
+
+_Search, open a skill, and **Add to chat** puts its command at the start of the message._
 
 ![The Skills tab in a thread's side panel listing personal and plugin skills](docs/screenshots/panel-list.png)
 
@@ -74,6 +90,9 @@ bb plugin dev          # rebuild and reload on change
 bb plugin logs skills -f
 ```
 
+The composer screenshots and the demo above are generated: `npm run shots -- skills` in
+`tools/shots/` (see its `README.md`) rewrites them from a throwaway bb with fixture skills.
+
 `AGENTS.md` records why the plugin is shaped this way, what it adds to bb's own skill management, and
 what it deliberately does not do. Read it before changing discovery.
 
@@ -85,6 +104,7 @@ what it deliberately does not do. Read it before changing discovery.
 | `server.ts`, `server/` | Thread or new-thread selection → workspace, bb's own skills, the reported list, the RPCs. |
 | `shared/` | Shapes, frontmatter, and the two contracts. |
 | `app.tsx`, `app/` | The panel, the composer button and its pop-up, and the browser they share. |
+| `shots/` | The screenshot shot list and its fixtures (not packaged). |
 
 ## License
 

@@ -630,6 +630,9 @@ keeps keys bb does not know, which makes a skill only the user can start possibl
 types `/<name>` (bb hands Claude Code the typed text unchanged). `firstmate-crew/skills/fm` is the
 example.
 
+README screenshots and demo GIFs come from `tools/shots/` (`npm run shots -- <plugin>`, a throwaway dev
+bb driven by `<plugin>/shots/shots.mjs`). Read `tools/shots/README.md` before running or writing one.
+
 ## Git
 
 - Work each port on its own branch and open a pull request that closes its issue.
