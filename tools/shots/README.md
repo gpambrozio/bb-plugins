@@ -18,7 +18,8 @@ A run:
 5. copies what the shot list made into `<plugin>/docs/screenshots/`.
 
 The copy happens only if every shot succeeded, so a failed run leaves the old images alone. The dev bb
-is stopped and its folder deleted on success, on failure and on Ctrl+C. `skills` takes about 26 s.
+is stopped and its folder deleted on success, on failure and on Ctrl+C. `skills` takes about 30 s,
+`launchd-jobs` about 35 s and `herald` about 50 s.
 
 | Option | Effect |
 | --- | --- |
@@ -52,17 +53,28 @@ The run checks these first and says what is missing:
 - **A built environment, not an inherited one.** No `BB_*` variable, token or API key reaches it.
   Inside a bb thread, any `bb` re-execs the live one through `BB_CLI`, so this matters. Its HOME is a
   fake one under the root, so `~/.claude/skills`, `~/Library/LaunchAgents` and the like are the
-  fixtures. PATH is the system's plus a private `bin/` holding only `node` and a stub `claude`, so the
+  fixtures. PATH is the system's plus a private `bin/` holding only `node` and the stubs below, so the
   agent CLIs in your own tool folders are not on it. `ANTHROPIC_BASE_URL` and `OPENAI_BASE_URL` point
   at a closed port.
+- **Its stubs come first.** bb gives its tools and host workers a login shell's PATH, and macOS's
+  `path_helper` (in `/etc/zprofile`) puts `/bin`, `/usr/bin` and Homebrew in front of the PATH it was
+  given, so a stub in `bin/` would lose to the real tool. The fake HOME's `.zprofile` and `.zshrc` put
+  `bin/` back in front, and the start fails unless `zsh -lc` and `zsh -lic` both find every stub there.
+- **A stub `launchctl`, always.** `launchctl-stub.mjs` keeps a launchd of its own in `launchd.json`
+  under the root (`seed.launchd`) and logs every call (`seed.launchctlCalls()`). It answers `print`,
+  `print-disabled`, `bootstrap`, `bootout`, `enable`, `disable` and `kickstart` against `gui/<uid>`
+  and fails anything else; `kickstart` counts a run and runs nothing. The real launchd is never asked.
 - **Its machine is renamed "Studio Mac".** Otherwise it would carry this Mac's real name.
 - **Two providers, neither real:**
   - `acp-demo`, the default and first in order, is `scripted-acp-agent.mjs`. This Agent Client Protocol
-    agent replays the shot list's `turns`, so a thread gets content in under a second. bb hands it no
-    MCP tools, so plugin tools cannot be called from its turns: seed the plugin's state instead.
+    agent replays the shot list's `turns`, so a thread gets content in under a second. A turn can end
+    in a `permission` request the thread then waits on, or fail with an `error`. bb hands it no MCP
+    tools, so plugin tools cannot be called from its turns: seed the plugin's state instead.
   - `claude-code` sees `claude-stub.mjs` as its CLI. The stub answers `--version` and the `initialize`
-    handshake bb reads models from, so the composer shows Claude Code with its skills. It exits with
-    an error on anything else, so no Claude Code session can run.
+    handshake bb reads models from, so the composer shows Claude Code with its skills. A one-shot
+    `claude -p` (a plugin's helper call, such as Herald's sentence writer) gets the first canned reply
+    from `seed.claudePrint` whose `match` finds its prompt, as text or as Claude Code's JSON result. It
+    exits with an error on anything else, so no Claude Code session or model call can run.
 
   Every other provider bb finds (Codex, Pi, ACP agents) is disabled. Do not loosen this: the scout
   found signed-in CLIs (omp, Hermes) visible from the dev bb when PATH was inherited, and one became
@@ -101,7 +113,11 @@ export async function shoot({ shots, VARIANTS }) {
 - **`seed`** (`tools/shots/lib/seed.mjs`) offers:
   - `homeFiles` (into the fake HOME);
   - `project` (a git repo with one commit, plus its bb project);
-  - `thread` (spawns on `acp-demo` and waits for the turn);
+  - `thread` (spawns on `acp-demo` and waits for the turn; `until: THREAD_EVENTS.interaction` with
+    `permissionMode: "accept-edits"` for a turn that asks a permission, which bb approves by itself
+    otherwise) and `send` (another prompt to such a thread);
+  - `rpc(pluginId, method, input)` (a plugin's RPC, to read its state or wait for it);
+  - `claudePrint` (`claude -p`'s canned replies), and `launchd` and `launchctlCalls` (the stub launchd);
   - `installPlugin`.
 
   `skillFile` and `writeTree` are exported for fixtures. `bb.cli([...])` and `bb.cliJson` run the dev
@@ -136,5 +152,10 @@ export async function shoot({ shots, VARIANTS }) {
   (the Skills plugin's is `Skills: <count>`, which also waits for its first answer).
 - **Headless video has no cursor.** Pace a demo with `waitForTimeout` and `pressSequentially` so a
   viewer can follow.
+- **The plugin is installed before `seed` runs.** A plugin that reads fixtures on a poll sees them
+  late; `bb.cli(["plugin", "reload", id])` at the end of the seed makes it read them at once, as
+  `launchd-jobs/shots/shots.mjs` does.
+- **Opening a thread in the browser marks it read.** Shoot a page that lists unread threads first, or
+  mark one unread again with `bb.cli(["thread", "unread", id])`.
 - **Panels need a thread.** A thread on `acp-demo` has a real worktree and panel tabs. A thread on any
   other provider would run that provider, so the harness has no way to make one.

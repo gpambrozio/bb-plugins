@@ -1,7 +1,7 @@
 // Seeding a dev bb: fixture files in the fake HOME, a demo git project, a neutral machine name, the
 // scripted provider as the default, and the plugin under test installed from its folder.
 import { execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -33,6 +33,7 @@ export class Seeder {
   constructor(devbb, { log = console.log } = {}) {
     this.bb = devbb;
     this.log = log;
+    this.rpcCalls = 0;
   }
 
   get home() {
@@ -106,13 +107,74 @@ export class Seeder {
   }
 
   /**
-   * Spawns a thread on the scripted provider and waits for its turn to finish. Only `acp-demo` is
+   * Spawns a thread on the scripted provider and waits until its log has an `until` event (see
+   * THREAD_EVENTS): the turn's end by default, which a turn scripted to fail also reaches. A turn
+   * whose script asks for a permission waits on it only under `permissionMode: "accept-edits"` (bb
+   * approves it itself otherwise); wait for `THREAD_EVENTS.interaction` then. Only `acp-demo` is
    * allowed: a thread on any other provider would send a prompt to a real agent.
    */
-  async thread({ projectId, title, prompt, provider = DEMO_PROVIDER }) {
+  async thread({ projectId, title, prompt, provider = DEMO_PROVIDER, until = THREAD_EVENTS.turnEnded, permissionMode }) {
     if (provider !== DEMO_PROVIDER) throw new Error(`refusing to spawn a thread on ${provider}: only ${DEMO_PROVIDER} is scripted`);
-    const thread = this.bb.cliJson(["thread", "spawn", "--project", projectId, "--provider", provider, "--title", title, "--prompt", prompt, "--json"]);
-    this.bb.cli(["thread", "wait", thread.id, "--event", "turn/completed", "--timeout", "60s"]);
+    const mode = permissionMode ? ["--permission-mode", permissionMode] : [];
+    const thread = this.bb.cliJson(["thread", "spawn", "--project", projectId, "--provider", provider, "--title", title, "--prompt", prompt, ...mode, "--json"]);
+    await this.waitForEvent(thread.id, until, 1);
     return thread;
   }
+
+  /** Sends another prompt to a seeded thread, on the scripted provider only, and waits as `thread` does. */
+  async send({ threadId, prompt, until = THREAD_EVENTS.turnEnded }) {
+    const { thread } = this.bb.cliJson(["thread", "show", threadId, "--json"]);
+    if (thread.providerId !== DEMO_PROVIDER) throw new Error(`refusing to send to ${threadId} on ${thread.providerId}: only ${DEMO_PROVIDER} is scripted`);
+    const before = this.events(threadId, until).length;
+    this.bb.cli(["thread", "tell", threadId, prompt]);
+    await this.waitForEvent(threadId, until, before + 1);
+  }
+
+  /** The thread's log events of `type`, oldest first. */
+  events(threadId, type) {
+    return this.bb.cliJson(["thread", "log", threadId, "--json", "--all"]).filter((event) => event.type === type);
+  }
+
+  async waitForEvent(threadId, type, count, { timeoutMs = 60_000 } = {}) {
+    await this.bb.waitFor(`${type} #${count} on ${threadId}`, () => this.events(threadId, type).length >= count, { timeoutMs });
+  }
+
+  /** Calls a plugin's RPC method in the dev bb (`bb plugin rpc call`) and returns its answer. */
+  rpc(pluginId, method, input = {}) {
+    const file = join(this.bb.cfg.root, `rpc-input-${process.pid}-${++this.rpcCalls}.json`);
+    writeFileSync(file, JSON.stringify(input));
+    try {
+      return this.bb.cliJson(["plugin", "rpc", "call", pluginId, method, "--input-file", file]);
+    } finally {
+      rmSync(file, { force: true });
+    }
+  }
+
+  /** Canned answers for a one-shot `claude -p` (see claude-stub.mjs): [{ match, reply }]. */
+  claudePrint(replies) {
+    writeFileSync(join(this.bb.cfg.root, "claude-print.json"), JSON.stringify(replies, null, 2));
+  }
+
+  /**
+   * The stub launchd's state (see launchctl-stub.mjs): `services` by label, each `{ running, pid,
+   * runs, lastExitCode }`, and the `disabled` labels. A label not in `services` is not loaded.
+   */
+  launchd({ services = {}, disabled = [] } = {}) {
+    writeFileSync(join(this.bb.cfg.root, "launchd.json"), JSON.stringify({ services, disabled }, null, 2));
+  }
+
+  /** Every call the stub `launchctl` answered, as argument lists. */
+  launchctlCalls() {
+    const log = join(this.bb.cfg.root, "launchctl.log");
+    if (!existsSync(log)) return [];
+    return readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+  }
 }
+
+/** Thread log event types a seed waits for. */
+export const THREAD_EVENTS = {
+  /** A turn ended, finished or failed (`data.status`). */
+  turnEnded: "turn/completed",
+  /** A permission or question the turn waits on was asked. */
+  interaction: "system/interaction/lifecycle",
+};

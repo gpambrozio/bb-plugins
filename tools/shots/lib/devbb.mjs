@@ -16,6 +16,9 @@ import { fileURLToPath } from "node:url";
 
 export const OWNER_PORTS = [38886, 38887];
 const CLAUDE_STUB = fileURLToPath(new URL("../claude-stub.mjs", import.meta.url));
+const LAUNCHCTL_STUB = fileURLToPath(new URL("../launchctl-stub.mjs", import.meta.url));
+/** Commands the private `bin/` must answer before anything on the system's PATH: each is a stub. */
+export const STUBBED_TOOLS = ["claude", "launchctl"];
 
 export function devBbConfig(env = process.env) {
   // Keep the root short: the data dir holds Unix sockets.
@@ -94,9 +97,50 @@ export function devBbEnv(cfg, extra = {}) {
   };
 }
 
-/** `bin/claude`: runs claude-stub.mjs (see there) with the dev bb's node. */
+/** A `bin/` script that runs `script` with the dev bb's node and `env` set. */
+function nodeShim(cfg, script, env = {}) {
+  const vars = Object.entries(env).map(([key, value]) => `${key}="${value}" `).join("");
+  return `#!/bin/sh\n${vars}exec "${join(cfg.bin, "node")}" "${script}" "$@"\n`;
+}
+
+/** `bin/claude`: runs claude-stub.mjs (see there), with its canned `-p` answers in the root. */
 export function claudeShim(cfg) {
-  return `#!/bin/sh\nexec "${join(cfg.bin, "node")}" "${CLAUDE_STUB}" "$@"\n`;
+  return nodeShim(cfg, CLAUDE_STUB, { SHOTS_CLAUDE_PRINT: join(cfg.root, "claude-print.json") });
+}
+
+/** `bin/launchctl`: runs launchctl-stub.mjs (see there), whose launchd is a JSON file in the root. */
+export function launchctlShim(cfg) {
+  return nodeShim(cfg, LAUNCHCTL_STUB, {
+    SHOTS_LAUNCHD: join(cfg.root, "launchd.json"),
+    SHOTS_LAUNCHCTL_LOG: join(cfg.root, "launchctl.log"),
+  });
+}
+
+/**
+ * The fake HOME's `.zprofile` and `.zshrc`. bb takes its tools' PATH from a login shell, where macOS's
+ * `path_helper` (/etc/zprofile) puts /bin, /usr/bin and Homebrew ahead of the PATH it was given, so
+ * the real `launchctl` would win over the stub. These put `bin/` back in front, as a user's own
+ * profile would; `assertStubsFirst` checks it worked.
+ */
+export function shellProfile(cfg) {
+  return `# Written by tools/shots: the dev bb's stubs come before the system's tools.\nexport PATH="${cfg.bin}:$PATH"\n`;
+}
+
+/**
+ * Throws unless a login shell in the dev bb's environment, interactive or not (bb asks both ways),
+ * finds every STUBBED_TOOLS command in `bin/`. Run before anything can call one.
+ */
+export function assertStubsFirst(cfg) {
+  for (const flags of ["-lc", "-lic"]) {
+    const script = STUBBED_TOOLS.map((tool) => `print -r -- "${tool}=$(whence -p ${tool})"`).join("; ");
+    const out = execFileSync("/bin/zsh", [flags, script], { env: devBbEnv(cfg), encoding: "utf8", timeout: 10_000, stdio: ["ignore", "pipe", "ignore"] });
+    for (const tool of STUBBED_TOOLS) {
+      const found = new RegExp(`^${tool}=(.*)$`, "m").exec(out)?.[1] ?? "";
+      if (found !== join(cfg.bin, tool)) {
+        throw new Error(`a login shell (zsh ${flags}) in the dev bb finds ${tool} at "${found}", not the stub in ${cfg.bin}; refusing to start`);
+      }
+    }
+  }
 }
 
 function portIsFree(port) {
@@ -193,6 +237,9 @@ export class DevBb {
     writeFileSync(join(cfg.root, ROOT_MARKER), "A throwaway dev bb for tools/shots; deleted when the run ends.\n");
     symlinkSync(process.execPath, join(cfg.bin, "node"));
     writeFileSync(join(cfg.bin, "claude"), claudeShim(cfg), { mode: 0o755 });
+    writeFileSync(join(cfg.bin, "launchctl"), launchctlShim(cfg), { mode: 0o755 });
+    for (const file of [".zprofile", ".zshrc"]) writeFileSync(join(cfg.home, file), shellProfile(cfg));
+    assertStubsFirst(cfg);
 
     const out = openSync(join(cfg.root, "bb-app.log"), "a");
     const child = spawn(
