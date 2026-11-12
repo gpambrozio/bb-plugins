@@ -1,0 +1,16 @@
+{
+  "name": "bb-plugins-shots",
+  "private": true,
+  "description": "Screenshots and demo videos of this repository's plugins, from a throwaway dev bb. See README.md.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "shots": "node run.mjs",
+    "test": "node --test \"lib/*.test.mjs\""
+  },
+  "dependencies": {
+    "playwright-core": "1.62.1"
+  }
+}
