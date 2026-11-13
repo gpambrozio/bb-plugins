@@ -5,6 +5,15 @@ Notable changes to `firstmate`. The other plugins in this repository version sep
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.10.2
+
+### Fixed
+
+- **A card's Answer box shows everything you type.** It was one line high, so a longer answer scrolled
+  out of sight. It now wraps and grows with your words, up to about nine lines before it scrolls, and
+  shrinks back once you send. Enter still sends; Shift+Enter starts a new line. The Steer and Relaunch
+  boxes grow the same way.
+
 ## 0.10.1
 
 ### Fixed

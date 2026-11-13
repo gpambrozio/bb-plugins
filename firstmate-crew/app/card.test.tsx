@@ -74,7 +74,7 @@ function actionButton(action: { label: string; prompt: string }): HTMLButtonElem
   return screen.getByRole("button", { name: `${action.label}: send "${action.prompt}" to the first mate` }) as HTMLButtonElement;
 }
 
-const answerBox = () => screen.getByRole("textbox", { name: "Answer for pick-db" }) as HTMLInputElement;
+const answerBox = () => screen.getByRole("textbox", { name: "Answer for pick-db" }) as HTMLTextAreaElement;
 const sendButton = () => screen.getByRole("button", { name: "Send" }) as HTMLButtonElement;
 
 describe("Card actions", () => {
@@ -168,6 +168,117 @@ describe("Answer box", () => {
     fireEvent.submit(answerBox().form as HTMLFormElement);
     await waitFor(() => expect(view.changed).toHaveLength(1));
     expect(view.rpcCalls).toEqual([{ method: "mate.ask", input: { text: answerText(backlog(), "Postgres") } }]);
+  });
+
+  it("keeps words over several lines and sends them as typed", async () => {
+    const view = renderCard(backlog({ actions: [] }));
+    fireEvent.change(answerBox(), { target: { value: "Postgres.\nSQLite can wait." } });
+    expect(answerBox().value).toBe("Postgres.\nSQLite can wait.");
+    fireEvent.click(sendButton());
+    await waitFor(() => expect(view.changed).toHaveLength(1));
+    expect(view.rpcCalls).toEqual([{ method: "mate.ask", input: { text: answerText(backlog(), "Postgres.\nSQLite can wait.") } }]);
+  });
+
+  it("sends when Enter is pressed in the box", async () => {
+    const view = renderCard(backlog({ actions: [] }));
+    fireEvent.change(answerBox(), { target: { value: "Postgres" } });
+    fireEvent.keyDown(answerBox(), { key: "Enter" });
+    await waitFor(() => expect(view.changed).toHaveLength(1));
+    expect(view.rpcCalls).toEqual([{ method: "mate.ask", input: { text: answerText(backlog(), "Postgres") } }]);
+  });
+
+  it("does not send on Shift+Enter, which starts a new line, or on Enter that ends an IME composition", () => {
+    const view = renderCard(backlog({ actions: [] }));
+    fireEvent.change(answerBox(), { target: { value: "Postgres" } });
+    expect(fireEvent.keyDown(answerBox(), { key: "Enter", shiftKey: true })).toBe(true);
+    fireEvent.keyDown(answerBox(), { key: "Enter", isComposing: true });
+    fireEvent.keyDown(answerBox(), { key: "Enter", keyCode: 229 });
+    expect(view.rpcCalls).toEqual([]);
+    expect(answerBox().value).toBe("Postgres");
+  });
+
+  it("grows with its words and shrinks back once they are sent, where the browser cannot size it itself", async () => {
+    // A browser without CSS `field-sizing`; jsdom lays nothing out, so let each line of the value count 16px.
+    vi.stubGlobal("CSS", { supports: () => false });
+    const scrollHeight = vi
+      .spyOn(HTMLTextAreaElement.prototype, "scrollHeight", "get")
+      .mockImplementation(function (this: HTMLTextAreaElement) {
+        return this.value.split("\n").length * 16;
+      });
+    try {
+      const view = renderCard(backlog({ actions: [] }));
+      await waitFor(() => expect(answerBox().style.height).toBe("16px"));
+      fireEvent.change(answerBox(), { target: { value: "one\ntwo\nthree" } });
+      await waitFor(() => expect(answerBox().style.height).toBe("48px"));
+      fireEvent.click(sendButton());
+      await waitFor(() => expect(view.changed).toHaveLength(1));
+      await waitFor(() => expect(answerBox().style.height).toBe("16px"));
+    } finally {
+      scrollHeight.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("shrinks when the words are replaced by as many or more that wrap onto fewer lines, where the browser cannot size it itself", async () => {
+    // As a browser does, `scrollHeight` is never below the box's current height, so only a reset lets it shrink.
+    // Wrapping stands in as: each "W" ends a line, 16px per line.
+    vi.stubGlobal("CSS", { supports: () => false });
+    const scrollHeight = vi
+      .spyOn(HTMLTextAreaElement.prototype, "scrollHeight", "get")
+      .mockImplementation(function (this: HTMLTextAreaElement) {
+        const content = (this.value.split("W").length) * 16;
+        const height = this.style.height === "auto" ? 0 : parseFloat(this.style.height) || 0;
+        return Math.max(content, height);
+      });
+    try {
+      renderCard(backlog({ actions: [] }));
+      fireEvent.change(answerBox(), { target: { value: "aWbWc" } });
+      await waitFor(() => expect(answerBox().style.height).toBe("48px"));
+      // Select all, paste something longer that wraps onto one line.
+      fireEvent.change(answerBox(), { target: { value: "abcdefghij" } });
+      await waitFor(() => expect(answerBox().style.height).toBe("16px"));
+      // Letters typed at the end only add; the box grows without being reset.
+      fireEvent.change(answerBox(), { target: { value: "abcdefghijWk" } });
+      await waitFor(() => expect(answerBox().style.height).toBe("32px"));
+    } finally {
+      scrollHeight.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("shrinks when a space typed inside a long word lets it wrap onto fewer lines, where the browser cannot size it itself", async () => {
+    // As a browser does, `scrollHeight` is never below the box's current height, so only a reset lets it shrink.
+    // Wrapping stands in as: a word of ten letters or more takes a line of its own, 16px per line.
+    vi.stubGlobal("CSS", { supports: () => false });
+    const scrollHeight = vi
+      .spyOn(HTMLTextAreaElement.prototype, "scrollHeight", "get")
+      .mockImplementation(function (this: HTMLTextAreaElement) {
+        const content = (1 + this.value.split(/\s+/).filter((word) => word.length >= 10).length) * 16;
+        const height = this.style.height === "auto" ? 0 : parseFloat(this.style.height) || 0;
+        return Math.max(content, height);
+      });
+    try {
+      renderCard(backlog({ actions: [] }));
+      fireEvent.change(answerBox(), { target: { value: "Hold it until the releasenotes are out" } });
+      await waitFor(() => expect(answerBox().style.height).toBe("32px"));
+      fireEvent.change(answerBox(), { target: { value: "Hold it until the release notes are out" } });
+      await waitFor(() => expect(answerBox().style.height).toBe("16px"));
+    } finally {
+      scrollHeight.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("leaves the sizing to the browser where it has CSS field-sizing", () => {
+    vi.stubGlobal("CSS", { supports: (property: string, value: string) => property === "field-sizing" && value === "content" });
+    try {
+      renderCard(backlog({ actions: [] }));
+      expect(answerBox().style.getPropertyValue("field-sizing")).toBe("content");
+      fireEvent.change(answerBox(), { target: { value: "one\ntwo" } });
+      expect(answerBox().style.height).toBe("");
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("asks a held card's question back as an answer", () => {
