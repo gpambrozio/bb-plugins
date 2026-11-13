@@ -197,8 +197,9 @@ describe("Answer box", () => {
     expect(answerBox().value).toBe("Postgres");
   });
 
-  it("grows with its words and shrinks back once they are sent", async () => {
-    // jsdom lays nothing out: let each line of the box's value count 16px.
+  it("grows with its words and shrinks back once they are sent, where the browser cannot size it itself", async () => {
+    // A browser without CSS `field-sizing`; jsdom lays nothing out, so let each line of the value count 16px.
+    vi.stubGlobal("CSS", { supports: () => false });
     const scrollHeight = vi
       .spyOn(HTMLTextAreaElement.prototype, "scrollHeight", "get")
       .mockImplementation(function (this: HTMLTextAreaElement) {
@@ -206,14 +207,27 @@ describe("Answer box", () => {
       });
     try {
       const view = renderCard(backlog({ actions: [] }));
-      expect(answerBox().style.height).toBe("16px");
+      await waitFor(() => expect(answerBox().style.height).toBe("16px"));
       fireEvent.change(answerBox(), { target: { value: "one\ntwo\nthree" } });
-      expect(answerBox().style.height).toBe("48px");
+      await waitFor(() => expect(answerBox().style.height).toBe("48px"));
       fireEvent.click(sendButton());
       await waitFor(() => expect(view.changed).toHaveLength(1));
-      expect(answerBox().style.height).toBe("16px");
+      await waitFor(() => expect(answerBox().style.height).toBe("16px"));
     } finally {
       scrollHeight.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("leaves the sizing to the browser where it has CSS field-sizing", () => {
+    vi.stubGlobal("CSS", { supports: (property: string, value: string) => property === "field-sizing" && value === "content" });
+    try {
+      renderCard(backlog({ actions: [] }));
+      expect(answerBox().style.getPropertyValue("field-sizing")).toBe("content");
+      fireEvent.change(answerBox(), { target: { value: "one\ntwo" } });
+      expect(answerBox().style.height).toBe("");
+    } finally {
+      vi.unstubAllGlobals();
     }
   });
 
