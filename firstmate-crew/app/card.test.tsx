@@ -219,6 +219,33 @@ describe("Answer box", () => {
     }
   });
 
+  it("shrinks when the words are replaced by as many or more that wrap onto fewer lines, where the browser cannot size it itself", async () => {
+    // As a browser does, `scrollHeight` is never below the box's current height, so only a reset lets it shrink.
+    // Wrapping stands in as: each "W" ends a line, 16px per line.
+    vi.stubGlobal("CSS", { supports: () => false });
+    const scrollHeight = vi
+      .spyOn(HTMLTextAreaElement.prototype, "scrollHeight", "get")
+      .mockImplementation(function (this: HTMLTextAreaElement) {
+        const content = (this.value.split("W").length) * 16;
+        const height = this.style.height === "auto" ? 0 : parseFloat(this.style.height) || 0;
+        return Math.max(content, height);
+      });
+    try {
+      renderCard(backlog({ actions: [] }));
+      fireEvent.change(answerBox(), { target: { value: "aWbWc" } });
+      await waitFor(() => expect(answerBox().style.height).toBe("48px"));
+      // Select all, paste something longer that wraps onto one line.
+      fireEvent.change(answerBox(), { target: { value: "abcdefghij" } });
+      await waitFor(() => expect(answerBox().style.height).toBe("16px"));
+      // Typing at the caret only adds; the box grows without being reset.
+      fireEvent.change(answerBox(), { target: { value: "abcdeWfghij" } });
+      await waitFor(() => expect(answerBox().style.height).toBe("32px"));
+    } finally {
+      scrollHeight.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("leaves the sizing to the browser where it has CSS field-sizing", () => {
     vi.stubGlobal("CSS", { supports: (property: string, value: string) => property === "field-sizing" && value === "content" });
     try {

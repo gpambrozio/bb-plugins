@@ -6,7 +6,7 @@
  * Where the browser has CSS `field-sizing: content` (Chromium, so bb's desktop app), the browser sizes the
  * box itself and this hook does nothing per keystroke. Elsewhere it measures, at most once per frame, inside
  * the layout that frame does anyway: a box whose text only grew is read without resetting its height, and the
- * reset that lets it shrink happens only when text or line breaks were removed, or the box's width changed.
+ * reset that lets it shrink happens only after a change that was not an insertion, or a change of width.
  * Resetting and reading synchronously on every keystroke tripled the layouts per key and made typing lag.
  */
 import { useCallback, useEffect, useRef } from "react";
@@ -46,8 +46,7 @@ function attach(element: HTMLTextAreaElement): Sizer {
 
   const style = window.getComputedStyle(element);
   const border = (parseFloat(style.borderTopWidth) || 0) + (parseFloat(style.borderBottomWidth) || 0);
-  let length = element.value.length;
-  let lines = lineCount(element.value);
+  let previous = element.value;
   let shrink = true;
   let frame: number | null = null;
   let width = element.clientWidth;
@@ -78,11 +77,10 @@ function attach(element: HTMLTextAreaElement): Sizer {
 
   return {
     changed(value) {
-      // Text that only grew needs no fewer lines; anything shorter, or with fewer line breaks, may.
-      const nextLines = lineCount(value);
-      if (value.length < length || nextLines < lines) shrink = true;
-      length = value.length;
-      lines = nextLines;
+      // Text inserted at one place, as typing does, cannot wrap onto fewer lines; any other change (a
+      // deletion, a paste over a selection) may.
+      if (!isInsertion(previous, value)) shrink = true;
+      previous = value;
       schedule();
     },
     dispose() {
@@ -93,8 +91,12 @@ function attach(element: HTMLTextAreaElement): Sizer {
   };
 }
 
-function lineCount(text: string): number {
-  let count = 1;
-  for (let at = text.indexOf("\n"); at !== -1; at = text.indexOf("\n", at + 1)) count += 1;
-  return count;
+/** Whether `next` is `previous` with text added at one place and nothing removed. */
+export function isInsertion(previous: string, next: string): boolean {
+  if (next.length <= previous.length) return false;
+  let start = 0;
+  while (start < previous.length && previous[start] === next[start]) start += 1;
+  let end = 0;
+  while (end < previous.length - start && previous[previous.length - 1 - end] === next[next.length - 1 - end]) end += 1;
+  return start + end === previous.length;
 }
