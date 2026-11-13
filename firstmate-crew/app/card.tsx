@@ -14,11 +14,11 @@ import { useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "../components/ui/button";
-import { Input } from "../components/ui/input";
 import { Textarea } from "../components/ui/textarea";
 import { cn } from "../lib/utils";
 import type { rpcContract } from "../server";
 import type { BacklogAction, ColumnId, FleetCard } from "../shared/types";
+import { useAutoGrow } from "./auto-grow";
 import { ConfirmDialog } from "./confirm-dialog";
 import { useCardDraft } from "./drafts";
 import { STATE_WORDS, STATUS_WORDS, answerText, cardSubject, isRunning, parentNotificationsWarning, relativeTime, shortUrl } from "./format";
@@ -60,6 +60,7 @@ export function Card({
   const subject = cardSubject(card);
   const [stored, setDraft] = useCardDraft(subject.id, "worker");
   const draft: WorkerLine | null = stored?.kind === undefined ? null : { kind: stored.kind, text: stored.text };
+  const growDraft = useAutoGrow(draft?.text ?? "");
   const [busy, setBusy] = useState(false);
   const [confirmEnd, setConfirmEnd] = useState(false);
 
@@ -184,7 +185,9 @@ export function Card({
       {draft === null ? null : (
         <div className="flex flex-col gap-2">
           <Textarea
+            ref={growDraft}
             value={draft.text}
+            className="max-h-52 resize-none overflow-y-auto"
             onChange={(event) => setDraft({ kind: draft.kind, text: event.target.value })}
             placeholder={
               draft.kind === "steer"
@@ -266,23 +269,33 @@ function AnswerBox({
   const text = stored?.text ?? "";
   const setText = (next: string) => store(next === "" ? null : { text: next });
   const answer = text.trim();
+  const grow = useAutoGrow(text);
 
   return (
     <form
-      className="flex items-center gap-2"
+      className="flex items-end gap-2"
       onSubmit={(event) => {
         event.preventDefault();
         if (answer === "" || sending) return;
         onSend(answerText(subject, answer), () => setText(""));
       }}
     >
-      <Input
+      <Textarea
+        ref={grow}
+        rows={1}
         value={text}
         onChange={(event) => setText(event.target.value)}
+        onKeyDown={(event) => {
+          // Enter sends, as a one-line box did; Shift+Enter starts a new line, and Enter that ends an IME
+          // composition only picks the composed word.
+          if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing || event.keyCode === 229) return;
+          event.preventDefault();
+          event.currentTarget.form?.requestSubmit();
+        }}
         placeholder={held ? "Answer the first mate…" : "Tell the first mate about this…"}
         aria-label={`Answer for ${subject.id}`}
         disabled={sending}
-        className="h-8 min-w-0 flex-1 text-xs"
+        className="max-h-40 min-h-8 min-w-0 max-md:pointer-coarse:min-h-10 flex-1 resize-none overflow-y-auto py-1.5 text-xs"
       />
       <Button type="submit" size="sm" className="shrink-0" disabled={sending || answer === ""}>
         Send

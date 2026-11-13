@@ -74,7 +74,7 @@ function actionButton(action: { label: string; prompt: string }): HTMLButtonElem
   return screen.getByRole("button", { name: `${action.label}: send "${action.prompt}" to the first mate` }) as HTMLButtonElement;
 }
 
-const answerBox = () => screen.getByRole("textbox", { name: "Answer for pick-db" }) as HTMLInputElement;
+const answerBox = () => screen.getByRole("textbox", { name: "Answer for pick-db" }) as HTMLTextAreaElement;
 const sendButton = () => screen.getByRole("button", { name: "Send" }) as HTMLButtonElement;
 
 describe("Card actions", () => {
@@ -168,6 +168,53 @@ describe("Answer box", () => {
     fireEvent.submit(answerBox().form as HTMLFormElement);
     await waitFor(() => expect(view.changed).toHaveLength(1));
     expect(view.rpcCalls).toEqual([{ method: "mate.ask", input: { text: answerText(backlog(), "Postgres") } }]);
+  });
+
+  it("keeps words over several lines and sends them as typed", async () => {
+    const view = renderCard(backlog({ actions: [] }));
+    fireEvent.change(answerBox(), { target: { value: "Postgres.\nSQLite can wait." } });
+    expect(answerBox().value).toBe("Postgres.\nSQLite can wait.");
+    fireEvent.click(sendButton());
+    await waitFor(() => expect(view.changed).toHaveLength(1));
+    expect(view.rpcCalls).toEqual([{ method: "mate.ask", input: { text: answerText(backlog(), "Postgres.\nSQLite can wait.") } }]);
+  });
+
+  it("sends when Enter is pressed in the box", async () => {
+    const view = renderCard(backlog({ actions: [] }));
+    fireEvent.change(answerBox(), { target: { value: "Postgres" } });
+    fireEvent.keyDown(answerBox(), { key: "Enter" });
+    await waitFor(() => expect(view.changed).toHaveLength(1));
+    expect(view.rpcCalls).toEqual([{ method: "mate.ask", input: { text: answerText(backlog(), "Postgres") } }]);
+  });
+
+  it("does not send on Shift+Enter, which starts a new line, or on Enter that ends an IME composition", () => {
+    const view = renderCard(backlog({ actions: [] }));
+    fireEvent.change(answerBox(), { target: { value: "Postgres" } });
+    expect(fireEvent.keyDown(answerBox(), { key: "Enter", shiftKey: true })).toBe(true);
+    fireEvent.keyDown(answerBox(), { key: "Enter", isComposing: true });
+    fireEvent.keyDown(answerBox(), { key: "Enter", keyCode: 229 });
+    expect(view.rpcCalls).toEqual([]);
+    expect(answerBox().value).toBe("Postgres");
+  });
+
+  it("grows with its words and shrinks back once they are sent", async () => {
+    // jsdom lays nothing out: let each line of the box's value count 16px.
+    const scrollHeight = vi
+      .spyOn(HTMLTextAreaElement.prototype, "scrollHeight", "get")
+      .mockImplementation(function (this: HTMLTextAreaElement) {
+        return this.value.split("\n").length * 16;
+      });
+    try {
+      const view = renderCard(backlog({ actions: [] }));
+      expect(answerBox().style.height).toBe("16px");
+      fireEvent.change(answerBox(), { target: { value: "one\ntwo\nthree" } });
+      expect(answerBox().style.height).toBe("48px");
+      fireEvent.click(sendButton());
+      await waitFor(() => expect(view.changed).toHaveLength(1));
+      expect(answerBox().style.height).toBe("16px");
+    } finally {
+      scrollHeight.mockRestore();
+    }
   });
 
   it("asks a held card's question back as an answer", () => {
