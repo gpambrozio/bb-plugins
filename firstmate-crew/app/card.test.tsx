@@ -237,9 +237,32 @@ describe("Answer box", () => {
       // Select all, paste something longer that wraps onto one line.
       fireEvent.change(answerBox(), { target: { value: "abcdefghij" } });
       await waitFor(() => expect(answerBox().style.height).toBe("16px"));
-      // Typing at the caret only adds; the box grows without being reset.
-      fireEvent.change(answerBox(), { target: { value: "abcdeWfghij" } });
+      // Letters typed at the end only add; the box grows without being reset.
+      fireEvent.change(answerBox(), { target: { value: "abcdefghijWk" } });
       await waitFor(() => expect(answerBox().style.height).toBe("32px"));
+    } finally {
+      scrollHeight.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("shrinks when a space typed inside a long word lets it wrap onto fewer lines, where the browser cannot size it itself", async () => {
+    // As a browser does, `scrollHeight` is never below the box's current height, so only a reset lets it shrink.
+    // Wrapping stands in as: a word of ten letters or more takes a line of its own, 16px per line.
+    vi.stubGlobal("CSS", { supports: () => false });
+    const scrollHeight = vi
+      .spyOn(HTMLTextAreaElement.prototype, "scrollHeight", "get")
+      .mockImplementation(function (this: HTMLTextAreaElement) {
+        const content = (1 + this.value.split(/\s+/).filter((word) => word.length >= 10).length) * 16;
+        const height = this.style.height === "auto" ? 0 : parseFloat(this.style.height) || 0;
+        return Math.max(content, height);
+      });
+    try {
+      renderCard(backlog({ actions: [] }));
+      fireEvent.change(answerBox(), { target: { value: "Hold it until the releasenotes are out" } });
+      await waitFor(() => expect(answerBox().style.height).toBe("32px"));
+      fireEvent.change(answerBox(), { target: { value: "Hold it until the release notes are out" } });
+      await waitFor(() => expect(answerBox().style.height).toBe("16px"));
     } finally {
       scrollHeight.mockRestore();
       vi.unstubAllGlobals();

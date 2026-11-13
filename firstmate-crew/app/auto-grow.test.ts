@@ -1,20 +1,21 @@
 import { describe, expect, it } from "vitest";
 
-import { isInsertion } from "./auto-grow";
+import { isAppend } from "./auto-grow";
 
-describe("isInsertion", () => {
-  it("is text added at one place: the end, the start or the middle", () => {
-    expect(isInsertion("", "a")).toBe(true);
-    expect(isInsertion("Merge", "Merge it")).toBe(true);
-    expect(isInsertion("it", "Merge it")).toBe(true);
-    expect(isInsertion("Merge it", "Merge all of it")).toBe(true);
-    expect(isInsertion("aa", "aaa")).toBe(true);
+describe("isAppend", () => {
+  it("is letters typed at the end", () => {
+    expect(isAppend("", "a")).toBe(true);
+    expect(isAppend("Merge", "Merge.")).toBe(true);
+    expect(isAppend("Merge it", "Merge itself")).toBe(true);
   });
 
-  it("is not a deletion, an unchanged text, or a replacement of any length", () => {
-    expect(isInsertion("Merge it", "Merge")).toBe(false);
-    expect(isInsertion("Merge it", "Merge it")).toBe(false);
-    expect(isInsertion("Merge when all checks are green.", "I'll merge it if CI is still green.")).toBe(false);
-    expect(isInsertion("abc", "abxd")).toBe(false);
+  it("is not whitespace, an edit inside the text, a deletion, an unchanged text or a replacement", () => {
+    expect(isAppend("Merge", "Merge ")).toBe(false);
+    expect(isAppend("Merge", "Merge\n")).toBe(false);
+    expect(isAppend("the releasenotes", "the release notes")).toBe(false);
+    expect(isAppend("it", "Merge it")).toBe(false);
+    expect(isAppend("Merge it", "Merge")).toBe(false);
+    expect(isAppend("Merge it", "Merge it")).toBe(false);
+    expect(isAppend("Merge when all checks are green.", "I'll merge it if CI is still green.")).toBe(false);
   });
 });

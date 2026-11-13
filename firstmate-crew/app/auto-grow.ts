@@ -5,8 +5,8 @@
  *
  * Where the browser has CSS `field-sizing: content` (Chromium, so bb's desktop app), the browser sizes the
  * box itself and this hook does nothing per keystroke. Elsewhere it measures, at most once per frame, inside
- * the layout that frame does anyway: a box whose text only grew is read without resetting its height, and the
- * reset that lets it shrink happens only after a change that was not an insertion, or a change of width.
+ * the layout that frame does anyway. Letters typed at the end are read without resetting its height; any
+ * other change, and a change of width, resets it first so the box can shrink.
  * Resetting and reading synchronously on every keystroke tripled the layouts per key and made typing lag.
  */
 import { useCallback, useEffect, useRef } from "react";
@@ -77,9 +77,7 @@ function attach(element: HTMLTextAreaElement): Sizer {
 
   return {
     changed(value) {
-      // Text inserted at one place, as typing does, cannot wrap onto fewer lines; any other change (a
-      // deletion, a paste over a selection) may.
-      if (!isInsertion(previous, value)) shrink = true;
+      if (!isAppend(previous, value)) shrink = true;
       previous = value;
       schedule();
     },
@@ -91,12 +89,11 @@ function attach(element: HTMLTextAreaElement): Sizer {
   };
 }
 
-/** Whether `next` is `previous` with text added at one place and nothing removed. */
-export function isInsertion(previous: string, next: string): boolean {
-  if (next.length <= previous.length) return false;
-  let start = 0;
-  while (start < previous.length && previous[start] === next[start]) start += 1;
-  let end = 0;
-  while (end < previous.length - start && previous[previous.length - 1 - end] === next[next.length - 1 - end]) end += 1;
-  return start + end === previous.length;
+/**
+ * Whether `next` is `previous` with letters typed at its end: no whitespace, nothing removed, nothing added
+ * anywhere else. Only that cannot make the text wrap onto fewer lines; a space typed inside a long word, any
+ * other edit inside the text, or a paste over a selection can.
+ */
+export function isAppend(previous: string, next: string): boolean {
+  return next.length > previous.length && next.startsWith(previous) && !/\s/.test(next.slice(previous.length));
 }
