@@ -61,8 +61,8 @@ sideband gives the server everything the design needs:
 
 The relay (`server/relay.ts`) is ticket-gated rather than `auth: "local"`: the page asks for a one-time
 ticket over RPC (bb authenticates RPC) and opens `…/http/relay?ticket=…` on an `auth: "none"` route. It
-therefore works from any origin bb serves the app on, a Connect port share included. Keep it working as
-the fallback until the phone checks are in.
+therefore works from any origin bb serves the app on, a Connect port share included. The owner's
+run through the share confirmed this. Keep it working as the fallback until an iPhone run is in.
 
 ### Default model: `gpt-realtime-2.1`, reasoning `low`
 
@@ -88,9 +88,22 @@ the page. Desktop runs used headless Chromium 151 (Electron's engine) against th
 - **Desktop (Chromium):** `getUserMedia` 23–41 ms after the tap; the reply track played through an
   `<audio>` element that was started after several awaits, so the tap's activation lasted long enough.
   Electron itself was not run: the owner's bb app must not be touched, and Electron shares the engine.
-- **Phone:** pending. The checks need the owner's phone (the page's **Run all checks**). See the spike
-  report for the steps. Until they are in, the iPhone WebView's microphone, audio after a tap, Wake Lock and
-  latency through Connect are unverified.
+- **The owner, through Connect (2026-11-14 02:31 UTC):** `spike-results/owner-1-remote-chrome-via-connect.json`,
+  with the transcripts removed. The saved user agent is **desktop Chrome 157 on macOS** (`platform:
+  "browser"`), not a phone. The run opened the Connect port share (`https://…--48886.getbb.app`) with a
+  real microphone, and the owner answered "Yes, clearly" to hearing the replies.
+  - The beep played through both Web Audio and an `<audio>` element. Wake Lock was granted.
+  - WebRTC: `getUserMedia` took 11.5 s, which was the permission prompt. The SDP exchange through Connect
+    and the bb server took 0.67 s, the peer connected 0.46 s later, and the data channel opened after 0.16 s.
+  - Relay: the socket opened through Connect in 0.54 s, and the upstream 0.78 s after that.
+  - `speech_stopped` → reply heard: 0.93 and 0.90 s on WebRTC, 0.92 s on the relay. That is the same as on
+    loopback, so Connect added no latency that shows on the relay.
+  - The page-measured turns (WebRTC 0.72 and 3.36 s, relay 2.32 s) mix in barge-in and room noise, since a
+    person spoke over the reply once. Read the VAD-side numbers above instead.
+- **Phone: still unverified.** No run came from an iPhone. The iPhone WebKit microphone, audio after a
+  tap, Wake Lock and the phone's latency are open until someone opens the page on the phone. The bb
+  mobile app's own WebView is not covered by this setup at all, because it would need the plugin in the
+  owner's bb.
 
 ## What phase 1 should carry over
 
