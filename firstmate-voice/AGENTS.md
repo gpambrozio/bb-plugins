@@ -61,8 +61,9 @@ sideband gives the server everything the design needs:
 
 The relay (`server/relay.ts`) is ticket-gated rather than `auth: "local"`: the page asks for a one-time
 ticket over RPC (bb authenticates RPC) and opens `…/http/relay?ticket=…` on an `auth: "none"` route. It
-therefore works from any origin bb serves the app on, a Connect port share included. The owner's
-run through the share confirmed this. Keep it working as the fallback until an iPhone run is in.
+therefore works from any origin bb serves the app on, a Connect port share included. Both of the
+owner's runs through the share (desktop Chrome and iPhone Safari) confirmed this. Keep it as the fallback for
+networks that block WebRTC.
 
 ### Default model: `gpt-realtime-2.1`, reasoning `low`
 
@@ -100,10 +101,28 @@ the page. Desktop runs used headless Chromium 151 (Electron's engine) against th
     loopback, so Connect added no latency that shows on the relay.
   - The page-measured turns (WebRTC 0.72 and 3.36 s, relay 2.32 s) mix in barge-in and room noise, since a
     person spoke over the reply once. Read the VAD-side numbers above instead.
-- **Phone: still unverified.** No run came from an iPhone. The iPhone WebKit microphone, audio after a
-  tap, Wake Lock and the phone's latency are open until someone opens the page on the phone. The bb
-  mobile app's own WebView is not covered by this setup at all, because it would need the plugin in the
-  owner's bb.
+- **The owner's iPhone, through Connect (2026-11-14 04:28 UTC):** `spike-results/owner-2-iphone-safari-via-connect.json`,
+  with the transcripts removed. The saved user agent is **iPhone Mobile Safari** (`iPhone; CPU iPhone OS 18_7`,
+  `Version/27.2 Mobile/15E148 Safari`; Safari freezes the OS part, so the iOS version is not in it) with
+  `platform: "browser"`: Safari itself, not the bb app's WebView. The page shows the user agent from this run on.
+  - Everything works in iPhone WebKit: `getUserMedia`, `RTCPeerConnection`, the data channel, Web Audio
+    (`running`) and an `<audio>` element after a tap, the reply track through an `<audio>` element started after
+    several awaits, and Wake Lock (granted, released). The owner answered "Yes, clearly" to hearing the replies.
+  - WebRTC: `getUserMedia` took 2.8 s, which was the permission prompt. The SDP exchange through Connect and the
+    bb server took 0.74 s (OpenAI's part 0.52 s), the peer connected 0.56 s later, and the data channel opened
+    after 0.20 s.
+  - WebRTC turn (the time question, tool with a preamble): 1.99 s from the end of speech to the first reply
+    sound; VAD wait 0.97 s; `speech_stopped` → heard 1.02 s. The sideband answered the tool in 3 ms, with the
+    next `response.created` 101 ms later.
+  - The announcement began playing 0.84 s after it was sent, but the 25 s cap ended the call 31 ms later.
+  - Relay: the socket opened through Connect in 0.71 s, the upstream 0.92 s later; the microphone (already
+    granted) in 0.39 s, with a 48 kHz `AudioContext`. `speech_stopped` → heard was 0.51 s, but the page-measured
+    turn was 4.16 s because the VAD waited 3.65 s for the end of the turn (room noise or a trailing word; one
+    sample). The relay's tool answer worked too.
+  - So the phone needs no fallback for WebRTC or the microphone. Phase 1 can make WebRTC direct the only path
+    on the phone. The relay is still a fallback for networks that block WebRTC.
+  - **Still not covered:** the bb mobile app's own WebView, which would need the plugin in the owner's bb, and
+    a screen that locks during a call.
 
 ## What phase 1 should carry over
 

@@ -1,0 +1,711 @@
+[
+  {
+    "saved": "2026-11-14T04:28:59.622Z",
+    "label": "all-browser",
+    "result": {
+      "label": "all-browser",
+      "startedAt": "2026-11-14T04:28:04.275Z",
+      "capabilities": {
+        "platform": "browser",
+        "userAgent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/27.2 Mobile/15E148 Safari/604.1",
+        "origin": "https://gpambrozio-mini--48886.getbb.app",
+        "secureContext": true,
+        "getUserMedia": true,
+        "RTCPeerConnection": true,
+        "AudioContext": true,
+        "wakeLock": true,
+        "WebSocket": true
+      },
+      "model": "gpt-realtime-2.1",
+      "effort": "low",
+      "seconds": 25,
+      "beep": {
+        "webAudio": "running",
+        "audioElement": "played"
+      },
+      "wakeLock": "granted (screen), released",
+      "webrtc": {
+        "path": "webrtc",
+        "label": "all-browser",
+        "model": "gpt-realtime-2.1",
+        "effort": "low",
+        "timings": {
+          "getUserMediaMs": 2803,
+          "offerMs": 2862,
+          "sdpExchangeRoundTripMs": 739,
+          "remoteTrackMs": 3619,
+          "peerConnectedMs": 4176,
+          "dataChannelOpenMs": 4373
+        },
+        "events": [
+          {
+            "t": 3617,
+            "type": "pc.connecting"
+          },
+          {
+            "t": 4176,
+            "type": "pc.connected"
+          },
+          {
+            "t": 4373,
+            "type": "dc.open"
+          },
+          {
+            "t": 4471,
+            "type": "session.created"
+          },
+          {
+            "t": 4471,
+            "type": "session.updated"
+          },
+          {
+            "t": 4471,
+            "type": "session.updated"
+          },
+          {
+            "t": 6421,
+            "type": "input_audio_buffer.speech_started"
+          },
+          {
+            "t": 8571,
+            "type": "input_audio_buffer.speech_stopped"
+          },
+          {
+            "t": 8572,
+            "type": "input_audio_buffer.committed"
+          },
+          {
+            "t": 8574,
+            "type": "response.created",
+            "info": "in_progress"
+          },
+          {
+            "t": 9339,
+            "type": "conversation.item.input_audio_transcription.completed",
+            "info": "[transcript removed]"
+          },
+          {
+            "t": 9429,
+            "type": "output_audio_buffer.started"
+          },
+          {
+            "t": 9844,
+            "type": "response.output_audio_transcript.done",
+            "info": "[transcript removed]"
+          },
+          {
+            "t": 9851,
+            "type": "response.function_call_arguments.done"
+          },
+          {
+            "t": 9853,
+            "type": "response.done",
+            "info": "completed"
+          },
+          {
+            "t": 9971,
+            "type": "response.created",
+            "info": "in_progress"
+          },
+          {
+            "t": 11188,
+            "type": "response.output_audio_transcript.done",
+            "info": "[transcript removed]"
+          },
+          {
+            "t": 11195,
+            "type": "response.done",
+            "info": "completed"
+          },
+          {
+            "t": 15279,
+            "type": "output_audio_buffer.stopped"
+          },
+          {
+            "t": 28107,
+            "type": "response.created",
+            "info": "in_progress"
+          }
+        ],
+        "serverSdpExchange": {
+          "accepted": true,
+          "status": 201,
+          "ms": 517,
+          "location": "/v1/realtime/calls/rtc_u7_Ejzexp3oN1UBuKN6RiTUB0YpVDN0OmZ9",
+          "callId": "rtc_u7_Ejzexp3oN1UBuKN6RiTUB0YpVDN0OmZ9"
+        },
+        "remoteAudioElement": "played",
+        "serverLog": {
+          "callId": "rtc_u7_Ejzexp3oN1UBuKN6RiTUB0YpVDN0OmZ9",
+          "label": "all-browser",
+          "model": "gpt-realtime-2.1",
+          "effort": "low",
+          "credential": "codex-realtime",
+          "createdAt": "2026-11-14T04:28:07.947Z",
+          "sdpExchange": {
+            "accepted": true,
+            "status": 201,
+            "ms": 517,
+            "location": "/v1/realtime/calls/rtc_u7_Ejzexp3oN1UBuKN6RiTUB0YpVDN0OmZ9",
+            "callId": "rtc_u7_Ejzexp3oN1UBuKN6RiTUB0YpVDN0OmZ9"
+          },
+          "sideband": {
+            "opened": true,
+            "openedAt": 932,
+            "firstEvent": "session.updated",
+            "firstEventAt": 1004,
+            "updated": true
+          },
+          "tools": [
+            {
+              "name": "get_time",
+              "argumentsDoneAt": 6836,
+              "outputSentAt": 6839,
+              "nextResponseAt": 6940
+            }
+          ],
+          "announcements": [
+            {
+              "text": "This is an announcement from the bb server.",
+              "sentAt": 25003,
+              "responseCreatedAt": 25099
+            }
+          ],
+          "events": [
+            {
+              "t": 932,
+              "type": "sideband.open"
+            },
+            {
+              "t": 1004,
+              "type": "session.updated",
+              "info": "model gpt-realtime-2.1, effort low, tools 1"
+            },
+            {
+              "t": 3390,
+              "type": "input_audio_buffer.speech_started"
+            },
+            {
+              "t": 5555,
+              "type": "input_audio_buffer.speech_stopped"
+            },
+            {
+              "t": 5556,
+              "type": "input_audio_buffer.committed"
+            },
+            {
+              "t": 5556,
+              "type": "conversation.item.added"
+            },
+            {
+              "t": 5556,
+              "type": "conversation.item.done"
+            },
+            {
+              "t": 5561,
+              "type": "response.created"
+            },
+            {
+              "t": 5866,
+              "type": "conversation.item.input_audio_transcription.delta"
+            },
+            {
+              "t": 5868,
+              "type": "conversation.item.input_audio_transcription.delta"
+            },
+            {
+              "t": 5871,
+              "type": "conversation.item.input_audio_transcription.delta"
+            },
+            {
+              "t": 5877,
+              "type": "conversation.item.input_audio_transcription.delta"
+            },
+            {
+              "t": 5884,
+              "type": "conversation.item.input_audio_transcription.delta"
+            },
+            {
+              "t": 5889,
+              "type": "conversation.item.input_audio_transcription.delta"
+            },
+            {
+              "t": 5893,
+              "type": "conversation.item.input_audio_transcription.delta"
+            },
+            {
+              "t": 5927,
+              "type": "response.output_item.added"
+            },
+            {
+              "t": 5927,
+              "type": "conversation.item.added"
+            },
+            {
+              "t": 5943,
+              "type": "response.content_part.added"
+            },
+            {
+              "t": 5945,
+              "type": "response.output_audio_transcript.delta"
+            },
+            {
+              "t": 5950,
+              "type": "response.output_audio_transcript.delta"
+            },
+            {
+              "t": 5958,
+              "type": "response.output_audio_transcript.delta"
+            },
+            {
+              "t": 6337,
+              "type": "conversation.item.input_audio_transcription.completed",
+              "info": "[transcript removed]"
+            },
+            {
+              "t": 6430,
+              "type": "output_audio_buffer.started"
+            },
+            {
+              "t": 6432,
+              "type": "response.output_audio_transcript.delta"
+            },
+            {
+              "t": 6435,
+              "type": "response.output_audio_transcript.delta"
+            },
+            {
+              "t": 6440,
+              "type": "response.output_audio_transcript.delta"
+            },
+            {
+              "t": 6442,
+              "type": "response.output_audio_transcript.delta"
+            },
+            {
+              "t": 6445,
+              "type": "response.output_audio_transcript.delta"
+            },
+            {
+              "t": 6486,
+              "type": "response.output_audio_transcript.delta"
+            },
+            {
+              "t": 6488,
+              "type": "response.output_audio_transcript.delta"
+            },
+            {
+              "t": 6490,
+              "type": "response.output_audio_transcript.delta"
+            },
+            {
+              "t": 6524,
+              "type": "response.output_audio_transcript.delta"
+            },
+            {
+              "t": 6525,
+              "type": "response.output_audio_transcript.delta"
+            },
+            {
+              "t": 6804,
+              "type": "response.output_item.added"
+            },
+            {
+              "t": 6805,
+              "type": "conversation.item.added"
+            },
+            {
+              "t": 6805,
+              "type": "response.function_call_arguments.delta"
+            },
+            {
+              "t": 6833,
+              "type": "response.output_audio.done"
+            },
+            {
+              "t": 6833,
+              "type": "response.output_audio_transcript.done",
+              "info": "[transcript removed]"
+            },
+            {
+              "t": 6834,
+              "type": "response.content_part.done"
+            },
+            {
+              "t": 6834,
+              "type": "conversation.item.done"
+            },
+            {
+              "t": 6835,
+              "type": "response.output_item.done"
+            },
+            {
+              "t": 6836,
+              "type": "response.function_call_arguments.done",
+              "info": "get_time"
+            },
+            {
+              "t": 6839,
+              "type": "conversation.item.done"
+            },
+            {
+              "t": 6870,
+              "type": "response.output_item.done"
+            },
+            {
+              "t": 6870,
+              "type": "response.done",
+              "info": "completed"
+            },
+            {
+              "t": 6871,
+              "type": "rate_limits.updated"
+            },
+            {
+              "t": 6917,
+              "type": "conversation.item.added"
+            },
+            {
+              "t": 6918,
+              "type": "conversation.item.done"
+            },
+            {
+              "t": 6939,
+              "type": "response.created"
+            },
+            {
+              "t": 7420,
+              "type": "response.output_item.added"
+            },
+            {
+              "t": 7420,
+              "type": "conversation.item.added"
+            },
+            {
+              "t": 7439,
+              "type": "response.content_part.added"
+            },
+            {
+              "t": 7439,
+              "type": "response.output_audio_transcript.delta"
+            },
+            {
+              "t": 7447,
+              "type": "response.output_audio_transcript.delta"
+            },
+            {
+              "t": 7456,
+              "type": "response.output_audio_transcript.delta"
+            },
+            {
+              "t": 7465,
+              "type": "response.output_audio_transcript.delta"
+            },
+            {
+              "t": 7475,
+              "type": "response.output_audio_transcript.delta"
+            },
+            {
+              "t": 7640,
+              "type": "response.output_audio_transcript.delta"
+            },
+            {
+              "t": 7818,
+              "type": "response.output_audio_transcript.delta"
+            },
+            {
+              "t": 7823,
+              "type": "response.output_audio_transcript.delta"
+            },
+            {
+              "t": 8175,
+              "type": "response.output_audio.done"
+            },
+            {
+              "t": 8175,
+              "type": "response.output_audio_transcript.done",
+              "info": "[transcript removed]"
+            },
+            {
+              "t": 8175,
+              "type": "response.content_part.done"
+            },
+            {
+              "t": 8176,
+              "type": "conversation.item.done"
+            },
+            {
+              "t": 8178,
+              "type": "response.output_item.done"
+            },
+            {
+              "t": 8180,
+              "type": "response.done",
+              "info": "completed"
+            },
+            {
+              "t": 8219,
+              "type": "rate_limits.updated"
+            },
+            {
+              "t": 12247,
+              "type": "output_audio_buffer.stopped"
+            },
+            {
+              "t": 25003,
+              "type": "announce.sent",
+              "info": "This is an announcement from the bb server."
+            },
+            {
+              "t": 25099,
+              "type": "response.created"
+            },
+            {
+              "t": 25521,
+              "type": "response.output_item.added"
+            },
+            {
+              "t": 25536,
+              "type": "response.content_part.added"
+            },
+            {
+              "t": 25536,
+              "type": "response.output_audio_transcript.delta"
+            },
+            {
+              "t": 25543,
+              "type": "response.output_audio_transcript.delta"
+            },
+            {
+              "t": 25551,
+              "type": "response.output_audio_transcript.delta"
+            },
+            {
+              "t": 25841,
+              "type": "output_audio_buffer.started"
+            },
+            {
+              "t": 25841,
+              "type": "response.output_audio_transcript.delta"
+            },
+            {
+              "t": 25841,
+              "type": "response.output_audio_transcript.delta"
+            },
+            {
+              "t": 25872,
+              "type": "end",
+              "info": "page ended"
+            },
+            {
+              "t": 25923,
+              "type": "response.output_audio_transcript.delta"
+            },
+            {
+              "t": 25923,
+              "type": "response.output_audio_transcript.delta"
+            },
+            {
+              "t": 26033,
+              "type": "response.output_audio_transcript.delta"
+            },
+            {
+              "t": 26054,
+              "type": "response.output_audio_transcript.delta"
+            }
+          ],
+          "hangup": {
+            "accepted": true,
+            "status": 200,
+            "ms": 212
+          },
+          "endedAt": 26085
+        },
+        "turns": [
+          {
+            "speechEndAt": 7600,
+            "replyOnsetAt": 9592,
+            "latencyMs": 1992
+          }
+        ],
+        "onsets": [
+          {
+            "at": 9592,
+            "afterSpeech": true
+          },
+          {
+            "at": 12544,
+            "afterSpeech": false
+          }
+        ],
+        "peaks": {
+          "local": 0.214,
+          "remote": 0.223
+        },
+        "firstEventAt": {
+          "session.created": 4471,
+          "session.updated": 4471,
+          "input_audio_buffer.speech_started": 6421,
+          "input_audio_buffer.speech_stopped": 8571,
+          "input_audio_buffer.committed": 8572,
+          "conversation.item.added": 8572,
+          "conversation.item.done": 8572,
+          "response.created": 8574,
+          "conversation.item.input_audio_transcription.delta": 8867,
+          "response.output_item.added": 8932,
+          "response.content_part.added": 8946,
+          "response.output_audio_transcript.delta": 8946,
+          "conversation.item.input_audio_transcription.completed": 9339,
+          "output_audio_buffer.started": 9429,
+          "response.function_call_arguments.delta": 9815,
+          "response.output_audio.done": 9844,
+          "response.output_audio_transcript.done": 9844,
+          "response.content_part.done": 9846,
+          "response.output_item.done": 9851,
+          "response.function_call_arguments.done": 9851,
+          "response.done": 9853,
+          "rate_limits.updated": 9892,
+          "output_audio_buffer.stopped": 15279
+        },
+        "serverToReply": [
+          1021
+        ]
+      },
+      "relay": {
+        "path": "relay",
+        "label": "all-browser",
+        "model": "gpt-realtime-2.1",
+        "effort": "low",
+        "timings": {
+          "getUserMediaMs": 393,
+          "relaySocketOpenMs": 712,
+          "upstreamOpenServerMs": 917,
+          "sessionCreatedMs": 1737,
+          "firstAudioDeltaMs": 13884
+        },
+        "events": [
+          {
+            "t": 712,
+            "type": "relay.open"
+          },
+          {
+            "t": 1729,
+            "type": "relay.upstream_open",
+            "info": "codex-realtime"
+          },
+          {
+            "t": 1737,
+            "type": "session.created"
+          },
+          {
+            "t": 1861,
+            "type": "session.updated"
+          },
+          {
+            "t": 1881,
+            "type": "session.updated"
+          },
+          {
+            "t": 8908,
+            "type": "input_audio_buffer.speech_started"
+          },
+          {
+            "t": 13432,
+            "type": "input_audio_buffer.speech_stopped"
+          },
+          {
+            "t": 13439,
+            "type": "response.created",
+            "info": "in_progress"
+          },
+          {
+            "t": 13887,
+            "type": "conversation.item.input_audio_transcription.completed",
+            "info": "[transcript removed]"
+          },
+          {
+            "t": 14480,
+            "type": "response.output_audio_transcript.done",
+            "info": "[transcript removed]"
+          },
+          {
+            "t": 14486,
+            "type": "response.function_call_arguments.done"
+          },
+          {
+            "t": 14486,
+            "type": "relay.tool_output_sent"
+          },
+          {
+            "t": 14491,
+            "type": "response.done",
+            "info": "completed"
+          },
+          {
+            "t": 14682,
+            "type": "response.created",
+            "info": "in_progress"
+          },
+          {
+            "t": 15252,
+            "type": "response.output_audio_transcript.done",
+            "info": "[transcript removed]"
+          },
+          {
+            "t": 15295,
+            "type": "response.done",
+            "info": "completed"
+          },
+          {
+            "t": 23161,
+            "type": "input_audio_buffer.speech_started"
+          }
+        ],
+        "sentFrames": 292,
+        "contextSampleRate": 48000,
+        "turns": [
+          {
+            "speechEndAt": 9787,
+            "replyOnsetAt": 13943,
+            "latencyMs": 4156
+          }
+        ],
+        "onsets": [
+          {
+            "at": 13943,
+            "afterSpeech": true
+          },
+          {
+            "at": 17087,
+            "afterSpeech": false
+          }
+        ],
+        "peaks": {
+          "local": 0.211,
+          "remote": 0.16
+        },
+        "serverToReply": [
+          511
+        ]
+      }
+    }
+  },
+  {
+    "saved": "2026-11-14T04:29:04.269Z",
+    "label": "heard-all-browser",
+    "result": {
+      "heard": "Yes, clearly",
+      "capabilities": {
+        "platform": "browser",
+        "userAgent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/27.2 Mobile/15E148 Safari/604.1",
+        "origin": "https://gpambrozio-mini--48886.getbb.app",
+        "secureContext": true,
+        "getUserMedia": true,
+        "RTCPeerConnection": true,
+        "AudioContext": true,
+        "wakeLock": true,
+        "WebSocket": true
+      }
+    }
+  }
+]
