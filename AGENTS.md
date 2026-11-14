@@ -180,6 +180,14 @@ moves the pin backwards. Re-pin with `npm install --save-exact -D @get-bb/plugin
   `node …/bb-app/host-daemon/dist/bb`. Install, reload and spawn threads there, never in the user's bb. Its
   web app is at the server URL (first load shows a setup screen with *Skip setup*); `playwright-core` with
   a cached Chromium drives it headlessly. `learning-exercises/AGENTS.md` and its spike notes used it.
+  With the real HOME, the first-run setup finds your agents and projects and offers no *Skip setup*;
+  `bb settings general onboardingCompletedAt <ISO time>` on the dev bb skips it without importing
+  anything. To reach the dev bb from a phone, `bb connect expose <port>` gives a URL only someone signed
+  in to the bb account can open, and the dev bb answers it only when started with
+  `BB_APP_URL=<that URL>` in its environment (otherwise 403). `firstmate-voice/AGENTS.md` used both.
+- **A git or path install refuses a server import from outside the plugin folder** ("server source import
+  escapes the plugin directory"), although a local `bb plugin build` accepts it. To reuse another plugin's
+  code, call its RPC or copy the module.
 
 ## Architecture
 
