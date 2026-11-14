@@ -1,0 +1,92 @@
+{
+  "ranAt": "2026-11-14T02:02:27.063Z",
+  "model": "gpt-realtime-2.1",
+  "credential": "ChatGPT subscription (Codex login, valid until 2026-11-22T02:33:02.000Z)",
+  "offerFrom": "http://127.0.0.1:48886/plugins/firstmate-voice/spike",
+  "clientSecrets": {
+    "accepted": true,
+    "status": 200,
+    "ms": 707,
+    "secretPrefix": "ek_…",
+    "validForSeconds": 59,
+    "sessionModel": "gpt-realtime-2.1",
+    "sessionEffort": "low"
+  },
+  "reasoningEffort": {
+    "opened": true,
+    "close": "1000",
+    "results": [
+      {
+        "effort": "minimal",
+        "accepted": true,
+        "echoed": "minimal"
+      },
+      {
+        "effort": "low",
+        "accepted": true,
+        "echoed": "low"
+      },
+      {
+        "effort": "medium",
+        "accepted": true,
+        "echoed": "medium"
+      },
+      {
+        "effort": "high",
+        "accepted": true,
+        "echoed": "high"
+      },
+      {
+        "effort": "xhigh",
+        "accepted": true,
+        "echoed": "xhigh"
+      },
+      {
+        "effort": "bogus",
+        "accepted": false,
+        "error": "{\"type\":\"invalid_request_error\",\"code\":\"invalid_value\",\"message\":\"Invalid value: 'bogus'. Supported values are: 'minimal', 'low', 'medium', 'high', and 'xhigh'.\",\"param\":\"session.reasoning.effort\",\"event_id\":\"effort_5\"}"
+      }
+    ]
+  },
+  "calls": {
+    "accepted": true,
+    "status": 201,
+    "ms": 633,
+    "location": "/v1/realtime/calls/rtc_u7_EjxO4p3oNHRwst0zwGleQjfqFTs04wTL",
+    "callId": "rtc_u7_EjxO4p3oNHRwst0zwGleQjfqFTs04wTL",
+    "answerSdpBytes": 1663
+  },
+  "peer": {
+    "state": "connected",
+    "ms": 208
+  },
+  "sideband": {
+    "opened": true,
+    "ms": 2408,
+    "firstEvent": "session.updated",
+    "updated": true,
+    "close": "1000"
+  },
+  "hangup": {
+    "accepted": true,
+    "status": 200,
+    "ms": 87
+  },
+  "secretCall": {
+    "accepted": true,
+    "status": 201,
+    "ms": 1045,
+    "location": "/v1/realtime/calls/rtc_u7_EjxO7p3oN1UBMupK2I4PaOGSLvh2PYv2",
+    "callId": "rtc_u7_EjxO7p3oN1UBMupK2I4PaOGSLvh2PYv2",
+    "answerSdpBytes": 1683
+  },
+  "secretCallPeer": {
+    "state": "connected",
+    "ms": 275
+  },
+  "secretCallHangup": {
+    "accepted": true,
+    "status": 200,
+    "ms": 89
+  }
+}
