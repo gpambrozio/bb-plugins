@@ -69,7 +69,8 @@ export interface SpeechRunDeps {
   localHostId(): Promise<string | null>;
   /** The `hooks.begin`, `hooks.renew` and `hooks.end` RPCs. */
   begin(hostId: string, runId: string): Promise<{ open: boolean | null; error: string | null }>;
-  renew(hostId: string, runId: string): Promise<{ open: boolean }>;
+  /** `open` false: the machine has closed the run. Null, or a failed call: unknown, so renewing goes on. */
+  renew(hostId: string, runId: string): Promise<{ open: boolean | null }>;
   end(hostId: string, runId: string): Promise<{ error: string | null }>;
   report(level: "info" | "warn", message: string, error?: unknown): void;
   /** How long speech waits for the run to start (the machine's before hook) before going on. */
@@ -137,10 +138,13 @@ export function createSpeechRunStarter(deps: SpeechRunDeps): SpeechRunStarter {
       open = result.open;
       // A before hook that failed is in the plugin's log already, with the machine.
       if (open !== false && ending === null) {
+        // Only the machine saying the run is closed stops the renewals: a renewal that failed, or
+        // that the machine could not be asked about, is tried again at the next one, while the
+        // lease (three renewals long) still holds.
         renewal = setInterval(() => {
           deps.renew(found, runId).then(
             (renewed) => {
-              if (!renewed.open) clearInterval(renewal);
+              if (renewed.open === false) clearInterval(renewal);
             },
             () => {},
           );

@@ -146,9 +146,10 @@ export function SpeechHooksSection() {
           A command to run on a machine just before Herald speaks there, and one once it has finished — to pause music or lower the
           volume, say. Each machine has its own, and empty runs nothing. They run on the machine whose bb desktop app speaks, through
           its shell, from the home folder, with {SPEECH_HOOK_ENV} set to <code>before</code> or <code>after</code>. Sentences said back
-          to back, and windows speaking on the same machine at once, share one before and one after. The after hook runs
-          whenever the before hook did: when the speech ends or fails, and within half a minute when the window speaking closes,
-          reloads or loses bb. A hook gets{" "}
+          to back, and windows speaking on the same machine at once, share one before and one after. The after hook follows the
+          before hook: when the speech ends or fails, within half a minute when the window speaking closes, reloads or loses bb,
+          and at once when Herald is reloaded or turned off (a before hook still running is then stopped, and the after hook gets
+          three seconds). A hook gets{" "}
           {SPEECH_HOOK_TIMEOUT_MS / 1000} seconds; one that is slower is stopped, and one that fails is noted in the plugin&apos;s log —
           Herald speaks either way. bb&apos;s mobile app and a browser tab run no hooks.
         </p>

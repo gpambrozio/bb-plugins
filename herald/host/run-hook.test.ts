@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import hostEntry from "../host";
-import { runHook } from "./run-hook";
+import { killRunningHooks, runHook } from "./run-hook";
 
 const posix = process.platform !== "win32";
 let dirs: string[] = [];
@@ -45,6 +45,14 @@ describe.runIf(posix)("runHook", () => {
     expect(Date.now() - started).toBeLessThan(5_000);
     await new Promise((resolve) => setTimeout(resolve, 1_500));
     expect(() => readFileSync(marker)).toThrow();
+  });
+
+  it("kills the running hooks of one kind, with what they started, and leaves the others", async () => {
+    const before = runHook("before", "sleep 30 & sleep 30");
+    const after = runHook("after", "sleep 1");
+    killRunningHooks("before");
+    await expect(before).resolves.toMatchObject({ signal: "SIGKILL", timedOut: false });
+    await expect(after).resolves.toMatchObject({ exitCode: 0 });
   });
 
   it("does not wait for a background process left holding its output", async () => {

@@ -9,7 +9,7 @@
  * - **Every run ends.** By its window's `end`; by its lease running out, when
  *   the window stopped renewing (closed, reloaded, lost the server); or by
  *   `dispose`, when the worker goes (a plugin reload, disable or removal, the
- *   daemon shutting down).
+ *   daemon shutting down) — within bb's disposal budget (`DISPOSE_BUDGET_MS`).
  * - **Order-proof.** bb does not deliver concurrent host calls in order, so an
  *   `end` can arrive before its `begin`: an ended run id is remembered, and a
  *   `begin` for it opens nothing. `end` and `renew` are safe to repeat.
@@ -26,8 +26,10 @@ export interface Lease {
 }
 
 export interface SessionsDeps {
-  /** Runs one hook command; never rejects (`host/run-hook.ts`). */
-  run(kind: SpeechHookKind, command: string): Promise<HookRun>;
+  /** Runs one hook command, within `timeoutMs` when given; never rejects (`host/run-hook.ts`). */
+  run(kind: SpeechHookKind, command: string, timeoutMs?: number): Promise<HookRun>;
+  /** Kills the hooks still running, or those of `kind`; their runs resolve as killed. */
+  kill(kind?: SpeechHookKind): void;
   /** A run ended by its lease running out, and the `after` that ran then (or null). */
   expired(runId: string, after: HookRun | null): void;
   now?: () => number;
@@ -46,6 +48,21 @@ interface Session {
 
 /** How long an ended run id is remembered, against a `begin` that arrives late. */
 export const ENDED_MEMORY_MS = 10 * 60_000;
+
+/**
+ * How long `dispose` may take, all in. bb gives a worker 5 s to dispose
+ * before it exits it (and its daemon SIGKILLs it at about the same moment),
+ * so cleanup must be done well inside that: a before hook still running is
+ * killed at once, the after hook gets this long instead of its usual 5 s,
+ * and anything still running when it is up is killed.
+ */
+export const DISPOSE_BUDGET_MS = 3_000;
+
+/** What `dispose` did: the runs it ended, and the after hook it ran for them (null when none was owed or set). */
+export interface DisposeReport {
+  runIds: string[];
+  after: HookRun | null;
+}
 
 export class HookSessions {
   private session: Session | null = null;
@@ -113,29 +130,40 @@ export class HookSessions {
     }
   }
 
-  /** The worker is going: every open run ends now, and `after` runs if it is owed. */
-  async dispose(): Promise<void> {
+  /**
+   * The worker is going: every open run ends now and its after hook runs,
+   * all within `DISPOSE_BUDGET_MS` (see there). Null when no run was open.
+   */
+  async dispose(): Promise<DisposeReport | null> {
     this.disposed = true;
-    const session = this.session;
-    if (session === null) {
-      await this.closing;
-      return;
-    }
-    const runs = [...session.runs.values()];
-    for (const run of runs) clearTimeout(run.timer);
-    session.runs.clear();
+    // A before hook still running would hold the after hook up past the budget; it is cut short.
+    this.deps.kill("before");
+    const deadline = setTimeout(() => this.deps.kill(), DISPOSE_BUDGET_MS);
     try {
-      await this.close(session);
+      const session = this.session;
+      if (session === null) {
+        // An after hook a window's end started may still be running; the deadline bounds it.
+        await this.closing;
+        return null;
+      }
+      const runs = [...session.runs.entries()];
+      for (const [, run] of runs) clearTimeout(run.timer);
+      session.runs.clear();
+      try {
+        return { runIds: runs.map(([runId]) => runId), after: await this.close(session, DISPOSE_BUDGET_MS) };
+      } finally {
+        await Promise.all(runs.map(([, run]) => run.lease.dispose()));
+      }
     } finally {
-      await Promise.all(runs.map((run) => run.lease.dispose()));
+      clearTimeout(deadline);
     }
   }
 
-  private close(session: Session): Promise<HookRun | null> {
+  private close(session: Session, afterTimeoutMs?: number): Promise<HookRun | null> {
     this.session = null;
     const closing = (async () => {
       await session.before;
-      return session.after === "" ? null : this.deps.run("after", session.after);
+      return session.after === "" ? null : this.deps.run("after", session.after, afterTimeoutMs);
     })();
     this.closing = closing;
     return closing;

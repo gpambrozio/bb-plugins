@@ -522,6 +522,7 @@ describe("Speech hooks across two windows on one machine", () => {
         steps.push(kind);
         return { exitCode: 0, signal: null, timedOut: false, durationMs: 0, stderr: "" };
       },
+      kill: () => {},
       expired: () => {},
     });
     const lease = { dispose: async () => {} };

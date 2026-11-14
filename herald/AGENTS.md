@@ -646,12 +646,29 @@ per setting for every device, so they live in storage and in a section of their 
   speech is a run id; the host entry keeps one session per machine: the first open run runs *before*,
   runs that join wait for it, and *after* runs when the last open run ends — so two windows on one
   machine, or a claim handed from one to the other, share one pair. A run ends by its window's
-  `hooks.end`, by its lease running out (30 s, renewed every 10 s by the window while it speaks; a
+  `hooks.end`, by its lease running out (30 s, renewed every 8 s by the window while it speaks; a
   window that closes, reloads or loses the server stops renewing), or by the worker's dispose (plugin
   reload, disable, removal, daemon shutdown). *After* always waits for *before*, and a new session's
   *before* waits for the last *after*. Each open run holds a worker lease, so the idle stop cannot drop
   an owed *after*. Only a hard kill of the machine or its daemon loses one; say so wherever the pairing
   is promised.
+- **Renewal tolerates a bad moment.** Only the machine answering that a run is *not* open stops the
+  window's renewals; a failed call, or the server unable to reach the machine (`open: null`), is tried
+  again at the next tick. Three renewals fit in a lease, so two failures in a row do not end a run.
+- **Dispose fits bb's budget.** bb's worker (`plugin-host-worker`, bb 0.49) gives `dispose` 5 s and then
+  calls `process.exit(1)`, and the daemon SIGKILLs the worker 5 s after asking — so a hook still running
+  then would lose the timeout that lived in the worker. `HookSessions.dispose` kills a running *before*
+  at once, gives *after* `DISPOSE_BUDGET_MS` (3 s), and kills whatever still runs when that is up; the
+  report waits at most 500 ms more. `host/run-hook.ts` also kills every running hook's process group
+  from a `process.on("exit")` listener, which covers every way the worker leaves except a SIGKILL.
+- **What the machine did alone is reported twice.** A run ended by expiry or dispose goes out as the
+  host signal `afterWithoutWindow` (logged by the server, with the machine) *and* as a line on the
+  worker's stderr, which the daemon logs as "Host plugin stderr" — the path that still works during a
+  shutdown, when the link to the server may be gone or the server's instance being replaced.
+- **`host/worker.test.ts` runs the built `dist/host.js` in bb's real worker** over its IPC protocol
+  (from the desktop app, the global `bb-app` CI installs, or `BB_HOST_WORKER`), since the SDK's
+  in-process harness has no disposal deadline. It is skipped without a worker or a build, and fails on
+  a build older than the host sources: run `bb plugin build` before `npm test` when changing them.
 - **Order-proof calls.** bb does not deliver concurrent host calls in order, so `end` may reach the host
   before its `begin`: the host remembers ended run ids for ten minutes and opens nothing for them, and
   `end` is safe to repeat. The window binds a run to one machine and run id when it starts; its deadline
@@ -664,8 +681,7 @@ per setting for every device, so they live in storage and in a section of their 
   elsewhere, withdrawn) starts none. Presses (*Test voice*, *Read again*) start runs like announcements.
 - **Never in the way:** the host kills a hook's process group at `SPEECH_HOOK_TIMEOUT_MS` (5 s) and
   resolves on `exit`, not `close`, so a background child holding stderr cannot hold speech. Nothing on
-  the window's side rejects. Failures are logged by the server, with the machine; a run the machine
-  ended by itself arrives as the host signal `afterOnExpiry` and is logged too.
+  the window's side rejects. Failures are logged by the server, with the machine.
 
 ## Icons
 

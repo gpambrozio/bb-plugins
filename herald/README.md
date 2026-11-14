@@ -212,15 +212,20 @@ osascript -e 'tell application "Music" to play'
   for it; the after command runs once nothing more is queued to be said. Sentences read back to back share
   one before and one after, and so do two windows speaking on the same machine at once: the after command
   waits for the last of them. *Test voice* and *Read again* run them too.
-- **A before is always followed by its after.** The after command runs when the speech ends, fails or is
-  cut short. The machine keeps track of it, not the window: if the window speaking closes, reloads or
-  loses its connection to bb, the machine runs the after command by itself within about 30 seconds, and
-  when Herald is reloaded, turned off or removed, it runs it at once. It always runs after the before
-  command has finished, never before it. Only the machine itself, or its bb host daemon, stopping
-  abruptly can leave a before without its after.
+- **A before is followed by its after.** The after command runs when the speech ends, fails or is cut
+  short. The machine keeps track of it, not the window: if the window speaking closes, reloads or loses
+  its connection to bb for good, the machine runs the after command by itself within about 30 seconds (a
+  connection that drops for a few seconds does not end the run). When Herald is reloaded, turned off or
+  removed during a run, the machine runs it at once, inside the five seconds bb gives Herald's machine
+  worker to shut down: a before command still running is stopped, and the after command gets three
+  seconds instead of five. It always runs after the before command has finished or been stopped, never
+  before it. Only the machine itself, or its bb host daemon, stopping abruptly can leave a before without
+  its after.
 - **Never in the way:** a command gets five seconds; a slower one is stopped (with whatever it started),
   and Herald speaks anyway. A command that fails is noted in `bb plugin logs herald` with its exit code
-  and the end of its error output.
+  and the end of its error output. An after command the machine ran by itself is noted there too, and
+  also in that machine's bb host daemon log ("Host plugin stderr"), which still works while Herald is
+  shutting down.
 - **Empty runs nothing**, and empty is the default. Clear both commands to forget a machine.
 
 ## Per-thread choice

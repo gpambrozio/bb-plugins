@@ -124,8 +124,8 @@ export default async function plugin(bb: BbPluginApi) {
     },
     log: bb.log,
   });
-  const stopHearingExpiries = hostClient.experimental_onSignal("afterOnExpiry", ({ hostId, payload }) =>
-    speechHooks.expired(hostId, payload.after),
+  const stopHearingExpiries = hostClient.experimental_onSignal("afterWithoutWindow", ({ hostId, payload }) =>
+    speechHooks.endedByMachine(hostId, payload.reason, payload.after),
   );
   const history = new SentenceHistory(bb.storage.kv, bb.log);
 

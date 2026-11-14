@@ -30,10 +30,11 @@ export const SPEECH_HOOK_TIMEOUT_MS = 5_000;
  * How long a run of speech stays open on its machine without word from the
  * window speaking it. The window renews it every `SPEECH_HOOK_RENEW_MS` while
  * it speaks; a window that closes, reloads or loses the server stops renewing,
- * and the machine runs the after hook itself once the lease runs out.
+ * and the machine runs the after hook itself once the lease runs out. Three
+ * renewals fit in a lease, so two that fail in a row do not end a run.
  */
 export const SPEECH_HOOK_LEASE_MS = 30_000;
-export const SPEECH_HOOK_RENEW_MS = 10_000;
+export const SPEECH_HOOK_RENEW_MS = 8_000;
 
 /** How much of a failed hook's error output is kept for the log. */
 export const SPEECH_HOOK_STDERR_MAX = 1_000;
@@ -76,9 +77,9 @@ export const HookRunSchema = z.object({
 });
 export type HookRun = z.infer<typeof HookRunSchema>;
 
-/** Why a run failed, for the log; null when it succeeded. */
+/** Why a run failed, for the log; null when it succeeded. A hook cut short as its worker shut down was ended by SIGKILL. */
 export function hookFailure(run: HookRun): string | null {
-  if (run.timedOut) return `it was stopped after ${SPEECH_HOOK_TIMEOUT_MS / 1000} seconds`;
+  if (run.timedOut) return `it was stopped after ${Math.round(run.durationMs / 1000)} seconds`;
   if (run.signal !== null) return `it was ended by ${run.signal}`;
   if (run.exitCode !== 0) {
     const output = run.stderr.trim();

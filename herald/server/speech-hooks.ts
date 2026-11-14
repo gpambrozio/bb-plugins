@@ -117,13 +117,17 @@ export class SpeechHooksStore {
     }
   }
 
-  /** Keeps `runId` open on `hostId`; false when the machine no longer has it open. */
-  async renew(hostId: string, runId: string): Promise<boolean> {
+  /**
+   * Keeps `runId` open on `hostId`: true when the machine has it open, false
+   * when the machine says it does not, null when the machine could not be
+   * asked — the window tries again at its next renewal.
+   */
+  async renew(hostId: string, runId: string): Promise<boolean | null> {
     try {
       return (await this.deps.host.renew(hostId, { runId, leaseMs: SPEECH_HOOK_LEASE_MS })).open;
     } catch (error) {
-      this.failed(`Could not keep a run of speech open on ${hostId}: ${reasonText(error)}`);
-      return false;
+      this.failed(`Could not keep a run of speech open on ${hostId}; trying again: ${reasonText(error)}`);
+      return null;
     }
   }
 
@@ -142,9 +146,16 @@ export class SpeechHooksStore {
     }
   }
 
-  /** What the machine says it ran by itself when a window stopped answering. */
-  expired(hostId: string, after: HookRun | null): void {
-    this.deps.log.info(`A window speaking on ${hostId} stopped answering, so its run of speech was ended there.`);
+  /**
+   * What the machine says it ran by itself: a window stopped answering, or
+   * Herald's worker there was shutting down (a reload, disable or removal).
+   */
+  endedByMachine(hostId: string, reason: "expired" | "disposed", after: HookRun | null): void {
+    this.deps.log.info(
+      reason === "expired"
+        ? `A window speaking on ${hostId} stopped answering, so its run of speech was ended there.`
+        : `Herald's worker on ${hostId} shut down during a run of speech, so the run was ended there.`,
+    );
     if (after !== null) this.report(hostId, "after", after);
   }
 

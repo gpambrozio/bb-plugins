@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { HookRun, SpeechHookKind } from "../shared/speech-hooks";
-import { HookSessions } from "./sessions";
+import { DISPOSE_BUDGET_MS, HookSessions } from "./sessions";
 
 const OK: HookRun = { exitCode: 0, signal: null, timedOut: false, durationMs: 1, stderr: "" };
 const COMMANDS = { before: "pause-music", after: "play-music", leaseMs: 30_000 };
@@ -9,15 +9,34 @@ const COMMANDS = { before: "pause-music", after: "play-music", leaseMs: 30_000 }
 function setup() {
   const order: string[] = [];
   /** Each command waits here until the test lets it finish, when `hold` is set. */
-  const held: Array<() => void> = [];
+  const held: Array<{ kind: SpeechHookKind; finish(killed: boolean): void }> = [];
   const options = { hold: false };
+  const timeouts: Array<number | undefined> = [];
   const expired: Array<{ runId: string; after: HookRun | null }> = [];
   const sessions = new HookSessions({
-    run: async (kind: SpeechHookKind, command: string) => {
+    run: async (kind: SpeechHookKind, command: string, timeoutMs?: number) => {
       order.push(`${kind}:${command}`);
-      if (options.hold) await new Promise<void>((resolve) => held.push(resolve));
-      order.push(`${kind}:done`);
-      return OK;
+      timeouts.push(timeoutMs);
+      let killed = false;
+      if (options.hold) {
+        await new Promise<void>((resolve) =>
+          held.push({
+            kind,
+            finish: (wasKilled) => {
+              killed = wasKilled;
+              resolve();
+            },
+          }),
+        );
+      }
+      order.push(killed ? `${kind}:killed` : `${kind}:done`);
+      return killed ? { ...OK, exitCode: null, signal: "SIGKILL" } : OK;
+    },
+    kill: (kind?: SpeechHookKind) => {
+      for (const hook of held.splice(0)) {
+        if (kind === undefined || hook.kind === kind) hook.finish(true);
+        else held.push(hook);
+      }
     },
     expired: (runId, after) => expired.push({ runId, after }),
   });
@@ -33,10 +52,10 @@ function setup() {
     return made;
   };
   const release = async () => {
-    held.shift()?.();
+    held.shift()?.finish(false);
     await settle();
   };
-  return { sessions, order, options, release, lease, leases, expired };
+  return { sessions, order, options, release, lease, leases, expired, timeouts };
 }
 
 async function settle(): Promise<void> {
@@ -144,12 +163,13 @@ describe("HookSessions", () => {
     await expect(sessions.end("gone")).resolves.toBeNull();
   });
 
-  it("runs the owed after hook when the worker is disposed", async () => {
-    const { sessions, order, lease, leases } = setup();
+  it("runs the owed after hook when the worker is disposed, within the disposal budget, and reports it", async () => {
+    const { sessions, order, lease, leases, timeouts } = setup();
     await sessions.begin({ runId: "a", ...COMMANDS }, lease());
     await sessions.begin({ runId: "b", ...COMMANDS }, lease());
-    await sessions.dispose();
+    await expect(sessions.dispose()).resolves.toEqual({ runIds: ["a", "b"], after: OK });
     expect(order).toEqual(["before:pause-music", "before:done", "after:play-music", "after:done"]);
+    expect(timeouts).toEqual([undefined, DISPOSE_BUDGET_MS]);
     expect(leases.every((made) => made.disposed)).toBe(true);
     await expect(sessions.begin({ runId: "c", ...COMMANDS }, lease())).resolves.toEqual({ open: false, before: null });
   });
@@ -162,5 +182,42 @@ describe("HookSessions", () => {
     });
     await sessions.end("a");
     expect(order).toEqual(["after:play-music", "after:done"]);
+  });
+
+  it("cuts a before hook short when the worker is disposed, then runs the after hook", async () => {
+    const { sessions, order, options, lease } = setup();
+    options.hold = true;
+    void sessions.begin({ runId: "a", ...COMMANDS }, lease());
+    await settle();
+    options.hold = false;
+    const report = await sessions.dispose();
+    expect(order).toEqual(["before:pause-music", "before:killed", "after:play-music", "after:done"]);
+    expect(report).toEqual({ runIds: ["a"], after: OK });
+  });
+
+  it("kills an after hook still running when the disposal budget is up", async () => {
+    vi.useFakeTimers();
+    const { sessions, order, options, lease } = setup();
+    await sessions.begin({ runId: "a", ...COMMANDS }, lease());
+    options.hold = true;
+    const disposed = sessions.dispose();
+    await vi.advanceTimersByTimeAsync(DISPOSE_BUDGET_MS - 1);
+    expect(order.at(-1)).toBe("after:play-music");
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(disposed).resolves.toEqual({ runIds: ["a"], after: { ...OK, exitCode: null, signal: "SIGKILL" } });
+    expect(order.at(-1)).toBe("after:killed");
+  });
+
+  it("bounds an after hook a window's end started when the worker is disposed", async () => {
+    vi.useFakeTimers();
+    const { sessions, order, options, lease } = setup();
+    await sessions.begin({ runId: "a", ...COMMANDS }, lease());
+    options.hold = true;
+    void sessions.end("a");
+    await vi.advanceTimersByTimeAsync(0);
+    const disposed = sessions.dispose();
+    await vi.advanceTimersByTimeAsync(DISPOSE_BUDGET_MS);
+    await expect(disposed).resolves.toBeNull();
+    expect(order.at(-1)).toBe("after:killed");
   });
 });

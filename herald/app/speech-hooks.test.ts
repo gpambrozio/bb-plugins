@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { SpeechPlatform } from "../shared/settings";
+import { HookSessions } from "../host/sessions";
+import { SPEECH_HOOK_LEASE_MS, SPEECH_HOOK_RENEW_MS } from "../shared/speech-hooks";
 import { createLocalHostLookup, createSpeechRunStarter, findLocalHostId, type SpeechRunDeps } from "./speech-hooks";
 
 const SERVER = "http://127.0.0.1:38886";
@@ -191,5 +193,56 @@ describe("createSpeechRunStarter", () => {
       "Could not end the run of speech; the machine ends it by itself shortly: still away",
       expect.any(Error),
     );
+  });
+
+  it.each([["fails", ["throws"]], ["cannot reach the machine", ["unknown"]], ["fails twice in a row", ["throws", "unknown"]]])(
+    "keeps renewing when a renewal %s, so the machine does not end a run still speaking",
+    async (_case, failures) => {
+    vi.useFakeTimers();
+    const steps: string[] = [];
+    const sessions = new HookSessions({
+      run: async (kind) => {
+        steps.push(kind);
+        return { exitCode: 0, signal: null, timedOut: false, durationMs: 0, stderr: "" };
+      },
+      kill: () => {},
+      expired: (runId) => steps.push(`expired:${runId}`),
+    });
+    const outcomes = [...failures];
+    const { start, deps } = starter({
+      begin: async (_hostId, runId) => {
+        const { open } = await sessions.begin({ runId, before: "pause", after: "play", leaseMs: SPEECH_HOOK_LEASE_MS }, { dispose: async () => {} });
+        return { open, error: null };
+      },
+      renew: vi.fn(async (_hostId: string, runId: string) => {
+        const outcome = outcomes.shift();
+        if (outcome === "throws") throw new Error("server away for a moment");
+        if (outcome === "unknown") return { open: null };
+        return { open: sessions.renew(runId, SPEECH_HOOK_LEASE_MS) as boolean | null };
+      }),
+      end: async (_hostId, runId) => {
+        await sessions.end(runId);
+        return { error: null };
+      },
+    });
+    const run = start();
+    await run.ready;
+    // The first renewals (at 8 s, and 16 s) fail; the next reaches the machine before the 30 s lease is out.
+    await vi.advanceTimersByTimeAsync(SPEECH_HOOK_LEASE_MS + 25_000);
+    expect(deps.renew).toHaveBeenCalledTimes(Math.floor((SPEECH_HOOK_LEASE_MS + 25_000) / SPEECH_HOOK_RENEW_MS));
+    expect(steps).toEqual(["before"]);
+    await run.end();
+    expect(steps).toEqual(["before", "after"]);
+  },
+  );
+
+  it("stops renewing once the machine says the run is closed", async () => {
+    vi.useFakeTimers();
+    const { start, deps } = starter({ renew: vi.fn(async () => ({ open: false as boolean | null })), renewMs: 10_000 });
+    const run = start();
+    await run.ready;
+    await vi.advanceTimersByTimeAsync(40_000);
+    expect(deps.renew).toHaveBeenCalledTimes(1);
+    await run.end();
   });
 });

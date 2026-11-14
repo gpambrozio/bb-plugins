@@ -15,8 +15,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   is speaking, not on the one running bb. Sentences read back to back, and windows speaking on the same
   machine at once, share one before and one after. The after command follows its before command when
   the speech ends, fails or is cut short, within about half a minute if the window speaking closes or
-  loses bb, and at once when Herald is reloaded. A command gets five seconds; a slower one is stopped, a
-  failing one is noted in Herald's log, and Herald speaks either way. Both are empty by default, and an
+  loses bb, and at once when Herald is reloaded (a before command still running is then stopped, and the
+  after command gets three seconds). A command gets five seconds; a slower one is stopped, a failing one
+  is noted in Herald's log, and Herald speaks either way. Both are empty by default, and an
   empty one runs nothing. bb's mobile app and a browser tab run no hooks.
 
 ## 0.11.0

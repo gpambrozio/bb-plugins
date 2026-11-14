@@ -38,6 +38,11 @@ export const hostContract = defineRpcContract({
 export type HostContract = typeof hostContract;
 
 export const hostSignals = {
-  /** A run's lease ran out — its window went away — and the machine ran the after hook itself. */
-  afterOnExpiry: { payload: z.object({ runId: z.string(), after: HookRunSchema.nullable() }) },
+  /**
+   * The machine ended runs by itself and ran the after hook for them: a run's
+   * lease ran out (its window went away), or the worker was shutting down.
+   */
+  afterWithoutWindow: {
+    payload: z.object({ reason: z.enum(["expired", "disposed"]), runIds: z.array(z.string()), after: HookRunSchema.nullable() }),
+  },
 } satisfies ExperimentalHostSignals;

@@ -74,7 +74,7 @@ describe("SpeechHooksStore", () => {
 
   it("logs and answers a hook that fails or is stopped, without throwing", async () => {
     const { store, log } = setup({
-      begin: async () => ({ open: true, before: { ...OK, exitCode: null, signal: "SIGKILL", timedOut: true } }),
+      begin: async () => ({ open: true, before: { ...OK, exitCode: null, signal: "SIGKILL", timedOut: true, durationMs: 5_004 } }),
       end: async () => ({ after: { ...OK, exitCode: 3, stderr: "no music app\n" } }),
     });
     await store.set("host_a", { before: "sleep 60", after: "play" });
@@ -97,7 +97,8 @@ describe("SpeechHooksStore", () => {
       open: null,
       error: "Could not start a run of speech on host_a: host_a is offline",
     });
-    await expect(store.renew("host_a", "r1")).resolves.toBe(false);
+    // Unknown, not closed: the window keeps renewing.
+    await expect(store.renew("host_a", "r1")).resolves.toBeNull();
     await expect(store.end("host_a", "r1")).resolves.toEqual({
       error: "Could not end a run of speech on host_a; it ends by itself shortly: host_a is offline",
     });
@@ -105,9 +106,16 @@ describe("SpeechHooksStore", () => {
 
   it("logs a run the machine ended by itself when its window stopped answering", async () => {
     const { store, log } = setup();
-    store.expired("host_a", OK);
+    store.endedByMachine("host_a", "expired", OK);
     expect(log.info).toHaveBeenCalledWith("A window speaking on host_a stopped answering, so its run of speech was ended there.");
     expect(log.info).toHaveBeenCalledWith("Ran the after-speaking hook on host_a (12 ms).");
+  });
+
+  it("logs a run ended by the machine's worker shutting down, with how its after hook failed", async () => {
+    const { store, log } = setup();
+    store.endedByMachine("host_a", "disposed", { ...OK, exitCode: 4, stderr: "disposal-hook-failed\n" });
+    expect(log.info).toHaveBeenCalledWith("Herald's worker on host_a shut down during a run of speech, so the run was ended there.");
+    expect(log.warn).toHaveBeenCalledWith("The after-speaking hook on host_a failed: it exited with 4: disposal-hook-failed");
   });
 
   it("reads an unreadable row as no hooks, and says so", async () => {

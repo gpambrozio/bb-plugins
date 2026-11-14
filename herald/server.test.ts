@@ -249,7 +249,7 @@ describe("herald server", () => {
   it("logs a run a machine ended by itself when the window speaking there went away", async () => {
     const { harness } = await load();
     const ok = { exitCode: 0, signal: null, timedOut: false, durationMs: 3, stderr: "" };
-    await harness.experimental_emitHostSignal("host_mac", "afterOnExpiry", { runId: "r1", after: ok });
+    await harness.experimental_emitHostSignal("host_mac", "afterWithoutWindow", { reason: "expired", runIds: ["r1"], after: ok });
     await settle();
     const messages = harness.logEntries.map((line) => line.message);
     expect(messages).toContain("A window speaking on host_mac stopped answering, so its run of speech was ended there.");

@@ -134,10 +134,14 @@ export const rpcContract = defineRpcContract({
     input: z.object({ hostId: z.string().min(1), runId: RunIdSchema }),
     output: z.object({ open: z.boolean().nullable(), error: z.string().nullable() }),
   },
-  /** Keeps a run open while its window still speaks; a run not renewed ends by itself. */
+  /**
+   * Keeps a run open while its window still speaks; a run not renewed ends by
+   * itself. `open` is false only when the machine says the run is not open,
+   * null when the machine could not be asked.
+   */
   "hooks.renew": {
     input: z.object({ hostId: z.string().min(1), runId: RunIdSchema }),
-    output: z.object({ open: z.boolean() }),
+    output: z.object({ open: z.boolean().nullable() }),
   },
   /** Ends a run; the last open run on the machine runs its after hook. Safe to repeat. */
   "hooks.end": {
