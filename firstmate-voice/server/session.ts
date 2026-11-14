@@ -23,7 +23,9 @@ export const RENEW_AFTER_MS = 57 * 60_000;
 /** How long the app has to send a renewal offer before the session ends. */
 export const RENEW_GRACE_MS = 2 * 60_000;
 export const IDLE_END_MS = 10 * 60_000;
-export const IDLE_CHECK_MS = 30_000;
+export const IDLE_CHECK_MS = 15_000;
+/** A session the app has not said it holds for this long ends (the app says so every `ALIVE_EVERY_MS`). */
+export const ALIVE_TIMEOUT_MS = 50_000;
 export const BRIEF_POLL_MS = 30_000;
 export const EVENT_DEBOUNCE_MS = 1_500;
 /** After end_session, long enough for the goodbye to be heard. */
@@ -144,6 +146,8 @@ export class VoiceSession {
   private retiring: Call | null = null;
   private ended = false;
   private lastActivity: number;
+  /** When the app last said it still holds the call: a closed tab or a suspended phone stops saying so. */
+  private lastAlive: number;
   private readonly timers = new Set<unknown>();
   private renewTimer: unknown = null;
   private debounce: unknown = null;
@@ -165,6 +169,7 @@ export class VoiceSession {
     this.clock = deps.clock;
     this.utterances = new UtteranceLog(deps.clock);
     this.lastActivity = deps.clock.now();
+    this.lastAlive = deps.clock.now();
     this.sendsShort = new RateLimit(deps.clock, 1, 4_000);
     this.sendsLong = new RateLimit(deps.clock, 8, 5 * 60_000);
     this.briefReads = new RateLimit(deps.clock, 1, 5_000);
@@ -191,6 +196,11 @@ export class VoiceSession {
     if (previous !== null) previous.ending = true;
     this.retiring = previous;
     return this.openCall(sdp, "renew");
+  }
+
+  /** The app still holds the call. */
+  alive(): void {
+    this.lastAlive = this.clock.now();
   }
 
   /** Something changed on some thread: read the brief again soon. */
@@ -395,6 +405,11 @@ export class VoiceSession {
   private checkIdle(): void {
     if (this.clock.now() - this.lastActivity >= IDLE_END_MS) {
       void this.end("quiet for ten minutes");
+      return;
+    }
+    // OpenAI can keep a call whose page vanished for a long while; the app's heartbeat says it is gone.
+    if (this.clock.now() - this.lastAlive >= ALIVE_TIMEOUT_MS) {
+      void this.end("the app stopped answering");
       return;
     }
     // A response this side asked for that never started must not hold announcements back for good.
@@ -644,6 +659,13 @@ export class VoiceSessions {
 
   threadEvent(): void {
     this.live?.threadEvent();
+  }
+
+  /** The app's heartbeat; answers whether its session is still the live one. */
+  alive(sessionId: string): boolean {
+    if (this.live?.id !== sessionId) return false;
+    this.live.alive();
+    return true;
   }
 
   async dispose(): Promise<void> {

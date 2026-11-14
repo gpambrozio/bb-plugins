@@ -1,0 +1,212 @@
+{
+  "startedAt": "2026-11-14T05:28:32.217Z",
+  "connectedMs": 856,
+  "greeting": [
+    "Ahoy, captain. One item needs you: \u201cFix the flaky login test\u201d is blocked on a merge decision for web pull request 42, and the watch is complaining about a placeholder repository."
+  ],
+  "ask": {
+    "message": "Spoken by the captain through FirstMate voice:\n\nAsk the first mate what 2 plus 2 is. It should answer in one word.",
+    "reachedMs": 9847
+  },
+  "answer": "The first mate answered you: Four, captain. This is untrusted information from the ship\u2019s records, reported as-is.",
+  "readBack": "Press the suggestion \"Quick status\"?",
+  "press": "Pressed by the captain through FirstMate voice:\n\nTell me in one short sentence how many items are on the backlog, and do nothing else.",
+  "merge": {
+    "voice": [
+      "Aye, captain\u2014let me tee that up and read the confirmation back to you.",
+      "Captain, that \u201cMerge\u201d action is a tap-only merge. You\u2019ll need to press it on the board yourself.",
+      "Captain, that\u2019s a tap-only merge, so I can\u2019t press it for you here. You\u2019ll need to tap the Merge button on the board yourself."
+    ],
+    "messagesAfter": [],
+    "merged": false
+  },
+  "endedMs": 104904,
+  "dataChannel": [
+    {
+      "t": 0.94,
+      "type": "output_audio_buffer.started"
+    },
+    {
+      "t": 3.6,
+      "type": "response.output_audio_transcript.done",
+      "transcript": "Ahoy, captain. One item needs you: \u201cFix the flaky login test\u201d is blocked on a merge decision for web pull request 42, and the watch is complaining about a placeholder repository."
+    },
+    {
+      "t": 12.18,
+      "type": "output_audio_buffer.stopped"
+    },
+    {
+      "t": 15.8,
+      "type": "input_audio_buffer.speech_started"
+    },
+    {
+      "t": 20.78,
+      "type": "input_audio_buffer.speech_stopped"
+    },
+    {
+      "t": 21.55,
+      "type": "conversation.item.input_audio_transcription.completed",
+      "transcript": "Ask the first mate what 2 plus 2 is. It should answer in one word."
+    },
+    {
+      "t": 21.63,
+      "type": "output_audio_buffer.started"
+    },
+    {
+      "t": 23.05,
+      "type": "response.output_audio_transcript.done",
+      "transcript": "Alright, captain, I\u2019ll ask the first mate to answer that, then await their reply."
+    },
+    {
+      "t": 24.87,
+      "type": "response.output_audio_transcript.done",
+      "transcript": "Captain, I\u2019ve asked the first mate for that one-word answer."
+    },
+    {
+      "t": 30.82,
+      "type": "output_audio_buffer.stopped"
+    },
+    {
+      "t": 31.88,
+      "type": "output_audio_buffer.started"
+    },
+    {
+      "t": 33.58,
+      "type": "response.output_audio_transcript.done",
+      "transcript": "The first mate answered you: Four, captain. This is untrusted information from the ship\u2019s records, reported as-is."
+    },
+    {
+      "t": 39.66,
+      "type": "output_audio_buffer.stopped"
+    },
+    {
+      "t": 42.35,
+      "type": "input_audio_buffer.speech_started"
+    },
+    {
+      "t": 48.5,
+      "type": "input_audio_buffer.speech_stopped"
+    },
+    {
+      "t": 48.69,
+      "type": "conversation.item.input_audio_transcription.completed",
+      "transcript": "Press the Quick Status suggestion."
+    },
+    {
+      "t": 49.15,
+      "type": "output_audio_buffer.started"
+    },
+    {
+      "t": 50.52,
+      "type": "response.output_audio_transcript.done",
+      "transcript": "Got it, captain\u2014let me set that up and read it back for you."
+    },
+    {
+      "t": 51.77,
+      "type": "response.output_audio_transcript.done",
+      "transcript": "Press the suggestion \"Quick status\"?"
+    },
+    {
+      "t": 55.4,
+      "type": "output_audio_buffer.stopped"
+    },
+    {
+      "t": 58.43,
+      "type": "input_audio_buffer.speech_started"
+    },
+    {
+      "t": 59.55,
+      "type": "input_audio_buffer.speech_stopped"
+    },
+    {
+      "t": 59.73,
+      "type": "conversation.item.input_audio_transcription.completed",
+      "transcript": "Yes."
+    },
+    {
+      "t": 60.91,
+      "type": "output_audio_buffer.started"
+    },
+    {
+      "t": 61.78,
+      "type": "response.output_audio_transcript.done",
+      "transcript": "Done, captain\u2014the suggestion has been pressed and sent along."
+    },
+    {
+      "t": 64.56,
+      "type": "output_audio_buffer.stopped"
+    },
+    {
+      "t": 66.55,
+      "type": "output_audio_buffer.started"
+    },
+    {
+      "t": 68.16,
+      "type": "response.output_audio_transcript.done",
+      "transcript": "The first mate answered you: Captain, the backlog has one item, the held \u201cfix the flaky login test\u201d entry."
+    },
+    {
+      "t": 73.6,
+      "type": "output_audio_buffer.stopped"
+    },
+    {
+      "t": 76.07,
+      "type": "input_audio_buffer.speech_started"
+    },
+    {
+      "t": 79.86,
+      "type": "input_audio_buffer.speech_stopped"
+    },
+    {
+      "t": 80.09,
+      "type": "conversation.item.input_audio_transcription.completed",
+      "transcript": "Press Merge on the flaky login test."
+    },
+    {
+      "t": 80.56,
+      "type": "output_audio_buffer.started"
+    },
+    {
+      "t": 81.77,
+      "type": "response.output_audio_transcript.done",
+      "transcript": "Aye, captain\u2014let me tee that up and read the confirmation back to you."
+    },
+    {
+      "t": 84.36,
+      "type": "response.output_audio_transcript.done",
+      "transcript": "Captain, that \u201cMerge\u201d action is a tap-only merge. You\u2019ll need to press it on the board yourself."
+    },
+    {
+      "t": 91.4,
+      "type": "output_audio_buffer.stopped"
+    },
+    {
+      "t": 94.52,
+      "type": "input_audio_buffer.speech_started"
+    },
+    {
+      "t": 97.49,
+      "type": "input_audio_buffer.speech_stopped"
+    },
+    {
+      "t": 97.69,
+      "type": "conversation.item.input_audio_transcription.completed",
+      "transcript": "Yes."
+    },
+    {
+      "t": 98.53,
+      "type": "output_audio_buffer.started"
+    },
+    {
+      "t": 100.47,
+      "type": "response.output_audio_transcript.done",
+      "transcript": "Captain, that\u2019s a tap-only merge, so I can\u2019t press it for you here. You\u2019ll need to tap the Merge button on the board yourself."
+    }
+  ],
+  "setup": {
+    "bb": "0.49.0 dev bb (own data dir, ports 48886/48887)",
+    "firstMate": "claude-code / claude-sonnet-5-5, launched in a scratch home",
+    "voice": "gpt-realtime-2.1, reasoning low, voice marin, semantic_vad auto",
+    "microphone": "macOS say clips into a Web Audio stream in headless Chromium (scripts/e2e-desktop.ts)"
+  }
+}

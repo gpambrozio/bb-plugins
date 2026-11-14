@@ -13,6 +13,7 @@
     { "name": "diff-review", "source": "./diff-review" },
     { "name": "terminals", "source": "./terminals" },
     { "name": "learning-exercises", "source": "./learning-exercises" },
-    { "name": "codex-realtime", "source": "./codex-realtime" }
+    { "name": "codex-realtime", "source": "./codex-realtime" },
+    { "name": "firstmate-voice", "source": "./firstmate-voice" }
   ]
 }

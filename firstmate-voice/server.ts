@@ -20,6 +20,7 @@ export const rpcContract = defineRpcContract({
   "session.start": { input: z.object({ sdp: Sdp }), output: z.object({ sessionId: z.string(), answerSdp: z.string() }) },
   "session.renew": { input: z.object({ sessionId: z.string(), sdp: Sdp }), output: z.object({ answerSdp: z.string() }) },
   "session.end": { input: z.object({ sessionId: z.string(), reason: z.string().max(80) }), output: z.null() },
+  "session.alive": { input: z.object({ sessionId: z.string() }), output: z.object({ live: z.boolean() }) },
   "session.current": { input: z.object({}), output: z.object({ sessionId: z.string().nullable() }) },
   "mate.thread": { input: z.object({}), output: z.object({ threadId: z.string().nullable() }) },
 });
@@ -80,6 +81,7 @@ export default async function plugin(bb: BbPluginApi) {
       await sessions.end(sessionId, reason);
       return null;
     },
+    "session.alive": async ({ sessionId }) => ({ live: sessions.alive(sessionId) }),
     "session.current": async () => ({ sessionId: sessions.current()?.id ?? null }),
     "mate.thread": async () => {
       try {

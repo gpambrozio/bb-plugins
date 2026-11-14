@@ -3,7 +3,7 @@
 Plugins for [bb](https://getbb.app). One folder per plugin, each self-contained.
 
 Most are ports of the plugins in [`gpambrozio/paseo-plugins`](https://github.com/gpambrozio/paseo-plugins),
-each tracked by its own issue; `screen-sharing`, `diff-review`, `terminals`, `learning-exercises` and `codex-realtime` are new here.
+each tracked by its own issue; `screen-sharing`, `diff-review`, `terminals`, `learning-exercises`, `codex-realtime` and `firstmate-voice` are new here.
 
 | Plugin | What it does | Status |
 | --- | --- | --- |
@@ -18,6 +18,7 @@ each tracked by its own issue; `screen-sharing`, `diff-review`, `terminals`, `le
 | [`terminals`](terminals) | Tabs of shells on any machine connected to bb, each in its home folder, with no project needed. | New — 0.1.0 |
 | [`learning-exercises`](learning-exercises) | Offers a short exercise on work you just did, and runs it in a side thread with an answer card. Adapted from Dr. Cat Hicks's Learning Opportunities (CC BY 4.0). | New — 0.1.0 |
 | [`codex-realtime`](codex-realtime) | Runs Voice Mode on your ChatGPT subscription, from the sign-in `codex login` keeps; read-only, undocumented, could stop working. | New — 0.1.0 |
+| [`firstmate-voice`](firstmate-voice) | Talk to your FirstMate first mate out loud: ask, hand it work in your own words, hear its answers, press its buttons with a spoken yes. Never merges by voice. | New — 0.1.0, not in the marketplace |
 
 ## Install
 

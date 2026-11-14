@@ -1,27 +1,109 @@
 # AGENTS.md
 
-`firstmate-voice` is, for now, the **phase 0 spike** of a real-time voice front end for FirstMate. The
-design is in `/Users/ci/repositories/firstmate/data/scout-firstmate-realtime-voice/report.html`, option B.
-Nothing here is released: the plugin is not in `.bb/plugins.json`, its version is `0.0.0` and the package is
-`private`. Phase 1 replaces most of this folder.
+`firstmate-voice` is FirstMate's real-time voice: the captain talks to the first mate out loud, on the
+desktop or on the phone with bb in front. It is option B of the design
+(`/Users/ci/repositories/firstmate/data/scout-firstmate-realtime-voice/report.html`): this plugin owns the
+audio, the session, the tool policy and the credential, and `firstmate-crew` keeps the authority through
+its narrow, caller-gated `voice.v1` API. Phase 1 ("ask and answer", design §13) is what is here: the brief,
+asks and answers, confirmed presses, and announcements of new captain's calls and first-mate replies.
 
-The repository root `AGENTS.md` covers what every plugin here shares. This file holds the spike's decision
-record and what phase 1 must not relearn.
+The repository root `AGENTS.md` covers what every plugin here shares. This file holds what is specific to
+the voice, the decisions behind phase 1, and the phase 0 decision record.
 
 ## Orientation
 
 | File | What it owns |
 | --- | --- |
-| `server/openai.ts` | Plain-Node calls to OpenAI: `/v1/realtime/calls` (SDP exchange), hangup, `client_secrets`, the `?call_id=` sideband and `?model=` sockets, the `reasoning.effort` probe, `redact`. Shared by the plugin and the scripts. |
-| `server/credential.ts` | The bearer, from codex-realtime's `realtimeConnection` (this plugin must be on its allow list). |
-| `server/calls.ts` | The WebRTC-direct path on the server: SDP exchange, sideband, the `get_time` tool, out-of-band announcements, an event log per call. |
-| `server/relay.ts` | The relayed fallback: a ticket-gated plugin WebSocket forwarded to a server-side Realtime socket. |
-| `app.tsx`, `app/*` | The spike page (nav panel "Voice spike"): Talk buttons for both paths, beep and Wake Lock checks, and the meters that measure latency. |
-| `scripts/live-check-call.ts` | `npm run live-check-call`: the four credential checks. Manual; spends a few seconds of voice time. |
-| `scripts/desktop-check.ts` | `npm run desktop-check`: drives the spike page in a dev bb with headless Chromium and a spoken clip as the microphone. |
-| `spike-results/` | The raw results quoted below. They hold no token: every error body passes through `redact`. |
+| `server.ts` | Wiring only: settings (model, reasoning, voice, turn taking), the app's RPCs (`session.start`, `renew`, `end`, `alive`, `current`, `mate.thread`), the thread events that make a live session read the brief again, `onDispose`. |
+| `server/session.ts` | One live session (`VoiceSessions`): the call, the sideband, event dispatch, the tools, renewal at the hour's cap, the idle end, the app's heartbeat. |
+| `server/policy.ts` | The utterance log, yes and no, the two-phase press (`PressGuard`), one send at a time, rate limits. |
+| `server/brief-sync.ts` | Brief → diff → `[firstmate-update]` items, full replacement every 15 updates or 20 minutes, and the events worth announcing. |
+| `server/announce.ts` | P1 announcements at gaps, once more when the captain talks over one. |
+| `server/instructions.ts`, `server/tools.ts` | The standing instructions (design §8's outline) and the tool list with levels. |
+| `server/openai-call.ts`, `server/openai-port.ts` | The SDP exchange, hangup and sideband socket (from the spike), and `RealtimePort` over them. |
+| `server/credentials.ts`, `server/crew-client.ts` | codex-realtime's `realtimeConnection`; firstmate-crew's `voice.v1`. |
+| `server/ports.ts`, `server/testing/fakes.ts` | The ports, and fakes for OpenAI (a sideband a test plays events into), the crew and time. |
+| `shared/crew-voice.ts` | A copy of firstmate-crew's `shared/voice.ts`; `shared/crew-voice.test.ts` fails when they differ. |
+| `app.tsx`, `app/*` | The pill (an app overlay), the WebRTC leg, the per-window controller, the palette command and the Talk button in the first mate's header. |
+| `scripts/live-check-call.ts`, `scripts/probes.ts` | The phase 0 credential checks (`npm run live-check-call`). Spends a few seconds of voice time. |
+| `scripts/e2e-desktop.ts` | A live end-to-end run in a dev bb (below). Spends a few minutes of voice time. |
+| `phase1-results/`, `spike-results/` | What the live runs recorded. No tokens. |
 
-## Decision record (phase 0, 2026-11-13, bb 0.49.0)
+## Invariants
+
+- **The model has no free-text channel into bb.** Asks and answers carry the captain's words copied from the
+  call's input transcription (the model names how many of the latest utterances, never the words), and a
+  press carries the button's own prompt, which firstmate-crew looks up. The agent-only note on a send is the
+  crew's template, not model text. Do not add a tool argument that reaches the first mate as text.
+- **Presses are two-phase and checked against the captain's transcript, not the model's claim.**
+  `propose_press` returns a server-written read-back; it counts as read back only when the model's own output
+  transcript says most of it; `confirm_press` needs the captain's first utterance committed after that to be
+  a short yes with no negation, within 30 s, on a single-use token, one press in 10 s. firstmate-crew checks
+  the card's etag again and refuses tap-only buttons again.
+- **Merges, anything destructive, publishing, credentials and settings are never pressed by voice** in phase
+  1, read-back or not. firstmate-crew marks them `tapOnly` (a wide word net) and refuses the press; this
+  plugin refuses to propose one. The voice may offer to ask the first mate, which answers with a board button.
+- **The token never reaches the app or the log.** The SDP exchange, the sideband and the hangup run on the
+  server; `redact` covers every error body; the token is held for one call's life.
+- **Transcripts live in memory for the session only.** The log gets tool names and session events, never
+  what anyone said. The renewal recap is the last ten exchanges, in memory.
+- **A session always ends.** The app ends it (End, the palette, "goodbye" by voice, the phone leaving the
+  screen); the server ends it after ten quiet minutes, when the app's heartbeat stops for 50 s, when the
+  sideband cannot be reopened, when a renewal does not come, and on dispose. It hangs up from the server and
+  treats a call that already ended as ended. One session at a time: a new Talk takes over.
+- **Herald is left alone.** Both may speak the same news while a session is live; the captain turns Herald
+  off by hand when that matters (design §10, phase 2).
+
+## Decisions for phase 1 (the design's open questions, the safe choice each time)
+
+- **Credential:** the ChatGPT subscription through codex-realtime, which must list `firstmate-voice` in
+  *Plugins that may use the sign-in*. No API key path.
+- **Merges by voice:** never, even after a read-back and a yes (above).
+- **Transcripts:** kept for the session only, not stored.
+- **Standby:** none; ten quiet minutes end the session.
+- **Herald:** no stand-down.
+- **Release:** private. The plugin is in `.bb/plugins.json` so CI checks and tags it, and nothing is
+  submitted to the marketplace. The id `firstmate-voice` was free there on 2026-11-14 (no
+  `entries/firstmate-voice.json`; `firstmate.json`, `firstmate-crew.json`, `voice-mode.json` and
+  `voice-input.json` exist) and is not a bb built-in.
+- **No relay in phase 1.** The design kept the relayed transport for a token refused on `/calls`, which phase 0
+  ruled out, and the iPhone ran WebRTC directly. It stays on the spike branch for networks that block WebRTC.
+- **No `quiet` tool.** Every phase 1 announcement is P1, which quiet would not hold; it comes with phase 2's
+  digests.
+- **No model words in the ask's note.** The design's agent-only part "says what the voice had just asked"; here
+  the note is firstmate-crew's fixed text, so the model has no channel at all.
+- **Turn taking** stays `semantic_vad` at `auto`, a setting. The spike measured the end-of-turn wait as the
+  largest part of the latency; *high* is the setting to try first.
+
+## What the live run found (2026-11-14, `phase1-results/2026-11-14-e2e-desktop.json`)
+
+One end-to-end run in a dev bb (root `AGENTS.md`), with a real first mate (Claude Code, Sonnet 5.5) and the
+voice on the subscription: the greeting named the held merge from the brief; an ask reached the first mate as
+`Spoken by the captain through FirstMate voice:` and the first mate's one-word answer was spoken back 13 s
+after the captain stopped; a suggestion was read back, confirmed with "Yes." and reached the first mate as
+`Pressed by the captain through FirstMate voice:`; "Press merge" was refused as tap-only, and a following
+"Yes." sent nothing.
+
+- **OpenAI keeps a call whose page vanished.** A closed headless browser left the sideband open with no
+  event for over a minute. That is why the app beats every 15 s (`session.alive`) and the server ends a
+  session it has not heard from for 50 s; on the phone it also ends one whose app was suspended.
+- **A stand-in microphone needs a noise floor.** A Web Audio stream that falls silent after a clip never let
+  the turn detection hear the speech end; `e2e-desktop.ts` mixes in faint noise, as a real room has.
+- **The model speaks a preamble before a tool** ("let me set that up"), so the read-back is its own response;
+  the press guard matches it there.
+
+## Live checks
+
+Only in a dev bb, never the owner's: install `codex-realtime` (with `firstmate-voice` on its allow list),
+`firstmate-crew` (home directory set to a scratch folder) and this plugin; launch a first mate; seed its
+backlog with a held item whose actions include a Merge, and a harmless suggestion. Then
+`node scripts/e2e-desktop.ts --mate <thread id> --bb <dev-bb CLI wrapper>`. Each run spends one to two minutes
+of voice time; the script ends the session even when a step fails.
+
+## Phase 0 decision record (2026-11-13, bb 0.49.0)
+
+The spike's own code is on the `fm/firstmate-voice-spike` branch (66229c3); `spike-results/` here holds its raw
+results, which hold no token (every error body passed through `redact`).
 
 ### Credential: the ChatGPT subscription, no API key
 
@@ -62,8 +144,8 @@ sideband gives the server everything the design needs:
 The relay (`server/relay.ts`) is ticket-gated rather than `auth: "local"`: the page asks for a one-time
 ticket over RPC (bb authenticates RPC) and opens `…/http/relay?ticket=…` on an `auth: "none"` route. It
 therefore works from any origin bb serves the app on, a Connect port share included. Both of the
-owner's runs through the share (desktop Chrome and iPhone Safari) confirmed this. Keep it as the fallback for
-networks that block WebRTC.
+owner's runs through the share (desktop Chrome and iPhone Safari) confirmed this. Phase 1 does not ship it (below);
+it stays on the spike branch as the fallback for networks that block WebRTC.
 
 ### Default model: `gpt-realtime-2.1`, reasoning `low`
 
@@ -123,13 +205,3 @@ the page. Desktop runs used headless Chromium 151 (Electron's engine) against th
     on the phone. The relay is still a fallback for networks that block WebRTC.
   - **Still not covered:** the bb mobile app's own WebView, which would need the plugin in the owner's bb, and
     a screen that locks during a call.
-
-## What phase 1 should carry over
-
-- Pass `ctx.experimental_signal` to `codex-realtime`'s `realtimeConnection` call, and keep the token in
-  server memory only for the call's life.
-- The bb build refuses a server import from outside the plugin folder (`server source import escapes the
-  plugin directory`), although a local `bb plugin build` accepts it. That is why the credential comes from
-  codex-realtime over RPC rather than its module.
-- A call ends by itself after 90 s here (`MAX_CALL_MS`) to protect the plan's voice time. Phase 1 needs
-  the real session lifecycle: renewal at the 60-minute cap and the idle end.
