@@ -26,6 +26,9 @@ know which thread to go back to without watching the sidebar.
   Code and Codex answer in JSON, so an empty summary is never mistaken for a sentence), or, with Claude
   Code and Codex, write a finished turn's sentence down without speaking or notifying it;
   a question or anything else waiting for you is still listed, spoken or notified as before.
+- Optionally, a command of your own run on each machine just before the desktop app speaks there and
+  once it has finished, to pause music or lower the volume. Empty by default; the mobile app and a
+  browser tab run none.
 
 ## Beside bb's push notifications
 

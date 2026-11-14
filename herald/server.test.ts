@@ -155,12 +155,16 @@ async function settle(): Promise<void> {
 /** The top-level messages of every thread's timeline, as `threads.timeline` serves them; one page, one turn. */
 let timelineMessages: Array<{ id: string; createdAt: number; role: "user" | "assistant"; initiator: "user" | null }> = [];
 
+/** What the host entry answers, for the speech hooks; set per test. */
+let callHostRpc: ((call: { method: string; input: unknown; hostId: string }) => unknown) | undefined;
+
 async function load(settings: Record<string, string | number | boolean> = {}) {
   const { metadata, failures, stubs } = metadataStubs();
   const push = pushStubs();
   const host = createFakePluginHost({
     pluginId: "herald",
     settings,
+    ...(callHostRpc === undefined ? {} : { experimental_callHostRpc: callHostRpc }),
     sdk: {
       projects: { get: async () => ({ id: "prj_shop", name: "Shop" }) as never },
       environments: { get: async () => ({ id: "env_1", path: "/Users/me/shop" }) as never },
@@ -206,6 +210,50 @@ describe("herald server", () => {
   afterEach(async () => {
     await Promise.all(live.splice(0).map((host) => host.harness.lifecycle.dispose().catch(() => {})));
     timelineMessages = [];
+    callHostRpc = undefined;
+  });
+
+  it("runs no speech hook by default, and reaches no machine for one", async () => {
+    callHostRpc = () => {
+      throw new Error("no machine should be reached");
+    };
+    const { harness } = await load();
+    await expect(harness.callRpc("hooks.list", {})).resolves.toEqual({ hooks: {} });
+    await expect(harness.callRpc("hooks.begin", { hostId: "host_mac", runId: "r1" })).resolves.toEqual({ open: false, error: null });
+    expect(harness.experimental_hostRpcCalls).toEqual([]);
+  });
+
+  it("opens and ends a run with the machine's own stored hooks on its host entry, and logs one that fails", async () => {
+    const ok = { exitCode: 0, signal: null, timedOut: false, durationMs: 3, stderr: "" };
+    callHostRpc = ({ method }) => {
+      if (method === "begin") return { open: true, before: ok };
+      if (method === "renew") return { open: true };
+      return { after: { ...ok, exitCode: 1, stderr: "boom" } };
+    };
+    const { harness } = await load();
+    await harness.callRpc("hooks.set", { hostId: "host_mac", before: "pause-music", after: "resume-music" });
+    await expect(harness.callRpc("hooks.begin", { hostId: "host_mac", runId: "r1" })).resolves.toEqual({ open: true, error: null });
+    await expect(harness.callRpc("hooks.renew", { hostId: "host_mac", runId: "r1" })).resolves.toEqual({ open: true });
+    await expect(harness.callRpc("hooks.end", { hostId: "host_mac", runId: "r1" })).resolves.toEqual({
+      error: "The after-speaking hook on host_mac failed: it exited with 1: boom",
+    });
+    // Another machine has none of its own.
+    await expect(harness.callRpc("hooks.begin", { hostId: "host_other", runId: "r2" })).resolves.toEqual({ open: false, error: null });
+    expect(harness.experimental_hostRpcCalls.map(({ method, input, hostId }) => ({ method, input, hostId }))).toEqual([
+      { method: "begin", input: { runId: "r1", before: "pause-music", after: "resume-music", leaseMs: 30_000 }, hostId: "host_mac" },
+      { method: "renew", input: { runId: "r1", leaseMs: 30_000 }, hostId: "host_mac" },
+      { method: "end", input: { runId: "r1" }, hostId: "host_mac" },
+    ]);
+  });
+
+  it("logs a run a machine ended by itself when the window speaking there went away", async () => {
+    const { harness } = await load();
+    const ok = { exitCode: 0, signal: null, timedOut: false, durationMs: 3, stderr: "" };
+    await harness.experimental_emitHostSignal("host_mac", "afterWithoutWindow", { reason: "expired", runIds: ["r1"], after: ok });
+    await settle();
+    const messages = harness.logEntries.map((line) => line.message);
+    expect(messages).toContain("A window speaking on host_mac stopped answering, so its run of speech was ended there.");
+    expect(messages).toContain("Ran the after-speaking hook on host_mac (3 ms).");
   });
 
   it("announces a finished turn with its plain sentence, tells the app, and starts no thread", async () => {

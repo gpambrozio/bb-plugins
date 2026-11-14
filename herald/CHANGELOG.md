@@ -5,6 +5,21 @@ Notable changes to `herald`. The other plugins in this repository version separa
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.12.0
+
+### Added
+
+- **Speech hooks: run a command before Herald speaks and after it finishes.** Under Settings → Plugins →
+  Herald, each of bb's machines has a *Before speaking* and an *After speaking* command, to pause your
+  music or lower the volume while a sentence is read, say. They run on the machine whose bb desktop app
+  is speaking, not on the one running bb. Sentences read back to back, and windows speaking on the same
+  machine at once, share one before and one after. The after command follows its before command when
+  the speech ends, fails or is cut short, within about half a minute if the window speaking closes or
+  loses bb, and at once when Herald is reloaded (a before command still running is then stopped, and the
+  after command gets three seconds). A command gets five seconds; a slower one is stopped, a failing one
+  is noted in Herald's log, and Herald speaks either way. Both are empty by default, and an
+  empty one runs nothing. bb's mobile app and a browser tab run no hooks.
+
 ## 0.11.0
 
 ### Added

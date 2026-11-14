@@ -12,6 +12,7 @@
 import { speechText, type AttentionEntry, type VoicesConfig } from "../shared/herald";
 import { blockedMessage, type SpeechPlatform, type SpeechSettings } from "../shared/settings";
 import type { Claim } from "./claims";
+import type { SpeechRun, SpeechRunStarter } from "./speech-hooks";
 
 export interface AnnouncerAudio {
   canPlayAudio(): boolean;
@@ -41,6 +42,11 @@ export interface AnnouncerDeps {
   audio: AnnouncerAudio;
   /** What was said, and why something was not, for `bb plugin logs herald`. */
   report(level: "info" | "warn", message: string, error?: unknown): void;
+  /**
+   * Starts a run of speech on this machine: its before hook now, its after
+   * hook when the run is ended. See `app/speech-hooks.ts`.
+   */
+  startRun?: SpeechRunStarter;
 }
 
 function describe(error: unknown): string {
@@ -63,6 +69,10 @@ export class Announcer {
   private warnedSay = false;
   /** Deliveries queue behind one another, so a button press never talks over an announcement. */
   private chain: Promise<void> = Promise.resolve();
+  /** Deliveries queued or running; the after-speaking hook waits until there are none. */
+  private queued = 0;
+  /** The run of speech this window has open on its machine, from its first sound until the queue empties. */
+  private run: SpeechRun | null = null;
 
   constructor(private readonly deps: AnnouncerDeps) {}
 
@@ -130,11 +140,17 @@ export class Announcer {
     );
   }
 
-  /** A reload starts a new announcer at once, so this one must fall silent or the two talk over each other. */
+  /**
+   * A reload starts a new announcer at once, so this one must fall silent or
+   * the two talk over each other. Its run ends now, not when the delivery in
+   * progress gets round to it — that may be waiting on a render that never
+   * answers.
+   */
   stop(): void {
     this.stopped = true;
     this.deps.audio.stopSpeaking();
     this.deps.audio.stopAudio();
+    void this.endRun();
   }
 
   private blocked(): string | null {
@@ -146,15 +162,45 @@ export class Announcer {
    * a press. `retrying` is set when another window gave the claim back.
    */
   private deliver(text: string, eventId: string | null, retrying: boolean): Promise<Outcome> {
-    const next = this.chain.then(
-      () => this.deliverNow(text, eventId, retrying),
-      () => this.deliverNow(text, eventId, retrying),
-    );
+    this.queued += 1;
+    const run = () => this.deliverWithHooks(text, eventId, retrying);
+    const next = this.chain.then(run, run);
     this.chain = next.then(
       () => {},
       () => {},
     );
     return next;
+  }
+
+  /**
+   * One delivery, and the run of speech around a run of them. The run starts
+   * just before the first sound (`beforeSound`) and ends once this delivery
+   * played, failed, was cut short or skipped, and none waits behind it — or
+   * at `stop`. Back-to-back sentences are one run, so whatever the hooks do
+   * (pause music, duck the volume) is not undone and redone between them.
+   * Should this window vanish first, the machine ends the run itself.
+   */
+  private async deliverWithHooks(text: string, eventId: string | null, retrying: boolean): Promise<Outcome> {
+    try {
+      return await this.deliverNow(text, eventId, retrying);
+    } finally {
+      this.queued -= 1;
+      if (this.queued === 0) await this.endRun();
+    }
+  }
+
+  /** Starts this window's run of speech if none is open, and resolves when it may sound. Never rejects. */
+  private beforeSound(): Promise<void> {
+    if (this.stopped) return Promise.resolve();
+    this.run ??= this.deps.startRun?.() ?? null;
+    return this.run?.ready ?? Promise.resolve();
+  }
+
+  /** Ends the open run, once; never rejects. */
+  private endRun(): Promise<void> {
+    const run = this.run;
+    this.run = null;
+    return run?.end() ?? Promise.resolve();
   }
 
   private async deliverNow(text: string, eventId: string | null, retrying: boolean): Promise<Outcome> {
@@ -212,7 +258,8 @@ export class Announcer {
     });
     if (settings.engine === "say" && audio.canPlayAudio()) {
       try {
-        const rendered = await this.deps.render(text, voices.say, settings.rate);
+        // The before hook runs while the server renders, so it adds no wait of its own.
+        const [rendered] = await Promise.all([this.deps.render(text, voices.say, settings.rate), this.beforeSound()]);
         if (this.stopped) return "skipped";
         await audio.playAudio(`data:${rendered.mimeType};base64,${rendered.base64}`);
         return "spoke";
@@ -225,6 +272,8 @@ export class Announcer {
     }
     if (this.stopped) return "skipped";
     if (!audio.canSpeak()) return "refused";
+    await this.beforeSound();
+    if (this.stopped) return "skipped";
     return (await audio.speak(text, { voice: voices.web, rate: settings.rate })) ? "spoke" : "refused";
   }
 }
