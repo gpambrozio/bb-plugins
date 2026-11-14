@@ -30,11 +30,15 @@ let emitAfter: ((payload: AfterWithoutWindow) => Promise<void>) | null = null;
  * worker shuts down and its link to the server may already be gone.
  */
 async function reportAfter(payload: AfterWithoutWindow): Promise<void> {
-  const why = payload.reason === "expired" ? "its window stopped answering" : "Herald's host worker was shutting down";
+  // On a shutdown the run may have been ended by its window already, its after hook still running.
+  const what =
+    payload.reason === "expired"
+      ? "a run of speech ended because its window stopped answering"
+      : "Herald's host worker shut down during a run of speech or its after hook";
   const failure = payload.after === null ? null : hookFailure(payload.after);
   const outcome =
     payload.after === null ? "no after-speaking hook was set" : failure === null ? "the after-speaking hook ran" : `the after-speaking hook failed: ${failure}`;
-  const line = `[herald] On ${hostname()}, a run of speech ended because ${why}; ${outcome}.\n`;
+  const line = `[herald] On ${hostname()}, ${what}; ${outcome}.\n`;
   const written = Promise.all([
     new Promise<void>((resolve) => process.stderr.write(line, () => resolve())),
     emitAfter?.(payload).catch(() => {}),

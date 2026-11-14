@@ -208,16 +208,27 @@ describe("HookSessions", () => {
     expect(order.at(-1)).toBe("after:killed");
   });
 
-  it("bounds an after hook a window's end started when the worker is disposed", async () => {
+  it("bounds and reports, without running it again, an after hook a window's end started when the worker is disposed", async () => {
     vi.useFakeTimers();
     const { sessions, order, options, lease } = setup();
     await sessions.begin({ runId: "a", ...COMMANDS }, lease());
+    await sessions.begin({ runId: "b", ...COMMANDS }, lease());
+    await sessions.end("b");
     options.hold = true;
     void sessions.end("a");
     await vi.advanceTimersByTimeAsync(0);
     const disposed = sessions.dispose();
     await vi.advanceTimersByTimeAsync(DISPOSE_BUDGET_MS);
-    await expect(disposed).resolves.toBeNull();
+    await expect(disposed).resolves.toEqual({ runIds: ["a", "b"], after: { ...OK, exitCode: null, signal: "SIGKILL" } });
+    expect(order.filter((step) => step === "after:play-music")).toHaveLength(1);
     expect(order.at(-1)).toBe("after:killed");
+  });
+
+  it("reports nothing on dispose for an after hook that already finished", async () => {
+    const { sessions, order, lease } = setup();
+    await sessions.begin({ runId: "a", ...COMMANDS }, lease());
+    await sessions.end("a");
+    await expect(sessions.dispose()).resolves.toBeNull();
+    expect(order.filter((step) => step === "after:play-music")).toHaveLength(1);
   });
 });

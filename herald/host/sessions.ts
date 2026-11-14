@@ -42,8 +42,16 @@ interface OpenRun {
 
 interface Session {
   runs: Map<string, OpenRun>;
+  /** Every run that was ever open in this session, for the report of its after hook. */
+  runIds: string[];
   before: Promise<HookRun | null>;
   after: string;
+}
+
+/** A session whose after hook is running: what a dispose arriving meanwhile waits for and reports. */
+interface Closing {
+  runIds: string[];
+  after: Promise<HookRun | null>;
 }
 
 /** How long an ended run id is remembered, against a `begin` that arrives late. */
@@ -68,6 +76,8 @@ export class HookSessions {
   private session: Session | null = null;
   /** The last session's `after`, while it runs; a new session's `before` waits for it. */
   private closing: Promise<unknown> = Promise.resolve();
+  /** The session whose after hook is still running, until it has finished; null otherwise. */
+  private inFlight: Closing | null = null;
   private readonly ended = new Map<string, number>();
   private disposed = false;
   private readonly now: () => number;
@@ -96,12 +106,14 @@ export class HookSessions {
       const before = input.before.trim();
       session = {
         runs: new Map(),
+        runIds: [],
         before: before === "" ? Promise.resolve(null) : this.deps.run("before", before),
         after: input.after.trim(),
       };
       this.session = session;
     }
     session.runs.set(input.runId, { timer: this.expireLater(input.runId, input.leaseMs), lease });
+    session.runIds.push(input.runId);
     const before = await session.before;
     return { open: true, before: opened ? before : null };
   }
@@ -142,15 +154,18 @@ export class HookSessions {
     try {
       const session = this.session;
       if (session === null) {
-        // An after hook a window's end started may still be running; the deadline bounds it.
-        await this.closing;
-        return null;
+        // An after hook a window's end (or an expiry) started may still be running: it is not run
+        // again, but waited for — the deadline bounds it — and reported, since the call that started
+        // it may not get to answer once the worker is going.
+        const inFlight = this.inFlight;
+        if (inFlight === null) return null;
+        return { runIds: inFlight.runIds, after: await inFlight.after };
       }
       const runs = [...session.runs.entries()];
       for (const [, run] of runs) clearTimeout(run.timer);
       session.runs.clear();
       try {
-        return { runIds: runs.map(([runId]) => runId), after: await this.close(session, DISPOSE_BUDGET_MS) };
+        return { runIds: session.runIds, after: await this.close(session, DISPOSE_BUDGET_MS) };
       } finally {
         await Promise.all(runs.map(([, run]) => run.lease.dispose()));
       }
@@ -165,7 +180,12 @@ export class HookSessions {
       await session.before;
       return session.after === "" ? null : this.deps.run("after", session.after, afterTimeoutMs);
     })();
+    const inFlight: Closing = { runIds: session.runIds, after: closing };
+    this.inFlight = inFlight;
     this.closing = closing;
+    void closing.then(() => {
+      if (this.inFlight === inFlight) this.inFlight = null;
+    });
     return closing;
   }
 

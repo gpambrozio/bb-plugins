@@ -114,7 +114,7 @@ describe("SpeechHooksStore", () => {
   it("logs a run ended by the machine's worker shutting down, with how its after hook failed", async () => {
     const { store, log } = setup();
     store.endedByMachine("host_a", "disposed", { ...OK, exitCode: 4, stderr: "disposal-hook-failed\n" });
-    expect(log.info).toHaveBeenCalledWith("Herald's worker on host_a shut down during a run of speech, so the run was ended there.");
+    expect(log.info).toHaveBeenCalledWith("Herald's worker on host_a shut down during a run of speech or its after hook, and finished the run there.");
     expect(log.warn).toHaveBeenCalledWith("The after-speaking hook on host_a failed: it exited with 4: disposal-hook-failed");
   });
 

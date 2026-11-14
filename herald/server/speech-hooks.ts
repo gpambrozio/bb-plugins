@@ -154,7 +154,7 @@ export class SpeechHooksStore {
     this.deps.log.info(
       reason === "expired"
         ? `A window speaking on ${hostId} stopped answering, so its run of speech was ended there.`
-        : `Herald's worker on ${hostId} shut down during a run of speech, so the run was ended there.`,
+        : `Herald's worker on ${hostId} shut down during a run of speech or its after hook, and finished the run there.`,
     );
     if (after !== null) this.report(hostId, "after", after);
   }

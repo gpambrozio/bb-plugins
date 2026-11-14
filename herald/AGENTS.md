@@ -664,7 +664,10 @@ per setting for every device, so they live in storage and in a section of their 
 - **What the machine did alone is reported twice.** A run ended by expiry or dispose goes out as the
   host signal `afterWithoutWindow` (logged by the server, with the machine) *and* as a line on the
   worker's stderr, which the daemon logs as "Host plugin stderr" — the path that still works during a
-  shutdown, when the link to the server may be gone or the server's instance being replaced.
+  shutdown, when the link to the server may be gone or the server's instance being replaced. A dispose
+  that finds an *after* still running from a window's `end` (or an expiry) does not run it again: it waits
+  for it within the budget and reports it with its session's run ids, since the `end` call may never get
+  to answer.
 - **`host/worker.test.ts` runs the built `dist/host.js` in bb's real worker** over its IPC protocol
   (from the desktop app, the global `bb-app` CI installs, or `BB_HOST_WORKER`), since the SDK's
   in-process harness has no disposal deadline. It is skipped without a worker or a build, and fails on

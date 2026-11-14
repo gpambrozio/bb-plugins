@@ -162,7 +162,7 @@ describe.runIf(runnable)("Herald's host entry in bb's real host worker", () => {
     expect(exit.afterMs).toBeLessThan(4_500);
     expect(readFileSync(join(dir, "log"), "utf8")).toBe("after\n");
     expect(groupAlive(beforePid)).toBe(false);
-    expect(w.stderr()).toMatch(/a run of speech ended because Herald's host worker was shutting down; the after-speaking hook ran\./);
+    expect(w.stderr()).toMatch(/Herald's host worker shut down during a run of speech or its after hook; the after-speaking hook ran\./);
     expect(signals(w)).toMatchObject([{ reason: "disposed", runIds: ["r1"], after: { exitCode: 0 } }]);
   }, 20_000);
 
@@ -192,5 +192,40 @@ describe.runIf(runnable)("Herald's host entry in bb's real host worker", () => {
     expect(exit.afterMs).toBeLessThan(4_500);
     expect(groupAlive(afterPid)).toBe(false);
     expect(w.stderr()).toContain("the after-speaking hook failed");
+  }, 20_000);
+
+  it("reports, without running it again, a failing after hook a window's end started when a shutdown comes", async () => {
+    const dir = scratch();
+    const w = await startWorker();
+    await w.call("begin", {
+      runId: "r1",
+      before: "",
+      after: `echo after >> '${join(dir, "log")}'; echo $$ > '${join(dir, "after.pid")}'; sleep 1; echo restore-failed >&2; exit 5`,
+      leaseMs: 30_000,
+    });
+    void w.call("end", { runId: "r1" });
+    await waitForFile(join(dir, "after.pid"));
+    w.dispose();
+    const exit = await w.exited;
+    expect(exit.code).toBe(0);
+    expect(exit.afterMs).toBeLessThan(4_500);
+    expect(readFileSync(join(dir, "log"), "utf8")).toBe("after\n");
+    expect(w.stderr()).toContain("the after-speaking hook failed: it exited with 5: restore-failed");
+    expect(signals(w)).toMatchObject([{ reason: "disposed", runIds: ["r1"], after: { exitCode: 5 } }]);
+  }, 20_000);
+
+  it("reports an after hook a window's end started that the shutdown has to cut short", async () => {
+    const dir = scratch();
+    const w = await startWorker();
+    await w.call("begin", { runId: "r1", before: "", after: `echo $$ > '${join(dir, "after.pid")}'; sleep 30`, leaseMs: 30_000 });
+    void w.call("end", { runId: "r1" });
+    const afterPid = Number(await waitForFile(join(dir, "after.pid")));
+    w.dispose();
+    const exit = await w.exited;
+    expect(exit.code).toBe(0);
+    expect(exit.afterMs).toBeLessThan(4_500);
+    expect(groupAlive(afterPid)).toBe(false);
+    expect(w.stderr()).toContain("the after-speaking hook failed: it was ended by SIGKILL");
+    expect(signals(w)).toMatchObject([{ reason: "disposed", runIds: ["r1"], after: { signal: "SIGKILL" } }]);
   }, 20_000);
 });
