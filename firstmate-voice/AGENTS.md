@@ -37,7 +37,8 @@ the voice, the decisions behind phase 1, and the phase 0 decision record.
   crew's template, not model text. Do not add a tool argument that reaches the first mate as text.
 - **Presses are two-phase and checked against the captain's transcript, not the model's claim.**
   `propose_press` returns a server-written read-back; it counts as read back only when the model's own output
-  transcript says most of it; `confirm_press` needs the captain's first utterance committed after that to be
+  transcript says most of it and that audio then plays to its end (`output_audio_buffer.stopped`; a reply the
+  captain talked over, `cleared`, does not count); `confirm_press` needs the captain's first utterance committed after that to be
   a short yes with no negation, within 30 s, on a single-use token, one press in 10 s. firstmate-crew checks
   the card's etag again and refuses tap-only buttons again.
 - **Merges, anything destructive, publishing, credentials and settings are never pressed by voice** in phase
@@ -91,6 +92,10 @@ after the captain stopped; a suggestion was read back, confirmed with "Yes." and
   the turn detection hear the speech end; `e2e-desktop.ts` mixes in faint noise, as a real room has.
 - **The model speaks a preamble before a tool** ("let me set that up"), so the read-back is its own response;
   the press guard matches it there.
+- **The press re-check** (`phase1-results/2026-11-14-e2e-desktop-press-recheck.json`), after the guard began
+  waiting for the read-back's audio to end: the read-back's audio stopped at 25.8 s, the captain's "Yes." was
+  committed at 33.1 s, and the suggestion was pressed; "Press merge" was refused from the brief without a
+  proposal. About four minutes of voice time were spent across the phase 1 runs.
 
 ## Live checks
 

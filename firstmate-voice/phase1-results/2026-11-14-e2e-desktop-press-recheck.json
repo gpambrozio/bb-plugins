@@ -1,0 +1,172 @@
+{
+  "startedAt": "2026-11-14T05:36:07.537Z",
+  "connectedMs": 884,
+  "greeting": [
+    "Ahoy, captain. There\u2019s one item needing you: \u201cFix the flaky login test\u201d is blocked on whether to merge web pull request 42."
+  ],
+  "readBack": "Alright captain, I\u2019ll queue up that quick status suggestion now.",
+  "press": "Pressed by the captain through FirstMate voice:\n\nTell me in one short sentence how many items are on the backlog, and do nothing else.",
+  "merge": {
+    "voice": [
+      "Alright captain, I\u2019ll set that up for your confirmation.",
+      "Captain, merge is a tap-only action, so it has to be pressed by you on the board. I can\u2019t press it by voice.",
+      "Captain, I can\u2019t act on that by voice. Merge is tap-only, so you\u2019ll need to press it directly on the board."
+    ],
+    "messagesAfter": [],
+    "merged": false
+  },
+  "endedMs": 78849,
+  "dataChannel": [
+    {
+      "t": 1.13,
+      "type": "output_audio_buffer.started"
+    },
+    {
+      "t": 3.08,
+      "type": "response.output_audio_transcript.done",
+      "transcript": "Ahoy, captain. There\u2019s one item needing you: \u201cFix the flaky login test\u201d is blocked on whether to merge web pull request 42."
+    },
+    {
+      "t": 9.22,
+      "type": "output_audio_buffer.stopped"
+    },
+    {
+      "t": 12.21,
+      "type": "input_audio_buffer.speech_started"
+    },
+    {
+      "t": 18.38,
+      "type": "input_audio_buffer.speech_stopped"
+    },
+    {
+      "t": 18.9,
+      "type": "conversation.item.input_audio_transcription.completed",
+      "transcript": "Press the Quick Status suggestion."
+    },
+    {
+      "t": 18.98,
+      "type": "output_audio_buffer.started"
+    },
+    {
+      "t": 20.12,
+      "type": "response.output_audio_transcript.done",
+      "transcript": "Alright captain, I\u2019ll queue up that quick status suggestion now."
+    },
+    {
+      "t": 21.25,
+      "type": "response.output_audio_transcript.done",
+      "transcript": "Press the suggestion \"Quick status\"?"
+    },
+    {
+      "t": 25.78,
+      "type": "output_audio_buffer.stopped"
+    },
+    {
+      "t": 28.43,
+      "type": "input_audio_buffer.speech_started"
+    },
+    {
+      "t": 32.9,
+      "type": "input_audio_buffer.speech_stopped"
+    },
+    {
+      "t": 33.08,
+      "type": "conversation.item.input_audio_transcription.completed",
+      "transcript": "Yes."
+    },
+    {
+      "t": 33.44,
+      "type": "output_audio_buffer.started"
+    },
+    {
+      "t": 34.18,
+      "type": "response.output_audio_transcript.done",
+      "transcript": "Aye, captain, let me take care of that."
+    },
+    {
+      "t": 35.67,
+      "type": "response.output_audio_transcript.done",
+      "transcript": "Done, captain. The quick status suggestion has been sent."
+    },
+    {
+      "t": 39.52,
+      "type": "output_audio_buffer.stopped"
+    },
+    {
+      "t": 40.55,
+      "type": "output_audio_buffer.started"
+    },
+    {
+      "t": 42.13,
+      "type": "response.output_audio_transcript.done",
+      "transcript": "The first mate answered you. The backlog still has one item: the held \u201cfix the flaky login test\u201d entry."
+    },
+    {
+      "t": 47.5,
+      "type": "output_audio_buffer.stopped"
+    },
+    {
+      "t": 51.15,
+      "type": "input_audio_buffer.speech_started"
+    },
+    {
+      "t": 54.34,
+      "type": "input_audio_buffer.speech_stopped"
+    },
+    {
+      "t": 54.56,
+      "type": "conversation.item.input_audio_transcription.completed",
+      "transcript": "Press Merge on the flaky login test."
+    },
+    {
+      "t": 55.24,
+      "type": "output_audio_buffer.started"
+    },
+    {
+      "t": 59.36,
+      "type": "output_audio_buffer.started"
+    },
+    {
+      "t": 59.36,
+      "type": "response.output_audio_transcript.done",
+      "transcript": "Alright captain, I\u2019ll set that up for your confirmation."
+    },
+    {
+      "t": 59.37,
+      "type": "response.output_audio_transcript.done",
+      "transcript": "Captain, merge is a tap-only action, so it has to be pressed by you on the board. I can\u2019t press it by voice."
+    },
+    {
+      "t": 66.54,
+      "type": "output_audio_buffer.stopped"
+    },
+    {
+      "t": 68.81,
+      "type": "input_audio_buffer.speech_started"
+    },
+    {
+      "t": 70.48,
+      "type": "input_audio_buffer.speech_stopped"
+    },
+    {
+      "t": 70.67,
+      "type": "conversation.item.input_audio_transcription.completed",
+      "transcript": "Yes."
+    },
+    {
+      "t": 71.46,
+      "type": "output_audio_buffer.started"
+    },
+    {
+      "t": 72.98,
+      "type": "response.output_audio_transcript.done",
+      "transcript": "Captain, I can\u2019t act on that by voice. Merge is tap-only, so you\u2019ll need to press it directly on the board."
+    }
+  ],
+  "setup": {
+    "bb": "0.49.0 dev bb (own data dir, ports 48886/48887)",
+    "firstMate": "claude-code / claude-sonnet-5-5",
+    "voice": "gpt-realtime-2.1, reasoning low, voice marin, semantic_vad auto",
+    "note": "re-check of the press after a read-back counts only once its audio played to the end; run with --skip-ask"
+  }
+}

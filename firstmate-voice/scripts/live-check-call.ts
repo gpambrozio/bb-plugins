@@ -11,7 +11,7 @@
 //     browser path: that ek_ posting an SDP offer to /v1/realtime/calls);
 //  2. reasoning.effort: one ?model= socket, one session.update per value;
 //  3. POST /v1/realtime/calls with a real SDP offer made in a headless
-//     Chromium page (--page loads the dev bb's spike page first), the peer
+//     Chromium page (--page loads a dev bb page first), the peer
 //     connected with the answer;
 //  4. the sideband: wss://…/v1/realtime?call_id= on that call, with a
 //     session.update; then the call is hung up.

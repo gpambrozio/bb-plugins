@@ -43,11 +43,14 @@ async function say(sideband: FakeSideband, clock: FakeClock, text: string): Prom
 }
 
 /** The model answers: a response that may speak and may call one tool. */
-async function respond(sideband: FakeSideband, clock: FakeClock, options: { spoken?: string; tool?: { name: string; args?: object } } = {}): Promise<void> {
+async function respond(sideband: FakeSideband, clock: FakeClock, options: { spoken?: string; cut?: boolean; tool?: { name: string; args?: object } } = {}): Promise<void> {
   counter += 1;
   const id = `resp_${counter}`;
   sideband.emit({ type: "response.created", response: { id } });
-  if (options.spoken !== undefined) sideband.emit({ type: "response.output_audio_transcript.done", response_id: id, transcript: options.spoken });
+  if (options.spoken !== undefined) {
+    sideband.emit({ type: "output_audio_buffer.started", response_id: id });
+    sideband.emit({ type: "response.output_audio_transcript.done", response_id: id, transcript: options.spoken });
+  }
   if (options.tool !== undefined) {
     sideband.emit({
       type: "response.function_call_arguments.done",
@@ -59,6 +62,10 @@ async function respond(sideband: FakeSideband, clock: FakeClock, options: { spok
   }
   await clock.advance(200);
   sideband.emit({ type: "response.done", response: { id, status: "completed" } });
+  if (options.spoken !== undefined) {
+    await clock.advance(options.cut === true ? 300 : 1_500);
+    sideband.emit({ type: options.cut === true ? "output_audio_buffer.cleared" : "output_audio_buffer.stopped", response_id: id });
+  }
   await settle();
 }
 
@@ -178,6 +185,14 @@ describe("pressing by voice", () => {
   it("never proposes a merge: the captain taps it on the board", async () => {
     const { sideband, crew } = await proposed("c1.a1");
     expect(sideband.outputs().at(-1)).toMatchObject({ ok: false, tapOnly: "a merge" });
+    expect(crew.presses).toEqual([]);
+  });
+
+  it("refuses a yes said over the read-back", async () => {
+    const { sideband, clock, crew, token, readBack } = await proposed();
+    await respond(sideband, clock, { spoken: readBack, cut: true });
+    await say(sideband, clock, "Yes.");
+    await respond(sideband, clock, { tool: { name: "confirm_press", args: { token } } });
     expect(crew.presses).toEqual([]);
   });
 
