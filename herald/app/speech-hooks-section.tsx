@@ -42,7 +42,9 @@ function MachineHooksForm({
   onSave: (hooks: MachineHooks) => void;
 }) {
   const [draft, setDraft] = useState(stored);
-  useEffect(() => setDraft(stored), [stored]);
+  // Only a change to this machine's own commands replaces the draft: saving another machine answers
+  // every machine's hooks as new objects, and must not throw away what was typed here.
+  useEffect(() => setDraft({ before: stored.before, after: stored.after }), [stored.before, stored.after]);
   const changed = draft.before !== stored.before || draft.after !== stored.after;
   const field = (kind: keyof MachineHooks, label: string) => (
     <div className="space-y-1">
@@ -144,7 +146,9 @@ export function SpeechHooksSection() {
           A command to run on a machine just before Herald speaks there, and one once it has finished — to pause music or lower the
           volume, say. Each machine has its own, and empty runs nothing. They run on the machine whose bb desktop app speaks, through
           its shell, from the home folder, with {SPEECH_HOOK_ENV} set to <code>before</code> or <code>after</code>. Sentences said back
-          to back share one before and one after, and the after hook runs even when the speech failed. A hook gets{" "}
+          to back, and windows speaking on the same machine at once, share one before and one after. The after hook runs
+          whenever the before hook did: when the speech ends or fails, and within half a minute when the window speaking closes,
+          reloads or loses bb. A hook gets{" "}
           {SPEECH_HOOK_TIMEOUT_MS / 1000} seconds; one that is slower is stopped, and one that fails is noted in the plugin&apos;s log —
           Herald speaks either way. bb&apos;s mobile app and a browser tab run no hooks.
         </p>

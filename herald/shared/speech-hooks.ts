@@ -3,6 +3,11 @@
  * whose bb desktop app is about to speak ("before") and once it has finished
  * ("after"). Empty runs nothing, and empty is the default.
  *
+ * Speech is tracked on that machine as runs: a window opens one before its
+ * first sentence and ends it after its last, and the machine's host entry
+ * runs "before" when the first open run starts and "after" when the last one
+ * ends — whichever window or reason ended it (`host/sessions.ts`).
+ *
  * Shared by the three halves — the app, the server and the host entry — so it
  * imports zod only, never the SDK (see `shared/herald.ts`).
  */
@@ -20,6 +25,15 @@ export const SPEECH_HOOK_MAX_CHARS = 2000;
  * The client stops waiting a little later, in case the host never answers.
  */
 export const SPEECH_HOOK_TIMEOUT_MS = 5_000;
+
+/**
+ * How long a run of speech stays open on its machine without word from the
+ * window speaking it. The window renews it every `SPEECH_HOOK_RENEW_MS` while
+ * it speaks; a window that closes, reloads or loses the server stops renewing,
+ * and the machine runs the after hook itself once the lease runs out.
+ */
+export const SPEECH_HOOK_LEASE_MS = 30_000;
+export const SPEECH_HOOK_RENEW_MS = 10_000;
 
 /** How much of a failed hook's error output is kept for the log. */
 export const SPEECH_HOOK_STDERR_MAX = 1_000;
@@ -47,7 +61,10 @@ export function hookCommand(hooks: SpeechHooks, hostId: string, kind: SpeechHook
   return command === "" ? null : command;
 }
 
-/** What the host entry reports of one run. */
+/** A run of speech, named by the window that opens it. */
+export const RunIdSchema = z.string().min(1).max(100);
+
+/** What the host entry reports of one run of a command. */
 export const HookRunSchema = z.object({
   exitCode: z.number().int().nullable(),
   /** The signal that ended it, when one did — a timeout's SIGKILL included. */

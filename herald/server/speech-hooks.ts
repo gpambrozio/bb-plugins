@@ -1,16 +1,18 @@
 /**
  * The speech hooks on the server's side: each machine's two commands, kept in
- * one kv row by bb host id, and the run a speaking window asks for.
+ * one kv row by bb host id, and the runs of speech a speaking window opens and
+ * ends on its machine.
  *
- * The app names only the machine and which hook; the command is always the
- * one stored here for that machine, so a window cannot have a host run
- * anything else. An empty command runs nothing and reaches no host.
+ * The app names only the machine and its run; the commands are always the ones
+ * stored here for that machine, so a window cannot have a host run anything
+ * else. A machine with no command opens no run and reaches no host. The run
+ * itself, and the after hook it owes, live on the machine (`host/sessions.ts`).
  */
 import {
-  hookCommand,
   hookFailure,
   MachineHooksSchema,
   NO_HOOKS,
+  SPEECH_HOOK_LEASE_MS,
   SPEECH_HOOK_TIMEOUT_MS,
   SpeechHooksSchema,
   type HookRun,
@@ -21,20 +23,32 @@ import {
 
 export const SPEECH_HOOKS_KEY = "speechHooks";
 
-/** The host call may take the hook's whole timeout, plus the round trip to the machine. */
-export const HOST_CALL_TIMEOUT_MS = SPEECH_HOOK_TIMEOUT_MS + 5_000;
+/** `begin` may take the before hook's whole timeout, plus the round trip to the machine. */
+export const BEGIN_TIMEOUT_MS = SPEECH_HOOK_TIMEOUT_MS + 5_000;
+/** `end` may wait for a `before` still running, then run the after hook. */
+export const END_TIMEOUT_MS = 2 * SPEECH_HOOK_TIMEOUT_MS + 5_000;
+
+/** Herald's host entry on one machine; see `shared/host-contract.ts`. */
+export interface HostSessionsPort {
+  begin(
+    hostId: string,
+    input: { runId: string; before: string; after: string; leaseMs: number },
+    signal?: AbortSignal,
+  ): Promise<{ open: boolean; before: HookRun | null }>;
+  renew(hostId: string, input: { runId: string; leaseMs: number }): Promise<{ open: boolean }>;
+  end(hostId: string, input: { runId: string }): Promise<{ after: HookRun | null }>;
+}
 
 export interface SpeechHooksDeps {
   kv: { get<T>(key: string): Promise<T | null | undefined>; set(key: string, value: unknown): Promise<void> };
-  /** Runs `command` on the machine `hostId` through Herald's host entry. */
-  runOnHost(hostId: string, kind: SpeechHookKind, command: string, signal?: AbortSignal): Promise<HookRun>;
+  host: HostSessionsPort;
   log: { info(message: string): void; warn(message: string): void; error(message: string): void };
 }
 
-export interface HookResult {
-  /** False when the machine has no command for this hook, so nothing ran. */
-  ran: boolean;
-  /** Why it failed, when it ran and failed; also in the plugin's log. */
+export interface BeginResult {
+  /** True: the run is open on the machine. False: nothing was opened. Null: unknown — the machine did not answer. */
+  open: boolean | null;
+  /** Why the before hook, or the call, failed; also in the plugin's log. */
   error: string | null;
 }
 
@@ -80,31 +94,72 @@ export class SpeechHooksStore {
   }
 
   /**
-   * Runs `kind` on `hostId` when that machine has a command for it. Never
-   * throws: a failure is logged here, with the machine, and returned for the
-   * window to report too.
+   * Opens `runId` on `hostId`, which runs the machine's before hook when no
+   * other run is open there. A machine with neither command opens nothing.
+   * Never throws: a failure is logged here, with the machine.
    */
-  async run(hostId: string, kind: SpeechHookKind, signal?: AbortSignal): Promise<HookResult> {
-    let command: string | null;
+  async begin(hostId: string, runId: string, signal?: AbortSignal): Promise<BeginResult> {
+    let hooks: MachineHooks;
     try {
-      command = hookCommand(await this.all(), hostId, kind);
+      hooks = await this.of(hostId);
     } catch (error) {
-      const message = `Could not read the speech hooks: ${reasonText(error)}`;
-      this.deps.log.error(message);
-      return { ran: false, error: message };
+      return { open: false, error: this.failed(`Could not read the speech hooks: ${reasonText(error)}`) };
     }
-    if (command === null) return { ran: false, error: null };
-    let failure: string | null;
+    const before = hooks.before.trim();
+    const after = hooks.after.trim();
+    if (before === "" && after === "") return { open: false, error: null };
     try {
-      const run = await this.deps.runOnHost(hostId, kind, command, signal);
-      failure = hookFailure(run);
-      if (failure === null) this.deps.log.info(`Ran the ${kind}-speaking hook on ${hostId} (${run.durationMs} ms).`);
+      const opened = await this.deps.host.begin(hostId, { runId, before, after, leaseMs: SPEECH_HOOK_LEASE_MS }, signal);
+      return { open: opened.open, error: opened.before === null ? null : this.report(hostId, "before", opened.before) };
     } catch (error) {
-      failure = `the machine could not run it: ${reasonText(error)}`;
+      // The machine may have opened it anyway; the window ends it all the same.
+      return { open: null, error: this.failed(`Could not start a run of speech on ${hostId}: ${reasonText(error)}`) };
     }
-    if (failure === null) return { ran: true, error: null };
-    const message = `The ${kind}-speaking hook on ${hostId} failed: ${failure}`;
+  }
+
+  /** Keeps `runId` open on `hostId`; false when the machine no longer has it open. */
+  async renew(hostId: string, runId: string): Promise<boolean> {
+    try {
+      return (await this.deps.host.renew(hostId, { runId, leaseMs: SPEECH_HOOK_LEASE_MS })).open;
+    } catch (error) {
+      this.failed(`Could not keep a run of speech open on ${hostId}: ${reasonText(error)}`);
+      return false;
+    }
+  }
+
+  /**
+   * Ends `runId` on `hostId`; the last open run there runs the after hook.
+   * Reaches the machine whatever is stored now, since a run opened under the
+   * old commands still owes its after hook. Safe to repeat.
+   */
+  async end(hostId: string, runId: string): Promise<{ error: string | null }> {
+    try {
+      const { after } = await this.deps.host.end(hostId, { runId });
+      return { error: after === null ? null : this.report(hostId, "after", after) };
+    } catch (error) {
+      // The machine runs the after hook itself once the run's lease is out.
+      return { error: this.failed(`Could not end a run of speech on ${hostId}; it ends by itself shortly: ${reasonText(error)}`) };
+    }
+  }
+
+  /** What the machine says it ran by itself when a window stopped answering. */
+  expired(hostId: string, after: HookRun | null): void {
+    this.deps.log.info(`A window speaking on ${hostId} stopped answering, so its run of speech was ended there.`);
+    if (after !== null) this.report(hostId, "after", after);
+  }
+
+  /** Logs one command's run; the failure text, or null when it succeeded. */
+  private report(hostId: string, kind: SpeechHookKind, run: HookRun): string | null {
+    const failure = hookFailure(run);
+    if (failure === null) {
+      this.deps.log.info(`Ran the ${kind}-speaking hook on ${hostId} (${run.durationMs} ms).`);
+      return null;
+    }
+    return this.failed(`The ${kind}-speaking hook on ${hostId} failed: ${failure}`);
+  }
+
+  private failed(message: string): string {
     this.deps.log.warn(message);
-    return { ran: true, error: message };
+    return message;
   }
 }

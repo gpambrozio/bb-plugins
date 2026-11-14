@@ -12,7 +12,7 @@
  * A browser tab (which may be on any machine, and needs a permission prompt
  * to reach a local port) and the mobile app (no host daemon) skip the hooks.
  */
-import { SPEECH_HOOK_TIMEOUT_MS, type SpeechHookKind } from "../shared/speech-hooks";
+import { SPEECH_HOOK_RENEW_MS, SPEECH_HOOK_TIMEOUT_MS } from "../shared/speech-hooks";
 import type { SpeechPlatform } from "../shared/settings";
 
 /** What the local host daemon's `/status` answers; only what Herald reads. */
@@ -63,52 +63,122 @@ async function fetchLocalStatus(port: number): Promise<unknown> {
   return response.json();
 }
 
-export interface HookRunnerDeps {
+export interface SpeechRunDeps {
   platform(): SpeechPlatform;
   /** This window's machine, or null when it has none bb knows; see `findLocalHostId`. */
   localHostId(): Promise<string | null>;
-  /** The server runs the hook stored for `hostId`; see the `hooks.run` RPC. */
-  run(hostId: string, kind: SpeechHookKind): Promise<{ ran: boolean; error: string | null }>;
+  /** The `hooks.begin`, `hooks.renew` and `hooks.end` RPCs. */
+  begin(hostId: string, runId: string): Promise<{ open: boolean | null; error: string | null }>;
+  renew(hostId: string, runId: string): Promise<{ open: boolean }>;
+  end(hostId: string, runId: string): Promise<{ error: string | null }>;
   report(level: "info" | "warn", message: string, error?: unknown): void;
-  /** How long to wait for the run before speaking anyway. */
+  /** How long speech waits for the run to start (the machine's before hook) before going on. */
   timeoutMs?: number;
+  renewMs?: number;
+  newRunId?: () => string;
 }
 
-export type HookRunner = (kind: SpeechHookKind) => Promise<void>;
+/** One run of speech in this window: the before hook around its start, the after hook at its end. */
+export interface SpeechRun {
+  /**
+   * Resolves when the run has started on the machine — its before hook has
+   * finished — or failed, or took longer than the deadline. Never rejects.
+   */
+  ready: Promise<void>;
+  /**
+   * Ends the run: the machine runs the after hook once no other run is open
+   * there. Safe to call more than once and at any point, also before `ready`.
+   * Never rejects.
+   */
+  end(): Promise<void>;
+}
+
+export type SpeechRunStarter = () => SpeechRun;
+
+const NO_RUN: SpeechRun = { ready: Promise.resolve(), end: async () => {} };
 
 function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
 /**
- * Runs a hook for this window, and resolves once it has finished, failed, or
- * taken too long — never rejects, so a hook never stands between Herald and
- * its voice. Off the desktop app it resolves at once without a single read.
- * A failure is reported to the plugin's log, with why.
+ * Starts runs of speech for this window. Off bb's desktop app every run is
+ * empty and reads nothing.
+ *
+ * A run is bound to one machine and one run id from its start. Its deadline
+ * only ends the wait for speech: a lookup still pending at the deadline is
+ * never sent on, so a late answer cannot start a before hook after the speech
+ * it was for; a `begin` already sent is left to finish, and `end` still goes —
+ * the machine runs that run's after hook after its before, in that order,
+ * whichever of the two calls arrives first. While the run is open the window
+ * renews it, so a window that disappears stops renewing and the machine ends
+ * the run itself.
  */
-export function createHookRunner(deps: HookRunnerDeps): HookRunner {
+export function createSpeechRunStarter(deps: SpeechRunDeps): SpeechRunStarter {
   const timeoutMs = deps.timeoutMs ?? SPEECH_HOOK_TIMEOUT_MS + 2_000;
-  return async (kind) => {
-    if (deps.platform() !== "desktop") return;
+  const renewMs = deps.renewMs ?? SPEECH_HOOK_RENEW_MS;
+  const newRunId = deps.newRunId ?? (() => crypto.randomUUID());
+  return () => {
+    if (deps.platform() !== "desktop") return NO_RUN;
+    const runId = newRunId();
+    /** The deadline passed or the run ended before `begin` was sent: it is never sent. */
+    let closed = false;
+    let hostId: string | null = null;
+    /** Null until the machine answers, or when it never does. */
+    let open: boolean | null = null;
+    let renewal: ReturnType<typeof setInterval> | undefined;
+    let ending: Promise<void> | null = null;
+
+    const started = (async () => {
+      const found = await deps.localHostId();
+      if (found === null || closed) return;
+      hostId = found;
+      const result = await deps.begin(found, runId);
+      open = result.open;
+      // A before hook that failed is in the plugin's log already, with the machine.
+      if (open !== false && ending === null) {
+        renewal = setInterval(() => {
+          deps.renew(found, runId).then(
+            (renewed) => {
+              if (!renewed.open) clearInterval(renewal);
+            },
+            () => {},
+          );
+        }, renewMs);
+      }
+    })().catch((error: unknown) => deps.report("warn", `Could not start the before-speaking hook: ${describe(error)}`, error));
+
     let timer: ReturnType<typeof setTimeout> | undefined;
     const late = new Promise<"late">((resolve) => {
       timer = setTimeout(() => resolve("late"), timeoutMs);
     });
-    const attempt = (async () => {
-      const hostId = await deps.localHostId();
-      if (hostId === null) return;
-      // A hook that failed is in the plugin's log already: the server writes
-      // it there with the machine and the reason, so it is not echoed here.
-      await deps.run(hostId, kind);
-    })().catch((error: unknown) => deps.report("warn", `Could not run the ${kind}-speaking hook: ${describe(error)}`, error));
-    try {
-      if ((await Promise.race([attempt, late])) === "late") {
-        const next = kind === "before" ? "speaking" : "going on";
-        deps.report("warn", `The ${kind}-speaking hook took longer than ${Math.round(timeoutMs / 1000)} seconds; ${next} without waiting for it.`);
-      }
-    } finally {
+    const ready = Promise.race([started, late]).then((outcome) => {
       clearTimeout(timer);
-    }
+      if (outcome !== "late") return;
+      if (hostId === null) closed = true;
+      deps.report("warn", `The before-speaking hook took longer than ${Math.round(timeoutMs / 1000)} seconds; speaking without waiting for it.`);
+    });
+
+    const end = async () => {
+      closed = true;
+      clearInterval(renewal);
+      clearTimeout(timer);
+      const machine = hostId;
+      // Never sent, or the machine opened nothing: nothing is owed.
+      if (machine === null || open === false) return;
+      try {
+        await deps.end(machine, runId);
+      } catch (error) {
+        deps.report("warn", `Could not end the run of speech; the machine ends it by itself shortly: ${describe(error)}`, error);
+      }
+    };
+    return {
+      ready,
+      end: () => {
+        ending ??= end();
+        return ending;
+      },
+    };
   };
 }
 

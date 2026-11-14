@@ -210,8 +210,14 @@ osascript -e 'tell application "Music" to play'
   folder, with `HERALD_HOOK` set to `before` or `after`, so one script can do both. Output is ignored.
 - **When:** the before command runs just before the first sentence of a run is heard, and Herald waits
   for it; the after command runs once nothing more is queued to be said. Sentences read back to back share
-  one before and one after. The after command runs whenever its before command did, even when the
-  speech failed or was cut short. *Test voice* and *Read again* run them too.
+  one before and one after, and so do two windows speaking on the same machine at once: the after command
+  waits for the last of them. *Test voice* and *Read again* run them too.
+- **A before is always followed by its after.** The after command runs when the speech ends, fails or is
+  cut short. The machine keeps track of it, not the window: if the window speaking closes, reloads or
+  loses its connection to bb, the machine runs the after command by itself within about 30 seconds, and
+  when Herald is reloaded, turned off or removed, it runs it at once. It always runs after the before
+  command has finished, never before it. Only the machine itself, or its bb host daemon, stopping
+  abruptly can leave a before without its after.
 - **Never in the way:** a command gets five seconds; a slower one is stopped (with whatever it started),
   and Herald speaks anyway. A command that fails is noted in `bb plugin logs herald` with its exit code
   and the end of its error output.

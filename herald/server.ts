@@ -11,7 +11,7 @@ import { randomUUID } from "node:crypto";
 import type { BbPluginApi, ExperimentalPluginRpcHandlerContext } from "@get-bb/plugin-sdk";
 
 import { rpcContract } from "./shared/contract";
-import { hostContract } from "./shared/host-contract";
+import { hostContract, hostSignals } from "./shared/host-contract";
 import {
   DEFAULT_STORED_CONFIG,
   ENTRIES_CHANNEL,
@@ -36,7 +36,7 @@ import { PushTakeover } from "./server/push";
 import { withNames } from "./server/recent";
 import { announceDrained, onOtherDrained } from "./server/reload-signal";
 import { listSayVoices, renderWithSay, sayAvailable } from "./server/say";
-import { HOST_CALL_TIMEOUT_MS, SpeechHooksStore } from "./server/speech-hooks";
+import { BEGIN_TIMEOUT_MS, END_TIMEOUT_MS, SpeechHooksStore } from "./server/speech-hooks";
 import { AttentionStore } from "./server/store";
 import { ThreadChoices } from "./server/thread-choices";
 import { SentenceWriter } from "./server/writer";
@@ -113,13 +113,20 @@ export default async function plugin(bb: BbPluginApi) {
   const writer = new SentenceWriter(bb.log);
   // The speech hooks run on the machine whose desktop app speaks, through the
   // host entry there; see AGENTS.md, "Speech hooks".
-  const hostClient = bb.hosts.experimental_client({ contract: hostContract });
+  const hostClient = bb.hosts.experimental_client({ contract: hostContract, experimental_signals: hostSignals });
   const speechHooks = new SpeechHooksStore({
     kv: bb.storage.kv,
-    runOnHost: (hostId, kind, command, signal) =>
-      hostClient.call("runHook", { kind, command }, { hostId, timeoutMs: HOST_CALL_TIMEOUT_MS, signal }),
+    host: {
+      begin: (hostId, input, signal) => hostClient.call("begin", input, { hostId, timeoutMs: BEGIN_TIMEOUT_MS, signal }),
+      renew: (hostId, input) => hostClient.call("renew", input, { hostId }),
+      // No caller signal: an end must reach the machine even when the window that sent it is gone.
+      end: (hostId, input) => hostClient.call("end", input, { hostId, timeoutMs: END_TIMEOUT_MS }),
+    },
     log: bb.log,
   });
+  const stopHearingExpiries = hostClient.experimental_onSignal("afterOnExpiry", ({ hostId, payload }) =>
+    speechHooks.expired(hostId, payload.after),
+  );
   const history = new SentenceHistory(bb.storage.kv, bb.log);
 
   let events: EventsPort | null = null;
@@ -359,7 +366,9 @@ export default async function plugin(bb: BbPluginApi) {
     },
     "hooks.list": async () => ({ hooks: await speechHooks.all() }),
     "hooks.set": async ({ hostId, before, after }) => ({ hooks: await speechHooks.set(hostId, { before, after }) }),
-    "hooks.run": ({ hostId, kind }, ctx) => speechHooks.run(hostId, kind, callerSignal(ctx)),
+    "hooks.begin": ({ hostId, runId }, ctx) => speechHooks.begin(hostId, runId, callerSignal(ctx)),
+    "hooks.renew": async ({ hostId, runId }) => ({ open: await speechHooks.renew(hostId, runId) }),
+    "hooks.end": ({ hostId, runId }) => speechHooks.end(hostId, runId),
     log: ({ level, message }) => {
       bb.log[level](`app: ${message}`);
       return null;
@@ -378,6 +387,7 @@ export default async function plugin(bb: BbPluginApi) {
 
   bb.onDispose(async () => {
     stopListening();
+    stopHearingExpiries();
     clearTimeout(abandonedTimer);
     // Hooks first, so a tool killed next cannot land a sentence; the store
     // then freezes with the entry still pending, for the next load to settle.

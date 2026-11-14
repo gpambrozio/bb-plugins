@@ -67,6 +67,20 @@ describe("Speech hooks settings", () => {
     expect(screen.getByText("no longer one of bb's machines")).toBeTruthy();
   });
 
+  it("keeps what was typed for one machine when another machine is saved", async () => {
+    const { saves } = render({ host_mac: { before: "pause", after: "" }, host_laptop: { before: "duck", after: "" } });
+    const mac = (await screen.findByLabelText("Before speaking on Studio Mac")) as HTMLTextAreaElement;
+    const laptop = screen.getByLabelText("Before speaking on Laptop") as HTMLTextAreaElement;
+    await waitFor(() => expect(laptop.value).toBe("duck"));
+    fireEvent.change(mac, { target: { value: "pause --all" } });
+    fireEvent.change(laptop, { target: { value: "duck --low" } });
+    fireEvent.click(screen.getByText("Save hooks for Studio Mac"));
+    await waitFor(() => expect(saves).toHaveLength(1));
+    await waitFor(() => expect(mac.value).toBe("pause --all"));
+    expect(laptop.value).toBe("duck --low");
+    expect((screen.getByText("Save hooks for Laptop").closest("button") as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it("says a browser tab runs no hooks", async () => {
     render({});
     await screen.findByText("This is a browser tab, which runs no hooks; bb's desktop app does.");

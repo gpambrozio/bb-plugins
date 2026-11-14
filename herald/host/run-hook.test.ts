@@ -54,13 +54,24 @@ describe.runIf(posix)("runHook", () => {
     expect(Date.now() - started).toBeLessThan(5_000);
   });
 
-  it("is reachable through the host entry", async () => {
+  it("runs a run's before and after hooks through the host entry, holding the worker while it is open", async () => {
+    const dir = scratch();
+    const out = join(dir, "out");
     const harness = experimental_createHostEntryHarness(hostEntry);
     try {
-      await expect(harness.experimental_call("runHook", { kind: "after", command: "exit 0" })).resolves.toMatchObject({ exitCode: 0 });
-      await expect(harness.experimental_call("runHook", { kind: "after", command: "" })).rejects.toThrow();
+      const commands = { before: `echo "$HERALD_HOOK" >> '${out}'`, after: `echo "$HERALD_HOOK" >> '${out}'`, leaseMs: 30_000 };
+      await expect(harness.experimental_call("begin", { runId: "r1", ...commands })).resolves.toMatchObject({ open: true, before: { exitCode: 0 } });
+      expect(harness.experimental_getRetainedWorkerLeaseCount()).toBe(1);
+      await expect(harness.experimental_call("renew", { runId: "r1", leaseMs: 30_000 })).resolves.toEqual({ open: true });
+      await expect(harness.experimental_call("end", { runId: "r1" })).resolves.toMatchObject({ after: { exitCode: 0 } });
+      await expect(harness.experimental_call("end", { runId: "r1" })).resolves.toEqual({ after: null });
+      expect(harness.experimental_getRetainedWorkerLeaseCount()).toBe(0);
+      expect(readFileSync(out, "utf8")).toBe("before\nafter\n");
+      // Still open when the worker goes: its after hook runs then.
+      await harness.experimental_call("begin", { runId: "r2", ...commands });
     } finally {
       await harness.experimental_dispose();
     }
+    expect(readFileSync(out, "utf8")).toBe("before\nafter\nbefore\nafter\n");
   });
 });

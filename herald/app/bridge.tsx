@@ -24,7 +24,7 @@ import { Announcer, setAnnouncer } from "./announcer";
 import { claimAnnouncement, onClaimReleased } from "./claims";
 import { setEntries, setEntriesError } from "./entries";
 import * as speech from "./speech";
-import { createHookRunner, createLocalHostLookup } from "./speech-hooks";
+import { createLocalHostLookup, createSpeechRunStarter } from "./speech-hooks";
 import { usePlacedLoader } from "./timeline";
 import { timelineSentences } from "./timeline-store";
 
@@ -69,10 +69,12 @@ export function HeraldBridge() {
       claim: (eventId) => claimAnnouncement(`${pluginId}:said:`, eventId),
       audio: speech,
       report,
-      hook: createHookRunner({
+      startRun: createSpeechRunStarter({
         platform: speech.speechPlatform,
         localHostId: createLocalHostLookup(async () => (await sdk.current.system.config()).localHelperPorts ?? []),
-        run: (hostId, kind) => rpc.call("hooks.run", { hostId, kind }),
+        begin: (hostId, runId) => rpc.call("hooks.begin", { hostId, runId }),
+        renew: (hostId, runId) => rpc.call("hooks.renew", { hostId, runId }),
+        end: (hostId, runId) => rpc.call("hooks.end", { hostId, runId }),
         report,
       }),
     });

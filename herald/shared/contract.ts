@@ -15,7 +15,7 @@ import {
   StoredConfigSchema,
 } from "./herald";
 import { PushStatusSchema } from "./push";
-import { MachineHooksSchema, SpeechHookKindSchema, SpeechHooksSchema } from "./speech-hooks";
+import { MachineHooksSchema, RunIdSchema, SpeechHooksSchema } from "./speech-hooks";
 import { ChoiceInputsSchema, ChoiceOptionSchema, CHOICES_BATCH_MAX } from "./thread-choice";
 
 export const rpcContract = defineRpcContract({
@@ -124,13 +124,25 @@ export const rpcContract = defineRpcContract({
     output: z.object({ hooks: SpeechHooksSchema }),
   },
   /**
-   * Runs the hook the machine `hostId` has for `kind`, there, and waits for
-   * it; see `server/speech-hooks.ts`. The command is never in the input: only
-   * the one stored for that machine runs.
+   * Opens a run of speech on the machine `hostId`, which runs its before hook
+   * when no other run is open there, and waits for it; see
+   * `server/speech-hooks.ts`. The commands are never in the input: only the
+   * ones stored for that machine run. `open` is null when the machine did not
+   * answer, and the window ends the run all the same.
    */
-  "hooks.run": {
-    input: z.object({ hostId: z.string().min(1), kind: SpeechHookKindSchema }),
-    output: z.object({ ran: z.boolean(), error: z.string().nullable() }),
+  "hooks.begin": {
+    input: z.object({ hostId: z.string().min(1), runId: RunIdSchema }),
+    output: z.object({ open: z.boolean().nullable(), error: z.string().nullable() }),
+  },
+  /** Keeps a run open while its window still speaks; a run not renewed ends by itself. */
+  "hooks.renew": {
+    input: z.object({ hostId: z.string().min(1), runId: RunIdSchema }),
+    output: z.object({ open: z.boolean() }),
+  },
+  /** Ends a run; the last open run on the machine runs its after hook. Safe to repeat. */
+  "hooks.end": {
+    input: z.object({ hostId: z.string().min(1), runId: RunIdSchema }),
+    output: z.object({ error: z.string().nullable() }),
   },
 });
 

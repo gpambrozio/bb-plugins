@@ -12,10 +12,12 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Speech hooks: run a command before Herald speaks and after it finishes.** Under Settings → Plugins →
   Herald, each of bb's machines has a *Before speaking* and an *After speaking* command, to pause your
   music or lower the volume while a sentence is read, say. They run on the machine whose bb desktop app
-  is speaking, not on the one running bb. Sentences read back to back share one before and one after, and
-  the after command runs even when the speech fails or is cut short. A command gets five seconds; a
-  slower one is stopped, a failing one is noted in Herald's log, and Herald speaks either way. Both are
-  empty by default, and an empty one runs nothing. bb's mobile app and a browser tab run no hooks.
+  is speaking, not on the one running bb. Sentences read back to back, and windows speaking on the same
+  machine at once, share one before and one after. The after command follows its before command when
+  the speech ends, fails or is cut short, within about half a minute if the window speaking closes or
+  loses bb, and at once when Herald is reloaded. A command gets five seconds; a slower one is stopped, a
+  failing one is noted in Herald's log, and Herald speaks either way. Both are empty by default, and an
+  empty one runs nothing. bb's mobile app and a browser tab run no hooks.
 
 ## 0.11.0
 

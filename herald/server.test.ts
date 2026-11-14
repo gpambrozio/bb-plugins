@@ -219,31 +219,41 @@ describe("herald server", () => {
     };
     const { harness } = await load();
     await expect(harness.callRpc("hooks.list", {})).resolves.toEqual({ hooks: {} });
-    await expect(harness.callRpc("hooks.run", { hostId: "host_mac", kind: "before" })).resolves.toEqual({ ran: false, error: null });
-    await expect(harness.callRpc("hooks.run", { hostId: "host_mac", kind: "after" })).resolves.toEqual({ ran: false, error: null });
+    await expect(harness.callRpc("hooks.begin", { hostId: "host_mac", runId: "r1" })).resolves.toEqual({ open: false, error: null });
     expect(harness.experimental_hostRpcCalls).toEqual([]);
   });
 
-  it("runs a machine's own stored hook on that machine's host entry, and logs one that fails", async () => {
-    callHostRpc = ({ input }) => {
-      const { kind } = input as { kind: string };
-      return kind === "before"
-        ? { exitCode: 0, signal: null, timedOut: false, durationMs: 3, stderr: "" }
-        : { exitCode: 1, signal: null, timedOut: false, durationMs: 3, stderr: "boom" };
+  it("opens and ends a run with the machine's own stored hooks on its host entry, and logs one that fails", async () => {
+    const ok = { exitCode: 0, signal: null, timedOut: false, durationMs: 3, stderr: "" };
+    callHostRpc = ({ method }) => {
+      if (method === "begin") return { open: true, before: ok };
+      if (method === "renew") return { open: true };
+      return { after: { ...ok, exitCode: 1, stderr: "boom" } };
     };
     const { harness } = await load();
     await harness.callRpc("hooks.set", { hostId: "host_mac", before: "pause-music", after: "resume-music" });
-    await expect(harness.callRpc("hooks.run", { hostId: "host_mac", kind: "before" })).resolves.toEqual({ ran: true, error: null });
-    await expect(harness.callRpc("hooks.run", { hostId: "host_mac", kind: "after" })).resolves.toEqual({
-      ran: true,
+    await expect(harness.callRpc("hooks.begin", { hostId: "host_mac", runId: "r1" })).resolves.toEqual({ open: true, error: null });
+    await expect(harness.callRpc("hooks.renew", { hostId: "host_mac", runId: "r1" })).resolves.toEqual({ open: true });
+    await expect(harness.callRpc("hooks.end", { hostId: "host_mac", runId: "r1" })).resolves.toEqual({
       error: "The after-speaking hook on host_mac failed: it exited with 1: boom",
     });
     // Another machine has none of its own.
-    await expect(harness.callRpc("hooks.run", { hostId: "host_other", kind: "before" })).resolves.toEqual({ ran: false, error: null });
+    await expect(harness.callRpc("hooks.begin", { hostId: "host_other", runId: "r2" })).resolves.toEqual({ open: false, error: null });
     expect(harness.experimental_hostRpcCalls.map(({ method, input, hostId }) => ({ method, input, hostId }))).toEqual([
-      { method: "runHook", input: { kind: "before", command: "pause-music" }, hostId: "host_mac" },
-      { method: "runHook", input: { kind: "after", command: "resume-music" }, hostId: "host_mac" },
+      { method: "begin", input: { runId: "r1", before: "pause-music", after: "resume-music", leaseMs: 30_000 }, hostId: "host_mac" },
+      { method: "renew", input: { runId: "r1", leaseMs: 30_000 }, hostId: "host_mac" },
+      { method: "end", input: { runId: "r1" }, hostId: "host_mac" },
     ]);
+  });
+
+  it("logs a run a machine ended by itself when the window speaking there went away", async () => {
+    const { harness } = await load();
+    const ok = { exitCode: 0, signal: null, timedOut: false, durationMs: 3, stderr: "" };
+    await harness.experimental_emitHostSignal("host_mac", "afterOnExpiry", { runId: "r1", after: ok });
+    await settle();
+    const messages = harness.logEntries.map((line) => line.message);
+    expect(messages).toContain("A window speaking on host_mac stopped answering, so its run of speech was ended there.");
+    expect(messages).toContain("Ran the after-speaking hook on host_mac (3 ms).");
   });
 
   it("announces a finished turn with its plain sentence, tells the app, and starts no thread", async () => {

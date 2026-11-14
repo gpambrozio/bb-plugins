@@ -2,7 +2,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AttentionEntry } from "../shared/herald";
 import type { SpeechPlatform, SpeechSettings } from "../shared/settings";
+import { HookSessions } from "../host/sessions";
 import { Announcer, setMutedHere, type AnnouncerDeps } from "./announcer";
+import { createSpeechRunStarter } from "./speech-hooks";
 
 function entry(id: string, overrides: Partial<AttentionEntry> = {}): AttentionEntry {
   return {
@@ -48,6 +50,8 @@ function setup(
     holdHooks?: Array<() => void>;
     /** The browser voice throws rather than answering. */
     speakThrows?: boolean;
+    startRun?: AnnouncerDeps["startRun"];
+    render?: AnnouncerDeps["render"];
   } = {},
 ) {
   const order: string[] = [];
@@ -93,13 +97,29 @@ function setup(
     report: vi.fn(),
     ...(overrides.hooks === true
       ? {
-          hook: vi.fn(async (kind: "before" | "after") => {
-            order.push(`hook:${kind}`);
-            if (overrides.holdHooks !== undefined) await new Promise<void>((resolve) => overrides.holdHooks?.push(resolve));
-            order.push(`hook:${kind}:done`);
+          // A run of speech that writes to `order`: started, ready, ended — each held until released with `holdHooks`.
+          startRun: vi.fn(() => {
+            order.push("hook:before");
+            const hold = () =>
+              overrides.holdHooks === undefined ? Promise.resolve() : new Promise<void>((resolve) => overrides.holdHooks?.push(resolve));
+            const ready = hold().then(() => {
+              order.push("hook:before:done");
+            });
+            let ended: Promise<void> | null = null;
+            return {
+              ready,
+              end: () =>
+                (ended ??= (async () => {
+                  order.push("hook:after");
+                  await hold();
+                  order.push("hook:after:done");
+                })()),
+            };
           }),
         }
       : {}),
+    ...(overrides.startRun === undefined ? {} : { startRun: overrides.startRun }),
+    ...(overrides.render === undefined ? {} : { render: overrides.render }),
   };
   return { announcer: new Announcer(deps), deps, audio, order };
 }
@@ -449,21 +469,124 @@ describe("Announcer speech hooks", () => {
     setMutedHere(true);
     announcer.onEntries([entry("a"), entry("b")]);
     await settle();
-    expect(deps.hook).not.toHaveBeenCalled();
+    expect(deps.startRun).not.toHaveBeenCalled();
     expect(order).toEqual([]);
   });
 
-  it("still runs the after hook when stopped while the before hook runs, and says nothing", async () => {
+  it("ends the run at once when stopped while the before hook runs, and says nothing", async () => {
     const holdHooks: Array<() => void> = [];
     const { announcer, order } = setup({ hooks: true, holdHooks });
     announcer.onEntries([]);
     announcer.onEntries([entry("a")]);
     await settle();
     announcer.stop();
-    holdHooks.shift()?.();
     await settle();
-    holdHooks.shift()?.();
+    expect(order).toEqual(["render:Sentence a.", "hook:before", "hook:after"]);
+    holdHooks.splice(0).forEach((release) => release());
+    await settle();
+    expect(order.filter((step) => step.startsWith("play:"))).toEqual([]);
+    expect(order.filter((step) => step === "hook:after")).toHaveLength(1);
+  });
+
+  it("ends the run when stopped while the render never answers", async () => {
+    const { announcer, order } = setup({
+      hooks: true,
+      render: vi.fn((text: string) => {
+        order.push(`render:${text}`);
+        return new Promise<never>(() => {});
+      }),
+    });
+    announcer.onEntries([]);
+    announcer.onEntries([entry("a")]);
+    await settle();
+    expect(order).toEqual(["render:Sentence a.", "hook:before", "hook:before:done"]);
+    announcer.stop();
     await settle();
     expect(order).toEqual(["render:Sentence a.", "hook:before", "hook:before:done", "hook:after", "hook:after:done"]);
+  });
+
+  it("starts no run once stopped", async () => {
+    const { announcer, deps } = setup({ hooks: true });
+    announcer.stop();
+    await announcer.speakText("Testing.", { force: true });
+    expect(deps.startRun).not.toHaveBeenCalled();
+  });
+});
+
+describe("Speech hooks across two windows on one machine", () => {
+  /** Two windows' announcers wired to one machine's real session tracker, as the server and host entry would. */
+  function machine() {
+    const steps: string[] = [];
+    const sessions = new HookSessions({
+      run: async (kind) => {
+        steps.push(kind);
+        return { exitCode: 0, signal: null, timedOut: false, durationMs: 0, stderr: "" };
+      },
+      expired: () => {},
+    });
+    const lease = { dispose: async () => {} };
+    const window = (label: string, claimed: Set<string>, hold?: Array<() => void>) => {
+      const startRun = createSpeechRunStarter({
+        platform: () => "desktop",
+        localHostId: async () => "host_mac",
+        begin: async (_hostId, runId) => {
+          const { open } = await sessions.begin({ runId, before: "pause", after: "play", leaseMs: 30_000 }, lease);
+          return { open, error: null };
+        },
+        renew: async (_hostId, runId) => ({ open: sessions.renew(runId, 30_000) }),
+        end: async (_hostId, runId) => {
+          await sessions.end(runId);
+          return { error: null };
+        },
+        report: () => {},
+      });
+      const made = setup({ claimed, unlocked: true, hold, startRun });
+      made.audio.playAudio.mockImplementation(async (url: string) => {
+        steps.push(`play:${label}`);
+        if (hold !== undefined) await new Promise<void>((resolve) => hold.push(resolve));
+        void url;
+      });
+      return made;
+    };
+    return { steps, window };
+  }
+
+  it("runs after only when the last window speaking on the machine is done", async () => {
+    const { steps, window } = machine();
+    const claimed = new Set<string>();
+    const holdA: Array<() => void> = [];
+    const a = window("a", claimed, holdA);
+    const b = window("b", claimed);
+    a.announcer.onEntries([]);
+    a.announcer.onEntries([entry("x")]);
+    await settle();
+    // While window A is still speaking, window B reads a sentence out on a press.
+    await b.announcer.speakText("Testing.", { force: true });
+    expect(steps).toEqual(["before", "play:a", "play:b"]);
+    holdA.shift()?.();
+    await settle();
+    expect(steps).toEqual(["before", "play:a", "play:b", "after"]);
+  });
+
+  it("keeps the run going across a claim handed from one window to the other", async () => {
+    const { steps, window } = machine();
+    const claimed = new Set<string>();
+    const a = window("a", claimed);
+    const b = window("b", claimed);
+    for (const side of [a, b]) side.announcer.onEntries([]);
+    a.audio.playAudio.mockImplementation(async () => {
+      steps.push("refused:a");
+      throw new Error("NotAllowedError");
+    });
+    a.audio.speak.mockResolvedValue(false);
+    a.announcer.onEntries([entry("x")]);
+    b.announcer.onEntries([entry("x")]);
+    await settle();
+    // A claimed it, could not play it and gave it back; B says it.
+    b.announcer.claimReleased("x");
+    await settle();
+    expect(steps.filter((step) => step === "before" || step === "after")).toEqual(["before", "after", "before", "after"]);
+    expect(steps.indexOf("play:b")).toBeGreaterThan(steps.indexOf("before", 2));
+    expect(steps.at(-1)).toBe("after");
   });
 });

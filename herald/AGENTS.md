@@ -27,8 +27,8 @@ what still holds and says what bb changed. The repo root `AGENTS.md` covers what
 | `server/carry.ts` | Each thread's finished turns no landed sentence has covered yet, held as they arrive, capped; and the prompt's output that lists them with the latest. |
 | `server/writer.ts` | The optional sentence-writing tool, run as a child process through bb's host toolchain: prompt in on stdin, one line out (from the JSON summary for Claude Code and Codex); the timeout, the cap, the empty folder. |
 | `server/command-line.ts` | The user's command split into words without a shell, and the prompt template filled in. |
-| `server/speech-hooks.ts` | The speech hooks' commands, one kv row by host id, and a run: the stored command only, empty reaches no host, a failure logged with the machine. |
-| `host.ts`, `host/run-hook.ts` | The host entry, on the machine whose desktop app speaks: one hook through the shell, from home, with `HERALD_HOOK`, killed with its process group at the timeout. |
+| `server/speech-hooks.ts` | The speech hooks' commands, one kv row by host id, and the runs of speech forwarded to the machine: the stored commands only, nothing stored reaches no host, a failure logged with the machine. |
+| `host.ts`, `host/sessions.ts`, `host/run-hook.ts` | The host entry, on the machine whose desktop app speaks: the runs of speech there and the after hook they owe (one session per machine, leases, dispose); one hook through the shell, from home, with `HERALD_HOOK`, killed with its process group at the timeout. |
 | `server/ports.ts`, `server/bb-ports.ts` | The seams the logic is tested through, and their implementations over `bb.sdk`. |
 | `shared/herald.ts` | The entry shape and the stored configuration: the voices, the model-written sentence's tool, command and prompt, and the page's history length. No SDK import. |
 | `shared/settings.ts` | The host-rendered form (with its select labels), and the speech gate (`blockedMessage`) both halves agree on. |
@@ -38,7 +38,7 @@ what still holds and says what bb changed. The repo root `AGENTS.md` covers what
 | `shared/contract.ts`, `shared/host-contract.ts` | The app ⇄ server and server ⇄ host contracts. The app imports them as types only. |
 | `app/bridge.tsx` | The app-wide overlay: reads the list on every nudge and reconnect, and runs the announcer. |
 | `app/announcer.ts` | Speaks each new sentence; the mute on this device; the speech hooks around each run of sentences; reports what it did to the server log. |
-| `app/speech-hooks.ts`, `app/speech-hooks-section.tsx` | Which machine this window runs on (the local host daemon), running its hook through the server; and the hooks' settings, per machine. |
+| `app/speech-hooks.ts`, `app/speech-hooks-section.tsx` | Which machine this window runs on (the local host daemon), and its runs of speech there (begin, renew, end); and the hooks' settings, per machine. |
 | `app/claims.ts` | Which window of the app says an announcement: a claim per event id. |
 | `app/icons.ts`, `icons/` | The icon names Herald draws, and the three SVGs it declares because bb has none. |
 | `app/open-settings.ts` | The page's Settings button: bb's own route for a plugin's settings. |
@@ -634,23 +634,38 @@ per setting for every device, so they live in storage and in a section of their 
   run a command, and `window.bbDesktop` exposes no exec. What it has is its machine's host daemon: bb's
   desktop app runs beside one, which answers `GET http://127.0.0.1:<port>/status` with its `hostId`, on the
   ports `system.config().localHelperPorts` lists, for the server's origin (CORS). bb's own app reads it for
-  the native folder picker. The window reads it (`app/speech-hooks.ts`), sends `hooks.run({ hostId, kind })`,
-  and the server calls the host entry on that host. The endpoint is bb internals, not SDK; if it moves,
+  the native folder picker. The window reads it (`app/speech-hooks.ts`), opens a run with
+  `hooks.begin({ hostId, runId })`, and the server calls the host entry on that host. The endpoint is bb internals, not SDK; if it moves,
   the hooks stop and the settings say this machine is not found.
 - **Only the desktop app runs them.** A browser tab can be on any machine and needs a Local Network
   Access prompt to reach a local port; the mobile app has no daemon. Both skip without a read.
-- **The command never travels from the window.** `hooks.run` names the machine and the kind; the server
-  sends the host the command it stored for that machine. `hooks.set` stores what the owner typed; any bb
-  client could, as any can already run a terminal on any host.
-- **Ordering:** the announcer runs *before* once per run of deliveries, just before the first sound (beside
-  the `say` render, so it adds no wait of its own), and *after* in the `finally` of the delivery that
-  leaves the queue empty — after a refusal, a throw or a stop too, so a before never goes without its
-  after. A delivery that is skipped (blocked, claimed elsewhere, withdrawn) runs neither. Presses (*Test
-  voice*, *Read again*) run them like announcements.
+- **The command never travels from the window.** `hooks.begin` names the machine and a run id; the
+  server sends the host the commands it stored for that machine. `hooks.set` stores what the owner typed;
+  any bb client could, as any can already run a terminal on any host.
+- **The after hook is owed by the machine, not the window** (`host/sessions.ts`). A window's run of
+  speech is a run id; the host entry keeps one session per machine: the first open run runs *before*,
+  runs that join wait for it, and *after* runs when the last open run ends — so two windows on one
+  machine, or a claim handed from one to the other, share one pair. A run ends by its window's
+  `hooks.end`, by its lease running out (30 s, renewed every 10 s by the window while it speaks; a
+  window that closes, reloads or loses the server stops renewing), or by the worker's dispose (plugin
+  reload, disable, removal, daemon shutdown). *After* always waits for *before*, and a new session's
+  *before* waits for the last *after*. Each open run holds a worker lease, so the idle stop cannot drop
+  an owed *after*. Only a hard kill of the machine or its daemon loses one; say so wherever the pairing
+  is promised.
+- **Order-proof calls.** bb does not deliver concurrent host calls in order, so `end` may reach the host
+  before its `begin`: the host remembers ended run ids for ten minutes and opens nothing for them, and
+  `end` is safe to repeat. The window binds a run to one machine and run id when it starts; its deadline
+  (7 s) only ends the wait for speech — a machine lookup still pending then is never sent on, while a
+  `begin` already sent is left to finish and is still ended (`app/speech-hooks.ts`). `Announcer.stop()`
+  ends the open run itself, without waiting for a delivery that may be stuck on a render.
+- **When, in the announcer:** the run starts just before the first sound of a run of deliveries (beside
+  the `say` render, so *before* adds no wait of its own), and ends in the `finally` of the delivery that
+  leaves the queue empty — after a refusal or a throw too. A delivery that is skipped (blocked, claimed
+  elsewhere, withdrawn) starts none. Presses (*Test voice*, *Read again*) start runs like announcements.
 - **Never in the way:** the host kills a hook's process group at `SPEECH_HOOK_TIMEOUT_MS` (5 s) and
-  resolves on `exit`, not `close`, so a background child holding stderr cannot hold speech; the window
-  stops waiting two seconds later whatever the host does. The runner never rejects. Failures are logged by
-  the server, with the machine, not echoed by the window.
+  resolves on `exit`, not `close`, so a background child holding stderr cannot hold speech. Nothing on
+  the window's side rejects. Failures are logged by the server, with the machine; a run the machine
+  ended by itself arrives as the host signal `afterOnExpiry` and is logged too.
 
 ## Icons
 
@@ -835,7 +850,8 @@ cover, check by hand after `bb plugin reload herald`:
 12. In the desktop app, Settings → Plugins → Herald → *Speech hooks* marks *this machine*. Give it a
     before command that writes a file and an after one that appends to it, and press *Test voice*: the
     file says before, then after, and the log has "Ran the before-speaking hook" for each. A `sleep 30`
-    before is stopped at five seconds and the sentence is still heard. In a browser tab the section says
-    it runs no hooks. A dev bb driven headlessly gets there with `bbDesktop` defined as a getter that
+    before is stopped at five seconds and the sentence is still heard. Reload the window while a long
+    sentence is being said: the after hook still runs, within half a minute, and the log says the window
+    stopped answering. In a browser tab the section says it runs no hooks. A dev bb driven headlessly gets there with `bbDesktop` defined as a getter that
     returns undefined: Herald tests `"bbDesktop" in window`, and bb's own app, reading the value, stays a
     browser page instead of calling desktop methods a stub lacks.
