@@ -10,6 +10,7 @@ import { readSuggestions } from "./home";
 import { defaultSettings, type FirstmateSettings } from "./settings";
 import { fakeLog, fakeProjects, fakeThreads, memoryStore } from "./testing/fakes";
 import { HOLD_PROMPT, voiceFleet } from "./testing/voice-fixtures";
+import { TEMPLATES, readTemplate } from "./templates";
 import { defuse, voiceHandlers, type VoiceDeps } from "./voice-api";
 import { VoiceRefs } from "./voice-brief";
 
@@ -57,6 +58,14 @@ async function setup(options: { settings?: Partial<FirstmateSettings>; fleet?: (
   const handlers = voiceHandlers(deps);
   return { home, threads, mate, handlers, published: () => published };
 }
+
+describe("the marks", () => {
+  it("are the lines the charter names", async () => {
+    const charter = await readTemplate(TEMPLATES.charter);
+    expect(charter).toContain(`\`${VOICE_SPOKEN_PREFIX}\``);
+    expect(charter).toContain(`\`${VOICE_PRESSED_PREFIX}\``);
+  });
+});
 
 describe("the caller gate", () => {
   it("refuses the app, a terminal and any plugin the setting does not name", async () => {
