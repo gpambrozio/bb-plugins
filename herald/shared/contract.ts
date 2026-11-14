@@ -15,6 +15,7 @@ import {
   StoredConfigSchema,
 } from "./herald";
 import { PushStatusSchema } from "./push";
+import { MachineHooksSchema, SpeechHookKindSchema, SpeechHooksSchema } from "./speech-hooks";
 import { ChoiceInputsSchema, ChoiceOptionSchema, CHOICES_BATCH_MAX } from "./thread-choice";
 
 export const rpcContract = defineRpcContract({
@@ -111,6 +112,25 @@ export const rpcContract = defineRpcContract({
       rate: z.number().min(0.5).max(2).default(1),
     }),
     output: z.object({ mimeType: z.string(), base64: z.string() }),
+  },
+  /** Every machine's speech hooks, by bb host id; a machine with none is left out. */
+  "hooks.list": {
+    input: z.object({}),
+    output: z.object({ hooks: SpeechHooksSchema }),
+  },
+  /** Sets one machine's two hooks; both empty forgets it. */
+  "hooks.set": {
+    input: MachineHooksSchema.extend({ hostId: z.string().min(1) }),
+    output: z.object({ hooks: SpeechHooksSchema }),
+  },
+  /**
+   * Runs the hook the machine `hostId` has for `kind`, there, and waits for
+   * it; see `server/speech-hooks.ts`. The command is never in the input: only
+   * the one stored for that machine runs.
+   */
+  "hooks.run": {
+    input: z.object({ hostId: z.string().min(1), kind: SpeechHookKindSchema }),
+    output: z.object({ ran: z.boolean(), error: z.string().nullable() }),
   },
 });
 

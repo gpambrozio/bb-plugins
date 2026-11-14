@@ -43,6 +43,11 @@ function setup(
     refused?: boolean;
     /** Holds every playback until the test releases it. */
     hold?: Array<() => void>;
+    /** Gives the announcer speech hooks that write to `order`, holding each until released when `holdHooks` is set. */
+    hooks?: boolean;
+    holdHooks?: Array<() => void>;
+    /** The browser voice throws rather than answering. */
+    speakThrows?: boolean;
   } = {},
 ) {
   const order: string[] = [];
@@ -58,6 +63,7 @@ function setup(
     }),
     speak: vi.fn(async (text: string) => {
       order.push(`speak:${text}`);
+      if (overrides.speakThrows === true) throw new Error("synthesis crashed");
       return overrides.refused !== true;
     }),
     stopAudio: vi.fn(),
@@ -85,6 +91,15 @@ function setup(
     }),
     audio,
     report: vi.fn(),
+    ...(overrides.hooks === true
+      ? {
+          hook: vi.fn(async (kind: "before" | "after") => {
+            order.push(`hook:${kind}`);
+            if (overrides.holdHooks !== undefined) await new Promise<void>((resolve) => overrides.holdHooks?.push(resolve));
+            order.push(`hook:${kind}:done`);
+          }),
+        }
+      : {}),
   };
   return { announcer: new Announcer(deps), deps, audio, order };
 }
@@ -343,5 +358,112 @@ describe("Announcer", () => {
     await settle();
     expect(audio.stopSpeaking).toHaveBeenCalled();
     expect(deps.render).not.toHaveBeenCalled();
+  });
+});
+
+describe("Announcer speech hooks", () => {
+  const PLAY = "play:data:audio/wav;base64,QUJD";
+
+  it("runs the before hook, then speaks once it has finished, then runs the after hook", async () => {
+    const holdHooks: Array<() => void> = [];
+    const { announcer, order } = setup({ hooks: true, holdHooks });
+    announcer.onEntries([]);
+    announcer.onEntries([entry("a")]);
+    await settle();
+    // The render runs beside the before hook, but nothing plays until the hook is done.
+    expect(order).toEqual(["render:Sentence a.", "hook:before"]);
+    holdHooks.shift()?.();
+    await settle();
+    expect(order).toEqual(["render:Sentence a.", "hook:before", "hook:before:done", PLAY, "hook:after"]);
+    holdHooks.shift()?.();
+    await settle();
+    expect(order.at(-1)).toBe("hook:after:done");
+  });
+
+  it("runs one before and one after around sentences said back to back", async () => {
+    const { announcer, order } = setup({ hooks: true });
+    announcer.onEntries([]);
+    announcer.onEntries([entry("a"), entry("b", { createdAt: "2026-09-15T10:05:00.000Z" })]);
+    await settle();
+    expect(order.filter((step) => !step.startsWith("render:"))).toEqual([
+      "hook:before",
+      "hook:before:done",
+      PLAY,
+      PLAY,
+      "hook:after",
+      "hook:after:done",
+    ]);
+  });
+
+  it("starts a new before and after for a sentence that comes after the last one ended", async () => {
+    const { announcer, order } = setup({ hooks: true });
+    announcer.onEntries([]);
+    announcer.onEntries([entry("a")]);
+    await settle();
+    announcer.onEntries([entry("a"), entry("b")]);
+    await settle();
+    expect(order.filter((step) => step.startsWith("hook:") && !step.endsWith(":done"))).toEqual([
+      "hook:before",
+      "hook:after",
+      "hook:before",
+      "hook:after",
+    ]);
+  });
+
+  it("runs the after hook when the playback is refused", async () => {
+    const { announcer, order } = setup({ hooks: true, refused: true });
+    announcer.onEntries([]);
+    announcer.onEntries([entry("a")]);
+    await settle();
+    expect(order).toEqual([
+      "render:Sentence a.",
+      "hook:before",
+      "hook:before:done",
+      PLAY,
+      "speak:Sentence a.",
+      "hook:after",
+      "hook:after:done",
+    ]);
+  });
+
+  it("runs the after hook when speaking throws", async () => {
+    const { announcer, order, deps } = setup({ hooks: true, renderFails: true, speakThrows: true });
+    announcer.onEntries([]);
+    announcer.onEntries([entry("a")]);
+    await settle();
+    expect(order.slice(-3)).toEqual(["speak:Sentence a.", "hook:after", "hook:after:done"]);
+    expect(deps.report).toHaveBeenCalledWith("warn", "Could not speak an announcement: synthesis crashed", expect.any(Error));
+  });
+
+  it("runs the before hook before the browser voice too", async () => {
+    const { announcer, order } = setup({ hooks: true, settings: { engine: "web" } });
+    await announcer.speakText("Testing.", { force: true });
+    expect(order).toEqual(["prime", "hook:before", "hook:before:done", "speak:Testing.", "hook:after", "hook:after:done"]);
+  });
+
+  it("runs no hook for a sentence it does not say", async () => {
+    const claimed = new Set<string>(["a"]);
+    const { announcer, order, deps } = setup({ hooks: true, claimed, settings: { speak: true } });
+    announcer.onEntries([]);
+    announcer.onEntries([entry("a")]);
+    setMutedHere(true);
+    announcer.onEntries([entry("a"), entry("b")]);
+    await settle();
+    expect(deps.hook).not.toHaveBeenCalled();
+    expect(order).toEqual([]);
+  });
+
+  it("still runs the after hook when stopped while the before hook runs, and says nothing", async () => {
+    const holdHooks: Array<() => void> = [];
+    const { announcer, order } = setup({ hooks: true, holdHooks });
+    announcer.onEntries([]);
+    announcer.onEntries([entry("a")]);
+    await settle();
+    announcer.stop();
+    holdHooks.shift()?.();
+    await settle();
+    holdHooks.shift()?.();
+    await settle();
+    expect(order).toEqual(["render:Sentence a.", "hook:before", "hook:before:done", "hook:after", "hook:after:done"]);
   });
 });

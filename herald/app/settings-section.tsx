@@ -4,7 +4,8 @@
  * custom command and prompt belong together, with the command shown only
  * under "custom" — which the form cannot do, so all three live here, in the
  * stored configuration. So does the length of the Herald page's history,
- * stored beside them.
+ * stored beside them, and the speech hooks, which are per machine
+ * (`app/speech-hooks-section.tsx`).
  */
 import { useRpc } from "@get-bb/plugin-sdk/app";
 import { useEffect, useState, type ReactNode } from "react";
@@ -24,6 +25,7 @@ import {
 } from "../shared/herald";
 import { getAnnouncer } from "./announcer";
 import { canPlaySpeech, listBrowserVoices, onVoicesChanged, type Voice } from "./speech";
+import { SpeechHooksSection } from "./speech-hooks-section";
 import { VoicePicker } from "./voice-picker";
 
 const TEST_SENTENCE = "This is Herald. Your agents will be announced like this.";
@@ -232,6 +234,7 @@ export function HeraldSettingsSection() {
     <div className="flex flex-col gap-6">
       <ModelSentence config={config} onSave={save} />
       <RecentHistoryLimit stored={config.recentHistoryLimit} onSave={save} />
+      <SpeechHooksSection />
       {canPlaySpeech() ? (
         <section className="space-y-3">
           <Heading title="Voices">

@@ -79,6 +79,9 @@ function server(initial: Record<string, ChoiceInputs>) {
       return null;
     },
     "push.status": () => ({ state: "off" as const, message: null }),
+    "hooks.list": () => ({ hooks: {} }),
+    "hooks.set": () => ({ hooks: {} }),
+    "hooks.run": () => ({ ran: false, error: null }),
   };
   return {
     stored,

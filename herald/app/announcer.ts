@@ -12,6 +12,7 @@
 import { speechText, type AttentionEntry, type VoicesConfig } from "../shared/herald";
 import { blockedMessage, type SpeechPlatform, type SpeechSettings } from "../shared/settings";
 import type { Claim } from "./claims";
+import type { HookRunner } from "./speech-hooks";
 
 export interface AnnouncerAudio {
   canPlayAudio(): boolean;
@@ -41,6 +42,11 @@ export interface AnnouncerDeps {
   audio: AnnouncerAudio;
   /** What was said, and why something was not, for `bb plugin logs herald`. */
   report(level: "info" | "warn", message: string, error?: unknown): void;
+  /**
+   * Runs this machine's before- or after-speaking hook and resolves when it is
+   * done, failed or too slow; never rejects. See `app/speech-hooks.ts`.
+   */
+  hook?: HookRunner;
 }
 
 function describe(error: unknown): string {
@@ -63,6 +69,10 @@ export class Announcer {
   private warnedSay = false;
   /** Deliveries queue behind one another, so a button press never talks over an announcement. */
   private chain: Promise<void> = Promise.resolve();
+  /** Deliveries queued or running; the after-speaking hook waits until there are none. */
+  private queued = 0;
+  /** The before-speaking hook, once started; its after-speaking one is owed until the run ends. */
+  private hookOpen: Promise<void> | null = null;
 
   constructor(private readonly deps: AnnouncerDeps) {}
 
@@ -146,15 +156,47 @@ export class Announcer {
    * a press. `retrying` is set when another window gave the claim back.
    */
   private deliver(text: string, eventId: string | null, retrying: boolean): Promise<Outcome> {
-    const next = this.chain.then(
-      () => this.deliverNow(text, eventId, retrying),
-      () => this.deliverNow(text, eventId, retrying),
-    );
+    this.queued += 1;
+    const run = () => this.deliverWithHooks(text, eventId, retrying);
+    const next = this.chain.then(run, run);
     this.chain = next.then(
       () => {},
       () => {},
     );
     return next;
+  }
+
+  /**
+   * One delivery, and the speech hooks around a run of them. The before hook
+   * runs just before the first sound of a run (`beforeSound`); the after hook
+   * once the run is over — this delivery played, failed, was cut short or
+   * skipped, and none waits behind it. Back-to-back sentences are one run, so
+   * whatever the hooks do (pause music, duck the volume) is not undone and
+   * redone between them. The after hook runs whenever its before hook did,
+   * whatever happened between, a stop included.
+   */
+  private async deliverWithHooks(text: string, eventId: string | null, retrying: boolean): Promise<Outcome> {
+    try {
+      return await this.deliverNow(text, eventId, retrying);
+    } finally {
+      this.queued -= 1;
+      const before = this.hookOpen;
+      if (before !== null && this.queued === 0) {
+        this.hookOpen = null;
+        // The hook runner never rejects; this only keeps "after" from overtaking "before".
+        await before;
+        await this.deps.hook?.("after");
+      }
+    }
+  }
+
+  /**
+   * Runs the before-speaking hook once per run of deliveries, and resolves
+   * when it is done; called before a delivery's first sound. Never rejects.
+   */
+  private beforeSound(): Promise<void> {
+    this.hookOpen ??= this.deps.hook?.("before") ?? Promise.resolve();
+    return this.hookOpen;
   }
 
   private async deliverNow(text: string, eventId: string | null, retrying: boolean): Promise<Outcome> {
@@ -212,7 +254,8 @@ export class Announcer {
     });
     if (settings.engine === "say" && audio.canPlayAudio()) {
       try {
-        const rendered = await this.deps.render(text, voices.say, settings.rate);
+        // The before hook runs while the server renders, so it adds no wait of its own.
+        const [rendered] = await Promise.all([this.deps.render(text, voices.say, settings.rate), this.beforeSound()]);
         if (this.stopped) return "skipped";
         await audio.playAudio(`data:${rendered.mimeType};base64,${rendered.base64}`);
         return "spoke";
@@ -225,6 +268,8 @@ export class Announcer {
     }
     if (this.stopped) return "skipped";
     if (!audio.canSpeak()) return "refused";
+    await this.beforeSound();
+    if (this.stopped) return "skipped";
     return (await audio.speak(text, { voice: voices.web, rate: settings.rate })) ? "spoke" : "refused";
   }
 }

@@ -23,6 +23,8 @@
   "include": [
     "server.ts",
     "server.test.ts",
+    "host.ts",
+    "host",
     "app.tsx",
     "server",
     "shared",

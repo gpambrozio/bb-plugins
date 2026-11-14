@@ -155,12 +155,16 @@ async function settle(): Promise<void> {
 /** The top-level messages of every thread's timeline, as `threads.timeline` serves them; one page, one turn. */
 let timelineMessages: Array<{ id: string; createdAt: number; role: "user" | "assistant"; initiator: "user" | null }> = [];
 
+/** What the host entry answers, for the speech hooks; set per test. */
+let callHostRpc: ((call: { method: string; input: unknown; hostId: string }) => unknown) | undefined;
+
 async function load(settings: Record<string, string | number | boolean> = {}) {
   const { metadata, failures, stubs } = metadataStubs();
   const push = pushStubs();
   const host = createFakePluginHost({
     pluginId: "herald",
     settings,
+    ...(callHostRpc === undefined ? {} : { experimental_callHostRpc: callHostRpc }),
     sdk: {
       projects: { get: async () => ({ id: "prj_shop", name: "Shop" }) as never },
       environments: { get: async () => ({ id: "env_1", path: "/Users/me/shop" }) as never },
@@ -206,6 +210,40 @@ describe("herald server", () => {
   afterEach(async () => {
     await Promise.all(live.splice(0).map((host) => host.harness.lifecycle.dispose().catch(() => {})));
     timelineMessages = [];
+    callHostRpc = undefined;
+  });
+
+  it("runs no speech hook by default, and reaches no machine for one", async () => {
+    callHostRpc = () => {
+      throw new Error("no machine should be reached");
+    };
+    const { harness } = await load();
+    await expect(harness.callRpc("hooks.list", {})).resolves.toEqual({ hooks: {} });
+    await expect(harness.callRpc("hooks.run", { hostId: "host_mac", kind: "before" })).resolves.toEqual({ ran: false, error: null });
+    await expect(harness.callRpc("hooks.run", { hostId: "host_mac", kind: "after" })).resolves.toEqual({ ran: false, error: null });
+    expect(harness.experimental_hostRpcCalls).toEqual([]);
+  });
+
+  it("runs a machine's own stored hook on that machine's host entry, and logs one that fails", async () => {
+    callHostRpc = ({ input }) => {
+      const { kind } = input as { kind: string };
+      return kind === "before"
+        ? { exitCode: 0, signal: null, timedOut: false, durationMs: 3, stderr: "" }
+        : { exitCode: 1, signal: null, timedOut: false, durationMs: 3, stderr: "boom" };
+    };
+    const { harness } = await load();
+    await harness.callRpc("hooks.set", { hostId: "host_mac", before: "pause-music", after: "resume-music" });
+    await expect(harness.callRpc("hooks.run", { hostId: "host_mac", kind: "before" })).resolves.toEqual({ ran: true, error: null });
+    await expect(harness.callRpc("hooks.run", { hostId: "host_mac", kind: "after" })).resolves.toEqual({
+      ran: true,
+      error: "The after-speaking hook on host_mac failed: it exited with 1: boom",
+    });
+    // Another machine has none of its own.
+    await expect(harness.callRpc("hooks.run", { hostId: "host_other", kind: "before" })).resolves.toEqual({ ran: false, error: null });
+    expect(harness.experimental_hostRpcCalls.map(({ method, input, hostId }) => ({ method, input, hostId }))).toEqual([
+      { method: "runHook", input: { kind: "before", command: "pause-music" }, hostId: "host_mac" },
+      { method: "runHook", input: { kind: "after", command: "resume-music" }, hostId: "host_mac" },
+    ]);
   });
 
   it("announces a finished turn with its plain sentence, tells the app, and starts no thread", async () => {

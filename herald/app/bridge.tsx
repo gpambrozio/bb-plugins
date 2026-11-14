@@ -12,6 +12,7 @@ import {
   useRealtime,
   useRealtimeConnectionState,
   useRpc,
+  useSdk,
   useSettings,
 } from "@get-bb/plugin-sdk/app";
 import { useCallback, useEffect, useRef } from "react";
@@ -23,6 +24,7 @@ import { Announcer, setAnnouncer } from "./announcer";
 import { claimAnnouncement, onClaimReleased } from "./claims";
 import { setEntries, setEntriesError } from "./entries";
 import * as speech from "./speech";
+import { createHookRunner, createLocalHostLookup } from "./speech-hooks";
 import { usePlacedLoader } from "./timeline";
 import { timelineSentences } from "./timeline-store";
 
@@ -48,8 +50,17 @@ export function HeraldBridge() {
   const settings = useRef<SpeechSettings>(speechSettingsOf(values));
   settings.current = speechSettingsOf(values);
   const announcer = useRef<Announcer | null>(null);
+  // Read through a ref: the announcer must outlive any re-render, so it is not rebuilt when the handle changes.
+  const sdkHandle = useSdk();
+  const sdk = useRef(sdkHandle);
+  sdk.current = sdkHandle;
 
   useEffect(() => {
+    const report = (level: "info" | "warn", message: string, error?: unknown) => {
+      if (level === "warn") console.warn(`[herald] ${message}`, error ?? "");
+      else console.info(`[herald] ${message}`);
+      rpc.call("log", { level, message }).catch(() => {});
+    };
     const next = new Announcer({
       render: (text, voice, rate) => rpc.call("speech.render", { text, voice, rate }),
       voices: async () => (await rpc.call("config.get", {})).voices,
@@ -57,11 +68,13 @@ export function HeraldBridge() {
       platform: speech.speechPlatform,
       claim: (eventId) => claimAnnouncement(`${pluginId}:said:`, eventId),
       audio: speech,
-      report: (level, message, error) => {
-        if (level === "warn") console.warn(`[herald] ${message}`, error ?? "");
-        else console.info(`[herald] ${message}`);
-        rpc.call("log", { level, message }).catch(() => {});
-      },
+      report,
+      hook: createHookRunner({
+        platform: speech.speechPlatform,
+        localHostId: createLocalHostLookup(async () => (await sdk.current.system.config()).localHelperPorts ?? []),
+        run: (hostId, kind) => rpc.call("hooks.run", { hostId, kind }),
+        report,
+      }),
     });
     announcer.current = next;
     setAnnouncer(next);

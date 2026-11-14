@@ -48,6 +48,9 @@ function backend(placed: () => PlacedSentences, reads: string[]) {
     "choices.set": () => NO_CHOICE,
     "choices.setMany": () => null,
     "push.status": () => ({ state: "off" as const, message: null }),
+    "hooks.list": () => ({ hooks: {} }),
+    "hooks.set": () => ({ hooks: {} }),
+    "hooks.run": () => ({ ran: false, error: null }),
     log: () => null,
   };
 }

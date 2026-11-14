@@ -94,6 +94,9 @@ function rpc(entries: () => AttentionEntry[], calls: { list: number }) {
     "choices.setMany": () => null,
     "push.status": () => ({ state: "off" as const, message: null }),
     log: () => null,
+    "hooks.list": () => ({ hooks: {} }),
+    "hooks.set": () => ({ hooks: {} }),
+    "hooks.run": () => ({ ran: false, error: null }),
   };
 }
 

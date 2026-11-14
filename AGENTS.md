@@ -445,6 +445,14 @@ showing, and a nav panel shows none. To put text in a thread's draft from a page
 `scope`; check on every render and poll briefly, since a scope can change in place and the SDK
 harness keeps the same handle list across `setComposerScope` (`terminals/app/chat-delivery.tsx`).
 
+**A window can learn which machine it runs on.** bb's desktop app runs beside a host daemon that answers
+`GET http://127.0.0.1:<port>/status` with `{ hostId, connected, serverUrl }`, on the ports
+`useSdk().system.config().localHelperPorts` lists and with CORS for the server's origin; bb's own app reads
+it for the native folder picker. It is bb internals, not SDK. With that `hostId` the server can call the
+plugin's `bb.host` entry on the window's own machine — the way to run something where the user sits, since
+`window.bbDesktop` has no exec (`herald/app/speech-hooks.ts`). A browser tab needs a Local Network Access
+prompt for it, so use it from the desktop app only.
+
 **bb's own app settings are readable and observable.** `useSdk().system.config()` returns
 `generalSettings` (`terminalCopyOnSelect` and the rest of Settings → General), and
 `useSdk().subscribe({ event: "system:config-changed", callback })` fires when bb saves them. The event
