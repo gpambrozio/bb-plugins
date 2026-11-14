@@ -9,6 +9,7 @@ import plugin, { rpcContract } from "./server";
 import { prepareHome } from "./server/home";
 import { withMateLock } from "./server/mate";
 import type { Fleet, WatchSummary } from "./shared/types";
+import { voiceContract } from "./shared/voice";
 
 type PendingInteraction = PluginThreadEventPayloads["interaction.pending"]["interaction"];
 
@@ -42,10 +43,20 @@ function fleetSignals(harness: { experimental_rpcInvalidations: (readonly string
 describe("server wiring", () => {
   it("registers every method of the contract, the CLI, the watch service and autocompact", async () => {
     const { harness } = await load();
-    expect([...harness.registrations.rpcMethods].sort()).toEqual(Object.keys(rpcContract).sort());
-    expect(harness.registrations.rpcMethods).toHaveLength(19);
+    expect([...harness.registrations.rpcMethods].sort()).toEqual([...Object.keys(rpcContract), ...Object.keys(voiceContract)].sort());
+    expect(harness.registrations.rpcMethods).toHaveLength(26);
     expect(harness.registrations.cli?.name).toBe("firstmate-crew");
     expect(harness.registrations.services.map((service) => service.name)).toEqual(["watches", "autocompact"]);
+  });
+
+  it("serves voice.v1 only to a plugin the voicePlugins setting names", async () => {
+    const { harness } = await load();
+    await expect(harness.callRpc("voice.v1.brief", {})).rejects.toThrow(/only a voice plugin/u);
+    const other = { experimental_caller: { kind: "plugin" as const, pluginId: "someone-else" } };
+    await expect(harness.behavior.callRpc("voice.v1.brief", {}, other)).rejects.toThrow(/may not talk to the first mate/u);
+    const voice = { experimental_caller: { kind: "plugin" as const, pluginId: "firstmate-voice" } };
+    expect(await harness.behavior.callRpc("voice.v1.brief", {}, voice)).toMatchObject({ v: 1, firstMate: null, captainsCall: [] });
+    expect(await harness.behavior.callRpc("voice.v1.mate", {}, voice)).toEqual({ threadId: null });
   });
 
   it("loads a fleet with no first mate without asking bb anything", async () => {

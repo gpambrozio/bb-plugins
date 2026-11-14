@@ -36,6 +36,8 @@ export class FakeThreads implements ThreadsPort {
   readonly calls: { method: ThreadMethod; args: unknown[] }[] = [];
   readonly spawned: SpawnArgs[] = [];
   readonly sent: { id: string; text: string; mode: SendMode }[] = [];
+  /** The agent-only notes `sendWithNote` sent, beside the visible text it put in `sent`. */
+  readonly notes: { id: string; note: string }[] = [];
   private readonly metadataById = new Map<string, Record<string, unknown>>();
   private readonly texts = new Map<string, string>();
   /** Each thread's last message of its own in its event log, which `lastText` may no longer return. */
@@ -278,6 +280,16 @@ export class FakeThreads implements ThreadsPort {
     this.throwIfFailing("sendShortened");
     const thread = this.require(id);
     this.sent.push({ id, text: message.hidden, mode });
+    return mode === "queue-if-active" && thread.status !== "idle" ? "queued" : "sent";
+  }
+
+  async sendWithNote(id: string, shown: string, note: string, mode: SendMode): Promise<"sent" | "queued"> {
+    this.record("sendWithNote", id, shown, note, mode);
+    await this.settle("sendWithNote", undefined);
+    this.throwIfFailing("sendWithNote");
+    const thread = this.require(id);
+    this.sent.push({ id, text: shown, mode });
+    this.notes.push({ id, note });
     return mode === "queue-if-active" && thread.status !== "idle" ? "queued" : "sent";
   }
 
