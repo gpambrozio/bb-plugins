@@ -164,6 +164,8 @@ export interface ThreadsPort {
   spawn(args: SpawnArgs): Promise<ThreadInfo>;
   send(id: string, text: string, mode: SendMode): Promise<"sent" | "queued">;
   sendShortened(id: string, message: ShortenedMessage, mode: SendMode): Promise<"sent" | "queued">;
+  /** Sends `shown` as the message the captain sees, and `note` after it as an agent-only part the agent alone reads. */
+  sendWithNote(id: string, shown: string, note: string, mode: SendMode): Promise<"sent" | "queued">;
   stop(id: string): Promise<void>;
   archive(id: string): Promise<void>;
   clearContext(id: string): Promise<void>;

@@ -34,6 +34,14 @@ export const REASONING_LABELS: Record<(typeof REASONING_OPTIONS)[number], string
   max: "Max",
 };
 
+/** The plugins `voice.v1` answers by default: FirstMate voice. */
+export const DEFAULT_VOICE_PLUGINS = "firstmate-voice";
+
+/** Plugin ids from the `voicePlugins` setting: separated by commas or white space. */
+export function voicePluginIds(value: string): Set<string> {
+  return new Set(value.split(/[\s,]+/u).filter((id) => id !== ""));
+}
+
 /** How often an open board reads the crew again when the setting is not a number above zero. */
 export const DEFAULT_REFRESH_SECONDS = 10;
 
@@ -77,6 +85,13 @@ export const SETTINGS = {
     description:
       "When the first mate's whole reply is \"Captain, shipshape.\", meaning there was nothing to do, FirstMate marks the turn read so bb does not notify you of it. Every other turn notifies as bb's settings say. Workers are not affected.",
     default: false,
+  },
+  voicePlugins: {
+    type: "string",
+    label: "Plugins that may talk to the first mate by voice",
+    description:
+      "Plugin ids, separated by commas, that may read the board and send the captain's spoken words and voice-pressed buttons to the first mate. Empty turns voice off.",
+    default: DEFAULT_VOICE_PLUGINS,
   },
   mateAutoCompact: {
     type: "boolean",
