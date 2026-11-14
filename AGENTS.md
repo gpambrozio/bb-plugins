@@ -244,6 +244,12 @@ What a port only learns by running it:
   most 16 KiB, and the multi-line `--stdin` that `bb guide plugins` describes is not in 0.44's CLI. For
   arbitrary text, send it base64-encoded through `--<name>-stdin` and decode it with a size cap
   (`firstmate-crew`'s `tell --message-base64`), rather than having the server read a file by path.
+- **An API for other plugins is a second `bb.rpc.register`.** Each registration takes its own
+  `experimental_discoverable`, so one plugin can publish a narrow contract beside its private one (bb 0.49
+  lists only the published methods). Gate it on `ctx.experimental_caller` (`{ kind: "plugin", pluginId }`,
+  else `client` for the app and `bb plugin rpc call`), and refuse with the SDK's `experimental_PluginRpcRefusal`:
+  its `code` (`forbidden`, `not_found`, `conflict`, `invalid`) reaches the caller as the error's `code` and an
+  HTTP status (403 for `forbidden`). `firstmate-crew/server/voice-api.ts` is the example.
 - **A thread spawn into a host workspace needs a `hostId`.** The SDK type marks it optional, bb 0.44
   answers `hostId is required unless workspace.type is personal`. Take the server's own machine from
   `bb.sdk.system.config().primaryHostId`, or the host of the project's checkout.

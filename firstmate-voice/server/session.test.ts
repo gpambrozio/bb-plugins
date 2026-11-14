@@ -17,7 +17,14 @@ async function setup() {
   const sideband = realtime.last;
   sideband.open();
   await settle();
-  return { realtime, crew, clock, signals, log, sessions, started, sideband };
+  /** Time passes with the app's heartbeat going, as it does while the page holds the call. */
+  const pass = async (ms: number) => {
+    for (let left = ms; left > 0; left -= 10_000) {
+      sessions.alive(started.sessionId);
+      await clock.advance(Math.min(10_000, left));
+    }
+  };
+  return { realtime, crew, clock, signals, log, sessions, started, sideband, pass };
 }
 
 let counter = 0;
@@ -293,27 +300,34 @@ describe("announcements", () => {
 
 describe("the session's life", () => {
   it("ends after ten quiet minutes and hangs up", async () => {
-    const { clock, realtime, signals, started } = await setup();
-    await clock.advance(IDLE_END_MS + 31_000);
+    const { realtime, signals, started, pass } = await setup();
+    await pass(IDLE_END_MS + 31_000);
     expect(realtime.hungUp).toEqual(["rtc_1"]);
     expect(signals.at(-1)).toEqual({ sessionId: started.sessionId, type: "state", state: "ended", reason: "quiet for ten minutes" });
   });
 
+  it("ends within a minute once the app stops answering: a closed tab, a suspended phone", async () => {
+    const { clock, realtime, signals } = await setup();
+    await clock.advance(70_000);
+    expect(realtime.hungUp).toEqual(["rtc_1"]);
+    expect(signals.at(-1)).toMatchObject({ state: "ended", reason: "the app stopped answering" });
+  });
+
   it("stays up while the captain keeps talking", async () => {
-    const { clock, sideband, realtime } = await setup();
+    const { clock, sideband, realtime, pass } = await setup();
     for (let minute = 0; minute < 15; minute += 1) {
-      await clock.advance(60_000);
+      await pass(60_000);
       await say(sideband, clock, "Anything new?");
     }
     expect(realtime.hungUp).toEqual([]);
   });
 
   it("renews at the hour's cap: a new call seeded with the brief and the recap, then the old one hung up", async () => {
-    const { clock, sideband, realtime, signals, sessions, started } = await setup();
+    const { clock, sideband, realtime, signals, sessions, started, pass } = await setup();
     // Keep talking so the idle end does not come first.
     for (let i = 0; i < 58; i += 1) {
       await say(sideband, clock, i === 57 ? "Remember the login fix." : "Status?");
-      await clock.advance(59_000);
+      await pass(59_000);
     }
     expect(signals).toContainEqual({ sessionId: started.sessionId, type: "renew" });
     await sessions.renew(started.sessionId, "v=0 renewal offer");
@@ -328,12 +342,12 @@ describe("the session's life", () => {
   });
 
   it("ends when the app does not renew in time", async () => {
-    const { clock, sideband, realtime } = await setup();
+    const { clock, sideband, realtime, pass } = await setup();
     for (let i = 0; i < 60; i += 1) {
       await say(sideband, clock, "Status?");
-      await clock.advance(59_000);
+      await pass(59_000);
     }
-    await clock.advance(RENEW_AFTER_MS + RENEW_GRACE_MS - 60 * 59_000 + 1_000);
+    await pass(RENEW_AFTER_MS + RENEW_GRACE_MS - 60 * 59_800 + 1_000);
     expect(realtime.hungUp).toEqual(["rtc_1"]);
   });
 
