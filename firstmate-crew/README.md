@@ -117,6 +117,15 @@ there, and `bb plugin dev` to rebuild on save. See [`AGENTS.md`](AGENTS.md).
   takes a suggestion off the list without sending it, and remembers it: the first mate is told not to
   suggest it again, and the board hides it if the first mate does, word for word. A suggestion whose
   words change shows as usual.
+- **By voice, with FirstMate voice.** The separate `firstmate-voice` plugin lets you talk to the first
+  mate out loud, on the desktop or on your phone with bb in front. It reads the board to answer "what
+  needs me?" or "what's running?" without waking the first mate, and hands anything else over as your own
+  words, transcribed, under the line `Spoken by the captain through FirstMate voice:`; the first mate's
+  reply is read back to you. It can press a card's button or a suggestion after reading it back and
+  hearing your yes, under `Pressed by the captain through FirstMate voice:`, but never a merge, anything
+  destructive, publishing, credentials or settings: those stay a tap on the board. The first mate treats
+  spoken words like typed ones, except that they never count as your word on any of those. Only plugins
+  named in the **voice plugins** setting get this far.
 - **Compact** and **Restart** sit beside Bearings at the top of the board, with a gear that
   opens FirstMate's settings. Compact has bb summarise the first mate's conversation to free room, as
   bb's own `/compact` does. Restart starts the first mate afresh on the same thread, after asking you:
@@ -209,6 +218,9 @@ how to write one; the first mate adds none without your approval.
   the refresh catches the rest, such as edits to the backlog. It runs once for every open board, in any
   window, and stops when the last one closes. On bb 0.48 a board whose tab is hidden, or whose panel is
   closed, does not reload until it is shown again.
+- **Plugins that may talk to the first mate by voice** (default `firstmate-voice`): the plugin ids allowed to
+  read the board and send your spoken words and voice-pressed buttons to the first mate. Empty turns voice
+  off.
 - **First mate: no notification for "Captain, shipshape."** (default off): the first mate's no-op replies
   stop notifying you. See below.
 - **Autocompact**, once for the first mate and once for the crew: whether to compact the conversation on
