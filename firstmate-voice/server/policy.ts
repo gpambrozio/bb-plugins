@@ -5,7 +5,7 @@
  *   audio was committed. Sends copy them from here: the model names how many of the latest to send and
  *   never writes them. Kept in memory for the session only.
  * - **The two-phase press.** `propose` picks a button and returns a read-back the server wrote; it counts as
- *   read back only once the model's own speech said it. `confirm` then needs the captain's first words after
+ *   read back only once the model's own speech said it and that audio played to its end, not cut off. `confirm` then needs the captain's first words after
  *   the read-back to be a short yes with no negation, within 30 s, on a single-use token, at most one press
  *   every 10 s. Firstmate-crew checks the card's etag and refuses tap-only buttons again.
  * - **One send at a time,** and rate limits on sends, presses and brief reads.
@@ -214,6 +214,8 @@ export class PressGuard {
   private current: Proposal | null = null;
   private counter = 0;
   private lastPressAt = Number.NEGATIVE_INFINITY;
+  /** The model's speech said the open proposal's read-back, and its audio has not finished yet. */
+  private heard = false;
 
   constructor(
     private readonly clock: Clock,
@@ -222,20 +224,34 @@ export class PressGuard {
 
   propose(ref: string, etag: string, readBack: string): Proposal {
     this.counter += 1;
+    this.heard = false;
     this.current = { token: `p${this.counter}-${Math.random().toString(36).slice(2, 8)}`, ref, etag, readBack, proposedAt: this.clock.now(), readBackAt: null, used: false };
     return this.current;
   }
 
-  /** The model finished speaking `transcript`; it marks the open proposal read back if it said it. */
+  /** The model's speech said the read-back: it counts once its audio has played to the end (`audioFinished`). */
   spoke(transcript: string): void {
     const proposal = this.current;
     if (proposal === null || proposal.used || proposal.readBackAt !== null) return;
-    if (saidReadBack(transcript, proposal.readBack)) proposal.readBackAt = this.clock.now();
+    if (saidReadBack(transcript, proposal.readBack)) this.heard = true;
+  }
+
+  /** The reply audio played to its end: a read-back said in it now counts, from this moment. */
+  audioFinished(): void {
+    if (!this.heard || this.current === null) return;
+    this.heard = false;
+    this.current.readBackAt = this.clock.now();
+  }
+
+  /** The captain talked over the reply: a read-back in it was not heard whole, so it does not count. */
+  audioCut(): void {
+    this.heard = false;
   }
 
   /** Drops the open proposal: the captain said no, or something else came up. */
   drop(): void {
     this.current = null;
+    this.heard = false;
   }
 
   /** Checks a confirm against the captain's own words. The token is spent whatever the answer. */

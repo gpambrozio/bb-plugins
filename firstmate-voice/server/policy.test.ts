@@ -66,10 +66,22 @@ describe("PressGuard", () => {
     const { clock, utterances, guard: presses } = guard();
     const proposal = presses.propose("c1.a2", "etag", READ_BACK);
     presses.spoke(READ_BACK);
+    presses.audioFinished();
     await clock.advance(1_500);
     utterances.committed("u1");
     utterances.transcribed("u1", "Yes.");
     expect(await presses.confirm(proposal.token)).toMatchObject({ ok: true, proposal: { ref: "c1.a2", etag: "etag" } });
+  });
+
+  it("does not count a read-back the captain talked over", async () => {
+    const { clock, utterances, guard: presses } = guard();
+    const proposal = presses.propose("c1.a2", "etag", READ_BACK);
+    presses.spoke(READ_BACK);
+    presses.audioCut();
+    presses.audioFinished();
+    await clock.advance(500);
+    utterances.transcribed("u1", "Yes.");
+    expect(await presses.confirm(proposal.token)).toMatchObject({ ok: false, reason: expect.stringContaining("read-back was not spoken") });
   });
 
   it("refuses a confirmation without a read-back", async () => {
@@ -87,6 +99,7 @@ describe("PressGuard", () => {
     utterances.transcribed("u0", "Yes, press hold.");
     await clock.advance(500);
     presses.spoke(READ_BACK);
+    presses.audioFinished();
     expect(await presses.confirm(proposal.token)).toMatchObject({ ok: false });
   });
 
@@ -94,6 +107,7 @@ describe("PressGuard", () => {
     const { clock, utterances, guard: presses } = guard();
     const late = presses.propose("c1.a2", "etag", READ_BACK);
     presses.spoke(READ_BACK);
+    presses.audioFinished();
     await clock.advance(31_000);
     utterances.transcribed("u1", "Yes.");
     expect((await presses.confirm(late.token)).ok).toBe(false);
@@ -102,6 +116,7 @@ describe("PressGuard", () => {
     const second = presses.propose("s1", "etag", 'Press the suggestion "Review loop on web#42"?');
     expect((await presses.confirm(first.token)).ok).toBe(false);
     presses.spoke('Press the suggestion "Review loop on web#42"?');
+    presses.audioFinished();
     await clock.advance(500);
     utterances.transcribed("u2", "Yes.");
     expect((await presses.confirm(second.token)).ok).toBe(true);
@@ -109,6 +124,7 @@ describe("PressGuard", () => {
 
     const soon = presses.propose("c1.a2", "etag", READ_BACK);
     presses.spoke(READ_BACK);
+    presses.audioFinished();
     await clock.advance(500);
     utterances.transcribed("u3", "Yes.");
     expect(await presses.confirm(soon.token)).toMatchObject({ ok: false, reason: expect.stringContaining("ten seconds") });

@@ -91,10 +91,12 @@ export class VoiceController {
   }
 
   private async connect(rpc: Rpc, audio: HTMLAudioElement): Promise<void> {
+    let made: string | null = null;
     try {
       this.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
       const leg = await this.newLeg(audio);
       const { sessionId, answerSdp } = await rpc.call("session.start", { sdp: leg.offer });
+      made = sessionId;
       if (this.state.phase !== "connecting") {
         leg.close();
         await rpc.call("session.end", { sessionId, reason: "ended while connecting" }).catch(() => null);
@@ -109,6 +111,8 @@ export class VoiceController {
       document.addEventListener("visibilitychange", this.onHidden);
       await this.keepAwake();
     } catch (error) {
+      // The server made the call but this side cannot hold it: hang it up now, not at the heartbeat's end.
+      if (made !== null) await rpc.call("session.end", { sessionId: made, reason: "the device could not connect" }).catch(() => null);
       this.teardown(talkFailure(error));
     }
   }

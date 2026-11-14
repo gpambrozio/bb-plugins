@@ -372,7 +372,11 @@ export class VoiceSession {
         call.announcer.audio(true);
         break;
       case "output_audio_buffer.stopped":
+        call.guard.audioFinished();
+        call.announcer.audio(false);
+        break;
       case "output_audio_buffer.cleared":
+        call.guard.audioCut();
         call.announcer.audio(false);
         break;
       case "response.function_call_arguments.done":

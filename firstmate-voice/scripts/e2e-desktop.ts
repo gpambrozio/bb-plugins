@@ -22,6 +22,7 @@ const { values } = parseArgs({
     mate: { type: "string" },
     bb: { type: "string" },
     out: { type: "string", default: join(process.env.TMPDIR ?? "/tmp", "fmv-e2e") },
+    "skip-ask": { type: "boolean", default: false },
   },
 });
 const base = new URL(values.url);
@@ -156,18 +157,20 @@ try {
   console.log("greeting:", report.greeting);
 
   // 1. Ask, and hear the first mate's answer.
-  const asked = await speak(page, "Ask the first mate what two plus two is. It should answer in one word.");
-  const askMessage = await until("the ask in the first mate's chat", 30_000, () => mateMessages().slice(before).find((text) => text.startsWith(SPOKEN)));
-  report.ask = { message: askMessage, reachedMs: Date.now() - asked };
-  console.log("first mate got:", askMessage);
-  await until("the first mate's turn", 180_000, async () => {
-    await new Promise((resolve) => setTimeout(resolve, 2_000));
-    return mateStatus() === "idle";
-  });
-  const answered = await until("the spoken answer", 90_000, async () => (await voiceSaid(page, asked)).find((text) => /first mate/iu.test(text) && /\b(four|4)\b/iu.test(text)));
-  report.answer = answered;
-  console.log("voice said:", answered);
-  await quiet(page);
+  if (!values["skip-ask"]) {
+    const asked = await speak(page, "Ask the first mate what two plus two is. It should answer in one word.");
+    const askMessage = await until("the ask in the first mate's chat", 30_000, () => mateMessages().slice(before).find((text) => text.startsWith(SPOKEN)));
+    report.ask = { message: askMessage, reachedMs: Date.now() - asked };
+    console.log("first mate got:", askMessage);
+    await until("the first mate's turn", 180_000, async () => {
+      await new Promise((resolve) => setTimeout(resolve, 2_000));
+      return mateStatus() === "idle";
+    });
+    const answered = await until("the spoken answer", 90_000, async () => (await voiceSaid(page, asked)).find((text) => /first mate/iu.test(text) && /\b(four|4)\b/iu.test(text)));
+    report.answer = answered;
+    console.log("voice said:", answered);
+    await quiet(page);
+  }
 
   // 2. Press a suggestion by voice: read-back, then yes.
   const pressAt = await speak(page, "Press the quick status suggestion.");
