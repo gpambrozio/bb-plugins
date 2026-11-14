@@ -180,6 +180,14 @@ moves the pin backwards. Re-pin with `npm install --save-exact -D @get-bb/plugin
   `node …/bb-app/host-daemon/dist/bb`. Install, reload and spawn threads there, never in the user's bb. Its
   web app is at the server URL (first load shows a setup screen with *Skip setup*); `playwright-core` with
   a cached Chromium drives it headlessly. `learning-exercises/AGENTS.md` and its spike notes used it.
+  With the real HOME, the first-run setup finds your agents and projects and offers no *Skip setup*;
+  `bb settings general onboardingCompletedAt <ISO time>` on the dev bb skips it without importing
+  anything. To reach the dev bb from a phone, `bb connect expose <port>` gives a URL only someone signed
+  in to the bb account can open, and the dev bb answers it only when started with
+  `BB_APP_URL=<that URL>` in its environment (otherwise 403). `firstmate-voice/AGENTS.md` used both.
+- **A git or path install refuses a server import from outside the plugin folder** ("server source import
+  escapes the plugin directory"), although a local `bb plugin build` accepts it. To reuse another plugin's
+  code, call its RPC or copy the module.
 
 ## Architecture
 
@@ -236,6 +244,12 @@ What a port only learns by running it:
   most 16 KiB, and the multi-line `--stdin` that `bb guide plugins` describes is not in 0.44's CLI. For
   arbitrary text, send it base64-encoded through `--<name>-stdin` and decode it with a size cap
   (`firstmate-crew`'s `tell --message-base64`), rather than having the server read a file by path.
+- **An API for other plugins is a second `bb.rpc.register`.** Each registration takes its own
+  `experimental_discoverable`, so one plugin can publish a narrow contract beside its private one (bb 0.49
+  lists only the published methods). Gate it on `ctx.experimental_caller` (`{ kind: "plugin", pluginId }`,
+  else `client` for the app and `bb plugin rpc call`), and refuse with the SDK's `experimental_PluginRpcRefusal`:
+  its `code` (`forbidden`, `not_found`, `conflict`, `invalid`) reaches the caller as the error's `code` and an
+  HTTP status (403 for `forbidden`). `firstmate-crew/server/voice-api.ts` is the example.
 - **A thread spawn into a host workspace needs a `hostId`.** The SDK type marks it optional, bb 0.44
   answers `hostId is required unless workspace.type is personal`. Take the server's own machine from
   `bb.sdk.system.config().primaryHostId`, or the host of the project's checkout.

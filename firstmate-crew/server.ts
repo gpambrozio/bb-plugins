@@ -11,6 +11,7 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import { FLEET_TAG, rpcContract } from "./shared/contract";
 import { STATE_DIR } from "./shared/types";
+import { voiceContract } from "./shared/voice";
 import { AUTOCOMPACT_INTERVAL_MS, checkAutoCompact, FailureLog } from "./server/autocompact";
 import { bbProjects, bbThreads } from "./server/bb-ports";
 import { acknowledgeCharter, NEW_CHARTER_FILE, writeNewCharter } from "./server/charter-file";
@@ -38,6 +39,8 @@ import { autoCompactRules, DEFAULT_REFRESH_SECONDS, homeConfig, homePath, refres
 import { createStore } from "./server/store";
 import { createDeliver } from "./server/watch-delivery";
 import { readWatchNote } from "./server/watch-notes";
+import { voiceHandlers } from "./server/voice-api";
+import { VoiceRefs } from "./server/voice-brief";
 import { WatchRunner } from "./server/watches";
 
 export { rpcContract } from "./shared/contract";
@@ -299,14 +302,17 @@ export default async function plugin(bb: BbPluginApi) {
 
   // --- RPCs and the CLI ----------------------------------------------------------------------------
 
+  /** The board, as `fleet.load` and `voice.v1` read it. */
+  const readFleet = () =>
+    loadFleet({
+      ...deps,
+      reports: reportCache(),
+      watches: () => (runner === null ? Promise.resolve([]) : runner.summaries()),
+      log: bb.log,
+    });
+
   bb.rpc.register(rpcContract, {
-    "fleet.load": () =>
-      loadFleet({
-        ...deps,
-        reports: reportCache(),
-        watches: () => (runner === null ? Promise.resolve([]) : runner.summaries()),
-        log: bb.log,
-      }),
+    "fleet.load": readFleet,
     "mate.launch": async (pick) => {
       const mate = await launchMate(deps, pick);
       void syncRunner();
@@ -399,6 +405,32 @@ export default async function plugin(bb: BbPluginApi) {
       if (!signal.aborted) publishFleet();
     }
   });
+
+  // FirstMate voice's narrow API, for the plugins in the `voicePlugins` setting only (`server/voice-api.ts`).
+  bb.rpc.register(
+    voiceContract,
+    voiceHandlers({
+      // Getters, as in `deps`: the ports are made on first use, never while the plugin loads.
+      get threads() {
+        return deps.threads;
+      },
+      get projects() {
+        return deps.projects;
+      },
+      store,
+      settings: deps.settings,
+      log: bb.log,
+      fleet: readFleet,
+      refs: new VoiceRefs(),
+      home: currentHome,
+      published: publishFleet,
+      now: Date.now,
+    }),
+    {
+      experimental_discoverable: true,
+      experimental_description: "FirstMate voice: the board as speech-ready data, and the captain's spoken asks, answers and confirmed presses.",
+    },
+  );
 
   bb.cli.register(firstmateCli(deps));
 

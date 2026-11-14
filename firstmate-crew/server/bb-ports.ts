@@ -272,6 +272,19 @@ export function bbThreads(sdk: PluginBbSdk): ThreadsPort {
       }));
       return result.delivery;
     },
+    async sendWithNote(id, shown, note, mode: SendMode) {
+      const result = await sending(mode, () =>
+        sdk.threads.send({
+          threadId: id,
+          ...sendModeOf(mode),
+          input: [
+            { type: "text", text: shown, mentions: [] },
+            { type: "text", text: note, mentions: [], visibility: "agent-only" },
+          ],
+        }),
+      );
+      return result.delivery;
+    },
     async stop(id) {
       await sdk.threads.stop({ threadId: id });
     },
