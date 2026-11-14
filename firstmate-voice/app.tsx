@@ -129,6 +129,10 @@ function SpikePage() {
         <h1 className="text-lg font-semibold">FirstMate voice: phase 0 spike</h1>
         <p className="text-muted-foreground">Talks to OpenAI Realtime on the ChatGPT subscription. Each run ends by itself after the set time.</p>
       </div>
+      <div className="rounded-md border border-border p-3 text-xs" data-testid="device">
+        <div className="font-medium">This device ({capabilities().platform}), saved with every result:</div>
+        <div className="break-all font-mono text-muted-foreground">{navigator.userAgent}</div>
+      </div>
       <div className="rounded-md border border-border bg-card p-3 text-base font-medium" data-testid="status">
         {status}
       </div>
