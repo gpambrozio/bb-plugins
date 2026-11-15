@@ -214,6 +214,34 @@ describe("voice.v1.press", () => {
     expect(threads.sent).toEqual([]);
   });
 
+  it("never presses a destructive command or a prompt whose safety is unknown, even with the right etag", async () => {
+    const fleet = voiceFleet();
+    const call = fleet.cards[0]!;
+    const risky = {
+      ...fleet,
+      cards: [
+        {
+          ...call,
+          backlog: {
+            ...call.backlog!,
+            actions: [
+              { label: "Clean workspace", prompt: "Run git clean -fdx in the checkout." },
+              { label: "Frobnicate", prompt: "Frobnicate the widgets" },
+            ],
+          },
+        },
+        ...fleet.cards.slice(1),
+      ],
+    };
+    const { handlers, threads } = await setup({ fleet: async () => risky });
+    const card = await handlers["voice.v1.card"]({ ref: "c1" }, VOICE);
+    expect(card.pressable.map((item) => item.tapOnly)).toEqual(["destructive or irreversible", "not known to be safe"]);
+    for (const ref of ["c1.a1", "c1.a2"]) {
+      await expect(handlers["voice.v1.press"]({ ref, etag: card.etag }, VOICE)).rejects.toMatchObject({ code: "forbidden" });
+    }
+    expect(threads.sent).toEqual([]);
+  });
+
   it("takes a pressed suggestion off the board, as the board does", async () => {
     const { handlers, threads, home } = await setup();
     await handlers["voice.v1.press"]({ ref: "s1", etag: await etagOf(handlers, "s1") }, VOICE);

@@ -78,6 +78,12 @@ describe("tapOnlyReason", () => {
     ["Rotate", "Rotate the API key", "credentials"],
     ["Yolo", "Turn on yolo for web", "settings"],
     ["Approve", "Approve the worker's permission", "settings"],
+    ["Clean workspace", "Run git clean -fdx in the checkout.", "destructive or irreversible"],
+    ["Tidy", "Run `npm run fmt` in web", "a command to run"],
+    ["Refresh", "Run gh pr list --state open | head", "a command to run"],
+    ["Sync", "git fetch origin && git status in web", "a command to run"],
+    ["Frobnicate", "Frobnicate the widgets", "not known to be safe"],
+    ["Big ask", `Tell me ${"and more ".repeat(100)}`, "not known to be safe"],
   ])("keeps %s on the board (%s)", (label, prompt, reason) => {
     expect(tapOnlyReason(label, prompt)).toBe(reason);
   });

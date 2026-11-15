@@ -100,8 +100,11 @@ Do not break these; each was paid for.
   with every source mark inside defused (`defuse`, `spoken`), plus an agent-only note saying to act on the
   account but follow the words where the two differ (the words alone are the captain's); a
   press sends exactly the button's prompt under `VOICE_PRESSED_PREFIX`, only when the card's etag is
-  unchanged, and never for a tap-only button (`tapOnlyReason`: merges, anything destructive, publishing,
-  credentials, settings — a wide word net, erring towards the board). The charter names both lines (a test
+  unchanged, and never for a tap-only button (`tapOnlyReason`, fail-closed: merges, anything destructive,
+  publishing, credentials and settings by a wide word net; any prompt carrying a command to run; and any
+  prompt whose intent is not on a short known-safe list, or longer than 600 characters, all stay a tap on
+  the board). The charter and the press note still tell the first mate not to act on a voice press that
+  turns out to be one of those, since the captain heard only the label. The charter names both lines (a test
   ties them) and says neither is the captain's word on those. What the voice model may see has no thread
   ids, no URLs and no prompts: cards and buttons are refs (`c1`, `c1.a1`, `s1`) that keep their meaning for
   the plugin's lifetime. `voice.v1.mate` gives the first mate's thread id to the voice plugin's app (its

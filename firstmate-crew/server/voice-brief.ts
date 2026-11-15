@@ -92,17 +92,43 @@ const TAP_ONLY: readonly { reason: string; pattern: RegExp }[] = [
   {
     reason: "destructive or irreversible",
     pattern:
-      /\b(delet\w*|remov\w*|discard\w*|drop\w*|destroy\w*|wip(e|es|ed|ing)|purg\w*|reset\w*|revert\w*|roll ?back\w*|force\w*|archiv\w*|clos(e|es|ed|ing)|abandon\w*|kill\w*|end (it|the|this|that)|stop the worker|retire\w*)\b/iu,
+      /\b(delet\w*|remov\w*|discard\w*|drop\w*|destroy\w*|wip(e|es|ed|ing)|purg\w*|reset\w*|revert\w*|roll ?back\w*|force\w*|archiv\w*|clos(e|es|ed|ing)|abandon\w*|kill\w*|end (it|the|this|that)|stop the worker|retire\w*|clean\w*|eras\w*|nuk\w*|prun\w*|truncat\w*|overwrit\w*|uninstall\w*|wipe ?out|throw away|rm|rmdir|unlink\w*|rewrit\w* (the )?history|hard reset|--hard|shred\w*|format the|mkfs|dd)\b/iu,
   },
   { reason: "publishing", pattern: /\b(publish\w*|releas\w*|deploy\w*|tag(s|ged|ging)?|push\w*|announc\w*|tweet\w*|e-?mail\w*)\b/iu },
   { reason: "credentials", pattern: /\b(credential\w*|secret\w*|tokens?|password\w*|passphrase\w*|api[ -]?keys?|ssh[ -]?keys?|log ?in|sign ?in|auth\w*)\b/iu },
-  { reason: "settings", pattern: /\b(setting\w*|config\w*|permission\w*|approv\w*|yolo)\b/iu },
+  { reason: "settings", pattern: /\b(setting\w*|config\w*|permission\w*|approv\w*|yolo|sudo|chmod|chown)\b/iu },
 ];
+
+/**
+ * A prompt that carries a command to run: the read-back names only the label, so what the command does is
+ * not what the captain heard. Checked with links taken out, so a URL's slashes and dashes do not count.
+ */
+const COMMAND: readonly RegExp[] = [
+  /`/u,
+  /(\|\||&&|\$\(|>>|(^|\s)[|<>](\s|$)|;\s*\w)/u,
+  /(^|\s)--?[a-z][\w-]*/iu,
+  /\b(git|gh|rm|mv|cp|dd|npm|npx|yarn|pnpm|bun|bb|docker|kubectl|curl|wget|ssh|scp|rsync|xargs|sed|awk|bash|zsh|sh|python3?|perl|ruby|osascript|launchctl|brew|terraform|psql|mysql|sqlite3)\s+\S/iu,
+];
+
+/**
+ * What a voice press may ask for, the fail-closed side: a prompt whose intent is none of these is not known
+ * to be safe, and stays a tap on the board. Asking, reviewing, waiting, choosing and ordinary work.
+ */
+const KNOWN_SAFE =
+  /\b(tell|report|summari[sz]e|explain|describe|show|list|check|look|review|read|status|wait|hold|pause|keep|leave|continue|resume|retry|answer|ask|investigate|research|plan|draft|start|work|fix|add|write|implement|test|update|rebase|run (a |the )?(tests?|test suite|checks?|gate|review loop|review)|use|pick|choose|go with|prefer|what|how|why|which|when|where)\b/iu;
+
+/** A prompt longer than this is not one the captain heard enough of to vouch for. */
+const PROMPT_MAX = 600;
 
 /** Why the button can only be pressed on the board, or null when the voice may press it after a yes. */
 export function tapOnlyReason(label: string, prompt: string): string | null {
   const text = `${label}\n${prompt}`;
-  return TAP_ONLY.find(({ pattern }) => pattern.test(text))?.reason ?? null;
+  const listed = TAP_ONLY.find(({ pattern }) => pattern.test(text))?.reason;
+  if (listed !== undefined) return listed;
+  const prose = text.replace(/https?:\/\/\S+/giu, " ");
+  if (COMMAND.some((pattern) => pattern.test(prose))) return "a command to run";
+  if (prompt.length > PROMPT_MAX || !KNOWN_SAFE.test(prompt)) return "not known to be safe";
+  return null;
 }
 
 // --- Refs and etags --------------------------------------------------------------------------------

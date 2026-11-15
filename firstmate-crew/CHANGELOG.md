@@ -15,8 +15,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   button or a suggestion once you have heard it read back and said yes. A spoken message and a voice press
   each open with a line saying so. The first mate acts on the voice's account but checks it against your
   words, and only your words count as yours; even they never count as your word on a merge, anything
-  destructive, publishing, credentials or settings. Those buttons are never pressed by voice: you tap them
-  on the board.
+  destructive, publishing, credentials or settings. Those buttons are never pressed by voice, nor is any
+  button that runs a command or whose action FirstMate cannot tell is safe: you tap them on the board.
 - **A setting for which plugins may do this,** "Plugins that may talk to the first mate by voice". It names
   FirstMate voice by default; empty turns voice off.
 

@@ -125,7 +125,8 @@ there, and `bb plugin dev` to rebuild on save. See [`AGENTS.md`](AGENTS.md).
   on the account but checks it against your words, which alone count as yours. Its reply is read back to
   you. It can press a card's button or a suggestion after reading it back and
   hearing your yes, under `Pressed by the captain through FirstMate voice:`, but never a merge, anything
-  destructive, publishing, credentials or settings: those stay a tap on the board. The first mate treats
+  destructive, publishing, credentials or settings, a command to run, or a button whose action it cannot
+  tell is safe: those stay a tap on the board. The first mate treats
   spoken words like typed ones, except that they never count as your word on any of those. Only plugins
   named in the **voice plugins** setting get this far.
 - **Compact** and **Restart** sit beside Bearings at the top of the board, with a gear that
