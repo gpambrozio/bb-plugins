@@ -251,7 +251,7 @@ describe("asking the first mate", () => {
     await clock.advance(2_000);
     sessions.threadEvent();
     await clock.advance(2_000);
-    expect(sideband.items().some((text) => text.startsWith("[firstmate-reply]") && text.includes("rebased and pushed"))).toBe(true);
+    expect(sideband.items().some((text) => text.startsWith("[firstmate-reply #1]") && text.includes("rebased and pushed"))).toBe(true);
     const creates = sideband.ofType("response.create").slice(before) as { response?: { instructions?: string; metadata?: object } }[];
     expect(creates.at(-1)?.response?.instructions).toContain("The first mate answered you");
   });
@@ -568,5 +568,127 @@ describe("the talk the first mate gets beside the words", () => {
       { who: "voice", text: "It asks whether to retry the flaky test or skip it." },
       { who: "captain", text: "Skip it." },
     ]);
+  });
+});
+
+describe("the first mate's messages, announced while the session is live", () => {
+  type Create = { response?: { instructions?: string; metadata?: { fmv_announcement?: string } } };
+  const creates = (sideband: FakeSideband) => sideband.ofType("response.create") as Create[];
+
+  /** The first mate's thread ends a turn with this message, and bb tells the plugin. */
+  async function mateSays(ctx: Awaited<ReturnType<typeof setup>>, text: string, at = ctx.clock.now() + 1_000): Promise<void> {
+    ctx.crew.replyText = text;
+    ctx.crew.current = brief({
+      etag: `e_${at}_${text.length}`,
+      firstMate: { status: "idle", waiting: false, lastReply: { untrusted: true, head: text, tail: "", chars: text.length }, repliedAt: new Date(at).toISOString() },
+    });
+    ctx.sessions.threadEvent();
+    await ctx.clock.advance(2_000);
+  }
+
+  it("announces a message the voice did not ask for, such as a report after a worker finished, first sentence first", async () => {
+    const ctx = await setup();
+    await respond(ctx.sideband, ctx.clock, { spoken: "Captain, all quiet." });
+    const before = creates(ctx.sideband).length;
+    await mateSays(ctx, "The login fix landed. Its worker is archived.");
+    expect(ctx.sideband.items().filter((text) => text.startsWith("[firstmate-reply #1]") && text.includes("The login fix landed."))).toHaveLength(1);
+    const made = creates(ctx.sideband).slice(before);
+    expect(made).toHaveLength(1);
+    expect(made[0]?.response?.instructions).toContain('Say "From the first mate"');
+    expect(made[0]?.response?.instructions).toContain("its first sentence first, from the [firstmate-reply #1] item and no other");
+  });
+
+  it("announces nothing from before the session, and no message twice", async () => {
+    const realtime = new FakeRealtime();
+    const crew = new FakeCrew();
+    crew.current = brief({ firstMate: { status: "idle", waiting: false, lastReply: { untrusted: true, head: "Old news.", tail: "", chars: 9 }, repliedAt: "2026-11-13T14:00:00.000Z" } });
+    const clock = new FakeClock();
+    const sessions = new VoiceSessions({ realtime, crew, clock, log: quietLog(), publish: () => {} }, async () => CONFIG);
+    await sessions.start("v=0 offer");
+    const sideband = realtime.last;
+    sideband.open();
+    await settle();
+    await respond(sideband, clock, { spoken: "Captain, all quiet." });
+    sessions.threadEvent();
+    await clock.advance(2_000);
+    expect(sideband.items().some((text) => text.startsWith("[firstmate-reply"))).toBe(false);
+    // A turn with no text of its own (a compaction): a new time, the same last message.
+    crew.current = brief({ etag: "e9", firstMate: { status: "idle", waiting: false, lastReply: { untrusted: true, head: "Old news.", tail: "", chars: 9 }, repliedAt: "2026-11-13T14:30:00.000Z" } });
+    sessions.threadEvent();
+    await clock.advance(2_000);
+    expect(sideband.items().some((text) => text.startsWith("[firstmate-reply"))).toBe(false);
+    expect(creates(sideband).some((item) => (item.response?.instructions ?? "").split("Now: ")[1]?.includes("[firstmate-reply") === true)).toBe(false);
+  });
+
+  it("holds a message while the captain speaks, then says several in order, one sentence each", async () => {
+    const ctx = await setup();
+    await respond(ctx.sideband, ctx.clock, { spoken: "Captain, all quiet." });
+    const before = creates(ctx.sideband).length;
+    ctx.sideband.emit({ type: "input_audio_buffer.speech_started" });
+    await mateSays(ctx, "The icons are rebased.");
+    await mateSays(ctx, "The docs fix failed its gate.");
+    expect(creates(ctx.sideband)).toHaveLength(before);
+    ctx.sideband.emit({ type: "input_audio_buffer.speech_stopped" });
+    await settle();
+    const first = creates(ctx.sideband).slice(before);
+    expect(first).toHaveLength(1);
+    expect(first[0]?.response?.instructions).toContain("only its first sentence (other messages from the first mate follow), from the [firstmate-reply #1] item");
+    await respond(ctx.sideband, ctx.clock, { spoken: "From the first mate: the icons are rebased.", announcement: first[0]?.response?.metadata?.fmv_announcement });
+    const second = creates(ctx.sideband).slice(before + 1);
+    expect(second[0]?.response?.instructions).toContain("only its first sentence (other messages from the first mate follow), from the [firstmate-reply #2] item");
+  });
+
+  it("puts a message the voice read out in the talk of the next hand-off, as the first mate's reply read aloud", async () => {
+    const ctx = await setup();
+    await respond(ctx.sideband, ctx.clock, { spoken: "Captain, all quiet." });
+    await mateSays(ctx, "The FirstMate voice PR is green and ready to merge.");
+    const id = creates(ctx.sideband).at(-1)?.response?.metadata?.fmv_announcement;
+    await respond(ctx.sideband, ctx.clock, { spoken: "From the first mate: the FirstMate voice PR is green and ready to merge.", announcement: id });
+    await say(ctx.sideband, ctx.clock, "Hold it for now.");
+    await respond(ctx.sideband, ctx.clock, { tool: { name: "ask_first_mate", args: { request: "The captain wants the FirstMate voice PR held." } } });
+    expect(ctx.crew.talks.at(-1)).toContainEqual({ who: "reply", text: "From the first mate: the FirstMate voice PR is green and ready to merge." });
+  });
+
+  it("says nothing once the session has ended", async () => {
+    const ctx = await setup();
+    await respond(ctx.sideband, ctx.clock, { spoken: "Captain, all quiet." });
+    await ctx.sessions.end(ctx.started.sessionId, "the captain ended it");
+    const before = creates(ctx.sideband).length;
+    const items = ctx.sideband.items().length;
+    await mateSays(ctx, "The icons are rebased.");
+    expect(creates(ctx.sideband)).toHaveLength(before);
+    expect(ctx.sideband.items()).toHaveLength(items);
+  });
+});
+
+describe("a captain's call, announced from the card alone", () => {
+  it("says the card's own title, project, pull request, hold and buttons, word for word, and no ref", async () => {
+    const { sideband, clock, crew, sessions } = await setup();
+    await respond(sideband, clock, { spoken: "Captain, all quiet." });
+    const card = {
+      ...brief().captainsCall[0]!,
+      ref: "c9",
+      title: "firstmate-voice-phase1",
+      project: "bb-plugins",
+      pr: "bb-plugins #112",
+      hold: "review or merge #112 once the announce change is in?",
+      actions: [{ label: "Review" }, { label: "Merge" }],
+    };
+    crew.current = brief({ etag: "e_call", captainsCall: [...brief().captainsCall, card] });
+    sessions.threadEvent();
+    await clock.advance(2_000);
+    const said = (sideband.ofType("response.create").at(-1) as { response: { instructions: string } }).response.instructions;
+    expect(said).toContain(
+      'Say exactly this, word for word: "A new captain\'s call: firstmate-voice-phase1 (bb-plugins, bb-plugins pull request 112). review or merge #112 once the announce change is in? On the board you can tap Review and Merge."',
+    );
+    const script = said.slice(said.indexOf("Now: "));
+    expect(script).not.toContain("c9");
+    expect(script).not.toMatch(/web|42/u);
+    expect(sideband.items().at(-1)).toContain('New on the board: c9 "firstmate-voice-phase1" (captain\'s call, project bb-plugins, bb-plugins #112, hold: review or merge #112 once the announce change is in?, buttons: "Review", "Merge").');
+  });
+
+  it("gives the voice no example pull request or card to lift", async () => {
+    const { INSTRUCTIONS } = await import("./instructions");
+    expect(INSTRUCTIONS).not.toMatch(/\b42\b|\bweb pull request\b|\bc\d+\b/u);
   });
 });

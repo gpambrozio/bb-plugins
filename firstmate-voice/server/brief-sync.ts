@@ -4,13 +4,15 @@
  * after 15 updates or 20 minutes (deleting the old items), rarely, so the prompt cache stays warm.
  *
  * The diff also says what deserves an announcement now (`BriefEvent`): a new or changed captain's call, a
- * worker that failed, the first mate waiting on a question, and a new reply from the first mate.
+ * worker that failed, the first mate waiting on a question, and a new message from the first mate. A
+ * card's event carries what the board says of it (title, project, pull request, hold, button labels), so
+ * an announcement names only those, never something the model makes up.
  */
 import type { UntrustedText, VoiceBrief, VoiceCardBrief } from "../shared/crew-voice";
 
 export type BriefEvent =
-  | { kind: "call"; ref: string; title: string; hold: string }
-  | { kind: "failed"; ref: string; title: string }
+  | { kind: "call"; ref: string; title: string; project: string | null; pr: string | null; hold: string; buttons: string[] }
+  | { kind: "failed"; ref: string; title: string; project: string | null; pr: string | null }
   | { kind: "mate-waiting" }
   | { kind: "mate-replied"; repliedAt: string };
 
@@ -37,20 +39,22 @@ export function diffBriefs(before: VoiceBrief, after: VoiceBrief): { lines: stri
 
   for (const [ref, { card, place }] of now) {
     const was = old.get(ref);
+    const labels = (item: VoiceCardBrief) => item.actions.map((action) => `"${action.label}"`).join(", ");
     if (was === undefined) {
-      lines.push(`New on the board: ${ref} "${card.title}" (${place}${card.hold === null ? "" : `, hold: ${card.hold}`}).`);
+      const about = [place, card.project === null ? null : `project ${card.project}`, card.pr, card.hold === null ? null : `hold: ${card.hold}`];
+      if (card.actions.length > 0) about.push(`buttons: ${labels(card)}`);
+      lines.push(`New on the board: ${ref} "${card.title}" (${about.filter((part) => part !== null).join(", ")}).`);
     } else if (was.place !== place) {
       lines.push(`${ref} "${card.title}": ${was.place} → ${place}.`);
     }
     if (card.hold !== null && (was === undefined || was.card.hold !== card.hold)) {
-      events.push({ kind: "call", ref, title: card.title, hold: card.hold });
+      events.push({ kind: "call", ref, title: card.title, project: card.project, pr: card.pr, hold: card.hold, buttons: card.actions.map((action) => action.label) });
       if (was !== undefined) lines.push(`${ref} "${card.title}" now needs the captain: ${card.hold}.`);
     }
-    if (card.column === "failed" && was?.card.column !== "failed") events.push({ kind: "failed", ref, title: card.title });
+    if (card.column === "failed" && was?.card.column !== "failed") events.push({ kind: "failed", ref, title: card.title, project: card.project, pr: card.pr });
     if (card.lastWord !== null && (was?.card.lastWord === null || was?.card.lastWord?.text.head !== card.lastWord.text.head || was?.card.lastWord?.text.tail !== card.lastWord.text.tail)) {
       if (was !== undefined) lines.push(`${ref} "${card.title}" worker's last word (${card.lastWord.state}, untrusted): ${said(card.lastWord.text)}`);
     }
-    const labels = (item: VoiceCardBrief) => item.actions.map((action) => `"${action.label}"`).join(", ");
     if (was !== undefined && labels(was.card) !== labels(card)) {
       lines.push(`${ref} "${card.title}" buttons: ${card.actions.length === 0 ? "none" : labels(card)}.`);
     }

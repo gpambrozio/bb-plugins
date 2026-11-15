@@ -5,7 +5,7 @@ desktop or on the phone with bb in front. It is option B of the design
 (`/Users/ci/repositories/firstmate/data/scout-firstmate-realtime-voice/report.html`): this plugin owns the
 audio, the session, the tool policy and the credential, and `firstmate-crew` keeps the authority through
 its narrow, caller-gated `voice.v1` API. Phase 1 ("ask and answer", design §13) is what is here: the brief,
-asks and answers, and announcements of new captain's calls and first-mate replies. There are no button
+asks and answers, and announcements of new captain's calls and of every first-mate message. There are no button
 presses by voice (below).
 
 The repository root `AGENTS.md` covers what every plugin here shares. This file holds what is specific to
@@ -101,6 +101,21 @@ the voice, the decisions behind phase 1, and the phase 0 decision record.
   `voice-input.json` exist) and is not a bb built-in.
 - **No relay in phase 1.** The design kept the relayed transport for a token refused on `/calls`, which phase 0
   ruled out, and the iPhone ran WebRTC directly. It stays on the spike branch for networks that block WebRTC.
+- **Every first-mate message is announced, not only answers to a voice ask** (the captain's call,
+  2026-11-15). The session announces the brief's last first-mate message whenever its text differs from
+  the last one it saw (`noticeMate`): the first brief only sets it, so nothing from before the session is
+  said; a turn with no text of its own (a compaction) repeats the old text and is skipped; two turns ending
+  between reads are one announcement, of the later, since the brief and `voice.v1.reply` give only the
+  last. Each message is its own `[firstmate-reply #n]` item and its announcement names that item. A burst
+  that queues (the captain speaking, another announcement playing) goes in order, one sentence each
+  (`Announcer.enqueueMate` shortens those still waiting); one already playing is not cut. The answer to a
+  voice ask opens "The first mate answered you", any other "From the first mate". All of them count as
+  the first mate's reply read aloud in the talk.
+- **A card's announcement is a script built from the card** (`callScript`): title, project, pull request,
+  hold and button labels from the brief, said word for word, no ref. The model once announced a call
+  with "web pull request 42" and buttons lifted from its own instructions' example while the update gave
+  no buttons; the instructions now carry no example identifiers (a test checks), and a new card's update
+  line lists its project, pull request and buttons.
 - **No `quiet` tool.** Every phase 1 announcement is P1, which quiet would not hold; it comes with phase 2's
   digests.
 - **The model's account goes with the captain's words** (the captain's call, 2026-11-14, after a long request

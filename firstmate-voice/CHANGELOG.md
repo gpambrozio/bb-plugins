@@ -21,5 +21,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Buttons stay a tap on the board.** The voice tells you which buttons a card offers but never presses
   one; asked to, it offers to hand your request to the first mate in your own words. Merges, anything
   destructive, publishing, credentials and settings are never your word by voice.
-- **Spoken news:** a new call for you, a worker that failed, and the first mate waiting on a question.
+- **Spoken news:** a new call for you, named as the board names it (title, project, pull request,
+  question, buttons), a worker that failed, the first mate waiting on a question, and every message the
+  first mate posts while you talk (not only answers to what you asked by voice), first sentence first.
+  Several at once go in order, one sentence each.
 - Sessions renew at OpenAI's one-hour limit and end after ten quiet minutes.

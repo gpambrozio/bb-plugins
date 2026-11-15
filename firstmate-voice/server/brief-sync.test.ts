@@ -19,7 +19,7 @@ describe("diffBriefs", () => {
     expect(lines).toEqual(
       expect.arrayContaining([
         'c3 "Add dark mode": working → blocked.',
-        'New on the board: c4 "Upgrade the date library" (queued).',
+        'New on the board: c4 "Upgrade the date library" (queued, project web, web #42).',
         'Landed: "Fix the typo" (merged 2026-11-12).',
         "Suggestions now: none.",
       ]),
@@ -35,8 +35,8 @@ describe("diffBriefs", () => {
       firstMate: { status: "idle", waiting: true, lastReply: { untrusted: true, head: "Captain, ready.", tail: "", chars: 15 }, repliedAt: "2026-11-13T14:06:00.000Z" },
     });
     expect(diffBriefs(brief(), after).events).toEqual([
-      { kind: "call", ref: "c1", title: "Fix the flaky login test", hold: "merge web#42 now?" },
-      { kind: "failed", ref: "c7", title: "Upgrade the date library" },
+      { kind: "call", ref: "c1", title: "Fix the flaky login test", project: "web", pr: "web #42", hold: "merge web#42 now?", buttons: ["Merge", "Hold"] },
+      { kind: "failed", ref: "c7", title: "Upgrade the date library", project: "web", pr: "web #42" },
       { kind: "mate-waiting" },
       { kind: "mate-replied", repliedAt: "2026-11-13T14:06:00.000Z" },
     ]);

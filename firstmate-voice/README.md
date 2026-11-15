@@ -25,9 +25,12 @@ against your ChatGPT plan. Read codex-realtime's README first.
   instead.
 - **Never merges by voice.** Merges, anything destructive or irreversible, publishing, credentials and
   settings are never your word by voice: ask for one and the first mate puts up a button for you to tap.
-- **Tells you what changed:** a new call for you on the board, a worker that failed, the first mate waiting
-  on a question in its chat, and the first mate's answers to what you asked. It waits for a pause, and stops
-  when you talk over it.
+- **Tells you what changed:** a new call for you on the board (its title, project, pull request, question
+  and buttons as the board has them), a worker that failed, the first mate waiting on a question in its
+  chat, and every message the first mate posts while you talk: its answers to what you asked, its reports
+  when a worker finishes, its replies to what you typed or tapped on the board, first sentence first. It
+  waits for a pause, says one again if you talked over it, and never says one twice; several at once go in
+  order, one sentence each.
 
 ## What you need
 
