@@ -1,11 +1,11 @@
 /**
- * The voice model's tools (design §8), each with its permission level. Phase 1 has read, verbatim send,
- * confirmed press and the session's own end. There is no tool for anything "never by voice" (ending or
- * archiving workers, restart or compact, permissions, settings, watches, gh, files, merging directly), and
- * `voice.v1` has no verb for them either.
+ * The voice model's tools (design §8), each with its permission level. Phase 1 has read, verbatim send and
+ * the session's own end. There is no tool for pressing a board button (the captain taps those on the
+ * board), nor for anything "never by voice" (ending or archiving workers, restart or compact, permissions,
+ * settings, watches, gh, files, merging directly), and `voice.v1` has no verb for them either.
  */
 
-export type ToolLevel = "read" | "verbatim" | "confirm" | "session";
+export type ToolLevel = "read" | "verbatim" | "session";
 
 export interface ToolSpec {
   name: string;
@@ -25,7 +25,7 @@ export const TOOLS: readonly ToolSpec[] = [
   {
     name: "get_card",
     level: "read",
-    description: "More on one card or suggestion: the worker's longer last word, the hold, and its buttons with their read-backs.",
+    description: "More on one card: the worker's longer last word, the hold, and the labels of its buttons (which the captain taps on the board).",
     parameters: { type: "object", properties: { ref: REF }, required: ["ref"], additionalProperties: false },
   },
   {
@@ -65,19 +65,6 @@ export const TOOLS: readonly ToolSpec[] = [
       required: ["ref", "answer"],
       additionalProperties: false,
     },
-  },
-  {
-    name: "propose_press",
-    level: "confirm",
-    description:
-      "Step one of pressing a button: a card's action (c1.a2) or a suggestion (s1). Returns a token and a readBack sentence to read to the captain exactly. Then wait for their answer.",
-    parameters: { type: "object", properties: { ref: { type: "string", description: "The button's ref, such as c1.a2 or s1." } }, required: ["ref"], additionalProperties: false },
-  },
-  {
-    name: "confirm_press",
-    level: "confirm",
-    description: "Step two, only after the captain answered the read-back with a yes: presses the button. The server checks the captain's own words.",
-    parameters: { type: "object", properties: { token: { type: "string" } }, required: ["token"], additionalProperties: false },
   },
   {
     name: "end_session",

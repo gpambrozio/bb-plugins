@@ -422,13 +422,12 @@ export default async function plugin(bb: BbPluginApi) {
       log: bb.log,
       fleet: readFleet,
       refs: new VoiceRefs(),
-      home: currentHome,
       published: publishFleet,
       now: Date.now,
     }),
     {
       experimental_discoverable: true,
-      experimental_description: "FirstMate voice: the board as speech-ready data, and the captain's spoken asks, answers and confirmed presses.",
+      experimental_description: "FirstMate voice: the board as speech-ready data, and the captain's spoken asks and answers.",
     },
   );
 

@@ -50,7 +50,7 @@ export function diffBriefs(before: VoiceBrief, after: VoiceBrief): { lines: stri
     if (card.lastWord !== null && (was?.card.lastWord === null || was?.card.lastWord?.text.head !== card.lastWord.text.head || was?.card.lastWord?.text.tail !== card.lastWord.text.tail)) {
       if (was !== undefined) lines.push(`${ref} "${card.title}" worker's last word (${card.lastWord.state}, untrusted): ${said(card.lastWord.text)}`);
     }
-    const labels = (item: VoiceCardBrief) => item.actions.map((action) => `${action.ref} ${action.label}`).join(", ");
+    const labels = (item: VoiceCardBrief) => item.actions.map((action) => `"${action.label}"`).join(", ");
     if (was !== undefined && labels(was.card) !== labels(card)) {
       lines.push(`${ref} "${card.title}" buttons: ${card.actions.length === 0 ? "none" : labels(card)}.`);
     }
@@ -62,7 +62,7 @@ export function diffBriefs(before: VoiceBrief, after: VoiceBrief): { lines: stri
   const landed = new Set(before.landed.map((item) => item.title));
   for (const item of after.landed) if (!landed.has(item.title)) lines.push(`Landed: "${item.title}"${item.outcome === null ? "" : ` (${item.outcome})`}.`);
 
-  const suggestions = (brief: VoiceBrief) => brief.suggestions.map((item) => `${item.ref} ${item.label}`).join(", ");
+  const suggestions = (brief: VoiceBrief) => brief.suggestions.map((item) => `"${item.label}"`).join(", ");
   if (suggestions(before) !== suggestions(after)) lines.push(`Suggestions now: ${after.suggestions.length === 0 ? "none" : suggestions(after)}.`);
 
   const mateBefore = before.firstMate;

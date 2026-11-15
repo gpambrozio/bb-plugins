@@ -6,11 +6,8 @@ import {
   VoiceRefs,
   buildVoiceBrief,
   headAndTail,
-  readBack,
-  resolveButton,
   speakable,
   spokenPr,
-  tapOnlyReason,
   voiceCard,
   type MateVoiceState,
 } from "./voice-brief";
@@ -67,77 +64,6 @@ describe("headAndTail", () => {
   });
 });
 
-describe("tapOnlyReason", () => {
-  const DECISION = { decision: "pick-db" };
-
-  it.each([
-    ["Merge", "Merge https://github.com/you/web/pull/42", "a merge"],
-    ["Land web#42", "Land https://github.com/you/web/pull/42", "a merge"],
-    ["Ship it", "Ship it", "a merge"],
-    ["Discard", "Throw away the branch", "destructive or irreversible"],
-    ["Clean up", "Archive the worker and delete its branch", "destructive or irreversible"],
-    ["Release", "Cut release 1.2.0", "publishing"],
-    ["Rotate", "Rotate the API key", "credentials"],
-    ["Yolo", "Turn on yolo for web", "settings"],
-    ["Approve", "Approve the worker's permission", "settings"],
-    ["Clean workspace", "Run git clean -fdx in the checkout.", "destructive or irreversible"],
-    ["Tidy", "Run `npm run fmt` in web", "a command to run"],
-    ["Refresh", "Run gh pr list --state open | head", "a command to run"],
-    ["Sync", "git fetch origin && git status in web", "a command to run"],
-    ["Proceed", "Check CI, then fast-forward main to the reviewed branch.", "a merge"],
-    ["Inspect", "Check the database, then empty all tables.", "destructive or irreversible"],
-    ["Go", "Start the production rollout.", "publishing"],
-    ["Go", "Use a new signing key.", "credentials"],
-    ["Go", "Check CI, promote the build to production.", "publishing"],
-  ])("keeps %s on the board (%s)", (label, prompt, reason) => {
-    expect(tapOnlyReason(label, prompt)).toBe(reason);
-  });
-
-  // Whatever the wording, a button outside the bounded set stays on the board: these name no deny-listed word.
-  it.each([
-    ["Frobnicate", "Frobnicate the widgets"],
-    ["Big ask", `Tell me ${"and more ".repeat(100)}`],
-    ["Proceed", "Check CI, then bring main up to the reviewed branch."],
-    ["Inspect", "Check the database. Then make every table blank."],
-    ["Inspect", "Look at the logs and then tidy the database."],
-    ["Status", "Tell me the status, afterwards switch main to the review branch."],
-    ["Fix", "Fix the parser by rewriting main."],
-    ["Go", "Go to the web project and do what the review says."],
-    ["Go", "Start the big switchover."],
-    ["Go", "Use the new pipeline."],
-    ["Go", "Check CI, bring the build live."],
-    ["Retry", "Retry the flaky test once more"],
-    ["Wait", "Wait for the second review on https://github.com/you/web/pull/42"],
-    ["Hold", "Leave https://github.com/you/web/pull/42 open until I say and switch main to it"],
-    ["Loop", "Run a review loop on https://github.com/you/web/pull/42 and bring it into main"],
-    ["Ask", "Can you start the switchover?"],
-    ["Ask", "What is left, then bring the build live?"],
-  ])("keeps %s on the board, whatever its words (%s)", (label, prompt) => {
-    expect(tapOnlyReason(label, prompt, DECISION)).toBe("not one the voice may press");
-  });
-
-  it("presses a decision card's choice only on a decision card, in the decision's own words", () => {
-    const choice = "Use Postgres for the web project's database (pick-db)";
-    expect(tapOnlyReason("Postgres", choice, DECISION)).toBeNull();
-    expect(tapOnlyReason("Postgres", choice)).toBe("not one the voice may press");
-    expect(tapOnlyReason("Postgres", choice, { decision: "other-task" })).toBe("not one the voice may press");
-    expect(tapOnlyReason("Postgres", "Use Postgres for the web project's database (pick-db) and bring it live", DECISION)).toBe("not one the voice may press");
-    expect(tapOnlyReason("Postgres", "Use Postgres for the web project's database, then switch main (pick-db)", DECISION)).toBe("not one the voice may press");
-  });
-
-  it.each([
-    ["Hold", "Leave https://github.com/you/web/pull/42 open until I say"],
-    ["Hold", "Hold web#42 for now."],
-    ["Wait", "Wait"],
-    ["Review loop on web#42", "Run a review loop on https://github.com/you/web/pull/42"],
-    ["Review loop on web#42", "Run a review loop on https://github.com/you/web/pull/42 until it comes back clean"],
-    ["Quick status", "Tell me in one short sentence how many items are on the backlog, and do nothing else."],
-    ["Running?", "What is running on web right now?"],
-  ])("lets the voice press %s after a yes (%s)", (label, prompt) => {
-    expect(tapOnlyReason(label, prompt)).toBeNull();
-  });
-});
-
 describe("VoiceRefs", () => {
   it("keeps a card's ref when it moves to another column", () => {
     const refs = new VoiceRefs();
@@ -163,19 +89,13 @@ describe("buildVoiceBrief", () => {
         title: "Fix the flaky login test",
         pr: "web #42",
         hold: "merge web#42?",
-        actions: [
-          { ref: "c1.a1", label: "Merge", tapOnly: "a merge" },
-          { ref: "c1.a2", label: "Hold", tapOnly: null },
-        ],
+        actions: [{ label: "Merge" }, { label: "Hold" }],
       }),
     ]);
     expect(brief.working.map((card) => card.title)).toEqual(["Add dark mode"]);
     expect(brief.queued.map((card) => [card.title, card.blockedBy])).toEqual([["Upgrade the date library", "dark-mode"]]);
     expect(brief.landed).toEqual([{ title: "Fix the typo", outcome: "merged 2026-11-12" }]);
-    expect(brief.suggestions).toEqual([
-      { ref: "s1", label: "Review loop on web#42", tapOnly: null },
-      { ref: "s2", label: "Land web#42", tapOnly: "a merge" },
-    ]);
+    expect(brief.suggestions).toEqual([{ label: "Review loop on web#42" }, { label: "Land web#42" }]);
     const text = JSON.stringify(brief);
     expect(text).not.toMatch(/https?:|thr_|Run a review loop|Leave https/u);
   });
@@ -195,45 +115,20 @@ describe("buildVoiceBrief", () => {
 });
 
 describe("voiceCard", () => {
-  it("reads a card back from the board with the pull request in words", () => {
+  it("gives a card in more detail, with its buttons' labels and never their prompts", () => {
     const refs = new VoiceRefs();
     const fleet = voiceFleet();
     buildVoiceBrief(fleet, MATE, refs, 0);
     const card = voiceCard(fleet, refs, "c1");
     expect(VoiceCardSchema.parse(card)).toEqual(card);
-    expect(card?.pressable.map((item) => item.readBack)).toEqual([
-      'Press "Merge" on Fix the flaky login test, web pull request 42?',
-      'Press "Hold" on Fix the flaky login test, web pull request 42?',
-    ]);
-    expect(readBack("Review loop on web#42", null)).toBe('Press the suggestion "Review loop on web#42"?');
+    expect(card).toMatchObject({ ref: "c1", title: "Fix the flaky login test", pr: "web #42", actions: [{ label: "Merge" }, { label: "Hold" }] });
+    expect(JSON.stringify(card)).not.toMatch(/https?:|thr_|Leave https/u);
   });
 
-  it("changes the etag when a button's prompt is rewritten under the same label", () => {
-    const refs = new VoiceRefs();
-    const fleet = voiceFleet();
-    const before = voiceCard(fleet, refs, "c1");
-    const call = fleet.cards[0]!;
-    const rewritten = voiceFleet({
-      cards: [{ ...call, backlog: { ...call.backlog!, actions: [{ label: "Merge", prompt: "Merge something else" }, call.backlog!.actions[1]!] } }, ...fleet.cards.slice(1)],
-    });
-    expect(voiceCard(rewritten, refs, "c1")?.etag).not.toBe(before?.etag);
-  });
-
-  it("answers null for a ref the board does not have", () => {
+  it("answers null for a ref the board does not have, a suggestion's included", () => {
     const refs = new VoiceRefs();
     expect(voiceCard(voiceFleet(), refs, "c99")).toBeNull();
+    expect(voiceCard(voiceFleet(), refs, "s1")).toBeNull();
     expect(voiceCard(voiceFleet(), refs, "nonsense")).toBeNull();
-  });
-});
-
-describe("resolveButton", () => {
-  it("finds a card's action and a suggestion with the prompt their buttons send", () => {
-    const refs = new VoiceRefs();
-    const fleet = voiceFleet();
-    buildVoiceBrief(fleet, MATE, refs, 0);
-    expect(resolveButton(fleet, refs, "c1.a2")?.prompt).toBe("Leave https://github.com/you/web/pull/42 open until I say");
-    expect(resolveButton(fleet, refs, "s1")?.prompt).toBe("Run a review loop on https://github.com/you/web/pull/42");
-    expect(resolveButton(fleet, refs, "c1.a3")).toBeNull();
-    expect(resolveButton(fleet, refs, "c1")).toBeNull();
   });
 });

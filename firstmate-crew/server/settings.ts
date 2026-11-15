@@ -90,7 +90,7 @@ export const SETTINGS = {
     type: "string",
     label: "Plugins that may talk to the first mate by voice",
     description:
-      "Plugin ids, separated by commas, that may read the board and send the captain's spoken words and voice-pressed buttons to the first mate. Empty turns voice off.",
+      "Plugin ids, separated by commas, that may read the board and send the captain's spoken words to the first mate. Empty turns voice off.",
     default: DEFAULT_VOICE_PLUGINS,
   },
   mateAutoCompact: {

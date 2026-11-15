@@ -44,7 +44,7 @@ describe("server wiring", () => {
   it("registers every method of the contract, the CLI, the watch service and autocompact", async () => {
     const { harness } = await load();
     expect([...harness.registrations.rpcMethods].sort()).toEqual([...Object.keys(rpcContract), ...Object.keys(voiceContract)].sort());
-    expect(harness.registrations.rpcMethods).toHaveLength(26);
+    expect(harness.registrations.rpcMethods).toHaveLength(25);
     expect(harness.registrations.cli?.name).toBe("firstmate-crew");
     expect(harness.registrations.services.map((service) => service.name)).toEqual(["watches", "autocompact"]);
   });

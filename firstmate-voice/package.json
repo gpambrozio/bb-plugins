@@ -39,7 +39,7 @@
   ],
   "bb": {
     "name": "FirstMate Voice",
-    "description": "Talk to your FirstMate first mate out loud: ask what needs you, hand it work in your own words, hear its answers, and press its buttons with a spoken yes.",
+    "description": "Talk to your FirstMate first mate out loud: ask what needs you, hand it work in your own words, and hear its answers.",
     "branding": {
       "icon": "Mic"
     },

@@ -11,12 +11,12 @@
  * - **Hang up from the server,** and treat a call that already ended as ended (the spike's finding).
  * - Transcripts live in memory for the session only, and never reach the log.
  */
-import type { VoiceBrief, VoiceCard } from "../shared/crew-voice";
+import type { VoiceBrief } from "../shared/crew-voice";
 import { Announcer, REPLY_ANNOUNCEMENT, announcementFor } from "./announce";
 import { BriefSync, type ConversationWriter } from "./brief-sync";
 import { GREETING, INSTRUCTIONS, RENEWAL_NOTE } from "./instructions";
-import { PressGuard, RateLimit, SendGate, UtteranceLog } from "./policy";
-import { errorText, refusalCode, type Clock, type CrewPort, type Log, type RealtimeEvent, type RealtimePort, type Sideband } from "./ports";
+import { RateLimit, SendGate, UtteranceLog } from "./policy";
+import { errorText, type Clock, type CrewPort, type Log, type RealtimeEvent, type RealtimePort, type Sideband } from "./ports";
 import { realtimeTools } from "./tools";
 
 export const RENEW_AFTER_MS = 57 * 60_000;
@@ -91,7 +91,6 @@ class Call {
   ending = false;
   readonly briefs: BriefSync;
   readonly announcer: Announcer;
-  readonly guard: PressGuard;
   /** When each response started, by id: a send copies only words said before the response that asked for it. */
   readonly responses = new Map<string, number>();
   /** Responses this side made to announce something: heard to the end, they are not a reply to the captain. */
@@ -124,7 +123,6 @@ class Call {
           response: { instructions: `${INSTRUCTIONS}\n\nNow: ${instructions}`, metadata: { fmv_announcement: id } },
         }),
     });
-    this.guard = new PressGuard(session.clock, session.utterances);
   }
 
   send(event: Record<string, unknown>): void {
@@ -398,16 +396,12 @@ export class VoiceSession {
         break;
       }
       case "response.output_audio_transcript.done":
-        if (typeof event.transcript === "string") {
-          call.guard.spoke(event.transcript);
-          this.remember("voice", event.transcript);
-        }
+        if (typeof event.transcript === "string") this.remember("voice", event.transcript);
         break;
       case "output_audio_buffer.started":
         call.announcer.audio(true);
         break;
       case "output_audio_buffer.stopped": {
-        call.guard.audioFinished();
         // A reply heard to its end answered what the captain had said: a later send starts after it.
         const responseId = typeof event.response_id === "string" ? event.response_id : call.lastResponseId;
         if (responseId !== null && !call.announcements.has(responseId) && !call.toolResponses.has(responseId)) {
@@ -417,7 +411,6 @@ export class VoiceSession {
         break;
       }
       case "output_audio_buffer.cleared": {
-        call.guard.audioCut();
         const responseId = typeof event.response_id === "string" ? event.response_id : call.lastResponseId;
         call.announcer.audioEnded(true, responseId === null ? null : (call.announcements.get(responseId) ?? null));
         break;
@@ -529,7 +522,7 @@ export class VoiceSession {
     }
     let output: unknown;
     try {
-      output = await this.tool(call, name, args, call.responses.get(responseId) ?? this.clock.now());
+      output = await this.tool(name, args, call.responses.get(responseId) ?? this.clock.now());
     } catch (error) {
       output = { ok: false, error: errorText(error) };
     }
@@ -542,13 +535,14 @@ export class VoiceSession {
   }
 
   /** One tool call, by name. `askedAt` is when the response that called it started. */
-  private async tool(call: Call, name: string, args: Record<string, unknown>, askedAt: number): Promise<unknown> {
+  private async tool(name: string, args: Record<string, unknown>, askedAt: number): Promise<unknown> {
     switch (name) {
       case "get_card": {
         const ref = String(args.ref ?? "");
-        if (!/^[cs]\d+$/u.test(ref)) return { ok: false, error: "Use a card ref such as c3, or a suggestion ref such as s1." };
+        if (!/^c\d+$/u.test(ref)) return { ok: false, error: "Use a card ref such as c3." };
         if (!this.cardReads.take()) return { ok: false, error: "Too many card reads; answer from the brief." };
-        return this.cardForModel(await this.crewCall(() => this.deps.crew.card(ref)));
+        const card = await this.crewCall(() => this.deps.crew.card(ref));
+        return "ok" in card ? card : { ok: true, ...card };
       }
       case "get_first_mate_reply":
         return { ok: true, ...(await this.deps.crew.reply()) };
@@ -564,23 +558,12 @@ export class VoiceSession {
         if (!/^c\d+$/u.test(ref)) return { ok: false, error: "answer_card takes a card ref such as c1." };
         return this.sendWords(name, askedAt, args.answer, (words, account) => this.deps.crew.answer(ref, words, account));
       }
-      case "propose_press":
-        return this.propose(call, String(args.ref ?? ""));
-      case "confirm_press":
-        return this.confirm(call, String(args.token ?? ""));
       case "end_session":
         this.later(GOODBYE_MS, () => void this.end("the captain ended it by voice"));
         return { ok: true };
       default:
         return { ok: false, error: `There is no tool ${name}.` };
     }
-  }
-
-  /** A card as the model may see it: no etag. */
-  private cardForModel(result: { ok: false; error: string } | VoiceCard): unknown {
-    if ("ok" in result) return result;
-    const { etag: _etag, ...card } = result;
-    return { ok: true, ...card };
   }
 
   /** A crew call whose refusal becomes the model's sentence rather than a failure. */
@@ -617,44 +600,6 @@ export class VoiceSession {
       `Voice session ${this.id}: ${tool} sent ${lengths.length} segment${lengths.length === 1 ? "" : "s"} of the captain's words (${lengths.join(" + ")} characters) and an account of ${told.length} characters.`,
     );
     return { ok: true, captainsWords: words.text, delivery: outcome.value.delivery };
-  }
-
-  private async propose(call: Call, ref: string): Promise<unknown> {
-    if (!/^(c\d+\.a\d+|s\d+)$/u.test(ref)) return { ok: false, error: "Use a button ref from the brief, such as c1.a2 or s1." };
-    const brief = call.briefs.current();
-    const known = brief !== null && [...brief.captainsCall, ...brief.working, ...brief.blocked, ...brief.failed, ...brief.parked, ...brief.idle, ...brief.queued]
-      .flatMap((card) => card.actions)
-      .concat(brief.suggestions)
-      .some((action) => action.ref === ref);
-    if (!known) return { ok: false, error: `${ref} is not a button in the brief. Read the brief again.` };
-    const owner = ref.split(".")[0] ?? ref;
-    const card = await this.crewCall(() => this.deps.crew.card(owner));
-    if ("ok" in card) return card;
-    const button = card.pressable.find((item) => item.ref === ref);
-    if (button === undefined) return { ok: false, error: `${ref} is no longer on the board.` };
-    if (button.tapOnly !== null) {
-      call.guard.drop();
-      return { ok: false, tapOnly: button.tapOnly, say: `"${button.label}" is ${button.tapOnly}: the captain taps it on the board. It is never pressed by voice.` };
-    }
-    const proposal = call.guard.propose(ref, card.etag, button.readBack);
-    return { ok: true, token: proposal.token, readBack: button.readBack, next: "Read readBack exactly, then wait for the captain's answer." };
-  }
-
-  private async confirm(call: Call, token: string): Promise<unknown> {
-    const outcome = await call.guard.confirm(token);
-    if (!outcome.ok) return { ok: false, pressed: false, error: outcome.reason };
-    if (!this.sendsShort.take() || !this.sendsLong.take()) return { ok: false, pressed: false, error: "Too many messages to the first mate just now. Nothing was pressed." };
-    const { ref, etag } = outcome.proposal;
-    try {
-      const sent = await this.gate.run(() => this.deps.crew.press(ref, etag));
-      if (!sent.ok) return { ok: false, pressed: false, error: "A message to the first mate is still on its way. Nothing was pressed." };
-      this.awaitingReplySince = this.clock.now();
-      return { ok: true, pressed: true, delivery: sent.value.delivery };
-    } catch (error) {
-      const code = refusalCode(error);
-      if (code === "conflict") return { ok: false, pressed: false, error: "The card changed since the read-back. Nothing was pressed; read it again." };
-      return { ok: false, pressed: false, error: `Nothing was pressed: ${errorText(error)}` };
-    }
   }
 
   // --- Timers ----------------------------------------------------------------------------------------

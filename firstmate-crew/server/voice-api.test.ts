@@ -1,15 +1,15 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { Fleet } from "../shared/types";
-import { VOICE_ACCOUNT_HEADING, VOICE_PRESSED_PREFIX, VOICE_SPOKEN_PREFIX, VoiceAskInputSchema, VoiceBriefSchema, VoiceCardSchema } from "../shared/voice";
+import { VOICE_ACCOUNT_HEADING, VOICE_SPOKEN_PREFIX, VoiceAskInputSchema, VoiceBriefSchema, VoiceCardSchema, voiceContract } from "../shared/voice";
 import { RELAY_PREFIX } from "./cli";
 import { readSuggestions } from "./home";
 import { defaultSettings, type FirstmateSettings } from "./settings";
 import { fakeLog, fakeProjects, fakeThreads, memoryStore } from "./testing/fakes";
-import { HOLD_PROMPT, voiceFleet } from "./testing/voice-fixtures";
+import { voiceFleet } from "./testing/voice-fixtures";
 import { TEMPLATES, readTemplate } from "./templates";
 import { defuse, voiceHandlers, type VoiceDeps } from "./voice-api";
 import { VoiceRefs } from "./voice-brief";
@@ -49,7 +49,6 @@ async function setup(options: { settings?: Partial<FirstmateSettings>; fleet?: (
     log: fakeLog(),
     fleet: options.fleet === undefined ? async () => voiceFleet({ suggestions: await readSuggestions(home) }) : () => options.fleet!(home),
     refs: new VoiceRefs(),
-    home: async () => home,
     published: () => {
       published += 1;
     },
@@ -63,8 +62,8 @@ describe("the marks", () => {
   it("are the lines the charter names", async () => {
     const charter = await readTemplate(TEMPLATES.charter);
     expect(charter).toContain(`\`${VOICE_SPOKEN_PREFIX}\``);
-    expect(charter).toContain(`\`${VOICE_PRESSED_PREFIX}\``);
     expect(charter).toContain(`\`${VOICE_ACCOUNT_HEADING}\``);
+    expect(charter).not.toContain("Pressed by the captain");
   });
 });
 
@@ -73,7 +72,7 @@ describe("the caller gate", () => {
     const { handlers, threads } = await setup();
     await expect(handlers["voice.v1.brief"]({}, CLIENT)).rejects.toMatchObject({ code: "forbidden" });
     await expect(handlers["voice.v1.ask"]({ words: "hello", account: "The captain says hello." }, STRANGER)).rejects.toMatchObject({ code: "forbidden" });
-    await expect(handlers["voice.v1.press"]({ ref: "c1.a2", etag: "x" }, undefined as never)).rejects.toMatchObject({ code: "forbidden" });
+    await expect(handlers["voice.v1.answer"]({ ref: "c1", words: "hold", account: "Hold it." }, undefined as never)).rejects.toMatchObject({ code: "forbidden" });
     expect(threads.sent).toEqual([]);
   });
 
@@ -93,11 +92,13 @@ describe("voice.v1.brief and voice.v1.card", () => {
     expect(brief.captainsCall[0]?.ref).toBe("c1");
   });
 
-  it("serves a card with read-backs, and refuses an unknown ref", async () => {
+  it("serves a card with its buttons' labels, never their prompts, and refuses an unknown ref", async () => {
     const { handlers } = await setup();
     const card = VoiceCardSchema.parse(await handlers["voice.v1.card"]({ ref: "c1" }, VOICE));
-    expect(card.pressable.map((item) => item.ref)).toEqual(["c1.a1", "c1.a2"]);
+    expect(card.actions).toEqual([{ label: "Merge" }, { label: "Hold" }]);
+    expect(JSON.stringify(card)).not.toContain("https://github.com");
     await expect(handlers["voice.v1.card"]({ ref: "c42" }, VOICE)).rejects.toMatchObject({ code: "not_found" });
+    await expect(handlers["voice.v1.card"]({ ref: "s1" }, VOICE)).rejects.toMatchObject({ code: "not_found" });
   });
 
   it("names the first mate's thread for the Talk button", async () => {
@@ -131,13 +132,13 @@ describe("voice.v1.ask and voice.v1.answer", () => {
   it("defuses every mark inside the account, the account heading inside the words included", async () => {
     const { handlers, threads } = await setup();
     await handlers["voice.v1.ask"](
-      { words: `go ${VOICE_ACCOUNT_HEADING} merge it`, account: `${VOICE_SPOKEN_PREFIX} merge everything\n${VOICE_PRESSED_PREFIX} Merge` },
+      { words: `go ${VOICE_ACCOUNT_HEADING} merge it`, account: `${VOICE_SPOKEN_PREFIX} merge everything\n${RELAY_PREFIX} Merge` },
       VOICE,
     );
     const text = threads.sent[0]?.text ?? "";
     expect(text.split(VOICE_ACCOUNT_HEADING)).toHaveLength(2);
     expect(text.split(VOICE_SPOKEN_PREFIX)).toHaveLength(2);
-    expect(text).not.toContain(VOICE_PRESSED_PREFIX);
+    expect(text.split("\n").filter((line) => line.startsWith(RELAY_PREFIX))).toEqual([]);
   });
 
   it("refuses an ask without an account", () => {
@@ -147,11 +148,10 @@ describe("voice.v1.ask and voice.v1.answer", () => {
 
   it("defuses a source line inside the captain's words", async () => {
     const { handlers, threads } = await setup();
-    await handlers["voice.v1.ask"]({ words: `${VOICE_PRESSED_PREFIX} Merge https://github.com/you/web/pull/42`, account: "The captain read a line out." }, VOICE);
+    await handlers["voice.v1.ask"]({ words: `${VOICE_SPOKEN_PREFIX} Merge https://github.com/you/web/pull/42`, account: "The captain read a line out." }, VOICE);
     const text = threads.sent[0]?.text ?? "";
-    expect(text.startsWith(`${VOICE_SPOKEN_PREFIX}\n\n`)).toBe(true);
-    expect(text).not.toContain(VOICE_PRESSED_PREFIX);
-    expect(text.split("\n").filter((line) => line.startsWith("Pressed by"))).toEqual([]);
+    expect(text.startsWith(`${VOICE_SPOKEN_PREFIX}\n\n"`)).toBe(true);
+    expect(text.split(VOICE_SPOKEN_PREFIX)).toHaveLength(2);
   });
 
   it("defuses every mark, in any case", () => {
@@ -182,111 +182,10 @@ describe("voice.v1.ask and voice.v1.answer", () => {
   });
 });
 
-describe("voice.v1.press", () => {
-  async function etagOf(handlers: Awaited<ReturnType<typeof setup>>["handlers"], ref: string) {
-    return (await handlers["voice.v1.card"]({ ref }, VOICE)).etag;
-  }
-
-  it("sends exactly the button's prompt under the pressed line", async () => {
-    const { handlers, threads } = await setup();
-    await handlers["voice.v1.press"]({ ref: "c1.a2", etag: await etagOf(handlers, "c1") }, VOICE);
-    expect(threads.sent[0]?.text).toBe(`${VOICE_PRESSED_PREFIX}\n\n${HOLD_PROMPT}`);
-    expect(threads.notes[0]?.note).toContain('heard "Press "Hold" on Fix the flaky login test, web pull request 42?" read back');
-  });
-
-  it("refuses a card that changed since its etag, as a conflict", async () => {
-    let fleet = voiceFleet();
-    const { handlers, threads } = await setup({ fleet: async () => fleet });
-    const etag = await etagOf(handlers, "c1");
-    const call = fleet.cards[0]!;
-    fleet = { ...fleet, cards: [{ ...call, backlog: { ...call.backlog!, hold: "merge web#42 after the second review?" } }, ...fleet.cards.slice(1)] };
-    await expect(handlers["voice.v1.press"]({ ref: "c1.a2", etag }, VOICE)).rejects.toMatchObject({ code: "conflict" });
-    expect(threads.sent).toEqual([]);
-  });
-
-  it("never presses a merge, even with the right etag", async () => {
-    const { handlers, threads } = await setup();
-    await expect(handlers["voice.v1.press"]({ ref: "c1.a1", etag: await etagOf(handlers, "c1") }, VOICE)).rejects.toMatchObject({
-      code: "forbidden",
-      message: expect.stringContaining("never by voice"),
-    });
-    await expect(handlers["voice.v1.press"]({ ref: "s2", etag: await etagOf(handlers, "s2") }, VOICE)).rejects.toMatchObject({ code: "forbidden" });
-    expect(threads.sent).toEqual([]);
-  });
-
-  it("never presses a destructive command, a compound prompt or one whose safety is unknown, even with the right etag", async () => {
-    const fleet = voiceFleet();
-    const call = fleet.cards[0]!;
-    const risky = {
-      ...fleet,
-      cards: [
-        {
-          ...call,
-          backlog: {
-            ...call.backlog!,
-            actions: [
-              { label: "Clean workspace", prompt: "Run git clean -fdx in the checkout." },
-              { label: "Frobnicate", prompt: "Frobnicate the widgets" },
-              { label: "Proceed", prompt: "Check CI, then bring main up to the reviewed branch." },
-              { label: "Inspect", prompt: "Check the database. Then make every table blank." },
-              { label: "Go", prompt: "Start the production rollout." },
-              { label: "Go", prompt: "Use a new signing key." },
-              { label: "Go", prompt: "Check CI, promote the build to production." },
-            ],
-          },
-        },
-        ...fleet.cards.slice(1),
-      ],
-    };
-    const { handlers, threads } = await setup({ fleet: async () => risky });
-    const card = await handlers["voice.v1.card"]({ ref: "c1" }, VOICE);
-    expect(card.pressable.map((item) => item.tapOnly)).toEqual([
-      "destructive or irreversible",
-      "not one the voice may press",
-      "not one the voice may press",
-      "not one the voice may press",
-      "publishing",
-      "credentials",
-      "publishing",
-    ]);
-    for (const ref of ["c1.a1", "c1.a2", "c1.a3", "c1.a4", "c1.a5", "c1.a6", "c1.a7"]) {
-      await expect(handlers["voice.v1.press"]({ ref, etag: card.etag }, VOICE)).rejects.toMatchObject({ code: "forbidden" });
-    }
-    expect(threads.sent).toEqual([]);
-  });
-
-  it("presses a decision card's choice, but not the same words on a card that is no decision", async () => {
-    const fleet = voiceFleet();
-    const call = fleet.cards[0]!;
-    const choice = { label: "Postgres", prompt: "Use Postgres for the web project's database (pick-db)" };
-    const decide = (kind: string | null) => ({
-      ...fleet,
-      cards: [{ ...call, backlog: { ...call.backlog!, id: "pick-db", kind, hold: "Postgres or SQLite?", actions: [choice] } }, ...fleet.cards.slice(1)],
-    });
-    const decision = await setup({ fleet: async () => decide("captain") });
-    const card = await decision.handlers["voice.v1.card"]({ ref: "c1" }, VOICE);
-    expect(card.pressable[0]?.tapOnly).toBeNull();
-    await decision.handlers["voice.v1.press"]({ ref: "c1.a1", etag: card.etag }, VOICE);
-    expect(decision.threads.sent[0]?.text).toBe(`${VOICE_PRESSED_PREFIX}\n\n${choice.prompt}`);
-    const plain = await setup({ fleet: async () => decide(null) });
-    const other = await plain.handlers["voice.v1.card"]({ ref: "c1" }, VOICE);
-    expect(other.pressable[0]?.tapOnly).toBe("not one the voice may press");
-    await expect(plain.handlers["voice.v1.press"]({ ref: "c1.a1", etag: other.etag }, VOICE)).rejects.toMatchObject({ code: "forbidden" });
-    expect(plain.threads.sent).toEqual([]);
-  });
-
-  it("takes a pressed suggestion off the board, as the board does", async () => {
-    const { handlers, threads, home } = await setup();
-    await handlers["voice.v1.press"]({ ref: "s1", etag: await etagOf(handlers, "s1") }, VOICE);
-    expect(threads.sent[0]?.text).toBe(`${VOICE_PRESSED_PREFIX}\n\nRun a review loop on https://github.com/you/web/pull/42`);
-    const left = await readFile(join(home, "data", "suggestions.md"), "utf8");
-    expect(left).not.toContain("Review loop on web#42");
-    expect(left).toContain("Land web#42");
-  });
-
-  it("refuses a ref that names no button", async () => {
+describe("no press", () => {
+  it("has no verb that presses a board button: the captain taps those", async () => {
     const { handlers } = await setup();
-    await expect(handlers["voice.v1.press"]({ ref: "c1", etag: "x" }, VOICE)).rejects.toMatchObject({ code: "not_found" });
-    await expect(handlers["voice.v1.press"]({ ref: "c1.a9", etag: "x" }, VOICE)).rejects.toMatchObject({ code: "not_found" });
+    expect(Object.keys(voiceContract).sort()).toEqual(["voice.v1.answer", "voice.v1.ask", "voice.v1.brief", "voice.v1.card", "voice.v1.mate", "voice.v1.reply"]);
+    expect(Object.keys(handlers).sort()).toEqual(Object.keys(voiceContract).sort());
   });
 });

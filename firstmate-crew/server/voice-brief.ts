@@ -6,16 +6,15 @@
  *   mentions the thread's title; thread ids, Markdown marks and line breaks go.
  * - **Untrusted and cut.** Anything a worker or the first mate wrote is marked untrusted and cut to its head
  *   and tail, so a closing status line survives a long message.
- * - **Refs, not prompts.** Cards are `c1`, their buttons `c1.a1`, suggestions `s1`. A ref names the same card
- *   for the life of the plugin, whatever column it moves to; the prompts stay here.
- * - **Tap-only buttons.** A button whose label or prompt reads as a merge, something destructive or
- *   irreversible, publishing, credentials or settings can only be pressed on the board (`tapOnlyReason`).
+ * - **Refs, not prompts.** Cards are `c1`. A ref names the same card for the life of the plugin, whatever
+ *   column it moves to. Buttons and suggestions go by their labels only: the voice never presses one, the
+ *   captain taps it on the board, and the prompts stay here.
  */
 import { createHash } from "node:crypto";
 
-import { STATUS_WORDS, cardSubject } from "../app/format";
-import type { Fleet, FleetCard, Suggestion, ThreadStatus } from "../shared/types";
-import type { UntrustedText, VoiceAction, VoiceBrief, VoiceCard, VoiceCardBrief, VoicePressable } from "../shared/voice";
+import { STATUS_WORDS } from "../app/format";
+import type { Fleet, FleetCard, ThreadStatus } from "../shared/types";
+import type { UntrustedText, VoiceAction, VoiceBrief, VoiceCard, VoiceCardBrief } from "../shared/voice";
 
 // --- Speakable text --------------------------------------------------------------------------------
 
@@ -24,11 +23,6 @@ export function spokenPr(url: string | null): string | null {
   if (url === null) return null;
   const match = /^https?:\/\/(?:www\.)?github\.com\/[^/\s]+\/([^/\s]+)\/(?:pull|issues)\/(\d+)/iu.exec(url);
   return match === null ? null : `${match[1]} #${match[2]}`;
-}
-
-/** "web #42" read out in full: "web pull request 42". */
-function prInWords(pr: string): string {
-  return pr.replace(/ #(\d+)$/u, " pull request $1");
 }
 
 /**
@@ -80,121 +74,6 @@ export function untrusted(text: string, head: number, tail: number, titles?: Rea
   return headAndTail(speakable(text, titles), head, tail);
 }
 
-// --- Tap-only buttons ------------------------------------------------------------------------------
-
-/**
- * What the voice never presses in phase 1, even after a read-back and a spoken yes: a misheard word must
- * not merge, destroy, publish or change credentials or settings. Matched on the label and the prompt, as
- * whole words, so a wide net errs towards the board.
- */
-const TAP_ONLY: readonly { reason: string; pattern: RegExp }[] = [
-  { reason: "a merge", pattern: /\b(merg\w*|land|landing|squash\w*|ship it|fast[- ]?forward\w*|ff-only|cherry[- ]?pick\w*)\b/iu },
-  {
-    reason: "destructive or irreversible",
-    pattern:
-      /\b(delet\w*|remov\w*|discard\w*|drop\w*|destroy\w*|wip(e|es|ed|ing)|purg\w*|reset\w*|revert\w*|roll ?back\w*|force\w*|archiv\w*|clos(e|es|ed|ing)|abandon\w*|kill\w*|end (it|the|this|that)|stop the worker|retire\w*|clean(s|ed|ing)? (up|out|the|all|everything)|cleanup|git clean|eras\w*|nuk\w*|prun\w*|truncat\w*|overwrit\w*|uninstall\w*|wipe ?out|throw away|rm|rmdir|unlink\w*|rewrit\w* (the )?history|hard reset|--hard|shred\w*|format the|mkfs|dd|empty|emptie\w*|clear(s|ed|ing)? (out|all|the)|wipe\w*)\b/iu,
-  },
-  { reason: "publishing", pattern: /\b(publish\w*|releas\w*|deploy\w*|tag(s|ged|ging)?|push\w*|announc\w*|tweet\w*|e-?mail\w*|roll ?outs?|rolling out|promot\w*|production|prod)\b/iu },
-  { reason: "credentials", pattern: /\b(credential\w*|secret\w*|tokens?|password\w*|passphrase\w*|api[ -]?keys?|ssh[ -]?keys?|log ?in|sign ?in|auth\w*|signing|keys?|certificat\w*|certs?)\b/iu },
-  { reason: "settings", pattern: /\b(setting\w*|config\w*|permission\w*|approv\w*|yolo|sudo|chmod|chown)\b/iu },
-];
-
-/**
- * A prompt that carries a command to run: the read-back names only the label, so what the command does is
- * not what the captain heard. Checked with links taken out, so a URL's slashes and dashes do not count.
- */
-const COMMAND: readonly RegExp[] = [
-  /`/u,
-  /(\|\||&&|\$\(|>>|(^|\s)[|<>](\s|$)|;\s*\w)/u,
-  /(^|\s)--?[a-z][\w-]*/iu,
-  /\b(git|gh|rm|mv|cp|dd|npm|npx|yarn|pnpm|bun|bb|docker|kubectl|curl|wget|ssh|scp|rsync|xargs|sed|awk|bash|zsh|sh|python3?|perl|ruby|osascript|launchctl|brew|terraform|psql|mysql|sqlite3)\s+\S/iu,
-];
-
-/**
- * The buttons the voice may press: a short, bounded set of whole shapes whose effect is known, matched on the
- * whole prompt with only a pull request (or the decision's id) left open. Anything else is a tap on the
- * board, whatever its wording; the voice tells the captain to tap it, or offers to ask the first mate.
- *
- * - **Hold or leave open:** wait, change nothing now.
- * - **A review loop** on a pull request.
- * - **A question or a report:** the first mate answers; one clause, no joined request.
- * - **A choice on a decision card** (`kind: captain`): "Use <option> for … (<the decision's id>)", which
- *   records the captain's answer to the question the card asks.
- */
-const PR = String.raw`(url|[\w.-]+ ?#\d+|pull request \d+|it|them|this one|that one)`;
-const UNTIL = String.raw`( until i say( so)?| for now)?`;
-const HOLD: readonly RegExp[] = [
-  new RegExp(String.raw`^(leave|keep) ${PR} open${UNTIL}$`, "u"),
-  new RegExp(String.raw`^(hold|wait)( on| off on)? ${PR}${UNTIL}$`, "u"),
-  new RegExp(String.raw`^(hold|wait|do nothing)${UNTIL}$`, "u"),
-];
-const REVIEW_LOOP = new RegExp(String.raw`^run a review loop on ${PR}( until it comes back clean)?$`, "u");
-/** One clause of free words: no comma, no clause mark, no word that joins a second request on. */
-const CLAUSE = String.raw`[^,;:.!?]+`;
-const JOINERS =
-  /\b(then|and|also|afterwards|after|before|next|plus|but|or|while|once|if|unless|so|by|via|using|instead|except|finally|meanwhile)\b/u;
-const QUESTION = new RegExp(String.raw`^(what|what's|how|why|which|when|where|who|is|are|was|were|does|did|has|have)\b${CLAUSE}\?$`, "u");
-const REPORT = new RegExp(String.raw`^(tell me|report|summari[sz]e)\b${CLAUSE}$`, "u");
-
-/** A tail the first mate's prompts may end with that adds no request. */
-const HARMLESS_TAIL = /(,?\s*and do nothing else|\.\s*nothing else)\s*[.!]?$/u;
-/** A prompt longer than this is not one the captain heard enough of to vouch for. */
-const PROMPT_MAX = 400;
-
-/** Where a button sits: a decision card's choices are pressable in the decision's own words. */
-export interface ButtonPlace {
-  /** The decision's backlog id when the card is a decision (`kind: captain`), else null. */
-  decision: string | null;
-}
-
-function escapeRegExp(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-}
-
-/** The prompt as the shapes read it: lower case, links as `url`, one space, the harmless tail and stop gone. */
-function shapeText(prompt: string): string {
-  return prompt
-    .toLowerCase()
-    .replace(/[‘’]/gu, "'")
-    .replace(/https?:\/\/\S+/gu, "url")
-    .replace(/\s+/gu, " ")
-    .trim()
-    .replace(HARMLESS_TAIL, "")
-    .replace(/[.!]$/u, "")
-    .trim();
-}
-
-/** Whether the button is one of the voice-pressable shapes. */
-export function voicePressable(prompt: string, place: ButtonPlace): boolean {
-  if (prompt.length > PROMPT_MAX) return false;
-  const text = shapeText(prompt);
-  if (text === "") return false;
-  if (HOLD.some((shape) => shape.test(text)) || REVIEW_LOOP.test(text)) return true;
-  const joined = JOINERS.test(text.replace(/\bonce (more|again)\b/gu, "again"));
-  if (!joined && (QUESTION.test(text) || REPORT.test(text))) return true;
-  if (place.decision !== null && !joined) {
-    const id = escapeRegExp(place.decision.toLowerCase());
-    return new RegExp(String.raw`^(use|pick|choose|go with) [^,;:.!?()]{1,80} \(${id}\)$`, "u").test(text);
-  }
-  return false;
-}
-
-/** Why the button can only be pressed on the board, or null when the voice may press it after a yes. */
-export function tapOnlyReason(label: string, prompt: string, place: ButtonPlace = { decision: null }): string | null {
-  const text = `${label}\n${prompt}`;
-  const listed = TAP_ONLY.find(({ pattern }) => pattern.test(text))?.reason;
-  if (listed !== undefined) return listed;
-  const prose = text.replace(/https?:\/\/\S+/giu, " ");
-  if (COMMAND.some((pattern) => pattern.test(prose))) return "a command to run";
-  if (!voicePressable(prompt, place)) return "not one the voice may press";
-  return null;
-}
-
-/** Where a card's buttons sit. */
-export function placeOf(card: FleetCard): ButtonPlace {
-  return { decision: card.backlog?.kind === "captain" ? card.backlog.id : null };
-}
-
 // --- Refs and etags --------------------------------------------------------------------------------
 
 /** A short hash of a JSON value: changes whenever the value does. */
@@ -207,17 +86,11 @@ function cardIdentity(card: FleetCard): string {
   return card.taskId === null ? `key:${card.key}` : `task:${card.taskId}`;
 }
 
-function suggestionIdentity(suggestion: Suggestion): string {
-  return `${suggestion.label}\n${suggestion.prompt}`;
-}
-
 /**
- * Refs handed out for the life of the plugin: a card keeps its `c` number and a suggestion its `s` number
- * whatever else changes. The maps grow by one entry per card ever seen, which a fleet's life keeps small.
+ * Refs handed out for the life of the plugin: a card keeps its `c` number whatever else changes. The maps grow by one entry per card ever seen, which a fleet's life keeps small.
  */
 export class VoiceRefs {
   private readonly cards = new Map<string, string>();
-  private readonly suggestions = new Map<string, string>();
 
   card(card: FleetCard): string {
     const identity = cardIdentity(card);
@@ -229,15 +102,6 @@ export class VoiceRefs {
     return ref;
   }
 
-  suggestion(suggestion: Suggestion): string {
-    const identity = suggestionIdentity(suggestion);
-    let ref = this.suggestions.get(identity);
-    if (ref === undefined) {
-      ref = `s${this.suggestions.size + 1}`;
-      this.suggestions.set(identity, ref);
-    }
-    return ref;
-  }
 }
 
 // --- The brief -------------------------------------------------------------------------------------
@@ -270,12 +134,8 @@ const QUEUED_SHOWN = 5;
 const LANDED_SHOWN = 3;
 const PER_COLUMN = 12;
 
-function actionsOf(card: FleetCard, ref: string): VoiceAction[] {
-  return (card.backlog?.actions ?? []).map((action, index) => ({
-    ref: `${ref}.a${index + 1}`,
-    label: action.label,
-    tapOnly: tapOnlyReason(action.label, action.prompt, placeOf(card)),
-  }));
+function actionsOf(card: FleetCard): VoiceAction[] {
+  return (card.backlog?.actions ?? []).map((action) => ({ label: action.label }));
 }
 
 function lastWord(card: FleetCard, cut: { head: number; tail: number }, titles: ReadonlyMap<string, string>) {
@@ -293,7 +153,7 @@ function briefCard(card: FleetCard, refs: VoiceRefs, titles: ReadonlyMap<string,
     pr: spokenPr(card.url),
     hold: card.backlog?.hold === null || card.backlog?.hold === undefined ? null : speakable(card.backlog.hold, titles),
     lastWord: lastWord(card, BRIEF_WORD, titles),
-    actions: actionsOf(card, ref),
+    actions: actionsOf(card),
     blockedBy: card.backlog?.blockedBy ?? null,
     since: card.backlog?.since ?? null,
   };
@@ -333,11 +193,7 @@ export function buildVoiceBrief(fleet: Fleet, mate: MateVoiceState | null, refs:
       .filter((card) => card.column === "done")
       .slice(0, LANDED_SHOWN)
       .map((card) => ({ title: card.title, outcome: card.backlog?.outcome ?? null })),
-    suggestions: fleet.suggestions.map((suggestion) => ({
-      ref: refs.suggestion(suggestion),
-      label: suggestion.label,
-      tapOnly: tapOnlyReason(suggestion.label, suggestion.prompt),
-    })),
+    suggestions: fleet.suggestions.map((suggestion) => ({ label: suggestion.label })),
     watches: {
       failing: fleet.watches
         .filter((watch) => watch.lastResult === "failed")
@@ -349,91 +205,25 @@ export function buildVoiceBrief(fleet: Fleet, mate: MateVoiceState | null, refs:
 
 // --- One card in detail ----------------------------------------------------------------------------
 
-/** A button resolved from a ref: its card or suggestion, and the prompt the board's button sends. */
-export interface ResolvedButton {
-  ref: string;
-  label: string;
-  prompt: string;
-  card: FleetCard | null;
-  suggestion: Suggestion | null;
-}
-
-/** The sentence the voice reads back before a press, written from the board, never by the model. */
-export function readBack(label: string, card: FleetCard | null): string {
-  if (card === null) return `Press the suggestion "${label}"?`;
-  const pr = spokenPr(card.url);
-  return `Press "${label}" on ${card.title}${pr === null ? "" : `, ${prInWords(pr)}`}?`;
-}
-
 /** The fleet's card for a `c` ref, or null. */
 export function findCard(fleet: Fleet, refs: VoiceRefs, ref: string): FleetCard | null {
   return fleet.cards.find((card) => refs.card(card) === ref) ?? null;
 }
 
-/** The fleet's suggestion for an `s` ref, or null. */
-export function findSuggestion(fleet: Fleet, refs: VoiceRefs, ref: string): Suggestion | null {
-  return fleet.suggestions.find((suggestion) => refs.suggestion(suggestion) === ref) ?? null;
-}
-
-/** A card's or a suggestion's detail for `voice.v1.card`, with its etag; null for an unknown ref. */
+/** A card's detail for `voice.v1.card`; null for an unknown ref. */
 export function voiceCard(fleet: Fleet, refs: VoiceRefs, ref: string): VoiceCard | null {
+  if (!/^c\d+$/u.test(ref)) return null;
+  const card = findCard(fleet, refs, ref);
+  if (card === null) return null;
   const titles = threadTitles(fleet);
-  if (/^c\d+$/u.test(ref)) {
-    const card = findCard(fleet, refs, ref);
-    if (card === null) return null;
-    const pressable: VoicePressable[] = actionsOf(card, ref).map((action) => ({ ...action, readBack: readBack(action.label, card) }));
-    const body = {
-      ref,
-      kind: "card" as const,
-      title: card.title,
-      project: card.project,
-      column: card.column,
-      pr: spokenPr(card.url),
-      hold: card.backlog?.hold == null ? null : speakable(card.backlog.hold, titles),
-      lastWord: lastWord(card, CARD_WORD, titles),
-      pressable,
-    };
-    // The prompts are in the etag, so a button rewritten under the same label is a change.
-    return { ...body, etag: etagOf({ body, prompts: card.backlog?.actions ?? [], subject: cardSubject(card) }) };
-  }
-  if (/^s\d+$/u.test(ref)) {
-    const suggestion = findSuggestion(fleet, refs, ref);
-    if (suggestion === null) return null;
-    const body = {
-      ref,
-      kind: "suggestion" as const,
-      title: suggestion.label,
-      project: null,
-      column: null,
-      pr: null,
-      hold: null,
-      lastWord: null,
-      pressable: [{ ref, label: suggestion.label, tapOnly: tapOnlyReason(suggestion.label, suggestion.prompt), readBack: readBack(suggestion.label, null) }],
-    };
-    return { ...body, etag: etagOf({ body, prompt: suggestion.prompt }) };
-  }
-  return null;
-}
-
-/** The card ref a button ref belongs to: `c3` for `c3.a1`, the ref itself for a suggestion. */
-export function ownerRef(ref: string): string | null {
-  const action = /^(c\d+)\.a\d+$/u.exec(ref);
-  if (action !== null) return action[1] ?? null;
-  return /^s\d+$/u.test(ref) ? ref : null;
-}
-
-/** The button a press names, with its prompt; null when the ref names none. */
-export function resolveButton(fleet: Fleet, refs: VoiceRefs, ref: string): ResolvedButton | null {
-  const action = /^(c\d+)\.a(\d+)$/u.exec(ref);
-  if (action !== null) {
-    const card = findCard(fleet, refs, action[1] ?? "");
-    const picked = card?.backlog?.actions[Number(action[2]) - 1];
-    if (card === null || picked === undefined) return null;
-    return { ref, label: picked.label, prompt: picked.prompt, card, suggestion: null };
-  }
-  if (/^s\d+$/u.test(ref)) {
-    const suggestion = findSuggestion(fleet, refs, ref);
-    return suggestion === null ? null : { ref, label: suggestion.label, prompt: suggestion.prompt, card: null, suggestion };
-  }
-  return null;
+  return {
+    ref,
+    title: card.title,
+    project: card.project,
+    column: card.column,
+    pr: spokenPr(card.url),
+    hold: card.backlog?.hold == null ? null : speakable(card.backlog.hold, titles),
+    lastWord: lastWord(card, CARD_WORD, titles),
+    actions: actionsOf(card),
+  };
 }

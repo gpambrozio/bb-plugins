@@ -5,7 +5,8 @@ desktop or on the phone with bb in front. It is option B of the design
 (`/Users/ci/repositories/firstmate/data/scout-firstmate-realtime-voice/report.html`): this plugin owns the
 audio, the session, the tool policy and the credential, and `firstmate-crew` keeps the authority through
 its narrow, caller-gated `voice.v1` API. Phase 1 ("ask and answer", design §13) is what is here: the brief,
-asks and answers, confirmed presses, and announcements of new captain's calls and first-mate replies.
+asks and answers, and announcements of new captain's calls and first-mate replies. There are no button
+presses by voice (below).
 
 The repository root `AGENTS.md` covers what every plugin here shares. This file holds what is specific to
 the voice, the decisions behind phase 1, and the phase 0 decision record.
@@ -17,7 +18,7 @@ the voice, the decisions behind phase 1, and the phase 0 decision record.
 | `server/rpc.ts` | The app-facing RPC handlers, refusing any caller but bb's app. |
 | `server.ts` | Wiring only: settings (model, reasoning, voice, turn taking), the app's RPCs (`session.start`, `renew`, `renewed`, `end`, `alive`, `current`, `mate.thread`, behind `server/rpc.ts`'s app-only gate), the thread events that make a live session read the brief again, `onDispose`. |
 | `server/session.ts` | One live session (`VoiceSessions`): the call, the sideband, event dispatch, the tools, renewal at the hour's cap, the idle end, the app's heartbeat. |
-| `server/policy.ts` | The utterance log, yes and no, the two-phase press (`PressGuard`), one send at a time, rate limits. |
+| `server/policy.ts` | The utterance log, one send at a time, rate limits. |
 | `server/brief-sync.ts` | Brief → diff → `[firstmate-update]` items, full replacement every 15 updates or 20 minutes, and the events worth announcing. |
 | `server/announce.ts` | P1 announcements at gaps, once more when the captain talks over one, during the response or later while its audio plays. |
 | `server/instructions.ts`, `server/tools.ts` | The standing instructions (design §8's outline) and the tool list with levels. |
@@ -36,29 +37,19 @@ the voice, the decisions behind phase 1, and the phase 0 decision record.
   an answer carries every segment of the call's input transcription since the last hand-off, joined in order
   (`UtteranceLog.sinceBoundary`), and the model's own account of the request (`request` / `answer`), which
   firstmate-crew puts under its own heading and tells the first mate to check against the words. A hand-off
-  is a boundary: a send, a press confirmation (both through `markUsed`, which spends everything said before
-  them too), or a voice reply heard to its end (`output_audio_buffer.stopped` for a response that is not an
+  is a boundary: a send (through `markUsed`, which spends everything said before it too), or a voice reply
+  heard to its end (`output_audio_buffer.stopped` for a response that is not an
   announcement and called no tool, at the moment that response started; a tool's spoken preamble is no
   answer). A send reads the boundary once as it starts, so a reply ending while a transcript is on its way
-  cannot drop that transcript. A reply the captain talked over (`cleared`) is no boundary, so a request turn detection split at a pause goes whole. A press carries the button's own
-  prompt, which firstmate-crew looks up. The account is the model's only text into bb: never let it stand
+  cannot drop that transcript. A reply the captain talked over (`cleared`) is no boundary, so a request turn detection split at a pause
+  goes whole. The account is the model's only text into bb: never let it stand
   for the captain's words, and add no other tool argument that reaches the first mate as text. The log
   records how many segments and characters went, never the words.
-- **Presses are two-phase and checked against the captain's transcript, not the model's claim.**
-  `propose_press` returns a server-written read-back; it counts as read back only when the model's own output
-  transcript says every word of it, in order, as the end of one sentence after at most a short lead-in with
-  no negation (`saidReadBack`; the only give is a grammatical number in words up to 999,999 (a run of number words past one number, such as "twenty twenty-two", matches nothing), a dropped "number", and full stops inside
-  the read-back, which a card title may hold, said or not), and that audio
-  then plays to its end (`output_audio_buffer.stopped`; a reply the captain talked over, `cleared`, does not
-  count). A read-back naming another label or another pull request does not count. `confirm_press` needs
-  the captain's first utterance committed after that to be a plain yes, wholly made of affirmative phrases
-  and politeness (`isConfirmation`: "yes, but use SQLite" and "yes, if it's green" are not), within 30 s, on
-  a single-use token, one press in 10 s. firstmate-crew checks the card's etag again and refuses tap-only
-  buttons again.
-- **Merges, anything destructive, publishing, credentials and settings are never pressed by voice** in phase
-  1, read-back or not. firstmate-crew marks them `tapOnly`, failing closed (a wide word net, any command to
-  run, and any prompt not on its short known-safe list), and refuses the press; this plugin refuses to
-  propose one. The first mate's charter still refuses to act on a voice press that turns out to be one. The voice may offer to ask the first mate, which answers with a board button.
+- **No board button is pressed by voice.** There is no press tool, and `voice.v1` has no press verb; the
+  model sees buttons and suggestions by label only. Asked to press one, the voice tells the captain to tap
+  it on the board and offers to hand the request to the first mate, which then gets the captain's own words
+  like any ask. Merges, anything destructive, publishing, credentials and settings are never the captain's
+  word by voice; the first mate answers a spoken request for one with a board button.
 - **Only bb's app opens or steers a session.** Every app-facing RPC (`server/rpc.ts`) refuses a caller bb
   does not name as a client, before anything runs: another plugin could otherwise spend the subscription
   and speak for the captain through this plugin's allowed identities.
@@ -83,7 +74,13 @@ the voice, the decisions behind phase 1, and the phase 0 decision record.
 
 - **Credential:** the ChatGPT subscription through codex-realtime, which must list `firstmate-voice` in
   *Plugins that may use the sign-in*. No API key path.
-- **Merges by voice:** never, even after a read-back and a yes (above).
+- **Merges by voice:** never (above).
+- **No presses in phase 1** (the captain's call, 2026-11-14, after four review passes of a read-back-and-yes
+  press). Deciding which button prompts were safe to press on a spoken yes kept leaving holes: a deny list
+  missed wordings, a bounded set of shapes still let a "report" publish or a decision card change a
+  setting, and number words in a read-back made different labels match. The captain hears only a label,
+  and a prompt is free text, so any press needs a design that does not judge free text; the history of
+  https://github.com/gpambrozio/bb-plugins/pull/112 (`PressGuard`, `saidReadBack`, `tapOnlyReason`) holds the removed code.
 - **Transcripts:** kept for the session only, not stored.
 - **Standby:** none; ten quiet minutes end the session.
 - **Herald:** no stand-down.
@@ -108,21 +105,15 @@ the voice, the decisions behind phase 1, and the phase 0 decision record.
 One end-to-end run in a dev bb (root `AGENTS.md`), with a real first mate (Claude Code, Sonnet 5.5) and the
 voice on the subscription: the greeting named the held merge from the brief; an ask reached the first mate as
 `Spoken by the captain through FirstMate voice:` and the first mate's one-word answer was spoken back 13 s
-after the captain stopped; a suggestion was read back, confirmed with "Yes." and reached the first mate as
-`Pressed by the captain through FirstMate voice:`; "Press merge" was refused as tap-only, and a following
-"Yes." sent nothing.
+after the captain stopped. The run also checked the voice press, since removed (above).
 
 - **OpenAI keeps a call whose page vanished.** A closed headless browser left the sideband open with no
   event for over a minute. That is why the app beats every 15 s (`session.alive`) and the server ends a
   session it has not heard from for 50 s; on the phone it also ends one whose app was suspended.
 - **A stand-in microphone needs a noise floor.** A Web Audio stream that falls silent after a clip never let
   the turn detection hear the speech end; `e2e-desktop.ts` mixes in faint noise, as a real room has.
-- **The model speaks a preamble before a tool** ("let me set that up"), so the read-back is its own response;
-  the press guard matches it there.
-- **The press re-check** (`phase1-results/2026-11-14-e2e-desktop-press-recheck.json`), after the guard began
-  waiting for the read-back's audio to end: the read-back's audio stopped at 25.8 s, the captain's "Yes." was
-  committed at 33.1 s, and the suggestion was pressed; "Press merge" was refused from the brief without a
-  proposal. About four minutes of voice time were spent across the phase 1 runs.
+- **The model speaks a preamble before a tool** ("let me set that up"), which is why a tool's response is
+  never a boundary. About four minutes of voice time were spent across the phase 1 runs.
 
 ## The split-request fix, live (2026-11-14, `phase1-results/2026-11-14-e2e-split-ask.json`)
 
@@ -144,7 +135,7 @@ fix, the model's "1" would have sent only the second clip, as it did for the cap
 
 Only in a dev bb, never the owner's: install `codex-realtime` (with `firstmate-voice` on its allow list),
 `firstmate-crew` (home directory set to a scratch folder) and this plugin; launch a first mate; seed its
-backlog with a held item whose actions include a Merge, and a harmless suggestion. Then
+backlog with a held item whose actions include a Merge. Then
 `node scripts/e2e-desktop.ts --mate <thread id> --bb <dev-bb CLI wrapper>`. Each run spends one to two minutes
 of voice time; the script ends the session even when a step fails.
 

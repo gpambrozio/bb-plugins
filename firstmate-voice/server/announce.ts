@@ -27,7 +27,7 @@ export interface AnnouncerOutput {
 export function announcementFor(event: BriefEvent): string | null {
   switch (event.kind) {
     case "call":
-      return `Announce in one or two sentences: a new captain's call on ${event.ref}, "${event.title}": ${event.hold}. Name the buttons it offers, if any. Do not press anything.`;
+      return `Announce in one or two sentences: a new captain's call on ${event.ref}, "${event.title}": ${event.hold}. Name the buttons it offers, if any, for the captain to tap on the board.`;
     case "failed":
       return `Announce in one sentence that a worker failed: ${event.ref}, "${event.title}". Say what its last word says, if anything, from the update.`;
     case "mate-waiting":

@@ -1,8 +1,7 @@
 # FirstMate Voice (firstmate-voice)
 
 Talk to your [FirstMate](../firstmate-crew) first mate out loud. Ask what needs you, hand it work in your
-own words, hear its answers, and press its buttons with a spoken yes, on the desktop or on your phone with
-bb in front.
+own words, and hear its answers, on the desktop or on your phone with bb in front.
 
 It runs on your ChatGPT subscription through the [codex-realtime](../codex-realtime) plugin: no API key,
 but an undocumented use of the subscription that OpenAI can close at any time, and your voice time counts
@@ -18,15 +17,11 @@ against your ChatGPT plan. Read codex-realtime's README first.
   so a request you made in several breaths goes whole. Beside it, marked as the voice's own, goes its
   account of what you asked, with what the talk made clear; the first mate acts on that account but checks
   it against your words, which alone count as yours. Its answer is read back to you when its turn ends.
-- **Presses a few kinds of button, after reading it back:** a hold or leave-open, a review loop, a question
-  or report, and your choice on a decision card. "Press hold on the login fix" → "Press
-  Hold on Fix the flaky login test, web pull request 42?" → "Yes." Only a short, plain yes right after the
-  read-back counts; any no, wait or hesitation drops it. The first mate sees `Pressed by the captain through
-  FirstMate voice:` and the button's own words.
-- **Never merges by voice.** Every other button, and always merges, anything destructive or
-  irreversible, publishing, credentials and settings, is pressed on the board, never by voice, even after a
-  read-back. Ask for one and it tells you to
-  tap it, or asks the first mate to put up the button.
+- **Never presses a button.** It can tell you which buttons a card offers, but you tap them on the board.
+  Ask it to press one and it says so, and offers to hand the request to the first mate in your own words
+  instead.
+- **Never merges by voice.** Merges, anything destructive or irreversible, publishing, credentials and
+  settings are never your word by voice: ask for one and the first mate puts up a button for you to tap.
 - **Tells you what changed:** a new call for you on the board, a worker that failed, the first mate waiting
   on a question in its chat, and the first mate's answers to what you asked. It waits for a pause, and stops
   when you talk over it.

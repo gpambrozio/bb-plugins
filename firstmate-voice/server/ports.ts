@@ -37,7 +37,6 @@ export interface CrewPort {
   /** The captain's words, verbatim, and beside them the model's account of the request. */
   ask(words: string, account: string): Promise<VoiceSent>;
   answer(ref: string, words: string, account: string): Promise<VoiceSent>;
-  press(ref: string, etag: string): Promise<VoiceSent>;
   mateThreadId(): Promise<string | null>;
 }
 
@@ -57,12 +56,6 @@ export interface Log {
   info(message: string): void;
   warn(message: string): void;
   error(message: string): void;
-}
-
-/** A refusal from `voice.v1`, by its RPC code: `forbidden`, `not_found`, `conflict`, or another failure. */
-export function refusalCode(error: unknown): string | null {
-  const code = (error as { code?: unknown } | null)?.code;
-  return typeof code === "string" ? code : null;
 }
 
 export function errorText(error: unknown): string {

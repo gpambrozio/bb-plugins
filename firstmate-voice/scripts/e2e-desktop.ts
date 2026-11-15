@@ -5,9 +5,10 @@
 //   node scripts/e2e-desktop.ts --url http://127.0.0.1:48886 --mate thr_… --bb <a dev-bb CLI wrapper>
 //
 // With --split-only it checks one thing: a request said in two breaths reaches the first mate whole, with
-// the voice's account beside it. Otherwise it checks, in order: the greeting; an ask that reaches the first mate as the captain's words and whose
-// reply is spoken back; a suggestion pressed by voice after a read-back and a "yes"; and a Merge button the
-// voice refuses to press. It spends a few minutes of the ChatGPT plan's voice time.
+// the voice's account beside it. Otherwise it checks, in order: the greeting; an ask that reaches the first
+// mate as the captain's words and whose reply is spoken back; and a request to press a Merge button, which
+// the voice sends to the board without sending any button's prompt. It spends a few minutes of the ChatGPT
+// plan's voice time.
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -35,7 +36,6 @@ const mate = values.mate;
 const devBb = values.bb;
 mkdirSync(values.out, { recursive: true });
 
-const PRESSED = "Pressed by the captain through FirstMate voice:";
 const SPOKEN = "Spoken by the captain through FirstMate voice:";
 const ACCOUNT = "The voice assistant's account, in its own words, not the captain's:";
 
@@ -195,29 +195,21 @@ try {
 
   if (values["split-only"]) throw new Done();
 
-  // 2. Press a suggestion by voice: read-back, then yes.
-  const pressAt = await speak(page, "Press the quick status suggestion.");
-  const readBack = await until("the read-back", 30_000, async () => (await voiceSaid(page, pressAt)).find((text) => /quick status/iu.test(text)));
-  report.readBack = readBack;
-  console.log("read-back:", readBack);
+  // 2. A button is never pressed by voice: the voice sends the captain to the board, and no button's
+  // prompt reaches the first mate.
+  const countBeforePress = mateMessages().length;
+  const pressAt = await speak(page, "Press merge on the flaky login test.");
+  const refusal = await until("the reply", 30_000, async () => (await voiceSaid(page, pressAt)).join(" ") || null);
   await quiet(page);
-  const countBeforeYes = mateMessages().length;
-  await speak(page, "Yes.");
-  const pressMessage = await until("the press in the first mate's chat", 30_000, () => mateMessages().slice(countBeforeYes).find((text) => text.startsWith(PRESSED)));
-  report.press = pressMessage;
-  console.log("first mate got:", pressMessage);
-  await quiet(page, 120_000);
-
-  // 3. A merge is never pressed by voice.
-  const countBeforeMerge = mateMessages().length;
-  const mergeAt = await speak(page, "Press merge on the flaky login test.");
-  const refusal = await until("the refusal", 30_000, async () => (await voiceSaid(page, mergeAt)).join(" ") || null);
-  await quiet(page);
-  await speak(page, "Yes.");
   await new Promise((resolve) => setTimeout(resolve, 8_000));
-  const afterMerge = mateMessages().slice(countBeforeMerge);
-  report.merge = { voice: await voiceSaid(page, mergeAt), messagesAfter: afterMerge, merged: afterMerge.some((text) => text.includes("Merge https://github.com/example/web/pull/42")) };
-  console.log("voice on merge:", refusal, "| merge sent:", (report.merge as { merged: boolean }).merged);
+  const afterPress = mateMessages().slice(countBeforePress);
+  report.press = {
+    voice: await voiceSaid(page, pressAt),
+    toTheBoard: /\b(board|tap)\b/iu.test(refusal),
+    messagesAfter: afterPress,
+    promptSent: afterPress.some((text) => text.includes("Merge https://github.com/example/web/pull/42")),
+  };
+  console.log("voice on press:", refusal, "| prompt sent:", (report.press as { promptSent: boolean }).promptSent);
 
   await page.getByRole("button", { name: "End", exact: true }).click();
   await page.getByText(/FirstMate voice ·/u).waitFor({ state: "detached", timeout: 15_000 }).catch(() => undefined);

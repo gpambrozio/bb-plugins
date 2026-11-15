@@ -1,6 +1,6 @@
 /**
- * The `voice.v1` handlers (`shared/voice.ts`): the brief, a card, the first mate's last reply, and the three
- * sends — ask, answer and press.
+ * The `voice.v1` handlers (`shared/voice.ts`): the brief, a card, the first mate's last reply, and the two
+ * sends — ask and answer. There is no press: the captain taps board buttons on the board.
  *
  * - **The caller gate.** Every handler refuses unless bb names the caller as a plugin listed in the
  *   `voicePlugins` setting, the way codex-realtime gates its token. The bb app and `bb plugin rpc call` are
@@ -10,19 +10,15 @@
  *   `VOICE_ACCOUNT_HEADING`, each on one line with every mark inside defused, plus an agent-only note on
  *   how to weigh the two. The voice plugin copies the words from its transcript; the model writes only the
  *   account.
- * - **A press sends exactly the button's prompt**, under `VOICE_PRESSED_PREFIX`, and only for a card or
- *   suggestion unchanged since the voice read it (its etag), and never for a tap-only button. A pressed
- *   suggestion leaves `data/suggestions.md` as it does when the board presses it.
  * - **One send at a time,** through `askMate`'s path: compact-first when due, mode `auto`, never an interrupt.
  */
 import { experimental_PluginRpcRefusal as PluginRpcRefusal, type ExperimentalPluginRpcHandlersWithContext } from "@get-bb/plugin-sdk";
 
 import { answerText, cardSubject } from "../app/format";
 import type { Fleet } from "../shared/types";
-import { VOICE_ACCOUNT_HEADING, VOICE_PRESSED_PREFIX, VOICE_SPOKEN_PREFIX, voiceContract, type VoiceBrief, type VoiceReply, type VoiceSent } from "../shared/voice";
+import { VOICE_ACCOUNT_HEADING, VOICE_SPOKEN_PREFIX, voiceContract, type VoiceBrief, type VoiceReply, type VoiceSent } from "../shared/voice";
 import { RELAY_PREFIX } from "./cli";
 import { sendCompactingIfDue } from "./compact-first";
-import { removeSuggestion } from "./home";
 import { compactFirstDeps, requireMate, resolveMate, type MateDeps } from "./mate";
 import { serialized } from "./serialize";
 import { voicePluginIds } from "./settings";
@@ -31,8 +27,6 @@ import {
   REPLY_CUT,
   buildVoiceBrief,
   findCard,
-  ownerRef,
-  resolveButton,
   threadTitles,
   untrusted,
   voiceCard,
@@ -44,8 +38,6 @@ export interface VoiceDeps extends MateDeps {
   /** The board as `fleet.load` builds it. */
   fleet: () => Promise<Fleet>;
   refs: VoiceRefs;
-  /** The home the crew works in (`activeHome`). */
-  home: () => Promise<string>;
   /** Every open board reads the fleet again. */
   published: () => void;
   now: () => number;
@@ -71,7 +63,7 @@ export async function requireVoiceCaller(deps: MateDeps, caller: Caller | undefi
 }
 
 /** Every line that marks where a message came from; the captain's words must not carry one. */
-const MARKS = [VOICE_SPOKEN_PREFIX, VOICE_PRESSED_PREFIX, VOICE_ACCOUNT_HEADING, RELAY_PREFIX].map((mark) => mark.replace(/:$/u, ""));
+const MARKS = [VOICE_SPOKEN_PREFIX, VOICE_ACCOUNT_HEADING, RELAY_PREFIX].map((mark) => mark.replace(/:$/u, ""));
 
 function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
@@ -169,36 +161,6 @@ export function voiceHandlers(deps: VoiceDeps, replies: MateReplyCache = new Mat
       const card = findCard(await deps.fleet(), deps.refs, ref);
       if (card === null) throw notFound(ref);
       return send(spoken(answerText(cardSubject(card), defuse(words)), account), await message(TEMPLATES.voiceAnswerNote));
-    },
-    "voice.v1.press": async ({ ref, etag }, ctx) => {
-      await requireVoiceCaller(deps, ctx?.experimental_caller);
-      const owner = ownerRef(ref);
-      if (owner === null) throw notFound(ref);
-      const fleet = await deps.fleet();
-      const card = voiceCard(fleet, deps.refs, owner);
-      const button = resolveButton(fleet, deps.refs, ref);
-      const pressable = card?.pressable.find((item) => item.ref === ref);
-      if (card === null || button === null || pressable === undefined) throw notFound(ref);
-      if (card.etag !== etag) {
-        throw new PluginRpcRefusal({ code: "conflict", message: `${card.title} changed since it was read back. Read it again before pressing.` });
-      }
-      if (pressable.tapOnly !== null) {
-        throw new PluginRpcRefusal({
-          code: "forbidden",
-          message: `"${pressable.label}" is ${pressable.tapOnly}: the captain taps it on the board, never by voice, or asks the first mate.`,
-        });
-      }
-      const sent = await send(`${VOICE_PRESSED_PREFIX}\n\n${button.prompt}`, await message(TEMPLATES.voicePressNote, { readBack: pressable.readBack }));
-      // As the board does once a suggestion is sent: by label and prompt, so a rewritten file loses it or nothing.
-      if (button.suggestion !== null) {
-        try {
-          await removeSuggestion(await deps.home(), button.suggestion);
-          deps.published();
-        } catch (error) {
-          deps.log.warn(`A suggestion pressed by voice was sent but could not be taken off the board: ${error instanceof Error ? error.message : String(error)}`);
-        }
-      }
-      return sent;
     },
     "voice.v1.mate": async (_input, ctx) => {
       await requireVoiceCaller(deps, ctx?.experimental_caller);

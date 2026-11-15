@@ -157,10 +157,7 @@ export function brief(overrides: Partial<VoiceBrief> = {}): VoiceBrief {
         pr: "web #42",
         hold: "merge web#42?",
         lastWord: { state: "done", text: { untrusted: true, head: "PR web #42 checks green", tail: "", chars: 23 } },
-        actions: [
-          { ref: "c1.a1", label: "Merge", tapOnly: "a merge" },
-          { ref: "c1.a2", label: "Hold", tapOnly: null },
-        ],
+        actions: [{ label: "Merge" }, { label: "Hold" }],
         blockedBy: null,
         since: null,
       },
@@ -173,59 +170,34 @@ export function brief(overrides: Partial<VoiceBrief> = {}): VoiceBrief {
     queued: [],
     queuedMore: 0,
     landed: [],
-    suggestions: [{ ref: "s1", label: "Review loop on web#42", tapOnly: null }],
+    suggestions: [{ label: "Review loop on web#42" }],
     watches: { failing: [] },
     ...overrides,
   };
 }
 
 export function card(ref: string, overrides: Partial<VoiceCard> = {}): VoiceCard {
-  if (ref.startsWith("s")) {
-    return {
-      ref,
-      etag: "es1",
-      kind: "suggestion",
-      title: "Review loop on web#42",
-      project: null,
-      column: null,
-      pr: null,
-      hold: null,
-      lastWord: null,
-      pressable: [{ ref, label: "Review loop on web#42", tapOnly: null, readBack: 'Press the suggestion "Review loop on web#42"?' }],
-      ...overrides,
-    };
-  }
   return {
     ref,
-    etag: "ec1",
-    kind: "card",
     title: "Fix the flaky login test",
     project: "web",
     column: "idle",
     pr: "web #42",
     hold: "merge web#42?",
     lastWord: null,
-    pressable: [
-      { ref: `${ref}.a1`, label: "Merge", tapOnly: "a merge", readBack: 'Press "Merge" on Fix the flaky login test, web pull request 42?' },
-      { ref: `${ref}.a2`, label: "Hold", tapOnly: null, readBack: 'Press "Hold" on Fix the flaky login test, web pull request 42?' },
-    ],
+    actions: [{ label: "Merge" }, { label: "Hold" }],
     ...overrides,
   };
 }
 
 export class FakeCrew implements CrewPort {
   current: VoiceBrief = brief();
-  cards = new Map<string, VoiceCard>([
-    ["c1", card("c1")],
-    ["s1", card("s1")],
-  ]);
+  cards = new Map<string, VoiceCard>([["c1", card("c1")]]);
   replyText = "Aye, captain: rebased and pushed.";
   /** The captain's words each ask sent; `accounts` holds the model's account beside each. */
   readonly asks: string[] = [];
   readonly accounts: string[] = [];
   readonly answers: { ref: string; words: string; account: string }[] = [];
-  readonly presses: { ref: string; etag: string }[] = [];
-  pressRefusal: Error | null = null;
 
   async brief(): Promise<VoiceBrief> {
     return this.current;
@@ -249,12 +221,6 @@ export class FakeCrew implements CrewPort {
 
   async answer(ref: string, words: string, account: string): Promise<VoiceSent> {
     this.answers.push({ ref, words, account });
-    return { delivery: "sent" };
-  }
-
-  async press(ref: string, etag: string): Promise<VoiceSent> {
-    if (this.pressRefusal !== null) throw this.pressRefusal;
-    this.presses.push({ ref, etag });
     return { delivery: "sent" };
   }
 

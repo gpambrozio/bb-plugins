@@ -1,16 +1,16 @@
-Talk to your FirstMate first mate out loud. Ask what needs you and hear the answer from the board at once, hand it work in your own words, hear its replies when its turn ends, and press its buttons with a spoken yes after a read-back, on the desktop or on your phone with bb in front.
+Talk to your FirstMate first mate out loud. Ask what needs you and hear the answer from the board at once, hand it work in your own words, and hear its replies when its turn ends, on the desktop or on your phone with bb in front.
 
 ## What you get
 
 - **Answers from the board.** "What needs me?", "what's running?", "what did the review worker say?" are answered at once, without waking the first mate.
 - **Your own words, with the voice's account beside them.** Anything else goes to the first mate exactly as transcribed, all you said since the last hand-off, marked as spoken, with the voice's account of what you asked, marked as its own. The first mate checks one against the other, and its answer is read back to you.
-- **A few buttons by voice, with a read-back.** A hold, a review loop, a question or report, or your choice on a decision card is pressed only after it is read back and you say a plain yes. Every other button stays a tap on the board.
-- **Never a merge by voice.** Merges, destructive actions, publishing, credentials and settings stay a tap on the board.
+- **Buttons stay a tap on the board.** The voice names a card's buttons but never presses one; asked to, it offers to pass your request to the first mate in your own words.
+- **Never a merge by voice.** Merges, destructive actions, publishing, credentials and settings are never your word by voice.
 - **News when it matters.** A new call for you, a failed worker, or the first mate waiting on a question, spoken at the next pause.
 
 ## How it works
 
-Audio goes from your device to OpenAI's Realtime voice model over WebRTC. The bb server makes the call and holds a side channel to it for the board, the tools and the announcements, so no credential reaches the app. The first mate stays in charge: FirstMate decides what a button sends and checks the board has not changed since the read-back.
+Audio goes from your device to OpenAI's Realtime voice model over WebRTC. The bb server makes the call and holds a side channel to it for the board, the tools and the announcements, so no credential reaches the app. The first mate stays in charge: the voice reads the board and passes your words on, and every button is yours to tap.
 
 ## Requirements
 

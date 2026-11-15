@@ -39,7 +39,6 @@ export const TEMPLATES = {
   watchDropped: "messages/watch-dropped.md",
   voiceAskNote: "messages/voice-ask-note.md",
   voiceAnswerNote: "messages/voice-answer-note.md",
-  voicePressNote: "messages/voice-press-note.md",
 } as const;
 
 export type TemplatePath = (typeof TEMPLATES)[keyof typeof TEMPLATES];

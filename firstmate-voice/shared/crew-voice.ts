@@ -3,13 +3,14 @@
 
 /**
  * `voice.v1`: the narrow API FirstMate voice (the `firstmate-voice` plugin) reaches the first mate through.
- * This plugin keeps the authority — what a press sends, the send path, compact-first — and the voice plugin
- * owns the audio, the session and the tool policy. Every method refuses a caller that is not a plugin named
- * in the `voicePlugins` setting (`server/voice-api.ts`).
+ * This plugin keeps the authority — what a spoken message says, the send path, compact-first — and the voice
+ * plugin owns the audio, the session and the tool policy. The voice reads the board and sends the captain's
+ * words; it never presses a board button (the captain taps those). Every method refuses a caller that is
+ * not a plugin named in the `voicePlugins` setting (`server/voice-api.ts`).
  *
- * The shapes are what the voice model may see: no thread ids, no URLs, no button prompts. Cards and their
- * buttons are named by short refs (`c1`, `c1.a1`, `s1`) that stay the same for the life of the plugin, and
- * anything a worker or the first mate wrote is marked untrusted and cut to its head and tail.
+ * The shapes are what the voice model may see: no thread ids, no URLs, no button prompts. Cards are named
+ * by short refs (`c1`) that stay the same for the life of the plugin, buttons and suggestions by their
+ * labels, and anything a worker or the first mate wrote is marked untrusted and cut to its head and tail.
  *
  * zod only: the voice plugin copies these schemas (a test there checks they still match), and nothing here
  * may import the SDK, as for `contract.ts`.
@@ -21,9 +22,6 @@ export const VOICE_API = "voice.v1";
 
 /** How a message the captain spoke through FirstMate voice begins; the charter names it (§0). */
 export const VOICE_SPOKEN_PREFIX = "Spoken by the captain through FirstMate voice:";
-
-/** How a board button the captain pressed by voice begins; the charter names it (§0). */
-export const VOICE_PRESSED_PREFIX = "Pressed by the captain through FirstMate voice:";
 
 /**
  * The line in a spoken message that sets the voice assistant's account apart from the captain's words: what
@@ -43,16 +41,8 @@ export const UntrustedTextSchema = z.object({
 });
 export type UntrustedText = z.infer<typeof UntrustedTextSchema>;
 
-/** A board button as the voice sees it: its label, never its prompt. */
-export const VoiceActionSchema = z.object({
-  ref: z.string(),
-  label: z.string(),
-  /**
-   * Why this button can only be pressed on the board — a merge, something destructive, publishing,
-   * credentials or settings — or null when a spoken yes after a read-back may press it.
-   */
-  tapOnly: z.string().nullable(),
-});
+/** A board button as the voice sees it: its label, never its prompt. The captain taps it on the board. */
+export const VoiceActionSchema = z.object({ label: z.string() });
 export type VoiceAction = z.infer<typeof VoiceActionSchema>;
 
 export const VoiceColumnSchema = z.enum(["queued", "working", "blocked", "parked", "done", "failed", "idle"]);
@@ -107,22 +97,16 @@ export const VoiceBriefSchema = z.object({
 });
 export type VoiceBrief = z.infer<typeof VoiceBriefSchema>;
 
-/** One button with the sentence the voice reads back before pressing it, written here, never by the model. */
-export const VoicePressableSchema = VoiceActionSchema.extend({ readBack: z.string() });
-export type VoicePressable = z.infer<typeof VoicePressableSchema>;
-
-/** One card in more detail than the brief, or one suggestion. `etag` changes when anything here does. */
+/** One card in more detail than the brief. */
 export const VoiceCardSchema = z.object({
   ref: z.string(),
-  etag: z.string(),
-  kind: z.enum(["card", "suggestion"]),
   title: z.string(),
   project: z.string().nullable(),
-  column: VoiceColumnSchema.nullable(),
+  column: VoiceColumnSchema,
   pr: z.string().nullable(),
   hold: z.string().nullable(),
   lastWord: z.object({ state: z.string(), text: UntrustedTextSchema }).nullable(),
-  pressable: z.array(VoicePressableSchema),
+  actions: z.array(VoiceActionSchema),
 });
 export type VoiceCard = z.infer<typeof VoiceCardSchema>;
 
@@ -146,13 +130,6 @@ export const VoiceAskInputSchema = z.object({ words: Words, account: Account });
 
 export const VoiceAnswerInputSchema = z.object({ ref: z.string().min(1).max(40), words: Words, account: Account });
 
-export const VoicePressInputSchema = z.object({
-  /** A button: `c1.a2` (an action on a card) or `s1` (a suggestion). */
-  ref: z.string().min(1).max(40),
-  /** The `etag` of the card or suggestion from `voice.v1.card`; a mismatch is refused as a conflict. */
-  etag: z.string().min(1).max(80),
-});
-
 export const VoiceReplySchema = z.object({
   /** The first mate's last reply, made speakable, cut to about 4,000 characters. Null when it has none. */
   reply: UntrustedTextSchema.nullable(),
@@ -165,8 +142,7 @@ const Empty = z.object({});
 
 /**
  * The methods, registered with `experimental_discoverable`. Inputs that take nothing take `{}`. A refused
- * call throws: `forbidden` for a caller that is not allowed or a button that is tap-only, `not_found` for
- * an unknown ref, `conflict` for a card that changed since its etag.
+ * call throws: `forbidden` for a caller that is not allowed, `not_found` for an unknown ref.
  */
 export const voiceContract = {
   "voice.v1.brief": { input: Empty, output: VoiceBriefSchema },
@@ -174,7 +150,6 @@ export const voiceContract = {
   "voice.v1.reply": { input: Empty, output: VoiceReplySchema },
   "voice.v1.ask": { input: VoiceAskInputSchema, output: VoiceSentSchema },
   "voice.v1.answer": { input: VoiceAnswerInputSchema, output: VoiceSentSchema },
-  "voice.v1.press": { input: VoicePressInputSchema, output: VoiceSentSchema },
   /** The first mate's thread id, for the voice plugin's Talk button on that thread. Never given to the model. */
   "voice.v1.mate": { input: Empty, output: z.object({ threadId: z.string().nullable() }) },
 };

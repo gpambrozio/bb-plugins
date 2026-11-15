@@ -30,7 +30,7 @@ against bb 0.48.1's bundled push-notifications plugin, read from its build (not 
 | `server/store.ts` | `bb.storage.kv`: the first mate's thread id, the switched-off watches and autocompact's marks. Nothing else. |
 | `server/settings.ts` | `bb.settings.define`: home directory, crew provider/model/reasoning, board refresh, quiet shipshape, and autocompact's six (on, thousands of tokens, idle minutes, for the first mate and for the crew). The token thresholds are set in thousands (`*KTokens`, ×1,000 in `autoCompactRules`) because bb's number field shows no thousands separators. |
 | `server/quiet-shipshape.ts` | `mateQuietShipshape`: the no-op rule (`isNoOpReply`) and marking the first mate's no-op turn read. |
-| `shared/voice.ts`, `server/voice-brief.ts`, `server/voice-api.ts` | `voice.v1`, the narrow API the `firstmate-voice` plugin reaches the first mate through: the brief and cards as speech-ready data (`speakable`, refs, tap-only buttons, etags), the first mate's last reply, and ask, answer and press, behind the `voicePlugins` caller gate. |
+| `shared/voice.ts`, `server/voice-brief.ts`, `server/voice-api.ts` | `voice.v1`, the narrow API the `firstmate-voice` plugin reaches the first mate through: the brief and cards as speech-ready data (`speakable`, card refs, button labels without prompts, the brief's etag), the first mate's last reply, and ask and answer, behind the `voicePlugins` caller gate. |
 | `server/autocompact.ts` | One autocompact check: which thread is at rest, idle long enough (bb's cache deadline, else the idle minutes) and over its threshold; the once-per-idle-stretch marks; `dueNow` for one thread. |
 | `server/compact-first.ts` | A message to a thread autocompact would compact now goes with bb's `compactFirst`. |
 | `server/home.ts`, `charter.ts`, `charter-file.ts` | Preparing the home; rendering `AGENTS.md`; the charter following the plugin until edited. |
@@ -98,17 +98,15 @@ Do not break these; each was paid for.
   call` are clients and refused. Ask and answer send the captain's transcribed words on one line under
   `VOICE_SPOKEN_PREFIX`, then the voice model's own account of them under `VOICE_ACCOUNT_HEADING`, each
   with every source mark inside defused (`defuse`, `spoken`), plus an agent-only note saying to act on the
-  account but follow the words where the two differ (the words alone are the captain's); a
-  press sends exactly the button's prompt under `VOICE_PRESSED_PREFIX`, only when the card's etag is
-  unchanged, and never for a tap-only button (`tapOnlyReason`, fail-closed: a deny list and a command check first,
-  then `voicePressable`, a bounded set of whole shapes whose effect is known: hold or leave a pull request
-  open, a review loop on one, a one-clause question or report, and, on a decision card only (`kind:
-  captain`), "Use <option> for … (<the decision's id>)". Every other button is tapped on the board,
-  whatever its wording; prompts are never judged by an opening verb). The charter and the press note still tell the first mate not to act on a voice press that
-  turns out to be one of those, since the captain heard only the label. The charter names both lines (a test
-  ties them) and says neither is the captain's word on those. What the voice model may see has no thread
-  ids, no URLs and no prompts: cards and buttons are refs (`c1`, `c1.a1`, `s1`) that keep their meaning for
-  the plugin's lifetime. `voice.v1.mate` gives the first mate's thread id to the voice plugin's app (its
+  account but follow the words where the two differ (the words alone are the captain's). There is no
+  press, by the captain's decision after four review passes: every attempt to decide which button prompts
+  were safe to press on a spoken yes (a deny list, then a bounded set of whole shapes, then decision cards)
+  left a hole, because a prompt is free text and its label is all the captain hears. Do not add one back
+  without a design that does not judge free text; the captain taps buttons on the board. The charter names
+  the spoken line and the account heading (a test ties them) and says spoken words are never the captain's
+  word on a merge, anything destructive, publishing, credentials or settings. What the voice model may see
+  has no thread ids, no URLs and no prompts: cards are refs (`c1`) that keep their meaning for the plugin's
+  lifetime, and buttons and suggestions go by their labels. `voice.v1.mate` gives the first mate's thread id to the voice plugin's app (its
   Talk button) and must never be put in front of the model.
 - **`tell` never reads a file.** Text arrives as words or as `--message-base64` (the skill uses bb's
   `--message-base64-stdin`, read on the caller's machine), strict base64 of UTF-8. Exactly one trailing
