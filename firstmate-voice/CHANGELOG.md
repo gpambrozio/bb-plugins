@@ -15,7 +15,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   worker last said, what is next.
 - **Requests in your own words.** Anything else goes to the first mate exactly as you said it, all of it
   since the voice last handed over, even when you paused midway, with the voice's own account of what you
-  asked beside it, marked as the voice's. Its answer is read to you when its turn ends.
+  asked beside it, marked as the voice's, and what the voice said aloud to you in that time (the first
+  mate's reply it read out included), so a short "hold it" arrives with what "it" was. Its answer is read
+  to you when its turn ends.
 - **Buttons stay a tap on the board.** The voice tells you which buttons a card offers but never presses
   one; asked to, it offers to hand your request to the first mate in your own words. Merges, anything
   destructive, publishing, credentials and settings are never your word by voice.

@@ -53,10 +53,13 @@ export class Announcer {
 
   constructor(private readonly output: AnnouncerOutput) {}
 
-  enqueue(instructions: string): void {
+  /** Queues an announcement; answers its id, which tags the response (or responses, on a retry) that say it. */
+  enqueue(instructions: string): string {
     this.counter += 1;
-    this.queue.push({ id: `fmv_ann_${this.counter}`, instructions, tries: 0 });
+    const id = `fmv_ann_${this.counter}`;
+    this.queue.push({ id, instructions, tries: 0 });
     this.pump();
+    return id;
   }
 
   pending(): number {

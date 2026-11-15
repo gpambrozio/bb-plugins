@@ -97,13 +97,17 @@ Do not break these; each was paid for.
   the caller as a plugin listed in `voicePlugins` (default `firstmate-voice`); the app and `bb plugin rpc
   call` are clients and refused. Ask and answer send the captain's transcribed words on one line under
   `VOICE_SPOKEN_PREFIX`, then the voice model's own account of them under `VOICE_ACCOUNT_HEADING`, each
-  with every source mark inside defused (`defuse`, `spoken`), plus an agent-only note saying to act on the
+  with every source mark inside defused (`defuse`, `spoken`), then, when the voice said anything in that
+  span, the talk under `VOICE_TALK_HEADING`: the captain's segments and the voice's own spoken lines (the
+  first mate's reply it read out marked as such), one labelled line each, copied by the voice plugin's
+  server from its transcripts. It exists because a short reply ("hold it") reached the first mate without
+  what "it" was. The voice's lines are context, never the captain's word. Then an agent-only note saying to act on the
   account but follow the words where the two differ (the words alone are the captain's). There is no
   press, by the captain's decision after four review passes: every attempt to decide which button prompts
   were safe to press on a spoken yes (a deny list, then a bounded set of whole shapes, then decision cards)
   left a hole, because a prompt is free text and its label is all the captain hears. Do not add one back
   without a design that does not judge free text; the captain taps buttons on the board. The charter names
-  the spoken line and the account heading (a test ties them) and says spoken words are never the captain's
+  the spoken line, the account heading and the talk heading (a test ties them) and says spoken words are never the captain's
   word on a merge, anything destructive, publishing, credentials or settings. What the voice model may see
   has no thread ids, no URLs and no prompts: cards are refs (`c1`) that keep their meaning for the plugin's
   lifetime, and buttons and suggestions go by their labels. `voice.v1.mate` gives the first mate's thread id to the voice plugin's app (its

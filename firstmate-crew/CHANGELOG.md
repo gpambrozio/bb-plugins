@@ -11,7 +11,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - **Talk to the first mate out loud,** with the separate FirstMate voice plugin. FirstMate now lets that
   plugin read the board, send the first mate your spoken words exactly as they were transcribed (all you
-  said since it last handed over) together with its own account of what you asked. A spoken message opens
+  said since it last handed over) together with its own account of what you asked and what it said aloud to
+  you in that time, so a short "hold it" arrives with what "it" was. A spoken message opens
   with a line saying so. The first mate acts on the voice's account but checks it against your words, and
   only your words count as yours; even they never count as your word on a merge, anything destructive,
   publishing, credentials or settings. The voice never presses a board button: you tap those.

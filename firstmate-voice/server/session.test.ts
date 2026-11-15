@@ -503,3 +503,70 @@ describe("the session's life", () => {
     expect(log.lines.join("\n")).not.toContain("blue folder");
   });
 });
+
+describe("the talk the first mate gets beside the words", () => {
+  const ASK = (request: string) => ({ name: "ask_first_mate", args: { request } });
+
+  /** The first mate answers the ask in flight; the voice reads the reply aloud as its announcement. */
+  async function replyReadAloud(ctx: Awaited<ReturnType<typeof setup>>, spoken: string): Promise<void> {
+    const { sideband, clock, crew, sessions } = ctx;
+    crew.current = brief({
+      etag: `e_${clock.now()}`,
+      firstMate: { status: "idle", waiting: false, lastReply: { untrusted: true, head: spoken, tail: "", chars: spoken.length }, repliedAt: new Date(clock.now() + 1_000).toISOString() },
+    });
+    await clock.advance(2_000);
+    sessions.threadEvent();
+    await clock.advance(2_000);
+    const create = sideband.ofType("response.create").at(-1) as { response?: { metadata?: { fmv_announcement?: string } } };
+    const id = create.response?.metadata?.fmv_announcement;
+    expect(id).toBeDefined();
+    await respond(sideband, clock, { spoken, announcement: id });
+  }
+
+  it("carries the first mate's reply the voice read out, so a short reply says what \"it\" was", async () => {
+    const ctx = await setup();
+    const { sideband, clock, crew } = ctx;
+    await say(sideband, clock, "How are SurfTracker and the FirstMate voice PR?");
+    await respond(sideband, clock, { spoken: "Asking now.", tool: ASK("The captain wants the state of SurfTracker and of the FirstMate voice PR.") });
+    await respond(sideband, clock, { spoken: "I've asked the first mate." });
+    await replyReadAloud(ctx, "The first mate answered you: SurfTracker is done, and the FirstMate voice PR is green and ready to merge.");
+    await say(sideband, clock, "Hold it for now.");
+    await respond(sideband, clock, { tool: ASK("The captain wants the FirstMate voice PR held for now.") });
+    expect(crew.asks.at(-1)).toBe("Hold it for now.");
+    expect(crew.talks.at(-1)).toEqual([
+      { who: "voice", text: "I've asked the first mate." },
+      { who: "reply", text: "The first mate answered you: SurfTracker is done, and the FirstMate voice PR is green and ready to merge." },
+      { who: "captain", text: "Hold it for now." },
+    ]);
+    // The first send's talk had no voice line from before it, and nothing of its own preamble.
+    expect(crew.talks[0]).toEqual([{ who: "captain", text: "How are SurfTracker and the FirstMate voice PR?" }]);
+  });
+
+  it("marks a line the captain talked over, and keeps a request split at a pause whole", async () => {
+    const { sideband, clock, crew } = await setup();
+    await respond(sideband, clock, { spoken: "Captain, all quiet." });
+    await say(sideband, clock, "Merge the tweak branch when the gate passes,");
+    await respond(sideband, clock, { spoken: "Aye, captain, I'll", cut: true });
+    await say(sideband, clock, "then merge main into the map branch.");
+    await respond(sideband, clock, { tool: ASK("The captain wants the tweak branch merged once its gate passes, then main merged into the map branch.") });
+    expect(crew.talks.at(-1)).toEqual([
+      { who: "voice", text: "Captain, all quiet." },
+      { who: "captain", text: "Merge the tweak branch when the gate passes," },
+      { who: "voice", text: "Aye, captain, I'll", talkedOver: true },
+      { who: "captain", text: "then merge main into the map branch." },
+    ]);
+  });
+
+  it("sends the talk with a card's answer too", async () => {
+    const { sideband, clock, crew } = await setup();
+    await say(sideband, clock, "What does the login fix need?");
+    await respond(sideband, clock, { spoken: "It asks whether to retry the flaky test or skip it." });
+    await say(sideband, clock, "Skip it.");
+    await respond(sideband, clock, { tool: { name: "answer_card", args: { ref: "c1", answer: "The captain wants the flaky test skipped." } } });
+    expect(crew.answers.at(-1)).toMatchObject({ ref: "c1", words: "Skip it." });
+    expect(crew.talks.at(-1)).toEqual([
+      { who: "voice", text: "It asks whether to retry the flaky test or skip it." },
+      { who: "captain", text: "Skip it." },
+    ]);
+  });
+});

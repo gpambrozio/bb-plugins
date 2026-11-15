@@ -5,7 +5,7 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import type { z } from "zod";
 
-import { VoiceBriefSchema, VoiceCardSchema, VoiceReplySchema, VoiceSentSchema, voiceContract } from "../shared/crew-voice";
+import { VoiceBriefSchema, VoiceCardSchema, VoiceReplySchema, VoiceSentSchema, voiceContract, type VoiceTalkLine } from "../shared/crew-voice";
 import type { CrewPort } from "./ports";
 
 export const CREW_PLUGIN = "firstmate-crew";
@@ -13,7 +13,7 @@ export const CREW_PLUGIN = "firstmate-crew";
 const MateSchema = voiceContract["voice.v1.mate"].output;
 
 export function crewClient(bb: BbPluginApi): CrewPort {
-  function call<T>(method: keyof typeof voiceContract, input: Record<string, string>, outputSchema: z.ZodType<T>): Promise<T> {
+  function call<T>(method: keyof typeof voiceContract, input: Record<string, string | VoiceTalkLine[]>, outputSchema: z.ZodType<T>): Promise<T> {
     return bb.sdk.plugins.callRpc({ pluginId: CREW_PLUGIN, method, input, outputSchema });
   }
 
@@ -21,8 +21,8 @@ export function crewClient(bb: BbPluginApi): CrewPort {
     brief: () => call("voice.v1.brief", {}, VoiceBriefSchema),
     card: (ref) => call("voice.v1.card", { ref }, VoiceCardSchema),
     reply: () => call("voice.v1.reply", {}, VoiceReplySchema),
-    ask: (words, account) => call("voice.v1.ask", { words, account }, VoiceSentSchema),
-    answer: (ref, words, account) => call("voice.v1.answer", { ref, words, account }, VoiceSentSchema),
+    ask: (words, account, talk) => call("voice.v1.ask", { words, account, talk }, VoiceSentSchema),
+    answer: (ref, words, account, talk) => call("voice.v1.answer", { ref, words, account, talk }, VoiceSentSchema),
     mateThreadId: async () => (await call("voice.v1.mate", {}, MateSchema)).threadId,
   };
 }

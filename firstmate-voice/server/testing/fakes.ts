@@ -2,7 +2,7 @@
  * Plain in-memory stand-ins for OpenAI's Realtime API, firstmate-crew's `voice.v1` and time, for tests.
  * The fake sideband records what the server sends and lets a test play the call's events.
  */
-import type { VoiceBrief, VoiceCard, VoiceSent } from "../../shared/crew-voice";
+import type { VoiceBrief, VoiceCard, VoiceSent, VoiceTalkLine } from "../../shared/crew-voice";
 import type { Clock, CrewPort, Log, RealtimeEvent, RealtimePort, Sideband, SidebandHandlers } from "../ports";
 
 // --- Time ------------------------------------------------------------------------------------------
@@ -198,6 +198,8 @@ export class FakeCrew implements CrewPort {
   readonly asks: string[] = [];
   readonly accounts: string[] = [];
   readonly answers: { ref: string; words: string; account: string }[] = [];
+  /** The talk each send carried, asks and answers in the order they went. */
+  readonly talks: VoiceTalkLine[][] = [];
 
   async brief(): Promise<VoiceBrief> {
     return this.current;
@@ -213,14 +215,16 @@ export class FakeCrew implements CrewPort {
     return { reply: { untrusted: true as const, head: this.replyText, tail: "", chars: this.replyText.length }, repliedAt: "2026-11-13T14:05:00.000Z", status: "idle" };
   }
 
-  async ask(words: string, account: string): Promise<VoiceSent> {
+  async ask(words: string, account: string, talk: VoiceTalkLine[] = []): Promise<VoiceSent> {
     this.asks.push(words);
+    this.talks.push(talk);
     this.accounts.push(account);
     return { delivery: "sent" };
   }
 
-  async answer(ref: string, words: string, account: string): Promise<VoiceSent> {
+  async answer(ref: string, words: string, account: string, talk: VoiceTalkLine[] = []): Promise<VoiceSent> {
     this.answers.push({ ref, words, account });
+    this.talks.push(talk);
     return { delivery: "sent" };
   }
 

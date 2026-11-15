@@ -15,8 +15,11 @@ against your ChatGPT plan. Read codex-realtime's README first.
 - **Hands everything else to the first mate in your own words.** Everything you said since it last handed
   over goes exactly as it was transcribed, under the line `Spoken by the captain through FirstMate voice:`,
   so a request you made in several breaths goes whole. Beside it, marked as the voice's own, goes its
-  account of what you asked, with what the talk made clear; the first mate acts on that account but checks
-  it against your words, which alone count as yours. Its answer is read back to you when its turn ends.
+  account of what you asked, with what the talk made clear, and the talk itself: your words and what the
+  voice said aloud to you in that time, in order, the first mate's reply it read out included, each line
+  marked as yours or the voice's. So a short "hold it" arrives with what "it" was. The first mate acts on
+  the account but checks it against your words, which alone count as yours. Its answer is read back to
+  you when its turn ends.
 - **Never presses a button.** It can tell you which buttons a card offers, but you tap them on the board.
   Ask it to press one and it says so, and offers to hand the request to the first mate in your own words
   instead.

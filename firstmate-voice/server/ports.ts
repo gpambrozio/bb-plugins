@@ -3,7 +3,7 @@
  * sync and the announcer are tested against plain fakes (`testing/`): OpenAI's Realtime API, firstmate-crew's
  * `voice.v1`, and time. `server.ts` builds the real ones.
  */
-import type { VoiceBrief, VoiceCard, VoiceReply, VoiceSent } from "../shared/crew-voice";
+import type { VoiceBrief, VoiceCard, VoiceReply, VoiceSent, VoiceTalkLine } from "../shared/crew-voice";
 
 /** One server event of a Realtime call, as the sideband receives it. */
 export type RealtimeEvent = Record<string, unknown> & { type: string };
@@ -34,9 +34,12 @@ export interface CrewPort {
   brief(): Promise<VoiceBrief>;
   card(ref: string): Promise<VoiceCard>;
   reply(): Promise<VoiceReply>;
-  /** The captain's words, verbatim, and beside them the model's account of the request. */
-  ask(words: string, account: string): Promise<VoiceSent>;
-  answer(ref: string, words: string, account: string): Promise<VoiceSent>;
+  /**
+   * The captain's words, verbatim, beside them the model's account of the request, and the talk they came
+   * from (the captain's segments and the voice's own spoken lines, in order), all copied by this server.
+   */
+  ask(words: string, account: string, talk: VoiceTalkLine[]): Promise<VoiceSent>;
+  answer(ref: string, words: string, account: string, talk: VoiceTalkLine[]): Promise<VoiceSent>;
   mateThreadId(): Promise<string | null>;
 }
 

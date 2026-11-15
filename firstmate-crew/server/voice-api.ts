@@ -10,13 +10,26 @@
  *   `VOICE_ACCOUNT_HEADING`, each on one line with every mark inside defused, plus an agent-only note on
  *   how to weigh the two. The voice plugin copies the words from its transcript; the model writes only the
  *   account.
+ * - **The talk, after both.** Under `VOICE_TALK_HEADING`, the captain's segments and what the voice said
+ *   aloud in the same span (the first mate's reply it read out included), in order, one labelled line each,
+ *   defused like the words. Context for a short reply ("hold it"), never the captain's word: left out when
+ *   the voice said nothing in that span.
  * - **One send at a time,** through `askMate`'s path: compact-first when due, mode `auto`, never an interrupt.
  */
 import { experimental_PluginRpcRefusal as PluginRpcRefusal, type ExperimentalPluginRpcHandlersWithContext } from "@get-bb/plugin-sdk";
 
 import { answerText, cardSubject } from "../app/format";
 import type { Fleet } from "../shared/types";
-import { VOICE_ACCOUNT_HEADING, VOICE_SPOKEN_PREFIX, voiceContract, type VoiceBrief, type VoiceReply, type VoiceSent } from "../shared/voice";
+import {
+  VOICE_ACCOUNT_HEADING,
+  VOICE_SPOKEN_PREFIX,
+  VOICE_TALK_HEADING,
+  voiceContract,
+  type VoiceBrief,
+  type VoiceReply,
+  type VoiceSent,
+  type VoiceTalkLine,
+} from "../shared/voice";
 import { RELAY_PREFIX } from "./cli";
 import { sendCompactingIfDue } from "./compact-first";
 import { compactFirstDeps, requireMate, resolveMate, type MateDeps } from "./mate";
@@ -63,7 +76,7 @@ export async function requireVoiceCaller(deps: MateDeps, caller: Caller | undefi
 }
 
 /** Every line that marks where a message came from; the captain's words must not carry one. */
-const MARKS = [VOICE_SPOKEN_PREFIX, VOICE_ACCOUNT_HEADING, RELAY_PREFIX].map((mark) => mark.replace(/:$/u, ""));
+const MARKS = [VOICE_SPOKEN_PREFIX, VOICE_ACCOUNT_HEADING, VOICE_TALK_HEADING, RELAY_PREFIX].map((mark) => mark.replace(/:$/u, ""));
 
 function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
@@ -81,12 +94,33 @@ export function defuse(words: string): string {
   return text;
 }
 
+/** How each line of the talk is labelled: only the captain's line is theirs. */
+const TALK_LABELS: Record<VoiceTalkLine["who"], string> = {
+  captain: "Captain",
+  voice: "Voice assistant, not the captain",
+  reply: "Voice assistant reading the first mate's reply aloud, not the captain",
+};
+
+/** The talk, one labelled line each, in order; null when the voice said nothing in it. */
+export function talkLines(talk: readonly VoiceTalkLine[]): string | null {
+  if (!talk.some((line) => line.who !== "captain")) return null;
+  return talk
+    .map((line) => {
+      const cut = line.who !== "captain" && line.talkedOver === true ? " (talked over, perhaps not heard in full)" : "";
+      return `${TALK_LABELS[line.who]}${cut}: ${defuse(line.text)}`;
+    })
+    .join("\n");
+}
+
 /**
  * A spoken message: the captain's words under the spoken line, then the voice assistant's account under its
- * own heading, each on one line with every mark defused, so the two cannot be mistaken for each other.
+ * own heading, then the talk they came from under its heading, each line with every mark defused, so none
+ * can be mistaken for another.
  */
-export function spoken(words: string, account: string): string {
-  return `${VOICE_SPOKEN_PREFIX}\n\n${words}\n\n${VOICE_ACCOUNT_HEADING}\n\n${defuse(account)}`;
+export function spoken(words: string, account: string, talk: readonly VoiceTalkLine[] = []): string {
+  const message = `${VOICE_SPOKEN_PREFIX}\n\n${words}\n\n${VOICE_ACCOUNT_HEADING}\n\n${defuse(account)}`;
+  const lines = talkLines(talk);
+  return lines === null ? message : `${message}\n\n${VOICE_TALK_HEADING}\n\n${lines}`;
 }
 
 /** What the voice reads of the first mate: its status, whether it waits on someone, its last reply and when. */
@@ -151,16 +185,16 @@ export function voiceHandlers(deps: VoiceDeps, replies: MateReplyCache = new Mat
         status: mate === null ? null : mate.status,
       };
     },
-    "voice.v1.ask": async ({ words, account }, ctx) => {
+    "voice.v1.ask": async ({ words, account, talk }, ctx) => {
       await requireVoiceCaller(deps, ctx?.experimental_caller);
-      return send(spoken(defuse(words), account), await message(TEMPLATES.voiceAskNote));
+      return send(spoken(defuse(words), account, talk), await message(TEMPLATES.voiceAskNote));
     },
-    "voice.v1.answer": async ({ ref, words, account }, ctx) => {
+    "voice.v1.answer": async ({ ref, words, account, talk }, ctx) => {
       await requireVoiceCaller(deps, ctx?.experimental_caller);
       if (!/^c\d+$/u.test(ref)) throw notFound(ref);
       const card = findCard(await deps.fleet(), deps.refs, ref);
       if (card === null) throw notFound(ref);
-      return send(spoken(answerText(cardSubject(card), defuse(words)), account), await message(TEMPLATES.voiceAnswerNote));
+      return send(spoken(answerText(cardSubject(card), defuse(words)), account, talk), await message(TEMPLATES.voiceAnswerNote));
     },
     "voice.v1.mate": async (_input, ctx) => {
       await requireVoiceCaller(deps, ctx?.experimental_caller);

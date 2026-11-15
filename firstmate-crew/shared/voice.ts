@@ -5,6 +5,9 @@
  * words; it never presses a board button (the captain taps those). Every method refuses a caller that is
  * not a plugin named in the `voicePlugins` setting (`server/voice-api.ts`).
  *
+ * A send carries the captain's words, the voice's account of them and the talk they came from, with what
+ * the voice said aloud in that span, so a short reply ("hold it") reaches the first mate with what "it" was.
+ *
  * The shapes are what the voice model may see: no thread ids, no URLs, no button prompts. Cards are named
  * by short refs (`c1`) that stay the same for the life of the plugin, buttons and suggestions by their
  * labels, and anything a worker or the first mate wrote is marked untrusted and cut to its head and tail.
@@ -123,9 +126,40 @@ const Words = z.string().trim().min(1).max(4000);
  */
 const Account = z.string().trim().min(1).max(2000);
 
-export const VoiceAskInputSchema = z.object({ words: Words, account: Account });
+/**
+ * The line in a spoken message that starts the talk: the captain's segments and what the voice assistant
+ * said aloud to them in the same span, in order, each line labelled. Context only: the voice's lines are
+ * never the captain's words.
+ */
+export const VOICE_TALK_HEADING = "The talk since the voice last handed over, in order; only the captain's lines are their words:";
 
-export const VoiceAnswerInputSchema = z.object({ ref: z.string().min(1).max(40), words: Words, account: Account });
+/** The most characters a talk may carry, every line together. */
+export const VOICE_TALK_MAX_CHARS = 8000;
+
+/**
+ * One line of the talk, copied by the voice plugin's server from its transcripts, never written by the
+ * model: a segment the captain said (`captain`), something the voice assistant said aloud (`voice`), or the
+ * voice reading the first mate's reply aloud (`reply`). `talkedOver` marks a voice line the captain cut
+ * off, so they may not have heard all of it.
+ */
+export const VoiceTalkLineSchema = z.object({
+  who: z.enum(["captain", "voice", "reply"]),
+  text: z.string().trim().min(1).max(4000),
+  talkedOver: z.boolean().optional(),
+});
+export type VoiceTalkLine = z.infer<typeof VoiceTalkLineSchema>;
+
+const Talk = z
+  .array(VoiceTalkLineSchema)
+  .max(80)
+  .refine((lines) => lines.reduce((sum, line) => sum + line.text.length, 0) <= VOICE_TALK_MAX_CHARS, {
+    message: `The talk is over ${VOICE_TALK_MAX_CHARS} characters.`,
+  })
+  .optional();
+
+export const VoiceAskInputSchema = z.object({ words: Words, account: Account, talk: Talk });
+
+export const VoiceAnswerInputSchema = z.object({ ref: z.string().min(1).max(40), words: Words, account: Account, talk: Talk });
 
 export const VoiceReplySchema = z.object({
   /** The first mate's last reply, made speakable, cut to about 4,000 characters. Null when it has none. */

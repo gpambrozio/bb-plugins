@@ -45,6 +45,17 @@ the voice, the decisions behind phase 1, and the phase 0 decision record.
   goes whole. The account is the model's only text into bb: never let it stand
   for the captain's words, and add no other tool argument that reaches the first mate as text. The log
   records how many segments and characters went, never the words.
+- **The talk goes too, and the voice's lines in it are only context.** Each send also carries the talk
+  (`UtteranceLog.talk`): the captain's segments it sends and what the voice said aloud in the same span
+  (each response's `response.output_audio_transcript.done`, timed by when the response started), in order,
+  a talked-over line marked. It starts at the boundary, so the reply heard to its end that set it is in,
+  and stops before the send's own response (its preamble is not part of the talk). A reading of the first
+  mate's reply (the reply announcement, tracked by announcement id) since the last send leads when the
+  span has none, since that is what a short reply most likely answers. A line goes once: `markUsed` spends
+  the voice's lines that started before the send's response. firstmate-crew labels each line, the voice's
+  as not the captain's. Added after a live run where "Hold it for now" reached the first mate without the
+  reply the voice had just read out, and "it" read as the wrong PR. These lines, like the account, never
+  stand for the captain's words.
 - **No board button is pressed by voice.** There is no press tool, and `voice.v1` has no press verb; the
   model sees buttons and suggestions by label only. Asked to press one, the voice tells the captain to tap
   it on the board and offers to hand the request to the first mate, which then gets the captain's own words
@@ -96,7 +107,9 @@ the voice, the decisions behind phase 1, and the phase 0 decision record.
   reached the first mate as its last segment only: turn detection split it at a pause and the model, asked
   for "how many of the latest utterances, usually 1", said one). The plugin sends every segment since the
   last hand-off, and the model's account of the request beside them, so the first mate has both the context
-  the model heard and the words to check it against.
+  the model heard and the words to check it against. The talk (the voice's own spoken lines beside the
+  captain's, in order) was added on the captain's call of 2026-11-15, after "Hold it for now" went without
+  the reply it answered.
 - **Turn taking** stays `semantic_vad` at `auto`, a setting. The spike measured the end-of-turn wait as the
   largest part of the latency; *high* is the setting to try first.
 

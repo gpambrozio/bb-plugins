@@ -121,8 +121,10 @@ there, and `bb plugin dev` to rebuild on save. See [`AGENTS.md`](AGENTS.md).
   mate out loud, on the desktop or on your phone with bb in front. It reads the board to answer "what
   needs me?" or "what's running?" without waking the first mate, and hands anything else over as your own
   words, transcribed, under the line `Spoken by the captain through FirstMate voice:`, followed by the
-  voice assistant's account of what you asked, in its own words and marked as its own; the first mate acts
-  on the account but checks it against your words, which alone count as yours. Its reply is read back to
+  voice assistant's account of what you asked, in its own words and marked as its own, and the talk your
+  words came from, with what the voice said aloud to you (the first mate's reply it read out included),
+  so a short "hold it" arrives with what "it" was. The first mate acts on the account but checks it
+  against your words, which alone count as yours. Its reply is read back to
   you. It never presses a board button: you tap those on the board, or ask it to hand the request to the
   first mate in your words. The first mate treats spoken words like typed ones, except that they never
   count as your word on a merge, anything destructive, publishing, credentials or settings. Only plugins
