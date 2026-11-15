@@ -6,22 +6,53 @@ import { FakeClock } from "./testing/fakes";
 const READ_BACK = 'Press "Hold" on Fix the flaky login test, web pull request 42?';
 
 describe("isConfirmation", () => {
-  it.each(["Yes.", "yeah", "Yep, do it.", "Go ahead", "Confirm.", "Aye.", "Yes please do"])("takes %s as a yes", (text) => {
-    expect(isConfirmation(text)).toBe(true);
-  });
-
-  it.each(["No.", "Wait.", "Don't.", "Yes— no, stop.", "Not sure.", "Cancel that.", "Hold on, yes", "", "Okay.", "Yes, and then also tell it to run the whole test suite again"])(
-    "refuses %s",
+  it.each(["Yes.", "yeah", "Yep, do it.", "Go ahead", "Confirm.", "Aye.", "Yes please do", "Aye aye, captain.", "Yes, thank you.", "Okay, yes.", "Yes. Yes."])(
+    "takes %s as a yes",
     (text) => {
-      expect(isConfirmation(text)).toBe(false);
+      expect(isConfirmation(text)).toBe(true);
     },
   );
+
+  it.each([
+    "No.",
+    "Wait.",
+    "Don't.",
+    "Yes— no, stop.",
+    "Not sure.",
+    "Cancel that.",
+    "Hold on, yes",
+    "",
+    "Okay.",
+    "Yes, and then also tell it to run the whole test suite again",
+    "Yes, but use SQLite instead.",
+    "Yes, if the checks are green.",
+    "Yeah, or the other one.",
+    "Sure, after lunch.",
+    "Yes for the second one.",
+    "Yes, press SQLite.",
+  ])("refuses %s", (text) => {
+    expect(isConfirmation(text)).toBe(false);
+  });
 });
 
 describe("saidReadBack", () => {
-  it("needs most of the read-back's words", () => {
+  it("takes the read-back said whole and in order, with a short lead-in", () => {
+    expect(saidReadBack(READ_BACK, READ_BACK)).toBe(true);
     expect(saidReadBack('Captain, press "Hold" on Fix the flaky login test, web pull request 42?', READ_BACK)).toBe(true);
+    expect(saidReadBack('Aye, let me check. Shall I press \u201cHold\u201d on Fix the flaky login test, web pull request forty-two, captain?', READ_BACK)).toBe(true);
+    expect(saidReadBack("Press Hold on Fix the flaky login test, web pull request number 42?", READ_BACK)).toBe(true);
+  });
+
+  it("refuses a read-back that names another button, another pull request, or comes negated", () => {
     expect(saidReadBack("Shall I press it?", READ_BACK)).toBe(false);
+    const postgres = 'Press "Postgres" on Choose the database for the web project?';
+    expect(saidReadBack('Press "SQLite" on Choose the database for the web project?', postgres)).toBe(false);
+    expect(saidReadBack('Press "Hold" on Fix the flaky login test, web pull request 43?', READ_BACK)).toBe(false);
+    expect(saidReadBack('Press "Hold" on Fix the flaky login test, web pull request 42 or 43?', READ_BACK)).toBe(false);
+    expect(saidReadBack('I won\'t press "Hold" on Fix the flaky login test, web pull request 42.', READ_BACK)).toBe(false);
+    expect(saidReadBack('Instead, press "Hold" on Fix the flaky login test, web pull request 42?', READ_BACK)).toBe(false);
+    expect(saidReadBack('Press "Hold" on the flaky login test, web pull request 42?', READ_BACK)).toBe(false);
+    expect(saidReadBack('Hold on Fix the flaky login test, web pull request 42, press?', READ_BACK)).toBe(false);
   });
 });
 
@@ -58,6 +89,19 @@ describe("UtteranceLog", () => {
     await clock.advance(1_000);
     log.transcribed("d", "and the dark mode branch");
     expect((await log.sinceBoundary(clock.now()))?.text).toBe("and the dark mode branch");
+  });
+
+  it("reserves the segments as a send starts: a boundary while a transcript is on its way does not drop it", async () => {
+    const clock = new FakeClock();
+    const log = new UtteranceLog(clock);
+    log.committed("a");
+    const asked = clock.now();
+    const pending = log.sinceBoundary(asked);
+    await clock.advance(1_000);
+    log.boundary(clock.now()); // some reply finished meanwhile
+    await clock.advance(400);
+    log.transcribed("a", "rebase the icons");
+    expect((await pending)?.text).toBe("rebase the icons");
   });
 
   it("keeps to the send limit, dropping the oldest segments", async () => {
@@ -102,6 +146,27 @@ describe("PressGuard", () => {
     utterances.committed("u1");
     utterances.transcribed("u1", "Yes.");
     expect(await presses.confirm(proposal.token)).toMatchObject({ ok: true, proposal: { ref: "c1.a2", etag: "etag" } });
+  });
+
+  it("refuses a read-back that named another choice, whatever the yes after it", async () => {
+    const { clock, utterances, guard: presses } = guard();
+    const postgres = 'Press "Postgres" on Choose the database for the web project?';
+    const proposal = presses.propose("c2.a1", "etag", postgres);
+    presses.spoke('Press "SQLite" on Choose the database for the web project?');
+    presses.audioFinished();
+    await clock.advance(1_500);
+    utterances.transcribed("u1", "Yes.");
+    expect(await presses.confirm(proposal.token)).toMatchObject({ ok: false, reason: expect.stringContaining("read-back was not spoken") });
+  });
+
+  it("refuses a qualified or corrected yes", async () => {
+    const { clock, utterances, guard: presses } = guard();
+    const proposal = presses.propose("c2.a1", "etag", READ_BACK);
+    presses.spoke(READ_BACK);
+    presses.audioFinished();
+    await clock.advance(1_500);
+    utterances.transcribed("u1", "Yes, but use SQLite instead.");
+    expect(await presses.confirm(proposal.token)).toMatchObject({ ok: false, reason: expect.stringContaining("not a plain yes") });
   });
 
   it("does not count a read-back the captain talked over", async () => {

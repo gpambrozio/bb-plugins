@@ -2,7 +2,9 @@
  * P1 announcements: the first mate's reply to a voice ask, a new or changed captain's call, a worker that
  * failed, the first mate waiting on a question. Each waits for a gap — no response under way, no reply
  * audio playing, the captain not speaking — and then asks the model, in the conversation, to say it in a
- * sentence or two. One cut off by the captain (barge-in) goes back in the queue once.
+ * sentence or two. One cut off by the captain (barge-in) goes back in the queue once, whether the cut came
+ * while the response was still being made or later, while its audio played (a response is done before its
+ * audio has drained).
  *
  * The details are already in the conversation (an update item, or the reply item), so the instruction
  * names only what kind of news it is, which also says why the turn ran.
@@ -45,6 +47,8 @@ export class Announcer {
   private playing = false;
   /** The announcement whose response is under way, by id. */
   private live: Announcement | null = null;
+  /** The announcement whose response is done and whose audio may still be playing, until that audio ends. */
+  private played: Announcement | null = null;
   private counter = 0;
 
   constructor(private readonly output: AnnouncerOutput) {}
@@ -78,7 +82,9 @@ export class Announcer {
       const finished = this.live;
       this.live = null;
       // The captain spoke over it: say it again once, at the next gap.
-      if (status === "cancelled" && finished.tries < 2) this.queue.unshift(finished);
+      if (status === "cancelled") {
+        if (finished.tries < 2) this.queue.unshift(finished);
+      } else this.played = finished;
     }
     this.pump();
   }
@@ -93,6 +99,20 @@ export class Announcer {
 
   audio(playing: boolean): void {
     this.playing = playing;
+    this.pump();
+  }
+
+  /**
+   * Reply audio ended: played to its end, or `cut` by the captain talking over it. `announcementId` is the
+   * announcement that audio belonged to, if any; one cut in playback is said again once, at the next gap.
+   */
+  audioEnded(cut: boolean, announcementId: string | null): void {
+    this.playing = false;
+    const played = this.played;
+    if (announcementId !== null && played?.id === announcementId) {
+      this.played = null;
+      if (cut && played.tries < 2) this.queue.unshift(played);
+    }
     this.pump();
   }
 

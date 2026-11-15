@@ -7,9 +7,9 @@
  *   voice reply heard to its end (talked over, it is not one). The model never writes these words; it writes
  *   only its own account beside them. Kept in memory for the session only.
  * - **The two-phase press.** `propose` picks a button and returns a read-back the server wrote; it counts as
- *   read back only once the model's own speech said it and that audio played to its end, not cut off. `confirm` then needs the captain's first words after
- *   the read-back to be a short yes with no negation, within 30 s, on a single-use token, at most one press
- *   every 10 s. Firstmate-crew checks the card's etag and refuses tap-only buttons again.
+ *   read back only once the model's own speech said it, whole and in order, and that audio played to its
+ *   end, not cut off. `confirm` then needs the captain's first words after the read-back to be a plain yes
+ *   and nothing else, within 30 s, on a single-use token, at most one press every 10 s. Firstmate-crew checks the card's etag and refuses tap-only buttons again.
  * - **One send at a time,** and rate limits on sends, presses and brief reads.
  */
 import type { Clock } from "./ports";
@@ -72,11 +72,11 @@ export class UtteranceLog {
     this.boundaryAt = Math.max(this.boundaryAt, at);
   }
 
-  /** The unused segments since the last boundary, committed by `before`, oldest first. */
-  private eligible(before: number): Utterance[] {
+  /** The unused segments after `floor` (a boundary), committed by `before`, oldest first. */
+  private eligible(floor: number, before: number): Utterance[] {
     const now = this.clock.now();
     return this.items.filter(
-      (item) => item.committedAt > this.boundaryAt && item.committedAt <= before && !item.used && now - item.committedAt <= UTTERANCE_MAX_AGE_MS,
+      (item) => item.committedAt > floor && item.committedAt <= before && !item.used && now - item.committedAt <= UTTERANCE_MAX_AGE_MS,
     );
   }
 
@@ -86,8 +86,11 @@ export class UtteranceLog {
    * first. Null when there is nothing to send.
    */
   async sinceBoundary(before: number): Promise<{ text: string; items: Utterance[] } | null> {
-    await this.until(() => this.eligible(before).every((item) => item.text !== null), TRANSCRIPT_WAIT_MS);
-    const said = this.eligible(before).filter((item) => item.text !== null && item.text !== "");
+    // The boundary is read once, as the send starts: a reply that ends while a transcript is still on its
+    // way must not take that transcript out of the send that was already waiting for it.
+    const floor = this.boundaryAt;
+    await this.until(() => this.eligible(floor, before).every((item) => item.text !== null), TRANSCRIPT_WAIT_MS);
+    const said = this.eligible(floor, before).filter((item) => item.text !== null && item.text !== "");
     const items: Utterance[] = [];
     let length = -1;
     for (const item of said.reverse()) {
@@ -151,31 +154,127 @@ export class UtteranceLog {
 
 // --- Yes and no ------------------------------------------------------------------------------------
 
-const NEGATIONS = /\b(no|nope|nah|not|don'?t|do not|never|wait|stop|cancel|hold on|hang on|abort|scratch that|negative|wrong|isn'?t|shouldn'?t|actually)\b/iu;
-const AFFIRMATIONS = /\b(yes|yeah|yep|yup|aye|confirm(ed)?|do it|go ahead|go for it|please do|press it|affirmative|correct|that'?s right|sure)\b/iu;
-/** A yes is short: a longer answer is a new request, not a confirmation. */
-const MAX_CONFIRM_WORDS = 8;
-
+/** The words of a text, lowercase, without punctuation; curly apostrophes made straight. */
 function words(text: string): string[] {
-  return text.toLowerCase().replace(/[^\p{L}\p{N}' ]+/gu, " ").split(/\s+/u).filter(Boolean);
+  return text.toLowerCase().replace(/[‘’]/gu, "'").replace(/[^\p{L}\p{N}' ]+/gu, " ").split(/\s+/u).filter(Boolean);
 }
 
-/** A short affirmative answer with no negation in it. */
+/** Every way the captain may say a plain yes, as whole phrases; longest first so "aye aye" wins over "aye". */
+const AFFIRMATIVES: readonly string[][] = [
+  "go for it",
+  "that's right",
+  "aye aye",
+  "go ahead",
+  "do it",
+  "please do",
+  "press it",
+  "yes",
+  "yeah",
+  "yep",
+  "yup",
+  "aye",
+  "confirm",
+  "confirmed",
+  "affirmative",
+  "correct",
+  "sure",
+]
+  .map((phrase) => phrase.split(" "))
+  .sort((x, y) => y.length - x.length);
+
+/** Politeness around a yes that changes nothing. Anything else in the answer makes it not a plain yes. */
+const FILLERS: readonly string[][] = ["thank you", "please", "captain", "sir", "thanks", "ok", "okay", "alright", "oh", "um", "uh"]
+  .map((phrase) => phrase.split(" "))
+  .sort((x, y) => y.length - x.length);
+
+function startsWith(tokens: readonly string[], at: number, phrase: readonly string[]): boolean {
+  return phrase.every((word, i) => tokens[at + i] === word);
+}
+
+/**
+ * A plain yes: the whole answer is affirmative phrases and politeness, nothing else. "Yes, but use SQLite
+ * instead", "yes, and also…", "hold on, yes" and "not yet" are not.
+ */
 export function isConfirmation(text: string): boolean {
-  const said = words(text);
-  if (said.length === 0 || said.length > MAX_CONFIRM_WORDS) return false;
-  const plain = said.join(" ");
-  return AFFIRMATIONS.test(plain) && !NEGATIONS.test(plain);
+  const tokens = words(text);
+  let at = 0;
+  let affirmed = false;
+  while (at < tokens.length) {
+    const yes = AFFIRMATIVES.find((phrase) => startsWith(tokens, at, phrase));
+    if (yes !== undefined) {
+      affirmed = true;
+      at += yes.length;
+      continue;
+    }
+    const filler = FILLERS.find((phrase) => startsWith(tokens, at, phrase));
+    if (filler === undefined) return false;
+    at += filler.length;
+  }
+  return affirmed;
 }
 
-/** Whether the model's own speech said the read-back: most of its words, in any order. */
+// --- The read-back ---------------------------------------------------------------------------------
+
+const BREAK = "\u0000";
+const UNITS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen"];
+const TENS = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"];
+/** Words a read-back may lose or gain in speech without changing what it names. */
+const DROPPED = new Set(["number"]);
+/** Words before a read-back that turn it into something other than the offer to press. */
+const NEGATING = new Set(["not", "don't", "won't", "never", "no", "can't", "cannot", "shouldn't", "wouldn't", "instead", "rather", "except", "unless"]);
+/** Words that may follow a read-back in its sentence ("…pull request 42, captain?"). */
+const TRAILING = new Set(["captain", "sir"]);
+/** How long the lead-in to a read-back may be ("Captain, shall I"), in words. */
+const LEAD_IN_MAX = 6;
+
+/**
+ * The tokens of a text for matching a read-back: words, with sentence ends kept as a mark, numbers under a
+ * hundred said in words turned into digits ("forty-two", "forty two"), and "number" dropped.
+ */
+function readBackTokens(text: string): string[] {
+  const marked = text.replace(/[.?!]+(?=\s|$)/gu, ` ${BREAK} `).replace(/(\p{L})-(\p{L})/gu, "$1 $2");
+  const tokens = marked
+    .split(/\s+/u)
+    .flatMap((chunk) => (chunk === BREAK ? [BREAK] : words(chunk)))
+    .filter((token) => !DROPPED.has(token));
+  const out: string[] = [];
+  for (let i = 0; i < tokens.length; i += 1) {
+    const token = tokens[i] ?? "";
+    const tens = TENS.indexOf(token);
+    if (tens >= 2) {
+      const unit = UNITS.indexOf(tokens[i + 1] ?? "");
+      if (unit >= 1 && unit <= 9) {
+        out.push(String(tens * 10 + unit));
+        i += 1;
+      } else out.push(String(tens * 10));
+      continue;
+    }
+    const unit = UNITS.indexOf(token);
+    out.push(unit >= 0 ? String(unit) : token);
+  }
+  return out;
+}
+
+/**
+ * Whether the model's own speech said the read-back: every word of it, in order, as one sentence that ends
+ * with it, after at most a short lead-in with no negation in it. A different label, a different pull request
+ * number or "I won't press…" does not count.
+ */
 export function saidReadBack(spoken: string, readBack: string): boolean {
-  const expected = new Set(words(readBack).filter((word) => word.length > 2));
-  if (expected.size === 0) return false;
-  const heard = new Set(words(spoken));
-  let found = 0;
-  for (const word of expected) if (heard.has(word)) found += 1;
-  return found / expected.size >= 0.75;
+  const expected = readBackTokens(readBack).filter((token) => token !== BREAK);
+  if (expected.length === 0) return false;
+  const heard = readBackTokens(spoken);
+  for (let start = 0; start + expected.length <= heard.length; start += 1) {
+    if (!startsWith(heard, start, expected)) continue;
+    let end = start + expected.length;
+    while (TRAILING.has(heard[end] ?? "")) end += 1;
+    if (end < heard.length && heard[end] !== BREAK) continue;
+    let lead = start;
+    while (lead > 0 && heard[lead - 1] !== BREAK) lead -= 1;
+    const leadIn = heard.slice(lead, start);
+    if (leadIn.length <= LEAD_IN_MAX && !leadIn.some((token) => NEGATING.has(token))) return true;
+  }
+  return false;
 }
 
 // --- Rate limits -----------------------------------------------------------------------------------

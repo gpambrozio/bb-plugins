@@ -14,11 +14,12 @@ the voice, the decisions behind phase 1, and the phase 0 decision record.
 
 | File | What it owns |
 | --- | --- |
-| `server.ts` | Wiring only: settings (model, reasoning, voice, turn taking), the app's RPCs (`session.start`, `renew`, `end`, `alive`, `current`, `mate.thread`), the thread events that make a live session read the brief again, `onDispose`. |
+| `server/rpc.ts` | The app-facing RPC handlers, refusing any caller but bb's app. |
+| `server.ts` | Wiring only: settings (model, reasoning, voice, turn taking), the app's RPCs (`session.start`, `renew`, `renewed`, `end`, `alive`, `current`, `mate.thread`, behind `server/rpc.ts`'s app-only gate), the thread events that make a live session read the brief again, `onDispose`. |
 | `server/session.ts` | One live session (`VoiceSessions`): the call, the sideband, event dispatch, the tools, renewal at the hour's cap, the idle end, the app's heartbeat. |
 | `server/policy.ts` | The utterance log, yes and no, the two-phase press (`PressGuard`), one send at a time, rate limits. |
 | `server/brief-sync.ts` | Brief → diff → `[firstmate-update]` items, full replacement every 15 updates or 20 minutes, and the events worth announcing. |
-| `server/announce.ts` | P1 announcements at gaps, once more when the captain talks over one. |
+| `server/announce.ts` | P1 announcements at gaps, once more when the captain talks over one, during the response or later while its audio plays. |
 | `server/instructions.ts`, `server/tools.ts` | The standing instructions (design §8's outline) and the tool list with levels. |
 | `server/openai-call.ts`, `server/openai-port.ts` | The SDP exchange, hangup and sideband socket (from the spike), and `RealtimePort` over them. |
 | `server/credentials.ts`, `server/crew-client.ts` | codex-realtime's `realtimeConnection`; firstmate-crew's `voice.v1`. |
@@ -37,20 +38,34 @@ the voice, the decisions behind phase 1, and the phase 0 decision record.
   firstmate-crew puts under its own heading and tells the first mate to check against the words. A hand-off
   is a boundary: a send, a press confirmation (both through `markUsed`, which spends everything said before
   them too), or a voice reply heard to its end (`output_audio_buffer.stopped` for a response that is not an
-  announcement, at the moment that response started). A reply the captain talked over (`cleared`) is no
-  boundary, so a request turn detection split at a pause goes whole. A press carries the button's own
+  announcement and called no tool, at the moment that response started; a tool's spoken preamble is no
+  answer). A send reads the boundary once as it starts, so a reply ending while a transcript is on its way
+  cannot drop that transcript. A reply the captain talked over (`cleared`) is no boundary, so a request turn detection split at a pause goes whole. A press carries the button's own
   prompt, which firstmate-crew looks up. The account is the model's only text into bb: never let it stand
   for the captain's words, and add no other tool argument that reaches the first mate as text. The log
   records how many segments and characters went, never the words.
 - **Presses are two-phase and checked against the captain's transcript, not the model's claim.**
   `propose_press` returns a server-written read-back; it counts as read back only when the model's own output
-  transcript says most of it and that audio then plays to its end (`output_audio_buffer.stopped`; a reply the
-  captain talked over, `cleared`, does not count); `confirm_press` needs the captain's first utterance committed after that to be
-  a short yes with no negation, within 30 s, on a single-use token, one press in 10 s. firstmate-crew checks
-  the card's etag again and refuses tap-only buttons again.
+  transcript says every word of it, in order, as the end of one sentence after at most a short lead-in with
+  no negation (`saidReadBack`; the only give is numbers in words and a dropped "number"), and that audio
+  then plays to its end (`output_audio_buffer.stopped`; a reply the captain talked over, `cleared`, does not
+  count). A read-back naming another label or another pull request does not count. `confirm_press` needs
+  the captain's first utterance committed after that to be a plain yes, wholly made of affirmative phrases
+  and politeness (`isConfirmation`: "yes, but use SQLite" and "yes, if it's green" are not), within 30 s, on
+  a single-use token, one press in 10 s. firstmate-crew checks the card's etag again and refuses tap-only
+  buttons again.
 - **Merges, anything destructive, publishing, credentials and settings are never pressed by voice** in phase
-  1, read-back or not. firstmate-crew marks them `tapOnly` (a wide word net) and refuses the press; this
-  plugin refuses to propose one. The voice may offer to ask the first mate, which answers with a board button.
+  1, read-back or not. firstmate-crew marks them `tapOnly`, failing closed (a wide word net, any command to
+  run, and any prompt not on its short known-safe list), and refuses the press; this plugin refuses to
+  propose one. The first mate's charter still refuses to act on a voice press that turns out to be one. The voice may offer to ask the first mate, which answers with a board button.
+- **Only bb's app opens or steers a session.** Every app-facing RPC (`server/rpc.ts`) refuses a caller bb
+  does not name as a client, before anything runs: another plugin could otherwise spend the subscription
+  and speak for the captain through this plugin's allowed identities.
+- **A renewal completes on the device's word.** `session.renew` makes the new call; the old call is hung up
+  only on `session.renewed`, which the app sends once its new leg connected. Without it the session ends
+  within 30 s (`RENEW_ACK_MS`), and the app ends it at once when its leg fails. In the app, each Talk is an
+  attempt every await checks, so an End while the microphone prompt or the start is pending leaves that
+  attempt to stop its own tracks, close its leg and end its server session.
 - **The token never reaches the app or the log.** The SDP exchange, the sideband and the hangup run on the
   server; `redact` covers every error body; the token is held for one call's life.
 - **Transcripts live in memory for the session only.** The log gets tool names and session events, never

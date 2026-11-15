@@ -22,6 +22,8 @@ import { realtimeTools } from "./tools";
 export const RENEW_AFTER_MS = 57 * 60_000;
 /** How long the app has to send a renewal offer before the session ends. */
 export const RENEW_GRACE_MS = 2 * 60_000;
+/** How long the app has, once the renewal's call is made, to say its new leg connected before the session ends. */
+export const RENEW_ACK_MS = 30_000;
 export const IDLE_END_MS = 10 * 60_000;
 export const IDLE_CHECK_MS = 15_000;
 /** A session the app has not said it holds for this long ends (the app says so every `ALIVE_EVERY_MS`). */
@@ -93,7 +95,9 @@ class Call {
   /** When each response started, by id: a send copies only words said before the response that asked for it. */
   readonly responses = new Map<string, number>();
   /** Responses this side made to announce something: heard to the end, they are not a reply to the captain. */
-  readonly announcements = new Set<string>();
+  readonly announcements = new Map<string, string>();
+  /** Responses that called a tool: their speech is a preamble to it, not an answer, so never a boundary. */
+  readonly toolResponses = new Set<string>();
   /** The newest response, for an audio event that names none. */
   lastResponseId: string | null = null;
   activeResponses = 0;
@@ -195,13 +199,32 @@ export class VoiceSession {
     return answer;
   }
 
-  /** A second call at the time cap, from the app's new offer; the first is hung up once this one's sideband is open. */
+  /**
+   * A second call at the time cap, from the app's new offer. The first is hung up only once the app says its
+   * new leg connected (`renewed`); a renewal the device cannot connect ends the session within
+   * `RENEW_ACK_MS`, rather than leaving it marked live with no audio.
+   */
   async renew(sdp: string): Promise<string> {
     if (this.ended) throw new Error("This voice session has ended.");
     const previous = this.call;
-    if (previous !== null) previous.ending = true;
-    this.retiring = previous;
+    if (this.retiring !== null) {
+      // A second offer while one renewal is unconfirmed: that unconfirmed call goes, the original stays.
+      if (previous !== null) await this.hangup(previous);
+    } else {
+      if (previous !== null) previous.ending = true;
+      this.retiring = previous;
+    }
     return this.openCall(sdp, "renew");
+  }
+
+  /** The app's new leg connected: retire the old call and start the next hour. */
+  async renewed(): Promise<void> {
+    if (this.ended || this.retiring === null) return;
+    const retiring = this.retiring;
+    this.retiring = null;
+    if (this.renewTimer !== null) this.clock.clearTimeout(this.renewTimer);
+    this.renewTimer = this.clock.setTimeout(() => this.askRenewal(), RENEW_AFTER_MS);
+    await this.hangup(retiring);
   }
 
   /** The app still holds the call. */
@@ -248,7 +271,10 @@ export class VoiceSession {
     this.deps.log.info(`Voice session ${this.id}: call ${callId} made (${why}), model ${this.config.model}, reasoning ${this.config.effort}.`);
     this.openSideband(call, why);
     if (this.renewTimer !== null) this.clock.clearTimeout(this.renewTimer);
-    this.renewTimer = this.clock.setTimeout(() => this.askRenewal(), RENEW_AFTER_MS);
+    this.renewTimer =
+      why === "start"
+        ? this.clock.setTimeout(() => this.askRenewal(), RENEW_AFTER_MS)
+        : this.clock.setTimeout(() => void this.end("the renewal did not connect on the device"), RENEW_ACK_MS);
     return answerSdp;
   }
 
@@ -295,9 +321,7 @@ export class VoiceSession {
     if (why === "renew") {
       const recap = this.exchanges.slice(-RECAP_ITEMS).map((item) => `${item.who === "captain" ? "Captain" : "Voice"}: ${item.text}`);
       if (recap.length > 0) call.addItem(`${RENEWAL_NOTE}\n${recap.join("\n")}`);
-      const retiring = this.retiring;
-      this.retiring = null;
-      if (retiring !== null) await this.hangup(retiring);
+      // The old call stays up until the app says the new leg connected (`renewed`).
       return;
     }
     call.announcer.responseStarted();
@@ -350,7 +374,7 @@ export class VoiceSession {
         if (typeof response?.id === "string") {
           call.responses.set(response.id, this.clock.now());
           call.lastResponseId = response.id;
-          if (typeof response.metadata?.fmv_announcement === "string") call.announcements.add(response.id);
+          if (typeof response.metadata?.fmv_announcement === "string") call.announcements.set(response.id, response.metadata.fmv_announcement);
         }
         call.activeResponses += 1;
         call.askedAt = null;
@@ -362,7 +386,7 @@ export class VoiceSession {
         const response = event.response as { id?: unknown; status?: unknown; metadata?: { fmv_announcement?: unknown } | null } | undefined;
         call.activeResponses = Math.max(0, call.activeResponses - 1);
         const announcement = typeof response?.metadata?.fmv_announcement === "string" ? response.metadata.fmv_announcement : null;
-        if (announcement !== null && typeof response?.id === "string") call.announcements.add(response.id);
+        if (announcement !== null && typeof response?.id === "string") call.announcements.set(response.id, announcement);
         const status = typeof response?.status === "string" ? response.status : "completed";
         if (call.pendingCreate && call.activeResponses === 0) {
           call.pendingCreate = false;
@@ -386,15 +410,20 @@ export class VoiceSession {
         call.guard.audioFinished();
         // A reply heard to its end answered what the captain had said: a later send starts after it.
         const responseId = typeof event.response_id === "string" ? event.response_id : call.lastResponseId;
-        if (responseId !== null && !call.announcements.has(responseId)) this.utterances.boundary(call.responses.get(responseId) ?? this.clock.now());
-        call.announcer.audio(false);
+        if (responseId !== null && !call.announcements.has(responseId) && !call.toolResponses.has(responseId)) {
+          this.utterances.boundary(call.responses.get(responseId) ?? this.clock.now());
+        }
+        call.announcer.audioEnded(false, responseId === null ? null : (call.announcements.get(responseId) ?? null));
         break;
       }
-      case "output_audio_buffer.cleared":
+      case "output_audio_buffer.cleared": {
         call.guard.audioCut();
-        call.announcer.audio(false);
+        const responseId = typeof event.response_id === "string" ? event.response_id : call.lastResponseId;
+        call.announcer.audioEnded(true, responseId === null ? null : (call.announcements.get(responseId) ?? null));
         break;
+      }
       case "response.function_call_arguments.done":
+        if (typeof event.response_id === "string") call.toolResponses.add(event.response_id);
         void this.runTool(call, event);
         break;
       case "error": {
@@ -685,6 +714,10 @@ export class VoiceSessions {
 
   async renew(sessionId: string, sdp: string): Promise<{ answerSdp: string }> {
     return { answerSdp: await this.find(sessionId).renew(sdp) };
+  }
+
+  async renewed(sessionId: string): Promise<void> {
+    await this.find(sessionId).renewed();
   }
 
   async end(sessionId: string, reason: string): Promise<void> {

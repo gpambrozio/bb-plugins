@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { BRIEF_LABEL, UPDATE_LABEL } from "./brief-sync";
-import { IDLE_END_MS, RENEW_AFTER_MS, RENEW_GRACE_MS, VoiceSessions, type SessionSignal } from "./session";
+import { IDLE_END_MS, RENEW_ACK_MS, RENEW_AFTER_MS, RENEW_GRACE_MS, VoiceSessions, type SessionSignal } from "./session";
 import { FakeClock, FakeCrew, FakeRealtime, brief, quietLog, settle, type FakeSideband } from "./testing/fakes";
 
 const CONFIG = { model: "gpt-realtime-2.1", effort: "low", voice: "marin", eagerness: "auto" as const };
@@ -154,6 +154,44 @@ describe("asking the first mate", () => {
     await say(sideband, clock, "Have the icons wait for the login fix.");
     await respond(sideband, clock, { tool: ASK("The captain wants the icon work to wait until the login fix lands.") });
     expect(crew.asks).toEqual(["Have the icons wait for the login fix."]);
+  });
+
+  it("keeps a segment whose transcript arrives after the tool began, past its own preamble's end", async () => {
+    const { sideband, clock, crew } = await setup();
+    await respond(sideband, clock, { spoken: "Captain, all quiet." });
+    sideband.emit({ type: "input_audio_buffer.speech_started" });
+    await clock.advance(800);
+    sideband.emit({ type: "input_audio_buffer.speech_stopped" });
+    sideband.emit({ type: "input_audio_buffer.committed", item_id: "late_1" });
+    // The response speaks a preamble and calls the tool before the transcript is in.
+    sideband.emit({ type: "response.created", response: { id: "resp_late" } });
+    sideband.emit({ type: "output_audio_buffer.started", response_id: "resp_late" });
+    sideband.emit({ type: "response.output_audio_transcript.done", response_id: "resp_late", transcript: "Passing that along." });
+    sideband.emit({
+      type: "response.function_call_arguments.done",
+      response_id: "resp_late",
+      call_id: "call_late",
+      name: "ask_first_mate",
+      arguments: JSON.stringify({ request: "The captain wants the icons rebased." }),
+    });
+    await clock.advance(200);
+    sideband.emit({ type: "response.done", response: { id: "resp_late", status: "completed" } });
+    await clock.advance(1_000);
+    sideband.emit({ type: "output_audio_buffer.stopped", response_id: "resp_late" });
+    await clock.advance(200);
+    sideband.emit({ type: "conversation.item.input_audio_transcription.completed", item_id: "late_1", transcript: "Rebase the icons." });
+    await clock.advance(100);
+    expect(crew.asks).toEqual(["Rebase the icons."]);
+    expect(sideband.outputs().at(-1)).toMatchObject({ ok: true });
+  });
+
+  it("does not count a tool's preamble heard to the end as a hand-off", async () => {
+    const { sideband, clock, crew } = await setup();
+    await say(sideband, clock, "What does the login fix need?");
+    await respond(sideband, clock, { spoken: "Let me look.", tool: { name: "get_card", args: { ref: "c1" } } });
+    await say(sideband, clock, "And then ask the first mate to rebase it.");
+    await respond(sideband, clock, { tool: ASK() });
+    expect(crew.asks).toEqual(["What does the login fix need? And then ask the first mate to rebase it."]);
   });
 
   it("does not count an announcement heard to the end as a hand-off", async () => {
@@ -383,6 +421,49 @@ describe("announcements", () => {
     const again = sideband.ofType("response.create").at(-1) as { response: { metadata: { fmv_announcement: string } } };
     expect(again.response.metadata.fmv_announcement).toBe(id);
   });
+
+  it("says an announcement again once when the captain talks over its audio after the response was done", async () => {
+    const { sideband, clock, crew, sessions } = await setup();
+    await respond(sideband, clock);
+    crew.current = brief({ etag: "e5", failed: [{ ...brief().captainsCall[0]!, ref: "c8", title: "Upgrade the icons", column: "failed", hold: null, actions: [] }] });
+    sessions.threadEvent();
+    await clock.advance(2_000);
+    const creates = () => sideband.ofType("response.create") as { response?: { metadata?: { fmv_announcement?: string } } }[];
+    const before = creates().length;
+    const id = creates().at(-1)?.response?.metadata?.fmv_announcement ?? "";
+    sideband.emit({ type: "response.created", response: { id: "r_ann2", metadata: { fmv_announcement: id } } });
+    sideband.emit({ type: "output_audio_buffer.started", response_id: "r_ann2" });
+    sideband.emit({ type: "response.done", response: { id: "r_ann2", status: "completed", metadata: { fmv_announcement: id } } });
+    await settle();
+    expect(creates()).toHaveLength(before);
+    sideband.emit({ type: "input_audio_buffer.speech_started" });
+    sideband.emit({ type: "output_audio_buffer.cleared", response_id: "r_ann2" });
+    await settle();
+    sideband.emit({ type: "input_audio_buffer.speech_stopped" });
+    await settle();
+    expect(creates()).toHaveLength(before + 1);
+    expect(creates().at(-1)?.response?.metadata?.fmv_announcement).toBe(id);
+  });
+
+  it("does not say an announcement again once its audio played to the end", async () => {
+    const { sideband, clock, crew, sessions } = await setup();
+    await respond(sideband, clock);
+    crew.current = brief({ etag: "e6", failed: [{ ...brief().captainsCall[0]!, ref: "c9", title: "Upgrade the fonts", column: "failed", hold: null, actions: [] }] });
+    sessions.threadEvent();
+    await clock.advance(2_000);
+    const creates = () => sideband.ofType("response.create");
+    const before = creates().length;
+    const id = (creates().at(-1) as { response: { metadata: { fmv_announcement: string } } }).response.metadata.fmv_announcement;
+    sideband.emit({ type: "response.created", response: { id: "r_ann3", metadata: { fmv_announcement: id } } });
+    sideband.emit({ type: "output_audio_buffer.started", response_id: "r_ann3" });
+    sideband.emit({ type: "response.done", response: { id: "r_ann3", status: "completed", metadata: { fmv_announcement: id } } });
+    sideband.emit({ type: "output_audio_buffer.stopped", response_id: "r_ann3" });
+    sideband.emit({ type: "input_audio_buffer.speech_started" });
+    sideband.emit({ type: "output_audio_buffer.cleared", response_id: "r_ann3" });
+    sideband.emit({ type: "input_audio_buffer.speech_stopped" });
+    await settle();
+    expect(creates()).toHaveLength(before);
+  });
 });
 
 describe("the session's life", () => {
@@ -424,8 +505,29 @@ describe("the session's life", () => {
     await settle();
     expect(renewed.items()[0]?.startsWith(BRIEF_LABEL)).toBe(true);
     expect(renewed.items().some((text) => text.startsWith("[firstmate-recent]") && text.includes("Remember the login fix."))).toBe(true);
+    // The old call stays until the device says its new leg connected.
+    expect(realtime.hungUp).toEqual([]);
+    await sessions.renewed(started.sessionId);
     expect(realtime.hungUp).toEqual(["rtc_1"]);
     expect(sessions.current()?.id).toBe(started.sessionId);
+    // The next hour has started: no end at the old deadline.
+    await pass(RENEW_GRACE_MS + RENEW_ACK_MS);
+    expect(sessions.current()?.id).toBe(started.sessionId);
+  });
+
+  it("ends when the device cannot connect the renewal's leg, though the renewal call was made", async () => {
+    const { clock, sideband, realtime, signals, sessions, started, pass } = await setup();
+    for (let i = 0; i < 58; i += 1) {
+      await say(sideband, clock, "Status?");
+      await pass(59_000);
+    }
+    await sessions.renew(started.sessionId, "v=0 renewal offer");
+    realtime.last.open();
+    await settle();
+    await pass(RENEW_ACK_MS + 1_000);
+    expect(realtime.hungUp.sort()).toEqual(["rtc_1", "rtc_2"]);
+    expect(sessions.current()).toBeNull();
+    expect(signals).toContainEqual({ sessionId: started.sessionId, type: "state", state: "ended", reason: "the renewal did not connect on the device" });
   });
 
   it("ends when the app does not renew in time", async () => {

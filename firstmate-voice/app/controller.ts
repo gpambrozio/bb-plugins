@@ -42,6 +42,11 @@ export class VoiceController {
   private audio: HTMLAudioElement | null = null;
   private wakeLock: WakeLock | null = null;
   private heartbeat: ReturnType<typeof setInterval> | null = null;
+  /**
+   * Which Talk is current. Every await in a connection or a renewal checks it, so an End (or a new Talk)
+   * while one is pending leaves that attempt to clean up its own microphone, leg and server session.
+   */
+  private attempt = 0;
   private readonly onHidden = () => {
     if (document.visibilityState === "hidden" && voicePlatform() === "mobile") void this.end("bb left the screen");
   };
@@ -87,40 +92,49 @@ export class VoiceController {
     audio.autoplay = true;
     void audio.play().catch(() => undefined);
     this.set({ phase: "connecting", muted: false, note: null, speaking: { captain: false, voice: false } });
-    void this.connect(rpc, audio);
+    this.attempt += 1;
+    void this.connect(rpc, audio, this.attempt);
   }
 
-  private async connect(rpc: Rpc, audio: HTMLAudioElement): Promise<void> {
+  private async connect(rpc: Rpc, audio: HTMLAudioElement, attempt: number): Promise<void> {
+    let stream: MediaStream | null = null;
+    let leg: Leg | null = null;
     let made: string | null = null;
+    const current = () => attempt === this.attempt && this.state.phase === "connecting";
+    /** This attempt's own microphone, leg and server session, whatever became of the controller since. */
+    const abandon = async (reason: string) => {
+      leg?.close();
+      for (const track of stream?.getTracks() ?? []) track.stop();
+      if (made !== null) await rpc.call("session.end", { sessionId: made, reason }).catch(() => null);
+    };
     try {
-      this.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
-      const leg = await this.newLeg(audio);
-      const { sessionId, answerSdp } = await rpc.call("session.start", { sdp: leg.offer });
-      made = sessionId;
-      if (this.state.phase !== "connecting") {
-        leg.close();
-        await rpc.call("session.end", { sessionId, reason: "ended while connecting" }).catch(() => null);
-        return;
-      }
-      this.sessionId = sessionId;
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+      if (!current()) return void (await abandon("ended while connecting"));
+      leg = await this.newLeg(stream, audio);
+      if (!current()) return void (await abandon("ended while connecting"));
+      const started = await rpc.call("session.start", { sdp: leg.offer });
+      made = started.sessionId;
+      if (!current()) return void (await abandon("ended while connecting"));
+      this.stream = stream;
+      this.sessionId = started.sessionId;
       this.leg = leg;
-      await leg.accept(answerSdp);
+      await leg.accept(started.answerSdp);
       await leg.connected();
+      if (!current()) return void (await abandon("ended while connecting"));
       this.set({ phase: "live" });
       this.heartbeat = setInterval(() => void this.beat(), ALIVE_EVERY_MS);
       document.addEventListener("visibilitychange", this.onHidden);
       await this.keepAwake();
     } catch (error) {
       // The server made the call but this side cannot hold it: hang it up now, not at the heartbeat's end.
-      if (made !== null) await rpc.call("session.end", { sessionId: made, reason: "the device could not connect" }).catch(() => null);
-      this.teardown(talkFailure(error));
+      await abandon("the device could not connect");
+      if (attempt === this.attempt) this.teardown(talkFailure(error));
     }
   }
 
-  private newLeg(audio: HTMLAudioElement): Promise<Leg> {
-    if (this.stream === null) throw new Error("No microphone.");
+  private newLeg(stream: MediaStream, audio: HTMLAudioElement): Promise<Leg> {
     return openLeg({
-      stream: this.stream,
+      stream,
       audio,
       onSpeaking: (speaking) => this.set({ speaking: { ...this.state.speaking, ...speaking } }),
       onFailed: () => {
@@ -173,28 +187,41 @@ export class VoiceController {
     else if (signal.state === "ended") this.teardown(signal.reason === undefined ? "The voice session ended." : `Voice ended: ${signal.reason}.`);
   }
 
-  /** A second leg on the same microphone for the server's new call; the old leg closes once it is up. */
+  /**
+   * A second leg on the same microphone for the server's new call. The server retires the old call only once
+   * this side says the new leg connected (`session.renewed`); when it cannot, the session ends here and now
+   * rather than living on with no audio.
+   */
   private async renew(): Promise<void> {
     const rpc = this.rpc;
     const sessionId = this.sessionId;
     const audio = this.audio;
-    if (rpc === null || sessionId === null || audio === null || this.state.phase !== "live") return;
+    const stream = this.stream;
+    const attempt = this.attempt;
+    if (rpc === null || sessionId === null || audio === null || stream === null || this.state.phase !== "live") return;
     let next: Leg | null = null;
+    const current = () => attempt === this.attempt && this.sessionId === sessionId && this.state.phase === "live";
     try {
-      next = await this.newLeg(audio);
+      next = await this.newLeg(stream, audio);
       const { answerSdp } = await rpc.call("session.renew", { sessionId, sdp: next.offer });
       await next.accept(answerSdp);
       await next.connected();
+      if (!current()) {
+        next.close();
+        return;
+      }
+      await rpc.call("session.renewed", { sessionId });
       const old = this.leg;
       this.leg = next;
       old?.close();
     } catch {
       next?.close();
-      // The server ends the session when no renewal reaches it in time.
+      if (current()) await this.end("the renewal could not connect");
     }
   }
 
   private teardown(note: string | null): void {
+    this.attempt += 1;
     if (this.heartbeat !== null) clearInterval(this.heartbeat);
     this.heartbeat = null;
     document.removeEventListener("visibilitychange", this.onHidden);

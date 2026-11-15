@@ -10,6 +10,7 @@ import { z } from "zod";
 import { subscriptionToken } from "./server/credentials";
 import { crewClient } from "./server/crew-client";
 import { openAiRealtime } from "./server/openai-port";
+import { sessionHandlers } from "./server/rpc";
 import { systemClock } from "./server/ports";
 import { VoiceSessions, type Eagerness, type SessionSignal } from "./server/session";
 import { SESSION_CHANNEL } from "./shared/channel";
@@ -19,6 +20,8 @@ const Sdp = z.string().min(10).max(20_000);
 export const rpcContract = defineRpcContract({
   "session.start": { input: z.object({ sdp: Sdp }), output: z.object({ sessionId: z.string(), answerSdp: z.string() }) },
   "session.renew": { input: z.object({ sessionId: z.string(), sdp: Sdp }), output: z.object({ answerSdp: z.string() }) },
+  /** The app's new leg at a renewal connected: the server retires the old call. */
+  "session.renewed": { input: z.object({ sessionId: z.string() }), output: z.null() },
   "session.end": { input: z.object({ sessionId: z.string(), reason: z.string().max(80) }), output: z.null() },
   "session.alive": { input: z.object({ sessionId: z.string() }), output: z.object({ live: z.boolean() }) },
   "session.current": { input: z.object({}), output: z.object({ sessionId: z.string().nullable() }) },
@@ -74,24 +77,7 @@ export default async function plugin(bb: BbPluginApi) {
   );
   bb.onDispose(() => sessions.dispose());
 
-  bb.rpc.register(rpcContract, {
-    "session.start": ({ sdp }) => sessions.start(sdp),
-    "session.renew": ({ sessionId, sdp }) => sessions.renew(sessionId, sdp),
-    "session.end": async ({ sessionId, reason }) => {
-      await sessions.end(sessionId, reason);
-      return null;
-    },
-    "session.alive": async ({ sessionId }) => ({ live: sessions.alive(sessionId) }),
-    "session.current": async () => ({ sessionId: sessions.current()?.id ?? null }),
-    "mate.thread": async () => {
-      try {
-        return { threadId: await crew.mateThreadId() };
-      } catch {
-        // firstmate-crew missing, off, or not letting this plugin in: no Talk button on any thread.
-        return { threadId: null };
-      }
-    },
-  });
+  bb.rpc.register(rpcContract, sessionHandlers(sessions, crew));
 
   // Any thread may be the first mate or one of its crew; the session reads the brief again, debounced.
   const changed = () => sessions.threadEvent();
