@@ -47,7 +47,8 @@ the voice, the decisions behind phase 1, and the phase 0 decision record.
 - **Presses are two-phase and checked against the captain's transcript, not the model's claim.**
   `propose_press` returns a server-written read-back; it counts as read back only when the model's own output
   transcript says every word of it, in order, as the end of one sentence after at most a short lead-in with
-  no negation (`saidReadBack`; the only give is numbers in words and a dropped "number"), and that audio
+  no negation (`saidReadBack`; the only give is numbers in words of any size, a dropped "number", and full stops inside
+  the read-back, which a card title may hold, said or not), and that audio
   then plays to its end (`output_audio_buffer.stopped`; a reply the captain talked over, `cleared`, does not
   count). A read-back naming another label or another pull request does not count. `confirm_press` needs
   the captain's first utterance committed after that to be a plain yes, wholly made of affirmative phrases
@@ -65,7 +66,8 @@ the voice, the decisions behind phase 1, and the phase 0 decision record.
   only on `session.renewed`, which the app sends once its new leg connected. Without it the session ends
   within 30 s (`RENEW_ACK_MS`), and the app ends it at once when its leg fails. In the app, each Talk is an
   attempt every await checks, so an End while the microphone prompt or the start is pending leaves that
-  attempt to stop its own tracks, close its leg and end its server session.
+  attempt to stop its own tracks, close its leg and end its server session. End and a renewal check it again
+  after their own RPCs answer: a late End answer or renewal acknowledgement never touches a newer Talk.
 - **The token never reaches the app or the log.** The SDP exchange, the sideband and the hangup run on the
   server; `redact` covers every error body; the token is held for one call's life.
 - **Transcripts live in memory for the session only.** The log gets tool names and session events, never

@@ -84,6 +84,14 @@ describe("tapOnlyReason", () => {
     ["Sync", "git fetch origin && git status in web", "a command to run"],
     ["Frobnicate", "Frobnicate the widgets", "not known to be safe"],
     ["Big ask", `Tell me ${"and more ".repeat(100)}`, "not known to be safe"],
+    ["Proceed", "Check CI, then fast-forward main to the reviewed branch.", "a merge"],
+    ["Proceed", "Check CI, then bring main up to the reviewed branch.", "not known to be safe"],
+    ["Inspect", "Check the database, then empty all tables.", "destructive or irreversible"],
+    ["Inspect", "Check the database. Then make every table blank.", "not known to be safe"],
+    ["Inspect", "Look at the logs and then tidy the database.", "not known to be safe"],
+    ["Status", "Tell me the status, afterwards switch main to the review branch.", "not known to be safe"],
+    ["Fix", "Fix the parser by rewriting main.", "not known to be safe"],
+    ["Go", "Go to the web project and do what the review says.", "not known to be safe"],
   ])("keeps %s on the board (%s)", (label, prompt, reason) => {
     expect(tapOnlyReason(label, prompt)).toBe(reason);
   });
@@ -93,6 +101,9 @@ describe("tapOnlyReason", () => {
     ["Postgres", "Use Postgres for the web project's database (pick-db)"],
     ["Review loop on web#42", "Run a review loop on https://github.com/you/web/pull/42"],
     ["Retry", "Retry the flaky test once more"],
+    ["Quick status", "Tell me in one short sentence how many items are on the backlog, and do nothing else."],
+    ["Running?", "What is running on web right now?"],
+    ["Wait", "Wait for the second review on https://github.com/you/web/pull/42"],
   ])("lets the voice press %s after a yes", (label, prompt) => {
     expect(tapOnlyReason(label, prompt)).toBeNull();
   });

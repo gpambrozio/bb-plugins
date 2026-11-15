@@ -227,46 +227,100 @@ const TRAILING = new Set(["captain", "sir"]);
 /** How long the lead-in to a read-back may be ("Captain, shall I"), in words. */
 const LEAD_IN_MAX = 6;
 
+/** The value of a number word, or null: units, teens and tens; "hundred" and "thousand" are scales. */
+function numberWord(token: string): number | null {
+  const unit = UNITS.indexOf(token);
+  if (unit >= 0) return unit;
+  const tens = TENS.indexOf(token);
+  return tens >= 2 ? tens * 10 : null;
+}
+
+const SCALES: Record<string, number> = { hundred: 100, thousand: 1000 };
+
 /**
- * The tokens of a text for matching a read-back: words, with sentence ends kept as a mark, numbers under a
- * hundred said in words turned into digits ("forty-two", "forty two"), and "number" dropped.
+ * Numbers said in words, turned into digits: "forty-two", "one hundred twelve", "one hundred and twelve",
+ * "a hundred", "one thousand one hundred twelve". An "and" counts only between a scale and more number.
  */
-function readBackTokens(text: string): string[] {
-  const marked = text.replace(/[.?!]+(?=\s|$)/gu, ` ${BREAK} `).replace(/(\p{L})-(\p{L})/gu, "$1 $2");
-  const tokens = marked
-    .split(/\s+/u)
-    .flatMap((chunk) => (chunk === BREAK ? [BREAK] : words(chunk)))
-    .filter((token) => !DROPPED.has(token));
+function digitsFor(tokens: readonly string[]): string[] {
   const out: string[] = [];
-  for (let i = 0; i < tokens.length; i += 1) {
+  let i = 0;
+  while (i < tokens.length) {
     const token = tokens[i] ?? "";
-    const tens = TENS.indexOf(token);
-    if (tens >= 2) {
-      const unit = UNITS.indexOf(tokens[i + 1] ?? "");
-      if (unit >= 1 && unit <= 9) {
-        out.push(String(tens * 10 + unit));
-        i += 1;
-      } else out.push(String(tens * 10));
+    const startsNumber = numberWord(token) !== null || (token === "a" && SCALES[tokens[i + 1] ?? ""] !== undefined);
+    if (!startsNumber) {
+      out.push(token);
+      i += 1;
       continue;
     }
-    const unit = UNITS.indexOf(token);
-    out.push(unit >= 0 ? String(unit) : token);
+    let total = 0;
+    let current = 0;
+    let lastWasScale = false;
+    while (i < tokens.length) {
+      const word = tokens[i] ?? "";
+      const value = word === "a" ? 1 : numberWord(word);
+      const scale = SCALES[word];
+      if (value !== null && !(word === "a" && SCALES[tokens[i + 1] ?? ""] === undefined)) {
+        current += value;
+        lastWasScale = false;
+      } else if (scale === 100) {
+        current = (current === 0 ? 1 : current) * 100;
+        lastWasScale = true;
+      } else if (scale === 1000) {
+        total += (current === 0 ? 1 : current) * 1000;
+        current = 0;
+        lastWasScale = true;
+      } else if (word === "and" && lastWasScale && numberWord(tokens[i + 1] ?? "") !== null) {
+        lastWasScale = false;
+      } else break;
+      i += 1;
+    }
+    out.push(String(total + current));
   }
   return out;
 }
 
 /**
- * Whether the model's own speech said the read-back: every word of it, in order, as one sentence that ends
- * with it, after at most a short lead-in with no negation in it. A different label, a different pull request
- * number or "I won't press…" does not count.
+ * The tokens of a text for matching a read-back: words, with sentence ends kept as a mark, numbers said in
+ * words turned into digits, digit groups joined ("1,112"), and "number" dropped.
+ */
+function readBackTokens(text: string): string[] {
+  const marked = text
+    .replace(/(\d),(?=\d{3}\b)/gu, "$1")
+    .replace(/[.?!]+(?=["'”’)]*(\s|$))/gu, ` ${BREAK} `)
+    .replace(/(\p{L})-(\p{L})/gu, "$1 $2");
+  const tokens = marked
+    .split(/\s+/u)
+    .flatMap((chunk) => (chunk === BREAK ? [BREAK] : words(chunk)))
+    .filter((token) => !DROPPED.has(token));
+  return digitsFor(tokens);
+}
+
+/**
+ * Where the expected words appear in order from `start`, skipping sentence marks inside the span (a title
+ * may hold a full stop, and speech may add or drop one); the index after the last, or -1.
+ */
+function matchFrom(heard: readonly string[], start: number, expected: readonly string[]): number {
+  let at = start;
+  for (const word of expected) {
+    while (at > start && heard[at] === BREAK) at += 1;
+    if (heard[at] !== word) return -1;
+    at += 1;
+  }
+  return at;
+}
+
+/**
+ * Whether the model's own speech said the read-back: every word of it, in order, as the end of a sentence,
+ * after at most a short lead-in with no negation in it. A different label, a different pull request number
+ * or "I won't press…" does not count.
  */
 export function saidReadBack(spoken: string, readBack: string): boolean {
   const expected = readBackTokens(readBack).filter((token) => token !== BREAK);
   if (expected.length === 0) return false;
   const heard = readBackTokens(spoken);
-  for (let start = 0; start + expected.length <= heard.length; start += 1) {
-    if (!startsWith(heard, start, expected)) continue;
-    let end = start + expected.length;
+  for (let start = 0; start < heard.length; start += 1) {
+    let end = matchFrom(heard, start, expected);
+    if (end < 0) continue;
     while (TRAILING.has(heard[end] ?? "")) end += 1;
     if (end < heard.length && heard[end] !== BREAK) continue;
     let lead = start;

@@ -214,7 +214,7 @@ describe("voice.v1.press", () => {
     expect(threads.sent).toEqual([]);
   });
 
-  it("never presses a destructive command or a prompt whose safety is unknown, even with the right etag", async () => {
+  it("never presses a destructive command, a compound prompt or one whose safety is unknown, even with the right etag", async () => {
     const fleet = voiceFleet();
     const call = fleet.cards[0]!;
     const risky = {
@@ -227,6 +227,8 @@ describe("voice.v1.press", () => {
             actions: [
               { label: "Clean workspace", prompt: "Run git clean -fdx in the checkout." },
               { label: "Frobnicate", prompt: "Frobnicate the widgets" },
+              { label: "Proceed", prompt: "Check CI, then bring main up to the reviewed branch." },
+              { label: "Inspect", prompt: "Check the database. Then make every table blank." },
             ],
           },
         },
@@ -235,8 +237,8 @@ describe("voice.v1.press", () => {
     };
     const { handlers, threads } = await setup({ fleet: async () => risky });
     const card = await handlers["voice.v1.card"]({ ref: "c1" }, VOICE);
-    expect(card.pressable.map((item) => item.tapOnly)).toEqual(["destructive or irreversible", "not known to be safe"]);
-    for (const ref of ["c1.a1", "c1.a2"]) {
+    expect(card.pressable.map((item) => item.tapOnly)).toEqual(["destructive or irreversible", "not known to be safe", "not known to be safe", "not known to be safe"]);
+    for (const ref of ["c1.a1", "c1.a2", "c1.a3", "c1.a4"]) {
       await expect(handlers["voice.v1.press"]({ ref, etag: card.etag }, VOICE)).rejects.toMatchObject({ code: "forbidden" });
     }
     expect(threads.sent).toEqual([]);

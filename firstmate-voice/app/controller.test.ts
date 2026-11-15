@@ -176,6 +176,77 @@ describe("the voice controller", () => {
     await voice.end("ended by the captain");
   });
 
+  /** An RPC whose answers to the named methods wait until the test releases them. */
+  function heldRpc(held: string[]) {
+    const calls: { method: string; input: Record<string, unknown> }[] = [];
+    const waiting = new Map<string, () => void>();
+    let sessions = 0;
+    const rpc = {
+      call: async (method: string, input: Record<string, unknown>) => {
+        calls.push({ method, input });
+        if (held.includes(method)) await new Promise<void>((resolve) => waiting.set(method, resolve));
+        if (method === "session.start") {
+          sessions += 1;
+          return { sessionId: `fmv_${sessions}`, answerSdp: "answer" };
+        }
+        if (method === "session.renew") return { answerSdp: "renewal answer" };
+        if (method === "session.alive") return { live: true };
+        return null;
+      },
+    };
+    return { rpc: rpc as never, calls, release: (method: string) => waiting.get(method)?.() };
+  }
+
+  it("leaves a newer session alone when an old renewal's acknowledgement comes back late", async () => {
+    const asks = pendingMicrophone();
+    const { rpc, release } = heldRpc(["session.renewed"]);
+    const voice = new VoiceController();
+    voice.attach(rpc);
+    voice.talk();
+    asks[0]?.resolve(fakeStream().stream);
+    await flush();
+    voice.onSignal({ sessionId: "fmv_1", type: "renew" });
+    await flush(); // the renewal's leg is up; its acknowledgement is held
+    voice.onSignal({ sessionId: "fmv_1", type: "state", state: "ended", reason: "the hour ran out" });
+    voice.talk();
+    const fresh = fakeStream();
+    asks[1]?.resolve(fresh.stream);
+    await flush();
+    expect(voice.snapshot.phase).toBe("live");
+    const freshLeg = legs[2]!;
+    release("session.renewed");
+    await flush();
+    expect(legs[1]?.closed).toBe(true); // the obsolete renewal leg closed itself
+    expect(freshLeg.closed).toBe(false);
+    expect(fresh.track.stopped).toBe(false);
+    expect(voice.snapshot.phase).toBe("live");
+    await voice.end("ended by the captain");
+  });
+
+  it("leaves a newer session alone when End's answer comes back after the ended signal and a new Talk", async () => {
+    const asks = pendingMicrophone();
+    const { rpc, release } = heldRpc(["session.end"]);
+    const voice = new VoiceController();
+    voice.attach(rpc);
+    voice.talk();
+    asks[0]?.resolve(fakeStream().stream);
+    await flush();
+    const ending = voice.end("ended by the captain");
+    voice.onSignal({ sessionId: "fmv_1", type: "state", state: "ended", reason: "ended by the captain" });
+    expect(voice.snapshot.phase).toBe("idle");
+    voice.talk();
+    const fresh = fakeStream();
+    asks[1]?.resolve(fresh.stream);
+    await flush();
+    expect(voice.snapshot.phase).toBe("live");
+    release("session.end");
+    await ending;
+    await flush();
+    expect(voice.snapshot.phase).toBe("live");
+    expect(fresh.track.stopped).toBe(false);
+    expect(legs[1]?.closed).toBe(false);
+  });
+
   it("ends the session when the renewal's leg fails after the server made the call", async () => {
     const asks = pendingMicrophone();
     const { rpc, calls } = fakeRpc();

@@ -43,6 +43,33 @@ describe("saidReadBack", () => {
     expect(saidReadBack("Press Hold on Fix the flaky login test, web pull request number 42?", READ_BACK)).toBe(true);
   });
 
+  it("takes a read-back whose title holds a full stop, said exactly or with the stop dropped", () => {
+    const readBack = 'Press "Hold" on Fix parsing. Add regression coverage, web pull request 42?';
+    expect(saidReadBack(readBack, readBack)).toBe(true);
+    expect(saidReadBack('Captain, press "Hold" on Fix parsing, add regression coverage, web pull request 42?', readBack)).toBe(true);
+    const asked = 'Press "Postgres?" on Choose the database?';
+    expect(saidReadBack(asked, asked)).toBe(true);
+    expect(saidReadBack('Press "SQLite?" on Choose the database?', asked)).toBe(false);
+    expect(saidReadBack('I won\'t press "Hold" on Fix parsing. Add regression coverage, web pull request 42.', readBack)).toBe(false);
+  });
+
+  it("reads pull request numbers of a hundred and more said in words, and only the right one", () => {
+    const r112 = 'Press "Hold" on Fix the flaky login test, web pull request 112?';
+    for (const said of ["one hundred twelve", "one hundred and twelve", "a hundred and twelve", "112"]) {
+      expect(saidReadBack(`Press "Hold" on Fix the flaky login test, web pull request ${said}?`, r112)).toBe(true);
+    }
+    for (const said of ["one hundred eleven", "one hundred and thirteen", "one hundred", "two hundred twelve", "1,112"]) {
+      expect(saidReadBack(`Press "Hold" on Fix the flaky login test, web pull request ${said}?`, r112)).toBe(false);
+    }
+    const r1112 = 'Press "Hold" on Fix the flaky login test, web pull request 1112?';
+    for (const said of ["one thousand one hundred twelve", "one thousand one hundred and twelve", "1,112", "1112"]) {
+      expect(saidReadBack(`Press "Hold" on Fix the flaky login test, web pull request ${said}?`, r1112)).toBe(true);
+    }
+    for (const said of ["one thousand one hundred eleven", "one thousand twelve", "112"]) {
+      expect(saidReadBack(`Press "Hold" on Fix the flaky login test, web pull request ${said}?`, r1112)).toBe(false);
+    }
+  });
+
   it("refuses a read-back that names another button, another pull request, or comes negated", () => {
     expect(saidReadBack("Shall I press it?", READ_BACK)).toBe(false);
     const postgres = 'Press "Postgres" on Choose the database for the web project?';

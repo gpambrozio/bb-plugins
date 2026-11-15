@@ -88,11 +88,11 @@ export function untrusted(text: string, head: number, tail: number, titles?: Rea
  * whole words, so a wide net errs towards the board.
  */
 const TAP_ONLY: readonly { reason: string; pattern: RegExp }[] = [
-  { reason: "a merge", pattern: /\b(merg\w*|land|landing|squash\w*|ship it)\b/iu },
+  { reason: "a merge", pattern: /\b(merg\w*|land|landing|squash\w*|ship it|fast[- ]?forward\w*|ff-only|cherry[- ]?pick\w*)\b/iu },
   {
     reason: "destructive or irreversible",
     pattern:
-      /\b(delet\w*|remov\w*|discard\w*|drop\w*|destroy\w*|wip(e|es|ed|ing)|purg\w*|reset\w*|revert\w*|roll ?back\w*|force\w*|archiv\w*|clos(e|es|ed|ing)|abandon\w*|kill\w*|end (it|the|this|that)|stop the worker|retire\w*|clean\w*|eras\w*|nuk\w*|prun\w*|truncat\w*|overwrit\w*|uninstall\w*|wipe ?out|throw away|rm|rmdir|unlink\w*|rewrit\w* (the )?history|hard reset|--hard|shred\w*|format the|mkfs|dd)\b/iu,
+      /\b(delet\w*|remov\w*|discard\w*|drop\w*|destroy\w*|wip(e|es|ed|ing)|purg\w*|reset\w*|revert\w*|roll ?back\w*|force\w*|archiv\w*|clos(e|es|ed|ing)|abandon\w*|kill\w*|end (it|the|this|that)|stop the worker|retire\w*|clean\w*|eras\w*|nuk\w*|prun\w*|truncat\w*|overwrit\w*|uninstall\w*|wipe ?out|throw away|rm|rmdir|unlink\w*|rewrit\w* (the )?history|hard reset|--hard|shred\w*|format the|mkfs|dd|empty|emptie\w*|clear(s|ed|ing)? (out|all|the)|wipe\w*)\b/iu,
   },
   { reason: "publishing", pattern: /\b(publish\w*|releas\w*|deploy\w*|tag(s|ged|ging)?|push\w*|announc\w*|tweet\w*|e-?mail\w*)\b/iu },
   { reason: "credentials", pattern: /\b(credential\w*|secret\w*|tokens?|password\w*|passphrase\w*|api[ -]?keys?|ssh[ -]?keys?|log ?in|sign ?in|auth\w*)\b/iu },
@@ -111,14 +111,59 @@ const COMMAND: readonly RegExp[] = [
 ];
 
 /**
- * What a voice press may ask for, the fail-closed side: a prompt whose intent is none of these is not known
- * to be safe, and stays a tap on the board. Asking, reviewing, waiting, choosing and ordinary work.
+ * What a voice press may ask for, the fail-closed side: the whole prompt must be one known operation, said
+ * as one clause. A second clause ("…, then fast-forward main"), a sentence break or a joining word means a
+ * compound request whose later parts this list never vetted, so it stays a tap on the board, as does any
+ * prompt that opens with no known operation. Each operation is decided by its opening words.
  */
-const KNOWN_SAFE =
-  /\b(tell|report|summari[sz]e|explain|describe|show|list|check|look|review|read|status|wait|hold|pause|keep|leave|continue|resume|retry|answer|ask|investigate|research|plan|draft|start|work|fix|add|write|implement|test|update|rebase|run (a |the )?(tests?|test suite|checks?|gate|review loop|review)|use|pick|choose|go with|prefer|what|how|why|which|when|where)\b/iu;
+const OPERATIONS: readonly RegExp[] = [
+  // A question or a report: the first mate answers, nothing changes.
+  /^(what|what's|how|why|which|when|where|who|is|are|was|were|does|do|did|has|have|can|could|should|will)\b.*\?$/u,
+  /^(tell me|report|summari[sz]e|explain|describe|show me|list|give me)\b/u,
+  // Reading and reviewing.
+  /^(check|look at|look into|investigate|research|review|read|plan)\b/u,
+  /^run a review loop on\b/u,
+  /^(run|rerun|re-run) (the )?(tests?|test suite|checks?|gate|ci)\b/u,
+  /^retry\b/u,
+  // Waiting and choosing.
+  /^(leave|keep)\b.*\bopen\b/u,
+  /^(hold off on|hold|wait for|wait|pause)\b/u,
+  /^(use|pick|choose|go with|prefer)\b/u,
+  // Ordinary work in a crewmate's own checkout.
+  /^(fix|start work on|start|implement|add|write)\b/u,
+];
+
+/** Words that join a second request onto the first. */
+const JOINERS =
+  /\b(then|and|also|afterwards|after|before|next|plus|but|or|while|once|if|unless|so|by|via|using|instead|except|finally|meanwhile)\b/u;
+
+/** A tail the first mate's prompts may end with that adds no request. */
+const HARMLESS_TAIL = /(,?\s*and do nothing else|\.\s*nothing else)\s*[.!]?$/u;
 
 /** A prompt longer than this is not one the captain heard enough of to vouch for. */
 const PROMPT_MAX = 600;
+
+/** Whether the prompt is one known operation, whole, with nothing joined on. */
+export function knownOperation(prompt: string): boolean {
+  if (prompt.length > PROMPT_MAX) return false;
+  let text = prompt
+    .toLowerCase()
+    .replace(/[‘’]/gu, "'")
+    .replace(/https?:\/\/\S+/gu, "url")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .replace(HARMLESS_TAIL, "")
+    .replace(/[.!]$/u, "")
+    .trim();
+  if (text === "") return false;
+  const question = text.endsWith("?");
+  if (question) text = text.slice(0, -1);
+  // A sentence break or a clause mark inside is a second request.
+  if (/[.!?;:](\s|$)|\n/u.test(text)) return false;
+  if (JOINERS.test(text.replace(/\bonce (more|again)\b/gu, "again"))) return false;
+  const whole = question ? `${text}?` : text;
+  return OPERATIONS.some((operation) => operation.test(whole));
+}
 
 /** Why the button can only be pressed on the board, or null when the voice may press it after a yes. */
 export function tapOnlyReason(label: string, prompt: string): string | null {
@@ -127,7 +172,7 @@ export function tapOnlyReason(label: string, prompt: string): string | null {
   if (listed !== undefined) return listed;
   const prose = text.replace(/https?:\/\/\S+/giu, " ");
   if (COMMAND.some((pattern) => pattern.test(prose))) return "a command to run";
-  if (prompt.length > PROMPT_MAX || !KNOWN_SAFE.test(prompt)) return "not known to be safe";
+  if (!knownOperation(prompt)) return "not known to be safe";
   return null;
 }
 

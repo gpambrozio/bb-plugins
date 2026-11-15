@@ -124,7 +124,7 @@ export class VoiceController {
       this.set({ phase: "live" });
       this.heartbeat = setInterval(() => void this.beat(), ALIVE_EVERY_MS);
       document.addEventListener("visibilitychange", this.onHidden);
-      await this.keepAwake();
+      await this.keepAwake(attempt);
     } catch (error) {
       // The server made the call but this side cannot hold it: hang it up now, not at the heartbeat's end.
       await abandon("the device could not connect");
@@ -156,13 +156,16 @@ export class VoiceController {
   }
 
   /** The screen stays on while talking, where the device allows it; nothing breaks where it does not. */
-  private async keepAwake(): Promise<void> {
+  private async keepAwake(attempt: number): Promise<void> {
     if (voicePlatform() === "desktop") return;
     try {
       const nav = navigator as unknown as { wakeLock?: { request(type: "screen"): Promise<WakeLock> } };
-      this.wakeLock = (await nav.wakeLock?.request("screen")) ?? null;
+      const lock = (await nav.wakeLock?.request("screen")) ?? null;
+      // Ended while the lock was being granted: let it go rather than hold the screen on for nothing.
+      if (attempt !== this.attempt) void lock?.release().catch(() => undefined);
+      else this.wakeLock = lock;
     } catch {
-      this.wakeLock = null;
+      // No wake lock here; the session works without it.
     }
   }
 
@@ -175,9 +178,12 @@ export class VoiceController {
   async end(reason: string): Promise<void> {
     if (!this.active) return;
     const sessionId = this.sessionId;
+    const attempt = this.attempt;
     this.set({ phase: "ending" });
     if (sessionId !== null) await this.rpc?.call("session.end", { sessionId, reason }).catch(() => null);
-    this.teardown(null);
+    // The server's "ended" signal can arrive first and a new Talk begin before this answer does: that new
+    // session is not this End's to tear down.
+    if (attempt === this.attempt) this.teardown(null);
   }
 
   /** What the server said on the session channel. */
@@ -211,6 +217,12 @@ export class VoiceController {
         return;
       }
       await rpc.call("session.renewed", { sessionId });
+      // The session may have ended, and a new Talk begun, while the acknowledgement was on its way: then
+      // this renewal's leg is obsolete, and it closes only itself.
+      if (!current()) {
+        next.close();
+        return;
+      }
       const old = this.leg;
       this.leg = next;
       old?.close();
