@@ -120,8 +120,10 @@ there, and `bb plugin dev` to rebuild on save. See [`AGENTS.md`](AGENTS.md).
 - **By voice, with FirstMate voice.** The separate `firstmate-voice` plugin lets you talk to the first
   mate out loud, on the desktop or on your phone with bb in front. It reads the board to answer "what
   needs me?" or "what's running?" without waking the first mate, and hands anything else over as your own
-  words, transcribed, under the line `Spoken by the captain through FirstMate voice:`; the first mate's
-  reply is read back to you. It can press a card's button or a suggestion after reading it back and
+  words, transcribed, under the line `Spoken by the captain through FirstMate voice:`, followed by the
+  voice assistant's account of what you asked, in its own words and marked as its own; the first mate acts
+  on the account but checks it against your words, which alone count as yours. Its reply is read back to
+  you. It can press a card's button or a suggestion after reading it back and
   hearing your yes, under `Pressed by the captain through FirstMate voice:`, but never a merge, anything
   destructive, publishing, credentials or settings: those stay a tap on the board. The first mate treats
   spoken words like typed ones, except that they never count as your word on any of those. Only plugins

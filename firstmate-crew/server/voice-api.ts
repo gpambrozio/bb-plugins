@@ -5,9 +5,11 @@
  * - **The caller gate.** Every handler refuses unless bb names the caller as a plugin listed in the
  *   `voicePlugins` setting, the way codex-realtime gates its token. The bb app and `bb plugin rpc call` are
  *   refused too: the verbs here speak for the captain.
- * - **Words, verbatim and marked.** An ask or an answer is the captain's transcribed words under
- *   `VOICE_SPOKEN_PREFIX`, on one line, with any prefix inside them defused, plus an agent-only note. The
- *   voice plugin copies the words from its transcript; the model never writes them.
+ * - **Words, verbatim and marked, beside the voice's account.** An ask or an answer is the captain's
+ *   transcribed words under `VOICE_SPOKEN_PREFIX`, then the voice assistant's account of them under
+ *   `VOICE_ACCOUNT_HEADING`, each on one line with every mark inside defused, plus an agent-only note on
+ *   how to weigh the two. The voice plugin copies the words from its transcript; the model writes only the
+ *   account.
  * - **A press sends exactly the button's prompt**, under `VOICE_PRESSED_PREFIX`, and only for a card or
  *   suggestion unchanged since the voice read it (its etag), and never for a tap-only button. A pressed
  *   suggestion leaves `data/suggestions.md` as it does when the board presses it.
@@ -17,7 +19,7 @@ import { experimental_PluginRpcRefusal as PluginRpcRefusal, type ExperimentalPlu
 
 import { answerText, cardSubject } from "../app/format";
 import type { Fleet } from "../shared/types";
-import { VOICE_PRESSED_PREFIX, VOICE_SPOKEN_PREFIX, voiceContract, type VoiceBrief, type VoiceReply, type VoiceSent } from "../shared/voice";
+import { VOICE_ACCOUNT_HEADING, VOICE_PRESSED_PREFIX, VOICE_SPOKEN_PREFIX, voiceContract, type VoiceBrief, type VoiceReply, type VoiceSent } from "../shared/voice";
 import { RELAY_PREFIX } from "./cli";
 import { sendCompactingIfDue } from "./compact-first";
 import { removeSuggestion } from "./home";
@@ -69,7 +71,7 @@ export async function requireVoiceCaller(deps: MateDeps, caller: Caller | undefi
 }
 
 /** Every line that marks where a message came from; the captain's words must not carry one. */
-const MARKS = [VOICE_SPOKEN_PREFIX, VOICE_PRESSED_PREFIX, RELAY_PREFIX].map((mark) => mark.replace(/:$/u, ""));
+const MARKS = [VOICE_SPOKEN_PREFIX, VOICE_PRESSED_PREFIX, VOICE_ACCOUNT_HEADING, RELAY_PREFIX].map((mark) => mark.replace(/:$/u, ""));
 
 function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
@@ -85,6 +87,14 @@ export function defuse(words: string): string {
     text = text.replace(new RegExp(`${escapeRegExp(mark)}:?`, "giu"), (found) => `"${found.replace(/:$/u, "")}"`);
   }
   return text;
+}
+
+/**
+ * A spoken message: the captain's words under the spoken line, then the voice assistant's account under its
+ * own heading, each on one line with every mark defused, so the two cannot be mistaken for each other.
+ */
+export function spoken(words: string, account: string): string {
+  return `${VOICE_SPOKEN_PREFIX}\n\n${words}\n\n${VOICE_ACCOUNT_HEADING}\n\n${defuse(account)}`;
 }
 
 /** What the voice reads of the first mate: its status, whether it waits on someone, its last reply and when. */
@@ -149,19 +159,16 @@ export function voiceHandlers(deps: VoiceDeps, replies: MateReplyCache = new Mat
         status: mate === null ? null : mate.status,
       };
     },
-    "voice.v1.ask": async ({ words, context }, ctx) => {
+    "voice.v1.ask": async ({ words, account }, ctx) => {
       await requireVoiceCaller(deps, ctx?.experimental_caller);
-      const note = await message(TEMPLATES.voiceAskNote, {
-        context: context === undefined || context.trim() === "" ? "none given." : defuse(context),
-      });
-      return send(`${VOICE_SPOKEN_PREFIX}\n\n${defuse(words)}`, note);
+      return send(spoken(defuse(words), account), await message(TEMPLATES.voiceAskNote));
     },
-    "voice.v1.answer": async ({ ref, words }, ctx) => {
+    "voice.v1.answer": async ({ ref, words, account }, ctx) => {
       await requireVoiceCaller(deps, ctx?.experimental_caller);
       if (!/^c\d+$/u.test(ref)) throw notFound(ref);
       const card = findCard(await deps.fleet(), deps.refs, ref);
       if (card === null) throw notFound(ref);
-      return send(`${VOICE_SPOKEN_PREFIX}\n\n${answerText(cardSubject(card), defuse(words))}`, await message(TEMPLATES.voiceAnswerNote));
+      return send(spoken(answerText(cardSubject(card), defuse(words)), account), await message(TEMPLATES.voiceAnswerNote));
     },
     "voice.v1.press": async ({ ref, etag }, ctx) => {
       await requireVoiceCaller(deps, ctx?.experimental_caller);

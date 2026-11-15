@@ -96,7 +96,9 @@ Do not break these; each was paid for.
 - **`voice.v1` speaks for the captain, so it is gated and narrow.** Every handler refuses unless bb names
   the caller as a plugin listed in `voicePlugins` (default `firstmate-voice`); the app and `bb plugin rpc
   call` are clients and refused. Ask and answer send the captain's transcribed words on one line under
-  `VOICE_SPOKEN_PREFIX`, with every source mark inside them defused (`defuse`), plus an agent-only note; a
+  `VOICE_SPOKEN_PREFIX`, then the voice model's own account of them under `VOICE_ACCOUNT_HEADING`, each
+  with every source mark inside defused (`defuse`, `spoken`), plus an agent-only note saying to act on the
+  account but follow the words where the two differ (the words alone are the captain's); a
   press sends exactly the button's prompt under `VOICE_PRESSED_PREFIX`, only when the card's etag is
   unchanged, and never for a tap-only button (`tapOnlyReason`: merges, anything destructive, publishing,
   credentials, settings — a wide word net, erring towards the board). The charter names both lines (a test

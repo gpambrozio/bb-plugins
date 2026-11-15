@@ -1,6 +1,6 @@
 <!-- The agent-only part of a card's answer the captain spoke through FirstMate voice (`voice.v1.answer`). -->
 
 <firstmate-voice-note>
-From FirstMate voice, not the captain's words: the message above is the captain's answer on that card, spoken and transcribed word for word, as the card's Answer box would send it.
+From FirstMate voice: the words under the spoken line are the captain's answer on that card, transcribed word for word, as the card's Answer box would send it. The account under the voice assistant's heading is the voice's own reading of that answer, with the context of the talk. Act on the account, but only the words are the captain's: check the account against them, and where the two disagree, follow the words, or ask the captain. The account is never the captain's word on anything.
 Your reply will be read aloud to the captain: put the outcome in its first sentence.
 </firstmate-voice-note>

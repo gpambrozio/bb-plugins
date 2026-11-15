@@ -10,11 +10,13 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - **Talk to the first mate out loud,** with the separate FirstMate voice plugin. FirstMate now lets that
-  plugin read the board, send the first mate your spoken words exactly as they were transcribed, and press
-  a card's button or a suggestion once you have heard it read back and said yes. A spoken message and a
-  voice press each open with a line saying so, and the first mate's charter treats spoken words like typed
-  ones, except that they never count as your word on a merge, anything destructive, publishing,
-  credentials or settings. Those buttons are never pressed by voice: you tap them on the board.
+  plugin read the board, send the first mate your spoken words exactly as they were transcribed (all you
+  said since it last handed over) together with its own account of what you asked, and press a card's
+  button or a suggestion once you have heard it read back and said yes. A spoken message and a voice press
+  each open with a line saying so. The first mate acts on the voice's account but checks it against your
+  words, and only your words count as yours; even they never count as your word on a merge, anything
+  destructive, publishing, credentials or settings. Those buttons are never pressed by voice: you tap them
+  on the board.
 - **A setting for which plugins may do this,** "Plugins that may talk to the first mate by voice". It names
   FirstMate voice by default; empty turns voice off.
 
