@@ -16,12 +16,8 @@ export interface ToolSpec {
 
 const NONE = { type: "object", properties: {}, additionalProperties: false } as const;
 
-const UTTERANCES = {
-  type: "integer",
-  minimum: 1,
-  maximum: 3,
-  description: "How many of the captain's latest utterances carry the request: usually 1.",
-} as const;
+const ACCOUNT =
+  "in your own words, complete: what the captain wants, with what the talk made clear (a request they split across pauses, what \"it\" or \"that\" means, what you already answered). Report it, as \"The captain wants…\"; add nothing they did not ask for. Their own words since your last hand-off go beside it, word for word.";
 
 const REF = { type: "string", description: "A ref from the brief, such as c3." } as const;
 
@@ -48,17 +44,25 @@ export const TOOLS: readonly ToolSpec[] = [
     name: "ask_first_mate",
     level: "verbatim",
     description:
-      "Sends the captain's own latest words to the first mate, word for word from the transcript. Use for any request for work, a decision, or a question the brief cannot answer.",
-    parameters: { type: "object", properties: { utterances: UTTERANCES }, required: ["utterances"], additionalProperties: false },
+      "Hands the captain's request to the first mate: your account of it, and beside it everything the captain said since your last hand-off, word for word from the transcript. Use for any request for work, a decision, or a question the brief cannot answer.",
+    parameters: {
+      type: "object",
+      properties: { request: { type: "string", description: `The captain's request ${ACCOUNT}` } },
+      required: ["request"],
+      additionalProperties: false,
+    },
   },
   {
     name: "answer_card",
     level: "verbatim",
-    description: "Sends the captain's own latest words as their answer on one card, as the card's Answer box does.",
+    description: "Sends the captain's answer on one card, as the card's Answer box does: your account of it, and beside it everything the captain said since your last hand-off, word for word.",
     parameters: {
       type: "object",
-      properties: { ref: { type: "string", description: "The card's ref, such as c1." }, utterances: UTTERANCES },
-      required: ["ref", "utterances"],
+      properties: {
+        ref: { type: "string", description: "The card's ref, such as c1." },
+        answer: { type: "string", description: `The captain's answer on that card ${ACCOUNT}` },
+      },
+      required: ["ref", "answer"],
       additionalProperties: false,
     },
   },

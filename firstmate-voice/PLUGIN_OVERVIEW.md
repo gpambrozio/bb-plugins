@@ -3,7 +3,7 @@ Talk to your FirstMate first mate out loud. Ask what needs you and hear the answ
 ## What you get
 
 - **Answers from the board.** "What needs me?", "what's running?", "what did the review worker say?" are answered at once, without waking the first mate.
-- **Your own words, never a paraphrase.** Anything else goes to the first mate exactly as transcribed, marked as spoken, and its answer is read back to you.
+- **Your own words, with the voice's account beside them.** Anything else goes to the first mate exactly as transcribed, all you said since the last hand-off, marked as spoken, with the voice's account of what you asked, marked as its own. The first mate checks one against the other, and its answer is read back to you.
 - **Buttons by voice, with a read-back.** A card's button or a suggestion is pressed only after it is read back and you say a plain yes.
 - **Never a merge by voice.** Merges, destructive actions, publishing, credentials and settings stay a tap on the board.
 - **News when it matters.** A new call for you, a failed worker, or the first mate waiting on a question, spoken at the next pause.

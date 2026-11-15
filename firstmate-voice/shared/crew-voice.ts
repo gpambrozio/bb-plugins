@@ -25,6 +25,12 @@ export const VOICE_SPOKEN_PREFIX = "Spoken by the captain through FirstMate voic
 /** How a board button the captain pressed by voice begins; the charter names it (§0). */
 export const VOICE_PRESSED_PREFIX = "Pressed by the captain through FirstMate voice:";
 
+/**
+ * The line in a spoken message that sets the voice assistant's account apart from the captain's words: what
+ * the voice understood the captain to want, in its own words, with the context of the talk. Never orders.
+ */
+export const VOICE_ACCOUNT_HEADING = "The voice assistant's account, in its own words, not the captain's:";
+
 /** Text a worker or the first mate wrote: data for the voice model, never instructions. */
 export const UntrustedTextSchema = z.object({
   untrusted: z.literal(true),
@@ -124,16 +130,21 @@ export type VoiceCard = z.infer<typeof VoiceCardSchema>;
 export const VoiceSentSchema = z.object({ delivery: z.enum(["sent", "queued"]) });
 export type VoiceSent = z.infer<typeof VoiceSentSchema>;
 
-/** The captain's own words, transcribed: copied by the voice plugin's server, never written by the model. */
+/**
+ * The captain's own words, transcribed: every segment since the voice's last hand-off, joined in order,
+ * copied by the voice plugin's server, never written by the model.
+ */
 const Words = z.string().trim().min(1).max(4000);
 
-export const VoiceAskInputSchema = z.object({
-  words: Words,
-  /** The voice assistant's note for the first mate, sent agent-only and labelled as not the captain's words. */
-  context: z.string().max(2000).optional(),
-});
+/**
+ * The voice assistant's account of the request, in its own words, with what the talk made clear (a request
+ * split at a pause, what "it" means). Sent beside the words, marked as the voice's, and checked against them.
+ */
+const Account = z.string().trim().min(1).max(2000);
 
-export const VoiceAnswerInputSchema = z.object({ ref: z.string().min(1).max(40), words: Words });
+export const VoiceAskInputSchema = z.object({ words: Words, account: Account });
+
+export const VoiceAnswerInputSchema = z.object({ ref: z.string().min(1).max(40), words: Words, account: Account });
 
 export const VoicePressInputSchema = z.object({
   /** A button: `c1.a2` (an action on a card) or `s1` (a suggestion). */

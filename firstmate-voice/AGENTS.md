@@ -31,10 +31,17 @@ the voice, the decisions behind phase 1, and the phase 0 decision record.
 
 ## Invariants
 
-- **The model has no free-text channel into bb.** Asks and answers carry the captain's words copied from the
-  call's input transcription (the model names how many of the latest utterances, never the words), and a
-  press carries the button's own prompt, which firstmate-crew looks up. The agent-only note on a send is the
-  crew's template, not model text. Do not add a tool argument that reaches the first mate as text.
+- **The captain's words are copied, never written; the model's account goes beside them, marked.** An ask or
+  an answer carries every segment of the call's input transcription since the last hand-off, joined in order
+  (`UtteranceLog.sinceBoundary`), and the model's own account of the request (`request` / `answer`), which
+  firstmate-crew puts under its own heading and tells the first mate to check against the words. A hand-off
+  is a boundary: a send, a press confirmation (both through `markUsed`, which spends everything said before
+  them too), or a voice reply heard to its end (`output_audio_buffer.stopped` for a response that is not an
+  announcement, at the moment that response started). A reply the captain talked over (`cleared`) is no
+  boundary, so a request turn detection split at a pause goes whole. A press carries the button's own
+  prompt, which firstmate-crew looks up. The account is the model's only text into bb: never let it stand
+  for the captain's words, and add no other tool argument that reaches the first mate as text. The log
+  records how many segments and characters went, never the words.
 - **Presses are two-phase and checked against the captain's transcript, not the model's claim.**
   `propose_press` returns a server-written read-back; it counts as read back only when the model's own output
   transcript says most of it and that audio then plays to its end (`output_audio_buffer.stopped`; a reply the
@@ -71,8 +78,11 @@ the voice, the decisions behind phase 1, and the phase 0 decision record.
   ruled out, and the iPhone ran WebRTC directly. It stays on the spike branch for networks that block WebRTC.
 - **No `quiet` tool.** Every phase 1 announcement is P1, which quiet would not hold; it comes with phase 2's
   digests.
-- **No model words in the ask's note.** The design's agent-only part "says what the voice had just asked"; here
-  the note is firstmate-crew's fixed text, so the model has no channel at all.
+- **The model's account goes with the captain's words** (the captain's call, 2026-11-14, after a long request
+  reached the first mate as its last segment only: turn detection split it at a pause and the model, asked
+  for "how many of the latest utterances, usually 1", said one). The plugin sends every segment since the
+  last hand-off, and the model's account of the request beside them, so the first mate has both the context
+  the model heard and the words to check it against.
 - **Turn taking** stays `semantic_vad` at `auto`, a setting. The spike measured the end-of-turn wait as the
   largest part of the latency; *high* is the setting to try first.
 

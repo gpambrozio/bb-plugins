@@ -21,8 +21,8 @@ export function crewClient(bb: BbPluginApi): CrewPort {
     brief: () => call("voice.v1.brief", {}, VoiceBriefSchema),
     card: (ref) => call("voice.v1.card", { ref }, VoiceCardSchema),
     reply: () => call("voice.v1.reply", {}, VoiceReplySchema),
-    ask: (words) => call("voice.v1.ask", { words }, VoiceSentSchema),
-    answer: (ref, words) => call("voice.v1.answer", { ref, words }, VoiceSentSchema),
+    ask: (words, account) => call("voice.v1.ask", { words, account }, VoiceSentSchema),
+    answer: (ref, words, account) => call("voice.v1.answer", { ref, words, account }, VoiceSentSchema),
     press: (ref, etag) => call("voice.v1.press", { ref, etag }, VoiceSentSchema),
     mateThreadId: async () => (await call("voice.v1.mate", {}, MateSchema)).threadId,
   };

@@ -220,8 +220,10 @@ export class FakeCrew implements CrewPort {
     ["s1", card("s1")],
   ]);
   replyText = "Aye, captain: rebased and pushed.";
+  /** The captain's words each ask sent; `accounts` holds the model's account beside each. */
   readonly asks: string[] = [];
-  readonly answers: { ref: string; words: string }[] = [];
+  readonly accounts: string[] = [];
+  readonly answers: { ref: string; words: string; account: string }[] = [];
   readonly presses: { ref: string; etag: string }[] = [];
   pressRefusal: Error | null = null;
 
@@ -239,13 +241,14 @@ export class FakeCrew implements CrewPort {
     return { reply: { untrusted: true as const, head: this.replyText, tail: "", chars: this.replyText.length }, repliedAt: "2026-11-13T14:05:00.000Z", status: "idle" };
   }
 
-  async ask(words: string): Promise<VoiceSent> {
+  async ask(words: string, account: string): Promise<VoiceSent> {
     this.asks.push(words);
+    this.accounts.push(account);
     return { delivery: "sent" };
   }
 
-  async answer(ref: string, words: string): Promise<VoiceSent> {
-    this.answers.push({ ref, words });
+  async answer(ref: string, words: string, account: string): Promise<VoiceSent> {
+    this.answers.push({ ref, words, account });
     return { delivery: "sent" };
   }
 

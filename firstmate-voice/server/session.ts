@@ -34,6 +34,8 @@ const SIDEBAND_RETRIES = 2;
 /** How long a response this side asked for may take to start before announcements stop waiting for it. */
 const STUCK_RESPONSE_MS = 20_000;
 const TOOL_OUTPUT_MAX = 4_000;
+/** The longest account of a request the model may send: firstmate-crew's limit. */
+const ACCOUNT_MAX = 2_000;
 const RECAP_ITEMS = 10;
 
 export type Eagerness = "low" | "medium" | "high" | "auto";
@@ -90,6 +92,10 @@ class Call {
   readonly guard: PressGuard;
   /** When each response started, by id: a send copies only words said before the response that asked for it. */
   readonly responses = new Map<string, number>();
+  /** Responses this side made to announce something: heard to the end, they are not a reply to the captain. */
+  readonly announcements = new Set<string>();
+  /** The newest response, for an audio event that names none. */
+  lastResponseId: string | null = null;
   activeResponses = 0;
   /** A tool's output is in; the response that reads it waits for the one under way to finish. */
   pendingCreate = false;
@@ -340,8 +346,12 @@ export class VoiceSession {
         break;
       case "response.created": {
         this.touch();
-        const response = event.response as { id?: unknown } | undefined;
-        if (typeof response?.id === "string") call.responses.set(response.id, this.clock.now());
+        const response = event.response as { id?: unknown; metadata?: { fmv_announcement?: unknown } | null } | undefined;
+        if (typeof response?.id === "string") {
+          call.responses.set(response.id, this.clock.now());
+          call.lastResponseId = response.id;
+          if (typeof response.metadata?.fmv_announcement === "string") call.announcements.add(response.id);
+        }
         call.activeResponses += 1;
         call.askedAt = null;
         call.announcer.responseStarted();
@@ -349,9 +359,10 @@ export class VoiceSession {
       }
       case "response.done": {
         this.touch();
-        const response = event.response as { status?: unknown; metadata?: { fmv_announcement?: unknown } | null } | undefined;
+        const response = event.response as { id?: unknown; status?: unknown; metadata?: { fmv_announcement?: unknown } | null } | undefined;
         call.activeResponses = Math.max(0, call.activeResponses - 1);
         const announcement = typeof response?.metadata?.fmv_announcement === "string" ? response.metadata.fmv_announcement : null;
+        if (announcement !== null && typeof response?.id === "string") call.announcements.add(response.id);
         const status = typeof response?.status === "string" ? response.status : "completed";
         if (call.pendingCreate && call.activeResponses === 0) {
           call.pendingCreate = false;
@@ -371,10 +382,14 @@ export class VoiceSession {
       case "output_audio_buffer.started":
         call.announcer.audio(true);
         break;
-      case "output_audio_buffer.stopped":
+      case "output_audio_buffer.stopped": {
         call.guard.audioFinished();
+        // A reply heard to its end answered what the captain had said: a later send starts after it.
+        const responseId = typeof event.response_id === "string" ? event.response_id : call.lastResponseId;
+        if (responseId !== null && !call.announcements.has(responseId)) this.utterances.boundary(call.responses.get(responseId) ?? this.clock.now());
         call.announcer.audio(false);
         break;
+      }
       case "output_audio_buffer.cleared":
         call.guard.audioCut();
         call.announcer.audio(false);
@@ -514,11 +529,11 @@ export class VoiceSession {
         return { ok: true, note: "Any changes are in the latest [firstmate-update] item." };
       }
       case "ask_first_mate":
-        return this.sendWords(askedAt, args.utterances, (words) => this.deps.crew.ask(words));
+        return this.sendWords(name, askedAt, args.request, (words, account) => this.deps.crew.ask(words, account));
       case "answer_card": {
         const ref = String(args.ref ?? "");
         if (!/^c\d+$/u.test(ref)) return { ok: false, error: "answer_card takes a card ref such as c1." };
-        return this.sendWords(askedAt, args.utterances, (words) => this.deps.crew.answer(ref, words));
+        return this.sendWords(name, askedAt, args.answer, (words, account) => this.deps.crew.answer(ref, words, account));
       }
       case "propose_press":
         return this.propose(call, String(args.ref ?? ""));
@@ -548,16 +563,31 @@ export class VoiceSession {
     }
   }
 
-  private async sendWords(askedAt: number, count: unknown, send: (words: string) => Promise<{ delivery: string }>): Promise<unknown> {
-    const n = typeof count === "number" && Number.isInteger(count) ? Math.min(3, Math.max(1, count)) : 1;
-    const words = await this.utterances.latest(n, askedAt);
+  /**
+   * A send: the captain's words since the last hand-off, copied from the transcript, and beside them the
+   * model's own account of the request. Logs how much went, never what.
+   */
+  private async sendWords(
+    tool: string,
+    askedAt: number,
+    account: unknown,
+    send: (words: string, account: string) => Promise<{ delivery: string }>,
+  ): Promise<unknown> {
+    const told = typeof account === "string" ? account.trim() : "";
+    if (told === "") return { ok: false, error: "Say in your own words what the captain is asking for, complete, then call it again." };
+    if (told.length > ACCOUNT_MAX) return { ok: false, error: `Put the request in under ${ACCOUNT_MAX} characters.` };
+    const words = await this.utterances.sinceBoundary(askedAt);
     if (words === null) return { ok: false, error: "There are no words of the captain's to send. Ask them to say it again." };
     if (!this.sendsShort.take() || !this.sendsLong.take()) return { ok: false, error: "Too many messages to the first mate just now. Wait a moment." };
-    const outcome = await this.gate.run(() => send(words.text));
+    const outcome = await this.gate.run(() => send(words.text, told));
     if (!outcome.ok) return { ok: false, error: "A message to the first mate is still on its way. Wait for it." };
     this.utterances.markUsed(words.items);
     this.awaitingReplySince = this.clock.now();
-    return { ok: true, sent: words.text, delivery: outcome.value.delivery };
+    const lengths = words.items.map((item) => (item.text ?? "").length);
+    this.deps.log.info(
+      `Voice session ${this.id}: ${tool} sent ${lengths.length} segment${lengths.length === 1 ? "" : "s"} of the captain's words (${lengths.join(" + ")} characters) and an account of ${told.length} characters.`,
+    );
+    return { ok: true, captainsWords: words.text, delivery: outcome.value.delivery };
   }
 
   private async propose(call: Call, ref: string): Promise<unknown> {

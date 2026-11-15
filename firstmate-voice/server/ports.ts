@@ -34,8 +34,9 @@ export interface CrewPort {
   brief(): Promise<VoiceBrief>;
   card(ref: string): Promise<VoiceCard>;
   reply(): Promise<VoiceReply>;
-  ask(words: string): Promise<VoiceSent>;
-  answer(ref: string, words: string): Promise<VoiceSent>;
+  /** The captain's words, verbatim, and beside them the model's account of the request. */
+  ask(words: string, account: string): Promise<VoiceSent>;
+  answer(ref: string, words: string, account: string): Promise<VoiceSent>;
   press(ref: string, etag: string): Promise<VoiceSent>;
   mateThreadId(): Promise<string | null>;
 }

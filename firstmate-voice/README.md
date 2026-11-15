@@ -13,9 +13,11 @@ against your ChatGPT plan. Read codex-realtime's README first.
 - **Answers from the board without waking the first mate:** "what needs me?", "what's running?", "what did
   the review worker say?", "what's next?". It reads the same board FirstMate draws, kept current while you
   talk.
-- **Hands everything else to the first mate in your own words.** It never rephrases: your words go exactly
-  as they were transcribed, under the line `Spoken by the captain through FirstMate voice:`, and the first
-  mate's answer is read back to you when its turn ends.
+- **Hands everything else to the first mate in your own words.** Everything you said since it last handed
+  over goes exactly as it was transcribed, under the line `Spoken by the captain through FirstMate voice:`,
+  so a request you made in several breaths goes whole. Beside it, marked as the voice's own, goes its
+  account of what you asked, with what the talk made clear; the first mate acts on that account but checks
+  it against your words, which alone count as yours. Its answer is read back to you when its turn ends.
 - **Presses a card's button or a suggestion, after reading it back.** "Press hold on the login fix" → "Press
   Hold on Fix the flaky login test, web pull request 42?" → "Yes." Only a short, plain yes right after the
   read-back counts; any no, wait or hesitation drops it. The first mate sees `Pressed by the captain through

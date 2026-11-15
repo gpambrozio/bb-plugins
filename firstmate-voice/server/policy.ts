@@ -2,8 +2,10 @@
  * What the voice model may make happen, enforced here rather than trusted from the model.
  *
  * - **The utterance log.** The captain's words come from the call's input transcription, in the order the
- *   audio was committed. Sends copy them from here: the model names how many of the latest to send and
- *   never writes them. Kept in memory for the session only.
+ *   audio was committed. A send copies every segment since the last hand-off, joined in order, so a request
+ *   turn detection split at a pause goes whole. A hand-off is a boundary: a send, a press confirmation, or a
+ *   voice reply heard to its end (talked over, it is not one). The model never writes these words; it writes
+ *   only its own account beside them. Kept in memory for the session only.
  * - **The two-phase press.** `propose` picks a button and returns a read-back the server wrote; it counts as
  *   read back only once the model's own speech said it and that audio played to its end, not cut off. `confirm` then needs the captain's first words after
  *   the read-back to be a short yes with no negation, within 30 s, on a single-use token, at most one press
@@ -30,10 +32,14 @@ export const TRANSCRIPT_WAIT_MS = 5_000;
 export const UTTERANCE_MAX_AGE_MS = 3 * 60_000;
 /** Utterances kept, for sends and for a renewal's recap. */
 const KEPT = 40;
+/** The most of the captain's words one send carries: firstmate-crew's limit. The oldest segments go first. */
+export const MAX_SEND_CHARS = 4000;
 
 export class UtteranceLog {
   private readonly items: Utterance[] = [];
   private waiters: (() => void)[] = [];
+  /** Segments committed up to here were handed over or answered: a send takes only later ones. */
+  private boundaryAt = Number.NEGATIVE_INFINITY;
 
   constructor(private readonly clock: Clock) {}
 
@@ -58,21 +64,38 @@ export class UtteranceLog {
     this.transcribed(itemId, "");
   }
 
-  /** The utterances committed up to `before`, newest last, that have words and are unused. */
+  /**
+   * A hand-off: what the captain said up to `at` has been dealt with. A voice reply heard to its end passes
+   * the moment that reply started, so a segment said while it played (it was not talked over) stays.
+   */
+  boundary(at: number): void {
+    this.boundaryAt = Math.max(this.boundaryAt, at);
+  }
+
+  /** The unused segments since the last boundary, committed by `before`, oldest first. */
   private eligible(before: number): Utterance[] {
     const now = this.clock.now();
-    return this.items.filter((item) => item.committedAt <= before && !item.used && now - item.committedAt <= UTTERANCE_MAX_AGE_MS);
+    return this.items.filter(
+      (item) => item.committedAt > this.boundaryAt && item.committedAt <= before && !item.used && now - item.committedAt <= UTTERANCE_MAX_AGE_MS,
+    );
   }
 
   /**
-   * The captain's latest `count` utterances committed by `before`, word for word, joined. Waits for
-   * transcripts still on their way. Null when there are none to send.
+   * Everything the captain said since the last boundary and by `before`, word for word, joined in order.
+   * Waits for transcripts still on their way. Keeps to `MAX_SEND_CHARS`, dropping the oldest segments
+   * first. Null when there is nothing to send.
    */
-  async latest(count: number, before: number): Promise<{ text: string; items: Utterance[] } | null> {
+  async sinceBoundary(before: number): Promise<{ text: string; items: Utterance[] } | null> {
     await this.until(() => this.eligible(before).every((item) => item.text !== null), TRANSCRIPT_WAIT_MS);
-    const items = this.eligible(before)
-      .filter((item) => item.text !== null && item.text !== "")
-      .slice(-count);
+    const said = this.eligible(before).filter((item) => item.text !== null && item.text !== "");
+    const items: Utterance[] = [];
+    let length = -1;
+    for (const item of said.reverse()) {
+      const next = length + 1 + (item.text ?? "").length;
+      if (next > MAX_SEND_CHARS) break;
+      items.unshift(item);
+      length = next;
+    }
     if (items.length === 0) return null;
     return { text: items.map((item) => item.text).join(" "), items };
   }
@@ -85,8 +108,12 @@ export class UtteranceLog {
     return item === null || item.text === null ? null : item;
   }
 
+  /** Sent, or used to confirm a press: those segments are spent, and so is everything said before them. */
   markUsed(items: readonly Utterance[]): void {
-    for (const item of items) item.used = true;
+    for (const item of items) {
+      item.used = true;
+      this.boundary(item.committedAt);
+    }
   }
 
   /** Every transcribed utterance, oldest first, for a renewal's recap. */

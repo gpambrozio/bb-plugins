@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { PressGuard, RateLimit, SendGate, UtteranceLog, isConfirmation, saidReadBack } from "./policy";
+import { MAX_SEND_CHARS, PressGuard, RateLimit, SendGate, UtteranceLog, isConfirmation, saidReadBack } from "./policy";
 import { FakeClock } from "./testing/fakes";
 
 const READ_BACK = 'Press "Hold" on Fix the flaky login test, web pull request 42?';
@@ -26,7 +26,7 @@ describe("saidReadBack", () => {
 });
 
 describe("UtteranceLog", () => {
-  it("gives the latest words committed before a response, waiting for a transcript on its way", async () => {
+  it("gives every segment since the last boundary committed before a response, waiting for a transcript on its way", async () => {
     const clock = new FakeClock();
     const log = new UtteranceLog(clock);
     log.committed("a");
@@ -36,22 +36,53 @@ describe("UtteranceLog", () => {
     const asked = clock.now();
     await clock.advance(1_000);
     log.committed("c"); // said after the response started: not part of this ask
-    const pending = log.latest(2, asked);
+    const pending = log.sinceBoundary(asked);
     log.transcribed("b", "second");
     log.transcribed("c", "third");
     expect((await pending)?.text).toBe("first second");
+  });
+
+  it("starts after a boundary, and after the segments a send or a press used", async () => {
+    const clock = new FakeClock();
+    const log = new UtteranceLog(clock);
+    log.transcribed("a", "what's running?");
+    await clock.advance(1_000);
+    log.boundary(clock.now()); // a reply to it, heard to the end
+    await clock.advance(1_000);
+    log.transcribed("b", "rebase the login fix");
+    expect((await log.sinceBoundary(clock.now()))?.text).toBe("rebase the login fix");
+    await clock.advance(1_000);
+    log.transcribed("c", "yes");
+    await clock.advance(1_000);
+    log.markUsed([...(await log.sinceBoundary(clock.now()))?.items ?? []].slice(-1)); // "yes" confirmed a press
+    await clock.advance(1_000);
+    log.transcribed("d", "and the dark mode branch");
+    expect((await log.sinceBoundary(clock.now()))?.text).toBe("and the dark mode branch");
+  });
+
+  it("keeps to the send limit, dropping the oldest segments", async () => {
+    const clock = new FakeClock();
+    const log = new UtteranceLog(clock);
+    for (const id of ["a", "b", "c"]) {
+      log.transcribed(id, id.repeat(MAX_SEND_CHARS / 2 - 10));
+      await clock.advance(1_000);
+    }
+    const found = await log.sinceBoundary(clock.now());
+    expect(found?.items.map((item) => item.itemId)).toEqual(["b", "c"]);
+    expect(found?.text.length).toBeLessThanOrEqual(MAX_SEND_CHARS);
   });
 
   it("gives nothing once the words are used or too old", async () => {
     const clock = new FakeClock();
     const log = new UtteranceLog(clock);
     log.transcribed("a", "hello");
-    const found = await log.latest(1, clock.now());
+    const found = await log.sinceBoundary(clock.now());
     log.markUsed(found?.items ?? []);
-    expect(await log.latest(1, clock.now())).toBeNull();
+    expect(await log.sinceBoundary(clock.now())).toBeNull();
+    await clock.advance(1_000);
     log.transcribed("b", "again");
     await clock.advance(4 * 60_000);
-    expect(await log.latest(1, clock.now())).toBeNull();
+    expect(await log.sinceBoundary(clock.now())).toBeNull();
   });
 });
 

@@ -43,10 +43,15 @@ async function say(sideband: FakeSideband, clock: FakeClock, text: string): Prom
 }
 
 /** The model answers: a response that may speak and may call one tool. */
-async function respond(sideband: FakeSideband, clock: FakeClock, options: { spoken?: string; cut?: boolean; tool?: { name: string; args?: object } } = {}): Promise<void> {
+async function respond(
+  sideband: FakeSideband,
+  clock: FakeClock,
+  options: { spoken?: string; cut?: boolean; tool?: { name: string; args?: object }; announcement?: string } = {},
+): Promise<void> {
   counter += 1;
   const id = `resp_${counter}`;
-  sideband.emit({ type: "response.created", response: { id } });
+  const metadata = options.announcement === undefined ? null : { fmv_announcement: options.announcement };
+  sideband.emit({ type: "response.created", response: { id, metadata } });
   if (options.spoken !== undefined) {
     sideband.emit({ type: "output_audio_buffer.started", response_id: id });
     sideband.emit({ type: "response.output_audio_transcript.done", response_id: id, transcript: options.spoken });
@@ -61,7 +66,7 @@ async function respond(sideband: FakeSideband, clock: FakeClock, options: { spok
     });
   }
   await clock.advance(200);
-  sideband.emit({ type: "response.done", response: { id, status: "completed" } });
+  sideband.emit({ type: "response.done", response: { id, status: "completed", metadata } });
   if (options.spoken !== undefined) {
     await clock.advance(options.cut === true ? 300 : 1_500);
     sideband.emit({ type: options.cut === true ? "output_audio_buffer.cleared" : "output_audio_buffer.stopped", response_id: id });
@@ -111,41 +116,95 @@ describe("a session's start", () => {
 });
 
 describe("asking the first mate", () => {
-  it("sends the captain's own transcribed words, never the model's", async () => {
+  const ASK = (request = "The captain wants the dark mode branch rebased on main.") => ({ name: "ask_first_mate", args: { request } });
+
+  it("sends the captain's own transcribed words, and the model's account beside them", async () => {
     const { sideband, clock, crew } = await setup();
     await respond(sideband, clock, { spoken: "Captain, two calls need you." });
     await say(sideband, clock, "Ask it to rebase the dark mode branch on main.");
-    await respond(sideband, clock, { spoken: "Asking the first mate.", tool: { name: "ask_first_mate", args: { utterances: 1 } } });
+    await respond(sideband, clock, { spoken: "Asking the first mate.", tool: ASK() });
     expect(crew.asks).toEqual(["Ask it to rebase the dark mode branch on main."]);
-    expect(sideband.outputs().at(-1)).toMatchObject({ ok: true, sent: "Ask it to rebase the dark mode branch on main." });
+    expect(crew.accounts).toEqual(["The captain wants the dark mode branch rebased on main."]);
+    expect(sideband.outputs().at(-1)).toMatchObject({ ok: true, captainsWords: "Ask it to rebase the dark mode branch on main." });
   });
 
-  it("joins up to three utterances, and refuses when there is nothing to send", async () => {
+  it("sends a request split at a pause whole: a reply the captain talked over is no boundary", async () => {
     const { sideband, clock, crew } = await setup();
-    await respond(sideband, clock, { tool: { name: "ask_first_mate", args: { utterances: 1 } } });
-    expect(crew.asks).toEqual([]);
+    await respond(sideband, clock, { spoken: "Captain, all quiet." });
+    await say(sideband, clock, "Merge the tweak branch when the gate passes,");
+    await respond(sideband, clock, { spoken: "Aye, captain, I'll", cut: true });
+    await say(sideband, clock, "Then merge main into the map branch and run the gate there too.");
+    await respond(sideband, clock, {
+      tool: ASK("The captain wants the tweak branch merged once its gate passes, then main merged into the map branch and the gate run there."),
+    });
+    expect(crew.asks).toEqual(["Merge the tweak branch when the gate passes, Then merge main into the map branch and run the gate there too."]);
+  });
+
+  it("joins every segment since the last hand-off, however many", async () => {
+    const { sideband, clock, crew } = await setup();
+    for (const part of ["Tell the first mate", "to pause the date library upgrade", "and the icon work,", "until Monday."]) await say(sideband, clock, part);
+    await respond(sideband, clock, { tool: ASK() });
+    expect(crew.asks).toEqual(["Tell the first mate to pause the date library upgrade and the icon work, until Monday."]);
+  });
+
+  it("starts after a reply heard to the end: a question answered, then a request", async () => {
+    const { sideband, clock, crew } = await setup();
+    await say(sideband, clock, "What's running?");
+    await respond(sideband, clock, { spoken: "Two workers, captain: the login fix and the icons." });
+    await say(sideband, clock, "Have the icons wait for the login fix.");
+    await respond(sideband, clock, { tool: ASK("The captain wants the icon work to wait until the login fix lands.") });
+    expect(crew.asks).toEqual(["Have the icons wait for the login fix."]);
+  });
+
+  it("does not count an announcement heard to the end as a hand-off", async () => {
+    const { sideband, clock, crew } = await setup();
+    await say(sideband, clock, "Rebase the login fix");
+    await respond(sideband, clock, { spoken: "Captain, a new call needs you.", announcement: "call:c5" });
+    await say(sideband, clock, "and then run its tests.");
+    await respond(sideband, clock, { tool: ASK() });
+    expect(crew.asks).toEqual(["Rebase the login fix and then run its tests."]);
+  });
+
+  it("refuses with nothing to send, or with no account", async () => {
+    const { sideband, clock, crew } = await setup();
+    await respond(sideband, clock, { tool: ASK() });
     expect(sideband.outputs().at(-1)).toMatchObject({ ok: false });
-    await say(sideband, clock, "Tell the first mate");
-    await say(sideband, clock, "to pause the date library upgrade.");
-    await clock.advance(5_000);
-    await respond(sideband, clock, { tool: { name: "ask_first_mate", args: { utterances: 2 } } });
-    expect(crew.asks).toEqual(["Tell the first mate to pause the date library upgrade."]);
+    await say(sideband, clock, "Pause the date library upgrade.");
+    await respond(sideband, clock, { tool: { name: "ask_first_mate", args: { request: "  " } } });
+    await respond(sideband, clock, { tool: { name: "ask_first_mate", args: {} } });
+    expect(sideband.outputs().slice(-2)).toMatchObject([{ ok: false }, { ok: false }]);
+    expect(crew.asks).toEqual([]);
   });
 
   it("does not send the same words twice", async () => {
     const { sideband, clock, crew } = await setup();
     await say(sideband, clock, "What did the review worker find?");
-    await respond(sideband, clock, { tool: { name: "ask_first_mate", args: { utterances: 1 } } });
+    await respond(sideband, clock, { tool: ASK() });
     await clock.advance(5_000);
-    await respond(sideband, clock, { tool: { name: "ask_first_mate", args: { utterances: 1 } } });
+    await respond(sideband, clock, { tool: ASK() });
     expect(crew.asks).toEqual(["What did the review worker find?"]);
+  });
+
+  it("answers a card with the captain's words and the model's account", async () => {
+    const { sideband, clock, crew } = await setup();
+    await say(sideband, clock, "Tell it to hold until the second review.");
+    await respond(sideband, clock, { tool: { name: "answer_card", args: { ref: "c1", answer: "The captain says to hold until the second review." } } });
+    expect(crew.answers).toEqual([{ ref: "c1", words: "Tell it to hold until the second review.", account: "The captain says to hold until the second review." }]);
+  });
+
+  it("logs how many segments and characters went, never the words", async () => {
+    const { sideband, clock, log } = await setup();
+    await say(sideband, clock, "Merge the tweak branch,");
+    await say(sideband, clock, "then the map branch.");
+    await respond(sideband, clock, { tool: ASK("The captain wants two merges.") });
+    expect(log.lines.join("\n")).toContain("ask_first_mate sent 2 segments of the captain's words (23 + 20 characters) and an account of 29 characters.");
   });
 
   it("announces the first mate's reply when its turn ends", async () => {
     const { sideband, clock, crew, sessions } = await setup();
     await respond(sideband, clock, { spoken: "Captain, all quiet." });
     await say(sideband, clock, "Rebase it.");
-    await respond(sideband, clock, { tool: { name: "ask_first_mate", args: { utterances: 1 } } });
+    await respond(sideband, clock, { tool: { name: "ask_first_mate", args: { request: "The captain wants it rebased." } } });
     // The response that reads the tool's output: "I've asked the first mate."
     await respond(sideband, clock, { spoken: "I've asked the first mate." });
     const before = sideband.ofType("response.create").length;
@@ -180,6 +239,19 @@ describe("pressing by voice", () => {
     await respond(sideband, clock, { tool: { name: "confirm_press", args: { token } } });
     expect(crew.presses).toEqual([{ ref: "c1.a2", etag: "ec1" }]);
     expect(sideband.outputs().at(-1)).toMatchObject({ ok: true, pressed: true });
+  });
+
+  it("never sends the confirming yes, or the press request before it, to the first mate", async () => {
+    const { sideband, clock, crew, token, readBack } = await proposed();
+    await respond(sideband, clock, { spoken: readBack });
+    await say(sideband, clock, "Yes.");
+    await respond(sideband, clock, { tool: { name: "confirm_press", args: { token } } });
+    await clock.advance(10_000);
+    await respond(sideband, clock, { tool: { name: "ask_first_mate", args: { request: "The captain wants it held." } } });
+    expect(sideband.outputs().at(-1)).toMatchObject({ ok: false });
+    await say(sideband, clock, "And ask it to rebase the icons.");
+    await respond(sideband, clock, { tool: { name: "ask_first_mate", args: { request: "The captain wants the icon work rebased." } } });
+    expect(crew.asks).toEqual(["And ask it to rebase the icons."]);
   });
 
   it("never proposes a merge: the captain taps it on the board", async () => {
@@ -394,7 +466,7 @@ describe("the session's life", () => {
   it("never logs what the captain said", async () => {
     const { clock, sideband, log } = await setup();
     await say(sideband, clock, "The secret plan is in the blue folder.");
-    await respond(sideband, clock, { tool: { name: "ask_first_mate", args: { utterances: 1 } } });
+    await respond(sideband, clock, { tool: { name: "ask_first_mate", args: { request: "The captain says the plan is in the blue folder." } } });
     expect(log.lines.join("\n")).not.toContain("blue folder");
   });
 });
