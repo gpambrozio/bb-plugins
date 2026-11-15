@@ -47,7 +47,7 @@ the voice, the decisions behind phase 1, and the phase 0 decision record.
 - **Presses are two-phase and checked against the captain's transcript, not the model's claim.**
   `propose_press` returns a server-written read-back; it counts as read back only when the model's own output
   transcript says every word of it, in order, as the end of one sentence after at most a short lead-in with
-  no negation (`saidReadBack`; the only give is numbers in words of any size, a dropped "number", and full stops inside
+  no negation (`saidReadBack`; the only give is a grammatical number in words up to 999,999 (a run of number words past one number, such as "twenty twenty-two", matches nothing), a dropped "number", and full stops inside
   the read-back, which a card title may hold, said or not), and that audio
   then plays to its end (`output_audio_buffer.stopped`; a reply the captain talked over, `cleared`, does not
   count). A read-back naming another label or another pull request does not count. `confirm_press` needs

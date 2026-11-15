@@ -70,6 +70,19 @@ describe("saidReadBack", () => {
     }
   });
 
+  it("never sums number words that run on past one number", () => {
+    const say = (n: string) => `Press "Hold" on Fix the flaky login test, web pull request ${n}?`;
+    expect(saidReadBack(say("forty-two"), READ_BACK)).toBe(true);
+    expect(saidReadBack(say("forty two"), READ_BACK)).toBe(true);
+    for (const n of ["twenty twenty-two", "twenty twenty two", "forty one one", "forty two two", "four two", "twenty two twenty", "forty and two", "two forty"]) {
+      expect(saidReadBack(say(n), READ_BACK)).toBe(false);
+    }
+    const r2022 = 'Press "Hold" on Fix the flaky login test, web pull request 2022?';
+    expect(saidReadBack(say("twenty twenty-two"), r2022)).toBe(false); // ambiguous, so refused rather than guessed
+    expect(saidReadBack(say("two thousand twenty-two"), r2022)).toBe(true);
+    expect(saidReadBack(say("two thousand and twenty-two"), r2022)).toBe(true);
+  });
+
   it("refuses a read-back that names another button, another pull request, or comes negated", () => {
     expect(saidReadBack("Shall I press it?", READ_BACK)).toBe(false);
     const postgres = 'Press "Postgres" on Choose the database for the web project?';
@@ -180,6 +193,16 @@ describe("PressGuard", () => {
     const postgres = 'Press "Postgres" on Choose the database for the web project?';
     const proposal = presses.propose("c2.a1", "etag", postgres);
     presses.spoke('Press "SQLite" on Choose the database for the web project?');
+    presses.audioFinished();
+    await clock.advance(1_500);
+    utterances.transcribed("u1", "Yes.");
+    expect(await presses.confirm(proposal.token)).toMatchObject({ ok: false, reason: expect.stringContaining("read-back was not spoken") });
+  });
+
+  it("refuses a read-back naming another pull request in grouped number words, whatever the yes after it", async () => {
+    const { clock, utterances, guard: presses } = guard();
+    const proposal = presses.propose("c1.a2", "etag", READ_BACK);
+    presses.spoke('Press "Hold" on Fix the flaky login test, web pull request twenty twenty-two?');
     presses.audioFinished();
     await clock.advance(1_500);
     utterances.transcribed("u1", "Yes.");

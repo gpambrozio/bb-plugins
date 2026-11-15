@@ -18,12 +18,14 @@ against your ChatGPT plan. Read codex-realtime's README first.
   so a request you made in several breaths goes whole. Beside it, marked as the voice's own, goes its
   account of what you asked, with what the talk made clear; the first mate acts on that account but checks
   it against your words, which alone count as yours. Its answer is read back to you when its turn ends.
-- **Presses a card's button or a suggestion, after reading it back.** "Press hold on the login fix" → "Press
+- **Presses a few kinds of button, after reading it back:** a hold or leave-open, a review loop, a question
+  or report, and your choice on a decision card. "Press hold on the login fix" → "Press
   Hold on Fix the flaky login test, web pull request 42?" → "Yes." Only a short, plain yes right after the
   read-back counts; any no, wait or hesitation drops it. The first mate sees `Pressed by the captain through
   FirstMate voice:` and the button's own words.
-- **Never merges by voice.** Merges, anything destructive or irreversible, publishing, credentials and
-  settings are pressed on the board, never by voice, even after a read-back. Ask for one and it tells you to
+- **Never merges by voice.** Every other button, and always merges, anything destructive or
+  irreversible, publishing, credentials and settings, is pressed on the board, never by voice, even after a
+  read-back. Ask for one and it tells you to
   tap it, or asks the first mate to put up the button.
 - **Tells you what changed:** a new call for you on the board, a worker that failed, the first mate waiting
   on a question in its chat, and the first mate's answers to what you asked. It waits for a pause, and stops

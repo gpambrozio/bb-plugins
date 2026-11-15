@@ -68,6 +68,8 @@ describe("headAndTail", () => {
 });
 
 describe("tapOnlyReason", () => {
+  const DECISION = { decision: "pick-db" };
+
   it.each([
     ["Merge", "Merge https://github.com/you/web/pull/42", "a merge"],
     ["Land web#42", "Land https://github.com/you/web/pull/42", "a merge"],
@@ -82,29 +84,56 @@ describe("tapOnlyReason", () => {
     ["Tidy", "Run `npm run fmt` in web", "a command to run"],
     ["Refresh", "Run gh pr list --state open | head", "a command to run"],
     ["Sync", "git fetch origin && git status in web", "a command to run"],
-    ["Frobnicate", "Frobnicate the widgets", "not known to be safe"],
-    ["Big ask", `Tell me ${"and more ".repeat(100)}`, "not known to be safe"],
     ["Proceed", "Check CI, then fast-forward main to the reviewed branch.", "a merge"],
-    ["Proceed", "Check CI, then bring main up to the reviewed branch.", "not known to be safe"],
     ["Inspect", "Check the database, then empty all tables.", "destructive or irreversible"],
-    ["Inspect", "Check the database. Then make every table blank.", "not known to be safe"],
-    ["Inspect", "Look at the logs and then tidy the database.", "not known to be safe"],
-    ["Status", "Tell me the status, afterwards switch main to the review branch.", "not known to be safe"],
-    ["Fix", "Fix the parser by rewriting main.", "not known to be safe"],
-    ["Go", "Go to the web project and do what the review says.", "not known to be safe"],
+    ["Go", "Start the production rollout.", "publishing"],
+    ["Go", "Use a new signing key.", "credentials"],
+    ["Go", "Check CI, promote the build to production.", "publishing"],
   ])("keeps %s on the board (%s)", (label, prompt, reason) => {
     expect(tapOnlyReason(label, prompt)).toBe(reason);
   });
 
+  // Whatever the wording, a button outside the bounded set stays on the board: these name no deny-listed word.
+  it.each([
+    ["Frobnicate", "Frobnicate the widgets"],
+    ["Big ask", `Tell me ${"and more ".repeat(100)}`],
+    ["Proceed", "Check CI, then bring main up to the reviewed branch."],
+    ["Inspect", "Check the database. Then make every table blank."],
+    ["Inspect", "Look at the logs and then tidy the database."],
+    ["Status", "Tell me the status, afterwards switch main to the review branch."],
+    ["Fix", "Fix the parser by rewriting main."],
+    ["Go", "Go to the web project and do what the review says."],
+    ["Go", "Start the big switchover."],
+    ["Go", "Use the new pipeline."],
+    ["Go", "Check CI, bring the build live."],
+    ["Retry", "Retry the flaky test once more"],
+    ["Wait", "Wait for the second review on https://github.com/you/web/pull/42"],
+    ["Hold", "Leave https://github.com/you/web/pull/42 open until I say and switch main to it"],
+    ["Loop", "Run a review loop on https://github.com/you/web/pull/42 and bring it into main"],
+    ["Ask", "Can you start the switchover?"],
+    ["Ask", "What is left, then bring the build live?"],
+  ])("keeps %s on the board, whatever its words (%s)", (label, prompt) => {
+    expect(tapOnlyReason(label, prompt, DECISION)).toBe("not one the voice may press");
+  });
+
+  it("presses a decision card's choice only on a decision card, in the decision's own words", () => {
+    const choice = "Use Postgres for the web project's database (pick-db)";
+    expect(tapOnlyReason("Postgres", choice, DECISION)).toBeNull();
+    expect(tapOnlyReason("Postgres", choice)).toBe("not one the voice may press");
+    expect(tapOnlyReason("Postgres", choice, { decision: "other-task" })).toBe("not one the voice may press");
+    expect(tapOnlyReason("Postgres", "Use Postgres for the web project's database (pick-db) and bring it live", DECISION)).toBe("not one the voice may press");
+    expect(tapOnlyReason("Postgres", "Use Postgres for the web project's database, then switch main (pick-db)", DECISION)).toBe("not one the voice may press");
+  });
+
   it.each([
     ["Hold", "Leave https://github.com/you/web/pull/42 open until I say"],
-    ["Postgres", "Use Postgres for the web project's database (pick-db)"],
+    ["Hold", "Hold web#42 for now."],
+    ["Wait", "Wait"],
     ["Review loop on web#42", "Run a review loop on https://github.com/you/web/pull/42"],
-    ["Retry", "Retry the flaky test once more"],
+    ["Review loop on web#42", "Run a review loop on https://github.com/you/web/pull/42 until it comes back clean"],
     ["Quick status", "Tell me in one short sentence how many items are on the backlog, and do nothing else."],
     ["Running?", "What is running on web right now?"],
-    ["Wait", "Wait for the second review on https://github.com/you/web/pull/42"],
-  ])("lets the voice press %s after a yes", (label, prompt) => {
+  ])("lets the voice press %s after a yes (%s)", (label, prompt) => {
     expect(tapOnlyReason(label, prompt)).toBeNull();
   });
 });

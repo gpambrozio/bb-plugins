@@ -229,6 +229,9 @@ describe("voice.v1.press", () => {
               { label: "Frobnicate", prompt: "Frobnicate the widgets" },
               { label: "Proceed", prompt: "Check CI, then bring main up to the reviewed branch." },
               { label: "Inspect", prompt: "Check the database. Then make every table blank." },
+              { label: "Go", prompt: "Start the production rollout." },
+              { label: "Go", prompt: "Use a new signing key." },
+              { label: "Go", prompt: "Check CI, promote the build to production." },
             ],
           },
         },
@@ -237,11 +240,39 @@ describe("voice.v1.press", () => {
     };
     const { handlers, threads } = await setup({ fleet: async () => risky });
     const card = await handlers["voice.v1.card"]({ ref: "c1" }, VOICE);
-    expect(card.pressable.map((item) => item.tapOnly)).toEqual(["destructive or irreversible", "not known to be safe", "not known to be safe", "not known to be safe"]);
-    for (const ref of ["c1.a1", "c1.a2", "c1.a3", "c1.a4"]) {
+    expect(card.pressable.map((item) => item.tapOnly)).toEqual([
+      "destructive or irreversible",
+      "not one the voice may press",
+      "not one the voice may press",
+      "not one the voice may press",
+      "publishing",
+      "credentials",
+      "publishing",
+    ]);
+    for (const ref of ["c1.a1", "c1.a2", "c1.a3", "c1.a4", "c1.a5", "c1.a6", "c1.a7"]) {
       await expect(handlers["voice.v1.press"]({ ref, etag: card.etag }, VOICE)).rejects.toMatchObject({ code: "forbidden" });
     }
     expect(threads.sent).toEqual([]);
+  });
+
+  it("presses a decision card's choice, but not the same words on a card that is no decision", async () => {
+    const fleet = voiceFleet();
+    const call = fleet.cards[0]!;
+    const choice = { label: "Postgres", prompt: "Use Postgres for the web project's database (pick-db)" };
+    const decide = (kind: string | null) => ({
+      ...fleet,
+      cards: [{ ...call, backlog: { ...call.backlog!, id: "pick-db", kind, hold: "Postgres or SQLite?", actions: [choice] } }, ...fleet.cards.slice(1)],
+    });
+    const decision = await setup({ fleet: async () => decide("captain") });
+    const card = await decision.handlers["voice.v1.card"]({ ref: "c1" }, VOICE);
+    expect(card.pressable[0]?.tapOnly).toBeNull();
+    await decision.handlers["voice.v1.press"]({ ref: "c1.a1", etag: card.etag }, VOICE);
+    expect(decision.threads.sent[0]?.text).toBe(`${VOICE_PRESSED_PREFIX}\n\n${choice.prompt}`);
+    const plain = await setup({ fleet: async () => decide(null) });
+    const other = await plain.handlers["voice.v1.card"]({ ref: "c1" }, VOICE);
+    expect(other.pressable[0]?.tapOnly).toBe("not one the voice may press");
+    await expect(plain.handlers["voice.v1.press"]({ ref: "c1.a1", etag: other.etag }, VOICE)).rejects.toMatchObject({ code: "forbidden" });
+    expect(plain.threads.sent).toEqual([]);
   });
 
   it("takes a pressed suggestion off the board, as the board does", async () => {

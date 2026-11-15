@@ -185,7 +185,7 @@ export function voiceHandlers(deps: VoiceDeps, replies: MateReplyCache = new Mat
       if (pressable.tapOnly !== null) {
         throw new PluginRpcRefusal({
           code: "forbidden",
-          message: `"${pressable.label}" is ${pressable.tapOnly}: the captain presses it on the board, never by voice.`,
+          message: `"${pressable.label}" is ${pressable.tapOnly}: the captain taps it on the board, never by voice, or asks the first mate.`,
         });
       }
       const sent = await send(`${VOICE_PRESSED_PREFIX}\n\n${button.prompt}`, await message(TEMPLATES.voicePressNote, { readBack: pressable.readBack }));

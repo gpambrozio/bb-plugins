@@ -92,10 +92,10 @@ const TAP_ONLY: readonly { reason: string; pattern: RegExp }[] = [
   {
     reason: "destructive or irreversible",
     pattern:
-      /\b(delet\w*|remov\w*|discard\w*|drop\w*|destroy\w*|wip(e|es|ed|ing)|purg\w*|reset\w*|revert\w*|roll ?back\w*|force\w*|archiv\w*|clos(e|es|ed|ing)|abandon\w*|kill\w*|end (it|the|this|that)|stop the worker|retire\w*|clean\w*|eras\w*|nuk\w*|prun\w*|truncat\w*|overwrit\w*|uninstall\w*|wipe ?out|throw away|rm|rmdir|unlink\w*|rewrit\w* (the )?history|hard reset|--hard|shred\w*|format the|mkfs|dd|empty|emptie\w*|clear(s|ed|ing)? (out|all|the)|wipe\w*)\b/iu,
+      /\b(delet\w*|remov\w*|discard\w*|drop\w*|destroy\w*|wip(e|es|ed|ing)|purg\w*|reset\w*|revert\w*|roll ?back\w*|force\w*|archiv\w*|clos(e|es|ed|ing)|abandon\w*|kill\w*|end (it|the|this|that)|stop the worker|retire\w*|clean(s|ed|ing)? (up|out|the|all|everything)|cleanup|git clean|eras\w*|nuk\w*|prun\w*|truncat\w*|overwrit\w*|uninstall\w*|wipe ?out|throw away|rm|rmdir|unlink\w*|rewrit\w* (the )?history|hard reset|--hard|shred\w*|format the|mkfs|dd|empty|emptie\w*|clear(s|ed|ing)? (out|all|the)|wipe\w*)\b/iu,
   },
-  { reason: "publishing", pattern: /\b(publish\w*|releas\w*|deploy\w*|tag(s|ged|ging)?|push\w*|announc\w*|tweet\w*|e-?mail\w*)\b/iu },
-  { reason: "credentials", pattern: /\b(credential\w*|secret\w*|tokens?|password\w*|passphrase\w*|api[ -]?keys?|ssh[ -]?keys?|log ?in|sign ?in|auth\w*)\b/iu },
+  { reason: "publishing", pattern: /\b(publish\w*|releas\w*|deploy\w*|tag(s|ged|ging)?|push\w*|announc\w*|tweet\w*|e-?mail\w*|roll ?outs?|rolling out|promot\w*|production|prod)\b/iu },
+  { reason: "credentials", pattern: /\b(credential\w*|secret\w*|tokens?|password\w*|passphrase\w*|api[ -]?keys?|ssh[ -]?keys?|log ?in|sign ?in|auth\w*|signing|keys?|certificat\w*|certs?)\b/iu },
   { reason: "settings", pattern: /\b(setting\w*|config\w*|permission\w*|approv\w*|yolo|sudo|chmod|chown)\b/iu },
 ];
 
@@ -111,42 +111,49 @@ const COMMAND: readonly RegExp[] = [
 ];
 
 /**
- * What a voice press may ask for, the fail-closed side: the whole prompt must be one known operation, said
- * as one clause. A second clause ("…, then fast-forward main"), a sentence break or a joining word means a
- * compound request whose later parts this list never vetted, so it stays a tap on the board, as does any
- * prompt that opens with no known operation. Each operation is decided by its opening words.
+ * The buttons the voice may press: a short, bounded set of whole shapes whose effect is known, matched on the
+ * whole prompt with only a pull request (or the decision's id) left open. Anything else is a tap on the
+ * board, whatever its wording; the voice tells the captain to tap it, or offers to ask the first mate.
+ *
+ * - **Hold or leave open:** wait, change nothing now.
+ * - **A review loop** on a pull request.
+ * - **A question or a report:** the first mate answers; one clause, no joined request.
+ * - **A choice on a decision card** (`kind: captain`): "Use <option> for … (<the decision's id>)", which
+ *   records the captain's answer to the question the card asks.
  */
-const OPERATIONS: readonly RegExp[] = [
-  // A question or a report: the first mate answers, nothing changes.
-  /^(what|what's|how|why|which|when|where|who|is|are|was|were|does|do|did|has|have|can|could|should|will)\b.*\?$/u,
-  /^(tell me|report|summari[sz]e|explain|describe|show me|list|give me)\b/u,
-  // Reading and reviewing.
-  /^(check|look at|look into|investigate|research|review|read|plan)\b/u,
-  /^run a review loop on\b/u,
-  /^(run|rerun|re-run) (the )?(tests?|test suite|checks?|gate|ci)\b/u,
-  /^retry\b/u,
-  // Waiting and choosing.
-  /^(leave|keep)\b.*\bopen\b/u,
-  /^(hold off on|hold|wait for|wait|pause)\b/u,
-  /^(use|pick|choose|go with|prefer)\b/u,
-  // Ordinary work in a crewmate's own checkout.
-  /^(fix|start work on|start|implement|add|write)\b/u,
+const PR = String.raw`(url|[\w.-]+ ?#\d+|pull request \d+|it|them|this one|that one)`;
+const UNTIL = String.raw`( until i say( so)?| for now)?`;
+const HOLD: readonly RegExp[] = [
+  new RegExp(String.raw`^(leave|keep) ${PR} open${UNTIL}$`, "u"),
+  new RegExp(String.raw`^(hold|wait)( on| off on)? ${PR}${UNTIL}$`, "u"),
+  new RegExp(String.raw`^(hold|wait|do nothing)${UNTIL}$`, "u"),
 ];
-
-/** Words that join a second request onto the first. */
+const REVIEW_LOOP = new RegExp(String.raw`^run a review loop on ${PR}( until it comes back clean)?$`, "u");
+/** One clause of free words: no comma, no clause mark, no word that joins a second request on. */
+const CLAUSE = String.raw`[^,;:.!?]+`;
 const JOINERS =
   /\b(then|and|also|afterwards|after|before|next|plus|but|or|while|once|if|unless|so|by|via|using|instead|except|finally|meanwhile)\b/u;
+const QUESTION = new RegExp(String.raw`^(what|what's|how|why|which|when|where|who|is|are|was|were|does|did|has|have)\b${CLAUSE}\?$`, "u");
+const REPORT = new RegExp(String.raw`^(tell me|report|summari[sz]e)\b${CLAUSE}$`, "u");
 
 /** A tail the first mate's prompts may end with that adds no request. */
 const HARMLESS_TAIL = /(,?\s*and do nothing else|\.\s*nothing else)\s*[.!]?$/u;
-
 /** A prompt longer than this is not one the captain heard enough of to vouch for. */
-const PROMPT_MAX = 600;
+const PROMPT_MAX = 400;
 
-/** Whether the prompt is one known operation, whole, with nothing joined on. */
-export function knownOperation(prompt: string): boolean {
-  if (prompt.length > PROMPT_MAX) return false;
-  let text = prompt
+/** Where a button sits: a decision card's choices are pressable in the decision's own words. */
+export interface ButtonPlace {
+  /** The decision's backlog id when the card is a decision (`kind: captain`), else null. */
+  decision: string | null;
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+/** The prompt as the shapes read it: lower case, links as `url`, one space, the harmless tail and stop gone. */
+function shapeText(prompt: string): string {
+  return prompt
     .toLowerCase()
     .replace(/[‘’]/gu, "'")
     .replace(/https?:\/\/\S+/gu, "url")
@@ -155,25 +162,37 @@ export function knownOperation(prompt: string): boolean {
     .replace(HARMLESS_TAIL, "")
     .replace(/[.!]$/u, "")
     .trim();
+}
+
+/** Whether the button is one of the voice-pressable shapes. */
+export function voicePressable(prompt: string, place: ButtonPlace): boolean {
+  if (prompt.length > PROMPT_MAX) return false;
+  const text = shapeText(prompt);
   if (text === "") return false;
-  const question = text.endsWith("?");
-  if (question) text = text.slice(0, -1);
-  // A sentence break or a clause mark inside is a second request.
-  if (/[.!?;:](\s|$)|\n/u.test(text)) return false;
-  if (JOINERS.test(text.replace(/\bonce (more|again)\b/gu, "again"))) return false;
-  const whole = question ? `${text}?` : text;
-  return OPERATIONS.some((operation) => operation.test(whole));
+  if (HOLD.some((shape) => shape.test(text)) || REVIEW_LOOP.test(text)) return true;
+  const joined = JOINERS.test(text.replace(/\bonce (more|again)\b/gu, "again"));
+  if (!joined && (QUESTION.test(text) || REPORT.test(text))) return true;
+  if (place.decision !== null && !joined) {
+    const id = escapeRegExp(place.decision.toLowerCase());
+    return new RegExp(String.raw`^(use|pick|choose|go with) [^,;:.!?()]{1,80} \(${id}\)$`, "u").test(text);
+  }
+  return false;
 }
 
 /** Why the button can only be pressed on the board, or null when the voice may press it after a yes. */
-export function tapOnlyReason(label: string, prompt: string): string | null {
+export function tapOnlyReason(label: string, prompt: string, place: ButtonPlace = { decision: null }): string | null {
   const text = `${label}\n${prompt}`;
   const listed = TAP_ONLY.find(({ pattern }) => pattern.test(text))?.reason;
   if (listed !== undefined) return listed;
   const prose = text.replace(/https?:\/\/\S+/giu, " ");
   if (COMMAND.some((pattern) => pattern.test(prose))) return "a command to run";
-  if (!knownOperation(prompt)) return "not known to be safe";
+  if (!voicePressable(prompt, place)) return "not one the voice may press";
   return null;
+}
+
+/** Where a card's buttons sit. */
+export function placeOf(card: FleetCard): ButtonPlace {
+  return { decision: card.backlog?.kind === "captain" ? card.backlog.id : null };
 }
 
 // --- Refs and etags --------------------------------------------------------------------------------
@@ -255,7 +274,7 @@ function actionsOf(card: FleetCard, ref: string): VoiceAction[] {
   return (card.backlog?.actions ?? []).map((action, index) => ({
     ref: `${ref}.a${index + 1}`,
     label: action.label,
-    tapOnly: tapOnlyReason(action.label, action.prompt),
+    tapOnly: tapOnlyReason(action.label, action.prompt, placeOf(card)),
   }));
 }
 

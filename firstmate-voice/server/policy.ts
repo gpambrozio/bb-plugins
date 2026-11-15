@@ -227,54 +227,82 @@ const TRAILING = new Set(["captain", "sir"]);
 /** How long the lead-in to a read-back may be ("Captain, shall I"), in words. */
 const LEAD_IN_MAX = 6;
 
-/** The value of a number word, or null: units, teens and tens; "hundred" and "thousand" are scales. */
-function numberWord(token: string): number | null {
-  const unit = UNITS.indexOf(token);
-  if (unit >= 0) return unit;
-  const tens = TENS.indexOf(token);
+/** A token no read-back holds: an ambiguous run of number words becomes it, so it can never match. */
+const AMBIGUOUS = "\u0001";
+
+function unitOf(token: string | undefined): number | null {
+  const unit = UNITS.indexOf(token ?? "");
+  return unit >= 0 ? unit : null;
+}
+
+function tensOf(token: string | undefined): number | null {
+  const tens = TENS.indexOf(token ?? "");
   return tens >= 2 ? tens * 10 : null;
 }
 
-const SCALES: Record<string, number> = { hundred: 100, thousand: 1000 };
+function isNumberWord(token: string | undefined): boolean {
+  return unitOf(token) !== null || tensOf(token) !== null || token === "hundred" || token === "thousand";
+}
+
+type Parsed = { value: number; next: number };
+
+/** Below a hundred: "seven", "fifteen", "forty", "forty two". */
+function belowHundred(tokens: readonly string[], i: number): Parsed | null {
+  const unit = unitOf(tokens[i]);
+  if (unit !== null) return { value: unit, next: i + 1 };
+  const tens = tensOf(tokens[i]);
+  if (tens === null) return null;
+  const more = unitOf(tokens[i + 1]);
+  return more !== null && more >= 1 && more <= 9 ? { value: tens + more, next: i + 2 } : { value: tens, next: i + 1 };
+}
+
+/** Below a thousand: "one hundred", "a hundred and twelve", "two hundred five", or below a hundred. */
+function belowThousand(tokens: readonly string[], i: number): Parsed | null {
+  const lead = tokens[i] === "a" ? 1 : unitOf(tokens[i]);
+  if (lead !== null && lead >= 1 && lead <= 9 && tokens[i + 1] === "hundred") {
+    const at = tokens[i + 2] === "and" ? i + 3 : i + 2;
+    const rest = belowHundred(tokens, at);
+    if (rest !== null && rest.value > 0) return { value: lead * 100 + rest.value, next: rest.next };
+    return { value: lead * 100, next: i + 2 };
+  }
+  return tokens[i] === "a" ? null : belowHundred(tokens, i);
+}
+
+/** A whole cardinal number up to 999,999, said grammatically; null when the words are not one. */
+function cardinal(tokens: readonly string[], i: number): Parsed | null {
+  const thousands = tokens[i] === "a" && tokens[i + 1] === "thousand" ? { value: 1, next: i + 1 } : belowThousand(tokens, i);
+  if (thousands !== null && tokens[thousands.next] === "thousand" && thousands.value >= 1) {
+    const after = thousands.next + 1;
+    const at = tokens[after] === "and" ? after + 1 : after;
+    const rest = belowThousand(tokens, at);
+    if (rest !== null && rest.value > 0) return { value: thousands.value * 1000 + rest.value, next: rest.next };
+    return { value: thousands.value * 1000, next: after };
+  }
+  return thousands;
+}
 
 /**
- * Numbers said in words, turned into digits: "forty-two", "one hundred twelve", "one hundred and twelve",
- * "a hundred", "one thousand one hundred twelve". An "and" counts only between a scale and more number.
+ * Numbers said in words, turned into digits, but only when grammatical: "forty-two", "one hundred and
+ * twelve", "one thousand one hundred twelve". Number words that run on past one number ("twenty
+ * twenty-two", "forty one one", "nineteen eighty") are ambiguous: the whole run becomes a token nothing
+ * matches, so a read-back said that way never counts.
  */
 function digitsFor(tokens: readonly string[]): string[] {
   const out: string[] = [];
   let i = 0;
   while (i < tokens.length) {
-    const token = tokens[i] ?? "";
-    const startsNumber = numberWord(token) !== null || (token === "a" && SCALES[tokens[i + 1] ?? ""] !== undefined);
-    if (!startsNumber) {
-      out.push(token);
+    const parsed = isNumberWord(tokens[i]) || tokens[i] === "a" ? cardinal(tokens, i) : null;
+    if (parsed === null) {
+      out.push(tokens[i] ?? "");
       i += 1;
       continue;
     }
-    let total = 0;
-    let current = 0;
-    let lastWasScale = false;
-    while (i < tokens.length) {
-      const word = tokens[i] ?? "";
-      const value = word === "a" ? 1 : numberWord(word);
-      const scale = SCALES[word];
-      if (value !== null && !(word === "a" && SCALES[tokens[i + 1] ?? ""] === undefined)) {
-        current += value;
-        lastWasScale = false;
-      } else if (scale === 100) {
-        current = (current === 0 ? 1 : current) * 100;
-        lastWasScale = true;
-      } else if (scale === 1000) {
-        total += (current === 0 ? 1 : current) * 1000;
-        current = 0;
-        lastWasScale = true;
-      } else if (word === "and" && lastWasScale && numberWord(tokens[i + 1] ?? "") !== null) {
-        lastWasScale = false;
-      } else break;
-      i += 1;
-    }
-    out.push(String(total + current));
+    let next = parsed.next;
+    if (isNumberWord(tokens[next]) || (tokens[next] === "and" && isNumberWord(tokens[next + 1]))) {
+      while (isNumberWord(tokens[next]) || (tokens[next] === "and" && isNumberWord(tokens[next + 1]))) next += 1;
+      out.push(AMBIGUOUS);
+    } else out.push(String(parsed.value));
+    i = next;
   }
   return out;
 }

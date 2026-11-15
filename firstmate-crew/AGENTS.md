@@ -100,12 +100,11 @@ Do not break these; each was paid for.
   with every source mark inside defused (`defuse`, `spoken`), plus an agent-only note saying to act on the
   account but follow the words where the two differ (the words alone are the captain's); a
   press sends exactly the button's prompt under `VOICE_PRESSED_PREFIX`, only when the card's etag is
-  unchanged, and never for a tap-only button (`tapOnlyReason`, fail-closed: merges, anything destructive,
-  publishing, credentials and settings by a wide word net; any prompt carrying a command to run; and any
-  prompt that is not one whole known operation (`knownOperation`: one clause, no sentence break, no joining
-  word such as "then", "and" or "by", opening with a listed verb such as "check", "tell me", "use" or "run a
-  review loop on"), or is longer than 600 characters, all stay a tap on the board; one safe verb never
-  vouches for the rest of a prompt). The charter and the press note still tell the first mate not to act on a voice press that
+  unchanged, and never for a tap-only button (`tapOnlyReason`, fail-closed: a deny list and a command check first,
+  then `voicePressable`, a bounded set of whole shapes whose effect is known: hold or leave a pull request
+  open, a review loop on one, a one-clause question or report, and, on a decision card only (`kind:
+  captain`), "Use <option> for … (<the decision's id>)". Every other button is tapped on the board,
+  whatever its wording; prompts are never judged by an opening verb). The charter and the press note still tell the first mate not to act on a voice press that
   turns out to be one of those, since the captain heard only the label. The charter names both lines (a test
   ties them) and says neither is the captain's word on those. What the voice model may see has no thread
   ids, no URLs and no prompts: cards and buttons are refs (`c1`, `c1.a1`, `s1`) that keep their meaning for

@@ -215,8 +215,8 @@ describe("prepareHome and the charter", () => {
     expect(agents).not.toContain("firstmate-charter");
     expect(fingerprint(await read(home, CHARTER_FILE))).toBe(fingerprint(await readTemplate(TEMPLATES.charter)));
     // Pinned so a charter change is deliberate: every untouched home follows it, and every edited one is
-    // offered it as charter.new.md. 38ea8ad6b546487e adds FirstMate voice (§0: the spoken and pressed lines,
-    // the voice assistant's account checked against the captain's words, a voice press never acted on for
+    // offered it as charter.new.md. 166ee9971898db2e adds FirstMate voice (§0: the spoken and pressed lines,
+    // the voice assistant's account checked against the captain's words, only a bounded set of buttons pressable by voice, a voice press never acted on for
     // a merge or anything destructive even if one arrives, never a merge or anything
     // destructive by voice; §9: the outcome in the first sentence);
     // 3a92da3164044f1a says the board gives every card an Answer box, held or
@@ -246,7 +246,7 @@ describe("prepareHome and the charter", () => {
     // mate to always title its crew; 79b5a4bc6315ef40 the charter rewritten for bb; 09fd534b24db4e75 was Paseo's text
     // with only its placeholders renamed, e0b749cb695c5df6 the charter as it moved into templates/, and
     // 8b6df21d082df6e6 Paseo's before {{crewModeRule}} became {{crewReasoningRule}}.
-    expect(fingerprint(await readTemplate(TEMPLATES.charter))).toBe("38ea8ad6b546487e");
+    expect(fingerprint(await readTemplate(TEMPLATES.charter))).toBe("166ee9971898db2e");
 
     await editCopy(home, "# My first mate\n\n<!-- a note to myself -->\nYour home is {{home}}; keep it tidy.");
     await prepareHome(home, homeConfig);
