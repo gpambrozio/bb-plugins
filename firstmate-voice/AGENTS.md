@@ -107,6 +107,22 @@ after the captain stopped; a suggestion was read back, confirmed with "Yes." and
   committed at 33.1 s, and the suggestion was pressed; "Press merge" was refused from the brief without a
   proposal. About four minutes of voice time were spent across the phase 1 runs.
 
+## The split-request fix, live (2026-11-14, `phase1-results/2026-11-14-e2e-split-ask.json`)
+
+`e2e-desktop.ts --split-only` says one request in two clips: "Ask the first mate to reply with the word
+apple, and then" and, after a short pause, "the word banana after it. Nothing else." Turn detection ended the
+turn at the pause (committed at 17.6 s) and the voice began a reply; the second clip talked over it
+(`cleared` at 19.0 s, so no boundary), was committed at 23.0 s, and the one `ask_first_mate` sent both
+segments joined, with the model's account beside them. The first mate answered "Apple banana". Before the
+fix, the model's "1" would have sent only the second clip, as it did for the captain.
+
+- **A first breath that sounds finished still goes on its own.** An earlier run, with a complete sentence
+  ("…write the word apple in its reply.") and a 3.3 s pause, had the model hand over before the second clip
+  started; the second half would be a send of its own. Nothing on the server can wait for words not yet
+  said; the instructions ask the model to wait when what it heard sounds unfinished.
+- **The model quoted the transcript inside its account** on that run, because the tool's text said the words
+  "go beside it". It now says not to quote them; the second run's account was clean.
+
 ## Live checks
 
 Only in a dev bb, never the owner's: install `codex-realtime` (with `firstmate-voice` on its allow list),

@@ -17,7 +17,7 @@ export interface ToolSpec {
 const NONE = { type: "object", properties: {}, additionalProperties: false } as const;
 
 const ACCOUNT =
-  "in your own words, complete: what the captain wants, with what the talk made clear (a request they split across pauses, what \"it\" or \"that\" means, what you already answered). Report it, as \"The captain wants…\"; add nothing they did not ask for. Their own words since your last hand-off go beside it, word for word.";
+  "in your own words, complete: what the captain wants, with what the talk made clear (a request they split across pauses, what \"it\" or \"that\" means, what you already answered). Report it, as \"The captain wants…\"; add nothing they did not ask for. Do not quote their words: the server adds everything they said since your last hand-off itself.";
 
 const REF = { type: "string", description: "A ref from the brief, such as c3." } as const;
 

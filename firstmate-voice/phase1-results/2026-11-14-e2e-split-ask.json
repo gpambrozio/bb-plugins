@@ -1,0 +1,356 @@
+{
+  "startedAt": "2026-11-15T02:27:52.975Z",
+  "connectedMs": 897,
+  "greeting": [
+    "Ahoy, captain.\n\nThere\u2019s a decision waiting: the login test fix is blocked on what to do with web pull request 42."
+  ],
+  "spokenMessages": [
+    "Spoken by the captain through FirstMate voice:\n\nAsk the first mate to reply with the word apple, and then... The word banana after it. Nothing else.\n\nThe voice assistant's account, in its own words, not the captain's:\n\nThe captain wants the first mate to reply with the word apple, and then the word banana after it, and nothing else."
+  ],
+  "split": {
+    "message": "Spoken by the captain through FirstMate voice:\n\nAsk the first mate to reply with the word apple, and then... The word banana after it. Nothing else.\n\nThe voice assistant's account, in its own words, not the captain's:\n\nThe captain wants the first mate to reply with the word apple, and then the word banana after it, and nothing else.",
+    "reachedMs": 21502,
+    "wordsHaveBoth": true,
+    "accountHasBoth": true
+  },
+  "events": [
+    {
+      "t": 1794709677696,
+      "type": "session.created"
+    },
+    {
+      "t": 1794709677764,
+      "type": "session.updated"
+    },
+    {
+      "t": 1794709677926,
+      "type": "session.updated"
+    },
+    {
+      "t": 1794709677927,
+      "type": "conversation.item.added"
+    },
+    {
+      "t": 1794709677927,
+      "type": "conversation.item.done"
+    },
+    {
+      "t": 1794709677927,
+      "type": "response.created"
+    },
+    {
+      "t": 1794709679031,
+      "type": "response.output_item.added"
+    },
+    {
+      "t": 1794709679032,
+      "type": "conversation.item.added"
+    },
+    {
+      "t": 1794709679050,
+      "type": "response.content_part.added"
+    },
+    {
+      "t": 1794709679289,
+      "type": "output_audio_buffer.started"
+    },
+    {
+      "t": 1794709681053,
+      "type": "response.output_audio.done"
+    },
+    {
+      "t": 1794709681053,
+      "type": "response.output_audio_transcript.done",
+      "transcript": "Ahoy, captain.\n\nThere\u2019s a decision waiting: the login test fix is blocked on what to do with web pull request 42."
+    },
+    {
+      "t": 1794709681056,
+      "type": "response.content_part.done"
+    },
+    {
+      "t": 1794709681056,
+      "type": "conversation.item.done"
+    },
+    {
+      "t": 1794709681057,
+      "type": "response.output_item.done"
+    },
+    {
+      "t": 1794709681059,
+      "type": "response.done"
+    },
+    {
+      "t": 1794709681102,
+      "type": "rate_limits.updated"
+    },
+    {
+      "t": 1794709687139,
+      "type": "output_audio_buffer.stopped"
+    },
+    {
+      "t": 1794709691307,
+      "type": "input_audio_buffer.speech_started"
+    },
+    {
+      "t": 1794709695289,
+      "type": "input_audio_buffer.speech_stopped"
+    },
+    {
+      "t": 1794709695291,
+      "type": "input_audio_buffer.committed"
+    },
+    {
+      "t": 1794709695293,
+      "type": "conversation.item.added"
+    },
+    {
+      "t": 1794709695293,
+      "type": "conversation.item.done"
+    },
+    {
+      "t": 1794709695297,
+      "type": "response.created"
+    },
+    {
+      "t": 1794709695659,
+      "type": "conversation.item.input_audio_transcription.completed",
+      "transcript": "Ask the first mate to reply with the word apple, and then..."
+    },
+    {
+      "t": 1794709695702,
+      "type": "response.output_item.added"
+    },
+    {
+      "t": 1794709695703,
+      "type": "conversation.item.added"
+    },
+    {
+      "t": 1794709695723,
+      "type": "response.content_part.added"
+    },
+    {
+      "t": 1794709695931,
+      "type": "output_audio_buffer.started"
+    },
+    {
+      "t": 1794709696687,
+      "type": "input_audio_buffer.speech_started"
+    },
+    {
+      "t": 1794709696688,
+      "type": "output_audio_buffer.cleared"
+    },
+    {
+      "t": 1794709696734,
+      "type": "response.output_audio.done"
+    },
+    {
+      "t": 1794709696734,
+      "type": "response.output_audio_transcript.done",
+      "transcript": "Alright, captain, I\u2019ll hand that request over to the first mate."
+    },
+    {
+      "t": 1794709696734,
+      "type": "response.content_part.done"
+    },
+    {
+      "t": 1794709696735,
+      "type": "conversation.item.done"
+    },
+    {
+      "t": 1794709696735,
+      "type": "response.output_item.done"
+    },
+    {
+      "t": 1794709696738,
+      "type": "response.done"
+    },
+    {
+      "t": 1794709696738,
+      "type": "conversation.item.truncated"
+    },
+    {
+      "t": 1794709700725,
+      "type": "input_audio_buffer.speech_stopped"
+    },
+    {
+      "t": 1794709700727,
+      "type": "input_audio_buffer.committed"
+    },
+    {
+      "t": 1794709700729,
+      "type": "conversation.item.added"
+    },
+    {
+      "t": 1794709700730,
+      "type": "conversation.item.done"
+    },
+    {
+      "t": 1794709700734,
+      "type": "response.created"
+    },
+    {
+      "t": 1794709701077,
+      "type": "conversation.item.input_audio_transcription.completed",
+      "transcript": "The word banana after it. Nothing else."
+    },
+    {
+      "t": 1794709701454,
+      "type": "response.output_item.added"
+    },
+    {
+      "t": 1794709701454,
+      "type": "conversation.item.added"
+    },
+    {
+      "t": 1794709701730,
+      "type": "response.function_call_arguments.done"
+    },
+    {
+      "t": 1794709701731,
+      "type": "conversation.item.done"
+    },
+    {
+      "t": 1794709701731,
+      "type": "response.output_item.done"
+    },
+    {
+      "t": 1794709701733,
+      "type": "response.done"
+    },
+    {
+      "t": 1794709701775,
+      "type": "rate_limits.updated"
+    },
+    {
+      "t": 1794709701950,
+      "type": "conversation.item.added"
+    },
+    {
+      "t": 1794709701950,
+      "type": "conversation.item.done"
+    },
+    {
+      "t": 1794709701956,
+      "type": "response.created"
+    },
+    {
+      "t": 1794709702285,
+      "type": "response.output_item.added"
+    },
+    {
+      "t": 1794709702285,
+      "type": "conversation.item.added"
+    },
+    {
+      "t": 1794709702302,
+      "type": "response.content_part.added"
+    },
+    {
+      "t": 1794709702493,
+      "type": "output_audio_buffer.started"
+    },
+    {
+      "t": 1794709703185,
+      "type": "response.output_audio.done"
+    },
+    {
+      "t": 1794709703187,
+      "type": "response.output_audio_transcript.done",
+      "transcript": "Captain, I\u2019ve asked the first mate for that exact reply."
+    },
+    {
+      "t": 1794709703187,
+      "type": "response.content_part.done"
+    },
+    {
+      "t": 1794709703187,
+      "type": "conversation.item.done"
+    },
+    {
+      "t": 1794709703187,
+      "type": "response.output_item.done"
+    },
+    {
+      "t": 1794709703189,
+      "type": "response.done"
+    },
+    {
+      "t": 1794709703231,
+      "type": "rate_limits.updated"
+    },
+    {
+      "t": 1794709704960,
+      "type": "conversation.item.added"
+    },
+    {
+      "t": 1794709704961,
+      "type": "conversation.item.done"
+    },
+    {
+      "t": 1794709704972,
+      "type": "conversation.item.added"
+    },
+    {
+      "t": 1794709704973,
+      "type": "conversation.item.done"
+    },
+    {
+      "t": 1794709706238,
+      "type": "output_audio_buffer.stopped"
+    },
+    {
+      "t": 1794709706356,
+      "type": "response.created"
+    },
+    {
+      "t": 1794709706728,
+      "type": "response.output_item.added"
+    },
+    {
+      "t": 1794709706729,
+      "type": "conversation.item.added"
+    },
+    {
+      "t": 1794709706746,
+      "type": "response.content_part.added"
+    },
+    {
+      "t": 1794709706927,
+      "type": "output_audio_buffer.started"
+    },
+    {
+      "t": 1794709707848,
+      "type": "response.output_audio.done"
+    },
+    {
+      "t": 1794709707849,
+      "type": "response.output_audio_transcript.done",
+      "transcript": "The first mate answered you. Outcome: they replied with \u201cApple banana, captain.\u201d"
+    },
+    {
+      "t": 1794709707850,
+      "type": "response.content_part.done"
+    },
+    {
+      "t": 1794709707851,
+      "type": "conversation.item.done"
+    },
+    {
+      "t": 1794709707851,
+      "type": "response.output_item.done"
+    },
+    {
+      "t": 1794709707854,
+      "type": "response.done"
+    },
+    {
+      "t": 1794709707906,
+      "type": "rate_limits.updated"
+    },
+    {
+      "t": 1794709711919,
+      "type": "output_audio_buffer.stopped"
+    }
+  ]
+}

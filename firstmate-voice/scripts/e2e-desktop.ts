@@ -4,7 +4,8 @@
 //
 //   node scripts/e2e-desktop.ts --url http://127.0.0.1:48886 --mate thr_… --bb <a dev-bb CLI wrapper>
 //
-// It checks, in order: the greeting; an ask that reaches the first mate as the captain's words and whose
+// With --split-only it checks one thing: a request said in two breaths reaches the first mate whole, with
+// the voice's account beside it. Otherwise it checks, in order: the greeting; an ask that reaches the first mate as the captain's words and whose
 // reply is spoken back; a suggestion pressed by voice after a read-back and a "yes"; and a Merge button the
 // voice refuses to press. It spends a few minutes of the ChatGPT plan's voice time.
 import { execFileSync } from "node:child_process";
@@ -23,6 +24,8 @@ const { values } = parseArgs({
     bb: { type: "string" },
     out: { type: "string", default: join(process.env.TMPDIR ?? "/tmp", "fmv-e2e") },
     "skip-ask": { type: "boolean", default: false },
+    /** Only the split ask: one request in two clips with a pause between, then End. */
+    "split-only": { type: "boolean", default: false },
   },
 });
 const base = new URL(values.url);
@@ -34,6 +37,7 @@ mkdirSync(values.out, { recursive: true });
 
 const PRESSED = "Pressed by the captain through FirstMate voice:";
 const SPOKEN = "Spoken by the captain through FirstMate voice:";
+const ACCOUNT = "The voice assistant's account, in its own words, not the captain's:";
 
 function clip(text: string): string {
   const path = join(values.out, "clip.wav");
@@ -92,6 +96,8 @@ async function speak(page: Page, text: string): Promise<number> {
 }
 
 const report: Record<string, unknown> = { startedAt: new Date().toISOString() };
+/** Ends a run early on purpose; the finally block still ends the call. */
+class Done extends Error {}
 let pageRef: Page | null = null;
 const browser = await chromium.launch({ executablePath: headlessChromium(), args: ["--autoplay-policy=no-user-gesture-required"] });
 try {
@@ -156,8 +162,23 @@ try {
   report.greeting = await voiceSaid(page, t0);
   console.log("greeting:", report.greeting);
 
+  // 0. One request in two breaths: turn detection ends the turn at the pause, and both halves must still go.
+  if (values["split-only"]) {
+    // As the captain's request split: the first breath sounds unfinished, then a short pause.
+    const splitAt = await speak(page, "Ask the first mate to reply with the word apple, and then");
+    await new Promise((resolve) => setTimeout(resolve, 900));
+    await speak(page, "the word banana after it. Nothing else.");
+    const message = await until("the split ask in the first mate's chat", 45_000, () => mateMessages().slice(before).find((text) => text.startsWith(SPOKEN)));
+    await new Promise((resolve) => setTimeout(resolve, 8_000));
+    report.spokenMessages = mateMessages().slice(before).filter((text) => text.startsWith(SPOKEN));
+    const [words = "", account = ""] = message.slice(SPOKEN.length).split(ACCOUNT).map((part) => part.trim());
+    report.split = { message, reachedMs: Date.now() - splitAt, wordsHaveBoth: /apple/iu.test(words) && /banana/iu.test(words), accountHasBoth: /apple/iu.test(account) && /banana/iu.test(account) };
+    console.log("first mate got:", message);
+    await quiet(page, 90_000);
+  }
+
   // 1. Ask, and hear the first mate's answer.
-  if (!values["skip-ask"]) {
+  if (!values["skip-ask"] && !values["split-only"]) {
     const asked = await speak(page, "Ask the first mate what two plus two is. It should answer in one word.");
     const askMessage = await until("the ask in the first mate's chat", 30_000, () => mateMessages().slice(before).find((text) => text.startsWith(SPOKEN)));
     report.ask = { message: askMessage, reachedMs: Date.now() - asked };
@@ -171,6 +192,8 @@ try {
     console.log("voice said:", answered);
     await quiet(page);
   }
+
+  if (values["split-only"]) throw new Done();
 
   // 2. Press a suggestion by voice: read-back, then yes.
   const pressAt = await speak(page, "Press the quick status suggestion.");
@@ -200,8 +223,10 @@ try {
   await page.getByText(/FirstMate voice ·/u).waitFor({ state: "detached", timeout: 15_000 }).catch(() => undefined);
   report.endedMs = Date.now() - t0;
 } catch (error) {
-  report.error = error instanceof Error ? error.message : String(error);
-  console.log("FAILED:", report.error);
+  if (!(error instanceof Done)) {
+    report.error = error instanceof Error ? error.message : String(error);
+    console.log("FAILED:", report.error);
+  }
 } finally {
   if (pageRef !== null) {
     report.events = await events(pageRef).catch(() => []);
