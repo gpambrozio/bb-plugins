@@ -413,10 +413,12 @@ with `fixed bottom-4 right-4` cover each other. A plugin drawing a pill from
 `screen-sharing/app/pill-stack.tsx` (plugins are bundled separately). The stack's styles are inline,
 because a class one plugin's CSS has may be missing from another's: fixed at `bottom: 16px; right:
 16px` (`96px` and `12px` under 640 px wide, above bb's composer), a `column-reverse` flex column with
-`gap: 8px` and `pointer-events: none`. Each pill's root sets `pointer-events: auto`, the portal scope
-props (the stack is outside the plugin root its CSS is scoped to) and `data-pill-order` with a CSS
-`order` from it: lower sits closer to the corner, FirstMate voice is `10`, Screen Sharing `20`. Pick a
-new number for a new pill and add it to every copy's `PILL_ORDER`.
+`gap: 8px` and `pointer-events: none`. Each pill's root sets `pointer-events: auto`,
+`data-bb-plugin-root` and `data-bb-plugin="<id>"` (bb applies a plugin's CSS only inside its root, and
+the shared stack carries neither), and `data-pill-order` with a CSS `order` from it: lower sits closer
+to the corner, FirstMate voice is `10`, Screen Sharing `20`; pick a free number for a new pill. Release
+the stack in a `useEffect` clean-up, which runs after React has taken the pill out; a `useLayoutEffect`
+clean-up still sees it there and never removes the stack.
 
 `app.slots.settingsSection` requires an `id` (letters, digits, `-`, `_`), unlike the Paseo settings screen.
 

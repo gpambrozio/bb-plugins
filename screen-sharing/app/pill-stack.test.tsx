@@ -7,7 +7,7 @@
 import { cleanup, render } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { PILL_STACK_ID, PillStackPortal, acquirePillStack, releasePillStack, usePillRootProps } from "./pill-stack";
+import { PILL_STACK_ID, PillStackPortal, acquirePillStack, releasePillStack, pillRootProps } from "./pill-stack";
 
 afterEach(() => {
   cleanup();
@@ -21,7 +21,7 @@ function stack(): HTMLElement | null {
 function Pill({ name, order }: { name: string; order: number }) {
   return (
     <PillStackPortal>
-      <div role="status" aria-label={name} {...usePillRootProps(order)} />
+      <div role="status" aria-label={name} {...pillRootProps(order)} />
     </PillStackPortal>
   );
 }
@@ -68,6 +68,11 @@ describe("a pill in the stack", () => {
     expect(pill.dataset.pillOrder).toBe("20");
     expect(pill.style.order).toBe("20");
     expect(pill.style.pointerEvents).toBe("auto");
+    // bb scopes this plugin's CSS to its root, which the shared stack is outside of.
+    expect(pill.dataset.bbPlugin).toBe("screen-sharing");
+    expect(pill.hasAttribute("data-bb-plugin-root")).toBe(true);
+    expect(stack()?.hasAttribute("data-bb-plugin")).toBe(false);
+    expect(stack()?.hasAttribute("data-bb-plugin-root")).toBe(false);
   });
 
   it("shares the stack with another plugin's pill and leaves it to that pill", () => {
@@ -77,6 +82,15 @@ describe("a pill in the stack", () => {
     ours.unmount();
     expect(stack()?.children).toHaveLength(1);
     theirs.remove();
+  });
+
+  it("takes a fresh stack when another plugin removed the one it held", () => {
+    const ours = render(<Pill name="ours" order={20} />);
+    const first = stack();
+    first?.remove();
+    ours.rerender(<Pill name="ours" order={20} />);
+    expect(stack()).not.toBe(first);
+    expect(stack()?.querySelector('[aria-label="ours"]')).not.toBeNull();
   });
 
   it("takes the stack away when it was the last pill", () => {

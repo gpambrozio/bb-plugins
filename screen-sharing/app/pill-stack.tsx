@@ -7,18 +7,16 @@
  * helper, since plugins are bundled separately, so its styles are set inline:
  * a Tailwind class one plugin relies on may not exist in another's CSS.
  */
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-
-import { usePortalScopeProps } from "@/lib/portal-scope";
 
 export const PILL_STACK_ID = "bb-plugin-pill-stack";
 
 /** Below this width bb's composer sits at the bottom, so the stack sits above it. */
 const NARROW_QUERY = "(max-width: 639px)";
 
-/** Lower sits closer to the corner. */
-export const PILL_ORDER = { voice: 10, screenSharing: 20 } as const;
+/** This pill's place in the stack; lower sits closer to the corner, and FirstMate voice's is 10. */
+export const SCREEN_SHARING_PILL_ORDER = 20;
 
 function place(stack: HTMLElement, narrow: boolean): void {
   stack.style.bottom = narrow ? "96px" : "16px";
@@ -55,40 +53,54 @@ export function releasePillStack(stack: HTMLElement): void {
   if (stack.childElementCount === 0) stack.remove();
 }
 
+/** This plugin's id, which its bundled CSS is scoped to. */
+export const PLUGIN_ID = "screen-sharing";
+
 /**
- * Renders `children` into the shared stack while mounted. The pill's root sets
- * `data-pill-order` and `pointer-events: auto` itself ({@link usePillRootProps}).
- * Mount it only while the pill shows, so an empty stack is never left behind.
+ * What a pill's root carries in the stack: its order, clicks back on (the stack
+ * lets them through), and the plugin's CSS scope. bb scopes each plugin's CSS
+ * to the plugin's root, and the stack is outside it and shared, so the scope
+ * goes on the pill and never on the stack.
+ */
+export function pillRootProps(order: number): {
+  "data-pill-order": number;
+  "data-bb-plugin-root": "";
+  "data-bb-plugin": string;
+  style: CSSProperties;
+} {
+  return { "data-pill-order": order, "data-bb-plugin-root": "", "data-bb-plugin": PLUGIN_ID, style: { order, pointerEvents: "auto" } };
+}
+
+/**
+ * Renders `children` into the shared stack while mounted. Mount it only while
+ * the pill shows, so the stack goes when the pill does. Another plugin's pill
+ * leaving can remove the stack in the moment before this one's portal lands in
+ * it, so a stack found detached is taken again.
  */
 export function PillStackPortal({ children }: { children: ReactNode }) {
   const [stack, setStack] = useState<HTMLElement | null>(null);
+
+  useLayoutEffect(() => {
+    if (stack !== null && stack.isConnected) return;
+    setStack(acquirePillStack());
+  });
+
+  // A passive effect, so that on unmount the release runs after React has taken
+  // the pill out of the stack (a layout clean-up runs while it is still there).
+  // Every mounted pill keeps the corner right, so it stays right after the pill
+  // that created the stack has gone.
   useEffect(() => {
-    const acquired = acquirePillStack();
-    setStack(acquired);
-    // Every mounted pill keeps the position current, so it stays right after the
-    // pill that created the stack has gone.
-    const query = window.matchMedia?.(NARROW_QUERY);
-    const onChange = () => place(acquired, isNarrow(window));
+    if (stack === null) return;
+    const view = stack.ownerDocument.defaultView;
+    const query = view?.matchMedia?.(NARROW_QUERY);
+    const onChange = () => place(stack, isNarrow(view));
     onChange();
     query?.addEventListener("change", onChange);
     return () => {
       query?.removeEventListener("change", onChange);
-      // Passive clean-up runs after React has taken the portal's nodes out.
-      releasePillStack(acquired);
+      releasePillStack(stack);
     };
-  }, []);
-  return stack ? createPortal(children, stack) : null;
-}
+  }, [stack]);
 
-/**
- * What a pill's root carries to take its place in the stack. The stack is
- * outside the plugin root this plugin's CSS is scoped to, so the root also
- * carries the portal scope that brings its classes back.
- */
-export function usePillRootProps(order: number) {
-  return {
-    ...usePortalScopeProps(),
-    "data-pill-order": String(order),
-    style: { order, pointerEvents: "auto" as const },
-  };
+  return stack === null ? null : createPortal(children, stack);
 }

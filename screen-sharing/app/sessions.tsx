@@ -12,7 +12,7 @@ import type { RpcContract } from "../shared/contract";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { CLOSED_BY_USER_MESSAGE } from "./end-message";
-import { PILL_ORDER, PillStackPortal, usePillRootProps } from "./pill-stack";
+import { PillStackPortal, SCREEN_SHARING_PILL_ORDER, pillRootProps } from "./pill-stack";
 import { screenSessions } from "./session-store";
 
 export const PANEL_PATH = "screen";
@@ -144,14 +144,13 @@ export function LiveSessionsOverlay() {
   const pageOpen = useIsPageOpen();
   const navigate = useBbNavigate();
   const { closeAll, closing } = useCloseAll();
-  const rootProps = usePillRootProps(PILL_ORDER.screenSharing);
   if (sessions.length === 0 || pageOpen) return null;
   return (
     <PillStackPortal>
       <div
         role="status"
         aria-label="Screen Sharing sessions open"
-        {...rootProps}
+        {...pillRootProps(SCREEN_SHARING_PILL_ORDER)}
         className="flex items-center gap-1 rounded-full border border-border bg-card py-1 pl-3 pr-1 text-sm shadow-lg"
       >
         <span className="size-2 shrink-0 rounded-full bg-destructive" aria-hidden />
