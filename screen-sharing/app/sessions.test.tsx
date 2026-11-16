@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { SESSIONS_CHANGED, type SessionInfo } from "../shared/channels";
 import type { RpcContract } from "../shared/contract";
+import { PILL_STACK_ID } from "./pill-stack";
 import { LiveSessionsOverlay, PANEL_PATH, useLiveBadge, usePageOpen } from "./sessions";
 
 afterEach(() => cleanup());
@@ -66,7 +67,9 @@ describe("the sidebar entry", () => {
 describe("the corner pill", () => {
   it("offers Close all and the page while a session is open", async () => {
     const view = renderSlot({ component: LiveSessionsOverlay }, {}, { rpc: stubs([session]) });
-    expect(await screen.findByRole("status", { name: "Screen Sharing sessions open" })).toBeTruthy();
+    const pill = await screen.findByRole("status", { name: "Screen Sharing sessions open" });
+    expect(pill.parentElement?.id).toBe(PILL_STACK_ID);
+    expect(pill.dataset.pillOrder).toBe("20");
     fireEvent.click(screen.getByRole("button", { name: "Close all" }));
     await waitFor(() => expect(view.rpcCalls.some((call) => call.method === "closeAll")).toBe(true));
     fireEvent.click(screen.getByRole("button", { name: /Screen Sharing · Live/ }));

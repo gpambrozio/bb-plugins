@@ -12,6 +12,7 @@ import type { RpcContract } from "../shared/contract";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { CLOSED_BY_USER_MESSAGE } from "./end-message";
+import { PILL_ORDER, PillStackPortal, usePillRootProps } from "./pill-stack";
 import { screenSessions } from "./session-store";
 
 export const PANEL_PATH = "screen";
@@ -135,28 +136,33 @@ export function useLiveBadge(): ExperimentalBadge | null {
 /**
  * A pill in the corner of every bb window while any session is open — from
  * this window or another device — so a forgotten one is hard to miss and one
- * press away from closed.
+ * press away from closed. It sits in the corner stack it shares with other
+ * plugins' pills (`./pill-stack`).
  */
 export function LiveSessionsOverlay() {
   const sessions = useSessions();
   const pageOpen = useIsPageOpen();
   const navigate = useBbNavigate();
   const { closeAll, closing } = useCloseAll();
+  const rootProps = usePillRootProps(PILL_ORDER.screenSharing);
   if (sessions.length === 0 || pageOpen) return null;
   return (
-    <div
-      role="status"
-      aria-label="Screen Sharing sessions open"
-      className="fixed bottom-4 right-4 z-50 flex items-center gap-1 rounded-full border border-border bg-card py-1 pl-3 pr-1 text-sm shadow-lg"
-    >
-      <span className="size-2 shrink-0 rounded-full bg-destructive" aria-hidden />
-      <button type="button" className="px-1 font-medium hover:underline" onClick={() => navigate.toPluginPanel(PANEL_PATH)}>
-        Screen Sharing · {liveLabel(sessions.length)}
-      </button>
-      <Button type="button" size="sm" variant="ghost" className="rounded-full" disabled={closing} onClick={closeAll}>
-        <Icon name="X" />
-        Close all
-      </Button>
-    </div>
+    <PillStackPortal>
+      <div
+        role="status"
+        aria-label="Screen Sharing sessions open"
+        {...rootProps}
+        className="flex items-center gap-1 rounded-full border border-border bg-card py-1 pl-3 pr-1 text-sm shadow-lg"
+      >
+        <span className="size-2 shrink-0 rounded-full bg-destructive" aria-hidden />
+        <button type="button" className="px-1 font-medium hover:underline" onClick={() => navigate.toPluginPanel(PANEL_PATH)}>
+          Screen Sharing · {liveLabel(sessions.length)}
+        </button>
+        <Button type="button" size="sm" variant="ghost" className="rounded-full" disabled={closing} onClick={closeAll}>
+          <Icon name="X" />
+          Close all
+        </Button>
+      </div>
+    </PillStackPortal>
   );
 }

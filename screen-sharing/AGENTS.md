@@ -44,6 +44,7 @@ findings are summarised under *Decisions*.
 | `app/clipboard-menu.tsx` | The "Clipboard" menu and the notice saying what the last clipboard action did. |
 | `app/cursor.ts` | The arrow-fallback CSS and the attribute that switches it off once the Mac sends a cursor. |
 | `app/sessions.tsx` | The open sessions as the app sees them; the sidebar entry's LIVE badge and the corner Close all pill. |
+| `app/pill-stack.tsx` | The corner stack the pill shares with other plugins' pills (the repository AGENTS.md has the convention). |
 | `app/novnc.d.ts` | Types for the part of noVNC's `RFB` used here; noVNC ships none. |
 
 `npm test` runs everything. The tests never touch this machine's real port 5900: the relay, the host

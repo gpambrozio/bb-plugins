@@ -5,6 +5,14 @@ Notable changes to `screen-sharing`. The other plugins in this repository versio
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.5.1
+
+### Fixed
+
+- The corner **Screen Sharing · Live** pill no longer covers another plugin's corner pill, such as
+  FirstMate voice's: the two stack one above the other. On a narrow window the pill sits above the
+  composer.
+
 ## 0.5.0
 
 ### Added
