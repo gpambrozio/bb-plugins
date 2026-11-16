@@ -12,10 +12,11 @@ interface Registered {
   commands: { id: string; title: string; run(context: unknown): void }[];
   threadActions: { id: string; item(input: unknown): { label: string; run(context: unknown): void } | null }[];
   composer: { id: string; scopes?: string[]; actions?: { id: string }[] }[];
+  settings: { id: string; title: string }[];
 }
 
 async function setUp(): Promise<Registered> {
-  const registered: Registered = { tabs: [], commands: [], threadActions: [], composer: [] };
+  const registered: Registered = { tabs: [], commands: [], threadActions: [], composer: [], settings: [] };
   const definition = (await import("../app")).default as unknown as { setup(builder: unknown): void };
   const slots = new Proxy({} as Record<string, unknown>, {
     get: (_target, name) =>
@@ -23,7 +24,9 @@ async function setUp(): Promise<Registered> {
         ? (tab: Record<string, unknown>) => registered.tabs.push(tab)
         : name === "experimental_threadAction"
           ? (action: Registered["threadActions"][number]) => registered.threadActions.push(action)
-          : () => undefined,
+          : name === "settingsSection"
+            ? (section: Registered["settings"][number]) => registered.settings.push(section)
+            : () => undefined,
   });
   definition.setup({
     slots,
@@ -79,5 +82,20 @@ describe("the debug log's side panel", () => {
     const declining = action.item({ thread: { id: "thr_mate" }, data: { mate: "thr_mate" }, experimental_panel: panel(false) })!;
     declining.run({});
     expect(debugOpen.wanted?.threadId).toBe("thr_mate");
+  });
+});
+
+describe("the voice hooks' settings", () => {
+  it("are a section of the plugin's settings page", async () => {
+    const { settings } = await setUp();
+    expect(settings.map((section) => [section.id, section.title])).toEqual([["hooks", "Voice hooks"]]);
+  });
+
+  it("list every machine bb knows, then any with a saved command bb no longer lists", async () => {
+    const { hookMachines } = await import("./hooks-section");
+    expect(hookMachines([{ id: "host_a", name: "Studio" }], { host_a: "say hi", host_gone: "say bye" })).toEqual([
+      { id: "host_a", name: "Studio", known: true },
+      { id: "host_gone", name: "host_gone", known: false },
+    ]);
   });
 });

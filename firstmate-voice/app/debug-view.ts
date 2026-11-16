@@ -49,6 +49,7 @@ export const KIND_LABELS: Record<DebugKind, string> = {
   announce: "Announce",
   interrupted: "Interrupted",
   turn: "Turn",
+  hook: "Hook",
   error: "Error",
 };
 

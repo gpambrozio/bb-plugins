@@ -70,10 +70,49 @@ bb plugin install 'git:github.com/gpambrozio/bb-plugins@>=0.1.0' --plugin firstm
 
 ## Settings
 
+- **Voice hooks:** a command per machine, run as listening starts and stops, as the voice speaks and as you
+  talk. Empty by default. See [Voice hooks](#voice-hooks).
 - **Voice model:** `gpt-realtime-2.1` (default) or `gpt-realtime-2.1-mini`.
 - **Reasoning:** how much it thinks before speaking. Default *low*.
 - **Voice:** default *marin*.
 - **Turn taking:** how soon it answers once you stop. *High* answers sooner and may cut in on a pause.
+
+## Voice hooks
+
+Under **Voice hooks** on the plugin's settings page, each of bb's machines has one command. Use it to pause
+your music while you talk to the first mate, turn on a light while it listens, or duck the volume while it
+speaks:
+
+```sh
+#!/bin/sh
+# ~/bin/voice-hook, set as the command on your Mac
+case "$FIRSTMATE_VOICE_HOOK" in
+  listening-started) osascript -e 'tell application "Music" to pause' ;;
+  listening-stopped) osascript -e 'tell application "Music" to play' ;;
+esac
+```
+
+- **When:** `FIRSTMATE_VOICE_HOOK` says which moment it is, in pairs, so one script handles all six:
+  - `listening-started` when a session starts, and `listening-stopped` when it ends, however it ends, with
+    the reason in `FIRSTMATE_VOICE_REASON` ("ended by the captain", "quiet for ten minutes", "the app stopped
+    answering"…).
+  - `speaking-started` when the voice is about to speak, and `speaking-stopped` once it has finished and
+    nothing more is on its way: replies back to back, a tool call between them included, share one pair.
+    The voice's audio is live and cannot be held back, so `speaking-started` runs at the first sign of a
+    spoken reply, usually a fraction of a second before the first word, and the voice does not wait for it.
+  - `talking-started` when you start talking, and `talking-stopped` when you stop.
+
+  Each stopped runs after its started has finished, and a session that ends runs the stopped of every open
+  pair before `listening-stopped`.
+- **Where they run:** on the machine whose **bb desktop app** is in the call, not on the machine running bb's
+  server. The window finds its machine through the bb host daemon beside the desktop app, so the machine
+  must be one of bb's machines; the settings mark the one you are on as *this machine*. bb's **mobile app**
+  and a **browser tab** run no hooks.
+- **How they run:** through the machine's shell (`/bin/sh -c`, `cmd.exe` on Windows), from your home
+  folder. Output is ignored.
+- **Never in the way:** a command gets five seconds and is then stopped, with whatever it started. The call
+  never waits for one, and one that fails or is slow changes nothing in the call. Each run is in the debug
+  log: the moment, the machine, the exit status and how long it took, never the output.
 
 ## Privacy
 

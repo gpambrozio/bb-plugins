@@ -93,6 +93,34 @@ afterEach(() => {
 });
 
 describe("the voice controller", () => {
+  it("names the window's client and machine at Talk, for the voice hooks", async () => {
+    const asks = pendingMicrophone();
+    const { rpc, calls } = fakeRpc();
+    const voice = new VoiceController();
+    voice.attach(rpc, async () => "host_mine");
+    voice.talk();
+    asks[0]?.resolve(fakeStream().stream);
+    await flush();
+    expect(calls.find((call) => call.method === "session.start")?.input).toEqual({ sdp: "v=0 offer 1", hostId: "host_mine", client: "desktop" });
+    await voice.end("ended by the captain");
+  });
+
+  it("starts the session with no machine when the lookup fails or none was handed over", async () => {
+    for (const machine of [async () => Promise.reject(new Error("no daemon")), undefined]) {
+      legs.length = 0;
+      const asks = pendingMicrophone();
+      const { rpc, calls } = fakeRpc();
+      const voice = new VoiceController();
+      voice.attach(rpc, machine);
+      voice.talk();
+      asks[0]?.resolve(fakeStream().stream);
+      await flush();
+      expect(calls.find((call) => call.method === "session.start")?.input).toMatchObject({ hostId: null, client: "desktop" });
+      expect(voice.snapshot.phase).toBe("live");
+      await voice.end("ended by the captain");
+    }
+  });
+
   it("stops the microphone granted after End, and starts no server call", async () => {
     const asks = pendingMicrophone();
     const { rpc, calls } = fakeRpc();

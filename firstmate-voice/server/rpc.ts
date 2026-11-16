@@ -1,11 +1,13 @@
 /**
  * The app-facing RPC handlers. A session spends the captain's ChatGPT plan and speaks for the captain to the
  * first mate, so only bb's app may open or steer one: any other plugin is refused before anything runs, the
- * credential lookup and the takeover of a live session included.
+ * credential lookup and the takeover of a live session included. The voice hooks' commands are shell commands
+ * run on the owner's machines, so they are read and set from bb's app only too.
  */
 import { experimental_PluginRpcRefusal as PluginRpcRefusal, type ExperimentalPluginRpcHandlersWithContext } from "@get-bb/plugin-sdk";
 
 import type { rpcContract } from "../server";
+import { hookTarget, type HookStore } from "./hooks";
 import type { CrewPort } from "./ports";
 import type { VoiceSessions } from "./session";
 
@@ -18,14 +20,23 @@ export function requireApp(caller: Caller): void {
   }
 }
 
+/** The voice hooks as the RPCs need them: the stored commands, and bb's active machines. */
+export interface HooksRpcPort {
+  store: Pick<HookStore, "all" | "set">;
+  hosts(): Promise<Array<{ id: string; name: string }>>;
+}
+
 export function sessionHandlers(
   sessions: Pick<VoiceSessions, "start" | "renew" | "renewed" | "end" | "alive" | "current" | "debugPage">,
   crew: Pick<CrewPort, "mateThreadId">,
+  hooks: HooksRpcPort,
 ): ExperimentalPluginRpcHandlersWithContext<typeof rpcContract> {
   return {
-    "session.start": async ({ sdp }, ctx) => {
+    "session.start": async ({ sdp, hostId, client }, ctx) => {
       requireApp(ctx?.experimental_caller);
-      return sessions.start(sdp);
+      // A machine list that cannot be read runs no hooks; the call goes on.
+      const hosts = await hooks.hosts().catch(() => []);
+      return sessions.start(sdp, hookTarget(client, hostId, hosts));
     },
     "session.renew": async ({ sessionId, sdp }, ctx) => {
       requireApp(ctx?.experimental_caller);
@@ -52,6 +63,14 @@ export function sessionHandlers(
     "debug.log": async ({ afterSeq }, ctx) => {
       requireApp(ctx?.experimental_caller);
       return sessions.debugPage(afterSeq);
+    },
+    "hooks.list": async (_input, ctx) => {
+      requireApp(ctx?.experimental_caller);
+      return { hooks: await hooks.store.all() };
+    },
+    "hooks.set": async ({ hostId, command }, ctx) => {
+      requireApp(ctx?.experimental_caller);
+      return { hooks: await hooks.store.set(hostId, command) };
     },
     "mate.thread": async (_input, ctx) => {
       requireApp(ctx?.experimental_caller);

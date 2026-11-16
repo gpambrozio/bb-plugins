@@ -12,11 +12,14 @@
  * - Transcripts live in memory for the session only, and never reach the log. The debug log
  *   (`server/debug-log.ts`) keeps them, with everything else the voice got and did, in memory until the next
  *   Talk, for the app's debug view only.
+ * - **The voice hooks** (`server/hooks.ts`) run the owner's command on their machine as listening, the voice's
+ *   speech and the captain's start and stop, from the same sideband events; nothing here waits for them.
  */
 import type { VoiceBrief, VoiceReply, VoiceSent, VoiceTalkLine } from "../shared/crew-voice";
 import { Announcer, announcementFor, mateAnnouncement } from "./announce";
 import { BriefSync, type ConversationWriter } from "./brief-sync";
 import { DebugLog, EMPTY_DEBUG_PAGE, type DebugPage } from "./debug-log";
+import type { HookRunner, HookTarget, SessionHooks } from "./hooks";
 import { GREETING, INSTRUCTIONS, RENEWAL_NOTE } from "./instructions";
 import { RateLimit, SendGate, UtteranceLog } from "./policy";
 import { errorText, type Clock, type CrewPort, type Log, type RealtimeEvent, type RealtimePort, type Sideband } from "./ports";
@@ -82,7 +85,12 @@ export interface SessionDeps {
   clock: Clock;
   log: Log;
   publish(signal: SessionSignal): void;
+  /** The voice hooks; none in tests that do not need them. */
+  hooks?: HookRunner;
 }
+
+/** How long a plugin that stops waits for the last session's closing hooks. */
+export const HOOKS_DISPOSE_WAIT_MS = 3_000;
 
 type Exchange = { at: number; who: "captain" | "voice"; text: string };
 
@@ -250,6 +258,8 @@ export class VoiceSession {
     private readonly onEnded: (session: VoiceSession) => void,
     /** Everything this session got and did, for the app's debug view. */
     readonly debug: DebugLog = new DebugLog(id, deps.clock.now(), () => deps.clock.now()),
+    /** This session's voice hooks, on the machine whose app holds the call; null runs none. */
+    private readonly hooks: SessionHooks | null = null,
   ) {
     this.clock = deps.clock;
     this.utterances = new UtteranceLog(deps.clock);
@@ -269,6 +279,7 @@ export class VoiceSession {
   async start(sdp: string): Promise<string> {
     const { model, effort, voice, eagerness } = this.config;
     this.debug.add("session", "Listening started", `Model ${model}, reasoning ${effort}, voice ${voice}, turn taking ${eagerness}.`);
+    this.hooks?.start();
     const answer = await this.openCall(sdp, "start");
     this.every(IDLE_CHECK_MS, () => this.checkIdle());
     this.every(BRIEF_POLL_MS, () => void this.refresh());
@@ -324,6 +335,8 @@ export class VoiceSession {
   async end(reason: string): Promise<void> {
     if (this.ended) return;
     this.ended = true;
+    // Not awaited: a hook never holds the call up. `VoiceSessions.dispose` waits for it, briefly.
+    void this.hooks?.end(reason);
     for (const timer of this.timers) this.clock.clearTimeout(timer);
     this.timers.clear();
     if (this.renewTimer !== null) this.clock.clearTimeout(this.renewTimer);
@@ -544,6 +557,7 @@ export class VoiceSession {
       default:
         break;
     }
+    this.hooks?.event(event, call.activeResponses > 0);
   }
 
   /** A call event, for the debug log: what was heard and said, turns, interruptions, tool calls and errors. */
@@ -837,7 +851,8 @@ export class VoiceSessions {
     return this.live;
   }
 
-  async start(sdp: string): Promise<{ sessionId: string; answerSdp: string }> {
+  /** `hooks` is where this session's voice hooks run: the machine of the window that tapped Talk, or none. */
+  async start(sdp: string, hooks: HookTarget | null = null): Promise<{ sessionId: string; answerSdp: string }> {
     await this.live?.end("a new session took over");
     this.counter += 1;
     const id = `fmv_${this.deps.clock.now().toString(36)}_${this.counter}`;
@@ -851,6 +866,7 @@ export class VoiceSessions {
         if (this.live === ended) this.live = null;
       },
       this.debug,
+      hooks === null ? null : (this.deps.hooks?.session(hooks, this.debug) ?? null),
     );
     this.live = session;
     try {
@@ -896,5 +912,11 @@ export class VoiceSessions {
 
   async dispose(): Promise<void> {
     await this.live?.end("the plugin stopped");
+    // The closing hooks (the open pairs, then "listening-stopped") get a moment to reach the machine.
+    const runner = this.deps.hooks;
+    if (runner === undefined) return;
+    let timer: unknown;
+    await Promise.race([runner.drained(), new Promise<void>((resolve) => (timer = this.deps.clock.setTimeout(resolve, HOOKS_DISPOSE_WAIT_MS)))]);
+    this.deps.clock.clearTimeout(timer);
   }
 }

@@ -25,6 +25,8 @@
   },
   "files": [
     "server.ts",
+    "host.ts",
+    "host/",
     "server/",
     "shared/",
     "app.tsx",
@@ -44,6 +46,7 @@
       "icon": "Mic"
     },
     "server": "./server.ts",
+    "host": "./host.ts",
     "app": "./app.tsx"
   },
   "dependencies": {

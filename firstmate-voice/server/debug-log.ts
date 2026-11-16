@@ -4,7 +4,7 @@
  * and the session the call was made with, every item put in the call's conversation, what the captain said
  * and what the voice said (the transcripts), tool calls and their answers, each message to the first mate as
  * it went, each first-mate message the voice read, announcements, interruptions, errors and the session's
- * own events.
+ * own events, and each run of the owner's voice hook on their machine (never its output).
  *
  * - **Local only.** It lives in this server's memory and is read through an app-only RPC (`debug.log`);
  *   nothing here is published, stored or logged. A new Talk starts a new log, so it holds the current
@@ -37,6 +37,7 @@ export const DEBUG_KINDS = [
   "announce",
   "interrupted",
   "turn",
+  "hook",
   "error",
 ] as const;
 export type DebugKind = (typeof DEBUG_KINDS)[number];

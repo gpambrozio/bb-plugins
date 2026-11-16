@@ -12,5 +12,5 @@
     "skipLibCheck": false,
     "allowImportingTsExtensions": true
   },
-  "include": ["server.ts", "app.tsx", "server", "app", "scripts", "components", "lib", "vitest.config.ts"]
+  "include": ["server.ts", "host.ts", "app.tsx", "server", "host", "shared", "app", "scripts", "components", "lib", "vitest.config.ts"]
 }

@@ -6,7 +6,8 @@
  * nothing otherwise), asks for the microphone with echo cancellation, makes the offer, and lets the bb
  * server do the SDP exchange. Mute disables the microphone track; End tells the server, which hangs up.
  * The server asks for a renewal near the hour's cap and announces the end; on the phone, leaving the
- * screen ends the session, as bb's mobile app is suspended there.
+ * screen ends the session, as bb's mobile app is suspended there. Talk also names the window's bb client
+ * and, in bb's desktop app, its machine (`app/machine.ts`), where the server runs the voice hooks.
  */
 import type { PluginRpcClient } from "@get-bb/plugin-sdk/app";
 
@@ -36,6 +37,8 @@ export class VoiceController {
   private state: VoiceState = IDLE;
   private readonly listeners = new Set<() => void>();
   private rpc: Rpc | null = null;
+  /** This window's bb machine, for the voice hooks; null until the overlay hands it over. */
+  private machine: (() => Promise<string | null>) | null = null;
   private sessionId: string | null = null;
   private stream: MediaStream | null = null;
   private leg: Leg | null = null;
@@ -52,8 +55,9 @@ export class VoiceController {
   };
 
   /** The overlay hands its RPC client over once mounted; commands and buttons use it. */
-  attach(rpc: Rpc): void {
+  attach(rpc: Rpc, machine?: () => Promise<string | null>): void {
     this.rpc = rpc;
+    if (machine !== undefined) this.machine = machine;
   }
 
   get snapshot(): VoiceState {
@@ -101,6 +105,9 @@ export class VoiceController {
     let leg: Leg | null = null;
     let made: string | null = null;
     const current = () => attempt === this.attempt && this.state.phase === "connecting";
+    // Looked up beside the microphone prompt, so it adds no wait; a lookup that fails runs no hooks.
+    const client = voicePlatform();
+    const machine = client === "desktop" && this.machine !== null ? this.machine().catch(() => null) : Promise.resolve(null);
     /** This attempt's own microphone, leg and server session, whatever became of the controller since. */
     const abandon = async (reason: string) => {
       leg?.close();
@@ -112,7 +119,7 @@ export class VoiceController {
       if (!current()) return void (await abandon("ended while connecting"));
       leg = await this.newLeg(stream, audio);
       if (!current()) return void (await abandon("ended while connecting"));
-      const started = await rpc.call("session.start", { sdp: leg.offer });
+      const started = await rpc.call("session.start", { sdp: leg.offer, hostId: await machine, client });
       made = started.sessionId;
       if (!current()) return void (await abandon("ended while connecting"));
       this.stream = stream;

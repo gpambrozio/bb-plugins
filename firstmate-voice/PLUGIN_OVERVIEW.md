@@ -22,5 +22,6 @@ Audio goes from your device to OpenAI's Realtime voice model over WebRTC. The bb
 
 - What you say is kept in memory and never logged.
 - A debug view, from the voice bar, shows the last session step by step (instructions, transcripts, tool calls, messages to and from the first mate, errors) for tuning; it stays on your bb until you next talk.
+- Voice hooks, empty by default: a command per machine, run on the desktop app's machine as listening starts and stops, as the voice speaks and as you talk, to pause music or dim a light. It gets five seconds and never holds the call up.
 - Task titles, workers' last words and the first mate's answers go to OpenAI.
 - A session ends after ten quiet minutes.

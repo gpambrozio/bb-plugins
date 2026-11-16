@@ -6,8 +6,8 @@
  * which it navigates to. It is an app overlay, mounted once per window, so it also hands the controller its RPC
  * client and the server's session signals.
  */
-import { useEffect, useSyncExternalStore } from "react";
-import { experimental_Icon as Icon, useBbContext, useBbNavigate, useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
+import { useEffect, useMemo, useSyncExternalStore } from "react";
+import { experimental_Icon as Icon, useBbContext, useBbNavigate, useRealtime, useRpc, useSdk } from "@get-bb/plugin-sdk/app";
 
 import { Button } from "@/components/ui/button";
 import type { rpcContract } from "../server";
@@ -15,6 +15,7 @@ import type { SessionSignal } from "../server/session";
 import { SESSION_CHANNEL } from "../shared/channel";
 import { voice, type VoiceState } from "./controller";
 import { DEBUG_OPEN_WAIT_MS, debugOpen } from "./debug-view";
+import { createLocalHostLookup } from "./machine";
 
 export function useVoiceState(): VoiceState {
   return useSyncExternalStore(voice.subscribe, () => voice.snapshot);
@@ -67,9 +68,11 @@ function useDebugRouting(): void {
 
 export function VoicePill() {
   const rpc = useRpc<typeof rpcContract>();
+  const sdk = useSdk();
   const state = useVoiceState();
+  const machine = useMemo(() => createLocalHostLookup(async () => (await sdk.system.config()).localHelperPorts ?? []), [sdk]);
 
-  useEffect(() => voice.attach(rpc), [rpc]);
+  useEffect(() => voice.attach(rpc, machine), [rpc, machine]);
   useRealtime(SESSION_CHANNEL, (payload) => voice.onSignal(payload as SessionSignal));
   useDebugRouting();
 
