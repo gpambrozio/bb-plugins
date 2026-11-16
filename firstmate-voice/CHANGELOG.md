@@ -27,8 +27,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Several at once go in order, one sentence each.
 - Sessions renew at OpenAI's one-hour limit and end after ten quiet minutes.
 - **A debug log of the session,** for tuning the voice: the bug button on the voice bar, "FirstMate voice:
-  debug log" in the palette, or the first mate's header menu opens it over the window, on the desktop or the
-  phone. It shows, in order and timed, what the voice was told at the start, what you said and what it
+  debug log" in the palette, or the first mate's header menu opens it as a "Voice debug" tab in the thread's
+  side panel, beside the chat, on the desktop or the phone. It shows, in order and timed, what the voice was told at the start, what you said and what it
   said, its tool calls and their answers, each message it handed the first mate word for word, each message
   from the first mate, announcements, interruptions and errors. It stays on your bb, in memory, until you
   next tap Talk, and never shows a credential.

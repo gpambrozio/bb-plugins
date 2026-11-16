@@ -1,31 +1,38 @@
 /**
- * The debug panel: everything that happened with the voice agent since the captain last tapped Talk, read from
- * the server's debug log (`server/debug-log.ts`) through the app-only `debug.log` RPC, every 1.5 s while it is
- * open. It covers the whole window, so it reads on a phone, and says plainly that it is a debug view. Nothing
- * leaves this window but a Copy the owner taps.
+ * The debug tab: everything that happened with the voice agent since the captain last tapped Talk, read from
+ * the server's debug log (`server/debug-log.ts`) through the app-only `debug.log` RPC, every 1.5 s while the
+ * tab shows. It is a tab in a thread's side panel (`DEBUG_TAB`), so it stays open beside the chat, and says
+ * plainly that it is a debug view. Nothing leaves this window but a Copy the owner taps.
+ *
+ * `DebugOpener` sits in each thread's composer, inside the thread view, where bb's panel controller is the
+ * thread's: it opens the tab when the pill (outside every thread view) or a declined command asked for it.
  */
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { experimental_copyToClipboard as copyToClipboard, experimental_Icon as Icon, useRpc } from "@get-bb/plugin-sdk/app";
+import {
+  experimental_copyToClipboard as copyToClipboard,
+  experimental_Icon as Icon,
+  experimental_useAppPanel as useAppPanel,
+  experimental_useTabVisible as useTabVisible,
+  useComposer,
+  useRpc,
+} from "@get-bb/plugin-sdk/app";
 
 import { Button } from "@/components/ui/button";
 import type { rpcContract } from "../server";
 import type { DebugEntry } from "../server/debug-log";
-import { EMPTY_DEBUG, KIND_LABELS, asText, clockTime, debugView, isLong, kindTone, mergePage, nextSeq, sinceStart, visible, type DebugState } from "./debug-view";
+import { EMPTY_DEBUG, KIND_LABELS, asText, clockTime, debugOpen, isLong, kindTone, mergePage, nextSeq, openDebugTab, sinceStart, visible, type DebugState } from "./debug-view";
 
 const POLL_MS = 1_500;
 
-export function useDebugOpen(): boolean {
-  return useSyncExternalStore(debugView.subscribe, () => debugView.open);
-}
-
-/** Reads the log while mounted: new entries after the last seq, all pages of them, and a new session from its start. */
-function useDebugLog(): { state: DebugState; failed: string | null } {
+/** Reads the log while `active`: new entries after the last seq, all pages of them, and a new session from its start. */
+function useDebugLog(active: boolean): { state: DebugState; failed: string | null } {
   const rpc = useRpc<typeof rpcContract>();
   const [state, setState] = useState<DebugState>(EMPTY_DEBUG);
   const [failed, setFailed] = useState<string | null>(null);
   const current = useRef(EMPTY_DEBUG);
 
   useEffect(() => {
+    if (!active) return;
     let live = true;
     let timer: ReturnType<typeof setTimeout> | null = null;
     const read = async () => {
@@ -49,7 +56,7 @@ function useDebugLog(): { state: DebugState; failed: string | null } {
       live = false;
       if (timer !== null) clearTimeout(timer);
     };
-  }, [rpc]);
+  }, [rpc, active]);
 
   return { state, failed };
 }
@@ -77,8 +84,9 @@ function Entry({ entry, startedAt }: { entry: DebugEntry; startedAt: number | nu
   );
 }
 
-export function DebugPanel() {
-  const { state, failed } = useDebugLog();
+export function DebugTab() {
+  const showing = useTabVisible();
+  const { state, failed } = useDebugLog(showing);
   const [showTurns, setShowTurns] = useState(true);
   const [copied, setCopied] = useState(false);
   const scroller = useRef<HTMLDivElement | null>(null);
@@ -89,15 +97,7 @@ export function DebugPanel() {
   useEffect(() => {
     const box = scroller.current;
     if (box !== null && following.current) box.scrollTop = box.scrollHeight;
-  }, [shown.length]);
-
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") debugView.set(false);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [shown.length, showing]);
 
   const copy = async () => {
     setCopied(await copyToClipboard({ text: asText(state) }).catch(() => false));
@@ -105,15 +105,10 @@ export function DebugPanel() {
   };
 
   return (
-    <div
-      role="dialog"
-      aria-label="FirstMate voice debug log"
-      className="fixed inset-0 z-[60] flex flex-col bg-background text-foreground"
-      style={{ paddingTop: "env(safe-area-inset-top)", paddingBottom: "env(safe-area-inset-bottom)" }}
-    >
-      <div className="flex flex-wrap items-center gap-2 border-b border-warning bg-card px-4 py-2">
-        {/* The title keeps a line of its own on a phone; the buttons wrap below it. */}
-        <div className="flex min-w-0 flex-1 basis-64 items-center gap-2">
+    <div aria-label="FirstMate voice debug log" className="flex h-full min-h-0 flex-col bg-background text-foreground">
+      <div className="flex flex-wrap items-center gap-2 border-b border-warning bg-card px-3 py-2">
+        {/* The title keeps a line of its own in a narrow panel; the buttons wrap below it. */}
+        <div className="flex min-w-0 flex-1 basis-48 items-center gap-2">
           <Icon name="Bug" className="text-warning-text" />
           <span className="rounded border border-warning px-1.5 text-xs font-semibold uppercase tracking-wide text-warning-text">Debug</span>
           <span className="min-w-0 truncate text-sm font-medium">FirstMate voice, this session</span>
@@ -126,12 +121,9 @@ export function DebugPanel() {
             <Icon name={copied ? "Check" : "Copy"} />
             {copied ? "Copied" : "Copy"}
           </Button>
-          <Button type="button" size="sm" variant="ghost" aria-label="Close the debug log" onClick={() => debugView.set(false)}>
-            <Icon name="X" />
-          </Button>
         </div>
       </div>
-      <div className="px-4 py-1.5 text-xs text-muted-foreground">
+      <div className="px-3 py-1.5 text-xs text-muted-foreground">
         {state.sessionId === null
           ? "No voice session since FirstMate voice loaded. Tap Talk, and this fills as it goes."
           : `Session ${state.sessionId} · ${state.entries.length} entries${state.dropped > 0 ? `, ${state.dropped} older dropped` : ""} · kept on this bb only, until listening starts again`}
@@ -139,7 +131,7 @@ export function DebugPanel() {
       </div>
       <div
         ref={scroller}
-        className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-4"
+        className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-3"
         onScroll={(event) => {
           const box = event.currentTarget;
           following.current = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
@@ -153,4 +145,19 @@ export function DebugPanel() {
       </div>
     </div>
   );
+}
+
+/** Opens the debug tab in this thread's side panel when a request names this thread. Renders nothing. */
+export function DebugOpener() {
+  const composer = useComposer();
+  const panel = useAppPanel();
+  const wanted = useSyncExternalStore(debugOpen.subscribe, () => debugOpen.wanted);
+  const threadId = composer.scope.kind === "thread" ? composer.scope.threadId : null;
+
+  useEffect(() => {
+    if (wanted === null || !debugOpen.isFor(threadId)) return;
+    if (openDebugTab(panel)) debugOpen.done();
+  }, [wanted, threadId, panel]);
+
+  return null;
 }

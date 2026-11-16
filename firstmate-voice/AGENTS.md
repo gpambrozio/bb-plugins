@@ -20,7 +20,7 @@ the voice, the decisions behind phase 1, and the phase 0 decision record.
 | `server/session.ts` | One live session (`VoiceSessions`): the call, the sideband, event dispatch, the tools, renewal at the hour's cap, the idle end, the app's heartbeat. |
 | `server/policy.ts` | The utterance log, one send at a time, rate limits. |
 | `server/brief-sync.ts` | Brief → diff → `[firstmate-update]` items, full replacement every 15 updates or 20 minutes, and the events worth announcing. |
-| `server/debug-log.ts`, `app/debug.tsx`, `app/debug-view.ts` | The debug log of the current (or last) session, its app-only `debug.log` RPC, and the full-window debug panel. |
+| `server/debug-log.ts`, `app/debug.tsx`, `app/debug-view.ts` | The debug log of the current (or last) session, its app-only `debug.log` RPC, and the debug tab in a thread's side panel, with the request that opens it from where no thread panel is at hand. |
 | `server/announce.ts` | P1 announcements at gaps, once more when the captain talks over one, during the response or later while its audio plays. |
 | `server/instructions.ts`, `server/tools.ts` | The standing instructions (design §8's outline) and the tool list with levels. |
 | `server/openai-call.ts`, `server/openai-port.ts` | The SDP exchange, hangup and sideband socket (from the spike), and `RealtimePort` over them. |
@@ -79,8 +79,8 @@ the voice, the decisions behind phase 1, and the phase 0 decision record.
   session and standing instructions, every item and response it was sent, transcripts, tool calls and
   answers, each send as firstmate-crew worded it, the first mate's messages, interruptions, errors) in the
   server's memory, one session's worth: a new Talk replaces it, a reload forgets it, and it is capped at
-  2,000 entries. Only the app reads it (`debug.log`, behind `requireApp`), by polling while the panel is
-  open; nothing publishes, stores or logs it. Every text passes `scrub` (bearer headers, JWTs, `ek_` and
+  2,000 entries. Only the app reads it (`debug.log`, behind `requireApp`), by polling while the tab
+  shows; nothing publishes, stores or logs it. Every text passes `scrub` (bearer headers, JWTs, `ek_` and
   `sk-` keys). Log an event there, not in `bb.log`, when it carries anyone's words.
 - **A session always ends.** The app ends it (End, the palette, "goodbye" by voice, the phone leaving the
   screen); the server ends it after ten quiet minutes, when the app's heartbeat stops for 50 s, when the
@@ -124,8 +124,16 @@ the voice, the decisions behind phase 1, and the phase 0 decision record.
   with "web pull request 42" and buttons lifted from its own instructions' example while the update gave
   no buttons; the instructions now carry no example identifiers (a test checks), and a new card's update
   line lists its project, pull request and buttons.
-- **A debug view for tuning the loop** (the owner's call, 2026-11-15). A full-window panel, marked Debug,
-  opens from the pill's bug button, the palette and the first mate's header menu, and reads on a phone. It
+- **A debug view for tuning the loop** (the owner's call, 2026-11-15). First a full-window overlay; the owner then
+  asked for a side panel kept open beside the chat, so it is an action tab of the thread's side panel
+  (`DEBUG_TAB`), marked Debug, opened through bb's panel controller from the pill's bug button, the
+  palette and the first mate's header menu, and full screen on a phone. The palette and the menu get the
+  focused thread's controller. The pill is an app overlay, and an overlay's `experimental_useAppPanel()`
+  is bb's default controller, which declines every call (bb 0.49.0: only the thread view, plugin pages and
+  the New thread screen provide one). So the pill leaves a request (`debugOpen`) that `DebugOpener`, a
+  composer action in each thread view that renders nothing, opens with its thread's controller; with no
+  thread in view, the overlay sends it to the first mate's thread and navigates there. Checked in a dev bb:
+  the palette and the bug button both opened the tab, at desktop and phone widths. It
   is a poll over an app-only RPC rather than a realtime channel, so nothing leaves the server unasked. For
   the exact text a send relayed, `voice.v1`'s ask and answer now return the message and the agent-only
   note as firstmate-crew sent them (optional fields: an older crew answers without them, and the panel then

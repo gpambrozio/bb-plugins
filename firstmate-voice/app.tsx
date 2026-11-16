@@ -1,14 +1,15 @@
 /**
  * FirstMate voice's app: the pill (an app overlay in every window), the palette commands, and a Talk button
  * in the first mate's thread header. All three share one controller per window (`app/controller.ts`). The debug
- * log opens from the pill, the palette and the first mate's header menu (`app/debug.tsx`).
+ * log is a side-panel tab (`app/debug.tsx`), opened from the pill, the palette and the first mate's header menu.
  */
 import { useEffect, useState } from "react";
 import { definePluginApp, useRpc } from "@get-bb/plugin-sdk/app";
 
 import type { rpcContract } from "./server";
 import { voice } from "./app/controller";
-import { debugView } from "./app/debug-view";
+import { DebugOpener, DebugTab } from "./app/debug";
+import { DEBUG_TAB, openDebugLog } from "./app/debug-view";
 import { VoicePill, useVoiceState } from "./app/overlay";
 
 /** The first mate's thread id, read once and again when the header shows another thread. */
@@ -41,10 +42,23 @@ export default definePluginApp((app) => {
     run: () => voice.toggle(),
   });
 
+  // The debug log: a tab in a thread's side panel, beside the chat. Every way in opens it through bb's panel
+  // controller; where the focused surface has no thread panel, the thread's composer (`DebugOpener`) or, for
+  // no thread at all, the first mate's thread takes the request.
+  app.slots.experimental_tab({
+    ...DEBUG_TAB,
+    title: "Voice debug",
+    icon: "Bug",
+    tooltip: "FirstMate voice debug log: everything since listening started",
+    layout: "flush",
+    component: DebugTab,
+  });
+  app.composer.customize({ id: "debug-opener", scopes: ["thread"], actions: [{ id: "debug-opener", component: DebugOpener }] });
+
   app.commands.register({
     id: "debug",
     title: "FirstMate voice: debug log",
-    run: () => debugView.set(true),
+    run: (context) => openDebugLog(context.experimental_panel, context.threadId),
   });
 
   app.slots.experimental_threadAction<{ mate: string | null; active: boolean }>({
@@ -77,9 +91,9 @@ export default definePluginApp((app) => {
     group: "firstmate-voice",
     placement: "header",
     useData: ({ threadIds }) => ({ mate: useMateThread(threadIds) }),
-    item: ({ thread, data }) =>
+    item: ({ thread, data, experimental_panel }) =>
       data.mate === null || thread.id !== data.mate
         ? null
-        : { label: "Voice debug log", detail: "FirstMate voice", icon: "Bug", run: () => debugView.set(true) },
+        : { label: "Voice debug log", detail: "FirstMate voice", icon: "Bug", run: () => openDebugLog(experimental_panel, thread.id) },
   });
 });

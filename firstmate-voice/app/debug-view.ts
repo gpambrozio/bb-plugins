@@ -1,7 +1,9 @@
 /**
- * The debug view's state, apart from React so it is tested plainly: whether the panel is open (one per
- * window, like the controller), the entries read so far, and how they read as text.
+ * The debug view's state, apart from React so it is tested plainly: the entries read so far, how they read
+ * as text, the side-panel tab they show in, and a request to open it (one per window, like the controller).
  */
+import type { ExperimentalPanelController, ExperimentalTabReference } from "@get-bb/plugin-sdk/app";
+
 import type { DebugEntry, DebugKind, DebugPage } from "../server/debug-log";
 
 export interface DebugState {
@@ -104,13 +106,37 @@ export function asText(state: DebugState): string {
   return [head + dropped, ...lines].join("\n");
 }
 
-/** Whether the debug panel shows, in this window. */
-class DebugToggle {
-  private shown = false;
+/** The debug tab as bb addresses it: an action tab in a thread's side panel, beside the chat. */
+export const DEBUG_TAB = { id: "debug", context: { kind: "thread" }, availability: "action" } as const satisfies ExperimentalTabReference;
+
+/** Opens (or focuses) the debug tab in `panel`; false when that surface has no thread side panel. */
+export function openDebugTab(panel: Pick<ExperimentalPanelController, "openTab">): boolean {
+  return panel.openTab({ tab: DEBUG_TAB });
+}
+
+/** How long a request to open the tab waits for its thread to show. */
+export const DEBUG_OPEN_WAIT_MS = 10_000;
+
+export interface DebugOpenWanted {
+  /** The thread whose side panel should show the tab; null for the first mate's, which the overlay looks up. */
+  threadId: string | null;
+  at: number;
+}
+
+/**
+ * A request to open the debug tab where no panel controller of a thread is at hand: the pill (an app overlay,
+ * outside every thread view) and the palette or the header menu when the focused surface declines. A
+ * component inside the thread view (`DebugOpener`, in the thread's composer) opens it, and the overlay turns
+ * a request for the first mate's thread into a navigation there. One per window.
+ */
+class DebugOpenRequest {
+  private current: DebugOpenWanted | null = null;
   private readonly listeners = new Set<() => void>();
 
-  get open(): boolean {
-    return this.shown;
+  constructor(private readonly now: () => number = Date.now) {}
+
+  get wanted(): DebugOpenWanted | null {
+    return this.current;
   }
 
   subscribe = (listener: () => void): (() => void) => {
@@ -118,11 +144,39 @@ class DebugToggle {
     return () => this.listeners.delete(listener);
   };
 
-  set(open: boolean): void {
-    if (this.shown === open) return;
-    this.shown = open;
+  ask(threadId: string | null): void {
+    this.current = { threadId, at: this.now() };
+    this.changed();
+  }
+
+  /** Whether the tab should open in `threadId`'s panel now. */
+  isFor(threadId: string | null): boolean {
+    const wanted = this.current;
+    return wanted !== null && threadId !== null && wanted.threadId === threadId && this.now() - wanted.at <= DEBUG_OPEN_WAIT_MS;
+  }
+
+  done(): void {
+    if (this.current === null) return;
+    this.current = null;
+    this.changed();
+  }
+
+  private changed(): void {
     for (const listener of this.listeners) listener();
   }
 }
 
-export const debugView = new DebugToggle();
+export function makeDebugOpenRequest(now?: () => number): DebugOpenRequest {
+  return new DebugOpenRequest(now);
+}
+
+export const debugOpen = makeDebugOpenRequest();
+
+/**
+ * Opens the debug tab from a palette command or a menu: in the focused surface's panel when it takes the tab,
+ * else in `threadId`'s once it shows, else in the first mate's thread.
+ */
+export function openDebugLog(panel: Pick<ExperimentalPanelController, "openTab">, threadId: string | null, request = debugOpen): void {
+  if (openDebugTab(panel)) return;
+  request.ask(threadId);
+}

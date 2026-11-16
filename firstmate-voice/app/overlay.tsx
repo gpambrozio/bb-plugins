@@ -1,21 +1,20 @@
 /**
  * The pill: while a session is connecting or live, a small bar at the bottom right with what is happening
  * (connecting, listening, the captain speaking, the voice speaking, muted) and Mute and End. When a session
- * ends or Talk fails it says why, with Talk again. Otherwise it draws nothing. Both carry a Debug button for the
- * debug panel (`app/debug.tsx`), which this overlay draws over the window while it is open. It is an app
- * overlay, mounted once per window, so it also hands the controller its RPC client and the server's session
- * signals.
+ * ends or Talk fails it says why, with Talk again. Otherwise it draws nothing. Both carry a Debug button that
+ * opens the debug tab (`app/debug.tsx`) in the side panel of the thread in view, or of the first mate's thread,
+ * which it navigates to. It is an app overlay, mounted once per window, so it also hands the controller its RPC
+ * client and the server's session signals.
  */
 import { useEffect, useSyncExternalStore } from "react";
-import { experimental_Icon as Icon, useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
+import { experimental_Icon as Icon, useBbContext, useBbNavigate, useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
 
 import { Button } from "@/components/ui/button";
 import type { rpcContract } from "../server";
 import type { SessionSignal } from "../server/session";
 import { SESSION_CHANNEL } from "../shared/channel";
 import { voice, type VoiceState } from "./controller";
-import { DebugPanel, useDebugOpen } from "./debug";
-import { debugView } from "./debug-view";
+import { DEBUG_OPEN_WAIT_MS, debugOpen } from "./debug-view";
 
 export function useVoiceState(): VoiceState {
   return useSyncExternalStore(voice.subscribe, () => voice.snapshot);
@@ -31,27 +30,50 @@ export function statusText(state: VoiceState): string {
 }
 
 function DebugButton() {
+  const { threadId } = useBbContext();
   return (
-    <Button type="button" size="sm" variant="ghost" aria-label="Open the voice debug log" onClick={() => debugView.set(true)}>
+    <Button type="button" size="sm" variant="ghost" aria-label="Open the voice debug log" onClick={() => debugOpen.ask(threadId)}>
       <Icon name="Bug" />
     </Button>
   );
 }
 
+/** A request to open the debug tab with no thread named goes to the first mate's thread: look it up and go there. */
+function useDebugRouting(): void {
+  const rpc = useRpc<typeof rpcContract>();
+  const navigate = useBbNavigate();
+  const { threadId } = useBbContext();
+  const wanted = useSyncExternalStore(debugOpen.subscribe, () => debugOpen.wanted);
+
+  useEffect(() => {
+    if (wanted === null || wanted.threadId !== null || Date.now() - wanted.at > DEBUG_OPEN_WAIT_MS) return;
+    let live = true;
+    rpc
+      .call("mate.thread", {})
+      .then(({ threadId: mate }) => {
+        if (!live || debugOpen.wanted !== wanted) return;
+        if (mate === null) return debugOpen.done();
+        debugOpen.ask(mate);
+        if (threadId !== mate) navigate.toThread(mate);
+      })
+      .catch(() => {
+        if (live && debugOpen.wanted === wanted) debugOpen.done();
+      });
+    return () => {
+      live = false;
+    };
+  }, [rpc, wanted, threadId, navigate]);
+}
+
 export function VoicePill() {
   const rpc = useRpc<typeof rpcContract>();
   const state = useVoiceState();
-  const debugOpen = useDebugOpen();
 
   useEffect(() => voice.attach(rpc), [rpc]);
   useRealtime(SESSION_CHANNEL, (payload) => voice.onSignal(payload as SessionSignal));
+  useDebugRouting();
 
-  return (
-    <>
-      {debugOpen && <DebugPanel />}
-      {!(state.phase === "idle" && state.note === null) && <Pill state={state} />}
-    </>
-  );
+  return state.phase === "idle" && state.note === null ? null : <Pill state={state} />;
 }
 
 function Pill({ state }: { state: VoiceState }) {
