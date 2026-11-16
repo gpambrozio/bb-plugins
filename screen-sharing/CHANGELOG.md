@@ -5,6 +5,15 @@ Notable changes to `screen-sharing`. The other plugins in this repository versio
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.5.1
+
+### Fixed
+
+- The **Screen Sharing · Live** reminder with **Close all** is now one of bb's own notifications, in
+  the same corner, look and stack as bb's other notifications, instead of a separate pill that could
+  cover them or another plugin's. It shows how many sessions are open, stays up until none is, and
+  **Open** takes you to the page.
+
 ## 0.5.0
 
 ### Added

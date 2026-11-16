@@ -405,6 +405,20 @@ mounted once per window. Paseo contribution → bb slot:
 | `theme.colors` tokens | Tailwind semantic classes (`bg-background`, `text-muted-foreground`, `border-border`, `bg-card`, `text-destructive`, `border-warning`/`text-warning-text`, `text-success`, `bg-state-hover`) |
 | host UI kit | shadcn components vendored into `components/ui/` (`npx shadcn add @bb/<name>`), plus host `Markdown`, `ThreadChat`, `ThreadTitle`, `UrlLink` |
 
+**Something that stays on screen whatever page is open is a bb toast, not a pinned pill.** bb leaves an
+app overlay's positioning to the plugin, so pills pinned with `fixed bottom-4 right-4` cover each other
+and bb's toasts. Instead, an `app.slots.experimental_appOverlay` component that renders nothing calls
+`toast(title, { id, duration: Infinity, dismissible: false, description, action, cancel })` from the
+`sonner` bb shims: plain options and `{ label, onClick }` buttons route to bb's own card, in bb's stack
+(`toast.custom` gets sonner's raw card instead). Calling it again with the same `id` updates
+it in place, and `toast.dismiss(id)` removes it. `dismissible: false` takes away the card's X, the
+swipe and Escape. An `action` that calls `event.preventDefault()` keeps the toast up; a `cancel` always
+dismisses it. Dismiss it in the overlay's unmount clean-up, and give the `id` a per-load suffix, because a
+reload mounts the new copy before the old one unmounts. bb's stack shows three toasts (sonner's default,
+bb 0.49): three newer ones hide an older persistent one until they expire, and in the collapsed stack
+only the front card takes clicks until the stack is hovered. `screen-sharing/app/sessions.tsx` is the
+example.
+
 `app.slots.settingsSection` requires an `id` (letters, digits, `-`, `_`), unlike the Paseo settings screen.
 
 **A per-thread setting belongs in bb's thread menu** (`app.slots.experimental_threadAction`, bb 0.46): an

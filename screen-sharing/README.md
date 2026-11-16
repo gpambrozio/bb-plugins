@@ -37,7 +37,7 @@ extra is installed on any Mac and no port is opened to the internet.
 - The pointer stays visible over the screen: macOS's own cursor when it sends one, otherwise your
   usual arrow, which is exactly where a click lands.
 - While any session is open — to any Mac, in this window, another window or on another device — the
-  sidebar entry carries a **LIVE** badge and a pill in the corner of every bb window offers **Close all**, which
+  sidebar entry carries a **LIVE** badge and a toast in every bb window offers **Close all**, which
   ends every one of them. The page's title bar has the same Close all, and the picker marks each Mac
   with a session open as Live.
 - A session also ends after 30 minutes without keyboard or mouse use (whether or not it is on screen),
