@@ -187,8 +187,10 @@ the voice, the decisions behind phase 1, and the phase 0 decision record.
   connecting, End only; ending, no buttons; ended or Talk failed, the note as the description, Talk as
   `action` and Close as `cancel`. A cancel always dismisses its toast, so End's ended state comes in a new
   one: each toast's id is the per-load `VOICE_TOAST_ID` plus a count bumped whenever one goes, so a toast
-  shown again at once is not merged into the one still fading out under the same id. The buttons read the
-  state at click time and do nothing for a state already past. End now leaves a note ("Voice ended: …"),
+  shown again at once is not merged into the one still fading out under the same id. A card still fading
+  out takes presses, so each button knows its own card's id: only the card on screen counts as going (once),
+  and a press on any other card, or for a state already past, does nothing (a second End on the old card
+  once left the next card untracked and on screen for good, and could end a new call). End now leaves a note ("Voice ended: …"),
   as the server's own end does, so the ended state always shows. The debug log lost its bug button there;
   the palette and the first mate's header menu open it.
 - **No `quiet` tool.** Every phase 1 announcement is P1, which quiet would not hold; it comes with phase 2's

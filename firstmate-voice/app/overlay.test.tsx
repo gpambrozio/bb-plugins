@@ -12,7 +12,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { rpcContract } from "../server";
 import type { VoiceState } from "./controller";
 
-vi.mock("sonner", () => ({ toast: Object.assign(vi.fn(), { dismiss: vi.fn() }) }));
+/**
+ * bb's toast stack as far as the mock can tell it: the cards on screen by id. Showing a toast with an id on
+ * screen updates that card; `dismiss` takes it away; a cancel button takes its own card away as it is pressed
+ * (`pressCancel`), and a card still fading out can be pressed again.
+ */
+const cards = vi.hoisted(() => new Map<string | number, string>());
+vi.mock("sonner", () => ({
+  toast: Object.assign(
+    vi.fn((title: string, options?: { id?: string | number }) => {
+      if (options?.id !== undefined) cards.set(options.id, title);
+    }),
+    { dismiss: vi.fn((id?: string | number) => void (id !== undefined && cards.delete(id))) },
+  ),
+}));
 
 /** The window's voice controller, reduced to a state the test sets and the calls the toast's buttons make. */
 const fake = vi.hoisted(() => {
@@ -63,6 +76,12 @@ function click(button: unknown, prevent = vi.fn()): ReturnType<typeof vi.fn> {
   return prevent;
 }
 
+/** A cancel press as bb's card makes it: the button's own onClick, and its card dismissed. */
+function pressCancel(options: ExternalToast): void {
+  click(options.cancel);
+  if (options.id !== undefined) cards.delete(options.id);
+}
+
 function live(next: Partial<VoiceState> = {}): Partial<VoiceState> {
   return { phase: "live", note: null, ...next };
 }
@@ -74,6 +93,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  cards.clear();
   debugOpen.done();
 });
 
@@ -144,6 +164,47 @@ describe("the voice toast", () => {
     expect(fake.voice.talk).toHaveBeenCalledTimes(1);
     click(ended.options.cancel);
     expect(fake.voice.dismiss).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps track of the card on screen when End is pressed twice on a card fading out", async () => {
+    fake.set(live());
+    const view = renderSlot({ component: VoicePill }, {}, { rpc: stubs() });
+    await waitFor(() => expect(toast).toHaveBeenCalled());
+    const first = shown().options;
+    pressCancel(first);
+    // The controller is ending; its end RPC is still on its way.
+    act(() => fake.set({ phase: "ending" }));
+    await waitFor(() => expect(shown().title).toBe("FirstMate voice · Ending…"));
+    const ending = shown().options.id;
+    // The first card, still fading out, takes a second press.
+    pressCancel(first);
+    expect(fake.voice.end).toHaveBeenCalledTimes(1);
+    expect([...cards.keys()]).toEqual([ending]);
+
+    // The end RPC answers: the ended state is that same card, changed in place, and the only one on screen.
+    act(() => fake.set({ phase: "idle", note: "Voice ended: ended by the captain." }));
+    await waitFor(() => expect(shown().title).toBe("FirstMate voice"));
+    expect(shown().options.id).toBe(ending);
+    expect([...cards.entries()]).toEqual([[ending, "FirstMate voice"]]);
+
+    view.unmount();
+    expect(cards.size).toBe(0);
+  });
+
+  it("does not end a new call for a press on the old call's card still fading out", async () => {
+    fake.set(live());
+    renderSlot({ component: VoicePill }, {}, { rpc: stubs() });
+    await waitFor(() => expect(toast).toHaveBeenCalled());
+    const first = shown().options;
+    pressCancel(first);
+    act(() => fake.set({ phase: "idle", note: "Voice ended: ended by the captain." }));
+    // Talk again at once: the new call's card offers End too.
+    act(() => fake.set({ phase: "connecting", note: null }));
+    await waitFor(() => expect(shown().title).toBe("FirstMate voice · Connecting…"));
+    const second = shown().options.id;
+    pressCancel(first);
+    expect(fake.voice.end).toHaveBeenCalledTimes(1);
+    expect([...cards.keys()]).toEqual([second]);
   });
 
   it("offers only End while connecting, and goes when there is nothing left to say", async () => {

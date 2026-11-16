@@ -79,8 +79,13 @@ function useVoiceToast(state: VoiceState): void {
   latest.current = shown;
   const toastRef = useRef({ count: 0, up: false });
   const id = () => `${VOICE_TOAST_ID}-${toastRef.current.count}`;
-  const gone = () => {
-    toastRef.current = { count: toastRef.current.count + 1, up: false };
+  /**
+   * The card `which` has gone: the next toast gets a new id. Only the current card's going counts, once, so a
+   * second press on a card already fading out leaves the card that replaced it tracked.
+   */
+  const current = (which: string) => which === id() && toastRef.current.up;
+  const gone = (which: string) => {
+    if (current(which)) toastRef.current = { count: toastRef.current.count + 1, up: false };
   };
 
   const title = shown?.title ?? null;
@@ -92,12 +97,13 @@ function useVoiceToast(state: VoiceState): void {
     if (title === null) {
       if (toastRef.current.up) {
         toast.dismiss(id());
-        gone();
+        gone(id());
       }
       return;
     }
+    const shownId = id();
     toast(title, {
-      id: id(),
+      id: shownId,
       duration: Infinity,
       dismissible: false,
       description,
@@ -109,8 +115,8 @@ function useVoiceToast(state: VoiceState): void {
               label: ACTION_LABELS[action],
               onClick: (event) => {
                 event.preventDefault();
-                const now = latest.current?.action;
-                if (now === action) runAction(action);
+                // A press on a card that is no longer the one on screen, or for a state already past, does nothing.
+                if (current(shownId) && latest.current?.action === action) runAction(action);
               },
             },
       // A cancel always dismisses its toast; End's ended state and the next Talk come in a new one.
@@ -120,8 +126,9 @@ function useVoiceToast(state: VoiceState): void {
           : {
               label: CANCEL_LABELS[cancel],
               onClick: () => {
-                gone();
-                if (latest.current?.cancel === cancel) runCancel(cancel);
+                const now = current(shownId);
+                gone(shownId);
+                if (now && latest.current?.cancel === cancel) runCancel(cancel);
               },
             },
     });
@@ -133,7 +140,7 @@ function useVoiceToast(state: VoiceState): void {
     () => () => {
       if (!toastRef.current.up) return;
       toast.dismiss(id());
-      gone();
+      gone(id());
     },
     [],
   );
