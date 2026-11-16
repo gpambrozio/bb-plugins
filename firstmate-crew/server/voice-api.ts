@@ -162,7 +162,7 @@ export function voiceHandlers(deps: VoiceDeps, replies: MateReplyCache = new Mat
         deps.threads.sendWithNote(mate.id, shown, note, mode),
       );
       deps.published();
-      return { delivery };
+      return { delivery, message: shown, note };
     });
 
   return {

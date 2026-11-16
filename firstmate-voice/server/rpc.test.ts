@@ -30,6 +30,10 @@ function setup() {
       calls.push("current");
       return null;
     },
+    debugPage: (afterSeq: number) => {
+      calls.push(`debug ${afterSeq}`);
+      return { sessionId: "fmv_1", startedAt: 1, entries: [], more: false, dropped: 0 };
+    },
   };
   const crew = {
     mateThreadId: async () => {
@@ -50,6 +54,8 @@ describe("the session RPCs", () => {
     await expect(handlers["session.alive"]({ sessionId: "fmv_1" }, PLUGIN)).rejects.toMatchObject({ code: "forbidden" });
     await expect(handlers["session.current"]({}, PLUGIN)).rejects.toMatchObject({ code: "forbidden" });
     await expect(handlers["mate.thread"]({}, PLUGIN)).rejects.toMatchObject({ code: "forbidden" });
+    // The debug log holds transcripts and the instructions: only the owner's own app reads it.
+    await expect(handlers["debug.log"]({ afterSeq: 0 }, PLUGIN)).rejects.toMatchObject({ code: "forbidden" });
     expect(calls).toEqual([]);
   });
 
@@ -63,6 +69,7 @@ describe("the session RPCs", () => {
     const { calls, handlers } = setup();
     expect(await handlers["session.start"]({ sdp: "v=0 offer" }, APP)).toEqual({ sessionId: "fmv_1", answerSdp: "answer" });
     expect(await handlers["mate.thread"]({}, APP)).toEqual({ threadId: "thr_mate" });
-    expect(calls).toEqual(["start v=0 offer", "mate"]);
+    expect(await handlers["debug.log"]({ afterSeq: 3 }, APP)).toMatchObject({ sessionId: "fmv_1" });
+    expect(calls).toEqual(["start v=0 offer", "mate", "debug 3"]);
   });
 });

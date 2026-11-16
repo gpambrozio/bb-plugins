@@ -16,10 +16,11 @@ the voice, the decisions behind phase 1, and the phase 0 decision record.
 | File | What it owns |
 | --- | --- |
 | `server/rpc.ts` | The app-facing RPC handlers, refusing any caller but bb's app. |
-| `server.ts` | Wiring only: settings (model, reasoning, voice, turn taking), the app's RPCs (`session.start`, `renew`, `renewed`, `end`, `alive`, `current`, `mate.thread`, behind `server/rpc.ts`'s app-only gate), the thread events that make a live session read the brief again, `onDispose`. |
+| `server.ts` | Wiring only: settings (model, reasoning, voice, turn taking), the app's RPCs (`session.start`, `renew`, `renewed`, `end`, `alive`, `current`, `mate.thread`, `debug.log`, behind `server/rpc.ts`'s app-only gate), the thread events that make a live session read the brief again, `onDispose`. |
 | `server/session.ts` | One live session (`VoiceSessions`): the call, the sideband, event dispatch, the tools, renewal at the hour's cap, the idle end, the app's heartbeat. |
 | `server/policy.ts` | The utterance log, one send at a time, rate limits. |
 | `server/brief-sync.ts` | Brief → diff → `[firstmate-update]` items, full replacement every 15 updates or 20 minutes, and the events worth announcing. |
+| `server/debug-log.ts`, `app/debug.tsx`, `app/debug-view.ts` | The debug log of the current (or last) session, its app-only `debug.log` RPC, and the full-window debug panel. |
 | `server/announce.ts` | P1 announcements at gaps, once more when the captain talks over one, during the response or later while its audio plays. |
 | `server/instructions.ts`, `server/tools.ts` | The standing instructions (design §8's outline) and the tool list with levels. |
 | `server/openai-call.ts`, `server/openai-port.ts` | The SDP exchange, hangup and sideband socket (from the spike), and `RealtimePort` over them. |
@@ -72,8 +73,15 @@ the voice, the decisions behind phase 1, and the phase 0 decision record.
   after their own RPCs answer: a late End answer or renewal acknowledgement never touches a newer Talk.
 - **The token never reaches the app or the log.** The SDP exchange, the sideband and the hangup run on the
   server; `redact` covers every error body; the token is held for one call's life.
-- **Transcripts live in memory for the session only.** The log gets tool names and session events, never
+- **Transcripts live in memory, never in the log.** The log gets tool names and session events, never
   what anyone said. The renewal recap is the last ten exchanges, in memory.
+- **The debug log stays on this bb.** `DebugLog` keeps everything the session got and did (the call's
+  session and standing instructions, every item and response it was sent, transcripts, tool calls and
+  answers, each send as firstmate-crew worded it, the first mate's messages, interruptions, errors) in the
+  server's memory, one session's worth: a new Talk replaces it, a reload forgets it, and it is capped at
+  2,000 entries. Only the app reads it (`debug.log`, behind `requireApp`), by polling while the panel is
+  open; nothing publishes, stores or logs it. Every text passes `scrub` (bearer headers, JWTs, `ek_` and
+  `sk-` keys). Log an event there, not in `bb.log`, when it carries anyone's words.
 - **A session always ends.** The app ends it (End, the palette, "goodbye" by voice, the phone leaving the
   screen); the server ends it after ten quiet minutes, when the app's heartbeat stops for 50 s, when the
   sideband cannot be reopened, when a renewal does not come, and on dispose. It hangs up from the server and
@@ -116,6 +124,12 @@ the voice, the decisions behind phase 1, and the phase 0 decision record.
   with "web pull request 42" and buttons lifted from its own instructions' example while the update gave
   no buttons; the instructions now carry no example identifiers (a test checks), and a new card's update
   line lists its project, pull request and buttons.
+- **A debug view for tuning the loop** (the owner's call, 2026-11-15). A full-window panel, marked Debug,
+  opens from the pill's bug button, the palette and the first mate's header menu, and reads on a phone. It
+  is a poll over an app-only RPC rather than a realtime channel, so nothing leaves the server unasked. For
+  the exact text a send relayed, `voice.v1`'s ask and answer now return the message and the agent-only
+  note as firstmate-crew sent them (optional fields: an older crew answers without them, and the panel then
+  shows the parts the voice sent).
 - **No `quiet` tool.** Every phase 1 announcement is P1, which quiet would not hold; it comes with phase 2's
   digests.
 - **The model's account goes with the captain's words** (the captain's call, 2026-11-14, after a long request

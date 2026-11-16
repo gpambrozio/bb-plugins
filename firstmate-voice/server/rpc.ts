@@ -19,7 +19,7 @@ export function requireApp(caller: Caller): void {
 }
 
 export function sessionHandlers(
-  sessions: Pick<VoiceSessions, "start" | "renew" | "renewed" | "end" | "alive" | "current">,
+  sessions: Pick<VoiceSessions, "start" | "renew" | "renewed" | "end" | "alive" | "current" | "debugPage">,
   crew: Pick<CrewPort, "mateThreadId">,
 ): ExperimentalPluginRpcHandlersWithContext<typeof rpcContract> {
   return {
@@ -48,6 +48,10 @@ export function sessionHandlers(
     "session.current": async (_input, ctx) => {
       requireApp(ctx?.experimental_caller);
       return { sessionId: sessions.current()?.id ?? null };
+    },
+    "debug.log": async ({ afterSeq }, ctx) => {
+      requireApp(ctx?.experimental_caller);
+      return sessions.debugPage(afterSeq);
     },
     "mate.thread": async (_input, ctx) => {
       requireApp(ctx?.experimental_caller);

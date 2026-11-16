@@ -58,6 +58,14 @@ bb plugin install 'git:github.com/gpambrozio/bb-plugins@>=0.1.0' --plugin firstm
   and **End**. Saying "goodbye" ends it too.
 - A session ends by itself after ten quiet minutes, and is renewed without a break at OpenAI's one-hour
   limit.
+- **Debug log.** The bug button on the bar, **FirstMate voice: debug log** in the palette, or **Voice debug
+  log** in the first mate's header menu opens a full-window view, marked *Debug*, of everything since you
+  last tapped Talk, oldest first, each with its time and seconds since the start: the standing instructions
+  and session the call was made with, every item put in the voice's conversation (the brief, its updates,
+  the first mate's messages), what you said and what the voice said (the transcripts), tool calls and their
+  answers, each message handed to the first mate exactly as its thread got it (with the note only the first
+  mate sees), announcements, interruptions, turns and errors. *Hide turns* hides the speech and audio
+  markers; *Copy* copies it all as text. It works on the phone, and shows the last session after one ends.
 
 ## Settings
 
@@ -70,8 +78,10 @@ bb plugin install 'git:github.com/gpambrozio/bb-plugins@>=0.1.0' --plugin firstm
 
 Audio goes from your device straight to OpenAI. Task titles, project names, what the first mate and its
 workers last said (cut short, with links and ids removed) and the first mate's answers go to OpenAI under
-the ChatGPT account. No code, diffs or files. What you say is kept in memory for the session only and is
-never written to a log. [Herald](../herald) keeps speaking while a session is live; turn it off if you
+the ChatGPT account. No code, diffs or files. What you say is kept in memory and is never written to a log
+or a file. The debug log holds it, with everything else the session got and did, in the bb server's memory
+until you next tap Talk (or the plugin reloads); only bb's app on your own bb can read it, and anything
+shaped like a credential is removed from it. [Herald](../herald) keeps speaking while a session is live; turn it off if you
 hear both.
 
 ## Limitations

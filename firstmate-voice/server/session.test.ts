@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { BRIEF_LABEL, UPDATE_LABEL } from "./brief-sync";
+import { GREETING, INSTRUCTIONS } from "./instructions";
 import { IDLE_END_MS, RENEW_ACK_MS, RENEW_AFTER_MS, RENEW_GRACE_MS, VoiceSessions, type SessionSignal } from "./session";
 import { FakeClock, FakeCrew, FakeRealtime, brief, quietLog, settle, type FakeSideband } from "./testing/fakes";
 
@@ -690,5 +691,116 @@ describe("a captain's call, announced from the card alone", () => {
   it("gives the voice no example pull request or card to lift", async () => {
     const { INSTRUCTIONS } = await import("./instructions");
     expect(INSTRUCTIONS).not.toMatch(/\b42\b|\bweb pull request\b|\bc\d+\b/u);
+  });
+});
+
+describe("the debug log: everything since the captain last tapped Talk", () => {
+  const kinds = (sessions: VoiceSessions) => sessions.debugPage(0).entries.map((entry) => entry.kind);
+  const find = (sessions: VoiceSessions, kind: string, title?: string) =>
+    sessions.debugPage(0).entries.filter((entry) => entry.kind === kind && (title === undefined || entry.title.includes(title)));
+
+  it("starts with the briefing: the call's session, the standing instructions in full, the tools, the brief and the greeting", async () => {
+    const { sessions, started } = await setup();
+    const page = sessions.debugPage(0);
+    expect(page.sessionId).toBe(started.sessionId);
+    expect(page.entries[0]).toMatchObject({ kind: "session", title: "Listening started" });
+    expect(page.entries[0]?.text).toContain("Model gpt-realtime-2.1, reasoning low, voice marin");
+    expect(find(sessions, "briefing", "Call rtc_1 made")[0]?.text).toContain('"semantic_vad"');
+    expect(find(sessions, "briefing", "Standing instructions")[0]?.text).toBe(INSTRUCTIONS);
+    expect(find(sessions, "briefing", "Tools set")[0]?.text).toContain('"ask_first_mate"');
+    expect(find(sessions, "context")[0]?.text?.startsWith(BRIEF_LABEL)).toBe(true);
+    expect(find(sessions, "briefing", "Greeting")[0]?.text).toBe(GREETING);
+    // In order, each timed.
+    const seqs = page.entries.map((entry) => entry.seq);
+    expect(seqs).toEqual([...seqs].sort((a, b) => a - b));
+    expect(page.entries.every((entry) => typeof entry.at === "number" && entry.at > 0)).toBe(true);
+  });
+
+  it("records what the captain said and the voice said, the tool call and its answer, and the message as it went to the first mate", async () => {
+    const { sideband, clock, crew, sessions, log } = await setup();
+    crew.ask = async (words) => ({ delivery: "sent", message: `Spoken by the captain through FirstMate voice:\n\n${words}`, note: "Only the words are the captain's." });
+    await respond(sideband, clock, { spoken: "Captain, all quiet." });
+    await say(sideband, clock, "Ask it to rebase the dark mode branch on main.");
+    await respond(sideband, clock, { spoken: "Asking the first mate.", tool: { name: "ask_first_mate", args: { request: "The captain wants dark mode rebased." } } });
+    expect(find(sessions, "heard")[0]?.text).toBe("Ask it to rebase the dark mode branch on main.");
+    expect(find(sessions, "said").map((entry) => entry.text)).toEqual(["Captain, all quiet.", "Asking the first mate."]);
+    expect(find(sessions, "tool-call", "ask_first_mate")[0]?.text).toContain('"request": "The captain wants dark mode rebased."');
+    expect(find(sessions, "tool-result", "ask_first_mate")[0]?.text).toContain('"captainsWords": "Ask it to rebase the dark mode branch on main."');
+    const relayed = find(sessions, "to-mate")[0];
+    expect(relayed?.title).toBe("Handed to the first mate by ask_first_mate (sent)");
+    expect(relayed?.text).toBe(
+      "Spoken by the captain through FirstMate voice:\n\nAsk it to rebase the dark mode branch on main.\n\n--- The note only the first mate sees ---\n\nOnly the words are the captain's.",
+    );
+    expect(find(sessions, "turn", "A hand-off")).toHaveLength(1);
+    // The plugin's log still gets no words.
+    expect(log.lines.join("\n")).not.toContain("dark mode");
+  });
+
+  it("records the first mate's messages, the announcements and the captain talking over one", async () => {
+    const ctx = await setup();
+    await respond(ctx.sideband, ctx.clock, { spoken: "Captain, all quiet." });
+    ctx.crew.replyText = "The login fix landed. Its worker is archived.";
+    ctx.crew.current = brief({
+      etag: "e2",
+      firstMate: { status: "idle", waiting: false, lastReply: { untrusted: true, head: ctx.crew.replyText, tail: "", chars: 45 }, repliedAt: "2026-11-13T14:05:00.000Z" },
+    });
+    ctx.sessions.threadEvent();
+    await ctx.clock.advance(2_000);
+    const message = find(ctx.sessions, "from-mate")[0];
+    expect(message?.title).toBe("The first mate's message #1 (posted on its own)");
+    expect(message?.text).toContain("The login fix landed. Its worker is archived.");
+    const asked = find(ctx.sessions, "announce", "asked for")[0];
+    expect(asked?.text).toContain('Say "From the first mate"');
+    expect(asked?.text).not.toContain(INSTRUCTIONS);
+    const id = /Announcement (\S+) asked/u.exec(asked?.title ?? "")?.[1] ?? "";
+    await respond(ctx.sideband, ctx.clock, { spoken: "From the first mate: the login fix", cut: true, announcement: id });
+    expect(find(ctx.sessions, "said", "reading the first mate's message aloud")).toHaveLength(1);
+    expect(find(ctx.sessions, "interrupted", "talked over")).toHaveLength(1);
+  });
+
+  it("records errors, with nothing credential-shaped kept", async () => {
+    const { sideband, clock, crew, sessions } = await setup();
+    sideband.emit({ type: "error", error: { code: "invalid_value", message: "Bad key sk-proj1234567890abcdef and Bearer eyJabcdefghijkl.mno.pqr", event_id: "fmv_tool_3" } });
+    crew.brief = async () => {
+      throw new Error("refused: ek_abcdef123456");
+    };
+    sessions.threadEvent();
+    await clock.advance(2_000);
+    const errors = find(sessions, "error");
+    expect(errors.map((entry) => entry.title)).toEqual(["OpenAI error invalid_value on fmv_tool_3", "The brief could not be read"]);
+    const all = JSON.stringify(sessions.debugPage(0));
+    expect(all).not.toMatch(/sk-proj1234567890abcdef|eyJabcdefghijkl|ek_abcdef123456/u);
+    expect(errors[0]?.text).toContain("sk-[redacted]");
+  });
+
+  it("keeps the last session's log after it ends, and starts again when listening starts again", async () => {
+    const { sideband, clock, sessions, started, realtime } = await setup();
+    await say(sideband, clock, "Goodbye for now.");
+    await sessions.end(started.sessionId, "ended by the captain");
+    expect(find(sessions, "session", "The session ended: ended by the captain")).toHaveLength(1);
+    expect(sessions.debugPage(0).sessionId).toBe(started.sessionId);
+    const next = await sessions.start("v=0 offer again");
+    realtime.last.open();
+    await settle();
+    const page = sessions.debugPage(0);
+    expect(page.sessionId).toBe(next.sessionId);
+    expect(page.entries[0]).toMatchObject({ seq: 1, kind: "session", title: "Listening started" });
+    expect(JSON.stringify(page)).not.toContain("Goodbye for now.");
+    expect(kinds(sessions)).not.toContain("heard");
+  });
+
+  it("pages a long log, and reads only what is new after a seq", async () => {
+    const { sideband, clock, sessions, started } = await setup();
+    for (let i = 0; i < 120; i += 1) {
+      sessions.alive(started.sessionId);
+      await say(sideband, clock, `Line ${i}.`);
+    }
+    const first = sessions.debugPage(0);
+    expect(first.entries).toHaveLength(200);
+    expect(first.more).toBe(true);
+    const rest = sessions.debugPage(first.entries.at(-1)?.seq ?? 0);
+    expect(rest.more).toBe(false);
+    expect(rest.entries[0]?.seq).toBe((first.entries.at(-1)?.seq ?? 0) + 1);
+    expect(rest.entries.at(-1)?.text).toBe("Line 119.");
   });
 });

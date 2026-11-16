@@ -1,8 +1,10 @@
 /**
  * The pill: while a session is connecting or live, a small bar at the bottom right with what is happening
  * (connecting, listening, the captain speaking, the voice speaking, muted) and Mute and End. When a session
- * ends or Talk fails it says why, with Talk again. Otherwise it draws nothing. It is an app overlay, mounted
- * once per window, so it also hands the controller its RPC client and the server's session signals.
+ * ends or Talk fails it says why, with Talk again. Otherwise it draws nothing. Both carry a Debug button for the
+ * debug panel (`app/debug.tsx`), which this overlay draws over the window while it is open. It is an app
+ * overlay, mounted once per window, so it also hands the controller its RPC client and the server's session
+ * signals.
  */
 import { useEffect, useSyncExternalStore } from "react";
 import { experimental_Icon as Icon, useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
@@ -12,6 +14,8 @@ import type { rpcContract } from "../server";
 import type { SessionSignal } from "../server/session";
 import { SESSION_CHANNEL } from "../shared/channel";
 import { voice, type VoiceState } from "./controller";
+import { DebugPanel, useDebugOpen } from "./debug";
+import { debugView } from "./debug-view";
 
 export function useVoiceState(): VoiceState {
   return useSyncExternalStore(voice.subscribe, () => voice.snapshot);
@@ -26,15 +30,31 @@ export function statusText(state: VoiceState): string {
   return "Listening";
 }
 
+function DebugButton() {
+  return (
+    <Button type="button" size="sm" variant="ghost" aria-label="Open the voice debug log" onClick={() => debugView.set(true)}>
+      <Icon name="Bug" />
+    </Button>
+  );
+}
+
 export function VoicePill() {
   const rpc = useRpc<typeof rpcContract>();
   const state = useVoiceState();
+  const debugOpen = useDebugOpen();
 
   useEffect(() => voice.attach(rpc), [rpc]);
   useRealtime(SESSION_CHANNEL, (payload) => voice.onSignal(payload as SessionSignal));
 
-  if (state.phase === "idle" && state.note === null) return null;
+  return (
+    <>
+      {debugOpen && <DebugPanel />}
+      {!(state.phase === "idle" && state.note === null) && <Pill state={state} />}
+    </>
+  );
+}
 
+function Pill({ state }: { state: VoiceState }) {
   return (
     <div
       role="status"
@@ -48,6 +68,7 @@ export function VoicePill() {
           <Button type="button" size="sm" variant="outline" onClick={() => voice.talk()}>
             Talk
           </Button>
+          <DebugButton />
           <Button type="button" size="sm" variant="ghost" aria-label="Dismiss" onClick={() => voice.dismiss()}>
             <Icon name="X" />
           </Button>
@@ -61,6 +82,7 @@ export function VoicePill() {
           <Button type="button" size="sm" variant="destructive" disabled={state.phase === "ending"} onClick={() => void voice.end("ended by the captain")}>
             End
           </Button>
+          <DebugButton />
         </>
       )}
     </div>

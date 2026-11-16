@@ -115,7 +115,8 @@ describe("voice.v1.ask and voice.v1.answer", () => {
       { words: "Merge the tweak branch when the gate passes, and Then merge main into the map\nbranch.", account: "The captain wants the tweak branch merged once its gate passes,\nthen main merged into the map branch." },
       VOICE,
     );
-    expect(sent).toEqual({ delivery: "sent" });
+    // The answer carries the message and the note word for word, for the voice's debug view.
+    expect(sent).toEqual({ delivery: "sent", message: threads.sent[0]?.text, note: threads.notes[0]?.note });
     expect(threads.sent).toEqual([
       {
         id: mate.id,

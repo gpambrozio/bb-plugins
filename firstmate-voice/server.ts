@@ -9,6 +9,7 @@ import { z } from "zod";
 
 import { subscriptionToken } from "./server/credentials";
 import { crewClient } from "./server/crew-client";
+import { DebugPageSchema } from "./server/debug-log";
 import { openAiRealtime } from "./server/openai-port";
 import { sessionHandlers } from "./server/rpc";
 import { systemClock } from "./server/ports";
@@ -26,6 +27,8 @@ export const rpcContract = defineRpcContract({
   "session.alive": { input: z.object({ sessionId: z.string() }), output: z.object({ live: z.boolean() }) },
   "session.current": { input: z.object({}), output: z.object({ sessionId: z.string().nullable() }) },
   "mate.thread": { input: z.object({}), output: z.object({ threadId: z.string().nullable() }) },
+  /** The debug view: the current session's log (or the last one's) after `afterSeq`. Local to this bb. */
+  "debug.log": { input: z.object({ afterSeq: z.number().int().min(0) }), output: DebugPageSchema },
 });
 
 export const SETTINGS = {

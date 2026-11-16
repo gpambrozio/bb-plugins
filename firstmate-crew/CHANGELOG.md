@@ -15,7 +15,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   you in that time, so a short "hold it" arrives with what "it" was. A spoken message opens
   with a line saying so. The first mate acts on the voice's account but checks it against your words, and
   only your words count as yours; even they never count as your word on a merge, anything destructive,
-  publishing, credentials or settings. The voice never presses a board button: you tap those.
+  publishing, credentials or settings. The voice never presses a board button: you tap those. FirstMate
+  tells the voice how it worded each message, so the voice's debug view shows it exactly.
 - **A setting for which plugins may do this,** "Plugins that may talk to the first mate by voice". It names
   FirstMate voice by default; empty turns voice off.
 

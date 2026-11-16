@@ -113,8 +113,16 @@ export const VoiceCardSchema = z.object({
 });
 export type VoiceCard = z.infer<typeof VoiceCardSchema>;
 
-/** What a send answers: bb delivered it, or queued it behind the first mate's turn. */
-export const VoiceSentSchema = z.object({ delivery: z.enum(["sent", "queued"]) });
+/**
+ * What a send answers: bb delivered it, or queued it behind the first mate's turn, and the message as it went
+ * to the first mate's thread, word for word, with the note only the first mate sees (for the voice's debug
+ * view; optional, since firstmate-crew 0.10 answered without them).
+ */
+export const VoiceSentSchema = z.object({
+  delivery: z.enum(["sent", "queued"]),
+  message: z.string().max(64_000).optional(),
+  note: z.string().max(16_000).optional(),
+});
 export type VoiceSent = z.infer<typeof VoiceSentSchema>;
 
 /**

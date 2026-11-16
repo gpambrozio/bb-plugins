@@ -20,6 +20,7 @@ Audio goes from your device to OpenAI's Realtime voice model over WebRTC. The bb
 
 ## Good to know
 
-- What you say is kept for the session only and never logged.
+- What you say is kept in memory and never logged.
+- A debug view, from the voice bar, shows the last session step by step (instructions, transcripts, tool calls, messages to and from the first mate, errors) for tuning; it stays on your bb until you next talk.
 - Task titles, workers' last words and the first mate's answers go to OpenAI.
 - A session ends after ten quiet minutes.
