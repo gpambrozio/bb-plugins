@@ -5,6 +5,16 @@ Notable changes to `firstmate`. The other plugins in this repository version sep
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.10.3
+
+### Fixed
+
+- **A card's title is only its title.** A note or question on a backlog item that itself held parentheses
+  ended up in the card's title, which could run to thousands of characters. Such notes are now read whole
+  and kept off the card.
+- **No card's text fills the board.** A card shows at most three lines of its title and of the captain's
+  call; when there is more, *Show more* opens the rest and *Show less* folds it again.
+
 ## 0.10.2
 
 ### Fixed

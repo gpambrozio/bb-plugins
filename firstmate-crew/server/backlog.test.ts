@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseBacklog, takeActions } from "./backlog";
+import { parseBacklog, takeActions, takeGroups } from "./backlog";
 import { TEMPLATES, readTemplate } from "./templates";
 
 const SAMPLE = `# Backlog
@@ -115,6 +115,67 @@ describe("parseBacklog", () => {
   });
 });
 
+describe("parseBacklog groups with parentheses", () => {
+  it("keeps a note holding parentheses out of the title and still reads the groups after it", () => {
+    const [item] = parseBacklog(
+      "## In flight\n- [ ] my-task - Short title (project: web) (note: merged main (#206) in; runs 1-3 done (phone prompts)) (thread: thr_x)",
+    );
+    expect(item).toMatchObject({ id: "my-task", title: "Short title", project: "web", threadId: "thr_x" });
+  });
+
+  it("reads known groups whose values hold parentheses, nested ones included", () => {
+    const [item] = parseBacklog(
+      "## Queued\n- [ ] pick-db - Choose the database (kind: captain) (hold: Postgres (fast (enough)) or SQLite?) (mode: direct-PR (yolo))",
+    );
+    expect(item).toMatchObject({ title: "Choose the database", hold: "Postgres (fast (enough)) or SQLite?", mode: "direct-PR (yolo)" });
+  });
+
+  it("takes out unknown groups whatever they hold, and an outcome or URL inside one stays there", () => {
+    const [item] = parseBacklog(
+      "## Done\n- [x] fix-typo - Fix the typo https://github.com/you/web/pull/41 (merged 2026-09-21) " +
+        "(note: retried (twice) after https://github.com/you/web/pull/40 (merged 2026-09-01) failed) (Extra-Bits_2: a (b) c)",
+    );
+    expect(item).toMatchObject({ title: "Fix the typo", url: "https://github.com/you/web/pull/41", outcome: "merged 2026-09-21" });
+  });
+
+  it("leaves plain parentheses that are not a key: group in the title", () => {
+    const [item] = parseBacklog("## Queued\n- [ ] phase-1 - Phase 1 (ask and answer) for web at 10:30 (or so) :( (project: web)");
+    expect(item).toMatchObject({ title: "Phase 1 (ask and answer) for web at 10:30 (or so) :(", project: "web" });
+  });
+
+  it("ends an unbalanced group at its first closing parenthesis or the next group, so the rest of the line still reads", () => {
+    const [missing, early] = parseBacklog(
+      "## In flight\n- [ ] my-task - Short title (note: merged (#206 in (thread: thr_x) (project: web)\n" +
+        "- [ ] other - Other title (hold: which (one) (kind: captain) (since 2026-09-20)",
+    );
+    expect(missing).toMatchObject({ title: "Short title", threadId: "thr_x", project: "web" });
+    expect(early).toMatchObject({ title: "Other title", hold: "which (one", kind: "captain", since: "2026-09-20" });
+  });
+
+  it("drops an unbalanced group with no closing parenthesis at all, and the title stays", () => {
+    const [item] = parseBacklog("## Queued\n- [ ] my-task - Short title (project: web) (note: merged (main");
+    expect(item).toMatchObject({ title: "Short title", project: "web" });
+  });
+});
+
+describe("takeGroups", () => {
+  it("returns the line without its groups and each value by its lower-cased key", () => {
+    const taken = takeGroups("x - T (Project : web) (note: a (b) c) :( (see this)");
+    expect(taken.rest).toBe("x - T   :( (see this)");
+    expect(Object.fromEntries(taken.groups)).toEqual({ project: " web", note: " a (b) c" });
+  });
+
+  it("reads \\( and \\) as lone parentheses inside a value", () => {
+    expect(takeGroups(String.raw`x (hold: say :\) please) (project: web)`).groups.get("hold")).toBe(" say :) please");
+  });
+
+  it("never throws on odd input", () => {
+    for (const line of ["(a:", "(a:)", "(a: \\", "(a: ((((", "(a: ) ) )", "((((b: c", ")))(d: e"]) {
+      expect(() => takeGroups(line)).not.toThrow();
+    }
+  });
+});
+
 describe("takeActions", () => {
   const actionsOf = (field: string) => takeActions(`x - Title ${field} (project: web)`).actions;
 
@@ -179,11 +240,16 @@ describe("takeActions", () => {
   });
 
   it("reads the real field of a line whose hold mentions (actions:", () => {
-    // A hold holding parentheses is beyond the other fields' reader either way; only the buttons are at stake here.
     const [item] = parseBacklog(
       "## Queued\n- [ ] pick-db - Choose the database (kind: captain) (hold: answer with (actions: Merge => Merge it) later) (actions: Postgres => Use Postgres)",
     );
-    expect(item).toMatchObject({ id: "pick-db", kind: "captain", actions: [{ label: "Postgres", prompt: "Use Postgres" }] });
+    expect(item).toMatchObject({
+      id: "pick-db",
+      title: "Choose the database",
+      kind: "captain",
+      hold: "answer with (actions: Merge => Merge it) later",
+      actions: [{ label: "Postgres", prompt: "Use Postgres" }],
+    });
   });
 
   it("finds a field after a stray closing parenthesis outside any group", () => {

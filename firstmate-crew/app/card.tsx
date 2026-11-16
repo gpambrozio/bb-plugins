@@ -19,6 +19,7 @@ import { cn } from "../lib/utils";
 import type { rpcContract } from "../server";
 import type { BacklogAction, ColumnId, FleetCard } from "../shared/types";
 import { useAutoGrow } from "./auto-grow";
+import { ClampedText } from "./clamped-text";
 import { ConfirmDialog } from "./confirm-dialog";
 import { useCardDraft } from "./drafts";
 import { STATE_WORDS, STATUS_WORDS, answerText, cardSubject, isRunning, parentNotificationsWarning, relativeTime, shortUrl } from "./format";
@@ -124,7 +125,7 @@ export function Card({
 
   return (
     <div className={cn("flex flex-col gap-2 rounded-lg border border-l-4 border-border bg-card p-3 text-card-foreground", TONES[card.column])}>
-      <div className="text-sm font-semibold">{card.title}</div>
+      <ClampedText text={card.title} label="title" className="text-sm font-semibold" />
       {facts.length === 0 ? null : <div className="text-xs text-muted-foreground">{facts.join(" · ")}</div>}
       {card.report === null ? (
         backlog === null ? null : <div className="text-xs text-muted-foreground">Backlog: {backlog.section}</div>
@@ -135,10 +136,10 @@ export function Card({
         </div>
       )}
       {backlog?.hold ? (
-        <div className="text-xs">
+        <ClampedText text={backlog.hold} label="captain's call" className="text-xs">
           <span className="font-semibold">Captain's call: </span>
           {backlog.hold}
-        </div>
+        </ClampedText>
       ) : null}
       {backlog === null || backlog.actions.length === 0 ? null : (
         <BacklogActions actions={backlog.actions} sending={mate.sending} onPick={(action) => tellMate(action.prompt)} />

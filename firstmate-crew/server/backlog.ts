@@ -5,7 +5,7 @@
  * the format is a contract between an agent and a parser. It is kept to what
  * an agent reliably reproduces — three headings and one line per item — and the
  * parser is lenient about everything else: unknown `(key: value)` groups are
- * kept as notes, a missing field is `null`, and a line it cannot read is
+ * read and ignored, a missing field is `null`, and a line it cannot read is
  * skipped rather than failing the board.
  *
  *     ## In flight
@@ -16,8 +16,9 @@
  *     ## Done
  *     - [x] fix-typo - Fix the typo https://github.com/you/web/pull/41 (merged 2026-09-21)
  *
- * `(actions: …)` is the one group whose value may hold anything a prompt needs, parentheses and URLs
- * included, so it has its own rules; see `takeActions`.
+ * Every `(key: value)` group runs to its balanced closing parenthesis, so a value may hold parentheses
+ * (`(note: merged main (#206) in)`) and still stays out of the title; see `takeGroups`. `(actions: …)` is
+ * read first, with rules of its own for the buttons it describes; see `takeActions`.
  *
  * The item shape is `BacklogItem` in `shared/types.ts`, which the board draws.
  */
@@ -30,7 +31,8 @@ const SECTION_HEADINGS: ReadonlyArray<[RegExp, BacklogSection]> = [
 ];
 
 const ITEM_LINE = /^\s*[-*]\s+\[([ xX~-])\]\s+(.+)$/;
-const GROUP = /\(([a-zA-Z][\w-]*)\s*:\s*([^()]*)\)/g;
+/** Sticky: the start of a `(key: value)` group, tried at each `(` outside every other group. */
+const GROUP_START = /\(([a-zA-Z][\w-]*)\s*:/y;
 const OUTCOME = /\((merged|done|landed|closed|failed|abandoned)\s+([^()]*)\)/i;
 /** `(since 2026-09-20)`, which the charter spells without a colon. */
 const SINCE = /\(since\s+([^():]*)\)/i;
@@ -113,6 +115,61 @@ function readField(body: string, start: number): { tokens: Token[] | null; end: 
   return { tokens: null, end: body.length };
 }
 
+/**
+ * Takes every `(key: value)` group out of a line, returning the line without them and each value by its
+ * lower-cased key (the last of a repeated key wins).
+ *
+ * - A group starts at a `(` followed by a key (a letter, then letters, digits, `_` or `-`) and a colon,
+ *   anywhere outside another group: a `(key:` inside a group's value is that value's text. Any other
+ *   parenthesis — `phase 1 (ask and answer)`, a stray `:(` — stays in the line as written.
+ * - The value runs to the `)` that balances the group's `(`, so it may hold balanced parentheses of its
+ *   own. A backslash makes the next `\`, `|`, `(` or `)` literal, as in `(actions: …)`.
+ * - A group with no balancing `)` ends at its first `)` instead, or just before the next `(key:` when that
+ *   comes first, or at the end of the line, so one missing parenthesis neither swallows the groups after
+ *   it nor leaves its text in the title.
+ */
+export function takeGroups(body: string): { rest: string; groups: Map<string, string> } {
+  const groups = new Map<string, string>();
+  let rest = "";
+  let from = 0;
+  let index = body.indexOf("(");
+  while (index !== -1) {
+    GROUP_START.lastIndex = index;
+    const start = GROUP_START.exec(body);
+    if (start === null) {
+      index = body.indexOf("(", index + 1);
+      continue;
+    }
+    rest += body.slice(from, index);
+    const value = readValue(body, index + start[0].length);
+    groups.set((start[1] ?? "").toLowerCase(), value.text);
+    from = value.end;
+    index = body.indexOf("(", from);
+  }
+  rest += body.slice(from);
+  return { rest, groups };
+}
+
+/** A group's value from just after its colon: balanced when it can be, else up to its first `)` or the next group. */
+function readValue(body: string, start: number): { text: string; end: number } {
+  const field = readField(body, start);
+  if (field.tokens !== null) return { text: field.tokens.map((token) => token.char).join(""), end: field.end };
+  const close = body.indexOf(")", start);
+  const next = nextGroupStart(body, start);
+  if (next !== -1 && (close === -1 || next < close)) return { text: body.slice(start, next), end: next };
+  if (close === -1) return { text: body.slice(start), end: body.length };
+  return { text: body.slice(start, close), end: close + 1 };
+}
+
+/** The index of the first `(key:` at or after `from`, or -1. */
+function nextGroupStart(body: string, from: number): number {
+  for (let index = body.indexOf("(", from); index !== -1; index = body.indexOf("(", index + 1)) {
+    GROUP_START.lastIndex = index;
+    if (GROUP_START.test(body)) return index;
+  }
+  return -1;
+}
+
 function toActions(tokens: readonly Token[]): BacklogAction[] {
   const entries: Token[][] = [[]];
   for (const token of tokens) {
@@ -151,28 +208,26 @@ function field(groups: Map<string, string>, ...names: string[]): string | null {
 function parseItem(section: BacklogSection, line: string): BacklogItem | null {
   // First, so a prompt's URLs and parentheses never reach the fields or the title below.
   const { rest: body, actions } = takeActions(line);
-  const groups = new Map<string, string>();
-  for (const match of body.matchAll(GROUP)) {
-    groups.set((match[1] ?? "").toLowerCase(), match[2] ?? "");
-  }
+  const { rest: outside, groups } = takeGroups(body);
   // `blocked-by: x` is written bare as often as in parentheses.
-  const bareBlocker = /\bblocked-by:\s*([\w.-]+)/i.exec(body.replace(GROUP, ""));
+  const bareBlocker = /\bblocked-by:\s*([\w.-]+)/i.exec(outside);
+  const outcome = OUTCOME.exec(outside);
 
-  const withoutGroups = body.replace(GROUP, "").replace(OUTCOME, "").replace(SINCE, "").trim();
+  const withoutGroups = outside.replace(OUTCOME, "").replace(SINCE, "").trim();
   const head = ID_AND_TITLE.exec(withoutGroups);
   const id = head?.[1] ?? withoutGroups.split(/\s+/)[0] ?? "";
   if (id === "") return null;
   const rest = head?.[2] ?? withoutGroups.slice(id.length);
 
-  const url = URL.exec(body)?.[0] ?? null;
-  const reportPath = REPORT_PATH.exec(body)?.[0] ?? null;
+  // The charter writes both outside every group; a group's copy (a note, a hold) is the fallback.
+  const url = URL.exec(outside)?.[0] ?? URL.exec(body)?.[0] ?? null;
+  const reportPath = REPORT_PATH.exec(outside)?.[0] ?? REPORT_PATH.exec(body)?.[0] ?? null;
   const title = rest
     .replace(URL, "")
     .replace(REPORT_PATH, "")
     .replace(/\bblocked-by:\s*[\w.-]+/i, "")
     .replace(/\s{2,}/g, " ")
     .trim();
-  const outcome = OUTCOME.exec(body);
 
   return {
     section,
@@ -186,7 +241,7 @@ function parseItem(section: BacklogSection, line: string): BacklogItem | null {
     hold: field(groups, "hold"),
     actions,
     blockedBy: field(groups, "blocked-by") ?? bareBlocker?.[1] ?? null,
-    since: field(groups, "since") ?? SINCE.exec(body)?.[1]?.trim() ?? null,
+    since: field(groups, "since") ?? SINCE.exec(outside)?.[1]?.trim() ?? null,
     url,
     reportPath: reportPath ?? field(groups, "report"),
     outcome: outcome === null ? null : `${outcome[1]?.toLowerCase()} ${outcome[2]?.trim()}`.trim(),
