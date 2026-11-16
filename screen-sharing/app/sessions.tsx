@@ -1,18 +1,16 @@
 /**
  * The open sessions, as the app sees them, and the two places that show them
- * whatever page is open: the sidebar entry's LIVE badge and a floating "Close
- * all" pill. The server publishes the list on every open and close; this asks
+ * whatever page is open: the sidebar entry's LIVE badge and a "Close all"
+ * toast. The server publishes the list on every open and close; this asks
  * again after a reconnect, because a publish sent while disconnected is gone.
  */
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { toast } from "sonner";
 import { useBbNavigate, useRealtime, useRealtimeConnectionState, useRpc, type ExperimentalBadge } from "@get-bb/plugin-sdk/app";
 
 import { SESSIONS_CHANGED, SessionListSchema, type SessionInfo } from "../shared/channels";
 import type { RpcContract } from "../shared/contract";
-import { Button } from "@/components/ui/button";
-import { Icon } from "@/components/ui/icon";
 import { CLOSED_BY_USER_MESSAGE } from "./end-message";
-import { PillStackPortal, SCREEN_SHARING_PILL_ORDER, pillRootProps } from "./pill-stack";
 import { screenSessions } from "./session-store";
 
 export const PANEL_PATH = "screen";
@@ -134,34 +132,65 @@ export function useLiveBadge(): ExperimentalBadge | null {
 }
 
 /**
- * A pill in the corner of every bb window while any session is open — from
- * this window or another device — so a forgotten one is hard to miss and one
- * press away from closed. It sits in the corner stack it shares with other
- * plugins' pills (`./pill-stack`).
+ * The live-sessions toast's id: showing it again with the same id updates it in
+ * place. It is this loaded copy's own, because a reload mounts the new copy
+ * before the old one unmounts, and the old one's clean-up must not dismiss the
+ * toast the new one has just shown.
+ */
+export const LIVE_TOAST_ID = `screen-sharing-live-sessions-${Math.random().toString(36).slice(2, 10)}`;
+
+/**
+ * A toast in bb's own toast stack, in every bb window, while any session is
+ * open — from this window or another device — so a forgotten one is hard to
+ * miss and one press away from closed. It is bb's toast card, through the
+ * `sonner` bb hands its plugins, and it stacks with bb's own toasts.
+ *
+ * - It stays: no time-out, and `dismissible: false` takes away the X, the swipe
+ *   and Escape, so Close all cannot be put away while a session is open.
+ * - Close all calls `preventDefault()`, which keeps the toast up until the
+ *   sessions have gone; a failed close leaves it there to try again.
+ * - Open always dismisses the toast (sonner's cancel button does), which is
+ *   right: the toast steps aside while the page is on screen, and comes back
+ *   when the page goes if a session is still open.
+ * - bb's stack shows the newest three toasts; a fourth newer one hides this
+ *   one until it expires.
+ *
+ * Renders nothing itself; the toast is the whole surface.
  */
 export function LiveSessionsOverlay() {
   const sessions = useSessions();
   const pageOpen = useIsPageOpen();
   const navigate = useBbNavigate();
   const { closeAll, closing } = useCloseAll();
-  if (sessions.length === 0 || pageOpen) return null;
-  return (
-    <PillStackPortal>
-      <div
-        role="status"
-        aria-label="Screen Sharing sessions open"
-        {...pillRootProps(SCREEN_SHARING_PILL_ORDER)}
-        className="flex items-center gap-1 rounded-full border border-border bg-card py-1 pl-3 pr-1 text-sm shadow-lg"
-      >
-        <span className="size-2 shrink-0 rounded-full bg-destructive" aria-hidden />
-        <button type="button" className="px-1 font-medium hover:underline" onClick={() => navigate.toPluginPanel(PANEL_PATH)}>
-          Screen Sharing · {liveLabel(sessions.length)}
-        </button>
-        <Button type="button" size="sm" variant="ghost" className="rounded-full" disabled={closing} onClick={closeAll}>
-          <Icon name="X" />
-          Close all
-        </Button>
-      </div>
-    </PillStackPortal>
-  );
+  // The handlers read these at click time, so the toast is not re-shown for a new function.
+  const latest = useRef({ closeAll, closing, navigate });
+  latest.current = { closeAll, closing, navigate };
+  const count = sessions.length;
+  const show = count > 0 && !pageOpen;
+
+  useEffect(() => {
+    if (!show) {
+      toast.dismiss(LIVE_TOAST_ID);
+      return;
+    }
+    toast(`Screen Sharing · ${liveLabel(count)}`, {
+      id: LIVE_TOAST_ID,
+      duration: Infinity,
+      dismissible: false,
+      description: count === 1 ? "A screen is open in bb." : `${count} screens are open in bb.`,
+      action: {
+        label: closing ? "Closing…" : "Close all",
+        onClick: (event) => {
+          event.preventDefault();
+          if (!latest.current.closing) latest.current.closeAll();
+        },
+      },
+      cancel: { label: "Open", onClick: () => latest.current.navigate.toPluginPanel(PANEL_PATH) },
+    });
+  }, [show, count, closing]);
+
+  // Unmounted (the plugin disabled, removed or reloaded): take the toast with it.
+  useEffect(() => () => void toast.dismiss(LIVE_TOAST_ID), []);
+
+  return null;
 }

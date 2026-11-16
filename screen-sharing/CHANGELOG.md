@@ -9,9 +9,10 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- The corner **Screen Sharing · Live** pill no longer covers another plugin's corner pill, such as
-  FirstMate voice's: the two stack one above the other. On a narrow window the pill sits above the
-  composer.
+- The **Screen Sharing · Live** reminder with **Close all** is now one of bb's own notifications, in
+  the same corner, look and stack as bb's other notifications, instead of a separate pill that could
+  cover them or another plugin's. It shows how many sessions are open, stays up until none is, and
+  **Open** takes you to the page.
 
 ## 0.5.0
 

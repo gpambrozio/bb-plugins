@@ -405,20 +405,19 @@ mounted once per window. Paseo contribution → bb slot:
 | `theme.colors` tokens | Tailwind semantic classes (`bg-background`, `text-muted-foreground`, `border-border`, `bg-card`, `text-destructive`, `border-warning`/`text-warning-text`, `text-success`, `bg-state-hover`) |
 | host UI kit | shadcn components vendored into `components/ui/` (`npx shadcn add @bb/<name>`), plus host `Markdown`, `ThreadChat`, `ThreadTitle`, `UrlLink` |
 
-**Floating pills share one corner stack.** bb leaves an app overlay's positioning to the plugin (the
-SDK README says so, at SDK 0.6.79) and has no stacking region, so two pills that each pin themselves
-with `fixed bottom-4 right-4` cover each other. A plugin drawing a pill from
-`app.slots.experimental_appOverlay` portals it into the element with id `bb-plugin-pill-stack` on
-`document.body`, which the first pill creates and the last one removes, through its own copy of
-`screen-sharing/app/pill-stack.tsx` (plugins are bundled separately). The stack's styles are inline,
-because a class one plugin's CSS has may be missing from another's: fixed at `bottom: 16px; right:
-16px` (`96px` and `12px` under 640 px wide, above bb's composer), a `column-reverse` flex column with
-`gap: 8px` and `pointer-events: none`. Each pill's root sets `pointer-events: auto`,
-`data-bb-plugin-root` and `data-bb-plugin="<id>"` (bb applies a plugin's CSS only inside its root, and
-the shared stack carries neither), and `data-pill-order` with a CSS `order` from it: lower sits closer
-to the corner, FirstMate voice is `10`, Screen Sharing `20`; pick a free number for a new pill. Release
-the stack in a `useEffect` clean-up, which runs after React has taken the pill out; a `useLayoutEffect`
-clean-up still sees it there and never removes the stack.
+**Something that stays on screen whatever page is open is a bb toast, not a pinned pill.** bb leaves an
+app overlay's positioning to the plugin, so pills pinned with `fixed bottom-4 right-4` cover each other
+and bb's toasts. Instead, an `app.slots.experimental_appOverlay` component that renders nothing calls
+`toast(title, { id, duration: Infinity, dismissible: false, description, action, cancel })` from the
+`sonner` bb shims: plain options and `{ label, onClick }` buttons route to bb's own card, in bb's stack
+(`toast.custom` gets sonner's raw card instead). Calling it again with the same `id` updates
+it in place, and `toast.dismiss(id)` removes it. `dismissible: false` takes away the card's X, the
+swipe and Escape. An `action` that calls `event.preventDefault()` keeps the toast up; a `cancel` always
+dismisses it. Dismiss it in the overlay's unmount clean-up, and give the `id` a per-load suffix, because a
+reload mounts the new copy before the old one unmounts. bb's stack shows three toasts (sonner's default,
+bb 0.49): three newer ones hide an older persistent one until they expire, and in the collapsed stack
+only the front card takes clicks until the stack is hovered. `screen-sharing/app/sessions.tsx` is the
+example.
 
 `app.slots.settingsSection` requires an `id` (letters, digits, `-`, `_`), unlike the Paseo settings screen.
 

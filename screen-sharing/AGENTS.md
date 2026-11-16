@@ -43,8 +43,7 @@ findings are summarised under *Decisions*.
 | `app/clipboard.ts` | Clipboard text between this computer and the Mac: `ClipboardSync` (one per connection; Send, Receive, Auto sync, whose account), the remembered Auto sync choice. |
 | `app/clipboard-menu.tsx` | The "Clipboard" menu and the notice saying what the last clipboard action did. |
 | `app/cursor.ts` | The arrow-fallback CSS and the attribute that switches it off once the Mac sends a cursor. |
-| `app/sessions.tsx` | The open sessions as the app sees them; the sidebar entry's LIVE badge and the corner Close all pill. |
-| `app/pill-stack.tsx` | The corner stack the pill shares with other plugins' pills (the repository AGENTS.md has the convention). |
+| `app/sessions.tsx` | The open sessions as the app sees them; the sidebar entry's LIVE badge and the Close all toast. |
 | `app/novnc.d.ts` | Types for the part of noVNC's `RFB` used here; noVNC ships none. |
 
 `npm test` runs everything. The tests never touch this machine's real port 5900: the relay, the host
@@ -454,19 +453,26 @@ reach any page. The evidence, so nobody has to rediscover it:
   sockets (its 4004 rarely reaches a page). The store ends a session after 30 min without input,
   seen or not, on Disconnect, and on `pagehide` (the window closing); a ticket that arrives after
   Disconnect is never used. Leaving the page does not end a session — the sidebar's LIVE badge and the
-  corner pill are how an unseen one stays visible.
+  Close all toast are how an unseen one stays visible.
 - **The clipboard only beside an open session.** `clipboardRead` and `clipboardWrite` refuse other
   plugins and any Mac with no session open, and reach only the clipboard of the account bb runs as
   there; the page uses them only for a signed-in session as that account. Neither the server nor the
   host entry logs or stores clipboard text. The page keeps the user name typed at sign-in for the
   session, to tell whether it is that account; the password is never kept.
 - **Open sessions are visible.** Every open and close publishes the list, whichever Mac; the sidebar
-  entry's badge and a corner pill in every window show it, both the pill and the page's title bar offer
+  entry's badge and a toast in every window show it, both the toast and the page's title bar offer
   Close all, and the picker marks each Mac with a session as Live. The badge is the nav panel's
   `experimental_useBadge` (bb 0.47, SDK 0.6.75), a hook bb calls in the plugin's scope: `text: "LIVE"`,
   `tone: "critical"`, the count in its `label`; the icon-only rail draws `text` as a dot. bb 0.46 drew
   nothing for the `experimental_sidebarAccessory` it replaced, and refuses the new key (`unknown
   field`).
+- **The live toast is bb's own toast.** `LiveSessionsOverlay` (an `experimental_appOverlay`) shows it
+  with `toast()` from the `sonner` bb shims, so it is bb's card in bb's stack. It never times out and is
+  `dismissible: false` (no X, swipe or Escape), so only the sessions going takes Close all away; Close
+  all calls `preventDefault()` to keep it up, and Open (sonner's cancel button, which always dismisses)
+  is fine because the toast steps aside on the page anyway. Its id is per loaded copy, so a reload's
+  old copy does not dismiss the new copy's toast. bb's stack shows three toasts: three newer ones hide
+  it until they expire.
 
 ## Status check
 
