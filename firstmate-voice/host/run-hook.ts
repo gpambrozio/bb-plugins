@@ -1,16 +1,41 @@
 /**
- * Runs one voice hook on this machine. Adapted from Herald's `host/run-hook.ts`: through the machine's shell
- * from the home folder, in a process group of its own, and resolved on `exit`. Unlike Herald's, the whole
- * group is killed as soon as the shell exits too, not only at the time limit: a background process the
- * command started (`… &`) would otherwise outlive the limit, the session and the worker. Its output is never
- * read.
+ * Runs this machine's voice hook: the executable file `HOOK_FILE` in the home folder, never a command from
+ * anywhere else. Adapted from Herald's `host/run-hook.ts`: from the home folder, in a process group of its
+ * own, and resolved on `exit`. Unlike Herald's, the whole group is killed as soon as the hook exits too, not
+ * only at the time limit: a background process it started (`… &`) would otherwise outlive the limit, the
+ * session and the worker. Its output is never read, and nothing here reads the file's contents.
  */
 import { spawn } from "node:child_process";
+import { constants } from "node:fs";
+import { access, stat } from "node:fs/promises";
 import { homedir } from "node:os";
+import { join } from "node:path";
 
-import { HOOK_EVENT_ENV, HOOK_REASON_ENV, HOOK_TIMEOUT_MS, type HookEvent, type HookRun } from "../shared/hooks";
+import { HOOK_EVENT_ENV, HOOK_FILE, HOOK_REASON_ENV, HOOK_TIMEOUT_MS, type HookEvent, type HookFileStatus, type HookRun } from "../shared/hooks";
+
+/** This machine's hook file, in the home folder of the user the host daemon runs as. */
+export function hookPath(home: string = homedir()): string {
+  return join(home, ...HOOK_FILE.split("/"));
+}
+
+/** Whether `file` is there (a file, or a link to one) and can be run. Reads nothing of it. */
+export async function hookStatus(file: string = hookPath()): Promise<HookFileStatus> {
+  try {
+    if (!(await stat(file)).isFile()) return { present: false, executable: false };
+  } catch {
+    return { present: false, executable: false };
+  }
+  try {
+    await access(file, constants.X_OK);
+    return { present: true, executable: true };
+  } catch {
+    return { present: true, executable: false };
+  }
+}
 
 export interface RunHookOptions {
+  /** Tests only; the host entry always runs `hookPath()`. */
+  file?: string;
   timeoutMs?: number;
   cwd?: string;
   env?: NodeJS.ProcessEnv;
@@ -33,12 +58,15 @@ function guardExit(): void {
 }
 
 /**
- * Runs `command` through `/bin/sh -c` (`cmd.exe` on Windows) with `FIRSTMATE_VOICE_HOOK` set to `event`, and
- * `FIRSTMATE_VOICE_REASON` to `reason` when there is one. Never rejects: a command that cannot start, fails
- * or runs out of time is reported in the result. On Windows there is no process group, so only the shell is
- * stopped.
+ * Runs the hook file for `event`, or answers null when there is none. The file is executed directly (its
+ * `#!` line names what runs it), from the home folder, with `FIRSTMATE_VOICE_HOOK` set to `event` and
+ * `FIRSTMATE_VOICE_REASON` to `reason` when there is one. Never rejects: a hook that cannot start (not
+ * executable), fails or runs out of time is reported in the result. On Windows there is no process group, so
+ * only the hook itself is stopped.
  */
-export function runHook(event: HookEvent, reason: string | null, command: string, options: RunHookOptions = {}): Promise<HookRun> {
+export async function runHook(event: HookEvent, reason: string | null, options: RunHookOptions = {}): Promise<HookRun | null> {
+  const file = options.file ?? hookPath();
+  if (!(await hookStatus(file)).present) return null;
   const timeoutMs = options.timeoutMs ?? HOOK_TIMEOUT_MS;
   const started = Date.now();
   const ownGroup = process.platform !== "win32";
@@ -49,8 +77,7 @@ export function runHook(event: HookEvent, reason: string | null, command: string
     const env: NodeJS.ProcessEnv = { ...(options.env ?? process.env), [HOOK_EVENT_ENV]: event };
     if (reason !== null) env[HOOK_REASON_ENV] = reason;
     else delete env[HOOK_REASON_ENV];
-    const child = spawn(command, {
-      shell: true,
+    const child = spawn(file, [], {
       cwd: options.cwd ?? homedir(),
       env,
       stdio: "ignore",
@@ -58,9 +85,9 @@ export function runHook(event: HookEvent, reason: string | null, command: string
       windowsHide: true,
     });
     /**
-     * Kills the command's process group, whether or not the shell itself is still running: what it started
-     * stays in the group (unless it made a session of its own). Right after the shell exits the group id
-     * cannot have been reused, since a member still holds it, or no process has it.
+     * Kills the hook's process group, whether or not the hook itself is still running: what it started stays
+     * in the group (unless it made a session of its own). Right after the hook exits the group id cannot have
+     * been reused, since a member still holds it, or no process has it.
      */
     const kill = (): void => {
       if (child.pid === undefined) return;
@@ -75,7 +102,7 @@ export function runHook(event: HookEvent, reason: string | null, command: string
     const finish = (exitCode: number | null, signal: string | null, failedToStart: boolean) => {
       if (settled) return;
       settled = true;
-      // The shell has exited: anything it left running goes with it, now rather than at the time limit.
+      // The hook has exited: anything it left running goes with it, now rather than at the time limit.
       kill();
       running.delete(kill);
       clearTimeout(timer);

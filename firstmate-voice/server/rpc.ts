@@ -1,8 +1,8 @@
 /**
  * The app-facing RPC handlers. A session spends the captain's ChatGPT plan and speaks for the captain to the
  * first mate, so another plugin is refused before anything runs, the credential lookup and the takeover of a
- * live session included; so are the debug log and the voice hooks' commands (shell commands run on the
- * owner's machines).
+ * live session included; so are the debug log and the voice hooks' status. No RPC sets, reads or names a
+ * hook command: each machine runs only its own hook file, which the owner writes there.
  *
  * This is not an app-only gate. bb 0.49 names both its app and its command line (`bb plugin rpc call`) a
  * `client`, with nothing else to tell them apart, so anything that can run `bb` on the owner's bb (an agent
@@ -11,7 +11,7 @@
 import { experimental_PluginRpcRefusal as PluginRpcRefusal, type ExperimentalPluginRpcHandlersWithContext } from "@get-bb/plugin-sdk";
 
 import type { rpcContract } from "../server";
-import { hookTarget, type HookStore } from "./hooks";
+import { hookTarget, type MachineHookStatus } from "./hooks";
 import type { CrewPort } from "./ports";
 import type { VoiceSessions } from "./session";
 
@@ -24,10 +24,10 @@ export function requireApp(caller: Caller): void {
   }
 }
 
-/** The voice hooks as the RPCs need them: the stored commands, and bb's active machines. */
+/** The voice hooks as the RPCs need them: bb's active machines, and whether each has a hook file. */
 export interface HooksRpcPort {
-  store: Pick<HookStore, "all" | "set">;
   hosts(): Promise<Array<{ id: string; name: string }>>;
+  statuses(hosts: Array<{ id: string; name: string }>): Promise<MachineHookStatus[]>;
 }
 
 export function sessionHandlers(
@@ -68,13 +68,9 @@ export function sessionHandlers(
       requireApp(ctx?.experimental_caller);
       return sessions.debugPage(afterSeq);
     },
-    "hooks.list": async (_input, ctx) => {
+    "hooks.status": async (_input, ctx) => {
       requireApp(ctx?.experimental_caller);
-      return { hooks: await hooks.store.all() };
-    },
-    "hooks.set": async ({ hostId, command }, ctx) => {
-      requireApp(ctx?.experimental_caller);
-      return { hooks: await hooks.store.set(hostId, command) };
+      return { machines: await hooks.statuses(await hooks.hosts()) };
     },
     "mate.thread": async (_input, ctx) => {
       requireApp(ctx?.experimental_caller);

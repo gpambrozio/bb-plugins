@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import type { HookEvent, HookRun } from "../shared/hooks";
+import type { HookEvent, HookFileStatus, HookRun } from "../shared/hooks";
 import { DebugLog } from "./debug-log";
-import { HOOK_CALL_TIMEOUT_MS, HOOKS_KEY, HookRunner, HookStore, SPEAKING_SETTLE_MS, hookTarget, type HookTarget } from "./hooks";
+import { HOOK_CALL_TIMEOUT_MS, HOOK_STATUS_TIMEOUT_MS, HookRunner, SPEAKING_SETTLE_MS, hookTarget, machineHookStatuses, type HookTarget } from "./hooks";
 import { VoiceSessions } from "./session";
 import { FakeClock, FakeCrew, FakeRealtime, quietLog, settle } from "./testing/fakes";
 
@@ -20,25 +20,23 @@ function expectPairs(events: string[], counts: { talking: number; speaking: numb
 const OK: HookRun = { exitCode: 0, signal: null, timedOut: false, failedToStart: false, durationMs: 40 };
 const STUDIO: HookTarget = { hostId: "host_studio", name: "Studio" };
 
-function fakeKv(initial: Record<string, unknown> = {}) {
-  const rows = new Map(Object.entries(initial));
-  return {
-    rows,
-    get: async <T>(key: string) => (rows.get(key) as T | undefined) ?? null,
-    set: async (key: string, value: unknown) => void rows.set(key, value),
-  };
-}
+const RUNNABLE: HookFileStatus = { present: true, executable: true };
 
-/** A machine that runs each command when the test says, or at once. */
-function fakeHost(options: { manual?: boolean } = {}) {
-  const runs: { hostId: string; event: HookEvent; reason: string | null; command: string }[] = [];
+/** A machine with a hook file (or none) that runs it when the test says, or at once. */
+function fakeHost(options: { manual?: boolean; file?: HookFileStatus | "silent" } = {}) {
+  const runs: { hostId: string; event: HookEvent; reason: string | null }[] = [];
   const pending: { event: HookEvent; finish(run?: HookRun): void }[] = [];
+  const file = { current: options.file ?? RUNNABLE };
   return {
     runs,
     pending,
+    file,
     port: {
-      run: (hostId: string, input: { command: string; event: HookEvent; reason: string | null }) => {
+      status: (_hostId: string): Promise<HookFileStatus> =>
+        file.current === "silent" ? new Promise<HookFileStatus>(() => undefined) : Promise.resolve(file.current),
+      run: (hostId: string, input: { event: HookEvent; reason: string | null }) => {
         runs.push({ hostId, ...input });
+        if (file.current !== "silent" && !file.current.present) return Promise.resolve(null);
         if (options.manual !== true) return Promise.resolve(OK);
         return new Promise<HookRun>((resolve) => pending.push({ event: input.event, finish: (run = OK) => resolve(run) }));
       },
@@ -46,38 +44,60 @@ function fakeHost(options: { manual?: boolean } = {}) {
   };
 }
 
-async function setup(options: { command?: string | null; manual?: boolean; target?: HookTarget } = {}) {
+async function setup(options: { file?: HookFileStatus | "silent"; manual?: boolean; target?: HookTarget } = {}) {
   const clock = new FakeClock();
   const log = quietLog();
-  const kv = fakeKv(options.command === null ? {} : { [HOOKS_KEY]: { host_studio: options.command ?? "~/bin/voice-hook" } });
-  const store = new HookStore(kv, log);
-  const host = fakeHost({ manual: options.manual });
-  const runner = new HookRunner({ store, host: host.port, clock, log });
+  const host = fakeHost({ manual: options.manual, file: options.file });
+  const runner = new HookRunner({ host: host.port, clock, log });
   const debug = new DebugLog("fmv_1", clock.now(), () => clock.now());
   const hooks = runner.session(options.target ?? STUDIO, debug);
   hooks.start();
   await settle();
   const events = () => host.runs.map((run) => run.event);
   const hookEntries = () => debug.page(0).entries.filter((entry) => entry.kind === "hook").map((entry) => entry.title);
-  return { clock, log, kv, store, host, runner, debug, hooks, events, hookEntries };
+  return { clock, log, host, runner, debug, hooks, events, hookEntries };
 }
 
-describe("the hook store", () => {
-  it("keeps one command per machine, forgets a machine set to empty, and lands two saves made at once", async () => {
-    const kv = fakeKv();
-    const store = new HookStore(kv, quietLog());
-    await Promise.all([store.set("host_a", "say a"), store.set("host_b", "say b")]);
-    expect(await store.all()).toEqual({ host_a: "say a", host_b: "say b" });
-    expect(await store.set("host_a", "  \n")).toEqual({ host_b: "say b" });
-    expect(await store.command("host_a")).toBeNull();
-    expect(await store.command("host_b")).toBe("say b");
-  });
+function voiceSessions(host: ReturnType<typeof fakeHost>) {
+  const realtime = new FakeRealtime();
+  const clock = new FakeClock();
+  const log = quietLog();
+  const runner = new HookRunner({ host: host.port, clock, log });
+  const sessions = new VoiceSessions({ realtime, crew: new FakeCrew(), clock, log, publish: () => undefined, hooks: runner }, async () => ({
+    model: "gpt-realtime-2.1",
+    effort: "low",
+    voice: "marin",
+    eagerness: "auto" as const,
+  }));
+  return { realtime, clock, sessions };
+}
 
-  it("reads a row it cannot parse as no hooks at all, and says so", async () => {
-    const log = quietLog();
-    const store = new HookStore(fakeKv({ [HOOKS_KEY]: { host_a: 42 } }), log);
-    expect(await store.all()).toEqual({});
-    expect(log.lines[0]).toMatch(/^error The voice hooks could not be read/u);
+describe("each machine's hook file, for the settings page", () => {
+  it("is asked of every machine, and a machine that does not answer in time is not known", async () => {
+    const clock = new FakeClock();
+    const statuses = machineHookStatuses(
+      [
+        { id: "host_a", name: "Studio" },
+        { id: "host_b", name: "Laptop" },
+        { id: "host_c", name: "Offline" },
+      ],
+      {
+        status: (hostId) =>
+          hostId === "host_a"
+            ? Promise.resolve(RUNNABLE)
+            : hostId === "host_b"
+              ? Promise.resolve({ present: false, executable: false })
+              : new Promise(() => undefined),
+      },
+      clock,
+    );
+    await settle();
+    await clock.advance(HOOK_STATUS_TIMEOUT_MS);
+    expect(await statuses).toEqual([
+      { hostId: "host_a", name: "Studio", status: RUNNABLE },
+      { hostId: "host_b", name: "Laptop", status: { present: false, executable: false } },
+      { hostId: "host_c", name: "Offline", status: null },
+    ]);
   });
 });
 
@@ -98,10 +118,13 @@ describe("where a session's hooks run", () => {
 });
 
 describe("a session's hooks", () => {
-  it("run listening-started on the window's machine with its command, and say where in the debug log", async () => {
+  it("run listening-started on the window's machine, naming no command, and say where in the debug log", async () => {
     const { host, hookEntries } = await setup();
-    expect(host.runs).toEqual([{ hostId: "host_studio", event: "listening-started", reason: null, command: "~/bin/voice-hook" }]);
-    expect(hookEntries()).toEqual(["Hooks run on Studio, this window's machine", "Hook listening-started on Studio: exit 0 after 40 ms"]);
+    expect(host.runs).toEqual([{ hostId: "host_studio", event: "listening-started", reason: null }]);
+    expect(hookEntries()).toEqual([
+      "The hook runs on Studio, this window's machine: ~/.config/firstmate-voice/hook",
+      "Hook listening-started on Studio: exit 0 after 40 ms",
+    ]);
   });
 
   it("run when the captain starts and stops talking", async () => {
@@ -216,14 +239,28 @@ describe("a session's hooks", () => {
     expect(entry).toMatchObject({ kind: "hook", title: "Hook listening-stopped on Studio: exit 0 after 40 ms", text: "FIRSTMATE_VOICE_REASON: ended by the captain" });
   });
 
-  it("run nothing for a machine with no command, and read the command when each run's turn comes", async () => {
-    const { hooks, store, host, hookEntries } = await setup({ command: null });
-    expect(host.runs).toEqual([]);
-    expect(hookEntries()).toEqual(["No hook is set for Studio, this window's machine"]);
-    await store.set("host_studio", "say hi");
+  it("run nothing for a session whose machine has no hook file, one that is not executable, or one that does not answer", async () => {
+    for (const [file, entry] of [
+      [{ present: false, executable: false }, "No hook this session: Studio, this window's machine, has no ~/.config/firstmate-voice/hook"],
+      [{ present: true, executable: false }, "No hook this session: ~/.config/firstmate-voice/hook on Studio is not executable (chmod +x)"],
+      ["silent", "No hook this session: Studio did not say whether it has a hook file"],
+    ] as const) {
+      const { hooks, host, clock, hookEntries } = await setup({ file });
+      await clock.advance(HOOK_STATUS_TIMEOUT_MS);
+      hooks.event({ type: "input_audio_buffer.speech_started" }, false);
+      await hooks.end("ended by the captain");
+      expect(host.runs).toEqual([]);
+      expect(hookEntries()).toEqual([entry]);
+    }
+  });
+
+  it("say nothing for each moment once the file has gone during the session", async () => {
+    const { hooks, host, hookEntries } = await setup();
+    host.file.current = { present: false, executable: false };
     hooks.event({ type: "input_audio_buffer.speech_started" }, false);
     await settle();
-    expect(host.runs).toEqual([{ hostId: "host_studio", event: "talking-started", reason: null, command: "say hi" }]);
+    expect(host.runs.map((run) => run.event)).toEqual(["listening-started", "talking-started"]);
+    expect(hookEntries()).toHaveLength(2);
   });
 
   it("run nothing anywhere for a window with no machine, and say why", async () => {
@@ -238,17 +275,8 @@ describe("a session's hooks", () => {
 
 describe("the hooks in a voice session", () => {
   it("run from the call's own events, and end with the session's reason, whatever ended it", async () => {
-    const realtime = new FakeRealtime();
-    const clock = new FakeClock();
-    const log = quietLog();
     const host = fakeHost();
-    const runner = new HookRunner({ store: new HookStore(fakeKv({ [HOOKS_KEY]: { host_studio: "hook" } }), log), host: host.port, clock, log });
-    const sessions = new VoiceSessions({ realtime, crew: new FakeCrew(), clock, log, publish: () => undefined, hooks: runner }, async () => ({
-      model: "gpt-realtime-2.1",
-      effort: "low",
-      voice: "marin",
-      eagerness: "auto" as const,
-    }));
+    const { realtime, clock, sessions } = voiceSessions(host);
     const { sessionId } = await sessions.start("v=0 offer", STUDIO);
     realtime.last.open();
     await settle();
@@ -267,17 +295,8 @@ describe("the hooks in a voice session", () => {
   });
 
   it("run the old session's closing hooks before a new session's first, when a Talk takes over on the same machine", async () => {
-    const realtime = new FakeRealtime();
-    const clock = new FakeClock();
-    const log = quietLog();
     const host = fakeHost({ manual: true });
-    const runner = new HookRunner({ store: new HookStore(fakeKv({ [HOOKS_KEY]: { host_studio: "hook" } }), log), host: host.port, clock, log });
-    const sessions = new VoiceSessions({ realtime, crew: new FakeCrew(), clock, log, publish: () => undefined, hooks: runner }, async () => ({
-      model: "gpt-realtime-2.1",
-      effort: "low",
-      voice: "marin",
-      eagerness: "auto" as const,
-    }));
+    const { realtime, sessions } = voiceSessions(host);
     await sessions.start("v=0 offer", STUDIO);
     realtime.last.open();
     await settle();
@@ -299,17 +318,8 @@ describe("the hooks in a voice session", () => {
   });
 
   it("run no hook for a Talk whose call OpenAI did not make", async () => {
-    const realtime = new FakeRealtime();
-    const clock = new FakeClock();
-    const log = quietLog();
     const host = fakeHost();
-    const runner = new HookRunner({ store: new HookStore(fakeKv({ [HOOKS_KEY]: { host_studio: "hook" } }), log), host: host.port, clock, log });
-    const sessions = new VoiceSessions({ realtime, crew: new FakeCrew(), clock, log, publish: () => undefined, hooks: runner }, async () => ({
-      model: "gpt-realtime-2.1",
-      effort: "low",
-      voice: "marin",
-      eagerness: "auto" as const,
-    }));
+    const { realtime, clock, sessions } = voiceSessions(host);
     realtime.refuseNext = new Error("HTTP 400: invalid offer");
     await expect(sessions.start("v=0 not a real offer", STUDIO)).rejects.toThrow("invalid offer");
     await sessions.dispose();
@@ -317,17 +327,8 @@ describe("the hooks in a voice session", () => {
   });
 
   it("run nowhere for a session started with no machine", async () => {
-    const realtime = new FakeRealtime();
-    const clock = new FakeClock();
     const host = fakeHost();
-    const log = quietLog();
-    const runner = new HookRunner({ store: new HookStore(fakeKv({ [HOOKS_KEY]: { host_studio: "hook" } }), log), host: host.port, clock, log });
-    const sessions = new VoiceSessions({ realtime, crew: new FakeCrew(), clock, log, publish: () => undefined, hooks: runner }, async () => ({
-      model: "gpt-realtime-2.1",
-      effort: "low",
-      voice: "marin",
-      eagerness: "auto" as const,
-    }));
+    const { realtime, sessions } = voiceSessions(host);
     await sessions.start("v=0 offer");
     realtime.last.open();
     realtime.last.emit({ type: "input_audio_buffer.speech_started" });

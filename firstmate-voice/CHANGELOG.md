@@ -32,9 +32,10 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   said, its tool calls and their answers, each message it handed the first mate word for word, each message
   from the first mate, announcements, interruptions and errors. It stays on your bb, in memory, until you
   next tap Talk, and never shows a credential.
-- **Voice hooks:** a command per machine, run as listening starts and stops, as the voice starts and
-  finishes speaking, and as you start and stop talking, with the moment (and why listening stopped) in an
-  environment variable, so one script handles them all. It runs on the machine whose bb desktop app is in
-  the call, from your home folder, for at most five seconds, and never holds the call up. Set it on the
-  plugin's settings page, where your machine is marked; the mobile app and a browser tab run none. Each run
-  shows in the debug log with its exit status and how long it took. Empty by default.
+- **Voice hooks:** a script you put at `~/.config/firstmate-voice/hook` on a machine runs as listening
+  starts and stops, as the voice starts and finishes speaking, and as you start and stop talking, with the
+  moment (and why listening stopped) in an environment variable, so one script handles them all. It runs on
+  the machine whose bb desktop app is in the call, from your home folder, for at most five seconds, and
+  never holds the call up. Nothing in bb can set it: the plugin's settings page shows only which machines
+  have one, with yours marked. The mobile app and a browser tab run none. Each run shows in the debug log
+  with its exit status and how long it took.

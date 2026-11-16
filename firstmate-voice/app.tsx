@@ -2,7 +2,8 @@
  * FirstMate voice's app: the pill (an app overlay in every window), the palette commands, and a Talk button
  * in the first mate's thread header. All three share one controller per window (`app/controller.ts`). The debug
  * log is a side-panel tab (`app/debug.tsx`), opened from the pill, the palette and the first mate's header menu.
- * The voice hooks, one command per machine, are a section of the plugin's settings (`app/hooks-section.tsx`).
+ * The voice hooks (a file on each machine) have a section of the plugin's settings that says which machines
+ * have one (`app/hooks-section.tsx`).
  */
 import { useEffect, useState } from "react";
 import { definePluginApp, useRpc } from "@get-bb/plugin-sdk/app";
@@ -41,7 +42,7 @@ export default definePluginApp((app) => {
   app.slots.settingsSection({
     id: "hooks",
     title: "Voice hooks",
-    description: "A command per machine, run as listening starts and stops, as the voice speaks and as you talk.",
+    description: "A file on each machine, run as listening starts and stops, as the voice speaks and as you talk.",
     component: VoiceHooksSection,
   });
 

@@ -11,13 +11,13 @@ import { z } from "zod";
 import { subscriptionToken } from "./server/credentials";
 import { crewClient } from "./server/crew-client";
 import { DebugPageSchema } from "./server/debug-log";
-import { HOOK_CALL_TIMEOUT_MS, HookRunner, HookStore } from "./server/hooks";
+import { HOOK_CALL_TIMEOUT_MS, HOOK_STATUS_TIMEOUT_MS, HookRunner, machineHookStatuses } from "./server/hooks";
 import { openAiRealtime } from "./server/openai-port";
 import { sessionHandlers } from "./server/rpc";
 import { systemClock } from "./server/ports";
 import { VoiceSessions, type Eagerness, type SessionSignal } from "./server/session";
 import { SESSION_CHANNEL } from "./shared/channel";
-import { HookCommandSchema, VoiceHooksSchema } from "./shared/hooks";
+import { HookFileStatusSchema, type HookEvent } from "./shared/hooks";
 import { hostContract } from "./shared/host-contract";
 
 const Sdp = z.string().min(10).max(20_000);
@@ -38,9 +38,14 @@ export const rpcContract = defineRpcContract({
   "mate.thread": { input: z.object({}), output: z.object({ threadId: z.string().nullable() }) },
   /** The debug view: the current session's log (or the last one's) after `afterSeq`. Local to this bb. */
   "debug.log": { input: z.object({ afterSeq: z.number().int().min(0) }), output: DebugPageSchema },
-  /** The voice hooks, one command per machine by bb host id, for the settings section. */
-  "hooks.list": { input: z.object({}), output: z.object({ hooks: VoiceHooksSchema }) },
-  "hooks.set": { input: z.object({ hostId: HostId, command: HookCommandSchema }), output: z.object({ hooks: VoiceHooksSchema }) },
+  /**
+   * Whether each of bb's machines has a voice hook file, for the settings section; null for a machine that
+   * did not answer. Never what is in it. Nothing sets a hook: the owner writes the file on the machine.
+   */
+  "hooks.status": {
+    input: z.object({}),
+    output: z.object({ machines: z.array(z.object({ hostId: z.string(), name: z.string(), status: HookFileStatusSchema.nullable() })) }),
+  },
 });
 
 export const SETTINGS = {
@@ -79,13 +84,11 @@ export default async function plugin(bb: BbPluginApi) {
   const crew = crewClient(bb);
   // The voice hooks run on the machine whose desktop app holds the call, through the host entry there.
   const hostClient = bb.hosts.experimental_client({ contract: hostContract });
-  const hookStore = new HookStore(bb.storage.kv, bb.log);
-  const hooks = new HookRunner({
-    store: hookStore,
-    host: { run: (hostId, input) => hostClient.call("run", input, { hostId, timeoutMs: HOOK_CALL_TIMEOUT_MS }) },
-    clock: systemClock,
-    log: bb.log,
-  });
+  const hookHost = {
+    status: (hostId: string) => hostClient.call("status", {}, { hostId, timeoutMs: HOOK_STATUS_TIMEOUT_MS }),
+    run: (hostId: string, input: { event: HookEvent; reason: string | null }) => hostClient.call("run", input, { hostId, timeoutMs: HOOK_CALL_TIMEOUT_MS }),
+  };
+  const hooks = new HookRunner({ host: hookHost, clock: systemClock, log: bb.log });
   const sessions = new VoiceSessions(
     {
       realtime: openAiRealtime({ token: (signal) => subscriptionToken(bb, signal), log: bb.log }),
@@ -104,7 +107,7 @@ export default async function plugin(bb: BbPluginApi) {
 
   const activeHosts = async () =>
     (await bb.sdk.hosts.list()).filter((host) => (host.lifecycle?.phase ?? "active") === "active").map(({ id, name }) => ({ id, name }));
-  bb.rpc.register(rpcContract, sessionHandlers(sessions, crew, { store: hookStore, hosts: activeHosts }));
+  bb.rpc.register(rpcContract, sessionHandlers(sessions, crew, { hosts: activeHosts, statuses: (hosts) => machineHookStatuses(hosts, hookHost, systemClock) }));
 
   // Any thread may be the first mate or one of its crew; the session reads the brief again, debounced.
   const changed = () => sessions.threadEvent();

@@ -91,11 +91,11 @@ describe("the voice hooks' settings", () => {
     expect(settings.map((section) => [section.id, section.title])).toEqual([["hooks", "Voice hooks"]]);
   });
 
-  it("list every machine bb knows, then any with a saved command bb no longer lists", async () => {
-    const { hookMachines } = await import("./hooks-section");
-    expect(hookMachines([{ id: "host_a", name: "Studio" }], { host_a: "say hi", host_gone: "say bye" })).toEqual([
-      { id: "host_a", name: "Studio", known: true },
-      { id: "host_gone", name: "host_gone", known: false },
-    ]);
+  it("say of each machine only whether its hook file is there and runs", async () => {
+    const { hookFileText } = await import("./hooks-section");
+    expect(hookFileText({ present: true, executable: true })).toBe("Has ~/.config/firstmate-voice/hook: it runs.");
+    expect(hookFileText({ present: true, executable: false })).toMatch(/not executable \(chmod \+x\)/u);
+    expect(hookFileText({ present: false, executable: false })).toBe("No hook file: nothing runs.");
+    expect(hookFileText(null)).toMatch(/Did not answer/u);
   });
 });

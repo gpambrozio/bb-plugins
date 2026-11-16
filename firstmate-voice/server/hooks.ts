@@ -1,11 +1,14 @@
 /**
- * The voice hooks on the server's side: each machine's command, kept in one kv row by bb host id, and when a
- * session runs it on the machine whose desktop app holds the call (`host.ts`).
+ * The voice hooks on the server's side: when a session runs the hook file of the machine whose desktop app
+ * holds the call (`host.ts`), and whether each machine has one, for the settings page.
  *
+ * - **No command passes through here.** Each machine runs only its own `~/.config/firstmate-voice/hook`; no
+ *   RPC, setting or call to a machine names a command or a path, and nothing reads the file's contents. bb
+ *   names its app and its command line the same caller, so anything stored in bb could be changed by an
+ *   agent with `bb`; a file on the machine can only be changed by someone who can already run things there.
  * - **The server owns the moments.** It hears every one on the call's sideband (the captain's speech, the
  *   voice's replies and their audio) and knows when the session starts and ends whatever ended it, a window
- *   that went away included. The app names only its machine; the command is always the one stored here for
- *   that machine.
+ *   that went away included. The app names only its machine.
  * - **Pairs.** Listening, speaking (the voice) and talking (the captain) each run "started" then "stopped".
  *   The voice's replies back to back, a tool call between them included, are one pair: "speaking-stopped"
  *   runs once its audio has stopped, no reply is under way and `SPEAKING_SETTLE_MS` has passed quietly. A
@@ -18,68 +21,51 @@
  *   once, so the next session's "listening-started" (and with it everything else of the next session) runs
  *   only after the old session's closing hooks.
  * - **Only once the call is made.** "listening-started" runs when OpenAI has accepted the call, not when Talk
- *   is asked for, so an RPC caller with no real WebRTC offer and no ChatGPT sign-in runs no hook. Live speech cannot be held back, so "speaking-started" runs at the first sign
- *   of a spoken reply, before its audio, and the voice speaks whether or not it has finished.
+ *   is asked for, so a caller with no real WebRTC offer and no ChatGPT sign-in runs no hook. Live speech
+ *   cannot be held back, so "speaking-started" runs at the first sign of a spoken reply, before its audio,
+ *   and the voice speaks whether or not it has finished.
  * - **The debug log** gets each run: the moment, the machine, the exit status and the duration. Never the
  *   output, which is not even read.
  */
-import { hookCommand, hookFailed, hookOutcome, HOOK_TIMEOUT_MS, HookCommandSchema, VoiceHooksSchema, type HookEvent, type HookRun, type VoiceHooks } from "../shared/hooks";
+import { hookFailed, hookOutcome, HOOK_FILE_SHOWN, HOOK_TIMEOUT_MS, type HookEvent, type HookFileStatus, type HookRun } from "../shared/hooks";
 import type { DebugLog } from "./debug-log";
 import { errorText, type Clock, type Log, type RealtimeEvent } from "./ports";
 
-export const HOOKS_KEY = "hooks";
 /** How long the server waits for a machine's answer: the hook's own limit, plus the round trip. */
 export const HOOK_CALL_TIMEOUT_MS = HOOK_TIMEOUT_MS + 5_000;
 /** How long the voice stays quiet, with no reply under way, before its speaking pair ends. */
 export const SPEAKING_SETTLE_MS = 1_000;
 
-/** The host entry on one machine; see `shared/host-contract.ts`. */
+/** How long a machine may take to say whether it has a hook file. */
+export const HOOK_STATUS_TIMEOUT_MS = 5_000;
+
+/** The host entry on one machine; see `shared/host-contract.ts`. Neither call names a command or a path. */
 export interface HostHookPort {
-  run(hostId: string, input: { command: string; event: HookEvent; reason: string | null }): Promise<HookRun>;
+  status(hostId: string): Promise<HookFileStatus>;
+  /** Null when the machine has no hook file (any more). */
+  run(hostId: string, input: { event: HookEvent; reason: string | null }): Promise<HookRun | null>;
 }
 
-export interface KvPort {
-  get<T>(key: string): Promise<T | null | undefined>;
-  set(key: string, value: unknown): Promise<void>;
+/** One machine's hook file as the settings page shows it: there, runnable, or not known (unreachable). */
+export interface MachineHookStatus {
+  hostId: string;
+  name: string;
+  status: HookFileStatus | null;
 }
 
-export class HookStore {
-  /** Saves are chained: two machines saved at once must both land. */
-  private writes: Promise<unknown> = Promise.resolve();
-
-  constructor(
-    private readonly kv: KvPort,
-    private readonly log: Log,
-  ) {}
-
-  /** Every machine's command; an unreadable row reads as none at all, and says so. */
-  async all(): Promise<VoiceHooks> {
-    const raw = await this.kv.get<unknown>(HOOKS_KEY);
-    if (raw === null || raw === undefined) return {};
-    const parsed = VoiceHooksSchema.safeParse(raw);
-    if (parsed.success) return parsed.data;
-    this.log.error(`The voice hooks could not be read, so none run: ${parsed.error.message}`);
-    return {};
-  }
-
-  /** Sets one machine's command; an empty one forgets the machine. Answers every machine's. */
-  set(hostId: string, command: string): Promise<VoiceHooks> {
-    const next = HookCommandSchema.parse(command);
-    const write = this.writes.then(async () => {
-      const { [hostId]: _previous, ...others } = await this.all();
-      const saved = next.trim() === "" ? others : { ...others, [hostId]: next };
-      await this.kv.set(HOOKS_KEY, saved);
-      return saved;
-    });
-    // A failed save must not wedge the ones after it.
-    this.writes = write.catch(() => {});
-    return write;
-  }
-
-  /** The machine's command, or null when it has none. */
-  async command(hostId: string): Promise<string | null> {
-    return hookCommand(await this.all(), hostId);
-  }
+/** Whether each of `hosts` has a hook file; a machine that does not answer in time is `null`. Never rejects. */
+export async function machineHookStatuses(
+  hosts: ReadonlyArray<{ id: string; name: string }>,
+  host: Pick<HostHookPort, "status">,
+  clock: Clock,
+): Promise<MachineHookStatus[]> {
+  return Promise.all(
+    hosts.map(async ({ id, name }) => ({
+      hostId: id,
+      name,
+      status: await withTimeout(host.status(id), HOOK_STATUS_TIMEOUT_MS, clock).catch(() => null),
+    })),
+  );
 }
 
 type Lane = "listening" | "speaking" | "talking";
@@ -91,7 +77,6 @@ type Lane = "listening" | "speaking" | "talking";
 export type HookTarget = { hostId: string; name: string } | { hostId: null; why: string };
 
 export interface HookRunnerDeps {
-  store: Pick<HookStore, "command">;
   host: HostHookPort;
   clock: Clock;
   log: Log;
@@ -138,6 +123,8 @@ export class SessionHooks {
   private ended = false;
   /** "listening-started" has run (or was skipped): the other lanes wait for it. */
   private opened: Promise<void> = Promise.resolve();
+  /** Whether the machine had a runnable hook file when listening started; none runs for the session otherwise. */
+  private runnable: Promise<boolean> = Promise.resolve(false);
 
   constructor(
     private readonly runner: HookRunner,
@@ -153,9 +140,18 @@ export class SessionHooks {
       return;
     }
     const { hostId, name } = this.target;
-    void this.runner.deps.store.command(hostId).then(
-      (command) => this.debug.add("hook", command === null ? `No hook is set for ${name}, this window's machine` : `Hooks run on ${name}, this window's machine`),
-      () => undefined,
+    const { host, clock } = this.runner.deps;
+    this.runnable = withTimeout(host.status(hostId), HOOK_STATUS_TIMEOUT_MS, clock).then(
+      (status) => {
+        if (!status.present) this.debug.add("hook", `No hook this session: ${name}, this window's machine, has no ${HOOK_FILE_SHOWN}`);
+        else if (!status.executable) this.debug.add("hook", `No hook this session: ${HOOK_FILE_SHOWN} on ${name} is not executable (chmod +x)`);
+        else this.debug.add("hook", `The hook runs on ${name}, this window's machine: ${HOOK_FILE_SHOWN}`);
+        return status.present && status.executable;
+      },
+      (error: unknown) => {
+        this.debug.add("hook", `No hook this session: ${name} did not say whether it has a hook file`, errorText(error));
+        return false;
+      },
     );
     this.listening = true;
     this.opened = this.run("listening", "listening-started");
@@ -254,30 +250,25 @@ export class SessionHooks {
     this.settle = null;
   }
 
-  /** Queues one run of the machine's command for `event` in `lane`. */
+  /** Queues one run of the machine's hook file for `event` in `lane`. */
   private run(lane: Lane, event: HookEvent, reason: string | null = null): Promise<void> {
     if (this.target.hostId === null) return Promise.resolve();
     return this.runner.enqueue(lane, () => this.execute(lane, event, reason));
   }
 
-  /** Runs the machine's command for `event` once its lane's turn has come; the command is read now. */
+  /** Runs the machine's hook file for `event` once its lane's turn has come, if it had a runnable one. */
   private async execute(lane: Lane, event: HookEvent, reason: string | null): Promise<void> {
     const target = this.target;
     if (target.hostId === null) return;
     const { hostId, name } = target;
     if (lane !== "listening") await this.opened;
-    const { store, host, clock, log } = this.runner.deps;
-    let command: string | null;
-    try {
-      command = await store.command(hostId);
-    } catch (error) {
-      this.debug.add("hook", `Hook ${event} not run: the hooks could not be read`, errorText(error));
-      return;
-    }
-    if (command === null) return;
+    if (!(await this.runnable)) return;
+    const { host, clock, log } = this.runner.deps;
     const reasonNote = reason === null ? undefined : `FIRSTMATE_VOICE_REASON: ${reason}`;
     try {
-      const run = await withTimeout(host.run(hostId, { command, event, reason }), HOOK_CALL_TIMEOUT_MS, clock);
+      const run = await withTimeout(host.run(hostId, { event, reason }), HOOK_CALL_TIMEOUT_MS, clock);
+      // The file went during the session: nothing ran, and there is nothing to say for each moment.
+      if (run === null) return;
       this.debug.add("hook", `Hook ${event} on ${name}: ${hookOutcome(run)}`, reasonNote);
       if (hookFailed(run)) log.warn(`The voice hook for ${event} on ${name} failed: ${hookOutcome(run)}.`);
     } catch (error) {

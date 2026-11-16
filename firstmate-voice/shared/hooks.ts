@@ -1,7 +1,13 @@
 /**
- * The voice hooks: one command per bb machine, run on the machine whose bb desktop app holds the call, at six
- * moments of a session. One command handles them all: the moment is in `FIRSTMATE_VOICE_HOOK`, and why
- * listening stopped in `FIRSTMATE_VOICE_REASON`. Empty runs nothing, and empty is the default.
+ * The voice hooks: on each bb machine, one executable file in the owner's home folder
+ * (`HOOK_FILE`), run on the machine whose bb desktop app holds the call, at six moments of a session. The
+ * moment is in `FIRSTMATE_VOICE_HOOK`, and why listening stopped in `FIRSTMATE_VOICE_REASON`, so one script
+ * handles them all. No file runs nothing, and there is none until the owner makes one.
+ *
+ * The command is never stored in bb nor set through it: bb names its app and its command line the same
+ * caller, so anything a bb RPC or setting holds, an agent with `bb` could change. Only someone who can write
+ * that file on that machine can choose what runs there. No RPC reads the file or shows what is in it; the
+ * settings page says only whether it is there.
  *
  * Shared by the app, the server and the host entry, so it imports zod only, never the SDK.
  */
@@ -27,31 +33,25 @@ export const HOOK_EVENT_ENV = "FIRSTMATE_VOICE_HOOK";
 /** Why listening stopped, on `listening-stopped` only ("ended by the captain", "quiet for ten minutes"…). */
 export const HOOK_REASON_ENV = "FIRSTMATE_VOICE_REASON";
 
-/** Long enough for any one-liner, or a path to a script; a whole script belongs in a file. */
-export const HOOK_MAX_CHARS = 2000;
+/** The hook file, relative to the home folder of the machine it runs on. */
+export const HOOK_FILE = ".config/firstmate-voice/hook";
+/** How the settings and the docs name it. */
+export const HOOK_FILE_SHOWN = `~/${HOOK_FILE}`;
 
-/** How long a command may run before it is stopped, with everything it started. */
+/** How long a run may take before it is stopped, with everything it started. */
 export const HOOK_TIMEOUT_MS = 5_000;
 
-export const HookCommandSchema = z.string().max(HOOK_MAX_CHARS);
+/** Whether a machine has a hook file; never what is in it. */
+export const HookFileStatusSchema = z.object({ present: z.boolean(), executable: z.boolean() });
+export type HookFileStatus = z.infer<typeof HookFileStatusSchema>;
 
-/** Every machine's command, by bb host id. A machine with none is left out. */
-export const VoiceHooksSchema = z.record(z.string().min(1), HookCommandSchema);
-export type VoiceHooks = z.infer<typeof VoiceHooksSchema>;
-
-/** The command to run on `hostId`, or null when it is empty: blank lines and spaces are empty too. */
-export function hookCommand(hooks: VoiceHooks, hostId: string): string | null {
-  const command = hooks[hostId]?.trim() ?? "";
-  return command === "" ? null : command;
-}
-
-/** What the host entry reports of one run. Never its output: the command's output is ignored. */
+/** What the host entry reports of one run. Never its output: the hook's output is ignored. */
 export const HookRunSchema = z.object({
   exitCode: z.number().int().nullable(),
   /** The signal that ended it, when one did — a timeout's SIGKILL included. */
   signal: z.string().nullable(),
   timedOut: z.boolean(),
-  /** It could not be started at all (no shell, say). */
+  /** It could not be started at all (not executable, say). */
   failedToStart: z.boolean(),
   durationMs: z.number().int().min(0),
 });

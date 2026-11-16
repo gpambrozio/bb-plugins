@@ -12,7 +12,7 @@
  * - Transcripts live in memory for the session only, and never reach the log. The debug log
  *   (`server/debug-log.ts`) keeps them, with everything else the voice got and did, in memory until the next
  *   Talk, for the app's debug view only.
- * - **The voice hooks** (`server/hooks.ts`) run the owner's command on their machine as listening, the voice's
+ * - **The voice hooks** (`server/hooks.ts`) run the owner's hook file on their machine as listening, the voice's
  *   speech and the captain's start and stop, from the same sideband events; nothing here waits for them.
  */
 import type { VoiceBrief, VoiceReply, VoiceSent, VoiceTalkLine } from "../shared/crew-voice";

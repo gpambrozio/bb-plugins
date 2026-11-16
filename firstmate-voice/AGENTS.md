@@ -16,11 +16,11 @@ the voice, the decisions behind phase 1, and the phase 0 decision record.
 | File | What it owns |
 | --- | --- |
 | `server/rpc.ts` | The app-facing RPC handlers, refusing any caller but bb's app. |
-| `server.ts` | Wiring only: settings (model, reasoning, voice, turn taking), the app's RPCs (`session.start`, `renew`, `renewed`, `end`, `alive`, `current`, `mate.thread`, `debug.log`, `hooks.list`, `hooks.set`, behind `server/rpc.ts`'s client-only gate), the thread events that make a live session read the brief again, `onDispose`. |
+| `server.ts` | Wiring only: settings (model, reasoning, voice, turn taking), the app's RPCs (`session.start`, `renew`, `renewed`, `end`, `alive`, `current`, `mate.thread`, `debug.log`, `hooks.status`, behind `server/rpc.ts`'s client-only gate), the thread events that make a live session read the brief again, `onDispose`. |
 | `server/session.ts` | One live session (`VoiceSessions`): the call, the sideband, event dispatch, the tools, renewal at the hour's cap, the idle end, the app's heartbeat. |
 | `server/policy.ts` | The utterance log, one send at a time, rate limits. |
 | `server/brief-sync.ts` | Brief → diff → `[firstmate-update]` items, full replacement every 15 updates or 20 minutes, and the events worth announcing. |
-| `server/hooks.ts`, `host.ts`, `host/run-hook.ts`, `shared/hooks.ts`, `shared/host-contract.ts`, `app/machine.ts`, `app/hooks-section.tsx` | The voice hooks: each machine's command (kv, by host id), when a session runs it (pairs, lanes, time limits), the host entry that runs it on the window's machine, the window's machine lookup, and the settings section. |
+| `server/hooks.ts`, `host.ts`, `host/run-hook.ts`, `shared/hooks.ts`, `shared/host-contract.ts`, `app/machine.ts`, `app/hooks-section.tsx` | The voice hooks: when a session runs the window's machine's hook file (pairs, lanes, time limits), the host entry that runs that file and says whether it is there, the window's machine lookup, and the settings section that shows which machines have one. |
 | `server/debug-log.ts`, `app/debug.tsx`, `app/debug-view.ts` | The debug log of the current (or last) session, its client-only `debug.log` RPC, and the debug tab in a thread's side panel, with the request that opens it from where no thread panel is at hand. |
 | `server/announce.ts` | P1 announcements at gaps, once more when the captain talks over one, during the response or later while its audio plays. |
 | `server/instructions.ts`, `server/tools.ts` | The standing instructions (design §8's outline) and the tool list with levels. |
@@ -68,14 +68,16 @@ the voice, the decisions behind phase 1, and the phase 0 decision record.
   and speak for the captain through this plugin's allowed identities.
 - **Who can reach the RPCs.** bb 0.49 names its app and its command line (`bb plugin rpc call`) the same
   `client`, with nothing else to tell them apart, so `requireApp` admits both: anything that can run `bb`
-  against the owner's bb, an agent in a thread included, can read the debug log, set a machine's hook
-  command and start a session. The `client` and `hostId` a `session.start` names are claims, not proof.
-  What holds: no hook runs until OpenAI has made the call (a real WebRTC offer and the ChatGPT sign-in),
-  and a hook runs only on a machine bb lists as active. The same command line can already change any
-  plugin's settings (`bb plugin config <id> set`), install a full-trust plugin and open a terminal on any
-  machine, so moving the commands into settings would not shut it out. Whether to keep the hook commands
-  on this surface is the owner's decision, open as of 2026-11-16 (review pass 1 of
-  https://github.com/gpambrozio/bb-plugins/pull/112).
+  against the owner's bb, an agent in a thread included, can read the debug log, ask which machines have
+  a hook file and start a session. The `client` and `hostId` a `session.start` names are claims, not
+  proof. So nothing a client sends may become something a machine runs: **no RPC, setting or host call
+  sets, reads or names a hook command or path** (`server/rpc.test.ts` checks every RPC input, the
+  settings and the host contract). Each machine runs only its own `~/.config/firstmate-voice/hook`, which
+  only someone who can already write files on that machine can change; `bb plugin config <id> set` would
+  have reached a command kept in settings. A client can at most make the owner's own hook run, and only
+  with a call OpenAI accepted (a real WebRTC offer and the ChatGPT sign-in), on a machine bb lists as
+  active. The owner's call, 2026-11-16, after review pass 1 of
+  https://github.com/gpambrozio/bb-plugins/pull/112.
 - **A renewal completes on the device's word.** `session.renew` makes the new call; the old call is hung up
   only on `session.renewed`, which the app sends once its new leg connected. Without it the session ends
   within 30 s (`RENEW_ACK_MS`), and the app ends it at once when its leg fails. In the app, each Talk is an
@@ -105,10 +107,11 @@ the voice, the decisions behind phase 1, and the phase 0 decision record.
   the speaking and talking lanes wait for `listening-started`, which runs only once OpenAI has made the
   call. A session that ends, however it ends, closes its open pairs and reserves its `listening-stopped`
   (with the reason) in the listening lane at once, behind those closing hooks, so a session that takes over
-  starts its own hooks only after them (`dispose` waits up to 3 s for them). The command runs only on a machine bb lists as active, the one the
-  desktop window names (`hookTarget`), and is always the one stored for it. The debug log records the
-  moment, the machine, the exit status and the duration of each run; the host entry never reads the
-  output, so nothing a command prints can reach the log.
+  starts its own hooks only after them (`dispose` waits up to 3 s for them). A hook runs only on a machine
+  bb lists as active, the one the desktop window names (`hookTarget`), and only when that machine said, as
+  listening started, that its file is there and executable. The debug log records the moment, the
+  machine, the exit status and the duration of each run; the host entry never reads the output or the
+  file, so nothing a hook prints or holds can reach the log.
 - **Herald is left alone.** Both may speak the same news while a session is live; the captain turns Herald
   off by hand when that matters (design §10, phase 2).
 
@@ -161,8 +164,9 @@ the voice, the decisions behind phase 1, and the phase 0 decision record.
   the exact text a send relayed, `voice.v1`'s ask and answer now return the message and the agent-only
   note as firstmate-crew sent them (optional fields: an older crew answers without them, and the panel then
   shows the parts the voice sent).
-- **Voice hooks** (the owner's call, 2026-11-16, after Herald's speech hooks): one command per machine,
-  with `FIRSTMATE_VOICE_HOOK` naming the moment (`listening-`, `speaking-` for the voice, `talking-` for the
+- **Voice hooks** (the owner's call, 2026-11-16, after Herald's speech hooks): one executable file per
+  machine, `~/.config/firstmate-voice/hook`, run directly (its `#!` line names the interpreter; macOS and
+  Linux), with `FIRSTMATE_VOICE_HOOK` naming the moment (`listening-`, `speaking-` for the voice, `talking-` for the
   captain, each `started`/`stopped`) and `FIRSTMATE_VOICE_REASON` why listening stopped. The server drives
   them from the call's sideband, which carries the captain's and the voice's speech events as the data
   channel does, so a window that goes away still gets its closing hooks when the session ends. The window
@@ -170,11 +174,10 @@ the voice, the decisions behind phase 1, and the phase 0 decision record.
   Unlike Herald's before hook, `speaking-started` cannot hold speech back: the audio is a live WebRTC
   stream, so it runs at the first sign of a spoken reply (`response.output_item.added` with a message item,
   else `output_audio_buffer.started`), usually some hundreds of milliseconds before the first word, and a
-  slower command overlaps the start. `speaking-stopped` waits until the audio has stopped, no response is
+  slower hook overlaps the start. `speaking-stopped` waits until the audio has stopped, no response is
   under way and a second has passed quietly, so a tool call between two spoken replies keeps one pair.
-  Checked in a dev bb: a Talk that failed at once (no codex-realtime there, so no voice time) ran
-  `listening-started` and `listening-stopped` (with "the call could not be made") through the host entry
-  on that bb's machine, from the home folder, and both runs showed in the debug tab.
+  The first version kept a shell command per machine in the plugin's storage, set from the settings page;
+  review pass 1 found that `bb plugin rpc call` could set and trigger it, so the owner moved it to the file.
 - **No `quiet` tool.** Every phase 1 announcement is P1, which quiet would not hold; it comes with phase 2's
   digests.
 - **The model's account goes with the captain's words** (the captain's call, 2026-11-14, after a long request
