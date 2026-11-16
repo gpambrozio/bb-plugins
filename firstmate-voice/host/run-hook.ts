@@ -1,7 +1,9 @@
 /**
  * Runs one voice hook on this machine. Adapted from Herald's `host/run-hook.ts`: through the machine's shell
- * from the home folder, the whole process group killed at the time limit, and resolved on `exit` so a
- * background process the command left behind cannot hold the call's hooks up. Its output is never read.
+ * from the home folder, in a process group of its own, and resolved on `exit`. Unlike Herald's, the whole
+ * group is killed as soon as the shell exits too, not only at the time limit: a background process the
+ * command started (`… &`) would otherwise outlive the limit, the session and the worker. Its output is never
+ * read.
  */
 import { spawn } from "node:child_process";
 import { homedir } from "node:os";
@@ -33,7 +35,8 @@ function guardExit(): void {
 /**
  * Runs `command` through `/bin/sh -c` (`cmd.exe` on Windows) with `FIRSTMATE_VOICE_HOOK` set to `event`, and
  * `FIRSTMATE_VOICE_REASON` to `reason` when there is one. Never rejects: a command that cannot start, fails
- * or runs out of time is reported in the result.
+ * or runs out of time is reported in the result. On Windows there is no process group, so only the shell is
+ * stopped.
  */
 export function runHook(event: HookEvent, reason: string | null, command: string, options: RunHookOptions = {}): Promise<HookRun> {
   const timeoutMs = options.timeoutMs ?? HOOK_TIMEOUT_MS;
@@ -54,19 +57,26 @@ export function runHook(event: HookEvent, reason: string | null, command: string
       detached: ownGroup,
       windowsHide: true,
     });
+    /**
+     * Kills the command's process group, whether or not the shell itself is still running: what it started
+     * stays in the group (unless it made a session of its own). Right after the shell exits the group id
+     * cannot have been reused, since a member still holds it, or no process has it.
+     */
     const kill = (): void => {
-      if (child.pid === undefined || child.exitCode !== null || child.signalCode !== null) return;
+      if (child.pid === undefined) return;
       try {
         if (ownGroup) process.kill(-child.pid, "SIGKILL");
-        else child.kill("SIGKILL");
+        else if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
       } catch {
-        // Already gone between the check and the kill.
+        // No process left in the group.
       }
     };
     running.add(kill);
     const finish = (exitCode: number | null, signal: string | null, failedToStart: boolean) => {
       if (settled) return;
       settled = true;
+      // The shell has exited: anything it left running goes with it, now rather than at the time limit.
+      kill();
       running.delete(kill);
       clearTimeout(timer);
       resolve({ exitCode, signal, timedOut, failedToStart, durationMs: Date.now() - started });

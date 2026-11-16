@@ -14,7 +14,11 @@
  *   so a slow speaking hook does not hold the captain's back); each run is stopped on its machine after
  *   `HOOK_TIMEOUT_MS`, and this side gives up waiting after `HOOK_CALL_TIMEOUT_MS`. A "stopped" runs after
  *   its "started" has finished or been stopped, never before, and the speaking and talking lanes start once
- *   "listening-started" has. Live speech cannot be held back, so "speaking-started" runs at the first sign
+ *   "listening-started" has. A session that ends reserves its "listening-stopped" in the listening lane at
+ *   once, so the next session's "listening-started" (and with it everything else of the next session) runs
+ *   only after the old session's closing hooks.
+ * - **Only once the call is made.** "listening-started" runs when OpenAI has accepted the call, not when Talk
+ *   is asked for, so an RPC caller with no real WebRTC offer and no ChatGPT sign-in runs no hook. Live speech cannot be held back, so "speaking-started" runs at the first sign
  *   of a spoken reply, before its audio, and the voice speaks whether or not it has finished.
  * - **The debug log** gets each run: the moment, the machine, the exit status and the duration. Never the
  *   output, which is not even read.
@@ -111,6 +115,11 @@ export class HookRunner {
     await Promise.all(lanes.map((lane) => this.lanes.get(lane)));
   }
 
+  /** What is queued in `lane` so far, taken now: later jobs are not waited for. */
+  tail(lane: Lane): Promise<void> {
+    return this.lanes.get(lane) ?? Promise.resolve();
+  }
+
   session(target: HookTarget, debug: DebugLog): SessionHooks {
     return new SessionHooks(this, target, debug);
   }
@@ -136,8 +145,9 @@ export class SessionHooks {
     private readonly debug: DebugLog,
   ) {}
 
-  /** Says in the debug log where this session's hooks run, then runs "listening-started". */
+  /** Says in the debug log where this session's hooks run, then runs "listening-started". Once the call is made. */
   start(): void {
+    if (this.ended) return;
     if (this.target.hostId === null) {
       this.debug.add("hook", `No hooks this session: ${this.target.why}`);
       return;
@@ -156,7 +166,7 @@ export class SessionHooks {
    * under way on the call.
    */
   event(event: RealtimeEvent, busy: boolean): void {
-    if (this.ended || this.target.hostId === null) return;
+    if (this.ended || !this.listening) return;
     this.busy = busy;
     switch (event.type) {
       case "input_audio_buffer.speech_started":
@@ -189,9 +199,13 @@ export class SessionHooks {
     this.check();
   }
 
-  /** Closes the open pairs, then runs "listening-stopped" with `reason`. Never rejects. */
-  async end(reason: string): Promise<void> {
-    if (this.ended) return;
+  /**
+   * Closes the open pairs, then runs "listening-stopped" with `reason`. Never rejects. Everything is queued
+   * before this returns its promise, the barrier included: "listening-stopped" holds the listening lane
+   * until this session's speaking and talking hooks are done, so a session started next waits for them.
+   */
+  end(reason: string): Promise<void> {
+    if (this.ended) return Promise.resolve();
     this.ended = true;
     this.cancelSettle();
     if (this.speaking) {
@@ -202,10 +216,13 @@ export class SessionHooks {
       this.talking = false;
       void this.run("talking", "talking-stopped");
     }
-    if (!this.listening) return;
+    if (!this.listening) return Promise.resolve();
     this.listening = false;
-    await this.runner.drained(["speaking", "talking"]);
-    await this.run("listening", "listening-stopped", reason);
+    const closing = [this.runner.tail("speaking"), this.runner.tail("talking")];
+    return this.runner.enqueue("listening", async () => {
+      await Promise.all(closing);
+      await this.execute("listening", "listening-stopped", reason);
+    });
   }
 
   private voiceComing(): void {
@@ -237,33 +254,36 @@ export class SessionHooks {
     this.settle = null;
   }
 
-  /** Queues one run of the machine's command for `event`; the command is read when its turn comes. */
+  /** Queues one run of the machine's command for `event` in `lane`. */
   private run(lane: Lane, event: HookEvent, reason: string | null = null): Promise<void> {
+    if (this.target.hostId === null) return Promise.resolve();
+    return this.runner.enqueue(lane, () => this.execute(lane, event, reason));
+  }
+
+  /** Runs the machine's command for `event` once its lane's turn has come; the command is read now. */
+  private async execute(lane: Lane, event: HookEvent, reason: string | null): Promise<void> {
     const target = this.target;
-    if (target.hostId === null) return Promise.resolve();
+    if (target.hostId === null) return;
     const { hostId, name } = target;
-    const opened = this.opened;
-    return this.runner.enqueue(lane, async () => {
-      if (lane !== "listening") await opened;
-      const { store, host, clock, log } = this.runner.deps;
-      let command: string | null;
-      try {
-        command = await store.command(hostId);
-      } catch (error) {
-        this.debug.add("hook", `Hook ${event} not run: the hooks could not be read`, errorText(error));
-        return;
-      }
-      if (command === null) return;
-      const reasonNote = reason === null ? undefined : `FIRSTMATE_VOICE_REASON: ${reason}`;
-      try {
-        const run = await withTimeout(host.run(hostId, { command, event, reason }), HOOK_CALL_TIMEOUT_MS, clock);
-        this.debug.add("hook", `Hook ${event} on ${name}: ${hookOutcome(run)}`, reasonNote);
-        if (hookFailed(run)) log.warn(`The voice hook for ${event} on ${name} failed: ${hookOutcome(run)}.`);
-      } catch (error) {
-        this.debug.add("hook", `Hook ${event} on ${name} did not run: ${errorText(error)}`, reasonNote);
-        log.warn(`The voice hook for ${event} on ${name} did not run: ${errorText(error)}`);
-      }
-    });
+    if (lane !== "listening") await this.opened;
+    const { store, host, clock, log } = this.runner.deps;
+    let command: string | null;
+    try {
+      command = await store.command(hostId);
+    } catch (error) {
+      this.debug.add("hook", `Hook ${event} not run: the hooks could not be read`, errorText(error));
+      return;
+    }
+    if (command === null) return;
+    const reasonNote = reason === null ? undefined : `FIRSTMATE_VOICE_REASON: ${reason}`;
+    try {
+      const run = await withTimeout(host.run(hostId, { command, event, reason }), HOOK_CALL_TIMEOUT_MS, clock);
+      this.debug.add("hook", `Hook ${event} on ${name}: ${hookOutcome(run)}`, reasonNote);
+      if (hookFailed(run)) log.warn(`The voice hook for ${event} on ${name} failed: ${hookOutcome(run)}.`);
+    } catch (error) {
+      this.debug.add("hook", `Hook ${event} on ${name} did not run: ${errorText(error)}`, reasonNote);
+      log.warn(`The voice hook for ${event} on ${name} did not run: ${errorText(error)}`);
+    }
   }
 }
 

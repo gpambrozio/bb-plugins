@@ -266,6 +266,56 @@ describe("the hooks in a voice session", () => {
     expect(host.runs.at(-1)?.reason).toMatch(/./u);
   });
 
+  it("run the old session's closing hooks before a new session's first, when a Talk takes over on the same machine", async () => {
+    const realtime = new FakeRealtime();
+    const clock = new FakeClock();
+    const log = quietLog();
+    const host = fakeHost({ manual: true });
+    const runner = new HookRunner({ store: new HookStore(fakeKv({ [HOOKS_KEY]: { host_studio: "hook" } }), log), host: host.port, clock, log });
+    const sessions = new VoiceSessions({ realtime, crew: new FakeCrew(), clock, log, publish: () => undefined, hooks: runner }, async () => ({
+      model: "gpt-realtime-2.1",
+      effort: "low",
+      voice: "marin",
+      eagerness: "auto" as const,
+    }));
+    await sessions.start("v=0 offer", STUDIO);
+    realtime.last.open();
+    await settle();
+    host.pending.shift()!.finish(); // the first session's listening-started
+    await settle();
+    realtime.last.emit({ type: "output_audio_buffer.started", response_id: "resp_1" });
+    await settle();
+    // Its speaking-started is still running on the machine when another Talk takes over.
+    expect(host.pending.map((run) => run.event)).toEqual(["speaking-started"]);
+    await sessions.start("v=0 offer 2", STUDIO);
+    realtime.last.open();
+    for (let i = 0; i < 6 && host.pending.length > 0; i += 1) {
+      await settle();
+      host.pending.shift()!.finish();
+      await settle();
+    }
+    expect(host.runs.map((run) => run.event)).toEqual(["listening-started", "speaking-started", "speaking-stopped", "listening-stopped", "listening-started"]);
+    expect(host.runs[3]).toMatchObject({ reason: "a new session took over" });
+  });
+
+  it("run no hook for a Talk whose call OpenAI did not make", async () => {
+    const realtime = new FakeRealtime();
+    const clock = new FakeClock();
+    const log = quietLog();
+    const host = fakeHost();
+    const runner = new HookRunner({ store: new HookStore(fakeKv({ [HOOKS_KEY]: { host_studio: "hook" } }), log), host: host.port, clock, log });
+    const sessions = new VoiceSessions({ realtime, crew: new FakeCrew(), clock, log, publish: () => undefined, hooks: runner }, async () => ({
+      model: "gpt-realtime-2.1",
+      effort: "low",
+      voice: "marin",
+      eagerness: "auto" as const,
+    }));
+    realtime.refuseNext = new Error("HTTP 400: invalid offer");
+    await expect(sessions.start("v=0 not a real offer", STUDIO)).rejects.toThrow("invalid offer");
+    await sessions.dispose();
+    expect(host.runs).toEqual([]);
+  });
+
   it("run nowhere for a session started with no machine", async () => {
     const realtime = new FakeRealtime();
     const clock = new FakeClock();

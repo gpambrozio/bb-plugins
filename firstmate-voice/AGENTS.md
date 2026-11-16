@@ -16,12 +16,12 @@ the voice, the decisions behind phase 1, and the phase 0 decision record.
 | File | What it owns |
 | --- | --- |
 | `server/rpc.ts` | The app-facing RPC handlers, refusing any caller but bb's app. |
-| `server.ts` | Wiring only: settings (model, reasoning, voice, turn taking), the app's RPCs (`session.start`, `renew`, `renewed`, `end`, `alive`, `current`, `mate.thread`, `debug.log`, `hooks.list`, `hooks.set`, behind `server/rpc.ts`'s app-only gate), the thread events that make a live session read the brief again, `onDispose`. |
+| `server.ts` | Wiring only: settings (model, reasoning, voice, turn taking), the app's RPCs (`session.start`, `renew`, `renewed`, `end`, `alive`, `current`, `mate.thread`, `debug.log`, `hooks.list`, `hooks.set`, behind `server/rpc.ts`'s client-only gate), the thread events that make a live session read the brief again, `onDispose`. |
 | `server/session.ts` | One live session (`VoiceSessions`): the call, the sideband, event dispatch, the tools, renewal at the hour's cap, the idle end, the app's heartbeat. |
 | `server/policy.ts` | The utterance log, one send at a time, rate limits. |
 | `server/brief-sync.ts` | Brief → diff → `[firstmate-update]` items, full replacement every 15 updates or 20 minutes, and the events worth announcing. |
 | `server/hooks.ts`, `host.ts`, `host/run-hook.ts`, `shared/hooks.ts`, `shared/host-contract.ts`, `app/machine.ts`, `app/hooks-section.tsx` | The voice hooks: each machine's command (kv, by host id), when a session runs it (pairs, lanes, time limits), the host entry that runs it on the window's machine, the window's machine lookup, and the settings section. |
-| `server/debug-log.ts`, `app/debug.tsx`, `app/debug-view.ts` | The debug log of the current (or last) session, its app-only `debug.log` RPC, and the debug tab in a thread's side panel, with the request that opens it from where no thread panel is at hand. |
+| `server/debug-log.ts`, `app/debug.tsx`, `app/debug-view.ts` | The debug log of the current (or last) session, its client-only `debug.log` RPC, and the debug tab in a thread's side panel, with the request that opens it from where no thread panel is at hand. |
 | `server/announce.ts` | P1 announcements at gaps, once more when the captain talks over one, during the response or later while its audio plays. |
 | `server/instructions.ts`, `server/tools.ts` | The standing instructions (design §8's outline) and the tool list with levels. |
 | `server/openai-call.ts`, `server/openai-port.ts` | The SDP exchange, hangup and sideband socket (from the spike), and `RealtimePort` over them. |
@@ -63,9 +63,19 @@ the voice, the decisions behind phase 1, and the phase 0 decision record.
   it on the board and offers to hand the request to the first mate, which then gets the captain's own words
   like any ask. Merges, anything destructive, publishing, credentials and settings are never the captain's
   word by voice; the first mate answers a spoken request for one with a board button.
-- **Only bb's app opens or steers a session.** Every app-facing RPC (`server/rpc.ts`) refuses a caller bb
+- **No other plugin opens or steers a session.** Every app-facing RPC (`server/rpc.ts`) refuses a caller bb
   does not name as a client, before anything runs: another plugin could otherwise spend the subscription
   and speak for the captain through this plugin's allowed identities.
+- **Who can reach the RPCs.** bb 0.49 names its app and its command line (`bb plugin rpc call`) the same
+  `client`, with nothing else to tell them apart, so `requireApp` admits both: anything that can run `bb`
+  against the owner's bb, an agent in a thread included, can read the debug log, set a machine's hook
+  command and start a session. The `client` and `hostId` a `session.start` names are claims, not proof.
+  What holds: no hook runs until OpenAI has made the call (a real WebRTC offer and the ChatGPT sign-in),
+  and a hook runs only on a machine bb lists as active. The same command line can already change any
+  plugin's settings (`bb plugin config <id> set`), install a full-trust plugin and open a terminal on any
+  machine, so moving the commands into settings would not shut it out. Whether to keep the hook commands
+  on this surface is the owner's decision, open as of 2026-11-16 (review pass 1 of
+  https://github.com/gpambrozio/bb-plugins/pull/112).
 - **A renewal completes on the device's word.** `session.renew` makes the new call; the old call is hung up
   only on `session.renewed`, which the app sends once its new leg connected. Without it the session ends
   within 30 s (`RENEW_ACK_MS`), and the app ends it at once when its leg fails. In the app, each Talk is an
@@ -80,7 +90,8 @@ the voice, the decisions behind phase 1, and the phase 0 decision record.
   session and standing instructions, every item and response it was sent, transcripts, tool calls and
   answers, each send as firstmate-crew worded it, the first mate's messages, interruptions, errors) in the
   server's memory, one session's worth: a new Talk replaces it, a reload forgets it, and it is capped at
-  2,000 entries. Only the app reads it (`debug.log`, behind `requireApp`), by polling while the tab
+  2,000 entries. Only a client reads it (`debug.log`, behind `requireApp`: bb's app, or its command line
+  on this bb, never another plugin), the app by polling while the tab
   shows; nothing publishes, stores or logs it. Every text passes `scrub` (bearer headers, JWTs, `ek_` and
   `sk-` keys). Log an event there, not in `bb.log`, when it carries anyone's words.
 - **A session always ends.** The app ends it (End, the palette, "goodbye" by voice, the phone leaving the
@@ -88,11 +99,13 @@ the voice, the decisions behind phase 1, and the phase 0 decision record.
   sideband cannot be reopened, when a renewal does not come, and on dispose. It hangs up from the server and
   treats a call that already ended as ended. One session at a time: a new Talk takes over.
 - **A hook never holds the call up.** Nothing in the call awaits one: the session hands each moment to
-  `SessionHooks` and goes on. Runs queue in three lanes (listening, speaking, talking), each run is killed on
-  its machine with its process group after 5 s, and the server stops waiting after 10 s. Within a pair the
-  stopped follows its started, and the speaking and talking lanes wait for `listening-started`; a session
-  that ends, however it ends, closes its open pairs and then runs `listening-stopped` with the reason
-  (`dispose` waits up to 3 s for them). The command runs only on a machine bb lists as active, the one the
+  `SessionHooks` and goes on. Runs queue in three lanes (listening, speaking, talking). Each run's process
+  group is killed on its machine after 5 s, and at once when its shell exits, so a background child (`… &`)
+  never outlives it; the server stops waiting after 10 s. Within a pair the stopped follows its started, and
+  the speaking and talking lanes wait for `listening-started`, which runs only once OpenAI has made the
+  call. A session that ends, however it ends, closes its open pairs and reserves its `listening-stopped`
+  (with the reason) in the listening lane at once, behind those closing hooks, so a session that takes over
+  starts its own hooks only after them (`dispose` waits up to 3 s for them). The command runs only on a machine bb lists as active, the one the
   desktop window names (`hookTarget`), and is always the one stored for it. The debug log records the
   moment, the machine, the exit status and the duration of each run; the host entry never reads the
   output, so nothing a command prints can reach the log.
@@ -144,7 +157,7 @@ the voice, the decisions behind phase 1, and the phase 0 decision record.
   composer action in each thread view that renders nothing, opens with its thread's controller; with no
   thread in view, the overlay sends it to the first mate's thread and navigates there. Checked in a dev bb:
   the palette and the bug button both opened the tab, at desktop and phone widths. It
-  is a poll over an app-only RPC rather than a realtime channel, so nothing leaves the server unasked. For
+  is a poll over a client-only RPC rather than a realtime channel, so nothing leaves the server unasked. For
   the exact text a send relayed, `voice.v1`'s ask and answer now return the message and the agent-only
   note as firstmate-crew sent them (optional fields: an older crew answers without them, and the panel then
   shows the parts the voice sent).

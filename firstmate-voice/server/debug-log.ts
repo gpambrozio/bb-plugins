@@ -6,7 +6,8 @@
  * it went, each first-mate message the voice read, announcements, interruptions, errors and the session's
  * own events, and each run of the owner's voice hook on their machine (never its output).
  *
- * - **Local only.** It lives in this server's memory and is read through an app-only RPC (`debug.log`);
+ * - **Local only.** It lives in this server's memory and is read through a client-only RPC (`debug.log`: bb's
+ *   app, or its command line on this bb, never another plugin);
  *   nothing here is published, stored or logged. A new Talk starts a new log, so it holds the current
  *   session, or the last one until the next; a reload of the plugin forgets it.
  * - **No credential.** Every text passes through `scrub` (the token's patterns from `redact`, and API keys)

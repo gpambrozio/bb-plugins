@@ -56,11 +56,30 @@ describe.runIf(posix)("running a voice hook on its machine", () => {
     expect(() => readFileSync(marker)).toThrow();
   });
 
-  it("does not wait for a background process the command left behind", async () => {
+  it("does not wait for a background process the command left behind, and stops it when the command exits", async () => {
+    const marker = join(scratch(), "background-still-running");
     const started = Date.now();
-    const run = await runHook("talking-stopped", null, "sleep 5 &");
-    expect(run.exitCode).toBe(0);
+    // The shell exits at once; its background child would write the marker after 0.4 s, inside the time limit.
+    const run = await runHook("talking-stopped", null, `(sleep 0.4; touch '${marker}') &`);
+    expect(run).toMatchObject({ exitCode: 0, timedOut: false });
     expect(Date.now() - started).toBeLessThan(5_000);
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+    expect(() => readFileSync(marker)).toThrow();
+  });
+
+  it("leaves nothing behind when the worker is disposed, a command's background child included", async () => {
+    const marker = join(scratch(), "after-dispose");
+    const harness = experimental_createHostEntryHarness(hostEntry);
+    let running: Promise<unknown> = Promise.resolve();
+    try {
+      running = harness.experimental_call("run", { command: `(sleep 0.4; touch '${marker}') & sleep 30`, event: "speaking-started", reason: null });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    } finally {
+      await harness.experimental_dispose();
+    }
+    await expect(running).resolves.toMatchObject({ signal: "SIGKILL" });
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+    expect(() => readFileSync(marker)).toThrow();
   });
 
   it("reports a command that could not be started", async () => {

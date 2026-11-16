@@ -279,8 +279,9 @@ export class VoiceSession {
   async start(sdp: string): Promise<string> {
     const { model, effort, voice, eagerness } = this.config;
     this.debug.add("session", "Listening started", `Model ${model}, reasoning ${effort}, voice ${voice}, turn taking ${eagerness}.`);
-    this.hooks?.start();
     const answer = await this.openCall(sdp, "start");
+    // Only once OpenAI has made the call: a start with no real offer or no sign-in runs no hook.
+    this.hooks?.start();
     this.every(IDLE_CHECK_MS, () => this.checkIdle());
     this.every(BRIEF_POLL_MS, () => void this.refresh());
     this.deps.publish({ sessionId: this.id, type: "state", state: "live" });

@@ -1,8 +1,12 @@
 /**
  * The app-facing RPC handlers. A session spends the captain's ChatGPT plan and speaks for the captain to the
- * first mate, so only bb's app may open or steer one: any other plugin is refused before anything runs, the
- * credential lookup and the takeover of a live session included. The voice hooks' commands are shell commands
- * run on the owner's machines, so they are read and set from bb's app only too.
+ * first mate, so another plugin is refused before anything runs, the credential lookup and the takeover of a
+ * live session included; so are the debug log and the voice hooks' commands (shell commands run on the
+ * owner's machines).
+ *
+ * This is not an app-only gate. bb 0.49 names both its app and its command line (`bb plugin rpc call`) a
+ * `client`, with nothing else to tell them apart, so anything that can run `bb` on the owner's bb (an agent
+ * in a thread included) passes it. See AGENTS.md, "Who can reach the RPCs".
  */
 import { experimental_PluginRpcRefusal as PluginRpcRefusal, type ExperimentalPluginRpcHandlersWithContext } from "@get-bb/plugin-sdk";
 
@@ -13,7 +17,7 @@ import type { VoiceSessions } from "./session";
 
 type Caller = { kind: string } | undefined;
 
-/** Throws unless bb names the caller as a client (the app); plugins and an unknown caller are refused. */
+/** Throws unless bb names the caller as a client (its app, or its command line); plugins and an unknown caller are refused. */
 export function requireApp(caller: Caller): void {
   if (caller?.kind !== "client") {
     throw new PluginRpcRefusal({ code: "forbidden", message: "FirstMate voice sessions are opened from bb's app only, never by another plugin." });
