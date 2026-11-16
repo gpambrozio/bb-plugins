@@ -410,3 +410,62 @@ describe("Answer box on a crewmate card", () => {
     expect(view.rpcCalls).toEqual([{ method: "mate.ask", input: { text: "thr_worker — A loose worker: What is this one doing?" } }]);
   });
 });
+
+describe("Long card text", () => {
+  /** jsdom lays nothing out; make every box report a height past three lines when its text is long. */
+  function layOutLongTextAsOverflowing(): () => void {
+    const scroll = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight");
+    const client = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
+    Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+      configurable: true,
+      get(this: HTMLElement) {
+        return (this.textContent ?? "").length > 200 ? 400 : 60;
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, "clientHeight", { configurable: true, get: () => 60 });
+    return () => {
+      if (scroll !== undefined) Object.defineProperty(HTMLElement.prototype, "scrollHeight", scroll);
+      if (client !== undefined) Object.defineProperty(HTMLElement.prototype, "clientHeight", client);
+    };
+  }
+
+  const LONG = "Merged main in; runs 1-3 done on the phone, prompts and all. ".repeat(20).trim();
+
+  it("folds a long title and a long hold to three lines, each with the whole text a click away", () => {
+    const restore = layOutLongTextAsOverflowing();
+    try {
+      renderCard(backlog({ title: `Fix login ${LONG}`, hold: `Which one? ${LONG}` }));
+      const title = screen.getByText(`Fix login ${LONG}`);
+      expect(title.className).toContain("line-clamp-3");
+      expect(title.getAttribute("title")).toBe(`Fix login ${LONG}`);
+
+      fireEvent.click(screen.getByRole("button", { name: "Show all of the title" }));
+      expect(title.className).not.toContain("line-clamp-3");
+      expect(screen.getByRole("button", { name: "Show less of the title" }).getAttribute("aria-expanded")).toBe("true");
+
+      const hold = screen.getByRole("button", { name: "Show all of the captain's call" });
+      expect(hold.previousElementSibling?.className).toContain("line-clamp-3");
+      expect(hold.previousElementSibling?.textContent).toBe(`Captain's call: Which one? ${LONG}`);
+      fireEvent.click(hold);
+      expect(screen.getByRole("button", { name: "Show less of the captain's call" }).previousElementSibling?.className).not.toContain(
+        "line-clamp-3",
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Show less of the title" }));
+      expect(title.className).toContain("line-clamp-3");
+    } finally {
+      restore();
+    }
+  });
+
+  it("shows no button for text that fits", () => {
+    const restore = layOutLongTextAsOverflowing();
+    try {
+      renderCard(backlog());
+      expect(screen.getByText("Choose the database").getAttribute("title")).toBeNull();
+      expect(screen.queryByRole("button", { name: /^Show (all|less) of/ })).toBeNull();
+    } finally {
+      restore();
+    }
+  });
+});

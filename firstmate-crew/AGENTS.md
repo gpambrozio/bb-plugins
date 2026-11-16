@@ -138,6 +138,11 @@ Do not break these; each was paid for.
   parses the charter's examples, so change the three together. The Paseo plugin's port parses the same
   lines by the same rules; keep the two in step. The field is taken out of the line before
   anything else is read, so a prompt's URLs and parentheses never reach the card's title, URL or fields.
+- **Every `(key: value)` group runs to its balanced `)`, whatever its key** (`takeGroups` in
+  `server/backlog.ts`), so a note or hold holding parentheses never lands in the card's title: a regex
+  that stopped at the first `(` inside a value once gave titles of thousands of characters. The board
+  still folds a card's title and hold to three lines (`app/clamped-text.tsx`), so no one card's text
+  can fill a column whatever the parser misses.
 - **Unsent words on a card outlive its unmount** — the Answer box, an open Steer or Relaunch line, a
   worker's Note. Leaving the first mate's thread unmounts the board, so they are kept in `localStorage`
   under the card's `cardSubject` id (`app/drafts.ts`), written on every edit, removed when emptied,
