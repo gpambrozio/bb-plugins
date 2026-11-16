@@ -1,5 +1,6 @@
 /**
- * The pill: while a session is connecting or live, a small bar at the bottom right with what is happening
+ * The pill: while a session is connecting or live, a small bar at the bottom right, in the pill stack it shares
+ * with other plugins' pills (`app/pill-stack.tsx`), with what is happening
  * (connecting, listening, the captain speaking, the voice speaking, muted) and Mute and End. When a session
  * ends or Talk fails it says why, with Talk again. Otherwise it draws nothing. Both carry a Debug button that
  * opens the debug tab (`app/debug.tsx`) in the side panel of the thread in view, or of the first mate's thread,
@@ -16,6 +17,7 @@ import { SESSION_CHANNEL } from "../shared/channel";
 import { voice, type VoiceState } from "./controller";
 import { DEBUG_OPEN_WAIT_MS, debugOpen } from "./debug-view";
 import { createLocalHostLookup } from "./machine";
+import { PillStackPortal, VOICE_PILL_ORDER, pillRootProps } from "./pill-stack";
 
 export function useVoiceState(): VoiceState {
   return useSyncExternalStore(voice.subscribe, () => voice.snapshot);
@@ -76,7 +78,11 @@ export function VoicePill() {
   useRealtime(SESSION_CHANNEL, (payload) => voice.onSignal(payload as SessionSignal));
   useDebugRouting();
 
-  return state.phase === "idle" && state.note === null ? null : <Pill state={state} />;
+  return state.phase === "idle" && state.note === null ? null : (
+    <PillStackPortal>
+      <Pill state={state} />
+    </PillStackPortal>
+  );
 }
 
 function Pill({ state }: { state: VoiceState }) {
@@ -84,7 +90,8 @@ function Pill({ state }: { state: VoiceState }) {
     <div
       role="status"
       aria-live="polite"
-      className="fixed bottom-24 right-3 z-50 flex max-w-[calc(100vw-1.5rem)] items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-sm text-card-foreground shadow-lg sm:bottom-4 sm:right-4"
+      {...pillRootProps(VOICE_PILL_ORDER)}
+      className="flex max-w-full items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-sm text-card-foreground shadow-lg"
     >
       <Icon name="Mic" className={state.phase === "live" && !state.muted ? "text-success" : "text-muted-foreground"} />
       {state.phase === "idle" ? (

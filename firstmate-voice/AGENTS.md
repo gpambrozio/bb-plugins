@@ -29,6 +29,7 @@ the voice, the decisions behind phase 1, and the phase 0 decision record.
 | `server/ports.ts`, `server/testing/fakes.ts` | The ports, and fakes for OpenAI (a sideband a test plays events into), the crew and time. |
 | `shared/crew-voice.ts` | A copy of firstmate-crew's `shared/voice.ts`; `shared/crew-voice.test.ts` fails when they differ. |
 | `app.tsx`, `app/*` | The pill (an app overlay), the WebRTC leg, the per-window controller, the palette command and the Talk button in the first mate's header. |
+| `app/pill-stack.tsx` | The bottom-right stack the pill shares with other plugins' pills (Screen Sharing's), at order 10. |
 | `scripts/live-check-call.ts`, `scripts/probes.ts` | The phase 0 credential checks (`npm run live-check-call`). Spends a few seconds of voice time. |
 | `scripts/e2e-desktop.ts` | A live end-to-end run in a dev bb (below). Spends a few minutes of voice time. |
 | `phase1-results/`, `spike-results/` | What the live runs recorded. No tokens. |

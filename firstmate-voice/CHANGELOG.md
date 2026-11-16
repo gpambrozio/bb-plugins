@@ -10,7 +10,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - **Talk to your first mate out loud.** A Talk button on the first mate's thread and a command in the
-  palette start a voice session on the desktop or on your phone, with a small bar to mute or end it.
+  palette start a voice session on the desktop or on your phone, with a small bar to mute or end it. The bar stacks with Screen Sharing's in the corner instead of
+  covering it.
 - **Answers from the board,** without waking the first mate: what needs you, what is running, what a
   worker last said, what is next.
 - **Requests in your own words.** Anything else goes to the first mate exactly as you said it, all of it

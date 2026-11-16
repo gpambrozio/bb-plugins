@@ -55,7 +55,7 @@ bb plugin install 'git:github.com/gpambrozio/bb-plugins@>=0.1.0' --plugin firstm
 - **Talk** is a button in the first mate's thread header, and **FirstMate voice: talk or end** is in the
   command palette. The first time, bb asks for the microphone.
 - While you talk, a small bar at the bottom right says whether it is listening or speaking, with **Mute**
-  and **End**. Saying "goodbye" ends it too.
+  and **End**. It sits beside Screen Sharing's bar there, closer to the corner, rather than over it. Saying "goodbye" ends it too.
 - A session ends by itself after ten quiet minutes, and is renewed without a break at OpenAI's one-hour
   limit.
 - **Debug log.** The bug button on the bar, **FirstMate voice: debug log** in the palette, or **Voice debug
