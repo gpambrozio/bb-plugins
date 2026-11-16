@@ -54,12 +54,14 @@ bb plugin install 'git:github.com/gpambrozio/bb-plugins@>=0.1.0' --plugin firstm
 
 - **Talk** is a button in the first mate's thread header, and **FirstMate voice: talk or end** is in the
   command palette. The first time, bb asks for the microphone.
-- While you talk, a small bar at the bottom right says whether it is listening or speaking, with **Mute**
-  and **End**. It sits beside Screen Sharing's bar there, closer to the corner, rather than over it. Saying "goodbye" ends it too.
+- While you talk, a card in bb's notifications says whether it is connecting, listening, hearing you or
+  speaking, with **Mute** (or **Unmute**) and **End**. It stays until the session ends, stacked with bb's
+  other notifications. Saying "goodbye" ends it too. When a session ends, the card says why, with **Talk**
+  to start again and **Close**.
 - A session ends by itself after ten quiet minutes, and is renewed without a break at OpenAI's one-hour
   limit.
-- **Debug log.** The bug button on the bar, **FirstMate voice: debug log** in the palette, or **Voice debug
-  log** in the first mate's header menu opens **Voice debug**, a tab in the thread's side panel that you can
+- **Debug log.** **FirstMate voice: debug log** in the palette, or **Voice debug log** in the first mate's
+  header menu, opens **Voice debug**, a tab in the thread's side panel that you can
   keep open beside the chat (full screen on a phone), marked *Debug*, of everything since you
   last tapped Talk, oldest first, each with its time and seconds since the start: the standing instructions
   and session the call was made with, every item put in the voice's conversation (the brief, its updates,

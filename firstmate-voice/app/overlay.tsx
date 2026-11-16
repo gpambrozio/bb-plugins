@@ -1,23 +1,20 @@
 /**
- * The pill: while a session is connecting or live, a small bar at the bottom right, in the pill stack it shares
- * with other plugins' pills (`app/pill-stack.tsx`), with what is happening
- * (connecting, listening, the captain speaking, the voice speaking, muted) and Mute and End. When a session
- * ends or Talk fails it says why, with Talk again. Otherwise it draws nothing. Both carry a Debug button that
- * opens the debug tab (`app/debug.tsx`) in the side panel of the thread in view, or of the first mate's thread,
- * which it navigates to. It is an app overlay, mounted once per window, so it also hands the controller its RPC
- * client and the server's session signals.
+ * The pill: a bb toast, in bb's own toast stack, while a session is connecting or live, with what is happening
+ * (connecting, listening, the captain speaking, the voice speaking, muted), Mute or Unmute and End. When a
+ * session ends or Talk fails it says why, with Talk again and Close. Otherwise there is no toast. It is an app
+ * overlay, mounted once per window and drawing nothing itself, so it also hands the controller its RPC client
+ * and the server's session signals, and sends a debug-tab request with no thread named to the first mate's thread.
  */
-import { useEffect, useMemo, useSyncExternalStore } from "react";
-import { experimental_Icon as Icon, useBbContext, useBbNavigate, useRealtime, useRpc, useSdk } from "@get-bb/plugin-sdk/app";
+import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
+import { toast } from "sonner";
+import { useBbContext, useBbNavigate, useRealtime, useRpc, useSdk } from "@get-bb/plugin-sdk/app";
 
-import { Button } from "@/components/ui/button";
 import type { rpcContract } from "../server";
 import type { SessionSignal } from "../server/session";
 import { SESSION_CHANNEL } from "../shared/channel";
 import { voice, type VoiceState } from "./controller";
 import { DEBUG_OPEN_WAIT_MS, debugOpen } from "./debug-view";
 import { createLocalHostLookup } from "./machine";
-import { PillStackPortal, VOICE_PILL_ORDER, pillRootProps } from "./pill-stack";
 
 export function useVoiceState(): VoiceState {
   return useSyncExternalStore(voice.subscribe, () => voice.snapshot);
@@ -32,12 +29,113 @@ export function statusText(state: VoiceState): string {
   return "Listening";
 }
 
-function DebugButton() {
-  const { threadId } = useBbContext();
-  return (
-    <Button type="button" size="sm" variant="ghost" aria-label="Open the voice debug log" onClick={() => debugOpen.ask(threadId)}>
-      <Icon name="Bug" />
-    </Button>
+type ActionKind = "mute" | "unmute" | "talk";
+type CancelKind = "end" | "close";
+
+/** What the toast says and offers in a state, or null for no toast. */
+export interface VoiceToast {
+  title: string;
+  description: string | undefined;
+  action: ActionKind | null;
+  cancel: CancelKind | null;
+}
+
+export function voiceToast(state: VoiceState): VoiceToast | null {
+  if (state.phase === "idle") {
+    return state.note === null ? null : { title: "FirstMate voice", description: state.note, action: "talk", cancel: "close" };
+  }
+  const title = `FirstMate voice · ${statusText(state)}`;
+  if (state.phase === "connecting") return { title, description: undefined, action: null, cancel: "end" };
+  if (state.phase === "ending") return { title, description: undefined, action: null, cancel: null };
+  return { title, description: undefined, action: state.muted ? "unmute" : "mute", cancel: "end" };
+}
+
+const ACTION_LABELS: Record<ActionKind, string> = { mute: "Mute", unmute: "Unmute", talk: "Talk" };
+const CANCEL_LABELS: Record<CancelKind, string> = { end: "End", close: "Close" };
+
+function runAction(kind: ActionKind): void {
+  if (kind === "talk") voice.talk();
+  else voice.toggleMute();
+}
+
+function runCancel(kind: CancelKind): void {
+  if (kind === "end") void voice.end("ended by the captain");
+  else voice.dismiss();
+}
+
+/**
+ * The toast's id: showing it again with the same id updates it in place. It is this loaded copy's own, since a
+ * reload mounts the new copy before the old one unmounts and the old one's clean-up must not dismiss the new
+ * one's toast. Each toast that goes (End and Close dismiss theirs at once, as sonner's cancel button does) takes
+ * its id with it, and the next one gets a new id, so a toast shown again at once is not merged into the one
+ * still fading out.
+ */
+export const VOICE_TOAST_ID = `firstmate-voice-session-${Math.random().toString(36).slice(2, 10)}`;
+
+function useVoiceToast(state: VoiceState): void {
+  const shown = voiceToast(state);
+  // The buttons read these at click time, so the toast is not shown again for a new function.
+  const latest = useRef(shown);
+  latest.current = shown;
+  const toastRef = useRef({ count: 0, up: false });
+  const id = () => `${VOICE_TOAST_ID}-${toastRef.current.count}`;
+  const gone = () => {
+    toastRef.current = { count: toastRef.current.count + 1, up: false };
+  };
+
+  const title = shown?.title ?? null;
+  const description = shown?.description;
+  const action = shown?.action ?? null;
+  const cancel = shown?.cancel ?? null;
+
+  useEffect(() => {
+    if (title === null) {
+      if (toastRef.current.up) {
+        toast.dismiss(id());
+        gone();
+      }
+      return;
+    }
+    toast(title, {
+      id: id(),
+      duration: Infinity,
+      dismissible: false,
+      description,
+      // An action that calls preventDefault keeps the toast up; it changes in place as the state does.
+      action:
+        action === null
+          ? undefined
+          : {
+              label: ACTION_LABELS[action],
+              onClick: (event) => {
+                event.preventDefault();
+                const now = latest.current?.action;
+                if (now === action) runAction(action);
+              },
+            },
+      // A cancel always dismisses its toast; End's ended state and the next Talk come in a new one.
+      cancel:
+        cancel === null
+          ? undefined
+          : {
+              label: CANCEL_LABELS[cancel],
+              onClick: () => {
+                gone();
+                if (latest.current?.cancel === cancel) runCancel(cancel);
+              },
+            },
+    });
+    toastRef.current.up = true;
+  }, [title, description, action, cancel]);
+
+  // Unmounted (the plugin disabled, removed or reloaded): take the toast with it.
+  useEffect(
+    () => () => {
+      if (!toastRef.current.up) return;
+      toast.dismiss(id());
+      gone();
+    },
+    [],
   );
 }
 
@@ -77,46 +175,7 @@ export function VoicePill() {
   useEffect(() => voice.attach(rpc, machine), [rpc, machine]);
   useRealtime(SESSION_CHANNEL, (payload) => voice.onSignal(payload as SessionSignal));
   useDebugRouting();
+  useVoiceToast(state);
 
-  return state.phase === "idle" && state.note === null ? null : (
-    <PillStackPortal>
-      <Pill state={state} />
-    </PillStackPortal>
-  );
-}
-
-function Pill({ state }: { state: VoiceState }) {
-  return (
-    <div
-      role="status"
-      aria-live="polite"
-      {...pillRootProps(VOICE_PILL_ORDER)}
-      className="flex max-w-full items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-sm text-card-foreground shadow-lg"
-    >
-      <Icon name="Mic" className={state.phase === "live" && !state.muted ? "text-success" : "text-muted-foreground"} />
-      {state.phase === "idle" ? (
-        <>
-          <span className="min-w-0 truncate text-muted-foreground">{state.note}</span>
-          <Button type="button" size="sm" variant="outline" onClick={() => voice.talk()}>
-            Talk
-          </Button>
-          <DebugButton />
-          <Button type="button" size="sm" variant="ghost" aria-label="Dismiss" onClick={() => voice.dismiss()}>
-            <Icon name="X" />
-          </Button>
-        </>
-      ) : (
-        <>
-          <span className="whitespace-nowrap font-medium">FirstMate voice · {statusText(state)}</span>
-          <Button type="button" size="sm" variant="outline" disabled={state.phase !== "live"} aria-pressed={state.muted} onClick={() => voice.toggleMute()}>
-            {state.muted ? "Unmute" : "Mute"}
-          </Button>
-          <Button type="button" size="sm" variant="destructive" disabled={state.phase === "ending"} onClick={() => void voice.end("ended by the captain")}>
-            End
-          </Button>
-          <DebugButton />
-        </>
-      )}
-    </div>
-  );
+  return null;
 }

@@ -28,8 +28,7 @@ the voice, the decisions behind phase 1, and the phase 0 decision record.
 | `server/credentials.ts`, `server/crew-client.ts` | codex-realtime's `realtimeConnection`; firstmate-crew's `voice.v1`. |
 | `server/ports.ts`, `server/testing/fakes.ts` | The ports, and fakes for OpenAI (a sideband a test plays events into), the crew and time. |
 | `shared/crew-voice.ts` | A copy of firstmate-crew's `shared/voice.ts`; `shared/crew-voice.test.ts` fails when they differ. |
-| `app.tsx`, `app/*` | The pill (an app overlay), the WebRTC leg, the per-window controller, the palette command and the Talk button in the first mate's header. |
-| `app/pill-stack.tsx` | The bottom-right stack the pill shares with other plugins' pills (Screen Sharing's), at order 10. |
+| `app.tsx`, `app/*` | The pill (an app overlay that shows a bb toast), the WebRTC leg, the per-window controller, the palette command and the Talk button in the first mate's header. |
 | `scripts/live-check-call.ts`, `scripts/probes.ts` | The phase 0 credential checks (`npm run live-check-call`). Spends a few seconds of voice time. |
 | `scripts/e2e-desktop.ts` | A live end-to-end run in a dev bb (below). Spends a few minutes of voice time. |
 | `phase1-results/`, `spike-results/` | What the live runs recorded. No tokens. |
@@ -153,12 +152,13 @@ the voice, the decisions behind phase 1, and the phase 0 decision record.
   line lists its project, pull request and buttons.
 - **A debug view for tuning the loop** (the owner's call, 2026-11-15). First a full-window overlay; the owner then
   asked for a side panel kept open beside the chat, so it is an action tab of the thread's side panel
-  (`DEBUG_TAB`), marked Debug, opened through bb's panel controller from the pill's bug button, the
-  palette and the first mate's header menu, and full screen on a phone. The palette and the menu get the
+  (`DEBUG_TAB`), marked Debug, opened through bb's panel controller from the
+  palette and the first mate's header menu, and full screen on a phone (the pill had a bug button too, until
+  it became a toast, which has room for two buttons). The palette and the menu get the
   focused thread's controller. The pill is an app overlay, and an overlay's `experimental_useAppPanel()`
   is bb's default controller, which declines every call (bb 0.49.0: only the thread view, plugin pages and
-  the New thread screen provide one). So the pill leaves a request (`debugOpen`) that `DebugOpener`, a
-  composer action in each thread view that renders nothing, opens with its thread's controller; with no
+  the New thread screen provide one). So a request with no panel to take it (`debugOpen`) waits for `DebugOpener`, a
+  composer action in each thread view that renders nothing, to open it with its thread's controller; with no
   thread in view, the overlay sends it to the first mate's thread and navigates there. Checked in a dev bb:
   the palette and the bug button both opened the tab, at desktop and phone widths. It
   is a poll over a client-only RPC rather than a realtime channel, so nothing leaves the server unasked. For
@@ -179,6 +179,18 @@ the voice, the decisions behind phase 1, and the phase 0 decision record.
   under way and a second has passed quietly, so a tool call between two spoken replies keeps one pair.
   The first version kept a shell command per machine in the plugin's storage, set from the settings page;
   review pass 1 found that `bb plugin rpc call` could set and trigger it, so the owner moved it to the file.
+- **The pill is a bb toast** (the owner's call, 2026-11-16, as Screen Sharing did; the root `AGENTS.md`
+  has the recipe). A pinned pill covered Screen Sharing's and bb's toasts, and bb lays out no overlays, so
+  `VoicePill` renders nothing and shows `toast(title, { id, duration: Infinity, dismissible: false,
+  description, action, cancel })` from the `sonner` bb shims, all plain data, so bb draws its own card.
+  Live: Mute or Unmute as `action` (it calls `preventDefault`, which keeps the toast up), End as `cancel`;
+  connecting, End only; ending, no buttons; ended or Talk failed, the note as the description, Talk as
+  `action` and Close as `cancel`. A cancel always dismisses its toast, so End's ended state comes in a new
+  one: each toast's id is the per-load `VOICE_TOAST_ID` plus a count bumped whenever one goes, so a toast
+  shown again at once is not merged into the one still fading out under the same id. The buttons read the
+  state at click time and do nothing for a state already past. End now leaves a note ("Voice ended: …"),
+  as the server's own end does, so the ended state always shows. The debug log lost its bug button there;
+  the palette and the first mate's header menu open it.
 - **No `quiet` tool.** Every phase 1 announcement is P1, which quiet would not hold; it comes with phase 2's
   digests.
 - **The model's account goes with the captain's words** (the captain's call, 2026-11-14, after a long request

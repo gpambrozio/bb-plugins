@@ -10,8 +10,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - **Talk to your first mate out loud.** A Talk button on the first mate's thread and a command in the
-  palette start a voice session on the desktop or on your phone, with a small bar to mute or end it. The bar stacks with Screen Sharing's in the corner instead of
-  covering it.
+  palette start a voice session on the desktop or on your phone, with a bb notification card to mute or end it, which stacks with bb's own notifications and
+  Screen Sharing's. When a session ends it says why, with Talk again and Close.
 - **Answers from the board,** without waking the first mate: what needs you, what is running, what a
   worker last said, what is next.
 - **Requests in your own words.** Anything else goes to the first mate exactly as you said it, all of it
@@ -27,8 +27,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   first mate posts while you talk (not only answers to what you asked by voice), first sentence first.
   Several at once go in order, one sentence each.
 - Sessions renew at OpenAI's one-hour limit and end after ten quiet minutes.
-- **A debug log of the session,** for tuning the voice: the bug button on the voice bar, "FirstMate voice:
-  debug log" in the palette, or the first mate's header menu opens it as a "Voice debug" tab in the thread's
+- **A debug log of the session,** for tuning the voice: "FirstMate voice: debug log" in the palette or the
+  first mate's header menu opens it as a "Voice debug" tab in the thread's
   side panel, beside the chat, on the desktop or the phone. It shows, in order and timed, what the voice was told at the start, what you said and what it
   said, its tool calls and their answers, each message it handed the first mate word for word, each message
   from the first mate, announcements, interruptions and errors. It stays on your bb, in memory, until you

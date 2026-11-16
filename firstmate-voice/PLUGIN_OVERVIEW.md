@@ -21,7 +21,7 @@ Audio goes from your device to OpenAI's Realtime voice model over WebRTC. The bb
 ## Good to know
 
 - What you say is kept in memory and never logged.
-- A debug view, from the voice bar, shows the last session step by step (instructions, transcripts, tool calls, messages to and from the first mate, errors) for tuning; it stays on your bb until you next talk.
+- A debug view, from the command palette or the first mate's menu, shows the last session step by step (instructions, transcripts, tool calls, messages to and from the first mate, errors) for tuning; it stays on your bb until you next talk.
 - Voice hooks: a script you put at `~/.config/firstmate-voice/hook` on a machine runs there as listening starts and stops, as the voice speaks and as you talk, to pause music or dim a light. Nothing in bb can set it. It gets five seconds and never holds the call up.
 - Task titles, workers' last words and the first mate's answers go to OpenAI.
 - A session ends after ten quiet minutes.

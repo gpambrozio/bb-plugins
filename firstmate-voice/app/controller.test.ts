@@ -129,6 +129,8 @@ describe("the voice controller", () => {
     voice.talk();
     await voice.end("ended by the captain");
     expect(voice.snapshot.phase).toBe("idle");
+    // It says why, so the pill shows the ended state with Talk again.
+    expect(voice.snapshot.note).toBe("Voice ended: ended by the captain.");
     const { stream, track } = fakeStream();
     asks[0]?.resolve(stream);
     await flush();

@@ -190,7 +190,8 @@ export class VoiceController {
     if (sessionId !== null) await this.rpc?.call("session.end", { sessionId, reason }).catch(() => null);
     // The server's "ended" signal can arrive first and a new Talk begin before this answer does: that new
     // session is not this End's to tear down.
-    if (attempt === this.attempt) this.teardown(null);
+    // It says why it ended, as the server's own "ended" does, so the pill stays to offer Talk again.
+    if (attempt === this.attempt) this.teardown(`Voice ended: ${reason}.`);
   }
 
   /** What the server said on the session channel. */
@@ -239,7 +240,7 @@ export class VoiceController {
     }
   }
 
-  private teardown(note: string | null): void {
+  private teardown(note: string): void {
     this.attempt += 1;
     if (this.heartbeat !== null) clearInterval(this.heartbeat);
     this.heartbeat = null;
