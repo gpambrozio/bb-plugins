@@ -236,6 +236,16 @@ describe("a dream", () => {
     await expect(service.begin("b", { mode: null, manual: true, trigger: "manual" })).resolves.toBeDefined();
   });
 
+  it("lets only one of two simultaneous starts through", async () => {
+    const { service, order } = setup({ start: at(12), projects: [project("a", null), project("b", null)] });
+    const results = await Promise.allSettled([
+      service.begin("a", { mode: null, manual: true, trigger: "manual" }),
+      service.begin("b", { mode: null, manual: true, trigger: "manual" }),
+    ]);
+    expect(results.map((result) => result.status)).toEqual(["fulfilled", "rejected"]);
+    expect(order).toEqual(["a"]);
+  });
+
   it("is stopped by hand as a failure, so its lock rolls back", async () => {
     const { service, finishes, stopped } = setup({ start: at(12), projects: [project("a", null, 60 * MINUTE)] });
     const { done } = await service.begin("a", { mode: null, manual: true, trigger: "manual" });

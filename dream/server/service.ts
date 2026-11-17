@@ -116,6 +116,8 @@ export function createDreamService(ports: DreamPorts) {
   const history = createHistory(ports.kv);
   /** The completion of the dream this instance is running or watching, if any. */
   let running: Promise<RunRecord> | null = null;
+  /** Set from the first await of `begin` until its run is recorded, so two starts cannot both pass the check. */
+  let starting = false;
   /** Projects the sweep already tried in the window that is open now. */
   let attempted = new Set<string>();
   let disposed = false;
@@ -260,7 +262,8 @@ export function createDreamService(ports: DreamPorts) {
       outcome,
       changes: finished?.changes ?? null,
       summary,
-      proposal: finished?.proposal ?? entry.proposal,
+      // The host names a proposal only when one waits; a dry run that changed nothing leaves none.
+      proposal: finished !== null ? finished.proposal : entry.proposal,
       error: error ?? finishError,
     };
     await record(done);
@@ -276,6 +279,16 @@ export function createDreamService(ports: DreamPorts) {
    * `DreamError` with the host's reason when the project is refused.
    */
   async function begin(projectId: string, options: { mode: Mode | null; manual: boolean; trigger: RunRecord["trigger"] }): Promise<{ record: RunRecord; done: Promise<RunRecord> }> {
+    if (starting) throw new DreamError("A dream is starting; dreams run one at a time.");
+    starting = true;
+    try {
+      return await beginOne(projectId, options);
+    } finally {
+      starting = false;
+    }
+  }
+
+  async function beginOne(projectId: string, options: { mode: Mode | null; manual: boolean; trigger: RunRecord["trigger"] }): Promise<{ record: RunRecord; done: Promise<RunRecord> }> {
     if (running !== null || (await activeRecord()) !== null) {
       const active = await activeRecord();
       throw new DreamError(`A dream is already running${active ? ` for ${active.projectName}` : ""}; dreams run one at a time.`);

@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { acquireLock, lastConsolidatedAt, lockPath, lockState, markConsolidated, rollbackLock, LOCK_STALE_MS } from "./lock";
 import { applyProposal, createProposal, discardProposal, finishProposal, pendingProposal, planApply, ProposalConflictError } from "./proposals";
 import { backup, diffManifests, listBackups, manifest, newestChange, pruneBackups, restoreBackup, stampOf, stampTime } from "./snapshot";
-import { checkoutFolders, checkoutSlugs, listSessions, parseWorktreeFolder, sessionTitle } from "./transcripts";
+import { checkoutFolders, checkoutSlugs, listSessions, parseWorktreeFolder, sessionTitle, TITLE_WINDOW_BYTES } from "./transcripts";
 
 let root: string;
 let memory: string;
@@ -202,5 +202,16 @@ describe("transcript folders", () => {
     expect(await sessionTitle(path.join(projects, folder, "s1.jsonl"))).toBe("Build fix, by hand");
     expect(await sessionTitle(path.join(projects, folder, "s2.jsonl"))).toBe("Only AI");
     expect(listSessions(projects, "missing")).toEqual([]);
+  });
+
+  it("finds a title at either end of a large transcript without reading the middle", async () => {
+    const file = path.join(root, "big.jsonl");
+    const filler = `${JSON.stringify({ type: "assistant", text: "x".repeat(1000) })}\n`;
+    const middle = filler.repeat(Math.ceil((3 * TITLE_WINDOW_BYTES) / filler.length));
+    const early = `${JSON.stringify({ type: "ai-title", aiTitle: "Early title" })}\n`;
+    const hidden = `${JSON.stringify({ type: "custom-title", customTitle: "In the middle" })}\n`;
+    const late = `${JSON.stringify({ type: "ai-title", aiTitle: "Late title" })}\n`;
+    write(file, early + middle + hidden + middle + late);
+    expect(await sessionTitle(file)).toBe("Late title");
   });
 });

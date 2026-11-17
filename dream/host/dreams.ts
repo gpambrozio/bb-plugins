@@ -32,6 +32,8 @@ import { writeWorkspace } from "./workspace";
 
 /** The most sessions a dream's prompt lists; the rest are counted. */
 export const MAX_LISTED_SESSIONS = 300;
+/** Longer than any dream (45 minutes) plus the server's grace for a lost run. */
+const LEASE_LIMIT_MS = 2 * 3_600_000;
 const INSTRUCTION_FILES = ["CLAUDE.md", ".claude/CLAUDE.md", "CLAUDE.local.md", "AGENTS.md"];
 
 export interface DreamsOptions {
@@ -298,7 +300,19 @@ export function createDreams(options: DreamsOptions) {
           state.runs[input.runId] = run;
           recordHistory(own, { runId: input.runId, mode, startedAt, endedAt: null, outcome: "running", threadId: null, changes: null, backup: backupStamp, proposal: proposalStamp });
           save(state);
-          if (retain) leases.set(input.runId, retain());
+          if (retain) {
+            const release = retain();
+            // A run whose `finish` never comes (the server lost it) must not keep the worker for ever.
+            const timer = setTimeout(() => {
+              release();
+              leases.delete(input.runId);
+            }, LEASE_LIMIT_MS);
+            timer.unref?.();
+            leases.set(input.runId, () => {
+              clearTimeout(timer);
+              release();
+            });
+          }
 
           return {
             ok: true,

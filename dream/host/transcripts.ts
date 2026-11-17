@@ -96,33 +96,46 @@ export function listSessions(projectsDir: string, folder: string): SessionFile[]
 /** Only these lines are parsed; the rest of a transcript is never read into memory whole. */
 const TITLE_LINE = /^\{"type":"(custom-title|ai-title)"/;
 const MAX_TITLE_LENGTH = 120;
+/** Titles are looked for in the first and last this many bytes, so a huge transcript costs little. */
+export const TITLE_WINDOW_BYTES = 1024 * 1024;
 
-/**
- * A session's title: the last title the user gave it (`custom-title`), else the last one Claude Code
- * wrote (`ai-title`), else null. Reads the file a line at a time and parses only title lines.
- */
-export async function sessionTitle(file: string): Promise<string | null> {
-  let custom: string | null = null;
-  let ai: string | null = null;
-  const lines = createInterface({ input: createReadStream(file, { encoding: "utf8" }), crlfDelay: Infinity });
+async function titleLines(file: string, start: number, end: number, found: { custom: string | null; ai: string | null }): Promise<void> {
+  const lines = createInterface({ input: createReadStream(file, { encoding: "utf8", start, end }), crlfDelay: Infinity });
   try {
     for await (const line of lines) {
       const match = TITLE_LINE.exec(line);
       if (!match) continue;
       try {
         const record = JSON.parse(line) as { customTitle?: unknown; aiTitle?: unknown };
-        if (match[1] === "custom-title" && typeof record.customTitle === "string") custom = record.customTitle;
-        if (match[1] === "ai-title" && typeof record.aiTitle === "string") ai = record.aiTitle;
+        if (match[1] === "custom-title" && typeof record.customTitle === "string") found.custom = record.customTitle;
+        if (match[1] === "ai-title" && typeof record.aiTitle === "string") found.ai = record.aiTitle;
       } catch {
-        // A line cut short while the session was still writing it.
+        // A line cut by the window, or still being written.
       }
     }
-  } catch {
-    return null;
   } finally {
     lines.close();
   }
-  const title = (custom ?? ai)?.replace(/\s+/g, " ").trim();
+}
+
+/**
+ * A session's title: the last title the user gave it (`custom-title`), else the last one Claude Code
+ * wrote (`ai-title`), else null. Reads the first and last `TITLE_WINDOW_BYTES` a line at a time and
+ * parses only title lines.
+ */
+export async function sessionTitle(file: string): Promise<string | null> {
+  const found: { custom: string | null; ai: string | null } = { custom: null, ai: null };
+  try {
+    const size = statSync(file).size;
+    if (size <= 2 * TITLE_WINDOW_BYTES) await titleLines(file, 0, Math.max(0, size - 1), found);
+    else {
+      await titleLines(file, 0, TITLE_WINDOW_BYTES - 1, found);
+      await titleLines(file, size - TITLE_WINDOW_BYTES, size - 1, found);
+    }
+  } catch {
+    return null;
+  }
+  const title = (found.custom ?? found.ai)?.replace(/\s+/g, " ").trim();
   if (!title) return null;
   return title.length > MAX_TITLE_LENGTH ? `${title.slice(0, MAX_TITLE_LENGTH - 1)}…` : title;
 }

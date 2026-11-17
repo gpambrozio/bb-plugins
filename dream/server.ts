@@ -112,7 +112,11 @@ export default async function plugin(bb: BbPluginApi) {
     if (pending.length > 0) return { kind: "asking" };
     if (thread.status !== "idle") return { kind: "running" };
     const completed = await bb.sdk.threads.events.list({ threadId, types: ["turn/completed"], order: "desc", limit: "1" });
-    return completed.length > 0 ? { kind: "finished" } : { kind: "running" };
+    if (completed.length === 0) return { kind: "running" };
+    // An interrupted or failed turn is not a dream that finished.
+    const last = completed[0];
+    const status = last.type === "turn/completed" ? last.data.status : undefined;
+    return status === undefined || status === "completed" ? { kind: "finished" } : { kind: "failed", error: `The dream's turn ended ${String(status)}.` };
   }
 
   const service = createDreamService({
