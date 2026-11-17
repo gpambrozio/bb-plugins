@@ -376,9 +376,10 @@ second flag would have been two switches for one thing. What must stay true:
   and moves `hushes`. Every delivery carries the generation it was *queued* in, so one under way (a render
   still out included) or queued behind it drops out even if Herald is unmuted before its turn, without
   releasing its claim, so no other window picks it up (review pass 1: capturing it when playback started
-  let a sentence queued during the mute play after unmute). While muted, `onEntries` counts every new
-  entry as said as it arrives, **a sentence still being written included**, so nothing that came up
-  during the mute is said later; the README promises this. Presses (*Read again*, *Test voice*) made
+  let a sentence queued during the mute play after unmute). `silence()` also counts every entry listed at that moment as said, a
+  sentence still being written included, since it may land after the unmute with no list read during the
+  mute (review pass 2). While muted, `onEntries` counts every new entry as said as it arrives, **a
+  sentence still being written included**, so nothing that came up during the mute is said later; the README promises this. Presses (*Read again*, *Test voice*) made
   during or after the mute speak as before.
 - **A late read never undoes a push** (`app/bridge.tsx`, `muteEpoch`): every `mute.get` started and every
   push heard moves the epoch, and a read answers only if nothing came after it started. A read sent before

@@ -488,6 +488,23 @@ describe("Announcer", () => {
     expect(audio.playAudio).not.toHaveBeenCalled();
   });
 
+  it("never speaks a sentence being written when Herald was muted, even with no list read during the mute", async () => {
+    const switches: Partial<SpeechSettings> = { speak: true };
+    const { announcer, audio } = setup({ settings: switches });
+    announcer.onEntries([]);
+    announcer.onEntries([entry("a", { summary: { status: "pending", fallback: "Sentence a." } })]);
+    switches.speak = false;
+    announcer.silence();
+    switches.speak = true;
+    announcer.onEntries([entry("a")]);
+    await settle();
+    expect(audio.playAudio).not.toHaveBeenCalled();
+    // What comes up after the unmute is said.
+    announcer.onEntries([entry("a"), entry("b", { createdAt: "2026-09-15T10:01:00.000Z" })]);
+    await settle();
+    expect(audio.playAudio).toHaveBeenCalledTimes(1);
+  });
+
   it("still says Test voice and Read again pressed while muted, and after a mute", async () => {
     const switches: Partial<SpeechSettings> = { speak: true };
     const { announcer, audio } = setup({ settings: switches });

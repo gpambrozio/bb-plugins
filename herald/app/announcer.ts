@@ -174,6 +174,9 @@ export class Announcer {
     this.hushes += 1;
     // Another window's announcement this one was waiting to take over is not said later either.
     this.lost.clear();
+    // Nor is anything listed now, a sentence still being written included: it
+    // may land after Herald is unmuted, with no list read during the mute.
+    for (const eventId of this.current) this.spoken.add(eventId);
     this.deps.audio.stopSpeaking();
     this.deps.audio.stopAudio();
   }
