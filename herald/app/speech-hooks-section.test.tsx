@@ -54,9 +54,13 @@ describe("Speech hooks settings", () => {
     const save = screen.getByText("Save hooks for Studio Mac").closest("button") as HTMLButtonElement;
     expect(save.disabled).toBe(true);
     fireEvent.change(before, { target: { value: "osascript -e 'tell application \"Music\" to pause'" } });
+    await waitFor(() => expect(save.disabled).toBe(false));
     fireEvent.click(save);
-    await waitFor(() =>
-      expect(saves).toEqual([{ hostId: "host_mac", before: "osascript -e 'tell application \"Music\" to pause'", after: "" }]),
+    // The save goes through the harness's RPC; a full parallel run on a busy CI machine has taken over
+    // waitFor's one-second default here, so it gets longer.
+    await waitFor(
+      () => expect(saves).toEqual([{ hostId: "host_mac", before: "osascript -e 'tell application \"Music\" to pause'", after: "" }]),
+      { timeout: 5_000 },
     );
   });
 
