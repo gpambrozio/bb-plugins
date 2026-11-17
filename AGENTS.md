@@ -385,7 +385,8 @@ is enrolled — say which one you chose in the plugin's `AGENTS.md`. `launchd-jo
   the worker, but puts bb's CLI folder first on its PATH, so a child's `bb` runs and then targets
   127.0.0.1:38886. On a machine joined through bb Connect nothing answers there: the CLI needs the daemon's
   loopback relay, which bb gives terminals and threads as `BB_SERVER_URL` and plugins not at all.
-  `firstmate-voice/host/relay.ts` finds it from the worker's parent (bb internals).
+  `firstmate-voice/host/relay.ts` finds it from the worker's parent (bb internals). Through bb Connect the
+  relay passes only `/api/v1/…`: the public gate answers `/health` with a 401 even with the credential.
 - **Testing a host entry:** `experimental_createHostEntryHarness` (`@get-bb/plugin-sdk/testing/host`)
   runs it with the daemon's validation and counts leases. Wiring `createFakePluginHost`'s
   `experimental_callHostRpc` and `harness.experimental_emitHostSignal` to the entry's logic tests the

@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { answersAsServer, listLoopbackPorts, parseLsofPorts, RELAY_LOOKUP_MS, RelayFinder, type RelayDeps } from "./relay";
+import { RELAY_NOTE_MAX } from "../shared/hooks";
+import { answersAsServer, listLoopbackPorts, parseLsofPorts, PROBE_PATH, RELAY_LOOKUP_MS, RelayFinder, type RelayDeps } from "./relay";
 import { hookPath, runMachineHook } from "./run-hook";
 
 const posix = process.platform !== "win32";
@@ -20,11 +21,24 @@ afterEach(async () => {
   dirs = [];
 });
 
-/** A loopback server that answers every request with `answer`, and keeps the headers it was sent. */
-async function serve(answer: { status: number; body: string; type?: string; delayMs?: number }): Promise<{ port: number; seen: IncomingHttpHeaders[] }> {
+interface Answer {
+  status: number;
+  body: string;
+  type?: string;
+  delayMs?: number;
+}
+
+/**
+ * A loopback server that answers every request with `answer`, or by path when given a map (a 404 for a
+ * path it lacks), and keeps the paths and headers it was sent.
+ */
+async function serve(answers: Answer | Record<string, Answer>): Promise<{ port: number; seen: IncomingHttpHeaders[]; paths: string[] }> {
   const seen: IncomingHttpHeaders[] = [];
+  const paths: string[] = [];
   const server = createServer((req, res) => {
     seen.push(req.headers);
+    paths.push(req.url ?? "");
+    const answer: Answer = "status" in answers ? (answers as Answer) : ((answers as Record<string, Answer>)[req.url ?? ""] ?? { status: 404, body: "" });
     setTimeout(() => {
       res.writeHead(answer.status, { "content-type": answer.type ?? "application/json" });
       res.end(answer.body);
@@ -34,7 +48,7 @@ async function serve(answer: { status: number; body: string; type?: string; dela
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
   if (address === null || typeof address === "string") throw new Error("no port");
-  return { port: address.port, seen };
+  return { port: address.port, seen, paths };
 }
 
 /** A daemon whose ports and answers the test sets; real timers, as `RelayFinder` would use. */
@@ -50,7 +64,7 @@ function fakeDaemon(state: { pid?: number; ports: number[] | Error; servers: num
     },
     answersAsServer: async (port) => {
       probed.push(port);
-      return state.servers.includes(port);
+      return state.servers.includes(port) ? { server: true } : { server: false, seen: "HTTP 404" };
     },
     setTimeout: (fn, ms) => setTimeout(fn, ms),
     clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
@@ -76,26 +90,52 @@ describe("reading lsof's answer", () => {
 });
 
 describe("knowing bb's server on a port", () => {
-  it("is an answer to /health of {ok: true} in JSON, as bb's own CLI checks", async () => {
-    const server = await serve({ status: 200, body: JSON.stringify({ ok: true, launchId: "x" }) });
-    await expect(answersAsServer(server.port)).resolves.toBe(true);
+  const attention = { status: 200, body: JSON.stringify({ hasAttention: false }) };
+
+  it(`is an answer to ${PROBE_PATH} of {hasAttention: <boolean>} in JSON`, async () => {
+    const server = await serve(attention);
+    await expect(answersAsServer(server.port)).resolves.toEqual({ server: true });
+    expect(server.paths).toEqual([PROBE_PATH]);
     // A plain request: no browser headers, which the relay refuses, and its own address as the Host.
     expect(server.seen[0]).not.toHaveProperty("origin");
     expect(server.seen[0]).not.toHaveProperty("sec-fetch-site");
     expect(server.seen[0]?.host).toBe(`127.0.0.1:${server.port}`);
   });
 
-  it("is not the daemon's own API (plain ok), a 404, anything else, nothing listening or too slow", async () => {
-    const localApi = await serve({ status: 200, body: "ok", type: "text/plain" });
+  // The DoxBook's relay (bb 0.49.0 through bb Connect): the gate refuses /health with its own 401 page even
+  // with the machine's credential, and passes /api/v1/…, so a probe of /health found no relay there.
+  it("is the relay through bb Connect's gate, which refuses /health", async () => {
+    const relay = await serve({
+      "/health": { status: 401, body: "<!doctype html><title>bb connect</title>", type: "text/html; charset=utf-8" },
+      "/api/v1/system/attention": attention,
+    });
+    await expect(answersAsServer(relay.port)).resolves.toEqual({ server: true });
+    expect(relay.paths).toEqual(["/api/v1/system/attention"]);
+  });
+
+  it("is not the daemon's own API, its broker, anything else, nothing listening or too slow, and says what it saw", async () => {
+    // The daemon's local API answers /health with a plain ok and the probe's path with a 404.
+    const localApi = await serve({ "/health": { status: 200, body: "ok", type: "text/plain" } });
     const broker = await serve({ status: 404, body: "" });
-    const other = await serve({ status: 200, body: JSON.stringify({ ok: false }) });
-    const slow = await serve({ status: 200, body: JSON.stringify({ ok: true }), delayMs: 2_000 });
+    const gate = await serve({ status: 401, body: "<!doctype html>", type: "text/html" });
+    const other = await serve({ status: 200, body: JSON.stringify({ ok: true }) });
+    const notJson = await serve({ status: 200, body: "hasAttention", type: "text/plain" });
+    const huge = await serve({ status: 200, body: JSON.stringify({ hasAttention: false, pad: "x".repeat(10_000) }) });
+    const slow = await serve({ ...attention, delayMs: 2_000 });
     const closed = await serve({ status: 200, body: "" });
     await new Promise((resolve) => servers.pop()!.close(resolve));
     const started = Date.now();
-    const answers = await Promise.all([localApi, broker, other, closed].map(({ port }) => answersAsServer(port)));
-    expect(answers).toEqual([false, false, false, false]);
-    await expect(answersAsServer(slow.port, 100)).resolves.toBe(false);
+    const answers = await Promise.all([localApi, broker, gate, other, notJson, huge, closed].map(({ port }) => answersAsServer(port)));
+    expect(answers).toEqual([
+      { server: false, seen: "HTTP 404" },
+      { server: false, seen: "HTTP 404" },
+      { server: false, seen: "HTTP 401" },
+      { server: false, seen: "HTTP 200, not bb's answer" },
+      { server: false, seen: "HTTP 200, not bb's answer" },
+      { server: false, seen: "HTTP 200, too long to be bb's answer" },
+      { server: false, seen: "ECONNREFUSED" },
+    ]);
+    await expect(answersAsServer(slow.port, 100)).resolves.toEqual({ server: false, seen: "no answer within 0.1 s" });
     expect(Date.now() - started).toBeLessThan(1_500);
   });
 });
@@ -129,9 +169,27 @@ describe("finding bb's relay for a hook", () => {
 
   it("sets nothing, and says why, where there is no relay (the machine running bb's server)", async () => {
     const finder = new RelayFinder(fakeDaemon({ ports: [48887, 57316], servers: [] }).deps);
-    const found = await finder.forRun(true);
-    expect(found.url).toBeNull();
-    expect(found.note).toMatch(/^no bb relay on this machine/);
+    await expect(finder.forRun(true)).resolves.toEqual({
+      url: null,
+      note: "no bb relay on this machine (no loopback port of bb's host daemon answers as bb's server: 48887 HTTP 404, 57316 HTTP 404), so bb's default address applies, as on the machine running bb's server",
+    });
+  });
+
+  it("finds the relay among the DoxBook's real ports, with real probes", async () => {
+    const relay = await serve({ "/health": { status: 401, body: "<!doctype html>", type: "text/html" }, "/api/v1/system/attention": { status: 200, body: '{"hasAttention":false}' } });
+    const broker = await serve({ status: 404, body: "" });
+    const localApi = await serve({ "/health": { status: 200, body: "ok", type: "text/plain" } });
+    const deps: RelayDeps = { ...fakeDaemon({ ports: [], servers: [] }).deps, listPorts: async () => [relay.port, broker.port, localApi.port], answersAsServer: (port) => answersAsServer(port) };
+    await expect(new RelayFinder(deps).forRun(true)).resolves.toEqual({ url: `http://127.0.0.1:${relay.port}`, note: null });
+  });
+
+  it(`keeps a note within the ${RELAY_NOTE_MAX} characters a run allows`, async () => {
+    const ports = Array.from({ length: 40 }, (_, index) => 50_000 + index);
+    const many = await new RelayFinder(fakeDaemon({ ports, servers: [] }).deps).forRun(true);
+    expect(many.note).toContain("50005 HTTP 404, …)");
+    const long = await new RelayFinder(fakeDaemon({ ports: new Error(`lsof failed: ${"x".repeat(2_000)}`), servers: [] }).deps).forRun(true);
+    expect(long.note?.length).toBe(RELAY_NOTE_MAX);
+    expect(long.note?.endsWith("…")).toBe(true);
   });
 
   it("sets nothing when more than one port answers, when lsof fails, or when the daemon is gone", async () => {
@@ -163,7 +221,7 @@ describe("finding bb's relay for a hook", () => {
     const daemon = fakeDaemon({ ports: [57314], servers: [57314] });
     daemon.deps.listPorts = () => new Promise(() => undefined);
     const started = Date.now();
-    await expect(new RelayFinder(daemon.deps).forRun(true)).resolves.toEqual({ url: null, note: "looking for bb's relay took longer than 1.5 s" });
+    await expect(new RelayFinder(daemon.deps).forRun(true)).resolves.toEqual({ url: null, note: "looking for bb's relay took longer than 2 s" });
     expect(Date.now() - started).toBeLessThan(RELAY_LOOKUP_MS + 1_000);
   });
 });

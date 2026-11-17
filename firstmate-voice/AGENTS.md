@@ -115,8 +115,9 @@ the voice, the decisions behind phase 1, and the phase 0 decision record.
   file, so nothing a hook prints or holds can reach the log.
 - **A hook's `BB_SERVER_URL` is an address, never a credential, and never in its way.** `host/relay.ts`
   reads only the host daemon's listening ports (`lsof -b`, never its environment, which holds the Connect
-  credential) and asks each one `GET /health`; the hook gets `http://127.0.0.1:<port>` and nothing more, and
-  the debug log gets the same URL or why there is none. The lookup gives up after 1.5 s, and on any
+  credential) and asks each one `GET /api/v1/system/attention`, never `/health` (bb Connect's gate refuses
+  it); the hook gets `http://127.0.0.1:<port>` and nothing more, and the debug log gets the same URL or why
+  there is none, with each port's HTTP status. The lookup gives up after 2 s, and on any
   failure the hook runs with the worker's environment untouched, as before. `listening-started` looks
   afresh; later runs only check that the same daemon still lists the port.
 - **Herald is left alone.** Both may speak the same news while a session is live; the captain turns Herald
@@ -195,15 +196,22 @@ the voice, the decisions behind phase 1, and the phase 0 decision record.
   and names it as `Host`). bb gives it to terminals and threads as `BB_SERVER_URL`, and the CLI needs
   nothing more. No SDK surface names it: the host context has no environment, the daemon's `/status` gives
   the Connect URL (401), and the server cannot know the port. The worker's parent is the daemon, so
-  `host/relay.ts` lists that process's loopback ports and takes the one that answers `/health` with
-  `{"ok":true}`, as the CLI checks; the daemon's local API answers plain `ok` and its browser broker 404.
+  `host/relay.ts` lists that process's loopback ports and takes the one that answers
+  `GET /api/v1/system/attention` with `{"hasAttention":<boolean>}`; the daemon's local API and its browser
+  broker answer that path 404. The first build asked `/health`, as the CLI checks a local server, and found
+  nothing on the owner's DoxBook (bb 0.49.0, macOS 27.0.1): bb Connect's public gate answers `/health` with
+  its own 401 page even with the machine's credential, and lets only `/api/v1/…` through, which is all the
+  CLI calls. A probe there takes 130 to 525 ms (the server is across the internet), so it gets 1.5 s.
   The other options were asking bb to hand host workers the CLI environment it gives terminals (the clean
   fix, still worth asking for) and running each hook as a bb terminal (supported, but a visible terminal and
   stored output for every run). Checked in a dev bb whose daemon was started with test-only
   `BB_SERVER_HEADERS`, which makes it run the relay: the lookup found the port bb gave its terminals in
-  14 ms, `bb herald status` worked through it, and a daemon without the headers gave the no-relay note. A
-  real Connect machine was not tried. A hook with it has the owner's full bb access; so had any local
-  program that found the port. Herald's speech hooks are left as they are.
+  14 ms, `bb herald status` worked through it, and a daemon without the headers gave the no-relay note. On
+  the DoxBook, through `bb terminal run` (no voice call, no hook run), the lookup against the plugin host
+  workers' parent found the port bb gave its terminals in 305 ms (37 ms for a later run's check), and
+  `bb host list` with only a worker's PATH and that `BB_SERVER_URL` worked (without it: "Cannot connect").
+  A dev bb's relay passes `/health`, so it could not show the gate's 401: test against the gate's answers.
+  A hook with it has the owner's full bb access; so had any local program that found the port. Herald's speech hooks are left as they are.
 - **The pill is a bb toast** (the owner's call, 2026-11-16, as Screen Sharing did; the root `AGENTS.md`
   has the recipe). A pinned pill covered Screen Sharing's and bb's toasts, and bb lays out no overlays, so
   `VoicePill` renders nothing and shows `toast(title, { id, duration: Infinity, dismissible: false,

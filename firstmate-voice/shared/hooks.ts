@@ -34,6 +34,8 @@ export const HOOK_EVENT_ENV = "FIRSTMATE_VOICE_HOOK";
 export const HOOK_REASON_ENV = "FIRSTMATE_VOICE_REASON";
 /** bb's relay on a machine joined through bb Connect, so the hook's `bb` reaches the server (bb internals). */
 export const BB_SERVER_URL_ENV = "BB_SERVER_URL";
+/** The longest reason a run gives for having no `BB_SERVER_URL`. */
+export const RELAY_NOTE_MAX = 500;
 
 /** The hook file, relative to the home folder of the machine it runs on. */
 export const HOOK_FILE = ".config/firstmate-voice/hook";
@@ -59,7 +61,7 @@ export const HookRunSchema = z.object({
   /** The `BB_SERVER_URL` the hook got: bb's relay on this machine, never a credential. Null when none was set. */
   bbServerUrl: z.string().max(100).nullable(),
   /** Why none was set, when none was. */
-  relayNote: z.string().max(300).nullable(),
+  relayNote: z.string().max(RELAY_NOTE_MAX).nullable(),
 });
 export type HookRun = z.infer<typeof HookRunSchema>;
 
