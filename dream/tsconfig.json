@@ -1,0 +1,40 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "lib": [
+      "ES2022",
+      "DOM"
+    ],
+    "types": [
+      "node"
+    ],
+    "paths": {
+      "@/*": [
+        "./*"
+      ]
+    },
+    "noEmit": true,
+    "skipLibCheck": false,
+    "allowJs": true,
+    "checkJs": false
+  },
+  "include": [
+    "server.ts",
+    "host.ts",
+    "app.tsx",
+    "server",
+    "host",
+    "shared",
+    "guard",
+    "app",
+    "components",
+    "lib",
+    "hooks",
+    "scripts",
+    "vitest.config.ts"
+  ]
+}

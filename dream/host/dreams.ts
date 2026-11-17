@@ -1,0 +1,459 @@
+/**
+ * Everything the dream machine does for the plugin, over its own files. Built with its machine's
+ * facts injected (home, environment, data folder, PID), so tests run it against temporary folders.
+ *
+ * Changes run one at a time (`exclusive`): taking a lock, a backup, a copy, applying or restoring.
+ * Reads (`scan`, `status`, `backups`) do not wait.
+ */
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import path from "node:path";
+
+import { evaluateGate, type Thresholds } from "../shared/gate";
+import type { Finished, ManifestEntry, MemoryInfo, Mode, Prepared, ProjectInput, ProjectStatus } from "../shared/types";
+import { acquireLock, lockState, markConsolidated, processIsAlive, rollbackLock, type IsAlive } from "./lock";
+import { claudeConfigDir, resolveMemory, type MemoryEnvironment, type ResolvedMemory } from "./memory";
+import { applyProposal, createProposal, discardProposal, findProposal, finishProposal, listProposals, pendingProposal, planApply, type Proposal } from "./proposals";
+import { projectSlug } from "./slug";
+import { backup, changeCount, diffManifests, listBackups, manifest, newestChange, pruneBackups, restoreBackup, stampOf, type Changes, type Manifest } from "./snapshot";
+import {
+  dataPaths,
+  projectState,
+  readState,
+  recordHistory,
+  rememberDreamSessions,
+  rememberDreamThread,
+  writeState,
+  type ActiveRun,
+  type DataPaths,
+  type DreamState,
+} from "./state";
+import { checkoutFolders, checkoutSlugs, listSessions, listTranscriptFolders, parseWorktreeFolder, sessionTitle, type SessionFile, type WorktreeFolder } from "./transcripts";
+import { writeWorkspace } from "./workspace";
+
+/** The most sessions a dream's prompt lists; the rest are counted. */
+export const MAX_LISTED_SESSIONS = 300;
+const INSTRUCTION_FILES = ["CLAUDE.md", ".claude/CLAUDE.md", "CLAUDE.local.md", "AGENTS.md"];
+
+export interface DreamsOptions {
+  dataDir: string;
+  home: string;
+  env: MemoryEnvironment;
+  managedDirs: readonly string[];
+  platform: string;
+  pid: number;
+  nodePath: string;
+  electron: boolean;
+  guardSource: string;
+  isAlive?: IsAlive;
+  now?: () => number;
+}
+
+/** Keeps the host worker alive while a dream runs; answers its release. Called inside `prepare`. */
+export type Retain = () => () => void;
+
+export class DreamRefusal extends Error {
+  constructor(readonly code: Extract<Prepared, { ok: false }>["code"], message: string) {
+    super(message);
+  }
+}
+
+interface ActiveRunRecord extends ActiveRun {
+  before: Manifest;
+}
+
+function emptyChanges(): Changes {
+  return { added: [], changed: [], deleted: [] };
+}
+
+function realOrSelf(dir: string): string {
+  try {
+    return realpathSync(dir);
+  } catch {
+    return dir;
+  }
+}
+
+function indexFacts(dir: string): { indexLines: number | null; indexBytes: number | null } {
+  try {
+    const text = readFileSync(path.join(dir, "MEMORY.md"), "utf8");
+    const lines = text.split("\n");
+    return { indexLines: lines[lines.length - 1] === "" ? lines.length - 1 : lines.length, indexBytes: Buffer.byteLength(text) };
+  } catch {
+    return { indexLines: null, indexBytes: null };
+  }
+}
+
+function sizeText(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+export function manifestLine(entry: ManifestEntry): string {
+  return `- ${entry.date} · ${entry.title ?? "(untitled)"} · ${sizeText(entry.size)} · ${entry.path}`;
+}
+
+export function createDreams(options: DreamsOptions) {
+  const paths: DataPaths = dataPaths(options.dataDir);
+  const now = options.now ?? Date.now;
+  const isAlive = options.isAlive ?? processIsAlive;
+  const projectsDir = path.join(claudeConfigDir(options.home, options.env), "projects");
+  const leases = new Map<string, () => void>();
+  let queue: Promise<unknown> = Promise.resolve();
+
+  function exclusive<T>(work: () => Promise<T> | T): Promise<T> {
+    const next = queue.then(work, work);
+    queue = next.catch(() => undefined);
+    return next;
+  }
+
+  /** A backup name not yet taken: two backups in the same millisecond would otherwise share one. */
+  function freshBackupStamp(projectId: string): string {
+    const taken = new Set(listBackups(paths.backups(projectId)).map((entry) => entry.stamp));
+    let at = now();
+    while (taken.has(stampOf(at))) at += 1;
+    return stampOf(at);
+  }
+
+  function load(): DreamState {
+    return readState(paths.state);
+  }
+
+  function save(state: DreamState): void {
+    writeState(paths.state, state);
+  }
+
+  function memoryOf(project: ProjectInput): ResolvedMemory {
+    return resolveMemory({ checkout: project.checkout, home: options.home, env: options.env, managedDirs: options.managedDirs });
+  }
+
+  function memoryInfo(memory: ResolvedMemory): MemoryInfo {
+    const files = manifest(memory.dir);
+    return { ...memory, files: Object.keys(files).length, ...indexFacts(memory.dir) };
+  }
+
+  /** The project's transcript folders and sessions, its dreams' own left out. */
+  function sessionsOf(project: ProjectInput, folders: readonly string[], state: DreamState): { folders: string[]; sessions: SessionFile[] } {
+    const own = state.projects[project.projectId];
+    const dreamThreads = new Set(own?.dreamThreadIds ?? []);
+    const dreamSessions = new Set(own?.dreamSessionIds ?? []);
+    const present = new Set(folders);
+    const mine = new Set([
+      ...checkoutFolders(folders, checkoutSlugs(project.checkout, realOrSelf(project.checkout))),
+      ...project.worktreeFolders.filter((name) => present.has(name)),
+    ]);
+    const kept = [...mine].filter((name) => {
+      const parsed = parseWorktreeFolder(name);
+      return parsed === null || !dreamThreads.has(parsed.threadId);
+    });
+    const sessions = kept.flatMap((name) => listSessions(projectsDir, name)).filter((session) => !dreamSessions.has(session.sessionId));
+    return { folders: kept.sort(), sessions };
+  }
+
+  function evaluate(project: ProjectInput, folders: readonly string[], state: DreamState, thresholds: Thresholds, enabled: boolean) {
+    const memory = memoryOf(project);
+    const info = memoryInfo(memory);
+    const { folders: own, sessions } = sessionsOf(project, folders, state);
+    const lock = lockState(memory.dir, isAlive, now());
+    const pending = pendingProposal(paths.proposals(project.projectId));
+    const checkoutExists = existsSync(project.checkout);
+    const gate = checkoutExists
+      ? evaluateGate({
+          now: now(),
+          enabled,
+          thresholds,
+          memory: { mdCount: info.files, newestChangeMs: info.files > 0 ? newestChange(memory.dir) : null, autoMemoryEnabled: memory.autoMemoryEnabled },
+          lock: { lastConsolidatedAt: lock.lastConsolidatedAt, held: lock.held || Object.values(state.runs).some((run) => run.projectId === project.projectId) },
+          sessions,
+          pendingProposal: pending?.stamp ?? null,
+        })
+      : null;
+    return { memory, info, folders: own, sessions, lock, pending, gate };
+  }
+
+  function proposalSummary(proposal: Proposal | null) {
+    if (proposal === null) return null;
+    return { stamp: proposal.stamp, createdAt: proposal.createdAt, status: proposal.status, changes: proposal.changes, dir: proposal.dir };
+  }
+
+  return {
+    paths,
+    projectsDir,
+
+    scan(): { projectsDir: string; platform: string; worktreeFolders: WorktreeFolder[] } {
+      const worktreeFolders = listTranscriptFolders(projectsDir)
+        .map(parseWorktreeFolder)
+        .filter((folder): folder is WorktreeFolder => folder !== null);
+      return { projectsDir, platform: options.platform, worktreeFolders };
+    },
+
+    status(projects: readonly ProjectInput[], thresholds: Thresholds): ProjectStatus[] {
+      const folders = listTranscriptFolders(projectsDir);
+      const state = load();
+      return projects.map((project) => {
+        const result = evaluate(project, folders, state, thresholds, project.enabled);
+        const gate = result.gate ?? {
+          due: false,
+          code: "no-checkout" as const,
+          reason: `Its checkout ${project.checkout} is not on this machine.`,
+          lastDreamAt: result.lock.lastConsolidatedAt || null,
+          baselineAt: null,
+          sessionsSince: 0,
+          daysSince: 0,
+        };
+        const backups = listBackups(paths.backups(project.projectId));
+        return {
+          projectId: project.projectId,
+          name: project.name,
+          checkout: project.checkout,
+          enabled: project.enabled,
+          memory: result.info,
+          gate: {
+            due: gate.due,
+            code: gate.code,
+            reason: gate.reason,
+            lastDreamAt: gate.lastDreamAt,
+            baselineAt: gate.baselineAt,
+            sessionsSince: gate.sessionsSince,
+            daysSince: gate.daysSince,
+          },
+          folders: result.folders.length,
+          sessions: result.sessions.length,
+          inPlace: state.projects[project.projectId]?.inPlace ?? false,
+          pendingProposal: proposalSummary(result.pending),
+          lastBackup: backups[0]?.stamp ?? null,
+        };
+      });
+    },
+
+    prepare(
+      input: { runId: string; project: ProjectInput; mode: Mode | null; manual: boolean; thresholds: Thresholds; backupsToKeep: number },
+      retain?: Retain,
+    ): Promise<Prepared> {
+      return exclusive(async () => {
+        const { project } = input;
+        const state = load();
+        const own = projectState(state, project.projectId, project.name);
+        const result = evaluate(project, listTranscriptFolders(projectsDir), state, input.thresholds, true);
+        const refuse = (code: Extract<Prepared, { ok: false }>["code"], reason: string): Prepared => ({ ok: false, code, reason });
+        if (result.gate === null) return refuse("no-checkout", `The checkout ${project.checkout} is not on this machine.`);
+        if (result.info.files === 0) return refuse("no-memory", `${result.memory.dir} has no .md files.`);
+        if (result.pending !== null) {
+          return refuse("proposal-pending", `A dry run from ${result.pending.stamp} waits: apply it with \`bb dream apply\` or discard it with \`bb dream discard\` first.`);
+        }
+        if (!input.manual && !result.gate.due) return refuse(result.gate.code, result.gate.reason);
+        if (result.gate.code === "locked") return refuse("locked", result.gate.reason);
+
+        const memoryDir = realOrSelf(result.memory.dir);
+        const mode: Mode = input.mode ?? (own.inPlace ? "dream" : "dry-run");
+        const priorMtime = acquireLock(memoryDir, options.pid, isAlive, now());
+        if (priorMtime === null) return refuse("locked", "Another dream holds its memory lock.");
+        const startedAt = now();
+        const stamp = stampOf(startedAt);
+        try {
+          let backupStamp: string | null = null;
+          let proposalStamp: string | null = null;
+          let targetDir = memoryDir;
+          if (mode === "dream") {
+            backupStamp = freshBackupStamp(project.projectId);
+            await backup(memoryDir, paths.backups(project.projectId), backupStamp);
+            pruneBackups(paths.backups(project.projectId), input.backupsToKeep);
+          } else {
+            const proposal = createProposal(memoryDir, paths.proposals(project.projectId), stamp, startedAt);
+            proposalStamp = proposal.stamp;
+            targetDir = realOrSelf(proposal.memoryDir);
+          }
+          const workspace = realOrSelf(
+            writeWorkspace(
+              { dir: paths.workspace(project.projectId), memoryDir: targetDir, guardPath: paths.guard, nodePath: options.nodePath, electron: options.electron },
+              options.guardSource,
+            ),
+          );
+
+          const since = result.gate.since;
+          const listed: ManifestEntry[] = [];
+          for (const session of since.slice(0, MAX_LISTED_SESSIONS)) {
+            const file = path.join(projectsDir, session.folder, `${session.sessionId}.jsonl`);
+            const found = result.sessions.find((candidate) => candidate.sessionId === session.sessionId);
+            listed.push({ path: file, date: new Date(session.mtimeMs).toISOString().slice(0, 16).replace("T", " "), title: await sessionTitle(file), size: found?.size ?? 0 });
+          }
+          const sinceFolders = [...new Set(since.map((session) => path.join(projectsDir, session.folder)))].sort();
+
+          const run: ActiveRunRecord = {
+            runId: input.runId,
+            projectId: project.projectId,
+            mode,
+            startedAt,
+            memoryDir,
+            targetDir,
+            workspace,
+            priorMtime,
+            backup: backupStamp,
+            proposal: proposalStamp,
+            before: manifest(targetDir),
+          };
+          state.runs[input.runId] = run;
+          recordHistory(own, { runId: input.runId, mode, startedAt, endedAt: null, outcome: "running", threadId: null, changes: null, backup: backupStamp, proposal: proposalStamp });
+          save(state);
+          if (retain) leases.set(input.runId, retain());
+
+          return {
+            ok: true,
+            mode,
+            workspace,
+            targetDir,
+            memoryDir,
+            checkout: project.checkout,
+            transcriptFolders: sinceFolders,
+            sessions: listed,
+            sessionCount: since.length,
+            instructionFiles: INSTRUCTION_FILES.map((file) => path.join(project.checkout, file)).filter((file) => existsSync(file)),
+            backup: backupStamp,
+            proposal: proposalStamp,
+          };
+        } catch (error) {
+          rollbackLock(memoryDir, priorMtime);
+          throw error;
+        }
+      });
+    },
+
+    finish(input: { runId: string; ok: boolean; summary: string | null; threadId: string | null }): Promise<Finished> {
+      return exclusive(() => {
+        const state = load();
+        const run = state.runs[input.runId] as ActiveRunRecord | undefined;
+        if (run === undefined) throw new Error(`No dream ${input.runId} is in progress on this machine.`);
+        const own = projectState(state, run.projectId, state.projects[run.projectId]?.name ?? run.projectId);
+        if (input.threadId) rememberDreamThread(own, input.threadId);
+        rememberDreamSessions(own, listSessions(projectsDir, projectSlug(run.workspace)).map((session) => session.sessionId));
+
+        let changes: Changes = emptyChanges();
+        let proposalDir: string | null = null;
+        let outcome: "changed" | "unchanged" | "proposed" | "failed";
+        if (run.mode === "dry-run" && run.proposal !== null) {
+          const proposal = findProposal(paths.proposals(run.projectId), run.proposal);
+          if (proposal === null) throw new Error(`The dry run ${run.proposal} has lost its folder.`);
+          const finished = finishProposal(proposal, input.ok, input.summary);
+          changes = finished.changes ?? emptyChanges();
+          proposalDir = finished.dir;
+          if (!input.ok) {
+            outcome = "failed";
+            rollbackLock(run.memoryDir, run.priorMtime);
+          } else if (changeCount(changes) === 0) {
+            // Nothing to propose: the memory is already tight, which counts as a dream.
+            outcome = "unchanged";
+            discardProposal(finished);
+          } else {
+            // Not consolidated until applied; `apply` moves the lock to the dry run's start.
+            outcome = "proposed";
+            rollbackLock(run.memoryDir, run.priorMtime);
+          }
+        } else {
+          changes = diffManifests(run.before, manifest(run.targetDir));
+          if (input.ok) outcome = changeCount(changes) > 0 ? "changed" : "unchanged";
+          else {
+            outcome = "failed";
+            rollbackLock(run.memoryDir, run.priorMtime);
+          }
+        }
+
+        delete state.runs[input.runId];
+        recordHistory(own, {
+          runId: run.runId,
+          mode: run.mode,
+          startedAt: run.startedAt,
+          endedAt: now(),
+          outcome,
+          threadId: input.threadId,
+          changes,
+          backup: run.backup,
+          proposal: run.proposal,
+        });
+        save(state);
+        leases.get(input.runId)?.();
+        leases.delete(input.runId);
+        return { mode: run.mode, changes, backup: run.backup, proposal: outcome === "proposed" ? run.proposal : null, proposalDir: outcome === "proposed" ? proposalDir : null };
+      });
+    },
+
+    apply(project: ProjectInput, stamp: string | undefined, backupsToKeep: number) {
+      return exclusive(async () => {
+        const memoryDir = realOrSelf(memoryOf(project).dir);
+        const proposal = findProposal(paths.proposals(project.projectId), stamp);
+        if (proposal === null) throw new DreamRefusal("proposal-pending", stamp ? `No dry run ${stamp} for ${project.name}.` : `${project.name} has no dry run waiting.`);
+        const changes = planApply(proposal, memoryDir);
+        const priorMtime = acquireLock(memoryDir, options.pid, isAlive, now());
+        if (priorMtime === null) throw new DreamRefusal("locked", "Another dream holds its memory lock.");
+        try {
+          const backupStamp = freshBackupStamp(project.projectId);
+          await backup(memoryDir, paths.backups(project.projectId), backupStamp);
+          pruneBackups(paths.backups(project.projectId), backupsToKeep);
+          applyProposal(proposal, memoryDir, changes, now());
+          markConsolidated(memoryDir, proposal.createdAt);
+          const state = load();
+          projectState(state, project.projectId, project.name).inPlace = true;
+          save(state);
+          return { stamp: proposal.stamp, changes, backup: backupStamp };
+        } catch (error) {
+          rollbackLock(memoryDir, priorMtime);
+          throw error;
+        }
+      });
+    },
+
+    discard(project: ProjectInput, stamp: string | undefined) {
+      return exclusive(() => {
+        const memoryDir = realOrSelf(memoryOf(project).dir);
+        const proposal = findProposal(paths.proposals(project.projectId), stamp);
+        if (proposal === null || proposal.status !== "ready") {
+          throw new DreamRefusal("proposal-pending", stamp ? `No dry run ${stamp} waits for ${project.name}.` : `${project.name} has no dry run waiting.`);
+        }
+        if (lockState(memoryDir, isAlive, now()).held) throw new DreamRefusal("locked", "Another dream holds its memory lock.");
+        discardProposal(proposal);
+        // Counted as a dream, so the next proposal waits for new sessions instead of coming back tomorrow.
+        markConsolidated(memoryDir, proposal.createdAt);
+        return { stamp: proposal.stamp };
+      });
+    },
+
+    restore(project: ProjectInput, stamp: string | undefined, backupsToKeep: number) {
+      return exclusive(async () => {
+        const memoryDir = realOrSelf(memoryOf(project).dir);
+        const backups = listBackups(paths.backups(project.projectId));
+        const chosen = stamp === undefined ? backups[0] : backups.find((entry) => entry.stamp === stamp || entry.stamp.startsWith(stamp));
+        if (chosen === undefined) throw new DreamRefusal("no-memory", stamp ? `No backup ${stamp} for ${project.name}.` : `${project.name} has no backups.`);
+        const priorMtime = acquireLock(memoryDir, options.pid, isAlive, now());
+        if (priorMtime === null) throw new DreamRefusal("locked", "Another dream holds its memory lock.");
+        try {
+          const before = freshBackupStamp(project.projectId);
+          await backup(memoryDir, paths.backups(project.projectId), before);
+          const changes = await restoreBackup(chosen.file, memoryDir);
+          pruneBackups(paths.backups(project.projectId), backupsToKeep + 1);
+          return { stamp: chosen.stamp, changes, backup: before };
+        } finally {
+          // A restore is not a dream: the last-dream time stays what it was.
+          rollbackLock(memoryDir, priorMtime);
+        }
+      });
+    },
+
+    backups(project: ProjectInput) {
+      return {
+        backups: listBackups(paths.backups(project.projectId)).map((entry) => ({ stamp: entry.stamp, size: entry.size })),
+        proposals: listProposals(paths.proposals(project.projectId)).map((proposal) => proposalSummary(proposal) as NonNullable<ReturnType<typeof proposalSummary>>),
+      };
+    },
+
+    activeRuns() {
+      return Object.values(load().runs).map((run) => ({ runId: run.runId, projectId: run.projectId, startedAt: run.startedAt }));
+    },
+
+    dispose() {
+      for (const release of leases.values()) release();
+      leases.clear();
+    },
+  };
+}
+
+export type Dreams = ReturnType<typeof createDreams>;
+
