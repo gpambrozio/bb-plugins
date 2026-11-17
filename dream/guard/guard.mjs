@@ -18,7 +18,7 @@
 
 import { readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 export const READ_ONLY_COMMANDS = ["ls", "find", "grep", "cat", "stat", "wc", "head", "tail"];
 const READ_TOOLS = ["Read", "Glob", "Grep"];
@@ -259,4 +259,18 @@ function main() {
   answer(result.decision, result.reason);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();
+/**
+ * Run as a script, not imported (by the tests). Compared by real path: run through a symlink, such as
+ * macOS's /var for /private/var, the two spellings differ, and a guard that did not notice would
+ * answer nothing and let Claude Code fall back to asking.
+ */
+function isMain() {
+  if (!process.argv[1]) return false;
+  try {
+    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (isMain()) main();

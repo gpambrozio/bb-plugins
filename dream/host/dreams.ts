@@ -5,7 +5,7 @@
  * Changes run one at a time (`exclusive`): taking a lock, a backup, a copy, applying or restoring.
  * Reads (`scan`, `status`, `backups`) do not wait.
  */
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 
 import { evaluateGate, type Thresholds } from "../shared/gate";
@@ -84,7 +84,9 @@ function indexFacts(dir: string): { indexLines: number | null; indexBytes: numbe
 }
 
 export function createDreams(options: DreamsOptions) {
-  const paths: DataPaths = dataPaths(options.dataDir);
+  // Real paths throughout, so the hook command and the transcript folder's name are spelled one way.
+  mkdirSync(options.dataDir, { recursive: true });
+  const paths: DataPaths = dataPaths(realOrSelf(options.dataDir));
   const now = options.now ?? Date.now;
   const isAlive = options.isAlive ?? processIsAlive;
   const projectsDir = path.join(claudeConfigDir(options.home, options.env), "projects");
@@ -107,6 +109,17 @@ export function createDreams(options: DreamsOptions) {
 
   function load(): DreamState {
     return readState(paths.state);
+  }
+
+  /**
+   * Liveness as this plugin sees a lock: a lock holding this worker's own PID with no dream of ours
+   * in progress on that folder is a dream that finished, not one running, so the plugin may take it.
+   * Every other process still sees the PID alive for the lock's hour, as native auto-dream expects.
+   */
+  function aliveFor(memoryDir: string, state: DreamState = load()): IsAlive {
+    const real = realOrSelf(memoryDir);
+    const ours = Object.values(state.runs).some((run) => run.memoryDir === real);
+    return (pid) => (pid === options.pid && !ours ? false : isAlive(pid));
   }
 
   function save(state: DreamState): void {
@@ -144,7 +157,7 @@ export function createDreams(options: DreamsOptions) {
     const memory = memoryOf(project);
     const info = memoryInfo(memory);
     const { folders: own, sessions } = sessionsOf(project, folders, state);
-    const lock = lockState(memory.dir, isAlive, now());
+    const lock = lockState(memory.dir, aliveFor(memory.dir, state), now());
     const pending = pendingProposal(paths.proposals(project.projectId));
     const checkoutExists = existsSync(project.checkout);
     const gate = checkoutExists
@@ -236,7 +249,7 @@ export function createDreams(options: DreamsOptions) {
 
         const memoryDir = realOrSelf(result.memory.dir);
         const mode: Mode = input.mode ?? (own.inPlace ? "dream" : "dry-run");
-        const priorMtime = acquireLock(memoryDir, options.pid, isAlive, now());
+        const priorMtime = acquireLock(memoryDir, options.pid, aliveFor(memoryDir, state), now());
         if (priorMtime === null) return refuse("locked", "Another dream holds its memory lock.");
         const startedAt = now();
         const stamp = stampOf(startedAt);
@@ -372,7 +385,7 @@ export function createDreams(options: DreamsOptions) {
         const proposal = findProposal(paths.proposals(project.projectId), stamp);
         if (proposal === null) throw new DreamRefusal("proposal-pending", stamp ? `No dry run ${stamp} for ${project.name}.` : `${project.name} has no dry run waiting.`);
         const changes = planApply(proposal, memoryDir);
-        const priorMtime = acquireLock(memoryDir, options.pid, isAlive, now());
+        const priorMtime = acquireLock(memoryDir, options.pid, aliveFor(memoryDir), now());
         if (priorMtime === null) throw new DreamRefusal("locked", "Another dream holds its memory lock.");
         try {
           const backupStamp = freshBackupStamp(project.projectId);
@@ -398,7 +411,7 @@ export function createDreams(options: DreamsOptions) {
         if (proposal === null || proposal.status !== "ready") {
           throw new DreamRefusal("proposal-pending", stamp ? `No dry run ${stamp} waits for ${project.name}.` : `${project.name} has no dry run waiting.`);
         }
-        if (lockState(memoryDir, isAlive, now()).held) throw new DreamRefusal("locked", "Another dream holds its memory lock.");
+        if (lockState(memoryDir, aliveFor(memoryDir), now()).held) throw new DreamRefusal("locked", "Another dream holds its memory lock.");
         discardProposal(proposal);
         // Counted as a dream, so the next proposal waits for new sessions instead of coming back tomorrow.
         markConsolidated(memoryDir, proposal.createdAt);
@@ -412,7 +425,7 @@ export function createDreams(options: DreamsOptions) {
         const backups = listBackups(paths.backups(project.projectId));
         const chosen = stamp === undefined ? backups[0] : backups.find((entry) => entry.stamp === stamp || entry.stamp.startsWith(stamp));
         if (chosen === undefined) throw new DreamRefusal("no-memory", stamp ? `No backup ${stamp} for ${project.name}.` : `${project.name} has no backups.`);
-        const priorMtime = acquireLock(memoryDir, options.pid, isAlive, now());
+        const priorMtime = acquireLock(memoryDir, options.pid, aliveFor(memoryDir), now());
         if (priorMtime === null) throw new DreamRefusal("locked", "Another dream holds its memory lock.");
         try {
           const before = freshBackupStamp(project.projectId);

@@ -184,6 +184,18 @@ describe("a project's dreams", () => {
     expect(host.backups(project()).backups.map((entry) => entry.stamp)).toContain(restored.backup);
   });
 
+  it("lets its own finished dream's lock go, so a restore right after a dream works", async () => {
+    const host = dreams();
+    const run = await prepare(host, "run1", true, "dream");
+    if (!run.ok) throw new Error(run.reason);
+    write(path.join(memory, "build.md"), "a bad rewrite\n");
+    await host.finish({ runId: "run1", ok: true, summary: null, threadId: null });
+    expect(readFileSync(lockPath(memory), "utf8")).toBe(String(process.pid));
+    expect(host.status([project()], DEFAULT_THRESHOLDS)[0].gate.code).not.toBe("locked");
+    await host.restore(project(), undefined, 20);
+    expect(readFileSync(path.join(memory, "build.md"), "utf8")).toBe("builds with make\n");
+  });
+
   it("refuses while the lock is held, and when the memory folder has no files", async () => {
     const host = dreams();
     write(lockPath(memory), "1", clock - 60_000);

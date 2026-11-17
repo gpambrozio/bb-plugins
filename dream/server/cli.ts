@@ -9,7 +9,8 @@ import { PluginCliError, cliCommand, defineCli, type PluginCliRegistration } fro
 import type { Overview, RunRecord } from "../shared/contract-types";
 import type { Changes, ProjectStatus } from "../shared/types";
 import { stampTime } from "../host/snapshot";
-import { changeText, DreamError, type DreamService } from "./service";
+import { changeText, when } from "../shared/format";
+import { DreamError, type DreamService } from "./service";
 
 function reason(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -26,13 +27,6 @@ async function guarded<T>(work: () => Promise<T>): Promise<T> {
 
 function output(json: boolean, data: unknown, text: string) {
   return { exitCode: 0, stdout: `${json ? JSON.stringify(data, null, 2) : text}\n` };
-}
-
-function when(ms: number | null): string {
-  if (ms === null) return "never";
-  const date = new Date(ms);
-  const pad = (value: number) => String(value).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
 function stampText(stamp: string): string {
@@ -78,7 +72,7 @@ export function overviewText(overview: Overview): string {
   if (overview.active) head.push(`Running: ${overview.active.projectName} (${overview.active.mode}), since ${when(overview.active.startedAt)}, thread ${overview.active.threadId ?? "starting"}`);
   if (overview.error) head.push(`! ${overview.error}`);
   const projects = overview.projects.length > 0 ? overview.projects.map(projectText) : ["No project has a checkout on the dream machine."];
-  return [...head, "", ...projects].join("\n\n").replace(/\n\n\n/g, "\n\n");
+  return `${head.join("\n")}\n\n${projects.join("\n\n")}`;
 }
 
 function changesText(changes: Changes | null): string {

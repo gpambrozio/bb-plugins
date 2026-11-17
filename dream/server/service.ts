@@ -21,6 +21,7 @@
 import { randomBytes } from "node:crypto";
 
 import type { Choices, Outcome, Overview, RunRecord } from "../shared/contract-types";
+import { changeText, totalChanges } from "../shared/format";
 import { mostOverdue, type Thresholds } from "../shared/gate";
 import type { Changes, Finished, Mode, Prepared, ProjectInput, ProjectStatus } from "../shared/types";
 import { inWindow, windowClosesAt, windowOpensAt } from "../shared/window";
@@ -109,21 +110,6 @@ export class DreamError extends Error {}
 
 function newRunId(): string {
   return randomBytes(6).toString("hex");
-}
-
-export function changeText(changes: Changes, conditional = false): string {
-  const parts: string[] = [];
-  if (changes.changed.length > 0) parts.push(`${conditional ? "update" : "updated"} ${changes.changed.length}`);
-  if (changes.added.length > 0) parts.push(`${conditional ? "add" : "added"} ${changes.added.length}`);
-  if (changes.deleted.length > 0) parts.push(`${conditional ? "remove" : "removed"} ${changes.deleted.length}`);
-  const total = changes.changed.length + changes.added.length + changes.deleted.length;
-  if (parts.length === 0) return "no memory files changed";
-  const text = `${parts.join(", ")} memory ${total === 1 ? "file" : "files"}`;
-  return `${text.charAt(0).toUpperCase()}${text.slice(1)}`;
-}
-
-function totalChanges(changes: Changes | null): number {
-  return changes === null ? 0 : changes.added.length + changes.changed.length + changes.deleted.length;
 }
 
 export function createDreamService(ports: DreamPorts) {

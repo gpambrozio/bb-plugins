@@ -1,142 +1,100 @@
-# bb-plugin-dream
+# Dream
 
-A BB plugin that keeps a todo list. It shows every surface a plugin can own:
+Consolidates each Claude Code project's memory overnight, the way Claude Code's own auto-dream does,
+for every project bb knows. Claude Code's auto-dream never runs in bb: bb runs Claude Code as SDK
+sessions, which auto-dream skips. Dream runs the same four-phase pass (orient, gather recent signal,
+consolidate, prune and index) from bb, on a schedule you choose, in a hidden thread that can read
+anything but write only that project's memory folder.
 
-- `server.ts` — the backend: a todo store in `bb.storage.kv`, RPC methods
-  for the page, a `bb dream` CLI command, a setting, and a realtime signal
-  that keeps every open page current.
-- `app.tsx` — the frontend: an **Example todos** page in the left sidebar
-  (`app.slots.navPanel`) built from the vendored components.
-- `skills/example-todos/SKILL.md` — a skill that tells agents how to keep the list
-  with `bb dream`. BB imports it into agent threads automatically.
-- `PLUGIN_OVERVIEW.md` — the store listing text: a longer version of
-  `bb.description` that the plugin detail page shows under it. See
-  [Store listing](#store-listing).
+**The schedule ships off.** Nothing dreams until you turn on *Dream on a schedule* in Settings →
+Plugins → Dream. Until then the page and `bb dream status` only read.
 
-Try it: install the plugin, open **Example todos** in the sidebar, then run
-`bb dream add "Ship it"` in a terminal. The page updates at once.
+## What a dream does
 
-## UI components
+Each dream is a hidden Claude Code thread, given Claude Code 2.1.326's dream prompt with three
+additions: a list of the sessions since the last dream across all the project's folders, the path of
+the project's checkout, and Claude Code's own rules for memories that contradict `CLAUDE.md` (delete
+or rewrite what `CLAUDE.md` supersedes, annotate and report what looks newer, never edit `CLAUDE.md`
+or `AGENTS.md`). It keeps `MEMORY.md` an index under 200 lines and about 25 KB. When it ends, the
+thread is stopped and archived, and its summary goes into the Dream page's history.
 
-`components/ui/` is vendored source you own (the shadcn model): edit the
-files freely — they never update out from under you. Add more from the BB
-component registry (the full shadcn set, version-matched to your BB install
-via the pinned ref in `components.json`):
+- **Held to memory-only writes.** The thread may use Read, Glob and Grep; `ls`, `find`, `grep`, `cat`,
+  `stat`, `wc`, `head` and `tail` in the shell; Write and Edit of `.md` files in the memory folder; and
+  `rm -f` of `.md` files there. Everything else is denied without asking, as in Claude Code's own dream.
+- **The first dream is a dry run.** It works on a copy of the memory and leaves a proposal. Apply it
+  from the page or with `bb dream apply <project>` (refused if a session changed one of those files
+  since), or discard it. Once one is applied, the project's dreams edit its memory in place.
+- **A backup before every change.** The memory folder is archived before each dream, apply and restore;
+  the 20 newest per project are kept. `bb dream restore <project> [time]` puts one back, and backs up
+  what it replaces, so it can be undone the same way.
+- **The same lock as Claude Code.** `<memory>/.consolidate-lock` holds the dream's process id while it
+  runs; its modification time is the last dream, a failed dream sets it back, and it goes stale after an
+  hour. A native auto-dream and this plugin never dream the same memory at once.
+- **One push notification** after a dream that changed files, naming the project and the counts, or
+  after a dry run that proposes changes. Nothing when nothing was due or nothing changed.
 
-```
-npx shadcn add @bb/select @bb/table
-```
+## When a project is due
 
-Run `npm install` once before `bb plugin build` — the vendored components'
-npm deps bundle into your dist. React, and BB-shimmed packages like the
-radix portal primitives and `sonner` (`import { toast } from "sonner"`
-reaches BB's own toaster), are provided by the BB app at runtime and never
-bundled. Every shimmed package is declared in `devDependencies` at the
-host's version so those imports typecheck; keep them there (never in
-`dependencies`, which would bundle a second copy), and `bb plugin types`
-repins declared packages alongside the SDK; unused packages may be removed. Ship `dist/` (npm tarball or committed for
-git installs) so people installing your plugin never need npm.
+By default, every night from 01:00 to 06:00 on the bb server's clock, Dream takes the most overdue
+project, dreams it, then the next, one at a time, until none is due or the window closes. A project is
+due when
 
-## Manifest
+- at least 72 hours have passed since its last dream,
+- at least 5 Claude Code sessions ran in it since then, on at least 2 different days, and
+- nobody is working in it: its memory did not change, and no session ran in it, in the last 30 minutes.
 
-`package.json` is the plugin manifest. Notable fields:
+A project with no memory files, with a dry run waiting, or switched off on the page is skipped. Every
+number is a setting. Sessions are counted in the checkout's own transcript folder, in every bb worktree
+of the project (bb tells which project a worktree's thread belongs to; for a thread bb no longer knows,
+the folder's repository name decides when only one project has it) and in Claude Code's own
+`.claude/worktrees`. Dream's own threads never count.
 
-- `bb.server` — backend entry (required).
-- `bb.app` — frontend entry. Delete it, `app.tsx`, `components/`,
-  `hooks/`, and `lib/` for a headless plugin.
-- `bb.skills` — skill roots; omitted here, so BB reads `skills/`. Each
-  directory with a `SKILL.md` is one skill, named after the directory.
-- `bb.name` and `bb.description` — required human-facing identity.
-- `bb.branding` — required; declare `icon` as a BB icon name or a
-  plugin-relative compact SVG, or declare `logo.light` (with optional
-  `logo.dark`). Logo assets must be relative `.svg`, `.png`, or
-  `.webp` files.
-- `engines.bb` — supported bb app version range.
-- `engines.bbPluginSdk` — the lowest plugin SDK you need (scaffold:
-  `>=0.6.132`). BB reads this as a floor, not a ceiling: a later
-  SDK in the same major still loads your plugin.
-- `dependencies` — every package your source imports that BB does not provide.
-  `bb plugin build` inlines them into `dist/`, and git installs resolve this
-  list alone, so a build-required package here rather than in
-  `devDependencies` is what keeps your plugin installable. `devDependencies`
-  is for types and tooling only (BB shims React, the portal primitives, and
-  `@get-bb/plugin-sdk` at runtime — never bundle them).
+## Memory folders
 
-Run `bb plugin build` before publishing git/npm installs. It writes
-`dist/server.js` + `server.meta.json` and `app.js` / `app.css` /
-`app.meta.json`. Each `*.meta.json` stamps SDK major/version,
-`artifactFormatVersion`, `pluginId`, `pluginVersion`, and
-`builtWith` so managed installs can verify the artifacts. `app.meta.json`
-also lists `runtimeSlots`, the shimmed host modules the bundle imports.
+Each project's memory folder is found the way Claude Code 2.1.326 finds it:
+`CLAUDE_COWORK_MEMORY_PATH_OVERRIDE`, then `autoMemoryDirectory` from managed, local, project and user
+settings (with `~` expanded), then `~/.claude/projects/<the main checkout>/memory`. The page shows where
+the folder came from, and warns, without touching anything, when an old default folder still holds
+files beside a custom one, or when the custom folder is set only in `settings.local.json`, which the
+project's worktrees do not have.
 
-## Store listing
+## Using it
 
-Two texts describe the plugin in the store. `bb.description` in package.json
-is the one-sentence hook on every browse card and the lead paragraph on the
-detail page; keep it under about 140 characters. `PLUGIN_OVERVIEW.md` is the
-same claim at length, shown in an Overview section under that paragraph.
-Rewrite the scaffold's copy for your plugin, and update it whenever
-`bb.description` changes, so the two never disagree.
+- **The Dream page** in the sidebar: the dream machine, the schedule, each project with its switch,
+  memory folder, last dream, sessions since and why it is or is not due, with *Dream now*, *Dry run*,
+  and *Apply* / *Discard* for a waiting dry run; and the history of dreams with their summaries.
+- **Settings → Plugins → Dream**: the schedule, its window, the thresholds, backups and the
+  notification; and below them the dream machine and the model (bb's own model picker; Sonnet 5.5 at
+  medium effort to start with).
+- **`bb dream`** for scripts and agents:
 
-The submission to the public BB Community marketplace requires the file. Keep
-it under 4000 characters (aim for 700 to 1800) and use headings, paragraphs,
-emphasis, code, blockquotes, lists, thematic breaks, and absolute https links
-only — raw HTML, images, tables, footnotes, and task lists are rejected. Do
-not open with a `#` title or repeat `bb.description` verbatim; the page
-shows both directly above.
+  ```text
+  bb dream status [--json]
+  bb dream run <project> [--dry-run]
+  bb dream stop
+  bb dream apply <project> [time]
+  bb dream discard <project> [time]
+  bb dream restore <project> [time]
+  bb dream backups <project>
+  bb dream history [project] [--limit n]
+  ```
+
+Dreams run on one machine, chosen in the settings (the bb server's machine to start with), for the
+projects with a checkout there. The machine needs Claude Code signed in, as for any Claude Code
+thread in bb. Each dream costs one model run on your Claude Code account.
+
+## Where its files are
+
+On the dream machine, in the plugin's own data folder (`~/.bb/plugins/dream/host-data/` on a default
+install): `state.json` (per project: whether it edits in place yet, its dreams' thread and session
+ids, and its last runs), `backups/<project id>/<time>.tar.gz`, `proposals/<project id>/<time>/` and
+the dream workspaces. Nothing is written in `~/.claude` except the memory folders themselves and
+Claude Code's own transcripts of the dream threads.
 
 ## Install
 
-From this directory (`bb plugin new` already ran the install; a fresh clone
-needs it):
-
-```
-npm install
-bb plugin install .
+```bash
+bb plugin install 'git:github.com/gpambrozio/bb-plugins@>=0.1.0' --plugin dream --tag-prefix dream/
 ```
 
-After editing sources, reload:
-
-```
-bb plugin reload dream
-```
-
-Or let `bb plugin dev` rebuild and reload on every save.
-
-## Configure
-
-```
-bb plugin config dream
-bb plugin config dream set showDone false
-bb plugin reload dream
-```
-
-## Types & API reference
-
-The plugin API ships as the npm package `@get-bb/plugin-sdk`, pinned to an
-exact version in `devDependencies` (`0.6.132` — the SDK of the BB
-that scaffolded this plugin). After `npm install`, the full surface is on disk
-at:
-
-```
-node_modules/@get-bb/plugin-sdk/bundled-types/bb-plugin-sdk.d.ts      # backend
-node_modules/@get-bb/plugin-sdk/bundled-types/bb-plugin-sdk-app.d.ts  # frontend
-```
-
-Your editor and `tsc` resolve `@get-bb/plugin-sdk` there through ordinary node
-resolution — no path mapping. These are readable declarations: open them for an
-exact signature.
-
-The SDK surface grows with every BB release, so the pin has to track the BB you
-actually run:
-
-```
-bb plugin types          # sync this plugin's SDK surface to the running BB
-bb plugin types --check  # CI: fail when it does not match
-```
-
-Ask BB to write plugins for you: the `bb-plugin-authoring` skill documents
-the whole surface with examples.
-
-Confused by the API, or need something the types don't explain? Clone the BB
-repo and read the source: <https://github.com/get-bb/bb>.
+Needs bb 0.49 or newer, a machine running macOS or Linux, and Claude Code as one of bb's providers.

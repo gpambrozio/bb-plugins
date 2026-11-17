@@ -183,6 +183,17 @@ describe("the hook", () => {
     expect(deny.answer.hookSpecificOutput.permissionDecisionReason).toContain("touch");
   });
 
+  it("answers when run through a symlinked path", () => {
+    const linked = path.join(root, "linked");
+    symlinkSync(path.dirname(GUARD), linked);
+    const result = spawnSync(process.execPath, [path.join(linked, "guard.mjs"), policyFile()], {
+      input: JSON.stringify({ tool_name: "Bash", tool_input: { command: "cd /tmp; ls" }, cwd: workspace }),
+      encoding: "utf8",
+    });
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout).hookSpecificOutput.permissionDecision).toBe("deny");
+  });
+
   it("fails closed, with exit 2, on bad input or a missing policy", () => {
     const garbage = hook("not json");
     expect(garbage.status).toBe(2);
