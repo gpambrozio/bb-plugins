@@ -66,6 +66,8 @@ export class Announcer {
   private readonly lost = new Map<string, string>();
   private seeded = false;
   private stopped = false;
+  /** Moved by every `silence()`, so a delivery that was under way when Herald was muted drops out. */
+  private hushes = 0;
   private warnedSay = false;
   /** Deliveries queue behind one another, so a button press never talks over an announcement. */
   private chain: Promise<void> = Promise.resolve();
@@ -80,25 +82,34 @@ export class Announcer {
   onEntries(entries: readonly AttentionEntry[]): void {
     const present = new Set(entries.map((entry) => entry.eventId));
     this.current = present;
-    if (!this.seeded) {
+    // Muted everywhere: what comes up now is never said, not even once it is
+    // written or Herald is unmuted, so a sentence still being written is
+    // counted as spoken too. The same holds for the list a window opens on.
+    const muted = !this.deps.settings().speak;
+    if (!this.seeded || muted) {
       // What was waiting when the window opened is not news — except a
       // sentence still being written, which is news the moment it lands.
-      for (const entry of entries) if (entry.summary.status !== "pending") this.spoken.add(entry.eventId);
+      for (const entry of entries) {
+        if (this.spoken.has(entry.eventId) || (!muted && entry.summary.status === "pending")) continue;
+        this.spoken.add(entry.eventId);
+        const text = this.seeded ? speechText(entry) : null;
+        if (text !== null) this.deps.report("info", `Not speaking "${text}": Herald is muted.`);
+      }
       this.seeded = true;
-      return;
-    }
-    // A sentence still being written is left for the list that brings it
-    // ready: counted as spoken only then, and spoken once.
-    const fresh = entries
-      .filter((entry) => !this.spoken.has(entry.eventId) && entry.summary.status !== "pending")
-      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-    for (const entry of fresh) {
-      this.spoken.add(entry.eventId);
-      const text = speechText(entry);
-      if (text === null) continue;
-      void this.deliver(text, entry.eventId, false).catch((error: unknown) =>
-        this.deps.report("warn", `Could not speak an announcement: ${describe(error)}`, error),
-      );
+    } else {
+      // A sentence still being written is left for the list that brings it
+      // ready: counted as spoken only then, and spoken once.
+      const fresh = entries
+        .filter((entry) => !this.spoken.has(entry.eventId) && entry.summary.status !== "pending")
+        .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+      for (const entry of fresh) {
+        this.spoken.add(entry.eventId);
+        const text = speechText(entry);
+        if (text === null) continue;
+        void this.deliver(text, entry.eventId, false).catch((error: unknown) =>
+          this.deps.report("warn", `Could not speak an announcement: ${describe(error)}`, error),
+        );
+      }
     }
     // Forget ids that are gone; an event id never comes back.
     for (const id of [...this.spoken]) if (!present.has(id)) this.spoken.delete(id);
@@ -153,6 +164,23 @@ export class Announcer {
     void this.endRun();
   }
 
+  /**
+   * Herald was just muted everywhere: what this window is saying stops now,
+   * and a sentence still being rendered is dropped when it arrives. Unlike
+   * `stop()` the announcer carries on; what comes up while muted is gated, and
+   * dropped, as it is about to be said.
+   */
+  silence(): void {
+    this.hushes += 1;
+    // Another window's announcement this one was waiting to take over is not said later either.
+    this.lost.clear();
+    // Nor is anything listed now, a sentence still being written included: it
+    // may land after Herald is unmuted, with no list read during the mute.
+    for (const eventId of this.current) this.spoken.add(eventId);
+    this.deps.audio.stopSpeaking();
+    this.deps.audio.stopAudio();
+  }
+
   private blocked(): string | null {
     return blockedMessage(this.deps.settings(), this.deps.platform(), isMutedHere());
   }
@@ -163,7 +191,9 @@ export class Announcer {
    */
   private deliver(text: string, eventId: string | null, retrying: boolean): Promise<Outcome> {
     this.queued += 1;
-    const run = () => this.deliverWithHooks(text, eventId, retrying);
+    // The mute generation it was queued in: a mute that comes while it waits drops it.
+    const hush = this.hushes;
+    const run = () => this.deliverWithHooks(text, eventId, retrying, hush);
     const next = this.chain.then(run, run);
     this.chain = next.then(
       () => {},
@@ -180,9 +210,9 @@ export class Announcer {
    * (pause music, duck the volume) is not undone and redone between them.
    * Should this window vanish first, the machine ends the run itself.
    */
-  private async deliverWithHooks(text: string, eventId: string | null, retrying: boolean): Promise<Outcome> {
+  private async deliverWithHooks(text: string, eventId: string | null, retrying: boolean, hush: number): Promise<Outcome> {
     try {
-      return await this.deliverNow(text, eventId, retrying);
+      return await this.deliverNow(text, eventId, retrying, hush);
     } finally {
       this.queued -= 1;
       if (this.queued === 0) await this.endRun();
@@ -203,10 +233,15 @@ export class Announcer {
     return run?.end() ?? Promise.resolve();
   }
 
-  private async deliverNow(text: string, eventId: string | null, retrying: boolean): Promise<Outcome> {
+  private async deliverNow(text: string, eventId: string | null, retrying: boolean, hush: number): Promise<Outcome> {
     // Checked here rather than only at the call: this runs once per queued
     // delivery, and a reload can stop the announcer while one waits.
     if (this.stopped) return "skipped";
+    // Queued before Herald was muted: dropped, even if it was unmuted again meanwhile.
+    if (this.hushes !== hush) {
+      if (eventId !== null) this.deps.report("info", `Not speaking "${text}" here: Herald was muted while it waited.`);
+      return "skipped";
+    }
     let claim: Claim | null = null;
     if (eventId !== null) {
       // Withdrawn while it waited — the thread moved on, or was answered.
@@ -233,10 +268,13 @@ export class Announcer {
         return "skipped";
       }
     }
-    const outcome = await this.play(text);
+    const outcome = await this.play(text, hush);
     if (eventId !== null) {
       if (outcome === "spoke") this.deps.report("info", `Spoke (${this.deps.platform()}): "${text}"`);
-      else {
+      else if (outcome === "skipped") {
+        // Muted while it was being said, or the announcer stopped: no other window should say it either.
+        if (!this.stopped) this.deps.report("info", `Stopped saying "${text}" here: Herald was muted.`);
+      } else {
         await claim?.release();
         this.deps.report("warn", `Could not play "${text}" here; another window may say it.`);
       }
@@ -249,9 +287,10 @@ export class Announcer {
    * otherwise. A failed render or a refused playback falls through to the
    * browser voice rather than to silence, and is reported once.
    */
-  private async play(text: string): Promise<Outcome> {
+  private async play(text: string, hush: number): Promise<Outcome> {
     const { audio } = this.deps;
     const settings = this.deps.settings();
+    const cut = () => this.stopped || this.hushes !== hush;
     const voices = await this.deps.voices().catch((error: unknown) => {
       this.deps.report("warn", `Could not read Herald's voices; using the defaults: ${describe(error)}`, error);
       return { say: "", web: "" };
@@ -260,9 +299,9 @@ export class Announcer {
       try {
         // The before hook runs while the server renders, so it adds no wait of its own.
         const [rendered] = await Promise.all([this.deps.render(text, voices.say, settings.rate), this.beforeSound()]);
-        if (this.stopped) return "skipped";
+        if (cut()) return "skipped";
         await audio.playAudio(`data:${rendered.mimeType};base64,${rendered.base64}`);
-        return "spoke";
+        return cut() ? "skipped" : "spoke";
       } catch (error) {
         if (!this.warnedSay) {
           this.warnedSay = true;
@@ -270,11 +309,13 @@ export class Announcer {
         }
       }
     }
-    if (this.stopped) return "skipped";
+    if (cut()) return "skipped";
     if (!audio.canSpeak()) return "refused";
     await this.beforeSound();
-    if (this.stopped) return "skipped";
-    return (await audio.speak(text, { voice: voices.web, rate: settings.rate })) ? "spoke" : "refused";
+    if (cut()) return "skipped";
+    const heard = await audio.speak(text, { voice: voices.web, rate: settings.rate });
+    if (cut()) return "skipped";
+    return heard ? "spoke" : "refused";
   }
 }
 

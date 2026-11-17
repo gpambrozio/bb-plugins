@@ -234,7 +234,8 @@ describe("Announcer", () => {
     muted.announcer.onEntries([]);
     muted.announcer.onEntries([entry("a")]);
     await settle();
-    expect(off.deps.report).toHaveBeenCalledWith("info", 'Not speaking "Sentence a." here: Announcements are off in Herald\'s settings.');
+    // Muted everywhere, an announcement is let go as it arrives, never queued.
+    expect(off.deps.report).toHaveBeenCalledWith("info", 'Not speaking "Sentence a.": Herald is muted.');
     expect(off.deps.render).not.toHaveBeenCalled();
     expect(phone.deps.render).not.toHaveBeenCalled();
     expect(muted.deps.render).not.toHaveBeenCalled();
@@ -368,6 +369,151 @@ describe("Announcer", () => {
     await expect(announcer.speakText("Testing.", { force: true })).resolves.toBe(
       "This device would not play the sound. Press Test voice, then try again.",
     );
+  });
+
+  it("stops what it is saying when Herald is muted everywhere, says nothing that waited behind it, and speaks again once unmuted", async () => {
+    const hold: Array<() => void> = [];
+    const switches: Partial<SpeechSettings> = { speak: true };
+    const { announcer, audio, deps } = setup({ hold, settings: switches });
+    announcer.onEntries([]);
+    const first = entry("a");
+    const second = entry("b", { createdAt: "2026-09-15T10:01:00.000Z" });
+    announcer.onEntries([first, second]);
+    await settle();
+    expect(audio.playAudio).toHaveBeenCalledTimes(1);
+    // `bb herald mute`: the switch goes off, and the bridge silences the announcer.
+    switches.speak = false;
+    announcer.silence();
+    expect(audio.stopAudio).toHaveBeenCalled();
+    expect(audio.stopSpeaking).toHaveBeenCalled();
+    hold.shift()?.();
+    await settle();
+    expect(audio.playAudio).toHaveBeenCalledTimes(1);
+    expect(deps.report).toHaveBeenCalledWith("info", 'Stopped saying "Sentence a." here: Herald was muted.');
+    expect(deps.report).not.toHaveBeenCalledWith("info", expect.stringMatching(/^Spoke/));
+    // Not said later, either: unmuting speaks only what comes next.
+    switches.speak = true;
+    const third = entry("c", { createdAt: "2026-09-15T10:02:00.000Z" });
+    announcer.onEntries([first, second, third]);
+    await settle();
+    hold.shift()?.();
+    await settle();
+    expect(audio.playAudio).toHaveBeenCalledTimes(2);
+    expect(deps.report).toHaveBeenCalledWith("info", 'Spoke (desktop): "Sentence c."');
+  });
+
+  it("drops a sentence the server was still rendering when Herald was muted", async () => {
+    let finishRender: () => void = () => {};
+    const switches: Partial<SpeechSettings> = { speak: true };
+    const { announcer, audio } = setup({
+      settings: switches,
+      render: () =>
+        new Promise((resolve) => {
+          finishRender = () => resolve({ mimeType: "audio/wav", base64: "QUJD" });
+        }),
+    });
+    announcer.onEntries([]);
+    announcer.onEntries([entry("a")]);
+    await settle();
+    switches.speak = false;
+    announcer.silence();
+    finishRender();
+    await settle();
+    expect(audio.playAudio).not.toHaveBeenCalled();
+    expect(audio.speak).not.toHaveBeenCalled();
+  });
+
+  it("says nothing that came up while muted, even when a render from before the mute finishes after unmute", async () => {
+    let finishRender: () => void = () => {};
+    const switches: Partial<SpeechSettings> = { speak: true };
+    const { announcer, audio, deps } = setup({
+      settings: switches,
+      render: vi.fn(
+        (text: string) =>
+          new Promise<{ mimeType: string; base64: string }>((resolve) => {
+            finishRender = () => resolve({ mimeType: "audio/wav", base64: text === "Sentence c." ? "Qw==" : "QUJD" });
+          }),
+      ),
+    });
+    announcer.onEntries([]);
+    const a = entry("a");
+    announcer.onEntries([a]);
+    await settle();
+    // Muted while A renders; B comes up while muted; unmuted; then A's render answers.
+    switches.speak = false;
+    announcer.silence();
+    const b = entry("b", { createdAt: "2026-09-15T10:01:00.000Z" });
+    announcer.onEntries([a, b]);
+    switches.speak = true;
+    finishRender();
+    await settle();
+    expect(audio.playAudio).not.toHaveBeenCalled();
+    expect(deps.render).toHaveBeenCalledTimes(1);
+    // What comes up after the unmute is said.
+    announcer.onEntries([a, b, entry("c", { createdAt: "2026-09-15T10:02:00.000Z" })]);
+    await settle();
+    finishRender();
+    await settle();
+    expect(audio.playAudio).toHaveBeenCalledTimes(1);
+    expect(audio.playAudio).toHaveBeenCalledWith("data:audio/wav;base64,Qw==");
+  });
+
+  it("drops a sentence queued before a mute, even when Herald is unmuted before its turn", async () => {
+    const hold: Array<() => void> = [];
+    const switches: Partial<SpeechSettings> = { speak: true };
+    const { announcer, audio } = setup({ hold, settings: switches });
+    announcer.onEntries([]);
+    announcer.onEntries([entry("a"), entry("b", { createdAt: "2026-09-15T10:01:00.000Z" })]);
+    await settle();
+    expect(audio.playAudio).toHaveBeenCalledTimes(1);
+    switches.speak = false;
+    announcer.silence();
+    switches.speak = true;
+    hold.shift()?.();
+    await settle();
+    expect(audio.playAudio).toHaveBeenCalledTimes(1);
+  });
+
+  it("never speaks a sentence that was still being written while muted, once it lands after unmute", async () => {
+    const switches: Partial<SpeechSettings> = { speak: true };
+    const { announcer, audio } = setup({ settings: switches });
+    announcer.onEntries([]);
+    switches.speak = false;
+    announcer.silence();
+    const pending = entry("a", { summary: { status: "pending", fallback: "Sentence a." } });
+    announcer.onEntries([pending]);
+    switches.speak = true;
+    announcer.onEntries([entry("a")]);
+    await settle();
+    expect(audio.playAudio).not.toHaveBeenCalled();
+  });
+
+  it("never speaks a sentence being written when Herald was muted, even with no list read during the mute", async () => {
+    const switches: Partial<SpeechSettings> = { speak: true };
+    const { announcer, audio } = setup({ settings: switches });
+    announcer.onEntries([]);
+    announcer.onEntries([entry("a", { summary: { status: "pending", fallback: "Sentence a." } })]);
+    switches.speak = false;
+    announcer.silence();
+    switches.speak = true;
+    announcer.onEntries([entry("a")]);
+    await settle();
+    expect(audio.playAudio).not.toHaveBeenCalled();
+    // What comes up after the unmute is said.
+    announcer.onEntries([entry("a"), entry("b", { createdAt: "2026-09-15T10:01:00.000Z" })]);
+    await settle();
+    expect(audio.playAudio).toHaveBeenCalledTimes(1);
+  });
+
+  it("still says Test voice and Read again pressed while muted, and after a mute", async () => {
+    const switches: Partial<SpeechSettings> = { speak: true };
+    const { announcer, audio } = setup({ settings: switches });
+    switches.speak = false;
+    announcer.silence();
+    await expect(announcer.speakText("Testing.", { force: true })).resolves.toBeNull();
+    switches.speak = true;
+    await expect(announcer.speakText("Again.", { force: true })).resolves.toBeNull();
+    expect(audio.playAudio).toHaveBeenCalledTimes(2);
   });
 
   it("falls silent when stopped", async () => {

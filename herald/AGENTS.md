@@ -27,6 +27,8 @@ what still holds and says what bb changed. The repo root `AGENTS.md` covers what
 | `server/carry.ts` | Each thread's finished turns no landed sentence has covered yet, held as they arrive, capped; and the prompt's output that lists them with the latest. |
 | `server/writer.ts` | The optional sentence-writing tool, run as a child process through bb's host toolchain: prompt in on stdin, one line out (from the JSON summary for Claude Code and Codex); the timeout, the cap, the empty folder. |
 | `server/command-line.ts` | The user's command split into words without a shell, and the prompt template filled in. |
+| `server/mute.ts`, `shared/mute.ts`, `app/global-mute.ts` | The global mute: the master switch read the other way round, the repeat that writes nothing, the push to every window, and the window's copy of it. |
+| `server/cli.ts` | `bb herald`: `mute`, `unmute`, `status`, and `thread <id> [choice]` over the menu's own code path. |
 | `server/speech-hooks.ts` | The speech hooks' commands, one kv row by host id, and the runs of speech forwarded to the machine: the stored commands only, nothing stored reaches no host, a failure logged with the machine. |
 | `host.ts`, `host/sessions.ts`, `host/run-hook.ts` | The host entry, on the machine whose desktop app speaks: the runs of speech there and the after hook they owe (one session per machine, leases, dispose); one hook through the shell, from home, with `HERALD_HOOK`, killed with its process group at the timeout. |
 | `server/ports.ts`, `server/bb-ports.ts` | The seams the logic is tested through, and their implementations over `bb.sdk`. |
@@ -357,6 +359,45 @@ an entry it silences is `off` — listed, never spoken, no tool run to write it.
 the same four choices for every selected thread, checked only when all have it as their own, and saves
 them with one `choices.setMany` per 200 threads. The server tries every thread, publishes once even when
 some failed, and then says how many were not saved. bb 0.47 drops `experimental_bulkItem` silently.
+
+## The global mute and `bb herald`
+
+`bb herald mute` / `unmute` (and the Herald page's Unmute) are **the host form's master switch, `speak`,
+read the other way round** (`server/mute.ts`): it already meant "nothing is spoken on any device", so a
+second flag would have been two switches for one thing. What must stay true:
+
+- **Every window hears it at once.** `useSettings()` is a query bb re-reads on its own schedule (bb 0.49's
+  app caches it 30 s), too late for a voice hook. So `settings.onChange` — which fires for the CLI, the
+  page and the form alike — publishes `MUTE_CHANNEL` with the new state, the bridge keeps it in
+  `app/global-mute.ts` (also read by `mute.get` on mount and after a reconnect), and the announcer's gate
+  takes `speak` from there before the form's copy. Checked live: a window's notice appeared about 0.2 s
+  after the command.
+- **Muting cuts off what is being said, and what waits** (`Announcer.silence()`): it stops both engines
+  and moves `hushes`. Every delivery carries the generation it was *queued* in, so one under way (a render
+  still out included) or queued behind it drops out even if Herald is unmuted before its turn, without
+  releasing its claim, so no other window picks it up (review pass 1: capturing it when playback started
+  let a sentence queued during the mute play after unmute). `silence()` also counts every entry listed at that moment as said, a
+  sentence still being written included, since it may land after the unmute with no list read during the
+  mute (review pass 2). While muted, `onEntries` counts every new entry as said as it arrives, **a
+  sentence still being written included**, so nothing that came up during the mute is said later; the README promises this. Presses (*Read again*, *Test voice*) made
+  during or after the mute speak as before.
+- **A late read never undoes a push** (`app/bridge.tsx`, `muteEpoch`): every `mute.get` started and every
+  push heard moves the epoch, and a read answers only if nothing came after it started. A read sent before
+  a hook's mute and answered after its push otherwise unmuted the window until the next change.
+- **A repeat writes nothing**, and requests run in order, so a quick mute then unmute ends unmuted. One
+  settings read and at most one write: a hook gets five seconds.
+- **`thread` goes through `setChoice`, the `choices.set` RPC's own path** (metadata, `CHOICES_CHANNEL`,
+  the push level), and refuses a thread bb does not know before writing (`ThreadChoices.lookup`:
+  `experimental_listAncestors` leaves unknown ids out, checked live on bb 0.49), and an archived or deleted
+  one, which the menu offers no choice for. The push takeover itself also reads the thread's facts before
+  it mutes a level, since `forgotten` knows only archives this instance heard: a thread archived before a
+  load reached it through the menu's path or an event (review pass 1). The command line spells
+  *Questions only* `questions-only`; the stored value stays `questions`.
+- **Reaching it from a hook on another machine** is the README's job, and has a hard limit: a host
+  daemon's hook gets no `BB_` variables (bb's `plugin-host-worker` env filter, bb 0.49), outside a thread
+  `bb` targets `127.0.0.1:38886`, and bb's CLI sends no `BB_SERVER_HEADERS`, so a machine paired only
+  through bb Connect cannot reach the server from a hook. Threads and terminals there get the daemon's
+  signed-in loopback proxy, on a random port.
 
 ## Herald's sentences as push notifications
 
@@ -874,3 +915,7 @@ cover, check by hand after `bb plugin reload herald`:
     stopped answering. In a browser tab the section says it runs no hooks. A dev bb driven headlessly gets there with `bbDesktop` defined as a getter that
     returns undefined: Herald tests `"bbDesktop" in window`, and bb's own app, reading the value, stays a
     browser page instead of calling desktop methods a stub lacks.
+13. With the Herald page open, run `bb herald mute`: within a second the page says Herald is muted on every
+    device, and a sentence being said stops; let a thread finish meanwhile: it is listed and never spoken,
+    not even after `bb herald unmute`. The page's Unmute button turns *Speak announcements* back on.
+    `bb herald thread <id> silent` shows as *Silent* in that thread's menu at once.

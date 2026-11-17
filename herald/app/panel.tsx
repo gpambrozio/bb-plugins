@@ -30,6 +30,7 @@ import { ENTRIES_CHANNEL, sentenceText, type AttentionEntry, type RecentHistoryI
 import type { PushStatus } from "../shared/push";
 import { getAnnouncer, isMutedHere, onMuteChange, setMutedHere } from "./announcer";
 import { useEntries } from "./entries";
+import { useGlobalMuted } from "./global-mute";
 import { HERALD_ICONS } from "./icons";
 import { openPluginSettings } from "./open-settings";
 import { joinRows, type Row, type RowReason } from "./rows";
@@ -365,6 +366,34 @@ function usePushProblem(): string | null {
   return status?.message ?? null;
 }
 
+/**
+ * Herald muted on every device — from this page, its settings' master switch
+ * or `bb herald mute` — with the way back. Hidden while it speaks, and until
+ * the server has said.
+ */
+function GlobalMuteNotice() {
+  const rpc = useRpc<RpcContract>();
+  const muted = useGlobalMuted();
+  const [busy, setBusy] = useState(false);
+  if (muted !== true) return null;
+  function onUnmute() {
+    setBusy(true);
+    rpc
+      .call("mute.set", { muted: false })
+      .catch((caught: unknown) => toast.error(`Could not unmute Herald: ${errorText(caught)}`))
+      .finally(() => setBusy(false));
+  }
+  return (
+    <div role="status" className="mx-3 mt-2 flex items-center gap-2 rounded-md border border-warning p-2 text-xs text-warning-text">
+      <Icon name={HERALD_ICONS.volumeOff} className="size-4 shrink-0" aria-hidden />
+      <p className="min-w-0 flex-1">Herald is muted on every device. Nothing is spoken until it is unmuted, and what comes up meanwhile is not said later.</p>
+      <TipButton variant="outline" size="sm" label="Let Herald speak again on every device" disabled={busy} onClick={onUnmute}>
+        Unmute
+      </TipButton>
+    </div>
+  );
+}
+
 function hintFor(): string | null {
   if (!canPlaySpeech()) return "This device can neither play audio nor speak, so summaries can only be read here.";
   switch (speechPlatform()) {
@@ -434,6 +463,7 @@ export function HeraldPanel() {
           <Icon name="Settings" />
         </TipButton>
       </div>
+      <GlobalMuteNotice />
       {hint === null ? null : <p className="px-3 pt-2 text-xs text-muted-foreground">{hint}</p>}
       {pushProblem === null ? null : (
         <p role="status" className="mx-3 mt-2 rounded-md border border-warning p-2 text-xs text-warning-text">

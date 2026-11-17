@@ -514,8 +514,16 @@ export class PushTakeover {
     // there is nothing bb would say for Herald to say instead.
     if (own === "muted") return;
     if (resolveLevel(threadId, state.ancestorIds, this.withoutHerald(state, this.now()), state.defaults) === "muted") return;
+    // An archived or deleted thread is never taken over, archived before this
+    // instance loaded included (`forgotten` knows only archives it heard).
+    // A read that fails takes nothing over: bb then keeps notifying as it does.
+    const facts = await this.deps.facts(threadId).catch((error: unknown) => {
+      this.deps.log.warn(`Could not read whether ${threadId} is archived; leaving bb's notifications for it alone: ${reasonOf(error)}`);
+      return null;
+    });
+    if (facts === null || facts.kind === "gone") return;
     // Checked again after the awaits above: a switch, a failure or an unload meanwhile wins.
-    if (this.epoch !== epoch || this.closed) return;
+    if (this.epoch !== epoch || this.closed || this.forgotten.has(threadId)) return;
     // The record first: a mute that lands with no record would never be given back.
     const claimed: PushRecord = { previous: own, mutedAt: this.now() };
     await this.deps.kv.set(this.key(threadId), claimed);
