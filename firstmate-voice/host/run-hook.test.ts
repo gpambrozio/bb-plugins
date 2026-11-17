@@ -72,7 +72,18 @@ describe.runIf(posix)("running a machine's voice hook", () => {
 
   it("reports the exit status, and never the output", async () => {
     const run = await runHook("talking-started", null, { file: hookFile("echo 'a secret'; echo 'another' >&2; exit 3") });
-    expect(run).toEqual({ exitCode: 3, signal: null, timedOut: false, failedToStart: false, durationMs: expect.any(Number) });
+    expect(run).toEqual({ exitCode: 3, signal: null, timedOut: false, failedToStart: false, durationMs: expect.any(Number), bbServerUrl: null, relayNote: null });
+  });
+
+  it("sets BB_SERVER_URL to bb's relay when there is one, and nothing otherwise, as before", async () => {
+    const out = join(scratch(), "out");
+    const file = hookFile(`printf '%s' "\${BB_SERVER_URL-unset}" > '${out}'`);
+    const withRelay = await runHook("listening-started", null, { file, bbServerUrl: "http://127.0.0.1:57314" });
+    expect(readFileSync(out, "utf8")).toBe("http://127.0.0.1:57314");
+    expect(withRelay).toMatchObject({ exitCode: 0, bbServerUrl: "http://127.0.0.1:57314", relayNote: null });
+    const without = await runHook("listening-started", null, { file, bbServerUrl: null, env: { PATH: process.env.PATH } });
+    expect(readFileSync(out, "utf8")).toBe("unset");
+    expect(without).toMatchObject({ exitCode: 0, bbServerUrl: null });
   });
 
   it("reports a file that is there but not executable as not started", async () => {

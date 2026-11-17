@@ -32,6 +32,8 @@ export const HookEventSchema = z.enum(HOOK_EVENTS);
 export const HOOK_EVENT_ENV = "FIRSTMATE_VOICE_HOOK";
 /** Why listening stopped, on `listening-stopped` only ("ended by the captain", "quiet for ten minutes"…). */
 export const HOOK_REASON_ENV = "FIRSTMATE_VOICE_REASON";
+/** bb's relay on a machine joined through bb Connect, so the hook's `bb` reaches the server (bb internals). */
+export const BB_SERVER_URL_ENV = "BB_SERVER_URL";
 
 /** The hook file, relative to the home folder of the machine it runs on. */
 export const HOOK_FILE = ".config/firstmate-voice/hook";
@@ -54,6 +56,10 @@ export const HookRunSchema = z.object({
   /** It could not be started at all (not executable, say). */
   failedToStart: z.boolean(),
   durationMs: z.number().int().min(0),
+  /** The `BB_SERVER_URL` the hook got: bb's relay on this machine, never a credential. Null when none was set. */
+  bbServerUrl: z.string().max(100).nullable(),
+  /** Why none was set, when none was. */
+  relayNote: z.string().max(300).nullable(),
 });
 export type HookRun = z.infer<typeof HookRunSchema>;
 
@@ -63,6 +69,13 @@ export function hookOutcome(run: HookRun): string {
   if (run.timedOut) return `stopped after ${Math.round(run.durationMs / 1000)} s, too slow`;
   if (run.signal !== null) return `ended by ${run.signal} after ${run.durationMs} ms`;
   return `exit ${run.exitCode ?? "?"} after ${run.durationMs} ms`;
+}
+
+/** One line on the hook's `BB_SERVER_URL`, for the debug log. */
+export function relayLine(run: HookRun): string | null {
+  if (run.bbServerUrl !== null) return `BB_SERVER_URL: ${run.bbServerUrl} (bb's relay on this machine; bb internals)`;
+  if (run.relayNote !== null) return `No BB_SERVER_URL: ${run.relayNote}`;
+  return null;
 }
 
 export function hookFailed(run: HookRun): boolean {

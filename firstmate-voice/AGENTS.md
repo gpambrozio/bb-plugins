@@ -21,6 +21,7 @@ the voice, the decisions behind phase 1, and the phase 0 decision record.
 | `server/policy.ts` | The utterance log, one send at a time, rate limits. |
 | `server/brief-sync.ts` | Brief → diff → `[firstmate-update]` items, full replacement every 15 updates or 20 minutes, and the events worth announcing. |
 | `server/hooks.ts`, `host.ts`, `host/run-hook.ts`, `shared/hooks.ts`, `shared/host-contract.ts`, `app/machine.ts`, `app/hooks-section.tsx` | The voice hooks: when a session runs the window's machine's hook file (pairs, lanes, time limits), the host entry that runs that file and says whether it is there, the window's machine lookup, and the settings section that shows which machines have one. |
+| `host/relay.ts` | bb's relay on the hook's machine (bb internals), found before each run and handed to the hook as `BB_SERVER_URL`, so its `bb` works on a machine joined through bb Connect. |
 | `server/debug-log.ts`, `app/debug.tsx`, `app/debug-view.ts` | The debug log of the current (or last) session, its client-only `debug.log` RPC, and the debug tab in a thread's side panel, with the request that opens it from where no thread panel is at hand. |
 | `server/announce.ts` | P1 announcements at gaps, once more when the captain talks over one, during the response or later while its audio plays. |
 | `server/instructions.ts`, `server/tools.ts` | The standing instructions (design §8's outline) and the tool list with levels. |
@@ -112,6 +113,12 @@ the voice, the decisions behind phase 1, and the phase 0 decision record.
   listening started, that its file is there and executable. The debug log records the moment, the
   machine, the exit status and the duration of each run; the host entry never reads the output or the
   file, so nothing a hook prints or holds can reach the log.
+- **A hook's `BB_SERVER_URL` is an address, never a credential, and never in its way.** `host/relay.ts`
+  reads only the host daemon's listening ports (`lsof -b`, never its environment, which holds the Connect
+  credential) and asks each one `GET /health`; the hook gets `http://127.0.0.1:<port>` and nothing more, and
+  the debug log gets the same URL or why there is none. The lookup gives up after 1.5 s, and on any
+  failure the hook runs with the worker's environment untouched, as before. `listening-started` looks
+  afresh; later runs only check that the same daemon still lists the port.
 - **Herald is left alone.** Both may speak the same news while a session is live; the captain turns Herald
   off by hand when that matters (design §10, phase 2).
 
@@ -179,6 +186,24 @@ the voice, the decisions behind phase 1, and the phase 0 decision record.
   under way and a second has passed quietly, so a tool call between two spoken replies keeps one pair.
   The first version kept a shell command per machine in the plugin's storage, set from the settings page;
   review pass 1 found that `bb plugin rpc call` could set and trigger it, so the owner moved it to the file.
+- **A hook can call `bb` on a machine joined through bb Connect, through bb internals** (the owner's call,
+  2026-11-16, option (c) of three). bb's host worker drops every `BB_*` variable (bb 0.49.0's daemon,
+  `ht`, as the SDK's `experimental_sanitizeInheritedChildProcessEnv`), though its PATH starts with bb's CLI
+  folder, so a hook's `bb` went to 127.0.0.1:38886 and failed there. On such a machine the daemon runs a
+  relay: a loopback port of its own, a new one each start, forwarding every request to the server with the
+  machine's Connect credential (it checks only that a request has no browser `Origin` or `Sec-Fetch-Site`
+  and names it as `Host`). bb gives it to terminals and threads as `BB_SERVER_URL`, and the CLI needs
+  nothing more. No SDK surface names it: the host context has no environment, the daemon's `/status` gives
+  the Connect URL (401), and the server cannot know the port. The worker's parent is the daemon, so
+  `host/relay.ts` lists that process's loopback ports and takes the one that answers `/health` with
+  `{"ok":true}`, as the CLI checks; the daemon's local API answers plain `ok` and its browser broker 404.
+  The other options were asking bb to hand host workers the CLI environment it gives terminals (the clean
+  fix, still worth asking for) and running each hook as a bb terminal (supported, but a visible terminal and
+  stored output for every run). Checked in a dev bb whose daemon was started with test-only
+  `BB_SERVER_HEADERS`, which makes it run the relay: the lookup found the port bb gave its terminals in
+  14 ms, `bb herald status` worked through it, and a daemon without the headers gave the no-relay note. A
+  real Connect machine was not tried. A hook with it has the owner's full bb access; so had any local
+  program that found the port. Herald's speech hooks are left as they are.
 - **The pill is a bb toast** (the owner's call, 2026-11-16, as Screen Sharing did; the root `AGENTS.md`
   has the recipe). A pinned pill covered Screen Sharing's and bb's toasts, and bb lays out no overlays, so
   `VoicePill` renders nothing and shows `toast(title, { id, duration: Infinity, dismissible: false,

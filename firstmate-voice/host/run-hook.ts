@@ -11,7 +11,8 @@ import { access, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { HOOK_EVENT_ENV, HOOK_FILE, HOOK_REASON_ENV, HOOK_TIMEOUT_MS, type HookEvent, type HookFileStatus, type HookRun } from "../shared/hooks";
+import { BB_SERVER_URL_ENV, HOOK_EVENT_ENV, HOOK_FILE, HOOK_REASON_ENV, HOOK_TIMEOUT_MS, type HookEvent, type HookFileStatus, type HookRun } from "../shared/hooks";
+import { RelayFinder } from "./relay";
 
 /** This machine's hook file, in the home folder of the user the host daemon runs as. */
 export function hookPath(home: string = homedir()): string {
@@ -39,6 +40,8 @@ export interface RunHookOptions {
   timeoutMs?: number;
   cwd?: string;
   env?: NodeJS.ProcessEnv;
+  /** bb's relay on this machine (`host/relay.ts`), set as `BB_SERVER_URL`; null or absent sets nothing. */
+  bbServerUrl?: string | null;
 }
 
 /** Every hook still running in this worker, with how to kill its process group. */
@@ -77,6 +80,8 @@ export async function runHook(event: HookEvent, reason: string | null, options: 
     const env: NodeJS.ProcessEnv = { ...(options.env ?? process.env), [HOOK_EVENT_ENV]: event };
     if (reason !== null) env[HOOK_REASON_ENV] = reason;
     else delete env[HOOK_REASON_ENV];
+    const bbServerUrl = options.bbServerUrl ?? null;
+    if (bbServerUrl !== null) env[BB_SERVER_URL_ENV] = bbServerUrl;
     const child = spawn(file, [], {
       cwd: options.cwd ?? homedir(),
       env,
@@ -106,7 +111,7 @@ export async function runHook(event: HookEvent, reason: string | null, options: 
       kill();
       running.delete(kill);
       clearTimeout(timer);
-      resolve({ exitCode, signal, timedOut, failedToStart, durationMs: Date.now() - started });
+      resolve({ exitCode, signal, timedOut, failedToStart, durationMs: Date.now() - started, bbServerUrl, relayNote: null });
     };
     const timer = setTimeout(() => {
       timedOut = true;
@@ -115,4 +120,20 @@ export async function runHook(event: HookEvent, reason: string | null, options: 
     child.on("error", () => finish(null, null, true));
     child.on("exit", (code, signal) => finish(code, signal, false));
   });
+}
+
+/** This worker's relay lookups: what a session's first hook found serves its later ones. */
+const relay = new RelayFinder();
+
+/**
+ * Runs this machine's hook for `event` from the host entry: null when there is no hook file. A session's first
+ * hook looks for bb's relay afresh, the others check what it found, and the hook gets `BB_SERVER_URL` when
+ * there is one; when there is none, or the lookup fails or runs out of time, it runs exactly as without, and
+ * the run says why.
+ */
+export async function runMachineHook(event: HookEvent, reason: string | null, finder: RelayFinder = relay): Promise<HookRun | null> {
+  if (!(await hookStatus()).present) return null;
+  const found = await finder.forRun(event === "listening-started");
+  const run = await runHook(event, reason, { bbServerUrl: found.url });
+  return run === null ? null : { ...run, relayNote: found.note };
 }

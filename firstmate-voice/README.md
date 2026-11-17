@@ -129,6 +129,14 @@ Delete the file, or make it not executable, and no hook runs there. There is non
   Linux only.
 - **How it runs:** the file itself, from your home folder, as the user bb's host daemon runs as. Output is
   ignored.
+- **Calling `bb` from a hook** (`bb herald mute`, say): on the machine running bb's server, `bb` works as
+  it does anywhere. On a machine joined to bb through **bb Connect**, `bb` needs the address of bb's relay
+  on that machine, which bb gives its own terminals and threads but not a plugin: before each session the
+  plugin looks for it and sets `BB_SERVER_URL` to it (`http://127.0.0.1:<port>`, an address only, never a
+  credential). **This depends on bb internals and may stop working after a bb update**; when the relay is
+  not found the hook runs without it, and the debug log says why. A hook that calls `bb` acts with **your
+  full bb access** (threads, messages, settings, commands on any of your machines), as any program on that
+  machine that finds the relay already could, so put in it only what you would run yourself.
 - **Never in the way:** a run gets five seconds and is then stopped, with whatever it started; anything it
   leaves running in the background (`… &`) is stopped as soon as it exits. The call never waits for one,
   and one that fails or is slow changes nothing in the call. Each run is in the debug log: the moment, the

@@ -24,10 +24,11 @@
  *   is asked for, so a caller with no real WebRTC offer and no ChatGPT sign-in runs no hook. Live speech
  *   cannot be held back, so "speaking-started" runs at the first sign of a spoken reply, before its audio,
  *   and the voice speaks whether or not it has finished.
- * - **The debug log** gets each run: the moment, the machine, the exit status and the duration. Never the
- *   output, which is not even read.
+ * - **The debug log** gets each run: the moment, the machine, the exit status and the duration, and the
+ *   `BB_SERVER_URL` the hook got (bb's relay on a Connect machine, `host/relay.ts`) or why it got none. Never
+ *   the output, which is not even read.
  */
-import { hookFailed, hookOutcome, HOOK_FILE_SHOWN, HOOK_TIMEOUT_MS, type HookEvent, type HookFileStatus, type HookRun } from "../shared/hooks";
+import { hookFailed, hookOutcome, relayLine, HOOK_FILE_SHOWN, HOOK_TIMEOUT_MS, type HookEvent, type HookFileStatus, type HookRun } from "../shared/hooks";
 import type { DebugLog } from "./debug-log";
 import { errorText, type Clock, type Log, type RealtimeEvent } from "./ports";
 
@@ -269,7 +270,8 @@ export class SessionHooks {
       const run = await withTimeout(host.run(hostId, { event, reason }), HOOK_CALL_TIMEOUT_MS, clock);
       // The file went during the session: nothing ran, and there is nothing to say for each moment.
       if (run === null) return;
-      this.debug.add("hook", `Hook ${event} on ${name}: ${hookOutcome(run)}`, reasonNote);
+      const note = [reasonNote, relayLine(run)].filter((line) => line !== undefined && line !== null).join("\n");
+      this.debug.add("hook", `Hook ${event} on ${name}: ${hookOutcome(run)}`, note);
       if (hookFailed(run)) log.warn(`The voice hook for ${event} on ${name} failed: ${hookOutcome(run)}.`);
     } catch (error) {
       this.debug.add("hook", `Hook ${event} on ${name} did not run: ${errorText(error)}`, reasonNote);

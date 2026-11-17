@@ -381,6 +381,11 @@ is enrolled — say which one you chose in the plugin's `AGENTS.md`. `launchd-jo
 - **`context.experimental_retainWorker()` works only while the call that asks is running**; it throws
   afterwards. Take the lease in the handler that starts the background work, and release it on every
   way that work ends.
+- **A host entry's processes get no `BB_*` variable** (bb 0.49): the daemon drops them all when it starts
+  the worker, but puts bb's CLI folder first on its PATH, so a child's `bb` runs and then targets
+  127.0.0.1:38886. On a machine joined through bb Connect nothing answers there: the CLI needs the daemon's
+  loopback relay, which bb gives terminals and threads as `BB_SERVER_URL` and plugins not at all.
+  `firstmate-voice/host/relay.ts` finds it from the worker's parent (bb internals).
 - **Testing a host entry:** `experimental_createHostEntryHarness` (`@get-bb/plugin-sdk/testing/host`)
   runs it with the daemon's validation and counts leases. Wiring `createFakePluginHost`'s
   `experimental_callHostRpc` and `harness.experimental_emitHostSignal` to the entry's logic tests the

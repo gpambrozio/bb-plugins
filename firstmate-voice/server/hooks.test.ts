@@ -17,7 +17,7 @@ function expectPairs(events: string[], counts: { talking: number; speaking: numb
   expect(events).toHaveLength(2 + 2 * (counts.talking + counts.speaking));
 }
 
-const OK: HookRun = { exitCode: 0, signal: null, timedOut: false, failedToStart: false, durationMs: 40 };
+const OK: HookRun = { exitCode: 0, signal: null, timedOut: false, failedToStart: false, durationMs: 40, bbServerUrl: null, relayNote: null };
 const STUDIO: HookTarget = { hostId: "host_studio", name: "Studio" };
 
 const RUNNABLE: HookFileStatus = { present: true, executable: true };
@@ -237,6 +237,24 @@ describe("a session's hooks", () => {
     await hooks.end("ended by the captain");
     const entry = debug.page(0).entries.at(-1);
     expect(entry).toMatchObject({ kind: "hook", title: "Hook listening-stopped on Studio: exit 0 after 40 ms", text: "FIRSTMATE_VOICE_REASON: ended by the captain" });
+  });
+
+  it("put the hook's BB_SERVER_URL, or why it had none, beside each run in the debug log, and never more than the URL", async () => {
+    const { hooks, debug, host } = await setup({ manual: true });
+    host.pending.shift()!.finish({ ...OK, bbServerUrl: "http://127.0.0.1:57314" });
+    await settle();
+    expect(debug.page(0).entries.at(-1)).toMatchObject({
+      title: "Hook listening-started on Studio: exit 0 after 40 ms",
+      text: "BB_SERVER_URL: http://127.0.0.1:57314 (bb's relay on this machine; bb internals)",
+    });
+    const ending = hooks.end("ended by the captain");
+    await settle();
+    host.pending.shift()!.finish({ ...OK, relayNote: "lsof did not answer within 1 s" });
+    await ending;
+    expect(debug.page(0).entries.at(-1)).toMatchObject({
+      title: "Hook listening-stopped on Studio: exit 0 after 40 ms",
+      text: "FIRSTMATE_VOICE_REASON: ended by the captain\nNo BB_SERVER_URL: lsof did not answer within 1 s",
+    });
   });
 
   it("run nothing for a session whose machine has no hook file, one that is not executable, or one that does not answer", async () => {

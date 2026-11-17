@@ -39,4 +39,6 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the machine whose bb desktop app is in the call, from your home folder, for at most five seconds, and
   never holds the call up. Nothing in bb can set it: the plugin's settings page shows only which machines
   have one, with yours marked. The mobile app and a browser tab run none. Each run shows in the debug log
-  with its exit status and how long it took.
+  with its exit status and how long it took. On a machine joined to bb through bb Connect, a hook can also
+  run bb's command line (to mute Herald, say), with your full bb access; this relies on how bb works inside
+  and may stop working after a bb update.
