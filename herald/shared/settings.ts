@@ -37,7 +37,8 @@ export const SETTINGS = {
   speak: {
     type: "boolean",
     label: "Speak announcements",
-    description: "The master switch. Off, nothing is spoken on any device; the Herald panel still lists what is waiting.",
+    description:
+      "The master switch. Off, Herald is muted: nothing is spoken on any device, and what comes up meanwhile is not said later; the Herald panel still lists what is waiting. The commands bb herald mute and bb herald unmute flip it from a script.",
     default: true,
   },
   speakOnDesktop: {
@@ -207,7 +208,7 @@ export function speechSettingsOf(values: Record<string, string | number | boolea
  */
 export function blockedMessage(settings: SpeechSettings, platform: SpeechPlatform, mutedHere: boolean): string | null {
   if (mutedHere) return "Herald is muted on this device. Unmute it from the Herald panel.";
-  if (!settings.speak) return "Announcements are off in Herald's settings.";
+  if (!settings.speak) return "Herald is muted on every device: Speak announcements is off in its settings.";
   switch (platform) {
     case "desktop":
       return settings.speakOnDesktop ? null : "Speaking in the desktop app is off in Herald's settings.";

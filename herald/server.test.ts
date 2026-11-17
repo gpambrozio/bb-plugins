@@ -13,6 +13,7 @@ import plugin, { ABANDONED_AFTER_MS } from "./server";
 import { announceDrained } from "./server/reload-signal";
 import type { AttentionEntry } from "./shared/herald";
 import { DEFAULT_STORED_CONFIG, ENTRIES_CHANNEL, SENTENCES_CHANNEL, TOOL_COMMANDS } from "./shared/herald";
+import { MUTE_CHANNEL } from "./shared/mute";
 import { CHOICES_CHANNEL } from "./shared/thread-choice";
 
 /**
@@ -710,5 +711,84 @@ describe("herald server", () => {
       await settle();
       expect(harness.sdk.calls.filter((call) => call.path.startsWith("plugins."))).toEqual([]);
     });
+  });
+});
+
+describe("herald's mute and thread commands", () => {
+  afterEach(async () => {
+    await Promise.all(live.splice(0).map((host) => host.harness.lifecycle.dispose().catch(() => {})));
+  });
+
+  const muteSignals = (harness: { realtimeSignals: Array<{ channel: string; payload: unknown }> }) =>
+    harness.realtimeSignals.filter((signal) => signal.channel === MUTE_CHANNEL).map((signal) => signal.payload);
+
+  it("mutes by switching Speak announcements off, tells every window, and writes nothing on a repeat", async () => {
+    const { harness } = await load();
+    expect((await harness.runCli(["mute"])).exitCode).toBe(0);
+    // Published from the settings' own change listener, with the value stored.
+    expect(muteSignals(harness)).toEqual([{ muted: true }]);
+    expect(JSON.parse((await harness.runCli(["mute", "--json"])).stdout)).toEqual({ muted: true, changed: false });
+    expect(muteSignals(harness)).toEqual([{ muted: true }]);
+    expect(await harness.callRpc("mute.get", {})).toEqual({ muted: true });
+    expect(JSON.parse((await harness.runCli(["status", "--json"])).stdout)).toEqual({ muted: true });
+    expect((await harness.runCli(["unmute"])).exitCode).toBe(0);
+    expect(await harness.callRpc("mute.get", {})).toEqual({ muted: false });
+    expect(muteSignals(harness)).toEqual([{ muted: true }, { muted: false }]);
+  });
+
+  it("tells every window when the switch is flipped in the settings form, and from the page", async () => {
+    const { harness } = await load();
+    await harness.setSettings({ speak: false });
+    expect(muteSignals(harness)).toEqual([{ muted: true }]);
+    expect(await harness.callRpc("mute.set", { muted: false })).toEqual({ muted: false, changed: true });
+    expect(muteSignals(harness)).toEqual([{ muted: true }, { muted: false }]);
+    expect(await harness.callRpc("mute.set", { muted: false })).toEqual({ muted: false, changed: false });
+  });
+
+  it("keeps listing what waits while muted", async () => {
+    const { harness } = await load({ speak: false });
+    await harness.emitThreadEvent("thread.idle", { thread: USER_THREAD, lastAssistantText: "Done." });
+    await settle();
+    expect(entriesOf(await harness.callRpc("list", {}))).toHaveLength(1);
+  });
+
+  it("sets a thread's choice as the thread menu does, and every open menu hears of it", async () => {
+    const { harness, metadata } = await load();
+    const set = await harness.runCli(["thread", USER_THREAD.id, "questions-only", "--json"]);
+    expect(set.exitCode).toBe(0);
+    expect(JSON.parse(set.stdout)).toEqual({
+      threadId: USER_THREAD.id,
+      choice: "questions-only",
+      effective: { choice: "questions-only", source: "self", fromThreadId: null },
+    });
+    expect(metadata.get(USER_THREAD.id)).toEqual({ announce: "questions" });
+    expect(harness.realtimeSignals.filter((signal) => signal.channel === CHOICES_CHANNEL)).toHaveLength(1);
+    // What the menu reads is what the command wrote.
+    expect(await harness.callRpc("choices.list", { threadIds: [USER_THREAD.id] })).toEqual({
+      threads: { [USER_THREAD.id]: { own: "questions", inherited: null } },
+    });
+    expect((await harness.runCli(["thread", USER_THREAD.id, "default"])).exitCode).toBe(0);
+    expect(metadata.has(USER_THREAD.id)).toBe(false);
+  });
+
+  it("shows a worker's own choice and the one it follows, by Herald's rule", async () => {
+    const { harness } = await load({ announceSubagents: true });
+    await harness.runCli(["thread", USER_THREAD.id, "silent"]);
+    expect((await harness.runCli(["thread", WORKER_THREAD.id])).stdout).toBe(
+      `${WORKER_THREAD.id}: default\nEffective: silent (following the thread that started it, ${USER_THREAD.id})\n`,
+    );
+    const off = await load();
+    expect(JSON.parse((await off.harness.runCli(["thread", WORKER_THREAD.id, "--json"])).stdout)).toMatchObject({
+      effective: { choice: "silent", source: "subagent" },
+    });
+  });
+
+  it("refuses a thread bb does not know, and writes nothing", async () => {
+    const { harness, metadata } = await load();
+    const result = await harness.runCli(["thread", "thr_unknown", "silent", "--json"]);
+    expect(result.exitCode).not.toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ ok: false, error: { code: "thread_not_found" } });
+    expect(metadata.size).toBe(0);
+    expect(harness.realtimeSignals.filter((signal) => signal.channel === CHOICES_CHANNEL)).toHaveLength(0);
   });
 });

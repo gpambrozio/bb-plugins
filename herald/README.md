@@ -33,6 +33,9 @@ of what was done — and the bb app speaks it.
 - *Mute here* silences announcements on the device you are on until the app reloads; *Test voice* says a
   sample sentence; the gear opens Herald's settings. Read again and Test voice speak even when muted —
   you pressed them.
+- `bb herald mute` and `bb herald unmute` silence Herald on every device and bring it back, from a
+  script such as a voice hook; while it is muted the page says so, with an Unmute button. `bb herald
+  thread` sets a thread's choice from the command line. See [The command line](#the-command-line).
 - Herald speaks whatever page you are on, with the Herald page open or not.
 
 ## Screenshots
@@ -169,8 +172,9 @@ The page is **Herald** in the sidebar.
 
 On the plugin's settings page (Settings → Plugins → Herald):
 
-- **Speech** — the master switch; whether the desktop app, browser tabs and the mobile app speak; the
-  voice source (the voices of the Mac running bb, or this device's browser voice); the speech rate.
+- **Speech** — the master switch (off is muted everywhere, as `bb herald mute` does); whether the desktop
+  app, browser tabs and the mobile app speak; the voice source (the voices of the Mac running bb, or this
+  device's browser voice); the speech rate.
 - **Which events are announced** — questions, plans, permissions, finished turns, errors. A kind that is
   switched off is still listed on the page, without being spoken.
 - **Threads started by another thread** — off by default. A child thread reports to the thread that
@@ -249,6 +253,68 @@ apply on top of every choice. *Mute here* is separate: it silences one device, f
 On bb 0.48, where the sidebar can select several threads, **Herald** is also in the menu of a selection
 and sets the same choice on every selected thread. A choice is checked there only when every selected
 thread has it as its own; archived threads are left out.
+
+## The command line
+
+```sh
+bb herald mute                              # nothing is spoken on any device
+bb herald unmute                            # Herald speaks again, as its settings say
+bb herald status                            # whether Herald is muted
+bb herald thread thr_abc123                 # the thread's own choice, and the one that applies
+bb herald thread thr_abc123 questions-only  # default, announce, questions-only or silent
+```
+
+Add `--json` to any of them for JSON: `{"muted": true, "changed": false}` from `mute`, `{"threadId", "choice",
+"effective": {"choice", "source", "fromThreadId"}}` from `thread`. A failure exits non-zero, with the
+reason on stderr (and as `{"ok": false, "error": …}` with `--json`).
+
+- **Muted is the master switch off.** `mute` turns *Speak announcements* off in Herald's settings, and
+  `unmute` turns it back on, so the settings page shows it too. While Herald is muted the Herald page
+  says so at the top, with an **Unmute** button.
+- **While muted, nothing is spoken on any device**, and whatever Herald is saying at that moment stops.
+  Threads are still listed on the Herald page, their cards still appear in the conversation, and push
+  notifications are unchanged. *Read again* and *Test voice* still speak: you pressed them.
+- **What comes up while Herald is muted is never spoken later.** Unmuting speaks only what comes next.
+- **Safe to repeat, and quick.** Muting a muted Herald changes nothing and says so (`changed: false`); each
+  command is one read and at most one write, a fraction of a second on the machine running bb.
+- **`thread` is the thread menu's choice.** It is saved exactly as the menu saves it, so every device and
+  window sees it at once. `default` clears the thread's own choice. Without a choice it prints the
+  thread's own and the one that applies, with where it comes from. An unknown thread or choice is refused.
+
+### From a voice hook on another machine
+
+A voice hook, such as FirstMate voice's, can mute Herald while
+you talk to another voice and unmute it after. A hook runs on the machine whose desktop app is in the
+call, started by bb's host daemon there, and two things are different from a bb terminal:
+
+- **Which `bb`.** bb removes every `BB_` variable from a hook's environment, `BB_CLI` included. A machine
+  added from Settings → Machines keeps its own copy of bb, not on your PATH, at
+  `~/.bb-machines/<server>/npm/bin/bb`, where `<server>` is the bb server's host name (the address after
+  `--server-url` in that machine's bb host daemon service). It is a Node script, so `node` must be on your
+  login shell's PATH; otherwise run it as `/path/to/node ~/.bb-machines/<server>/npm/bin/bb …`. A machine
+  where you installed bb with npm (`npm install -g bb-app`) has `bb` on its PATH.
+- **Where bb's server is.** Outside a bb thread, `bb` looks for the server on this machine
+  (`http://127.0.0.1:38886`), and there is none here. Set `BB_SERVER_URL` to the address this machine uses
+  to reach bb's server: the `--server-url` above.
+
+```sh
+#!/bin/sh
+# ~/.config/firstmate-voice/hook: mute Herald for the length of a voice session.
+BB="$HOME/.bb-machines/my-mac.example.ts.net/npm/bin/bb"
+export BB_SERVER_URL="https://my-mac.example.ts.net"
+case "$FIRSTMATE_VOICE_HOOK" in
+  listening-started) "$BB" herald mute ;;
+  listening-stopped) "$BB" herald unmute ;;
+esac
+```
+
+**A machine connected through bb Connect cannot do this.** Its address (`https://<name>.getbb.app`)
+needs bb's sign-in, which the machine's host daemon holds and bb's command line does not send, so a hook
+there cannot reach the server. Threads and terminals bb starts on that machine can: bb hands them a local
+route through the host daemon, on a port that changes whenever the daemon restarts. Such a machine needs a
+direct address to the server, such as a private Tailscale Serve address configured as bb's server URL;
+or the hook can run the command on the machine running bb, where `bb` finds the server by itself:
+`ssh my-mac bb herald mute`, with `bb` on that Mac's PATH, as long as it fits the hook's time.
 
 ## Model-written sentences
 

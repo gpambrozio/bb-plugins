@@ -234,7 +234,7 @@ describe("Announcer", () => {
     muted.announcer.onEntries([]);
     muted.announcer.onEntries([entry("a")]);
     await settle();
-    expect(off.deps.report).toHaveBeenCalledWith("info", 'Not speaking "Sentence a." here: Announcements are off in Herald\'s settings.');
+    expect(off.deps.report).toHaveBeenCalledWith("info", 'Not speaking "Sentence a." here: Herald is muted on every device: Speak announcements is off in its settings.');
     expect(off.deps.render).not.toHaveBeenCalled();
     expect(phone.deps.render).not.toHaveBeenCalled();
     expect(muted.deps.render).not.toHaveBeenCalled();
@@ -368,6 +368,58 @@ describe("Announcer", () => {
     await expect(announcer.speakText("Testing.", { force: true })).resolves.toBe(
       "This device would not play the sound. Press Test voice, then try again.",
     );
+  });
+
+  it("stops what it is saying when Herald is muted everywhere, says nothing that waited behind it, and speaks again once unmuted", async () => {
+    const hold: Array<() => void> = [];
+    const switches: Partial<SpeechSettings> = { speak: true };
+    const { announcer, audio, deps } = setup({ hold, settings: switches });
+    announcer.onEntries([]);
+    const first = entry("a");
+    const second = entry("b", { createdAt: "2026-09-15T10:01:00.000Z" });
+    announcer.onEntries([first, second]);
+    await settle();
+    expect(audio.playAudio).toHaveBeenCalledTimes(1);
+    // `bb herald mute`: the switch goes off, and the bridge silences the announcer.
+    switches.speak = false;
+    announcer.silence();
+    expect(audio.stopAudio).toHaveBeenCalled();
+    expect(audio.stopSpeaking).toHaveBeenCalled();
+    hold.shift()?.();
+    await settle();
+    expect(audio.playAudio).toHaveBeenCalledTimes(1);
+    expect(deps.report).toHaveBeenCalledWith("info", 'Stopped saying "Sentence a." here: Herald was muted.');
+    expect(deps.report).not.toHaveBeenCalledWith("info", expect.stringMatching(/^Spoke/));
+    // Not said later, either: unmuting speaks only what comes next.
+    switches.speak = true;
+    const third = entry("c", { createdAt: "2026-09-15T10:02:00.000Z" });
+    announcer.onEntries([first, second, third]);
+    await settle();
+    hold.shift()?.();
+    await settle();
+    expect(audio.playAudio).toHaveBeenCalledTimes(2);
+    expect(deps.report).toHaveBeenCalledWith("info", 'Spoke (desktop): "Sentence c."');
+  });
+
+  it("drops a sentence the server was still rendering when Herald was muted", async () => {
+    let finishRender: () => void = () => {};
+    const switches: Partial<SpeechSettings> = { speak: true };
+    const { announcer, audio } = setup({
+      settings: switches,
+      render: () =>
+        new Promise((resolve) => {
+          finishRender = () => resolve({ mimeType: "audio/wav", base64: "QUJD" });
+        }),
+    });
+    announcer.onEntries([]);
+    announcer.onEntries([entry("a")]);
+    await settle();
+    switches.speak = false;
+    announcer.silence();
+    finishRender();
+    await settle();
+    expect(audio.playAudio).not.toHaveBeenCalled();
+    expect(audio.speak).not.toHaveBeenCalled();
   });
 
   it("falls silent when stopped", async () => {

@@ -15,6 +15,7 @@ import {
   StoredConfigSchema,
 } from "./herald";
 import { PushStatusSchema } from "./push";
+import { MuteStateSchema } from "./mute";
 import { MachineHooksSchema, RunIdSchema, SpeechHooksSchema } from "./speech-hooks";
 import { ChoiceInputsSchema, ChoiceOptionSchema, CHOICES_BATCH_MAX } from "./thread-choice";
 
@@ -76,6 +77,16 @@ export const rpcContract = defineRpcContract({
   "choices.setMany": {
     input: z.object({ threadIds: z.array(z.string().min(1)).min(1).max(CHOICES_BATCH_MAX), choice: ChoiceOptionSchema }),
     output: z.null(),
+  },
+  /** Whether Herald is muted on every device: its master switch, *Speak announcements*, off. */
+  "mute.get": {
+    input: z.object({}),
+    output: MuteStateSchema,
+  },
+  /** Mutes or unmutes Herald everywhere, as `bb herald mute` does; a repeat writes nothing. */
+  "mute.set": {
+    input: MuteStateSchema,
+    output: z.object({ muted: z.boolean(), changed: z.boolean() }),
   },
   /**
    * Whether Herald sends its sentences as push notifications in place of

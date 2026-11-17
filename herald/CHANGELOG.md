@@ -5,6 +5,22 @@ Notable changes to `herald`. The other plugins in this repository version separa
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.13.0
+
+### Added
+
+- **Mute Herald everywhere from the command line.** `bb herald mute` stops Herald speaking on every
+  device, and `bb herald unmute` lets it speak again; `bb herald status` says which. Use them from a voice
+  hook, to keep Herald quiet while you talk to another voice. Muting turns *Speak announcements* off in
+  Herald's settings, and whatever Herald is saying at that moment stops. What comes up while Herald is
+  muted is still listed but is never spoken later. Both commands are safe to repeat. The README explains
+  how to call them from a hook on another of your machines, and why a machine connected only through bb
+  Connect cannot.
+- **The Herald page shows when Herald is muted everywhere**, with an Unmute button.
+- **Set a thread's Herald choice from the command line.** `bb herald thread <thread> <choice>` sets it to
+  default, announce, questions-only or silent, exactly as the thread's menu does, and without a choice it
+  shows the thread's own choice and the one that applies. Add `--json` to any Herald command for JSON.
+
 ## 0.12.0
 
 ### Added

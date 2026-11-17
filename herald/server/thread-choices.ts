@@ -32,6 +32,17 @@ export class ThreadChoices {
     return new Map(lineages.map(({ threadId, ancestorIds }) => [threadId, inputsFrom(threadId, ancestorIds, own)]));
   }
 
+  /**
+   * One thread's inputs and whether another thread started it, which the
+   * rule needs too; null when bb does not know the thread.
+   */
+  async lookup(threadId: string): Promise<{ inputs: ChoiceInputs; isChild: boolean } | null> {
+    const [lineage] = await this.port.ancestors([threadId]);
+    if (lineage === undefined || lineage.threadId !== threadId) return null;
+    const own = await this.port.ownChoices([threadId, ...lineage.ancestorIds]);
+    return { inputs: inputsFrom(threadId, lineage.ancestorIds, own), isChild: lineage.ancestorIds.length > 0 };
+  }
+
   /** One thread's inputs; a thread bb does not know has no choice. */
   async inputsOf(threadId: string): Promise<ChoiceInputs> {
     return (await this.inputs([threadId])).get(threadId) ?? NO_CHOICE;

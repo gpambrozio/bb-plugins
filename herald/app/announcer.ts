@@ -66,6 +66,8 @@ export class Announcer {
   private readonly lost = new Map<string, string>();
   private seeded = false;
   private stopped = false;
+  /** Moved by every `silence()`, so a delivery that was under way when Herald was muted drops out. */
+  private hushes = 0;
   private warnedSay = false;
   /** Deliveries queue behind one another, so a button press never talks over an announcement. */
   private chain: Promise<void> = Promise.resolve();
@@ -153,6 +155,18 @@ export class Announcer {
     void this.endRun();
   }
 
+  /**
+   * Herald was just muted everywhere: what this window is saying stops now,
+   * and a sentence still being rendered is dropped when it arrives. Unlike
+   * `stop()` the announcer carries on; what comes up while muted is gated, and
+   * dropped, as it is about to be said.
+   */
+  silence(): void {
+    this.hushes += 1;
+    this.deps.audio.stopSpeaking();
+    this.deps.audio.stopAudio();
+  }
+
   private blocked(): string | null {
     return blockedMessage(this.deps.settings(), this.deps.platform(), isMutedHere());
   }
@@ -236,7 +250,10 @@ export class Announcer {
     const outcome = await this.play(text);
     if (eventId !== null) {
       if (outcome === "spoke") this.deps.report("info", `Spoke (${this.deps.platform()}): "${text}"`);
-      else {
+      else if (outcome === "skipped") {
+        // Muted while it was being said, or the announcer stopped: no other window should say it either.
+        if (!this.stopped) this.deps.report("info", `Stopped saying "${text}" here: Herald was muted.`);
+      } else {
         await claim?.release();
         this.deps.report("warn", `Could not play "${text}" here; another window may say it.`);
       }
@@ -252,6 +269,8 @@ export class Announcer {
   private async play(text: string): Promise<Outcome> {
     const { audio } = this.deps;
     const settings = this.deps.settings();
+    const hush = this.hushes;
+    const cut = () => this.stopped || this.hushes !== hush;
     const voices = await this.deps.voices().catch((error: unknown) => {
       this.deps.report("warn", `Could not read Herald's voices; using the defaults: ${describe(error)}`, error);
       return { say: "", web: "" };
@@ -260,9 +279,9 @@ export class Announcer {
       try {
         // The before hook runs while the server renders, so it adds no wait of its own.
         const [rendered] = await Promise.all([this.deps.render(text, voices.say, settings.rate), this.beforeSound()]);
-        if (this.stopped) return "skipped";
+        if (cut()) return "skipped";
         await audio.playAudio(`data:${rendered.mimeType};base64,${rendered.base64}`);
-        return "spoke";
+        return cut() ? "skipped" : "spoke";
       } catch (error) {
         if (!this.warnedSay) {
           this.warnedSay = true;
@@ -270,11 +289,13 @@ export class Announcer {
         }
       }
     }
-    if (this.stopped) return "skipped";
+    if (cut()) return "skipped";
     if (!audio.canSpeak()) return "refused";
     await this.beforeSound();
-    if (this.stopped) return "skipped";
-    return (await audio.speak(text, { voice: voices.web, rate: settings.rate })) ? "spoke" : "refused";
+    if (cut()) return "skipped";
+    const heard = await audio.speak(text, { voice: voices.web, rate: settings.rate });
+    if (cut()) return "skipped";
+    return heard ? "spoke" : "refused";
   }
 }
 

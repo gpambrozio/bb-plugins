@@ -24,12 +24,15 @@ import {
   type StoredConfig,
 } from "./shared/herald";
 import { customCommandSeed, sentenceSettingsOf, SETTINGS } from "./shared/settings";
-import { CHOICES_CHANNEL, effectiveChoice } from "./shared/thread-choice";
+import { MUTE_CHANNEL } from "./shared/mute";
+import { CHOICES_CHANNEL, effectiveChoice, type ChoiceOption } from "./shared/thread-choice";
+import { heraldCli, UnknownThreadError, type ThreadChoiceReport } from "./server/cli";
 import { bbEvents, bbLiveness, bbNames, bbPush, bbThreadChoices, bbTimeline } from "./server/bb-ports";
 import { SentenceHistory } from "./server/history";
 import { createHooks, type HeraldConfig } from "./server/hooks";
 import { kvBackend } from "./server/kv-backend";
 import { Liveness } from "./server/liveness";
+import { GlobalMute } from "./server/mute";
 import { placeSentences } from "./server/placement";
 import type { EventsPort, LivenessPort, NamesPort, PushPort, TimelinePort } from "./server/ports";
 import { PushTakeover } from "./server/push";
@@ -226,7 +229,23 @@ export default async function plugin(bb: BbPluginApi) {
     interactionPending: (threadId, interactionId) => eventsPort().interactionPending(threadId, interactionId),
     log: bb.log,
   });
+  // The global mute is the master switch read the other way round; see `shared/mute.ts`.
+  const mute = new GlobalMute({
+    get: async () => (await settings.get()).speak,
+    set: async (on) => {
+      await settings.experimental_set({ speak: on });
+    },
+  });
   settings.onChange((next, prev) => {
+    // Whoever flipped the master switch — the CLI, the page or the form —
+    // every window hears it now and stops or starts speaking.
+    if (next.speak !== prev.speak) {
+      try {
+        bb.realtime.publish(MUTE_CHANNEL, { muted: !next.speak });
+      } catch (error) {
+        bb.log.warn(`Could not tell the app Herald's mute changed: ${reasonText(error)}`);
+      }
+    }
     if (next.pushSentences === prev.pushSentences) return;
     // On, nothing is swept: each thread is taken over as Herald next handles it.
     if (next.pushSentences) push.switchedOn();
@@ -258,6 +277,47 @@ export default async function plugin(bb: BbPluginApi) {
       }
     })().catch((error: unknown) => bb.log.error(`Could not bring bb's notification levels in line with a new choice: ${reasonText(error)}`));
   }
+
+  /**
+   * A thread's own choice set or cleared, the way bb's thread menu does it:
+   * every open menu re-reads (a thread's choice is also its descendants'),
+   * and the thread's bb level follows. Open menus hear of it as soon as it is
+   * saved, before any read-back, which may fail on its own.
+   */
+  async function setChoice(threadId: string, choice: ChoiceOption): Promise<void> {
+    await choicesOf().set(threadId, choice);
+    publishOn(CHOICES_CHANNEL, "a thread's choice");
+    syncPushOf([threadId]);
+  }
+
+  /** A thread's choice and the one that applies, for `bb herald thread`. */
+  async function choiceReport(threadId: string): Promise<ThreadChoiceReport> {
+    const [found, values] = await Promise.all([choicesOf().lookup(threadId), settings.get()]);
+    if (found === null) throw new UnknownThreadError(threadId);
+    const { choice, source } = effectiveChoice(found.inputs, found.isChild, values.announceSubagents);
+    return {
+      threadId,
+      own: found.inputs.own ?? "default",
+      effective: choice,
+      source,
+      fromThreadId: source === "parent" || source === "ancestor" ? (found.inputs.inherited?.threadId ?? null) : null,
+    };
+  }
+
+  bb.cli.register(
+    heraldCli({
+      mute,
+      threads: {
+        show: choiceReport,
+        set: async (threadId, choice) => {
+          // Checked first, so an unknown thread is refused rather than written to.
+          await choiceReport(threadId);
+          await setChoice(threadId, choice);
+          return choiceReport(threadId);
+        },
+      },
+    }),
+  );
 
   const hooks = createHooks({
     store,
@@ -329,9 +389,7 @@ export default async function plugin(bb: BbPluginApi) {
     // They hear of it as soon as it is saved, before the read-back, which
     // may fail on its own.
     "choices.set": async ({ threadId, choice }) => {
-      await choicesOf().set(threadId, choice);
-      publishOn(CHOICES_CHANNEL, "a thread's choice");
-      syncPushOf([threadId]);
+      await setChoice(threadId, choice);
       return choicesOf().inputsOf(threadId);
     },
     // Told once for the whole selection, and also when only some were saved.
@@ -345,6 +403,8 @@ export default async function plugin(bb: BbPluginApi) {
       return null;
     },
     "push.status": () => push.status(),
+    "mute.get": async () => ({ muted: await mute.muted() }),
+    "mute.set": ({ muted }) => mute.set(muted),
     "config.get": () => storedConfig(),
     // Any part of the stored configuration; the rest is kept. When the tool
     // becomes "custom" with nothing written yet, the command of the tool

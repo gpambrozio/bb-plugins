@@ -19,10 +19,12 @@ import { useCallback, useEffect, useRef } from "react";
 
 import type { RpcContract } from "../shared/contract";
 import { ENTRIES_CHANNEL, SENTENCES_CHANNEL } from "../shared/herald";
+import { MUTE_CHANNEL, mutedOf } from "../shared/mute";
 import { speechSettingsOf, type SpeechSettings } from "../shared/settings";
 import { Announcer, setAnnouncer } from "./announcer";
 import { claimAnnouncement, onClaimReleased } from "./claims";
 import { setEntries, setEntriesError } from "./entries";
+import { globalMuted, setGlobalMuted } from "./global-mute";
 import * as speech from "./speech";
 import { createLocalHostLookup, createSpeechRunStarter } from "./speech-hooks";
 import { usePlacedLoader } from "./timeline";
@@ -49,6 +51,11 @@ export function HeraldBridge() {
   const connection = useRealtimeConnectionState();
   const settings = useRef<SpeechSettings>(speechSettingsOf(values));
   settings.current = speechSettingsOf(values);
+  /** The form's values, with the master switch as the server last said it: see `app/global-mute.ts`. */
+  const speechSettings = useCallback((): SpeechSettings => {
+    const muted = globalMuted();
+    return muted === null ? settings.current : { ...settings.current, speak: !muted };
+  }, []);
   const announcer = useRef<Announcer | null>(null);
   // Read through a ref: the announcer must outlive any re-render, so it is not rebuilt when the handle changes.
   const sdkHandle = useSdk();
@@ -64,7 +71,7 @@ export function HeraldBridge() {
     const next = new Announcer({
       render: (text, voice, rate) => rpc.call("speech.render", { text, voice, rate }),
       voices: async () => (await rpc.call("config.get", {})).voices,
-      settings: () => settings.current,
+      settings: speechSettings,
       platform: speech.speechPlatform,
       claim: (eventId) => claimAnnouncement(`${pluginId}:said:`, eventId),
       audio: speech,
@@ -87,7 +94,29 @@ export function HeraldBridge() {
       setAnnouncer(null);
       announcer.current = null;
     };
-  }, [rpc, pluginId]);
+  }, [rpc, pluginId, speechSettings]);
+
+  /** Herald muted or unmuted everywhere; muting stops what this window is saying. */
+  const applyMuted = useCallback((muted: boolean) => {
+    setGlobalMuted(muted);
+    if (muted) announcer.current?.silence();
+  }, []);
+  const readMuted = useCallback(() => {
+    rpc.call("mute.get", {}).then(
+      ({ muted }) => applyMuted(muted),
+      // The form's value stands meanwhile; the next push or reconnect reads it again.
+      (error: unknown) => console.warn(`[herald] Could not read whether Herald is muted: ${errorText(error)}`),
+    );
+  }, [rpc, applyMuted]);
+  useEffect(readMuted, [readMuted]);
+  const onMuted = useCallback(
+    (payload: unknown) => {
+      const muted = mutedOf(payload);
+      if (muted !== null) applyMuted(muted);
+    },
+    [applyMuted],
+  );
+  useRealtime(MUTE_CHANNEL, onMuted);
 
   /** One read at a time; a nudge during a read asks for one more afterwards. */
   const reading = useRef<{ busy: boolean; again: boolean }>({ busy: false, again: false });
@@ -139,10 +168,11 @@ export function HeraldBridge() {
   useEffect(() => {
     if (previous.current === "reconnecting" && connection === "connected") {
       refresh();
+      readMuted();
       timelineSentences.refreshAll(loadPlaced);
     }
     previous.current = connection;
-  }, [connection, refresh, loadPlaced]);
+  }, [connection, refresh, readMuted, loadPlaced]);
 
   return null;
 }

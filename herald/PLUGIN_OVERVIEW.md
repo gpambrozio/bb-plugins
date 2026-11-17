@@ -19,6 +19,8 @@ know which thread to go back to without watching the sidebar.
 - A choice in each thread's menu: Announce, Questions only, or Silent. A worker without one follows the
   thread that started it, so silencing a coordinator silences its workers. On bb 0.48, set it for several
   threads selected in the sidebar at once.
+- bb herald mute and unmute silence Herald on every device and bring it back, from a script such as a
+  voice hook; bb herald thread sets a thread's choice.
 - Optionally, a model writes each sentence: Claude Code, OpenAI Codex, Gemini CLI or a command of your
   own, installed on the Mac running bb, runs once per announcement with no tools or read-only. Off by
   default; the plain sentence is spoken whenever the tool fails or is slow. Your prompt can have the

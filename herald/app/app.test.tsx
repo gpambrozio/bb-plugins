@@ -19,9 +19,11 @@ import {
   type RecentHistoryItem,
   type StoredConfig,
 } from "../shared/herald";
+import { MUTE_CHANNEL } from "../shared/mute";
 import { NO_CHOICE } from "../shared/thread-choice";
 import { HeraldBanner } from "./banner";
 import { HeraldBridge } from "./bridge";
+import { setGlobalMuted } from "./global-mute";
 import { HeraldHeaderAction, HeraldHeaderToggle, HISTORY_TAB, registerHistoryOpener } from "./header-action";
 import { HeraldHistoryPanel } from "./history-panel";
 import { HeraldPanel, useWaitingBadge } from "./panel";
@@ -40,6 +42,8 @@ afterEach(() => {
   // The cross-window claims live in localStorage.
   localStorage.clear();
   delete (window as { bbDesktop?: unknown }).bbDesktop;
+  // What the window last heard about the mute on every device.
+  setGlobalMuted(null);
 });
 
 function entry(overrides: Partial<AttentionEntry> = {}): AttentionEntry {
@@ -93,6 +97,8 @@ function rpc(entries: () => AttentionEntry[], calls: { list: number }) {
     "choices.set": () => NO_CHOICE,
     "choices.setMany": () => null,
     "push.status": () => ({ state: "off" as const, message: null }),
+    "mute.get": () => ({ muted: false }),
+    "mute.set": () => ({ muted: false, changed: false }),
     log: () => null,
     "hooks.list": () => ({ hooks: {} }),
     "hooks.set": () => ({ hooks: {} }),
@@ -158,6 +164,58 @@ describe("Herald's app", () => {
         label: "2 threads waiting for you",
       }),
     );
+  });
+
+  it("shows the mute on every device on the page, and Unmute lifts it through the server", async () => {
+    const calls = { list: 0 };
+    const server = { muted: true, sets: [] as boolean[] };
+    const handlers = {
+      ...rpc(() => [], calls),
+      "mute.get": () => ({ muted: server.muted }),
+      "mute.set": ({ muted }: { muted: boolean }) => {
+        server.sets.push(muted);
+        server.muted = muted;
+        return { muted, changed: true };
+      },
+    };
+    const bridge = renderSlot<object, RpcContract>({ component: HeraldBridge }, {}, { rpc: handlers });
+    renderSlot<object, RpcContract>({ component: HeraldPanel }, {}, { rpc: handlers, sidebarThreads: { status: "ready", threads: [] } });
+    await screen.findByText(/Herald is muted on every device/);
+    fireEvent.click(screen.getByRole("button", { name: "Let Herald speak again on every device" }));
+    await waitFor(() => expect(server.sets).toEqual([false]));
+    // The server tells every window once the switch is on again.
+    await bridge.emitRealtime(MUTE_CHANNEL, { muted: false });
+    await waitFor(() => expect(screen.queryByText(/Herald is muted on every device/)).toBeNull());
+    // And when a voice hook runs `bb herald mute`, the notice comes back.
+    await bridge.emitRealtime(MUTE_CHANNEL, { muted: true });
+    await screen.findByText(/Herald is muted on every device/);
+  });
+
+  it("speaks nothing that comes up while Herald is muted everywhere, however stale the window's settings", async () => {
+    let current: AttentionEntry[] = [];
+    const calls = { list: 0, render: 0 };
+    const handlers = {
+      ...rpc(() => current, calls),
+      "speech.render": () => {
+        calls.render += 1;
+        return { mimeType: "audio/wav", base64: "" };
+      },
+    };
+    (window as { bbDesktop?: unknown }).bbDesktop = {};
+    // The window's settings still say speak; only the push says muted.
+    const bridge = renderSlot<object, RpcContract>({ component: HeraldBridge }, {}, { rpc: handlers, settings: { speak: true } });
+    await waitFor(() => expect(calls.list).toBe(1));
+    await bridge.emitRealtime(MUTE_CHANNEL, { muted: true });
+    current = [entry({ eventId: "t1:idle:muted" })];
+    await bridge.emitRealtime(ENTRIES_CHANNEL, { at: 1 });
+    await waitFor(() => expect(calls.list).toBe(2));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(calls.render).toBe(0);
+    // Unmuted, the next one is said; the one that came up meanwhile is not.
+    await bridge.emitRealtime(MUTE_CHANNEL, { muted: false });
+    current = [...current, entry({ threadId: "t2", eventId: "t2:idle:after", createdAt: "2026-09-15T10:05:00.000Z" })];
+    await bridge.emitRealtime(ENTRIES_CHANNEL, { at: 2 });
+    await waitFor(() => expect(calls.render).toBe(1));
   });
 
   it("lists what the overlay reads, and re-reads on a nudge and on reconnect", async () => {
