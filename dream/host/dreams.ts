@@ -83,16 +83,6 @@ function indexFacts(dir: string): { indexLines: number | null; indexBytes: numbe
   }
 }
 
-function sizeText(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-export function manifestLine(entry: ManifestEntry): string {
-  return `- ${entry.date} · ${entry.title ?? "(untitled)"} · ${sizeText(entry.size)} · ${entry.path}`;
-}
-
 export function createDreams(options: DreamsOptions) {
   const paths: DataPaths = dataPaths(options.dataDir);
   const now = options.now ?? Date.now;

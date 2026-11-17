@@ -5,7 +5,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { DEFAULT_THRESHOLDS } from "../shared/gate";
 import type { ProjectInput } from "../shared/types";
-import { createDreams, manifestLine } from "./dreams";
+import { manifestLine } from "../server/prompt";
+import { createDreams } from "./dreams";
 import { lastConsolidatedAt, lockPath } from "./lock";
 import { projectSlug } from "./slug";
 

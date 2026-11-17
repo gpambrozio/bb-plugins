@@ -7,6 +7,7 @@ import { z } from "zod";
 import { GATE_CODES, ThresholdsSchema } from "./gate";
 
 export const ChangesSchema = z.object({ added: z.array(z.string()), changed: z.array(z.string()), deleted: z.array(z.string()) });
+export type Changes = z.infer<typeof ChangesSchema>;
 
 export const ModeSchema = z.enum(["dream", "dry-run"]);
 export type Mode = z.infer<typeof ModeSchema>;
