@@ -49,7 +49,10 @@ const WORKER_THREAD = makeThreadResponse({
   lastReadAt: 1,
 });
 
-const KNOWN_THREADS = [USER_THREAD, OTHER_THREAD, WORKER_THREAD];
+/** Archived before Herald loaded, so no archive event ever reaches it. */
+const ARCHIVED_THREAD = makeThreadResponse({ id: "thr_archived", projectId: "prj_shop", title: "Old", archivedAt: 5 });
+
+const KNOWN_THREADS = [USER_THREAD, OTHER_THREAD, WORKER_THREAD, ARCHIVED_THREAD];
 
 /**
  * Plugin metadata on the known threads, kept the way bb keeps it, for the
@@ -675,6 +678,23 @@ describe("herald server", () => {
       expect(push.levels.get(USER_THREAD.id)).toBe("muted");
     });
 
+    it("never takes over a thread archived before it loaded, whichever way its choice is set", async () => {
+      const { harness, push, metadata } = await loadPushing();
+      const refused = await harness.runCli(["thread", ARCHIVED_THREAD.id, "announce", "--json"]);
+      expect(refused.exitCode).not.toBe(0);
+      expect(JSON.parse(refused.stdout)).toMatchObject({ ok: false, error: { code: "thread_archived" } });
+      expect(metadata.has(ARCHIVED_THREAD.id)).toBe(false);
+      // The menu's own path, and an event, reach the takeover itself, which checks too.
+      await harness.callRpc("choices.set", { threadId: ARCHIVED_THREAD.id, choice: "announce" });
+      await harness.emitThreadEvent("thread.active", { thread: ARCHIVED_THREAD });
+      await settle();
+      expect(push.levels.has(ARCHIVED_THREAD.id)).toBe(false);
+      // An open thread is still taken over.
+      expect((await harness.runCli(["thread", USER_THREAD.id, "announce"])).exitCode).toBe(0);
+      await settle();
+      expect(push.levels.get(USER_THREAD.id)).toBe("muted");
+    });
+
     it("gives every level back when Herald unloads", async () => {
       const { harness, push } = await loadPushing();
       await harness.emitThreadEvent("thread.active", { thread: USER_THREAD });
@@ -781,6 +801,16 @@ describe("herald's mute and thread commands", () => {
     expect(JSON.parse((await off.harness.runCli(["thread", WORKER_THREAD.id, "--json"])).stdout)).toMatchObject({
       effective: { choice: "silent", source: "subagent" },
     });
+  });
+
+  it("refuses to set an archived thread's choice, as the thread menu offers none, but shows it", async () => {
+    const { harness, metadata } = await load();
+    const result = await harness.runCli(["thread", ARCHIVED_THREAD.id, "silent"]);
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toContain("thr_archived is archived or deleted");
+    expect(metadata.size).toBe(0);
+    expect(harness.realtimeSignals.filter((signal) => signal.channel === CHOICES_CHANNEL)).toHaveLength(0);
+    expect((await harness.runCli(["thread", ARCHIVED_THREAD.id])).exitCode).toBe(0);
   });
 
   it("refuses a thread bb does not know, and writes nothing", async () => {

@@ -372,15 +372,25 @@ second flag would have been two switches for one thing. What must stay true:
   `app/global-mute.ts` (also read by `mute.get` on mount and after a reconnect), and the announcer's gate
   takes `speak` from there before the form's copy. Checked live: a window's notice appeared about 0.2 s
   after the command.
-- **Muting cuts off what is being said** (`Announcer.silence()`): it stops both engines, and a delivery
-  under way — a render still out included — drops out (`hushes`) without releasing its claim, so no other
-  window picks it up. What arrives while muted is gated and dropped as it is about to be said, like any
-  blocked announcement, so **nothing is said later**; the README promises this.
+- **Muting cuts off what is being said, and what waits** (`Announcer.silence()`): it stops both engines
+  and moves `hushes`. Every delivery carries the generation it was *queued* in, so one under way (a render
+  still out included) or queued behind it drops out even if Herald is unmuted before its turn, without
+  releasing its claim, so no other window picks it up (review pass 1: capturing it when playback started
+  let a sentence queued during the mute play after unmute). While muted, `onEntries` counts every new
+  entry as said as it arrives, **a sentence still being written included**, so nothing that came up
+  during the mute is said later; the README promises this. Presses (*Read again*, *Test voice*) made
+  during or after the mute speak as before.
+- **A late read never undoes a push** (`app/bridge.tsx`, `muteEpoch`): every `mute.get` started and every
+  push heard moves the epoch, and a read answers only if nothing came after it started. A read sent before
+  a hook's mute and answered after its push otherwise unmuted the window until the next change.
 - **A repeat writes nothing**, and requests run in order, so a quick mute then unmute ends unmuted. One
   settings read and at most one write: a hook gets five seconds.
 - **`thread` goes through `setChoice`, the `choices.set` RPC's own path** (metadata, `CHOICES_CHANNEL`,
   the push level), and refuses a thread bb does not know before writing (`ThreadChoices.lookup`:
-  `experimental_listAncestors` leaves unknown ids out, checked live on bb 0.49). The command line spells
+  `experimental_listAncestors` leaves unknown ids out, checked live on bb 0.49), and an archived or deleted
+  one, which the menu offers no choice for. The push takeover itself also reads the thread's facts before
+  it mutes a level, since `forgotten` knows only archives this instance heard: a thread archived before a
+  load reached it through the menu's path or an event (review pass 1). The command line spells
   *Questions only* `questions-only`; the stored value stays `questions`.
 - **Reaching it from a hook on another machine** is the README's job, and has a hard limit: a host
   daemon's hook gets no `BB_` variables (bb's `plugin-host-worker` env filter, bb 0.49), outside a thread

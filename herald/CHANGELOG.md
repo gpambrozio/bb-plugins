@@ -13,13 +13,20 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   device, and `bb herald unmute` lets it speak again; `bb herald status` says which. Use them from a voice
   hook, to keep Herald quiet while you talk to another voice. Muting turns *Speak announcements* off in
   Herald's settings, and whatever Herald is saying at that moment stops. What comes up while Herald is
-  muted is still listed but is never spoken later. Both commands are safe to repeat. The README explains
+  muted, or was waiting to be said when it was muted, is still listed but is never spoken later. Both
+  commands are safe to repeat. The README explains
   how to call them from a hook on another of your machines, and why a machine connected only through bb
   Connect cannot.
 - **The Herald page shows when Herald is muted everywhere**, with an Unmute button.
 - **Set a thread's Herald choice from the command line.** `bb herald thread <thread> <choice>` sets it to
   default, announce, questions-only or silent, exactly as the thread's menu does, and without a choice it
-  shows the thread's own choice and the one that applies. Add `--json` to any Herald command for JSON.
+  shows the thread's own choice and the one that applies. Like the menu, it leaves archived threads
+  alone. Add `--json` to any Herald command for JSON.
+
+### Fixed
+
+- **An archived thread is never taken over for push notifications**, archived before Herald was last
+  reloaded included.
 
 ## 0.12.0
 

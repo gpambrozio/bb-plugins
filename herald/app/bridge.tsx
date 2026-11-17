@@ -101,18 +101,35 @@ export function HeraldBridge() {
     setGlobalMuted(muted);
     if (muted) announcer.current?.silence();
   }, []);
+  /**
+   * Moved by every read started and every push heard. A read answers only if
+   * nothing came after it started: a push, or a newer read, knows better than
+   * a reply that may have been read before the change it reports.
+   */
+  const muteEpoch = useRef(0);
   const readMuted = useCallback(() => {
+    const epoch = ++muteEpoch.current;
     rpc.call("mute.get", {}).then(
-      ({ muted }) => applyMuted(muted),
+      ({ muted }) => {
+        if (muteEpoch.current === epoch) applyMuted(muted);
+      },
       // The form's value stands meanwhile; the next push or reconnect reads it again.
       (error: unknown) => console.warn(`[herald] Could not read whether Herald is muted: ${errorText(error)}`),
     );
   }, [rpc, applyMuted]);
-  useEffect(readMuted, [readMuted]);
+  useEffect(() => {
+    readMuted();
+    // Unmounted (a reload mounts a new bridge): a read still out answers no one.
+    return () => {
+      muteEpoch.current += 1;
+    };
+  }, [readMuted]);
   const onMuted = useCallback(
     (payload: unknown) => {
       const muted = mutedOf(payload);
-      if (muted !== null) applyMuted(muted);
+      if (muted === null) return;
+      muteEpoch.current += 1;
+      applyMuted(muted);
     },
     [applyMuted],
   );

@@ -274,12 +274,15 @@ reason on stderr (and as `{"ok": false, "error": …}` with `--json`).
 - **While muted, nothing is spoken on any device**, and whatever Herald is saying at that moment stops.
   Threads are still listed on the Herald page, their cards still appear in the conversation, and push
   notifications are unchanged. *Read again* and *Test voice* still speak: you pressed them.
-- **What comes up while Herald is muted is never spoken later.** Unmuting speaks only what comes next.
+- **What comes up while Herald is muted is never spoken later**, nor what was waiting to be said when it
+  was muted, nor a model-written sentence that was still being written. Unmuting speaks only what comes
+  next.
 - **Safe to repeat, and quick.** Muting a muted Herald changes nothing and says so (`changed: false`); each
   command is one read and at most one write, a fraction of a second on the machine running bb.
 - **`thread` is the thread menu's choice.** It is saved exactly as the menu saves it, so every device and
   window sees it at once. `default` clears the thread's own choice. Without a choice it prints the
-  thread's own and the one that applies, with where it comes from. An unknown thread or choice is refused.
+  thread's own and the one that applies, with where it comes from. An unknown thread or choice is refused,
+  and so is setting one on an archived thread, which its menu does not offer either.
 
 ### From a voice hook on another machine
 

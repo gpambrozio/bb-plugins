@@ -53,6 +53,13 @@ export class UnknownThreadError extends Error {
   }
 }
 
+/** Raised by the service for a thread that is archived or deleted: like the thread menu, the command leaves it alone. */
+export class ClosedThreadError extends Error {
+  constructor(readonly threadId: string) {
+    super(`${threadId} is archived or deleted; Herald's choice can only be set on an open thread.`);
+  }
+}
+
 export interface HeraldCliDeps {
   mute: {
     muted(): Promise<boolean>;
@@ -61,7 +68,10 @@ export interface HeraldCliDeps {
   threads: {
     /** Rejects with `UnknownThreadError` for a thread bb does not know. */
     show(threadId: string): Promise<ThreadChoiceReport>;
-    /** Sets the thread's own choice, `default` clearing it, and reports it; rejects as `show` does. */
+    /**
+     * Sets the thread's own choice, `default` clearing it, and reports it; rejects as `show` does, and
+     * with `ClosedThreadError` for an archived or deleted thread, before writing anything.
+     */
     set(threadId: string, option: ChoiceOption): Promise<ThreadChoiceReport>;
   };
 }
@@ -78,6 +88,9 @@ async function guarded<T>(work: () => Promise<T>): Promise<T> {
     if (error instanceof PluginCliError) throw error;
     if (error instanceof UnknownThreadError) {
       throw new PluginCliError(error.message, { code: "thread_not_found", hint: "Pass a thread id such as thr_abc123; `bb thread list` lists them." });
+    }
+    if (error instanceof ClosedThreadError) {
+      throw new PluginCliError(error.message, { code: "thread_archived", hint: "Unarchive it first, as bb's thread menu needs too." });
     }
     throw new PluginCliError(reason(error), { code: "failed" });
   }

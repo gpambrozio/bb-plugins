@@ -82,25 +82,34 @@ export class Announcer {
   onEntries(entries: readonly AttentionEntry[]): void {
     const present = new Set(entries.map((entry) => entry.eventId));
     this.current = present;
-    if (!this.seeded) {
+    // Muted everywhere: what comes up now is never said, not even once it is
+    // written or Herald is unmuted, so a sentence still being written is
+    // counted as spoken too. The same holds for the list a window opens on.
+    const muted = !this.deps.settings().speak;
+    if (!this.seeded || muted) {
       // What was waiting when the window opened is not news — except a
       // sentence still being written, which is news the moment it lands.
-      for (const entry of entries) if (entry.summary.status !== "pending") this.spoken.add(entry.eventId);
+      for (const entry of entries) {
+        if (this.spoken.has(entry.eventId) || (!muted && entry.summary.status === "pending")) continue;
+        this.spoken.add(entry.eventId);
+        const text = this.seeded ? speechText(entry) : null;
+        if (text !== null) this.deps.report("info", `Not speaking "${text}": Herald is muted.`);
+      }
       this.seeded = true;
-      return;
-    }
-    // A sentence still being written is left for the list that brings it
-    // ready: counted as spoken only then, and spoken once.
-    const fresh = entries
-      .filter((entry) => !this.spoken.has(entry.eventId) && entry.summary.status !== "pending")
-      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-    for (const entry of fresh) {
-      this.spoken.add(entry.eventId);
-      const text = speechText(entry);
-      if (text === null) continue;
-      void this.deliver(text, entry.eventId, false).catch((error: unknown) =>
-        this.deps.report("warn", `Could not speak an announcement: ${describe(error)}`, error),
-      );
+    } else {
+      // A sentence still being written is left for the list that brings it
+      // ready: counted as spoken only then, and spoken once.
+      const fresh = entries
+        .filter((entry) => !this.spoken.has(entry.eventId) && entry.summary.status !== "pending")
+        .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+      for (const entry of fresh) {
+        this.spoken.add(entry.eventId);
+        const text = speechText(entry);
+        if (text === null) continue;
+        void this.deliver(text, entry.eventId, false).catch((error: unknown) =>
+          this.deps.report("warn", `Could not speak an announcement: ${describe(error)}`, error),
+        );
+      }
     }
     // Forget ids that are gone; an event id never comes back.
     for (const id of [...this.spoken]) if (!present.has(id)) this.spoken.delete(id);
@@ -163,6 +172,8 @@ export class Announcer {
    */
   silence(): void {
     this.hushes += 1;
+    // Another window's announcement this one was waiting to take over is not said later either.
+    this.lost.clear();
     this.deps.audio.stopSpeaking();
     this.deps.audio.stopAudio();
   }
@@ -177,7 +188,9 @@ export class Announcer {
    */
   private deliver(text: string, eventId: string | null, retrying: boolean): Promise<Outcome> {
     this.queued += 1;
-    const run = () => this.deliverWithHooks(text, eventId, retrying);
+    // The mute generation it was queued in: a mute that comes while it waits drops it.
+    const hush = this.hushes;
+    const run = () => this.deliverWithHooks(text, eventId, retrying, hush);
     const next = this.chain.then(run, run);
     this.chain = next.then(
       () => {},
@@ -194,9 +207,9 @@ export class Announcer {
    * (pause music, duck the volume) is not undone and redone between them.
    * Should this window vanish first, the machine ends the run itself.
    */
-  private async deliverWithHooks(text: string, eventId: string | null, retrying: boolean): Promise<Outcome> {
+  private async deliverWithHooks(text: string, eventId: string | null, retrying: boolean, hush: number): Promise<Outcome> {
     try {
-      return await this.deliverNow(text, eventId, retrying);
+      return await this.deliverNow(text, eventId, retrying, hush);
     } finally {
       this.queued -= 1;
       if (this.queued === 0) await this.endRun();
@@ -217,10 +230,15 @@ export class Announcer {
     return run?.end() ?? Promise.resolve();
   }
 
-  private async deliverNow(text: string, eventId: string | null, retrying: boolean): Promise<Outcome> {
+  private async deliverNow(text: string, eventId: string | null, retrying: boolean, hush: number): Promise<Outcome> {
     // Checked here rather than only at the call: this runs once per queued
     // delivery, and a reload can stop the announcer while one waits.
     if (this.stopped) return "skipped";
+    // Queued before Herald was muted: dropped, even if it was unmuted again meanwhile.
+    if (this.hushes !== hush) {
+      if (eventId !== null) this.deps.report("info", `Not speaking "${text}" here: Herald was muted while it waited.`);
+      return "skipped";
+    }
     let claim: Claim | null = null;
     if (eventId !== null) {
       // Withdrawn while it waited — the thread moved on, or was answered.
@@ -247,7 +265,7 @@ export class Announcer {
         return "skipped";
       }
     }
-    const outcome = await this.play(text);
+    const outcome = await this.play(text, hush);
     if (eventId !== null) {
       if (outcome === "spoke") this.deps.report("info", `Spoke (${this.deps.platform()}): "${text}"`);
       else if (outcome === "skipped") {
@@ -266,10 +284,9 @@ export class Announcer {
    * otherwise. A failed render or a refused playback falls through to the
    * browser voice rather than to silence, and is reported once.
    */
-  private async play(text: string): Promise<Outcome> {
+  private async play(text: string, hush: number): Promise<Outcome> {
     const { audio } = this.deps;
     const settings = this.deps.settings();
-    const hush = this.hushes;
     const cut = () => this.stopped || this.hushes !== hush;
     const voices = await this.deps.voices().catch((error: unknown) => {
       this.deps.report("warn", `Could not read Herald's voices; using the defaults: ${describe(error)}`, error);

@@ -191,6 +191,33 @@ describe("Herald's app", () => {
     await screen.findByText(/Herald is muted on every device/);
   });
 
+  it("lets no late mute read undo a newer push, in either order", async () => {
+    for (const [pushes, staleRead, notice] of [
+      [[true], false, true],
+      [[true, false], true, false],
+    ] as const) {
+      const calls = { list: 0, reads: 0 };
+      const answers: Array<(muted: boolean) => void> = [];
+      const handlers = {
+        ...rpc(() => [], calls),
+        "mute.get": () => {
+          calls.reads += 1;
+          return new Promise<{ muted: boolean }>((resolve) => answers.push((muted) => resolve({ muted })));
+        },
+      };
+      const bridge = renderSlot<object, RpcContract>({ component: HeraldBridge }, {}, { rpc: handlers });
+      renderSlot<object, RpcContract>({ component: HeraldPanel }, {}, { rpc: handlers, sidebarThreads: { status: "ready", threads: [] } });
+      await waitFor(() => expect(calls.reads).toBe(1));
+      // The read was taken before the change; its answer arrives after the push.
+      for (const muted of pushes) await bridge.emitRealtime(MUTE_CHANNEL, { muted });
+      answers.shift()?.(staleRead);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(screen.queryByText(/Herald is muted on every device/) !== null).toBe(notice);
+      cleanup();
+      setGlobalMuted(null);
+    }
+  });
+
   it("speaks nothing that comes up while Herald is muted everywhere, however stale the window's settings", async () => {
     let current: AttentionEntry[] = [];
     const calls = { list: 0, render: 0 };

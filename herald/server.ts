@@ -26,7 +26,7 @@ import {
 import { customCommandSeed, sentenceSettingsOf, SETTINGS } from "./shared/settings";
 import { MUTE_CHANNEL } from "./shared/mute";
 import { CHOICES_CHANNEL, effectiveChoice, type ChoiceOption } from "./shared/thread-choice";
-import { heraldCli, UnknownThreadError, type ThreadChoiceReport } from "./server/cli";
+import { ClosedThreadError, heraldCli, UnknownThreadError, type ThreadChoiceReport } from "./server/cli";
 import { bbEvents, bbLiveness, bbNames, bbPush, bbThreadChoices, bbTimeline } from "./server/bb-ports";
 import { SentenceHistory } from "./server/history";
 import { createHooks, type HeraldConfig } from "./server/hooks";
@@ -310,8 +310,10 @@ export default async function plugin(bb: BbPluginApi) {
       threads: {
         show: choiceReport,
         set: async (threadId, choice) => {
-          // Checked first, so an unknown thread is refused rather than written to.
+          // Checked first, so an unknown thread is refused rather than written to,
+          // and an archived one too: bb's thread menu offers no choice there.
           await choiceReport(threadId);
+          if ((await factsPort().facts(threadId)).kind === "gone") throw new ClosedThreadError(threadId);
           await setChoice(threadId, choice);
           return choiceReport(threadId);
         },
