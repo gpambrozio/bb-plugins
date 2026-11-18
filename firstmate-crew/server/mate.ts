@@ -122,8 +122,6 @@ export interface LaunchOptions {
    * which asks the first mate to walk a new captain through their first session.
    */
   firstSession?: boolean;
-  /** Told the id of the FirstMate project when this launch registered it, so a failed guide can undo it. */
-  onProjectCreated?: (projectId: string) => void;
 }
 
 /** A new first mate's first message: the captain's opening, and the first-session guide when asked for. */
@@ -165,11 +163,7 @@ export async function launchInHome(
 
   await readyHome(await deps.settings(), home);
   const project = await step(`The ${PROJECT_NAME} project could not be registered at ${home}`, async () => {
-    const found = await deps.projects.findByPath(home);
-    if (found !== null) return found;
-    const created = await deps.projects.create(PROJECT_NAME, home);
-    options.onProjectCreated?.(created.id);
-    return created;
+    return (await deps.projects.findByPath(home)) ?? (await deps.projects.create(PROJECT_NAME, home));
   });
   const args: SpawnArgs = {
     projectId: project.id,
@@ -183,7 +177,17 @@ export async function launchInHome(
     pinned: true,
   };
   const mate = await step("The first mate could not be started", () => deps.threads.spawn(args));
-  await deps.store.setMateThreadId(mate.id);
+  try {
+    await deps.store.setMateThreadId(mate.id);
+  } catch (error) {
+    // The thread exists and works; only the record failed. Leave it running and say how to keep it.
+    throw new Error(
+      `The first mate was started (${mate.id}) but could not be recorded: ${reason(error)}. It is still running ` +
+        `in ${home}. To keep it, make sure FirstMate's home directory is ${home}, then choose Adopt this thread ` +
+        `in its FirstMate tab.`,
+      { cause: error },
+    );
+  }
   return mate;
 }
 

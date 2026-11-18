@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { PluginThreadEventPayloads } from "@get-bb/plugin-sdk";
@@ -19,8 +19,9 @@ afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
+/** A scratch folder by its real path: macOS's temporary folder sits behind the /var link. */
 async function tempDir(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "firstmate-server-"));
+  const dir = await realpath(await mkdtemp(join(tmpdir(), "firstmate-server-")));
   tempDirs.push(dir);
   return dir;
 }

@@ -216,16 +216,23 @@ Do not break these; each was paid for.
   `AGENTS.md`, so `checkHomeFolder` takes only a missing or empty folder, or an earlier home (its
   `AGENTS.md` *and* `data/charter.md`): a project with its own `AGENTS.md` is refused, and so is a path
   with a `.` or `..` part (`guideHomePath`: a missing folder followed by `..` names its parent once
-  created). A new or empty folder is never written into: the home is prepared in a staging folder beside
-  it and renamed into place (`placeFreshHome`). The rename itself refuses a folder filled since the check
-  and a link or file swapped in, which no check-then-write could; the launch then prepares the home again
-  in place, so the charter names the home rather than the staging folder. An earlier home is used in place
-  after a second look (same folder, same names). The check, the placement, the launch and the setting all
-  run in one hold of the `mate` lock, and the launch gets the checked home rather than reading the setting
-  again, so two guides, or a guide and a launch or adoption, cannot mix. The setting is written only once
-  the first mate is aboard. A failed launch unregisters a project it registered and takes a placed home
-  back (an empty folder comes back with its `.DS_Store`, parent folders it made go), but only while the
-  folder there is still the guide's own; an earlier home is left as it is.
+  created). The typed path is resolved to its real path once, up front (`canonicalHome`: the real path of
+  its nearest existing folder, then the parts still to be created), and the check, the placement, the
+  launch, the project and the setting all use that path, so a link in the typed path that is retargeted
+  meanwhile leads nowhere the guide writes. A new or empty folder is never written into: the home is
+  prepared in a staging folder beside it and renamed into place (`placeFreshHome`). The rename itself
+  refuses a folder filled since the check and a link or file swapped in, which no check-then-write could;
+  the launch then prepares the home again in place, so the charter names the home rather than the staging
+  folder. An earlier home is used in place after a second look (same folder, same names). The check, the
+  placement, the launch and the setting all run in one hold of the `mate` lock, and the launch gets the
+  checked home rather than reading the setting again, so two guides, or a guide and a launch or adoption,
+  cannot mix. The setting is written only once the first mate is aboard.
+- **A failed guide deletes nothing.** Once a home is placed, the captain or another window may already be
+  writing in it, and bb's project deletion takes the project's threads with it, so a failure leaves the
+  placed home and any project it registered (both harmless; the next start finds them) and only the
+  setting unwritten. Only a staging folder that was never placed is removed. A first mate that started but
+  could not be recorded (`launchInHome`, any launch) is left running, and the error names its thread and
+  how to adopt it.
 - **The first-session prompt is only the guide's.** `templates/messages/first-session.md` follows the
   opening in the guide's launch (`LaunchOptions.firstSession`); a launch from settings and a restart send
   the opening alone.

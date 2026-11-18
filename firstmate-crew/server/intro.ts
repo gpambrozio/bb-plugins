@@ -9,14 +9,13 @@
  *
  * The guide can always be started by hand (the palette, the settings section, the tab), whatever the
  * state says: `startIntro` does not read it. It checks its folder and launches in one hold of the `mate`
- * lock, and never writes into a folder it does not own: a new or empty folder is replaced whole by a home
- * prepared beside it (`placeFreshHome`), and taken back if the launch fails.
+ * lock, in the folder's real path, and never writes into a folder it does not own: a new or empty folder is
+ * replaced whole by a home prepared beside it (`placeFreshHome`). It never deletes anything it placed.
  */
-import { chmod, lstat, mkdir, mkdtemp, readdir, realpath, rename, rm, rmdir, stat } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readdir, realpath, rename, rm, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
 import { isHomeReady, prepareHome } from "./home";
-import type { Log } from "./log";
 import { launchInHome, resolveMate, withMateLock, type MateDeps } from "./mate";
 import type { ThreadInfo } from "./ports";
 import { serialized } from "./serialize";
@@ -197,26 +196,13 @@ async function isFile(path: string): Promise<boolean> {
   }
 }
 
-/**
- * Where the guide's home stands once it is in place, and what undoing a failed launch takes. A new or empty
- * folder is replaced whole by one the guide prepared (`placeFreshHome`); an earlier home is used in place.
- */
+/** The guide's folder as placed: its identity, so every later step can tell it is still the same one. */
 interface Placement {
-  home: string;
-  /** The guide's own folder now stands at `target`; undone on failure. */
-  fresh: boolean;
-  /** The path the guide's folder was renamed to: `home`, or an empty folder's real path. */
-  target: string;
-  /** The guide's folder, which a link swapped in since would not be. */
   dev: number;
   ino: number;
-  /** An empty folder stood there before, to be put back on failure. */
-  replacedEmpty: boolean;
-  /** Parent folders the guide created, deepest first. */
-  createdParents: string[];
 }
 
-async function identity(path: string): Promise<{ dev: number; ino: number } | null> {
+async function identity(path: string): Promise<Placement | null> {
   try {
     const info = await lstat(path);
     return info.isDirectory() ? { dev: info.dev, ino: info.ino } : null;
@@ -225,33 +211,26 @@ async function identity(path: string): Promise<{ dev: number; ino: number } | nu
   }
 }
 
-async function sameFolder(path: string, expected: { dev: number; ino: number }): Promise<boolean> {
+async function sameFolder(path: string, expected: Placement): Promise<boolean> {
   const found = await identity(path);
   return found !== null && found.dev === expected.dev && found.ino === expected.ino;
 }
 
 const CHANGED = (home: string) => `${home} changed while the guide was starting. Check the folder and try again.`;
 
-/** `mkdir -p` that answers with the folders it created, deepest first. */
-async function makeParents(dir: string): Promise<string[]> {
-  const first = await mkdir(dir, { recursive: true });
-  if (first === undefined) return [];
-  const created: string[] = [];
-  for (let at = dir; ; at = dirname(at)) {
-    created.push(at);
-    if (at === first || dirname(at) === at) break;
-  }
-  return created;
-}
-
-async function removeEmptyFolders(folders: string[]): Promise<void> {
-  for (const dir of folders) {
+/**
+ * The home as the filesystem names it, every link in it resolved once: the real path of its nearest
+ * existing folder, then the parts still to be created. The guide checks, places, launches and records
+ * this path and nothing else, so a link in the typed path that is retargeted later leads nowhere it writes.
+ */
+export async function canonicalHome(home: string): Promise<string> {
+  const missing: string[] = [];
+  for (let at = home; ; at = dirname(at)) {
     try {
-      await rmdir(dir);
+      return join(await realpath(at), ...missing);
     } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      if (code === "ENOTEMPTY" || code === "EEXIST" || code === "ENOENT") return;
-      throw error;
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT" || dirname(at) === at) throw error;
+      missing.unshift(basename(at));
     }
   }
 }
@@ -261,7 +240,8 @@ async function removeEmptyFolders(folders: string[]): Promise<void> {
  * replaces nothing but a missing path or an empty folder, and refuses a folder something has been put
  * in since the check, a file and a link swapped in, so the guide never writes into a folder it does not
  * own. Finder's `.DS_Store` moves into the new folder first. The charter names the staging folder until
- * the launch prepares the home again in place, moments later.
+ * the launch prepares the home again in place, moments later. A staging folder that was never placed is
+ * removed; nothing placed is.
  */
 async function placeFreshHome(
   home: string,
@@ -269,30 +249,26 @@ async function placeFreshHome(
   settings: FirstmateSettings,
   hooks: IntroHooks,
 ): Promise<Placement> {
-  const target = folder.kind === "missing" ? home : folder.real;
-  const createdParents = await makeParents(dirname(target));
-  let staging: string | null = null;
+  await mkdir(dirname(home), { recursive: true });
+  const staging = await mkdtemp(join(dirname(home), `.${basename(home)}.firstmate-`));
   try {
-    staging = await mkdtemp(join(dirname(target), `.${basename(target)}.firstmate-`));
-    await chmod(staging, 0o755);
     await prepareHome(staging, homeConfig(settings));
+    await chmod(staging, 0o755);
     const own = (await identity(staging))!;
     await hooks.beforePlace?.();
-    if (folder.kind !== "missing" && !(await sameFolder(target, folder))) throw new Error(CHANGED(home));
-    const moved = folder.kind === "missing" ? [] : await moveIgnored(target, staging);
+    if (folder.kind !== "missing" && !(await sameFolder(home, folder))) throw new Error(CHANGED(home));
+    const moved = folder.kind === "missing" ? [] : await moveIgnored(home, staging);
     try {
-      await rename(staging, target);
+      await rename(staging, home);
     } catch (error) {
-      await moveIgnored(staging, target, moved).catch(() => undefined);
+      await moveIgnored(staging, home, moved).catch(() => undefined);
       const code = (error as NodeJS.ErrnoException).code;
       if (code === "ENOTEMPTY" || code === "EEXIST" || code === "ENOTDIR" || code === "EISDIR") throw new Error(CHANGED(home));
       throw error;
     }
-    staging = null;
-    return { home, fresh: true, target, ...own, replacedEmpty: folder.kind === "empty", createdParents };
+    return own;
   } catch (error) {
-    if (staging !== null) await rm(staging, { recursive: true, force: true }).catch(() => undefined);
-    await removeEmptyFolders(createdParents).catch(() => undefined);
+    await rm(staging, { recursive: true, force: true }).catch(() => undefined);
     throw error;
   }
 }
@@ -306,77 +282,46 @@ async function moveIgnored(from: string, to: string, names?: string[]): Promise<
 
 /** An earlier home is used in place, once it is checked to be the same folder, holding the same names. */
 async function confirmEarlierHome(home: string, folder: Exclude<HomeFolder, { kind: "missing" }>): Promise<Placement> {
-  const real = await realpath(home).catch(() => null);
   const entries = await readdir(home).catch(() => null);
   const same =
-    real === folder.real &&
-    (await sameFolder(real, folder)) &&
+    (await sameFolder(home, folder)) &&
     entries !== null &&
     entries.length === folder.entries.length &&
     entries.every((name) => folder.entries.includes(name));
   if (!same) throw new Error(CHANGED(home));
-  return { home, fresh: false, target: real, dev: folder.dev, ino: folder.ino, replacedEmpty: false, createdParents: [] };
-}
-
-/**
- * Takes a fresh placement back: the guide's folder goes (only while it is still the guide's, never a link
- * swapped in), an empty folder that stood there comes back with its Finder files, and parent folders the
- * guide created go if they are empty. An earlier home is left as it is.
- */
-async function undoPlacement(placement: Placement, log: Log): Promise<void> {
-  if (!placement.fresh) return;
-  if (!(await sameFolder(placement.target, placement))) {
-    log.warn(`The first-run guide left ${placement.target} alone: it is no longer the folder it prepared.`);
-    return;
-  }
-  const aside = await mkdtemp(join(dirname(placement.target), `.${basename(placement.target)}.firstmate-undo-`));
-  await rename(placement.target, join(aside, "home"));
-  if (placement.replacedEmpty) {
-    await mkdir(placement.target);
-    await moveIgnored(join(aside, "home"), placement.target);
-  }
-  await rm(aside, { recursive: true, force: true });
-  await removeEmptyFolders(placement.createdParents);
+  return { dev: folder.dev, ino: folder.ino };
 }
 
 /**
  * The guide's last step, in one hold of the `mate` lock, so no other launch, adoption or guide can come
- * between its check and its launch: checks the folder, reserves it, prepares it and launches the first
- * mate there with the first-session prompt (`templates/messages/first-session.md`), then writes the home
- * setting. The home it launches in is the one it checked, never the setting read again.
+ * between its check and its launch: resolves the folder to its real path (`canonicalHome`), checks it,
+ * places a new home there (or confirms an earlier one), launches the first mate in that path with the
+ * first-session prompt (`templates/messages/first-session.md`), then writes the home setting.
  *
- * Refused before anything changes when a first mate is aboard or the folder is unusable. A launch that
- * fails leaves the setting as it was, unregisters a project it registered and removes what it created in
- * a fresh folder (`undoFolder`); the state stays `offered`.
+ * Refused before anything is written when a first mate is aboard or the folder is unusable. A failure
+ * after that changes no setting and deletes nothing: a placed home and a registered project stay (both
+ * harmless, and the next start uses them), and a first mate started but not recorded keeps running with
+ * its id in the error (`launchInHome`), so the captain can adopt it.
  */
 export async function startIntro(deps: IntroDeps, input: IntroStart, hooks: IntroHooks = {}): Promise<ThreadInfo> {
   const homeDirectory = input.homeDirectory.trim();
-  const home = guideHomePath(homeDirectory);
+  const typed = guideHomePath(homeDirectory);
   const pick = { providerId: input.providerId, model: input.model, reasoningLevel: input.reasoningLevel };
   const mate = await withMateLock(async () => {
     const current = await resolveMate(deps);
     if (current !== null) throw new Error(`A first mate is already aboard (${current.id}).`);
+    const home = await canonicalHome(typed);
     const folder = await checkHomeFolder(home);
     await hooks.afterCheck?.();
-    const placement =
-      folder.kind === "home" ? await confirmEarlierHome(home, folder) : await placeFreshHome(home, folder, await deps.settings(), hooks);
-    let project: string | null = null;
-    let launched: ThreadInfo;
-    try {
-      launched = await launchInHome(deps, home, pick, {
-        firstSession: true,
-        onProjectCreated: (id) => {
-          project = id;
-        },
-      });
-    } catch (error) {
-      await undoLaunch(deps, placement, project);
-      throw error;
-    }
+    const placed = folder.kind === "home" ? await confirmEarlierHome(home, folder) : await placeFreshHome(home, folder, await deps.settings(), hooks);
+    if (!(await sameFolder(home, placed))) throw new Error(CHANGED(home));
+    const launched = await launchInHome(deps, home, pick, { firstSession: true });
+    // The setting keeps the captain's spelling (`~/…`) when it names the same folder.
+    const setting = typed === home ? homeDirectory : home;
     // The first mate is aboard: a setting that cannot be written is logged, and its own workspace is the
     // home meanwhile (`activeHome`).
-    await deps.setHomeDirectory(homeDirectory).catch((error: unknown) => {
-      deps.log.error(`The first-run guide could not set the home directory to ${homeDirectory}: ${reason(error)}`);
+    await deps.setHomeDirectory(setting).catch((error: unknown) => {
+      deps.log.error(`The first-run guide could not set the home directory to ${setting}: ${reason(error)}`);
     });
     return launched;
   });
@@ -385,16 +330,4 @@ export async function startIntro(deps: IntroDeps, input: IntroStart, hooks: Intr
     deps.log.error(`The first-run guide could not be marked done: ${reason(error)}`);
   });
   return mate;
-}
-
-/** A failed guide's launch, undone as far as it was the guide's own; each failure is logged, not thrown. */
-async function undoLaunch(deps: IntroDeps, placement: Placement, project: string | null): Promise<void> {
-  if (project !== null && placement.fresh) {
-    await deps.projects.remove(project).catch((error: unknown) => {
-      deps.log.error(`The first-run guide could not unregister the project ${project}: ${reason(error)}`);
-    });
-  }
-  await undoPlacement(placement, deps.log).catch((error: unknown) => {
-    deps.log.error(`The first-run guide could not clean up ${placement.target}: ${reason(error)}`);
-  });
 }
