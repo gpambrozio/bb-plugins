@@ -218,6 +218,12 @@ of the plugin carries it on; `loop` calls `recover` every minute, which drives i
   line; `git ls-files --others --ignored --exclude-from=.worktreeinclude` lists the file; not a
   symlink). Use git's own matcher, never a hand-written gitignore one: negation and folder patterns are
   where they differ.
+- **That check runs on every status read, so it may run no code and never block.** `.worktreeinclude` is
+  opened no-follow and non-blocking, must be a regular file of at most 64 KB, and is read once with a
+  bound; git gets a private copy of those bytes, never the checkout's path, which could be swapped for a
+  FIFO or device. git runs with `-c core.fsmonitor=false -c core.hooksPath=/dev/null`, since a
+  repository's fsmonitor program would otherwise run while it reads the index. Anything else, and the
+  warning stays.
 - **Never dreamed means every session counts.** The last dream is the later of the lock's mtime (this
   plugin's dreams and native's) and `lastDreamAt` in the host state, which only an applied dry run (its
   start) or a real dream that did not fail sets, so a removed lock does not erase it. With neither, the

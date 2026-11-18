@@ -23,7 +23,8 @@
  * file into each new worktree covers them, so neither is reported.
  */
 import { execFileSync } from "node:child_process";
-import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { closeSync, constants as fsConstants, existsSync, fstatSync, lstatSync, mkdtempSync, openSync, readdirSync, readFileSync, readSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { projectSlug } from "./slug";
@@ -234,35 +235,87 @@ export function canonicalGitRoot(dir: string): string | null {
 const LOCAL_SETTINGS = ".claude/settings.local.json";
 const WORKTREE_INCLUDE = ".worktreeinclude";
 
+/** A `.worktreeinclude` larger than this is not read, and the warning stays. */
+export const MAX_WORKTREE_INCLUDE_BYTES = 64 * 1024;
+
+/**
+ * The checkout's `.worktreeinclude`, or null unless it is a regular file of at most
+ * `MAX_WORKTREE_INCLUDE_BYTES`. Opened without following a symbolic link and without blocking on a
+ * FIFO, checked on the open descriptor, and read with a bound, so a hostile file can neither hang the
+ * host worker nor make it read without end.
+ */
+function readWorktreeInclude(checkout: string): Buffer | null {
+  let fd: number;
+  try {
+    fd = openSync(path.join(checkout, WORKTREE_INCLUDE), fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK);
+  } catch {
+    return null;
+  }
+  try {
+    const stats = fstatSync(fd);
+    if (!stats.isFile() || stats.size > MAX_WORKTREE_INCLUDE_BYTES) return null;
+    const buffer = Buffer.alloc(MAX_WORKTREE_INCLUDE_BYTES + 1);
+    let length = 0;
+    for (;;) {
+      const read = readSync(fd, buffer, length, buffer.length - length, null);
+      if (read === 0) break;
+      length += read;
+      if (length > MAX_WORKTREE_INCLUDE_BYTES) return null;
+    }
+    return buffer.subarray(0, length);
+  } catch {
+    return null;
+  } finally {
+    closeSync(fd);
+  }
+}
+
 /**
  * Whether bb copies `.claude/settings.local.json` into each new worktree of `checkout`, decided as bb
  * 0.49's git-worktree environment does: `<checkout>/.worktreeinclude` (committed or not) has a line that
  * is neither blank nor a comment, the file is one `git ls-files --others --ignored
- * --exclude-from=.worktreeinclude` lists there (gitignore syntax, `!` negation included; so it is
- * untracked), and it is not a symbolic link, which bb skips. Read-only; any failure answers false, so
- * the warning stays.
+ * --exclude-from=<those patterns>` lists there (gitignore syntax, `!` negation included; so it is
+ * untracked), and it is not a symbolic link, which bb skips. Any doubt answers false, so the warning
+ * stays.
+ *
+ * It runs on every status read, so it must never run code or block:
+ * - git reads the patterns from a private copy of what `readWorktreeInclude` read, never the checkout's
+ *   file, which could be swapped for a FIFO or device after the check. The patterns' meaning does not
+ *   depend on where the file is: `--exclude-from` patterns are relative to the folder git lists.
+ * - `core.fsmonitor=false` stops git running a repository-configured fsmonitor program while it reads
+ *   the index; `core.hooksPath=/dev/null` keeps any hook out. Nothing else this command uses runs code:
+ *   it applies no clean/smudge filter or textconv (it reads no file's contents), reads no objects (so
+ *   no alternates), does not recurse into submodules, writes no index (so no post-index-change hook),
+ *   and `includeIf` only includes more configuration, whose programs are these same ones. trace2
+ *   targets come from system and global configuration only, never the repository's.
  */
 export function worktreesGetLocalSettings(checkout: string, gitPath = "git"): boolean {
-  let include: string;
-  try {
-    include = readFileSync(path.join(checkout, WORKTREE_INCLUDE), "utf8");
-  } catch {
-    return false;
-  }
-  if (!include.split(/\r?\n/u).some((line) => line.trim().length > 0 && !line.trim().startsWith("#"))) return false;
+  const include = readWorktreeInclude(checkout);
+  if (include === null) return false;
+  if (!include.toString("utf8").split(/\r?\n/u).some((line) => line.trim().length > 0 && !line.trim().startsWith("#"))) return false;
+  let copy: string | null = null;
   try {
     if (lstatSync(path.join(checkout, ...LOCAL_SETTINGS.split("/"))).isSymbolicLink()) return false;
-    const listed = execFileSync(gitPath, ["ls-files", "--others", "--ignored", `--exclude-from=${WORKTREE_INCLUDE}`, "-z", "--", LOCAL_SETTINGS], {
-      cwd: checkout,
-      encoding: "utf8",
-      timeout: 10_000,
-      killSignal: "SIGKILL",
-      stdio: ["ignore", "pipe", "ignore"],
-      env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0", LC_ALL: "C" },
-    });
+    copy = mkdtempSync(path.join(tmpdir(), "dream-worktreeinclude-"));
+    const patterns = path.join(copy, "patterns");
+    writeFileSync(patterns, include, { mode: 0o600 });
+    const listed = execFileSync(
+      gitPath,
+      ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "ls-files", "--others", "--ignored", `--exclude-from=${patterns}`, "-z", "--", LOCAL_SETTINGS],
+      {
+        cwd: checkout,
+        encoding: "utf8",
+        timeout: 10_000,
+        killSignal: "SIGKILL",
+        stdio: ["ignore", "pipe", "ignore"],
+        env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0", LC_ALL: "C" },
+      },
+    );
     return listed.split("\0").includes(LOCAL_SETTINGS);
   } catch {
     return false;
+  } finally {
+    if (copy !== null) rmSync(copy, { recursive: true, force: true });
   }
 }
 

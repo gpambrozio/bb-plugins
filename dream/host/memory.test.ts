@@ -1,10 +1,10 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { canonicalGitRoot, ENVIRONMENT_KEYS, worktreesGetLocalSettings, hostEnvironment, resolveMemory, usableDir, type ResolveMemoryOptions } from "./memory";
+import { canonicalGitRoot, ENVIRONMENT_KEYS, MAX_WORKTREE_INCLUDE_BYTES, worktreesGetLocalSettings, hostEnvironment, resolveMemory, usableDir, type ResolveMemoryOptions } from "./memory";
 import { MAX_SLUG_LENGTH, pathHash, projectSlug } from "./slug";
 
 let root: string;
@@ -182,6 +182,42 @@ describe("resolveMemory", () => {
       expect(warned()).toBe(true);
       write(path.join(repo, ".worktreeinclude"), "# .claude/settings.local.json\n\n");
       expect(warned()).toBe(true);
+    });
+
+    it("never runs a fsmonitor program the repository configures, and still matches", () => {
+      write(path.join(repo, ".worktreeinclude"), ".claude/settings.local.json\n");
+      git("add", "README.md", ".worktreeinclude");
+      git("commit", "-q", "-m", "init");
+      const sentinel = path.join(root, "fsmonitor-ran");
+      const hook = path.join(root, "fsmonitor.sh");
+      writeFileSync(hook, `#!/bin/sh\ntouch '${sentinel}'\nexit 1\n`);
+      chmodSync(hook, 0o755);
+      git("config", "core.fsmonitor", hook);
+      expect(warned()).toBe(false);
+      expect(existsSync(sentinel)).toBe(false);
+    });
+
+    it("keeps the warning, without reading or blocking, when .worktreeinclude is a FIFO, a link or too large", () => {
+      const include = path.join(repo, ".worktreeinclude");
+      // A FIFO: opening it to read would block for good.
+      execFileSync("mkfifo", [include]);
+      expect(warned()).toBe(true);
+      // A link, to a FIFO or to a file that would match: bb's own read follows it, ours never does.
+      rmSync(include);
+      const fifo = path.join(root, "fifo");
+      execFileSync("mkfifo", [fifo]);
+      symlinkSync(fifo, include);
+      expect(warned()).toBe(true);
+      rmSync(include);
+      write(path.join(root, "patterns"), ".claude/settings.local.json\n");
+      symlinkSync(path.join(root, "patterns"), include);
+      expect(warned()).toBe(true);
+      // Larger than the cap, though it matches.
+      rmSync(include);
+      write(include, `.claude/settings.local.json\n${"#".repeat(MAX_WORKTREE_INCLUDE_BYTES)}\n`);
+      expect(warned()).toBe(true);
+      write(include, ".claude/settings.local.json\n");
+      expect(warned()).toBe(false);
     });
 
     it("warns when the file is a symbolic link, which bb does not copy", () => {
