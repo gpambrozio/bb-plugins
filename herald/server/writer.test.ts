@@ -209,6 +209,11 @@ describe("SentenceWriter", () => {
     await expect(access(cwd)).rejects.toThrow();
   });
 
+  it("turns Claude Code's auto memory off, which would leave an empty project folder per run", async () => {
+    const memory = node(`process.stdout.write(process.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY ?? "unset")`);
+    expect(textOf(await writer().write(memory, "p", "text"))).toBe("1");
+  });
+
   it("gives every run a fresh empty folder and removes it afterwards", async () => {
     const w = writer();
     const script = node(`process.stdout.write(process.cwd())`);
