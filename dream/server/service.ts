@@ -38,7 +38,8 @@ import { createHistory, type KvLike } from "./history";
 import { checkoutsOn, findCheckout, mapWorktreeFolders, type BbProjectRow, type Checkout, type ThreadProjectLookup } from "./projects";
 import { renderPrompt } from "./prompt";
 
-export const MAX_DREAM_MS = 45 * 60_000;
+export { MAX_DREAM_MS } from "./limits";
+import { MAX_DREAM_MS } from "./limits";
 export const POLL_MS = 10_000;
 /** Between sweeps that found nothing due, inside the window. */
 export const SWEEP_EVERY_MS = 15 * 60_000;

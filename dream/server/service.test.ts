@@ -392,6 +392,20 @@ describe("a dream", () => {
   });
 });
 
+describe("the default model", () => {
+  it("is the most capable Claude model bb offers, at high reasoning", async () => {
+    const context = setup({ start: at(12), projects: [project("a", null)] });
+    const spawned: Array<{ model: string; reasoningLevel: string }> = [];
+    const spawn = context.ports.threads.spawn;
+    context.ports.threads.spawn = async (request) => {
+      spawned.push({ model: request.model, reasoningLevel: request.reasoningLevel });
+      return spawn(request);
+    };
+    await (await context.service.begin("a", { mode: null, manual: true, trigger: "manual" })).done;
+    expect(spawned).toEqual([{ model: "claude-fable-5-2", reasoningLevel: "high" }]);
+  });
+});
+
 describe("the startup check", () => {
   it("sends the dream prompt only after the guard is proven, as a second turn", async () => {
     const { service, sent } = setup({ start: at(12), projects: [project("a", null)] });
@@ -673,5 +687,11 @@ describe("the prompt", () => {
     expect(prompt).toContain("- 2026-11-16 22:10 · Fix the build · 2 KB · /home/.claude/projects/-repos-app/s1.jsonl");
     expect(prompt).toContain("… and 6 older sessions");
     expect(prompt).toContain("`/repos/app/CLAUDE.md`");
+    // No rush, with the budget the watcher really enforces, and every session and memory covered.
+    expect(prompt).toContain(`up to ${MAX_DREAM_MS / 60_000} minutes`);
+    expect(prompt).toContain("Look at every session listed below at least narrowly");
+    expect(prompt).toContain("Check each existing memory against the code");
+    expect(prompt).toContain("Never say you ran out of time unless the run actually stopped you");
+    expect(prompt.indexOf("## Phase 4 — Prune and index")).toBeLessThan(prompt.indexOf("**Time and coverage:**"));
   });
 });

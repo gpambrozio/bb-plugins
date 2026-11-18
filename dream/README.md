@@ -12,11 +12,13 @@ Plugins → Dream. Until then the page and `bb dream status` only read.
 ## What a dream does
 
 Each dream is a hidden Claude Code thread, given Claude Code 2.1.326's dream prompt with three
-additions: a list of the sessions since the last dream across all the project's folders, the path of
-the project's checkout, and Claude Code's own rules for memories that contradict `CLAUDE.md` (delete
-or rewrite what `CLAUDE.md` supersedes, annotate and report what looks newer, never edit `CLAUDE.md`
-or `AGENTS.md`). It keeps `MEMORY.md` an index under 200 lines and about 25 KB. When it ends, the
-thread is stopped and archived, and its summary goes into the Dream page's history.
+additions: a list of the sessions since the last dream across all the project's folders, the path of the
+project's checkout, and Claude Code's own rules for memories that contradict `CLAUDE.md` (delete or
+rewrite what `CLAUDE.md` supersedes, annotate and report what looks newer, never edit `CLAUDE.md` or
+`AGENTS.md`). It keeps `MEMORY.md` an index under 200 lines and about 25 KB. It is told there is no rush
+(it may run up to 45 minutes), to look at every session listed and check each memory against the code,
+and to say in its summary what it covered. When it ends, the thread is stopped and archived, and its
+summary goes into the Dream page's history.
 
 - **Held to memory-only writes.** The thread may use Read, Glob and Grep; `ls`, `find`, `grep`, `cat`,
   `stat`, `wc`, `head` and `tail` in the shell; Write and Edit of `.md` files in the memory folder; and
@@ -78,8 +80,8 @@ project's worktrees do not have.
   memory file it would add, change or delete as a diff against the memory now, with *Apply* and
   *Discard*; and the history of dreams with their summaries.
 - **Settings → Plugins → Dream**: the schedule, its window, the thresholds, backups and the
-  notification; and below them the dream machine and the model (bb's own model picker; Sonnet 5.5 at
-  medium effort to start with).
+  notification; and below them the dream machine and the model (bb's own model picker; Fable 5.2 at
+  high reasoning to start with).
 - **`bb dream`** for scripts and agents:
 
   ```text

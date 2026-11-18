@@ -7,6 +7,7 @@
  */
 import type { ManifestEntry } from "../shared/types";
 import { DREAM_SKILL } from "./dream-skill";
+import { MAX_DREAM_MS } from "./limits";
 
 export interface PromptFacts {
   targetDir: string;
@@ -41,6 +42,7 @@ export function renderPrompt(facts: PromptFacts, skill = DREAM_SKILL): string {
     checkout: facts.checkout,
     transcriptFolders: facts.transcriptFolders.length > 0 ? facts.transcriptFolders.map((folder) => `- \`${folder}\``).join("\n") : "- (none: no session since the last dream)",
     sessionCount: String(facts.sessionCount),
+    timeBudgetMinutes: String(Math.round(MAX_DREAM_MS / 60_000)),
     sessions: listed.length > 0 ? listed.join("\n") : "- (none)",
     instructionFiles: facts.instructionFiles.length > 0 ? facts.instructionFiles.map((file) => `\`${file}\``).join(", ") : "none (the project has no CLAUDE.md or AGENTS.md)",
   };

@@ -9,8 +9,13 @@ import { ChangesSchema, ModeSchema, ProjectStatusSchema } from "./types";
 export const DREAM_CHANGED = "dream-changed";
 
 export const DEFAULT_PROVIDER = "claude-code";
-export const DEFAULT_MODEL = "claude-sonnet-5-5";
-export const DEFAULT_REASONING = "medium";
+/**
+ * The most capable Claude model bb's Claude Code provider offers (bb 0.49 lists Fable 5.2 as "For your
+ * toughest challenges", above Opus 5.5), at high reasoning. A setting: users change it in the plugin's
+ * settings section.
+ */
+export const DEFAULT_MODEL = "claude-fable-5-2";
+export const DEFAULT_REASONING = "high";
 
 /** Choices the host-rendered form cannot offer: the machine and the model, set from the plugin's settings section. */
 export const ChoicesSchema = z.object({

@@ -44,6 +44,11 @@ Update `MEMORY.md` so it stays under 200 lines AND under ~25KB. It's an **index*
 Return a brief summary of what you consolidated, updated, or pruned. If nothing changed (memories are already tight), say so. List any memory you annotated as contradicting CLAUDE.md under a heading "CLAUDE.md to check".
 ## Additional context
 
+**Time and coverage:** there is no rush. This run may take up to {{timeBudgetMinutes}} minutes, the only limit there is, so be thorough rather than quick:
+- Look at every session listed below at least narrowly: a few targeted greps per file are enough, but do not skip any, and never read a whole transcript.
+- Check each existing memory against the code in the checkout before keeping, rewriting or deleting it.
+- In your summary, say what you covered: how many of the listed sessions you looked at, and how many memories you checked against the code. Never say you ran out of time unless the run actually stopped you.
+
 **Tool constraints for this run:** Shell access is restricted to read-only commands (`ls`, `find`, `grep`, `cat`, `stat`, `wc`, `head`, `tail`) plus deleting `.md` files inside the memory directory (outside protected subdirectories like `.git` or `agents`; `rm` takes no flags except `-f`). Write and Edit work only on `.md` files inside the memory directory. Anything else that writes, redirects to a file, or modifies state will be denied, and so will every other tool. Plan your exploration with this in mind.
 Sessions since last consolidation ({{sessionCount}}), newest first, as date · title · size · file:
 {{sessions}}
