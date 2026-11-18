@@ -43,7 +43,9 @@ be re-checked when Claude Code changes them:
   with native to native's own read-back, it does not close it: a native contender that saw the lock free
   and stalls past the settle delay can still write after the plugin proceeded. Native auto-dream never
   runs in bb's SDK sessions and is behind a server flag, so the residual risk is an interactive Claude
-  Code session dreaming the same repository at the same moment. Rollback and marking only touch a lock
+  Code session dreaming the same repository at the same moment. **The owner accepted this residual risk
+  (review pass 2, option a): do not build anything more for it**, such as requiring
+  `autoDreamEnabled: false` or a lock heuristic, without asking. Rollback and marking only touch a lock
   that still holds the PID recorded with the run (`lockPid`), so a replacement host worker can still
   roll back what its predecessor took, and a rollback that finds another holder is reported in the run's
   log, never silently dropped.

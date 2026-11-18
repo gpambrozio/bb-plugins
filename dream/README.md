@@ -35,6 +35,12 @@ thread is stopped and archived, and its summary goes into the Dream page's histo
   runs; its modification time is the last dream, a failed dream sets it back, and it goes stale after an
   hour. Two copies of this plugin cannot take it at once, and it reads the lock back after taking it, so
   it steps aside for a native auto-dream that started at the same moment.
+- **A known gap: a native auto-dream can still overlap.** Claude Code's own auto-dream takes the same
+  lock without any exclusive step, so if it starts on the same project at almost the same moment as a
+  Dream run and stalls briefly, both can edit that memory together. It cannot run in bb's own sessions
+  and is turned off for most accounts, so this needs an interactive Claude Code session auto-dreaming
+  the same repository at that moment. This was a deliberate choice: Dream does not try to close it. If
+  it happens, the backup taken before the dream (`bb dream restore`) puts the memory back.
 - **One push notification** after a dream that changed files, naming the project and the counts, or
   after a dry run that proposes changes. Nothing when nothing was due or nothing changed.
 
