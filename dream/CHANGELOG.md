@@ -23,7 +23,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **A dry run you do not apply never counts as a dream**: the next one is given every session since the
   last real dream, whether the dry run was discarded or proposed nothing.
 - **No false warning for a project folder outside git**: a custom memory folder set only in your local
-  settings is flagged only in a git repository, whose worktrees do not see that file.
+  settings is flagged only in a git repository, whose worktrees do not see that file, and not when the
+  repository's `.worktreeinclude` has bb copy that file into each new worktree.
 - **A project that has never dreamed counts all its sessions**, even when a session saved a memory
   yesterday, and the Dream page says what its sessions are counted from: the last dream, or "never
   dreamed".

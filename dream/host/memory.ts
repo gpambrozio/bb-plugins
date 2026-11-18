@@ -19,9 +19,11 @@
  * Nothing here writes. Two things are reported and never touched: a legacy default folder that still
  * holds `.md` files beside a custom one, and, in a git repository, an `autoMemoryDirectory` set only in
  * `settings.local.json`, which a worktree of the repository does not have, so its sessions use
- * another folder. A folder outside git has no worktrees, so its local setting is not reported.
+ * another folder. A folder outside git has no worktrees, and a `.worktreeinclude` that makes bb copy the
+ * file into each new worktree covers them, so neither is reported.
  */
-import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 
 import { projectSlug } from "./slug";
@@ -229,6 +231,41 @@ export function canonicalGitRoot(dir: string): string | null {
   }
 }
 
+const LOCAL_SETTINGS = ".claude/settings.local.json";
+const WORKTREE_INCLUDE = ".worktreeinclude";
+
+/**
+ * Whether bb copies `.claude/settings.local.json` into each new worktree of `checkout`, decided as bb
+ * 0.49's git-worktree environment does: `<checkout>/.worktreeinclude` (committed or not) has a line that
+ * is neither blank nor a comment, the file is one `git ls-files --others --ignored
+ * --exclude-from=.worktreeinclude` lists there (gitignore syntax, `!` negation included; so it is
+ * untracked), and it is not a symbolic link, which bb skips. Read-only; any failure answers false, so
+ * the warning stays.
+ */
+export function worktreesGetLocalSettings(checkout: string, gitPath = "git"): boolean {
+  let include: string;
+  try {
+    include = readFileSync(path.join(checkout, WORKTREE_INCLUDE), "utf8");
+  } catch {
+    return false;
+  }
+  if (!include.split(/\r?\n/u).some((line) => line.trim().length > 0 && !line.trim().startsWith("#"))) return false;
+  try {
+    if (lstatSync(path.join(checkout, ...LOCAL_SETTINGS.split("/"))).isSymbolicLink()) return false;
+    const listed = execFileSync(gitPath, ["ls-files", "--others", "--ignored", `--exclude-from=${WORKTREE_INCLUDE}`, "-z", "--", LOCAL_SETTINGS], {
+      cwd: checkout,
+      encoding: "utf8",
+      timeout: 10_000,
+      killSignal: "SIGKILL",
+      stdio: ["ignore", "pipe", "ignore"],
+      env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_TERMINAL_PROMPT: "0", LC_ALL: "C" },
+    });
+    return listed.split("\0").includes(LOCAL_SETTINGS);
+  } catch {
+    return false;
+  }
+}
+
 /** The `.md` files in a folder, recursively, outside `.git`. Zero for a folder that does not exist. */
 export function countMarkdown(dir: string): number {
   let count = 0;
@@ -288,7 +325,8 @@ export function resolveMemory(options: ResolveMemoryOptions): ResolvedMemory {
 
   // A worktree checks out tracked files only, so it has no settings.local.json. Only a git repository
   // has worktrees: a plain folder's sessions all run in it and all read its local settings.
-  if (resolved.source === "localSettings" && canonicalGitRoot(options.checkout) !== null) {
+  // bb copies it into each new worktree when the checkout's .worktreeinclude matches it.
+  if (resolved.source === "localSettings" && canonicalGitRoot(options.checkout) !== null && !worktreesGetLocalSettings(options.checkout)) {
     const inWorktree = resolveWith(options, files, ["policySettings", "projectSettings", "userSettings"]);
     if (inWorktree.dir !== resolved.dir) {
       warnings.push(

@@ -92,7 +92,9 @@ settings (with `~` expanded), then `~/.claude/projects/<the main checkout>/memor
 the folder came from, and warns, without touching anything, when an old default folder still holds
 files beside a custom one, or when a git repository's custom folder is set only in
 `settings.local.json`, which its worktrees do not have. A project folder outside git has no worktrees,
-so a custom folder set only there is not flagged.
+and a `.worktreeinclude` (committed or not) that has bb copy `.claude/settings.local.json` into each new
+worktree covers them, so neither is flagged; Dream asks git which files that `.worktreeinclude` matches,
+as bb does.
 
 ## Using it
 

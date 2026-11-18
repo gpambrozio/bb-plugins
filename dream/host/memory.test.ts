@@ -1,9 +1,10 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { canonicalGitRoot, ENVIRONMENT_KEYS, hostEnvironment, resolveMemory, usableDir, type ResolveMemoryOptions } from "./memory";
+import { canonicalGitRoot, ENVIRONMENT_KEYS, worktreesGetLocalSettings, hostEnvironment, resolveMemory, usableDir, type ResolveMemoryOptions } from "./memory";
 import { MAX_SLUG_LENGTH, pathHash, projectSlug } from "./slug";
 
 let root: string;
@@ -136,6 +137,60 @@ describe("resolveMemory", () => {
     const resolved = resolveMemory(options({ checkout: plain }));
     expect(resolved).toMatchObject({ source: "localSettings", dir: path.join(home, "agent-memory", "OnShape") });
     expect(resolved.warnings).toEqual([]);
+  });
+
+  describe("with a .worktreeinclude, which bb uses to copy untracked files into new worktrees", () => {
+    const gitEnv = { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@example.com", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@example.com" };
+    const git = (...args: string[]) => execFileSync("git", ["-C", repo, ...args], { env: gitEnv, encoding: "utf8" });
+    let repo: string;
+    const warned = () => resolveMemory(options({ checkout: repo })).warnings.join("\n").includes("only in .claude/settings.local.json");
+
+    beforeEach(() => {
+      repo = path.join(root, "repos", "real");
+      mkdirSync(repo, { recursive: true });
+      git("init", "-q", "-b", "main");
+      write(path.join(repo, "README.md"), "app\n");
+      write(path.join(repo, ".claude", "settings.local.json"), { autoMemoryDirectory: "~/agent-memory/real" });
+    });
+
+    it("stays quiet when a committed .worktreeinclude copies the file", () => {
+      write(path.join(repo, ".worktreeinclude"), "# local files\n.env\n.claude/settings.local.json\n");
+      git("add", "README.md", ".worktreeinclude");
+      git("commit", "-q", "-m", "init");
+      expect(worktreesGetLocalSettings(repo)).toBe(true);
+      expect(warned()).toBe(false);
+      expect(resolveMemory(options({ checkout: repo })).dir).toBe(path.join(home, "agent-memory", "real"));
+    });
+
+    it("stays quiet when an untracked .worktreeinclude, hidden through .git/info/exclude, copies its folder", () => {
+      write(path.join(repo, ".worktreeinclude"), ".claude/\n");
+      write(path.join(repo, ".git", "info", "exclude"), ".worktreeinclude\n");
+      git("add", "README.md");
+      git("commit", "-q", "-m", "init");
+      expect(warned()).toBe(false);
+    });
+
+    it("warns when the .worktreeinclude negates the file", () => {
+      write(path.join(repo, ".worktreeinclude"), ".claude/*\n!.claude/settings.local.json\n");
+      expect(worktreesGetLocalSettings(repo)).toBe(false);
+      expect(warned()).toBe(true);
+    });
+
+    it("warns when the .worktreeinclude does not match the file, has only comments, or is missing", () => {
+      expect(warned()).toBe(true);
+      write(path.join(repo, ".worktreeinclude"), ".env\n.env.*\n");
+      expect(warned()).toBe(true);
+      write(path.join(repo, ".worktreeinclude"), "# .claude/settings.local.json\n\n");
+      expect(warned()).toBe(true);
+    });
+
+    it("warns when the file is a symbolic link, which bb does not copy", () => {
+      write(path.join(repo, "real-settings.json"), { autoMemoryDirectory: "~/agent-memory/real" });
+      rmSync(path.join(repo, ".claude", "settings.local.json"));
+      symlinkSync(path.join(repo, "real-settings.json"), path.join(repo, ".claude", "settings.local.json"));
+      write(path.join(repo, ".worktreeinclude"), ".claude/settings.local.json\n");
+      expect(warned()).toBe(true);
+    });
   });
 
   it("does not report a local override that the tracked settings repeat", () => {

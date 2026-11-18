@@ -212,7 +212,12 @@ of the plugin carries it on; `loop` calls `recover` every minute, which drives i
 - **The local-settings warning is for git repositories only.** `autoMemoryDirectory` set only in
   `settings.local.json` is reported because a git worktree checks out tracked files only. A folder
   outside git (`canonicalGitRoot` finds no `.git` folder or `.git` file up its parents, read without
-  running git) has no worktrees, so every session reads that file and nothing is reported.
+  running git) has no worktrees, so every session reads that file and nothing is reported. Nor is it
+  when bb copies the file into each new worktree: `worktreesGetLocalSettings` decides that as bb 0.49's
+  git-worktree environment does (a `.worktreeinclude` in the checkout, committed or not, with a pattern
+  line; `git ls-files --others --ignored --exclude-from=.worktreeinclude` lists the file; not a
+  symlink). Use git's own matcher, never a hand-written gitignore one: negation and folder patterns are
+  where they differ.
 - **Never dreamed means every session counts.** The last dream is the later of the lock's mtime (this
   plugin's dreams and native's) and `lastDreamAt` in the host state, which only an applied dry run (its
   start) or a real dream that did not fail sets, so a removed lock does not erase it. With neither, the
