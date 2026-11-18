@@ -28,7 +28,7 @@ import {
   type DreamState,
 } from "./state";
 import { checkoutFolders, checkoutSlugs, listSessions, listTranscriptFolders, parseWorktreeFolder, sessionTitle, type SessionFile, type WorktreeFolder } from "./transcripts";
-import { CANARY_FILE, writeWorkspace } from "./workspace";
+import { armPolicy, CANARY_FILE, writeWorkspace } from "./workspace";
 
 /** The most sessions a dream's prompt lists; the rest are counted. */
 export const MAX_LISTED_SESSIONS = 300;
@@ -93,6 +93,30 @@ function indexFacts(dir: string): { indexLines: number | null; indexBytes: numbe
   } catch {
     return { indexLines: null, indexBytes: null };
   }
+}
+
+/** The startup check's verdict from its evidence: the guard's log and the canary file. */
+function canaryVerdict(run: ActiveRunRecord): CanaryResult {
+  let logged = false;
+  try {
+    logged = readFileSync(run.logPath, "utf8")
+      .split("\n")
+      .some((line) => {
+        try {
+          return (JSON.parse(line) as { canary?: unknown }).canary === true;
+        } catch {
+          return false;
+        }
+      });
+  } catch {
+    logged = false;
+  }
+  // The evidence stays until the run is finished, so nothing can turn a failed check into a pass.
+  const written = existsSync(run.canary);
+  if (!logged && written) return { ok: false, reason: "the check file was written and the guard never saw it: the workspace's hooks did not run" };
+  if (!logged) return { ok: false, reason: "the guard never saw the check's Write (hooks off, or the thread did not try it)" };
+  if (written) return { ok: false, reason: "the check file was written although its hook failed: this Claude Code ignores onFailure: \"block\"" };
+  return { ok: true, reason: "the guard ran and a failing hook blocked the call" };
 }
 
 export function createDreams(options: DreamsOptions) {
@@ -314,6 +338,8 @@ export function createDreams(options: DreamsOptions) {
             targetDir,
             workspace,
             priorMtime,
+            lockPid: options.pid,
+            canaryVerdict: null,
             backup: backupStamp,
             proposal: proposalStamp,
             before: manifest(targetDir),
@@ -362,31 +388,23 @@ export function createDreams(options: DreamsOptions) {
     /**
      * The startup check, after the thread's first turn asked it to Write the canary file: proven only
      * when the guard logged that Write (so it ran) and the file does not exist (so the companion hook's
-     * failure blocked it, which needs `onFailure: "block"`). Removes the file either way.
+     * failure blocked it, which needs `onFailure: "block"`). The verdict is kept with the run and the
+     * file stays until `finish`, so asking again never turns a failure into a pass. A pass arms the
+     * guard: only then may it allow writes in the dream's real target.
      */
-    checkCanary(runId: string): CanaryResult {
-      const run = load().runs[runId] as ActiveRunRecord | undefined;
-      if (run === undefined) return { ok: false, reason: `No dream ${runId} is in progress on this machine.` };
-      let logged = false;
-      try {
-        logged = readFileSync(run.logPath, "utf8")
-          .split("\n")
-          .some((line) => {
-            try {
-              return (JSON.parse(line) as { canary?: unknown }).canary === true;
-            } catch {
-              return false;
-            }
-          });
-      } catch {
-        logged = false;
-      }
-      const written = existsSync(run.canary);
-      rmSync(run.canary, { force: true });
-      if (!logged && written) return { ok: false, reason: "the check file was written and the guard never saw it: the workspace's hooks did not run" };
-      if (!logged) return { ok: false, reason: "the guard never saw the check's Write (hooks off, or the thread did not try it)" };
-      if (written) return { ok: false, reason: "the check file was written although its hook failed: this Claude Code ignores onFailure: \"block\"" };
-      return { ok: true, reason: "the guard ran and a failing hook blocked the call" };
+    checkCanary(runId: string): Promise<CanaryResult> {
+      return exclusive(() => {
+        const state = load();
+        const run = state.runs[runId] as ActiveRunRecord | undefined;
+        if (run === undefined) return { ok: false, reason: `No dream ${runId} is in progress on this machine.` };
+        // Decided once: a repeat, after a reload or from a second copy, answers the same.
+        if (run.canaryVerdict) return run.canaryVerdict;
+        const verdict = canaryVerdict(run);
+        run.canaryVerdict = verdict;
+        save(state);
+        if (verdict.ok) armPolicy(run.workspace, run.targetDir);
+        return verdict;
+      });
     },
 
     /**
@@ -409,15 +427,23 @@ export function createDreams(options: DreamsOptions) {
                 backup: entry.backup,
                 proposal: proposed ? entry.proposal : null,
                 proposalDir: null,
+                warning: null,
               };
             }
           }
-          return { found: false, mode: "dream", changes: emptyChanges(), backup: null, proposal: null, proposalDir: null };
+          return { found: false, mode: "dream", changes: emptyChanges(), backup: null, proposal: null, proposalDir: null, warning: null };
         }
         const own = projectState(state, run.projectId, state.projects[run.projectId]?.name ?? run.projectId);
         if (input.threadId) rememberDreamThread(own, input.threadId);
         rememberDreamSessions(own, listSessions(projectsDir, projectSlug(run.workspace)).map((session) => session.sessionId));
 
+        rmSync(run.canary, { force: true });
+        // The lock was taken by the worker that prepared the run, which may have been replaced since.
+        const owner = run.lockPid ?? options.pid;
+        let rollbackFailed = false;
+        const rollback = () => {
+          if (!rollbackLock(run.memoryDir, run.priorMtime, owner)) rollbackFailed = true;
+        };
         let changes: Changes = emptyChanges();
         let proposalDir: string | null = null;
         let outcome: "changed" | "unchanged" | "proposed" | "failed";
@@ -429,7 +455,7 @@ export function createDreams(options: DreamsOptions) {
           proposalDir = finished.dir;
           if (!input.ok) {
             outcome = "failed";
-            rollbackLock(run.memoryDir, run.priorMtime, options.pid);
+            rollback();
           } else if (changeCount(changes) === 0) {
             // Nothing to propose: the memory is already tight, which counts as a dream.
             outcome = "unchanged";
@@ -437,14 +463,14 @@ export function createDreams(options: DreamsOptions) {
           } else {
             // Not consolidated until applied; `apply` moves the lock to the dry run's start.
             outcome = "proposed";
-            rollbackLock(run.memoryDir, run.priorMtime, options.pid);
+            rollback();
           }
         } else {
           changes = diffManifests(run.before, manifest(run.targetDir));
           if (input.ok) outcome = changeCount(changes) > 0 ? "changed" : "unchanged";
           else {
             outcome = "failed";
-            rollbackLock(run.memoryDir, run.priorMtime, options.pid);
+            rollback();
           }
         }
 
@@ -470,6 +496,9 @@ export function createDreams(options: DreamsOptions) {
           backup: run.backup,
           proposal: outcome === "proposed" ? run.proposal : null,
           proposalDir: outcome === "proposed" ? proposalDir : null,
+          warning: rollbackFailed
+            ? `The memory lock could not be set back to the last dream's time: another process holds it now. The project may wait for its next dream as if this run had happened.`
+            : null,
         };
       });
     },

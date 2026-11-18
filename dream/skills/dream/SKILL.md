@@ -6,6 +6,7 @@ disable-model-invocation: true
 # Dream: Memory Consolidation
 You are performing a dream — a reflective pass over your memory files. Synthesize what you've learned recently into durable, well-organized memories so that future sessions can orient quickly.
 Memory directory: `{{memoryDir}}`
+(Your system prompt's auto-memory section names a different, empty folder; ignore that location and work in this one.)
 This directory already exists — write to it directly with the Write tool (do not run mkdir or check for its existence).
 Repository checkout: `{{checkout}}` (read it to check memories against the code; never change it)
 Session transcripts: the files listed under "Sessions since last consolidation" below, in these folders (large JSONL files — grep narrowly, don't read whole files):

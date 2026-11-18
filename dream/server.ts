@@ -182,6 +182,18 @@ export default async function plugin(bb: BbPluginApi) {
       send: async (threadId, text) => {
         await bb.sdk.threads.send({ threadId, mode: "queue-if-active", input: [{ type: "text", text, mentions: [] }] });
       },
+      writeErrors: async (threadId, file) => {
+        // The canary is the thread's first turn, so its items are among the first events.
+        const rows = await bb.sdk.threads.events.list({ threadId, types: ["item/completed"], order: "asc", limit: "100" });
+        const errors: string[] = [];
+        for (const row of rows) {
+          const item = (row as { data?: { item?: { type?: unknown; status?: unknown; error?: unknown; changes?: unknown } } }).data?.item;
+          if (item?.type !== "fileChange" || item.status !== "failed" || typeof item.error !== "string") continue;
+          const changes = Array.isArray(item.changes) ? (item.changes as Array<{ path?: unknown }>) : [];
+          if (changes.some((change) => change.path === file)) errors.push(item.error);
+        }
+        return errors;
+      },
       state: threadState,
       output: async (threadId) => (await bb.sdk.threads.output({ threadId })).output,
       stop: async (threadId) => {

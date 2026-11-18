@@ -53,6 +53,22 @@ const THREADS_KEY = "thread-projects";
 const LAST_SWEEP_KEY = "last-sweep";
 const STOP_KEY = "stop-requested";
 const ARCHIVE_KEY = "to-archive";
+/** Set while a thread of this plugin could not be confirmed stopped; no clean-up or start passes it. */
+const ORPHAN_KEY = "orphans-unconfirmed";
+
+/** The error text Claude Code gives a call its failing hook blocked under `onFailure: "block"`. */
+const ON_FAILURE_BLOCK = 'onFailure is "block"';
+const COMPANION_FLAG = "--canary-fail";
+
+/**
+ * Whether the canary Write was blocked by the plugin's companion hook under `onFailure: "block"`,
+ * judged from the errors bb recorded for that Write. Another hook denying the call (a user's, say) leaves
+ * a different error, so the proof is bound to the handler it is about, and a Claude Code that ignored
+ * `onFailure` cannot pass it. A future rewording of that message fails the check, which fails closed.
+ */
+export function blockedByCompanion(errors: readonly string[]): boolean {
+  return errors.some((error) => error.includes(COMPANION_FLAG) && error.includes(ON_FAILURE_BLOCK));
+}
 
 export interface DreamConfig {
   scheduleEnabled: boolean;
@@ -109,6 +125,8 @@ export interface DreamPorts {
   threads: {
     spawn(request: SpawnRequest): Promise<string>;
     send(threadId: string, text: string): Promise<void>;
+    /** The errors bb recorded for the thread's failed Writes of `file`. */
+    writeErrors(threadId: string, file: string): Promise<string[]>;
     /** The thread's state once `turns` turns should have completed. */
     state(threadId: string, turns: number): Promise<ThreadState>;
     output(threadId: string): Promise<string | null>;
@@ -137,6 +155,8 @@ export interface Ended {
 export interface ActiveState {
   record: RunRecord;
   phase: Phase;
+  /** The startup check's file, whose blocked Write proves the guard. */
+  canary: string | null;
   /** The dream prompt, sent once the startup check passes. */
   prompt: string | null;
   ended: Ended | null;
@@ -218,14 +238,27 @@ export function createDreamService(ports: DreamPorts) {
     return (await loadActive())?.record ?? null;
   }
 
-  async function saveActive(state: ActiveState): Promise<void> {
+  /**
+   * Writes the run's state, fenced: never from a copy that has been disposed, and never over another
+   * run's marker (one that started after this run was finished by another copy). Answers whether it
+   * wrote. bb loads a new copy before it disposes the old one, so both may drive the same run for a
+   * moment; the fence keeps the old one's late answers from touching what the new one owns.
+   */
+  async function saveActive(state: ActiveState): Promise<boolean> {
+    if (disposed) return false;
+    const current = await loadActive();
+    if (current !== null && current.record.runId !== state.record.runId) return false;
     await ports.kv.set(ACTIVE_KEY, state);
     ports.publish();
+    return true;
   }
 
-  async function clearActive(): Promise<void> {
+  /** Clears the marker of `runId` only, and its stop request; never another run's. */
+  async function clearActive(runId: string): Promise<void> {
+    const current = await loadActive();
+    if (current !== null && current.record.runId !== runId) return;
     await ports.kv.delete(ACTIVE_KEY);
-    await ports.kv.delete(STOP_KEY);
+    if ((await ports.kv.get<string>(STOP_KEY)) === runId) await ports.kv.delete(STOP_KEY);
     ports.publish();
   }
 
@@ -309,7 +342,10 @@ export function createDreamService(ports: DreamPorts) {
     await ports.kv.set(ARCHIVE_KEY, left);
   }
 
-  /** Stops every open thread of this plugin; true when all are confirmed stopped. */
+  /**
+   * Stops every open thread of this plugin; true when all are confirmed stopped. While one is not,
+   * `ORPHAN_KEY` stays set, and it blocks the host's clean-up and every new start.
+   */
   async function stopOrphans(signal: AbortSignal): Promise<boolean> {
     let all = true;
     for (const threadId of await ports.threads.listOpen()) {
@@ -317,6 +353,9 @@ export function createDreamService(ports: DreamPorts) {
       if (await stopAndConfirm(threadId, signal)) await archive(threadId);
       else all = false;
     }
+    if (disposed) return all;
+    if (all) await ports.kv.delete(ORPHAN_KEY);
+    else await ports.kv.set(ORPHAN_KEY, ports.now());
     return all;
   }
 
@@ -335,6 +374,9 @@ export function createDreamService(ports: DreamPorts) {
       if (state.phase !== "finishing") await saveActive({ ...state, phase: "finishing" });
       return null;
     }
+    // Another copy finished this run meanwhile, and a newer run may own the marker: leave it be.
+    const current = await loadActive();
+    if (disposed || current === null || current.record.runId !== entry.runId) return null;
     let outcome: Outcome = "failed";
     if (ended.ok && finished.found) {
       const count = totalChanges(finished.changes);
@@ -348,20 +390,26 @@ export function createDreamService(ports: DreamPorts) {
       summary: ended.summary,
       // The host names a proposal only when one waits; a dry run that changed nothing leaves none.
       proposal: finished.found ? finished.proposal : entry.proposal,
-      error: ended.error ?? (finished.found ? null : "The dream machine had no record of this run."),
+      error: [ended.error ?? (finished.found ? null : "The dream machine had no record of this run."), finished.found ? finished.warning : null].filter(Boolean).join(" ") || null,
     };
     await history.put(done);
-    await clearActive();
+    await clearActive(entry.runId);
     if (entry.threadId) await archive(entry.threadId);
     await notifyAbout(done, await ports.config());
     await history.prune();
     return done;
   }
 
-  async function toStopping(state: ActiveState, ended: Ended): Promise<ActiveState> {
-    const next: ActiveState = { ...state, phase: "stopping", ended };
-    await saveActive(next);
+  /** Thrown when this copy may no longer write the run's state: disposed, or the run is another's. */
+  class Superseded extends Error {}
+
+  async function advance(next: ActiveState): Promise<ActiveState> {
+    if (!(await saveActive(next))) throw new Superseded();
     return next;
+  }
+
+  async function toStopping(state: ActiveState, ended: Ended): Promise<ActiveState> {
+    return advance({ ...state, phase: "stopping", ended });
   }
 
   /**
@@ -369,6 +417,15 @@ export function createDreamService(ports: DreamPorts) {
    * Answers the record: finished, or as it stands while it waits.
    */
   async function drive(initial: ActiveState, signal: AbortSignal): Promise<RunRecord> {
+    try {
+      return await driveSteps(initial, signal);
+    } catch (error) {
+      if (error instanceof Superseded) return initial.record;
+      throw error;
+    }
+  }
+
+  async function driveSteps(initial: ActiveState, signal: AbortSignal): Promise<RunRecord> {
     let state = initial;
     for (;;) {
       if (signal.aborted) return state.record;
@@ -379,8 +436,7 @@ export function createDreamService(ports: DreamPorts) {
           // Only a copy that went away leaves a run here; give it time, then end it.
           if (ports.now() - record.startedAt < START_GRACE_MS) return record;
           if (!(await stopOrphans(signal))) return record;
-          state = { ...state, phase: "finishing", ended: { ok: false, summary: null, error: "bb reloaded the plugin while the dream was starting." } };
-          await saveActive(state);
+          state = await advance({ ...state, phase: "finishing", ended: { ok: false, summary: null, error: "bb reloaded the plugin while the dream was starting." } });
           break;
         }
         case "checking": {
@@ -392,7 +448,12 @@ export function createDreamService(ports: DreamPorts) {
           }
           let proof: { ok: boolean; reason: string };
           try {
-            proof = await ports.host.checkCanary(record.hostId, { runId: record.runId });
+            // First what bb saw (the companion hook's own block), then the host (guard log, file), which
+            // arms the guard only on a pass.
+            const errors = state.canary === null ? [] : await ports.threads.writeErrors(record.threadId as string, state.canary);
+            proof = blockedByCompanion(errors)
+              ? await ports.host.checkCanary(record.hostId, { runId: record.runId })
+              : { ok: false, reason: "the check's Write was not blocked by the plugin's own failing hook under onFailure \"block\"" };
           } catch (error) {
             proof = { ok: false, reason: `the check could not be read: ${message(error)}` };
           }
@@ -406,8 +467,7 @@ export function createDreamService(ports: DreamPorts) {
             state = await toStopping(state, { ok: false, summary: null, error: `Could not send the dream prompt: ${message(error)}` });
             break;
           }
-          state = { ...state, phase: "running" };
-          await saveActive(state);
+          state = await advance({ ...state, phase: "running" });
           break;
         }
         case "running": {
@@ -432,8 +492,7 @@ export function createDreamService(ports: DreamPorts) {
             ports.log.warn(`Dream thread ${record.threadId} is not confirmed stopped; its run keeps the lock and is retried.`);
             return record;
           }
-          state = { ...state, phase: "finishing" };
-          await saveActive(state);
+          state = await advance({ ...state, phase: "finishing" });
           break;
         }
         case "finishing":
@@ -473,6 +532,9 @@ export function createDreamService(ports: DreamPorts) {
     if (running !== null || active !== null) {
       throw new DreamError(`A dream is already running${active ? ` for ${active.projectName}` : ""}; dreams run one at a time.`);
     }
+    if ((await ports.kv.get<number>(ORPHAN_KEY)) !== undefined) {
+      throw new DreamError("A dream thread from an earlier run could not be confirmed stopped; no dream starts until it is.");
+    }
     const closed = () => options.notAfter !== undefined && ports.now() >= options.notAfter;
     const config = await ports.config();
     const hostId = await dreamHost();
@@ -500,6 +562,7 @@ export function createDreamService(ports: DreamPorts) {
         error: null,
       },
       phase: "preparing",
+      canary: null,
       prompt: null,
       ended: null,
     };
@@ -520,13 +583,14 @@ export function createDreamService(ports: DreamPorts) {
       return failStart(state, `Could not prepare the dream: ${message(error)}`);
     }
     if (!prepared.ok) {
-      await clearActive();
+      await clearActive(runId);
       throw new DreamError(`${project.name}: ${prepared.reason}`);
     }
     state = {
       ...state,
       record: { ...state.record, mode: prepared.mode, backup: prepared.backup, proposal: prepared.proposal },
       phase: "spawning",
+      canary: prepared.canary,
       prompt: renderPrompt(prepared),
     };
     await saveActive(state);
@@ -578,7 +642,8 @@ export function createDreamService(ports: DreamPorts) {
     }
     try {
       await retryArchives();
-      await stopOrphans(lifetime.signal);
+      // A thread not confirmed stopped may still be writing: its lock must not be released under it.
+      if (!(await stopOrphans(lifetime.signal))) return;
       const hostId = await dreamHost();
       const { runs } = await ports.host.activeRuns(hostId);
       for (const run of runs) {

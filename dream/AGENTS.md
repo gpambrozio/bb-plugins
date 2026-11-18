@@ -40,8 +40,13 @@ be re-checked when Claude Code changes them:
   Native takes it by write-and-read-back, which is not exclusive; the plugin adds an O_EXCL
   `.consolidate-lock.claim` around its check-and-write (exclusive between plugin processes) and reads
   the lock again after `SETTLE_MS`, giving up if a racing native dream rewrote it. That narrows the race
-  with native to native's own read-back, it does not close it. Rollback and marking only touch a lock
-  that still holds the plugin's PID.
+  with native to native's own read-back, it does not close it: a native contender that saw the lock free
+  and stalls past the settle delay can still write after the plugin proceeded. Native auto-dream never
+  runs in bb's SDK sessions and is behind a server flag, so the residual risk is an interactive Claude
+  Code session dreaming the same repository at the same moment. Rollback and marking only touch a lock
+  that still holds the PID recorded with the run (`lockPid`), so a replacement host worker can still
+  roll back what its predecessor took, and a rollback that finds another holder is reported in the run's
+  log, never silently dropped.
 - **The prompt** (`skills/dream/SKILL.md`): native's text, changed only where a bb dream differs — the
   transcripts are a manifest over several folders, the checkout is outside the working directory, and
   `CLAUDE.md` is read from the checkout rather than the system prompt. Native's "Reconcile memories
@@ -68,12 +73,20 @@ deny and never ask, which is native's dontAsk dream. Do not move the dream into 
   `true` wins over the workspace's `false`), managed `allowManagedHooksOnly`,
   `CLAUDE_CODE_PERSONAL_HOOKS_OFF` and `CLAUDE_CODE_SIMPLE` switch hooks off. So:
   - `prepare` refuses (`no-guard`) when it can see any of those (`hookBlockers` in `host/memory.ts`);
+  - **the session never loads memory at start.** Claude Code puts a session's memory index in its
+    context before any hook runs, so `autoMemoryDirectory` points at the workspace's empty
+    `startup-memory/` for the whole session, and the guard's policy starts *unarmed* (its memory folder is
+    that empty one). The dream reads the real memory with tools, under the guard, once it is armed;
   - **every dream starts with a canary turn**, before the thread sees any transcript or memory: Write
     `<workspace>/.dream-canary.md`. The guard allows that one path and logs it to `runs/<run id>.log`;
-    a companion hook (`guard.mjs --canary-fail`, matcher `Write`) fails on it. `checkCanary` passes
-    only when the log has the canary *and* the file does not exist. Hooks off: the file exists and the
-    log is empty. `onFailure` ignored: both exist. Only then does the server send the dream prompt as a
-    second turn. A dream that cannot prove its guard never starts.
+    a companion hook (`guard.mjs --canary-fail`, matcher `Write`) fails on it. The proof has two halves,
+    both required: bb's record of that failed Write must carry the companion's own error, naming
+    `--canary-fail` and `onFailure is "block"` (`blockedByCompanion`, so another hook's denial, which
+    leaves its own error, cannot stand in for it), and the host must find the guard's log entry and no
+    file (`checkCanary`). The host's verdict is stored with the run the first time and never changes, and
+    the evidence stays until `finish`, so asking again cannot turn a failure into a pass. Only a pass arms
+    the policy and sends the dream prompt, as a second turn. A rewording of Claude Code's message fails
+    the check, which fails closed.
 - **Behind it**, anything that asks is stopped: the watcher ends a dream whose thread has a pending
   interaction, as a failure, within one poll.
 - **Symlinks.** The guard walks a target with `lstat` and refuses a symlink it cannot resolve (a dangling
@@ -122,6 +135,13 @@ of the plugin carries it on; `loop` calls `recover` every minute, which drives i
   answers `found: false`). The marker is cleared only after it answers; then the log, the archive (a
   failed archive goes to `to-archive` and is retried, without holding anything) and the notification.
 
+- **Two copies at once.** bb loads a new copy before it disposes the old one, so both may drive one run.
+  Every write of the kv marker is fenced: never from a disposed copy, never over another run's marker,
+  and a finalizer clears only its own run's marker and stop request. A late answer to the old copy cannot
+  touch a run the new one started since.
+- **Orphans.** An open thread of this plugin that cannot be confirmed stopped sets `orphans-unconfirmed`,
+  which blocks the host's clean-up of unwatched runs (their locks stay) and every new start until a later
+  tick confirms it.
 - A run still **preparing or spawning** `START_GRACE_MS` after it began was left by a copy that went
   away: `recover` stops every open thread of this plugin (`threads.list` by `originPluginId`, hidden
   included), and only once all are confirmed stopped ends the run as failed. With **no run in kv**, any

@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { canonicalGitRoot, resolveMemory, usableDir, type ResolveMemoryOptions } from "./memory";
+import { canonicalGitRoot, ENVIRONMENT_KEYS, hostEnvironment, resolveMemory, usableDir, type ResolveMemoryOptions } from "./memory";
 import { MAX_SLUG_LENGTH, pathHash, projectSlug } from "./slug";
 
 let root: string;
@@ -147,5 +147,19 @@ describe("resolveMemory", () => {
 
   it("turns auto memory off with CLAUDE_CODE_DISABLE_AUTO_MEMORY", () => {
     expect(resolveMemory(options({ env: { CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1" } })).autoMemoryEnabled).toBe(false);
+  });
+});
+
+describe("hostEnvironment", () => {
+  it("forwards every variable the resolution and the hook checks read, the hook-off ones included", () => {
+    const env = Object.fromEntries(ENVIRONMENT_KEYS.map((key) => [key, `v-${key}`]));
+    expect(hostEnvironment({ ...env, UNRELATED: "x" })).toEqual(env);
+    expect(hostEnvironment({ CLAUDE_CODE_PERSONAL_HOOKS_OFF: "1", CLAUDE_CODE_SIMPLE: "1" })).toEqual({ CLAUDE_CODE_PERSONAL_HOOKS_OFF: "1", CLAUDE_CODE_SIMPLE: "1" });
+  });
+
+  it("is what the production host entry uses", async () => {
+    const { readFileSync } = await import("node:fs");
+    const source = readFileSync(path.join(import.meta.dirname, "..", "host.ts"), "utf8");
+    expect(source).toMatch(/env: hostEnvironment\(process\.env\)/);
   });
 });

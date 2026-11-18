@@ -14,21 +14,22 @@
  *   prompt is sent that this Claude Code honours `onFailure` (see `checkCanary` in host/dreams.ts);
  * - `disableAllHooks: false`. A `true` anywhere else still wins (the key is restrictive), which is why
  *   `prepare` refuses when it can see one and the canary catches what it cannot see;
- * - `autoMemoryDirectory` set to the folder the dream writes (the repository's memory, or a dry
- *   run's copy), so the session's auto-memory section, which the prompt defers to for the memory
- *   format, names that folder;
+ * - `autoMemoryDirectory` set to `startup-memory/`, an empty folder of the workspace, for the whole
+ *   session. Claude Code loads a session's memory index into its context at start, before any hook
+ *   runs, so pointing it at the real memory would put untrusted text in front of the agent before the
+ *   guard is proven. The dream reads the memory with tools, under the guard, once it is armed;
  * - an Edit allow rule and an additional directory for that folder, so the sandbox bb runs Bash in
  *   lets `rm -f` of a memory file through.
  *
  * Its transcripts land in this folder's own `~/.claude/projects/<slug>` folder, which belongs to no
  * project, so a dream never counts as one of its repository's sessions.
  */
-import { mkdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 export interface WorkspaceOptions {
   dir: string;
-  /** The folder the dream may write, as a real path. */
+  /** The folder the dream may write once the startup check passes, as a real path. */
   memoryDir: string;
   /** Where the guard logs its decisions, outside the workspace and the memory. */
   logPath: string;
@@ -56,10 +57,13 @@ function ruleSpelling(absolute: string): string {
   return `/${absolute.replace(/\\/g, "/")}`;
 }
 
+/** The empty folder a dream session's auto memory points at. */
+export const STARTUP_MEMORY = "startup-memory";
+
 export function workspaceSettings(options: WorkspaceOptions, policyPath: string): Record<string, unknown> {
   return {
     disableAllHooks: false,
-    autoMemoryDirectory: options.memoryDir,
+    autoMemoryDirectory: path.join(options.dir, STARTUP_MEMORY),
     permissions: {
       allow: [`Edit(${ruleSpelling(options.memoryDir)}/**)`],
       additionalDirectories: [options.memoryDir],
@@ -80,14 +84,34 @@ function writeAtomic(file: string, text: string): void {
   renameSync(temporary, file);
 }
 
+export interface GuardPolicy {
+  memoryDir: string;
+  logPath: string;
+  canary: string;
+}
+
+export function writePolicy(policyPath: string, policy: GuardPolicy): void {
+  writeAtomic(policyPath, `${JSON.stringify(policy, null, 2)}\n`);
+}
+
+/** Lets the guard allow writes in the dream's real target: only after the startup check passed. */
+export function armPolicy(workspace: string, memoryDir: string): void {
+  const policyPath = path.join(workspace, "policy.json");
+  const policy = JSON.parse(readFileSync(policyPath, "utf8")) as GuardPolicy;
+  writePolicy(policyPath, { ...policy, memoryDir });
+}
+
 /** Writes the guard and a fresh workspace for one dream; answers the workspace path. */
 export function writeWorkspace(options: WorkspaceOptions, guardSource: string): string {
   rmSync(options.dir, { recursive: true, force: true });
   mkdirSync(path.join(options.dir, ".claude"), { recursive: true });
   writeAtomic(options.guardPath, guardSource);
+  mkdirSync(path.join(options.dir, STARTUP_MEMORY));
   const policyPath = path.join(options.dir, "policy.json");
   const canary = path.join(realpathSync(options.dir), CANARY_FILE);
-  writeAtomic(policyPath, `${JSON.stringify({ memoryDir: options.memoryDir, logPath: options.logPath, canary }, null, 2)}\n`);
+  // Unarmed: until the startup check passes, the only memory the guard lets the thread write is the
+  // empty startup folder. `armPolicy` points it at the real target afterwards.
+  writePolicy(policyPath, { memoryDir: path.join(realpathSync(options.dir), STARTUP_MEMORY), logPath: options.logPath, canary });
   writeAtomic(path.join(options.dir, ".claude", "settings.json"), `${JSON.stringify(workspaceSettings(options, policyPath), null, 2)}\n`);
   writeAtomic(
     path.join(options.dir, "README.md"),

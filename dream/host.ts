@@ -10,7 +10,7 @@ import { experimental_defineHostEntry } from "@get-bb/plugin-sdk";
 
 import { createDreams, DreamRefusal, type Dreams } from "./host/dreams";
 import { GUARD_SOURCE } from "./host/guard-source";
-import { managedSettingsDirs } from "./host/memory";
+import { hostEnvironment, managedSettingsDirs } from "./host/memory";
 import { hostContract } from "./shared/host-contract";
 
 /** Built on the first call, once bb has said where this plugin's data directory is. */
@@ -21,12 +21,7 @@ function dreamsIn(dataDir: string): Dreams {
     dreams = createDreams({
       dataDir,
       home: homedir(),
-      env: {
-        CLAUDE_COWORK_MEMORY_PATH_OVERRIDE: process.env.CLAUDE_COWORK_MEMORY_PATH_OVERRIDE,
-        CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR,
-        CLAUDE_CODE_REMOTE_MEMORY_DIR: process.env.CLAUDE_CODE_REMOTE_MEMORY_DIR,
-        CLAUDE_CODE_DISABLE_AUTO_MEMORY: process.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY,
-      },
+      env: hostEnvironment(process.env),
       managedDirs: managedSettingsDirs(process.platform),
       platform: process.platform,
       pid: process.pid,

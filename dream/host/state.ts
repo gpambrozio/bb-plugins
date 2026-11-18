@@ -78,6 +78,10 @@ export interface ActiveRun {
   targetDir: string;
   workspace: string;
   priorMtime: number;
+  /** The PID written into the lock, so a later host worker can still roll it back. */
+  lockPid: number;
+  /** The startup check's verdict, decided once and never changed. */
+  canaryVerdict?: { ok: boolean; reason: string } | null;
   backup: string | null;
   proposal: string | null;
 }

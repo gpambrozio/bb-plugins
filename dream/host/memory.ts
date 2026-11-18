@@ -65,6 +65,22 @@ export interface ResolvedMemory {
   warnings: string[];
 }
 
+/** Every variable `resolveMemory` and `hookBlockers` read, taken from a process environment. */
+export const ENVIRONMENT_KEYS = [
+  "CLAUDE_COWORK_MEMORY_PATH_OVERRIDE",
+  "CLAUDE_CONFIG_DIR",
+  "CLAUDE_CODE_REMOTE_MEMORY_DIR",
+  "CLAUDE_CODE_DISABLE_AUTO_MEMORY",
+  "CLAUDE_CODE_PERSONAL_HOOKS_OFF",
+  "CLAUDE_CODE_SIMPLE",
+] as const satisfies ReadonlyArray<keyof MemoryEnvironment>;
+
+export function hostEnvironment(env: NodeJS.ProcessEnv): MemoryEnvironment {
+  const result: MemoryEnvironment = {};
+  for (const key of ENVIRONMENT_KEYS) if (env[key] !== undefined) result[key] = env[key];
+  return result;
+}
+
 export function claudeConfigDir(home: string, env: MemoryEnvironment): string {
   return nonEmpty(env.CLAUDE_CONFIG_DIR) ?? path.join(home, ".claude");
 }

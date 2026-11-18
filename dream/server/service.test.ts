@@ -6,7 +6,7 @@ import type { Changes, Prepared, ProjectStatus } from "../shared/types";
 import type { KvLike } from "./history";
 import { mapWorktreeFolders } from "./projects";
 import { renderPrompt } from "./prompt";
-import { createDreamService, MAX_DREAM_MS, START_GRACE_MS, type ActiveState, type DreamConfig, type DreamPorts, type DreamService, type ThreadState } from "./service";
+import { blockedByCompanion, createDreamService, MAX_DREAM_MS, START_GRACE_MS, type ActiveState, type DreamConfig, type DreamPorts, type DreamService, type ThreadState } from "./service";
 
 const MINUTE = 60_000;
 const DAY = 24 * 60 * MINUTE;
@@ -49,7 +49,15 @@ interface Faults {
   prepareMs: number;
   /** Called while `spawn` is in flight, before it answers. */
   duringSpawn?: () => void;
+  /** The errors bb recorded for the canary Write; the companion's block by default. */
+  writeErrors: string[];
+  /** When set, `finish` waits for this before answering. */
+  finishGate?: Promise<void>;
+  /** Host runs nobody watches, as `activeRuns` reports them. */
+  hostRuns: Array<{ runId: string; projectId: string; startedAt: number }>;
 }
+
+const COMPANION_ERROR = "PreToolUse:Write hook error: ['node' 'guard.mjs' --canary-fail 'policy.json']: failed; blocking because onFailure is \"block\"";
 
 const CANARY_MS = MINUTE;
 
@@ -66,7 +74,18 @@ function setup(options: { projects: FakeProject[]; start: Date; config?: Partial
   const threads = new Map<string, { project: FakeProject; spawnedAt: number; sentAt: number | null; stopped: boolean; archived: boolean }>();
   const runs = new Map<string, FakeProject>();
   const finished = new Set<string>();
-  const faults: Faults = { canary: { ok: true, reason: "proven" }, stopFails: false, neverStops: false, finishFails: false, archiveFails: false, statusMs: 0, prepareMs: 0 };
+  const faults: Faults = {
+    canary: { ok: true, reason: "proven" },
+    stopFails: false,
+    neverStops: false,
+    finishFails: false,
+    archiveFails: false,
+    statusMs: 0,
+    prepareMs: 0,
+    writeErrors: [COMPANION_ERROR],
+    hostRuns: [],
+  };
+  const canaryChecks: string[] = [];
   const config: DreamConfig = {
     scheduleEnabled: true,
     windowStart: "01:00",
@@ -131,24 +150,29 @@ function setup(options: { projects: FakeProject[]; start: Date; config?: Partial
           canary: `/ws/${project.id}/.dream-canary.md`,
         };
       },
-      checkCanary: async () => faults.canary,
+      checkCanary: async (_hostId, input) => {
+        canaryChecks.push(input.runId);
+        return faults.canary;
+      },
       finish: async (_hostId, input) => {
         finishes.push({ runId: input.runId, ok: input.ok });
+        const gate = faults.finishGate;
+        if (gate) await gate;
         if (faults.finishFails) throw new Error("the dream machine is offline");
         const project = runs.get(input.runId);
-        if (project === undefined) return { found: false, mode: "dream", changes: NO_CHANGES, backup: null, proposal: null, proposalDir: null };
+        if (project === undefined) return { found: false, mode: "dream", changes: NO_CHANGES, backup: null, proposal: null, proposalDir: null, warning: null };
         if (input.ok && !finished.has(input.runId)) {
           project.due = false;
           project.lastDreamAt = now;
         }
         finished.add(input.runId);
-        return { found: true, mode: "dream", changes: input.ok ? project.changes : NO_CHANGES, backup: null, proposal: null, proposalDir: null };
+        return { found: true, mode: "dream", changes: input.ok ? project.changes : NO_CHANGES, backup: null, proposal: null, proposalDir: null, warning: null };
       },
       apply: async () => ({ stamp: "", changes: NO_CHANGES, backup: "" }),
       discard: async () => ({ stamp: "" }),
       restore: async () => ({ stamp: "", changes: NO_CHANGES, backup: "" }),
       backups: async () => ({ backups: [], proposals: [] }),
-      activeRuns: async () => ({ runs: [] }),
+      activeRuns: async () => ({ runs: faults.hostRuns }),
     },
     threads: {
       spawn: async (request) => {
@@ -161,6 +185,7 @@ function setup(options: { projects: FakeProject[]; start: Date; config?: Partial
         faults.duringSpawn?.();
         return id;
       },
+      writeErrors: async () => faults.writeErrors,
       send: async (threadId, text) => {
         sent.push({ threadId, text });
         const thread = threads.get(threadId);
@@ -201,6 +226,7 @@ function setup(options: { projects: FakeProject[]; start: Date; config?: Partial
     ports,
     kv,
     faults,
+    canaryChecks,
     order,
     sent,
     stopped,
@@ -372,6 +398,68 @@ describe("the startup check", () => {
     expect(ended).toMatchObject({ outcome: "failed", error: expect.stringContaining("could not be proven active") });
     expect(context.finishes).toEqual([expect.objectContaining({ ok: false })]);
     expect(context.stopped).toEqual(["thr_a1"]);
+  });
+});
+
+describe("binding the check to the plugin's own hook", () => {
+  it("passes only on the companion hook's onFailure block", () => {
+    expect(blockedByCompanion([COMPANION_ERROR])).toBe(true);
+    expect(blockedByCompanion(["PreToolUse:Write hook error: [my-policy.sh]: blocked by policy"])).toBe(false);
+    expect(blockedByCompanion(["PreToolUse:Write hook error: ['node' 'guard.mjs' --canary-fail 'policy.json']: failed"])).toBe(false);
+    expect(blockedByCompanion([])).toBe(false);
+  });
+
+  it("fails the run, without asking the host or sending the prompt, when another hook denied the canary", async () => {
+    const context = setup({ start: at(12), projects: [project("a", null)] });
+    context.faults.writeErrors = ["PreToolUse:Write hook error: [company-hook]: denied by policy"];
+    const { done } = await context.service.begin("a", { mode: null, manual: true, trigger: "manual" });
+    expect(await done).toMatchObject({ outcome: "failed", error: expect.stringContaining("plugin's own failing hook") });
+    expect(context.canaryChecks).toEqual([]);
+    expect(context.sent).toEqual([]);
+  });
+});
+
+describe("orphans not confirmed stopped", () => {
+  it("block the host's clean-up and every new start until they are", async () => {
+    const context = setup({ start: at(12), projects: [project("a", null)] });
+    context.threads.set("thr_lost", { project: project("a", null), spawnedAt: context.now(), sentAt: null, stopped: false, archived: false });
+    context.faults.hostRuns = [{ runId: "old-run", projectId: "a", startedAt: context.now() - 5 * 60 * MINUTE }];
+    context.faults.stopFails = true;
+    context.faults.neverStops = true;
+    await tick(context, context.service, 2);
+    expect(context.finishes).toEqual([]);
+    await expect(context.service.begin("a", { mode: null, manual: true, trigger: "manual" })).rejects.toThrow(/could not be confirmed stopped/);
+
+    context.faults.stopFails = false;
+    context.faults.neverStops = false;
+    await tick(context, context.service, 1);
+    expect(context.finishes).toEqual([{ runId: "old-run", ok: false }]);
+    await expect(context.service.begin("a", { mode: null, manual: true, trigger: "manual" })).resolves.toBeDefined();
+  });
+});
+
+describe("two copies of the plugin at once", () => {
+  it("never lets the old copy's late finish erase a newer run's marker", async () => {
+    const context = setup({ start: at(12), projects: [project("a", null, 5 * MINUTE), project("b", null, 60 * MINUTE)] });
+    const { done } = await context.service.begin("a", { mode: null, manual: true, trigger: "manual" });
+    // The old copy's finish is held up in flight...
+    let release: () => void = () => undefined;
+    context.faults.finishGate = new Promise((resolve) => (release = resolve));
+    const old = done;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // ...while bb loads the new copy, which finishes the same run and starts the next one.
+    context.service.dispose();
+    const fresh = createDreamService(context.ports);
+    context.faults.finishGate = undefined;
+    const recovered = fresh.recover();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await recovered;
+    const next = await fresh.begin("b", { mode: null, manual: true, trigger: "manual" });
+    expect((await context.active())?.record.runId).toBe(next.record.runId);
+    release();
+    await old;
+    expect((await context.active())?.record.runId).toBe(next.record.runId);
+    expect((await context.active())?.phase).toBe("checking");
   });
 });
 

@@ -105,6 +105,8 @@ export const FinishedSchema = z.object({
   backup: z.string().nullable(),
   proposal: z.string().nullable(),
   proposalDir: z.string().nullable(),
+  /** Something went wrong that the run's log should say, such as a lock that could not be rolled back. */
+  warning: z.string().nullable(),
 });
 export type Finished = z.infer<typeof FinishedSchema>;
 

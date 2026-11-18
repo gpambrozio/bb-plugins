@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -117,14 +117,14 @@ describe("a project's dreams", () => {
     expect(readFileSync(lockPath(memory), "utf8")).toBe(String(process.pid));
 
     const settings = JSON.parse(readFileSync(path.join(first.workspace, ".claude", "settings.json"), "utf8"));
-    expect(settings.autoMemoryDirectory).toBe(first.targetDir);
+    expect(settings.autoMemoryDirectory).toBe(path.join(first.workspace, "startup-memory"));
     expect(settings.disableAllHooks).toBe(false);
     expect(settings.hooks.PreToolUse).toEqual([
       { matcher: "*", hooks: [expect.objectContaining({ type: "command", onFailure: "block", timeout: 30 })] },
       { matcher: "Write", hooks: [expect.objectContaining({ type: "command", onFailure: "block", command: expect.stringContaining("--canary-fail") })] },
     ]);
     expect(JSON.parse(readFileSync(path.join(first.workspace, "policy.json"), "utf8"))).toEqual({
-      memoryDir: first.targetDir,
+      memoryDir: path.join(first.workspace, "startup-memory"),
       logPath: expect.stringMatching(/runs\/run1\.log$/),
       canary: first.canary,
     });
@@ -166,23 +166,80 @@ describe("a project's dreams", () => {
     expect(lastConsolidatedAt(memory)).toBeCloseTo(clock, -1);
   });
 
-  it("proves the guard only when it logged the canary Write and the file does not exist", async () => {
+  it("starts the session on an empty memory folder, with the guard unarmed", async () => {
     const host = dreams();
     const run = await prepare(host, "run1", true, "dream");
     if (!run.ok) throw new Error(run.reason);
-    const policy = JSON.parse(readFileSync(path.join(run.workspace, "policy.json"), "utf8")) as { logPath: string };
-    expect(host.checkCanary("run1")).toMatchObject({ ok: false, reason: expect.stringContaining("never saw") });
+    const settings = JSON.parse(readFileSync(path.join(run.workspace, ".claude", "settings.json"), "utf8"));
+    const startup = path.join(run.workspace, "startup-memory");
+    expect(settings.autoMemoryDirectory).toBe(startup);
+    expect(readdirSync(startup)).toEqual([]);
+    expect(JSON.stringify(settings)).not.toContain("MEMORY.md");
+    const policy = () => JSON.parse(readFileSync(path.join(run.workspace, "policy.json"), "utf8")) as { memoryDir: string; logPath: string };
+    expect(policy().memoryDir).toBe(startup);
+    expect(run.targetDir).toBe(memory);
+  });
 
+  it("proves the guard only when it logged the canary Write and the file does not exist, then arms it", async () => {
+    const host = dreams();
+    const run = await prepare(host, "run1", true, "dream");
+    if (!run.ok) throw new Error(run.reason);
+    const policyFile = path.join(run.workspace, "policy.json");
+    const { logPath } = JSON.parse(readFileSync(policyFile, "utf8")) as { logPath: string };
+    write(logPath, `${JSON.stringify({ tool: "Write", decision: "allow", canary: true })}\n`);
+    expect(await host.checkCanary("run1")).toEqual({ ok: true, reason: expect.any(String) });
+    expect(JSON.parse(readFileSync(policyFile, "utf8")).memoryDir).toBe(memory);
+    expect((await host.checkCanary("nope")).ok).toBe(false);
+  });
+
+  it("keeps a failed check failed: asking again, after a reload or from a second copy, never passes", async () => {
+    const host = dreams();
+    const run = await prepare(host, "run1", true, "dream");
+    if (!run.ok) throw new Error(run.reason);
+    const policyFile = path.join(run.workspace, "policy.json");
+    const { logPath, memoryDir: startup } = JSON.parse(readFileSync(policyFile, "utf8")) as { logPath: string; memoryDir: string };
+    write(logPath, `${JSON.stringify({ tool: "Write", decision: "allow", canary: true })}\n`);
     write(run.canary, "canary");
-    expect(host.checkCanary("run1")).toMatchObject({ ok: false, reason: expect.stringContaining("hooks did not run") });
+    const first = await host.checkCanary("run1");
+    expect(first).toMatchObject({ ok: false, reason: expect.stringContaining("onFailure") });
+    expect(existsSync(run.canary)).toBe(true);
+    rmSync(run.canary);
+    expect(await dreams().checkCanary("run1")).toEqual(first);
+    expect(await host.checkCanary("run1")).toEqual(first);
+    expect(JSON.parse(readFileSync(policyFile, "utf8")).memoryDir).toBe(startup);
+  });
+
+  it("fails the check when the guard never saw the Write, or saw it and the file was written", async () => {
+    const hooksOff = dreams();
+    const run = await prepare(hooksOff, "run1", true, "dream");
+    if (!run.ok) throw new Error(run.reason);
+    write(run.canary, "canary");
+    expect(await hooksOff.checkCanary("run1")).toMatchObject({ ok: false, reason: expect.stringContaining("hooks did not run") });
+    await hooksOff.finish({ runId: "run1", ok: false, summary: null, threadId: null });
     expect(existsSync(run.canary)).toBe(false);
+  });
 
-    write(policy.logPath, `${JSON.stringify({ tool: "Write", decision: "allow", canary: true })}\n`);
-    write(run.canary, "canary");
-    expect(host.checkCanary("run1")).toMatchObject({ ok: false, reason: expect.stringContaining("onFailure") });
+  it("lets a replacement host worker roll back the lock the previous worker took", async () => {
+    const prior = clock - 5 * DAY;
+    write(lockPath(memory), "", prior);
+    utimesSync(memory, (clock - 10 * DAY) / 1000, (clock - 10 * DAY) / 1000);
+    const run = await prepare(dreams({ pid: 11111, isAlive: () => false }), "run1", true, "dream");
+    if (!run.ok) throw new Error(run.reason);
+    expect(readFileSync(lockPath(memory), "utf8")).toBe("11111");
+    const replacement = dreams({ pid: 22222, isAlive: () => false });
+    const ended = await replacement.finish({ runId: "run1", ok: false, summary: null, threadId: null });
+    expect(ended.warning).toBeNull();
+    expect(lastConsolidatedAt(memory)).toBeCloseTo(prior, -1);
+    expect(replacement.status([project()], DEFAULT_THRESHOLDS)[0].gate.code).not.toBe("too-soon");
+  });
 
-    expect(host.checkCanary("run1")).toEqual({ ok: true, reason: expect.any(String) });
-    expect(host.checkCanary("nope").ok).toBe(false);
+  it("says so when the lock could not be rolled back because another process took it", async () => {
+    const host = dreams();
+    const run = await prepare(host, "run1", true, "dream");
+    if (!run.ok) throw new Error(run.reason);
+    writeFileSync(lockPath(memory), "99999");
+    const ended = await host.finish({ runId: "run1", ok: false, summary: null, threadId: null });
+    expect(ended.warning).toContain("could not be set back");
   });
 
   it("refuses to start when a setting or variable would switch the guard off", async () => {
