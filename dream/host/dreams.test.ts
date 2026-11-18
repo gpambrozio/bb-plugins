@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -8,6 +8,7 @@ import type { ProjectInput } from "../shared/types";
 import { manifestLine } from "../server/prompt";
 import { createDreams } from "./dreams";
 import { resolveMemory } from "./memory";
+import { insideBbData } from "./workspace-root";
 import { lastConsolidatedAt, lockPath } from "./lock";
 import { projectSlug } from "./slug";
 
@@ -41,7 +42,9 @@ function project(overrides: Partial<ProjectInput> = {}): ProjectInput {
 
 function dreams(overrides: Partial<Parameters<typeof createDreams>[0]> = {}) {
   return createDreams({
-    dataDir: path.join(root, "host-data"),
+    // As bb lays it out: the plugin's host data inside bb's data folder, workspaces outside it.
+    dataDir: path.join(root, "bbdata", "plugins", "dream", "host-data"),
+    workspacesRoot: path.join(root, "cache", "bb-dream", "workspaces"),
     home,
     env: {},
     managedDirs: [path.join(root, "managed")],
@@ -165,6 +168,23 @@ describe("a project's dreams", () => {
     const done = await host.finish({ runId: "run2", ok: true, summary: "Added ci.", threadId: "thr_dream2" });
     expect(done.changes.added).toEqual(["ci.md"]);
     expect(lastConsolidatedAt(memory)).toBeCloseTo(clock, -1);
+  });
+
+  it("puts the workspace outside bb's data folder, which refuses thread workspaces inside it", async () => {
+    const run = await prepare(dreams(), "run1", true, "dream");
+    if (!run.ok) throw new Error(run.reason);
+    expect(run.workspace).toBe(path.join(root, "cache", "bb-dream", "workspaces", "proj_app"));
+    expect(insideBbData(path.join(root, "bbdata"), run.workspace)).toBe(false);
+  });
+
+  it("refuses rather than spawn a workspace bb would refuse, symlinked spellings included", async () => {
+    const inside = await prepare(dreams({ workspacesRoot: path.join(root, "bbdata", "plugins", "dream", "host-data", "workspaces") }), "run1", true, "dream");
+    expect(inside).toMatchObject({ ok: false, code: "no-workspace" });
+    mkdirSync(path.join(root, "bbdata", "plugins"), { recursive: true });
+    symlinkSync(path.join(root, "bbdata"), path.join(root, "alias"));
+    const aliased = await prepare(dreams({ workspacesRoot: path.join(root, "alias", "plugins", "dream", "host-data", "workspaces") }), "run2", true, "dream");
+    expect(aliased).toMatchObject({ ok: false, code: "no-workspace" });
+    expect(existsSync(lockPath(memory))).toBe(false);
   });
 
   it("starts the session on an empty memory folder, with the guard unarmed", async () => {

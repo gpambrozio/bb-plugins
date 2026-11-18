@@ -99,9 +99,11 @@ thread in bb. Each dream costs one model run on your Claude Code account.
 
 On the dream machine, in the plugin's own data folder (`~/.bb/plugins/dream/host-data/` on a default
 install): `state.json` (per project: whether it edits in place yet, its dreams' thread and session
-ids, and its last runs), `backups/<project id>/<time>.tar.gz`, `proposals/<project id>/<time>/` and
-the dream workspaces. Nothing is written in `~/.claude` except the memory folders themselves and
-Claude Code's own transcripts of the dream threads.
+ids, and its last runs), `backups/<project id>/<time>.tar.gz` and `proposals/<project id>/<time>/`.
+The folder each dream thread runs in is in your cache folder instead
+(`~/Library/Caches/bb-dream/workspaces/` on macOS, `~/.cache/bb-dream/workspaces/` on Linux), because bb
+does not let a thread run inside its own data folder. Nothing is written in `~/.claude` except the
+memory folders themselves and Claude Code's own transcripts of the dream threads.
 
 ## Install
 

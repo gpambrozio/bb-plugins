@@ -330,7 +330,11 @@ which puts a message in that thread. **bb cannot make a helper thread tool-free*
 *can* be held to a list from inside: the provider loads project settings from the thread's working
 directory, so spawn it into a plugin-owned folder (`environment: { type: "host", workspace: { type:
 "unmanaged", path } }`) whose `.claude/settings.json` has a PreToolUse hook that answers allow or deny for
-every tool (`dream/host/workspace.ts`, `dream/guard/guard.mjs`). The hook must always print a decision
+every tool (`dream/host/workspace.ts`, `dream/guard/guard.mjs`). Keep that folder **outside bb's data
+folder**: bb 0.49 refuses a thread workspace under `<data dir>/plugins/<plugin>/<kind>/` (the plugin's
+`host-data` included) with "HTTP 409: Workspace path is inside bb-managed storage", comparing paths as
+spelled, so a dev bb whose data dir is reached through macOS's `/var` symlink does not show it
+(`dream/host/workspace-root.ts`). The hook must always print a decision
 (one that prints nothing lets Claude Code fall back to its own check) and must be declared
 `onFailure: "block"` (one that cannot start or times out is otherwise skipped). Settings can still switch
 hooks off (`disableAllHooks` anywhere wins), so prove the hook live before the thread sees anything

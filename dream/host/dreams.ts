@@ -29,6 +29,7 @@ import {
 } from "./state";
 import { checkoutFolders, checkoutSlugs, listSessions, listTranscriptFolders, parseWorktreeFolder, sessionTitle, type SessionFile, type WorktreeFolder } from "./transcripts";
 import { armPolicy, CANARY_FILE, STARTUP_MEMORY, writeWorkspace } from "./workspace";
+import { bbDataRoot, insideBbData } from "./workspace-root";
 
 /** The most sessions a dream's prompt lists; the rest are counted. */
 export const MAX_LISTED_SESSIONS = 300;
@@ -48,6 +49,8 @@ export interface DreamsOptions {
   guardSource: string;
   isAlive?: IsAlive;
   now?: () => number;
+  /** Where dream workspaces go; outside bb's data folder, which refuses them. */
+  workspacesRoot: string;
   /** For tests: how long a new lock settles before it is read back, and how to wait. */
   lockSettle?: Pick<AcquireOptions, "settleMs" | "sleep">;
 }
@@ -122,7 +125,7 @@ function canaryVerdict(run: ActiveRunRecord): CanaryResult {
 export function createDreams(options: DreamsOptions) {
   // Real paths throughout, so the hook command and the transcript folder's name are spelled one way.
   mkdirSync(options.dataDir, { recursive: true });
-  const paths: DataPaths = dataPaths(realOrSelf(options.dataDir));
+  const paths: DataPaths = dataPaths(realOrSelf(options.dataDir), options.workspacesRoot);
   const now = options.now ?? Date.now;
   const isAlive = options.isAlive ?? processIsAlive;
   const projectsDir = path.join(claudeConfigDir(options.home, options.env), "projects");
@@ -289,6 +292,10 @@ export function createDreams(options: DreamsOptions) {
         const blockers = hookBlockers({ home: options.home, env: options.env, managedDirs: options.managedDirs });
         if (blockers.length > 0) {
           return refuse("no-guard", `Dream's guard hook would not run, so no dream may start: ${blockers.join("; ")}.`);
+        }
+
+        if (insideBbData(bbDataRoot(options.dataDir), paths.workspace(project.projectId))) {
+          return refuse("no-workspace", `bb refuses a thread workspace inside its own data folder, and ${paths.workspace(project.projectId)} is there.`);
         }
 
         const memoryDir = realOrSelf(result.memory.dir);

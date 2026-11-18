@@ -6,10 +6,12 @@
  *
  *     state.json
  *     guard.mjs                       the PreToolUse hook every dream runs under
- *     workspaces/<project id>/        a dream thread's working directory
  *     backups/<project id>/<stamp>.tar.gz
  *     proposals/<project id>/<stamp>/ a dry run: memory/, base.json, proposal.json
  *     runs/<run id>.log               the guard's decisions during one dream
+ *
+ * A dream thread's working directory is not here: bb refuses a thread workspace inside its own data
+ * folder, so it is `<platform cache>/bb-dream/workspaces/<project id>/` (host/workspace-root.ts).
  *
  * Folders are named by bb project id, which a rename does not change.
  */
@@ -34,12 +36,13 @@ function folderOf(projectId: string): string {
   return projectId.replace(/[^A-Za-z0-9_-]/g, "_");
 }
 
-export function dataPaths(root: string): DataPaths {
+/** `workspacesRoot` is outside bb's data folder (see host/workspace-root.ts); everything else is in `root`. */
+export function dataPaths(root: string, workspacesRoot: string): DataPaths {
   return {
     root,
     state: path.join(root, "state.json"),
     guard: path.join(root, "guard.mjs"),
-    workspace: (projectId) => path.join(root, "workspaces", folderOf(projectId)),
+    workspace: (projectId) => path.join(workspacesRoot, folderOf(projectId)),
     backups: (projectId) => path.join(root, "backups", folderOf(projectId)),
     proposals: (projectId) => path.join(root, "proposals", folderOf(projectId)),
     runLog: (runId) => path.join(root, "runs", `${folderOf(runId)}.log`),

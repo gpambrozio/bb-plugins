@@ -60,7 +60,9 @@ be re-checked when Claude Code changes them:
 bb's Claude Code provider has no per-thread tool list and no dontAsk mode: its least privileged mode is
 accept-edits. But it starts sessions with the user, project and local settings sources, so a thread's
 *working directory* decides its project settings. A dream therefore runs in its own workspace
-(`<host data>/workspaces/<project id>/`), spawned as an unmanaged workspace of the project, whose
+(`<platform cache>/bb-dream/workspaces/<project id>/`, `host/workspace-root.ts`; never inside bb's data
+folder, where bb 0.49 refuses a thread workspace with a 409, and `prepare` refuses rather than spawn
+there), spawned as an unmanaged workspace of the project, whose
 `.claude/settings.json` carries a PreToolUse hook on every tool. The hook, `guard.mjs`, answers allow or
 deny and never ask, which is native's dontAsk dream. Do not move the dream into the checkout: writing
 `settings.local.json` there would change the user's own sessions.

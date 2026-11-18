@@ -11,6 +11,7 @@ import { experimental_defineHostEntry } from "@get-bb/plugin-sdk";
 import { createDreams, DreamRefusal, type Dreams } from "./host/dreams";
 import { GUARD_SOURCE } from "./host/guard-source";
 import { hostEnvironment, managedSettingsDirs } from "./host/memory";
+import { dreamWorkspacesRoot } from "./host/workspace-root";
 import { hostContract } from "./shared/host-contract";
 
 /** Built on the first call, once bb has said where this plugin's data directory is. */
@@ -29,6 +30,7 @@ function dreamsIn(dataDir: string): Dreams {
       nodePath: process.execPath,
       electron: typeof process.versions.electron === "string",
       guardSource: GUARD_SOURCE,
+      workspacesRoot: dreamWorkspacesRoot(process.platform, homedir(), { XDG_CACHE_HOME: process.env.XDG_CACHE_HOME, LOCALAPPDATA: process.env.LOCALAPPDATA }),
     });
   }
   return dreams;

@@ -93,7 +93,7 @@ export const PreparedSchema = z.discriminatedUnion("ok", [
     /** The file the startup check asks the thread to Write; the hooks must keep it from existing. */
     canary: z.string(),
   }),
-  z.object({ ok: z.literal(false), code: z.enum([...GATE_CODES, "no-guard"]), reason: z.string() }),
+  z.object({ ok: z.literal(false), code: z.enum([...GATE_CODES, "no-guard", "no-workspace"]), reason: z.string() }),
 ]);
 export type Prepared = z.infer<typeof PreparedSchema>;
 
