@@ -429,7 +429,7 @@ describe("a project's dreams", () => {
     const copied = await prepare(host, "run2", true, "dry-run");
     if (!copied.ok) throw new Error(copied.reason);
     expect(copied.code).toMatchObject({ kind: "copy", branch: "main", ref: "main", commit: newest });
-    expect(copied.code.dir).toBe(path.join(root, "cache", "bb-dream", "code", "proj_app", newest));
+    expect(copied.code.dir).toBe(path.join(root, "cache", "bb-dream", "code", "proj_app", `tree-${newest}`));
     expect(copied.instructionFiles).toEqual([path.join(copied.code.dir, "CLAUDE.md")]);
     expect(readFileSync(copied.instructionFiles[0], "utf8")).toBe("# newer rules\n");
     expect(readFileSync(path.join(checkout, "CLAUDE.md"), "utf8")).toBe("# rules\n");

@@ -23,10 +23,12 @@ summary goes into the Dream page's history.
 - **Checked against the newest code.** A checkout can sit on an old commit while the project moves on
   in worktrees. So the dream reads the newest commit of the default branch (the one `origin/HEAD` names,
   else `main` or `master`) that the repository already has, local or remote-tracking: when the checkout
-  is on it, the checkout itself; otherwise a read-only copy made with `git archive`, outside the
-  repository. Nothing is fetched and nothing in the repository changes, so the copy is as fresh as its
+  is on it, the checkout itself; otherwise a read-only copy of every tracked file of that commit, as git stores
+  it (no `.gitattributes` export rule leaves a file out or rewrites one, and Git LFS files stay
+  pointers rather than being downloaded), outside the repository. Nothing is fetched and nothing in the repository changes, so the copy is as fresh as its
   last fetch, by anyone; a repository with no remote uses its local branch. Not a git repository, no
-  default branch, or a tree over 1 GB: the dream reads the checkout and is told why. The copy has no
+  default branch, or a copy that would write over 1 GB or 200,000 files (counted as it writes, and
+  removed when it stops): the dream reads the checkout and is told why. The copy has no
   submodules and no untracked files; the dream is pointed at the checkout for work not on the branch yet.
 - **No dangling links.** A dream that deletes, merges or renames a memory is told to fix or remove every
   link to it. When it ends, Dream checks: a `[Title](file.md)` link to a missing file, or a `[[name]]`
@@ -121,7 +123,7 @@ ids, and its last runs), `backups/<project id>/<time>.tar.gz` and `proposals/<pr
 The folder each dream thread runs in is in your cache folder instead
 (`~/Library/Caches/bb-dream/workspaces/` on macOS, `~/.cache/bb-dream/workspaces/` on Linux), because bb
 does not let a thread run inside its own data folder, and so is the copy of each project's code a dream
-reads (`bb-dream/code/<project id>/<commit>/` beside it, only the newest kept). Nothing is written in `~/.claude` except the
+reads (`bb-dream/code/<project id>/tree-<commit>/` beside it, only the newest kept). Nothing is written in `~/.claude` except the
 memory folders themselves and Claude Code's own transcripts of the dream threads.
 
 ## Install

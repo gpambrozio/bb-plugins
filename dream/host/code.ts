@@ -8,29 +8,33 @@
  * - **No network, ever.** Nothing fetches: the copy is as fresh as the repository's last fetch, by
  *   anyone. A repository with no remote just uses its local branch.
  * - **The checkout is only read.** Every git command here reads (`symbolic-ref`, `rev-parse`,
- *   `merge-base`, `ls-tree`, `archive`), with `GIT_OPTIONAL_LOCKS=0` so none refreshes the index.
- *   When the checkout's HEAD is already that commit, the dream reads the checkout itself. Otherwise
- *   `git archive` exports the commit's tree into `<code root>/<project>/<commit>/`, a folder outside
- *   the repository and bb's data folder; the export is reused while the commit stays the newest, and
- *   older exports of the project are removed.
+ *   `merge-base`, `log`, `ls-tree`, `cat-file`), with `GIT_OPTIONAL_LOCKS=0` so none refreshes the
+ *   index. When the checkout's HEAD is already that commit, the dream reads the checkout itself.
+ *   Otherwise the commit's tree is copied, file by file as git stores it, into
+ *   `<code root>/<project>/tree-<commit>/`, a folder outside the repository and bb's data folder
+ *   (host/tree-copy.ts). Not `git archive`: its `export-ignore` drops tracked files and its
+ *   `export-subst` grows them past any limit. The copy is reused while the commit stays the newest,
+ *   and older copies of the project are removed.
  * - **Anything unexpected falls back to the checkout**, with a note the prompt passes on: not a git
- *   repository, no default branch, a tree over `MAX_CODE_BYTES`, or a failing command. Never fails a
- *   dream.
+ *   repository, no default branch, a copy that would write over `MAX_CODE_BYTES` or `MAX_CODE_FILES`,
+ *   or a failing command. Never fails a dream.
  *
- * Submodules are not in an export (`git archive` leaves them out), and neither are untracked files.
+ * Submodules and untracked files are not in a copy.
  */
 import { execFile } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, renameSync, rmSync } from "node:fs";
 import path from "node:path";
 
 import type { CodeSource } from "../shared/types";
+import { copyTree, TreeTooLargeError } from "./tree-copy";
 
 export type { CodeSource };
 
-/** A tree larger than this is not exported; the dream reads the checkout. */
+/** A copy may write no more than this, counted as it writes; past it the dream reads the checkout. */
 export const MAX_CODE_BYTES = 1024 * 1024 * 1024;
+/** Nor more files than this. */
+export const MAX_CODE_FILES = 200_000;
 const GIT_TIMEOUT_MS = 30_000;
-const EXPORT_TIMEOUT_MS = 300_000;
 const BRANCH_GUESSES = ["main", "master"];
 
 export type Git = (args: string[], options?: { timeoutMs?: number }) => Promise<{ code: number; stdout: string }>;
@@ -113,46 +117,33 @@ async function newest(git: Git, found: { ref: string; commit: string }[]): Promi
   return best;
 }
 
-async function treeBytes(git: Git, commit: string): Promise<number> {
-  const result = await git(["ls-tree", "-r", "-l", "-z", commit], { timeoutMs: EXPORT_TIMEOUT_MS });
-  if (result.code !== 0) throw new Error("git ls-tree failed");
-  let total = 0;
-  for (const entry of result.stdout.split("\0")) {
-    const size = /^\S+ blob \S+\s+(\d+)\t/.exec(entry);
-    if (size) total += Number(size[1]);
-  }
-  return total;
+/**
+ * A copy's folder name. The `tree-` prefix marks copies made by host/tree-copy.ts: a folder named by
+ * the bare commit was made by `git archive` (attributes applied, LFS smudged) and is never reused.
+ */
+export function copyName(commit: string): string {
+  return `tree-${commit}`;
 }
 
-function run(file: string, args: string[]): Promise<void> {
-  return new Promise((resolve, reject) => {
-    execFile(file, args, { timeout: EXPORT_TIMEOUT_MS, killSignal: "SIGKILL", maxBuffer: 1024 * 1024 }, (error, _stdout, stderr) => {
-      if (error) reject(new Error(`${file} ${args[0]} failed: ${String(stderr).trim() || error.message}`));
-      else resolve();
-    });
-  });
-}
-
-/** Exports `commit` into `<projectCodeDir>/<commit>/`, reusing a finished export, and removes older ones. */
-async function exportCommit(git: Git, projectCodeDir: string, commit: string): Promise<string> {
-  const target = path.join(projectCodeDir, commit);
+/**
+ * Copies `commit` into `<projectCodeDir>/tree-<commit>/`, reusing a finished copy, and removes older ones.
+ * A failed or oversized copy leaves nothing behind.
+ */
+async function exportCommit(git: Git, repo: string, projectCodeDir: string, commit: string, maxBytes: number): Promise<string> {
+  const name = copyName(commit);
+  const target = path.join(projectCodeDir, name);
   mkdirSync(projectCodeDir, { recursive: true });
-  for (const name of readdirSync(projectCodeDir)) {
-    if (name !== commit) rmSync(path.join(projectCodeDir, name), { recursive: true, force: true });
+  for (const entry of readdirSync(projectCodeDir)) {
+    if (entry !== name) rmSync(path.join(projectCodeDir, entry), { recursive: true, force: true });
   }
   if (existsSync(target)) return target;
   const partial = `${target}.partial-${process.pid}`;
-  const archive = `${partial}.tar`;
   rmSync(partial, { recursive: true, force: true });
-  mkdirSync(partial);
   try {
-    const result = await git(["archive", "--format=tar", `--output=${archive}`, commit], { timeoutMs: EXPORT_TIMEOUT_MS });
-    if (result.code !== 0) throw new Error("git archive failed");
-    await run("tar", ["-xf", archive, "-C", partial]);
+    await copyTree({ git, repo, commit, target: partial, maxBytes, maxEntries: MAX_CODE_FILES });
     renameSync(partial, target);
     return target;
   } finally {
-    rmSync(archive, { force: true });
     rmSync(partial, { recursive: true, force: true });
   }
 }
@@ -191,16 +182,16 @@ export async function codeSource(input: { checkout: string; projectCodeDir: stri
     const facts = { branch, ref: best.ref, commit: best.commit, committedAt };
     if (head === best.commit) return { dir: input.checkout, kind: "checkout", ...facts, checkoutCommit: null, checkoutCommittedAt: null, note: null };
     const checkoutFacts = { checkoutCommit: head, checkoutCommittedAt: head ? await commitTime(git, head) : null };
-    // From the repository's top folder: run in a subfolder, `ls-tree` and `archive` see only that.
+    // The repository's top folder holds the tree; the checkout may be a subfolder of it.
     const top = await line(git, ["rev-parse", "--show-toplevel"]);
     if (top === null) return fallback("its repository's top folder could not be found", { ...facts, ...checkoutFacts });
-    const topGit = gitIn(top);
-    const bytes = await treeBytes(topGit, best.commit);
-    const limit = input.maxBytes ?? MAX_CODE_BYTES;
-    if (bytes > limit) {
-      return fallback(`${best.ref} (${shortOf(best.commit)}) is too large to copy (${Math.round(bytes / 1048576)} MB), and the checkout is at ${shortOf(head)}`, { ...facts, ...checkoutFacts });
+    let exported: string;
+    try {
+      exported = await exportCommit(gitIn(top), top, input.projectCodeDir, best.commit, input.maxBytes ?? MAX_CODE_BYTES);
+    } catch (error) {
+      if (!(error instanceof TreeTooLargeError)) throw error;
+      return fallback(`${best.ref} (${shortOf(best.commit)}) is too large to copy (${error.message}), and the checkout is at ${shortOf(head)}`, { ...facts, ...checkoutFacts });
     }
-    const exported = await exportCommit(topGit, input.projectCodeDir, best.commit);
     // A checkout below the repository's top folder reads the same folder in the copy.
     const prefix = (await line(git, ["rev-parse", "--show-prefix"])) ?? "";
     const dir = prefix === "" ? exported : path.join(exported, ...prefix.split("/").filter(Boolean));

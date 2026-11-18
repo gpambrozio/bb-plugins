@@ -127,16 +127,28 @@ A checkout can be months behind its project (the owner's was: worktrees fetch an
 `origin/main`, the checkout's `main` stays put), so a dream checking memories against it deletes or
 rewrites facts that are still true. `host/code.ts` picks the newest commit among the default branch's
 local branch, its upstream and `origin/<branch>` (a descendant beats its ancestor; diverged ones go by
-commit time), and the dream reads the checkout when HEAD is that commit, else a `git archive` export in
-`<platform cache>/bb-dream/code/<project id>/<commit>/`. Invariants:
+commit time), and the dream reads the checkout when HEAD is that commit, else a copy of the commit's tree in
+`<platform cache>/bb-dream/code/<project id>/tree-<commit>/` (`host/tree-copy.ts`). Invariants:
 
 - **No network.** Nothing fetches: no credential prompt, no surprise for a repository with no remote, no
   writes to the repository's refs. The copy is as fresh as the last fetch by anything (bb fetches when it
   makes a worktree). Do not add a fetch without asking: it is a product choice, not a fix.
 - **The repository is only read**: `symbolic-ref`, `rev-parse`, `merge-base`, `log`, `ls-tree`,
-  `archive`, with `GIT_OPTIONAL_LOCKS=0` and `GIT_TERMINAL_PROMPT=0`. No `worktree add` (it writes
-  `.git/worktrees`), no checkout, no pull. Run from the repository's top folder: in a subfolder,
-  `ls-tree` and `archive` see only that subfolder.
+  `cat-file`, with `GIT_OPTIONAL_LOCKS=0` and `GIT_TERMINAL_PROMPT=0`. No `worktree add` (it writes
+  `.git/worktrees`), no checkout, no pull.
+- **A faithful copy, not `git archive`** (review pass 1): archive applies the repository's
+  `.gitattributes`, so `export-ignore` dropped tracked files (a `docs/`, a `CLAUDE.md`) and
+  `export-subst` grew 29 KB in git into 10 MB on disk past a limit counted from blob sizes. The copy
+  lists the tree (`ls-tree -r -l -z --full-tree`) and reads raw blobs (`cat-file --batch`), which apply
+  no attribute or filter; that also keeps Git LFS's smudge filter from running, which archive ran (a
+  134-byte pointer became a 122 MB file, and smudge may download). LFS files stay pointers. Copies are
+  named `tree-<commit>`, so a bare-`<commit>` folder an archive made is removed, never reused. Do not go back to archive, and do not add `--worktree-attributes`-style
+  filtering.
+- **The limit is on bytes written**, `MAX_CODE_BYTES` and `MAX_CODE_FILES`, checked as each chunk is
+  written, not only from the listing; past it git is killed and the partial copy deleted, and the dream
+  reads the checkout. Paths with an empty, `.`, `..` or `.git` part are refused, folders are made one at
+  a time and checked to be real, files are created `wx`, and symlinks are made last, so no write goes
+  through a link.
 - **It never fails a dream.** Anything unexpected reads the checkout, and the prompt says why.
 - The guard is unchanged: reads were never limited, and the copy is outside the memory folder, so the
   dream cannot write it.

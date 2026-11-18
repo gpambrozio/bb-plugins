@@ -80,11 +80,21 @@ describe("the code a dream reads", () => {
     const code = await codeSource({ checkout, projectCodeDir: codeDir });
 
     expect(code).toMatchObject({ kind: "copy", branch: "main", ref: "origin/main", commit: newest, checkoutCommit: stale, note: null });
-    expect(code.dir).toBe(path.join(codeDir, newest));
+    expect(code.dir).toBe(path.join(codeDir, `tree-${newest}`));
     expect(readFileSync(path.join(code.dir, "src.txt"), "utf8")).toBe("new code\n");
     expect(existsSync(path.join(checkout, "src.txt"))).toBe(false);
     expect(snapshot(checkout)).toEqual(before);
     expect(git(checkout, "rev-parse", "HEAD")).toBe(stale);
+  });
+
+  it("never reuses a copy made by git archive, which an older version left under the bare commit name", async () => {
+    const newest = commit(origin, "src.txt", "new code\n");
+    git(checkout, "fetch", "-q", "origin");
+    mkdirSync(path.join(codeDir, newest), { recursive: true });
+    writeFileSync(path.join(codeDir, newest, "src.txt"), "an archive's smudged or rewritten file\n");
+    const code = await codeSource({ checkout, projectCodeDir: codeDir });
+    expect(readFileSync(path.join(code.dir, "src.txt"), "utf8")).toBe("new code\n");
+    expect(readdirSync(codeDir)).toEqual([`tree-${newest}`]);
   });
 
   it("reuses a finished copy and removes older ones when the branch moves on", async () => {
@@ -139,6 +149,36 @@ describe("the code a dream reads", () => {
     const tooBig = await codeSource({ checkout, projectCodeDir: codeDir, maxBytes: 1024 });
     expect(tooBig).toMatchObject({ dir: checkout, kind: "checkout", ref: "origin/main" });
     expect(tooBig.note).toMatch(/too large to copy/);
-    expect(existsSync(codeDir)).toBe(false);
+    expect(readdirSync(codeDir)).toEqual([]);
+  });
+
+  it("copies files as git stores them: export-subst expands nothing, so the limit holds", async () => {
+    // 1,000 placeholders that `git archive` would expand to 10 KB each: 29 KB in git, 10 MB archived.
+    const raw = "$Format:%w(1,10000,10000)%s$\n".repeat(1000);
+    writeFileSync(path.join(origin, ".gitattributes"), "expand.md export-subst\n");
+    git(origin, "add", ".gitattributes");
+    const newest = commit(origin, "expand.md", raw);
+    git(checkout, "fetch", "-q", "origin");
+
+    const code = await codeSource({ checkout, projectCodeDir: codeDir, maxBytes: 32768 });
+
+    expect(code).toMatchObject({ kind: "copy", commit: newest, note: null });
+    expect(readFileSync(path.join(code.dir, "expand.md"), "utf8")).toBe(raw);
+    expect(statSync(path.join(code.dir, "expand.md")).size).toBe(Buffer.byteLength(raw));
+  });
+
+  it("copies every tracked file: export-ignore leaves nothing out", async () => {
+    mkdirSync(path.join(origin, "docs"));
+    writeFileSync(path.join(origin, ".gitattributes"), "docs/ export-ignore\nCLAUDE.md export-ignore\n");
+    writeFileSync(path.join(origin, "docs", "architecture.md"), "# the architecture\n");
+    git(origin, "add", ".gitattributes", "docs/architecture.md");
+    commit(origin, "CLAUDE.md", "# the rules\n");
+    git(checkout, "fetch", "-q", "origin");
+
+    const code = await codeSource({ checkout, projectCodeDir: codeDir });
+
+    expect(code.kind).toBe("copy");
+    expect(readFileSync(path.join(code.dir, "docs", "architecture.md"), "utf8")).toBe("# the architecture\n");
+    expect(readFileSync(path.join(code.dir, "CLAUDE.md"), "utf8")).toBe("# the rules\n");
   });
 });
