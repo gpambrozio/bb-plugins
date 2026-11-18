@@ -209,6 +209,10 @@ of the plugin carries it on; `loop` calls `recover` every minute, which drives i
   the lock. Only applying (which moves the lock to the dry run's start and makes the project edit in
   place) or a real dream moves the baseline. So a project whose dry runs propose nothing, or are
   discarded, is dry-run again when it is next due.
+- **The local-settings warning is for git repositories only.** `autoMemoryDirectory` set only in
+  `settings.local.json` is reported because a git worktree checks out tracked files only. A folder
+  outside git (`canonicalGitRoot` finds no `.git` folder or `.git` file up its parents, read without
+  running git) has no worktrees, so every session reads that file and nothing is reported.
 - **Never dreamed means every session counts.** The last dream is the later of the lock's mtime (this
   plugin's dreams and native's) and `lastDreamAt` in the host state, which only an applied dry run (its
   start) or a real dream that did not fail sets, so a removed lock does not erase it. With neither, the

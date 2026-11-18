@@ -113,6 +113,31 @@ describe("resolveMemory", () => {
     expect(resolved.warnings.join("\n")).toContain(path.join(home, ".claude", "projects", projectSlug(checkout), "memory"));
   });
 
+  it("reports a local-only override in a linked worktree or submodule checkout, whose .git is a file", () => {
+    const linked = path.join(root, "repos", "linked");
+    const gitDir = path.join(checkout, ".git", "worktrees", "linked");
+    mkdirSync(gitDir, { recursive: true });
+    writeFileSync(path.join(gitDir, "commondir"), "../..\n");
+    mkdirSync(linked, { recursive: true });
+    writeFileSync(path.join(linked, ".git"), `gitdir: ${gitDir}\n`);
+    write(path.join(linked, ".claude", "settings.local.json"), { autoMemoryDirectory: "~/agent-memory/app" });
+    expect(resolveMemory(options({ checkout: linked })).warnings.join("\n")).toContain("only in .claude/settings.local.json");
+
+    const submodule = path.join(root, "repos", "sub");
+    mkdirSync(submodule, { recursive: true });
+    writeFileSync(path.join(submodule, ".git"), "gitdir: ../app/.git/modules/sub\n");
+    write(path.join(submodule, ".claude", "settings.local.json"), { autoMemoryDirectory: "~/agent-memory/sub" });
+    expect(resolveMemory(options({ checkout: submodule })).warnings.join("\n")).toContain("only in .claude/settings.local.json");
+  });
+
+  it("does not report a local-only override in a folder outside git, which has no worktrees", () => {
+    const plain = path.join(root, "Documents", "OnShape");
+    write(path.join(plain, ".claude", "settings.local.json"), { autoMemoryDirectory: "~/agent-memory/OnShape" });
+    const resolved = resolveMemory(options({ checkout: plain }));
+    expect(resolved).toMatchObject({ source: "localSettings", dir: path.join(home, "agent-memory", "OnShape") });
+    expect(resolved.warnings).toEqual([]);
+  });
+
   it("does not report a local override that the tracked settings repeat", () => {
     write(path.join(checkout, ".claude", "settings.local.json"), { autoMemoryDirectory: "/same/mem" });
     write(path.join(checkout, ".claude", "settings.json"), { autoMemoryDirectory: "/same/mem" });

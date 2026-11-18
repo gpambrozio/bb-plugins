@@ -90,8 +90,9 @@ Each project's memory folder is found the way Claude Code 2.1.326 finds it:
 `CLAUDE_COWORK_MEMORY_PATH_OVERRIDE`, then `autoMemoryDirectory` from managed, local, project and user
 settings (with `~` expanded), then `~/.claude/projects/<the main checkout>/memory`. The page shows where
 the folder came from, and warns, without touching anything, when an old default folder still holds
-files beside a custom one, or when the custom folder is set only in `settings.local.json`, which the
-project's worktrees do not have.
+files beside a custom one, or when a git repository's custom folder is set only in
+`settings.local.json`, which its worktrees do not have. A project folder outside git has no worktrees,
+so a custom folder set only there is not flagged.
 
 ## Using it
 

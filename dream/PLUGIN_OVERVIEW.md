@@ -20,7 +20,7 @@ Every night between 01:00 and 06:00, the most overdue project first, one at a ti
 
 ## Memory folders
 
-Each project's memory folder is found as Claude Code finds it, custom autoMemoryDirectory settings included. Dream points out, without touching anything, an old default folder that still holds files beside a custom one, and a custom folder set only in settings.local.json, which the project's worktrees do not see.
+Each project's memory folder is found as Claude Code finds it, custom autoMemoryDirectory settings included. Dream points out, without touching anything, an old default folder that still holds files beside a custom one, and, in a git repository, a custom folder set only in settings.local.json, which its worktrees do not see.
 
 ## Using it
 

@@ -17,9 +17,9 @@
  * launch and are not modelled.
  *
  * Nothing here writes. Two things are reported and never touched: a legacy default folder that still
- * holds `.md` files beside a custom one, and an `autoMemoryDirectory` set only in
+ * holds `.md` files beside a custom one, and, in a git repository, an `autoMemoryDirectory` set only in
  * `settings.local.json`, which a worktree of the repository does not have, so its sessions use
- * another folder.
+ * another folder. A folder outside git has no worktrees, so its local setting is not reported.
  */
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
@@ -286,8 +286,9 @@ export function resolveMemory(options: ResolveMemoryOptions): ResolvedMemory {
     warnings.push(`autoMemoryDirectory "${set.value}" in ${set.source} is not a usable folder, so Claude Code uses the default one.`);
   }
 
-  if (resolved.source === "localSettings") {
-    // A worktree checks out tracked files only, so it has no settings.local.json.
+  // A worktree checks out tracked files only, so it has no settings.local.json. Only a git repository
+  // has worktrees: a plain folder's sessions all run in it and all read its local settings.
+  if (resolved.source === "localSettings" && canonicalGitRoot(options.checkout) !== null) {
     const inWorktree = resolveWith(options, files, ["policySettings", "projectSettings", "userSettings"]);
     if (inWorktree.dir !== resolved.dir) {
       warnings.push(
