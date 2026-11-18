@@ -452,6 +452,13 @@ by `hostId`, as bb's own `/` menu does there (`skills/app/subject.ts`, `skills/s
 `bb.sdk.skills.list` and `getContent` take no `hostId`: with `environmentId: null` bb 0.48.1 scans the
 primary host's checkout, whatever machine was picked (`skills/AGENTS.md`).
 
+**An app overlay's panel controller opens no pane's side panel.** `experimental_useAppPanel()` belongs to
+the surface the component renders in, and an `experimental_appOverlay` renders in none: after
+`toThread(id, { split: true })` its `openTab` showed nothing (bb 0.49). To open a tab in the thread just
+opened, render a component inside that thread's view, such as a composer contribution that draws nothing,
+and open it from there once `useComposer().scope` names the thread (`firstmate-crew/app/intro.tsx`,
+`BoardOpener`).
+
 **A composer that is not on screen cannot be written to.** `useComposers()` lists only the composers
 showing, and a nav panel shows none. To put text in a thread's draft from a page, hand it to an
 `app.slots.experimental_appOverlay` component, navigate (`toThread`, or `toCompose` with a

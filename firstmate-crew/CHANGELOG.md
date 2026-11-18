@@ -5,6 +5,19 @@ Notable changes to `firstmate`. The other plugins in this repository version sep
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.11.0
+
+### Added
+
+- **A guided first session.** Right after installing FirstMate, a toast asks *Start using FirstMate?*
+  *Start* opens a short setup: where the first mate keeps its home folder, which model it uses and which
+  machine it runs on. Then FirstMate starts the first mate, opens its chat beside the view you are in with
+  the FirstMate board, and the first mate walks you through your first session: what it does, your first
+  project and a first small task. *Later* asks again the next time you open bb; *Don't ask again* stops
+  asking. If FirstMate was already set up, you are never asked.
+- **FirstMate: get started** in the command palette, **Guided setup…** in FirstMate's settings and
+  **Get started** on the FirstMate tab open the same setup whenever no first mate is aboard.
+
 ## 0.10.3
 
 ### Fixed

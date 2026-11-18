@@ -45,7 +45,10 @@ parent is set so that the first mate isn't told when it finishes._
 
 _The board on a phone, where it takes the screen over the chat._
 
-![Opening the board from the thread's panel, reading a long suggestion whole, and typing an answer on a card waiting for the captain](docs/screenshots/board-demo.gif)
+![The first-run guide: the "Start using FirstMate?" toast, Start, the home folder, the model and machine, Start the first mate, and the first mate's chat opening beside the view with the FirstMate board, where it welcomes the captain and asks which project to work on first](docs/screenshots/first-run-demo.gif)
+
+_The first-run guide, right after installing: three short steps, then the first mate opens beside you
+with its board and shows you around._
 
 ## What you need
 
@@ -78,13 +81,29 @@ there, and `bb plugin dev` to rebuild on save. See [`AGENTS.md`](AGENTS.md).
 
 ## Getting started
 
-1. Open bb's settings, find **FirstMate**, pick the first mate's provider and model, and press **Launch**.
-   If you already started a thread in the first mate's home (the **Home directory** setting), open its
-   **FirstMate** tab and press **Adopt this thread** instead. Only a thread working in the home can be
-   adopted, because the charter the first mate follows is the home's `AGENTS.md`.
-2. The first mate is now pinned in the sidebar, in a project called **FirstMate** (its home). Open it and
-   tell it about a project: "the web app is in bb as `web` and ships through pull requests". It keeps a
-   registry, so you say this once.
+1. Right after you install FirstMate, a toast asks **Start using FirstMate?** Press **Start** for a short
+   guided setup:
+   - **Home folder**: where the first mate keeps its charter, backlog and notes, `~/FirstMate` unless you
+     choose another. Use a new or empty folder; the desktop app has a **Browse…** button.
+   - **Model and machine**: the agent that will be your first mate. It runs on the machine bb runs on,
+     next to its home folder; your crew can still work in projects on your other machines.
+   - **Start the first mate**: FirstMate starts it, opens its chat beside the view you are in with the
+     **FirstMate** board, and the first mate walks you through your first session: what it does, your
+     first project, and a first small task.
+
+   **Later** asks again the next time you open bb; **Don't ask again** stops asking. Either way, the guide
+   is always in the command palette (**FirstMate: get started**), in FirstMate's settings (**Guided
+   setup…**) and on the FirstMate tab of any thread while no first mate is aboard. If FirstMate was already
+   set up when you updated to this version, you are never asked.
+
+   To set it up by hand instead, open bb's settings, find **FirstMate**, pick the first mate's provider and
+   model, and press **Launch**. If you already started a thread in the first mate's home (the **Home
+   directory** setting), open its **FirstMate** tab and press **Adopt this thread** instead. Only a thread
+   working in the home can be adopted, because the charter the first mate follows is the home's
+   `AGENTS.md`.
+2. The first mate is now pinned in the sidebar, in a project called **FirstMate** (its home). Tell it about
+   a project, if the guide has not already: "the web app is in bb as `web` and ships through pull
+   requests". It keeps a registry, so you say this once.
 3. Ask for work: "fix the flaky login test and add dark mode". Two workers appear under it in the sidebar
    and on the board, each in its own worktree. Minutes later:
 
@@ -107,7 +126,7 @@ there, and `bb plugin dev` to rebuild on save. See [`AGENTS.md`](AGENTS.md).
   send, and requests up to 12,000 bytes fit. Only you can start it: agents do not use it on their own.
 - **Bearings** is where everything stands in four sections: what needs your call, what landed, what is
   under way, what is next. It is a button on the board and an entry in the command palette
-  (FirstMate: bearings), next to FirstMate: open.
+  (FirstMate: bearings), next to FirstMate: open and FirstMate: get started.
 - **Suggestions.** When the first mate has an idea of what you will want next ("Land web#42"), it shows
   as a button above the columns. Pressing one sends that request to the first mate as if you had typed
   it; it joins a turn under way, or starts one, and never interrupts. Once the first mate has it, the

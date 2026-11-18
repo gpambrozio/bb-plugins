@@ -116,6 +116,20 @@ async function readyHome(settings: FirstmateSettings, home: string = homePath(se
   return home;
 }
 
+export interface LaunchOptions {
+  /**
+   * The first-run guide's launch: the opening is followed by `templates/messages/first-session.md`,
+   * which asks the first mate to walk a new captain through their first session.
+   */
+  firstSession?: boolean;
+}
+
+/** A new first mate's first message: the captain's opening, and the first-session guide when asked for. */
+async function openingPrompt(home: string, options: LaunchOptions): Promise<string> {
+  const opening = await readOpening(home);
+  return options.firstSession === true ? `${opening}\n\n${await message(TEMPLATES.firstSession)}` : opening;
+}
+
 /**
  * Prepares the home, registers it as the FirstMate project (or finds the project already there), and
  * starts a pinned first mate in it with the captain's opening. Refused when a first mate is already
@@ -128,6 +142,7 @@ async function readyHome(settings: FirstmateSettings, home: string = homePath(se
 export function launchMate(
   deps: MateDeps,
   pick: { providerId: string; model: string; reasoningLevel?: string },
+  options: LaunchOptions = {},
 ): Promise<ThreadInfo> {
   return serialized(MATE_LOCK, async () => {
     const current = await resolveMate(deps);
@@ -140,7 +155,7 @@ export function launchMate(
     const args: SpawnArgs = {
       projectId: project.id,
       title: MATE_TITLE,
-      prompt: await readOpening(home),
+      prompt: await openingPrompt(home, options),
       environment: { kind: "path", path: home },
       providerId: pick.providerId,
       model: pick.model,

@@ -11,6 +11,7 @@ import type { rpcContract } from "../server";
 import type { Fleet } from "../shared/types";
 import { Board } from "./board";
 import { CrewPanel } from "./crew-panel";
+import { openIntro } from "./intro-store";
 import { reportError } from "./notify";
 import { useTabVisible } from "./tab-visible";
 import { useFleet } from "./use-fleet";
@@ -60,11 +61,14 @@ function Elsewhere({ fleet, threadId, onChanged }: { fleet: Fleet; threadId: str
         <p className="text-xs text-muted-foreground">The recorded first mate's thread is gone (archived or deleted).</p>
       ) : null}
       <p className="text-xs text-muted-foreground">
-        Launch one from FirstMate's settings. A thread can be adopted only if it works in the first mate's home,{" "}
+        Get started sets one up in a few steps, or launch one from FirstMate's settings. A thread can be adopted only if it works in the first mate's home,{" "}
         <span className="font-mono break-all">{fleet.home}</span>, where its charter is.
       </p>
-      <div>
-        <Button size="sm" disabled={busy} onClick={adopt}>
+      <div className="flex flex-wrap gap-2">
+        <Button size="sm" disabled={busy} onClick={openIntro}>
+          Get started
+        </Button>
+        <Button size="sm" variant="outline" disabled={busy} onClick={adopt}>
           Adopt this thread
         </Button>
       </div>

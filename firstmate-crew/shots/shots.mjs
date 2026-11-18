@@ -1,16 +1,20 @@
-// Shot list for FirstMate: the board beside the first mate's chat, with suggestions, a crewmate at
+// Shot list for FirstMate. First the first-run guide, on the fresh install the harness makes: its toast,
+// each setup step, and the first mate it starts greeting the captain beside the board, as stills and as
+// the README's demo GIF. Then the board beside the first mate's chat, with suggestions, a crewmate at
 // work, held cards with the captain's answer buttons, a failed and a parked crewmate (Notify parent
-// off), queued and done work, and the watches; light and dark, on a desktop window and at phone
-// width; and a GIF of opening the board and starting an answer. Run with `npm run shots -- firstmate-crew` in tools/shots; it writes into
+// off), queued and done work, and the watches; light and dark, on a desktop window and at phone width.
+// Run with `npm run shots -- firstmate-crew` in tools/shots; it writes into
 // firstmate-crew/docs/screenshots/.
 //
-// The first mate's home is a fixture inside the dev bb's fake HOME: its backlog, suggestions and
-// projects are written before the launch, which keeps them (the plugin never overwrites records).
-// Its one watch is the built-in pr-watch, replaced by an inert copy that prints nothing and calls
-// nothing (the plugin keeps an edited copy as it is), with a last run seeded in its state file. The
-// first mate and its crew run on the scripted agent; the crew is dispatched with the plugin's own
-// `crew spawn`, run as the first mate's thread (bb's CLI takes the caller's thread from
-// BB_THREAD_ID). Nothing is sent from the browser.
+// The guide's first mate runs on the scripted agent in the default home, ~/FirstMate in the dev bb's
+// fake HOME, and is released and archived once shot. The board's first mate lives in a second home,
+// ~/Voyage, a fixture: its backlog, suggestions and projects are written before its launch, which keeps
+// them (the plugin never overwrites records). Its one watch is the built-in pr-watch, replaced by an
+// inert copy that prints nothing and calls nothing (the plugin keeps an edited copy as it is), with a
+// last run seeded in its state file. The board's first mate and its crew run on the scripted agent;
+// the crew is dispatched with the plugin's own `crew spawn`, run as the first mate's thread (bb's CLI
+// takes the caller's thread from BB_THREAD_ID). Nothing is sent from the browser: the guide's start is
+// the plugin's own RPC, which spawns on the scripted agent.
 import { createHash } from "node:crypto";
 import { chmodSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -98,7 +102,21 @@ const BEARINGS =
   "**Under way**\n\n- Dark mode is being built. The date library upgrade waits for date-fns 4.1.\n\n" +
   "**Next**\n\n- Full-text search, once rate limiting lands. The nightly run failed on memory; I can rerun it with more.";
 
+/** The guide's first mate, greeting a new captain as `templates/messages/first-session.md` asks. */
+const GREETING =
+  "Welcome aboard, captain! I'm your first mate.\n\n" +
+  "You tell me what you want done. I turn it into work items, start a crewmate for each one in its own git worktree, keep an eye on them, and come back to you only for decisions, work ready for review, failures and credentials. Nothing merges without your word.\n\n" +
+  "Let's set up your first project. You have **Acme Web** and **Acme API** in bb. Which one should I work on first?";
+
 export const turns = [
+  {
+    match: "my first time with FirstMate",
+    reply: GREETING,
+    tools: [
+      { title: "Read AGENTS.md", kind: "read" },
+      { title: "bb project list --json", kind: "execute" },
+    ],
+  },
   {
     match: "You are the first mate",
     reply: "Aboard, captain. Two projects on the books, Acme Web and Acme API, both shipping through pull requests. Nothing under way yet. What first?",
@@ -214,8 +232,11 @@ async function mateSettled(bb, mateId) {
   );
 }
 
-export async function seed({ bb, seed }) {
-  const home = join(seed.home, "FirstMate");
+/** The board's home: a second one, so the guide's run in the default home stays apart from it. */
+const voyageHome = (seed) => join(seed.home, "Voyage");
+
+export async function seed({ seed }) {
+  const home = voyageHome(seed);
   seed.project(WEB, { "README.md": "# Acme Web\n\nThe Acme customer site.\n" });
   seed.project(API, { "README.md": "# Acme API\n\nThe Acme public API.\n" });
 
@@ -235,7 +256,14 @@ export async function seed({ bb, seed }) {
     ...briefs,
   });
   chmodSync(join(home, "watches", "pr-watch"), 0o755);
+}
 
+/**
+ * The board's voyage, after the guide has been shot: its first mate launched in ~/Voyage, the crew
+ * dispatched and settled, and a bearings report. Returns the first mate's thread id.
+ */
+async function sailVoyage({ bb, seed }) {
+  const home = voyageHome(seed);
   bb.cli(["plugin", "config", PLUGIN, "set", "homeDirectory", home]);
   bb.cli(["plugin", "config", PLUGIN, "set", "crewProvider", "acp-demo"]);
   bb.cli(["plugin", "config", PLUGIN, "set", "crewModel", "demo"]);
@@ -277,6 +305,7 @@ export async function seed({ bb, seed }) {
   await mateSettled(bb, mateId);
   await seed.send({ threadId: mateId, prompt: "Bearings, please." });
   await mateSettled(bb, mateId);
+  return mateId;
 }
 
 /**
@@ -305,21 +334,104 @@ async function openBoard(shots, variant, mateId, layout) {
   if (layout === "calls") await page.getByRole("button", { name: /^Merge: send/ }).waitFor();
   else await page.getByText(/Notify parent is Off/).waitFor();
   await page.getByText("pr-watch", { exact: true }).waitFor();
+  // An install with a first mate aboard is never offered the guide.
+  if ((await page.locator("[data-sonner-toast]").filter({ hasText: "Start using FirstMate?" }).count()) > 0) {
+    throw new Error("the first-run guide was offered to an install that is set up");
+  }
   // Away from every card, so none is drawn hovered.
   await page.mouse.move(2, (variant.viewport.height ?? 800) - 2);
   await page.waitForTimeout(600);
   return page;
 }
 
-function mateOf(bb) {
-  const listed = bb.cliJson(["thread", "list", "--json"]);
-  const mate = (listed.threads ?? listed).find((thread) => thread.title === "First mate");
-  if (!mate) throw new Error("no first mate was launched");
-  return mate.id;
+/** The board, once the guide has opened the FirstMate tab beside the first mate's chat. */
+async function boardShown(page) {
+  await page.getByRole("button", { name: "Bearings", exact: true }).waitFor({ timeout: 20_000 });
 }
 
-export async function shoot({ bb, shots, VARIANTS }) {
-  const mateId = mateOf(bb);
+/** The fresh install's first page: bb's toast stack offers the guide on its own. */
+async function toastShown(page) {
+  const toast = page.locator("[data-sonner-toast]").filter({ hasText: "Start using FirstMate?" });
+  await toast.waitFor({ timeout: 20_000 });
+  return toast;
+}
+
+/** The setup dialog, from its Start button in the toast. */
+async function openSetup(page, toast) {
+  await toast.getByRole("button", { name: "Start", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByText("Step 1 of 3").waitFor();
+  return dialog;
+}
+
+/** Steps 1 and 2 as a new captain takes them: the default home, the default model, the one machine. */
+async function stepToStart(page, dialog, { pace = 0 } = {}) {
+  await dialog.getByRole("textbox", { name: "Home folder" }).waitFor();
+  await page.waitForTimeout(pace);
+  await dialog.getByRole("button", { name: "Next" }).click();
+  await dialog.getByText("Step 2 of 3").waitFor();
+  await dialog.getByText("Studio Mac").waitFor();
+  await page.waitForTimeout(pace);
+  await dialog.getByRole("button", { name: "Next" }).click();
+  await dialog.getByText("Step 3 of 3").waitFor();
+}
+
+export async function shoot({ bb, seed, shots, VARIANTS }) {
+  // The guide, step by step, as stills; cancelled at the last step, so the install still offers it.
+  {
+    const page = await shots.page(VARIANTS.desktopLight, "/");
+    const toast = await toastShown(page);
+    await page.waitForTimeout(600);
+    await shots.still(page, "first-run-toast.png");
+    const dialog = await openSetup(page, toast);
+    await dialog.getByRole("textbox", { name: "Home folder" }).waitFor();
+    await page.waitForTimeout(400);
+    await shots.still(page, "first-run-home.png");
+    await dialog.getByRole("button", { name: "Next" }).click();
+    await dialog.getByText("Studio Mac").waitFor();
+    await page.waitForTimeout(800);
+    await shots.still(page, "first-run-agent.png");
+    await dialog.getByRole("button", { name: "Next" }).click();
+    await dialog.getByText("Step 3 of 3").waitFor();
+    await page.waitForTimeout(400);
+    await shots.still(page, "first-run-start.png");
+    await dialog.getByRole("button", { name: "Back" }).click();
+    await dialog.getByRole("button", { name: "Back" }).click();
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+    await shots.closePage(page);
+  }
+
+  // The demo: from the toast to the first mate greeting the captain beside the board. The last frame is
+  // also the end state's still.
+  let guideMate = null;
+  await shots.video(
+    "first-run-demo",
+    { ...VARIANTS.desktopLight, viewport: { width: 1280, height: 800 } },
+    async (page) => {
+      const toast = await toastShown(page);
+      await page.waitForTimeout(1800);
+      const dialog = await openSetup(page, toast);
+      await stepToStart(page, dialog, { pace: 1400 });
+      await page.waitForTimeout(1600);
+      await dialog.getByRole("button", { name: "Start the first mate" }).click();
+      await page.getByText("Welcome aboard, captain!").first().waitFor({ timeout: 30_000 });
+      await boardShown(page);
+      await page.getByText("Which one should I work on first?").first().waitFor({ timeout: 30_000 });
+      await page.mouse.move(2, 798);
+      await page.waitForTimeout(3500);
+      await shots.still(page, "first-run-aboard.png");
+      guideMate = new URL(page.url()).pathname;
+    },
+    { formats: ["gif"] },
+  );
+  console.log(`  the guide's first mate was shown at ${guideMate}`);
+
+  // The guide is done: its first mate goes, and the board's voyage gets its own.
+  const { mate } = seed.rpc(PLUGIN, "fleet.load", {});
+  if (!mate) throw new Error("the guide started no first mate");
+  seed.rpc(PLUGIN, "mate.release", {});
+  bb.cli(["thread", "archive", mate.threadId]);
+  const mateId = await sailVoyage({ bb, seed });
   const wide = (variant) => ({ ...variant, viewport: { width: 1440, height: 960 } });
 
   // The board beside the first mate's chat: suggestions, then the cards waiting on the captain.
@@ -353,36 +465,4 @@ export async function shoot({ bb, shots, VARIANTS }) {
     await shots.still(page, file);
     await shots.closePage(page);
   }
-
-  // The demo: open the board, read a long suggestion whole, and start an answer on a held card. Nothing
-  // is sent: the page closes with the answer still typed.
-  await shots.video(
-    "board-demo",
-    { ...VARIANTS.desktopLight, viewport: { width: 1280, height: 800 } },
-    async (page) => {
-      await page.evaluate(({ order, folds }) => {
-        localStorage.setItem("firstmate.order", JSON.stringify(order));
-        localStorage.setItem("firstmate.folds", JSON.stringify(folds));
-      }, LAYOUTS.calls);
-      await page.goto(new URL(`/threads/${mateId}`, page.url()).href, { waitUntil: "networkidle" });
-      await page.getByText("Needs your call", { exact: true }).waitFor();
-      await page.waitForTimeout(1500);
-      await page.getByRole("button", { name: "Show right panel (⌘ J)" }).click();
-      await page.waitForTimeout(700);
-      await page.getByRole("button", { name: "Open new tab (⌘ T)" }).click();
-      await page.waitForTimeout(1000);
-      await page.getByText("FirstMate", { exact: true }).last().click();
-      await page.getByRole("button", { name: /^Merge: send/ }).waitFor();
-      await page.waitForTimeout(1800);
-      await page.getByRole("button", { name: "Show the whole suggestion: Review loop on api#17" }).click();
-      await page.waitForTimeout(2500);
-      await page.getByRole("button", { name: "Hide the whole suggestion: Review loop on api#17" }).click();
-      await page.waitForTimeout(800);
-      const answer = page.getByRole("textbox", { name: "Answer for login-redirect" });
-      await answer.click();
-      await answer.pressSequentially("Hold it until the release notes are out", { delay: 55 });
-      await page.waitForTimeout(2500);
-    },
-    { formats: ["gif"] },
-  );
 }
