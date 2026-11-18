@@ -452,6 +452,14 @@ by `hostId`, as bb's own `/` menu does there (`skills/app/subject.ts`, `skills/s
 `bb.sdk.skills.list` and `getContent` take no `hostId`: with `environmentId: null` bb 0.48.1 scans the
 primary host's checkout, whatever machine was picked (`skills/AGENTS.md`).
 
+**An app overlay's panel controller opens no pane's side panel.** `experimental_useAppPanel()` belongs to
+the surface the component renders in, and an `experimental_appOverlay` renders in none: after
+`toThread(id, { split: true })` its `openTab` showed nothing (bb 0.49). To open a tab in the thread just
+opened, render a component inside that thread's view, such as a composer contribution that draws nothing,
+and open it from there once `useComposer().scope` names the thread (`firstmate-crew/app/intro.tsx`,
+`BoardOpener`). Plain `toThread(id)` replaces the current view; `split: true` keeps it as a pane of its
+own beside the thread, even when it is only an empty New thread screen.
+
 **A composer that is not on screen cannot be written to.** `useComposers()` lists only the composers
 showing, and a nav panel shows none. To put text in a thread's draft from a page, hand it to an
 `app.slots.experimental_appOverlay` component, navigate (`toThread`, or `toCompose` with a
@@ -466,6 +474,13 @@ it for the native folder picker. It is bb internals, not SDK. With that `hostId`
 plugin's `bb.host` entry on the window's own machine — the way to run something where the user sits, since
 `window.bbDesktop` has no exec (`herald/app/speech-hooks.ts`). A browser tab needs a Local Network Access
 prompt for it, so use it from the desktop app only.
+
+**Choosing a folder on a machine.** bb's Add project dialog opens the system's picker
+(`useSdk().hosts.pickFolder({ hostId, clientHostId })`) when the desktop app runs on that machine, and its
+own folder browser otherwise; the SDK does not export that browser (bb 0.49). A plugin builds one over
+the calls it uses: `hosts.directory({ hostId, path? })` (absolute real paths, the host's home folder
+without a path, no dot entries or `node_modules`) and `files.mkdir({ hostId, path, recursive })`
+(`firstmate-crew/app/folder-browser.tsx`).
 
 **bb's own app settings are readable and observable.** `useSdk().system.config()` returns
 `generalSettings` (`terminalCopyOnSelect` and the rest of Settings → General), and

@@ -1,7 +1,7 @@
 /**
  * What the plugin itself owns, as opposed to what the captain edits in settings: which thread is the
- * first mate, which watches are switched off, and which threads autocompact last compacted. Kept in
- * `bb.storage.kv`.
+ * first mate, which watches are switched off, which threads autocompact last compacted, and where the
+ * first-run guide stands. Kept in `bb.storage.kv`.
  *
  * The stored id is the only way the first mate is found. Nothing looks it up by metadata or title,
  * so a released first mate stays released.
@@ -19,6 +19,15 @@ export interface CompactionMark {
   at: number;
 }
 
+/**
+ * Where the first-run guide stands for this install (`intro.ts`): `offered` while it may still be shown,
+ * `done` once a first mate has been launched or adopted, `dismissed` after "Don't ask again", and
+ * `settled` for an install that already had a home or a first mate when the guide was first considered.
+ */
+export type IntroState = "offered" | "done" | "dismissed" | "settled";
+
+const INTRO_STATES: readonly IntroState[] = ["offered", "done", "dismissed", "settled"];
+
 export interface Store {
   mateThreadId(): Promise<string | null>;
   /** `null` forgets the first mate. */
@@ -31,12 +40,18 @@ export interface Store {
   deleteCompactionMark(threadId: string): Promise<void>;
   /** The threads that have a mark. */
   compactionMarkIds(): Promise<string[]>;
+  /** Whether anything but the guide's own state is stored: an install that has been used. */
+  hasRecords(): Promise<boolean>;
+  /** Null until the guide has been considered for this install. */
+  introState(): Promise<IntroState | null>;
+  setIntroState(state: IntroState): Promise<void>;
 }
 
 const MATE_THREAD_ID = "mateThreadId";
 const DISABLED_WATCHES = "disabledWatches";
 /** One key per thread, so a large crew never meets kv's 256 KB limit on one value. */
 const COMPACTION_PREFIX = "autoCompaction:";
+const INTRO_STATE = "introState";
 
 function isMark(value: unknown): value is CompactionMark {
   if (typeof value !== "object" || value === null) return false;
@@ -73,6 +88,16 @@ export function createStore(kv: PluginKvStorage): Store {
     },
     async compactionMarkIds() {
       return (await kv.list(COMPACTION_PREFIX)).map((key) => key.slice(COMPACTION_PREFIX.length));
+    },
+    async hasRecords() {
+      return (await kv.list()).some((key) => key !== INTRO_STATE);
+    },
+    async introState() {
+      const state = await kv.get<unknown>(INTRO_STATE);
+      return INTRO_STATES.find((known) => known === state) ?? null;
+    },
+    async setIntroState(state) {
+      await kv.set(INTRO_STATE, state);
     },
   };
 }

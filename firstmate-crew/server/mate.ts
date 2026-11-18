@@ -116,6 +116,20 @@ async function readyHome(settings: FirstmateSettings, home: string = homePath(se
   return home;
 }
 
+export interface LaunchOptions {
+  /**
+   * The first-run guide's launch: the opening is followed by `templates/messages/first-session.md`,
+   * which asks the first mate to walk a new captain through their first session.
+   */
+  firstSession?: boolean;
+}
+
+/** A new first mate's first message: the captain's opening, and the first-session guide when asked for. */
+async function openingPrompt(home: string, options: LaunchOptions): Promise<string> {
+  const opening = await readOpening(home);
+  return options.firstSession === true ? `${opening}\n\n${await message(TEMPLATES.firstSession)}` : opening;
+}
+
 /**
  * Prepares the home, registers it as the FirstMate project (or finds the project already there), and
  * starts a pinned first mate in it with the captain's opening. Refused when a first mate is already
@@ -128,30 +142,92 @@ async function readyHome(settings: FirstmateSettings, home: string = homePath(se
 export function launchMate(
   deps: MateDeps,
   pick: { providerId: string; model: string; reasoningLevel?: string },
+  options: LaunchOptions = {},
 ): Promise<ThreadInfo> {
-  return serialized(MATE_LOCK, async () => {
-    const current = await resolveMate(deps);
-    if (current !== null) throw aboard(current);
+  return serialized(MATE_LOCK, async () => launchInHome(deps, homePath((await deps.settings()).homeDirectory), pick, options));
+}
 
-    const home = await readyHome(await deps.settings());
-    const project = await step(`The ${PROJECT_NAME} project could not be registered at ${home}`, async () => {
-      return (await deps.projects.findByPath(home)) ?? (await deps.projects.create(PROJECT_NAME, home));
-    });
-    const args: SpawnArgs = {
-      projectId: project.id,
-      title: MATE_TITLE,
-      prompt: await readOpening(home),
-      environment: { kind: "path", path: home },
-      providerId: pick.providerId,
-      model: pick.model,
-      ...(pick.reasoningLevel === undefined || pick.reasoningLevel === "" ? {} : { reasoningLevel: pick.reasoningLevel }),
-      metadata: { [CREW_METADATA.role]: CREW_METADATA.mateRole },
-      pinned: true,
-    };
-    const mate = await step("The first mate could not be started", () => deps.threads.spawn(args));
-    await deps.store.setMateThreadId(mate.id);
-    return mate;
+/**
+ * `launchMate` in a home the caller has already chosen, rather than the setting, for the first-run
+ * guide (`intro.ts`), which checks its folder and launches in one hold of the `mate` lock. Run it only
+ * under that lock.
+ */
+export async function launchInHome(
+  deps: MateDeps,
+  home: string,
+  pick: { providerId: string; model: string; reasoningLevel?: string },
+  options: LaunchOptions = {},
+): Promise<ThreadInfo> {
+  const current = await resolveMate(deps);
+  if (current !== null) throw aboard(current);
+  const waiting = await unrecordedMate(deps, home);
+  if (waiting !== null) {
+    await recordMate(deps, waiting, home);
+    return waiting;
+  }
+
+  await readyHome(await deps.settings(), home);
+  const project = await step(`The ${PROJECT_NAME} project could not be registered at ${home}`, async () => {
+    return (await deps.projects.findByPath(home)) ?? (await deps.projects.create(PROJECT_NAME, home));
   });
+  const args: SpawnArgs = {
+    projectId: project.id,
+    title: MATE_TITLE,
+    prompt: await openingPrompt(home, options),
+    environment: { kind: "path", path: home },
+    providerId: pick.providerId,
+    model: pick.model,
+    ...(pick.reasoningLevel === undefined || pick.reasoningLevel === "" ? {} : { reasoningLevel: pick.reasoningLevel }),
+    metadata: { [CREW_METADATA.role]: CREW_METADATA.mateRole },
+    pinned: true,
+  };
+  const mate = await step("The first mate could not be started", () => deps.threads.spawn(args));
+  await recordMate(deps, mate, home);
+  return mate;
+}
+
+/**
+ * First mates started but not recorded, because the store write failed: the next launch in the same home
+ * records that thread rather than start a second one. In memory, per store (one per plugin load), and
+ * read and written only under the `mate` lock; a reload forgets it, and the thread can still be adopted.
+ */
+const unrecorded = new WeakMap<Store, { id: string; home: string }>();
+
+/** Stores the first mate's id; on failure remembers the running thread for the next launch, and says so. */
+async function recordMate(deps: MateDeps, mate: ThreadInfo, home: string): Promise<void> {
+  try {
+    await deps.store.setMateThreadId(mate.id);
+  } catch (error) {
+    unrecorded.set(deps.store, { id: mate.id, home });
+    throw new Error(
+      `The first mate was started (${mate.id}) but could not be recorded: ${reason(error)}. It is still running ` +
+        `in ${home}. Try again to adopt this first mate: FirstMate will not start another.`,
+      { cause: error },
+    );
+  }
+  unrecorded.delete(deps.store);
+}
+
+/**
+ * The first mate an earlier launch started but could not record, when it still exists; null when there is
+ * none or it is gone (archived or deleted), so the launch starts a new one. A launch into another home is
+ * refused while it waits: two first mates would share no records but both answer to the captain.
+ */
+async function unrecordedMate(deps: MateDeps, home: string): Promise<ThreadInfo | null> {
+  const waiting = unrecorded.get(deps.store);
+  if (waiting === undefined) return null;
+  const thread = await deps.threads.get(waiting.id);
+  if (thread === null) {
+    unrecorded.delete(deps.store);
+    return null;
+  }
+  if ((await canonicalPath(waiting.home)) !== (await canonicalPath(home))) {
+    throw new Error(
+      `A first mate started earlier (${waiting.id}) in ${waiting.home} is still waiting to be recorded. Start ` +
+        `again with that folder to keep it, or archive it to start afresh.`,
+    );
+  }
+  return thread;
 }
 
 /** Whether the thread's workspace is the home, compared through symlinks, on the bb server's machine. */
@@ -185,13 +261,18 @@ export function adoptMate(deps: MateDeps, threadId: string): Promise<ThreadInfo>
     }
     await readyHome(settings);
     await deps.store.setMateThreadId(thread.id);
+    // A first mate is recorded now: one a failed launch left waiting is no longer the next launch's.
+    unrecorded.delete(deps.store);
     return thread;
   });
 }
 
-/** Forgets the first mate. The thread and its crew are untouched. */
+/** Forgets the first mate, and any first mate a failed launch left waiting. The threads and crew are untouched. */
 export function releaseMate(deps: MateDeps): Promise<void> {
-  return serialized(MATE_LOCK, () => deps.store.setMateThreadId(null));
+  return serialized(MATE_LOCK, async () => {
+    await deps.store.setMateThreadId(null);
+    unrecorded.delete(deps.store);
+  });
 }
 
 /**

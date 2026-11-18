@@ -424,6 +424,8 @@ export class FakeProjects implements ProjectsPort {
   readonly projects: { id: string; name: string; path: string }[];
   /** The projects `create` registered, in order. */
   readonly created: { id: string; name: string; path: string }[] = [];
+  /** The error the next `create` throws, once. */
+  private createFailure: Error | null = null;
   private nextId = 1;
 
   constructor(existing: { id: string; path: string; name?: string }[] = []) {
@@ -436,8 +438,16 @@ export class FakeProjects implements ProjectsPort {
     return project === undefined ? null : { id: project.id };
   }
 
+  /** The next `create` throws this, as bb refusing a project would. */
+  failNextCreate(error: Error): void {
+    this.createFailure = error;
+  }
+
   async create(name: string, path: string): Promise<{ id: string }> {
     await tick();
+    const failure = this.createFailure;
+    this.createFailure = null;
+    if (failure !== null) throw failure;
     const project = { id: `prj_${this.nextId++}`, name, path };
     this.projects.push(project);
     this.created.push(project);
