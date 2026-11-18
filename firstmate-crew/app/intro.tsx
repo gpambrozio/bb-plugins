@@ -27,6 +27,7 @@ import type { rpcContract as RpcContract } from "../server";
 import { rpcContract } from "../shared/contract";
 import { useAppPanel } from "./app-panel";
 import { PANEL_ACTION_ID } from "./commands";
+import { FolderBrowser } from "./folder-browser";
 import { introStore } from "./intro-store";
 import { findLocalHostId, isDesktopApp } from "./local-host";
 import { errorText, reportError } from "./notify";
@@ -113,16 +114,19 @@ export function looksLikeHome(value: string): boolean {
 function StepHome({
   home,
   onChange,
-  serverMachine,
-  canBrowse,
+  server,
+  browsing,
   onBrowse,
+  onCloseBrowser,
 }: {
   home: string;
   onChange: (value: string) => void;
-  serverMachine: string | null;
-  canBrowse: boolean;
+  server: MachineChoice | null;
+  browsing: boolean;
   onBrowse: () => void;
+  onCloseBrowser: () => void;
 }) {
+  const serverMachine = server?.name ?? null;
   return (
     <div className="flex flex-col gap-3 text-sm">
       <p className="text-muted-foreground">
@@ -141,8 +145,8 @@ function StepHome({
             className="font-mono"
             onChange={(event) => onChange(event.target.value)}
           />
-          {canBrowse ? (
-            <Button type="button" variant="outline" onClick={onBrowse}>
+          {server !== null && server.connected ? (
+            <Button type="button" variant="outline" aria-pressed={browsing} onClick={onBrowse}>
               Browse…
             </Button>
           ) : null}
@@ -153,6 +157,18 @@ function StepHome({
           Use a full path, or one starting with ~ for your home folder.
         </p>
       )}
+      {browsing && server !== null ? (
+        <FolderBrowser
+          hostId={server.id}
+          machine={server.name}
+          typed={home}
+          onPick={(path) => {
+            onChange(path);
+            onCloseBrowser();
+          }}
+          onClose={onCloseBrowser}
+        />
+      ) : null}
     </div>
   );
 }
@@ -263,19 +279,33 @@ export function IntroDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [browsing, setBrowsing] = useState(false);
+
   const pick = chosen ?? initial.pick;
   const server = machines.list.find((machine) => machine.isServer) ?? null;
-  const canBrowse = server !== null && machines.localHostId === server.id;
   const index = STEPS.indexOf(step);
 
+  /**
+   * As bb's Add project dialog does: the system's own folder picker when this window is bb's desktop app
+   * on the machine bb runs on, and the folder browser in the dialog anywhere else, or when that picker
+   * cannot open.
+   */
   function browse(): void {
-    if (server === null || machines.localHostId === null) return;
+    if (server === null) return;
+    if (browsing) {
+      setBrowsing(false);
+      return;
+    }
+    if (machines.localHostId !== server.id) {
+      setBrowsing(true);
+      return;
+    }
     sdk.hosts
       .pickFolder({ hostId: server.id, clientHostId: machines.localHostId })
       .then(({ path }) => {
         if (path !== null) setHome(path);
       })
-      .catch(reportError);
+      .catch(() => setBrowsing(true));
   }
 
   function start(): void {
@@ -309,7 +339,14 @@ export function IntroDialog({
           </DialogDescription>
         </DialogHeader>
         {step === "home" ? (
-          <StepHome home={home} onChange={setHome} serverMachine={server?.name ?? null} canBrowse={canBrowse} onBrowse={browse} />
+          <StepHome
+            home={home}
+            onChange={setHome}
+            server={server}
+            browsing={browsing}
+            onBrowse={browse}
+            onCloseBrowser={() => setBrowsing(false)}
+          />
         ) : step === "agent" ? (
           <StepAgent pick={pick} pickError={initial.error} onPick={setChosen} machines={machines} />
         ) : (
@@ -330,7 +367,14 @@ export function IntroDialog({
               {busy ? "Starting…" : "Start the first mate"}
             </Button>
           ) : (
-            <Button type="button" disabled={!canNext} onClick={() => setStep(STEPS[index + 1]!)}>
+            <Button
+              type="button"
+              disabled={!canNext}
+              onClick={() => {
+                setBrowsing(false);
+                setStep(STEPS[index + 1]!);
+              }}
+            >
               Next
             </Button>
           )}

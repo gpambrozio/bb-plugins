@@ -44,7 +44,7 @@ against bb 0.48.1's bundled push-notifications plugin, read from its build (not 
 | `skills/fm/` | The `/fm` skill bb puts in every thread: it pipes the user's request, base64, into `tell --message-base64-stdin`. Its test is `server/fm-skill.test.ts`, because bb copies the skill's folder into threads whole. |
 | `templates/` | **Everything the plugin writes into the home**, laid out as it lands there, plus `messages/` (what the plugin says to the first mate) and `parts/` (pieces inside other files). The first mate's behaviour is `templates/data/charter.md`. |
 | `app.tsx`, `app/` | The "FirstMate" action tab (`experimental_tab`; `panel.tsx` branches on the thread), the board and cards, the settings section, the command palette entries, and the overlay that expands watch notes in chat. `use-fleet.ts` is the board's one read. |
-| `app/intro.tsx`, `app/intro-store.ts`, `app/local-host.ts` | The first-run guide: the offer's toast and the setup dialog (an app overlay), the window's own state (open, "Later", which thread gets the board), the composer contribution that opens the FirstMate tab in the new first mate's pane, and the desktop app's machine lookup for Browse. |
+| `app/intro.tsx`, `app/intro-store.ts`, `app/local-host.ts`, `app/folder-browser.tsx` | The first-run guide: the offer's toast and the setup dialog (an app overlay), the window's own state (open, "Later", which thread gets the board), the composer contribution that opens the FirstMate tab in the new first mate's pane, the desktop app's machine lookup for Browse, and the in-dialog folder browser. |
 | `components/ui/`, `lib/`, `hooks/` | Vendored shadcn components and helpers. |
 | `scripts/gen-templates.mjs` | Writes `server/templates.generated.ts` from `templates/`. |
 
@@ -349,9 +349,15 @@ Do not break these; each was paid for.
   above), so the guide lists every machine but only that one can be chosen; the others are marked "for
   crew only" or offline. Letting the first mate live on another machine needs the home moved behind a
   `bb.host` entry first.
-- **The guide's Browse is the desktop app's native picker** (`hosts.pickFolder`), offered only when the
-  window runs on the server's machine, found through the local host daemon's `/status` as Herald does
-  (bb internals). Anywhere else the folder is typed.
+- **The guide's Browse does what bb's Add project dialog does.** In the desktop app on the server's
+  machine (found through the local host daemon's `/status` as Herald does; bb internals) it opens the
+  system's picker (`hosts.pickFolder`); anywhere else, or when that picker fails, it opens a folder
+  browser in the dialog (`app/folder-browser.tsx`) over the server's machine. bb 0.49 does not export its
+  own browser to plugins, so this one uses the same calls: `hosts.directory` (absolute real paths; it
+  leaves out dot entries and `node_modules`, and lists the host's home folder when given no path) and
+  `files.mkdir` (non-recursive) for **New folder**. The browser only fills the Home folder field, which
+  can still be typed: the path goes to `intro.start` and through every check above, like a typed one. A
+  folder it makes is new and empty, which the guide takes as it takes a missing one.
 - **Relaunch is a message to the first mate**, which spawns the replacement with `--environment` set to
   the old worker's environment. The old thread stays stopped, not archived, so the shared worktree lives.
 

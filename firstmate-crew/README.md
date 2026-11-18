@@ -45,7 +45,7 @@ parent is set so that the first mate isn't told when it finishes._
 
 _The board on a phone, where it takes the screen over the chat._
 
-![The first-run guide: the "Start using FirstMate?" toast, Start, the home folder, the model and machine, Start the first mate, and the first mate's chat opening with the FirstMate board beside it, where it welcomes the captain and asks which project to work on first](docs/screenshots/first-run-demo.gif)
+![The first-run guide: the "Start using FirstMate?" toast, Start, a new FirstMate folder made for the home with Browse, the model and machine, Start the first mate, and the first mate's chat opening with the FirstMate board beside it, where it welcomes the captain and asks which project to work on first](docs/screenshots/first-run-demo.gif)
 
 _The first-run guide, right after installing: three short steps, then the first mate's chat opens with
 its board beside it and the first mate shows you around._
@@ -84,7 +84,8 @@ there, and `bb plugin dev` to rebuild on save. See [`AGENTS.md`](AGENTS.md).
 1. Right after you install FirstMate, a toast asks **Start using FirstMate?** Press **Start** for a short
    guided setup:
    - **Home folder**: where the first mate keeps its charter, backlog and notes, `~/FirstMate` unless you
-     choose another. Use a new or empty folder; the desktop app has a **Browse…** button.
+     choose another. Use a new or empty folder: type its path, or **Browse…** the folders on bb's machine,
+     where **New folder** makes one. In the desktop app on that machine, Browse opens the system's picker.
    - **Model and machine**: the agent that will be your first mate. It runs on the machine bb runs on,
      next to its home folder; your crew can still work in projects on your other machines.
    - **Start the first mate**: FirstMate starts it, opens its chat with the **FirstMate** board beside

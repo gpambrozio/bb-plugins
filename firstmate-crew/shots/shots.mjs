@@ -6,8 +6,8 @@
 // Run with `npm run shots -- firstmate-crew` in tools/shots; it writes into
 // firstmate-crew/docs/screenshots/.
 //
-// The guide's first mate runs on the scripted agent in the default home, ~/FirstMate in the dev bb's
-// fake HOME, and is released and archived once shot. The board's first mate lives in a second home,
+// The guide's first mate runs on the scripted agent in ~/FirstMate in the dev bb's fake HOME, a folder the
+// demo makes with the guide's folder browser, and is released and archived once shot. The board's first mate lives in a second home,
 // ~/Voyage, a fixture: its backlog, suggestions and projects are written before its launch, which keeps
 // them (the plugin never overwrites records). Its one watch is the built-in pr-watch, replaced by an
 // inert copy that prints nothing and calls nothing (the plugin keeps an edited copy as it is), with a
@@ -237,6 +237,8 @@ const voyageHome = (seed) => join(seed.home, "Voyage");
 
 export async function seed({ seed }) {
   const home = voyageHome(seed);
+  // A lived-in home folder for the guide's folder browser (hidden files keep the folders and list nothing).
+  seed.homeFiles(Object.fromEntries(["Desktop", "Documents", "Downloads", "Developer"].map((folder) => [`${folder}/.keep`, ""])));
   seed.project(WEB, { "README.md": "# Acme Web\n\nThe Acme customer site.\n" });
   seed.project(API, { "README.md": "# Acme API\n\nThe Acme public API.\n" });
 
@@ -364,9 +366,30 @@ async function openSetup(page, toast) {
   return dialog;
 }
 
-/** Steps 1 and 2 as a new captain takes them: the default home, the default model, the one machine. */
+/** The guide's folder browser, opened from Browse… on the home step and listing the fake HOME. */
+async function openBrowser(dialog) {
+  await dialog.getByRole("button", { name: "Browse…" }).click();
+  await dialog.getByRole("button", { name: "Documents", exact: true }).waitFor();
+}
+
+/**
+ * Steps 1 and 2 as a new captain takes them: a new FirstMate folder made in the home folder with the
+ * browser, the default model, the one machine.
+ */
 async function stepToStart(page, dialog, { pace = 0 } = {}) {
   await dialog.getByRole("textbox", { name: "Home folder" }).waitFor();
+  await page.waitForTimeout(pace);
+  await openBrowser(dialog);
+  await page.waitForTimeout(pace);
+  await dialog.getByRole("button", { name: /New folder/ }).click();
+  await dialog.getByRole("textbox", { name: "New folder name" }).pressSequentially("FirstMate", { delay: 90 });
+  await page.waitForTimeout(pace / 2);
+  await dialog.getByRole("button", { name: "Create", exact: true }).click();
+  await dialog.getByText("No folders here.").waitFor();
+  await page.waitForTimeout(pace);
+  await dialog.getByRole("button", { name: "Use this folder" }).click();
+  const home = await dialog.getByRole("textbox", { name: "Home folder" }).inputValue();
+  if (!home.endsWith("/FirstMate")) throw new Error(`the browser picked ${home}, not the new FirstMate folder`);
   await page.waitForTimeout(pace);
   await dialog.getByRole("button", { name: "Next" }).click();
   await dialog.getByText("Step 2 of 3").waitFor();
@@ -385,6 +408,7 @@ export async function shoot({ bb, seed, shots, VARIANTS }) {
     await shots.still(page, "first-run-toast.png");
     const dialog = await openSetup(page, toast);
     await dialog.getByRole("textbox", { name: "Home folder" }).waitFor();
+    await openBrowser(dialog);
     await page.waitForTimeout(400);
     await shots.still(page, "first-run-home.png");
     await dialog.getByRole("button", { name: "Next" }).click();

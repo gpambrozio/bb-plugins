@@ -475,6 +475,13 @@ plugin's `bb.host` entry on the window's own machine — the way to run somethin
 `window.bbDesktop` has no exec (`herald/app/speech-hooks.ts`). A browser tab needs a Local Network Access
 prompt for it, so use it from the desktop app only.
 
+**Choosing a folder on a machine.** bb's Add project dialog opens the system's picker
+(`useSdk().hosts.pickFolder({ hostId, clientHostId })`) when the desktop app runs on that machine, and its
+own folder browser otherwise; the SDK does not export that browser (bb 0.49). A plugin builds one over
+the calls it uses: `hosts.directory({ hostId, path? })` (absolute real paths, the host's home folder
+without a path, no dot entries or `node_modules`) and `files.mkdir({ hostId, path, recursive })`
+(`firstmate-crew/app/folder-browser.tsx`).
+
 **bb's own app settings are readable and observable.** `useSdk().system.config()` returns
 `generalSettings` (`terminalCopyOnSelect` and the rest of Settings → General), and
 `useSdk().subscribe({ event: "system:config-changed", callback })` fires when bb saves them. The event

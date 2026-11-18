@@ -14,7 +14,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   machine it runs on. Then FirstMate starts the first mate, opens its chat with the FirstMate board beside
   it, and the first mate walks you through your first session: what it does, your first
   project and a first small task. *Later* asks again the next time you open bb; *Don't ask again* stops
-  asking. If FirstMate was already set up, you are never asked.
+  asking. If FirstMate was already set up, you are never asked. The home folder can be typed or chosen
+  with *Browse…*, which lists the folders on the machine bb runs on and can make a new one, from any
+  window, the browser and the phone included.
 - **FirstMate: get started** in the command palette, **Guided setup…** in FirstMate's settings and
   **Get started** on the FirstMate tab open the same setup whenever no first mate is aboard.
 
