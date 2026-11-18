@@ -457,7 +457,8 @@ the surface the component renders in, and an `experimental_appOverlay` renders i
 `toThread(id, { split: true })` its `openTab` showed nothing (bb 0.49). To open a tab in the thread just
 opened, render a component inside that thread's view, such as a composer contribution that draws nothing,
 and open it from there once `useComposer().scope` names the thread (`firstmate-crew/app/intro.tsx`,
-`BoardOpener`).
+`BoardOpener`). Plain `toThread(id)` replaces the current view; `split: true` keeps it as a pane of its
+own beside the thread, even when it is only an empty New thread screen.
 
 **A composer that is not on screen cannot be written to.** `useComposers()` lists only the composers
 showing, and a nav panel shows none. To put text in a thread's draft from a page, hand it to an

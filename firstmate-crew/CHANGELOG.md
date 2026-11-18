@@ -11,8 +11,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - **A guided first session.** Right after installing FirstMate, a toast asks *Start using FirstMate?*
   *Start* opens a short setup: where the first mate keeps its home folder, which model it uses and which
-  machine it runs on. Then FirstMate starts the first mate, opens its chat beside the view you are in with
-  the FirstMate board, and the first mate walks you through your first session: what it does, your first
+  machine it runs on. Then FirstMate starts the first mate, opens its chat with the FirstMate board beside
+  it, and the first mate walks you through your first session: what it does, your first
   project and a first small task. *Later* asks again the next time you open bb; *Don't ask again* stops
   asking. If FirstMate was already set up, you are never asked.
 - **FirstMate: get started** in the command palette, **Guided setup…** in FirstMate's settings and

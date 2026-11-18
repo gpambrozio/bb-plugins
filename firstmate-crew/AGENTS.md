@@ -312,8 +312,10 @@ Do not break these; each was paid for.
   crewmate — the ones idle long enough to be compacted — would drop to Idle. `lastText` stays the latest
   turn's reply: quiet shipshape needs exactly that. The charter's §0 gives the first mate the same
   fallback as a `bb thread log … | jq` query.
-- **The guide's board opens from inside the first mate's thread.** The guide opens the thread with
-  `useBbNavigate().toThread(id, { split: true })`, then has to open the FirstMate tab in *that* pane. An
+- **The guide's board opens from inside the first mate's thread.** The guide opens the thread with a
+  plain `useBbNavigate().toThread(id)` (`showFirstMate`), never `split: true`: a split keeps the view the
+  guide started from as a pane of its own, which on a new install is an empty New thread screen. Then it
+  has to open the FirstMate tab in the thread's pane. An
   app overlay's `experimental_useAppPanel()` opens no pane's panel (bb 0.49, tried live), so a composer
   contribution that draws nothing (`BoardOpener`, scope `thread`) opens it from the thread's own view once
   its composer's scope names the thread, retrying for five seconds while bb mounts the pane.

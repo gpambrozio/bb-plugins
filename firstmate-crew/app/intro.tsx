@@ -1,8 +1,8 @@
 /**
  * The first-run guide: a toast that offers it to a new install, and the three-step setup it opens —
  * the first mate's home folder, its model and machine, and the start. Starting launches the first mate
- * with the first-session prompt (`intro.start`), opens its thread beside the current view, and opens the
- * FirstMate tab there.
+ * with the first-session prompt (`intro.start`), opens its thread in place of the current view, and opens
+ * the FirstMate tab beside it.
  *
  * Whether to offer it is the server's (`server/intro.ts`); "Later" is this window's (`intro-store.ts`).
  * Everything here lives in one app overlay, so the dialog can open over any page.
@@ -14,6 +14,7 @@ import {
   useComposer,
   useRpc,
   useSdk,
+  type BbNavigate,
   type ExperimentalProviderModelPickerValue,
 } from "@get-bb/plugin-sdk/app";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
@@ -341,7 +342,7 @@ export function IntroDialog({
 
 /**
  * Opens the FirstMate tab in the first mate's thread once its composer is on screen, the guide having
- * just opened the thread in a split pane. A composer contribution that draws nothing, because only a
+ * just opened the thread (`showFirstMate`). A composer contribution that draws nothing, because only a
  * component inside the thread's view gets that view's panel controller: an app overlay's opens no pane's.
  * bb mounts the pane a moment after the guide asks for it, so it tries again briefly.
  */
@@ -376,6 +377,18 @@ export function BoardOpener() {
     };
   }, [boardFor, threadId]);
   return null;
+}
+
+/**
+ * The guide's end: the first mate's thread in place of the view the guide was started from, with the
+ * FirstMate tab beside it (`BoardOpener`). Plain navigation, never `split`: a split keeps that view as a
+ * pane of its own, and on a new install that is an empty New thread screen.
+ */
+export function showFirstMate(navigate: Pick<BbNavigate, "toThread">, threadId: string): void {
+  introStore.close();
+  introStore.showBoardFor(threadId);
+  navigate.toThread(threadId);
+  toast.success("Your first mate is aboard.");
 }
 
 /**
@@ -426,10 +439,7 @@ export function IntroOverlay() {
   useEffect(() => () => void toast.dismiss(INTRO_TOAST_ID), []);
 
   function started(threadId: string): void {
-    introStore.close();
-    introStore.showBoardFor(threadId);
-    navigate.toThread(threadId, { split: true });
-    toast.success("Your first mate is aboard.");
+    showFirstMate(navigate, threadId);
   }
 
   if (!open) return null;

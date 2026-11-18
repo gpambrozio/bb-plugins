@@ -417,6 +417,10 @@ export async function shoot({ bb, seed, shots, VARIANTS }) {
       await page.getByText("Welcome aboard, captain!").first().waitFor({ timeout: 30_000 });
       await boardShown(page);
       await page.getByText("Which one should I work on first?").first().waitFor({ timeout: 30_000 });
+      // Only the first mate's chat and its board: no pane left over from the page the guide started on.
+      if ((await page.getByPlaceholder("Ask anything.").count()) > 0) {
+        throw new Error("the guide left an empty New thread pane beside the first mate");
+      }
       await page.mouse.move(2, 798);
       await page.waitForTimeout(3500);
       await shots.still(page, "first-run-aboard.png");

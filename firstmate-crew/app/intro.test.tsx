@@ -8,7 +8,7 @@ import { renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { BoardOpener, INTRO_TOAST_ID, INTRO_TOAST_TITLE, IntroOverlay, looksLikeHome } from "./intro";
+import { BoardOpener, INTRO_TOAST_ID, INTRO_TOAST_TITLE, IntroOverlay, looksLikeHome, showFirstMate } from "./intro";
 import { createIntroStore, introStore } from "./intro-store";
 import { findLocalHostId } from "./local-host";
 
@@ -66,6 +66,17 @@ describe("the offer's toast", () => {
     expect(introStore.get().snoozed).toBe(true);
     await waitFor(() => expect(toastMock.dismiss).toHaveBeenCalledWith(INTRO_TOAST_ID));
     expect(view.rpcCalls.map((call) => call.method)).not.toContain("intro.dismiss");
+  });
+});
+
+describe("the guide's end", () => {
+  it("opens the first mate's thread in place of the current view, never as a split beside it", () => {
+    introStore.open();
+    const toThread = vi.fn();
+    showFirstMate({ toThread }, "thr_mate");
+    // A split would keep the view the guide started from as a pane of its own: an empty New thread screen.
+    expect(toThread.mock.calls).toEqual([["thr_mate"]]);
+    expect(introStore.get()).toMatchObject({ open: false, boardFor: "thr_mate" });
   });
 });
 
