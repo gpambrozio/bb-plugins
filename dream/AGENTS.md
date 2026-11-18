@@ -229,6 +229,11 @@ of the plugin carries it on; `loop` calls `recover` every minute, which drives i
   else changes: the host's gate still refuses a project with a dry run waiting (manual runs too), and an
   unapplied dry run still never counts as a dream. The overview carries it, so the page and `bb dream
   status` say it.
+- **The model picker saves only the user's own pick.** bb's `experimental_ProviderModelPicker` calls
+  `onChange` by itself on mount when the stored model is not one the machine's Claude Code lists (the
+  screenshot dev bb's stub lists only `opus` and `sonnet`), so `app/settings-section.tsx` ignores it until
+  the user presses or types in the picker. Saving it would change the user's model just by opening the
+  settings.
 - **The sidebar badge** (`app/waiting-badge.ts`, `experimental_useBadge`) counts waiting dry runs from
   the host's `waiting` read: the proposal folders' `proposal.json` files only, no memory or transcript.
   The app asks once, on every `DREAM_CHANGED` (every end of a run, apply and discard goes through the

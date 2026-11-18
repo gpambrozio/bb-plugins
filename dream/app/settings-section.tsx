@@ -4,7 +4,7 @@
  * whose transcripts, memory and hooks they depend on, so the picker cannot switch provider.
  */
 import { experimental_ProviderModelPicker as ProviderModelPicker, useRpc } from "@get-bb/plugin-sdk/app";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import type { RpcContract } from "../shared/contract";
@@ -18,6 +18,11 @@ export function DreamSettingsSection() {
   const rpc = useRpc<RpcContract>();
   const [overview, setOverview] = useState<Overview | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** Set once the user presses or types in the model picker; until then its onChange is bb's own. */
+  const touched = useRef(false);
+  const touch = () => {
+    touched.current = true;
+  };
 
   useEffect(() => {
     let live = true;
@@ -73,12 +78,21 @@ export function DreamSettingsSection() {
       <div className="space-y-1.5">
         <span className="text-sm font-medium">Model</span>
         <p className="text-xs text-muted-foreground">The Claude Code model and reasoning level each dream thread uses.</p>
-        <ProviderModelPicker
-          value={{ providerId: DEFAULT_PROVIDER, model: overview.choices.model, reasoningLevel: overview.choices.reasoningLevel }}
-          onChange={(value) => void save({ model: value.model, reasoningLevel: value.reasoningLevel })}
-          allowProviderChange={false}
-          {...(hostId ? { routing: { kind: "host" as const, hostId } } : {})}
-        />
+        {/* Only a choice the user makes is saved: bb's picker also calls onChange by itself, on
+            mount, when the stored model is not one this Claude Code lists, and saving that would
+            overwrite the user's choice just by opening the settings. */}
+        <div onPointerDownCapture={touch} onKeyDownCapture={touch}>
+          <ProviderModelPicker
+            value={{ providerId: DEFAULT_PROVIDER, model: overview.choices.model, reasoningLevel: overview.choices.reasoningLevel }}
+            onChange={(value) => {
+              if (!touched.current) return;
+              if (value.model === overview.choices.model && value.reasoningLevel === overview.choices.reasoningLevel) return;
+              void save({ model: value.model, reasoningLevel: value.reasoningLevel });
+            }}
+            allowProviderChange={false}
+            {...(hostId ? { routing: { kind: "host" as const, hostId } } : {})}
+          />
+        </div>
       </div>
     </div>
   );
