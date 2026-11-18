@@ -467,6 +467,15 @@ showing, and a nav panel shows none. To put text in a thread's draft from a page
 `scope`; check on every render and poll briefly, since a scope can change in place and the SDK
 harness keeps the same handle list across `setComposerScope` (`terminals/app/chat-delivery.tsx`).
 
+**A plugin cannot tell one device from another.** The SDK names no client, device or native app (SDK
+0.6.104–0.6.132); the only form-factor signal is `isCompactViewport`, which bb passes to several slots
+(navigation, thread list, …) and which is its `(max-width: 767px)` test, so a narrow desktop window counts
+as a phone. Per-device state therefore lives in `localStorage` (one browser) or in plugin storage keyed by
+form factor (every phone). Forking bb's sidebar navigation (`app.slots.experimental_sidebarNavigation`,
+selected by `sidebar.navigationProvider`) starts from `plugins/navigation` in `get-bb/bb`; its
+`@/components/ui/*` imports are in the `@bb` registry (`sidebar-row-classes`, `shortcut-pill`, and
+`sidebar-visibility-customize`, bb's own Customize navigation list) (`phone-rail`).
+
 **A window can learn which machine it runs on.** bb's desktop app runs beside a host daemon that answers
 `GET http://127.0.0.1:<port>/status` with `{ hostId, connected, serverUrl }`, on the ports
 `useSdk().system.config().localHelperPorts` lists and with CORS for the server's origin; bb's own app reads
