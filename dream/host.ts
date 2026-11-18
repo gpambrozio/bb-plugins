@@ -61,6 +61,7 @@ export default experimental_defineHostEntry({
         return () => void lease.dispose();
       }),
     finish: (input, context) => dreamsIn(context.experimental_paths.dataDir).finish(input),
+    checkCanary: (input, context) => dreamsIn(context.experimental_paths.dataDir).checkCanary(input.runId),
     apply: (input, context) =>
       answer(() => dreamsIn(context.experimental_paths.dataDir).apply(input.project, input.stamp, input.backupsToKeep)),
     discard: (input, context) => answer(() => dreamsIn(context.experimental_paths.dataDir).discard(input.project, input.stamp)),

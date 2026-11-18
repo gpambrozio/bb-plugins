@@ -5,13 +5,13 @@
  * Changes run one at a time (`exclusive`): taking a lock, a backup, a copy, applying or restoring.
  * Reads (`scan`, `status`, `backups`) do not wait.
  */
-import { existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import path from "node:path";
 
 import { evaluateGate, type Thresholds } from "../shared/gate";
 import type { Finished, ManifestEntry, MemoryInfo, Mode, Prepared, ProjectInput, ProjectStatus } from "../shared/types";
-import { acquireLock, lockState, markConsolidated, processIsAlive, rollbackLock, type IsAlive } from "./lock";
-import { claudeConfigDir, resolveMemory, type MemoryEnvironment, type ResolvedMemory } from "./memory";
+import { acquireLock, lockState, markConsolidated, processIsAlive, rollbackLock, type AcquireOptions, type IsAlive } from "./lock";
+import { claudeConfigDir, hookBlockers, resolveMemory, type MemoryEnvironment, type ResolvedMemory } from "./memory";
 import { applyProposal, createProposal, discardProposal, findProposal, finishProposal, listProposals, pendingProposal, planApply, type Proposal } from "./proposals";
 import { projectSlug } from "./slug";
 import { backup, changeCount, diffManifests, listBackups, manifest, newestChange, pruneBackups, restoreBackup, stampOf, type Changes, type Manifest } from "./snapshot";
@@ -28,7 +28,7 @@ import {
   type DreamState,
 } from "./state";
 import { checkoutFolders, checkoutSlugs, listSessions, listTranscriptFolders, parseWorktreeFolder, sessionTitle, type SessionFile, type WorktreeFolder } from "./transcripts";
-import { writeWorkspace } from "./workspace";
+import { CANARY_FILE, writeWorkspace } from "./workspace";
 
 /** The most sessions a dream's prompt lists; the rest are counted. */
 export const MAX_LISTED_SESSIONS = 300;
@@ -48,6 +48,8 @@ export interface DreamsOptions {
   guardSource: string;
   isAlive?: IsAlive;
   now?: () => number;
+  /** For tests: how long a new lock settles before it is read back, and how to wait. */
+  lockSettle?: Pick<AcquireOptions, "settleMs" | "sleep">;
 }
 
 /** Keeps the host worker alive while a dream runs; answers its release. Called inside `prepare`. */
@@ -61,6 +63,14 @@ export class DreamRefusal extends Error {
 
 interface ActiveRunRecord extends ActiveRun {
   before: Manifest;
+  /** The guard's decision log for this run, and the canary file the startup check asks for. */
+  logPath: string;
+  canary: string;
+}
+
+export interface CanaryResult {
+  ok: boolean;
+  reason: string;
 }
 
 function emptyChanges(): Changes {
@@ -122,6 +132,10 @@ export function createDreams(options: DreamsOptions) {
     const real = realOrSelf(memoryDir);
     const ours = Object.values(state.runs).some((run) => run.memoryDir === real);
     return (pid) => (pid === options.pid && !ours ? false : isAlive(pid));
+  }
+
+  function takeLock(memoryDir: string, state?: DreamState): Promise<number | null> {
+    return acquireLock(memoryDir, options.pid, { isAlive: aliveFor(memoryDir, state), now: now(), ...options.lockSettle });
   }
 
   function save(state: DreamState): void {
@@ -248,10 +262,14 @@ export function createDreams(options: DreamsOptions) {
         }
         if (!input.manual && !result.gate.due) return refuse(result.gate.code, result.gate.reason);
         if (result.gate.code === "locked") return refuse("locked", result.gate.reason);
+        const blockers = hookBlockers({ home: options.home, env: options.env, managedDirs: options.managedDirs });
+        if (blockers.length > 0) {
+          return refuse("no-guard", `Dream's guard hook would not run, so no dream may start: ${blockers.join("; ")}.`);
+        }
 
         const memoryDir = realOrSelf(result.memory.dir);
         const mode: Mode = input.mode ?? (own.inPlace ? "dream" : "dry-run");
-        const priorMtime = acquireLock(memoryDir, options.pid, aliveFor(memoryDir, state), now());
+        const priorMtime = await takeLock(memoryDir, state);
         if (priorMtime === null) return refuse("locked", "Another dream holds its memory lock.");
         const startedAt = now();
         const stamp = stampOf(startedAt);
@@ -268,9 +286,12 @@ export function createDreams(options: DreamsOptions) {
             proposalStamp = proposal.stamp;
             targetDir = realOrSelf(proposal.memoryDir);
           }
+          const logPath = paths.runLog(input.runId);
+          mkdirSync(path.dirname(logPath), { recursive: true });
+          rmSync(logPath, { force: true });
           const workspace = realOrSelf(
             writeWorkspace(
-              { dir: paths.workspace(project.projectId), memoryDir: targetDir, guardPath: paths.guard, nodePath: options.nodePath, electron: options.electron },
+              { dir: paths.workspace(project.projectId), memoryDir: targetDir, logPath, guardPath: paths.guard, nodePath: options.nodePath, electron: options.electron },
               options.guardSource,
             ),
           );
@@ -296,6 +317,8 @@ export function createDreams(options: DreamsOptions) {
             backup: backupStamp,
             proposal: proposalStamp,
             before: manifest(targetDir),
+            logPath,
+            canary: path.join(workspace, CANARY_FILE),
           };
           state.runs[input.runId] = run;
           recordHistory(own, { runId: input.runId, mode, startedAt, endedAt: null, outcome: "running", threadId: null, changes: null, backup: backupStamp, proposal: proposalStamp });
@@ -327,19 +350,70 @@ export function createDreams(options: DreamsOptions) {
             instructionFiles: INSTRUCTION_FILES.map((file) => path.join(project.checkout, file)).filter((file) => existsSync(file)),
             backup: backupStamp,
             proposal: proposalStamp,
+            canary: path.join(workspace, CANARY_FILE),
           };
         } catch (error) {
-          rollbackLock(memoryDir, priorMtime);
+          rollbackLock(memoryDir, priorMtime, options.pid);
           throw error;
         }
       });
     },
 
+    /**
+     * The startup check, after the thread's first turn asked it to Write the canary file: proven only
+     * when the guard logged that Write (so it ran) and the file does not exist (so the companion hook's
+     * failure blocked it, which needs `onFailure: "block"`). Removes the file either way.
+     */
+    checkCanary(runId: string): CanaryResult {
+      const run = load().runs[runId] as ActiveRunRecord | undefined;
+      if (run === undefined) return { ok: false, reason: `No dream ${runId} is in progress on this machine.` };
+      let logged = false;
+      try {
+        logged = readFileSync(run.logPath, "utf8")
+          .split("\n")
+          .some((line) => {
+            try {
+              return (JSON.parse(line) as { canary?: unknown }).canary === true;
+            } catch {
+              return false;
+            }
+          });
+      } catch {
+        logged = false;
+      }
+      const written = existsSync(run.canary);
+      rmSync(run.canary, { force: true });
+      if (!logged && written) return { ok: false, reason: "the check file was written and the guard never saw it: the workspace's hooks did not run" };
+      if (!logged) return { ok: false, reason: "the guard never saw the check's Write (hooks off, or the thread did not try it)" };
+      if (written) return { ok: false, reason: "the check file was written although its hook failed: this Claude Code ignores onFailure: \"block\"" };
+      return { ok: true, reason: "the guard ran and a failing hook blocked the call" };
+    },
+
+    /**
+     * Ends a prepared run. Safe to repeat: a run already finished answers what it recorded then
+     * (`found: true`), and an unknown one `found: false`, so a lost answer can be asked for again.
+     */
     finish(input: { runId: string; ok: boolean; summary: string | null; threadId: string | null }): Promise<Finished> {
       return exclusive(() => {
         const state = load();
         const run = state.runs[input.runId] as ActiveRunRecord | undefined;
-        if (run === undefined) throw new Error(`No dream ${input.runId} is in progress on this machine.`);
+        if (run === undefined) {
+          for (const project of Object.values(state.projects)) {
+            const entry = project.history.find((candidate) => candidate.runId === input.runId && candidate.endedAt !== null);
+            if (entry) {
+              const proposed = entry.outcome === "proposed";
+              return {
+                found: true,
+                mode: entry.mode,
+                changes: entry.changes ?? emptyChanges(),
+                backup: entry.backup,
+                proposal: proposed ? entry.proposal : null,
+                proposalDir: null,
+              };
+            }
+          }
+          return { found: false, mode: "dream", changes: emptyChanges(), backup: null, proposal: null, proposalDir: null };
+        }
         const own = projectState(state, run.projectId, state.projects[run.projectId]?.name ?? run.projectId);
         if (input.threadId) rememberDreamThread(own, input.threadId);
         rememberDreamSessions(own, listSessions(projectsDir, projectSlug(run.workspace)).map((session) => session.sessionId));
@@ -355,7 +429,7 @@ export function createDreams(options: DreamsOptions) {
           proposalDir = finished.dir;
           if (!input.ok) {
             outcome = "failed";
-            rollbackLock(run.memoryDir, run.priorMtime);
+            rollbackLock(run.memoryDir, run.priorMtime, options.pid);
           } else if (changeCount(changes) === 0) {
             // Nothing to propose: the memory is already tight, which counts as a dream.
             outcome = "unchanged";
@@ -363,14 +437,14 @@ export function createDreams(options: DreamsOptions) {
           } else {
             // Not consolidated until applied; `apply` moves the lock to the dry run's start.
             outcome = "proposed";
-            rollbackLock(run.memoryDir, run.priorMtime);
+            rollbackLock(run.memoryDir, run.priorMtime, options.pid);
           }
         } else {
           changes = diffManifests(run.before, manifest(run.targetDir));
           if (input.ok) outcome = changeCount(changes) > 0 ? "changed" : "unchanged";
           else {
             outcome = "failed";
-            rollbackLock(run.memoryDir, run.priorMtime);
+            rollbackLock(run.memoryDir, run.priorMtime, options.pid);
           }
         }
 
@@ -389,7 +463,14 @@ export function createDreams(options: DreamsOptions) {
         save(state);
         leases.get(input.runId)?.();
         leases.delete(input.runId);
-        return { mode: run.mode, changes, backup: run.backup, proposal: outcome === "proposed" ? run.proposal : null, proposalDir: outcome === "proposed" ? proposalDir : null };
+        return {
+          found: true,
+          mode: run.mode,
+          changes,
+          backup: run.backup,
+          proposal: outcome === "proposed" ? run.proposal : null,
+          proposalDir: outcome === "proposed" ? proposalDir : null,
+        };
       });
     },
 
@@ -399,36 +480,42 @@ export function createDreams(options: DreamsOptions) {
         const proposal = findProposal(paths.proposals(project.projectId), stamp);
         if (proposal === null) throw new DreamRefusal("proposal-pending", stamp ? `No dry run ${stamp} for ${project.name}.` : `${project.name} has no dry run waiting.`);
         const changes = planApply(proposal, memoryDir);
-        const priorMtime = acquireLock(memoryDir, options.pid, aliveFor(memoryDir), now());
+        const priorMtime = await takeLock(memoryDir);
         if (priorMtime === null) throw new DreamRefusal("locked", "Another dream holds its memory lock.");
         try {
           const backupStamp = freshBackupStamp(project.projectId);
           await backup(memoryDir, paths.backups(project.projectId), backupStamp);
           pruneBackups(paths.backups(project.projectId), backupsToKeep);
           applyProposal(proposal, memoryDir, changes, now());
-          markConsolidated(memoryDir, proposal.createdAt);
+          markConsolidated(memoryDir, proposal.createdAt, options.pid);
           const state = load();
           projectState(state, project.projectId, project.name).inPlace = true;
           save(state);
           return { stamp: proposal.stamp, changes, backup: backupStamp };
         } catch (error) {
-          rollbackLock(memoryDir, priorMtime);
+          rollbackLock(memoryDir, priorMtime, options.pid);
           throw error;
         }
       });
     },
 
     discard(project: ProjectInput, stamp: string | undefined) {
-      return exclusive(() => {
+      return exclusive(async () => {
         const memoryDir = realOrSelf(memoryOf(project).dir);
         const proposal = findProposal(paths.proposals(project.projectId), stamp);
         if (proposal === null || proposal.status !== "ready") {
           throw new DreamRefusal("proposal-pending", stamp ? `No dry run ${stamp} waits for ${project.name}.` : `${project.name} has no dry run waiting.`);
         }
-        if (lockState(memoryDir, aliveFor(memoryDir), now()).held) throw new DreamRefusal("locked", "Another dream holds its memory lock.");
-        discardProposal(proposal);
+        const priorMtime = await takeLock(memoryDir);
+        if (priorMtime === null) throw new DreamRefusal("locked", "Another dream holds its memory lock.");
+        try {
+          discardProposal(proposal);
+        } catch (error) {
+          rollbackLock(memoryDir, priorMtime, options.pid);
+          throw error;
+        }
         // Counted as a dream, so the next proposal waits for new sessions instead of coming back tomorrow.
-        markConsolidated(memoryDir, proposal.createdAt);
+        markConsolidated(memoryDir, proposal.createdAt, options.pid);
         return { stamp: proposal.stamp };
       });
     },
@@ -439,7 +526,7 @@ export function createDreams(options: DreamsOptions) {
         const backups = listBackups(paths.backups(project.projectId));
         const chosen = stamp === undefined ? backups[0] : backups.find((entry) => entry.stamp === stamp || entry.stamp.startsWith(stamp));
         if (chosen === undefined) throw new DreamRefusal("no-memory", stamp ? `No backup ${stamp} for ${project.name}.` : `${project.name} has no backups.`);
-        const priorMtime = acquireLock(memoryDir, options.pid, aliveFor(memoryDir), now());
+        const priorMtime = await takeLock(memoryDir);
         if (priorMtime === null) throw new DreamRefusal("locked", "Another dream holds its memory lock.");
         try {
           const before = freshBackupStamp(project.projectId);
@@ -449,7 +536,7 @@ export function createDreams(options: DreamsOptions) {
           return { stamp: chosen.stamp, changes, backup: before };
         } finally {
           // A restore is not a dream: the last-dream time stays what it was.
-          rollbackLock(memoryDir, priorMtime);
+          rollbackLock(memoryDir, priorMtime, options.pid);
         }
       });
     },

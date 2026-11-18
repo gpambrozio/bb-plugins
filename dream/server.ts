@@ -98,7 +98,8 @@ export default async function plugin(bb: BbPluginApi) {
   const host = bb.hosts.experimental_client({ contract: hostContract });
   const publish = () => bb.realtime.publish(DREAM_CHANGED, { at: Date.now() });
 
-  async function threadState(threadId: string): Promise<ThreadState> {
+  /** A dream thread's state once `turns` turns (the startup check, then the dream) should have completed. */
+  async function threadState(threadId: string, turns: number): Promise<ThreadState> {
     let thread;
     try {
       thread = await bb.sdk.threads.get({ threadId });
@@ -111,12 +112,23 @@ export default async function plugin(bb: BbPluginApi) {
     const pending = await bb.sdk.threads.interactions.list({ threadId });
     if (pending.length > 0) return { kind: "asking" };
     if (thread.status !== "idle") return { kind: "running" };
-    const completed = await bb.sdk.threads.events.list({ threadId, types: ["turn/completed"], order: "desc", limit: "1" });
-    if (completed.length === 0) return { kind: "running" };
-    // An interrupted or failed turn is not a dream that finished.
+    const completed = await bb.sdk.threads.events.list({ threadId, types: ["turn/completed"], order: "desc", limit: "10" });
+    if (completed.length < turns) return { kind: "running" };
+    // An interrupted or failed turn is not a turn that finished.
     const last = completed[0];
     const status = last.type === "turn/completed" ? last.data.status : undefined;
     return status === undefined || status === "completed" ? { kind: "finished" } : { kind: "failed", error: `The dream's turn ended ${String(status)}.` };
+  }
+
+  /** Whether bb says the thread is not running: idle, failed, or gone. */
+  async function threadStopped(threadId: string): Promise<boolean> {
+    try {
+      const thread = await bb.sdk.threads.get({ threadId });
+      return thread.deletedAt !== null || thread.status === "idle" || thread.status === "error";
+    } catch (error) {
+      if (isNotFound(error)) return true;
+      throw error;
+    }
   }
 
   const service = createDreamService({
@@ -143,6 +155,7 @@ export default async function plugin(bb: BbPluginApi) {
       scan: (hostId) => host.call("scan", {}, { hostId }),
       status: (hostId, input) => host.call("status", input, { hostId }),
       prepare: (hostId, input) => host.call("prepare", input, { hostId }),
+      checkCanary: (hostId, input) => host.call("checkCanary", input, { hostId }),
       finish: (hostId, input) => host.call("finish", input, { hostId }),
       apply: (hostId, input) => host.call("apply", input, { hostId }),
       discard: (hostId, input) => host.call("discard", input, { hostId }),
@@ -166,14 +179,19 @@ export default async function plugin(bb: BbPluginApi) {
         });
         return thread.id;
       },
+      send: async (threadId, text) => {
+        await bb.sdk.threads.send({ threadId, mode: "queue-if-active", input: [{ type: "text", text, mentions: [] }] });
+      },
       state: threadState,
       output: async (threadId) => (await bb.sdk.threads.output({ threadId })).output,
       stop: async (threadId) => {
         await bb.sdk.threads.stop({ threadId });
       },
+      stopped: threadStopped,
       archive: async (threadId) => {
         await bb.sdk.threads.archive({ threadId });
       },
+      listOpen: async () => (await bb.sdk.threads.list({ originPluginId: bb.pluginId, includeHidden: true, archived: false })).map((thread) => thread.id),
     },
     kv: bb.storage.kv,
     // Feature-detected: with Push notifications off, or on a bb without it, this throws and is logged.

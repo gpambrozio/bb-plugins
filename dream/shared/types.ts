@@ -90,12 +90,16 @@ export const PreparedSchema = z.discriminatedUnion("ok", [
     instructionFiles: z.array(z.string()),
     backup: z.string().nullable(),
     proposal: z.string().nullable(),
+    /** The file the startup check asks the thread to Write; the hooks must keep it from existing. */
+    canary: z.string(),
   }),
   z.object({ ok: z.literal(false), code: z.enum([...GATE_CODES, "no-guard"]), reason: z.string() }),
 ]);
 export type Prepared = z.infer<typeof PreparedSchema>;
 
 export const FinishedSchema = z.object({
+  /** False when the host knows nothing of the run (never prepared, or its state was lost). */
+  found: z.boolean(),
   mode: ModeSchema,
   changes: ChangesSchema,
   backup: z.string().nullable(),

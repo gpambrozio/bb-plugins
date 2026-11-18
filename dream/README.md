@@ -21,6 +21,10 @@ thread is stopped and archived, and its summary goes into the Dream page's histo
 - **Held to memory-only writes.** The thread may use Read, Glob and Grep; `ls`, `find`, `grep`, `cat`,
   `stat`, `wc`, `head` and `tail` in the shell; Write and Edit of `.md` files in the memory folder; and
   `rm -f` of `.md` files there. Everything else is denied without asking, as in Claude Code's own dream.
+- **The limits are proven before every dream.** Each dream thread's first turn is a startup check that
+  shows the guard is running and that a failing guard blocks the call. If it does not pass (hooks
+  switched off in your Claude Code settings, say), the dream never sees your memory or transcripts and
+  ends as failed. Dream also refuses to start when your settings visibly turn hooks off.
 - **The first dream is a dry run.** It works on a copy of the memory and leaves a proposal. Apply it
   from the page or with `bb dream apply <project>` (refused if a session changed one of those files
   since), or discard it. Once one is applied, the project's dreams edit its memory in place.
@@ -29,7 +33,8 @@ thread is stopped and archived, and its summary goes into the Dream page's histo
   what it replaces, so it can be undone the same way.
 - **The same lock as Claude Code.** `<memory>/.consolidate-lock` holds the dream's process id while it
   runs; its modification time is the last dream, a failed dream sets it back, and it goes stale after an
-  hour. A native auto-dream and this plugin never dream the same memory at once.
+  hour. Two copies of this plugin cannot take it at once, and it reads the lock back after taking it, so
+  it steps aside for a native auto-dream that started at the same moment.
 - **One push notification** after a dream that changed files, naming the project and the counts, or
   after a dry run that proposes changes. Nothing when nothing was due or nothing changed.
 

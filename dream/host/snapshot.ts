@@ -3,18 +3,23 @@
  * change: `<backups>/<stamp>.tar.gz`, made with the system `tar` (bsdtar on macOS, GNU tar on Linux,
  * both read `-czf`, `-xzf` and `--exclude`).
  *
- * A dream changes only `.md` files outside `.git/` and `agents/`, so that is what a manifest lists and
+ * A dream changes only `.md` files outside `.git/` and `agents/` (at any depth, without case), and
+ * the walk follows no symlink, so a manifest lists regular files reached through real folders only.
+ * That is what a manifest lists and
  * what a restore puts back: it removes the `.md` files the backup does not have and writes the ones
  * it does. Anything else in the folder (a `.git/`, notes in other formats) is never touched. Every
  * restore takes a backup of what it replaces first, so it can be undone the same way.
  */
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, unlinkSync } from "node:fs";
+import { constants, copyFileSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-const PROTECTED = new Set([".git", "agents"]);
+/** As the guard: `.git` and `agents` at any depth, without case (macOS volumes ignore it). */
+export function isProtectedName(name: string): boolean {
+  return [".git", "agents"].includes(name.normalize("NFC").toLowerCase());
+}
 const TAR_TIMEOUT_MS = 120_000;
 
 /** `relative path` → sha256 of each `.md` file a dream may change. */
@@ -38,7 +43,7 @@ export function markdownFiles(dir: string): string[] {
     for (const entry of entries) {
       const relative = prefix === "" ? entry.name : `${prefix}/${entry.name}`;
       if (entry.isDirectory()) {
-        if (!(prefix === "" && PROTECTED.has(entry.name)) && entry.name !== ".git") walk(path.join(folder, entry.name), relative);
+        if (!isProtectedName(entry.name)) walk(path.join(folder, entry.name), relative);
       } else if (entry.isFile() && entry.name.endsWith(".md")) {
         files.push(relative);
       }
@@ -148,22 +153,77 @@ export function pruneBackups(backupsDir: string, keep: number): string[] {
   return removed;
 }
 
-/** Writes `source` over `target` through a temporary file in the same folder. */
-function replaceFile(source: string, target: string): void {
-  mkdirSync(path.dirname(target), { recursive: true });
+export class UnsafePathError extends Error {}
+
+/**
+ * The absolute path of `relative` inside the memory folder, after checking that writing or deleting
+ * it cannot leave the folder: no `..`, no protected folder, every existing folder on the way a real
+ * directory (not a symlink), and the file itself, if it exists, a regular file. Throws
+ * `UnsafePathError` otherwise. Apply and restore never pass through the dream's guard, so they check
+ * here, right before each change.
+ */
+export function containedPath(root: string, relative: string): string {
+  const parts = relative.split("/");
+  if (parts.some((part) => part === "" || part === "." || part === "..")) throw new UnsafePathError(`${relative} is not a plain relative path`);
+  if (parts.slice(0, -1).some(isProtectedName)) throw new UnsafePathError(`${relative} is in a protected folder`);
+  let rootStats;
+  try {
+    rootStats = lstatSync(root);
+  } catch {
+    throw new UnsafePathError(`the memory folder ${root} does not exist`);
+  }
+  if (!rootStats.isDirectory()) throw new UnsafePathError(`the memory folder ${root} is not a directory`);
+  let current = root;
+  for (let index = 0; index < parts.length; index++) {
+    current = path.join(current, parts[index]);
+    let stats;
+    try {
+      stats = lstatSync(current);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return path.join(root, ...parts);
+      throw new UnsafePathError(`${current} cannot be inspected`);
+    }
+    const last = index === parts.length - 1;
+    if (stats.isSymbolicLink()) throw new UnsafePathError(`${current} is a symlink`);
+    if (!last && !stats.isDirectory()) throw new UnsafePathError(`${current} is not a directory`);
+    if (last && !stats.isFile()) throw new UnsafePathError(`${current} is not a regular file`);
+  }
+  return path.join(root, ...parts);
+}
+
+/** Copies `source` to `relative` in the memory folder through a temporary file beside it, contained. */
+export function writeMemoryFile(root: string, relative: string, source: string): void {
+  const target = containedPath(root, relative);
+  // Make the missing folders one at a time, re-checking, so none of them can be a link.
+  const parts = relative.split("/").slice(0, -1);
+  let current = root;
+  for (const part of parts) {
+    current = path.join(current, part);
+    try {
+      mkdirSync(current);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    }
+  }
+  containedPath(root, relative);
   const temporary = `${target}.dream-${process.pid}-${Date.now()}`;
-  copyFileSync(source, temporary);
+  copyFileSync(source, temporary, constants.COPYFILE_EXCL);
   renameSync(temporary, target);
 }
 
+export function removeMemoryFile(root: string, relative: string): void {
+  rmSync(containedPath(root, relative), { force: true });
+}
+
 /**
- * Makes the memory folder's `.md` files those of `fromDir`, leaving every other file alone.
- * Answers what changed.
+ * Makes the memory folder's `.md` files those of `fromDir`, leaving every other file alone. Every
+ * target is checked before anything changes, and again as it changes. Answers what changed.
  */
 export function syncMarkdown(fromDir: string, memoryDir: string): Changes {
   const changes = diffManifests(manifest(memoryDir), manifest(fromDir));
-  for (const file of [...changes.added, ...changes.changed]) replaceFile(path.join(fromDir, ...file.split("/")), path.join(memoryDir, ...file.split("/")));
-  for (const file of changes.deleted) rmSync(path.join(memoryDir, ...file.split("/")), { force: true });
+  for (const file of [...changes.added, ...changes.changed, ...changes.deleted]) containedPath(memoryDir, file);
+  for (const file of [...changes.added, ...changes.changed]) writeMemoryFile(memoryDir, file, path.join(fromDir, ...file.split("/")));
+  for (const file of changes.deleted) removeMemoryFile(memoryDir, file);
   return changes;
 }
 

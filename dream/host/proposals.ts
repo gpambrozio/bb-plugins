@@ -8,11 +8,11 @@
  * in the real folder since (a session wrote to it), so a proposal never undoes newer memory. Files
  * that appeared in the real folder meanwhile stay.
  */
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { constants, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import { LOCK_FILE } from "./lock";
-import { diffManifests, manifest, stampTime, type Changes, type Manifest } from "./snapshot";
+import { containedPath, diffManifests, manifest, removeMemoryFile, stampTime, writeMemoryFile, type Changes, type Manifest } from "./snapshot";
 
 export interface ProposalRecord {
   stamp: string;
@@ -48,19 +48,28 @@ function proposalOf(dir: string): Proposal | null {
   return { ...record, dir, memoryDir: path.join(dir, "memory") };
 }
 
-/** Copies the memory folder (without `.git/` and the lock) into a new proposal. */
+/**
+ * Copies the regular files of `from` into `to`, through real folders only: no symlink is copied or
+ * followed, so the copy is independent of the memory (a link copied as a link could lead a dry run's
+ * write back into the real memory). `.git/` and the lock are left out.
+ */
+export function copyRegularFiles(from: string, to: string): void {
+  mkdirSync(to, { recursive: true });
+  for (const entry of readdirSync(from, { withFileTypes: true })) {
+    if (entry.name === ".git" || entry.name === LOCK_FILE || entry.name === `${LOCK_FILE}.claim`) continue;
+    const source = path.join(from, entry.name);
+    const target = path.join(to, entry.name);
+    if (entry.isDirectory()) copyRegularFiles(source, target);
+    else if (entry.isFile()) copyFileSync(source, target, constants.COPYFILE_EXCL);
+  }
+}
+
+/** Copies the memory folder (regular files only, without `.git/` and the lock) into a new proposal. */
 export function createProposal(memoryDir: string, proposalsDir: string, stamp: string, now = Date.now()): Proposal {
   const dir = path.join(proposalsDir, stamp);
   const copy = path.join(dir, "memory");
   mkdirSync(dir, { recursive: true });
-  cpSync(memoryDir, copy, {
-    recursive: true,
-    filter: (source) => {
-      const name = path.basename(source);
-      return name !== ".git" && name !== LOCK_FILE;
-    },
-  });
-  mkdirSync(copy, { recursive: true });
+  copyRegularFiles(memoryDir, copy);
   writeJson(path.join(dir, "base.json"), manifest(memoryDir));
   const record: ProposalRecord = { stamp, createdAt: now, status: "running", changes: null, summary: null, appliedAt: null };
   writeJson(path.join(dir, "proposal.json"), record);
@@ -125,16 +134,15 @@ export function planApply(proposal: Proposal, memoryDir: string): Changes {
   return changes;
 }
 
-/** Applies a planned proposal to the real folder. The caller takes a backup first. */
+/**
+ * Applies a planned proposal to the real folder. The caller takes a backup first. Every target is
+ * checked for containment (no symlink on the way, nothing outside the folder) before anything
+ * changes, and again as it changes.
+ */
 export function applyProposal(proposal: Proposal, memoryDir: string, changes: Changes, now = Date.now()): void {
-  for (const file of [...changes.added, ...changes.changed]) {
-    const target = path.join(memoryDir, ...file.split("/"));
-    mkdirSync(path.dirname(target), { recursive: true });
-    const temporary = `${target}.dream-${process.pid}`;
-    cpSync(path.join(proposal.memoryDir, ...file.split("/")), temporary);
-    renameSync(temporary, target);
-  }
-  for (const file of changes.deleted) rmSync(path.join(memoryDir, ...file.split("/")), { force: true });
+  for (const file of [...changes.added, ...changes.changed, ...changes.deleted]) containedPath(memoryDir, file);
+  for (const file of [...changes.added, ...changes.changed]) writeMemoryFile(memoryDir, file, path.join(proposal.memoryDir, ...file.split("/")));
+  for (const file of changes.deleted) removeMemoryFile(memoryDir, file);
   writeJson(path.join(proposal.dir, "proposal.json"), toRecord({ ...proposal, status: "applied", appliedAt: now }));
 }
 

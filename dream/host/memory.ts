@@ -37,6 +37,9 @@ export interface MemoryEnvironment {
   CLAUDE_CONFIG_DIR?: string;
   CLAUDE_CODE_REMOTE_MEMORY_DIR?: string;
   CLAUDE_CODE_DISABLE_AUTO_MEMORY?: string;
+  /** Both turn off the hooks a dream's guard is (`hookBlockers`). */
+  CLAUDE_CODE_PERSONAL_HOOKS_OFF?: string;
+  CLAUDE_CODE_SIMPLE?: string;
 }
 
 export interface ResolveMemoryOptions {
@@ -99,13 +102,13 @@ export function usableDir(value: string | undefined, expandTilde: boolean, home:
   return normalized;
 }
 
-interface SettingsFile {
+export interface SettingsFile {
   file: string;
   values: Record<string, unknown> | null;
   error: string | null;
 }
 
-function readSettingsFile(file: string): SettingsFile {
+export function readSettingsFile(file: string): SettingsFile {
   if (!existsSync(file)) return { file, values: null, error: null };
   try {
     const parsed: unknown = JSON.parse(readFileSync(file, "utf8"));
@@ -118,7 +121,7 @@ function readSettingsFile(file: string): SettingsFile {
   }
 }
 
-function policyFiles(managedDirs: readonly string[]): SettingsFile[] {
+export function policyFiles(managedDirs: readonly string[]): SettingsFile[] {
   const files: SettingsFile[] = [];
   for (const dir of managedDirs) {
     // Drop-ins later in the alphabet win over earlier ones and over the base file.
@@ -293,4 +296,28 @@ export function resolveMemory(options: ResolveMemoryOptions): ResolvedMemory {
   }
 
   return { ...resolved, defaultDir, autoMemoryEnabled, warnings };
+}
+
+/**
+ * Why a dream's guard hook would not run on this machine, as far as files and the environment show:
+ * `disableAllHooks` in user or managed settings (Claude Code merges it restrictively, so the
+ * workspace's own `false` cannot undo it), managed `allowManagedHooksOnly` (which drops project
+ * hooks), `CLAUDE_CODE_PERSONAL_HOOKS_OFF` or `CLAUDE_CODE_SIMPLE`, or a settings file Claude Code
+ * could not read either. MDM and server-managed policy are not visible here; the startup canary
+ * catches those. Empty when nothing is in the way.
+ */
+export function hookBlockers(options: Pick<ResolveMemoryOptions, "home" | "env" | "managedDirs">): string[] {
+  const reasons: string[] = [];
+  const user = readSettingsFile(path.join(claudeConfigDir(options.home, options.env), "settings.json"));
+  const managed = policyFiles(options.managedDirs);
+  for (const file of [user, ...managed]) {
+    if (file.error) reasons.push(`${file.error}, so whether it turns hooks off cannot be known`);
+    if (file.values?.disableAllHooks === true) reasons.push(`${file.file} sets disableAllHooks`);
+  }
+  for (const file of managed) {
+    if (file.values?.allowManagedHooksOnly === true) reasons.push(`${file.file} sets allowManagedHooksOnly, which ignores project hooks`);
+  }
+  if (isTrue(options.env.CLAUDE_CODE_PERSONAL_HOOKS_OFF)) reasons.push("CLAUDE_CODE_PERSONAL_HOOKS_OFF is set");
+  if (nonEmpty(options.env.CLAUDE_CODE_SIMPLE) && !isFalse(options.env.CLAUDE_CODE_SIMPLE)) reasons.push("CLAUDE_CODE_SIMPLE is set");
+  return reasons;
 }

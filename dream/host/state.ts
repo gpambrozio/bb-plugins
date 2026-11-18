@@ -9,6 +9,7 @@
  *     workspaces/<project id>/        a dream thread's working directory
  *     backups/<project id>/<stamp>.tar.gz
  *     proposals/<project id>/<stamp>/ a dry run: memory/, base.json, proposal.json
+ *     runs/<run id>.log               the guard's decisions during one dream
  *
  * Folders are named by bb project id, which a rename does not change.
  */
@@ -24,6 +25,8 @@ export interface DataPaths {
   workspace(projectId: string): string;
   backups(projectId: string): string;
   proposals(projectId: string): string;
+  /** The guard's decision log for one run. */
+  runLog(runId: string): string;
 }
 
 /** A project id as a folder name: bb's ids are already safe; anything else is made so. */
@@ -39,6 +42,7 @@ export function dataPaths(root: string): DataPaths {
     workspace: (projectId) => path.join(root, "workspaces", folderOf(projectId)),
     backups: (projectId) => path.join(root, "backups", folderOf(projectId)),
     proposals: (projectId) => path.join(root, "proposals", folderOf(projectId)),
+    runLog: (runId) => path.join(root, "runs", `${folderOf(runId)}.log`),
   };
 }
 

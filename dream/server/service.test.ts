@@ -6,7 +6,7 @@ import type { Changes, Prepared, ProjectStatus } from "../shared/types";
 import type { KvLike } from "./history";
 import { mapWorktreeFolders } from "./projects";
 import { renderPrompt } from "./prompt";
-import { createDreamService, MAX_DREAM_MS, type DreamConfig, type DreamPorts, type ThreadState } from "./service";
+import { createDreamService, MAX_DREAM_MS, START_GRACE_MS, type ActiveState, type DreamConfig, type DreamPorts, type DreamService, type ThreadState } from "./service";
 
 const MINUTE = 60_000;
 const DAY = 24 * 60 * MINUTE;
@@ -28,12 +28,30 @@ interface FakeProject {
   id: string;
   lastDreamAt: number | null;
   due: boolean;
-  /** How long its dream thread runs. */
+  /** How long its dream turn runs. */
   takesMs: number;
   changes: Changes;
   thread?: ThreadState["kind"];
   refuse?: string;
 }
+
+/** How a fake bb and dream machine misbehave, switchable during a test. */
+interface Faults {
+  /** The startup check's verdict; proven by default. */
+  canary: { ok: boolean; reason: string };
+  stopFails: boolean;
+  /** bb keeps saying the thread runs after a stop. */
+  neverStops: boolean;
+  finishFails: boolean;
+  archiveFails: boolean;
+  /** Extra time each status scan and each prepare takes. */
+  statusMs: number;
+  prepareMs: number;
+  /** Called while `spawn` is in flight, before it answers. */
+  duringSpawn?: () => void;
+}
+
+const CANARY_MS = MINUTE;
 
 function setup(options: { projects: FakeProject[]; start: Date; config?: Partial<DreamConfig> }) {
   let now = options.start.getTime();
@@ -42,10 +60,13 @@ function setup(options: { projects: FakeProject[]; start: Date; config?: Partial
   const order: string[] = [];
   const stopped: string[] = [];
   const archived: string[] = [];
+  const sent: Array<{ threadId: string; text: string }> = [];
   const notifications: Array<{ title: string; body: string }> = [];
   const finishes: Array<{ runId: string; ok: boolean }> = [];
-  const threads = new Map<string, { project: FakeProject; spawnedAt: number; stopped: boolean }>();
+  const threads = new Map<string, { project: FakeProject; spawnedAt: number; sentAt: number | null; stopped: boolean; archived: boolean }>();
   const runs = new Map<string, FakeProject>();
+  const finished = new Set<string>();
+  const faults: Faults = { canary: { ok: true, reason: "proven" }, stopFails: false, neverStops: false, finishFails: false, archiveFails: false, statusMs: 0, prepareMs: 0 };
   const config: DreamConfig = {
     scheduleEnabled: true,
     windowStart: "01:00",
@@ -85,10 +106,14 @@ function setup(options: { projects: FakeProject[]; start: Date; config?: Partial
     threadProject: async () => null,
     host: {
       scan: async () => ({ worktreeFolders: [] }),
-      status: async (_hostId, input) => ({ projects: input.projects.map((input) => status(options.projects.find((project) => project.id === input.projectId) as FakeProject)) }),
+      status: async (_hostId, input) => {
+        now += faults.statusMs;
+        return { projects: input.projects.map((input) => status(options.projects.find((project) => project.id === input.projectId) as FakeProject)) };
+      },
       prepare: async (_hostId, input): Promise<Prepared> => {
         const project = options.projects.find((candidate) => candidate.id === input.project.projectId) as FakeProject;
         if (project.refuse) return { ok: false, code: "locked", reason: project.refuse };
+        now += faults.prepareMs;
         runs.set(input.runId, project);
         return {
           ok: true,
@@ -103,16 +128,21 @@ function setup(options: { projects: FakeProject[]; start: Date; config?: Partial
           instructionFiles: [],
           backup: "20261117T010000000Z",
           proposal: null,
+          canary: `/ws/${project.id}/.dream-canary.md`,
         };
       },
+      checkCanary: async () => faults.canary,
       finish: async (_hostId, input) => {
         finishes.push({ runId: input.runId, ok: input.ok });
-        const project = runs.get(input.runId) as FakeProject;
-        if (input.ok) {
+        if (faults.finishFails) throw new Error("the dream machine is offline");
+        const project = runs.get(input.runId);
+        if (project === undefined) return { found: false, mode: "dream", changes: NO_CHANGES, backup: null, proposal: null, proposalDir: null };
+        if (input.ok && !finished.has(input.runId)) {
           project.due = false;
           project.lastDreamAt = now;
         }
-        return { mode: "dream", changes: input.ok ? project.changes : NO_CHANGES, backup: null, proposal: null, proposalDir: null };
+        finished.add(input.runId);
+        return { found: true, mode: "dream", changes: input.ok ? project.changes : NO_CHANGES, backup: null, proposal: null, proposalDir: null };
       },
       apply: async () => ({ stamp: "", changes: NO_CHANGES, backup: "" }),
       discard: async () => ({ stamp: "" }),
@@ -125,26 +155,78 @@ function setup(options: { projects: FakeProject[]; start: Date; config?: Partial
         const project = options.projects.find((candidate) => candidate.id === request.projectId) as FakeProject;
         order.push(project.id);
         const id = `thr_${project.id}${order.length}`;
-        threads.set(id, { project, spawnedAt: now, stopped: false });
+        threads.set(id, { project, spawnedAt: now, sentAt: null, stopped: false, archived: false });
+        expect(request.prompt).toContain("Dream startup check");
+        expect(request.prompt).not.toContain("# Dream: Memory Consolidation");
+        faults.duringSpawn?.();
         return id;
       },
-      state: async (threadId) => {
+      send: async (threadId, text) => {
+        sent.push({ threadId, text });
+        const thread = threads.get(threadId);
+        if (thread) thread.sentAt = now;
+      },
+      state: async (threadId, turns) => {
         const thread = threads.get(threadId);
         if (!thread) return { kind: "gone" };
+        if (turns === 1) return now - thread.spawnedAt >= CANARY_MS ? { kind: "finished" } : { kind: "running" };
         if (thread.project.thread === "asking") return { kind: "asking" };
         if (thread.project.thread === "failed") return { kind: "failed", error: "boom" };
-        return now - thread.spawnedAt >= thread.project.takesMs ? { kind: "finished" } : { kind: "running" };
+        if (thread.sentAt === null) return { kind: "running" };
+        return now - thread.sentAt >= thread.project.takesMs ? { kind: "finished" } : { kind: "running" };
       },
       output: async (threadId) => `Summary of ${threadId}`,
-      stop: async (threadId) => void stopped.push(threadId),
-      archive: async (threadId) => void archived.push(threadId),
+      stop: async (threadId) => {
+        if (faults.stopFails) throw new Error("the provider is unreachable");
+        stopped.push(threadId);
+        const thread = threads.get(threadId);
+        if (thread) thread.stopped = true;
+      },
+      stopped: async (threadId) => !faults.neverStops && (threads.get(threadId)?.stopped ?? true),
+      archive: async (threadId) => {
+        if (faults.archiveFails) throw new Error("archive failed");
+        archived.push(threadId);
+        const thread = threads.get(threadId);
+        if (thread) thread.archived = true;
+      },
+      listOpen: async () => [...threads].filter(([, thread]) => !thread.archived).map(([id]) => id),
     },
     kv,
     notify: async (title, body) => void notifications.push({ title, body }),
     publish: () => undefined,
   };
   const service = createDreamService(ports);
-  return { service, ports, kv, order, stopped, archived, notifications, finishes, log, now: () => now, advance: (ms: number) => (now += ms) };
+  return {
+    service,
+    ports,
+    kv,
+    faults,
+    order,
+    sent,
+    stopped,
+    archived,
+    notifications,
+    finishes,
+    log,
+    threads,
+    now: () => now,
+    advance: (ms: number) => (now += ms),
+    active: () => kv.get<ActiveState>("active-run"),
+  };
+}
+
+/** Runs `loop` for `ticks` minutes of fake time. */
+async function tick(context: ReturnType<typeof setup>, service: DreamService, ticks: number): Promise<void> {
+  const controller = new AbortController();
+  const end = context.now() + ticks * MINUTE;
+  const ports = context.ports;
+  const sleep = ports.sleep;
+  ports.sleep = async (ms, signal) => {
+    await sleep(ms, signal);
+    if (context.now() >= end) controller.abort();
+  };
+  await service.loop(controller.signal);
+  ports.sleep = sleep;
 }
 
 const at = (hours: number, minutes = 0) => new Date(2026, 10, 17, hours, minutes);
@@ -165,7 +247,7 @@ describe("the nightly sweep", () => {
       config: { windowEnd: "02:00" },
     });
     const dreams = await service.sweep(new AbortController().signal);
-    // never: 01:00–01:40, old: 01:40–02:20; recent would start after the window closed at 02:00.
+    // never: 01:00–01:41 (startup check, then dream), old: 01:41–02:22; recent would start after 02:00.
     expect(order).toEqual(["never", "old"]);
     expect(dreams).toBe(2);
     expect(stopped).toEqual(["thr_never1", "thr_old2"]);
@@ -261,14 +343,149 @@ describe("a dream", () => {
     const first = setup({ start: at(12), projects: [project("a", null, 30 * MINUTE)] });
     const { record } = await first.service.begin("a", { mode: null, manual: true, trigger: "manual" });
     first.service.dispose();
-    const active = await first.kv.get<RunRecord>("active-run");
-    expect(active?.threadId).toBe(record.threadId);
+    const active = await first.active();
+    expect(active?.record.threadId).toBe(record.threadId);
 
     // The new copy shares the stores (kv, host, threads) with the old one.
     const second = createDreamService(first.ports);
     await second.recover();
     expect(await first.kv.get("active-run")).toBeUndefined();
     expect((await second.history.list())[0]).toMatchObject({ outcome: "changed", threadId: record.threadId });
+  });
+});
+
+describe("the startup check", () => {
+  it("sends the dream prompt only after the guard is proven, as a second turn", async () => {
+    const { service, sent } = setup({ start: at(12), projects: [project("a", null)] });
+    const { done } = await service.begin("a", { mode: null, manual: true, trigger: "manual" });
+    await done;
+    expect(sent).toHaveLength(1);
+    expect(sent[0].text).toContain("# Dream: Memory Consolidation");
+  });
+
+  it("never sends the dream prompt when the guard cannot be proven, and fails the run", async () => {
+    const context = setup({ start: at(12), projects: [project("a", null)] });
+    context.faults.canary = { ok: false, reason: "the guard never saw the check's Write" };
+    const { done } = await context.service.begin("a", { mode: null, manual: true, trigger: "manual" });
+    const ended = await done;
+    expect(context.sent).toEqual([]);
+    expect(ended).toMatchObject({ outcome: "failed", error: expect.stringContaining("could not be proven active") });
+    expect(context.finishes).toEqual([expect.objectContaining({ ok: false })]);
+    expect(context.stopped).toEqual(["thr_a1"]);
+  });
+});
+
+describe("ending a dream safely", () => {
+  it("keeps the run, and its lock, while bb cannot confirm the thread stopped", async () => {
+    const context = setup({ start: at(12), projects: [project("a", null, 5 * MINUTE)] });
+    context.faults.stopFails = true;
+    context.faults.neverStops = true;
+    const { done } = await context.service.begin("a", { mode: null, manual: true, trigger: "manual" });
+    await done;
+    expect(context.finishes).toEqual([]);
+    expect((await context.active())?.phase).toBe("stopping");
+    await expect(context.service.begin("a", { mode: null, manual: true, trigger: "manual" })).rejects.toThrow(/already running/);
+
+    // Ticks retry the stop; nothing is released until it is confirmed.
+    await tick(context, context.service, 3);
+    expect(context.finishes).toEqual([]);
+    context.faults.stopFails = false;
+    context.faults.neverStops = false;
+    await tick(context, context.service, 2);
+    expect(context.finishes).toEqual([expect.objectContaining({ ok: true })]);
+    expect(await context.active()).toBeUndefined();
+  });
+
+  it("keeps the run until the dream machine acknowledges the finish, then retries it", async () => {
+    const context = setup({ start: at(12), projects: [project("a", null, 5 * MINUTE)] });
+    context.faults.finishFails = true;
+    const { done } = await context.service.begin("a", { mode: null, manual: true, trigger: "manual" });
+    await done;
+    expect((await context.active())?.phase).toBe("finishing");
+    expect(await context.service.history.list()).toEqual([expect.objectContaining({ outcome: "running" })]);
+    await tick(context, context.service, 2);
+    expect(await context.active()).toBeDefined();
+    context.faults.finishFails = false;
+    await tick(context, context.service, 2);
+    expect(await context.active()).toBeUndefined();
+    expect((await context.service.history.list())[0]).toMatchObject({ outcome: "changed" });
+    expect(context.notifications).toHaveLength(1);
+  });
+
+  it("retries an archive that failed, without holding the lock for it", async () => {
+    const context = setup({ start: at(12), projects: [project("a", null, 5 * MINUTE)] });
+    context.faults.archiveFails = true;
+    const { done } = await context.service.begin("a", { mode: null, manual: true, trigger: "manual" });
+    expect(await done).toMatchObject({ outcome: "changed" });
+    expect(await context.active()).toBeUndefined();
+    expect(context.archived).toEqual([]);
+    context.faults.archiveFails = false;
+    await tick(context, context.service, 1);
+    expect(context.archived).toEqual(["thr_a1"]);
+  });
+});
+
+describe("a reload while a dream starts", () => {
+  it("waits out the grace period, stops the thread nobody watches, and ends the run", async () => {
+    const first = setup({ start: at(12), projects: [project("a", null)] });
+    // The old copy goes away after `spawn` began but before it answered: kv still says spawning.
+    first.faults.duringSpawn = () => first.service.dispose();
+    await expect(first.service.begin("a", { mode: null, manual: true, trigger: "manual" })).rejects.toThrow(/reloaded/);
+    expect((await first.active())?.phase).toBe("spawning");
+    // The old copy stopped the thread it spawned on its way out; say it did not, to test the new copy.
+    first.threads.get("thr_a1")!.stopped = false;
+
+    const second = createDreamService(first.ports);
+    await tick(first, second, 3);
+    expect(await first.active()).toBeDefined();
+    expect(first.finishes).toEqual([]);
+    await tick(first, second, START_GRACE_MS / MINUTE);
+    expect(await first.active()).toBeUndefined();
+    expect(first.finishes).toEqual([expect.objectContaining({ ok: false })]);
+    expect(first.threads.get("thr_a1")).toMatchObject({ stopped: true, archived: true });
+    expect((await second.history.list())[0]).toMatchObject({ outcome: "failed", error: expect.stringContaining("while the dream was starting") });
+  });
+
+  it("stops the thread it just spawned when it finds it was replaced meanwhile", async () => {
+    const first = setup({ start: at(12), projects: [project("a", null)] });
+    first.faults.duringSpawn = () => first.service.dispose();
+    await expect(first.service.begin("a", { mode: null, manual: true, trigger: "manual" })).rejects.toThrow();
+    expect(first.stopped).toEqual(["thr_a1"]);
+    expect(first.sent).toEqual([]);
+  });
+
+  it("stops an orphaned dream thread when no run is recorded at all", async () => {
+    const context = setup({ start: at(12), projects: [project("a", null)] });
+    context.threads.set("thr_lost", { project: project("a", null), spawnedAt: context.now(), sentAt: null, stopped: false, archived: false });
+    await tick(context, context.service, 1);
+    expect(context.stopped).toEqual(["thr_lost"]);
+    expect(context.archived).toEqual(["thr_lost"]);
+  });
+});
+
+describe("the window's end", () => {
+  it("starts no dream when the status scan runs past the window's end", async () => {
+    const context = setup({ start: new Date(2026, 10, 17, 5, 59, 59), projects: [project("a", null)], config: { windowEnd: "06:00" } });
+    context.faults.statusMs = 2_000;
+    await context.service.sweep(new AbortController().signal);
+    expect(context.order).toEqual([]);
+    expect(context.finishes).toEqual([]);
+  });
+
+  it("ends a dream prepared past the window's end without starting its thread", async () => {
+    const context = setup({ start: new Date(2026, 10, 17, 5, 59), projects: [project("a", null)], config: { windowEnd: "06:00" } });
+    context.faults.prepareMs = 2 * MINUTE;
+    await context.service.sweep(new AbortController().signal);
+    expect(context.order).toEqual([]);
+    expect(context.finishes).toEqual([expect.objectContaining({ ok: false })]);
+    expect(await context.active()).toBeUndefined();
+  });
+
+  it("lets a dream that started inside the window finish after it", async () => {
+    const context = setup({ start: new Date(2026, 10, 17, 5, 50), projects: [project("a", null, 30 * MINUTE)], config: { windowEnd: "06:00" } });
+    await context.service.sweep(new AbortController().signal);
+    expect(context.order).toEqual(["a"]);
+    expect(context.finishes).toEqual([expect.objectContaining({ ok: true })]);
   });
 });
 

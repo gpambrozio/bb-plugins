@@ -1,7 +1,7 @@
 // The tool limits a dream is held to, checked on every build (`npm test` in CI) against the guard
 // itself, both as a module and run as Claude Code runs a PreToolUse hook.
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -60,6 +60,21 @@ describe("writes", () => {
     expect(verdict("Write", { file_path: path.join(memory, "..", "outside", "x.md") })).toBe("deny");
     expect(verdict("Write", { file_path: "memory/x.md" })).toBe("deny");
     expect(verdict("Write", { file_path: path.join(memory, "escape", "x.md") })).toBe("deny");
+  });
+
+  it("denies a dangling link instead of following it, inside or outside the memory", () => {
+    symlinkSync(path.join(memory, "not-yet.md"), path.join(memory, "dangling.md"));
+    symlinkSync(path.join(root, "outside", "nowhere.md"), path.join(memory, "away.md"));
+    expect(verdict("Write", { file_path: path.join(memory, "dangling.md") })).toBe("deny");
+    expect(verdict("Write", { file_path: path.join(memory, "away.md") })).toBe("deny");
+    expect(bash(`rm -f ${memory}/dangling.md`)).toBe("deny");
+  });
+
+  it("denies the protected folders whatever their case", () => {
+    expect(verdict("Write", { file_path: path.join(memory, "AGENTS", "a.md") })).toBe("deny");
+    expect(verdict("Edit", { file_path: path.join(memory, "Agents", "a.md") })).toBe("deny");
+    expect(verdict("Write", { file_path: path.join(memory, ".GIT", "x.md") })).toBe("deny");
+    expect(verdict("Write", { file_path: path.join(memory, "topic", "agents", "x.md") })).toBe("deny");
   });
 
   it("denies files that are not .md, the lock, and the protected folders", () => {
@@ -203,8 +218,37 @@ describe("the hook", () => {
     expect(noPolicy.stderr).toContain("dream guard failed");
   });
 
-  it("is what the host writes out", async () => {
-    const { readFileSync } = await import("node:fs");
+  it("logs every decision, and marks the canary Write it allows", () => {
+    const logPath = path.join(root, "guard.log");
+    const canary = path.join(workspace, ".dream-canary.md");
+    const policy = path.join(workspace, "policy-logged.json");
+    writeFileSync(policy, JSON.stringify({ memoryDir: memory, logPath, canary }));
+    const run = (input: unknown, ...flags: string[]) =>
+      spawnSync(process.execPath, [GUARD, ...flags, policy], { input: JSON.stringify(input), encoding: "utf8" });
+
+    const allowed = run({ tool_name: "Write", tool_input: { file_path: canary }, cwd: workspace });
+    expect(JSON.parse(allowed.stdout).hookSpecificOutput.permissionDecision).toBe("allow");
+    const denied = run({ tool_name: "Bash", tool_input: { command: "touch x" }, cwd: workspace });
+    expect(JSON.parse(denied.stdout).hookSpecificOutput.permissionDecision).toBe("deny");
+    const lines = readFileSync(logPath, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    expect(lines).toEqual([
+      expect.objectContaining({ tool: "Write", decision: "allow", canary: true }),
+      expect.objectContaining({ tool: "Bash", decision: "deny", canary: false }),
+    ]);
+
+    // The companion hook fails on the canary Write and gives no decision on anything else.
+    const failing = run({ tool_name: "Write", tool_input: { file_path: canary }, cwd: workspace }, "--canary-fail");
+    expect(failing.status).toBe(1);
+    expect(failing.stdout).toBe("");
+    const quiet = run({ tool_name: "Write", tool_input: { file_path: path.join(memory, "a.md") }, cwd: workspace }, "--canary-fail");
+    expect(quiet.status).toBe(0);
+    expect(quiet.stdout).toBe("");
+    // The canary is the only Write outside memory the guard lets through, and only by that exact path.
+    expect(decide({ tool_name: "Edit", tool_input: { file_path: canary }, cwd: workspace }, { memoryDir: memory, canary }).decision).toBe("deny");
+    expect(decide({ tool_name: "Write", tool_input: { file_path: `${canary}x` }, cwd: workspace }, { memoryDir: memory, canary }).decision).toBe("deny");
+  });
+
+  it("is what the host writes out", () => {
     expect(GUARD_SOURCE).toBe(readFileSync(GUARD, "utf8"));
   });
 });

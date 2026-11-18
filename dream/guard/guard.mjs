@@ -10,21 +10,35 @@
 // - Write and Edit of `.md` files inside the memory folder only;
 // - every other tool, MCP tools included, denied.
 //
-// The policy file (argv[2]) names the memory folder. Anything unexpected, including a crash, an
-// unreadable policy or unparsable input, answers deny and exits 2, so the hook fails closed.
+// The policy file (argv[2]) names the memory folder, the run's decision log and its canary file.
+// Anything unexpected, including a crash, an unreadable policy or unparsable input, answers deny and
+// exits 2, so the hook fails closed; the workspace also declares it `onFailure: "block"`, so a guard
+// that cannot start or times out blocks the call too.
+//
+// Before a dream sees anything, its thread is asked to Write the canary file. The guard allows that
+// one path and logs it, and a second hook (`--canary-fail`) fails on it on purpose. The file stays
+// absent only when the guard ran *and* Claude Code honours `onFailure: "block"`; the plugin sends the
+// dream prompt only then (see host/workspace.ts).
 //
 // Plain Node, no dependencies: the host writes this file next to the policy and runs it with the
 // host daemon's own Node. `host/guard-source.ts` is generated from it (`npm run embed-guard`).
 
-import { readFileSync, realpathSync } from "node:fs";
+import { appendFileSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const READ_ONLY_COMMANDS = ["ls", "find", "grep", "cat", "stat", "wc", "head", "tail"];
 const READ_TOOLS = ["Read", "Glob", "Grep"];
 const WRITE_TOOLS = ["Write", "Edit"];
-/** Subfolders of the memory folder a dream never writes or deletes in (as native). */
-const PROTECTED_DIRS = [".git", "agents"];
+/**
+ * Subfolders of the memory folder a dream never writes or deletes in (as native), compared without
+ * case: macOS volumes are case-insensitive, so `AGENTS/` is `agents/`.
+ */
+export const PROTECTED_DIRS = [".git", "agents"];
+
+export function isProtectedName(name) {
+  return PROTECTED_DIRS.includes(String(name).normalize("NFC").toLowerCase());
+}
 /** `find` actions that write, delete or run something. */
 const FIND_WRITING = new Set([
   "-exec",
@@ -125,20 +139,36 @@ export function tokenize(command) {
   return { segments };
 }
 
-/** Resolves symlinks in the deepest part of `target` that exists, so a link cannot lead out. */
+/**
+ * `target` with every symlink resolved, for the part of it that exists; the rest is appended as
+ * written. Walks the path a component at a time with `lstat`, so a symlink whose destination does not
+ * exist (a dangling link, which `realpath` cannot resolve) is refused rather than taken for a missing
+ * file: following it would create its destination, wherever that is. Any other lookup error is
+ * refused too. Throws with the reason.
+ */
 export function realTarget(target) {
-  let existing = target;
-  const rest = [];
-  for (;;) {
+  const parts = path.resolve(target).split(path.sep).filter((part) => part.length > 0);
+  let current = path.parse(path.resolve(target)).root;
+  for (let index = 0; index < parts.length; index++) {
+    const next = path.join(current, parts[index]);
+    let stats;
     try {
-      return path.join(realpathSync(existing), ...rest.reverse());
-    } catch {
-      const parent = path.dirname(existing);
-      if (parent === existing) return target;
-      rest.push(path.basename(existing));
-      existing = parent;
+      stats = lstatSync(next);
+    } catch (error) {
+      if (error?.code === "ENOENT") return path.join(current, ...parts.slice(index));
+      throw new Error(`${next} cannot be inspected (${error?.code ?? error})`);
+    }
+    if (stats.isSymbolicLink()) {
+      try {
+        current = realpathSync(next);
+      } catch {
+        throw new Error(`${next} is a symlink that leads nowhere`);
+      }
+    } else {
+      current = next;
     }
   }
+  return realpathSync(current);
 }
 
 /** Why `target` is not a memory file the dream may change, or null when it is one. */
@@ -146,13 +176,18 @@ export function memoryFileProblem(target, memoryDir) {
   if (typeof target !== "string" || target.length === 0) return "no path";
   if (!path.isAbsolute(target)) return "the path is not absolute";
   if (target.split(/[\\/]/).includes("..")) return "the path contains ..";
-  const resolved = realTarget(path.normalize(target));
+  let resolved;
+  try {
+    resolved = realTarget(path.normalize(target));
+  } catch (error) {
+    return error?.message ?? String(error);
+  }
   const relative = path.relative(memoryDir, resolved);
   if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) {
     return `${target} is outside the memory folder ${memoryDir}`;
   }
   const parts = relative.split(path.sep);
-  if (PROTECTED_DIRS.includes(parts[0])) return `${target} is in the protected ${parts[0]}/ folder`;
+  if (parts.some(isProtectedName)) return `${target} is in a protected folder (${PROTECTED_DIRS.join(", ")})`;
   if (!resolved.endsWith(".md")) return `${target} is not a .md file`;
   return null;
 }
@@ -196,9 +231,16 @@ function bashProblem(command, cwd, memoryDir) {
   return null;
 }
 
+/** Whether a Write targets the run's canary file. */
+export function isCanaryWrite(input, policy) {
+  const canary = policy?.canary;
+  const file = input?.tool_input?.file_path;
+  return input?.tool_name === "Write" && typeof canary === "string" && typeof file === "string" && path.resolve(file) === canary;
+}
+
 /**
  * The decision for one PreToolUse input: `{ decision: "allow" | "deny", reason }`.
- * `policy` is `{ memoryDir }`, an absolute real path.
+ * `policy` is `{ memoryDir, canary?, logPath? }`, absolute real paths.
  */
 export function decide(input, policy) {
   const memoryDir = policy?.memoryDir;
@@ -207,6 +249,9 @@ export function decide(input, policy) {
   }
   const tool = input?.tool_name;
   const args = input?.tool_input ?? {};
+  if (isCanaryWrite(input, policy)) {
+    return { decision: "allow", reason: "The startup check; the companion hook blocks it.", canary: true };
+  }
   if (READ_TOOLS.includes(tool)) return { decision: "allow", reason: "Reads are allowed." };
   if (WRITE_TOOLS.includes(tool)) {
     const problem = memoryFileProblem(args.file_path, memoryDir);
@@ -242,12 +287,42 @@ function answer(decision, reason) {
   );
 }
 
-function main() {
-  let result;
+/** Appends one decision to the run's log, which proves to the plugin that the guard ran. */
+function log(policy, input, result) {
+  if (typeof policy?.logPath !== "string") return;
   try {
-    const policy = JSON.parse(readFileSync(process.argv[2], "utf8"));
+    const entry = { at: Date.now(), tool: String(input?.tool_name), decision: result.decision, canary: result.canary === true };
+    appendFileSync(policy.logPath, `${JSON.stringify(entry)}\n`);
+  } catch {
+    // The canary check fails without the log, so a dream never starts on a guard that cannot log.
+  }
+}
+
+/**
+ * The companion hook: fails (exit 1, no answer) on the canary Write, and gives no decision on
+ * anything else. Declared `onFailure: "block"`, so its failure blocks the canary Write that the guard
+ * allowed; a Claude Code that ignores `onFailure` lets it through, and the canary check sees the file.
+ */
+function canaryFail() {
+  try {
+    const policy = JSON.parse(readFileSync(process.argv[3], "utf8"));
     const input = JSON.parse(readFileSync(0, "utf8"));
+    if (isCanaryWrite(input, policy)) process.exitCode = 1;
+  } catch {
+    process.exitCode = 1;
+  }
+}
+
+function main() {
+  if (process.argv[2] === "--canary-fail") return canaryFail();
+  let result;
+  let policy;
+  let input;
+  try {
+    policy = JSON.parse(readFileSync(process.argv[2], "utf8"));
+    input = JSON.parse(readFileSync(0, "utf8"));
     result = decide(input, policy);
+    log(policy, input, result);
   } catch (error) {
     // Exit 2 blocks the call even if Claude Code cannot read the answer.
     const reason = `The dream guard failed: ${error?.message ?? error}`;

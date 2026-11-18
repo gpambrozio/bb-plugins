@@ -1,11 +1,12 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { acquireLock, lastConsolidatedAt, lockPath, lockState, markConsolidated, rollbackLock, LOCK_STALE_MS } from "./lock";
+import { acquireLock, CLAIM_STALE_MS, lastConsolidatedAt, lockPath, lockState, markConsolidated, rollbackLock, takeClaim, LOCK_STALE_MS } from "./lock";
 import { applyProposal, createProposal, discardProposal, finishProposal, pendingProposal, planApply, ProposalConflictError } from "./proposals";
-import { backup, diffManifests, listBackups, manifest, newestChange, pruneBackups, restoreBackup, stampOf, stampTime } from "./snapshot";
+import { decide } from "../guard/guard.mjs";
+import { backup, containedPath, diffManifests, listBackups, manifest, markdownFiles, newestChange, pruneBackups, restoreBackup, stampOf, stampTime, UnsafePathError } from "./snapshot";
 import { checkoutFolders, checkoutSlugs, listSessions, parseWorktreeFolder, sessionTitle, TITLE_WINDOW_BYTES } from "./transcripts";
 
 let root: string;
@@ -32,43 +33,81 @@ afterEach(() => rmSync(root, { recursive: true, force: true }));
 describe("the consolidate lock", () => {
   const alive = () => true;
   const dead = () => false;
+  const quick = { settleMs: 0, sleep: async () => undefined };
 
-  it("is free with no lock, and taking it writes the PID and answers 0", () => {
+  it("is free with no lock, and taking it writes the PID and answers 0", async () => {
     expect(lockState(memory, alive)).toEqual({ lastConsolidatedAt: 0, held: false, pid: null });
-    expect(acquireLock(memory, 4242, alive)).toBe(0);
+    expect(await acquireLock(memory, 4242, { isAlive: alive, ...quick })).toBe(0);
     expect(readFileSync(lockPath(memory), "utf8")).toBe("4242");
     expect(lockState(memory, alive)).toMatchObject({ held: true, pid: 4242 });
+    expect(existsSync(`${lockPath(memory)}.claim`)).toBe(false);
   });
 
-  it("refuses while a live holder has it under an hour old", () => {
-    expect(acquireLock(memory, 1, alive)).toBe(0);
-    expect(acquireLock(memory, 2, alive)).toBeNull();
+  it("refuses while a live holder has it under an hour old", async () => {
+    expect(await acquireLock(memory, 1, { isAlive: alive, ...quick })).toBe(0);
+    expect(await acquireLock(memory, 2, { isAlive: alive, ...quick })).toBeNull();
   });
 
-  it("is stale after an hour, or when its holder died, and can be taken", () => {
-    acquireLock(memory, 1, alive);
+  it("is stale after an hour, or when its holder died, and can be taken", async () => {
+    await acquireLock(memory, 1, { isAlive: alive, ...quick });
     const old = Date.now() - LOCK_STALE_MS - 1000;
     setMtime(lockPath(memory), old);
     expect(lockState(memory, alive).held).toBe(false);
-    expect(acquireLock(memory, 2, alive)).toBeCloseTo(old, -2);
-    expect(acquireLock(memory, 3, dead)).not.toBeNull();
+    expect(await acquireLock(memory, 2, { isAlive: alive, ...quick })).toBeCloseTo(old, -2);
+    expect(await acquireLock(memory, 3, { isAlive: dead, ...quick })).not.toBeNull();
   });
 
-  it("rolls the mtime back on failure, and removes a lock that did not exist", () => {
+  it("lets only one of two processes that both saw a stale lock take it", async () => {
+    // Process A holds the claim while it checks and writes; process B, arriving then, is refused.
+    const releaseA = takeClaim(memory);
+    expect(releaseA).not.toBeNull();
+    expect(await acquireLock(memory, 2, { isAlive: alive, ...quick })).toBeNull();
+    releaseA?.();
+    expect(await acquireLock(memory, 1, { isAlive: alive, ...quick })).toBe(0);
+  });
+
+  it("gives up when another writer replaced its PID while it settled, as a racing native dream does", async () => {
+    const result = await acquireLock(memory, 1, {
+      isAlive: alive,
+      settleMs: 5,
+      sleep: async () => writeFileSync(lockPath(memory), "999"),
+    });
+    expect(result).toBeNull();
+    expect(readFileSync(lockPath(memory), "utf8")).toBe("999");
+  });
+
+  it("breaks a claim left by a crashed holder", async () => {
+    writeFileSync(`${lockPath(memory)}.claim`, "");
+    setMtime(`${lockPath(memory)}.claim`, Date.now() - CLAIM_STALE_MS - 1000);
+    expect(await acquireLock(memory, 1, { isAlive: alive, ...quick })).toBe(0);
+  });
+
+  it("rolls the mtime back on failure, and removes a lock that did not exist", async () => {
     const prior = Date.UTC(2026, 10, 10, 3, 0, 0);
-    markConsolidated(memory, prior);
-    expect(lastConsolidatedAt(memory)).toBe(prior);
-    const before = acquireLock(memory, 7, alive);
-    expect(before).toBe(prior);
+    await acquireLock(memory, 7, { isAlive: alive, ...quick });
+    expect(markConsolidated(memory, prior, 7)).toBe(true);
+    expect(lastConsolidatedAt(memory)).toBeCloseTo(prior, -1);
+    const before = await acquireLock(memory, 7, { isAlive: dead, ...quick });
+    expect(before).toBeCloseTo(prior, -1);
     expect(lastConsolidatedAt(memory)).toBeGreaterThan(prior);
-    rollbackLock(memory, before as number);
-    expect(lastConsolidatedAt(memory)).toBe(prior);
+    expect(rollbackLock(memory, before as number, 7)).toBe(true);
+    expect(lastConsolidatedAt(memory)).toBeCloseTo(prior, -1);
     expect(readFileSync(lockPath(memory), "utf8")).toBe("");
 
     rmSync(lockPath(memory));
-    expect(acquireLock(memory, 7, alive)).toBe(0);
-    rollbackLock(memory, 0);
+    expect(await acquireLock(memory, 7, { isAlive: alive, ...quick })).toBe(0);
+    rollbackLock(memory, 0, 7);
     expect(existsSync(lockPath(memory))).toBe(false);
+  });
+
+  it("never rolls back or marks a lock another process has taken since", async () => {
+    await acquireLock(memory, 7, { isAlive: alive, ...quick });
+    writeFileSync(lockPath(memory), "8");
+    const mtime = lastConsolidatedAt(memory);
+    expect(rollbackLock(memory, 0, 7)).toBe(false);
+    expect(markConsolidated(memory, 1, 7)).toBe(false);
+    expect(readFileSync(lockPath(memory), "utf8")).toBe("8");
+    expect(lastConsolidatedAt(memory)).toBe(mtime);
   });
 });
 
@@ -92,7 +131,7 @@ describe("backups", () => {
     const backups = path.join(root, "backups");
     write(path.join(memory, "notes.txt"), "not memory");
     write(path.join(memory, ".git", "HEAD"), "ref");
-    acquireLock(memory, 1, () => true);
+    await acquireLock(memory, 1, { isAlive: () => true, settleMs: 0 });
     const archive = await backup(memory, backups, stampOf(Date.now()));
     const before = manifest(memory);
 
@@ -163,6 +202,60 @@ describe("dry-run proposals", () => {
     discardProposal(second);
     expect(pendingProposal(proposals())).toBeNull();
     expect(() => planApply({ ...second, status: "discarded" }, memory)).toThrow(/discarded/);
+  });
+});
+
+describe("symlinks and protected folders", () => {
+  const proposals = () => path.join(root, "proposals");
+
+  it("never lets a dry run write the real memory through a dangling link", () => {
+    symlinkSync(path.join(memory, "not-created.md"), path.join(memory, "dangling.md"));
+    const proposal = createProposal(memory, proposals(), "20261117T010500000Z");
+    // The copy holds regular files only: the link is not copied, so nothing in it leads back.
+    expect(existsSync(path.join(proposal.memoryDir, "dangling.md"))).toBe(false);
+    expect(() => lstatSync(path.join(proposal.memoryDir, "dangling.md"))).toThrow();
+    // And the guard refuses a dangling link wherever it is, instead of following it.
+    const copyLink = path.join(proposal.memoryDir, "link.md");
+    symlinkSync(path.join(memory, "also-not-created.md"), copyLink);
+    expect(decide({ tool_name: "Write", tool_input: { file_path: copyLink }, cwd: "/" }, { memoryDir: realpathSync(proposal.memoryDir) }).decision).toBe("deny");
+    expect(existsSync(path.join(memory, "not-created.md"))).toBe(false);
+    expect(existsSync(path.join(memory, "also-not-created.md"))).toBe(false);
+  });
+
+  it("refuses to apply through a folder that became a link out of the memory", () => {
+    const proposal = createProposal(memory, proposals(), "20261117T010500000Z");
+    write(path.join(proposal.memoryDir, "topic", "new.md"), "new\n");
+    const ready = finishProposal(proposal, true, null);
+    const outside = path.join(root, "outside");
+    mkdirSync(outside);
+    symlinkSync(outside, path.join(memory, "topic"));
+    const plan = planApply(ready, memory);
+    expect(() => applyProposal(ready, memory, plan)).toThrow(UnsafePathError);
+    expect(existsSync(path.join(outside, "new.md"))).toBe(false);
+  });
+
+  it("refuses to restore through a link out of the memory", async () => {
+    const backups = path.join(root, "backups");
+    write(path.join(memory, "topic", "kept.md"), "kept\n");
+    const archive = await backup(memory, backups, stampOf(Date.now()));
+    rmSync(path.join(memory, "topic"), { recursive: true });
+    const outside = path.join(root, "outside");
+    mkdirSync(outside);
+    write(path.join(outside, "kept.md"), "someone else's file\n");
+    symlinkSync(outside, path.join(memory, "topic"));
+    await expect(restoreBackup(archive, memory)).rejects.toThrow(UnsafePathError);
+    expect(readFileSync(path.join(outside, "kept.md"), "utf8")).toBe("someone else's file\n");
+  });
+
+  it("treats protected folders without regard to case, in the guard and in the file walk alike", () => {
+    write(path.join(memory, "agents", "a.md"), "protected\n");
+    write(path.join(memory, "Topic", "AGENTS", "b.md"), "protected too\n");
+    for (const spelling of ["AGENTS", "Agents", "agents"]) {
+      expect(decide({ tool_name: "Write", tool_input: { file_path: path.join(memory, spelling, "a.md") }, cwd: "/" }, { memoryDir: memory }).decision).toBe("deny");
+    }
+    expect(markdownFiles(memory)).toEqual(["MEMORY.md", "build.md"]);
+    expect(() => containedPath(memory, "AGENTS/a.md")).toThrow(UnsafePathError);
+    expect(() => containedPath(memory, ".GIT/x.md")).toThrow(UnsafePathError);
   });
 });
 

@@ -13,7 +13,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   does it, which never runs in bb. **The schedule is off until you turn it on** in the plugin's settings.
 - **A dream that can only write memory.** Each dream is a hidden thread that may read anything but write
   only `.md` files in that project's memory folder; everything else is refused without asking. The
-  thread is stopped and archived when it ends.
+  thread is stopped and archived when it ends. Before each dream sees anything, a startup check proves those
+  limits are in force; if it fails, the dream does not run.
 - **A dry run first.** A project's first dream proposes its changes on a copy; you apply or discard them.
   After one is applied, that project's dreams edit its memory in place.
 - **Backups and restore.** The memory is backed up before every change, the 20 newest kept per project.

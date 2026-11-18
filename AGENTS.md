@@ -330,9 +330,12 @@ which puts a message in that thread. **bb cannot make a helper thread tool-free*
 *can* be held to a list from inside: the provider loads project settings from the thread's working
 directory, so spawn it into a plugin-owned folder (`environment: { type: "host", workspace: { type:
 "unmanaged", path } }`) whose `.claude/settings.json` has a PreToolUse hook that answers allow or deny for
-every tool (`dream/host/workspace.ts`, `dream/guard/guard.mjs`). The hook must always print a decision: one
-that prints nothing lets Claude Code fall back to asking. A helper fed untrusted text is still a decision
-to record, not a default. **Bounding helpers across a reload is the hard
+every tool (`dream/host/workspace.ts`, `dream/guard/guard.mjs`). The hook must always print a decision
+(one that prints nothing lets Claude Code fall back to its own check) and must be declared
+`onFailure: "block"` (one that cannot start or times out is otherwise skipped). Settings can still switch
+hooks off (`disableAllHooks` anywhere wins), so prove the hook live before the thread sees anything
+untrusted: Dream's first turn is a canary Write the hooks must block (`dream/AGENTS.md`). A helper fed
+untrusted text is still a decision to record, not a default. **Bounding helpers across a reload is the hard
 part**: the new instance loads before the old one is disposed, so a spawn the old one sent can answer
 after the new one has checked for leftovers, and a clean-up that fails or is aborted must keep spawning
 shut. `herald` dropped its helpers over this and has a command-line tool (`claude -p --tools ""`, a child

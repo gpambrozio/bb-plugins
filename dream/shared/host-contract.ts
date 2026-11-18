@@ -52,6 +52,8 @@ export const hostContract = defineRpcContract({
     input: z.object({ runId: z.string().min(1), ok: z.boolean(), summary: z.string().nullable(), threadId: z.string().nullable() }),
     output: FinishedSchema,
   },
+  /** The startup check: did the guard run, and does this Claude Code honour onFailure "block"? */
+  checkCanary: { input: z.object({ runId: z.string().min(1) }), output: z.object({ ok: z.boolean(), reason: z.string() }) },
   apply: { input: ByProject.extend({ backupsToKeep: z.number().int().min(1) }), output: ApplyResultSchema },
   discard: { input: ByProject, output: z.object({ stamp: z.string() }) },
   restore: { input: ByProject.extend({ backupsToKeep: z.number().int().min(1) }), output: RestoreResultSchema },

@@ -37,6 +37,11 @@ be re-checked when Claude Code changes them:
   of the canonical git root>/memory`. Flag settings, MDM and server-managed policy are not visible here.
 - **The lock** (`host/lock.ts`): PID body, mtime is the last consolidation, held while under an hour old
   and its PID alive, rolled back (mtime restored, or removed) on failure, left in place on success.
+  Native takes it by write-and-read-back, which is not exclusive; the plugin adds an O_EXCL
+  `.consolidate-lock.claim` around its check-and-write (exclusive between plugin processes) and reads
+  the lock again after `SETTLE_MS`, giving up if a racing native dream rewrote it. That narrows the race
+  with native to native's own read-back, it does not close it. Rollback and marking only touch a lock
+  that still holds the plugin's PID.
 - **The prompt** (`skills/dream/SKILL.md`): native's text, changed only where a bb dream differs — the
   transcripts are a manifest over several folders, the checkout is outside the working directory, and
   `CLAUDE.md` is read from the checkout rather than the system prompt. Native's "Reconcile memories
@@ -55,11 +60,28 @@ deny and never ask, which is native's dontAsk dream. Do not move the dream into 
 
 - **The guard fails closed.** Bad input, a missing policy or a crash answers deny with exit 2. It must
   also *answer*: a hook that prints nothing lets Claude Code fall back to its own permission check,
-  which in accept-edits asks. Its main-script check compares real paths for that reason (run through
-  macOS's `/var` symlink, a plain URL comparison silently skipped `main()`; a test runs it through a
-  symlink).
-- **Behind it**, anything that does ask is stopped: the watcher ends a dream whose thread has a pending
+  which in accept-edits allows workspace writes and asks for the rest. Its main-script check compares
+  real paths for that reason (run through macOS's `/var` symlink, a plain URL comparison silently
+  skipped `main()`; a test runs it through a symlink).
+- **Both hooks are `onFailure: "block"`**, so a guard that cannot start, crashes or times out blocks the
+  call. Claude Code before the option ignores it, and `disableAllHooks` (restrictive: any source's
+  `true` wins over the workspace's `false`), managed `allowManagedHooksOnly`,
+  `CLAUDE_CODE_PERSONAL_HOOKS_OFF` and `CLAUDE_CODE_SIMPLE` switch hooks off. So:
+  - `prepare` refuses (`no-guard`) when it can see any of those (`hookBlockers` in `host/memory.ts`);
+  - **every dream starts with a canary turn**, before the thread sees any transcript or memory: Write
+    `<workspace>/.dream-canary.md`. The guard allows that one path and logs it to `runs/<run id>.log`;
+    a companion hook (`guard.mjs --canary-fail`, matcher `Write`) fails on it. `checkCanary` passes
+    only when the log has the canary *and* the file does not exist. Hooks off: the file exists and the
+    log is empty. `onFailure` ignored: both exist. Only then does the server send the dream prompt as a
+    second turn. A dream that cannot prove its guard never starts.
+- **Behind it**, anything that asks is stopped: the watcher ends a dream whose thread has a pending
   interaction, as a failure, within one poll.
+- **Symlinks.** The guard walks a target with `lstat` and refuses a symlink it cannot resolve (a dangling
+  link would create its destination, wherever it is). A dry run's copy holds regular files only, never
+  links. Apply and restore never pass through the guard, so they check every target with
+  `containedPath` (`host/snapshot.ts`): no symlink on the way, nothing outside the folder, before and as
+  each file changes. `.git` and `agents` are protected at any depth and without case, in the guard and
+  in the file walk alike.
 - **The hook runs on the host daemon's own Node** (`process.execPath`); bb.app's is Electron, so the
   command sets `ELECTRON_RUN_AS_NODE=1` when `process.versions.electron` is set.
 - `autoMemoryDirectory` in the workspace settings makes the session's auto-memory section name the folder
@@ -68,7 +90,10 @@ deny and never ask, which is native's dontAsk dream. Do not move the dream into 
 - **What was verified live** (bb 0.49.0, Claude Code 2.1.326, isolated dev bb): a thread in a generated
   workspace was denied Write and Edit in the repository and in the workspace itself, `>>`, `touch`, `cp`,
   `find -delete`, `rm -f` outside memory and ToolSearch, with no approval prompt, and allowed reads, a
-  memory write and a memory `rm -f`.
+  memory write and a memory `rm -f`. A guard whose executable is missing, and one that times out, both
+  blocked a workspace Write and a `touch` ("blocking because onFailure is block"). With `disableAllHooks`
+  in a settings layer, the canary Write went through with nothing logged, which `checkCanary` refuses;
+  with hooks on it was blocked and logged. A plugin dream ran its canary turn, then its dream turn.
 
 ## Dreams are sessions too
 
@@ -78,25 +103,39 @@ so it can never count. Belt and braces: `finish` records the dream thread's id a
 
 ## A run's life
 
-`prepare` (host, under one-at-a-time `exclusive`): lock, then backup (a dream) or copy (a dry run), then
-workspace, then `state.runs[runId]`, and a worker lease so the host worker outlives the five-minute idle stop. The
-server records `active-run` in kv before spawning and the thread id after. The watcher polls every 10 s
-until the turn ends, the thread fails, asks for anything, is stopped by hand (`stop-requested` in kv), or
-45 minutes pass. Then: stop the thread, `finish` on the host (changes, or rollback), archive, log,
-notify.
+A run is a state machine kept in kv (`active-run`, an `ActiveState`), saved at every step, so any copy
+of the plugin carries it on; `loop` calls `recover` every minute, which drives it one more step:
 
+- **preparing** (host, under one-at-a-time `exclusive`): lock, then backup (a dream) or copy (a dry run),
+  workspace, `state.runs[runId]`, and a worker lease (released by `finish`, or after two hours) so the
+  host worker outlives the five-minute idle stop. Saved *before* the host call, so a run is never
+  invisible to the next copy.
+- **spawning**: the thread starts with the canary prompt only. If the plugin was disposed while the spawn
+  was in flight, the old copy stops the thread itself.
+- **checking**: the first turn's end, then `checkCanary`, then the dream prompt (`threads.send`).
+- **running**: the second turn, polled every 10 s until it ends, the thread fails, asks for anything, is
+  stopped by hand (`stop-requested`), or 45 minutes from the start pass.
+- **stopping**: `stop`, then wait for bb to say the thread is idle, failed or gone. Not confirmed: the run
+  stays here, keeping the lock, and the next tick tries again. A writer that may still be alive never
+  has its lock released.
+- **finishing**: host `finish`, which is idempotent (a repeat answers what it recorded; an unknown run
+  answers `found: false`). The marker is cleared only after it answers; then the log, the archive (a
+  failed archive goes to `to-archive` and is retried, without holding anything) and the notification.
+
+- A run still **preparing or spawning** `START_GRACE_MS` after it began was left by a copy that went
+  away: `recover` stops every open thread of this plugin (`threads.list` by `originPluginId`, hidden
+  included), and only once all are confirmed stopped ends the run as failed. With **no run in kv**, any
+  open thread of this plugin is an orphan and is stopped and archived the same way.
 - **The lock's PID is the host worker's.** After a successful dream it stays for the lock's hour, as
   native's does, so *other* processes see it held. The plugin itself treats a lock holding its own PID
   with no run of its own in progress as free; otherwise a restore right after a bad dream was refused.
 - **A dry run** never moves the lock unless it proposes nothing (then it counts as a dream). Applying moves
-  it to the dry run's start and makes the project edit in place; discarding moves it there too, so the
-  next proposal waits for new sessions instead of coming back the next night.
-- **Reloads.** The new copy of the plugin runs `recover` before its first sweep: it watches and finishes a
-  run left in `active-run`, ends one cut short while spawning (no thread id after two minutes), and ends
-  host runs nobody watches once they are older than a dream can be. The old copy's watcher stops on
-  dispose without finishing anything.
-- **The sweep** tries each project once per window, so a failing one cannot loop, and starts nothing
-  once the window has closed; a dream already running finishes.
+  it to the dry run's start and makes the project edit in place; discarding (which takes the lock first)
+  moves it there too, so the next proposal waits for new sessions instead of coming back the next night.
+- **The sweep** tries each project once per window, so a failing one cannot loop. It hands `begin` the
+  window's end, which is checked again after `prepare` and before the spawn: a scan or a backup that
+  runs past the end starts nothing, and a prepared run is ended (lock rolled back). A dream already
+  running finishes.
 
 ## Off by default, and generic
 
