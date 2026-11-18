@@ -32,6 +32,7 @@ export const TEMPLATES = {
   boardNote: "messages/board-note.md",
   bearings: "messages/bearings.md",
   bearingsArgs: "messages/bearings-args.md",
+  firstSession: "messages/first-session.md",
   relaunch: "messages/relaunch.md",
   restartNote: "messages/restart-note.md",
   watchOutput: "messages/watch-output.md",

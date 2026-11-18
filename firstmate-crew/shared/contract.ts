@@ -19,9 +19,26 @@ const ThreadRef = z.object({ threadId: z.string().min(1) });
 
 /** The tag `fleet.load` reads carry; invalidating it makes every open board read the fleet again. */
 export const FLEET_TAG = "fleet";
+/** The tag `intro.status` reads carry; invalidated whenever the first-run guide's state may have changed. */
+export const INTRO_TAG = "intro";
 
 export const rpcContract = {
   "fleet.load": { input: Empty, output: FleetSchema, tags: () => [FLEET_TAG] },
+  "intro.status": {
+    input: Empty,
+    output: z.object({ offer: z.boolean(), homeDirectory: z.string() }),
+    tags: () => [INTRO_TAG],
+  },
+  "intro.dismiss": { input: Empty, output: Done },
+  "intro.start": {
+    input: z.object({
+      homeDirectory: z.string().min(1),
+      providerId: z.string().min(1),
+      model: z.string().min(1),
+      reasoningLevel: z.string().optional(),
+    }),
+    output: ThreadRef,
+  },
   "mate.launch": {
     input: z.object({ providerId: z.string(), model: z.string(), reasoningLevel: z.string().optional() }),
     output: ThreadRef,

@@ -27,8 +27,9 @@ against bb 0.48.1's bundled push-notifications plugin, read from its build (not 
 | `server/fleet.ts` | The first mate's children joined to backlog items on `task`; the seven columns; `ReportCache`. |
 | `server/cli.ts` | `bb firstmate-crew crew spawn` and `bb firstmate-crew tell` (words or `--message-base64`, always under the relay line). |
 | `server/bb-ports.ts`, `server/ports.ts` | The narrow `ThreadsPort` and `ProjectsPort` over `bb.sdk`, so everything else is tested against fakes. Where the machine rule below lives. |
-| `server/store.ts` | `bb.storage.kv`: the first mate's thread id, the switched-off watches and autocompact's marks. Nothing else. |
+| `server/store.ts` | `bb.storage.kv`: the first mate's thread id, the switched-off watches, autocompact's marks and the first-run guide's state. Nothing else. |
 | `server/settings.ts` | `bb.settings.define`: home directory, crew provider/model/reasoning, board refresh, quiet shipshape, and autocompact's six (on, thousands of tokens, idle minutes, for the first mate and for the crew). The token thresholds are set in thousands (`*KTokens`, ×1,000 in `autoCompactRules`) because bb's number field shows no thousands separators. |
+| `server/intro.ts` | The first-run guide's server half: whether this install is offered it (`considerIntro`, decided once), the home folder check, and `startIntro` (writes the home setting, launches with the first-session prompt). |
 | `server/quiet-shipshape.ts` | `mateQuietShipshape`: the no-op rule (`isNoOpReply`) and marking the first mate's no-op turn read. |
 | `shared/voice.ts`, `server/voice-brief.ts`, `server/voice-api.ts` | `voice.v1`, the narrow API the `firstmate-voice` plugin reaches the first mate through: the brief and cards as speech-ready data (`speakable`, card refs, button labels without prompts, the brief's etag), the first mate's last reply, and ask and answer, behind the `voicePlugins` caller gate. |
 | `server/autocompact.ts` | One autocompact check: which thread is at rest, idle long enough (bb's cache deadline, else the idle minutes) and over its threshold; the once-per-idle-stretch marks; `dueNow` for one thread. |
@@ -44,6 +45,7 @@ against bb 0.48.1's bundled push-notifications plugin, read from its build (not 
 | `skills/fm/` | The `/fm` skill bb puts in every thread: it pipes the user's request, base64, into `tell --message-base64-stdin`. Its test is `server/fm-skill.test.ts`, because bb copies the skill's folder into threads whole. |
 | `templates/` | **Everything the plugin writes into the home**, laid out as it lands there, plus `messages/` (what the plugin says to the first mate) and `parts/` (pieces inside other files). The first mate's behaviour is `templates/data/charter.md`. |
 | `app.tsx`, `app/` | The "FirstMate" action tab (`experimental_tab`; `panel.tsx` branches on the thread), the board and cards, the settings section, the command palette entries, and the overlay that expands watch notes in chat. `use-fleet.ts` is the board's one read. |
+| `app/intro.tsx`, `app/intro-store.ts`, `app/local-host.ts`, `app/folder-browser.tsx` | The first-run guide: the offer's toast and the setup dialog (an app overlay), the window's own state (open, "Later", which thread gets the board), the composer contribution that opens the FirstMate tab in the new first mate's pane, the desktop app's machine lookup for Browse, and the in-dialog folder browser. |
 | `components/ui/`, `lib/`, `hooks/` | Vendored shadcn components and helpers. |
 | `scripts/gen-templates.mjs` | Writes `server/templates.generated.ts` from `templates/`. |
 
@@ -218,6 +220,45 @@ Do not break these; each was paid for.
   first shipshape after autocompact usually notifies (its `previous` is the compaction, which the captain
   has not opened). Every failure is logged and leaves bb's notification to go out; a late mark does the
   same. A shipshape turn leaves no unread mark in the sidebar either; the README says so.
+- **An install that was set up never sees the first-run guide.** Whether to offer it is decided once, the
+  first time it is considered (at load), and kept in kv (`introState`): `offered` only with nothing else in
+  kv, every setting at its default, no home prepared at the default folder, and no sign of an update in
+  bb's builds of the plugin (`bb.sdk.plugins.getSource`'s `history`, read last because it is the one check
+  that asks bb, and skipped with a warning when bb cannot answer). bb 0.49 lists there the last ten builds
+  it keeps, each kept seven days after it stops being used: versions for an npm install, commit SHAs for a
+  git one, nothing for a local folder. So more than one build, or a version before 0.11.0 (`GUIDE_SINCE`),
+  is an update (read from bb's server, `getSource`). Anything else is `settled` for good, so releasing a
+  first mate later does not bring it back. An install from a local folder that was never configured or
+  launched cannot be told from a new one and is offered it. Any launch or adoption makes it `done`; "Don't
+  ask again" makes it `dismissed`. "Later" is the window's alone (`app/intro-store.ts`) and lasts until the
+  app loads again. Starting the guide by hand reads none of this.
+- **The guide never writes into a folder that holds anything else.** Preparing a home overwrites its
+  `AGENTS.md`, so `checkHomeFolder` takes only a missing or empty folder, or an earlier home (its
+  `AGENTS.md` *and* `data/charter.md`): a project with its own `AGENTS.md` is refused, and so is a path
+  with a `.` or `..` part (`guideHomePath`: a missing folder followed by `..` names its parent once
+  created). The typed path is resolved to its real path once, up front (`canonicalHome`: the real path of
+  its nearest existing folder, then the parts still to be created), and the check, the placement, the
+  launch, the project and the setting all use that path, so a link in the typed path that is retargeted
+  meanwhile leads nowhere the guide writes. A new or empty folder is never written into: the home is
+  prepared in a staging folder beside it and renamed into place (`placeFreshHome`). The rename itself
+  refuses a folder filled since the check and a link or file swapped in, which no check-then-write could;
+  the launch then prepares the home again in place, so the charter names the home rather than the staging
+  folder. An earlier home is used in place after a second look (same folder, same names). The check, the
+  placement, the launch and the setting all run in one hold of the `mate` lock, and the launch gets the
+  checked home rather than reading the setting again, so two guides, or a guide and a launch or adoption,
+  cannot mix. The setting is written only once the first mate is aboard.
+- **A failed guide deletes nothing.** Once a home is placed, the captain or another window may already be
+  writing in it, and bb's project deletion takes the project's threads with it, so a failure leaves the
+  placed home and any project it registered (both harmless; the next start finds them) and only the
+  setting unwritten. Only a staging folder that was never placed is removed. A first mate that started but
+  could not be recorded (`launchInHome`, any launch) is left running and remembered in memory under the
+  `mate` lock (`unrecorded`, per store): the next launch or Start in the same home records that thread
+  instead of spawning, one in another home is refused while it waits, and a new one is spawned only once
+  that thread is gone. Adopting any thread and Release forget it too, so a released thread is never taken
+  back. A reload forgets it; the thread can still be adopted from its tab.
+- **The first-session prompt is only the guide's.** `templates/messages/first-session.md` follows the
+  opening in the guide's launch (`LaunchOptions.firstSession`); a launch from settings and a restart send
+  the opening alone.
 - **Nothing throws into the server's event loop.** Services and listeners catch and log per tick;
   everything is released in `bb.onDispose`.
 - **Server code logs only through the injected `Log` (`server/log.ts`), wired to `bb.log`**, never
@@ -317,6 +358,26 @@ Do not break these; each was paid for.
   crewmate — the ones idle long enough to be compacted — would drop to Idle. `lastText` stays the latest
   turn's reply: quiet shipshape needs exactly that. The charter's §0 gives the first mate the same
   fallback as a `bb thread log … | jq` query.
+- **The guide's board opens from inside the first mate's thread.** The guide opens the thread with a
+  plain `useBbNavigate().toThread(id)` (`showFirstMate`), never `split: true`: a split keeps the view the
+  guide started from as a pane of its own, which on a new install is an empty New thread screen. Then it
+  has to open the FirstMate tab in the thread's pane. An
+  app overlay's `experimental_useAppPanel()` opens no pane's panel (bb 0.49, tried live), so a composer
+  contribution that draws nothing (`BoardOpener`, scope `thread`) opens it from the thread's own view once
+  its composer's scope names the thread, retrying for five seconds while bb mounts the pane.
+- **The guide's machine is the bb server's.** The home lives on the server's machine (no `bb.host`,
+  above), so the guide lists every machine but only that one can be chosen; the others are marked "for
+  crew only" or offline. Letting the first mate live on another machine needs the home moved behind a
+  `bb.host` entry first.
+- **The guide's Browse does what bb's Add project dialog does.** In the desktop app on the server's
+  machine (found through the local host daemon's `/status` as Herald does; bb internals) it opens the
+  system's picker (`hosts.pickFolder`); anywhere else, or when that picker fails, it opens a folder
+  browser in the dialog (`app/folder-browser.tsx`) over the server's machine. bb 0.49 does not export its
+  own browser to plugins, so this one uses the same calls: `hosts.directory` (absolute real paths; it
+  leaves out dot entries and `node_modules`, and lists the host's home folder when given no path) and
+  `files.mkdir` (non-recursive) for **New folder**. The browser only fills the Home folder field, which
+  can still be typed: the path goes to `intro.start` and through every check above, like a typed one. A
+  folder it makes is new and empty, which the guide takes as it takes a missing one.
 - **Relaunch is a message to the first mate**, which spawns the replacement with `--environment` set to
   the old worker's environment. The old thread stays stopped, not archived, so the shared worktree lives.
 
