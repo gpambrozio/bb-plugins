@@ -9,6 +9,43 @@ anything but write only that project's memory folder.
 **The schedule ships off.** Nothing dreams until you turn on *Dream on a schedule* in Settings →
 Plugins → Dream. Until then the page and `bb dream status` only read.
 
+## Screenshots
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/page-dark.png">
+  <img alt="The Dream page: a badge with 1 on Dream's sidebar entry, the schedule off, filters for all projects, those with or without memory and those due, Acme API due with 7 sessions since its last dream, and Acme Web with a dry run waiting to be applied or discarded" src="docs/screenshots/page-light.png">
+</picture>
+
+_The Dream page. The sidebar badge counts the dry runs waiting for you; each project says what its sessions are counted from and whether it is due._
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/proposal-dark.png">
+  <img alt="A waiting dry run for Acme Web: would update 3, add 1 and remove 1 memory files, with Apply and Discard, and each file's changes as a line diff" src="docs/screenshots/proposal-light.png">
+</picture>
+
+_A dry run's proposal, file by file, before you apply or discard it._
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/history-dark.png">
+  <img alt="The history: an Acme Web dry run opened, with the dream's summary of what it changed and why and the files it touched, above two Acme API runs" src="docs/screenshots/history-light.png">
+</picture>
+
+_The history of dreams, with each one's summary._
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/project-dark.png">
+  <img alt="The Mobile App project: never dreamed, so every session counts, 3 sessions where 5 are needed, and a warning that its memory folder is set only in settings.local.json, which its worktrees do not see" src="docs/screenshots/project-light.png">
+</picture>
+
+_A project that is not due yet, and a warning about where its worktrees' sessions keep memory._
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/settings-dark.png">
+  <img width="560" alt="Dream's settings: Dream on a schedule off, the window, the thresholds, backups, the notification, Always dry run off, the dream machine and the model" src="docs/screenshots/settings-light.png">
+</picture>
+
+_The settings: the schedule is off until you turn it on._
+
 ## What a dream does
 
 Each dream is a hidden Claude Code thread, given Claude Code 2.1.326's dream prompt with three
