@@ -102,6 +102,13 @@ no shell. What that buys, and what must stay true:
   it is Codex's `summary-schema.json` (below), when Codex is the tool. One folder for
   the life of the plugin was the first version: macOS purges unused temp entries after a few days and a
   bb server runs for weeks, after which every spawn failed with an ENOENT that named the *tool*.
+- **Claude Code's auto memory is off for every run** (`WRITER_ENV`: `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`
+  in the child's environment). Claude Code 2.1.327 makes `~/.claude/projects/<cwd slug>/memory` at
+  start-up, before login is even checked, and neither `--no-session-persistence` nor
+  `--setting-sources ""` stops it; with a fresh folder per run, that left one empty project folder per
+  announcement (2,386 on the owner's Mac). `--settings '{"autoMemoryEnabled":false}'` works too, but the
+  variable also reaches a custom command that runs `claude`. Both were checked against a scratch
+  `CLAUDE_CONFIG_DIR`, and a logged-in run of the preset left nothing in `~/.claude/projects`.
 - **A kill takes the tool's helpers with it, on every way out.** The child is spawned `detached`, leading
   its own process group, and the group gets `process.kill(-pid)` at the timeout, on abort, on too much
   output, *and when the tool itself exits* — a tool that answers and leaves a helper behind would otherwise

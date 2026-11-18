@@ -41,6 +41,16 @@ export const MAX_SENTENCE_CHARS = 400;
 /** A tool that streams a file instead of answering is stopped here, not at the timeout. */
 export const MAX_OUTPUT_BYTES = 256 * 1024;
 
+/**
+ * Added to the tool's environment. Claude Code's auto memory makes
+ * `~/.claude/projects/<working folder>/memory` at start-up, before the model
+ * is asked anything, and `--no-session-persistence` and `--setting-sources ""`
+ * do not stop it; with a fresh working folder per run, that was one empty
+ * project folder per announcement. The variable reaches a custom command that
+ * runs `claude` as well, and the other tools ignore it.
+ */
+export const WRITER_ENV: Readonly<Record<string, string>> = { CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1" };
+
 export interface RunOptions {
   cwd: string;
   env: NodeJS.ProcessEnv;
@@ -263,7 +273,7 @@ export class SentenceWriter {
       if (reply === "codex-json") await writeFile(schemaPath, JSON.stringify(SUMMARY_SCHEMA), "utf8");
       const result = await runCommand(commandFor(command, reply, schemaPath), prompt, {
         cwd,
-        env: process.env,
+        env: { ...process.env, ...WRITER_ENV },
         timeoutMs: WRITE_TIMEOUT_MS,
         signal: signal === undefined ? this.controller.signal : AbortSignal.any([this.controller.signal, signal]),
       });
