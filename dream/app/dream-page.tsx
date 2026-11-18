@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 
 import type { RpcContract } from "../shared/contract";
 import type { Overview, RunRecord } from "../shared/contract-types";
+import { FILTER_LABELS, matchesFilter, PROJECT_FILTERS, type ProjectFilter } from "../shared/filters";
 import { changeText, when } from "../shared/format";
 import type { ProjectStatus } from "../shared/types";
 import { openPluginSettings } from "./open-settings";
@@ -310,6 +311,8 @@ function ActiveBanner({ run, onChanged }: { run: RunRecord; onChanged(): void })
 export function DreamPage(_props: PluginNavPanelProps) {
   const { overview, runs, loading, error, refresh } = useDream();
   const [view, setView] = useState<"projects" | "history">("projects");
+  const [filter, setFilter] = useState<ProjectFilter>("all");
+  const shown = overview ? overview.projects.filter((status) => matchesFilter(status, filter)) : [];
   const busy = overview?.active !== null && overview?.active !== undefined;
 
   return (
@@ -345,11 +348,24 @@ export function DreamPage(_props: PluginNavPanelProps) {
         {loading && overview === null ? <p className="px-4 py-6 text-sm text-muted-foreground">Loading…</p> : null}
         {view === "projects" && overview ? (
           overview.projects.length > 0 ? (
-            <ul>
-              {overview.projects.map((status) => (
-                <ProjectCard key={status.projectId} status={status} busy={busy} onChanged={refresh} />
-              ))}
-            </ul>
+            <>
+              <div className="flex flex-wrap gap-1 border-b border-border px-4 py-2" role="group" aria-label="Filter projects">
+                {PROJECT_FILTERS.map((option) => (
+                  <Button key={option} size="sm" variant="ghost" aria-pressed={filter === option} onClick={() => setFilter(option)}>
+                    {FILTER_LABELS[option]} ({overview.projects.filter((status) => matchesFilter(status, option)).length})
+                  </Button>
+                ))}
+              </div>
+              {shown.length > 0 ? (
+                <ul>
+                  {shown.map((status) => (
+                    <ProjectCard key={status.projectId} status={status} busy={busy} onChanged={refresh} />
+                  ))}
+                </ul>
+              ) : (
+                <p className="px-4 py-6 text-sm text-muted-foreground">No project matches {FILTER_LABELS[filter].toLowerCase()}.</p>
+              )}
+            </>
           ) : (
             <p className="px-4 py-6 text-sm text-muted-foreground">No bb project has a checkout on the dream machine.</p>
           )

@@ -303,6 +303,17 @@ describe("the nightly sweep", () => {
     expect(finishes.map((finish) => finish.ok)).toEqual([false, true]);
   });
 
+  it("leaves out a project whose switch is off, by the same check the page's Dream eligible filter uses", async () => {
+    const context = setup({ start: at(1), projects: [project("off", null), project("on", 5)] });
+    const status = context.ports.host.status;
+    context.ports.host.status = async (hostId, input) => {
+      const result = await status(hostId, input);
+      return { projects: result.projects.map((entry) => (entry.projectId === "off" ? { ...entry, enabled: false } : entry)) };
+    };
+    await context.service.sweep(new AbortController().signal);
+    expect(context.order).toEqual(["on"]);
+  });
+
   it("skips a project the host refuses and goes on to the next", async () => {
     const refused = { ...project("locked", null), refuse: "Another dream holds its memory lock." };
     const { service, order } = setup({ start: at(1), projects: [refused, project("next", 5)] });

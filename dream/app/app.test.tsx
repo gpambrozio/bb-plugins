@@ -20,7 +20,7 @@ import { BB_ICON_NAMES } from "./testing/bb-icon-names";
 afterEach(() => cleanup());
 
 const root = join(import.meta.dirname, "..");
-const appFiles = ["app.tsx", "shared/contract-types.ts", "shared/types.ts", "shared/gate.ts", "shared/format.ts", "shared/window.ts", ...readdirSync(join(root, "app")).filter((name) => /\.tsx?$/.test(name) && !name.includes(".test.")).map((name) => join("app", name))];
+const appFiles = ["app.tsx", "shared/contract-types.ts", "shared/types.ts", "shared/gate.ts", "shared/format.ts", "shared/window.ts", "shared/filters.ts", ...readdirSync(join(root, "app")).filter((name) => /\.tsx?$/.test(name) && !name.includes(".test.")).map((name) => join("app", name))];
 
 const overview: Overview = {
   host: { id: "host_1", name: "Studio", connected: true },
@@ -106,6 +106,32 @@ describe("the Dream page", () => {
     fireEvent.click(await screen.findByRole("button", { expanded: false }));
     expect(await screen.findByText(/Merged the build notes/)).toBeTruthy();
     expect(screen.getByText("+ ci.md")).toBeTruthy();
+  });
+});
+
+describe("the project filters", () => {
+  const base = overview.projects[0];
+  const projects = [
+    { ...base, projectId: "p_due", name: "due-one", pendingProposal: null, gate: { ...base.gate, due: true, code: "due" as const, reason: "Due now." } },
+    { ...base, projectId: "p_off", name: "switched-off", enabled: false, pendingProposal: null, gate: { ...base.gate, due: false, code: "off" as const, reason: "Turned off." } },
+    { ...base, projectId: "p_empty", name: "no-memory", pendingProposal: null, memory: { ...base.memory, files: 0, indexLines: null }, gate: { ...base.gate, due: false, code: "no-memory" as const, reason: "No files." } },
+  ];
+
+  it("shows all projects, those with or without memory, and those the scheduler would dream", async () => {
+    renderSlot<PluginNavPanelProps, RpcContract>({ component: DreamPage }, { subPath: "" }, {
+      rpc: stubs({ overview: () => ({ ...overview, projects }), history: () => [] }),
+    });
+    const names = () => ["due-one", "switched-off", "no-memory"].filter((name) => screen.queryByText(name) !== null);
+    expect(await screen.findByText("due-one")).toBeTruthy();
+    expect(names()).toEqual(["due-one", "switched-off", "no-memory"]);
+    fireEvent.click(screen.getByRole("button", { name: "With memory (2)" }));
+    expect(names()).toEqual(["due-one", "switched-off"]);
+    fireEvent.click(screen.getByRole("button", { name: "Without memory (1)" }));
+    expect(names()).toEqual(["no-memory"]);
+    fireEvent.click(screen.getByRole("button", { name: "Dream eligible (1)" }));
+    expect(names()).toEqual(["due-one"]);
+    fireEvent.click(screen.getByRole("button", { name: "All projects (3)" }));
+    expect(names()).toEqual(["due-one", "switched-off", "no-memory"]);
   });
 });
 

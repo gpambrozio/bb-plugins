@@ -29,6 +29,7 @@
 import { randomBytes } from "node:crypto";
 
 import type { Choices, Outcome, Overview, RunRecord } from "../shared/contract-types";
+import { dreamEligible } from "../shared/filters";
 import { changeText, totalChanges } from "../shared/format";
 import { mostOverdue, type Thresholds } from "../shared/gate";
 import type { Changes, Finished, Mode, Prepared, ProjectInput, ProjectStatus } from "../shared/types";
@@ -674,7 +675,7 @@ export function createDreamService(ports: DreamPorts) {
       if (!config.scheduleEnabled || closesAt === null) break;
       if (running !== null || (await loadActive()) !== null) break;
       const hostId = await dreamHost();
-      const candidates = (await statuses(hostId)).filter((status) => status.enabled && !attempted.has(status.projectId));
+      const candidates = (await statuses(hostId)).filter((status) => dreamEligible(status) && !attempted.has(status.projectId));
       const pick = mostOverdue(candidates);
       if (pick === null) break;
       attempted.add(pick.projectId);
