@@ -433,12 +433,51 @@ describe("a failed start", () => {
       store.setMateThreadId = () => Promise.reject(new Error("storage is down"));
       const error = await startIntro(deps, { homeDirectory: home, ...PICK }).catch((caught: Error) => caught);
       expect(threads.spawned).toHaveLength(1);
-      expect(String(error)).toMatch(/started \(thr_[^)]+\).*storage is down.*Adopt this thread/);
+      expect(String(error)).toMatch(/started \(thr_[^)]+\).*storage is down.*Try again to adopt this first mate/);
       expect(threads.callsTo("stop")).toEqual([]);
       expect(await exists(join(home, "AGENTS.md"))).toBe(true);
       expect(projects.projects).toHaveLength(1);
       expect(current.homeDirectory).toBe("~/FirstMate");
     }
+  });
+
+  it("adopts the first mate it started when Start is pressed again after the record failed", async () => {
+    const dir = await tempDir();
+    const home = join(dir, "home");
+    const { deps, threads, store, current } = await setup();
+    const save = store.setMateThreadId.bind(store);
+    let failures = 1;
+    store.setMateThreadId = (id) => (failures-- > 0 ? Promise.reject(new Error("storage is down")) : save(id));
+    const error = await startIntro(deps, { homeDirectory: home, ...PICK }).catch((caught: Error) => caught);
+    expect(String(error)).toMatch(/Try again to adopt this first mate/);
+    const firstId = /started \((thr_[^)]+)\)/.exec(String(error))![1]!;
+
+    const mate = await startIntro(deps, { homeDirectory: home, ...PICK });
+    expect(mate.id).toBe(firstId);
+    expect(threads.spawned).toHaveLength(1);
+    expect(await store.mateThreadId()).toBe(mate.id);
+    expect(current.homeDirectory).toBe(home);
+    expect(await store.introState()).toBe("done");
+  });
+
+  it("starts a new first mate on the retry when the unrecorded one is gone, and refuses another folder while it waits", async () => {
+    const dir = await tempDir();
+    const home = join(dir, "home");
+    const { deps, threads, store } = await setup();
+    const save = store.setMateThreadId.bind(store);
+    let failures = 1;
+    store.setMateThreadId = (id) => (failures-- > 0 ? Promise.reject(new Error("storage is down")) : save(id));
+    const error = await startIntro(deps, { homeDirectory: home, ...PICK }).catch((caught: Error) => caught);
+    const firstId = /started \((thr_[^)]+)\)/.exec(String(error))![1]!;
+
+    await expect(startIntro(deps, { homeDirectory: join(dir, "elsewhere"), ...PICK })).rejects.toThrow(/still waiting to be recorded/);
+    expect(threads.spawned).toHaveLength(1);
+
+    threads.archiveNow(firstId);
+    const mate = await startIntro(deps, { homeDirectory: home, ...PICK });
+    expect(mate.id).not.toBe(firstId);
+    expect(threads.spawned).toHaveLength(2);
+    expect(await store.mateThreadId()).toBe(mate.id);
   });
 
   it("leaves an earlier home as it is", async () => {

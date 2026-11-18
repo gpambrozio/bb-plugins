@@ -160,6 +160,11 @@ export async function launchInHome(
 ): Promise<ThreadInfo> {
   const current = await resolveMate(deps);
   if (current !== null) throw aboard(current);
+  const waiting = await unrecordedMate(deps, home);
+  if (waiting !== null) {
+    await recordMate(deps, waiting, home);
+    return waiting;
+  }
 
   await readyHome(await deps.settings(), home);
   const project = await step(`The ${PROJECT_NAME} project could not be registered at ${home}`, async () => {
@@ -177,18 +182,52 @@ export async function launchInHome(
     pinned: true,
   };
   const mate = await step("The first mate could not be started", () => deps.threads.spawn(args));
+  await recordMate(deps, mate, home);
+  return mate;
+}
+
+/**
+ * First mates started but not recorded, because the store write failed: the next launch in the same home
+ * records that thread rather than start a second one. In memory, per store (one per plugin load), and
+ * read and written only under the `mate` lock; a reload forgets it, and the thread can still be adopted.
+ */
+const unrecorded = new WeakMap<Store, { id: string; home: string }>();
+
+/** Stores the first mate's id; on failure remembers the running thread for the next launch, and says so. */
+async function recordMate(deps: MateDeps, mate: ThreadInfo, home: string): Promise<void> {
   try {
     await deps.store.setMateThreadId(mate.id);
   } catch (error) {
-    // The thread exists and works; only the record failed. Leave it running and say how to keep it.
+    unrecorded.set(deps.store, { id: mate.id, home });
     throw new Error(
       `The first mate was started (${mate.id}) but could not be recorded: ${reason(error)}. It is still running ` +
-        `in ${home}. To keep it, make sure FirstMate's home directory is ${home}, then choose Adopt this thread ` +
-        `in its FirstMate tab.`,
+        `in ${home}. Try again to adopt this first mate: FirstMate will not start another.`,
       { cause: error },
     );
   }
-  return mate;
+  unrecorded.delete(deps.store);
+}
+
+/**
+ * The first mate an earlier launch started but could not record, when it still exists; null when there is
+ * none or it is gone (archived or deleted), so the launch starts a new one. A launch into another home is
+ * refused while it waits: two first mates would share no records but both answer to the captain.
+ */
+async function unrecordedMate(deps: MateDeps, home: string): Promise<ThreadInfo | null> {
+  const waiting = unrecorded.get(deps.store);
+  if (waiting === undefined) return null;
+  const thread = await deps.threads.get(waiting.id);
+  if (thread === null) {
+    unrecorded.delete(deps.store);
+    return null;
+  }
+  if ((await canonicalPath(waiting.home)) !== (await canonicalPath(home))) {
+    throw new Error(
+      `A first mate started earlier (${waiting.id}) in ${waiting.home} is still waiting to be recorded. Start ` +
+        `again with that folder to keep it, or archive it to start afresh.`,
+    );
+  }
+  return thread;
 }
 
 /** Whether the thread's workspace is the home, compared through symlinks, on the bb server's machine. */

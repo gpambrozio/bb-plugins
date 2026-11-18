@@ -231,8 +231,10 @@ Do not break these; each was paid for.
   writing in it, and bb's project deletion takes the project's threads with it, so a failure leaves the
   placed home and any project it registered (both harmless; the next start finds them) and only the
   setting unwritten. Only a staging folder that was never placed is removed. A first mate that started but
-  could not be recorded (`launchInHome`, any launch) is left running, and the error names its thread and
-  how to adopt it.
+  could not be recorded (`launchInHome`, any launch) is left running and remembered in memory under the
+  `mate` lock (`unrecorded`, per store): the next launch or Start in the same home records that thread
+  instead of spawning, one in another home is refused while it waits, and a new one is spawned only once
+  that thread is gone. A reload forgets it; the thread can still be adopted from its tab.
 - **The first-session prompt is only the guide's.** `templates/messages/first-session.md` follows the
   opening in the guide's launch (`LaunchOptions.firstSession`); a launch from settings and a restart send
   the opening alone.
