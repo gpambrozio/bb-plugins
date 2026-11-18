@@ -148,7 +148,7 @@ export function dreamCli(service: DreamService): PluginCliRegistration {
           }),
       }),
       discard: cliCommand({
-        summary: "Discard a dry run's proposal; the next one waits for new sessions",
+        summary: "Discard a dry run's proposal; it never counts as a dream, so the next one covers the same sessions",
         options: JSON_OPTION,
         positionals: [PROJECT, TIME],
         run: (input) =>

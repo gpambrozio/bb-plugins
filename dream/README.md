@@ -29,7 +29,8 @@ summary goes into the Dream page's history.
   ends as failed. Dream also refuses to start when your settings visibly turn hooks off.
 - **The first dream is a dry run.** It works on a copy of the memory and leaves a proposal. Apply it
   from the page or with `bb dream apply <project>` (refused if a session changed one of those files
-  since), or discard it. Once one is applied, the project's dreams edit its memory in place.
+  since), or discard it. Once one is applied, the project's dreams edit its memory in place. A dry run
+  you do not apply never counts as a dream, so the next one covers the same sessions again.
 - **A backup before every change.** The memory folder is archived before each dream, apply and restore;
   the 20 newest per project are kept. `bb dream restore <project> [time]` puts one back, and backs up
   what it replaces, so it can be undone the same way.

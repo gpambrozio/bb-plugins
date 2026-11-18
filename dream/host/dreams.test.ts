@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -393,23 +393,68 @@ describe("a project's dreams", () => {
     expect(host.proposalDiff(project(), undefined)).toMatchObject({ stamp: run.proposal, files: [{ path: "build.md", kind: "changed", proposed: "builds with ninja\n" }] });
   });
 
-  it("counts a dry run that changes nothing as a dream, and a discarded proposal too", async () => {
+  it("never counts a dry run as a dream: not one that proposes nothing, not a discarded one", async () => {
     const host = dreams();
+    const gate = () => host.status([project()], DEFAULT_THRESHOLDS)[0].gate;
+    const before = gate();
+    expect(before).toMatchObject({ due: true, lastDreamAt: null, sessionsSince: 5 });
+
+    // A dry run that proposes nothing.
     const quiet = await prepare(host, "run1");
     if (!quiet.ok) throw new Error(quiet.reason);
     await host.finish({ runId: "run1", ok: true, summary: "Already tight.", threadId: null });
-    expect(lastConsolidatedAt(memory)).toBeCloseTo(clock, -1);
+    expect(lastConsolidatedAt(memory)).toBe(0);
     expect(host.status([project()], DEFAULT_THRESHOLDS)[0].pendingProposal).toBeNull();
+    expect(gate()).toMatchObject({ due: true, lastDreamAt: null, baselineAt: before.baselineAt, sessionsSince: 5 });
 
-    clock += 4 * DAY;
-    for (const [index, age] of [3, 2.5, 2, 1.5, 1].entries()) session(projectSlug(checkout), `n${index}`, age * DAY);
+    // A dry run that proposes changes, then is discarded.
+    clock += HOUR;
     const busy = await prepare(host, "run2");
     if (!busy.ok) throw new Error(busy.reason);
     write(path.join(busy.targetDir, "new.md"), "new\n");
     await host.finish({ runId: "run2", ok: true, summary: null, threadId: null });
     const discarded = await host.discard(project(), undefined);
     expect(discarded.stamp).toBe(busy.proposal);
-    expect(lastConsolidatedAt(memory)).toBeCloseTo(clock, -1);
+    expect(lastConsolidatedAt(memory)).toBe(0);
     expect(existsSync(path.join(memory, "new.md"))).toBe(false);
+    expect(gate()).toMatchObject({ lastDreamAt: null, baselineAt: before.baselineAt, sessionsSince: 5 });
+
+    // The next dry run is given every session since the last real dream, as the first one was.
+    const again = await prepare(host, "run3");
+    if (!again.ok) throw new Error(again.reason);
+    expect(again.sessionCount).toBe(5);
+  });
+
+  it("keeps an earlier real dream as the baseline through dry runs, and moves it only on apply", async () => {
+    const prior = clock - 5 * DAY;
+    write(lockPath(memory), "", prior);
+    utimesSync(memory, (clock - 10 * DAY) / 1000, (clock - 10 * DAY) / 1000);
+    const host = dreams();
+    const proposed = await prepare(host, "run1", true, "dry-run");
+    if (!proposed.ok) throw new Error(proposed.reason);
+    write(path.join(proposed.targetDir, "build.md"), "builds with ninja\n");
+    await host.finish({ runId: "run1", ok: true, summary: null, threadId: null });
+    expect(lastConsolidatedAt(memory)).toBeCloseTo(prior, -1);
+    await host.discard(project(), undefined);
+    expect(lastConsolidatedAt(memory)).toBeCloseTo(prior, -1);
+
+    const applied = await prepare(host, "run2", true, "dry-run");
+    if (!applied.ok) throw new Error(applied.reason);
+    write(path.join(applied.targetDir, "build.md"), "builds with ninja\n");
+    await host.finish({ runId: "run2", ok: true, summary: null, threadId: null });
+    await host.apply(project(), undefined, 20);
+    expect(lastConsolidatedAt(memory)).toBeCloseTo(clock, -1);
+  });
+
+  it("does not take the lock's own coming and going for a change to the memory", async () => {
+    const host = dreams();
+    const baseline = host.status([project()], DEFAULT_THRESHOLDS)[0].gate.baselineAt;
+    clock += HOUR;
+    const run = await prepare(host, "run1", true, "dry-run");
+    if (!run.ok) throw new Error(run.reason);
+    await host.finish({ runId: "run1", ok: false, summary: null, threadId: null });
+    // The lock was written and removed in the memory folder; the folder's own mtime moved with it.
+    expect(statSync(memory).mtimeMs).toBeGreaterThan(baseline as number);
+    expect(host.status([project()], DEFAULT_THRESHOLDS)[0].gate).toMatchObject({ baselineAt: baseline, code: "due" });
   });
 });

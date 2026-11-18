@@ -313,7 +313,10 @@ export function createDreams(options: DreamsOptions) {
             await backup(memoryDir, paths.backups(project.projectId), backupStamp);
             pruneBackups(paths.backups(project.projectId), input.backupsToKeep);
           } else {
-            const proposal = createProposal(memoryDir, paths.proposals(project.projectId), stamp, startedAt);
+            // A dry run's folder is named by its start; two in the same millisecond must not share one.
+            let at = startedAt;
+            while (existsSync(path.join(paths.proposals(project.projectId), stampOf(at)))) at += 1;
+            const proposal = createProposal(memoryDir, paths.proposals(project.projectId), stampOf(at), startedAt);
             proposalStamp = proposal.stamp;
             targetDir = realOrSelf(proposal.memoryDir);
           }
@@ -481,9 +484,10 @@ export function createDreams(options: DreamsOptions) {
             outcome = "failed";
             rollback();
           } else if (changeCount(changes) === 0) {
-            // Nothing to propose: the memory is already tight, which counts as a dream.
+            // Nothing to propose. A dry run never counts as a dream, so the lock goes back too.
             outcome = "unchanged";
             discardProposal(finished);
+            rollback();
           } else {
             // Not consolidated until applied; `apply` moves the lock to the dry run's start.
             outcome = "proposed";
@@ -554,21 +558,13 @@ export function createDreams(options: DreamsOptions) {
 
     discard(project: ProjectInput, stamp: string | undefined) {
       return exclusive(async () => {
-        const memoryDir = realOrSelf(memoryOf(project).dir);
         const proposal = findProposal(paths.proposals(project.projectId), stamp);
         if (proposal === null || proposal.status !== "ready") {
           throw new DreamRefusal("proposal-pending", stamp ? `No dry run ${stamp} waits for ${project.name}.` : `${project.name} has no dry run waiting.`);
         }
-        const priorMtime = await takeLock(memoryDir);
-        if (priorMtime === null) throw new DreamRefusal("locked", "Another dream holds its memory lock.");
-        try {
-          discardProposal(proposal);
-        } catch (error) {
-          rollbackLock(memoryDir, priorMtime, options.pid);
-          throw error;
-        }
-        // Counted as a dream, so the next proposal waits for new sessions instead of coming back tomorrow.
-        markConsolidated(memoryDir, proposal.createdAt, options.pid);
+        // A discarded dry run never counts as a dream: the memory and its lock are left exactly as
+        // they are, so the next dream is given every session since the last real one.
+        discardProposal(proposal);
         return { stamp: proposal.stamp };
       });
     },

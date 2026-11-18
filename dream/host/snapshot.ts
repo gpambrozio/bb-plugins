@@ -72,17 +72,17 @@ export function changeCount(changes: Changes): number {
   return changes.added.length + changes.changed.length + changes.deleted.length;
 }
 
-/** The newest mtime of the folder itself and its `.md` files: when someone last wrote memory. */
+/**
+ * When someone last wrote memory: the newest mtime of the folder's `.md` files, or null when it has
+ * none. The folder's own mtime is left out on purpose: taking and rolling back the lock creates and
+ * removes a file in it, so the plugin's own lock would otherwise read as a change to the memory, move a
+ * lock-less project's baseline, and make it look busy for the quiet period.
+ */
 export function newestChange(dir: string): number | null {
   let newest: number | null = null;
-  try {
-    newest = statSync(dir).mtimeMs;
-  } catch {
-    return null;
-  }
   for (const file of markdownFiles(dir)) {
     try {
-      newest = Math.max(newest, statSync(path.join(dir, ...file.split("/"))).mtimeMs);
+      newest = Math.max(newest ?? 0, statSync(path.join(dir, ...file.split("/"))).mtimeMs);
     } catch {
       // Removed while reading.
     }

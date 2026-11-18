@@ -160,9 +160,13 @@ of the plugin carries it on; `loop` calls `recover` every minute, which drives i
 - **The lock's PID is the host worker's.** After a successful dream it stays for the lock's hour, as
   native's does, so *other* processes see it held. The plugin itself treats a lock holding its own PID
   with no run of its own in progress as free; otherwise a restore right after a bad dream was refused.
-- **A dry run** never moves the lock unless it proposes nothing (then it counts as a dream). Applying moves
-  it to the dry run's start and makes the project edit in place; discarding (which takes the lock first)
-  moves it there too, so the next proposal waits for new sessions instead of coming back the next night.
+- **A dry run that is not applied never counts as a dream** (the owner's rule): not for the gate's
+  baseline, not for the sessions the next prompt lists, not for due-ness. Its lock is always rolled back,
+  whether it failed, proposed changes or proposed nothing, and discarding touches neither the memory nor
+  the lock. Only applying (which moves the lock to the dry run's start and makes the project edit in
+  place) or a real dream moves the baseline. So a project whose dry runs propose nothing, or are
+  discarded, is dry-run again when it is next due. The baseline of a project with no lock is its
+  newest `.md` file, not the folder's mtime, which the lock's own coming and going changes.
 - **The sweep** tries each project once per window, so a failing one cannot loop. It hands `begin` the
   window's end, which is checked again after `prepare` and before the spawn: a scan or a backup that
   runs past the end starts nothing, and a prepared run is ended (lock rolled back). A dream already
