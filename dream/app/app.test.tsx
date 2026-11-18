@@ -1,0 +1,325 @@
+// @vitest-environment jsdom
+/**
+ * The app against a fake server: the page lists a project with why it is due, its warnings and a
+ * waiting dry run, says the schedule is off, and shows a dream's summary in the history. Also the
+ * boundaries a build does not check: the app takes the SDK root and the contract as types only, and
+ * every icon it names is one bb draws.
+ */
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
+import type { PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
+import { renderSlot, type PluginRpcTestHandlers } from "@get-bb/plugin-sdk/testing/app";
+import { afterEach, describe, expect, it } from "vitest";
+
+import type { RpcContract } from "../shared/contract";
+import { DEFAULT_CHOICES, DREAM_CHANGED, type Overview, type RunRecord, type Waiting, type WaitingProposal } from "../shared/contract-types";
+import { DreamPage } from "./dream-page";
+import { useWaitingBadge } from "./waiting-badge";
+import { BB_ICON_NAMES } from "./testing/bb-icon-names";
+
+afterEach(() => cleanup());
+
+const root = join(import.meta.dirname, "..");
+const appFiles = ["app.tsx", "shared/contract-types.ts", "shared/types.ts", "shared/gate.ts", "shared/format.ts", "shared/window.ts", "shared/filters.ts", "shared/line-diff.ts", ...readdirSync(join(root, "app")).filter((name) => /\.tsx?$/.test(name) && !name.includes(".test.")).map((name) => join("app", name))];
+
+const overview: Overview = {
+  host: { id: "host_1", name: "Studio", connected: true },
+  hosts: [{ id: "host_1", name: "Studio", connected: true }],
+  choices: DEFAULT_CHOICES,
+  schedule: { enabled: false, windowStart: "01:00", windowEnd: "06:00", inWindow: false, nextChange: null, lastSweepAt: null },
+  alwaysDryRun: false,
+  active: null,
+  error: null,
+  projects: [
+    {
+      projectId: "proj_app",
+      name: "app",
+      checkout: "/repos/app",
+      enabled: true,
+      memory: {
+        dir: "/home/agent-memory/app",
+        source: "projectSettings",
+        configured: "~/agent-memory/app",
+        defaultDir: "/home/.claude/projects/-repos-app/memory",
+        autoMemoryEnabled: true,
+        warnings: ["The default memory folder still holds 3 .md files; Dream leaves it alone."],
+        files: 12,
+        indexLines: 40,
+        indexBytes: 3000,
+      },
+      gate: { due: false, code: "proposal-pending", reason: "A dry-run proposal waits to be applied or discarded.", lastDreamAt: null, sessionsSince: 9, daysSince: 3 },
+      folders: 4,
+      sessions: 20,
+      inPlace: false,
+      pendingProposal: { stamp: "20261117T010500000Z", createdAt: Date.UTC(2026, 10, 17, 1, 5), status: "ready", changes: { added: ["ci.md"], changed: ["build.md", "MEMORY.md"], deleted: [] }, dir: "/data/proposals/proj_app/20261117T010500000Z" },
+      lastBackup: null,
+    },
+  ],
+};
+
+const run: RunRecord = {
+  runId: "abc",
+  projectId: "proj_app",
+  projectName: "app",
+  hostId: "host_1",
+  mode: "dry-run",
+  trigger: "schedule",
+  startedAt: Date.UTC(2026, 10, 17, 1, 5),
+  endedAt: Date.UTC(2026, 10, 17, 1, 15),
+  outcome: "proposed",
+  threadId: "thr_dream",
+  changes: { added: ["ci.md"], changed: ["build.md"], deleted: [] },
+  summary: "Merged the build notes. **CLAUDE.md to check:** none.",
+  backup: null,
+  proposal: "20261117T010500000Z",
+  error: null,
+};
+
+function stubs(handlers: Partial<PluginRpcTestHandlers<RpcContract>>): PluginRpcTestHandlers<RpcContract> {
+  return handlers as PluginRpcTestHandlers<RpcContract>;
+}
+
+describe("the Dream page", () => {
+  it("shows a project's memory, why it is waiting, its warnings and dry run, and the history", async () => {
+    const applied: string[] = [];
+    renderSlot<PluginNavPanelProps, RpcContract>({ component: DreamPage }, { subPath: "" }, {
+      rpc: stubs({
+        overview: () => overview,
+        history: () => [run],
+        apply: ({ projectId }) => {
+          applied.push(projectId);
+          return { stamp: run.proposal as string, changes: run.changes as NonNullable<RunRecord["changes"]>, backup: "20261117T090000000Z" };
+        },
+      }),
+    });
+    expect(await screen.findByText("app")).toBeTruthy();
+    expect(screen.getByText(/The schedule is off/)).toBeTruthy();
+    expect(screen.getByText("Proposal waiting")).toBeTruthy();
+    expect(screen.getByText("/home/agent-memory/app")).toBeTruthy();
+    expect(screen.getByText("Sessions (never dreamed: all count)")).toBeTruthy();
+    expect(screen.getByText(/still holds 3 .md files/)).toBeTruthy();
+    expect(screen.getByText(/would update 2, add 1 memory files/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Dream now/ }).hasAttribute("disabled")).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    await waitFor(() => expect(applied).toEqual(["proj_app"]));
+
+    fireEvent.click(screen.getByRole("tab", { name: /History/ }));
+    fireEvent.click(await screen.findByRole("button", { expanded: false }));
+    expect(await screen.findByText(/Merged the build notes/)).toBeTruthy();
+    expect(screen.getByText("+ ci.md")).toBeTruthy();
+  });
+});
+
+describe("the proposal view", () => {
+  const diff = (baseChanged: boolean) => ({
+    stamp: "20261117T010500000Z",
+    createdAt: Date.UTC(2026, 10, 17, 1, 5),
+    summary: "Fixed the build tool.",
+    changes: { added: ["ci.md"], changed: ["MEMORY.md"], deleted: [] },
+    files: [
+      { path: "MEMORY.md", kind: "changed" as const, current: "- [Build](build.md) — make\n", proposed: "- [Build](build.md) — ninja\n", baseChanged, truncated: false },
+      { path: "ci.md", kind: "added" as const, current: null, proposed: "ci runs nightly\n", baseChanged: false, truncated: false },
+    ],
+    danglingLinks: [] as Array<{ file: string; link: string }>,
+  });
+
+  it("opens from the project, shows the counts and each file's diff, and applies from there", async () => {
+    const applied: Array<string | undefined> = [];
+    renderSlot<PluginNavPanelProps, RpcContract>({ component: DreamPage }, { subPath: "" }, {
+      rpc: stubs({
+        overview: () => overview,
+        history: () => [],
+        proposal: () => diff(false),
+        apply: ({ stamp }) => {
+          applied.push(stamp);
+          return { stamp: stamp as string, changes: diff(false).changes, backup: "b" };
+        },
+      }),
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "View changes" }));
+    expect(await screen.findByText(/1 changed, 1 added, 0 deleted/)).toBeTruthy();
+    const index = screen.getByRole("table", { name: "Changes to MEMORY.md" });
+    expect(index.querySelector('[data-kind="del"]')?.textContent).toContain("— make");
+    expect(index.querySelector('[data-kind="add"]')?.textContent).toContain("— ninja");
+    expect(screen.getByRole("table", { name: "Changes to ci.md" }).textContent).toContain("ci runs nightly");
+    expect(screen.queryByRole("alert")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    await waitFor(() => expect(applied).toEqual(["20261117T010500000Z"]));
+  });
+
+  it("lists the links the proposal leaves pointing at memory files that would be gone", async () => {
+    renderSlot<PluginNavPanelProps, RpcContract>({ component: DreamPage }, { subPath: "" }, {
+      rpc: stubs({ overview: () => overview, history: () => [], proposal: () => ({ ...diff(false), danglingLinks: [{ file: "ci.md", link: "[[old-build]]" }] }) }),
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "View changes" }));
+    const warning = await screen.findByRole("status");
+    expect(warning.textContent).toContain("1 link points at memory files that are gone");
+    expect(warning.textContent).toContain("ci.md → [[old-build]]");
+  });
+
+  it("says plainly when the memory changed since the dry run, and turns Apply off", async () => {
+    renderSlot<PluginNavPanelProps, RpcContract>({ component: DreamPage }, { subPath: "" }, {
+      rpc: stubs({ overview: () => overview, history: () => [], proposal: () => diff(true) }),
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "View changes" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("The memory has changed since this dry run: MEMORY.md");
+    expect(screen.getByRole("button", { name: "Apply" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: "Discard" }).hasAttribute("disabled")).toBe(false);
+  });
+});
+
+describe("the project filters", () => {
+  const base = overview.projects[0];
+  const projects = [
+    { ...base, projectId: "p_due", name: "due-one", pendingProposal: null, gate: { ...base.gate, due: true, code: "due" as const, reason: "Due now." } },
+    { ...base, projectId: "p_off", name: "switched-off", enabled: false, pendingProposal: null, gate: { ...base.gate, due: false, code: "off" as const, reason: "Turned off." } },
+    { ...base, projectId: "p_empty", name: "no-memory", pendingProposal: null, memory: { ...base.memory, files: 0, indexLines: null }, gate: { ...base.gate, due: false, code: "no-memory" as const, reason: "No files." } },
+  ];
+
+  it("shows all projects, those with or without memory, and those the scheduler would dream", async () => {
+    renderSlot<PluginNavPanelProps, RpcContract>({ component: DreamPage }, { subPath: "" }, {
+      rpc: stubs({ overview: () => ({ ...overview, projects }), history: () => [], waiting: () => ({ hostId: "host_1", reachable: true, proposals: [] }) }),
+    });
+    const names = () => ["due-one", "switched-off", "no-memory"].filter((name) => screen.queryByText(name) !== null);
+    expect(await screen.findByText("due-one")).toBeTruthy();
+    expect(names()).toEqual(["due-one", "switched-off", "no-memory"]);
+    fireEvent.click(screen.getByRole("button", { name: "With memory (2)" }));
+    expect(names()).toEqual(["due-one", "switched-off"]);
+    fireEvent.click(screen.getByRole("button", { name: "Without memory (1)" }));
+    expect(names()).toEqual(["no-memory"]);
+    fireEvent.click(screen.getByRole("button", { name: "Dream eligible (1)" }));
+    expect(names()).toEqual(["due-one"]);
+    fireEvent.click(screen.getByRole("button", { name: "All projects (3)" }));
+    expect(names()).toEqual(["due-one", "switched-off", "no-memory"]);
+  });
+
+  it("shows the projects with a dry run pending, counted from the badge's list, and follows it", async () => {
+    let waiting = [{ projectId: "p_off", projectName: "switched-off", stamp: "20261117T010000000Z", createdAt: 1 }];
+    const view = renderSlot<PluginNavPanelProps, RpcContract>({ component: DreamPage }, { subPath: "" }, {
+      rpc: stubs({ overview: () => ({ ...overview, projects }), history: () => [], waiting: () => ({ hostId: "host_1", reachable: true, proposals: waiting }) }),
+    });
+    const names = () => ["due-one", "switched-off", "no-memory"].filter((name) => screen.queryByText(name) !== null);
+    fireEvent.click(await screen.findByRole("button", { name: "Dry run pending (1)" }));
+    expect(names()).toEqual(["switched-off"]);
+
+    // Applied or discarded: the server announces it, and the filter empties.
+    waiting = [];
+    await view.emitRealtime(DREAM_CHANGED, { at: 1 });
+    expect(await screen.findByRole("button", { name: "Dry run pending (0)" })).toBeTruthy();
+    expect(screen.getByText("No project matches dry run pending.")).toBeTruthy();
+  });
+});
+
+describe("Always dry run", () => {
+  it("says on the page whether every dream is a dry run, and marks every project's next dream as one", async () => {
+    const inPlace = { ...overview.projects[0], projectId: "proj_api", name: "api", inPlace: true, pendingProposal: null, gate: { ...overview.projects[0].gate, code: "too-soon" as const } };
+    const view = renderSlot<PluginNavPanelProps, RpcContract>({ component: DreamPage }, { subPath: "" }, {
+      rpc: stubs({ overview: () => ({ ...overview, projects: [inPlace] }), history: () => [] }),
+    });
+    expect(await screen.findByText("api")).toBeTruthy();
+    expect(screen.getByText(/A project's first dream is a dry run; once one is applied/)).toBeTruthy();
+    expect(screen.queryByText("Next: dry run")).toBeNull();
+    view.unmount();
+
+    renderSlot<PluginNavPanelProps, RpcContract>({ component: DreamPage }, { subPath: "" }, {
+      rpc: stubs({ overview: () => ({ ...overview, alwaysDryRun: true, projects: [inPlace] }), history: () => [] }),
+    });
+    expect(await screen.findByText(/Always dry run is on: every dream is a dry run/)).toBeTruthy();
+    expect(screen.getByText("Next: dry run")).toBeTruthy();
+  });
+});
+
+describe("the sidebar badge", () => {
+  function BadgeProbe() {
+    const badge = useWaitingBadge();
+    return <p data-testid="badge">{badge === null ? "none" : `${badge.count} ${badge.tone} ${badge.label}`}</p>;
+  }
+  const waitingOn = (...names: string[]): WaitingProposal[] => names.map((name, index) => ({ projectId: `proj_${name}`, projectName: name, stamp: `2026111${index}T010000000Z`, createdAt: index }));
+
+  it("counts the dry runs waiting for review, follows the server's announcements, and clears when none waits", async () => {
+    let waiting = waitingOn("Acme Web");
+    const view = renderSlot<object, RpcContract>({ component: BadgeProbe }, {}, { rpc: stubs({ waiting: () => ({ hostId: "host_1", reachable: true, proposals: waiting }) }) });
+    await waitFor(() => expect(screen.getByTestId("badge").textContent).toBe("1 warning 1 dry run waiting for review: Acme Web"));
+
+    waiting = waitingOn("Acme API", "Acme Web");
+    await view.emitRealtime(DREAM_CHANGED, { at: 1 });
+    await waitFor(() => expect(screen.getByTestId("badge").textContent).toBe("2 warning 2 dry runs waiting for review: Acme API, Acme Web"));
+
+    waiting = [];
+    await view.emitRealtime(DREAM_CHANGED, { at: 2 });
+    await waitFor(() => expect(screen.getByTestId("badge").textContent).toBe("none"));
+  });
+
+  it("asks again when the realtime link comes back, and never on a timer", async () => {
+    let waiting: WaitingProposal[] = [];
+    const view = renderSlot<object, RpcContract>({ component: BadgeProbe }, {}, { rpc: stubs({ waiting: () => ({ hostId: "host_1", reachable: true, proposals: waiting }) }) });
+    await waitFor(() => expect(view.rpcCalls.filter((call) => call.method === "waiting")).toHaveLength(1));
+    waiting = waitingOn("Acme Web");
+    await view.setRealtimeConnectionState("reconnecting");
+    await view.setRealtimeConnectionState("connected");
+    await waitFor(() => expect(screen.getByTestId("badge").textContent).toMatch(/^1 warning/));
+    expect(view.rpcCalls.filter((call) => call.method === "waiting")).toHaveLength(2);
+  });
+
+  it("keeps its count while the dream machine cannot be asked, and catches up when the server says it is back", async () => {
+    let answer: Waiting = { hostId: "host_1", reachable: true, proposals: waitingOn("Acme Web") };
+    const view = renderSlot<object, RpcContract>({ component: BadgeProbe }, {}, { rpc: stubs({ waiting: () => answer }) });
+    await waitFor(() => expect(screen.getByTestId("badge").textContent).toBe("1 warning 1 dry run waiting for review: Acme Web"));
+
+    answer = { hostId: "host_1", reachable: false, proposals: [] };
+    await view.emitRealtime(DREAM_CHANGED, { at: 1 });
+    await waitFor(() => expect(view.rpcCalls.filter((call) => call.method === "waiting")).toHaveLength(2));
+    expect(screen.getByTestId("badge").textContent).toBe("1 warning 1 dry run waiting for review: Acme Web");
+
+    // The machine is back: the server announces it, and the badge reads the proposals again.
+    answer = { hostId: "host_1", reachable: true, proposals: waitingOn("Acme API", "Acme Web") };
+    await view.emitRealtime(DREAM_CHANGED, { at: 2 });
+    await waitFor(() => expect(screen.getByTestId("badge").textContent).toBe("2 warning 2 dry runs waiting for review: Acme API, Acme Web"));
+  });
+
+  it("drops the count of the previous dream machine when the dream machine changes to one that is offline", async () => {
+    let answer: Waiting = { hostId: "host_a", reachable: true, proposals: waitingOn("Acme API", "Acme Web") };
+    const view = renderSlot<object, RpcContract>({ component: BadgeProbe }, {}, { rpc: stubs({ waiting: () => answer }) });
+    await waitFor(() => expect(screen.getByTestId("badge").textContent).toBe("2 warning 2 dry runs waiting for review: Acme API, Acme Web"));
+
+    // Machine B, offline, is chosen as the dream machine: saving it announces a change.
+    answer = { hostId: "host_b", reachable: false, proposals: [] };
+    await view.emitRealtime(DREAM_CHANGED, { at: 1 });
+    await waitFor(() => expect(screen.getByTestId("badge").textContent).toBe("none"));
+
+    // B comes back with a dry run of its own.
+    answer = { hostId: "host_b", reachable: true, proposals: waitingOn("Docs Site") };
+    await view.emitRealtime(DREAM_CHANGED, { at: 2 });
+    await waitFor(() => expect(screen.getByTestId("badge").textContent).toBe("1 warning 1 dry run waiting for review: Docs Site"));
+  });
+
+  it("is registered on the Dream sidebar entry", () => {
+    const source = readFileSync(join(root, "app.tsx"), "utf8");
+    expect(source).toMatch(/navPanel\(\{[^}]*experimental_useBadge: useWaitingBadge/);
+  });
+});
+
+describe("app boundaries", () => {
+  it.each(appFiles)("%s takes the SDK root and the contract as types only", (file) => {
+    const source = readFileSync(join(root, file), "utf8");
+    expect(source.match(/^import\s+(?!type\b)[^;]*from\s+"@get-bb\/plugin-sdk"/m)).toBeNull();
+    expect(source.match(/^import\s+(?!type\b)[^;]*from\s+"[./]*shared\/contract"/m)).toBeNull();
+    expect(source).not.toMatch(/from\s+"[./]*(server|host)\//);
+  });
+
+  it("names only icons bb draws", () => {
+    const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { bb: { branding: { icon: string } } };
+    const used = new Set([manifest.bb.branding.icon]);
+    for (const file of appFiles) {
+      for (const match of readFileSync(join(root, file), "utf8").matchAll(/(?:name|icon)[=:]\s*\{?\s*"([A-Za-z]+)"/g)) used.add(match[1]);
+      for (const match of readFileSync(join(root, file), "utf8").matchAll(/name=\{[^}]*\?\s*"([A-Za-z]+)"\s*:\s*"([A-Za-z]+)"/g)) {
+        used.add(match[1]);
+        used.add(match[2]);
+      }
+    }
+    expect(used.size).toBeGreaterThan(5);
+    for (const name of used) expect(BB_ICON_NAMES, name).toContain(name);
+  });
+});
