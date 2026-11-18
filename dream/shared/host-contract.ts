@@ -6,6 +6,7 @@
 import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
+import { WaitingProposalSchema } from "./contract-types";
 import {
   ApplyResultSchema,
   BackupListSchema,
@@ -61,6 +62,8 @@ export const hostContract = defineRpcContract({
   backups: { input: z.object({ project: ProjectInputSchema }), output: BackupListSchema },
   /** A waiting dry run's changes, file by file, for the proposal view. Reads only. */
   proposalDiff: { input: ByProject, output: ProposalDiffSchema },
+  /** Every project's dry run that waits to be applied or discarded. Reads one small file per proposal. */
+  waiting: { input: z.object({}), output: z.object({ proposals: z.array(WaitingProposalSchema) }) },
   /** The runs this host still holds a lock for, so a reloaded server can finish them. */
   activeRuns: {
     input: z.object({}),

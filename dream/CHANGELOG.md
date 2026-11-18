@@ -22,6 +22,11 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   since the dry run.
 - **A dry run you do not apply never counts as a dream**: the next one is given every session since the
   last real dream, whether the dry run was discarded or proposed nothing.
+- **A badge on Dream's sidebar entry** counts the dry runs waiting for you to apply or discard, and
+  clears when none waits.
+- **Always dry run**, a setting, off by default: when on, every dream, scheduled or by hand, is a dry
+  run that waits for your review, not only a project's first. The page and `bb dream status` say
+  which.
 - **No false warning for a project folder outside git**: a custom memory folder set only in your local
   settings is flagged only in a git repository, whose worktrees do not see that file, and not when the
   repository's `.worktreeinclude` has bb copy that file into each new worktree.

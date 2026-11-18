@@ -97,9 +97,14 @@ function setup(options: { projects: FakeProject[]; start: Date; config?: Partial
     thresholds: DEFAULT_THRESHOLDS,
     backupsToKeep: 20,
     notify: true,
+    alwaysDryRun: false,
     choices: DEFAULT_CHOICES,
     ...options.config,
   };
+  /** The mode each prepare was asked for, in order. */
+  const preparedModes: Array<string | null> = [];
+  /** What the dream machine says waits, or an error it fails with. */
+  let waiting: Array<{ projectId: string; projectName: string; stamp: string; createdAt: number }> | Error = [];
 
   const status = (project: FakeProject): ProjectStatus => ({
     projectId: project.id,
@@ -136,11 +141,12 @@ function setup(options: { projects: FakeProject[]; start: Date; config?: Partial
       prepare: async (_hostId, input): Promise<Prepared> => {
         const project = options.projects.find((candidate) => candidate.id === input.project.projectId) as FakeProject;
         if (project.refuse) return { ok: false, code: "locked", reason: project.refuse };
+        preparedModes.push(input.mode);
         now += faults.prepareMs;
         runs.set(input.runId, project);
         return {
           ok: true,
-          mode: "dream",
+          mode: input.mode ?? "dream",
           workspace: `/ws/${project.id}`,
           targetDir: `/mem/${project.id}`,
           memoryDir: `/mem/${project.id}`,
@@ -197,6 +203,10 @@ function setup(options: { projects: FakeProject[]; start: Date; config?: Partial
       restore: async () => ({ stamp: "", changes: NO_CHANGES, backup: "" }),
       backups: async () => ({ backups: [], proposals: [] }),
       activeRuns: async () => ({ runs: faults.hostRuns }),
+      waiting: async () => {
+        if (waiting instanceof Error) throw waiting;
+        return { proposals: waiting };
+      },
       proposalDiff: async () => ({ stamp: "", createdAt: 0, summary: null, changes: NO_CHANGES, files: [], danglingLinks: [] }),
     },
     threads: {
@@ -263,6 +273,8 @@ function setup(options: { projects: FakeProject[]; start: Date; config?: Partial
     now: () => now,
     advance: (ms: number) => (now += ms),
     active: () => kv.get<ActiveState>("active-run"),
+    preparedModes,
+    setWaiting: (value: typeof waiting) => (waiting = value),
   };
 }
 
@@ -425,6 +437,51 @@ describe("a dream", () => {
     await second.recover();
     expect(await first.kv.get("active-run")).toBeUndefined();
     expect((await second.history.list())[0]).toMatchObject({ outcome: "changed", threadId: record.threadId });
+  });
+});
+
+describe("Always dry run", () => {
+  it("is off by default: the host picks, so only a project's first dream is a dry run", async () => {
+    const context = setup({ start: at(12), projects: [project("a", null)] });
+    const { done } = await context.service.begin("a", { mode: null, manual: true, trigger: "manual" });
+    await done;
+    expect(context.preparedModes).toEqual([null]);
+    expect((await context.service.overview()).alwaysDryRun).toBe(false);
+  });
+
+  it("makes every dream a dry run when on, by hand or on the schedule", async () => {
+    const context = setup({ start: at(12), projects: [project("a", null), project("b", 5)], config: { alwaysDryRun: true } });
+    const { record, done } = await context.service.begin("a", { mode: null, manual: true, trigger: "manual" });
+    expect(record.mode).toBe("dry-run");
+    await done;
+    expect((await context.service.overview()).alwaysDryRun).toBe(true);
+
+    const scheduled = setup({ start: at(1), projects: [project("b", 5)], config: { alwaysDryRun: true } });
+    await tick(scheduled, scheduled.service, 60);
+    expect(scheduled.preparedModes).toEqual(["dry-run"]);
+    expect(context.preparedModes).toEqual(["dry-run"]);
+  });
+});
+
+describe("the waiting dry runs", () => {
+  it("lists the dream machine's waiting dry runs under bb's project names, leaving out projects bb no longer has", async () => {
+    const context = setup({ start: at(12), projects: [project("b", null), project("a", null)] });
+    context.setWaiting([
+      { projectId: "b", projectName: "old name", stamp: "20261117T010000000Z", createdAt: 1 },
+      { projectId: "gone", projectName: "Gone", stamp: "20261116T010000000Z", createdAt: 2 },
+      { projectId: "a", projectName: "a", stamp: "20261115T010000000Z", createdAt: 3 },
+    ]);
+    expect(await context.service.waiting()).toEqual([
+      { projectId: "a", projectName: "a", stamp: "20261115T010000000Z", createdAt: 3 },
+      { projectId: "b", projectName: "b", stamp: "20261117T010000000Z", createdAt: 1 },
+    ]);
+  });
+
+  it("counts none, and says why in the log, when the dream machine cannot be asked", async () => {
+    const context = setup({ start: at(12), projects: [project("a", null)] });
+    context.setWaiting(new Error("the dream machine is offline"));
+    expect(await context.service.waiting()).toEqual([]);
+    expect(context.log.join("\n")).toMatch(/Could not count the waiting dry runs: the dream machine is offline/);
   });
 });
 

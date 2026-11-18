@@ -8,6 +8,10 @@ import { ChangesSchema, DanglingLinkSchema, ModeSchema, ProjectStatusSchema } fr
 
 export const DREAM_CHANGED = "dream-changed";
 
+/** A dry run waiting to be applied or discarded: what the sidebar badge counts. */
+export const WaitingProposalSchema = z.object({ projectId: z.string(), projectName: z.string(), stamp: z.string(), createdAt: z.number() });
+export type WaitingProposal = z.infer<typeof WaitingProposalSchema>;
+
 export const DEFAULT_PROVIDER = "claude-code";
 /**
  * Opus 5.5 at high reasoning: on a real project's memory it checked more against the code, condensed
@@ -67,6 +71,8 @@ export const OverviewSchema = z.object({
   hosts: z.array(z.object({ id: z.string(), name: z.string(), connected: z.boolean() })),
   choices: ChoicesSchema,
   schedule: ScheduleSchema,
+  /** The "Always dry run" setting: every dream is a dry run that waits for review. */
+  alwaysDryRun: z.boolean(),
   projects: z.array(ProjectStatusSchema),
   active: RunRecordSchema.nullable(),
   /** Why the projects could not be read, such as the dream machine being offline. */

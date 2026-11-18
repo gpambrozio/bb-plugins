@@ -28,7 +28,7 @@
  */
 import { randomBytes } from "node:crypto";
 
-import type { Choices, Outcome, Overview, RunRecord } from "../shared/contract-types";
+import type { Choices, Outcome, Overview, RunRecord, WaitingProposal } from "../shared/contract-types";
 import { dreamEligible } from "../shared/filters";
 import { changeText, linksText, totalChanges } from "../shared/format";
 import { mostOverdue, type Thresholds } from "../shared/gate";
@@ -79,6 +79,8 @@ export interface DreamConfig {
   thresholds: Thresholds;
   backupsToKeep: number;
   notify: boolean;
+  /** Every dream, scheduled or by hand, is a dry run that waits for review, not only a project's first. */
+  alwaysDryRun: boolean;
   choices: Choices;
 }
 
@@ -101,6 +103,7 @@ export interface HostPort {
   backups(hostId: string, input: { project: ProjectInput }): Promise<{ backups: Array<{ stamp: string; size: number }>; proposals: ProjectStatus["pendingProposal"][] }>;
   proposalDiff(hostId: string, input: { project: ProjectInput; stamp?: string }): Promise<ProposalDiff>;
   activeRuns(hostId: string): Promise<{ runs: Array<{ runId: string; projectId: string; startedAt: number }> }>;
+  waiting(hostId: string): Promise<{ proposals: WaitingProposal[] }>;
 }
 
 export interface SpawnRequest {
@@ -546,6 +549,8 @@ export function createDreamService(ports: DreamPorts) {
     }
     const closed = () => options.notAfter !== undefined && ports.now() >= options.notAfter;
     const config = await ports.config();
+    // "Always dry run" makes every run a dry run; otherwise the host picks one until a proposal is applied.
+    const mode: Mode | null = config.alwaysDryRun ? "dry-run" : options.mode;
     const hostId = await dreamHost();
     const project = (await projectInputs(hostId)).find((candidate) => candidate.projectId === projectId);
     if (project === undefined) throw new DreamError(`Project ${projectId} has no checkout on the dream machine.`);
@@ -558,7 +563,7 @@ export function createDreamService(ports: DreamPorts) {
         projectId,
         projectName: project.name,
         hostId,
-        mode: options.mode ?? "dream",
+        mode: mode ?? "dream",
         trigger: options.trigger,
         startedAt: ports.now(),
         endedAt: null,
@@ -582,7 +587,7 @@ export function createDreamService(ports: DreamPorts) {
       prepared = await ports.host.prepare(hostId, {
         runId,
         project,
-        mode: options.mode,
+        mode,
         manual: options.manual,
         thresholds: config.thresholds,
         backupsToKeep: config.backupsToKeep,
@@ -767,10 +772,31 @@ export function createDreamService(ports: DreamPorts) {
           nextChange: next?.getTime() ?? null,
           lastSweepAt: (await ports.kv.get<number>(LAST_SWEEP_KEY)) ?? null,
         },
+        alwaysDryRun: config.alwaysDryRun,
         projects,
         active: await activeRecord(),
         error,
       };
+    },
+
+    /**
+     * The dry runs waiting on the user, for the sidebar badge: one read of the proposal folders on the
+     * dream machine, nothing else. Proposals of projects bb no longer has are left out; an unreachable
+     * machine counts none.
+     */
+    async waiting(): Promise<WaitingProposal[]> {
+      try {
+        const hostId = await dreamHost();
+        const [{ proposals }, projects] = await Promise.all([ports.host.waiting(hostId), ports.projects()]);
+        const names = new Map(projects.map((project) => [project.id, project.name]));
+        return proposals
+          .filter((proposal) => names.has(proposal.projectId))
+          .map((proposal) => ({ ...proposal, projectName: names.get(proposal.projectId) ?? proposal.projectName }))
+          .sort((a, b) => a.projectName.localeCompare(b.projectName));
+      } catch (error) {
+        ports.log.warn(`Could not count the waiting dry runs: ${message(error)}`);
+        return [];
+      }
     },
 
     async setSwitch(projectId: string, enabled: boolean): Promise<void> {

@@ -44,8 +44,10 @@ summary goes into the Dream page's history.
   ends as failed. Dream also refuses to start when your settings visibly turn hooks off.
 - **The first dream is a dry run.** It works on a copy of the memory and leaves a proposal. Apply it
   from the page or with `bb dream apply <project>` (refused if a session changed one of those files
-  since), or discard it. Once one is applied, the project's dreams edit its memory in place. A dry run
-  you do not apply never counts as a dream, so the next one covers the same sessions again.
+  since), or discard it. Once one is applied, the project's dreams edit its memory in place, unless
+  **Always dry run** is on: then every dream, scheduled or by hand, is a dry run that waits for you. A
+  dry run you do not apply never counts as a dream, so the next one covers the same sessions again, and
+  a project with a dry run waiting gets no other dream until you apply or discard it.
 - **A backup before every change.** The memory folder is archived before each dream, apply and restore;
   the 20 newest per project are kept. `bb dream restore <project> [time]` puts one back, and backs up
   what it replaces, so it can be undone the same way.
@@ -98,14 +100,16 @@ as bb does.
 
 ## Using it
 
-- **The Dream page** in the sidebar: the dream machine, the schedule, each project with its switch,
+- **The Dream page** in the sidebar, whose entry shows a badge with the number of dry runs waiting
+  for you to apply or discard (none when nothing waits): the dream machine, the schedule and whether
+  every dream is a dry run, each project with its switch,
   memory folder, last dream, sessions since and why it is or is not due, with *Dream now*, *Dry run*,
   and *Apply* / *Discard* for a waiting dry run, filtered to all projects, those with or without memory,
   or those the schedule would dream (*Dream eligible*); *View changes* on a waiting dry run shows each
   memory file it would add, change or delete as a diff against the memory now, with *Apply* and
   *Discard*; and the history of dreams with their summaries.
-- **Settings → Plugins → Dream**: the schedule, its window, the thresholds, backups and the
-  notification; and below them the dream machine and the model (bb's own model picker; Opus 5.5 at
+- **Settings → Plugins → Dream**: the schedule, its window, the thresholds, backups, the
+  notification and *Always dry run* (off: only a project's first dream is a dry run); and below them the dream machine and the model (bb's own model picker; Opus 5.5 at
   high reasoning to start with).
 - **`bb dream`** for scripts and agents:
 

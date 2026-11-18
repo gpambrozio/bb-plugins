@@ -499,6 +499,26 @@ describe("a project's dreams", () => {
     expect(lastConsolidatedAt(memory)).toBeCloseTo(clock, -1);
   });
 
+  it("lists the dry runs waiting for review, and starts no second one for a project that has one", async () => {
+    const host = dreams();
+    expect(host.waiting()).toEqual([]);
+    const run = await prepare(host, "run1", true, "dry-run");
+    if (!run.ok) throw new Error(run.reason);
+    // Still running: not waiting yet.
+    expect(host.waiting()).toEqual([]);
+    write(path.join(run.targetDir, "build.md"), "builds with ninja\n");
+    await host.finish({ runId: "run1", ok: true, summary: null, threadId: null });
+    expect(host.waiting()).toEqual([{ projectId: "proj_app", projectName: "app", stamp: run.proposal, createdAt: expect.any(Number) }]);
+
+    // As "Always dry run" asks: a scheduled dry run is refused while one waits, by hand too.
+    const scheduled = await host.prepare({ runId: "run2", project: project(), mode: "dry-run", manual: false, thresholds: DEFAULT_THRESHOLDS, backupsToKeep: 20 });
+    expect(scheduled).toMatchObject({ ok: false, code: "proposal-pending" });
+    expect(await prepare(host, "run3", true, "dry-run")).toMatchObject({ ok: false, code: "proposal-pending" });
+
+    await host.discard(project(), undefined);
+    expect(host.waiting()).toEqual([]);
+  });
+
   it("does not take the lock's own coming and going for a change to the memory", async () => {
     const host = dreams();
     const folderBefore = statSync(memory).mtimeMs;

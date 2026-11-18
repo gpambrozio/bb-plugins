@@ -75,6 +75,13 @@ export default async function plugin(bb: BbPluginApi) {
       description: "One notification naming the project and how many memory files changed, through bb's Push notifications. Nothing is sent when nothing changed.",
       default: true,
     },
+    alwaysDryRun: {
+      type: "boolean",
+      label: "Always dry run",
+      description:
+        "Every dream, scheduled or by hand, is a dry run you apply or discard, even after a project's first one was applied. Off: only a project's first dream is a dry run, and later ones edit its memory in place.",
+      default: false,
+    },
   });
 
   async function choices(): Promise<Choices> {
@@ -91,6 +98,7 @@ export default async function plugin(bb: BbPluginApi) {
       thresholds: { minHours: values.minHours, minSessions: values.minSessions, minDays: values.minDays, quietMinutes: values.quietMinutes },
       backupsToKeep: values.backupsToKeep,
       notify: values.notify,
+      alwaysDryRun: values.alwaysDryRun,
       choices: await choices(),
     };
   }
@@ -163,6 +171,7 @@ export default async function plugin(bb: BbPluginApi) {
       backups: (hostId, input) => host.call("backups", input, { hostId }),
       proposalDiff: (hostId, input) => host.call("proposalDiff", input, { hostId }),
       activeRuns: (hostId) => host.call("activeRuns", {}, { hostId }),
+      waiting: (hostId) => host.call("waiting", {}, { hostId }),
     },
     threads: {
       spawn: async (request) => {
@@ -235,6 +244,7 @@ export default async function plugin(bb: BbPluginApi) {
     discard: ({ projectId, stamp }) => service.discard(projectId, stamp),
     restore: ({ projectId, stamp }) => service.restore(projectId, stamp),
     proposal: ({ projectId, stamp }) => service.proposal(projectId, stamp),
+    waiting: () => service.waiting(),
     backups: async ({ projectId }) => {
       const result = await service.backups(projectId);
       return { backups: result.backups, proposals: result.proposals.filter((proposal) => proposal !== null) };

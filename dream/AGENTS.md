@@ -224,6 +224,16 @@ of the plugin carries it on; `loop` calls `recover` every minute, which drives i
   FIFO or device. git runs with `-c core.fsmonitor=false -c core.hooksPath=/dev/null`, since a
   repository's fsmonitor program would otherwise run while it reads the index. Anything else, and the
   warning stays.
+- **Always dry run** (a setting, off by default) is applied in the server's `beginOne`: it forces
+  `mode: "dry-run"` for every run, scheduled, by hand or from the CLI, before the host is asked. Nothing
+  else changes: the host's gate still refuses a project with a dry run waiting (manual runs too), and an
+  unapplied dry run still never counts as a dream. The overview carries it, so the page and `bb dream
+  status` say it.
+- **The sidebar badge** (`app/waiting-badge.ts`, `experimental_useBadge`) counts waiting dry runs from
+  the host's `waiting` read: the proposal folders' `proposal.json` files only, no memory or transcript.
+  The app asks once, on every `DREAM_CHANGED` (every end of a run, apply and discard goes through the
+  server, which publishes it) and after a reconnect; never on a timer, which would keep the dream
+  machine's host worker awake for good. Proposals of projects bb no longer has are left out.
 - **Never dreamed means every session counts.** The last dream is the later of the lock's mtime (this
   plugin's dreams and native's) and `lastDreamAt` in the host state, which only an applied dry run (its
   start) or a real dream that did not fail sets, so a removed lock does not erase it. With neither, the

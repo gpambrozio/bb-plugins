@@ -48,14 +48,14 @@ const SOURCE_TEXT: Record<ProjectStatus["memory"]["source"], string> = {
   default: "default",
 };
 
-export function projectText(status: ProjectStatus): string {
+export function projectText(status: ProjectStatus, alwaysDryRun = false): string {
   const { memory, gate } = status;
   const index = memory.indexLines === null ? "no MEMORY.md" : `MEMORY.md ${memory.indexLines} lines, ${sizeText(memory.indexBytes)}`;
   const lines = [
     `${status.name} (${status.projectId}) — ${gate.due ? "due" : "not due"}: ${gate.reason}`,
     `  memory      ${memory.dir} (${SOURCE_TEXT[memory.source]}) · ${memory.files} files · ${index}`,
     `  last dream  ${when(gate.lastDreamAt)} · ${gate.sessionsSince} sessions on ${gate.daysSince} days, ${sinceText(gate.lastDreamAt)}`,
-    `  sessions    ${status.sessions} in ${status.folders} transcript folders · switch ${status.enabled ? "on" : "off"} · ${status.inPlace ? "edits in place" : "next dream is a dry run"}`,
+    `  sessions    ${status.sessions} in ${status.folders} transcript folders · switch ${status.enabled ? "on" : "off"} · ${status.inPlace && !alwaysDryRun ? "edits in place" : "next dream is a dry run"}`,
   ];
   if (status.pendingProposal) lines.push(`  proposal    ${stampText(status.pendingProposal.stamp)} waits: bb dream apply ${status.name}, or bb dream discard ${status.name}`);
   if (status.lastBackup) lines.push(`  backup      ${stampText(status.lastBackup)}`);
@@ -68,10 +68,11 @@ export function overviewText(overview: Overview): string {
   const head = [
     `Dream machine: ${overview.host?.name ?? "unknown"}${overview.host && !overview.host.connected ? " (offline)" : ""}`,
     `Schedule: ${schedule.enabled ? "on" : "off"}, ${schedule.windowStart}–${schedule.windowEnd}${schedule.enabled && schedule.inWindow ? " (window open)" : ""}`,
+    `Always dry run: ${overview.alwaysDryRun ? "on, every dream is a dry run you apply or discard" : "off, only a project's first dream is a dry run"}`,
   ];
   if (overview.active) head.push(`Running: ${overview.active.projectName} (${overview.active.mode}), since ${when(overview.active.startedAt)}, thread ${overview.active.threadId ?? "starting"}`);
   if (overview.error) head.push(`! ${overview.error}`);
-  const projects = overview.projects.length > 0 ? overview.projects.map(projectText) : ["No project has a checkout on the dream machine."];
+  const projects = overview.projects.length > 0 ? overview.projects.map((status) => projectText(status, overview.alwaysDryRun)) : ["No project has a checkout on the dream machine."];
   return `${head.join("\n")}\n\n${projects.join("\n\n")}`;
 }
 
@@ -101,7 +102,7 @@ export function dreamCli(service: DreamService): PluginCliRegistration {
     name: "dream",
     summary: "Consolidate Claude Code projects' memory on a schedule, as Claude Code's auto-dream does",
     description:
-      "Each dream is a hidden bb thread limited to reading and to writing the project's memory folder. A project's first dream is a dry run whose proposal you apply or discard. The schedule is off until you turn it on in the plugin's settings.",
+      "Each dream is a hidden bb thread limited to reading and to writing the project's memory folder. A project's first dream is a dry run whose proposal you apply or discard (every dream, with the Always dry run setting). The schedule is off until you turn it on in the plugin's settings.",
     commands: {
       status: cliCommand({
         summary: "Show each project's memory folder, last dream, sessions since and whether it is due",

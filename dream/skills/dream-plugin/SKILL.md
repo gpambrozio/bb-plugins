@@ -31,8 +31,8 @@ that one memory folder. It runs on one machine, chosen in the plugin's settings.
 
 - Never start a dream, apply, discard or restore unless the user asked for that project. Status,
   backups and history only read.
-- A project's first dream is a dry run: it changes nothing until someone applies it. Say so when you
-  report one.
+- A project's first dream is a dry run: it changes nothing until someone applies it. With the Always
+  dry run setting on (`bb dream status` says), every dream is one. Say so when you report one.
 - The schedule is the user's to turn on, in Settings → Plugins → Dream. Do not change it.
 - `bb dream history` marks with `!` the links a dream left pointing at memory files that are gone;
   report them, since applying a dry run keeps them.

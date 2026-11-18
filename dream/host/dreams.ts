@@ -5,7 +5,7 @@
  * Changes run one at a time (`exclusive`): taking a lock, a backup, a copy, applying or restoring.
  * Reads (`scan`, `status`, `backups`) do not wait.
  */
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import path from "node:path";
 
 import { evaluateGate, type Thresholds } from "../shared/gate";
@@ -634,6 +634,23 @@ export function createDreams(options: DreamsOptions) {
         backups: listBackups(paths.backups(project.projectId)).map((entry) => ({ stamp: entry.stamp, size: entry.size })),
         proposals: listProposals(paths.proposals(project.projectId)).map((proposal) => proposalSummary(proposal) as NonNullable<ReturnType<typeof proposalSummary>>),
       };
+    },
+
+    /** Every project's waiting dry run, from the proposal folders alone: no memory or transcript is read. */
+    waiting() {
+      const state = load();
+      const root = path.join(paths.root, "proposals");
+      let folders: string[];
+      try {
+        folders = readdirSync(root);
+      } catch {
+        return [];
+      }
+      return folders.flatMap((folder) => {
+        const proposal = pendingProposal(path.join(root, folder));
+        if (proposal === null) return [];
+        return [{ projectId: folder, projectName: state.projects[folder]?.name ?? folder, stamp: proposal.stamp, createdAt: proposal.createdAt }];
+      });
     },
 
     activeRuns() {

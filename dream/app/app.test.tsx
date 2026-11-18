@@ -13,8 +13,9 @@ import { renderSlot, type PluginRpcTestHandlers } from "@get-bb/plugin-sdk/testi
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { RpcContract } from "../shared/contract";
-import { DEFAULT_CHOICES, type Overview, type RunRecord } from "../shared/contract-types";
+import { DEFAULT_CHOICES, DREAM_CHANGED, type Overview, type RunRecord, type WaitingProposal } from "../shared/contract-types";
 import { DreamPage } from "./dream-page";
+import { useWaitingBadge } from "./waiting-badge";
 import { BB_ICON_NAMES } from "./testing/bb-icon-names";
 
 afterEach(() => cleanup());
@@ -27,6 +28,7 @@ const overview: Overview = {
   hosts: [{ id: "host_1", name: "Studio", connected: true }],
   choices: DEFAULT_CHOICES,
   schedule: { enabled: false, windowStart: "01:00", windowEnd: "06:00", inWindow: false, nextChange: null, lastSweepAt: null },
+  alwaysDryRun: false,
   active: null,
   error: null,
   projects: [
@@ -191,6 +193,63 @@ describe("the project filters", () => {
     expect(names()).toEqual(["due-one"]);
     fireEvent.click(screen.getByRole("button", { name: "All projects (3)" }));
     expect(names()).toEqual(["due-one", "switched-off", "no-memory"]);
+  });
+});
+
+describe("Always dry run", () => {
+  it("says on the page whether every dream is a dry run, and marks every project's next dream as one", async () => {
+    const inPlace = { ...overview.projects[0], projectId: "proj_api", name: "api", inPlace: true, pendingProposal: null, gate: { ...overview.projects[0].gate, code: "too-soon" as const } };
+    const view = renderSlot<PluginNavPanelProps, RpcContract>({ component: DreamPage }, { subPath: "" }, {
+      rpc: stubs({ overview: () => ({ ...overview, projects: [inPlace] }), history: () => [] }),
+    });
+    expect(await screen.findByText("api")).toBeTruthy();
+    expect(screen.getByText(/A project's first dream is a dry run; once one is applied/)).toBeTruthy();
+    expect(screen.queryByText("Next: dry run")).toBeNull();
+    view.unmount();
+
+    renderSlot<PluginNavPanelProps, RpcContract>({ component: DreamPage }, { subPath: "" }, {
+      rpc: stubs({ overview: () => ({ ...overview, alwaysDryRun: true, projects: [inPlace] }), history: () => [] }),
+    });
+    expect(await screen.findByText(/Always dry run is on: every dream is a dry run/)).toBeTruthy();
+    expect(screen.getByText("Next: dry run")).toBeTruthy();
+  });
+});
+
+describe("the sidebar badge", () => {
+  function BadgeProbe() {
+    const badge = useWaitingBadge();
+    return <p data-testid="badge">{badge === null ? "none" : `${badge.count} ${badge.tone} ${badge.label}`}</p>;
+  }
+  const waitingOn = (...names: string[]): WaitingProposal[] => names.map((name, index) => ({ projectId: `proj_${name}`, projectName: name, stamp: `2026111${index}T010000000Z`, createdAt: index }));
+
+  it("counts the dry runs waiting for review, follows the server's announcements, and clears when none waits", async () => {
+    let waiting = waitingOn("Acme Web");
+    const view = renderSlot<object, RpcContract>({ component: BadgeProbe }, {}, { rpc: stubs({ waiting: () => waiting }) });
+    await waitFor(() => expect(screen.getByTestId("badge").textContent).toBe("1 warning 1 dry run waiting for review: Acme Web"));
+
+    waiting = waitingOn("Acme API", "Acme Web");
+    await view.emitRealtime(DREAM_CHANGED, { at: 1 });
+    await waitFor(() => expect(screen.getByTestId("badge").textContent).toBe("2 warning 2 dry runs waiting for review: Acme API, Acme Web"));
+
+    waiting = [];
+    await view.emitRealtime(DREAM_CHANGED, { at: 2 });
+    await waitFor(() => expect(screen.getByTestId("badge").textContent).toBe("none"));
+  });
+
+  it("asks again when the realtime link comes back, and never on a timer", async () => {
+    let waiting: WaitingProposal[] = [];
+    const view = renderSlot<object, RpcContract>({ component: BadgeProbe }, {}, { rpc: stubs({ waiting: () => waiting }) });
+    await waitFor(() => expect(view.rpcCalls.filter((call) => call.method === "waiting")).toHaveLength(1));
+    waiting = waitingOn("Acme Web");
+    await view.setRealtimeConnectionState("reconnecting");
+    await view.setRealtimeConnectionState("connected");
+    await waitFor(() => expect(screen.getByTestId("badge").textContent).toMatch(/^1 warning/));
+    expect(view.rpcCalls.filter((call) => call.method === "waiting")).toHaveLength(2);
+  });
+
+  it("is registered on the Dream sidebar entry", () => {
+    const source = readFileSync(join(root, "app.tsx"), "utf8");
+    expect(source).toMatch(/navPanel\(\{[^}]*experimental_useBadge: useWaitingBadge/);
   });
 });
 

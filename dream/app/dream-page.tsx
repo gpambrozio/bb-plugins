@@ -90,7 +90,7 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-function ProjectCard({ status, busy, onChanged, onView }: { status: ProjectStatus; busy: boolean; onChanged(): void; onView(): void }) {
+function ProjectCard({ status, alwaysDryRun, busy, onChanged, onView }: { status: ProjectStatus; alwaysDryRun: boolean; busy: boolean; onChanged(): void; onView(): void }) {
   const rpc = useRpc<RpcContract>();
   const [working, setWorking] = useState(false);
   const { memory, gate } = status;
@@ -134,7 +134,7 @@ function ProjectCard({ status, busy, onChanged, onView }: { status: ProjectStatu
           <span className="truncate text-sm font-medium">{status.name}</span>
         </label>
         {gatePill(status)}
-        {!status.inPlace ? <Pill tone="muted">Next: dry run</Pill> : null}
+        {!status.inPlace || alwaysDryRun ? <Pill tone="muted">Next: dry run</Pill> : null}
       </div>
       <p className="text-sm text-muted-foreground">{gate.reason}</p>
       <dl className="grid grid-cols-1 gap-x-6 gap-y-2 sm:grid-cols-3">
@@ -260,12 +260,22 @@ function RunRow({ run }: { run: RunRecord }) {
   );
 }
 
+/** The "Always dry run" setting, said where the schedule is. */
+function dryRunText(alwaysDryRun: boolean): string {
+  return alwaysDryRun
+    ? " Always dry run is on: every dream is a dry run that waits for you to apply or discard it."
+    : " A project's first dream is a dry run; once one is applied, its dreams edit memory in place.";
+}
+
 function ScheduleLine({ overview }: { overview: Overview }) {
   const { schedule } = overview;
   if (!schedule.enabled) {
     return (
       <div className="flex flex-wrap items-center gap-2 rounded-md border border-border px-3 py-2 text-sm">
-        <span className="min-w-0 flex-1">The schedule is off: nothing dreams on its own until you turn it on in Dream's settings.</span>
+        <span className="min-w-0 flex-1">
+          The schedule is off: nothing dreams on its own until you turn it on in Dream's settings.
+          {dryRunText(overview.alwaysDryRun)}
+        </span>
         <Button size="sm" variant="outline" onClick={openSettings}>
           Settings
         </Button>
@@ -277,6 +287,7 @@ function ScheduleLine({ overview }: { overview: Overview }) {
       Dreams every night from {schedule.windowStart} to {schedule.windowEnd}
       {schedule.inWindow ? ", window open now" : schedule.nextChange ? `, next window ${when(schedule.nextChange)}` : ""}.
       {schedule.lastSweepAt ? ` Last checked ${when(schedule.lastSweepAt)}.` : ""}
+      {dryRunText(overview.alwaysDryRun)}
     </p>
   );
 }
@@ -372,6 +383,7 @@ export function DreamPage(_props: PluginNavPanelProps) {
                     <ProjectCard
                       key={status.projectId}
                       status={status}
+                      alwaysDryRun={overview.alwaysDryRun}
                       busy={busy}
                       onChanged={refresh}
                       onView={() => setViewing({ projectId: status.projectId, name: status.name })}
