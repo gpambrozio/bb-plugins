@@ -1,0 +1,172 @@
+[
+  {
+    "label": "relay",
+    "startedAt": "2026-11-14T02:20:17.313Z",
+    "capabilities": {
+      "platform": "browser",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.7922.34 Safari/537.36",
+      "origin": "http://127.0.0.1:48886",
+      "secureContext": true,
+      "getUserMedia": true,
+      "RTCPeerConnection": true,
+      "AudioContext": true,
+      "wakeLock": true,
+      "WebSocket": true
+    },
+    "model": "gpt-realtime-2.1",
+    "effort": "low",
+    "seconds": 20,
+    "relay": {
+      "path": "relay",
+      "label": "relay",
+      "model": "gpt-realtime-2.1",
+      "effort": "low",
+      "timings": {
+        "getUserMediaMs": 41,
+        "relaySocketOpenMs": 50,
+        "upstreamOpenServerMs": 700,
+        "sessionCreatedMs": 757,
+        "firstAudioDeltaMs": 7258
+      },
+      "events": [
+        {
+          "t": 50,
+          "type": "relay.open"
+        },
+        {
+          "t": 749,
+          "type": "relay.upstream_open",
+          "info": "codex-realtime"
+        },
+        {
+          "t": 757,
+          "type": "session.created"
+        },
+        {
+          "t": 858,
+          "type": "session.updated"
+        },
+        {
+          "t": 866,
+          "type": "session.updated"
+        },
+        {
+          "t": 3306,
+          "type": "input_audio_buffer.speech_started"
+        },
+        {
+          "t": 6479,
+          "type": "input_audio_buffer.speech_stopped"
+        },
+        {
+          "t": 6484,
+          "type": "response.created",
+          "info": "in_progress"
+        },
+        {
+          "t": 6951,
+          "type": "conversation.item.input_audio_transcription.completed",
+          "info": "Say hello in three words."
+        },
+        {
+          "t": 7464,
+          "type": "response.output_audio_transcript.done",
+          "info": "Hello there, friend."
+        },
+        {
+          "t": 7464,
+          "type": "response.done",
+          "info": "completed"
+        },
+        {
+          "t": 12026,
+          "type": "input_audio_buffer.speech_started"
+        },
+        {
+          "t": 13679,
+          "type": "input_audio_buffer.speech_stopped"
+        },
+        {
+          "t": 13684,
+          "type": "response.created",
+          "info": "in_progress"
+        },
+        {
+          "t": 14008,
+          "type": "conversation.item.input_audio_transcription.completed",
+          "info": "What time is it right now?"
+        },
+        {
+          "t": 14549,
+          "type": "response.output_audio_transcript.done",
+          "info": "Checking the current time for you now."
+        },
+        {
+          "t": 14551,
+          "type": "response.function_call_arguments.done"
+        },
+        {
+          "t": 14556,
+          "type": "relay.tool_output_sent"
+        },
+        {
+          "t": 14557,
+          "type": "response.done",
+          "info": "completed"
+        },
+        {
+          "t": 14695,
+          "type": "response.created",
+          "info": "in_progress"
+        },
+        {
+          "t": 15531,
+          "type": "response.output_audio_transcript.done",
+          "info": "It’s 4:20:31 PM."
+        },
+        {
+          "t": 15535,
+          "type": "response.done",
+          "info": "completed"
+        },
+        {
+          "t": 20058,
+          "type": "relay.close",
+          "info": "1000 "
+        }
+      ],
+      "sentFrames": 234,
+      "contextSampleRate": 48000,
+      "turns": [
+        {
+          "speechEndAt": 4634.100000143051,
+          "replyOnsetAt": 7333.600000143051,
+          "latencyMs": 2700
+        },
+        {
+          "speechEndAt": 12790.600000143051,
+          "replyOnsetAt": 14370.900000095367,
+          "latencyMs": 1580
+        }
+      ],
+      "onsets": [
+        {
+          "at": 7334,
+          "afterSpeech": true
+        },
+        {
+          "at": 14371,
+          "afterSpeech": true
+        }
+      ],
+      "peaks": {
+        "local": 0.464,
+        "remote": 0.24
+      },
+      "serverToReply": [
+        855,
+        692
+      ]
+    }
+  }
+]

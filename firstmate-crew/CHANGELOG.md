@@ -5,6 +5,26 @@ Notable changes to `firstmate`. The other plugins in this repository version sep
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.12.0
+
+### Added
+
+- **Talk to the first mate out loud,** with the separate FirstMate voice plugin. FirstMate now lets that
+  plugin read the board, send the first mate your spoken words exactly as they were transcribed (all you
+  said since it last handed over) together with its own account of what you asked and what it said aloud to
+  you in that time, so a short "hold it" arrives with what "it" was. A spoken message opens
+  with a line saying so. The first mate acts on the voice's account but checks it against your words, and
+  only your words count as yours; even they never count as your word on a merge, anything destructive,
+  publishing, credentials or settings. The voice never presses a board button: you tap those. FirstMate
+  tells the voice how it worded each message, so the voice's debug view shows it exactly.
+- **A setting for which plugins may do this,** "Plugins that may talk to the first mate by voice". It names
+  FirstMate voice by default; empty turns voice off.
+
+### Changed
+
+- **The charter asks the first mate to put the outcome in its reply's first sentence,** since a reply may be
+  read aloud.
+
 ## 0.11.0
 
 ### Added

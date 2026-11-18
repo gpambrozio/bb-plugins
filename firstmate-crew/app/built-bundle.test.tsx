@@ -45,6 +45,8 @@ beforeAll(async () => {
     radixAlertDialog: await import("@radix-ui/react-alert-dialog"),
     radixDialog: await import("@radix-ui/react-dialog"),
     classVarianceAuthority: await import("class-variance-authority"),
+    // bb 0.49 shares zod with plugin bundles rather than bundling it.
+    zod: await import("zod"),
   });
 });
 

@@ -180,6 +180,14 @@ moves the pin backwards. Re-pin with `npm install --save-exact -D @get-bb/plugin
   `node …/bb-app/host-daemon/dist/bb`. Install, reload and spawn threads there, never in the user's bb. Its
   web app is at the server URL (first load shows a setup screen with *Skip setup*); `playwright-core` with
   a cached Chromium drives it headlessly. `learning-exercises/AGENTS.md` and its spike notes used it.
+  With the real HOME, the first-run setup finds your agents and projects and offers no *Skip setup*;
+  `bb settings general onboardingCompletedAt <ISO time>` on the dev bb skips it without importing
+  anything. To reach the dev bb from a phone, `bb connect expose <port>` gives a URL only someone signed
+  in to the bb account can open, and the dev bb answers it only when started with
+  `BB_APP_URL=<that URL>` in its environment (otherwise 403). `firstmate-voice/AGENTS.md` used both.
+- **A git or path install refuses a server import from outside the plugin folder** ("server source import
+  escapes the plugin directory"), although a local `bb plugin build` accepts it. To reuse another plugin's
+  code, call its RPC or copy the module.
 
 ## Architecture
 
@@ -236,6 +244,12 @@ What a port only learns by running it:
   most 16 KiB, and the multi-line `--stdin` that `bb guide plugins` describes is not in 0.44's CLI. For
   arbitrary text, send it base64-encoded through `--<name>-stdin` and decode it with a size cap
   (`firstmate-crew`'s `tell --message-base64`), rather than having the server read a file by path.
+- **An API for other plugins is a second `bb.rpc.register`.** Each registration takes its own
+  `experimental_discoverable`, so one plugin can publish a narrow contract beside its private one (bb 0.49
+  lists only the published methods). Gate it on `ctx.experimental_caller` (`{ kind: "plugin", pluginId }`,
+  else `client` for the app and `bb plugin rpc call`), and refuse with the SDK's `experimental_PluginRpcRefusal`:
+  its `code` (`forbidden`, `not_found`, `conflict`, `invalid`) reaches the caller as the error's `code` and an
+  HTTP status (403 for `forbidden`). `firstmate-crew/server/voice-api.ts` is the example.
 - **A thread spawn into a host workspace needs a `hostId`.** The SDK type marks it optional, bb 0.44
   answers `hostId is required unless workspace.type is personal`. Take the server's own machine from
   `bb.sdk.system.config().primaryHostId`, or the host of the project's checkout.
@@ -367,6 +381,12 @@ is enrolled — say which one you chose in the plugin's `AGENTS.md`. `launchd-jo
 - **`context.experimental_retainWorker()` works only while the call that asks is running**; it throws
   afterwards. Take the lease in the handler that starts the background work, and release it on every
   way that work ends.
+- **A host entry's processes get no `BB_*` variable** (bb 0.49): the daemon drops them all when it starts
+  the worker, but puts bb's CLI folder first on its PATH, so a child's `bb` runs and then targets
+  127.0.0.1:38886. On a machine joined through bb Connect nothing answers there: the CLI needs the daemon's
+  loopback relay, which bb gives terminals and threads as `BB_SERVER_URL` and plugins not at all.
+  `firstmate-voice/host/relay.ts` finds it from the worker's parent (bb internals). Through bb Connect the
+  relay passes only `/api/v1/…`: the public gate answers `/health` with a 401 even with the credential.
 - **Testing a host entry:** `experimental_createHostEntryHarness` (`@get-bb/plugin-sdk/testing/host`)
   runs it with the daemon's validation and counts leases. Wiring `createFakePluginHost`'s
   `experimental_callHostRpc` and `harness.experimental_emitHostSignal` to the entry's logic tests the
@@ -393,7 +413,7 @@ mounted once per window. Paseo contribution → bb slot:
 | --- | --- |
 | `addSurface` + `addSidebarItem` | `app.slots.navPanel` (own sidebar entry and route `/plugins/<id>/<path>/*`); a live count on the entry is its `experimental_useBadge` hook (bb 0.47, SDK 0.6.75), not a re-registration: bb calls it in the plugin's scope and draws `{ count?, text?, tone?, label }`, or nothing for null. bb 0.46 draws no `experimental_sidebarAccessory`, bb 0.47 ignores it with a warning, and bb 0.46 refuses `experimental_useBadge` as an unknown field, so a badge means `engines.bb >=0.47` (`launchd-jobs/app/health.tsx`). Test the hook by rendering a component that prints what it returns |
 | a row in a thread's Info tab | `app.slots.experimental_threadInfoRow` (`github-board/app/thread-card-slots.tsx`). bb 0.48.1 adds a **thread context card** at a thread pane's upper right, with `app.slots.experimental_threadContextCardRow` / `experimental_threadContextCardSection` and the host `experimental_ThreadContextCardRow` (icon, label, trailing count, optional action). It shows only with the `threadContextCard` experiment on, which bb keeps out of the early-adopter set, so no plugin here registers one yet |
-| `addWorkspacePanel` (agent context) | `app.slots.experimental_tab({ context: { kind: "thread" }, availability: "action", icon, … })` (gets `threadId`, `params` and, from bb 0.48, `environment`; `icon` is required). Open it through the panel controller (bb 0.48, SDK 0.6.88): `experimental_useAppPanel().openTab({ tab: { id, context: { kind: "thread" }, availability: "action" }, params? })` in a component, `ctx.experimental_panel` in a command or a thread action's `item` (`diff-review/app/tab.ts`); `useBbNavigate().openThreadPanel` and `ctx.openPanel` are retired from the typings and only run through adapters. `experimental_useTabVisible()` says whether the tab shows. It replaced `app.slots.threadPanelAction` in SDK 0.6.73: bb 0.47 still loads a bundle that uses the old slot, but the 0.6.75 typings have no such slot, and bb 0.46 has no `experimental_tab`; to keep bb 0.45–0.46, call `experimental_tab` only when `app.slots` has it and the old slot otherwise (`skills/app/panel.tsx`) |
+| `addWorkspacePanel` (agent context) | `app.slots.experimental_tab({ context: { kind: "thread" }, availability: "action", icon, … })` (gets `threadId`, `params` and, from bb 0.48, `environment`; `icon` is required). Open it through the panel controller (bb 0.48, SDK 0.6.88): `experimental_useAppPanel().openTab({ tab: { id, context: { kind: "thread" }, availability: "action" }, params? })` in a component (not in an `experimental_appOverlay`: there it is bb's default controller, which declines every call in bb 0.49, so hand the request to a component inside the thread view, as `firstmate-voice/app/debug.tsx` does with a composer action), `ctx.experimental_panel` in a command or a thread action's `item` (`diff-review/app/tab.ts`); `useBbNavigate().openThreadPanel` and `ctx.openPanel` are retired from the typings and only run through adapters. `experimental_useTabVisible()` says whether the tab shows. It replaced `app.slots.threadPanelAction` in SDK 0.6.73: bb 0.47 still loads a bundle that uses the old slot, but the 0.6.75 typings have no such slot, and bb 0.46 has no `experimental_tab`; to keep bb 0.45–0.46, call `experimental_tab` only when `app.slots` has it and the old slot otherwise (`skills/app/panel.tsx`) |
 | `addSettingsScreen` | host-rendered form from `bb.settings.define`, plus `app.slots.settingsSection` for anything custom |
 | `addCommandCenterItem` | `app.commands.register` — its `run` gets no navigation; hand it `useBbNavigate()` from an `app.slots.experimental_appOverlay` component that renders nothing (`github-board/app.tsx`) |
 | slash commands, composer pills | `app.composer.customize` (`actions` draws a component in the thread composer's toolbar; a pop-up over the composer is `experimental_popups`, opened with `useComposer().experimental_openPopup` — drawn *inside the composer's `<form>`*, so give every button `type="button"` and stop `mousedown` at its root, see `skills/AGENTS.md`), `app.composer.experimental_registerCommand` for a bindable key, a `{ kind: "command" }` mention through `composer.replace` for the pill bb's `/` menu inserts, `app.slots.pendingInteraction` |

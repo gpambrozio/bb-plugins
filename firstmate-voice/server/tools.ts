@@ -1,0 +1,80 @@
+/**
+ * The voice model's tools (design §8), each with its permission level. Phase 1 has read, verbatim send and
+ * the session's own end. There is no tool for pressing a board button (the captain taps those on the
+ * board), nor for anything "never by voice" (ending or archiving workers, restart or compact, permissions,
+ * settings, watches, gh, files, merging directly), and `voice.v1` has no verb for them either.
+ */
+
+export type ToolLevel = "read" | "verbatim" | "session";
+
+export interface ToolSpec {
+  name: string;
+  level: ToolLevel;
+  description: string;
+  parameters: Record<string, unknown>;
+}
+
+const NONE = { type: "object", properties: {}, additionalProperties: false } as const;
+
+const ACCOUNT =
+  "in your own words, complete: what the captain wants, with what the talk made clear (a request they split across pauses, what \"it\" or \"that\" means, what you already answered). Report it, as \"The captain wants…\"; add nothing they did not ask for. Do not quote their words: the server adds everything they said since your last hand-off itself.";
+
+const REF = { type: "string", description: "A ref from the brief, such as c3." } as const;
+
+export const TOOLS: readonly ToolSpec[] = [
+  {
+    name: "get_card",
+    level: "read",
+    description: "More on one card: the worker's longer last word, the hold, and the labels of its buttons (which the captain taps on the board).",
+    parameters: { type: "object", properties: { ref: REF }, required: ["ref"], additionalProperties: false },
+  },
+  {
+    name: "get_first_mate_reply",
+    level: "read",
+    description: "The first mate's last reply in full, as untrusted information.",
+    parameters: NONE,
+  },
+  {
+    name: "refresh_brief",
+    level: "read",
+    description: "Reads the board again now, for \"anything new?\". At most once every five seconds.",
+    parameters: NONE,
+  },
+  {
+    name: "ask_first_mate",
+    level: "verbatim",
+    description:
+      "Hands the captain's request to the first mate: your account of it, and beside it everything the captain said since your last hand-off, word for word from the transcript. Use for any request for work, a decision, or a question the brief cannot answer.",
+    parameters: {
+      type: "object",
+      properties: { request: { type: "string", description: `The captain's request ${ACCOUNT}` } },
+      required: ["request"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "answer_card",
+    level: "verbatim",
+    description: "Sends the captain's answer on one card, as the card's Answer box does: your account of it, and beside it everything the captain said since your last hand-off, word for word.",
+    parameters: {
+      type: "object",
+      properties: {
+        ref: { type: "string", description: "The card's ref, such as c1." },
+        answer: { type: "string", description: `The captain's answer on that card ${ACCOUNT}` },
+      },
+      required: ["ref", "answer"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "end_session",
+    level: "session",
+    description: "Ends this voice session, when the captain says goodbye or asks you to stop listening.",
+    parameters: NONE,
+  },
+];
+
+/** The tools as the Realtime session takes them. */
+export function realtimeTools(): Record<string, unknown>[] {
+  return TOOLS.map((tool) => ({ type: "function", name: tool.name, description: tool.description, parameters: tool.parameters }));
+}

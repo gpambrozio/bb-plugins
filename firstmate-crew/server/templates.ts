@@ -38,6 +38,8 @@ export const TEMPLATES = {
   watchOutput: "messages/watch-output.md",
   watchFailed: "messages/watch-failed.md",
   watchDropped: "messages/watch-dropped.md",
+  voiceAskNote: "messages/voice-ask-note.md",
+  voiceAnswerNote: "messages/voice-answer-note.md",
 } as const;
 
 export type TemplatePath = (typeof TEMPLATES)[keyof typeof TEMPLATES];

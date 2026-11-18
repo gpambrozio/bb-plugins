@@ -31,6 +31,7 @@ against bb 0.48.1's bundled push-notifications plugin, read from its build (not 
 | `server/settings.ts` | `bb.settings.define`: home directory, crew provider/model/reasoning, board refresh, quiet shipshape, and autocompact's six (on, thousands of tokens, idle minutes, for the first mate and for the crew). The token thresholds are set in thousands (`*KTokens`, ×1,000 in `autoCompactRules`) because bb's number field shows no thousands separators. |
 | `server/intro.ts` | The first-run guide's server half: whether this install is offered it (`considerIntro`, decided once), the home folder check, and `startIntro` (writes the home setting, launches with the first-session prompt). |
 | `server/quiet-shipshape.ts` | `mateQuietShipshape`: the no-op rule (`isNoOpReply`) and marking the first mate's no-op turn read. |
+| `shared/voice.ts`, `server/voice-brief.ts`, `server/voice-api.ts` | `voice.v1`, the narrow API the `firstmate-voice` plugin reaches the first mate through: the brief and cards as speech-ready data (`speakable`, card refs, button labels without prompts, the brief's etag), the first mate's last reply, and ask and answer, behind the `voicePlugins` caller gate. |
 | `server/autocompact.ts` | One autocompact check: which thread is at rest, idle long enough (bb's cache deadline, else the idle minutes) and over its threshold; the once-per-idle-stretch marks; `dueNow` for one thread. |
 | `server/compact-first.ts` | A message to a thread autocompact would compact now goes with bb's `compactFirst`. |
 | `server/home.ts`, `charter.ts`, `charter-file.ts` | Preparing the home; rendering `AGENTS.md`; the charter following the plugin until edited. |
@@ -94,6 +95,25 @@ Do not break these; each was paid for.
   may start or steer work for it, but merges, anything destructive or irreversible, publishing,
   credentials and settings need the captain in its own chat. Messages from the board and the command
   palette are not relays and go unmarked.
+- **`voice.v1` speaks for the captain, so it is gated and narrow.** Every handler refuses unless bb names
+  the caller as a plugin listed in `voicePlugins` (default `firstmate-voice`); the app and `bb plugin rpc
+  call` are clients and refused. Ask and answer send the captain's transcribed words on one line under
+  `VOICE_SPOKEN_PREFIX`, then the voice model's own account of them under `VOICE_ACCOUNT_HEADING`, each
+  with every source mark inside defused (`defuse`, `spoken`), then, when the voice said anything in that
+  span, the talk under `VOICE_TALK_HEADING`: the captain's segments and the voice's own spoken lines (the
+  first mate's reply it read out marked as such), one labelled line each, copied by the voice plugin's
+  server from its transcripts. It exists because a short reply ("hold it") reached the first mate without
+  what "it" was. The voice's lines are context, never the captain's word. Then an agent-only note saying to act on the
+  account but follow the words where the two differ (the words alone are the captain's). There is no
+  press, by the captain's decision after four review passes: every attempt to decide which button prompts
+  were safe to press on a spoken yes (a deny list, then a bounded set of whole shapes, then decision cards)
+  left a hole, because a prompt is free text and its label is all the captain hears. Do not add one back
+  without a design that does not judge free text; the captain taps buttons on the board. The charter names
+  the spoken line, the account heading and the talk heading (a test ties them) and says spoken words are never the captain's
+  word on a merge, anything destructive, publishing, credentials or settings. What the voice model may see
+  has no thread ids, no URLs and no prompts: cards are refs (`c1`) that keep their meaning for the plugin's
+  lifetime, and buttons and suggestions go by their labels. `voice.v1.mate` gives the first mate's thread id to the voice plugin's app (its
+  Talk button) and must never be put in front of the model.
 - **`tell` never reads a file.** Text arrives as words or as `--message-base64` (the skill uses bb's
   `--message-base64-stdin`, read on the caller's machine), strict base64 of UTF-8. Exactly one trailing
   "\n" is dropped, because the skill's heredoc always adds one; the 12,000-byte limit applies after
