@@ -383,6 +383,16 @@ describe("a project's dreams", () => {
     expect(await prepare(host, "run1")).toMatchObject({ ok: false, code: "too-soon" });
   });
 
+  it("shows a waiting dry run's changes, and refuses when there is none", async () => {
+    const host = dreams();
+    const run = await prepare(host, "run1", true, "dry-run");
+    if (!run.ok) throw new Error(run.reason);
+    expect(() => host.proposalDiff(project(), undefined)).toThrow(/no dry run waiting/);
+    write(path.join(run.targetDir, "build.md"), "builds with ninja\n");
+    await host.finish({ runId: "run1", ok: true, summary: "Fixed the build tool.", threadId: null });
+    expect(host.proposalDiff(project(), undefined)).toMatchObject({ stamp: run.proposal, files: [{ path: "build.md", kind: "changed", proposed: "builds with ninja\n" }] });
+  });
+
   it("counts a dry run that changes nothing as a dream, and a discarded proposal too", async () => {
     const host = dreams();
     const quiet = await prepare(host, "run1");

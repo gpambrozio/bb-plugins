@@ -12,7 +12,7 @@ import { evaluateGate, type Thresholds } from "../shared/gate";
 import type { Finished, ManifestEntry, MemoryInfo, Mode, Prepared, ProjectInput, ProjectStatus } from "../shared/types";
 import { acquireLock, lockState, markConsolidated, processIsAlive, rollbackLock, type AcquireOptions, type IsAlive } from "./lock";
 import { claudeConfigDir, hookBlockers, resolveMemory, type MemoryEnvironment, type ResolvedMemory } from "./memory";
-import { applyProposal, createProposal, discardProposal, findProposal, finishProposal, listProposals, pendingProposal, planApply, type Proposal } from "./proposals";
+import { applyProposal, createProposal, describeProposal, discardProposal, findProposal, finishProposal, listProposals, pendingProposal, planApply, type Proposal } from "./proposals";
 import { projectSlug } from "./slug";
 import { backup, changeCount, diffManifests, listBackups, manifest, newestChange, pruneBackups, restoreBackup, stampOf, type Changes, type Manifest } from "./snapshot";
 import {
@@ -592,6 +592,15 @@ export function createDreams(options: DreamsOptions) {
           rollbackLock(memoryDir, priorMtime, options.pid);
         }
       });
+    },
+
+    /** The waiting dry run's changes, file by file, against the memory as it is now. Reads only. */
+    proposalDiff(project: ProjectInput, stamp: string | undefined) {
+      const proposal = findProposal(paths.proposals(project.projectId), stamp);
+      if (proposal === null || proposal.status !== "ready") {
+        throw new DreamRefusal("proposal-pending", stamp ? `No dry run ${stamp} waits for ${project.name}.` : `${project.name} has no dry run waiting.`);
+      }
+      return describeProposal(proposal, realOrSelf(memoryOf(project).dir));
     },
 
     backups(project: ProjectInput) {

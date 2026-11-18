@@ -173,6 +173,7 @@ function setup(options: { projects: FakeProject[]; start: Date; config?: Partial
       restore: async () => ({ stamp: "", changes: NO_CHANGES, backup: "" }),
       backups: async () => ({ backups: [], proposals: [] }),
       activeRuns: async () => ({ runs: faults.hostRuns }),
+      proposalDiff: async () => ({ stamp: "", createdAt: 0, summary: null, changes: NO_CHANGES, files: [] }),
     },
     threads: {
       spawn: async (request) => {

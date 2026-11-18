@@ -6,7 +6,7 @@ import { defineRpcContract } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
 import { ChoicesSchema, OverviewSchema, RunRecordSchema } from "./contract-types";
-import { ApplyResultSchema, BackupListSchema, ModeSchema, RestoreResultSchema } from "./types";
+import { ApplyResultSchema, BackupListSchema, ModeSchema, ProposalDiffSchema, RestoreResultSchema } from "./types";
 
 const ByProject = z.object({ projectId: z.string().min(1) });
 const Started = z.object({ runId: z.string(), threadId: z.string(), mode: ModeSchema, projectName: z.string() });
@@ -22,6 +22,8 @@ export const rpcContract = defineRpcContract({
   discard: { input: ByProject.extend({ stamp: z.string().optional() }), output: z.object({ stamp: z.string() }) },
   restore: { input: ByProject.extend({ stamp: z.string().optional() }), output: RestoreResultSchema },
   backups: { input: ByProject, output: BackupListSchema },
+  /** A waiting dry run's changes, file by file, against the memory now. Reads only. */
+  proposal: { input: ByProject.extend({ stamp: z.string().optional() }), output: ProposalDiffSchema },
 });
 
 export type RpcContract = typeof rpcContract;

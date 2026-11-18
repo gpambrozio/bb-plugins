@@ -20,7 +20,7 @@ import { BB_ICON_NAMES } from "./testing/bb-icon-names";
 afterEach(() => cleanup());
 
 const root = join(import.meta.dirname, "..");
-const appFiles = ["app.tsx", "shared/contract-types.ts", "shared/types.ts", "shared/gate.ts", "shared/format.ts", "shared/window.ts", "shared/filters.ts", ...readdirSync(join(root, "app")).filter((name) => /\.tsx?$/.test(name) && !name.includes(".test.")).map((name) => join("app", name))];
+const appFiles = ["app.tsx", "shared/contract-types.ts", "shared/types.ts", "shared/gate.ts", "shared/format.ts", "shared/window.ts", "shared/filters.ts", "shared/line-diff.ts", ...readdirSync(join(root, "app")).filter((name) => /\.tsx?$/.test(name) && !name.includes(".test.")).map((name) => join("app", name))];
 
 const overview: Overview = {
   host: { id: "host_1", name: "Studio", connected: true },
@@ -106,6 +106,53 @@ describe("the Dream page", () => {
     fireEvent.click(await screen.findByRole("button", { expanded: false }));
     expect(await screen.findByText(/Merged the build notes/)).toBeTruthy();
     expect(screen.getByText("+ ci.md")).toBeTruthy();
+  });
+});
+
+describe("the proposal view", () => {
+  const diff = (baseChanged: boolean) => ({
+    stamp: "20261117T010500000Z",
+    createdAt: Date.UTC(2026, 10, 17, 1, 5),
+    summary: "Fixed the build tool.",
+    changes: { added: ["ci.md"], changed: ["MEMORY.md"], deleted: [] },
+    files: [
+      { path: "MEMORY.md", kind: "changed" as const, current: "- [Build](build.md) — make\n", proposed: "- [Build](build.md) — ninja\n", baseChanged, truncated: false },
+      { path: "ci.md", kind: "added" as const, current: null, proposed: "ci runs nightly\n", baseChanged: false, truncated: false },
+    ],
+  });
+
+  it("opens from the project, shows the counts and each file's diff, and applies from there", async () => {
+    const applied: Array<string | undefined> = [];
+    renderSlot<PluginNavPanelProps, RpcContract>({ component: DreamPage }, { subPath: "" }, {
+      rpc: stubs({
+        overview: () => overview,
+        history: () => [],
+        proposal: () => diff(false),
+        apply: ({ stamp }) => {
+          applied.push(stamp);
+          return { stamp: stamp as string, changes: diff(false).changes, backup: "b" };
+        },
+      }),
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "View changes" }));
+    expect(await screen.findByText(/1 changed, 1 added, 0 deleted/)).toBeTruthy();
+    const index = screen.getByRole("table", { name: "Changes to MEMORY.md" });
+    expect(index.querySelector('[data-kind="del"]')?.textContent).toContain("— make");
+    expect(index.querySelector('[data-kind="add"]')?.textContent).toContain("— ninja");
+    expect(screen.getByRole("table", { name: "Changes to ci.md" }).textContent).toContain("ci runs nightly");
+    expect(screen.queryByRole("alert")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    await waitFor(() => expect(applied).toEqual(["20261117T010500000Z"]));
+  });
+
+  it("says plainly when the memory changed since the dry run, and turns Apply off", async () => {
+    renderSlot<PluginNavPanelProps, RpcContract>({ component: DreamPage }, { subPath: "" }, {
+      rpc: stubs({ overview: () => overview, history: () => [], proposal: () => diff(true) }),
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "View changes" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("The memory has changed since this dry run: MEMORY.md");
+    expect(screen.getByRole("button", { name: "Apply" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: "Discard" }).hasAttribute("disabled")).toBe(false);
   });
 });
 

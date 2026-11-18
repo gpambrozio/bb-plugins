@@ -17,6 +17,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   limits are in force; if it fails, the dream does not run.
 - **A dry run first.** A project's first dream proposes its changes on a copy; you apply or discard them.
   After one is applied, that project's dreams edit its memory in place.
+- **See a dry run's changes before applying them**: every memory file it would add, change or delete,
+  shown line by line against your memory as it is now, with a warning when your memory has changed
+  since the dry run.
 - **Backups and restore.** The memory is backed up before every change, the 20 newest kept per project.
 - **The Dream page**: each project's memory folder, last dream, sessions since and whether it is due,
   with a switch per project, *Dream now*, *Dry run*, *Apply* and *Discard*, and filters for projects with

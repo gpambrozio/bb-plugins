@@ -64,6 +64,7 @@ export default experimental_defineHostEntry({
     discard: (input, context) => answer(() => dreamsIn(context.experimental_paths.dataDir).discard(input.project, input.stamp)),
     restore: (input, context) =>
       answer(() => dreamsIn(context.experimental_paths.dataDir).restore(input.project, input.stamp, input.backupsToKeep)),
+    proposalDiff: (input, context) => answer(() => dreamsIn(context.experimental_paths.dataDir).proposalDiff(input.project, input.stamp)),
     backups: (input, context) => dreamsIn(context.experimental_paths.dataDir).backups(input.project),
     activeRuns: (_input, context) => ({ runs: dreamsIn(context.experimental_paths.dataDir).activeRuns() }),
   },

@@ -115,6 +115,30 @@ export const BackupListSchema = z.object({
   proposals: z.array(ProposalSummarySchema),
 });
 
+/** One memory file a waiting dry run would add, change or delete, with both texts for a diff. */
+export const ProposalFileSchema = z.object({
+  path: z.string(),
+  kind: z.enum(["added", "changed", "deleted"]),
+  /** The file as it is in the memory now; null when it does not exist (or could not be read). */
+  current: z.string().nullable(),
+  /** The file as the dream left it in its copy; null for a deletion. */
+  proposed: z.string().nullable(),
+  /** The memory's file differs from what the dream started from: applying is refused. */
+  baseChanged: z.boolean(),
+  /** A text was cut to `MAX_DIFF_TEXT` characters. */
+  truncated: z.boolean(),
+});
+export type ProposalFile = z.infer<typeof ProposalFileSchema>;
+
+export const ProposalDiffSchema = z.object({
+  stamp: z.string(),
+  createdAt: z.number(),
+  summary: z.string().nullable(),
+  changes: ChangesSchema,
+  files: z.array(ProposalFileSchema),
+});
+export type ProposalDiff = z.infer<typeof ProposalDiffSchema>;
+
 export const ApplyResultSchema = z.object({ stamp: z.string(), changes: ChangesSchema, backup: z.string() });
 export const RestoreResultSchema = z.object({ stamp: z.string(), changes: ChangesSchema, backup: z.string() });
 

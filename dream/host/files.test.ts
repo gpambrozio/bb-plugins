@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { acquireLock, CLAIM_STALE_MS, lastConsolidatedAt, lockPath, lockState, markConsolidated, rollbackLock, takeClaim, LOCK_STALE_MS } from "./lock";
-import { applyProposal, createProposal, discardProposal, finishProposal, pendingProposal, planApply, ProposalConflictError } from "./proposals";
+import { applyProposal, createProposal, describeProposal, discardProposal, finishProposal, pendingProposal, planApply, ProposalConflictError } from "./proposals";
 import { decide } from "../guard/guard.mjs";
 import { backup, containedPath, diffManifests, listBackups, manifest, markdownFiles, newestChange, pruneBackups, restoreBackup, stampOf, stampTime, UnsafePathError } from "./snapshot";
 import { checkoutFolders, checkoutSlugs, listSessions, parseWorktreeFolder, sessionTitle, TITLE_WINDOW_BYTES } from "./transcripts";
@@ -202,6 +202,45 @@ describe("dry-run proposals", () => {
     discardProposal(second);
     expect(pendingProposal(proposals())).toBeNull();
     expect(() => planApply({ ...second, status: "discarded" }, memory)).toThrow(/discarded/);
+  });
+});
+
+describe("the proposal view", () => {
+  it("lists each file the dream would add, change or delete, with both texts, and writes nothing", () => {
+    const proposals = path.join(root, "proposals");
+    write(path.join(memory, "stale.md"), "old note\n");
+    const proposal = createProposal(memory, proposals, "20261117T010500000Z");
+    write(path.join(proposal.memoryDir, "build.md"), "builds with ninja\n");
+    write(path.join(proposal.memoryDir, "MEMORY.md"), "- [Build](build.md) — ninja\n");
+    write(path.join(proposal.memoryDir, "ci.md"), "ci nightly\n");
+    rmSync(path.join(proposal.memoryDir, "stale.md"));
+    const ready = finishProposal(proposal, true, "Consolidated.");
+    const before = manifest(memory);
+
+    const view = describeProposal(ready, memory);
+    expect(view).toMatchObject({ stamp: "20261117T010500000Z", summary: "Consolidated.", changes: { added: ["ci.md"], changed: ["MEMORY.md", "build.md"], deleted: ["stale.md"] } });
+    expect(view.files).toEqual([
+      { path: "MEMORY.md", kind: "changed", current: "- [Build](build.md) — make\n", proposed: "- [Build](build.md) — ninja\n", baseChanged: false, truncated: false },
+      { path: "build.md", kind: "changed", current: "builds with make\n", proposed: "builds with ninja\n", baseChanged: false, truncated: false },
+      { path: "ci.md", kind: "added", current: null, proposed: "ci nightly\n", baseChanged: false, truncated: false },
+      { path: "stale.md", kind: "deleted", current: "old note\n", proposed: null, baseChanged: false, truncated: false },
+    ]);
+    expect(manifest(memory)).toEqual(before);
+    expect(pendingProposal(proposals)?.stamp).toBe("20261117T010500000Z");
+  });
+
+  it("says which files changed in the memory since the dry run, and reads nothing through a link", () => {
+    const proposal = createProposal(memory, path.join(root, "proposals"), "20261117T010500000Z");
+    write(path.join(proposal.memoryDir, "build.md"), "builds with ninja\n");
+    write(path.join(proposal.memoryDir, "MEMORY.md"), "- index\n");
+    const ready = finishProposal(proposal, true, null);
+    write(path.join(memory, "build.md"), "a session edited this\n");
+    write(path.join(root, "outside.md"), "secret\n");
+    rmSync(path.join(memory, "MEMORY.md"));
+    symlinkSync(path.join(root, "outside.md"), path.join(memory, "MEMORY.md"));
+    const view = describeProposal(ready, memory);
+    expect(view.files.find((file) => file.path === "build.md")).toMatchObject({ baseChanged: true, current: "a session edited this\n" });
+    expect(view.files.find((file) => file.path === "MEMORY.md")).toMatchObject({ baseChanged: true, current: null });
   });
 });
 

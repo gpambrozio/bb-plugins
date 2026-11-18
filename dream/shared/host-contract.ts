@@ -12,6 +12,7 @@ import {
   FinishedSchema,
   ModeSchema,
   PreparedSchema,
+  ProposalDiffSchema,
   ProjectInputSchema,
   ProjectStatusSchema,
   RestoreResultSchema,
@@ -58,6 +59,8 @@ export const hostContract = defineRpcContract({
   discard: { input: ByProject, output: z.object({ stamp: z.string() }) },
   restore: { input: ByProject.extend({ backupsToKeep: z.number().int().min(1) }), output: RestoreResultSchema },
   backups: { input: z.object({ project: ProjectInputSchema }), output: BackupListSchema },
+  /** A waiting dry run's changes, file by file, for the proposal view. Reads only. */
+  proposalDiff: { input: ByProject, output: ProposalDiffSchema },
   /** The runs this host still holds a lock for, so a reloaded server can finish them. */
   activeRuns: {
     input: z.object({}),

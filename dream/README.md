@@ -74,7 +74,9 @@ project's worktrees do not have.
 - **The Dream page** in the sidebar: the dream machine, the schedule, each project with its switch,
   memory folder, last dream, sessions since and why it is or is not due, with *Dream now*, *Dry run*,
   and *Apply* / *Discard* for a waiting dry run, filtered to all projects, those with or without memory,
-  or those the schedule would dream (*Dream eligible*); and the history of dreams with their summaries.
+  or those the schedule would dream (*Dream eligible*); *View changes* on a waiting dry run shows each
+  memory file it would add, change or delete as a diff against the memory now, with *Apply* and
+  *Discard*; and the history of dreams with their summaries.
 - **Settings → Plugins → Dream**: the schedule, its window, the thresholds, backups and the
   notification; and below them the dream machine and the model (bb's own model picker; Sonnet 5.5 at
   medium effort to start with).

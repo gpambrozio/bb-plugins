@@ -18,6 +18,7 @@ import { FILTER_LABELS, matchesFilter, PROJECT_FILTERS, type ProjectFilter } fro
 import { changeText, when } from "../shared/format";
 import type { ProjectStatus } from "../shared/types";
 import { openPluginSettings } from "./open-settings";
+import { ProposalView } from "./proposal-view";
 import { errorText, useDream } from "./use-dream";
 
 export const PANEL_PATH = "dream";
@@ -88,7 +89,7 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-function ProjectCard({ status, busy, onChanged }: { status: ProjectStatus; busy: boolean; onChanged(): void }) {
+function ProjectCard({ status, busy, onChanged, onView }: { status: ProjectStatus; busy: boolean; onChanged(): void; onView(): void }) {
   const rpc = useRpc<RpcContract>();
   const [working, setWorking] = useState(false);
   const { memory, gate } = status;
@@ -168,6 +169,9 @@ function ProjectCard({ status, busy, onChanged }: { status: ProjectStatus; busy:
             {status.pendingProposal.changes ? changeText(status.pendingProposal.changes, true).toLowerCase() : "change nothing"}.{" "}
             <span className="font-mono text-xs text-muted-foreground">{status.pendingProposal.dir}</span>
           </span>
+          <Button size="sm" variant="outline" onClick={onView}>
+            View changes
+          </Button>
           <Button
             size="sm"
             disabled={working || busy}
@@ -312,6 +316,7 @@ export function DreamPage(_props: PluginNavPanelProps) {
   const { overview, runs, loading, error, refresh } = useDream();
   const [view, setView] = useState<"projects" | "history">("projects");
   const [filter, setFilter] = useState<ProjectFilter>("all");
+  const [viewing, setViewing] = useState<{ projectId: string; name: string } | null>(null);
   const shown = overview ? overview.projects.filter((status) => matchesFilter(status, filter)) : [];
   const busy = overview?.active !== null && overview?.active !== undefined;
 
@@ -346,7 +351,10 @@ export function DreamPage(_props: PluginNavPanelProps) {
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto">
         {loading && overview === null ? <p className="px-4 py-6 text-sm text-muted-foreground">Loading…</p> : null}
-        {view === "projects" && overview ? (
+        {view === "projects" && overview && viewing ? (
+          <ProposalView projectId={viewing.projectId} projectName={viewing.name} busy={busy} onClose={() => setViewing(null)} onChanged={refresh} />
+        ) : null}
+        {view === "projects" && overview && !viewing ? (
           overview.projects.length > 0 ? (
             <>
               <div className="flex flex-wrap gap-1 border-b border-border px-4 py-2" role="group" aria-label="Filter projects">
@@ -359,7 +367,13 @@ export function DreamPage(_props: PluginNavPanelProps) {
               {shown.length > 0 ? (
                 <ul>
                   {shown.map((status) => (
-                    <ProjectCard key={status.projectId} status={status} busy={busy} onChanged={refresh} />
+                    <ProjectCard
+                      key={status.projectId}
+                      status={status}
+                      busy={busy}
+                      onChanged={refresh}
+                      onView={() => setViewing({ projectId: status.projectId, name: status.name })}
+                    />
                   ))}
                 </ul>
               ) : (

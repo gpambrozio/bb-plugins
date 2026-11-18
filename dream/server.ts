@@ -161,6 +161,7 @@ export default async function plugin(bb: BbPluginApi) {
       discard: (hostId, input) => host.call("discard", input, { hostId }),
       restore: (hostId, input) => host.call("restore", input, { hostId }),
       backups: (hostId, input) => host.call("backups", input, { hostId }),
+      proposalDiff: (hostId, input) => host.call("proposalDiff", input, { hostId }),
       activeRuns: (hostId) => host.call("activeRuns", {}, { hostId }),
     },
     threads: {
@@ -233,6 +234,7 @@ export default async function plugin(bb: BbPluginApi) {
     apply: ({ projectId, stamp }) => service.apply(projectId, stamp),
     discard: ({ projectId, stamp }) => service.discard(projectId, stamp),
     restore: ({ projectId, stamp }) => service.restore(projectId, stamp),
+    proposal: ({ projectId, stamp }) => service.proposal(projectId, stamp),
     backups: async ({ projectId }) => {
       const result = await service.backups(projectId);
       return { backups: result.backups, proposals: result.proposals.filter((proposal) => proposal !== null) };

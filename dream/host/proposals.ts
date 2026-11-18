@@ -134,6 +134,38 @@ export function planApply(proposal: Proposal, memoryDir: string): Changes {
   return changes;
 }
 
+/** Texts longer than this are cut for the proposal view; memory files are far smaller. */
+export const MAX_DIFF_TEXT = 200_000;
+
+function readForView(root: string, relative: string): { text: string | null; truncated: boolean } {
+  try {
+    // The same containment as apply: no symlink on the way, nothing read from outside the folder.
+    const text = readFileSync(containedPath(root, relative), "utf8");
+    return text.length > MAX_DIFF_TEXT ? { text: text.slice(0, MAX_DIFF_TEXT), truncated: true } : { text, truncated: false };
+  } catch {
+    return { text: null, truncated: false };
+  }
+}
+
+/**
+ * What a waiting dry run would do, file by file, for the proposal view: the memory's file now and the
+ * dream's version, and whether the memory's file changed since the dry run began (which makes
+ * `planApply` refuse). Reads only; writes nothing anywhere.
+ */
+export function describeProposal(proposal: Proposal, memoryDir: string) {
+  const base = readJson<Manifest>(path.join(proposal.dir, "base.json")) ?? {};
+  const changes = diffManifests(base, manifest(proposal.memoryDir));
+  const current = manifest(memoryDir);
+  const files = (["changed", "added", "deleted"] as const).flatMap((kind) =>
+    changes[kind].map((file) => {
+      const now = readForView(memoryDir, file);
+      const next = kind === "deleted" ? { text: null, truncated: false } : readForView(proposal.memoryDir, file);
+      return { path: file, kind, current: now.text, proposed: next.text, baseChanged: current[file] !== base[file], truncated: now.truncated || next.truncated };
+    }),
+  );
+  return { stamp: proposal.stamp, createdAt: proposal.createdAt, summary: proposal.summary, changes, files };
+}
+
 /**
  * Applies a planned proposal to the real folder. The caller takes a backup first. Every target is
  * checked for containment (no symlink on the way, nothing outside the folder) before anything

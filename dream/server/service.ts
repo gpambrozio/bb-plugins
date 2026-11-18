@@ -32,7 +32,7 @@ import type { Choices, Outcome, Overview, RunRecord } from "../shared/contract-t
 import { dreamEligible } from "../shared/filters";
 import { changeText, totalChanges } from "../shared/format";
 import { mostOverdue, type Thresholds } from "../shared/gate";
-import type { Changes, Finished, Mode, Prepared, ProjectInput, ProjectStatus } from "../shared/types";
+import type { Changes, Finished, Mode, Prepared, ProjectInput, ProjectStatus, ProposalDiff } from "../shared/types";
 import { inWindow, windowClosesAt, windowOpensAt } from "../shared/window";
 import { createHistory, type KvLike } from "./history";
 import { checkoutsOn, findCheckout, mapWorktreeFolders, type BbProjectRow, type Checkout, type ThreadProjectLookup } from "./projects";
@@ -98,6 +98,7 @@ export interface HostPort {
   discard(hostId: string, input: { project: ProjectInput; stamp?: string }): Promise<{ stamp: string }>;
   restore(hostId: string, input: { project: ProjectInput; stamp?: string; backupsToKeep: number }): Promise<{ stamp: string; changes: Changes; backup: string }>;
   backups(hostId: string, input: { project: ProjectInput }): Promise<{ backups: Array<{ stamp: string; size: number }>; proposals: ProjectStatus["pendingProposal"][] }>;
+  proposalDiff(hostId: string, input: { project: ProjectInput; stamp?: string }): Promise<ProposalDiff>;
   activeRuns(hostId: string): Promise<{ runs: Array<{ runId: string; projectId: string; startedAt: number }> }>;
 }
 
@@ -813,6 +814,11 @@ export function createDreamService(ports: DreamPorts) {
       const result = await ports.host.restore(hostId, { project, stamp, backupsToKeep: (await ports.config()).backupsToKeep });
       ports.publish();
       return result;
+    },
+
+    async proposal(projectId: string, stamp?: string): Promise<ProposalDiff> {
+      const { hostId, project } = await checkoutOf(projectId);
+      return ports.host.proposalDiff(hostId, { project, stamp });
     },
 
     async backups(projectId: string) {
