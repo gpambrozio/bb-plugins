@@ -461,13 +461,17 @@ export function createDreamService(ports: DreamPorts) {
             state = await toStopping(state, { ok: false, summary: null, error: `The dream's guard could not be proven active, so no dream ran: ${proof.reason}.` });
             break;
           }
+          // The send is a side effect, fenced like a state write: only the copy that still owns this run,
+          // with the run still in checking, may send, and it records "running" first, so no other copy
+          // sends it again. A copy disposed, or overtaken, while the proof was in flight sends nothing.
+          const current = await loadActive();
+          if (disposed || current === null || current.record.runId !== record.runId || current.phase !== "checking") throw new Superseded();
+          state = await advance({ ...state, phase: "running" });
           try {
-            await ports.threads.send(record.threadId as string, state.prompt);
+            await ports.threads.send(record.threadId as string, state.prompt as string);
           } catch (error) {
             state = await toStopping(state, { ok: false, summary: null, error: `Could not send the dream prompt: ${message(error)}` });
-            break;
           }
-          state = await advance({ ...state, phase: "running" });
           break;
         }
         case "running": {

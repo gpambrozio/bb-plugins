@@ -28,7 +28,7 @@ import {
   type DreamState,
 } from "./state";
 import { checkoutFolders, checkoutSlugs, listSessions, listTranscriptFolders, parseWorktreeFolder, sessionTitle, type SessionFile, type WorktreeFolder } from "./transcripts";
-import { armPolicy, CANARY_FILE, writeWorkspace } from "./workspace";
+import { armPolicy, CANARY_FILE, STARTUP_MEMORY, writeWorkspace } from "./workspace";
 
 /** The most sessions a dream's prompt lists; the rest are counted. */
 export const MAX_LISTED_SESSIONS = 300;
@@ -319,6 +319,18 @@ export function createDreams(options: DreamsOptions) {
               options.guardSource,
             ),
           );
+          // What the session will really load at start, resolved as Claude Code does: an environment or
+          // managed `autoMemoryDirectory` beats the workspace's own, and would put the memory in front of
+          // the agent before its guard is proven. Refuse rather than start.
+          const startup = path.join(workspace, STARTUP_MEMORY);
+          const effective = resolveMemory({ checkout: workspace, home: options.home, env: options.env, managedDirs: options.managedDirs });
+          if (realOrSelf(effective.dir) !== realOrSelf(startup)) {
+            rollbackLock(memoryDir, priorMtime, options.pid);
+            return refuse(
+              "no-guard",
+              `A dream session here would load ${effective.dir} as its memory (from ${effective.source === "env" ? "CLAUDE_COWORK_MEMORY_PATH_OVERRIDE" : effective.source}), not its own empty folder, so the memory would reach the agent before its guard is proven. No dream may start while that is set.`,
+            );
+          }
 
           const since = result.gate.since;
           const listed: ManifestEntry[] = [];
@@ -398,11 +410,16 @@ export function createDreams(options: DreamsOptions) {
         const run = state.runs[runId] as ActiveRunRecord | undefined;
         if (run === undefined) return { ok: false, reason: `No dream ${runId} is in progress on this machine.` };
         // Decided once: a repeat, after a reload or from a second copy, answers the same.
-        if (run.canaryVerdict) return run.canaryVerdict;
+        // A pass is only answered with the policy armed: armed before the verdict is stored, and again
+        // on every repeat, so a crash or failed write between the two cannot leave a pass unarmed.
+        if (run.canaryVerdict) {
+          if (run.canaryVerdict.ok) armPolicy(run.workspace, run.targetDir);
+          return run.canaryVerdict;
+        }
         const verdict = canaryVerdict(run);
+        if (verdict.ok) armPolicy(run.workspace, run.targetDir);
         run.canaryVerdict = verdict;
         save(state);
-        if (verdict.ok) armPolicy(run.workspace, run.targetDir);
         return verdict;
       });
     },

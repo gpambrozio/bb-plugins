@@ -463,6 +463,36 @@ describe("two copies of the plugin at once", () => {
   });
 });
 
+describe("a startup check that answers late", () => {
+  it("never lets a disposed copy send the dream prompt after the run moved on", async () => {
+    const context = setup({ start: at(12), projects: [project("a", null, 5 * MINUTE)] });
+    let releaseCheck: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => (releaseCheck = resolve));
+    const realCheck = context.ports.host.checkCanary;
+    let calls = 0;
+    context.ports.host.checkCanary = async (hostId, input) => {
+      calls += 1;
+      if (calls === 1) await held;
+      return realCheck(hostId, input);
+    };
+    const { done } = await context.service.begin("a", { mode: null, manual: true, trigger: "manual" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(calls).toBe(1);
+    // bb loads a new copy and disposes the old one while its check is in flight; the new copy carries
+    // the run to its end, and its archive fails, so the thread stays open.
+    context.service.dispose();
+    context.faults.archiveFails = true;
+    const fresh = createDreamService(context.ports);
+    await fresh.recover();
+    expect(await context.active()).toBeUndefined();
+    expect(context.sent).toHaveLength(1);
+    releaseCheck();
+    await done;
+    expect(context.sent).toHaveLength(1);
+    expect(await context.active()).toBeUndefined();
+  });
+});
+
 describe("ending a dream safely", () => {
   it("keeps the run, and its lock, while bb cannot confirm the thread stopped", async () => {
     const context = setup({ start: at(12), projects: [project("a", null, 5 * MINUTE)] });

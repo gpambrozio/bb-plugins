@@ -78,7 +78,11 @@ deny and never ask, which is native's dontAsk dream. Do not move the dream into 
   - **the session never loads memory at start.** Claude Code puts a session's memory index in its
     context before any hook runs, so `autoMemoryDirectory` points at the workspace's empty
     `startup-memory/` for the whole session, and the guard's policy starts *unarmed* (its memory folder is
-    that empty one). The dream reads the real memory with tools, under the guard, once it is armed;
+    that empty one). The dream reads the real memory with tools, under the guard, once it is armed.
+    `CLAUDE_COWORK_MEMORY_PATH_OVERRIDE` and a managed `autoMemoryDirectory` beat the workspace's
+    setting, so `prepare` resolves the workspace's *effective* memory folder with the same resolver and
+    refuses (`no-guard`) unless it is that empty folder (verified live: with the override set, a session
+    quoted the real index despite the empty setting). Flag settings are not visible here;
   - **every dream starts with a canary turn**, before the thread sees any transcript or memory: Write
     `<workspace>/.dream-canary.md`. The guard allows that one path and logs it to `runs/<run id>.log`;
     a companion hook (`guard.mjs --canary-fail`, matcher `Write`) fails on it. The proof has two halves,
@@ -87,8 +91,11 @@ deny and never ask, which is native's dontAsk dream. Do not move the dream into 
     leaves its own error, cannot stand in for it), and the host must find the guard's log entry and no
     file (`checkCanary`). The host's verdict is stored with the run the first time and never changes, and
     the evidence stays until `finish`, so asking again cannot turn a failure into a pass. Only a pass arms
-    the policy and sends the dream prompt, as a second turn. A rewording of Claude Code's message fails
-    the check, which fails closed.
+    the policy and sends the dream prompt, as a second turn. A pass is armed before it is stored and
+    again on every repeat, so it is never answered unarmed. The send is fenced like a state write: the
+    coordinator re-reads the run, records `running` first, and sends only if it still owns the run in
+    `checking`, so a copy disposed while its proof was in flight sends nothing. A rewording of Claude
+    Code's message fails the check, which fails closed.
 - **Behind it**, anything that asks is stopped: the watcher ends a dream whose thread has a pending
   interaction, as a failure, within one poll.
 - **Symlinks.** The guard walks a target with `lstat` and refuses a symlink it cannot resolve (a dangling

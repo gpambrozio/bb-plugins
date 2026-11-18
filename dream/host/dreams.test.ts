@@ -7,6 +7,7 @@ import { DEFAULT_THRESHOLDS } from "../shared/gate";
 import type { ProjectInput } from "../shared/types";
 import { manifestLine } from "../server/prompt";
 import { createDreams } from "./dreams";
+import { resolveMemory } from "./memory";
 import { lastConsolidatedAt, lockPath } from "./lock";
 import { projectSlug } from "./slug";
 
@@ -190,6 +191,44 @@ describe("a project's dreams", () => {
     expect(await host.checkCanary("run1")).toEqual({ ok: true, reason: expect.any(String) });
     expect(JSON.parse(readFileSync(policyFile, "utf8")).memoryDir).toBe(memory);
     expect((await host.checkCanary("nope")).ok).toBe(false);
+  });
+
+  it("starts only when the session's effective memory is its empty folder", async () => {
+    const host = dreams();
+    const run = await prepare(host, "run1", true, "dream");
+    if (!run.ok) throw new Error(run.reason);
+    expect(resolveMemory({ checkout: run.workspace, home, env: {}, managedDirs: [path.join(root, "managed")] }).dir).toBe(path.join(run.workspace, "startup-memory"));
+  });
+
+  it("refuses when an environment or managed memory override would beat the empty folder", async () => {
+    const env = await prepare(dreams({ env: { CLAUDE_COWORK_MEMORY_PATH_OVERRIDE: memory } }), "run1", true, "dream");
+    expect(env).toMatchObject({ ok: false, code: "no-guard", reason: expect.stringContaining("CLAUDE_COWORK_MEMORY_PATH_OVERRIDE") });
+    expect(existsSync(lockPath(memory))).toBe(false);
+
+    write(path.join(root, "managed", "managed-settings.json"), JSON.stringify({ autoMemoryDirectory: memory }));
+    const managed = await prepare(dreams(), "run2", true, "dream");
+    expect(managed).toMatchObject({ ok: false, code: "no-guard", reason: expect.stringContaining("policySettings") });
+    expect(existsSync(lockPath(memory))).toBe(false);
+  });
+
+  it("never answers a pass with the policy unarmed, even after arming failed once", async () => {
+    const host = dreams();
+    const run = await prepare(host, "run1", true, "dream");
+    if (!run.ok) throw new Error(run.reason);
+    const policyFile = path.join(run.workspace, "policy.json");
+    const policy = readFileSync(policyFile, "utf8");
+    const { logPath } = JSON.parse(policy) as { logPath: string };
+    write(logPath, `${JSON.stringify({ tool: "Write", decision: "allow", canary: true })}\n`);
+    // The policy cannot be replaced: arming fails, and no verdict is stored.
+    rmSync(policyFile);
+    await expect(host.checkCanary("run1")).rejects.toThrow();
+    write(policyFile, policy);
+    expect(await host.checkCanary("run1")).toMatchObject({ ok: true });
+    expect(JSON.parse(readFileSync(policyFile, "utf8")).memoryDir).toBe(memory);
+    // A repeat of the stored pass arms again, should the policy have been put back meanwhile.
+    write(policyFile, policy);
+    expect(await dreams().checkCanary("run1")).toMatchObject({ ok: true });
+    expect(JSON.parse(readFileSync(policyFile, "utf8")).memoryDir).toBe(memory);
   });
 
   it("keeps a failed check failed: asking again, after a reload or from a second copy, never passes", async () => {
