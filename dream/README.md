@@ -94,7 +94,7 @@ project's worktrees do not have.
   memory file it would add, change or delete as a diff against the memory now, with *Apply* and
   *Discard*; and the history of dreams with their summaries.
 - **Settings → Plugins → Dream**: the schedule, its window, the thresholds, backups and the
-  notification; and below them the dream machine and the model (bb's own model picker; Fable 5.2 at
+  notification; and below them the dream machine and the model (bb's own model picker; Opus 5.5 at
   high reasoning to start with).
 - **`bb dream`** for scripts and agents:
 

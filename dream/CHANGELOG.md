@@ -28,9 +28,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   or without memory and those the schedule would dream; and the history of dreams with their summaries.
 - **Settings** for the window (01:00–06:00), the thresholds (72 hours, 5 sessions on 2 days, 30 quiet
   minutes), backups, the push notification, the machine dreams run on and the model.
-- **Thorough by default**: each dream runs on the most capable Claude model bb offers (Fable 5.2, high
-  reasoning; a setting), is told it has up to 45 minutes and no rush, must look at every session since
-  the last dream and check each memory against the code, and says in its summary what it covered.
+- **Thorough by default**: each dream runs on Opus 5.5 at high reasoning (a setting), is told it has
+  up to 45 minutes and no rush, must look at every session since the last dream and check each memory
+  against the code, and says in its summary what it covered.
 - **Checks memories against your newest code**, not an old checkout: each dream reads the newest copy of
   the project's main branch your repository already has (a read-only copy, made without fetching or
   touching your checkout), and falls back to the checkout, saying so, when there is none.

@@ -28,4 +28,4 @@ The Dream page lists each project with its memory folder, last dream, sessions s
 
 ## Costs and requirements
 
-Each dream is one model run on your Claude Code account; Fable 5.2 at high reasoning to start with. Needs bb 0.49 or newer, Claude Code signed in on the dream machine, and macOS or Linux.
+Each dream is one model run on your Claude Code account; Opus 5.5 at high reasoning to start with. Needs bb 0.49 or newer, Claude Code signed in on the dream machine, and macOS or Linux.

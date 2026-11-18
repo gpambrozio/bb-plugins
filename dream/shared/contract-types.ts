@@ -10,11 +10,11 @@ export const DREAM_CHANGED = "dream-changed";
 
 export const DEFAULT_PROVIDER = "claude-code";
 /**
- * The most capable Claude model bb's Claude Code provider offers (bb 0.49 lists Fable 5.2 as "For your
- * toughest challenges", above Opus 5.5), at high reasoning. A setting: users change it in the plugin's
- * settings section.
+ * Opus 5.5 at high reasoning: on a real project's memory it checked more against the code, condensed
+ * rather than deleted, and left no dangling links, where Fable 5.2 (bb 0.49's "toughest challenges"
+ * pick) deleted more and left some. A setting: users change it in the plugin's settings section.
  */
-export const DEFAULT_MODEL = "claude-fable-5-2";
+export const DEFAULT_MODEL = "claude-opus-5-5";
 export const DEFAULT_REASONING = "high";
 
 /** Choices the host-rendered form cannot offer: the machine and the model, set from the plugin's settings section. */

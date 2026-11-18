@@ -429,7 +429,7 @@ describe("a dream", () => {
 });
 
 describe("the default model", () => {
-  it("is the most capable Claude model bb offers, at high reasoning", async () => {
+  it("defaults to Opus 5.5 at high reasoning", async () => {
     const context = setup({ start: at(12), projects: [project("a", null)] });
     const spawned: Array<{ model: string; reasoningLevel: string }> = [];
     const spawn = context.ports.threads.spawn;
@@ -438,7 +438,7 @@ describe("the default model", () => {
       return spawn(request);
     };
     await (await context.service.begin("a", { mode: null, manual: true, trigger: "manual" })).done;
-    expect(spawned).toEqual([{ model: "claude-fable-5-2", reasoningLevel: "high" }]);
+    expect(spawned).toEqual([{ model: "claude-opus-5-5", reasoningLevel: "high" }]);
   });
 });
 
