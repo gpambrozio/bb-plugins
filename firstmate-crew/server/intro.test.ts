@@ -1,10 +1,11 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { prepareHome } from "./home";
 import { checkHomeFolder, considerIntro, dismissIntro, finishIntro, introStatus, startIntro, type IntroDeps } from "./intro";
+import { launchMate } from "./mate";
 import { defaultSettings, type FirstmateSettings } from "./settings";
 import { TEMPLATES, message } from "./templates";
 import { fakeLog, fakeProjects, fakeThreads, memoryStore } from "./testing/fakes";
@@ -22,21 +23,50 @@ async function tempDir(): Promise<string> {
 }
 
 /** The plugin as a new install sees it: every setting at its default, nothing stored. */
-async function setup(settings: Partial<FirstmateSettings> = {}) {
+async function setup(settings: Partial<FirstmateSettings> = {}, installedVersions?: () => Promise<string[]>) {
   const current: FirstmateSettings = { ...defaultSettings(), ...settings };
   const threads = fakeThreads();
+  const projects = fakeProjects();
   const store = memoryStore();
+  const log = fakeLog();
   const deps: IntroDeps = {
     threads,
-    projects: fakeProjects(),
+    projects,
     store,
     settings: async () => current,
-    log: fakeLog(),
+    log,
     async setHomeDirectory(value) {
       current.homeDirectory = value;
     },
+    ...(installedVersions === undefined ? {} : { installedVersions }),
   };
-  return { deps, store, threads, current };
+  return { deps, store, threads, projects, current, log };
+}
+
+/** A project of the captain's: its own agent instructions, which the guide must never touch. */
+async function captainsProject(dir: string): Promise<string> {
+  const project = join(dir, "project");
+  await mkdir(project);
+  await writeFile(join(project, "AGENTS.md"), "my own instructions");
+  return project;
+}
+
+/** Asserts the project is exactly as `captainsProject` left it. */
+async function expectUntouched(project: string): Promise<void> {
+  expect(await readdir(project)).toEqual(["AGENTS.md"]);
+  expect(await readFile(join(project, "AGENTS.md"), "utf8")).toBe("my own instructions");
+}
+
+async function exists(path: string): Promise<boolean> {
+  return lstat(path).then(
+    () => true,
+    () => false,
+  );
+}
+
+/** The folder holds nothing but what is named: no staging folder left beside a home. */
+async function expectOnly(dir: string, names: string[]): Promise<void> {
+  expect((await readdir(dir)).sort()).toEqual([...names].sort());
 }
 
 const PICK = { providerId: "claude-code", model: "opus" };
@@ -73,6 +103,31 @@ describe("considerIntro", () => {
     await prepareHome(home, { crewProvider: "", crewReasoning: "" });
     const { deps } = await setup();
     expect(await considerIntro(deps)).toBe("settled");
+  });
+
+  it("never offers it to an install whose other settings were changed, or that stored anything", async () => {
+    vi.stubEnv("HOME", await tempDir());
+    const crew = await setup({ crewProvider: "codex", crewModel: "gpt-5" });
+    expect(await considerIntro(crew.deps)).toBe("settled");
+    const used = await setup();
+    await used.store.setDisabledWatches(["pr-watch"]);
+    expect(await considerIntro(used.deps)).toBe("settled");
+  });
+
+  it("never offers it to an update: bb keeps more than one build, or one before the guide", async () => {
+    vi.stubEnv("HOME", await tempDir());
+    const decide = async (builds: string[]) => considerIntro((await setup({}, async () => builds)).deps);
+    // npm installs list versions; git installs list commit SHAs; a local folder lists none.
+    expect(await decide(["0.11.0", "0.10.3"])).toBe("settled");
+    expect(await decide(["0.10.3"])).toBe("settled");
+    expect(await decide(["4f1c2d0", "9ab3e77"])).toBe("settled");
+    expect(await decide(["0.11.0"])).toBe("offered");
+    expect(await decide(["4f1c2d0"])).toBe("offered");
+    expect(await decide([])).toBe("offered");
+    // A history bb cannot give is no evidence either way: the other checks decide, and it is logged.
+    const unknown = await setup({}, () => Promise.reject(new Error("no source")));
+    expect(await considerIntro(unknown.deps)).toBe("offered");
+    expect(unknown.log.warnings.join("\n")).toContain("no source");
   });
 
   it("decides once: a settled install stays settled after its first mate is released", async () => {
@@ -137,6 +192,9 @@ describe("startIntro", () => {
     expect(spawn!.environment).toEqual({ kind: "path", path: home });
     expect(spawn!.prompt).toContain("You are the first mate");
     expect(spawn!.prompt.endsWith(await message(TEMPLATES.firstSession))).toBe(true);
+    // Prepared beside the folder and renamed into place: the charter names the home, and nothing is left over.
+    expect(await readFile(join(home, "AGENTS.md"), "utf8")).toContain(`Your home is \`${home}\``);
+    await expectOnly(dir, ["FirstMate"]);
   });
 
   it("refuses before changing anything when a first mate is aboard", async () => {
@@ -164,3 +222,161 @@ describe("startIntro", () => {
     await expect(startIntro(deps, { homeDirectory: "FirstMate", ...PICK })).rejects.toThrow(/absolute path or start with ~/);
   });
 });
+
+describe("startIntro's folder", () => {
+  it("refuses . and .. in the path: a missing folder followed by .. names a project it never checked", async () => {
+    const dir = await tempDir();
+    const project = await captainsProject(dir);
+    const { deps, threads, current } = await setup();
+    await expect(startIntro(deps, { homeDirectory: join(project, "not-created") + "/..", ...PICK })).rejects.toThrow(/"\." or "\.\."/);
+    await expect(startIntro(deps, { homeDirectory: `${project}/./home`, ...PICK })).rejects.toThrow(/"\." or "\.\."/);
+    await expectUntouched(project);
+    expect(current.homeDirectory).toBe("~/FirstMate");
+    expect(threads.spawned).toHaveLength(0);
+  });
+
+  it("refuses a folder filled between the check and its use, and leaves what was put there", async () => {
+    const dir = await tempDir();
+    const home = join(dir, "home");
+    await mkdir(home);
+    const { deps, threads, current } = await setup();
+    const started = startIntro(
+      deps,
+      { homeDirectory: home, ...PICK },
+      { afterCheck: () => writeFile(join(home, "README.md"), "someone else's") },
+    );
+    await expect(started).rejects.toThrow(/changed while the guide was starting/);
+    await expectOnly(home, ["README.md"]);
+    await expectOnly(dir, ["home"]);
+    expect(current.homeDirectory).toBe("~/FirstMate");
+    expect(threads.spawned).toHaveLength(0);
+  });
+
+  it("refuses a checked folder swapped for a link to a project, before or after the home is prepared", async () => {
+    for (const hook of ["afterCheck", "beforePlace"] as const) {
+      const dir = await tempDir();
+      const project = await captainsProject(dir);
+      const home = join(dir, "home");
+      await mkdir(home);
+      const { deps, threads } = await setup();
+      const swap = async () => {
+        await rm(home, { recursive: true });
+        await symlink(project, home);
+      };
+      await expect(startIntro(deps, { homeDirectory: home, ...PICK }, { [hook]: swap })).rejects.toThrow(/changed while the guide was starting/);
+      await expectUntouched(project);
+      await expectOnly(dir, ["home", "project"]);
+      expect(threads.spawned).toHaveLength(0);
+    }
+  });
+
+  it("refuses a missing folder that appears, filled or as a link, before the new home is put in place", async () => {
+    const dir = await tempDir();
+    const project = await captainsProject(dir);
+    const filled = join(dir, "filled");
+    const linked = join(dir, "linked");
+    const { deps, threads } = await setup();
+    const fill = async () => {
+      await mkdir(filled);
+      await writeFile(join(filled, "notes.md"), "someone else's");
+    };
+    await expect(startIntro(deps, { homeDirectory: filled, ...PICK }, { beforePlace: fill })).rejects.toThrow(
+      /changed while the guide was starting/,
+    );
+    await expectOnly(filled, ["notes.md"]);
+    await expect(startIntro(deps, { homeDirectory: linked, ...PICK }, { beforePlace: () => symlink(project, linked) })).rejects.toThrow(
+      /changed while the guide was starting/,
+    );
+    await expectUntouched(project);
+    await expectOnly(dir, ["filled", "linked", "project"]);
+    expect(threads.spawned).toHaveLength(0);
+  });
+});
+
+describe("overlapping starts", () => {
+  it("launches the first guide in its own home with its own model; the second is refused and writes nothing", async () => {
+    const dir = await tempDir();
+    const { deps, threads, current } = await setup();
+    const [first, second] = await Promise.allSettled([
+      startIntro(deps, { homeDirectory: join(dir, "a"), providerId: "claude-code", model: "opus" }),
+      startIntro(deps, { homeDirectory: join(dir, "b"), providerId: "codex", model: "gpt-5" }),
+    ]);
+    expect(first.status).toBe("fulfilled");
+    expect(second).toMatchObject({ status: "rejected", reason: expect.objectContaining({ message: expect.stringMatching(/already aboard/) }) });
+    expect(threads.spawned).toHaveLength(1);
+    expect(threads.spawned[0]).toMatchObject({ providerId: "claude-code", model: "opus", environment: { kind: "path", path: join(dir, "a") } });
+    expect(current.homeDirectory).toBe(join(dir, "a"));
+    await expectOnly(dir, ["a"]);
+  });
+
+  it("keeps a launch from settings that lands meanwhile out of the guide's home", async () => {
+    const dir = await tempDir();
+    const { deps, threads, current } = await setup({ homeDirectory: join(dir, "settings-home") });
+    const [guide, launch] = await Promise.allSettled([
+      startIntro(deps, { homeDirectory: join(dir, "guide-home"), ...PICK }),
+      launchMate(deps, { providerId: "codex", model: "gpt-5" }),
+    ]);
+    expect(guide.status).toBe("fulfilled");
+    expect(launch.status).toBe("rejected");
+    expect(threads.spawned).toHaveLength(1);
+    expect(threads.spawned[0]!.environment).toEqual({ kind: "path", path: join(dir, "guide-home") });
+    expect(current.homeDirectory).toBe(join(dir, "guide-home"));
+  });
+});
+
+describe("a failed start", () => {
+  it("leaves the setting, unregisters its project and removes the folders it made when the spawn fails", async () => {
+    const dir = await tempDir();
+    const home = join(dir, "new", "deeper", "home");
+    const { deps, threads, projects, store, current } = await setup();
+    await store.setIntroState("offered");
+    threads.failSpawn(new Error("provider refused"));
+    await expect(startIntro(deps, { homeDirectory: home, ...PICK })).rejects.toThrow(/provider refused/);
+    expect(current.homeDirectory).toBe("~/FirstMate");
+    expect(projects.created).toHaveLength(1);
+    expect(projects.removed).toEqual([projects.created[0]!.id]);
+    await expectOnly(dir, []);
+    expect(await store.mateThreadId()).toBeNull();
+    expect(await store.introState()).toBe("offered");
+  });
+
+  it("puts an empty folder back as it was, Finder's file included, when the project cannot be registered", async () => {
+    const dir = await tempDir();
+    const home = join(dir, "home");
+    await mkdir(home);
+    await writeFile(join(home, ".DS_Store"), "finder");
+    const { deps, projects, current } = await setup();
+    projects.failNextCreate(new Error("bb refused the project"));
+    await expect(startIntro(deps, { homeDirectory: home, ...PICK })).rejects.toThrow(/bb refused the project/);
+    expect(current.homeDirectory).toBe("~/FirstMate");
+    await expectOnly(home, [".DS_Store"]);
+    expect(await readFile(join(home, ".DS_Store"), "utf8")).toBe("finder");
+    await expectOnly(dir, ["home"]);
+  });
+
+  it("removes the staged home and the folders it made when preparing fails", async () => {
+    const dir = await tempDir();
+    const { deps, threads, current } = await setup();
+    const failing = () => Promise.reject(new Error("disk full"));
+    await expect(startIntro(deps, { homeDirectory: join(dir, "new", "home"), ...PICK }, { beforePlace: failing })).rejects.toThrow(/disk full/);
+    await expectOnly(dir, []);
+    expect(current.homeDirectory).toBe("~/FirstMate");
+    expect(threads.spawned).toHaveLength(0);
+  });
+
+  it("leaves an earlier home as it is", async () => {
+    const dir = await tempDir();
+    const home = join(dir, "home");
+    await mkdir(home);
+    await prepareHome(home, { crewProvider: "", crewReasoning: "" });
+    await writeFile(join(home, "data", "backlog.md"), "the captain's backlog");
+    const before = (await readdir(home)).sort();
+    const { deps, threads, projects } = await setup();
+    threads.failSpawn(new Error("provider refused"));
+    await expect(startIntro(deps, { homeDirectory: home, ...PICK })).rejects.toThrow(/provider refused/);
+    expect((await readdir(home)).sort()).toEqual(before);
+    expect(await readFile(join(home, "data", "backlog.md"), "utf8")).toBe("the captain's backlog");
+    expect(projects.removed).toEqual([]);
+  });
+});
+

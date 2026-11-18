@@ -201,15 +201,31 @@ Do not break these; each was paid for.
   has not opened). Every failure is logged and leaves bb's notification to go out; a late mark does the
   same. A shipshape turn leaves no unread mark in the sidebar either; the README says so.
 - **An install that was set up never sees the first-run guide.** Whether to offer it is decided once, the
-  first time it is considered (at load), and kept in kv (`introState`): `offered` only with no first mate
-  stored, the home setting at its default and no home prepared there; anything else is `settled` for good,
-  so releasing a first mate later does not bring it back. Any launch or adoption makes it `done`; "Don't
+  first time it is considered (at load), and kept in kv (`introState`): `offered` only with nothing else in
+  kv, every setting at its default, no home prepared at the default folder, and no sign of an update in
+  bb's builds of the plugin (`bb.sdk.plugins.getSource`'s `history`, read last because it is the one check
+  that asks bb, and skipped with a warning when bb cannot answer). bb 0.49 lists there the last ten builds
+  it keeps, each kept seven days after it stops being used: versions for an npm install, commit SHAs for a
+  git one, nothing for a local folder. So more than one build, or a version before 0.11.0 (`GUIDE_SINCE`),
+  is an update (read from bb's server, `getSource`). Anything else is `settled` for good, so releasing a
+  first mate later does not bring it back. An install from a local folder that was never configured or
+  launched cannot be told from a new one and is offered it. Any launch or adoption makes it `done`; "Don't
   ask again" makes it `dismissed`. "Later" is the window's alone (`app/intro-store.ts`) and lasts until the
   app loads again. Starting the guide by hand reads none of this.
 - **The guide never writes into a folder that holds anything else.** Preparing a home overwrites its
   `AGENTS.md`, so `checkHomeFolder` takes only a missing or empty folder, or an earlier home (its
-  `AGENTS.md` *and* `data/charter.md`): a project with its own `AGENTS.md` is refused. It is checked before
-  the setting is written, so a refusal changes nothing.
+  `AGENTS.md` *and* `data/charter.md`): a project with its own `AGENTS.md` is refused, and so is a path
+  with a `.` or `..` part (`guideHomePath`: a missing folder followed by `..` names its parent once
+  created). A new or empty folder is never written into: the home is prepared in a staging folder beside
+  it and renamed into place (`placeFreshHome`). The rename itself refuses a folder filled since the check
+  and a link or file swapped in, which no check-then-write could; the launch then prepares the home again
+  in place, so the charter names the home rather than the staging folder. An earlier home is used in place
+  after a second look (same folder, same names). The check, the placement, the launch and the setting all
+  run in one hold of the `mate` lock, and the launch gets the checked home rather than reading the setting
+  again, so two guides, or a guide and a launch or adoption, cannot mix. The setting is written only once
+  the first mate is aboard. A failed launch unregisters a project it registered and takes a placed home
+  back (an empty folder comes back with its `.DS_Store`, parent folders it made go), but only while the
+  folder there is still the guide's own; an earlier home is left as it is.
 - **The first-session prompt is only the guide's.** `templates/messages/first-session.md` follows the
   opening in the guide's launch (`LaunchOptions.firstSession`); a launch from settings and a restart send
   the opening alone.

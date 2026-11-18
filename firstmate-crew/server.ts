@@ -114,6 +114,9 @@ export default async function plugin(bb: BbPluginApi) {
     async setHomeDirectory(value) {
       await settings.experimental_set({ homeDirectory: value });
     },
+    async installedVersions() {
+      return (await bb.sdk.plugins.getSource({ pluginId: bb.pluginId })).history.map((entry) => entry.version);
+    },
   };
 
   /**
@@ -130,7 +133,7 @@ export default async function plugin(bb: BbPluginApi) {
   }
 
   // Decided at load, before the captain can change anything, so an install that is set up never sees it.
-  void considerIntro(deps).catch((error: unknown) => bb.log.error(`The first-run guide could not be considered: ${reason(error)}`));
+  void considerIntro(introDeps).catch((error: unknown) => bb.log.error(`The first-run guide could not be considered: ${reason(error)}`));
 
   // --- Watches -------------------------------------------------------------------------------------
 
@@ -342,7 +345,7 @@ export default async function plugin(bb: BbPluginApi) {
         watches: () => (runner === null ? Promise.resolve([]) : runner.summaries()),
         log: bb.log,
       }),
-    "intro.status": () => introStatus(deps),
+    "intro.status": () => introStatus(introDeps),
     "intro.dismiss": async () => {
       await dismissIntro(deps);
       bb.rpc.experimental_invalidate([INTRO_TAG]);

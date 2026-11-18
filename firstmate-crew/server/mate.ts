@@ -122,6 +122,8 @@ export interface LaunchOptions {
    * which asks the first mate to walk a new captain through their first session.
    */
   firstSession?: boolean;
+  /** Told the id of the FirstMate project when this launch registered it, so a failed guide can undo it. */
+  onProjectCreated?: (projectId: string) => void;
 }
 
 /** A new first mate's first message: the captain's opening, and the first-session guide when asked for. */
@@ -144,29 +146,45 @@ export function launchMate(
   pick: { providerId: string; model: string; reasoningLevel?: string },
   options: LaunchOptions = {},
 ): Promise<ThreadInfo> {
-  return serialized(MATE_LOCK, async () => {
-    const current = await resolveMate(deps);
-    if (current !== null) throw aboard(current);
+  return serialized(MATE_LOCK, async () => launchInHome(deps, homePath((await deps.settings()).homeDirectory), pick, options));
+}
 
-    const home = await readyHome(await deps.settings());
-    const project = await step(`The ${PROJECT_NAME} project could not be registered at ${home}`, async () => {
-      return (await deps.projects.findByPath(home)) ?? (await deps.projects.create(PROJECT_NAME, home));
-    });
-    const args: SpawnArgs = {
-      projectId: project.id,
-      title: MATE_TITLE,
-      prompt: await openingPrompt(home, options),
-      environment: { kind: "path", path: home },
-      providerId: pick.providerId,
-      model: pick.model,
-      ...(pick.reasoningLevel === undefined || pick.reasoningLevel === "" ? {} : { reasoningLevel: pick.reasoningLevel }),
-      metadata: { [CREW_METADATA.role]: CREW_METADATA.mateRole },
-      pinned: true,
-    };
-    const mate = await step("The first mate could not be started", () => deps.threads.spawn(args));
-    await deps.store.setMateThreadId(mate.id);
-    return mate;
+/**
+ * `launchMate` in a home the caller has already chosen, rather than the setting, for the first-run
+ * guide (`intro.ts`), which checks its folder and launches in one hold of the `mate` lock. Run it only
+ * under that lock.
+ */
+export async function launchInHome(
+  deps: MateDeps,
+  home: string,
+  pick: { providerId: string; model: string; reasoningLevel?: string },
+  options: LaunchOptions = {},
+): Promise<ThreadInfo> {
+  const current = await resolveMate(deps);
+  if (current !== null) throw aboard(current);
+
+  await readyHome(await deps.settings(), home);
+  const project = await step(`The ${PROJECT_NAME} project could not be registered at ${home}`, async () => {
+    const found = await deps.projects.findByPath(home);
+    if (found !== null) return found;
+    const created = await deps.projects.create(PROJECT_NAME, home);
+    options.onProjectCreated?.(created.id);
+    return created;
   });
+  const args: SpawnArgs = {
+    projectId: project.id,
+    title: MATE_TITLE,
+    prompt: await openingPrompt(home, options),
+    environment: { kind: "path", path: home },
+    providerId: pick.providerId,
+    model: pick.model,
+    ...(pick.reasoningLevel === undefined || pick.reasoningLevel === "" ? {} : { reasoningLevel: pick.reasoningLevel }),
+    metadata: { [CREW_METADATA.role]: CREW_METADATA.mateRole },
+    pinned: true,
+  };
+  const mate = await step("The first mate could not be started", () => deps.threads.spawn(args));
+  await deps.store.setMateThreadId(mate.id);
+  return mate;
 }
 
 /** Whether the thread's workspace is the home, compared through symlinks, on the bb server's machine. */

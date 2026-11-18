@@ -74,6 +74,16 @@ describe("the first-run guide", () => {
     expect(await harness.callRpc("intro.status", {})).toMatchObject({ offer: false });
   });
 
+  it("is never offered to an update: bb still keeps the build it replaced", async () => {
+    const userHome = await tempDir();
+    vi.stubEnv("HOME", userHome);
+    const host = createFakePluginHost({ pluginId: "firstmate-crew" });
+    hosts.push(host);
+    host.harness.sdk.stub("plugins.getSource", () => ({ history: [{ version: "9ab3e77", activatedAt: 2 }, { version: "4f1c2d0", activatedAt: 1 }] }));
+    await plugin(host.bb);
+    expect(await host.harness.callRpc("intro.status", {})).toMatchObject({ offer: false });
+  });
+
   it("is never offered to an install with a home set or a first mate stored", async () => {
     const configured = await load();
     expect(await configured.harness.callRpc("intro.status", {})).toMatchObject({ offer: false });
@@ -87,7 +97,7 @@ describe("the first-run guide", () => {
     stubLaunch(harness);
     const home = join(userHome, "Ship");
     expect(await harness.callRpc("intro.start", { homeDirectory: home, providerId: "claude-code", model: "opus" })).toEqual({ threadId: "thr_mate" });
-    // The launch read the home from the setting the guide wrote.
+    // The launch went to the home the guide checked.
     const created = harness.sdk.calls.find((call) => call.path === "projects.create");
     expect(JSON.stringify(created)).toContain(JSON.stringify(home));
     const spawn = harness.sdk.calls.find((call) => call.path === "threads.spawn");

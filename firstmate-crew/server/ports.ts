@@ -190,6 +190,8 @@ export interface ProjectsPort {
   findByPath(path: string): Promise<{ id: string } | null>;
   /** Registers the directory as a new project on the bb server's machine. */
   create(name: string, path: string): Promise<{ id: string }>;
+  /** Unregisters a project bb knows; its folder stays as it is. Only the guide's undo uses it. */
+  remove(projectId: string): Promise<void>;
   /** Every project's id and name, for resolving what the captain or the first mate typed. */
   list(): Promise<{ id: string; name: string }[]>;
 }

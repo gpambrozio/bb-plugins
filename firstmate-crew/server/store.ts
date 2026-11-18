@@ -40,6 +40,8 @@ export interface Store {
   deleteCompactionMark(threadId: string): Promise<void>;
   /** The threads that have a mark. */
   compactionMarkIds(): Promise<string[]>;
+  /** Whether anything but the guide's own state is stored: an install that has been used. */
+  hasRecords(): Promise<boolean>;
   /** Null until the guide has been considered for this install. */
   introState(): Promise<IntroState | null>;
   setIntroState(state: IntroState): Promise<void>;
@@ -86,6 +88,9 @@ export function createStore(kv: PluginKvStorage): Store {
     },
     async compactionMarkIds() {
       return (await kv.list(COMPACTION_PREFIX)).map((key) => key.slice(COMPACTION_PREFIX.length));
+    },
+    async hasRecords() {
+      return (await kv.list()).some((key) => key !== INTRO_STATE);
     },
     async introState() {
       const state = await kv.get<unknown>(INTRO_STATE);
