@@ -234,7 +234,8 @@ Do not break these; each was paid for.
   could not be recorded (`launchInHome`, any launch) is left running and remembered in memory under the
   `mate` lock (`unrecorded`, per store): the next launch or Start in the same home records that thread
   instead of spawning, one in another home is refused while it waits, and a new one is spawned only once
-  that thread is gone. A reload forgets it; the thread can still be adopted from its tab.
+  that thread is gone. Adopting any thread and Release forget it too, so a released thread is never taken
+  back. A reload forgets it; the thread can still be adopted from its tab.
 - **The first-session prompt is only the guide's.** `templates/messages/first-session.md` follows the
   opening in the guide's launch (`LaunchOptions.firstSession`); a launch from settings and a restart send
   the opening alone.

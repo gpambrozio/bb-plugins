@@ -261,13 +261,18 @@ export function adoptMate(deps: MateDeps, threadId: string): Promise<ThreadInfo>
     }
     await readyHome(settings);
     await deps.store.setMateThreadId(thread.id);
+    // A first mate is recorded now: one a failed launch left waiting is no longer the next launch's.
+    unrecorded.delete(deps.store);
     return thread;
   });
 }
 
-/** Forgets the first mate. The thread and its crew are untouched. */
+/** Forgets the first mate, and any first mate a failed launch left waiting. The threads and crew are untouched. */
 export function releaseMate(deps: MateDeps): Promise<void> {
-  return serialized(MATE_LOCK, () => deps.store.setMateThreadId(null));
+  return serialized(MATE_LOCK, async () => {
+    await deps.store.setMateThreadId(null);
+    unrecorded.delete(deps.store);
+  });
 }
 
 /**

@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { prepareHome } from "./home";
 import { checkHomeFolder, considerIntro, dismissIntro, finishIntro, introStatus, startIntro, type IntroDeps } from "./intro";
-import { launchMate } from "./mate";
+import { adoptMate, launchMate, releaseMate } from "./mate";
 import { defaultSettings, type FirstmateSettings } from "./settings";
 import { TEMPLATES, message } from "./templates";
 import { fakeLog, fakeProjects, fakeThreads, memoryStore } from "./testing/fakes";
@@ -478,6 +478,32 @@ describe("a failed start", () => {
     expect(mate.id).not.toBe(firstId);
     expect(threads.spawned).toHaveLength(2);
     expect(await store.mateThreadId()).toBe(mate.id);
+  });
+
+  it("forgets the unrecorded first mate once it is adopted by hand and released: the next launch starts afresh", async () => {
+    for (const elsewhere of [false, true]) {
+      const dir = await tempDir();
+      const home = join(dir, "home");
+      const { deps, threads, store, current } = await setup();
+      const save = store.setMateThreadId.bind(store);
+      let failures = 1;
+      store.setMateThreadId = (id) => (failures-- > 0 ? Promise.reject(new Error("storage is down")) : save(id));
+      const error = await startIntro(deps, { homeDirectory: home, ...PICK }).catch((caught: Error) => caught);
+      const firstId = /started \((thr_[^)]+)\)/.exec(String(error))![1]!;
+
+      // Recovered through "Adopt this thread" with the setting naming its home, then released.
+      current.homeDirectory = home;
+      threads.setWorkspace((await threads.get(firstId))!.environmentId!, home);
+      await adoptMate(deps, firstId);
+      await releaseMate(deps);
+
+      if (elsewhere) current.homeDirectory = join(dir, "other");
+      const mate = await launchMate(deps, { providerId: "codex", model: "gpt-5" });
+      expect(mate.id).not.toBe(firstId);
+      expect(threads.spawned).toHaveLength(2);
+      expect(threads.spawned[1]).toMatchObject({ providerId: "codex", model: "gpt-5", environment: { kind: "path", path: current.homeDirectory } });
+      expect(await store.mateThreadId()).toBe(mate.id);
+    }
   });
 
   it("leaves an earlier home as it is", async () => {
