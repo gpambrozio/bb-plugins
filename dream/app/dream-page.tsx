@@ -4,7 +4,7 @@
  * with their summaries. The page only reads and asks; the server decides.
  */
 import { Markdown, useBbNavigate, useRpc, type PluginNavPanelProps } from "@get-bb/plugin-sdk/app";
-import { useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,7 @@ import { cn } from "@/lib/utils";
 import type { RpcContract } from "../shared/contract";
 import type { Overview, RunRecord } from "../shared/contract-types";
 import { FILTER_LABELS, matchesFilter, PROJECT_FILTERS, type ProjectFilter } from "../shared/filters";
+import { useWaiting } from "./waiting-badge";
 import { changeText, when } from "../shared/format";
 import type { ProjectStatus } from "../shared/types";
 import { DanglingLinks } from "./dangling-links";
@@ -330,7 +331,10 @@ export function DreamPage(_props: PluginNavPanelProps) {
   const [view, setView] = useState<"projects" | "history">("projects");
   const [filter, setFilter] = useState<ProjectFilter>("all");
   const [viewing, setViewing] = useState<{ projectId: string; name: string } | null>(null);
-  const shown = overview ? overview.projects.filter((status) => matchesFilter(status, filter)) : [];
+  // The badge's own list of waiting dry runs, so "Dry run pending" counts what the badge counts.
+  const waitingList = useWaiting();
+  const waiting = useMemo(() => new Set((waitingList ?? []).map((proposal) => proposal.projectId)), [waitingList]);
+  const shown = overview ? overview.projects.filter((status) => matchesFilter(status, filter, waiting)) : [];
   const busy = overview?.active !== null && overview?.active !== undefined;
 
   return (
@@ -373,7 +377,7 @@ export function DreamPage(_props: PluginNavPanelProps) {
               <div className="flex flex-wrap gap-1 border-b border-border px-4 py-2" role="group" aria-label="Filter projects">
                 {PROJECT_FILTERS.map((option) => (
                   <Button key={option} size="sm" variant="ghost" aria-pressed={filter === option} onClick={() => setFilter(option)}>
-                    {FILTER_LABELS[option]} ({overview.projects.filter((status) => matchesFilter(status, option)).length})
+                    {FILTER_LABELS[option]} ({overview.projects.filter((status) => matchesFilter(status, option, waiting)).length})
                   </Button>
                 ))}
               </div>

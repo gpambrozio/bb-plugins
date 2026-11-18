@@ -248,7 +248,9 @@ of the plugin carries it on; `loop` calls `recover` every minute, which drives i
   machine is back. A machine that cannot be asked answers `reachable: false`, which is not a count of none:
   the badge keeps its count until the machine answers, but only for that same machine. The answer names
   the dream machine (`hostId`), and a count from another one (the user picked a machine that is offline)
-  is dropped, since Dream cannot apply that machine's dry runs.
+  is dropped, since Dream cannot apply that machine's dry runs. The page's *Dry run pending* filter
+  reads the same list through `useWaiting` (one module cache), not the overview's `pendingProposal`, so
+  its count is always the badge's.
 - **Never dreamed means every session counts.** The last dream is the later of the lock's mtime (this
   plugin's dreams and native's) and `lastDreamAt` in the host state, which only an applied dry run (its
   start) or a real dream that did not fail sets, so a removed lock does not erase it. With neither, the

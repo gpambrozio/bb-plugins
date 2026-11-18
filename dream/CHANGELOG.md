@@ -41,7 +41,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Backups and restore.** The memory is backed up before every change, the 20 newest kept per project.
 - **The Dream page**: each project's memory folder, last dream, sessions since and whether it is due,
   with a switch per project, *Dream now*, *Dry run*, *Apply* and *Discard*, and filters for projects with
-  or without memory and those the schedule would dream; and the history of dreams with their summaries.
+  or without memory, those the schedule would dream and those with a dry run waiting for you (Dry run
+  pending, the same count as the sidebar badge); and the history of dreams with their summaries.
 - **Settings** for the window (01:00–06:00), the thresholds (72 hours, 5 sessions on 2 days, 30 quiet
   minutes), backups, the push notification, the machine dreams run on and the model.
 - **Thorough by default**: each dream runs on Opus 5.5 at high reasoning (a setting), is told it has

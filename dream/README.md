@@ -13,7 +13,7 @@ Plugins → Dream. Until then the page and `bb dream status` only read.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/page-dark.png">
-  <img alt="The Dream page: a badge with 1 on Dream's sidebar entry, the schedule off, filters for all projects, those with or without memory and those due, Acme API due with 7 sessions since its last dream, and Acme Web with a dry run waiting to be applied or discarded" src="docs/screenshots/page-light.png">
+  <img alt="The Dream page: a badge with 1 on Dream's sidebar entry, the schedule off, filters for all projects, those with or without memory, those due and those with a dry run pending, Acme API due with 7 sessions since its last dream, and Acme Web with a dry run waiting to be applied or discarded" src="docs/screenshots/page-light.png">
 </picture>
 
 _The Dream page. The sidebar badge counts the dry runs waiting for you; each project says what its sessions are counted from and whether it is due._
@@ -143,7 +143,8 @@ as bb does.
   every dream is a dry run, each project with its switch,
   memory folder, last dream, sessions since and why it is or is not due, with *Dream now*, *Dry run*,
   and *Apply* / *Discard* for a waiting dry run, filtered to all projects, those with or without memory,
-  or those the schedule would dream (*Dream eligible*); *View changes* on a waiting dry run shows each
+  those the schedule would dream (*Dream eligible*), or those with a dry run waiting to be applied or
+  discarded (*Dry run pending*, the same list the badge counts); *View changes* on a waiting dry run shows each
   memory file it would add, change or delete as a diff against the memory now, with *Apply* and
   *Discard*; and the history of dreams with their summaries.
 - **Settings → Plugins → Dream**: the schedule, its window, the thresholds, backups, the

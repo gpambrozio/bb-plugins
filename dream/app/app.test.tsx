@@ -180,7 +180,7 @@ describe("the project filters", () => {
 
   it("shows all projects, those with or without memory, and those the scheduler would dream", async () => {
     renderSlot<PluginNavPanelProps, RpcContract>({ component: DreamPage }, { subPath: "" }, {
-      rpc: stubs({ overview: () => ({ ...overview, projects }), history: () => [] }),
+      rpc: stubs({ overview: () => ({ ...overview, projects }), history: () => [], waiting: () => ({ hostId: "host_1", reachable: true, proposals: [] }) }),
     });
     const names = () => ["due-one", "switched-off", "no-memory"].filter((name) => screen.queryByText(name) !== null);
     expect(await screen.findByText("due-one")).toBeTruthy();
@@ -193,6 +193,22 @@ describe("the project filters", () => {
     expect(names()).toEqual(["due-one"]);
     fireEvent.click(screen.getByRole("button", { name: "All projects (3)" }));
     expect(names()).toEqual(["due-one", "switched-off", "no-memory"]);
+  });
+
+  it("shows the projects with a dry run pending, counted from the badge's list, and follows it", async () => {
+    let waiting = [{ projectId: "p_off", projectName: "switched-off", stamp: "20261117T010000000Z", createdAt: 1 }];
+    const view = renderSlot<PluginNavPanelProps, RpcContract>({ component: DreamPage }, { subPath: "" }, {
+      rpc: stubs({ overview: () => ({ ...overview, projects }), history: () => [], waiting: () => ({ hostId: "host_1", reachable: true, proposals: waiting }) }),
+    });
+    const names = () => ["due-one", "switched-off", "no-memory"].filter((name) => screen.queryByText(name) !== null);
+    fireEvent.click(await screen.findByRole("button", { name: "Dry run pending (1)" }));
+    expect(names()).toEqual(["switched-off"]);
+
+    // Applied or discarded: the server announces it, and the filter empties.
+    waiting = [];
+    await view.emitRealtime(DREAM_CHANGED, { at: 1 });
+    expect(await screen.findByRole("button", { name: "Dry run pending (0)" })).toBeTruthy();
+    expect(screen.getByText("No project matches dry run pending.")).toBeTruthy();
   });
 });
 
