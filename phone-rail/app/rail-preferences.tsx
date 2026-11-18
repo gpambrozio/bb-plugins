@@ -22,7 +22,13 @@ export interface RailPreferences {
   phoneItems: readonly ExperimentalSidebarNavigationItem[];
   /** The phone layout; "loading" until the server (or this browser's cache) has answered. */
   phoneLayout: PhoneLayoutState;
-  /** Hides or shows an item on this screen's rail. */
+  /**
+   * False until the server's phone layout has arrived. Before then the phone's
+   * items are a cache or bb's shared set: shown, but an edit would save over
+   * the server's layout, so phone edits wait. Opening destinations never does.
+   */
+  canEditPhone: boolean;
+  /** Hides or shows an item on this screen's rail. On a phone, a no-op until `canEditPhone`. */
   setVisible(itemId: string, isVisible: boolean): void;
   /** Opens the editor for this screen: bb's on a wide screen, the phone editor on a phone. */
   openCustomize(): void;
@@ -58,27 +64,33 @@ export function RailPreferencesProvider({
   children: ReactNode;
 }) {
   const { items, actions } = experimental_useSidebarNavigation();
-  const { state, save } = usePhoneLayout();
+  const { state, isSynced, save } = usePhoneLayout();
   const [isPhoneEditorOpen, setPhoneEditorOpen] = useState(false);
 
   const value = useMemo<RailPreferences>(() => {
     const phoneItems = phoneItemsFor(items, state);
-    const setPhoneVisible = (itemId: string, isVisible: boolean) =>
-      save(withVisibility(phoneItems, itemId, isVisible));
+    const setPhoneVisible = (itemId: string, isVisible: boolean) => {
+      if (isSynced) save(withVisibility(phoneItems, itemId, isVisible));
+    };
     return {
       isPhone: isCompactViewport,
       items: isCompactViewport ? phoneItems : items,
       phoneItems,
       phoneLayout: state,
+      canEditPhone: isSynced,
       setVisible: isCompactViewport ? setPhoneVisible : (itemId, isVisible) => actions.setVisible(itemId, isVisible),
       openCustomize: isCompactViewport ? () => setPhoneEditorOpen(true) : () => actions.openCustomize(),
       setPhoneVisible,
-      movePhoneItem: (activeId, overId) => save(withMove(phoneItems, activeId, overId)),
-      resetPhone: () => save(null),
+      movePhoneItem: (activeId, overId) => {
+        if (isSynced) save(withMove(phoneItems, activeId, overId));
+      },
+      resetPhone: () => {
+        if (isSynced) save(null);
+      },
       isPhoneEditorOpen,
       setPhoneEditorOpen,
     };
-  }, [items, actions, state, save, isCompactViewport, isPhoneEditorOpen]);
+  }, [items, actions, state, isSynced, save, isCompactViewport, isPhoneEditorOpen]);
 
   return <RailPreferencesContext.Provider value={value}>{children}</RailPreferencesContext.Provider>;
 }

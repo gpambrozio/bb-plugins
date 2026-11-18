@@ -4,7 +4,7 @@
  * screen, the phone layout on a compact one, and where each edit goes.
  */
 import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   ExperimentalSidebarNavigationItem,
   ExperimentalSidebarNavigationProps,
@@ -13,7 +13,7 @@ import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 
 import type { RpcContract } from "./shared/contract";
 import { LAYOUT_CHANGED_CHANNEL, type NavigationLayout } from "./shared/layout";
-import { CACHE_KEY } from "./app/phone-layout";
+import { CACHE_KEY, RETRY_DELAY_MS } from "./app/phone-layout";
 
 const app = await loadPluginApp(() => import("./app"));
 const rail = app.experimentalSidebarNavigations.find((registration) => registration.id === "rail");
@@ -56,14 +56,26 @@ const ITEMS = [NEW_THREAD, PLUGINS, DOCS, BOARD];
 
 const PHONE: NavigationLayout = { visible: ["board/board"], order: ["board/board", "__bb__/extensions", "garden/docs"] };
 
-/** A server with one stored layout, recording what the app saves. */
-function server(initial: NavigationLayout | null) {
+/**
+ * A server with one stored layout, recording what the app saves. With
+ * `holdReads`, each layout read waits in `reads` until the test answers it,
+ * with the layout stored when it was asked (what a slow server would send).
+ */
+function server(initial: NavigationLayout | null, options: { holdReads?: boolean } = {}) {
   let stored = initial;
   const saved: (NavigationLayout | null)[] = [];
+  const reads: { answer(): void; fail(): void }[] = [];
   return {
     saved,
+    reads,
     rpc: {
-      getPhoneLayout: () => ({ layout: stored }),
+      getPhoneLayout: () => {
+        const layout = stored;
+        if (!options.holdReads) return { layout };
+        return new Promise<{ layout: NavigationLayout | null }>((resolve, reject) => {
+          reads.push({ answer: () => resolve({ layout }), fail: () => reject(new Error("offline")) });
+        });
+      },
       setPhoneLayout: ({ layout }: { layout: NavigationLayout | null }) => {
         stored = layout;
         saved.push(layout);
@@ -73,8 +85,8 @@ function server(initial: NavigationLayout | null) {
   };
 }
 
-function renderRail(options: { compact: boolean; layout?: NavigationLayout | null }) {
-  const backend = server(options.layout ?? null);
+function renderRail(options: { compact: boolean; layout?: NavigationLayout | null; holdReads?: boolean }) {
+  const backend = server(options.layout ?? null, { holdReads: options.holdReads ?? false });
   const props: ExperimentalSidebarNavigationProps = {
     isCompactViewport: options.compact,
     placement: "rail",
@@ -221,5 +233,115 @@ describe("on a phone", () => {
     window.localStorage.setItem(CACHE_KEY, JSON.stringify(PHONE));
     renderRail({ compact: true, layout: PHONE });
     expect(railLabels()).toEqual(["Home", "Board", "More"]);
+  });
+});
+
+describe("while the phone layout loads", () => {
+  /** What an older phone layout showed: Docs, not Board. */
+  const OLD: NavigationLayout = { visible: ["garden/docs"], order: ["garden/docs", "board/board", "__bb__/extensions"] };
+
+  async function answer(read: { answer(): void } | undefined) {
+    if (!read) throw new Error("no layout read is waiting");
+    await act(async () => read.answer());
+  }
+
+  it("keeps an announcement over a slower first load", async () => {
+    const { view, backend } = renderRail({ compact: true, layout: OLD, holdReads: true });
+    await waitFor(() => expect(backend.reads).toHaveLength(1));
+
+    await view.behavior.emitRealtime(LAYOUT_CHANGED_CHANNEL, { layout: PHONE });
+    await answer(backend.reads[0]);
+
+    expect(railLabels()).toEqual(["Home", "Board", "More"]);
+    expect(JSON.parse(window.localStorage.getItem(CACHE_KEY)!)).toEqual(PHONE);
+  });
+
+  it("keeps a finished save over a slower load from a reconnect", async () => {
+    const { view, backend } = renderRail({ compact: true, layout: PHONE, holdReads: true });
+    await waitFor(() => expect(backend.reads).toHaveLength(1));
+    await answer(backend.reads[0]);
+
+    await view.behavior.setRealtimeConnectionState("reconnecting");
+    await view.behavior.setRealtimeConnectionState("connected");
+    await waitFor(() => expect(backend.reads).toHaveLength(2)); // asked before the edit below
+
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Board" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Hide from rail" }));
+    await waitFor(() => expect(backend.saved).toHaveLength(1));
+    await waitFor(() => expect(backend.reads).toHaveLength(3)); // the read after the save
+
+    await answer(backend.reads[1]); // still the layout from before the save
+    expect(railLabels()).toEqual(["Home", "More"]);
+    await answer(backend.reads[2]);
+    expect(railLabels()).toEqual(["Home", "More"]);
+  });
+
+  it("keeps phone edits off over a stale cache until the server answers, and still opens destinations", async () => {
+    window.localStorage.setItem(CACHE_KEY, JSON.stringify(OLD));
+    const { view, backend } = renderRail({ compact: true, layout: PHONE, holdReads: true });
+    await waitFor(() => expect(backend.reads).toHaveLength(1));
+    expect(railLabels()).toEqual(["Home", "Docs", "More"]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Docs" }));
+    expect(view.inspection.sidebarNavigationCalls).toContainEqual(
+      expect.objectContaining({ method: "activate", itemId: "garden/docs" }),
+    );
+
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Docs" }));
+    const hide = await screen.findByRole("menuitem", { name: "Hide from rail" });
+    expect(hide.getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(hide);
+    expect(backend.saved).toEqual([]);
+    fireEvent.keyDown(hide, { key: "Escape" });
+
+    openMore();
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Customize navigation" }));
+    const editor = await screen.findByTestId("phone-rail-editor");
+    expect(within(editor).getByTestId("phone-rail-editor-loading")).toBeTruthy();
+    expect(within(editor).queryAllByRole("checkbox")).toEqual([]);
+    expect(within(editor).queryByRole("button", { name: "Same as wider windows" })).toBeNull();
+
+    await answer(backend.reads[0]);
+    expect(railLabels()).toEqual(["Home", "Board", "More"]);
+    expect(within(editor).getByRole("checkbox", { name: "Show Board in sidebar" }).getAttribute("aria-checked")).toBe("true");
+    expect(backend.saved).toEqual([]);
+  });
+
+  it("keeps phone edits off over bb's shared set until the server answers, then edits the server's layout", async () => {
+    const { backend } = renderRail({ compact: true, layout: PHONE, holdReads: true });
+    await waitFor(() => expect(backend.reads).toHaveLength(1));
+    expect(railLabels()).toEqual(["Home", "Plugins", "Docs", "Board", "More"]);
+
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Docs" }));
+    const hide = await screen.findByRole("menuitem", { name: "Hide from rail" });
+    fireEvent.click(hide);
+    expect(backend.saved).toEqual([]);
+    fireEvent.keyDown(hide, { key: "Escape" });
+
+    await answer(backend.reads[0]);
+    expect(railLabels()).toEqual(["Home", "Board", "More"]);
+
+    openMore();
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Customize navigation" }));
+    const editor = await screen.findByTestId("phone-rail-editor");
+    fireEvent.click(within(editor).getByRole("checkbox", { name: "Show Plugins in sidebar" }));
+    await waitFor(() => expect(backend.saved).toHaveLength(1));
+    expect(backend.saved[0]!.visible).toEqual(["board/board", "__bb__/new-thread", "__bb__/extensions"]);
+  });
+
+  it("asks again after a failed first load", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const { backend } = renderRail({ compact: true, layout: PHONE, holdReads: true });
+      await vi.waitFor(() => expect(backend.reads).toHaveLength(1));
+      await act(async () => backend.reads[0]!.fail());
+
+      await act(async () => vi.advanceTimersByTimeAsync(RETRY_DELAY_MS));
+      expect(backend.reads).toHaveLength(2);
+      await answer(backend.reads[1]);
+      expect(railLabels()).toEqual(["Home", "Board", "More"]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

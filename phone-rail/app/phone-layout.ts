@@ -76,13 +76,28 @@ export function createSerialWriter<T>(
   };
 }
 
+/** How long to wait before asking again after the first load failed. */
+export const RETRY_DELAY_MS = 5000;
+
 export function usePhoneLayout(): {
   state: PhoneLayoutState;
+  /**
+   * True once this mount has the server's layout, from a load or an
+   * announcement. Until then the state is this browser's cache or bb's shared
+   * preferences: fine to draw, not safe to edit and save over the server's.
+   */
+  isSynced: boolean;
   save(layout: NavigationLayout | null): void;
 } {
   const rpc = useRpc<RpcContract>();
   const [state, setState] = useState<PhoneLayoutState>(readCachedLayout);
+  const [isSynced, setSynced] = useState(false);
+  const [failedLoads, setFailedLoads] = useState(0);
   const writerRef = useRef<ReturnType<typeof createSerialWriter<NavigationLayout | null>> | null>(null);
+  // Bumped by every announcement applied and every save started: a load that
+  // began before either answers with an older layout than the one on screen.
+  const generationRef = useRef(0);
+  const latestLoadRef = useRef(0);
 
   const apply = useCallback((layout: NavigationLayout | null) => {
     setState({ status: "ready", layout });
@@ -90,12 +105,20 @@ export function usePhoneLayout(): {
   }, []);
 
   const refetch = useCallback(() => {
+    const load = ++latestLoadRef.current;
+    const generation = generationRef.current;
     rpc.call("getPhoneLayout", {}).then(
       ({ layout }) => {
-        // A save started meanwhile is newer than this answer; the refetch after it settles.
-        if (!writerRef.current?.busy) apply(layout);
+        // A newer load, an announcement or a save since this one began knows better.
+        if (load !== latestLoadRef.current || generation !== generationRef.current) return;
+        if (writerRef.current?.busy) return;
+        apply(layout);
+        setSynced(true);
       },
-      (error: unknown) => console.warn("[phone-rail] could not load the phone layout", error),
+      (error: unknown) => {
+        console.warn("[phone-rail] could not load the phone layout", error);
+        if (load === latestLoadRef.current) setFailedLoads((count) => count + 1);
+      },
     );
   }, [rpc, apply]);
 
@@ -117,13 +140,25 @@ export function usePhoneLayout(): {
 
   useEffect(refetch, [refetch]);
 
+  // Until the first load succeeds, edits stay off; keep asking.
+  useEffect(() => {
+    if (failedLoads === 0 || isSynced) return;
+    const timer = setTimeout(refetch, RETRY_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [failedLoads, isSynced, refetch]);
+
   // Another window or phone changed it. Our own saves are announced too; while
   // one is still going, the refetch after it brings the final value.
   useRealtime(LAYOUT_CHANGED_CHANNEL, (payload) => {
     if (writerRef.current?.busy) return;
     const parsed = AnnouncementSchema.safeParse(payload);
-    if (parsed.success) apply(parsed.data.layout);
-    else refetch();
+    if (!parsed.success) {
+      refetch();
+      return;
+    }
+    generationRef.current += 1;
+    apply(parsed.data.layout);
+    setSynced(true);
   });
 
   // Announcements are lost while the connection is down.
@@ -136,11 +171,12 @@ export function usePhoneLayout(): {
 
   const save = useCallback(
     (layout: NavigationLayout | null) => {
+      generationRef.current += 1;
       apply(layout);
       writerRef.current!.save(layout);
     },
     [apply],
   );
 
-  return { state, save };
+  return { state, isSynced, save };
 }

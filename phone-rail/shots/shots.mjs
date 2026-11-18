@@ -24,6 +24,12 @@ const PANELS = [
 
 const panelId = ([path]) => `${FIXTURE_ID}/${path}`;
 
+/**
+ * A 402-point-wide phone (an iPhone 16 Pro) rather than the harness's 390: at the harness's 3x
+ * that is 1206 pixels, over the Community marketplace's 1200-pixel minimum width.
+ */
+const PHONE_VIEWPORT = { width: 402, height: 874 };
+
 /** What phones show: three pages, Reviews first. Everything else stays in More. */
 const PHONE_LAYOUT = {
   visible: ["workspace-tools/reviews", "workspace-tools/mail", "workspace-tools/calendar"],
@@ -120,7 +126,7 @@ export async function shoot({ shots, VARIANTS }) {
     [VARIANTS.phoneLight, "phone-light.png", "phone-editor-light.png"],
     [VARIANTS.phoneDark, "phone-dark.png", "phone-editor-dark.png"],
   ]) {
-    const page = await shots.page(variant);
+    const page = await shots.page({ ...variant, viewport: PHONE_VIEWPORT });
     await openPhoneSidebar(page);
     await page.getByRole("button", { name: "Reviews" }).waitFor();
     await shots.still(page, rail);

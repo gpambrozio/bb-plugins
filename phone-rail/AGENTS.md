@@ -22,6 +22,15 @@ root `AGENTS.md` first.
   must not reach the server out of order. While a save is in flight, realtime echoes are ignored and a
   refetch follows the last write. Each window caches the last layout in `localStorage`
   (`phone-rail.layout`) only to avoid drawing bb's full rail before the server answers.
+- **A load never overwrites something newer.** Every load is numbered, and an applied announcement or a
+  started save bumps a generation; a load's answer counts only if it is the latest load and nothing
+  bumped the generation since it began. Otherwise a slow mount or reconnect read puts an old layout
+  back on screen and in the cache, and the next edit saves it over the newer one.
+- **Phone edits wait for the server** (`isSynced` → `canEditPhone`): until a load or an announcement
+  has brought the server's layout, the rail draws the cache or bb's shared set but Hide from rail is
+  disabled on a phone and the phone editor shows a loading line, since an edit saves a whole layout
+  computed from what is on screen. Opening destinations never waits. A failed first load is retried
+  every five seconds.
 - **The forked files** (`app/bb-rail/`) note their source commit and every change at the top. When bb's
   Navigation plugin changes, diff `plugins/navigation/app/` between the noted tag and the new one and
   carry the changes over. The vendored UI (`components/ui/`) is from the `@bb` registry at

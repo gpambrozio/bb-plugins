@@ -7,6 +7,7 @@
  * Changes from bb's copy:
  * - Hide from rail and Customize navigation go through `useRailPreferences`,
  *   so on a phone they change the phone layout and open the phone editor.
+ *   On a phone, Hide from rail is disabled until the phone layout has loaded.
  * - On a wide screen, More also offers Customize phone navigation.
  */
 import { useState, type ReactNode } from "react";
@@ -89,7 +90,11 @@ function SidebarNavigationItemMenuItems({
           <Separator />
         </>
       ) : null}
-      <Item onSelect={() => preferences.setVisible(item.id, false)}>
+      <Item
+        // On a phone, hiding waits for the server's phone layout (see canEditPhone).
+        disabled={preferences.isPhone && !preferences.canEditPhone}
+        onSelect={() => preferences.setVisible(item.id, false)}
+      >
         <Icon name="EyeOff" aria-hidden="true" />
         Hide from {surface}
       </Item>
