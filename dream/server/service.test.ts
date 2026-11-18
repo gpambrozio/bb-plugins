@@ -107,7 +107,7 @@ function setup(options: { projects: FakeProject[]; start: Date; config?: Partial
     checkout: `/repos/${project.id}`,
     enabled: true,
     memory: { dir: `/mem/${project.id}`, source: "default", configured: null, defaultDir: `/mem/${project.id}`, autoMemoryEnabled: true, warnings: [], files: 3, indexLines: 3, indexBytes: 90 },
-    gate: { due: project.due, code: project.due ? "due" : "too-soon", reason: "", lastDreamAt: project.lastDreamAt, baselineAt: null, sessionsSince: 6, daysSince: 3 },
+    gate: { due: project.due, code: project.due ? "due" : "too-soon", reason: "", lastDreamAt: project.lastDreamAt, sessionsSince: 6, daysSince: 3 },
     folders: 1,
     sessions: 6,
     inPlace: true,

@@ -198,6 +198,14 @@ export function createDreams(options: DreamsOptions) {
     return { folders: kept.sort(), sessions };
   }
 
+  /**
+   * The last dream: the lock's mtime (this plugin's dreams and native ones), or the one this plugin
+   * recorded if the lock has since been removed; 0 when there was none. Never the memory's newest file.
+   */
+  function lastDreamOf(lockMtime: number, state: DreamState, projectId: string): number {
+    return Math.max(lockMtime, state.projects[projectId]?.lastDreamAt ?? 0);
+  }
+
   function evaluate(project: ProjectInput, folders: readonly string[], state: DreamState, thresholds: Thresholds, enabled: boolean) {
     const memory = memoryOf(project);
     const info = memoryInfo(memory);
@@ -211,7 +219,7 @@ export function createDreams(options: DreamsOptions) {
           enabled,
           thresholds,
           memory: { mdCount: info.files, newestChangeMs: info.files > 0 ? newestChange(memory.dir) : null, autoMemoryEnabled: memory.autoMemoryEnabled },
-          lock: { lastConsolidatedAt: lock.lastConsolidatedAt, held: lock.held || Object.values(state.runs).some((run) => run.projectId === project.projectId) },
+          lock: { lastConsolidatedAt: lastDreamOf(lock.lastConsolidatedAt, state, project.projectId), held: lock.held || Object.values(state.runs).some((run) => run.projectId === project.projectId) },
           sessions,
           pendingProposal: pending?.stamp ?? null,
         })
@@ -244,8 +252,7 @@ export function createDreams(options: DreamsOptions) {
           due: false,
           code: "no-checkout" as const,
           reason: `Its checkout ${project.checkout} is not on this machine.`,
-          lastDreamAt: result.lock.lastConsolidatedAt || null,
-          baselineAt: null,
+          lastDreamAt: lastDreamOf(result.lock.lastConsolidatedAt, state, project.projectId) || null,
           sessionsSince: 0,
           daysSince: 0,
         };
@@ -261,7 +268,6 @@ export function createDreams(options: DreamsOptions) {
             code: gate.code,
             reason: gate.reason,
             lastDreamAt: gate.lastDreamAt,
-            baselineAt: gate.baselineAt,
             sessionsSince: gate.sessionsSince,
             daysSince: gate.daysSince,
           },
@@ -519,6 +525,8 @@ export function createDreams(options: DreamsOptions) {
         // A dream that deleted or renamed a memory must not leave links to it behind: flag any it left.
         const links: DanglingLink[] = outcome === "changed" || outcome === "proposed" ? danglingLinks(resultDir, run.namesBefore ?? []) : [];
 
+        // A real dream that ended well is one, whatever it changed; a dry run counts only when applied.
+        if (run.mode === "dream" && outcome !== "failed") own.lastDreamAt = Math.max(own.lastDreamAt ?? 0, run.startedAt);
         delete state.runs[input.runId];
         recordHistory(own, {
           runId: run.runId,
@@ -565,7 +573,9 @@ export function createDreams(options: DreamsOptions) {
           applyProposal(proposal, memoryDir, changes, now());
           markConsolidated(memoryDir, proposal.createdAt, options.pid);
           const state = load();
-          projectState(state, project.projectId, project.name).inPlace = true;
+          const own = projectState(state, project.projectId, project.name);
+          own.inPlace = true;
+          own.lastDreamAt = Math.max(own.lastDreamAt ?? 0, proposal.createdAt);
           save(state);
           return { stamp: proposal.stamp, changes, backup: backupStamp };
         } catch (error) {

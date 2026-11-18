@@ -22,6 +22,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   since the dry run.
 - **A dry run you do not apply never counts as a dream**: the next one is given every session since the
   last real dream, whether the dry run was discarded or proposed nothing.
+- **A project that has never dreamed counts all its sessions**, even when a session saved a memory
+  yesterday, and the Dream page says what its sessions are counted from: the last dream, or "never
+  dreamed".
 - **Backups and restore.** The memory is backed up before every change, the 20 newest kept per project.
 - **The Dream page**: each project's memory folder, last dream, sessions since and whether it is due,
   with a switch per project, *Dream now*, *Dry run*, *Apply* and *Discard*, and filters for projects with

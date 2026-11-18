@@ -70,9 +70,20 @@ describe("evaluateGate", () => {
     expect(quiet.due).toBe(true);
   });
 
-  it("counts from the memory folder's newest change when it has never dreamed", () => {
+  it("counts every session when it has never dreamed, however recently a session wrote memory", () => {
+    // Claude Code sessions write memory themselves: the newest file is the last session that saved one.
     const result = evaluateGate(input({ lock: { lastConsolidatedAt: 0, held: false }, memory: { mdCount: 4, newestChangeMs: NOW - 40 * HOUR, autoMemoryEnabled: true } }));
-    expect(result).toMatchObject({ due: false, code: "too-few-sessions", sessionsSince: 3, lastDreamAt: null, baselineAt: NOW - 40 * HOUR });
+    expect(result).toMatchObject({ due: true, code: "due", sessionsSince: 5, daysSince: 4, lastDreamAt: null });
+    expect(result.reason).toBe("Never dreamed, so every session counts: 5 sessions on 4 days.");
+    const few = evaluateGate(input({ lock: { lastConsolidatedAt: 0, held: false }, sessions: sessions(2, 50) }));
+    expect(few).toMatchObject({ code: "too-few-sessions", sessionsSince: 2 });
+    expect(few.reason).toBe("Never dreamed, so every session counts: 2 sessions; needs 5.");
+  });
+
+  it("says what the sessions are counted from", () => {
+    expect(evaluateGate(input()).reason).toBe(`5 sessions on 4 days since the last dream on ${utcDay(NOW - 4 * DAY)}.`);
+    expect(evaluateGate(input({ sessions: sessions(2, 5) })).reason).toBe(`2 sessions since the last dream on ${utcDay(NOW - 4 * DAY)}; needs 5.`);
+    expect(evaluateGate(input({ sessions: sessions(0.6, 1, 1.5, 2, 2.5) })).reason).toBe(`5 sessions on 1 day since the last dream on ${utcDay(NOW - 4 * DAY)}; needs 2 days.`);
   });
 
   it("skips a repository with no memory files, a pending proposal, a held lock, or its switch off", () => {
@@ -85,15 +96,17 @@ describe("evaluateGate", () => {
 });
 
 describe("mostOverdue", () => {
-  const candidate = (projectId: string, due: boolean, lastDreamAt: number | null, baselineAt: number | null = null) => ({
+  const candidate = (projectId: string, due: boolean, lastDreamAt: number | null, sessionsSince = 5) => ({
     projectId,
-    gate: { due, lastDreamAt, baselineAt },
+    gate: { due, lastDreamAt, sessionsSince },
   });
 
   it("picks the due repository whose last dream is oldest, never-dreamed first", () => {
     const picked = mostOverdue([candidate("a", true, NOW - 4 * DAY), candidate("b", true, NOW - 9 * DAY), candidate("c", false, NOW - 30 * DAY)]);
     expect(picked?.projectId).toBe("b");
-    expect(mostOverdue([candidate("a", true, NOW - 9 * DAY), candidate("n", true, null, NOW - DAY)])?.projectId).toBe("n");
+    expect(mostOverdue([candidate("a", true, NOW - 9 * DAY), candidate("n", true, null)])?.projectId).toBe("n");
+    // Among the never-dreamed, the one with the most sessions waiting.
+    expect(mostOverdue([candidate("m", true, null, 6), candidate("n", true, null, 90)])?.projectId).toBe("n");
     expect(mostOverdue([candidate("a", false, null)])).toBeNull();
   });
 });

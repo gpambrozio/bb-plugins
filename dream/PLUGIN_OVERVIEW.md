@@ -16,7 +16,7 @@ Each dream is a hidden Claude Code thread given Claude Code's dream prompt: orie
 
 ## When a project is due
 
-Every night between 01:00 and 06:00, the most overdue project first, one at a time, until none is due or the window closes. A project is due after 72 hours and 5 sessions on at least 2 days since its last dream, and only when nobody worked in it in the last 30 minutes. Sessions are counted across the project's checkout, its bb worktrees and Claude Code's own worktrees. Projects without memory files are skipped, and each project has its own switch. Every number is a setting.
+Every night between 01:00 and 06:00, the most overdue project first, one at a time, until none is due or the window closes. A project is due after 72 hours and 5 sessions on at least 2 days since its last dream (a project that never dreamed counts all its sessions), and only when nobody worked in it in the last 30 minutes. Sessions are counted across the project's checkout, its bb worktrees and Claude Code's own worktrees. Projects without memory files are skipped, and each project has its own switch. Every number is a setting.
 
 ## Memory folders
 

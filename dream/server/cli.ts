@@ -9,7 +9,7 @@ import { PluginCliError, cliCommand, defineCli, type PluginCliRegistration } fro
 import type { Overview, RunRecord } from "../shared/contract-types";
 import type { Changes, ProjectStatus } from "../shared/types";
 import { stampTime } from "../host/snapshot";
-import { changeText, linksText, when } from "../shared/format";
+import { changeText, linksText, sinceText, when } from "../shared/format";
 import { DreamError, type DreamService } from "./service";
 
 function reason(error: unknown): string {
@@ -54,7 +54,7 @@ export function projectText(status: ProjectStatus): string {
   const lines = [
     `${status.name} (${status.projectId}) — ${gate.due ? "due" : "not due"}: ${gate.reason}`,
     `  memory      ${memory.dir} (${SOURCE_TEXT[memory.source]}) · ${memory.files} files · ${index}`,
-    `  last dream  ${when(gate.lastDreamAt)} · ${gate.sessionsSince} sessions on ${gate.daysSince} days since${gate.lastDreamAt === null && gate.baselineAt !== null ? ` the last memory change (${when(gate.baselineAt)})` : ""}`,
+    `  last dream  ${when(gate.lastDreamAt)} · ${gate.sessionsSince} sessions on ${gate.daysSince} days, ${sinceText(gate.lastDreamAt)}`,
     `  sessions    ${status.sessions} in ${status.folders} transcript folders · switch ${status.enabled ? "on" : "off"} · ${status.inPlace ? "edits in place" : "next dream is a dry run"}`,
   ];
   if (status.pendingProposal) lines.push(`  proposal    ${stampText(status.pendingProposal.stamp)} waits: bb dream apply ${status.name}, or bb dream discard ${status.name}`);

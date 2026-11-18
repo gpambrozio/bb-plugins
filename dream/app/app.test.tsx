@@ -46,7 +46,7 @@ const overview: Overview = {
         indexLines: 40,
         indexBytes: 3000,
       },
-      gate: { due: false, code: "proposal-pending", reason: "A dry-run proposal waits to be applied or discarded.", lastDreamAt: null, baselineAt: null, sessionsSince: 9, daysSince: 3 },
+      gate: { due: false, code: "proposal-pending", reason: "A dry-run proposal waits to be applied or discarded.", lastDreamAt: null, sessionsSince: 9, daysSince: 3 },
       folders: 4,
       sessions: 20,
       inPlace: false,
@@ -95,6 +95,7 @@ describe("the Dream page", () => {
     expect(screen.getByText(/The schedule is off/)).toBeTruthy();
     expect(screen.getByText("Proposal waiting")).toBeTruthy();
     expect(screen.getByText("/home/agent-memory/app")).toBeTruthy();
+    expect(screen.getByText("Sessions (never dreamed: all count)")).toBeTruthy();
     expect(screen.getByText(/still holds 3 .md files/)).toBeTruthy();
     expect(screen.getByText(/would update 2, add 1 memory files/)).toBeTruthy();
     expect(screen.getByRole("button", { name: /Dream now/ }).hasAttribute("disabled")).toBe(true);

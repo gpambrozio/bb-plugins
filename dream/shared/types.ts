@@ -42,8 +42,8 @@ export const GateSummarySchema = z.object({
   due: z.boolean(),
   code: z.enum(GATE_CODES),
   reason: z.string(),
+  /** The last dream; null when the project has never had one and every session counts. */
   lastDreamAt: z.number().nullable(),
-  baselineAt: z.number().nullable(),
   sessionsSince: z.number().int(),
   daysSince: z.number().int(),
 });

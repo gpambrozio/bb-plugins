@@ -11,8 +11,8 @@ that one memory folder. It runs on one machine, chosen in the plugin's settings.
 ## Commands
 
 - `bb dream status [--json]` — per project: the memory folder and where its location comes from,
-  file and index counts, the last dream, sessions since, and whether it is due and why. Read this
-  first.
+  file and index counts, the last dream, sessions since (every session when it has never dreamed),
+  and whether it is due and why. Read this first.
 - `bb dream run <project> [--dry-run]` — dream one project now, skipping the time, session and busy
   checks (never the lock). Answers once the thread has started; the dream takes minutes.
 - `bb dream stop` — stop the running dream; its lock is rolled back, so it does not count.

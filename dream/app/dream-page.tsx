@@ -147,7 +147,7 @@ function ProjectCard({ status, busy, onChanged, onView }: { status: ProjectStatu
           {memory.files} · {index}
         </Fact>
         <Fact label="Last dream">{when(gate.lastDreamAt)}</Fact>
-        <Fact label="Sessions since">{sessionsSince}</Fact>
+        <Fact label={gate.lastDreamAt === null ? "Sessions (never dreamed: all count)" : "Sessions since last dream"}>{sessionsSince}</Fact>
         <Fact label="Transcripts">
           {status.sessions} sessions in {status.folders} {status.folders === 1 ? "folder" : "folders"}
         </Fact>

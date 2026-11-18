@@ -75,8 +75,8 @@ export function changeCount(changes: Changes): number {
 /**
  * When someone last wrote memory: the newest mtime of the folder's `.md` files, or null when it has
  * none. The folder's own mtime is left out on purpose: taking and rolling back the lock creates and
- * removes a file in it, so the plugin's own lock would otherwise read as a change to the memory, move a
- * lock-less project's baseline, and make it look busy for the quiet period.
+ * removes a file in it, so the plugin's own lock would otherwise read as a change to the memory and make
+ * it look busy for the quiet period. It is never a baseline for counting sessions (shared/gate.ts).
  */
 export function newestChange(dir: string): number | null {
   let newest: number | null = null;

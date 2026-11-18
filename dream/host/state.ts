@@ -76,6 +76,12 @@ export interface ProjectState {
   name: string;
   /** False until a dry run's proposal has been applied: until then every scheduled dream is a dry run. */
   inPlace: boolean;
+  /**
+   * When this plugin last consolidated the memory: an applied dry run's start, or a real dream's that
+   * ended well. The lock says the same until something removes it; with neither, the project has never
+   * had a dream and every session counts. Missing in state before this was recorded.
+   */
+  lastDreamAt?: number;
   dreamThreadIds: string[];
   dreamSessionIds: string[];
   history: RunHistoryEntry[];

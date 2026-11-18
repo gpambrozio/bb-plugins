@@ -72,6 +72,12 @@ due when
 - at least 5 Claude Code sessions ran in it since then, on at least 2 different days, and
 - nobody is working in it: its memory did not change, and no session ran in it, in the last 30 minutes.
 
+A project that has never had a dream counts every session it has, whenever its sessions last saved a
+memory: Claude Code's sessions write memory themselves, so a recent memory file is not a dream. Only a
+real dream or an applied dry run starts the count again (a dream Claude Code ran itself counts too). The
+Dream page and `bb dream status` say what the count is from: the last dream, or "never dreamed". A long
+backlog is fine: the dream's prompt lists the newest 300 sessions, and a first dream is a dry run.
+
 A project with no memory files, with a dry run waiting, or switched off on the page is skipped. Every
 number is a setting. Sessions are counted in the checkout's own transcript folder, in every bb worktree
 of the project (bb tells which project a worktree's thread belongs to; for a thread bb no longer knows,

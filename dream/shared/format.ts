@@ -24,6 +24,14 @@ export function totalChanges(changes: Changes | null): number {
 }
 
 /** A local date and time as "2026-11-17 01:05". */
+/**
+ * What a project's session count is measured from: the last dream, or, when it has never had one,
+ * nothing, so every session counts.
+ */
+export function sinceText(lastDreamAt: number | null): string {
+  return lastDreamAt === null ? "all counted: never dreamed" : `since the last dream (${when(lastDreamAt)})`;
+}
+
 export function when(ms: number | null): string {
   if (ms === null) return "never";
   const date = new Date(ms);

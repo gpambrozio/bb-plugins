@@ -8,8 +8,11 @@
  *   machine-driven sessions in one day does not trigger a dream;
  * - nobody working in it: no change to the memory folder and no session in the last `quietMinutes`.
  *
- * With no lock (never dreamed), the time gate passes and sessions count from the memory folder's
- * newest change, since the memory already holds what came before it.
+ * A project that has never had a dream counts every session: the time gate passes and nothing is left
+ * out. Its memory's newest file is no baseline: Claude Code sessions write memory themselves, so it is
+ * only the last session that saved one, as Claude Code's own auto-dream, which treats a missing lock as
+ * never consolidated, agrees. The prompt lists the newest `MAX_LISTED_SESSIONS` (host/dreams.ts), so a
+ * long backlog stays bounded, and a first dream is a dry run that changes nothing until applied.
  */
 import { z } from "zod";
 
@@ -49,7 +52,10 @@ export interface GateInput<S extends GateSession = GateSession> {
   enabled: boolean;
   thresholds: Thresholds;
   memory: { mdCount: number; newestChangeMs: number | null; autoMemoryEnabled: boolean };
-  /** `lastConsolidatedAt` is the lock's mtime, 0 when there is no lock. */
+  /**
+   * `lastConsolidatedAt` is the last dream: the lock's mtime or the dream this plugin recorded, whichever
+   * is later; 0 when the project has never had one.
+   */
   lock: { lastConsolidatedAt: number; held: boolean };
   /** Every session of the repository, dream threads' own already left out. */
   sessions: readonly S[];
@@ -63,12 +69,11 @@ export interface GateResult<S extends GateSession = GateSession> {
   due: boolean;
   code: GateCode;
   reason: string;
+  /** Sessions count from here; null when the project has never had a dream, and every session counts. */
   lastDreamAt: number | null;
-  /** Sessions count from here: the last dream, else the memory folder's newest change. */
-  baselineAt: number | null;
   sessionsSince: number;
   daysSince: number;
-  /** The sessions since the baseline, newest first. */
+  /** The sessions since the last dream (every one when never dreamed), newest first. */
   since: S[];
 }
 
@@ -93,12 +98,13 @@ export function evaluateGate<S extends GateSession>(input: GateInput<S>): GateRe
   const { now, thresholds, memory, lock } = input;
   const dayKey = input.dayKey ?? localDayKey;
   const lastDreamAt = lock.lastConsolidatedAt > 0 ? lock.lastConsolidatedAt : null;
-  const baselineAt = lastDreamAt ?? memory.newestChangeMs;
   const since = input.sessions
-    .filter((session) => baselineAt === null || session.mtimeMs > baselineAt)
+    .filter((session) => lastDreamAt === null || session.mtimeMs > lastDreamAt)
     .sort((a, b) => b.mtimeMs - a.mtimeMs);
   const days = new Set(since.map((session) => dayKey(session.mtimeMs))).size;
-  const base = { lastDreamAt, baselineAt, sessionsSince: since.length, daysSince: days, since };
+  const base = { lastDreamAt, sessionsSince: since.length, daysSince: days, since };
+  // What the counts are measured from, said every time.
+  const counted = (text: string) => (lastDreamAt === null ? `Never dreamed, so every session counts: ${text}` : `${text} since the last dream on ${dayKey(lastDreamAt)}`);
   const result = (code: GateCode, reason: string): GateResult<S> => ({ ...base, due: code === "due", code, reason });
 
   if (!input.enabled) return result("off", "Turned off for this project.");
@@ -112,10 +118,10 @@ export function evaluateGate<S extends GateSession>(input: GateInput<S>): GateRe
     return result("too-soon", `Last dream ${hours(now - lastDreamAt)} ago; needs ${thresholds.minHours} h.`);
   }
   if (since.length < thresholds.minSessions) {
-    return result("too-few-sessions", `${plural(since.length, "session")} since; needs ${thresholds.minSessions}.`);
+    return result("too-few-sessions", `${counted(plural(since.length, "session"))}; needs ${thresholds.minSessions}.`);
   }
   if (days < thresholds.minDays) {
-    return result("too-few-days", `${plural(since.length, "session")} on ${plural(days, "day")}; needs ${plural(thresholds.minDays, "day")}.`);
+    return result("too-few-days", `${counted(`${plural(since.length, "session")} on ${plural(days, "day")}`)}; needs ${plural(thresholds.minDays, "day")}.`);
   }
   const quiet = thresholds.quietMinutes * MINUTE;
   if (memory.newestChangeMs !== null && now - memory.newestChangeMs < quiet) {
@@ -125,7 +131,7 @@ export function evaluateGate<S extends GateSession>(input: GateInput<S>): GateRe
   if (newestSession > 0 && now - newestSession < quiet) {
     return result("session-busy", `A session ran in the last ${thresholds.quietMinutes} minutes; someone is working in it.`);
   }
-  return result("due", `${plural(since.length, "session")} on ${plural(days, "day")} since ${lastDreamAt === null ? "its memory last changed" : "the last dream"}.`);
+  return result("due", `${counted(`${plural(since.length, "session")} on ${plural(days, "day")}`)}.`);
 }
 
 /** Codes that a dream started by hand still refuses. */
@@ -133,12 +139,12 @@ export const MANUAL_REFUSALS: ReadonlySet<GateCode> = new Set(["no-checkout", "n
 
 export interface Candidate {
   projectId: string;
-  gate: Pick<GateResult, "due" | "lastDreamAt" | "baselineAt">;
+  gate: Pick<GateResult, "due" | "lastDreamAt" | "sessionsSince">;
 }
 
 /**
  * The most overdue due repository: never dreamed before any that has, then the oldest last dream,
- * then the oldest baseline. Null when none is due.
+ * then the most sessions since. Null when none is due.
  */
 export function mostOverdue<T extends Candidate>(candidates: readonly T[]): T | null {
   const due = candidates.filter((candidate) => candidate.gate.due);
@@ -146,7 +152,7 @@ export function mostOverdue<T extends Candidate>(candidates: readonly T[]): T | 
     const lastA = a.gate.lastDreamAt ?? -1;
     const lastB = b.gate.lastDreamAt ?? -1;
     if (lastA !== lastB) return lastA - lastB;
-    return (a.gate.baselineAt ?? 0) - (b.gate.baselineAt ?? 0) || a.projectId.localeCompare(b.projectId);
+    return b.gate.sessionsSince - a.gate.sessionsSince || a.projectId.localeCompare(b.projectId);
   });
   return due[0] ?? null;
 }

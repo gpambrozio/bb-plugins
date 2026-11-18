@@ -208,8 +208,16 @@ of the plugin carries it on; `loop` calls `recover` every minute, which drives i
   whether it failed, proposed changes or proposed nothing, and discarding touches neither the memory nor
   the lock. Only applying (which moves the lock to the dry run's start and makes the project edit in
   place) or a real dream moves the baseline. So a project whose dry runs propose nothing, or are
-  discarded, is dry-run again when it is next due. The baseline of a project with no lock is its
-  newest `.md` file, not the folder's mtime, which the lock's own coming and going changes.
+  discarded, is dry-run again when it is next due.
+- **Never dreamed means every session counts.** The last dream is the later of the lock's mtime (this
+  plugin's dreams and native's) and `lastDreamAt` in the host state, which only an applied dry run (its
+  start) or a real dream that did not fail sets, so a removed lock does not erase it. With neither, the
+  project has never dreamed and nothing is left out, as native treats a missing lock. Never take the
+  memory's newest `.md` as a baseline: Claude Code sessions write memory themselves, so it is only the
+  last session that saved one, and hid nearly every session of real projects. A long backlog is bounded by
+  `MAX_LISTED_SESSIONS` in the prompt instead. The newest `.md` (never the folder's mtime, which the
+  lock's own coming and going changes) still drives the quiet-period check. Every gate reason says what
+  it counts from.
 - **The sweep** tries each project once per window, so a failing one cannot loop. It hands `begin` the
   window's end, which is checked again after `prepare` and before the spawn: a scan or a backup that
   runs past the end starts nothing, and a prepared run is ended (lock rolled back). A dream already
