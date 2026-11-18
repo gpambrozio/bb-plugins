@@ -139,7 +139,7 @@ as bb does.
 
 - **The Dream page** in the sidebar, whose entry shows a badge with the number of dry runs waiting
   for you to apply or discard (none when nothing waits; while the dream machine is offline it keeps the
-  last count, and catches up when the machine is back): the dream machine, the schedule and whether
+  last count, and catches up when the machine is back; choosing another dream machine drops the old one's count): the dream machine, the schedule and whether
   every dream is a dry run, each project with its switch,
   memory folder, last dream, sessions since and why it is or is not due, with *Dream now*, *Dry run*,
   and *Apply* / *Discard* for a waiting dry run, filtered to all projects, those with or without memory,

@@ -782,14 +782,17 @@ export function createDreamService(ports: DreamPorts) {
     /**
      * The dry runs waiting on the user, for the sidebar badge: one read of the proposal folders on the
      * dream machine, nothing else. Proposals of projects bb no longer has are left out. An unreachable
-     * machine is `reachable: false`, not a count of none, so the badge keeps its count while it is away.
+     * machine is `reachable: false`, not a count of none, so the badge keeps its count while it is away;
+     * `hostId` says which machine, so a count is never kept for another one.
      */
     async waiting(): Promise<Waiting> {
+      let hostId: string | null = null;
       try {
-        const hostId = await dreamHost();
+        hostId = await dreamHost();
         const [{ proposals }, projects] = await Promise.all([ports.host.waiting(hostId), ports.projects()]);
         const names = new Map(projects.map((project) => [project.id, project.name]));
         return {
+          hostId,
           reachable: true,
           proposals: proposals
             .filter((proposal) => names.has(proposal.projectId))
@@ -798,7 +801,7 @@ export function createDreamService(ports: DreamPorts) {
         };
       } catch (error) {
         ports.log.warn(`Could not count the waiting dry runs: ${message(error)}`);
-        return { reachable: false, proposals: [] };
+        return { hostId, reachable: false, proposals: [] };
       }
     },
 

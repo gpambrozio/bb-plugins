@@ -12,10 +12,11 @@ export const DREAM_CHANGED = "dream-changed";
 export const WaitingProposalSchema = z.object({ projectId: z.string(), projectName: z.string(), stamp: z.string(), createdAt: z.number() });
 export type WaitingProposal = z.infer<typeof WaitingProposalSchema>;
 /**
- * The dry runs waiting, or `reachable: false` when the dream machine could not be asked: that is not
- * a count of none, so the badge keeps the count it has until the machine answers again.
+ * The dry runs waiting on the dream machine `hostId` (null when there is none to ask), or
+ * `reachable: false` when it could not be asked: that is not a count of none, so the badge keeps the
+ * count it has for that same machine until it answers again.
  */
-export const WaitingSchema = z.object({ reachable: z.boolean(), proposals: z.array(WaitingProposalSchema) });
+export const WaitingSchema = z.object({ hostId: z.string().nullable(), reachable: z.boolean(), proposals: z.array(WaitingProposalSchema) });
 export type Waiting = z.infer<typeof WaitingSchema>;
 
 export const DEFAULT_PROVIDER = "claude-code";

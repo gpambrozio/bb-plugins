@@ -474,6 +474,7 @@ describe("the waiting dry runs", () => {
       { projectId: "a", projectName: "a", stamp: "20261115T010000000Z", createdAt: 3 },
     ]);
     expect(await context.service.waiting()).toEqual({
+      hostId: "host_1",
       reachable: true,
       proposals: [
         { projectId: "a", projectName: "a", stamp: "20261115T010000000Z", createdAt: 3 },
@@ -485,13 +486,13 @@ describe("the waiting dry runs", () => {
   it("answers none waiting, reachable, when the dream machine has none", async () => {
     const context = setup({ start: at(12), projects: [project("a", null)] });
     context.setWaiting([]);
-    expect(await context.service.waiting()).toEqual({ reachable: true, proposals: [] });
+    expect(await context.service.waiting()).toEqual({ hostId: "host_1", reachable: true, proposals: [] });
   });
 
   it("says the dream machine could not be asked, rather than counting none, and why in the log", async () => {
     const context = setup({ start: at(12), projects: [project("a", null)] });
     context.setWaiting(new Error("the dream machine is offline"));
-    expect(await context.service.waiting()).toEqual({ reachable: false, proposals: [] });
+    expect(await context.service.waiting()).toEqual({ hostId: "host_1", reachable: false, proposals: [] });
     expect(context.log.join("\n")).toMatch(/Could not count the waiting dry runs: the dream machine is offline/);
   });
 

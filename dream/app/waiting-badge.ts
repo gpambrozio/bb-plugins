@@ -11,20 +11,34 @@
  * again even when this window's own link never dropped. No timer, so the badge never keeps the dream
  * machine's worker awake.
  *
- * A machine that cannot be asked is not a count of none: the badge keeps the count it last had.
+ * A machine that cannot be asked is not a count of none: the badge keeps the count it last had for that
+ * same machine. A count from another machine (the dream machine was changed to one that is offline) is
+ * dropped, since Dream no longer works on that machine's dry runs.
  */
 import { useRealtime, useRealtimeConnectionState, useRpc, type ExperimentalBadge } from "@get-bb/plugin-sdk/app";
 import { useEffect, useRef, useState } from "react";
 
 import type { RpcContract } from "../shared/contract";
-import { DREAM_CHANGED, type WaitingProposal } from "../shared/contract-types";
+import { DREAM_CHANGED, type Waiting, type WaitingProposal } from "../shared/contract-types";
+
+interface Counted {
+  hostId: string | null;
+  proposals: WaitingProposal[];
+}
 
 /** Shared by every mounted reader, so a remount starts from the last count. */
-let cached: WaitingProposal[] | null = null;
+let cached: Counted | null = null;
+
+/** The count to show after `answer`: the answer, or the last count while its own machine is away. */
+export function nextCount(last: Counted | null, answer: Waiting): Counted {
+  if (answer.reachable) return { hostId: answer.hostId, proposals: answer.proposals };
+  if (last !== null && last.hostId === answer.hostId) return last;
+  return { hostId: answer.hostId, proposals: [] };
+}
 
 export function useWaiting(): WaitingProposal[] | null {
   const rpc = useRpc<RpcContract>();
-  const [waiting, setWaiting] = useState<WaitingProposal[] | null>(cached);
+  const [waiting, setWaiting] = useState<Counted | null>(cached);
   const [asks, setAsks] = useState(0);
   const generation = useRef(0);
 
@@ -33,9 +47,9 @@ export function useWaiting(): WaitingProposal[] | null {
     rpc
       .call("waiting", {})
       .then((value) => {
-        if (mine !== generation.current || !value.reachable) return;
-        cached = value.proposals;
-        setWaiting(value.proposals);
+        if (mine !== generation.current) return;
+        cached = nextCount(cached, value);
+        setWaiting(cached);
       })
       .catch((error: unknown) => {
         // A plugin mid-reload: keep the count we have rather than clearing the badge.
@@ -53,7 +67,7 @@ export function useWaiting(): WaitingProposal[] | null {
     wasConnected.current = connected;
   }, [connection]);
 
-  return waiting;
+  return waiting?.proposals ?? null;
 }
 
 /** The badge for `waiting`: its count, the projects in the label, or null when none waits. */
