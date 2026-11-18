@@ -14,6 +14,7 @@ import { Button } from "../components/ui/button";
 import type { rpcContract } from "../server";
 import { ConfirmDialog } from "./confirm-dialog";
 import { STATUS_WORDS } from "./format";
+import { openIntro } from "./intro-store";
 import { RESTART_CONFIRMATION, isBetweenTurns } from "./mate-actions";
 import { reportError } from "./notify";
 import { useDefaultPick } from "./use-default-pick";
@@ -86,6 +87,9 @@ export function SettingsSection() {
             }}
           >
             Launch
+          </Button>
+          <Button variant="outline" disabled={busy} onClick={openIntro}>
+            Guided setup…
           </Button>
         </div>
       ) : (

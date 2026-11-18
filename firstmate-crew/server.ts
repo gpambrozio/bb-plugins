@@ -9,7 +9,7 @@ import { join } from "node:path";
 
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
-import { FLEET_TAG, rpcContract } from "./shared/contract";
+import { FLEET_TAG, INTRO_TAG, rpcContract } from "./shared/contract";
 import { STATE_DIR } from "./shared/types";
 import { AUTOCOMPACT_INTERVAL_MS, checkAutoCompact, FailureLog } from "./server/autocompact";
 import { bbProjects, bbThreads } from "./server/bb-ports";
@@ -18,6 +18,7 @@ import { firstmateCli } from "./server/cli";
 import { endCrew, interruptCrew, noteCrew, relaunchCrew, steerCrew } from "./server/crew";
 import { loadFleet, ReportCache } from "./server/fleet";
 import { dismissSuggestion, isHomeReady, prepareHome, removeSuggestion } from "./server/home";
+import { considerIntro, dismissIntro, finishIntro, introStatus, startIntro, type IntroDeps } from "./server/intro";
 import {
   activeHome,
   adoptMate,
@@ -96,6 +97,43 @@ export default async function plugin(bb: BbPluginApi) {
   function publishFleet(): void {
     bb.rpc.experimental_invalidate([FLEET_TAG]);
   }
+
+  // --- The first-run guide --------------------------------------------------------------------------
+
+  /** `deps` plus the one settings write the guide makes. Getters, as in `deps`: bb.sdk is reached on first use. */
+  const introDeps: IntroDeps = {
+    get threads() {
+      return deps.threads;
+    },
+    get projects() {
+      return deps.projects;
+    },
+    store,
+    settings: deps.settings,
+    log: bb.log,
+    async setHomeDirectory(value) {
+      await settings.experimental_set({ homeDirectory: value });
+    },
+    async installedVersions() {
+      return (await bb.sdk.plugins.getSource({ pluginId: bb.pluginId })).history.map((entry) => entry.version);
+    },
+  };
+
+  /**
+   * A first mate came aboard: the guide is done, and every window's offer goes. The launch or adoption has
+   * already happened, so a failure here is logged rather than reported as the launch's.
+   */
+  async function mateAboard(): Promise<void> {
+    try {
+      await finishIntro(deps);
+    } catch (error) {
+      bb.log.error(`The first-run guide could not be marked done: ${reason(error)}`);
+    }
+    bb.rpc.experimental_invalidate([INTRO_TAG]);
+  }
+
+  // Decided at load, before the captain can change anything, so an install that is set up never sees it.
+  void considerIntro(introDeps).catch((error: unknown) => bb.log.error(`The first-run guide could not be considered: ${reason(error)}`));
 
   // --- Watches -------------------------------------------------------------------------------------
 
@@ -307,14 +345,29 @@ export default async function plugin(bb: BbPluginApi) {
         watches: () => (runner === null ? Promise.resolve([]) : runner.summaries()),
         log: bb.log,
       }),
+    "intro.status": () => introStatus(introDeps),
+    "intro.dismiss": async () => {
+      await dismissIntro(deps);
+      bb.rpc.experimental_invalidate([INTRO_TAG]);
+      return null;
+    },
+    "intro.start": async (input) => {
+      const mate = await startIntro(introDeps, input);
+      bb.rpc.experimental_invalidate([INTRO_TAG]);
+      void syncRunner();
+      publishFleet();
+      return { threadId: mate.id };
+    },
     "mate.launch": async (pick) => {
       const mate = await launchMate(deps, pick);
+      await mateAboard();
       void syncRunner();
       publishFleet();
       return { threadId: mate.id };
     },
     "mate.adopt": async ({ threadId }) => {
       await adoptMate(deps, threadId);
+      await mateAboard();
       void syncRunner();
       publishFleet();
       return null;

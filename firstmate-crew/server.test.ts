@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { PluginThreadEventPayloads } from "@get-bb/plugin-sdk";
@@ -19,8 +19,9 @@ afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
+/** A scratch folder by its real path: macOS's temporary folder sits behind the /var link. */
 async function tempDir(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "firstmate-server-"));
+  const dir = await realpath(await mkdtemp(join(tmpdir(), "firstmate-server-")));
   tempDirs.push(dir);
   return dir;
 }
@@ -39,11 +40,87 @@ function fleetSignals(harness: { experimental_rpcInvalidations: (readonly string
   return harness.experimental_rpcInvalidations.filter((tags) => tags?.includes("fleet") === true).length;
 }
 
+/** The plugin as a fresh install loads it: every setting at its default, its home folder under `userHome`. */
+async function loadFresh(userHome: string) {
+  vi.stubEnv("HOME", userHome);
+  const host = createFakePluginHost({ pluginId: "firstmate-crew" });
+  hosts.push(host);
+  await plugin(host.bb);
+  return host;
+}
+
+/** bb's answers to a first mate's launch: one machine, no project yet, and the spawned thread. */
+function stubLaunch(harness: ReturnType<typeof createFakePluginHost>["harness"]): void {
+  harness.sdk.stub("system.config", () => ({ primaryHostId: "host_1" }));
+  harness.sdk.stub("projects.list", () => []);
+  harness.sdk.stub("projects.create", () => ({ id: "proj_home" }));
+  harness.sdk.stub("threads.spawn", () => makeThreadResponse({ id: "thr_mate", projectId: "proj_home" }));
+}
+
+/** How many times the server told every window to read the guide's state again. */
+function introSignals(harness: { experimental_rpcInvalidations: (readonly string[] | null)[] }): number {
+  return harness.experimental_rpcInvalidations.filter((tags) => tags?.includes("intro") === true).length;
+}
+
+describe("the first-run guide", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("is offered to a fresh install, until dismissed", async () => {
+    const { harness } = await loadFresh(await tempDir());
+    expect(await harness.callRpc("intro.status", {})).toEqual({ offer: true, homeDirectory: "~/FirstMate" });
+    await harness.callRpc("intro.dismiss", {});
+    expect(introSignals(harness)).toBe(1);
+    expect(await harness.callRpc("intro.status", {})).toMatchObject({ offer: false });
+  });
+
+  it("is never offered to an update: bb still keeps the build it replaced", async () => {
+    const userHome = await tempDir();
+    vi.stubEnv("HOME", userHome);
+    const host = createFakePluginHost({ pluginId: "firstmate-crew" });
+    hosts.push(host);
+    host.harness.sdk.stub("plugins.getSource", () => ({ history: [{ version: "9ab3e77", activatedAt: 2 }, { version: "4f1c2d0", activatedAt: 1 }] }));
+    await plugin(host.bb);
+    expect(await host.harness.callRpc("intro.status", {})).toMatchObject({ offer: false });
+  });
+
+  it("is never offered to an install with a home set or a first mate stored", async () => {
+    const configured = await load();
+    expect(await configured.harness.callRpc("intro.status", {})).toMatchObject({ offer: false });
+    const crewed = await load({ mateId: "thr_mate" });
+    expect(await crewed.harness.callRpc("intro.status", {})).toMatchObject({ offer: false });
+  });
+
+  it("starts the first mate in the chosen home with the first-session prompt, and is done", async () => {
+    const userHome = await tempDir();
+    const { harness } = await loadFresh(userHome);
+    stubLaunch(harness);
+    const home = join(userHome, "Ship");
+    expect(await harness.callRpc("intro.start", { homeDirectory: home, providerId: "claude-code", model: "opus" })).toEqual({ threadId: "thr_mate" });
+    // The launch went to the home the guide checked.
+    const created = harness.sdk.calls.find((call) => call.path === "projects.create");
+    expect(JSON.stringify(created)).toContain(JSON.stringify(home));
+    const spawn = harness.sdk.calls.find((call) => call.path === "threads.spawn");
+    expect(JSON.stringify(spawn)).toContain("This is my first time with FirstMate");
+    expect(await harness.callRpc("intro.status", {})).toMatchObject({ offer: false });
+    expect(introSignals(harness)).toBe(1);
+  });
+
+  it("is done once a first mate is launched from settings", async () => {
+    const { harness } = await loadFresh(await tempDir());
+    stubLaunch(harness);
+    await harness.callRpc("mate.launch", { providerId: "claude-code", model: "opus" });
+    expect(await harness.callRpc("intro.status", {})).toMatchObject({ offer: false });
+    expect(introSignals(harness)).toBe(1);
+  });
+});
+
 describe("server wiring", () => {
   it("registers every method of the contract, the CLI, the watch service and autocompact", async () => {
     const { harness } = await load();
     expect([...harness.registrations.rpcMethods].sort()).toEqual(Object.keys(rpcContract).sort());
-    expect(harness.registrations.rpcMethods).toHaveLength(19);
+    expect(harness.registrations.rpcMethods).toHaveLength(22);
     expect(harness.registrations.cli?.name).toBe("firstmate-crew");
     expect(harness.registrations.services.map((service) => service.name)).toEqual(["watches", "autocompact"]);
   });

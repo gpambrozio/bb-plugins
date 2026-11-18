@@ -8,6 +8,7 @@ import { useEffect } from "react";
 import { toast } from "sonner";
 
 import type { rpcContract } from "../server";
+import { openIntro } from "./intro-store";
 import { reportError } from "./notify";
 import { deliverToMate } from "./use-mate-sender";
 
@@ -65,7 +66,7 @@ export function openFirstMate(context: PluginCommandContext): void {
     if (mate === null) {
       // Nowhere to go: the tab on this thread offers to adopt it, and settings can launch one.
       if (context.threadId === null || !openTab(context)) {
-        toast.error("No first mate aboard. Launch one from FirstMate's settings.");
+        toast.error("No first mate aboard. Run “FirstMate: get started”, or launch one from FirstMate's settings.");
       }
       return;
     }
@@ -79,5 +80,18 @@ export function askFirstMate(command: "bearings"): void {
   withBridge(async ({ rpc }) => {
     // One message at a time with the board's buttons, so a double press sends it once.
     deliverToMate(() => rpc.call("mate.command", { command, args: "" }), () => toast.success("Sent to the first mate."));
+  });
+}
+
+/** Opens the first-run guide, or goes to the first mate when one is already aboard. */
+export function getStarted(): void {
+  withBridge(async ({ rpc, navigate }) => {
+    const { mate } = await rpc.call("fleet.load", {});
+    if (mate === null) {
+      openIntro();
+      return;
+    }
+    toast.info("Your first mate is already aboard.");
+    navigate.toThread(mate.threadId);
   });
 }
