@@ -41,7 +41,7 @@ _A project that is not due yet, and a warning about where its worktrees' session
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/settings-dark.png">
-  <img width="560" alt="Dream's settings: Dream on a schedule off, the window, the thresholds, backups, the notification, Always dry run off, the dream machine and the model" src="docs/screenshots/settings-light.png">
+  <img width="560" alt="Dream's settings: Dream on a schedule off, the window, the thresholds, backups, the notification, Always dry run off, the dream machine, and the model with the saved model and reasoning level written out above bb's model picker" src="docs/screenshots/settings-light.png">
 </picture>
 
 _The settings: the schedule is off until you turn it on._
@@ -138,7 +138,8 @@ as bb does.
 ## Using it
 
 - **The Dream page** in the sidebar, whose entry shows a badge with the number of dry runs waiting
-  for you to apply or discard (none when nothing waits): the dream machine, the schedule and whether
+  for you to apply or discard (none when nothing waits; while the dream machine is offline it keeps the
+  last count, and catches up when the machine is back): the dream machine, the schedule and whether
   every dream is a dry run, each project with its switch,
   memory folder, last dream, sessions since and why it is or is not due, with *Dream now*, *Dry run*,
   and *Apply* / *Discard* for a waiting dry run, filtered to all projects, those with or without memory,
@@ -147,7 +148,9 @@ as bb does.
   *Discard*; and the history of dreams with their summaries.
 - **Settings → Plugins → Dream**: the schedule, its window, the thresholds, backups, the
   notification and *Always dry run* (off: only a project's first dream is a dry run); and below them the dream machine and the model (bb's own model picker; Opus 5.5 at
-  high reasoning to start with).
+  high reasoning to start with). The saved model and reasoning level are always shown as they are, and a
+  model picked takes effect only when you press *Save*: when the machine's Claude Code does not list the
+  saved one, the picker shows the nearest it has, marked *Not saved*.
 - **`bb dream`** for scripts and agents:
 
   ```text

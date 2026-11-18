@@ -229,16 +229,24 @@ of the plugin carries it on; `loop` calls `recover` every minute, which drives i
   else changes: the host's gate still refuses a project with a dry run waiting (manual runs too), and an
   unapplied dry run still never counts as a dream. The overview carries it, so the page and `bb dream
   status` say it.
-- **The model picker saves only the user's own pick.** bb's `experimental_ProviderModelPicker` calls
-  `onChange` by itself on mount when the stored model is not one the machine's Claude Code lists (the
-  screenshot dev bb's stub lists only `opus` and `sonnet`), so `app/settings-section.tsx` ignores it until
-  the user presses or types in the picker. Saving it would change the user's model just by opening the
-  settings.
+- **The model is saved only by its Save button, and the saved one is always shown.** bb's
+  `experimental_ProviderModelPicker` changes its own selection, and calls `onChange`, when the saved model
+  or reasoning level is not one the machine's Claude Code lists (on mount, on a rerender, on a machine
+  change; the screenshot dev bb's stub lists no reasoning levels, so it shows Low), so what it shows is not
+  always what is saved and its `onChange` cannot tell the user's pick from its own. `app/settings-section.tsx`
+  shows the saved model id and reasoning level as text, keeps a picker selection that differs as a draft
+  with a "Not saved" notice and a Save button, and calls `setChoices` from that button only. Saving from
+  `onChange` would change the user's model just by opening the settings; hiding the saved value behind the
+  picker would leave them unable to tell what dreams use.
 - **The sidebar badge** (`app/waiting-badge.ts`, `experimental_useBadge`) counts waiting dry runs from
   the host's `waiting` read: the proposal folders' `proposal.json` files only, no memory or transcript.
   The app asks once, on every `DREAM_CHANGED` (every end of a run, apply and discard goes through the
   server, which publishes it) and after a reconnect; never on a timer, which would keep the dream
-  machine's host worker awake for good. Proposals of projects bb no longer has are left out.
+  machine's host worker awake for good. Proposals of projects bb no longer has are left out. The server
+  also publishes `DREAM_CHANGED` when bb says the dream machine connected or went away (`bb.sdk.subscribe`,
+  `host:changed`), since a window whose own link never dropped has no other way to learn that a remote
+  machine is back. A machine that cannot be asked answers `reachable: false`, which is not a count of none:
+  the badge keeps its count until the machine answers.
 - **Never dreamed means every session counts.** The last dream is the later of the lock's mtime (this
   plugin's dreams and native's) and `lastDreamAt` in the host state, which only an applied dry run (its
   start) or a real dream that did not fail sets, so a removed lock does not erase it. With neither, the

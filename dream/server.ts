@@ -226,6 +226,12 @@ export default async function plugin(bb: BbPluginApi) {
   bb.onDispose(() => service.dispose());
 
   settings.onChange(() => publish());
+  // The dream machine coming back (or going) changes what the page and the badge can read.
+  const stopHostEvents = bb.sdk.subscribe({
+    event: "host:changed",
+    callback: (event) => void service.hostChanged(event.id, event.changes),
+  });
+  bb.onDispose(() => stopHostEvents());
 
   bb.rpc.register(rpcContract, {
     overview: () => service.overview(),

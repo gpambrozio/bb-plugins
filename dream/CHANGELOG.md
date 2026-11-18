@@ -22,10 +22,13 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   since the dry run.
 - **A dry run you do not apply never counts as a dream**: the next one is given every session since the
   last real dream, whether the dry run was discarded or proposed nothing.
-- **Opening the settings never changes your model.** When your Claude Code did not list the stored
-  model, the model picker chose another one on its own and Dream saved it.
+- **Opening the settings never changes your model, and they show the model dreams use.** When your
+  Claude Code did not list the saved model, the model picker chose another one on its own and Dream
+  saved it. Now the settings show the saved model and reasoning level as they are, and a model you pick
+  takes effect only when you press Save.
 - **A badge on Dream's sidebar entry** counts the dry runs waiting for you to apply or discard, and
-  clears when none waits.
+  clears when none waits. While the dream machine is offline it keeps its count, and it catches up when
+  the machine is back.
 - **Always dry run**, a setting, off by default: when on, every dream, scheduled or by hand, is a dry
   run that waits for your review, not only a project's first. The page and `bb dream status` say
   which.

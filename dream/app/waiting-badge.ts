@@ -6,8 +6,12 @@
  * Cheap and current without a poll: the count is one read of the proposal folders on the dream machine
  * (the `waiting` RPC), asked once when the app loads, again whenever the server announces a change (a
  * run that ended, an apply, a discard: all go through the server, which publishes `DREAM_CHANGED`), and
- * after the realtime link comes back, since an announcement sent while it was down is lost. No timer, so
- * the badge never keeps the dream machine's worker awake.
+ * after the realtime link comes back, since an announcement sent while it was down is lost. The server
+ * also announces the dream machine connecting or going away, so a machine that comes back is asked
+ * again even when this window's own link never dropped. No timer, so the badge never keeps the dream
+ * machine's worker awake.
+ *
+ * A machine that cannot be asked is not a count of none: the badge keeps the count it last had.
  */
 import { useRealtime, useRealtimeConnectionState, useRpc, type ExperimentalBadge } from "@get-bb/plugin-sdk/app";
 import { useEffect, useRef, useState } from "react";
@@ -29,9 +33,9 @@ export function useWaiting(): WaitingProposal[] | null {
     rpc
       .call("waiting", {})
       .then((value) => {
-        if (mine !== generation.current) return;
-        cached = value;
-        setWaiting(value);
+        if (mine !== generation.current || !value.reachable) return;
+        cached = value.proposals;
+        setWaiting(value.proposals);
       })
       .catch((error: unknown) => {
         // A plugin mid-reload: keep the count we have rather than clearing the badge.

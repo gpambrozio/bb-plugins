@@ -28,7 +28,7 @@
  */
 import { randomBytes } from "node:crypto";
 
-import type { Choices, Outcome, Overview, RunRecord, WaitingProposal } from "../shared/contract-types";
+import type { Choices, Outcome, Overview, RunRecord, Waiting, WaitingProposal } from "../shared/contract-types";
 import { dreamEligible } from "../shared/filters";
 import { changeText, linksText, totalChanges } from "../shared/format";
 import { mostOverdue, type Thresholds } from "../shared/gate";
@@ -781,22 +781,41 @@ export function createDreamService(ports: DreamPorts) {
 
     /**
      * The dry runs waiting on the user, for the sidebar badge: one read of the proposal folders on the
-     * dream machine, nothing else. Proposals of projects bb no longer has are left out; an unreachable
-     * machine counts none.
+     * dream machine, nothing else. Proposals of projects bb no longer has are left out. An unreachable
+     * machine is `reachable: false`, not a count of none, so the badge keeps its count while it is away.
      */
-    async waiting(): Promise<WaitingProposal[]> {
+    async waiting(): Promise<Waiting> {
       try {
         const hostId = await dreamHost();
         const [{ proposals }, projects] = await Promise.all([ports.host.waiting(hostId), ports.projects()]);
         const names = new Map(projects.map((project) => [project.id, project.name]));
-        return proposals
-          .filter((proposal) => names.has(proposal.projectId))
-          .map((proposal) => ({ ...proposal, projectName: names.get(proposal.projectId) ?? proposal.projectName }))
-          .sort((a, b) => a.projectName.localeCompare(b.projectName));
+        return {
+          reachable: true,
+          proposals: proposals
+            .filter((proposal) => names.has(proposal.projectId))
+            .map((proposal) => ({ ...proposal, projectName: names.get(proposal.projectId) ?? proposal.projectName }))
+            .sort((a, b) => a.projectName.localeCompare(b.projectName)),
+        };
       } catch (error) {
         ports.log.warn(`Could not count the waiting dry runs: ${message(error)}`);
-        return [];
+        return { reachable: false, proposals: [] };
       }
+    },
+
+    /**
+     * bb says a machine connected or went away. When it is the dream machine, open pages are told, so
+     * the badge and the page ask again: an app whose own link to the server never dropped has no
+     * other way to learn that the machine is back.
+     */
+    async hostChanged(hostId: string | undefined, changes: readonly string[]): Promise<void> {
+      if (!changes.some((change) => change === "host-connected" || change === "host-disconnected")) return;
+      try {
+        if (hostId !== undefined && hostId !== (await dreamHost())) return;
+      } catch (error) {
+        ports.log.warn(`Could not tell whether the dream machine changed: ${message(error)}`);
+        return;
+      }
+      ports.publish();
     },
 
     async setSwitch(projectId: string, enabled: boolean): Promise<void> {

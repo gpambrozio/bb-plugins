@@ -11,6 +11,12 @@ export const DREAM_CHANGED = "dream-changed";
 /** A dry run waiting to be applied or discarded: what the sidebar badge counts. */
 export const WaitingProposalSchema = z.object({ projectId: z.string(), projectName: z.string(), stamp: z.string(), createdAt: z.number() });
 export type WaitingProposal = z.infer<typeof WaitingProposalSchema>;
+/**
+ * The dry runs waiting, or `reachable: false` when the dream machine could not be asked: that is not
+ * a count of none, so the badge keeps the count it has until the machine answers again.
+ */
+export const WaitingSchema = z.object({ reachable: z.boolean(), proposals: z.array(WaitingProposalSchema) });
+export type Waiting = z.infer<typeof WaitingSchema>;
 
 export const DEFAULT_PROVIDER = "claude-code";
 /**

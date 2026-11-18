@@ -105,6 +105,7 @@ function setup(options: { projects: FakeProject[]; start: Date; config?: Partial
   const preparedModes: Array<string | null> = [];
   /** What the dream machine says waits, or an error it fails with. */
   let waiting: Array<{ projectId: string; projectName: string; stamp: string; createdAt: number }> | Error = [];
+  const published: number[] = [];
 
   const status = (project: FakeProject): ProjectStatus => ({
     projectId: project.id,
@@ -253,7 +254,7 @@ function setup(options: { projects: FakeProject[]; start: Date; config?: Partial
     },
     kv,
     notify: async (title, body) => void notifications.push({ title, body }),
-    publish: () => undefined,
+    publish: () => void published.push(now),
   };
   const service = createDreamService(ports);
   return {
@@ -275,6 +276,7 @@ function setup(options: { projects: FakeProject[]; start: Date; config?: Partial
     active: () => kv.get<ActiveState>("active-run"),
     preparedModes,
     setWaiting: (value: typeof waiting) => (waiting = value),
+    published,
   };
 }
 
@@ -471,17 +473,38 @@ describe("the waiting dry runs", () => {
       { projectId: "gone", projectName: "Gone", stamp: "20261116T010000000Z", createdAt: 2 },
       { projectId: "a", projectName: "a", stamp: "20261115T010000000Z", createdAt: 3 },
     ]);
-    expect(await context.service.waiting()).toEqual([
-      { projectId: "a", projectName: "a", stamp: "20261115T010000000Z", createdAt: 3 },
-      { projectId: "b", projectName: "b", stamp: "20261117T010000000Z", createdAt: 1 },
-    ]);
+    expect(await context.service.waiting()).toEqual({
+      reachable: true,
+      proposals: [
+        { projectId: "a", projectName: "a", stamp: "20261115T010000000Z", createdAt: 3 },
+        { projectId: "b", projectName: "b", stamp: "20261117T010000000Z", createdAt: 1 },
+      ],
+    });
   });
 
-  it("counts none, and says why in the log, when the dream machine cannot be asked", async () => {
+  it("answers none waiting, reachable, when the dream machine has none", async () => {
+    const context = setup({ start: at(12), projects: [project("a", null)] });
+    context.setWaiting([]);
+    expect(await context.service.waiting()).toEqual({ reachable: true, proposals: [] });
+  });
+
+  it("says the dream machine could not be asked, rather than counting none, and why in the log", async () => {
     const context = setup({ start: at(12), projects: [project("a", null)] });
     context.setWaiting(new Error("the dream machine is offline"));
-    expect(await context.service.waiting()).toEqual([]);
+    expect(await context.service.waiting()).toEqual({ reachable: false, proposals: [] });
     expect(context.log.join("\n")).toMatch(/Could not count the waiting dry runs: the dream machine is offline/);
+  });
+
+  it("tells open pages when the dream machine connects or goes away, and not for other machines or other changes", async () => {
+    const context = setup({ start: at(12), projects: [project("a", null)] });
+    const hostId = await context.service.dreamHost();
+    await context.service.hostChanged(hostId, ["host-connected"]);
+    expect(context.published).toHaveLength(1);
+    await context.service.hostChanged(hostId, ["host-disconnected"]);
+    expect(context.published).toHaveLength(2);
+    await context.service.hostChanged("host_other", ["host-connected"]);
+    await context.service.hostChanged(hostId, ["provider-model-catalog-changed"]);
+    expect(context.published).toHaveLength(2);
   });
 });
 

@@ -315,8 +315,10 @@ export async function seed({ bb, seed }) {
 
   writeHistory(bb, runs(projects));
   bb.cli(["plugin", "reload", PLUGIN]);
-  // The model the settings show: the stub Claude Code lists "opus" (Opus 5.5), not the full model id.
-  await seed.rpc(PLUGIN, "setChoices", { model: "opus", reasoningLevel: "high" });
+  // The model the settings show: the stub Claude Code lists "opus" (Opus 5.5), not the full model id,
+  // and no reasoning levels, so its picker shows Low. Saved as the picker can show it, the settings show
+  // no "Not saved" draft.
+  await seed.rpc(PLUGIN, "setChoices", { model: "opus", reasoningLevel: "low" });
 }
 
 /**
@@ -376,9 +378,9 @@ export async function shoot({ shots, VARIANTS }) {
     await settings.getByRole("button", { name: "Settings", exact: true }).last().click();
     await settings.getByText("Always dry run", { exact: true }).first().waitFor();
     await settings.getByText("Dream machine and model").first().waitFor();
-    await settings.getByText("The Claude Code model and reasoning level", { exact: false }).waitFor();
+    await settings.getByTestId("dream-saved-model").waitFor();
     await shots.still(settings, `settings-${theme}.png`, {
-      around: [settings.getByText("Plugin details").first(), settings.getByText("Always dry run", { exact: true }).first(), settings.locator("#dream-machine"), settings.getByText("The Claude Code model and reasoning level", { exact: false })],
+      around: [settings.getByText("Plugin details").first(), settings.getByText("Always dry run", { exact: true }).first(), settings.locator("#dream-machine"), settings.getByTestId("dream-saved-model")],
       pad: 40,
     });
     await shots.closePage(settings);

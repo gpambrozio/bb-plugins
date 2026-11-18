@@ -13,7 +13,7 @@ import { renderSlot, type PluginRpcTestHandlers } from "@get-bb/plugin-sdk/testi
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { RpcContract } from "../shared/contract";
-import { DEFAULT_CHOICES, DREAM_CHANGED, type Overview, type RunRecord, type WaitingProposal } from "../shared/contract-types";
+import { DEFAULT_CHOICES, DREAM_CHANGED, type Overview, type RunRecord, type Waiting, type WaitingProposal } from "../shared/contract-types";
 import { DreamPage } from "./dream-page";
 import { useWaitingBadge } from "./waiting-badge";
 import { BB_ICON_NAMES } from "./testing/bb-icon-names";
@@ -224,7 +224,7 @@ describe("the sidebar badge", () => {
 
   it("counts the dry runs waiting for review, follows the server's announcements, and clears when none waits", async () => {
     let waiting = waitingOn("Acme Web");
-    const view = renderSlot<object, RpcContract>({ component: BadgeProbe }, {}, { rpc: stubs({ waiting: () => waiting }) });
+    const view = renderSlot<object, RpcContract>({ component: BadgeProbe }, {}, { rpc: stubs({ waiting: () => ({ reachable: true, proposals: waiting }) }) });
     await waitFor(() => expect(screen.getByTestId("badge").textContent).toBe("1 warning 1 dry run waiting for review: Acme Web"));
 
     waiting = waitingOn("Acme API", "Acme Web");
@@ -238,13 +238,29 @@ describe("the sidebar badge", () => {
 
   it("asks again when the realtime link comes back, and never on a timer", async () => {
     let waiting: WaitingProposal[] = [];
-    const view = renderSlot<object, RpcContract>({ component: BadgeProbe }, {}, { rpc: stubs({ waiting: () => waiting }) });
+    const view = renderSlot<object, RpcContract>({ component: BadgeProbe }, {}, { rpc: stubs({ waiting: () => ({ reachable: true, proposals: waiting }) }) });
     await waitFor(() => expect(view.rpcCalls.filter((call) => call.method === "waiting")).toHaveLength(1));
     waiting = waitingOn("Acme Web");
     await view.setRealtimeConnectionState("reconnecting");
     await view.setRealtimeConnectionState("connected");
     await waitFor(() => expect(screen.getByTestId("badge").textContent).toMatch(/^1 warning/));
     expect(view.rpcCalls.filter((call) => call.method === "waiting")).toHaveLength(2);
+  });
+
+  it("keeps its count while the dream machine cannot be asked, and catches up when the server says it is back", async () => {
+    let answer: Waiting = { reachable: true, proposals: waitingOn("Acme Web") };
+    const view = renderSlot<object, RpcContract>({ component: BadgeProbe }, {}, { rpc: stubs({ waiting: () => answer }) });
+    await waitFor(() => expect(screen.getByTestId("badge").textContent).toBe("1 warning 1 dry run waiting for review: Acme Web"));
+
+    answer = { reachable: false, proposals: [] };
+    await view.emitRealtime(DREAM_CHANGED, { at: 1 });
+    await waitFor(() => expect(view.rpcCalls.filter((call) => call.method === "waiting")).toHaveLength(2));
+    expect(screen.getByTestId("badge").textContent).toBe("1 warning 1 dry run waiting for review: Acme Web");
+
+    // The machine is back: the server announces it, and the badge reads the proposals again.
+    answer = { reachable: true, proposals: waitingOn("Acme API", "Acme Web") };
+    await view.emitRealtime(DREAM_CHANGED, { at: 2 });
+    await waitFor(() => expect(screen.getByTestId("badge").textContent).toBe("2 warning 2 dry runs waiting for review: Acme API, Acme Web"));
   });
 
   it("is registered on the Dream sidebar entry", () => {
