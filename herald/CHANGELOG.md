@@ -5,6 +5,15 @@ Notable changes to `herald`. The other plugins in this repository version separa
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.13.1
+
+### Fixed
+
+- **Model-written sentences no longer leave empty folders behind.** With Claude Code writing the
+  sentences, every announcement left an empty folder named `…-herald-writer-…` in `~/.claude/projects`.
+  Herald now turns Claude Code's memory off for those runs, so nothing is left there. Folders left by
+  earlier versions stay until you delete them; they hold nothing.
+
 ## 0.13.0
 
 ### Added

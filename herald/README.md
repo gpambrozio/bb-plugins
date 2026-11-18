@@ -329,7 +329,8 @@ custom command and the prompt sit together in the *Model-written sentences* sect
 page, below bb's own form. The presets:
 
 - **claude** — Claude Code, with no tools, no settings-file hooks and no MCP servers, one turn of the
-  Haiku model at low effort. It answers in JSON, with the sentence in a summary field.
+  Haiku model at low effort. It answers in JSON, with the sentence in a summary field. Nothing of the
+  run is kept: no session, and no memory folder under `~/.claude/projects`.
 - **codex** — OpenAI Codex without its user configuration (so none of your MCP servers or hooks),
   read-only, nothing saved to disk. Its login still comes from your Codex home. It answers in JSON, with
   the sentence in a summary field.
@@ -339,7 +340,8 @@ page, below bb's own form. The presets:
   arrives on standard input; the last paragraph of the standard output becomes the sentence, as it does
   for gemini. No shell
   runs the command: quote as you would in one, but `~` and `$VARIABLES` are not expanded, and it sees
-  the bb server's environment.
+  the bb server's environment, with Claude Code's auto memory turned off
+  (`CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`).
 
 Only the Claude preset runs with no tools at all, and as one bounded call. Codex runs without your
 configuration and its read-only sandbox cuts the network for the commands it runs; Gemini's plan mode
