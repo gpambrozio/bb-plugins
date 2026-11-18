@@ -119,6 +119,7 @@ describe("the proposal view", () => {
       { path: "MEMORY.md", kind: "changed" as const, current: "- [Build](build.md) — make\n", proposed: "- [Build](build.md) — ninja\n", baseChanged, truncated: false },
       { path: "ci.md", kind: "added" as const, current: null, proposed: "ci runs nightly\n", baseChanged: false, truncated: false },
     ],
+    danglingLinks: [] as Array<{ file: string; link: string }>,
   });
 
   it("opens from the project, shows the counts and each file's diff, and applies from there", async () => {
@@ -143,6 +144,16 @@ describe("the proposal view", () => {
     expect(screen.queryByRole("alert")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Apply" }));
     await waitFor(() => expect(applied).toEqual(["20261117T010500000Z"]));
+  });
+
+  it("lists the links the proposal leaves pointing at memory files that would be gone", async () => {
+    renderSlot<PluginNavPanelProps, RpcContract>({ component: DreamPage }, { subPath: "" }, {
+      rpc: stubs({ overview: () => overview, history: () => [], proposal: () => ({ ...diff(false), danglingLinks: [{ file: "ci.md", link: "[[old-build]]" }] }) }),
+    });
+    fireEvent.click(await screen.findByRole("button", { name: "View changes" }));
+    const warning = await screen.findByRole("status");
+    expect(warning.textContent).toContain("1 link points at memory files that are gone");
+    expect(warning.textContent).toContain("ci.md → [[old-build]]");
   });
 
   it("says plainly when the memory changed since the dry run, and turns Apply off", async () => {

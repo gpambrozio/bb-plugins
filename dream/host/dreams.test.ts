@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -381,6 +382,58 @@ describe("a project's dreams", () => {
     const host = dreams();
     write(lockPath(memory), "", clock - HOUR * 2);
     expect(await prepare(host, "run1")).toMatchObject({ ok: false, code: "too-soon" });
+  });
+
+  it("flags the links a dream left to memories it deleted, in a dry run's copy and in place", async () => {
+    write(path.join(memory, "ci.md"), "---\nname: ci-nightly\n---\nci runs nightly\n", clock - 10 * DAY);
+    write(path.join(memory, "deploy.md"), "after [[ci-nightly]], deploy\n", clock - 10 * DAY);
+    const host = dreams();
+    const dry = await prepare(host, "run1", true, "dry-run");
+    if (!dry.ok) throw new Error(dry.reason);
+    rmSync(path.join(dry.targetDir, "build.md"));
+    const proposed = await host.finish({ runId: "run1", ok: true, summary: "Dropped the build note.", threadId: null });
+    expect(proposed.danglingLinks).toEqual([{ file: "MEMORY.md", link: "build.md" }]);
+    expect(host.proposalDiff(project(), undefined).danglingLinks).toEqual([{ file: "MEMORY.md", link: "build.md" }]);
+    await host.discard(project(), undefined);
+
+    const dream = await prepare(host, "run2", true, "dream");
+    if (!dream.ok) throw new Error(dream.reason);
+    rmSync(path.join(memory, "ci.md"));
+    write(path.join(memory, "build.md"), "builds with ninja\n");
+    const done = await host.finish({ runId: "run2", ok: true, summary: "Merged ci into deploy.", threadId: null });
+    expect(done.danglingLinks).toEqual([{ file: "deploy.md", link: "[[ci-nightly]]" }]);
+    // A repeated finish answers the same.
+    expect((await host.finish({ runId: "run2", ok: true, summary: null, threadId: null })).danglingLinks).toEqual(done.danglingLinks);
+  });
+
+  it("reads the code from the newest default-branch commit, not a stale checkout, and says when it cannot", async () => {
+    const host = dreams();
+    const fallback = await prepare(host, "run1", true, "dry-run");
+    if (!fallback.ok) throw new Error(fallback.reason);
+    expect(fallback.code).toMatchObject({ dir: checkout, kind: "checkout", note: "the checkout is not a git repository" });
+    await host.finish({ runId: "run1", ok: false, summary: null, threadId: null });
+
+    rmSync(path.join(checkout, ".git"), { recursive: true });
+    const env = { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@example.com", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@example.com" };
+    const git = (...args: string[]) => execFileSync("git", ["-C", checkout, ...args], { env, encoding: "utf8" }).trim();
+    git("init", "-q", "-b", "main");
+    git("add", "CLAUDE.md");
+    git("commit", "-q", "-m", "one");
+    git("checkout", "-q", "-b", "stale");
+    git("checkout", "-q", "main");
+    write(path.join(checkout, "CLAUDE.md"), "# newer rules\n");
+    git("commit", "-q", "-am", "two");
+    const newest = git("rev-parse", "HEAD");
+    git("checkout", "-q", "stale");
+
+    const copied = await prepare(host, "run2", true, "dry-run");
+    if (!copied.ok) throw new Error(copied.reason);
+    expect(copied.code).toMatchObject({ kind: "copy", branch: "main", ref: "main", commit: newest });
+    expect(copied.code.dir).toBe(path.join(root, "cache", "bb-dream", "code", "proj_app", newest));
+    expect(copied.instructionFiles).toEqual([path.join(copied.code.dir, "CLAUDE.md")]);
+    expect(readFileSync(copied.instructionFiles[0], "utf8")).toBe("# newer rules\n");
+    expect(readFileSync(path.join(checkout, "CLAUDE.md"), "utf8")).toBe("# rules\n");
+    expect(insideBbData(path.join(root, "bbdata"), copied.code.dir)).toBe(false);
   });
 
   it("shows a waiting dry run's changes, and refuses when there is none", async () => {

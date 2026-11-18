@@ -8,7 +8,7 @@ You are performing a dream — a reflective pass over your memory files. Synthes
 Memory directory: `{{memoryDir}}`
 (Your system prompt's auto-memory section names a different, empty folder; ignore that location and work in this one.)
 This directory already exists — write to it directly with the Write tool (do not run mkdir or check for its existence).
-Repository checkout: `{{checkout}}` (read it to check memories against the code; never change it)
+Code to check memories against: {{code}}
 Session transcripts: the files listed under "Sessions since last consolidation" below, in these folders (large JSONL files — grep narrowly, don't read whole files):
 {{transcriptFolders}}
 ## Phase 1 — Orient
@@ -41,12 +41,13 @@ Update `MEMORY.md` so it stays under 200 lines AND under ~25KB. It's an **index*
 - Demote verbose entries: if an index line is over ~200 chars, it's carrying content that belongs in the topic file — shorten the line, move the detail
 - Add pointers to newly important memories
 - Resolve contradictions — if two files disagree, fix the wrong one
+- Leave no link pointing at nothing — when you delete, merge or rename a memory file, grep the memory directory for its file name and its `name:` and fix or remove every link to it in the files that remain, both `[Title](file.md)` and `[[name]]`
 Return a brief summary of what you consolidated, updated, or pruned. If nothing changed (memories are already tight), say so. List any memory you annotated as contradicting CLAUDE.md under a heading "CLAUDE.md to check".
 ## Additional context
 
 **Time and coverage:** there is no rush. This run may take up to {{timeBudgetMinutes}} minutes, the only limit there is, so be thorough rather than quick:
 - Look at every session listed below at least narrowly: a few targeted greps per file are enough, but do not skip any, and never read a whole transcript.
-- Check each existing memory against the code in the checkout before keeping, rewriting or deleting it.
+- Check each existing memory against the code before keeping, rewriting or deleting it.
 - In your summary, say what you covered: how many of the listed sessions you looked at, and how many memories you checked against the code. Never say you ran out of time unless the run actually stopped you.
 
 **Tool constraints for this run:** Shell access is restricted to read-only commands (`ls`, `find`, `grep`, `cat`, `stat`, `wc`, `head`, `tail`) plus deleting `.md` files inside the memory directory (outside protected subdirectories like `.git` or `agents`; `rm` takes no flags except `-f`). Write and Edit work only on `.md` files inside the memory directory. Anything else that writes, redirects to a file, or modifies state will be denied, and so will every other tool. Plan your exploration with this in mind.

@@ -72,6 +72,24 @@ export const ProjectStatusSchema = z.object({
 });
 export type ProjectStatus = z.infer<typeof ProjectStatusSchema>;
 
+/** A link in a memory file that points at a memory file that is not there. */
+export const DanglingLinkSchema = z.object({ file: z.string(), link: z.string() });
+export type DanglingLinkInfo = z.infer<typeof DanglingLinkSchema>;
+
+/** Where a dream reads the project's code (host/code.ts). */
+export const CodeSourceSchema = z.object({
+  dir: z.string(),
+  kind: z.enum(["copy", "checkout"]),
+  branch: z.string().nullable(),
+  ref: z.string().nullable(),
+  commit: z.string().nullable(),
+  committedAt: z.number().nullable(),
+  checkoutCommit: z.string().nullable(),
+  checkoutCommittedAt: z.number().nullable(),
+  note: z.string().nullable(),
+});
+export type CodeSource = z.infer<typeof CodeSourceSchema>;
+
 export const ManifestEntrySchema = z.object({ path: z.string(), date: z.string(), title: z.string().nullable(), size: z.number() });
 export type ManifestEntry = z.infer<typeof ManifestEntrySchema>;
 
@@ -84,6 +102,8 @@ export const PreparedSchema = z.discriminatedUnion("ok", [
     targetDir: z.string(),
     memoryDir: z.string(),
     checkout: z.string(),
+    /** The code the dream checks memories against: a copy of the default branch, or the checkout. */
+    code: CodeSourceSchema,
     transcriptFolders: z.array(z.string()),
     sessions: z.array(ManifestEntrySchema),
     sessionCount: z.number().int(),
@@ -107,6 +127,8 @@ export const FinishedSchema = z.object({
   proposalDir: z.string().nullable(),
   /** Something went wrong that the run's log should say, such as a lock that could not be rolled back. */
   warning: z.string().nullable(),
+  /** Links the dream left (in the memory, or in a dry run's copy) pointing at a memory file that is gone. */
+  danglingLinks: z.array(DanglingLinkSchema),
 });
 export type Finished = z.infer<typeof FinishedSchema>;
 
@@ -136,6 +158,8 @@ export const ProposalDiffSchema = z.object({
   summary: z.string().nullable(),
   changes: ChangesSchema,
   files: z.array(ProposalFileSchema),
+  /** Links the proposal leaves pointing at a memory file that would be gone. */
+  danglingLinks: z.array(DanglingLinkSchema),
 });
 export type ProposalDiff = z.infer<typeof ProposalDiffSchema>;
 

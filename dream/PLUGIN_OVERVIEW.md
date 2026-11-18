@@ -9,6 +9,8 @@ Each dream is a hidden Claude Code thread given Claude Code's dream prompt: orie
 - The thread can read anything, but may write only .md files in that project's memory folder. Its shell is limited to ls, find, grep, cat, stat, wc, head and tail, plus rm -f of memory files. Anything else is denied without asking.
 - A project's first dream is a dry run on a copy. You apply its proposal or discard it; after that, dreams edit in place.
 - The memory folder is backed up before every change, the 20 newest kept per project, and any backup can be restored.
+- It checks memories against the newest copy of the project's main branch your repository already has, not a checkout that may be months old, without fetching or touching the checkout.
+- When it deletes or renames a memory it fixes the links to it, and any link it leaves pointing at nothing is listed with the run.
 - It uses Claude Code's own lock file, so it does not dream a memory that a native dream is working on.
 - One push notification after a dream that changed files, with the project and the counts. Nothing when nothing was due or changed.
 

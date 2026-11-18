@@ -12,14 +12,27 @@ Plugins → Dream. Until then the page and `bb dream status` only read.
 ## What a dream does
 
 Each dream is a hidden Claude Code thread, given Claude Code 2.1.326's dream prompt with three
-additions: a list of the sessions since the last dream across all the project's folders, the path of the
-project's checkout, and Claude Code's own rules for memories that contradict `CLAUDE.md` (delete or
+additions: a list of the sessions since the last dream across all the project's folders, where to read
+the project's code (see below), and Claude Code's own rules for memories that contradict `CLAUDE.md` (delete or
 rewrite what `CLAUDE.md` supersedes, annotate and report what looks newer, never edit `CLAUDE.md` or
 `AGENTS.md`). It keeps `MEMORY.md` an index under 200 lines and about 25 KB. It is told there is no rush
 (it may run up to 45 minutes), to look at every session listed and check each memory against the code,
 and to say in its summary what it covered. When it ends, the thread is stopped and archived, and its
 summary goes into the Dream page's history.
 
+- **Checked against the newest code.** A checkout can sit on an old commit while the project moves on
+  in worktrees. So the dream reads the newest commit of the default branch (the one `origin/HEAD` names,
+  else `main` or `master`) that the repository already has, local or remote-tracking: when the checkout
+  is on it, the checkout itself; otherwise a read-only copy made with `git archive`, outside the
+  repository. Nothing is fetched and nothing in the repository changes, so the copy is as fresh as its
+  last fetch, by anyone; a repository with no remote uses its local branch. Not a git repository, no
+  default branch, or a tree over 1 GB: the dream reads the checkout and is told why. The copy has no
+  submodules and no untracked files; the dream is pointed at the checkout for work not on the branch yet.
+- **No dangling links.** A dream that deletes, merges or renames a memory is told to fix or remove every
+  link to it. When it ends, Dream checks: a `[Title](file.md)` link to a missing file, or a `[[name]]`
+  link to a memory that was there before the dream and is gone, is listed with the run in the history,
+  on the dry run's view and in the notification. (A `[[name]]` to a memory never written is allowed by
+  Claude Code's memory format and not flagged.)
 - **Held to memory-only writes.** The thread may use Read, Glob and Grep; `ls`, `find`, `grep`, `cat`,
   `stat`, `wc`, `head` and `tail` in the shell; Write and Edit of `.md` files in the memory folder; and
   `rm -f` of `.md` files there. Everything else is denied without asking, as in Claude Code's own dream.
@@ -107,7 +120,8 @@ install): `state.json` (per project: whether it edits in place yet, its dreams' 
 ids, and its last runs), `backups/<project id>/<time>.tar.gz` and `proposals/<project id>/<time>/`.
 The folder each dream thread runs in is in your cache folder instead
 (`~/Library/Caches/bb-dream/workspaces/` on macOS, `~/.cache/bb-dream/workspaces/` on Linux), because bb
-does not let a thread run inside its own data folder. Nothing is written in `~/.claude` except the
+does not let a thread run inside its own data folder, and so is the copy of each project's code a dream
+reads (`bb-dream/code/<project id>/<commit>/` beside it, only the newest kept). Nothing is written in `~/.claude` except the
 memory folders themselves and Claude Code's own transcripts of the dream threads.
 
 ## Install

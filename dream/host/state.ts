@@ -11,13 +11,16 @@
  *     runs/<run id>.log               the guard's decisions during one dream
  *
  * A dream thread's working directory is not here: bb refuses a thread workspace inside its own data
- * folder, so it is `<platform cache>/bb-dream/workspaces/<project id>/` (host/workspace-root.ts).
+ * folder, so it is `<platform cache>/bb-dream/workspaces/<project id>/` (host/workspace-root.ts). The
+ * copy of a project's code a dream reads is beside it, in `<platform cache>/bb-dream/code/<project id>/`
+ * (host/code.ts).
  *
  * Folders are named by bb project id, which a rename does not change.
  */
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
+import type { DanglingLink } from "./links";
 import type { Changes } from "./snapshot";
 
 export interface DataPaths {
@@ -25,6 +28,8 @@ export interface DataPaths {
   state: string;
   guard: string;
   workspace(projectId: string): string;
+  /** Where exports of the project's default branch go, one commit at a time. */
+  code(projectId: string): string;
   backups(projectId: string): string;
   proposals(projectId: string): string;
   /** The guard's decision log for one run. */
@@ -36,13 +41,17 @@ function folderOf(projectId: string): string {
   return projectId.replace(/[^A-Za-z0-9_-]/g, "_");
 }
 
-/** `workspacesRoot` is outside bb's data folder (see host/workspace-root.ts); everything else is in `root`. */
+/**
+ * `workspacesRoot` is outside bb's data folder (see host/workspace-root.ts), and the code exports are
+ * beside it; everything else is in `root`.
+ */
 export function dataPaths(root: string, workspacesRoot: string): DataPaths {
   return {
     root,
     state: path.join(root, "state.json"),
     guard: path.join(root, "guard.mjs"),
     workspace: (projectId) => path.join(workspacesRoot, folderOf(projectId)),
+    code: (projectId) => path.join(path.dirname(workspacesRoot), "code", folderOf(projectId)),
     backups: (projectId) => path.join(root, "backups", folderOf(projectId)),
     proposals: (projectId) => path.join(root, "proposals", folderOf(projectId)),
     runLog: (runId) => path.join(root, "runs", `${folderOf(runId)}.log`),
@@ -59,6 +68,8 @@ export interface RunHistoryEntry {
   changes: Changes | null;
   backup: string | null;
   proposal: string | null;
+  /** Links the dream left pointing at a memory file that is gone; missing in records before 0.1.0's link check. */
+  danglingLinks?: DanglingLink[];
 }
 
 export interface ProjectState {
@@ -83,6 +94,8 @@ export interface ActiveRun {
   priorMtime: number;
   /** The PID written into the lock, so a later host worker can still roll it back. */
   lockPid: number;
+  /** Every name a `[[name]]` link could use for the memory when the run began, to tell which links it broke. */
+  namesBefore?: string[];
   /** The startup check's verdict, decided once and never changed. */
   canaryVerdict?: { ok: boolean; reason: string } | null;
   backup: string | null;

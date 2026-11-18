@@ -1,5 +1,5 @@
 /** Wording the server, the CLI and the app share. No SDK import. */
-import type { Changes } from "./types";
+import type { Changes, DanglingLinkInfo } from "./types";
 
 /** "Updated 2, added 1 memory files", or with `conditional` "update 2, add 1 memory files". */
 export function changeText(changes: Changes, conditional = false): string {
@@ -11,6 +11,12 @@ export function changeText(changes: Changes, conditional = false): string {
   if (parts.length === 0) return "No memory files changed";
   const text = `${parts.join(", ")} memory ${total === 1 ? "file" : "files"}`;
   return `${text.charAt(0).toUpperCase()}${text.slice(1)}`;
+}
+
+/** "2 links point at memory files that are gone", or null for none. */
+export function linksText(links: readonly DanglingLinkInfo[] | undefined): string | null {
+  if (links === undefined || links.length === 0) return null;
+  return `${links.length} ${links.length === 1 ? "link points" : "links point"} at memory files that are gone`;
 }
 
 export function totalChanges(changes: Changes | null): number {

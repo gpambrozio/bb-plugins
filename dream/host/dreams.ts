@@ -11,6 +11,8 @@ import path from "node:path";
 import { evaluateGate, type Thresholds } from "../shared/gate";
 import type { Finished, ManifestEntry, MemoryInfo, Mode, Prepared, ProjectInput, ProjectStatus } from "../shared/types";
 import { acquireLock, lockState, markConsolidated, processIsAlive, rollbackLock, type AcquireOptions, type IsAlive } from "./lock";
+import { codeSource } from "./code";
+import { danglingLinks, memoryNames, type DanglingLink } from "./links";
 import { claudeConfigDir, hookBlockers, resolveMemory, type MemoryEnvironment, type ResolvedMemory } from "./memory";
 import { applyProposal, createProposal, describeProposal, discardProposal, findProposal, finishProposal, listProposals, pendingProposal, planApply, type Proposal } from "./proposals";
 import { projectSlug } from "./slug";
@@ -320,6 +322,9 @@ export function createDreams(options: DreamsOptions) {
             proposalStamp = proposal.stamp;
             targetDir = realOrSelf(proposal.memoryDir);
           }
+          // The code the dream checks memories against: the newest default-branch commit the
+          // repository has, which the checkout may be months behind. Reads the repository only.
+          const code = await codeSource({ checkout: project.checkout, projectCodeDir: paths.code(project.projectId) });
           const logPath = paths.runLog(input.runId);
           mkdirSync(path.dirname(logPath), { recursive: true });
           rmSync(logPath, { force: true });
@@ -361,6 +366,7 @@ export function createDreams(options: DreamsOptions) {
             workspace,
             priorMtime,
             lockPid: options.pid,
+            namesBefore: memoryNames(memoryDir),
             canaryVerdict: null,
             backup: backupStamp,
             proposal: proposalStamp,
@@ -392,10 +398,15 @@ export function createDreams(options: DreamsOptions) {
             targetDir,
             memoryDir,
             checkout: project.checkout,
+            code,
             transcriptFolders: sinceFolders,
             sessions: listed,
             sessionCount: since.length,
-            instructionFiles: INSTRUCTION_FILES.map((file) => path.join(project.checkout, file)).filter((file) => existsSync(file)),
+            // From the code the dream reads, so they are as current as it; a file only the checkout
+            // has (CLAUDE.local.md is never committed) from the checkout.
+            instructionFiles: INSTRUCTION_FILES.map((file) => [code.dir, project.checkout].map((dir) => path.join(dir, file)).find((candidate) => existsSync(candidate))).filter(
+              (file): file is string => file !== undefined,
+            ),
             backup: backupStamp,
             proposal: proposalStamp,
             canary: path.join(workspace, CANARY_FILE),
@@ -455,10 +466,11 @@ export function createDreams(options: DreamsOptions) {
                 proposal: proposed ? entry.proposal : null,
                 proposalDir: null,
                 warning: null,
+                danglingLinks: entry.danglingLinks ?? [],
               };
             }
           }
-          return { found: false, mode: "dream", changes: emptyChanges(), backup: null, proposal: null, proposalDir: null, warning: null };
+          return { found: false, mode: "dream", changes: emptyChanges(), backup: null, proposal: null, proposalDir: null, warning: null, danglingLinks: [] };
         }
         const own = projectState(state, run.projectId, state.projects[run.projectId]?.name ?? run.projectId);
         if (input.threadId) rememberDreamThread(own, input.threadId);
@@ -473,6 +485,7 @@ export function createDreams(options: DreamsOptions) {
         };
         let changes: Changes = emptyChanges();
         let proposalDir: string | null = null;
+        let resultDir = run.targetDir;
         let outcome: "changed" | "unchanged" | "proposed" | "failed";
         if (run.mode === "dry-run" && run.proposal !== null) {
           const proposal = findProposal(paths.proposals(run.projectId), run.proposal);
@@ -480,6 +493,7 @@ export function createDreams(options: DreamsOptions) {
           const finished = finishProposal(proposal, input.ok, input.summary);
           changes = finished.changes ?? emptyChanges();
           proposalDir = finished.dir;
+          resultDir = finished.memoryDir;
           if (!input.ok) {
             outcome = "failed";
             rollback();
@@ -502,6 +516,9 @@ export function createDreams(options: DreamsOptions) {
           }
         }
 
+        // A dream that deleted or renamed a memory must not leave links to it behind: flag any it left.
+        const links: DanglingLink[] = outcome === "changed" || outcome === "proposed" ? danglingLinks(resultDir, run.namesBefore ?? []) : [];
+
         delete state.runs[input.runId];
         recordHistory(own, {
           runId: run.runId,
@@ -513,6 +530,7 @@ export function createDreams(options: DreamsOptions) {
           changes,
           backup: run.backup,
           proposal: run.proposal,
+          danglingLinks: links,
         });
         save(state);
         leases.get(input.runId)?.();
@@ -527,6 +545,7 @@ export function createDreams(options: DreamsOptions) {
           warning: rollbackFailed
             ? `The memory lock could not be set back to the last dream's time: another process holds it now. The project may wait for its next dream as if this run had happened.`
             : null,
+          danglingLinks: links,
         };
       });
     },
@@ -596,7 +615,8 @@ export function createDreams(options: DreamsOptions) {
       if (proposal === null || proposal.status !== "ready") {
         throw new DreamRefusal("proposal-pending", stamp ? `No dry run ${stamp} waits for ${project.name}.` : `${project.name} has no dry run waiting.`);
       }
-      return describeProposal(proposal, realOrSelf(memoryOf(project).dir));
+      const memoryDir = realOrSelf(memoryOf(project).dir);
+      return { ...describeProposal(proposal, memoryDir), danglingLinks: danglingLinks(proposal.memoryDir, memoryNames(memoryDir)) };
     },
 
     backups(project: ProjectInput) {

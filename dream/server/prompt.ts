@@ -5,13 +5,14 @@
  * read from outside the session's working directory, and native's "Reconcile memories against
  * CLAUDE.md" section, which 2.1.326 ships but leaves out of its prompt, is in.
  */
-import type { ManifestEntry } from "../shared/types";
+import type { CodeSource, ManifestEntry } from "../shared/types";
 import { DREAM_SKILL } from "./dream-skill";
 import { MAX_DREAM_MS } from "./limits";
 
 export interface PromptFacts {
   targetDir: string;
   checkout: string;
+  code: CodeSource;
   transcriptFolders: readonly string[];
   sessions: readonly ManifestEntry[];
   sessionCount: number;
@@ -28,6 +29,25 @@ export function manifestLine(entry: ManifestEntry): string {
   return `- ${entry.date} · ${entry.title ?? "(untitled)"} · ${sizeText(entry.size)} · ${entry.path}`;
 }
 
+function shortOf(commit: string | null): string {
+  return commit === null ? "?" : commit.slice(0, 8);
+}
+
+function day(ms: number | null): string {
+  return ms === null ? "an unknown date" : new Date(ms).toISOString().slice(0, 10);
+}
+
+/** The prompt's line about the code the dream checks memories against, ending with never to change it. */
+export function codeText(code: CodeSource, checkout: string): string {
+  if (code.kind === "copy") {
+    return `\`${code.dir}\`, a read-only copy of the default branch \`${code.branch}\` at ${shortOf(code.commit)} (from \`${code.ref}\`, committed ${day(code.committedAt)}), the newest the repository has. The checkout \`${checkout}\` is at ${shortOf(code.checkoutCommit)} (committed ${day(code.checkoutCommittedAt)}) and may be behind or on another branch: check memories against the copy, and read the checkout only for work that is not on \`${code.branch}\` yet. Never change either.`;
+  }
+  if (code.note === null) {
+    return `\`${code.dir}\`, the checkout, at the default branch \`${code.branch}\`'s newest commit ${shortOf(code.commit)} (committed ${day(code.committedAt)}). Never change it.`;
+  }
+  return `\`${code.dir}\`, the checkout (${code.note}, so it may be behind the project). Never change it.`;
+}
+
 /** The skill's body: everything after its front matter. */
 export function skillBody(skill: string): string {
   const match = /^---\n[\s\S]*?\n---\n/.exec(skill);
@@ -40,6 +60,7 @@ export function renderPrompt(facts: PromptFacts, skill = DREAM_SKILL): string {
   const values: Record<string, string> = {
     memoryDir: facts.targetDir,
     checkout: facts.checkout,
+    code: codeText(facts.code, facts.checkout),
     transcriptFolders: facts.transcriptFolders.length > 0 ? facts.transcriptFolders.map((folder) => `- \`${folder}\``).join("\n") : "- (none: no session since the last dream)",
     sessionCount: String(facts.sessionCount),
     timeBudgetMinutes: String(Math.round(MAX_DREAM_MS / 60_000)),

@@ -5,7 +5,8 @@ import { DEFAULT_THRESHOLDS } from "../shared/gate";
 import type { Changes, Prepared, ProjectStatus } from "../shared/types";
 import type { KvLike } from "./history";
 import { mapWorktreeFolders } from "./projects";
-import { renderPrompt } from "./prompt";
+import { runText } from "./cli";
+import { codeText, renderPrompt } from "./prompt";
 import { blockedByCompanion, createDreamService, MAX_DREAM_MS, START_GRACE_MS, type ActiveState, type DreamConfig, type DreamPorts, type DreamService, type ThreadState } from "./service";
 
 const MINUTE = 60_000;
@@ -51,6 +52,8 @@ interface Faults {
   duringSpawn?: () => void;
   /** The errors bb recorded for the canary Write; the companion's block by default. */
   writeErrors: string[];
+  /** The links a finished dream left pointing at missing memory files. */
+  danglingLinks: Array<{ file: string; link: string }>;
   /** When set, `finish` waits for this before answering. */
   finishGate?: Promise<void>;
   /** Host runs nobody watches, as `activeRuns` reports them. */
@@ -84,6 +87,7 @@ function setup(options: { projects: FakeProject[]; start: Date; config?: Partial
     prepareMs: 0,
     writeErrors: [COMPANION_ERROR],
     hostRuns: [],
+    danglingLinks: [],
   };
   const canaryChecks: string[] = [];
   const config: DreamConfig = {
@@ -141,6 +145,17 @@ function setup(options: { projects: FakeProject[]; start: Date; config?: Partial
           targetDir: `/mem/${project.id}`,
           memoryDir: `/mem/${project.id}`,
           checkout: `/repos/${project.id}`,
+          code: {
+            dir: `/repos/${project.id}`,
+            kind: "checkout",
+            branch: "main",
+            ref: "main",
+            commit: "a".repeat(40),
+            committedAt: now,
+            checkoutCommit: null,
+            checkoutCommittedAt: null,
+            note: null,
+          },
           transcriptFolders: [],
           sessions: [],
           sessionCount: 6,
@@ -160,20 +175,29 @@ function setup(options: { projects: FakeProject[]; start: Date; config?: Partial
         if (gate) await gate;
         if (faults.finishFails) throw new Error("the dream machine is offline");
         const project = runs.get(input.runId);
-        if (project === undefined) return { found: false, mode: "dream", changes: NO_CHANGES, backup: null, proposal: null, proposalDir: null, warning: null };
+        if (project === undefined) return { found: false, mode: "dream", changes: NO_CHANGES, backup: null, proposal: null, proposalDir: null, warning: null, danglingLinks: [] };
         if (input.ok && !finished.has(input.runId)) {
           project.due = false;
           project.lastDreamAt = now;
         }
         finished.add(input.runId);
-        return { found: true, mode: "dream", changes: input.ok ? project.changes : NO_CHANGES, backup: null, proposal: null, proposalDir: null, warning: null };
+        return {
+          found: true,
+          mode: "dream",
+          changes: input.ok ? project.changes : NO_CHANGES,
+          backup: null,
+          proposal: null,
+          proposalDir: null,
+          warning: null,
+          danglingLinks: input.ok ? faults.danglingLinks : [],
+        };
       },
       apply: async () => ({ stamp: "", changes: NO_CHANGES, backup: "" }),
       discard: async () => ({ stamp: "" }),
       restore: async () => ({ stamp: "", changes: NO_CHANGES, backup: "" }),
       backups: async () => ({ backups: [], proposals: [] }),
       activeRuns: async () => ({ runs: faults.hostRuns }),
-      proposalDiff: async () => ({ stamp: "", createdAt: 0, summary: null, changes: NO_CHANGES, files: [] }),
+      proposalDiff: async () => ({ stamp: "", createdAt: 0, summary: null, changes: NO_CHANGES, files: [], danglingLinks: [] }),
     },
     threads: {
       spawn: async (request) => {
@@ -333,6 +357,18 @@ describe("a dream", () => {
       ["tight", "unchanged", "Summary of thr_tight2"],
       ["busy", "changed", "Summary of thr_busy1"],
     ]);
+  });
+
+  it("logs the links a dream left pointing at missing memories, and says so in its notification", async () => {
+    const context = setup({ start: at(1), projects: [project("links", 1)] });
+    context.faults.danglingLinks = [{ file: "notes.md", link: "[[old-build]]" }];
+    await context.service.sweep(new AbortController().signal);
+    const [run] = await context.service.history.list();
+    expect(run.danglingLinks).toEqual([{ file: "notes.md", link: "[[old-build]]" }]);
+    expect(context.notifications).toEqual([
+      { title: "Dream: links", body: "Updated 1, added 1 memory files. 1 link points at memory files that are gone: see the Dream page." },
+    ]);
+    expect(runText(run)).toContain("! 1 link points at memory files that are gone: notes.md → [[old-build]]");
   });
 
   it("stops and fails a dream that asks for anything, and one that overruns", async () => {
@@ -670,6 +706,17 @@ describe("the prompt", () => {
     const prompt = renderPrompt({
       targetDir: "/mem/app",
       checkout: "/repos/app",
+      code: {
+        dir: "/cache/bb-dream/code/proj_app/cac40b45aa",
+        kind: "copy",
+        branch: "main",
+        ref: "origin/main",
+        commit: "cac40b45aa",
+        committedAt: Date.UTC(2026, 10, 16, 20),
+        checkoutCommit: "d22016b3bb",
+        checkoutCommittedAt: Date.UTC(2026, 8, 22, 7),
+        note: null,
+      },
       transcriptFolders: ["/home/.claude/projects/-repos-app"],
       sessions: [{ path: "/home/.claude/projects/-repos-app/s1.jsonl", date: "2026-11-16 22:10", title: "Fix the build", size: 2048 }],
       sessionCount: 7,
@@ -693,5 +740,21 @@ describe("the prompt", () => {
     expect(prompt).toContain("Check each existing memory against the code");
     expect(prompt).toContain("Never say you ran out of time unless the run actually stopped you");
     expect(prompt.indexOf("## Phase 4 — Prune and index")).toBeLessThan(prompt.indexOf("**Time and coverage:**"));
+    // The code is the newest default-branch copy, with the stale checkout named as such.
+    expect(prompt).toContain(
+      "Code to check memories against: `/cache/bb-dream/code/proj_app/cac40b45aa`, a read-only copy of the default branch `main` at cac40b45 (from `origin/main`, committed 2026-11-16), the newest the repository has. The checkout `/repos/app` is at d22016b3 (committed 2026-09-22)",
+    );
+    // Deleting or renaming a memory means fixing every link to it.
+    expect(prompt).toContain("fix or remove every link to it in the files that remain, both `[Title](file.md)` and `[[name]]`");
+  });
+
+  it("says when the dream reads the checkout, and why", () => {
+    const code = { dir: "/repos/app", kind: "checkout" as const, branch: null, ref: null, commit: null, committedAt: null, checkoutCommit: null, checkoutCommittedAt: null };
+    expect(codeText({ ...code, note: "the checkout is not a git repository" }, "/repos/app")).toBe(
+      "`/repos/app`, the checkout (the checkout is not a git repository, so it may be behind the project). Never change it.",
+    );
+    expect(codeText({ ...code, branch: "main", commit: "abcdef1234", committedAt: Date.UTC(2026, 10, 16), note: null }, "/repos/app")).toBe(
+      "`/repos/app`, the checkout, at the default branch `main`'s newest commit abcdef12 (committed 2026-11-16). Never change it.",
+    );
   });
 });

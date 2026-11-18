@@ -9,7 +9,7 @@ import { PluginCliError, cliCommand, defineCli, type PluginCliRegistration } fro
 import type { Overview, RunRecord } from "../shared/contract-types";
 import type { Changes, ProjectStatus } from "../shared/types";
 import { stampTime } from "../host/snapshot";
-import { changeText, when } from "../shared/format";
+import { changeText, linksText, when } from "../shared/format";
 import { DreamError, type DreamService } from "./service";
 
 function reason(error: unknown): string {
@@ -83,6 +83,8 @@ export function runText(run: RunRecord): string {
   const head = `${when(run.startedAt)}  ${run.projectName}  ${run.mode}  ${run.outcome}${run.changes ? ` — ${changesText(run.changes)}` : ""}`;
   const lines = [head];
   if (run.error) lines.push(`  ${run.error}`);
+  const links = linksText(run.danglingLinks);
+  if (links) lines.push(`  ! ${links}: ${(run.danglingLinks ?? []).map((entry) => `${entry.file} → ${entry.link}`).join(", ")}`);
   if (run.backup) lines.push(`  backup ${run.backup}`);
   if (run.proposal) lines.push(`  proposal ${run.proposal}`);
   if (run.threadId) lines.push(`  thread ${run.threadId}`);

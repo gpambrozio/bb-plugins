@@ -14,6 +14,8 @@ every plugin shares; this file covers what is specific to `dream`.
 | `server/prompt.ts`, `server/dream-skill.ts` | The dream prompt: `skills/dream/SKILL.md`, embedded, with one run's facts filled in. |
 | `server/cli.ts`, `server/history.ts` | `bb dream`, and the run log in kv. |
 | `host.ts`, `host/dreams.ts` | Everything on the dream machine: status, prepare and finish a run, apply, discard, restore. |
+| `host/code.ts` | The code a dream reads: the newest local default-branch commit, exported read-only, or the checkout. |
+| `host/links.ts` | The links a dream left pointing at a memory that is gone. |
 | `host/memory.ts`, `host/slug.ts` | Claude Code 2.1.326's memory-folder resolution and project-folder naming. |
 | `host/transcripts.ts` | Transcript folders and session files; titles from `ai-title` / `custom-title` lines. |
 | `host/lock.ts`, `host/snapshot.ts`, `host/proposals.ts`, `host/state.ts` | The `.consolidate-lock`, backups, dry runs and `state.json`. |
@@ -118,6 +120,35 @@ deny and never ask, which is native's dontAsk dream. Do not move the dream into 
   blocked a workspace Write and a `touch` ("blocking because onFailure is block"). With `disableAllHooks`
   in a settings layer, the canary Write went through with nothing logged, which `checkCanary` refuses;
   with hooks on it was blocked and logged. A plugin dream ran its canary turn, then its dream turn.
+
+## The code a dream reads
+
+A checkout can be months behind its project (the owner's was: worktrees fetch and move
+`origin/main`, the checkout's `main` stays put), so a dream checking memories against it deletes or
+rewrites facts that are still true. `host/code.ts` picks the newest commit among the default branch's
+local branch, its upstream and `origin/<branch>` (a descendant beats its ancestor; diverged ones go by
+commit time), and the dream reads the checkout when HEAD is that commit, else a `git archive` export in
+`<platform cache>/bb-dream/code/<project id>/<commit>/`. Invariants:
+
+- **No network.** Nothing fetches: no credential prompt, no surprise for a repository with no remote, no
+  writes to the repository's refs. The copy is as fresh as the last fetch by anything (bb fetches when it
+  makes a worktree). Do not add a fetch without asking: it is a product choice, not a fix.
+- **The repository is only read**: `symbolic-ref`, `rev-parse`, `merge-base`, `log`, `ls-tree`,
+  `archive`, with `GIT_OPTIONAL_LOCKS=0` and `GIT_TERMINAL_PROMPT=0`. No `worktree add` (it writes
+  `.git/worktrees`), no checkout, no pull. Run from the repository's top folder: in a subfolder,
+  `ls-tree` and `archive` see only that subfolder.
+- **It never fails a dream.** Anything unexpected reads the checkout, and the prompt says why.
+- The guard is unchanged: reads were never limited, and the copy is outside the memory folder, so the
+  dream cannot write it.
+
+## Links left dangling
+
+`finish` scans the result (the memory, or a dry run's copy) for links to memory that is gone and records
+them with the run (`danglingLinks`, host history, kv run log, notification, the proposal view). A
+`[[name]]` counts only when `name` was a memory's file name or front matter `name:` when the run began
+(`namesBefore`, kept with the run, since an in-place dream overwrites the evidence): Claude Code's memory
+format allows a `[[name]]` with no memory yet. A Markdown link to a missing `.md` file always counts.
+Links in code are examples and are skipped. The check reports; it never edits memory.
 
 ## Dreams are sessions too
 

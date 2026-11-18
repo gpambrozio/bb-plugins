@@ -31,5 +31,10 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Thorough by default**: each dream runs on the most capable Claude model bb offers (Fable 5.2, high
   reasoning; a setting), is told it has up to 45 minutes and no rush, must look at every session since
   the last dream and check each memory against the code, and says in its summary what it covered.
+- **Checks memories against your newest code**, not an old checkout: each dream reads the newest copy of
+  the project's main branch your repository already has (a read-only copy, made without fetching or
+  touching your checkout), and falls back to the checkout, saying so, when there is none.
+- **No links left pointing at nothing**: a dream that deletes, merges or renames a memory fixes the links
+  to it, and any it leaves behind are listed with the run, on the dry run's view and in its notification.
 - **`bb dream`**: `status`, `run`, `stop`, `apply`, `discard`, `restore`, `backups` and `history`.
 - **One push notification** after a dream that changed files, naming the project and the counts.

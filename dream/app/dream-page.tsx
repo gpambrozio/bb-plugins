@@ -17,6 +17,7 @@ import type { Overview, RunRecord } from "../shared/contract-types";
 import { FILTER_LABELS, matchesFilter, PROJECT_FILTERS, type ProjectFilter } from "../shared/filters";
 import { changeText, when } from "../shared/format";
 import type { ProjectStatus } from "../shared/types";
+import { DanglingLinks } from "./dangling-links";
 import { openPluginSettings } from "./open-settings";
 import { ProposalView } from "./proposal-view";
 import { errorText, useDream } from "./use-dream";
@@ -229,6 +230,7 @@ function RunRow({ run }: { run: RunRecord }) {
       {open ? (
         <div className="mt-3 space-y-3 pl-6">
           {run.error ? <p className="text-sm text-destructive">{run.error}</p> : null}
+          <DanglingLinks links={run.danglingLinks} />
           {run.summary ? <Markdown content={run.summary} className="text-sm" /> : <p className="text-sm text-muted-foreground">No summary.</p>}
           {run.changes ? (
             <ul className="space-y-0.5 font-mono text-xs text-muted-foreground">

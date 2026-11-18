@@ -30,7 +30,7 @@ import { randomBytes } from "node:crypto";
 
 import type { Choices, Outcome, Overview, RunRecord } from "../shared/contract-types";
 import { dreamEligible } from "../shared/filters";
-import { changeText, totalChanges } from "../shared/format";
+import { changeText, linksText, totalChanges } from "../shared/format";
 import { mostOverdue, type Thresholds } from "../shared/gate";
 import type { Changes, Finished, Mode, Prepared, ProjectInput, ProjectStatus, ProposalDiff } from "../shared/types";
 import { inWindow, windowClosesAt, windowOpensAt } from "../shared/window";
@@ -272,8 +272,9 @@ export function createDreamService(ports: DreamPorts) {
       entry.outcome === "proposed"
         ? `Would ${changeText(entry.changes, true).toLowerCase()}. Review it on the Dream page, or run bb dream apply ${entry.projectName}.`
         : `${changeText(entry.changes)}.`;
+    const links = linksText(entry.danglingLinks);
     try {
-      await ports.notify(title, body);
+      await ports.notify(title, links ? `${body} ${links}: see the Dream page.` : body);
     } catch (error) {
       ports.log.warn(`Could not send the push notification for ${entry.projectName}: ${message(error)}`);
     }
@@ -394,6 +395,7 @@ export function createDreamService(ports: DreamPorts) {
       // The host names a proposal only when one waits; a dry run that changed nothing leaves none.
       proposal: finished.found ? finished.proposal : entry.proposal,
       error: [ended.error ?? (finished.found ? null : "The dream machine had no record of this run."), finished.found ? finished.warning : null].filter(Boolean).join(" ") || null,
+      danglingLinks: finished.found ? finished.danglingLinks : [],
     };
     await history.put(done);
     await clearActive(entry.runId);

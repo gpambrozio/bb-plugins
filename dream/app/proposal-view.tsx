@@ -17,6 +17,7 @@ import type { RpcContract } from "../shared/contract";
 import { changeText, when } from "../shared/format";
 import { lineDiff } from "../shared/line-diff";
 import type { ProposalDiff, ProposalFile } from "../shared/types";
+import { DanglingLinks } from "./dangling-links";
 import { errorText } from "./use-dream";
 
 const KIND_TEXT: Record<ProposalFile["kind"], string> = { added: "Added", changed: "Changed", deleted: "Deleted" };
@@ -117,6 +118,7 @@ export function ProposalView({ projectId, projectName, busy, onClose, onChanged 
               again.
             </div>
           ) : null}
+          <DanglingLinks links={proposal.danglingLinks} />
           <div className="flex flex-wrap gap-2">
             <Button
               size="sm"

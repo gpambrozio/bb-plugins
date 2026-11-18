@@ -4,7 +4,7 @@
  */
 import { z } from "zod";
 
-import { ChangesSchema, ModeSchema, ProjectStatusSchema } from "./types";
+import { ChangesSchema, DanglingLinkSchema, ModeSchema, ProjectStatusSchema } from "./types";
 
 export const DREAM_CHANGED = "dream-changed";
 
@@ -47,6 +47,8 @@ export const RunRecordSchema = z.object({
   backup: z.string().nullable(),
   proposal: z.string().nullable(),
   error: z.string().nullable(),
+  /** Links the dream left pointing at memory files that are gone; missing in runs logged before the check. */
+  danglingLinks: z.array(DanglingLinkSchema).optional(),
 });
 export type RunRecord = z.infer<typeof RunRecordSchema>;
 
