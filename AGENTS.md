@@ -691,6 +691,16 @@ example.
 README screenshots and demo GIFs come from `tools/shots/` (`npm run shots -- <plugin>`, a throwaway dev
 bb driven by `<plugin>/shots/shots.mjs`). Read `tools/shots/README.md` before running or writing one.
 
+## Before opening a pull request
+
+`.claude/hooks/pr-checklist.md` is the one list of what a pull request needs beyond green CI:
+screenshots and a proof GIF, a regression test for a fix, the changelog's wording, docs, a privacy
+check of every image, and whether the marketplace listing needs its own PR. Claude Code gets it
+automatically: a PostToolUse hook (`.claude/hooks/pr-checklist.py`, registered in
+`.claude/settings.json`) prints it after `gh pr create`. Codex and other agents get no hook, so read
+the file before opening the PR and work through it. Edit the list there, not here. The hook's tests
+run in CI's *Manifests agree* job, and locally with `python3 .claude/hooks/test_pr_checklist.py`.
+
 ## Git
 
 - Work each port on its own branch and open a pull request that closes its issue.

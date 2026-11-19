@@ -9,8 +9,8 @@
 # - **Find plugins** reads `.bb/plugins.json`, the index bb installs from, into the matrix below.
 #   Adding a plugin means adding it there — which bb needs anyway — and editing nothing here.
 # - **Manifests agree** reads the files inside each plugin that have to be kept in step by hand,
-#   and tests the scripts that do the reading. No `npm ci` first: it needs no dependencies and
-#   should report before a slower job does.
+#   and tests the scripts that do the reading and the PR checklist hook (`.claude/hooks/`). No
+#   `npm ci` first: it needs no dependencies and should report before a slower job does.
 # - **Version bumps release** fails a pull request that edits a plugin's `CHANGELOG.md` without
 #   bumping its version, or bumps it to a version that is already tagged or lower than before.
 # - **One job per plugin** builds it exactly as a git install does, then typechecks and tests it.
@@ -70,6 +70,9 @@ jobs:
 
       - name: Test the scripts CI and releases run
         run: node --test ".github/scripts/*.test.mjs"
+
+      - name: Test the PR checklist hook
+        run: python3 .claude/hooks/test_pr_checklist.py
 
       - name: Check every plugin's declarations against each other
         run: node .github/scripts/check-plugin-consistency.mjs
