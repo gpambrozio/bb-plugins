@@ -1,0 +1,41 @@
+---
+name: project-actions
+description: Add or change a project's actions for the Project Actions plugin — named commands (dev server, tests, scripts) in `.bb/actions.json` that bb shows in a menu in each thread's header and runs in a terminal of the thread. Use when the user asks to add a command to that menu, or to fix an actions file the menu reports a problem in.
+---
+# Project actions
+
+The Project Actions plugin reads `.bb/actions.json` at the root of the thread's workspace and lists its
+actions in a menu in the thread's header (the play button). Picking one runs it in a bb terminal of the
+thread, in the workspace. The user picks; agents do not start actions through this plugin. To run a
+command yourself, use your own shell, or `bb terminal create --thread "$BB_THREAD_ID" --title <name>
+--command <command>` for a terminal the user can see.
+
+## The file
+
+```json
+{
+  "actions": [
+    { "name": "Dev server", "command": "npm run dev", "description": "Vite on http://localhost:5173" },
+    { "name": "Run tests", "command": "npm test" },
+    { "name": "Storybook", "command": "npm run storybook", "cwd": "packages/ui" }
+  ]
+}
+```
+
+- `name` (required): unique in the file ignoring case, at most 80 characters.
+- `command` (required): run with the user's login shell (`$SHELL -lc`), so shell syntax works.
+- `cwd` (optional): a folder relative to the repository root; no absolute paths, no `..`.
+- `description` (optional): shown under the name instead of the command.
+- At most 100 actions. An optional `$schema` key is allowed; any other key is an error.
+
+Rules: strict JSON (no comments, no trailing commas). Commit the file like any other: each worktree reads
+its own branch's copy, and the menu re-reads it every time it opens, so no reload is needed.
+
+## After editing
+
+Check the file parses (`node -e 'JSON.parse(require("fs").readFileSync(".bb/actions.json","utf8"))'` or
+`jq . .bb/actions.json`) and tell the user to open the play button's menu in the thread header. If the
+menu reports a problem, it names the line, the column and the action (`actions[1].command`).
+
+Actions run on macOS and Linux machines only. A finished action's terminal stays open until Enter is
+pressed or the action is picked again, which starts a fresh run.
