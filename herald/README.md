@@ -284,40 +284,83 @@ reason on stderr (and as `{"ok": false, "error": …}` with `--json`).
   thread's own and the one that applies, with where it comes from. An unknown thread or choice is refused,
   and so is setting one on an archived thread, which its menu does not offer either.
 
-### From a voice hook on another machine
+### From a script outside bb
 
-A voice hook, such as FirstMate voice's, can mute Herald while
-you talk to another voice and unmute it after. A hook runs on the machine whose desktop app is in the
-call, started by bb's host daemon there, and two things are different from a bb terminal:
+`bb herald mute` and `unmute` work from any script, not only from bb's threads and terminals: a voice hook
+such as FirstMate voice's, a launchd job, a hotkey tool or a plain Terminal window. Such a script has none
+of the `BB_` variables bb gives its own terminals (bb removes them from a hook's environment too), so it
+has to say which `bb` to run and, on a machine joined through bb Connect, where bb's server is.
 
-- **Which `bb`.** bb removes every `BB_` variable from a hook's environment, `BB_CLI` included. A machine
-  added from Settings → Machines keeps its own copy of bb, not on your PATH, at
-  `~/.bb-machines/<server>/npm/bin/bb`, where `<server>` is the bb server's host name (the address after
-  `--server-url` in that machine's bb host daemon service). It is a Node script, so `node` must be on your
-  login shell's PATH; otherwise run it as `/path/to/node ~/.bb-machines/<server>/npm/bin/bb …`. A machine
-  where you installed bb with npm (`npm install -g bb-app`) has `bb` on its PATH.
-- **Where bb's server is.** Outside a bb thread, `bb` looks for the server on this machine
-  (`http://127.0.0.1:38886`), and there is none here. Set `BB_SERVER_URL` to the address this machine uses
-  to reach bb's server: the `--server-url` above.
+**On the Mac that runs bb's server**, run `~/.bb/bin/bb`, the command bb keeps there for use outside bb
+(Settings → General → Command line puts it on your PATH). It needs nothing else: outside bb, `bb` looks
+for the server on this Mac, at `http://127.0.0.1:38886`, and finds it.
 
 ```sh
 #!/bin/sh
-# ~/.config/firstmate-voice/hook: mute Herald for the length of a voice session.
-BB="$HOME/.bb-machines/my-mac.example.ts.net/npm/bin/bb"
-export BB_SERVER_URL="https://my-mac.example.ts.net"
+# ~/.config/firstmate-voice/hook on the Mac that runs bb's server.
 case "$FIRSTMATE_VOICE_HOOK" in
-  listening-started) "$BB" herald mute ;;
-  listening-stopped) "$BB" herald unmute ;;
+  listening-started) action=mute ;;
+  listening-stopped) action=unmute ;;
+  *) exit 0 ;;
 esac
+exec "$HOME/.bb/bin/bb" herald "$action"
 ```
 
-**A machine connected through bb Connect cannot do this.** Its address (`https://<name>.getbb.app`)
-needs bb's sign-in, which the machine's host daemon holds and bb's command line does not send, so a hook
-there cannot reach the server. Threads and terminals bb starts on that machine can: bb hands them a local
-route through the host daemon, on a port that changes whenever the daemon restarts. Such a machine needs a
-direct address to the server, such as a private Tailscale Serve address configured as bb's server URL;
-or the hook can run the command on the machine running bb, where `bb` finds the server by itself:
-`ssh my-mac bb herald mute`, with `bb` on that Mac's PATH, as long as it fits the hook's time.
+**On another machine** (one added from Settings → Machines), run `~/.local/bin/bb`, the copy of bb's
+command line that bb installed with the machine. It brings its own Node.js, so it works from a script with
+a bare PATH. (bb does not replace a `~/.local/bin/bb` that was already there; then run
+`~/.bb-machines/<server>/npm/bin/bb`, with `node` on PATH.) Where bb's server is depends on how the
+machine reaches it:
+
+- **Through a direct address**, such as a private Tailscale Serve address set as *Server URL reachable by
+  machines* under Settings → Machines: set `BB_SERVER_URL` to that address. This is the way bb documents,
+  and the one to choose if you can.
+- **Through bb Connect** (`https://<name>.getbb.app`): that address needs the machine's Connect sign-in,
+  which bb's command line does not send, so `BB_SERVER_URL` set to it is refused (`HTTP 401`). Instead,
+  bb's host daemon on the machine runs a local relay that signs each request in, at
+  `http://127.0.0.1:<port>`; bb's own terminals and threads get it as `BB_SERVER_URL`. bb publishes the
+  port nowhere else, and it changes whenever the daemon restarts, so the script below looks for it on
+  every run: the loopback port of the host daemon that answers as bb's server. **This relies on bb
+  internals** (seen in bb 0.50), not on anything bb documents, and a bb update may change them; the
+  script then stops with a message rather than call the wrong place.
+
+```sh
+#!/bin/sh
+# ~/.config/firstmate-voice/hook on a machine joined through bb Connect:
+# mute Herald for the length of a voice session.
+case "$FIRSTMATE_VOICE_HOOK" in
+  listening-started) action=mute ;;
+  listening-stopped) action=unmute ;;
+  *) exit 0 ;;
+esac
+BB="$HOME/.local/bin/bb"
+MACHINE="$HOME/.bb-machines/my-mac.getbb.app"   # this machine's bb folder
+PATH="$PATH:/usr/sbin:/usr/bin:/bin"
+# Find bb's relay: a loopback port of this machine's bb host daemon that
+# answers as bb's server. bb internals (bb 0.50); the port changes when the
+# daemon restarts, so look every time.
+if [ -z "$BB_SERVER_URL" ]; then
+  daemon_port=$(cat "$MACHINE/host-daemon-port") || exit 1
+  pid=$(lsof -b -w -nP -t -iTCP:"$daemon_port" -sTCP:LISTEN | head -n 1)
+  [ -n "$pid" ] || { echo "bb's host daemon is not running" >&2; exit 1; }
+  for port in $(lsof -b -w -nP -a -p "$pid" -iTCP -sTCP:LISTEN -Fn |
+                sed -n 's/^n127\.0\.0\.1:\([0-9]*\)$/\1/p'); do
+    case $(curl -s -m 3 "http://127.0.0.1:$port/api/v1/system/attention") in
+      *'"hasAttention":'*) export BB_SERVER_URL="http://127.0.0.1:$port"; break ;;
+    esac
+  done
+  [ -n "$BB_SERVER_URL" ] || { echo "no bb relay found" >&2; exit 1; }
+fi
+exec "$BB" herald "$action"
+```
+
+Replace `my-mac.getbb.app` with the folder under `~/.bb-machines`, which is named after your server's
+address. The lookup takes well under a second, and each `bb` call through bb Connect about a third of a
+second more. When `BB_SERVER_URL` is already set, as it is in bb's own terminals, the script uses it and
+skips the lookup.
+
+**Or run the command where the server is:** `ssh my-mac '~/.bb/bin/bb herald mute'`, if this machine can
+ssh to the server's Mac without a password and the round trip fits the hook's time.
 
 ## Model-written sentences
 
