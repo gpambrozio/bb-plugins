@@ -53,6 +53,23 @@ export const RunOutcomeSchema = z.object({
 });
 export type RunOutcome = z.infer<typeof RunOutcomeSchema>;
 
+/**
+ * The actions file as the editor opens it: its text (null when there is none yet), the hash a save
+ * must still find on disk, and the workspace's branch, to say where a save lands.
+ */
+export const EditorFileSchema = z.discriminatedUnion("state", [
+  z.object({ state: z.literal("ready"), text: z.string().nullable(), sha256: z.string().nullable(), branch: z.string().nullable() }),
+  z.object({ state: z.literal("unavailable"), message: z.string() }),
+]);
+export type EditorFile = z.infer<typeof EditorFileSchema>;
+
+/** saved: written, with the file's new hash; conflict: the file changed on disk since it was opened. */
+export const SaveResultSchema = z.discriminatedUnion("outcome", [
+  z.object({ outcome: z.literal("saved"), sha256: z.string() }),
+  z.object({ outcome: z.literal("conflict") }),
+]);
+export type SaveResult = z.infer<typeof SaveResultSchema>;
+
 /** `.bb/actions.json, line 4, column 7 (actions[1].command)` */
 export function describeLocation(problem: Problem): string {
   const parts = [ACTIONS_FILE];

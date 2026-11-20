@@ -27,6 +27,11 @@ function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** A file under the workspace by its path relative to the root. */
+function filePath(workspace: { path: string }, relativePath: string): string {
+  return `${workspace.path.replace(/\/+$/, "")}/${relativePath}`;
+}
+
 function status(error: unknown): unknown {
   return (error as { status?: unknown } | null)?.status;
 }
@@ -51,12 +56,12 @@ export default async function plugin(bb: BbPluginApi) {
       if (environment.status !== "ready") return { ok: false, message: "This thread's workspace is still being set up." };
       const host = await bb.sdk.hosts.get({ hostId: environment.hostId });
       if (host.status !== "connected") return { ok: false, message: `${host.name} is offline, so its workspace cannot be read.` };
-      return { ok: true, workspace: { hostId: environment.hostId, path: environment.path } };
+      return { ok: true, workspace: { hostId: environment.hostId, path: environment.path, branch: environment.branchName } };
     },
     async readFile(workspace, relativePath): Promise<FileRead> {
       let file;
       try {
-        file = await bb.sdk.files.read({ hostId: workspace.hostId, rootPath: workspace.path, path: `${workspace.path.replace(/\/+$/, "")}/${relativePath}` });
+        file = await bb.sdk.files.read({ hostId: workspace.hostId, rootPath: workspace.path, path: filePath(workspace, relativePath) });
       } catch (error) {
         if (isMissingFile(error)) return { kind: "missing" };
         bb.log.warn(`reading ${relativePath} failed: ${message(error)}`);
@@ -64,7 +69,18 @@ export default async function plugin(bb: BbPluginApi) {
       }
       if (file.sizeBytes > LIMITS.fileBytes) return { kind: "error", message: `${relativePath} is larger than ${LIMITS.fileBytes / 1024} KB.` };
       const text = file.contentEncoding === "base64" ? Buffer.from(file.content, "base64").toString("utf8") : file.content;
-      return { kind: "text", text };
+      return { kind: "text", text, sha256: file.sha256 };
+    },
+    async writeFile(workspace, relativePath, content, expectedSha256) {
+      const written = await bb.sdk.files.write({
+        hostId: workspace.hostId,
+        rootPath: workspace.path,
+        path: filePath(workspace, relativePath),
+        content,
+        createParents: true,
+        expectedSha256,
+      });
+      return written.outcome === "written" ? { outcome: "written", sha256: written.sha256 } : { outcome: "conflict" };
     },
     async getTerminal(terminalId) {
       try {
@@ -97,17 +113,22 @@ export default async function plugin(bb: BbPluginApi) {
     },
   });
 
+  /** An ActionError is the user's to read; anything else is logged and said plainly. */
+  async function answer<T>(what: string, work: () => Promise<T>): Promise<T> {
+    try {
+      return await work();
+    } catch (error) {
+      if (error instanceof ActionError) throw error;
+      bb.log.warn(`${what} failed: ${message(error)}`);
+      throw new Error(`${what} failed: ${message(error)}`);
+    }
+  }
+
   bb.rpc.register(rpcContract, {
     list: ({ threadId }) => service.list(threadId),
-    run: async ({ threadId, name }) => {
-      try {
-        return await service.run(threadId, name);
-      } catch (error) {
-        if (error instanceof ActionError) throw error;
-        bb.log.warn(`running "${name}" in ${threadId} failed: ${message(error)}`);
-        throw new Error(`The action could not start: ${message(error)}`);
-      }
-    },
+    read: ({ threadId }) => service.read(threadId),
+    save: ({ threadId, text, expectedSha256 }) => answer("Saving the actions file", () => service.save(threadId, text, expectedSha256)),
+    run: ({ threadId, name }) => answer(`Starting "${name}"`, () => service.run(threadId, name)),
   });
 
   // A thread's terminals end with it; so does the record of its runs.

@@ -20,7 +20,7 @@ const sources = [
 
 /** Literal names in `name="…"`, `name={x ? "…" : "…"}`, `icon: "…"` and the offers' icon record. */
 function literalNames(source: string): string[] {
-  const direct = [...source.matchAll(/\b(?:name|icon)(?:=|:\s*)"([A-Za-z0-9/-]+)"/g)].map((match) => match[1] ?? "");
+  const direct = [...source.matchAll(/(?:\bname=|\bicon:\s*)"([A-Za-z0-9/-]+)"/g)].map((match) => match[1] ?? "");
   const ternary = [...source.matchAll(/\bname=\{[^}]*\?\s*"([A-Za-z0-9-]+)"\s*:\s*"([A-Za-z0-9-]+)"\s*\}/g)].flatMap((match) => [match[1] ?? "", match[2] ?? ""]);
   const record = [...source.matchAll(/OFFER_ICONS[^=]*=\s*\{([^}]*)\}/g)].flatMap((match) => [...(match[1] ?? "").matchAll(/"([A-Za-z0-9-]+)"/g)].map((name) => name[1] ?? ""));
   return [...direct, ...ternary, ...record];
@@ -30,7 +30,7 @@ describe("icon names", () => {
   const used = [...new Set([manifest.bb.branding.icon, ...sources.flatMap((file) => literalNames(readFileSync(join(root, file), "utf8")))])];
 
   it("finds the names it checks", () => {
-    expect(used).toEqual(expect.arrayContaining(["Play", "Terminal", "Spinner", "RotateCcw", "ExternalLink"]));
+    expect(used).toEqual(expect.arrayContaining(["Play", "Terminal", "Spinner", "RotateCcw", "ExternalLink", "EditFile", "ArrowUp", "ArrowDown", "Trash2", "Plus"]));
   });
 
   it.each(used)("%s is a bb built-in", (name) => {

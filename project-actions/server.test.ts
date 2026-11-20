@@ -15,7 +15,9 @@ function httpError(message: string, status: number): Error {
   return Object.assign(new Error(message), { status });
 }
 
-async function start(options: { file?: string | Error; environment?: Record<string, unknown>; hostStatus?: string; base64?: boolean } = {}) {
+async function start(
+  options: { file?: string | Error; environment?: Record<string, unknown>; hostStatus?: string; base64?: boolean; write?: Record<string, unknown> } = {},
+) {
   const sessions = new Map<string, { status: string; tail: string }>();
   let next = 0;
   const { bb, harness } = createFakePluginHost({
@@ -23,7 +25,7 @@ async function start(options: { file?: string | Error; environment?: Record<stri
     sdk: {
       threads: { get: async ({ threadId }) => makeThreadResponse({ id: threadId, environmentId: "env_1" }) },
       environments: {
-        get: async () => ({ id: "env_1", hostId: "air", path: "/Users/me/wt/feature", status: "ready", ...options.environment }) as never,
+        get: async () => ({ id: "env_1", hostId: "air", path: "/Users/me/wt/feature", status: "ready", branchName: "feature", ...options.environment }) as never,
       },
       hosts: { get: async () => makeHostResponse({ id: "air", name: "MacBook Air", status: (options.hostStatus ?? "connected") as never }) },
       files: {
@@ -37,6 +39,7 @@ async function start(options: { file?: string | Error; environment?: Record<stri
             sizeBytes: Buffer.byteLength(file),
           } as never;
         },
+        write: async () => (options.write ?? { outcome: "written", sha256: "y", sizeBytes: 1 }) as never,
       },
       terminals: {
         create: async () => {
@@ -126,5 +129,30 @@ describe("project-actions server", () => {
   ])("says when the workspace cannot be read (%o)", async (options, message) => {
     const { harness } = await start(options);
     expect(await harness.callRpc("list", { threadId: "thr_1" })).toEqual({ state: "unavailable", message });
+  });
+
+  it("opens the file for the editor with its hash and the workspace's branch", async () => {
+    const { harness } = await start();
+    expect(await harness.callRpc("read", { threadId: "thr_1" })).toEqual({ state: "ready", text: ACTIONS, sha256: "x", branch: "feature" });
+  });
+
+  it("saves into the workspace on its machine, creating .bb/, only over the file the editor read", async () => {
+    const { harness } = await start();
+    const text = '{\n  "actions": []\n}\n';
+    expect(await harness.callRpc("save", { threadId: "thr_1", text, expectedSha256: "x" })).toEqual({ outcome: "saved", sha256: "y" });
+    expect(harness.sdk.callsTo("files.write")).toEqual([
+      [{ hostId: "air", rootPath: "/Users/me/wt/feature", path: "/Users/me/wt/feature/.bb/actions.json", content: text, createParents: true, expectedSha256: "x" }],
+    ]);
+  });
+
+  it("answers a conflict when the file changed on disk", async () => {
+    const { harness } = await start({ write: { outcome: "conflict", currentSha256: "z" } });
+    expect(await harness.callRpc("save", { threadId: "thr_1", text: '{ "actions": [] }', expectedSha256: "x" })).toEqual({ outcome: "conflict" });
+  });
+
+  it("refuses to save an invalid file", async () => {
+    const { harness } = await start();
+    await expect(harness.callRpc("save", { threadId: "thr_1", text: "{", expectedSha256: "x" })).rejects.toThrow(/Not saved/);
+    expect(harness.sdk.callsTo("files.write")).toEqual([]);
   });
 });

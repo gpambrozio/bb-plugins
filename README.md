@@ -20,7 +20,7 @@ each tracked by its own issue; `screen-sharing`, `diff-review`, `terminals`, `le
 | [`codex-realtime`](codex-realtime) | Runs Voice Mode on your ChatGPT subscription, from the sign-in `codex login` keeps; read-only, undocumented, could stop working. | New — 0.1.0 |
 | [`phone-rail`](phone-rail) | bb's icon rail with its own, smaller set of icons on phone-sized screens. | New — 0.1.0 |
 | [`dream`](dream) | Consolidates each Claude Code project's memory overnight, as Claude Code's auto-dream does, in a hidden thread that can write only that memory. Schedule off until you turn it on. | New — 0.1.0 |
-| [`project-actions`](project-actions) | A menu of the project's named commands (dev server, tests, scripts) in each thread's header; each runs in a terminal of that thread, in its worktree. | New — 0.1.0 |
+| [`project-actions`](project-actions) | A menu of the project's named commands (dev server, tests, scripts) in each thread's header; each runs in a terminal of that thread, in its worktree. An editor for the list beside the thread. | New — 0.1.0 |
 
 ## Install
 

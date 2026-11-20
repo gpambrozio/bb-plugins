@@ -4,6 +4,10 @@ Run your project's everyday commands, such as starting the dev server, running t
 
 The list lives in the project, in `.bb/actions.json`, committed like any other file. Each action has a name and a command, and optionally a folder to run in (relative to the repository's root) and a description for the menu. Because the file is read from the thread's own workspace, every worktree sees its own branch's version, and a thread on another bb machine reads that machine's copy. Edits show up the next time the menu opens.
 
+## Editing actions
+
+Edit actions… in the menu opens an editor beside the thread: add, change, reorder and delete actions in a form, or edit the file as JSON. It checks each change the way the menu does and will not save a file with a mistake. Saving writes the thread's own copy of the file, creating it when there is none, without committing it, and it will not overwrite a file that changed on disk since you opened it.
+
 ## Running an action
 
 Picking an action starts a terminal titled with its name. The command runs in your login shell, so your PATH and your shell's syntax work as in a terminal you opened yourself.
@@ -20,4 +24,4 @@ A project without the file gets a short explanation of how to add one. A file wi
 
 ## Requirements
 
-bb 0.49 or newer. Actions run on macOS and Linux machines. Nothing to configure, and nothing is sent anywhere: the plugin runs only the commands in the project's file, only when you pick one.
+bb 0.49 or newer. Actions run on macOS and Linux machines. Nothing to configure, and nothing is sent anywhere: the plugin runs only the commands in the project's file, only when you pick one, and writes that file only when you save in the editor.

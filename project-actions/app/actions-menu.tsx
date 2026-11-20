@@ -1,6 +1,6 @@
 // The Actions button in a thread's header and its menu: the project's actions as the thread's
 // branch has them, read again each time the menu opens.
-import { useBbNavigate } from "@get-bb/plugin-sdk/app";
+import { experimental_useAppPanel, useBbNavigate } from "@get-bb/plugin-sdk/app";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -15,12 +15,13 @@ import { Icon } from "@/components/ui/icon";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 import { FORMAT_URL, type ActionView } from "../shared/views";
-import { actionsModel, OFFER_LABELS, STATUS_LABELS, type ActionsModel, type Offer } from "./model";
+import { actionsModel, EDIT_LABEL, STATUS_LABELS, type ActionsModel, type Offer } from "./model";
+import { EDITOR_TAB } from "./tabs";
 import { useProjectActions, type ActionsState } from "./use-actions";
 
 export const BUTTON_LABEL = "Project actions";
 
-const OFFER_ICONS: Record<Offer, string> = { retry: "RotateCcw", format: "ExternalLink" };
+const OFFER_ICONS: Record<Offer, string> = { retry: "RotateCcw", edit: "EditFile", format: "ExternalLink" };
 
 /** What bb hands the header slot's component. */
 export interface HeaderActionProps {
@@ -73,7 +74,7 @@ export function ActionsMenuBody({ state, onRun, onOffer }: { state: ActionsState
           <NoteText model={model} />
         </div>
         <DropdownMenuSeparator />
-        {model.offers.map((offer) => (
+        {model.offers.map(({ offer, label }) => (
           <DropdownMenuItem
             key={offer}
             onSelect={(event) => {
@@ -83,7 +84,7 @@ export function ActionsMenuBody({ state, onRun, onOffer }: { state: ActionsState
             }}
           >
             <Icon name={OFFER_ICONS[offer]} />
-            {OFFER_LABELS[offer]}
+            {label}
           </DropdownMenuItem>
         ))}
       </>
@@ -102,15 +103,23 @@ export function ActionsMenuBody({ state, onRun, onOffer }: { state: ActionsState
           </DropdownMenuItem>
         );
       })}
+      <DropdownMenuSeparator />
+      <DropdownMenuItem onSelect={() => onOffer("edit")}>
+        <Icon name={OFFER_ICONS.edit} />
+        {EDIT_LABEL}
+      </DropdownMenuItem>
     </>
   );
 }
 
 export function ActionsHeaderButton({ threadId }: HeaderActionProps) {
   const navigate = useBbNavigate();
+  // bb mounts the header inside the thread's panel controller, as it does the thread's tabs.
+  const panel = experimental_useAppPanel();
   const { state, load, run } = useProjectActions(threadId);
   const offer = (choice: Offer) => {
     if (choice === "retry") load();
+    else if (choice === "edit") panel.openTab({ tab: EDITOR_TAB });
     else navigate.openUrl(FORMAT_URL);
   };
   return (

@@ -1,7 +1,8 @@
 /**
- * The app bundle must not import `shared/contract.ts` (the SDK root, which bb gives the server
- * bundle only) or `shared/actions-file.ts` (the parser) at run time. A git install builds with
- * production dependencies only, so the contract import fails there and nowhere else.
+ * The app bundle must not import `shared/contract.ts` at run time: it imports the SDK root, which bb
+ * gives the server bundle only. A git install builds with production dependencies only, so the
+ * import fails there and nowhere else. (The parser, `shared/actions-file.ts`, is fine: the editor
+ * checks a draft with it.)
  */
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -16,9 +17,8 @@ const appFiles = [
 ];
 
 describe("app imports", () => {
-  it.each(appFiles)("%s imports the contract as a type only, and not the parser", (file) => {
+  it.each(appFiles)("%s imports the contract as a type only", (file) => {
     const source = readFileSync(join(root, file), "utf8");
     expect(source.match(/^import\s+(?!type\b)[^;]*from\s+"[./]*shared\/contract"/m)).toBeNull();
-    expect(source).not.toMatch(/shared\/actions-file"/);
   });
 });

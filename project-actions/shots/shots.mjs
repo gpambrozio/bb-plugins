@@ -7,8 +7,10 @@
 // - Docs Site has none, for the empty state;
 // - Mobile App has one with a mistake, for the error and where it is.
 // The shots: the menu, the dev server running in the thread's terminal panel, the menu again with it
-// running, the empty state and the error; light and dark. The GIF runs the dev server from the menu,
-// picks it again (its terminal comes back, no second one starts), then runs the tests.
+// running, the empty state, the error and the Edit actions tab; light and dark. The first GIF runs the
+// dev server from the menu, picks it again (its terminal comes back, no second one starts), then runs
+// the tests. The second adds the first action to Docs Site from its empty menu, in the editor, and
+// shows it in the menu; it runs last, since it writes Docs Site's actions file.
 // The actions really run: each is a terminal of the dev bb, on this Mac, in the fixture's worktree.
 
 const WEB = "Acme Web";
@@ -236,4 +238,48 @@ export async function shoot({ bb, shots, VARIANTS }) {
     { formats: ["gif"] },
   );
   closeTerminals(bb, web);
+
+  // The editor beside the thread, opened from the menu.
+  for (const [variant, file] of pairs(VARIANTS, "editor")) {
+    const page = await openThread(shots, { ...variant, viewport: { width: 1440, height: 1000 } }, web);
+    const menu = await openMenu(page, actionsReady);
+    await menu.getByRole("menuitem", { name: "Edit actions…" }).click();
+    await page.getByRole("listitem", { name: "Dev server" }).waitFor();
+    // A field with a mistake, to show the check the menu makes, then back to the tab's top.
+    await page.getByRole("listitem", { name: "Run tests" }).getByLabel(/Folder/).fill("../tests");
+    await page.getByRole("heading", { name: "Edit actions" }).evaluate((heading) => heading.scrollIntoView({ block: "start" }));
+    await page.getByRole("listitem", { name: "Run tests" }).getByText('"cwd" must stay inside the project (no ..)').waitFor();
+    await settle(page);
+    await shots.still(page, file);
+    await shots.closePage(page);
+  }
+
+  // The demo: a project with no actions gets its first one in the editor, and the menu lists it.
+  await shots.video(
+    "editor-demo",
+    VARIANTS.desktopLight,
+    async (page) => {
+      await page.goto(new URL(`/threads/${docs}`, page.url()).href);
+      await page.getByRole("button", { name: "Project actions" }).waitFor();
+      await page.waitForTimeout(800);
+      let menu = await openMenu(page, (opened) => opened.getByText("No actions in this project").waitFor());
+      await page.waitForTimeout(1200);
+      await menu.getByRole("menuitem", { name: "Add actions" }).click();
+      const first = page.getByRole("listitem", { name: "Action 1" });
+      await first.waitFor();
+      await page.waitForTimeout(800);
+      await first.getByLabel(/Name/).pressSequentially("Docs preview", { delay: 60 });
+      const row = page.getByRole("listitem", { name: "Docs preview" });
+      await row.getByLabel(/Command/).pressSequentially("npm run docs:dev", { delay: 50 });
+      await row.getByLabel(/Description/).pressSequentially("The guide on http://localhost:4000", { delay: 30 });
+      await page.waitForTimeout(600);
+      await page.getByRole("button", { name: "Save" }).click();
+      await page.getByText(/Saved in this worktree/).waitFor();
+      await page.waitForTimeout(1500);
+      menu = await openMenu(page, (opened) => opened.getByRole("menuitem", { name: /Docs preview/ }).waitFor());
+      await page.waitForTimeout(2000);
+      await page.keyboard.press("Escape");
+    },
+    { formats: ["gif"] },
+  );
 }

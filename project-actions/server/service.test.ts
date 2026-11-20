@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 
 import { FINISHED_MARKER } from "./command";
-import { ActionError, createActionsService, type FileRead, type Runs, type TerminalState, type WorkspaceLookup } from "./service";
+import { ActionError, createActionsService, type FileRead, type FileWrite, type Runs, type TerminalState, type WorkspaceLookup } from "./service";
 
 const ACTIONS = JSON.stringify({
   actions: [
@@ -11,8 +11,12 @@ const ACTIONS = JSON.stringify({
   ],
 });
 
+const text = (content: string): FileRead => ({ kind: "text", text: content, sha256: "old-sha" });
+
 function setup(options: { file?: FileRead; workspace?: WorkspaceLookup } = {}) {
-  let file: FileRead = options.file ?? { kind: "text", text: ACTIONS };
+  let file: FileRead = options.file ?? text(ACTIONS);
+  const writes: { hostId: string; path: string; relativePath: string; content: string; expectedSha256: string | null }[] = [];
+  let writeAnswer: FileWrite = { outcome: "written", sha256: "new-sha" };
   const terminals = new Map<string, TerminalState & { tail: string }>();
   const runs = new Map<string, Runs>();
   const created: { threadId: string; title: string; argv: string[] }[] = [];
@@ -20,10 +24,14 @@ function setup(options: { file?: FileRead; workspace?: WorkspaceLookup } = {}) {
   const reads: { hostId: string; path: string; relativePath: string }[] = [];
   let next = 0;
   const service = createActionsService({
-    workspace: async () => options.workspace ?? { ok: true, workspace: { hostId: "mini", path: "/work/repo" } },
+    workspace: async () => options.workspace ?? { ok: true, workspace: { hostId: "mini", path: "/work/repo", branch: "feature" } },
     readFile: async (workspace, relativePath) => {
-      reads.push({ ...workspace, relativePath });
+      reads.push({ hostId: workspace.hostId, path: workspace.path, relativePath });
       return file;
+    },
+    writeFile: async (workspace, relativePath, content, expectedSha256) => {
+      writes.push({ hostId: workspace.hostId, path: workspace.path, relativePath, content, expectedSha256 });
+      return writeAnswer;
     },
     getTerminal: async (id) => terminals.get(id) ?? null,
     outputTail: async (id) => terminals.get(id)?.tail ?? "",
@@ -52,8 +60,12 @@ function setup(options: { file?: FileRead; workspace?: WorkspaceLookup } = {}) {
     created,
     closed,
     reads,
+    writes,
     setFile: (value: FileRead) => {
       file = value;
+    },
+    setWriteAnswer: (value: FileWrite) => {
+      writeAnswer = value;
     },
   };
 }
@@ -73,7 +85,7 @@ describe("list", () => {
 
   it("says when the file is missing, invalid or unreadable, and when there is no workspace", async () => {
     expect(await setup({ file: { kind: "missing" } }).service.list("thr_1")).toEqual({ state: "missing" });
-    expect(await setup({ file: { kind: "text", text: "{" } }).service.list("thr_1")).toMatchObject({ state: "invalid", problem: { line: 1 } });
+    expect(await setup({ file: text("{") }).service.list("thr_1")).toMatchObject({ state: "invalid", problem: { line: 1 } });
     expect(await setup({ file: { kind: "error", message: "denied" } }).service.list("thr_1")).toEqual({ state: "unavailable", message: "denied" });
     expect(await setup({ workspace: { ok: false, message: "offline" } }).service.list("thr_1")).toEqual({ state: "unavailable", message: "offline" });
   });
@@ -146,14 +158,14 @@ describe("run", () => {
 
   it("runs what the file says now", async () => {
     const { service, created, setFile } = setup();
-    setFile({ kind: "text", text: JSON.stringify({ actions: [{ name: "Test", command: "npm run test:ci" }] }) });
+    setFile(text(JSON.stringify({ actions: [{ name: "Test", command: "npm run test:ci" }] })));
     await service.run("thr_1", "Test");
     expect(created[0]!.argv[5]).toBe("npm run test:ci");
   });
 
   it.each([
     ["a missing file", { kind: "missing" } as FileRead, "This workspace has no .bb/actions.json."],
-    ["an invalid file", { kind: "text", text: "{" } as FileRead, "Expected a closing brace (.bb/actions.json, line 1, column 2)"],
+    ["an invalid file", text("{"), "Expected a closing brace (.bb/actions.json, line 1, column 2)"],
   ])("refuses to run with %s", async (_label, file, message) => {
     const { service, created } = setup({ file });
     await expect(service.run("thr_1", "Test")).rejects.toThrow(new ActionError(message));
@@ -166,7 +178,7 @@ describe("run", () => {
   });
 
   it("refuses a Windows workspace, which has no /bin/sh", async () => {
-    const { service, created } = setup({ workspace: { ok: true, workspace: { hostId: "pc", path: "C:\\repo" } } });
+    const { service, created } = setup({ workspace: { ok: true, workspace: { hostId: "pc", path: "C:\\repo", branch: null } } });
     await expect(service.run("thr_1", "Test")).rejects.toThrow("macOS and Linux");
     expect(created).toEqual([]);
   });
@@ -174,7 +186,72 @@ describe("run", () => {
   it("goes on after a failed run", async () => {
     const { service, setFile } = setup({ file: { kind: "missing" } });
     await expect(service.run("thr_1", "Test")).rejects.toThrow();
-    setFile({ kind: "text", text: ACTIONS });
+    setFile(text(ACTIONS));
     expect(await service.run("thr_1", "Test")).toEqual({ terminalId: "term_1", outcome: "started" });
+  });
+});
+
+describe("read", () => {
+  it("opens the workspace's file with its hash and branch", async () => {
+    expect(await setup().service.read("thr_1")).toEqual({ state: "ready", text: ACTIONS, sha256: "old-sha", branch: "feature" });
+  });
+
+  it("opens an invalid file as it is, so the editor can fix it", async () => {
+    expect(await setup({ file: text("{") }).service.read("thr_1")).toEqual({ state: "ready", text: "{", sha256: "old-sha", branch: "feature" });
+  });
+
+  it("opens a missing file as none yet", async () => {
+    expect(await setup({ file: { kind: "missing" } }).service.read("thr_1")).toEqual({ state: "ready", text: null, sha256: null, branch: "feature" });
+  });
+
+  it("says when it cannot read", async () => {
+    expect(await setup({ file: { kind: "error", message: "denied" } }).service.read("thr_1")).toEqual({ state: "unavailable", message: "denied" });
+    expect(await setup({ workspace: { ok: false, message: "offline" } }).service.read("thr_1")).toEqual({ state: "unavailable", message: "offline" });
+  });
+});
+
+describe("save", () => {
+  const NEXT = '{\n  "actions": [\n    {\n      "name": "Lint",\n      "command": "npm run lint"\n    }\n  ]\n}\n';
+
+  it("writes the file in the workspace, only over the one the editor read, and leaves running actions alone", async () => {
+    const { service, writes, created, closed, runs, terminals } = setup();
+    await service.run("thr_1", "Dev server");
+    expect(await service.save("thr_1", NEXT, "old-sha")).toEqual({ outcome: "saved", sha256: "new-sha" });
+    expect(created).toHaveLength(1);
+    expect(closed).toEqual([]);
+    expect(terminals.get("term_1")?.status).toBe("running");
+    expect(runs.get("thr_1")).toEqual({ "Dev server": "term_1" });
+    expect(writes).toEqual([{ hostId: "mini", path: "/work/repo", relativePath: ".bb/actions.json", content: NEXT, expectedSha256: "old-sha" }]);
+  });
+
+  it("creates the file when there was none", async () => {
+    const { service, writes } = setup({ file: { kind: "missing" } });
+    await service.save("thr_1", NEXT, null);
+    expect(writes[0]?.expectedSha256).toBeNull();
+  });
+
+  it("says when the file changed on disk since it was opened", async () => {
+    const { service, setWriteAnswer } = setup();
+    setWriteAnswer({ outcome: "conflict" });
+    expect(await service.save("thr_1", NEXT, "old-sha")).toEqual({ outcome: "conflict" });
+  });
+
+  it("never writes a file the menu would refuse", async () => {
+    const { service, writes } = setup();
+    await expect(service.save("thr_1", '{ "actions": [{ "name": "Lint" }] }', "old-sha")).rejects.toThrow(
+      new ActionError('Not saved: Missing "command" (.bb/actions.json, line 1, column 15 (actions[0]))'),
+    );
+    await expect(service.save("thr_1", "{", "old-sha")).rejects.toThrow(/Not saved: Expected a closing brace/);
+    expect(writes).toEqual([]);
+  });
+
+  it("refuses a file over 256 KB", async () => {
+    const { service, writes } = setup();
+    await expect(service.save("thr_1", `{"actions":[]}${" ".repeat(256 * 1024)}`, null)).rejects.toThrow("larger than 256 KB");
+    expect(writes).toEqual([]);
+  });
+
+  it("says why it cannot reach the workspace", async () => {
+    await expect(setup({ workspace: { ok: false, message: "offline" } }).service.save("thr_1", NEXT, null)).rejects.toThrow("offline");
   });
 });

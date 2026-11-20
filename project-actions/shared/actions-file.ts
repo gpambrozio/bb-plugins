@@ -2,8 +2,9 @@
 //
 // Strict JSON (no comments, no trailing commas), so other tools read it too. Every problem names
 // where it is: a line and column, and for a value that parses but is wrong, its path in the file
-// (`actions[2].command`). Server only: the app gets what this returns through the RPCs, and the
-// types from `shared/views.ts`, so jsonc-parser stays out of the app bundle.
+// (`actions[2].command`). The server checks the file with it before running or saving, and the
+// editor checks a draft with the same function, so both say the same thing. No SDK import.
+//
 // The ESM build: the package's `main` is a UMD build whose lazy `require("./impl/format")` bb's
 // bundle cannot resolve, so the server would fail to load.
 import { findNodeAtLocation, parseTree, type Node, type ParseError, type ParseErrorCode } from "jsonc-parser/lib/esm/main.js";
@@ -20,7 +21,8 @@ export const LIMITS = {
   description: 300,
 } as const;
 
-export type ParsedActionsFile = { ok: true; actions: Action[] } | { ok: false; problem: Problem };
+/** `schema` is the file's optional `$schema`, kept when the editor writes the file back. */
+export type ParsedActionsFile = { ok: true; actions: Action[]; schema: string | null } | { ok: false; problem: Problem };
 
 type Segment = string | number;
 
@@ -45,6 +47,8 @@ const SYNTAX_MESSAGES: Partial<Record<ParseErrorCode, string>> = {
 
 const ACTION_KEYS = new Set(["name", "command", "cwd", "description"]);
 const FILE_KEYS = new Set(["$schema", "actions"]);
+/** The order an action's fields are written in. */
+const FIELD_ORDER = ["name", "command", "cwd", "description"] as const;
 
 /** `actions[1].name` from `["actions", 1, "name"]`. */
 export function formatPath(segments: readonly Segment[]): string {
@@ -93,18 +97,20 @@ function requireString(value: unknown, segments: Segment[], limit: number, label
   return trimmed;
 }
 
-function validate(value: unknown): Action[] {
+function validate(value: unknown): { actions: Action[]; schema: string | null } {
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new ValueError('The file must be an object with an "actions" list', []);
   const file = value as Record<string, unknown>;
   for (const key of Object.keys(file)) {
     if (!FILE_KEYS.has(key)) throw new ValueError(`Unknown field "${key}"; the file has only "actions"`, [key]);
   }
+  if ("$schema" in file && typeof file.$schema !== "string") throw new ValueError('"$schema" must be a string', ["$schema"]);
+  const schema = typeof file.$schema === "string" ? file.$schema : null;
   if (!("actions" in file)) throw new ValueError('Missing the "actions" list', []);
   const list = file.actions;
   if (!Array.isArray(list)) throw new ValueError('"actions" must be a list', ["actions"]);
   if (list.length > LIMITS.actions) throw new ValueError(`More than ${LIMITS.actions} actions`, ["actions"]);
   const seen = new Map<string, number>();
-  return list.map((entry, index): Action => {
+  const actions = list.map((entry, index): Action => {
     const at: Segment[] = ["actions", index];
     if (entry === null || typeof entry !== "object" || Array.isArray(entry)) throw new ValueError("Each action must be an object", at);
     const action = entry as Record<string, unknown>;
@@ -129,6 +135,7 @@ function validate(value: unknown): Action[] {
     const description = "description" in action ? requireString(action.description, [...at, "description"], LIMITS.description, '"description"') : null;
     return { name, command, cwd, description };
   });
+  return { actions, schema };
 }
 
 /** Where a value's problem is: its node, or the closest parent the file has. */
@@ -163,10 +170,36 @@ export function parseActionsFile(text: string): ParsedActionsFile {
     return { ok: false, problem: { message: error instanceof Error ? error.message : String(error), line: null, column: null, path: null } };
   }
   try {
-    return { ok: true, actions: validate(value) };
+    return { ok: true, ...validate(value) };
   } catch (error) {
     if (!(error instanceof ValueError)) throw error;
     const { line, column } = locate(source, root, error.segments);
     return { ok: false, problem: { message: error.message, line, column, path: error.segments.length === 0 ? null : formatPath(error.segments) } };
   }
+}
+
+/** One action as the editor holds it: every field as typed, an empty optional field left out. */
+export interface ActionFields {
+  name: string;
+  command: string;
+  cwd: string;
+  description: string;
+}
+
+/**
+ * The file the editor writes: 2-space JSON with a trailing newline, `$schema` first when the file had
+ * one, each action's fields in a fixed order, values trimmed and empty optional fields left out. A
+ * file the editor saves twice is byte-for-byte the same.
+ */
+export function serializeActionsFile(actions: readonly ActionFields[], schema: string | null = null): string {
+  const entries = actions.map((action) => {
+    const entry: Record<string, string> = {};
+    for (const field of FIELD_ORDER) {
+      const value = action[field].trim();
+      if (value !== "" || field === "name" || field === "command") entry[field] = value;
+    }
+    return entry;
+  });
+  const file = schema === null ? { actions: entries } : { $schema: schema, actions: entries };
+  return `${JSON.stringify(file, null, 2)}\n`;
 }

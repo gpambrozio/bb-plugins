@@ -8,8 +8,8 @@ import type { ComponentType } from "react";
 
 import { ActionsHeaderButton, BUTTON_LABEL, type HeaderActionProps } from "./app/actions-menu";
 import { ActionsTab } from "./app/actions-panel";
-
-const TAB = { id: "actions", context: { kind: "thread" }, availability: "action" } as const;
+import { EditorTab } from "./app/editor";
+import { EDITOR_TAB, LIST_TAB } from "./app/tabs";
 
 type LegacySlots = { experimental_threadHeaderAction?: (registration: { id: string; title: string; component: ComponentType<HeaderActionProps> }) => void };
 
@@ -21,12 +21,14 @@ type LegacySlots = { experimental_threadHeaderAction?: (registration: { id: stri
  * bb that drops the old slot: it opens a tab beside the thread with the same actions.
  */
 export function registerActions(app: PluginAppBuilder): "menu" | "tab" {
+  // The editor, opened from the menu (or the fallback list) beside the thread.
+  app.slots.experimental_tab({ ...EDITOR_TAB, title: "Edit actions", icon: "EditFile", tooltip: "Edit this project's actions", component: EditorTab });
   const legacy = (app.slots as unknown as LegacySlots).experimental_threadHeaderAction;
   if (typeof legacy === "function") {
     legacy.call(app.slots, { id: "actions", title: BUTTON_LABEL, component: ActionsHeaderButton });
     return "menu";
   }
-  app.slots.experimental_tab({ ...TAB, title: "Actions", icon: "Play", tooltip: BUTTON_LABEL, component: ActionsTab });
+  app.slots.experimental_tab({ ...LIST_TAB, title: "Actions", icon: "Play", tooltip: BUTTON_LABEL, component: ActionsTab });
   app.slots.experimental_threadAction({
     id: "actions",
     title: "Actions",
@@ -38,7 +40,7 @@ export function registerActions(app: PluginAppBuilder): "menu" | "tab" {
       detail: BUTTON_LABEL,
       icon: "Play",
       run: () => {
-        experimental_panel.openTab({ tab: TAB });
+        experimental_panel.openTab({ tab: LIST_TAB });
       },
     }),
   });

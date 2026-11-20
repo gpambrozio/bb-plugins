@@ -10,6 +10,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import type { RpcContract } from "../shared/contract";
 import { FORMAT_URL, type ActionsList, type RunOutcome } from "../shared/views";
 import { ActionsHeaderButton, type HeaderActionProps } from "./actions-menu";
+import { EDITOR_TAB } from "./tabs";
 
 const toasts = vi.hoisted(() => ({ error: [] as { message: string; description?: string }[] }));
 vi.mock("sonner", () => ({
@@ -61,11 +62,13 @@ function render(options: { list?: () => Promise<ActionsList>; run?: (input: { th
       calls.push({ method: "run", input });
       return (options.run ?? (async () => ({ terminalId: "term_1", outcome: "started" as const })))(input);
     },
+    read: async () => ({ state: "unavailable", message: "not used here" }),
+    save: async () => ({ outcome: "conflict" }),
   };
   const rendered = renderSlot<HeaderActionProps, RpcContract>(
     { component: ActionsHeaderButton },
     { threadId: "thr_1", projectId: "proj_1", isCompactViewport: false },
-    { rpc, openTerminal: options.openTerminal ?? (() => true) },
+    { rpc, openTerminal: options.openTerminal ?? (() => true), experimental_panel: { openTab: () => true } },
   );
   return { calls, rendered };
 }
@@ -82,7 +85,7 @@ describe("the Project actions menu", () => {
     expect(calls).toEqual([]);
     const menu = await openMenu();
     const items = await within(menu).findAllByRole("menuitem");
-    expect(items.map((item) => item.textContent)).toEqual(["Dev serverVite on :5173Running", "Run testsnpm test", "Lintnpm run lintFinished"]);
+    expect(items.map((item) => item.textContent)).toEqual(["Dev serverVite on :5173Running", "Run testsnpm test", "Lintnpm run lintFinished", "Edit actions…"]);
     expect(calls).toEqual([{ method: "list", input: { threadId: "thr_1" } }]);
   });
 
@@ -120,6 +123,24 @@ describe("the Project actions menu", () => {
     expect(within(menu).getByText(".bb/actions.json")).toBeTruthy();
     fireEvent.click(within(menu).getByRole("menuitem", { name: /How to write the actions file/ }));
     expect(rendered.inspection.navigateCalls).toEqual([{ method: "openUrl", url: FORMAT_URL }]);
+  });
+
+  it("opens the editor beside the thread from Add actions", async () => {
+    const { rendered } = render({ list: async () => ({ state: "missing" }) });
+    const menu = await openMenu();
+    fireEvent.click(await within(menu).findByRole("menuitem", { name: /Add actions/ }));
+    expect(rendered.inspection.experimental_panelCalls).toEqual([{ method: "openTab", options: { tab: EDITOR_TAB } }]);
+  });
+
+  it("opens the editor from Edit actions… under the list, and from a file with a problem", async () => {
+    const { rendered } = render();
+    const menu = await openMenu();
+    fireEvent.click(await within(menu).findByRole("menuitem", { name: "Edit actions…" }));
+    expect(rendered.inspection.experimental_panelCalls).toEqual([{ method: "openTab", options: { tab: EDITOR_TAB } }]);
+    cleanup();
+    const broken = render({ list: async () => ({ state: "invalid", problem: { message: "Expected a comma", line: 2, column: 3, path: null } }) });
+    fireEvent.click(await within(await openMenu()).findByRole("menuitem", { name: /Fix it in the editor/ }));
+    expect(broken.rendered.inspection.experimental_panelCalls).toEqual([{ method: "openTab", options: { tab: EDITOR_TAB } }]);
   });
 
   it("shows a problem in the file and where it is, and reads it again on Try again", async () => {

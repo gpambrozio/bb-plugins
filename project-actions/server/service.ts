@@ -5,18 +5,32 @@
 // menu lists what the branch has now, and a run starts the command the file has now. Each thread
 // remembers which terminal its last run of each action went to (by action name); that is how a run
 // of an action that is still running shows its terminal instead of starting another.
-import { parseActionsFile } from "../shared/actions-file";
-import { ACTIONS_FILE, describeLocation, type Action, type ActionsList, type ActionView, type RunOutcome, type RunStatus } from "../shared/views";
+import { LIMITS, parseActionsFile as parse } from "../shared/actions-file";
+import {
+  ACTIONS_FILE,
+  describeLocation,
+  type Action,
+  type ActionsList,
+  type ActionView,
+  type EditorFile,
+  type RunOutcome,
+  type RunStatus,
+  type SaveResult,
+} from "../shared/views";
 import { actionArgv, hasFinished, isWindowsPath } from "./command";
 
 export interface Workspace {
   hostId: string;
   path: string;
+  /** The branch checked out there, to say where an edit lands; null when bb does not know one. */
+  branch: string | null;
 }
 
 export type WorkspaceLookup = { ok: true; workspace: Workspace } | { ok: false; message: string };
 
-export type FileRead = { kind: "text"; text: string } | { kind: "missing" } | { kind: "error"; message: string };
+export type FileRead = { kind: "text"; text: string; sha256: string } | { kind: "missing" } | { kind: "error"; message: string };
+
+export type FileWrite = { outcome: "written"; sha256: string } | { outcome: "conflict" };
 
 export interface TerminalState {
   status: "starting" | "running" | "disconnected" | "exited";
@@ -29,6 +43,11 @@ export interface ActionsPorts {
   workspace(threadId: string): Promise<WorkspaceLookup>;
   /** Reads a file under the workspace by its path relative to the root. */
   readFile(workspace: Workspace, relativePath: string): Promise<FileRead>;
+  /**
+   * Writes a file under the workspace, creating its folder, only if its hash on disk is still
+   * `expectedSha256` (null: only if there is no file).
+   */
+  writeFile(workspace: Workspace, relativePath: string, content: string, expectedSha256: string | null): Promise<FileWrite>;
   /** null when bb no longer knows the terminal. */
   getTerminal(terminalId: string): Promise<TerminalState | null>;
   /** The terminal's latest output, decoded. */
@@ -63,7 +82,7 @@ export function createActionsService(ports: ActionsPorts) {
     const file = await ports.readFile(lookup.workspace, ACTIONS_FILE);
     if (file.kind === "missing") return { kind: "other", list: { state: "missing" } };
     if (file.kind === "error") return { kind: "other", list: { state: "unavailable", message: file.message } };
-    const parsed = parseActionsFile(file.text);
+    const parsed = parse(file.text);
     if (!parsed.ok) return { kind: "other", list: { state: "invalid", problem: parsed.problem } };
     return { kind: "ready", workspace: lookup.workspace, actions: parsed.actions };
   }
@@ -127,5 +146,26 @@ export function createActionsService(ports: ActionsPorts) {
     });
   }
 
-  return { list, run };
+  async function read(threadId: string): Promise<EditorFile> {
+    const lookup = await ports.workspace(threadId);
+    if (!lookup.ok) return { state: "unavailable", message: lookup.message };
+    const file = await ports.readFile(lookup.workspace, ACTIONS_FILE);
+    const branch = lookup.workspace.branch;
+    if (file.kind === "missing") return { state: "ready", text: null, sha256: null, branch };
+    if (file.kind === "error") return { state: "unavailable", message: file.message };
+    return { state: "ready", text: file.text, sha256: file.sha256, branch };
+  }
+
+  /** Saves the editor's text, checked as the menu checks it: an invalid file is never written. */
+  async function save(threadId: string, text: string, expectedSha256: string | null): Promise<SaveResult> {
+    if (Buffer.byteLength(text) > LIMITS.fileBytes) throw new ActionError(`The actions file would be larger than ${LIMITS.fileBytes / 1024} KB.`);
+    const parsed = parse(text);
+    if (!parsed.ok) throw new ActionError(`Not saved: ${parsed.problem.message} (${describeLocation(parsed.problem)})`);
+    const lookup = await ports.workspace(threadId);
+    if (!lookup.ok) throw new ActionError(lookup.message);
+    const written = await ports.writeFile(lookup.workspace, ACTIONS_FILE, text, expectedSha256);
+    return written.outcome === "written" ? { outcome: "saved", sha256: written.sha256 } : { outcome: "conflict" };
+  }
+
+  return { list, run, read, save };
 }

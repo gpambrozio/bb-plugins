@@ -31,6 +31,12 @@ command yourself, use your own shell, or `bb terminal create --thread "$BB_THREA
 Rules: strict JSON (no comments, no trailing commas). Commit the file like any other: each worktree reads
 its own branch's copy, and the menu re-reads it every time it opens, so no reload is needed.
 
+Write it as the plugin's editor does, so the user's edits there and yours produce the same bytes: 2-space
+indentation, a trailing newline, each action's keys in the order name, command, cwd, description, empty
+optional keys left out, and `$schema` (if any) first. The user can also edit the file in a form: **Edit
+actions…** at the bottom of the menu opens it beside the thread. It saves into the worktree without
+committing.
+
 ## After editing
 
 Check the file parses (`node -e 'JSON.parse(require("fs").readFileSync(".bb/actions.json","utf8"))'` or

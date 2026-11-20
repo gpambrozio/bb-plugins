@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { formatPath, normaliseCwd, parseActionsFile } from "./actions-file";
+import { formatPath, normaliseCwd, parseActionsFile, serializeActionsFile } from "./actions-file";
 import { describeLocation } from "./views";
 
 const file = (actions: unknown) => JSON.stringify({ actions }, null, 2);
@@ -19,16 +19,17 @@ describe("parseActionsFile", () => {
         { name: "Dev server", command: "npm run dev", cwd: null, description: "Vite on port 5173" },
         { name: "Storybook", command: "npm run storybook", cwd: "packages/ui", description: null },
       ],
+      schema: null,
     });
   });
 
   it("accepts an empty list, a $schema and a byte order mark", () => {
-    expect(parseActionsFile('\uFEFF{ "$schema": "x", "actions": [] }')).toEqual({ ok: true, actions: [] });
+    expect(parseActionsFile('\uFEFF{ "$schema": "x", "actions": [] }')).toEqual({ ok: true, actions: [], schema: "x" });
   });
 
   it("trims names and commands", () => {
     const parsed = parseActionsFile(file([{ name: "  Test  ", command: "  npm test\n" }]));
-    expect(parsed).toEqual({ ok: true, actions: [{ name: "Test", command: "npm test", cwd: null, description: null }] });
+    expect(parsed).toEqual({ ok: true, actions: [{ name: "Test", command: "npm test", cwd: null, description: null }], schema: null });
   });
 
   it("gives a syntax error's line and column", () => {
@@ -62,6 +63,7 @@ describe("parseActionsFile", () => {
     ["not an object", "[]", "The file must be an object with an \"actions\" list", null],
     ["no actions", "{}", 'Missing the "actions" list', null],
     ["actions not a list", '{ "actions": {} }', '"actions" must be a list', "actions"],
+    ["a $schema that is not text", '{ "$schema": 1, "actions": [] }', '"$schema" must be a string', "$schema"],
     ["an unknown top-level field", '{ "actions": [], "tasks": [] }', 'Unknown field "tasks"; the file has only "actions"', "tasks"],
     ["an action that is not an object", '{ "actions": ["npm test"] }', "Each action must be an object", "actions[0]"],
     ["a misspelt field", file([{ name: "a", comand: "b" }]), 'Unknown field "comand"; an action has name, command, cwd and description', "actions[0].comand"],
@@ -120,5 +122,51 @@ describe("the parser's import", () => {
     const source = readFileSync(new URL("./actions-file.ts", import.meta.url), "utf8");
     expect(source).toMatch(/from "jsonc-parser\/lib\/esm\/main\.js";/);
     expect(source).not.toMatch(/from "jsonc-parser";/);
+  });
+});
+
+describe("serializeActionsFile", () => {
+  const fields = (name: string, command: string, cwd = "", description = "") => ({ name, command, cwd, description });
+
+  it("writes 2-space JSON with a trailing newline, fields in order, empty optional fields left out", () => {
+    const text = serializeActionsFile([fields(" Dev server ", "npm run dev", "", "Vite"), fields("Storybook", "npm run storybook", "packages/ui")]);
+    expect(text).toBe(`{
+  "actions": [
+    {
+      "name": "Dev server",
+      "command": "npm run dev",
+      "description": "Vite"
+    },
+    {
+      "name": "Storybook",
+      "command": "npm run storybook",
+      "cwd": "packages/ui"
+    }
+  ]
+}
+`);
+  });
+
+  it("keeps $schema first, and reads back to the same actions", () => {
+    const text = serializeActionsFile([fields("Test", "npm test", "web", "Unit tests")], "https://example.com/actions.schema.json");
+    expect(text.startsWith('{\n  "$schema": "https://example.com/actions.schema.json",\n  "actions"')).toBe(true);
+    const parsed = parseActionsFile(text);
+    expect(parsed).toEqual({ ok: true, schema: "https://example.com/actions.schema.json", actions: [{ name: "Test", command: "npm test", cwd: "web", description: "Unit tests" }] });
+  });
+
+  it("writes the same bytes again for a file it wrote", () => {
+    const once = serializeActionsFile([fields("A", "echo a"), fields("B", "echo b", "x")]);
+    const parsed = parseActionsFile(once);
+    if (!parsed.ok) throw new Error("did not parse");
+    const again = serializeActionsFile(parsed.actions.map((action) => fields(action.name, action.command, action.cwd ?? "", action.description ?? "")));
+    expect(again).toBe(once);
+  });
+
+  it("writes an empty list for no actions", () => {
+    expect(serializeActionsFile([])).toBe('{\n  "actions": []\n}\n');
+  });
+
+  it("keeps empty required fields, so the check names them", () => {
+    expect(parseActionsFile(serializeActionsFile([fields("", "")]))).toMatchObject({ ok: false, problem: { message: '"name" must not be empty', path: "actions[0].name" } });
   });
 });

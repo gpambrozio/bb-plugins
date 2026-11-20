@@ -1,6 +1,6 @@
 // The fallback for a bb that no longer draws the header slot the Actions button uses: a header
 // thread action opens this tab beside the thread, with the same actions as buttons.
-import { useBbNavigate, type ExperimentalThreadTabProps } from "@get-bb/plugin-sdk/app";
+import { experimental_useAppPanel, useBbNavigate, type ExperimentalThreadTabProps } from "@get-bb/plugin-sdk/app";
 import { useEffect } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -8,12 +8,19 @@ import { Icon } from "@/components/ui/icon";
 
 import { FORMAT_URL } from "../shared/views";
 import { ActionText, NoteText } from "./actions-menu";
-import { actionsModel, OFFER_LABELS, STATUS_LABELS } from "./model";
+import { actionsModel, EDIT_LABEL, STATUS_LABELS, type Offer } from "./model";
+import { EDITOR_TAB } from "./tabs";
 import { useProjectActions } from "./use-actions";
 
 export function ActionsPanel({ threadId }: { threadId: string }) {
   const navigate = useBbNavigate();
+  const panel = experimental_useAppPanel();
   const { state, load, run } = useProjectActions(threadId);
+  const offer = (choice: Offer) => {
+    if (choice === "retry") load();
+    else if (choice === "edit") panel.openTab({ tab: EDITOR_TAB });
+    else navigate.openUrl(FORMAT_URL);
+  };
   useEffect(() => load(), [load]);
   const model = actionsModel(state);
   return (
@@ -23,9 +30,9 @@ export function ActionsPanel({ threadId }: { threadId: string }) {
         <>
           <NoteText model={model} />
           <div className="flex flex-wrap gap-2">
-            {model.offers.map((offer) => (
-              <Button key={offer} type="button" variant="outline" size="sm" onClick={() => (offer === "retry" ? load() : navigate.openUrl(FORMAT_URL))}>
-                {OFFER_LABELS[offer]}
+            {model.offers.map(({ offer: choice, label }) => (
+              <Button key={choice} type="button" variant="outline" size="sm" onClick={() => offer(choice)}>
+                {label}
               </Button>
             ))}
           </div>
@@ -35,10 +42,16 @@ export function ActionsPanel({ threadId }: { threadId: string }) {
         <>
           <div className="flex items-center justify-between">
             <span className="text-xs text-muted-foreground">Run in a terminal</span>
-            <Button type="button" variant="ghost" size="sm" onClick={load}>
-              <Icon name="RotateCcw" />
-              Refresh
-            </Button>
+            <div className="flex gap-1">
+              <Button type="button" variant="ghost" size="sm" onClick={() => offer("edit")}>
+                <Icon name="EditFile" />
+                {EDIT_LABEL.replace("…", "")}
+              </Button>
+              <Button type="button" variant="ghost" size="sm" onClick={load}>
+                <Icon name="RotateCcw" />
+                Refresh
+              </Button>
+            </div>
           </div>
           <ul className="flex flex-col gap-1">
             {model.actions.map((action) => {

@@ -5,13 +5,14 @@ menu in each thread's header. Each one runs in a terminal of that thread, in the
 workspace (its worktree), and opens in bb's terminal panel.
 
 The list lives in the project, in `.bb/actions.json`, committed like any other file, so every worktree
-reads its own branch's version and everyone who opens the project gets the same menu.
+reads its own branch's version and everyone who opens the project gets the same menu. Write it by hand,
+or with the editor the menu opens beside the thread.
 
 ## Screenshots
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/menu-dark.png">
-  <img alt="The Project actions menu open below its play button in a thread's header: Run in a terminal, then Dev server (Vite on http://localhost:5173), Run tests (node scripts/test.mjs), Storybook (The component gallery) and Seed database (Reset the local database with sample data)" src="docs/screenshots/menu-light.png">
+  <img alt="The Project actions menu open below its play button in a thread's header: Run in a terminal, then Dev server (Vite on http://localhost:5173), Run tests (node scripts/test.mjs), Storybook (The component gallery) and Seed database (Reset the local database with sample data), then Edit actions…" src="docs/screenshots/menu-light.png">
 </picture>
 
 _The menu, from the play button in the thread's header. Each action shows its description, or its command when it has none._
@@ -42,7 +43,16 @@ _A mistake in the file is shown with the line, the column and the action it is i
   <img alt="The menu of a project without an actions file: No actions in this project, how to add .bb/actions.json at the project's root, and a link to how to write it" src="docs/screenshots/empty-light.png">
 </picture>
 
-_A project without the file explains how to add one._
+_A project without the file explains how to add one, and **Add actions** opens the editor._
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/editor-dark.png">
+  <img alt="The Edit actions tab beside a thread: a note that the file is saved in this thread's workspace and needs committing to reach other branches, Form and JSON views, and each action as a card with Name, Folder, Command and Description fields, move up, move down and delete buttons; Run tests' folder ../tests is marked &quot;cwd&quot; must stay inside the project (no ..)" src="docs/screenshots/editor-light.png">
+</picture>
+
+_The editor checks each change as the menu does and will not save a file with a mistake._
+
+![In a project with no actions, Add actions opens the editor; an action named Docs preview is typed in with its command and description, saved, and the menu then lists it](docs/screenshots/editor-demo.gif)
 
 ![Picking Dev server from the menu starts it in a terminal; picking it again from the menu, where it says Running, shows the same terminal; then Run tests runs in a second terminal and ends with its exit code; and picking Dev server once more brings back its terminal](docs/screenshots/demo.gif)
 
@@ -76,6 +86,25 @@ The menu reads the file each time it opens, from the thread's own workspace, on 
 it — a thread on another bb machine reads that machine's copy. An edit shows up the next time you open
 the menu, with no reload.
 
+## Editing actions
+
+**Edit actions…** at the bottom of the menu (or **Add actions** when there are none, and **Fix it in the
+editor** when the file has a mistake) opens the editor in a tab beside the thread. It edits the thread's
+own copy of `.bb/actions.json`, on the machine that holds the workspace.
+
+- **Form or JSON.** The form lists each action with its name, command, folder and description; add one,
+  move it up or down, or delete it. The JSON view shows the same file as text. A file the form cannot
+  hold, such as one with a syntax error, opens as JSON to be fixed there.
+- **Checked as the menu checks it.** Each mistake shows on its field with the menu's own message, and Save
+  stays off until the file is valid. A new action shows no errors until you start filling it in.
+- **Stable formatting.** The form writes 2-space JSON with a trailing newline, each action's fields in the
+  order name, command, cwd, description, and leaves out empty optional fields; a `$schema` key is kept.
+- **Saved in the workspace, not committed.** Saving creates `.bb/` and the file when needed. The change
+  is in this thread's worktree only: commit it to share it with other branches.
+- **No lost edits.** If the file changed on disk since the editor opened it, the save is refused and the
+  editor offers to reload it.
+- Actions already running keep running. The menu shows the new list the next time it opens.
+
 ## Running an action
 
 Picking an action starts a terminal in the thread, titled with the action's name, in the thread's
@@ -104,6 +133,7 @@ Needs bb 0.49 or newer. Nothing to configure.
 ## Privacy and safety
 
 The plugin runs exactly the commands in the project's actions file, and only when you pick one. It
-reads no other file and sends nothing anywhere. The commands run with your permissions on the machine
+reads and writes no other file (it writes that one only when you save in the editor) and sends nothing
+anywhere. The commands run with your permissions on the machine
 that holds the workspace, as they would in a terminal you opened yourself, so treat a repository's
 actions file like any script in it: read it before you run it.

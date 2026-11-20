@@ -1,8 +1,8 @@
 # AGENTS.md
 
 A bb plugin that adds a **Project actions** menu to every thread's header: the named commands in the
-project's `.bb/actions.json`, each run in a bb terminal of that thread, in its workspace. It is not a
-Paseo port.
+project's `.bb/actions.json`, each run in a bb terminal of that thread, in its workspace, and an editor
+for that file in a tab beside the thread. It is not a Paseo port.
 
 The repository root `AGENTS.md` covers what every plugin here shares. This file covers only what is
 specific to `project-actions`.
@@ -11,21 +11,24 @@ specific to `project-actions`.
 
 | File | What it owns |
 | --- | --- |
-| `server.ts` | Wires the service to bb: thread → environment → machine and folder, `bb.sdk.files.read` on that machine, `bb.sdk.terminals` for the runs, `bb.storage.kv` for which terminal each action's last run went to. Forgets a thread's runs when it is archived or deleted. |
-| `server/service.ts` | Over injected ports: `list` (read and parse the file, each action's run status) and `run` (start, show again, or replace a finished run), one run at a time per thread. |
+| `server.ts` | Wires the service to bb: thread → environment → machine, folder and branch, `bb.sdk.files.read` / `write` on that machine, `bb.sdk.terminals` for the runs, `bb.storage.kv` for which terminal each action's last run went to. Forgets a thread's runs when it is archived or deleted. |
+| `server/service.ts` | Over injected ports: `list` (read and parse the file, each action's run status), `run` (start, show again, or replace a finished run), one run at a time per thread, and the editor's `read` and `save`. |
 | `server/command.ts` | The `/bin/sh` wrapper a terminal runs for an action, the marker it prints when the action ends, and the action's folder. |
-| `shared/actions-file.ts` | Parsing and checking the file, with each problem's line, column and path. Server only (jsonc-parser stays out of the app). |
-| `shared/views.ts` | What the server answers (zod schemas, used by the contract), the file's path, the README link, how a problem's location reads. No SDK import and no parser, so the app imports it at run time. |
+| `shared/actions-file.ts` | Parsing and checking the file, with each problem's line, column and path, and writing it back (`serializeActionsFile`). Used by the server and by the editor. No SDK import. |
+| `shared/views.ts` | What the server answers (zod schemas, used by the contract), the file's path, the README link, how a problem's location reads. No SDK import, so the app imports it at run time. |
 | `shared/contract.ts` | The app ⇄ server RPC contract. The app imports it as a type only (`app/imports.test.ts`). |
-| `app.tsx` | Registers the header button, or the fallback (below). |
+| `app.tsx` | Registers the editor's tab, and the header button or the fallback (below). |
 | `app/actions-menu.tsx` | The header button and its menu. |
 | `app/actions-panel.tsx` | The fallback tab for a bb without the old header slot. |
 | `app/model.ts` | The words for each state of the file, shared by the menu and the panel. |
 | `app/use-actions.ts` | Loading the list, running an action and opening its terminal. |
+| `app/editor.tsx` | The Edit actions tab: form and JSON views, the checks, save, conflict and reload. |
+| `app/editor-model.ts` | The editor's draft without React: rows ↔ file text, moving rows, which field a problem belongs to. |
+| `app/tabs.ts` | The two tab ids the panel controller opens. |
 | `shots/shots.mjs` | README screenshots and the demo GIF (`npm run shots -- project-actions` in `tools/shots`). |
 
 `npm test` runs everything. The wrapper is run for real under `/bin/sh` (`server/command.test.ts`);
-the server runs against the SDK's fake host; the menu renders in jsdom against fake RPCs.
+the server runs against the SDK's fake host; the menu and the editor render in jsdom against fake RPCs.
 
 ## Decisions
 
@@ -69,15 +72,36 @@ thread, so a double click starts one terminal.
 `\\server\…`) gets "runs actions on macOS and Linux machines only" instead of a guess at PowerShell.
 
 **Strict JSON.** The file is plain JSON so other tools read it; jsonc-parser is used for its error offsets
-and node positions, with comments and trailing commas refused. Import its ESM build
+and node positions, with comments and trailing commas refused. It is in the app bundle too (about 20 KB):
+the editor checks each draft with the same `parseActionsFile`, so its messages are the menu's. Import its ESM build
 (`jsonc-parser/lib/esm/main.js`): its `main` is a UMD build with a lazy `require("./impl/format")` that
 bb's server bundle cannot resolve, so the plugin fails to load — at run time, not at build time
 (`shared/actions-file.test.ts` guards the import). Unknown fields are refused so a misspelt `comand` is an
 error, not a silently missing command.
 
+**The editor edits the workspace's copy, and saves only what checks out.** `read` gives the file's text,
+its `sha256` and the environment's branch; `save` re-checks the text with the parser (an invalid file is
+never written, whatever the app sent) and writes it with `bb.sdk.files.write` with `createParents` and
+`expectedSha256` (null for a file that did not exist), so a file that changed on disk since the editor
+read it answers `conflict` and is left alone; the editor then offers Reload. Nothing is committed: the
+editor says the change is in this worktree only. Saving never touches terminals; the menu reads the new
+file the next time it opens.
+
+**The form writes one canonical file.** `serializeActionsFile`: 2-space JSON, a trailing newline,
+`$schema` first when the file had one, each action's fields in the order name, command, cwd, description,
+values trimmed, empty optional fields left out. Since the parser refuses unknown keys, nothing a valid file
+can hold is lost. A hand-formatted file is reformatted on its first save from the form; the JSON view
+saves the text exactly as typed. A file the form cannot hold (a syntax error, say) opens in the JSON view,
+and the Form view stays off until it parses. The parser reports one problem at a time, so the form shows
+one error; a new row shows none until it is touched, and a line says what blocks the save instead.
+
+**The editor is a thread tab** (`edit-actions`, `availability: "action"`), opened with the panel
+controller from the header menu: bb mounts the old header slot inside the thread's panel controller.
+
 ## Live checks
 
 Use the shots harness with `--keep` (`tools/shots/README.md`): it seeds three projects (an actions file,
-none, and one with a mistake) with a thread each. bb draws terminals on a WebGL canvas, so a page has no
+none, and one with a mistake) with a thread each. The shot list's last GIF writes Docs Site's actions
+file through the editor, so a `--keep` run leaves that project with one action. bb draws terminals on a WebGL canvas, so a page has no
 terminal text to wait on (read it with `bb terminal output <id> --plain`), and headless Chromium captures
 the canvas blank at 2×: shots that show a terminal are taken at 1×.
