@@ -400,11 +400,15 @@ second flag would have been two switches for one thing. What must stay true:
   it mutes a level, since `forgotten` knows only archives this instance heard: a thread archived before a
   load reached it through the menu's path or an event (review pass 1). The command line spells
   *Questions only* `questions-only`; the stored value stays `questions`.
-- **Reaching it from a hook on another machine** is the README's job, and has a hard limit: a host
-  daemon's hook gets no `BB_` variables (bb's `plugin-host-worker` env filter, bb 0.49), outside a thread
-  `bb` targets `127.0.0.1:38886`, and bb's CLI sends no `BB_SERVER_HEADERS`, so a machine paired only
-  through bb Connect cannot reach the server from a hook. Threads and terminals there get the daemon's
-  signed-in loopback proxy, on a random port.
+- **Reaching it from a script outside bb** (a hook, launchd, a Terminal window) is the README's job, in
+  [From a script outside bb](README.md#from-a-script-outside-bb). Such a script gets no `BB_` variables
+  (a host daemon's hook included: bb's `plugin-host-worker` env filter, bb 0.49), so outside a thread
+  `bb` targets `127.0.0.1:38886`, which is the server only on the server's Mac. bb's CLI sends no Connect
+  sign-in, so on a machine paired through bb Connect the `getbb.app` address answers 401; the way in is
+  the host daemon's signed-in loopback relay, on a port that changes with each daemon start and that bb
+  hands only to its own threads and terminals. The README's snippet finds it by probing the daemon's
+  loopback ports, which is bb internals (bb 0.50); a direct server URL is the documented alternative.
+  Re-run that snippet when bb changes its host daemon.
 
 ## Herald's sentences as push notifications
 
