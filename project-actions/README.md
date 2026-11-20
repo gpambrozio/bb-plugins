@@ -52,9 +52,7 @@ _A project without the file explains how to add one, and **Add actions** opens t
 
 _The editor checks each change as the menu does and will not save a file with a mistake._
 
-![In a project with no actions, Add actions opens the editor; an action named Docs preview is typed in with its command and description, saved, and the menu then lists it](docs/screenshots/editor-demo.gif)
-
-![Picking Dev server from the menu starts it in a terminal; picking it again from the menu, where it says Running, shows the same terminal; then Run tests runs in a second terminal and ends with its exit code; and picking Dev server once more brings back its terminal](docs/screenshots/demo.gif)
+![Picking Dev server from the menu starts it in a terminal and the menu then marks it Running; Run tests runs in a second terminal and ends with its exit code; Edit actions… opens the editor beside the thread, where a Lint action is added with its command and description and saved into the worktree; the menu lists Lint at once, and picking it runs it in a third terminal](docs/screenshots/demo.gif)
 
 ## The actions file
 

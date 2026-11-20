@@ -7,10 +7,10 @@
 // - Docs Site has none, for the empty state;
 // - Mobile App has one with a mistake, for the error and where it is.
 // The shots: the menu, the dev server running in the thread's terminal panel, the menu again with it
-// running, the empty state, the error and the Edit actions tab; light and dark. The first GIF runs the
-// dev server from the menu, picks it again (its terminal comes back, no second one starts), then runs
-// the tests. The second adds the first action to Docs Site from its empty menu, in the editor, and
-// shows it in the menu; it runs last, since it writes Docs Site's actions file.
+// running, the empty state, the error and the Edit actions tab; light and dark. The GIF runs the dev
+// server from the menu, runs the tests, then opens Edit actions…, adds a Lint action in the form,
+// saves it, and runs it from the menu. It writes Acme Web's actions file, so the editor shots list
+// Lint too.
 // The actions really run: each is a terminal of the dev bb, on this Mac, in the fixture's worktree.
 
 const WEB = "Acme Web";
@@ -45,6 +45,10 @@ for (const file of files) {
 console.log(\`\\n Test Files  \${files.length} passed (\${files.length})\\n      Tests  \${passed} passed (\${passed})\\n\`);
 `;
 
+const LINT = `// Prints a short lint run, then ends.
+console.log("Checked 42 files in src/: no problems.");
+`;
+
 const WEB_ACTIONS = {
   actions: [
     { name: "Dev server", command: "node scripts/dev-server.mjs", description: "Vite on http://localhost:5173" },
@@ -60,6 +64,7 @@ const WEB_FILES = {
   ".bb/actions.json": `${JSON.stringify(WEB_ACTIONS, null, 2)}\n`,
   "scripts/dev-server.mjs": DEV_SERVER,
   "scripts/test.mjs": TESTS,
+  "scripts/lint.mjs": LINT,
   "scripts/seed.sh": 'echo "Seeded 24 products and 3 customers."\n',
   "packages/ui/README.md": "# UI components\n",
 };
@@ -212,7 +217,10 @@ export async function shoot({ bb, shots, VARIANTS }) {
     await shots.closePage(page);
   }
 
-  // The demo: run the dev server, pick it again (its terminal comes back), then run the tests.
+
+  // The demo: run the dev server (the menu then says Running), run the tests, then add
+  // an action in the editor, save, and run it from the menu. Before the editor shots: bb keeps a
+  // thread's panel tabs, so after them the GIF would open with the editor's tab already there.
   await shots.video(
     "demo",
     VARIANTS.desktopLight,
@@ -224,21 +232,41 @@ export async function shoot({ bb, shots, VARIANTS }) {
       await page.waitForTimeout(1000);
       await menu.getByRole("menuitem", { name: /Dev server/ }).click();
       await terminalShows(bb, page, web, "Dev server", "ready in 312 ms");
-      await page.waitForTimeout(1800);
+      await page.waitForTimeout(1500);
       menu = await openMenu(page, (opened) => opened.getByText("Running", { exact: true }).waitFor());
-      await page.waitForTimeout(1200);
+      await page.waitForTimeout(1000);
       await menu.getByRole("menuitem", { name: /Run tests/ }).click();
       await terminalShows(bb, page, web, "Run tests", "passed (");
-      await page.waitForTimeout(1800);
+      await page.waitForTimeout(1500);
+
+      // Edit: add a Lint action in the form and save it.
       menu = await openMenu(page, (opened) => opened.getByText("Finished", { exact: true }).waitFor());
+      await page.waitForTimeout(1000);
+      await menu.getByRole("menuitem", { name: "Edit actions…" }).click();
+      await page.getByRole("listitem", { name: "Dev server" }).waitFor();
       await page.waitForTimeout(1200);
-      await menu.getByRole("menuitem", { name: /Dev server/ }).click();
-      await page.waitForTimeout(2500);
+      await page.getByRole("button", { name: "Add action" }).click();
+      const added = page.getByRole("listitem", { name: "Action 5" });
+      await added.getByLabel(/Name/).pressSequentially("Lint", { delay: 80 });
+      const lint = page.getByRole("listitem", { name: "Lint" });
+      await lint.getByLabel(/Command/).pressSequentially("node scripts/lint.mjs", { delay: 45 });
+      await lint.getByLabel(/Description/).pressSequentially("ESLint over src/", { delay: 45 });
+      await page.waitForTimeout(700);
+      await page.getByRole("button", { name: "Save" }).click();
+      await page.getByText(/Saved in this worktree/).waitFor();
+      await page.getByText(/Saved in this worktree/).evaluate((note) => note.scrollIntoView({ block: "center" }));
+      await page.waitForTimeout(2000);
+
+      // The menu lists it at once, and it runs.
+      menu = await openMenu(page, (opened) => opened.getByRole("menuitem", { name: /Lint/ }).waitFor());
+      await page.waitForTimeout(1500);
+      await menu.getByRole("menuitem", { name: /Lint/ }).click();
+      await terminalShows(bb, page, web, "Lint", "no problems");
+      await page.waitForTimeout(2200);
     },
     { formats: ["gif"] },
   );
   closeTerminals(bb, web);
-
   // The editor beside the thread, opened from the menu.
   for (const [variant, file] of pairs(VARIANTS, "editor")) {
     const page = await openThread(shots, { ...variant, viewport: { width: 1440, height: 1000 } }, web);
@@ -253,33 +281,4 @@ export async function shoot({ bb, shots, VARIANTS }) {
     await shots.still(page, file);
     await shots.closePage(page);
   }
-
-  // The demo: a project with no actions gets its first one in the editor, and the menu lists it.
-  await shots.video(
-    "editor-demo",
-    VARIANTS.desktopLight,
-    async (page) => {
-      await page.goto(new URL(`/threads/${docs}`, page.url()).href);
-      await page.getByRole("button", { name: "Project actions" }).waitFor();
-      await page.waitForTimeout(800);
-      let menu = await openMenu(page, (opened) => opened.getByText("No actions in this project").waitFor());
-      await page.waitForTimeout(1200);
-      await menu.getByRole("menuitem", { name: "Add actions" }).click();
-      const first = page.getByRole("listitem", { name: "Action 1" });
-      await first.waitFor();
-      await page.waitForTimeout(800);
-      await first.getByLabel(/Name/).pressSequentially("Docs preview", { delay: 60 });
-      const row = page.getByRole("listitem", { name: "Docs preview" });
-      await row.getByLabel(/Command/).pressSequentially("npm run docs:dev", { delay: 50 });
-      await row.getByLabel(/Description/).pressSequentially("The guide on http://localhost:4000", { delay: 30 });
-      await page.waitForTimeout(600);
-      await page.getByRole("button", { name: "Save" }).click();
-      await page.getByText(/Saved in this worktree/).waitFor();
-      await page.waitForTimeout(1500);
-      menu = await openMenu(page, (opened) => opened.getByRole("menuitem", { name: /Docs preview/ }).waitFor());
-      await page.waitForTimeout(2000);
-      await page.keyboard.press("Escape");
-    },
-    { formats: ["gif"] },
-  );
 }

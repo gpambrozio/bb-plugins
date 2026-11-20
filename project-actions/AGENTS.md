@@ -101,7 +101,7 @@ controller from the header menu: bb mounts the old header slot inside the thread
 ## Live checks
 
 Use the shots harness with `--keep` (`tools/shots/README.md`): it seeds three projects (an actions file,
-none, and one with a mistake) with a thread each. The shot list's last GIF writes Docs Site's actions
-file through the editor, so a `--keep` run leaves that project with one action. bb draws terminals on a WebGL canvas, so a page has no
+none, and one with a mistake) with a thread each. The demo GIF adds a Lint action to Acme Web's actions
+file through the editor, so a `--keep` run leaves that project with five actions. bb draws terminals on a WebGL canvas, so a page has no
 terminal text to wait on (read it with `bb terminal output <id> --plain`), and headless Chromium captures
 the canvas blank at 2×: shots that show a terminal are taken at 1×.
