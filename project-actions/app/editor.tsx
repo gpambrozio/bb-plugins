@@ -226,15 +226,16 @@ export function ActionsEditor({ threadId }: { threadId: string }) {
     if (loaded.kind !== "ready" || problem !== null || saving) return;
     setSaving(true);
     setNotice(null);
+    // What was sent. Editing stays open while the save is on its way, so the draft may have moved on.
+    const sent = draft;
     try {
-      const result = await rpc.call("save", { threadId, text: draft, expectedSha256: loaded.sha256 });
+      const result = await rpc.call("save", { threadId, text: sent, expectedSha256: loaded.sha256 });
       if (result.outcome === "conflict") {
         setNotice({ kind: "conflict" });
         return;
       }
-      setLoaded({ ...loaded, original: draft, sha256: result.sha256 });
-      setJson(draft);
-      setRows((current) => current.map((row) => ({ ...row, touched: true })));
+      // Only the saved baseline moves: edits made since the click stay in the draft, unsaved.
+      setLoaded((current) => (current.kind === "ready" ? { ...current, original: sent, sha256: result.sha256 } : current));
       setNotice({ kind: "saved" });
     } catch (error) {
       setNotice({ kind: "error", message: message(error) });

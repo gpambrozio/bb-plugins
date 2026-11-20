@@ -24,4 +24,4 @@ A project without the file gets a short explanation of how to add one. A file wi
 
 ## Requirements
 
-bb 0.49 or newer. Actions run on macOS and Linux machines. Nothing to configure, and nothing is sent anywhere: the plugin runs only the commands in the project's file, only when you pick one, and writes that file only when you save in the editor.
+bb 0.49 or newer. Actions run on macOS and Linux machines. Nothing to configure, and nothing is sent anywhere: the plugin runs only the commands in the project's file, in folders inside the workspace, and writes only that file. Starting an action and saving the file are the plugin's RPCs, which the menu and the editor call and which other clients you trust with your bb (plugins, scripts) can call too, as with any bb plugin.

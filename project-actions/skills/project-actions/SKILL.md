@@ -6,9 +6,11 @@ description: Add or change a project's actions for the Project Actions plugin â€
 
 The Project Actions plugin reads `.bb/actions.json` at the root of the thread's workspace and lists its
 actions in a menu in the thread's header (the play button). Picking one runs it in a bb terminal of the
-thread, in the workspace. The user picks; agents do not start actions through this plugin. To run a
-command yourself, use your own shell, or `bb terminal create --thread "$BB_THREAD_ID" --title <name>
---command <command>` for a terminal the user can see.
+thread, in the workspace. Which actions to run is the user's call: do not start them through the
+plugin's RPCs (`bb plugin rpc call project-actions run â€¦` would work, since bb trusts agents' calls like
+the app's; this is a convention, not a lock). To run a command yourself, use your own shell, or
+`bb terminal create --thread "$BB_THREAD_ID" --title <name> --command <command>` for a terminal the user
+can see. Edit the file directly (below) rather than through the plugin's `save` RPC.
 
 ## The file
 

@@ -3,7 +3,7 @@
  * The Edit actions tab against a fake server: what it opens, the checks it shows while editing, the
  * file it saves, and a file that changed on disk meanwhile.
  */
-import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { renderSlot, type PluginRpcTestHandlers } from "@get-bb/plugin-sdk/testing/app";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
@@ -143,6 +143,41 @@ describe("the Edit actions tab", () => {
     await waitFor(() => expect(field(screen.getByRole("listitem", { name: "Dev server" }), /Description/).value).toBe("Vite, on port 5173"));
     expect(field(action("Run tests"), /Command/).value).toBe("npm test");
     expect(reads).toHaveLength(2);
+  });
+
+  it("keeps JSON typed while a save is on its way, and leaves it to save", async () => {
+    let finish: (result: SaveResult) => void = () => {};
+    const { saves } = render({ save: () => new Promise<SaveResult>((resolve) => (finish = resolve)) });
+    await screen.findByRole("listitem", { name: "Dev server" });
+    fireEvent.click(screen.getByRole("button", { name: "JSON" }));
+    const textarea = screen.getByLabelText(".bb/actions.json") as HTMLTextAreaElement;
+    const first = FILE.replace("npm test", "npm run test:ci");
+    fireEvent.change(textarea, { target: { value: first } });
+    fireEvent.click(saveButton());
+    await waitFor(() => expect(saves).toHaveLength(1));
+    // Typed after Save, before the machine answered.
+    const later = first.replace("Vite", "Vite, on port 5173");
+    fireEvent.change(textarea, { target: { value: later } });
+    await act(async () => finish({ outcome: "saved", sha256: "sha-2" }));
+    expect(await screen.findByText(/Saved in this worktree/)).toBeTruthy();
+    expect(textarea.value).toBe(later);
+    expect(saveButton().disabled).toBe(false);
+    // The next save sends the later edit, over the file the first save wrote.
+    fireEvent.click(saveButton());
+    await waitFor(() => expect(saves).toHaveLength(2));
+    expect(saves[1]).toEqual({ threadId: "thr_1", text: later, expectedSha256: "sha-2" });
+  });
+
+  it("keeps form edits made while a save is on its way", async () => {
+    let finish: (result: SaveResult) => void = () => {};
+    render({ save: () => new Promise<SaveResult>((resolve) => (finish = resolve)) });
+    fireEvent.change(field(await screen.findByRole("listitem", { name: "Run tests" }), /Command/), { target: { value: "npm run test:ci" } });
+    fireEvent.click(saveButton());
+    fireEvent.change(field(action("Dev server"), /Description/), { target: { value: "Vite, on port 5173" } });
+    await act(async () => finish({ outcome: "saved", sha256: "sha-2" }));
+    expect(field(action("Dev server"), /Description/).value).toBe("Vite, on port 5173");
+    expect(field(action("Run tests"), /Command/).value).toBe("npm run test:ci");
+    expect(saveButton().disabled).toBe(false);
   });
 
   it("says why a save failed", async () => {

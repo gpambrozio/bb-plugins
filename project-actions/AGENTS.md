@@ -49,11 +49,11 @@ the plugin registers one that opens a thread tab listing the same actions (`app/
 **The terminal runs a wrapper, not bb's command mode.** `start: { mode: "command" }` runs `$SHELL -lc
 <command>` and ends the terminal with the command. A script that finishes quickly is then gone before the
 app opens it (`experimental_openTerminal` refuses an exited terminal), and its output is never seen. So
-the terminal starts in argv mode: `/bin/sh -c <wrapper> bb-project-actions <dir> <command> <name>`. The
-wrapper `cd`s, runs the command as bb would (`"$SHELL" -lc`, so the user's PATH and shell syntax hold),
-prints `[<name> ended with exit code N. Press Enter to close this terminal.]` and waits for Enter. The
-command, folder and name are arguments, never spliced into the script, so nothing in the file is
-re-quoted. `trap : INT` keeps the wrapper alive through a Ctrl+C that stops the command (an ignored
+the terminal starts in argv mode: `/bin/sh -c <wrapper> bb-project-actions <workspace> <folder> <command>
+<name>`. The wrapper `cd`s (and checks the folder, below), runs the command as bb would (`"$SHELL"
+-lc`, so the user's PATH and shell syntax hold), prints `[<name> ended with exit code N. Press Enter to close this terminal.]` and waits for Enter. The
+workspace, folder, command and name are arguments, never spliced into the script, so nothing in the
+file is re-quoted. `trap : INT` keeps the wrapper alive through a Ctrl+C that stops the command (an ignored
 signal would be inherited by the command; a trapped one is reset for it).
 
 **Running or finished is read from the terminal.** bb says a terminal is running until the wrapper exits,
@@ -68,6 +68,20 @@ name → terminal id), not the terminal's title: the user can rename a tab, or o
 Runs whose terminals have ended are dropped from the record on the next run. Runs are serialized per
 thread, so a double click starts one terminal.
 
+**The folder is checked physically, where the action runs.** The parser refuses absolute `cwd`s and
+`..`, but only by spelling; a symlink in the repository (`linked -> ../outside`) passes it. So the
+wrapper takes the workspace and the relative folder (`./web`) separately, `cd`s into both, and compares
+`pwd -P` of each: the command runs only in the workspace's physical directory or beneath it, else the
+terminal says the folder is outside the workspace and the action ends with exit code 1. The check runs on
+the workspace's machine, in the directory the command then runs in, so nothing can change between them.
+`CDPATH` is cleared, and the `./` keeps `cd` from searching it anyway.
+
+**The RPCs are the trust boundary, not the UI.** `run` and `save` are plain plugin RPCs: other plugins,
+and scripts or agents with bb's access (`bb plugin rpc call`), can call them as the app does, and bb's
+caller kinds do not single out the app. The README says so; the skill asks agents not to start actions
+through them, as a convention. What holds for every caller: the file is re-read and re-checked, a save
+never writes an invalid file or one that changed on disk, and the folder check above.
+
 **Windows is refused.** The wrapper needs `/bin/sh`. A workspace path that looks like Windows (`C:\…`,
 `\\server\…`) gets "runs actions on macOS and Linux machines only" instead of a guess at PowerShell.
 
@@ -78,6 +92,10 @@ the editor checks each draft with the same `parseActionsFile`, so its messages a
 bb's server bundle cannot resolve, so the plugin fails to load — at run time, not at build time
 (`shared/actions-file.test.ts` guards the import). Unknown fields are refused so a misspelt `comand` is an
 error, not a silently missing command.
+
+**A save moves the baseline, not the draft.** Editing stays open while a save is on its way; when it
+lands, only the saved text and its hash change, so anything typed meanwhile stays in the draft, unsaved,
+and the next save sends it over the file the first one wrote (`app/editor.test.tsx`).
 
 **The editor edits the workspace's copy, and saves only what checks out.** `read` gives the file's text,
 its `sha256` and the environment's branch; `save` re-checks the text with the parser (an invalid file is

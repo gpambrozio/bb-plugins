@@ -110,7 +110,7 @@ describe("run", () => {
     expect(await service.run("thr_1", "Test")).toEqual({ terminalId: "term_1", outcome: "started" });
     expect(created).toHaveLength(1);
     expect(created[0]).toMatchObject({ threadId: "thr_1", title: "Test" });
-    expect(created[0]!.argv.slice(3)).toEqual(["bb-project-actions", "/work/repo/web", "npm test", "Test"]);
+    expect(created[0]!.argv.slice(3)).toEqual(["bb-project-actions", "/work/repo", "./web", "npm test", "Test"]);
     expect(runs.get("thr_1")).toEqual({ Test: "term_1" });
   });
 
@@ -160,7 +160,7 @@ describe("run", () => {
     const { service, created, setFile } = setup();
     setFile(text(JSON.stringify({ actions: [{ name: "Test", command: "npm run test:ci" }] })));
     await service.run("thr_1", "Test");
-    expect(created[0]!.argv[5]).toBe("npm run test:ci");
+    expect(created[0]!.argv[6]).toBe("npm run test:ci");
   });
 
   it.each([

@@ -87,7 +87,7 @@ describe("project-actions server", () => {
     const [[create]] = harness.sdk.callsTo("terminals.create") as [[Record<string, unknown> & { start: { mode: string; argv: string[] } }]];
     expect(create).toMatchObject({ scope: { kind: "thread", threadId: "thr_1" }, title: "Dev server", cols: 120, rows: 32 });
     expect(create.start.mode).toBe("argv");
-    expect(create.start.argv.slice(3)).toEqual(["bb-project-actions", "/Users/me/wt/feature/web", "npm run dev", "Dev server"]);
+    expect(create.start.argv.slice(3)).toEqual(["bb-project-actions", "/Users/me/wt/feature", "./web", "npm run dev", "Dev server"]);
 
     expect(await harness.callRpc("run", { threadId: "thr_1", name: "Dev server" })).toEqual({ terminalId: "term_1", outcome: "focused" });
     expect(await harness.callRpc("list", { threadId: "thr_1" })).toMatchObject({ actions: [{ status: "running" }] });

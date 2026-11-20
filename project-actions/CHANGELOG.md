@@ -14,6 +14,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Each action runs in a terminal of that thread**, in the thread's own worktree (or a folder inside
   it), titled with the action's name and opened in bb's terminal panel. Threads on other bb machines run
   their actions there.
+- **Actions stay inside the project**: an action's folder must be in the project, and one that leads
+  outside it, through a link for instance, is refused when the action starts.
 - **No duplicates**: picking an action that is still running shows its terminal again. A finished one
   keeps its output and how it ended until you run it again.
 - **Clear help when the file is missing or wrong**: the menu explains how to add the file, or shows the

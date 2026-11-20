@@ -130,8 +130,16 @@ Needs bb 0.49 or newer. Nothing to configure.
 
 ## Privacy and safety
 
-The plugin runs exactly the commands in the project's actions file, and only when you pick one. It
-reads and writes no other file (it writes that one only when you save in the editor) and sends nothing
-anywhere. The commands run with your permissions on the machine
-that holds the workspace, as they would in a terminal you opened yourself, so treat a repository's
-actions file like any script in it: read it before you run it.
+The plugin runs only commands from the project's actions file, in the action's folder inside the
+workspace (a folder that leads outside it, through a symlink say, is refused when the action starts). It
+reads and writes no other file and sends nothing anywhere. The commands run with your permissions on the
+machine that holds the workspace, as they would in a terminal you opened yourself, so treat a
+repository's actions file like any script in it: read it before you run it.
+
+The menu and the editor do their work through the plugin's RPCs (start an action, save the file). Like
+every bb plugin's, those can also be called by any client bb already trusts: other plugins, and scripts
+or agents with access to your bb (`bb plugin rpc call project-actions …`). The plugin does not tell the
+app's clicks apart from those calls, so "only when you pick one" holds for the app, not as a lock: an
+action starts, and the file is written, when you pick or save, or when something you have trusted with
+your bb asks for it. The file is checked the same way either way, and a save still refuses an invalid
+file or one that changed on disk.
