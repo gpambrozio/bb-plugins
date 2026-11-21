@@ -40,8 +40,8 @@ bb plugin install 'git:github.com/gpambrozio/bb-plugins@>=0.1.0' --plugin briefi
   its `README.md`, skipping titles, badges and the "This file provides guidance…" line. It is read from the
   project's checkout on whichever machine holds it, so projects on other bb machines work; when that machine
   is offline, a thread's workspace is tried instead, and the briefing says when neither answered. Each file
-  is read only if it really lies inside that folder: one that is a symlink to somewhere else on the machine
-  is passed over for the next file (as is one that cannot be opened or is too large), and the briefing says
+  is read only if it really lies inside that folder (a checkout registered through a symlinked folder is
+  read at its real path): one that is a symlink to somewhere else on the machine is passed over for the next file (as is one that cannot be opened or is too large), and the briefing says
   so when no file was left.
 - **FirstMate's tasks**, when the [FirstMate Crew](../firstmate-crew) plugin is installed and its first mate's
   thread is a root thread: what needs you (held tasks, with the question, and the captain's calls), what is

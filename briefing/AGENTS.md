@@ -67,12 +67,16 @@ written to the first mate ("You are the first mate…") and followed by paths an
 thread's workspace on another machine; at most two places, each one trying `AGENTS.md`, `CLAUDE.md`,
 `README.md` in turn. Every read passes the folder as `rootPath`: without it bb follows a symlinked
 `AGENTS.md` anywhere on the machine, and with it bb resolves the file's real path and answers one outside
-the folder with `invalid_path` ("escapes read root"). bb 0.50's daemon does not resolve the root on
-this route (`followRootSymlink: false`), so a folder whose own path ran through a symlink would have every
-file refused, failing closed with a line in `problems`; the live check's checkouts, under macOS's
-symlinked `/var`, are read, and its symlink out of a checkout is refused. A refused file (outside, `file_too_large`, `EACCES`, a
-directory: `fileRefusal` in `sdk-ports.ts`) is passed over for the next file; any other failure is the
-machine's, and the next place is tried. A machine that does not answer within the call timeout is a line
+the folder with `invalid_path` ("escapes read root"). bb 0.50's daemon checks the root itself with
+`lstat` on this route (`followRootSymlink: false`): a symlink in a parent folder (macOS's `/var`) is
+fine, since it then takes the root's real path, but a root that is itself a symlink (`/work/current` →
+a release folder) is refused with "must not be a symlink" before any file is looked at. So each place is
+first resolved once on its machine with `hosts.directory` (bb's folder browser, read-only, whose
+`directory` is the `fs.realpath`), and `path` and `rootPath` are built from that; the file containment
+check still applies inside it. A folder that cannot be opened is its own line in `problems` ("its folder
+could not be opened"), apart from a file pointing outside. A refused file (outside, `file_too_large`,
+`EACCES`, a directory: `fileRefusal` in `sdk-ports.ts`) is passed over for the next file; any other
+failure is the machine's, and the next place is tried. A machine that does not answer within the call timeout is a line
 in `problems`.
 
 **Sub-threads.** `experimental_listDescendants` gives every non-archived, visible thread below each root

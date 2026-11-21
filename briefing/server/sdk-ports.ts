@@ -38,11 +38,11 @@ export function fileRefusal(error: unknown): string | null {
   const code = String((error as { code?: unknown } | null)?.code ?? "");
   const status = (error as { status?: unknown } | null)?.status;
   const text = message(error);
-  if (code === "invalid_path" || /escapes read root/i.test(text)) return "it points outside the project's folder";
+  if (/escapes read root/i.test(text)) return "it points outside the project's folder";
   if (code === "file_too_large" || status === 413) return "it is too large";
   if (code === "EACCES" || code === "EPERM" || /\b(?:EACCES|EPERM)\b|permission denied/i.test(text)) return "permission denied";
   if (code === "EISDIR" || code === "ENOTDIR" || /\b(?:EISDIR|ENOTDIR)\b/.test(text)) return "it is not a file";
-  if (status === 400 || status === 403) return text;
+  if (code === "invalid_path" || status === 400 || status === 403) return text;
   return null;
 }
 
@@ -187,11 +187,17 @@ export function sdkPorts(sdk: Sdk, caller: AbortSignal | undefined): BriefingPor
       // turn stopped first) has none: the reply before it is the thread's last message of its own.
       return lastOwnAgentMessage(threadId);
     },
+    async realFolder(hostId, path) {
+      // bb's folder browser answers with the folder's real path (`fs.realpath`), and only reads.
+      const listing = await sdk.hosts.directory({ hostId, path, signal: signal() });
+      return listing.directory;
+    },
     async readFile(hostId, root, name): Promise<FileRead> {
       const rootPath = root.replace(/\/+$/, "") || "/";
       try {
         // `rootPath` makes bb resolve the file's real path and refuse one outside the folder; without it,
-        // a symlinked AGENTS.md would be followed anywhere on the machine.
+        // a symlinked AGENTS.md would be followed anywhere on the machine. bb refuses a `rootPath` that is
+        // itself a symlink ("must not be a symlink"), so `root` is `realFolder`'s answer.
         const file = await sdk.files.read({ hostId, path: `${rootPath === "/" ? "" : rootPath}/${name}`, rootPath, signal: signal() });
         const text = file.contentEncoding === "base64" ? Buffer.from(file.content, "base64").toString("utf8") : file.content;
         return { kind: "text", text };

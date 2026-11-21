@@ -24,6 +24,10 @@ export interface FakeBb {
   files?: Record<string, string>;
   /** `<hostId>:<absolute path>` → the absolute path that symlink points to, on the same machine. */
   links?: Record<string, string>;
+  /** `<hostId>:<folder>` → the real folder that symlinked folder points to. */
+  folderLinks?: Record<string, string>;
+  /** `<hostId>:<folder>` → why that folder cannot be opened (gone, not a directory). */
+  folderErrors?: Record<string, string>;
   /** `<hostId>:<absolute path>` → an error the machine answers for that one file (EACCES, too large). */
   fileErrors?: Record<string, string>;
   /** Machines whose reads fail. */
@@ -104,11 +108,21 @@ export function fakePorts(bb: FakeBb): BriefingPorts & { calls: string[] } {
       calls.push(`reply:${threadId}`);
       return find(threadId)?.reply ?? null;
     },
+    async realFolder(hostId, path) {
+      calls.push(`folder:${hostId}:${path}`);
+      if (bb.offline?.includes(hostId)) throw new Error(`host ${hostId} is offline`);
+      const key = `${hostId}:${path.replace(/\/+$/, "")}`;
+      const error = bb.folderErrors?.[key];
+      if (error !== undefined) throw new Error(error);
+      return bb.folderLinks?.[key] ?? path.replace(/\/+$/, "");
+    },
     async readFile(hostId, root, name) {
       const folder = root.replace(/\/+$/, "");
       const path = `${folder}/${name}`;
       calls.push(`read:${hostId}:${path}`);
       if (bb.offline?.includes(hostId)) throw new Error(`host ${hostId} is offline`);
+      // As bb does: a root that is itself a symlink is refused before any file is looked at.
+      if (bb.folderLinks?.[`${hostId}:${folder}`] !== undefined) return { kind: "refused", reason: `Root path "${folder}" must not be a symlink` };
       const fileError = bb.fileErrors?.[`${hostId}:${path}`];
       if (fileError !== undefined) return { kind: "refused", reason: fileError };
       // As bb does with a `rootPath`: the real path must stay inside the folder.

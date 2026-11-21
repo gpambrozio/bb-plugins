@@ -172,6 +172,39 @@ describe("gatherBriefing", () => {
     expect(JSON.stringify(allOutside)).not.toContain("Private notes");
   });
 
+  it("reads a checkout registered through a symlink at its real path, still refusing a file that points out of it", async () => {
+    const base = world();
+    const ports = fakePorts({
+      ...base,
+      projects: [{ id: "proj_a", name: "Alpha", sources: [{ hostId: "host_mac", path: "/work/current" }] }, ...(base.projects ?? []).slice(1)],
+      folderLinks: { "host_mac:/work/current": "/work/releases/v2" },
+      files: { "host_mac:/work/releases/v2/README.md": "Alpha, at its real path.", "host_mac:/Users/me/private.md": "Private notes." },
+      links: { "host_mac:/work/releases/v2/AGENTS.md": "/Users/me/private.md" },
+    });
+    const briefing = await gatherBriefing(ports);
+    expect(briefing.projects.find((project) => project.id === "proj_a")).toMatchObject({ description: "Alpha, at its real path.", source: "README.md" });
+    expect(ports.calls.filter((call) => call.startsWith("folder:host_mac:/work"))).toEqual(["folder:host_mac:/work/current"]);
+    expect(ports.calls.filter((call) => call.startsWith("read:host_mac:/work"))).toEqual([
+      "read:host_mac:/work/releases/v2/AGENTS.md",
+      "read:host_mac:/work/releases/v2/CLAUDE.md",
+      "read:host_mac:/work/releases/v2/README.md",
+    ]);
+    expect(JSON.stringify(briefing)).not.toContain("Private notes");
+  });
+
+  it("tells a folder that cannot be opened apart from a file pointing outside, and tries the next place", async () => {
+    const base = world();
+    const threads = base.threads.map((thread) => (thread.id === "thr_old" ? { ...thread, hostId: "host_linux", path: "/w/alpha" } : thread));
+    const fallback = await gatherBriefing(
+      fakePorts({ ...base, threads, folderErrors: { "host_mac:/src/alpha": "HTTP 404: no such directory" }, files: { "host_linux:/w/alpha/AGENTS.md": "Alpha, from the worktree." } }),
+    );
+    expect(fallback.projects.find((project) => project.id === "proj_a")?.description).toBe("Alpha, from the worktree.");
+
+    const none = await gatherBriefing(fakePorts({ ...base, folderErrors: { "host_mac:/src/alpha": "HTTP 404: no such directory" } }));
+    expect(none.problems).toContain('Could not read the files of project "Alpha": its folder could not be opened: HTTP 404: no such directory');
+    expect(none.problems.some((problem) => problem.includes("outside"))).toBe(false);
+  });
+
   it("goes on to the README when AGENTS.md cannot be read, without trying another machine", async () => {
     const base = world();
     const ports = fakePorts({ ...base, fileErrors: { "host_mac:/src/alpha/AGENTS.md": "permission denied" } });

@@ -56,7 +56,12 @@ export interface BriefingPorts {
   /** The full text of the thread's latest reply: its latest turn's, else its last message of its own. */
   latestReply(threadId: string): Promise<string | null>;
   /**
-   * The file `name` in the folder `root` on a machine, confined to that folder: a file that resolves
+   * The real path of a folder on a machine, its symlinks resolved: bb's confined reads refuse a root that is
+   * itself a symlink, so `readFile` is given this. Throws when the folder or the machine cannot be read.
+   */
+  realFolder(hostId: string, path: string): Promise<string>;
+  /**
+   * The file `name` in the folder `root` (a real path, from `realFolder`) on a machine, confined to that folder: a file that resolves
    * outside it (a symlink out) is refused, not read. Throws when the machine cannot be read.
    */
   readFile(hostId: string, root: string, name: string): Promise<FileRead>;

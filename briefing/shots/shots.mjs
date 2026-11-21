@@ -6,7 +6,7 @@
 //   cd tools/shots && npm run shots -- briefing --out "$TMPDIR/briefing-live"
 //
 // The seed: two projects (one described by AGENTS.md after the boilerplate line, one whose CLAUDE.md only
-// imports AGENTS.md, whose AGENTS.md is a symlink to a file outside the checkout that must never be read,
+// imports AGENTS.md, which is registered through a symlinked folder, whose AGENTS.md is a symlink to a file outside the checkout that must never be read,
 // and whose README describes it), root threads that are finished, failed, waiting on a
 // permission, and archived, twenty more to press on the size budget, and a FirstMate home with a backlog
 // (holds, blocked-by, in flight, queued, done) whose first mate runs two crewmates: one that needs a
@@ -94,6 +94,28 @@ function expect(condition, what) {
 
 const state = {};
 
+/**
+ * A project registered through a symlinked folder (`demo/acme-api` → `demo/acme-api-v2`), as a checkout
+ * kept at `current` → a release folder is: bb refuses a confined read whose root is itself a symlink, so
+ * the briefing has to resolve it first. Returns { id, path } with `path` the real folder.
+ */
+function symlinkedProject(bb, seed, name, files) {
+  const real = join(bb.cfg.root, "demo", "acme-api-v2");
+  const link = join(bb.cfg.root, "demo", "acme-api");
+  writeTree(real, files);
+  const git = (...args) =>
+    execFileSync("git", ["-C", real, "-c", "user.name=Demo", "-c", "user.email=demo@example.com", ...args], { stdio: "ignore", env: { PATH: process.env.PATH, HOME: seed.home } });
+  git("init", "-q", "-b", "main");
+  git("add", "-A");
+  git("commit", "-qm", "Initial commit");
+  symlinkSync(real, link);
+  const project = bb.cliJson(["project", "create", "--root", link, "--name", name, "--json"]);
+  const shown = bb.cliJson(["project", "show", project.id, "--json"]);
+  const sources = shown.sources ?? shown.project?.sources ?? project.sources ?? [];
+  expect(sources.some((source) => source.path === link), `bb did not keep the symlinked root: ${JSON.stringify(sources.map((source) => source.path))}`);
+  return { id: project.id, path: real };
+}
+
 export async function seed({ bb, seed }) {
   if (!existsSync(join(FIRSTMATE, "node_modules"))) {
     execFileSync("npm", ["ci", "--no-audit", "--no-fund", "--cache", join(tmpdir(), "bbss-npm-cache")], { cwd: FIRSTMATE, stdio: "inherit" });
@@ -103,7 +125,7 @@ export async function seed({ bb, seed }) {
   const web = seed.project(WEB, {
     "AGENTS.md": "# AGENTS.md\n\nThis file provides guidance to coding agents working in this repository.\n\nAcme Web is the customer site: sign-up, sign-in and the dashboard. It ships through reviewed pull requests.\n\n## Commands\n\n`npm test`\n",
   });
-  const api = seed.project(API, { "CLAUDE.md": "@AGENTS.md\n", "README.md": "# Acme API\n\n[![CI](https://ci.example/badge.svg)](https://ci.example)\n\nThe public Acme API, with keys per customer and rate limits per plan.\n" });
+  const api = symlinkedProject(bb, seed, API, { "CLAUDE.md": "@AGENTS.md\n", "README.md": "# Acme API\n\n[![CI](https://ci.example/badge.svg)](https://ci.example)\n\nThe public Acme API, with keys per customer and rate limits per plan.\n" });
   state.web = web;
   // A description file that points outside the checkout: bb must refuse it, and the README describe the project.
   const outside = join(bb.cfg.root, "outside");

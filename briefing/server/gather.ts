@@ -136,8 +136,8 @@ function placesOf(project: ProjectRow | undefined, rows: readonly ThreadRow[]): 
 
 /**
  * The project's description from the first of its files that has one, on the first machine that answers.
- * A file bb refuses (outside the folder, too large, unreadable) is passed over for the next one; a machine
- * that does not answer is passed over for the next place.
+ * A file bb refuses (outside the folder, too large, unreadable) is passed over for the next one; a folder
+ * that cannot be opened, or a machine that does not answer, is passed over for the next place.
  */
 export async function readProject(
   ports: BriefingPorts,
@@ -151,9 +151,17 @@ export async function readProject(
   let lastError: string | null = null;
   for (const place of places) {
     const refused: string[] = [];
+    let root: string;
+    try {
+      // Once per place: a checkout registered through a symlink is read at its real path.
+      root = await ports.realFolder(place.hostId, place.path);
+    } catch (error) {
+      lastError = `its folder could not be opened: ${reason(error)}`;
+      continue;
+    }
     try {
       for (const file of DESCRIPTION_FILES) {
-        const read = await ports.readFile(place.hostId, place.path, file);
+        const read = await ports.readFile(place.hostId, root, file);
         if (read.kind === "refused") {
           refused.push(`${file} (${read.reason})`);
           continue;

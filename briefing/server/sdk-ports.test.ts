@@ -14,6 +14,7 @@ const READS = new Set([
   "threads.conversationOutline",
   "threads.output",
   "projects.list",
+  "hosts.directory",
   "files.read",
   "plugins.list",
   "plugins.callRpc",
@@ -45,6 +46,8 @@ const ANSWERS: Record<string, (args: Record<string, unknown>) => unknown> = {
   "threads.conversationOutline": () => ({ items: [{ id: "a", role: "assistant", preview: "hi there", attachmentSummary: null }], maxSeq: 2 }),
   "threads.output": () => ({ output: "blocked: waiting" }),
   "projects.list": () => [{ id: "proj_a", name: "Alpha", sources: [{ hostId: "host_mac", path: "/src", isDefault: true }] }],
+  // The folder's real path, as bb's folder browser answers it.
+  "hosts.directory": (args) => ({ directory: args.path, parent: "/", entries: [], roots: ["/"] }),
   "files.read": (args) => {
     if (args.path === "/src/AGENTS.md") return { content: Buffer.from("Alpha does things.").toString("base64"), contentEncoding: "base64" };
     throw Object.assign(new Error("not found"), { status: 404 });
@@ -192,6 +195,27 @@ describe("sdkPorts description reads", () => {
       const briefing = await gatherBriefing(sdkPorts(sdk, undefined));
       expect(briefing.projects[0]).toMatchObject({ description: "Alpha from the README.", source: "README.md" });
     }
+  });
+
+  it("reads a checkout registered through a symlink at its real path, resolving it once", async () => {
+    const calls: { path: string; args: Record<string, unknown> }[] = [];
+    const sdk = recordingSdk(calls, {
+      "projects.list": () => [{ id: "proj_a", name: "Alpha", sources: [{ hostId: "host_mac", path: "/work/current", isDefault: true }] }],
+      "hosts.directory": (args) => ({ directory: args.path === "/work/current" ? "/work/releases/v2" : args.path, parent: "/work", entries: [], roots: ["/"] }),
+      "files.read": (args) => {
+        if (args.rootPath !== "/work/releases/v2") throw http(400, "invalid_path", `Root path "${String(args.rootPath)}" must not be a symlink`);
+        if (args.path === "/work/releases/v2/README.md") return { content: "Alpha, at its real path.", contentEncoding: "utf8" };
+        throw http(404, "ENOENT", "no such file");
+      },
+    });
+    const briefing = await gatherBriefing(sdkPorts(sdk, undefined));
+    expect(briefing.projects[0]).toMatchObject({ description: "Alpha, at its real path.", source: "README.md" });
+    expect(calls.filter((call) => call.path === "hosts.directory" && call.args.path === "/work/current")).toHaveLength(1);
+    expect(calls.filter((call) => call.path === "files.read").every((call) => call.args.rootPath === "/work/releases/v2")).toBe(true);
+  });
+
+  it("says a root bb will not open is a root problem, not a file pointing outside", () => {
+    expect(fileRefusal(http(400, "invalid_path", 'Root path "/work/current" must not be a symlink'))).toBe('HTTP 400: Root path "/work/current" must not be a symlink');
   });
 
   it("gives up on a machine that does not answer, rather than on one file", async () => {
