@@ -5,7 +5,7 @@
 import { describe, DESCRIPTION_FILES } from "./description";
 import { groupFleet } from "./firstmate";
 import { flaggedStatusLine, lastLine, userMessages } from "./messages";
-import type { Briefing, FirstMateBrief, FlaggedChild, ProjectBrief, ThreadBrief, ThreadDetail } from "./model";
+import type { Briefing, DetailChild, FirstMateBrief, FlaggedChild, ProjectBrief, ThreadBrief, ThreadDetail } from "./model";
 import type { BriefingPorts, ProjectRow, ThreadRow } from "./ports";
 import { clip, cleanTitle, plain } from "./text";
 
@@ -63,10 +63,11 @@ function titleOf(row: ThreadRow): string {
   return cleanTitle(row.title ?? row.titleFallback ?? "Untitled");
 }
 
-function kept(text: string | null): string | null {
+/** `text` cleaned for speech and cut to `max` characters (the thread detail keeps it whole). */
+function kept(text: string | null, max: number = LIMITS.messageChars): string | null {
   if (text === null) return null;
   const cleaned = plain(text);
-  return cleaned === "" ? null : clip(cleaned, LIMITS.messageChars);
+  return cleaned === "" ? null : clip(cleaned, max);
 }
 
 interface Messages {
@@ -76,8 +77,18 @@ interface Messages {
   lastAgent: string | null;
 }
 
-/** The thread's opening message, its latest `want` messages from the user, and its agent's latest message. */
-export async function readMessages(ports: BriefingPorts, threadId: string, want: number, problems: string[], name: string): Promise<Messages> {
+/**
+ * The thread's opening message, its latest `want` messages from the user, and its agent's latest message,
+ * each cut to `maxChars`.
+ */
+export async function readMessages(
+  ports: BriefingPorts,
+  threadId: string,
+  want: number,
+  problems: string[],
+  name: string,
+  maxChars: number = LIMITS.messageChars,
+): Promise<Messages> {
   const failed = (what: string) => (error: unknown) => {
     problems.push(`Could not read ${what} of "${name}": ${reason(error)}`);
     return null;
@@ -103,9 +114,9 @@ export async function readMessages(ports: BriefingPorts, threadId: string, want:
   const openingSeq = openingEvent?.seq ?? null;
   const recentUser = (recent ?? [])
     .filter((message) => message.seq !== openingSeq)
-    .map((message) => kept(message.text))
+    .map((message) => kept(message.text, maxChars))
     .filter((text): text is string => text !== null);
-  return { opening: kept(openingEvent?.text ?? null), recentUser, lastAgent: kept(agent) };
+  return { opening: kept(openingEvent?.text ?? null, maxChars), recentUser, lastAgent: kept(agent, maxChars) };
 }
 
 /** Where a project's files can be read: its checkouts, then the workspaces of its threads. */
@@ -123,7 +134,11 @@ function placesOf(project: ProjectRow | undefined, rows: readonly ThreadRow[]): 
   });
 }
 
-/** The project's description from the first of its files that has one, on the first machine that answers. */
+/**
+ * The project's description from the first of its files that has one, on the first machine that answers.
+ * A file bb refuses (outside the folder, too large, unreadable) is passed over for the next one; a machine
+ * that does not answer is passed over for the next place.
+ */
 export async function readProject(
   ports: BriefingPorts,
   projectId: string,
@@ -135,36 +150,71 @@ export async function readProject(
   const places = placesOf(project, rows).slice(0, LIMITS.descriptionSources);
   let lastError: string | null = null;
   for (const place of places) {
+    const refused: string[] = [];
     try {
       for (const file of DESCRIPTION_FILES) {
-        const text = await ports.readFile(place.hostId, `${place.path.replace(/\/+$/, "")}/${file}`);
-        const description = text === null ? null : describe(text);
+        const read = await ports.readFile(place.hostId, place.path, file);
+        if (read.kind === "refused") {
+          refused.push(`${file} (${read.reason})`);
+          continue;
+        }
+        const description = read.kind === "text" ? describe(read.text) : null;
         if (description !== null) return { id: projectId, name, description: clip(description, LIMITS.messageChars), source: file };
       }
-      return { id: projectId, name, description: null, source: null };
     } catch (error) {
       lastError = reason(error);
+      continue;
     }
+    if (refused.length > 0) problems.push(`Did not read the description of project "${name}" from ${refused.join(", ")}.`);
+    return { id: projectId, name, description: null, source: null };
   }
   if (lastError !== null) problems.push(`Could not read the files of project "${name}": ${lastError}`);
   return { id: projectId, name, description: null, source: null };
 }
 
-/** Why a sub-thread is worth naming, or null when it is not. Reads its latest reply only when it is idle. */
-async function flagOf(ports: BriefingPorts, row: ThreadRow, budget: { replies: number; skipped: number }): Promise<FlaggedChild | null> {
+/** A sub-thread the briefing checked: named when it needs someone, `unchecked` when its reply was not read. */
+type ChildCheck = { flag: FlaggedChild | null; unchecked: boolean };
+
+/** Why a sub-thread is worth naming. Reads its latest reply only when it is idle; a failed read is noted in `budget.failed`. */
+async function flagOf(ports: BriefingPorts, row: ThreadRow, budget: ReplyBudget): Promise<ChildCheck> {
   const base = { id: row.id, title: titleOf(row) };
-  if (row.hasPendingInteraction) return { ...base, state: "waiting for an answer", detail: null };
-  if (row.status === "error") return { ...base, state: "failed", detail: null };
-  if (row.status !== "idle") return null;
+  if (row.hasPendingInteraction) return { flag: { ...base, state: "waiting for an answer", detail: null }, unchecked: false };
+  if (row.status === "error") return { flag: { ...base, state: "failed", detail: null }, unchecked: false };
+  if (row.status !== "idle") return { flag: null, unchecked: false };
   if (budget.replies <= 0) {
     budget.skipped++;
-    return null;
+    return { flag: null, unchecked: true };
   }
   budget.replies--;
-  const line = flaggedStatusLine(await ports.latestReply(row.id).catch(() => null));
-  if (line === null) return null;
+  let reply: string | null;
+  try {
+    reply = await ports.latestReply(row.id);
+  } catch (error) {
+    budget.failed.push(reason(error));
+    return { flag: null, unchecked: true };
+  }
+  const line = flaggedStatusLine(reply);
+  if (line === null) return { flag: null, unchecked: false };
   const detail = plain(line.detail);
-  return { ...base, state: line.state, detail: detail === "" ? null : clip(detail, 200) };
+  return { flag: { ...base, state: line.state, detail: detail === "" ? null : clip(detail, 200) }, unchecked: false };
+}
+
+interface ReplyBudget {
+  replies: number;
+  /** Idle sub-threads not read because `replies` ran out. */
+  skipped: number;
+  /** Why each failed read failed. */
+  failed: string[];
+}
+
+/** The problem lines for sub-thread replies that were not read. */
+function replyProblems(budget: ReplyBudget, cap: number): string[] {
+  const out: string[] = [];
+  if (budget.failed.length > 0) {
+    out.push(`Could not check ${budget.failed.length === 1 ? "1 sub-thread" : `${budget.failed.length} sub-threads`} for a blocked status line: ${budget.failed[0]}`);
+  }
+  if (budget.skipped > 0) out.push(`Only ${cap} idle sub-threads were checked for a blocked status line; ${budget.skipped} were not.`);
+  return out;
 }
 
 /** Most urgent first: the user's attention, then the first mate, then the most recently updated. */
@@ -218,7 +268,7 @@ export async function gatherBriefing(ports: BriefingPorts, now: number = Date.no
   const projectById = new Map(projects.map((project) => [project.id, project]));
   const firstMate = firstMateAll !== null && rootIds.includes(firstMateAll.threadId) ? firstMateAll : null;
 
-  const budget = { replies: LIMITS.childReplies, skipped: 0 };
+  const budget: ReplyBudget = { replies: LIMITS.childReplies, skipped: 0, failed: [] };
   const threads = await pool(roots, LIMITS.concurrency, async (row): Promise<ThreadBrief> => {
     const title = titleOf(row);
     const below = children.get(row.id) ?? [];
@@ -239,13 +289,12 @@ export async function gatherBriefing(ports: BriefingPorts, now: number = Date.no
       lastUser: messages.recentUser[0] ?? null,
       lastAgent: messages.lastAgent,
       childCount: below.length,
-      flaggedChildren: flags.filter((flag): flag is FlaggedChild => flag !== null),
+      flaggedChildren: flags.map((check) => check.flag).filter((flag): flag is FlaggedChild => flag !== null),
+      uncheckedChildren: flags.filter((check) => check.unchecked).length,
     };
   });
   threads.sort(compareThreads);
-  if (budget.skipped > 0) {
-    problems.push(`Only ${LIMITS.childReplies} idle sub-threads were checked for a blocked status line; ${budget.skipped} were not.`);
-  }
+  problems.push(...replyProblems(budget, LIMITS.childReplies));
 
   const projectIds = [...new Set(threads.map((thread) => thread.projectId))];
   const mateProjectId = threads.find((thread) => thread.isFirstMate)?.projectId ?? null;
@@ -275,7 +324,11 @@ const DETAIL_USER_MESSAGES = 3;
 /** Sub-threads whose latest reply is read for the thread detail. */
 const DETAIL_CHILD_REPLIES = 20;
 
-/** One thread in more depth: its last few messages from the user, every sub-thread, and the first mate's tasks when it is the first mate. */
+/**
+ * One thread in more depth: its last few messages from the user, every sub-thread, and the first mate's
+ * tasks when it is the first mate. Messages and the latest reply are kept whole; the text renderer decides
+ * what fits.
+ */
 export async function gatherThread(ports: BriefingPorts, threadId: string): Promise<ThreadDetail | null> {
   const row = await ports.thread(threadId);
   if (row === null) return null;
@@ -294,22 +347,33 @@ export async function gatherThread(ports: BriefingPorts, threadId: string): Prom
         return [] as ThreadRow[];
       }),
     // One more than shown, since the opening message is not repeated among them.
-    readMessages(ports, row.id, DETAIL_USER_MESSAGES + 1, problems, title),
-    ports.latestReply(row.id).catch(() => null),
+    readMessages(ports, row.id, DETAIL_USER_MESSAGES + 1, problems, title, Number.POSITIVE_INFINITY),
+    ports.latestReply(row.id).catch((error: unknown) => {
+      problems.push(`Could not read the whole latest reply of "${title}", so only its opening is given: ${reason(error)}`);
+      return null;
+    }),
   ]);
   const project = projects.find((candidate) => candidate.id === row.projectId);
   const firstMate = firstMateAll?.threadId === row.id ? firstMateAll : null;
-  let replies = DETAIL_CHILD_REPLIES;
-  const childLines = await pool(children, LIMITS.concurrency, async (child) => {
-    let statusLine: string | null = null;
-    if (child.status === "idle" && replies > 0) {
-      replies--;
-      const line = lastLine(await ports.latestReply(child.id).catch(() => null));
-      statusLine = line === null ? null : clip(plain(line), 200) || null;
-    }
+  const budget: ReplyBudget = { replies: DETAIL_CHILD_REPLIES, skipped: 0, failed: [] };
+  const childLines = await pool(children, LIMITS.concurrency, async (child): Promise<DetailChild> => {
     const status = child.hasPendingInteraction ? "waiting for an answer" : statusWord(child.status);
-    return { id: child.id, title: titleOf(child), status, statusLine };
+    const base = { id: child.id, title: titleOf(child), status };
+    if (child.status !== "idle") return { ...base, statusLine: null, unread: null };
+    if (budget.replies <= 0) {
+      budget.skipped++;
+      return { ...base, statusLine: null, unread: "over-limit" };
+    }
+    budget.replies--;
+    try {
+      const line = lastLine(await ports.latestReply(child.id));
+      return { ...base, statusLine: line === null ? null : clip(plain(line), 200) || null, unread: null };
+    } catch (error) {
+      budget.failed.push(reason(error));
+      return { ...base, statusLine: null, unread: "failed" };
+    }
   });
+  problems.push(...replyProblems(budget, DETAIL_CHILD_REPLIES));
   const projectBrief = firstMate !== null ? firstMateProject(row.projectId, project) : await readProject(ports, row.projectId, project, [row], problems);
   const thread: ThreadBrief = {
     id: row.id,
@@ -322,9 +386,10 @@ export async function gatherThread(ports: BriefingPorts, threadId: string): Prom
     updatedAt: row.updatedAt,
     opening: messages.opening,
     lastUser: messages.recentUser[0] ?? null,
-    lastAgent: kept(reply) ?? messages.lastAgent,
+    lastAgent: kept(reply, Number.POSITIVE_INFINITY) ?? messages.lastAgent,
     childCount: children.length,
     flaggedChildren: [],
+    uncheckedChildren: childLines.filter((child) => child.unread !== null).length,
   };
   return { thread, project: projectBrief, recentUserMessages: messages.recentUser.slice(0, DETAIL_USER_MESSAGES), children: childLines, firstMate, problems };
 }

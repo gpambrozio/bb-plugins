@@ -30,6 +30,12 @@ export interface ProjectRow {
 
 export type FleetRead = { ok: true; fleet: FleetData } | { ok: false; reason: string };
 
+/**
+ * One file read inside a folder: its text, not there, or refused for this file alone (it resolves outside
+ * the folder, is too large, cannot be opened). A machine that cannot be read throws instead.
+ */
+export type FileRead = { kind: "text"; text: string } | { kind: "missing" } | { kind: "refused"; reason: string };
+
 export interface BriefingPorts {
   /** Every thread with no parent that is not archived or hidden; `complete` is false when a cap cut the list. */
   rootThreads(): Promise<{ threads: ThreadRow[]; complete: boolean }>;
@@ -49,8 +55,11 @@ export interface BriefingPorts {
   lastAgentPreview(threadId: string): Promise<string | null>;
   /** The full text of the thread's latest reply: its latest turn's, else its last message of its own. */
   latestReply(threadId: string): Promise<string | null>;
-  /** A text file on a machine; null when it is not there. Throws when the machine cannot be read. */
-  readFile(hostId: string, path: string): Promise<string | null>;
+  /**
+   * The file `name` in the folder `root` on a machine, confined to that folder: a file that resolves
+   * outside it (a symlink out) is refused, not read. Throws when the machine cannot be read.
+   */
+  readFile(hostId: string, root: string, name: string): Promise<FileRead>;
   /** firstmate-crew's board, or why it could not be read. */
   fleet(): Promise<FleetRead>;
 }

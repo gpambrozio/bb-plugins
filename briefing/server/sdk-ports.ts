@@ -6,7 +6,7 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
 import { FIRSTMATE_PLUGIN_ID, FLEET_METHOD, FleetSchema } from "./firstmate";
 import type { RequestEvent } from "./messages";
-import type { BriefingPorts, FleetRead, ProjectRow, ThreadRow } from "./ports";
+import type { BriefingPorts, FileRead, FleetRead, ProjectRow, ThreadRow } from "./ports";
 
 type Sdk = BbPluginApi["sdk"];
 
@@ -27,6 +27,23 @@ export function isMissingFile(error: unknown): boolean {
   const status = (error as { status?: unknown } | null)?.status;
   if (status === 404 || code === "not_found" || code === "ENOENT") return true;
   return /not found|no such file|enoent|does not exist/i.test(message(error));
+}
+
+/**
+ * Why bb refused to read this one file, in plain words, or null when the failure is the machine's (offline,
+ * timed out, cancelled) rather than the file's. bb answers a file outside `rootPath` with `invalid_path`
+ * ("escapes read root"), a large one with `file_too_large`, and passes the file system's own codes through.
+ */
+export function fileRefusal(error: unknown): string | null {
+  const code = String((error as { code?: unknown } | null)?.code ?? "");
+  const status = (error as { status?: unknown } | null)?.status;
+  const text = message(error);
+  if (code === "invalid_path" || /escapes read root/i.test(text)) return "it points outside the project's folder";
+  if (code === "file_too_large" || status === 413) return "it is too large";
+  if (code === "EACCES" || code === "EPERM" || /\b(?:EACCES|EPERM)\b|permission denied/i.test(text)) return "permission denied";
+  if (code === "EISDIR" || code === "ENOTDIR" || /\b(?:EISDIR|ENOTDIR)\b/.test(text)) return "it is not a file";
+  if (status === 400 || status === 403) return text;
+  return null;
 }
 
 function chunks<T>(items: readonly T[], size: number): T[][] {
@@ -170,12 +187,18 @@ export function sdkPorts(sdk: Sdk, caller: AbortSignal | undefined): BriefingPor
       // turn stopped first) has none: the reply before it is the thread's last message of its own.
       return lastOwnAgentMessage(threadId);
     },
-    async readFile(hostId, path) {
+    async readFile(hostId, root, name): Promise<FileRead> {
+      const rootPath = root.replace(/\/+$/, "") || "/";
       try {
-        const file = await sdk.files.read({ hostId, path, signal: signal() });
-        return file.contentEncoding === "base64" ? Buffer.from(file.content, "base64").toString("utf8") : file.content;
+        // `rootPath` makes bb resolve the file's real path and refuse one outside the folder; without it,
+        // a symlinked AGENTS.md would be followed anywhere on the machine.
+        const file = await sdk.files.read({ hostId, path: `${rootPath === "/" ? "" : rootPath}/${name}`, rootPath, signal: signal() });
+        const text = file.contentEncoding === "base64" ? Buffer.from(file.content, "base64").toString("utf8") : file.content;
+        return { kind: "text", text };
       } catch (error) {
-        if (isMissingFile(error)) return null;
+        if (isMissingFile(error)) return { kind: "missing" };
+        const refused = fileRefusal(error);
+        if (refused !== null) return { kind: "refused", reason: refused };
         throw error;
       }
     },

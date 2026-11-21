@@ -2,7 +2,7 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { describe, expect, it } from "vitest";
 
 import { gatherBriefing, gatherThread } from "./gather";
-import { isMissingFile, sdkPorts } from "./sdk-ports";
+import { fileRefusal, isMissingFile, sdkPorts } from "./sdk-ports";
 
 type Sdk = BbPluginApi["sdk"];
 
@@ -157,6 +157,59 @@ describe("sdkPorts reads that need care", () => {
     const capped = await ports({ "threads.list": (args) => page(Number(args.offset), 200) }).rootThreads();
     expect(capped.complete).toBe(false);
     expect(capped.threads).toHaveLength(1_000);
+  });
+});
+
+describe("sdkPorts description reads", () => {
+  /** bb's errors as the SDK throws them (`BbHttpError`). */
+  const http = (status: number, code: string, text: string) => Object.assign(new Error(`HTTP ${status}: ${text}`), { status, code });
+
+  it("confines every description read to the checkout with rootPath", async () => {
+    const calls: { path: string; args: Record<string, unknown> }[] = [];
+    await gatherBriefing(sdkPorts(recordingSdk(calls, { "files.read": () => Promise.reject(http(404, "ENOENT", "no such file")) }), undefined));
+    const reads = calls.filter((call) => call.path === "files.read");
+    expect(reads.map((call) => [call.args.path, call.args.rootPath])).toEqual([
+      ["/src/AGENTS.md", "/src"],
+      ["/src/CLAUDE.md", "/src"],
+      ["/src/README.md", "/src"],
+    ]);
+  });
+
+  it("passes over a file bb refuses (outside the folder, unreadable, too large) for the next one", async () => {
+    for (const refusal of [
+      http(400, "invalid_path", 'Path "/src/AGENTS.md" escapes read root'),
+      http(500, "EACCES", "EACCES: permission denied, open '/src/AGENTS.md'"),
+      http(413, "file_too_large", "File is too large"),
+    ]) {
+      const calls: { path: string; args: Record<string, unknown> }[] = [];
+      const sdk = recordingSdk(calls, {
+        "files.read": (args) => {
+          if (args.path === "/src/AGENTS.md") throw refusal;
+          if (args.path === "/src/README.md") return { content: "# Alpha\n\nAlpha from the README.", contentEncoding: "utf8" };
+          throw http(404, "ENOENT", "no such file");
+        },
+      });
+      const briefing = await gatherBriefing(sdkPorts(sdk, undefined));
+      expect(briefing.projects[0]).toMatchObject({ description: "Alpha from the README.", source: "README.md" });
+    }
+  });
+
+  it("gives up on a machine that does not answer, rather than on one file", async () => {
+    const ports = sdkPorts(recordingSdk([], { "files.read": () => Promise.reject(new Error("BB request timed out after 8 s.")) }), undefined);
+    await expect(ports.readFile("host_mac", "/src", "AGENTS.md")).rejects.toThrow("timed out");
+  });
+});
+
+describe("fileRefusal", () => {
+  it("names what is wrong with the file, and is null for a machine's failure", () => {
+    expect(fileRefusal(Object.assign(new Error('HTTP 400: Path "/a/AGENTS.md" escapes read root'), { status: 400, code: "invalid_path" }))).toBe(
+      "it points outside the project's folder",
+    );
+    expect(fileRefusal(Object.assign(new Error("HTTP 413: too large"), { status: 413, code: "file_too_large" }))).toBe("it is too large");
+    expect(fileRefusal(new Error("EACCES: permission denied"))).toBe("permission denied");
+    expect(fileRefusal(new Error("EISDIR: illegal operation on a directory"))).toBe("it is not a file");
+    expect(fileRefusal(new Error("host is offline"))).toBeNull();
+    expect(fileRefusal(new Error("BB request timed out after 8 s."))).toBeNull();
   });
 });
 

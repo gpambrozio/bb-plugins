@@ -33,6 +33,11 @@ export interface ThreadBrief {
   /** Every sub-thread below it, at any depth, that is not archived. */
   childCount: number;
   flaggedChildren: FlaggedChild[];
+  /**
+   * Idle sub-threads whose latest reply was not read (the read failed, or the briefing's cap on such reads
+   * was reached), so whether they are blocked is not known. "None blocked" is said only when this is 0.
+   */
+  uncheckedChildren: number;
 }
 
 export interface ProjectBrief {
@@ -74,12 +79,22 @@ export interface Briefing {
   problems: string[];
 }
 
+export interface DetailChild {
+  id: string;
+  title: string;
+  status: string;
+  /** The last line of its latest reply, when it is idle and that reply was read. */
+  statusLine: string | null;
+  /** Why an idle sub-thread's latest reply was not read: the read failed, or the cap on such reads was reached. */
+  unread: "failed" | "over-limit" | null;
+}
+
 export interface ThreadDetail {
   thread: ThreadBrief;
   project: ProjectBrief | null;
   /** Newest first, the latest included. */
   recentUserMessages: string[];
-  children: { id: string; title: string; status: string; statusLine: string | null }[];
+  children: DetailChild[];
   firstMate: FirstMateBrief | null;
   problems: string[];
 }

@@ -119,8 +119,12 @@ function childrenLine(thread: ThreadBrief, limit: number, withDetail: boolean): 
     .slice(0, limit)
     .map((child) => `${child.title} ${CHILD_STATE[child.state]}${withDetail && child.detail !== null ? ` (${clip(child.detail, CHILD_DETAIL_MAX)})` : ""}`);
   const more = flagged.length - named.length;
-  const tail = flagged.length === 0 ? "none blocked" : `${named.join("; ")}${more > 0 ? `; and ${more} more need attention` : ""}`;
-  return `  ${plural(thread.childCount, "sub-thread")}: ${tail}.`;
+  const parts = named.length > 0 ? [named.join("; ")] : [];
+  if (more > 0) parts.push(`and ${more} more need attention`);
+  // "None blocked" only when every idle one was read: an unread reply may end with `blocked:`.
+  if (thread.uncheckedChildren > 0) parts.push(`${thread.uncheckedChildren} could not be checked`);
+  else if (flagged.length === 0) parts.push("none blocked");
+  return `  ${plural(thread.childCount, "sub-thread")}: ${parts.join("; ")}.`;
 }
 
 function fullThread(thread: ThreadBrief, detail: Detail): string[] {
@@ -139,7 +143,8 @@ function fullThread(thread: ThreadBrief, detail: Detail): string[] {
 
 function compactThread(thread: ThreadBrief): string {
   const flagged = thread.flaggedChildren.length;
-  const children = thread.childCount === 0 ? "" : `; ${plural(thread.childCount, "sub-thread")}${flagged > 0 ? `, ${flagged} need attention` : ""}`;
+  const unchecked = thread.uncheckedChildren > 0 ? `, ${thread.uncheckedChildren} not checked` : "";
+  const children = thread.childCount === 0 ? "" : `; ${plural(thread.childCount, "sub-thread")}${flagged > 0 ? `, ${flagged} need attention` : ""}${unchecked}`;
   return `- ${headline(thread).replace(/\) \[/, `${children}) [`)}`;
 }
 
@@ -225,51 +230,107 @@ interface DetailLevel {
   opening: number;
   messages: number;
   messageChars: number;
-  reply: number;
   descSentences: number;
   descChars: number;
   children: number;
   first: Detail;
+  /**
+   * The latest reply gets whatever room the rest leaves; this is the least of it kept at this level
+   * before the next level cuts the rest instead.
+   */
+  minReply: number;
 }
 
+const FULL_FIRST_MATE: Detail = { ...(LEVELS[0] as Detail), listLimit: ALL, doneLimit: ALL };
+
+/** The first level is everything; each later one cuts the rest further so more room is left for the reply. */
 const DETAIL_LEVELS: readonly DetailLevel[] = [
-  { opening: 700, messages: 3, messageChars: 300, reply: 1_000, descSentences: 3, descChars: 400, children: 15, first: { ...(LEVELS[0] as Detail), listLimit: 15, doneLimit: 10 } },
-  { opening: 450, messages: 2, messageChars: 220, reply: 600, descSentences: 2, descChars: 260, children: 10, first: { ...(LEVELS[1] as Detail), doneLimit: 5 } },
-  { opening: 250, messages: 1, messageChars: 180, reply: 350, descSentences: 1, descChars: 160, children: 6, first: LEVELS[2] as Detail },
-  { opening: 160, messages: 1, messageChars: 120, reply: 200, descSentences: 1, descChars: 120, children: 3, first: LEVELS[5] as Detail },
+  { opening: ALL, messages: 3, messageChars: ALL, descSentences: ALL, descChars: ALL, children: ALL, first: FULL_FIRST_MATE, minReply: ALL },
+  { opening: 700, messages: 3, messageChars: 300, descSentences: 3, descChars: 400, children: 15, first: { ...(LEVELS[0] as Detail), listLimit: 15, doneLimit: 10 }, minReply: 1_500 },
+  { opening: 450, messages: 2, messageChars: 220, descSentences: 2, descChars: 260, children: 10, first: { ...(LEVELS[1] as Detail), doneLimit: 5 }, minReply: 900 },
+  { opening: 250, messages: 1, messageChars: 180, descSentences: 1, descChars: 160, children: 6, first: LEVELS[2] as Detail, minReply: 500 },
+  { opening: 160, messages: 1, messageChars: 120, descSentences: 1, descChars: 120, children: 3, first: LEVELS[5] as Detail, minReply: 200 },
 ];
 
-function renderDetailAt(detail: ThreadDetail, level: DetailLevel): string {
+function count(value: number): string {
+  return value.toLocaleString("en-US");
+}
+
+/** Whether a FirstMate list at this level names fewer items than it has. */
+function firstMateCut(fm: FirstMateBrief, detail: Detail): boolean {
+  const lists = [fm.needsOwner, fm.blocked, fm.inFlight, fm.queued, fm.suggestions];
+  return lists.some((list) => list.length > detail.listLimit) || fm.done.length > detail.doneLimit;
+}
+
+/** The thread detail at one level, with the latest reply cut to `replyChars`, and a "Left out" line naming every cut. */
+function renderDetailAt(detail: ThreadDetail, level: DetailLevel, replyChars: number): string {
   const { thread } = detail;
+  const notes: string[] = [];
   const out = [headline(thread)];
   if (detail.project?.description != null) {
-    out.push(`About ${detail.project.name}: ${sentences(detail.project.description, level.descSentences, level.descChars)}`);
+    const about = sentences(detail.project.description, level.descSentences, level.descChars);
+    if (about.length < detail.project.description.length) notes.push("the rest of the project's description");
+    out.push(`About ${detail.project.name}: ${about}`);
   }
-  if (thread.opening !== null) out.push("", `Opening message: ${clip(thread.opening, level.opening)}`);
+  if (thread.opening !== null) {
+    if (thread.opening.length > level.opening) notes.push("the end of the opening message");
+    out.push("", `Opening message: ${clip(thread.opening, level.opening)}`);
+  }
   const recent = detail.recentUserMessages.slice(0, level.messages);
   if (recent.length > 0) {
     out.push("", "User's latest messages, newest first:");
     for (const message of recent) out.push(`- ${clip(message, level.messageChars)}`);
+    if (recent.some((message) => message.length > level.messageChars)) notes.push("the end of the user's longer messages");
   }
-  if (thread.lastAgent !== null) out.push("", `Agent's latest reply: ${clip(thread.lastAgent, level.reply)}`);
+  const olderMessages = detail.recentUserMessages.length - recent.length;
+  if (olderMessages > 0) notes.push(`the user's ${plural(olderMessages, "older message")}`);
+  if (thread.lastAgent !== null) {
+    const reply = clip(thread.lastAgent, replyChars);
+    if (thread.lastAgent.length > replyChars) {
+      notes.push(`the end of the agent's latest reply (the first ${count(reply.length)} of ${count(thread.lastAgent.length)} characters are given)`);
+    }
+    out.push("", `Agent's latest reply: ${reply}`);
+  }
   if (detail.children.length > 0) {
     out.push("", `Sub-threads (${detail.children.length}):`);
     for (const child of detail.children.slice(0, level.children)) {
-      out.push(`- ${child.title} (${child.status}) [${child.id}]${child.statusLine === null ? "" : `: ${clip(child.statusLine, 140)}`}`);
+      const said =
+        child.unread === "failed" ? ": its latest reply could not be read" : child.unread === "over-limit" ? ": not checked" : child.statusLine === null ? "" : `: ${clip(child.statusLine, 140)}`;
+      out.push(`- ${child.title} (${child.status}) [${child.id}]${said}`);
     }
     const more = detail.children.length - level.children;
-    if (more > 0) out.push(`- and ${more} more`);
+    if (more > 0) {
+      out.push(`- and ${more} more`);
+      notes.push(plural(more, "sub-thread"));
+    }
   }
-  if (detail.firstMate !== null) out.push("", ...renderFirstMate(detail.firstMate, level.first));
+  if (detail.firstMate !== null) {
+    out.push("", ...renderFirstMate(detail.firstMate, level.first));
+    if (firstMateCut(detail.firstMate, level.first)) notes.push("some of FirstMate's tasks");
+  }
+  if (notes.length > 0) out.push("", `Left out to fit: ${notes.join("; ")}.`);
   out.push(...problemLines(detail.problems, 2));
   return out.join("\n");
 }
 
-/** One thread in depth, at the most detailed level that fits `budget`. */
+/**
+ * One thread in depth: everything when it fits `budget`; otherwise, at the first level whose cuts leave the
+ * latest reply at least that level's `minReply`, the reply gets all the room the rest leaves.
+ */
 export function renderThread(detail: ThreadDetail, budget: number = BUDGET): string {
+  const reply = detail.thread.lastAgent;
   for (const level of DETAIL_LEVELS) {
-    const text = renderDetailAt(detail, level);
-    if (text.length <= budget) return text;
+    const whole = renderDetailAt(detail, level, ALL);
+    if (whole.length <= budget) return whole;
+    if (reply === null) continue;
+    // Shrink the reply by what is over, plus room for the "Left out" note its cut adds.
+    let chars = reply.length - (whole.length - budget) - 120;
+    while (chars >= Math.min(level.minReply, reply.length) && chars < reply.length) {
+      const text = renderDetailAt(detail, level, chars);
+      if (text.length <= budget) return text;
+      chars -= text.length - budget;
+    }
   }
-  return cut(renderDetailAt(detail, DETAIL_LEVELS[DETAIL_LEVELS.length - 1] as DetailLevel), budget);
+  const last = DETAIL_LEVELS[DETAIL_LEVELS.length - 1] as DetailLevel;
+  return cut(renderDetailAt(detail, last, last.minReply), budget);
 }

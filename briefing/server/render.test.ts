@@ -20,6 +20,7 @@ function thread(index: number, patch: Partial<ThreadBrief> = {}): ThreadBrief {
     lastAgent: `Done with step ${index}. ${LONG}`,
     childCount: 0,
     flaggedChildren: [],
+    uncheckedChildren: 0,
     ...patch,
   };
 }
@@ -145,6 +146,15 @@ describe("renderBriefing", () => {
     expect(text).toMatch(/Left out to fit: .*\nMore on one thread: bb briefing thread <id>\.$/);
   });
 
+  it("says none are blocked only when every sub-thread was checked", () => {
+    const render = (patch: Partial<ThreadBrief>) => renderBriefing({ ...briefing(1), threads: [thread(0, { childCount: 2, ...patch })] });
+    expect(render({})).toContain("2 sub-threads: none blocked.");
+    expect(render({ uncheckedChildren: 1 })).toContain("2 sub-threads: 1 could not be checked.");
+    expect(render({ uncheckedChildren: 1 })).not.toContain("none blocked");
+    const flagged = render({ uncheckedChildren: 1, flaggedChildren: [{ id: "thr_c", title: "Crew task", state: "blocked", detail: null }] });
+    expect(flagged).toContain("2 sub-threads: Crew task is blocked; 1 could not be checked.");
+  });
+
   it("drops why sub-threads are blocked before the messages, and says so", () => {
     const data = briefing(12, 10);
     data.threads[0] = { ...data.threads[0]!, flaggedChildren: [{ id: "thr_c", title: "Crew task", state: "blocked", detail: "no API key" }] };
@@ -161,7 +171,7 @@ describe("renderThread", () => {
       thread: thread(1, { lastAgent: `Reply. ${LONG.repeat(20)}`, opening: `Opening. ${LONG.repeat(10)}` }),
       project: { id: "proj_1", name: "Project 1", description: LONG, source: "AGENTS.md" },
       recentUserMessages: [`Newest. ${LONG}`, `Older. ${LONG}`, `Oldest. ${LONG}`],
-      children: Array.from({ length: 30 }, (_, index) => ({ id: `thr_c${index}`, title: `Child ${index}`, status: "idle", statusLine: `done: finished part ${index}` })),
+      children: Array.from({ length: 30 }, (_, index) => ({ id: `thr_c${index}`, title: `Child ${index}`, status: "idle", statusLine: `done: finished part ${index}`, unread: null })),
       firstMate: null,
       problems: [],
       ...patch,
@@ -183,5 +193,43 @@ describe("renderThread", () => {
     const text = renderThread(detail({ thread: thread(1), children: [] }));
     expect(text).toContain("- Oldest.");
     expect(text).toContain(`About Project 1: ${LONG}`);
+  });
+
+  it("gives a reply of about 1,500 characters whole, with nothing left out", () => {
+    const reply = `${"The work went well and every check passed in the end. ".repeat(27)}The decision: ship it on Monday.`;
+    expect(reply.length).toBeGreaterThan(1_400);
+    const text = renderThread(detail({ thread: thread(1, { lastAgent: reply }), children: [] }));
+    expect(text).toContain(`Agent's latest reply: ${reply}`);
+    expect(text).not.toContain("Left out to fit");
+  });
+
+  it("gives a reply too long for one result as far as it fits, and says how much was left out", () => {
+    const reply = `Start. ${"The work went well and every check passed in the end. ".repeat(120)}The decision: ship it on Monday.`;
+    const text = renderThread(detail({ thread: thread(1, { lastAgent: reply }), children: [], recentUserMessages: [] }));
+    expect(text.length).toBeLessThanOrEqual(BUDGET);
+    expect(text.length).toBeGreaterThan(BUDGET - 200);
+    expect(text).toMatch(/Left out to fit: .*the end of the agent's latest reply \(the first [\d,]+ of [\d,]+ characters are given\)/);
+    const given = /Agent's latest reply: (.*)/.exec(text)?.[1] ?? "";
+    expect(given.length).toBeGreaterThan(3_000);
+  });
+
+  it("gives every sub-thread and task when they fit, and names each cut when they do not", () => {
+    const children = Array.from({ length: 18 }, (_, index) => ({ id: `thr_c${index}`, title: `Child ${index}`, status: "idle", statusLine: "done: ok", unread: null }));
+    const roomy = renderThread(detail({ thread: thread(1), children, recentUserMessages: [] }));
+    expect(roomy).toContain("Child 17");
+    expect(roomy).not.toContain("Left out to fit");
+
+    const crowded = renderThread(detail({ firstMate: firstMate(40) }));
+    expect(crowded).toMatch(/Left out to fit: .*sub-threads.*some of FirstMate's tasks/);
+  });
+
+  it("marks a sub-thread whose reply was not read", () => {
+    const children = [
+      { id: "thr_a", title: "Read fails", status: "idle", statusLine: null, unread: "failed" as const },
+      { id: "thr_b", title: "Past the cap", status: "idle", statusLine: null, unread: "over-limit" as const },
+    ];
+    const text = renderThread(detail({ thread: thread(1), children }));
+    expect(text).toContain("- Read fails (idle) [thr_a]: its latest reply could not be read");
+    expect(text).toContain("- Past the cap (idle) [thr_b]: not checked");
   });
 });

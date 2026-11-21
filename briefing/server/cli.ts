@@ -22,7 +22,7 @@ async function guarded<T>(work: () => Promise<T>): Promise<T> {
   }
 }
 
-const json = { type: "boolean", description: "Print the data as JSON instead of the text" } as const;
+const json = { type: "boolean", description: "Print the data as JSON instead of the text: for scripts, with no size limit" } as const;
 
 export function briefingCli(portsFor: (signal: AbortSignal | undefined) => BriefingPorts): PluginCliRegistration {
   return defineCli({

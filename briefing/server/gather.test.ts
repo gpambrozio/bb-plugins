@@ -146,6 +146,57 @@ describe("gatherBriefing", () => {
     expect(offline.problems.some((problem) => problem.includes('project "Alpha"') && problem.includes("offline"))).toBe(true);
   });
 
+  it("never follows a description file that points outside the checkout, and tries the next one", async () => {
+    const base = world();
+    const secret = "Private notes that must never be read aloud.";
+    const ports = fakePorts({
+      ...base,
+      files: { ...base.files, "host_mac:/Users/me/private.md": secret },
+      links: { "host_mac:/src/alpha/AGENTS.md": "/Users/me/private.md" },
+    });
+    const briefing = await gatherBriefing(ports);
+    expect(briefing.projects.find((project) => project.id === "proj_a")).toMatchObject({ description: "Alpha keeps the lights on.", source: "README.md" });
+    expect(JSON.stringify(briefing)).not.toContain("Private notes");
+
+    const allOutside = await gatherBriefing(
+      fakePorts({
+        ...base,
+        files: { "host_mac:/Users/me/private.md": secret },
+        links: Object.fromEntries(["AGENTS.md", "CLAUDE.md", "README.md"].map((file) => [`host_mac:/src/alpha/${file}`, "/Users/me/private.md"])),
+      }),
+    );
+    expect(allOutside.projects.find((project) => project.id === "proj_a")?.description).toBeNull();
+    expect(allOutside.problems).toContain(
+      `Did not read the description of project "Alpha" from AGENTS.md (it points outside the project's folder), CLAUDE.md (it points outside the project's folder), README.md (it points outside the project's folder).`,
+    );
+    expect(JSON.stringify(allOutside)).not.toContain("Private notes");
+  });
+
+  it("goes on to the README when AGENTS.md cannot be read, without trying another machine", async () => {
+    const base = world();
+    const ports = fakePorts({ ...base, fileErrors: { "host_mac:/src/alpha/AGENTS.md": "permission denied" } });
+    const briefing = await gatherBriefing(ports);
+    expect(briefing.projects.find((project) => project.id === "proj_a")).toMatchObject({ description: "Alpha keeps the lights on.", source: "README.md" });
+    expect(briefing.problems).toEqual([]);
+  });
+
+  it("does not call sub-threads clear when a reply could not be read, and says why", async () => {
+    const ports = fakePorts({ threads: [{ id: "thr_root" }, { id: "thr_kid", parentThreadId: "thr_root", reply: "blocked: needs a key" }] });
+    for (const failure of [new Error("thread store unavailable"), new Error("BB request timed out after 8 s.")]) {
+      const briefing = await gatherBriefing({ ...ports, latestReply: () => Promise.reject(failure) });
+      expect(briefing.threads[0]).toMatchObject({ childCount: 1, flaggedChildren: [], uncheckedChildren: 1 });
+      expect(briefing.problems).toEqual([`Could not check 1 sub-thread for a blocked status line: ${failure.message}`]);
+    }
+    const read = await gatherBriefing(ports);
+    expect(read.threads[0]).toMatchObject({ uncheckedChildren: 0, flaggedChildren: [{ id: "thr_kid", state: "blocked" }] });
+  });
+
+  it("counts the sub-threads past the cap on reply reads as not checked", async () => {
+    const kids = Array.from({ length: LIMITS.childReplies + 2 }, (_, index) => ({ id: `thr_k${index}`, parentThreadId: "thr_root", reply: "done: fine" }));
+    const briefing = await gatherBriefing(fakePorts({ threads: [{ id: "thr_root" }, ...kids] }));
+    expect(briefing.threads[0]?.uncheckedChildren).toBe(2);
+  });
+
   it("adds FirstMate's tasks only when its thread is a root thread", async () => {
     const briefing = await gatherBriefing(fakePorts(world()));
     expect(briefing.firstMate?.needsOwner).toEqual([{ title: "Held", detail: "go?" }]);
@@ -201,6 +252,29 @@ describe("gatherThread", () => {
     expect(detail?.recentUserMessages).toEqual(["four", "three", "two"]);
     const short = await gatherThread(fakePorts({ threads: [{ id: "thr_s", requests: ["one", "two"] }] }), "thr_s");
     expect(short?.recentUserMessages).toEqual(["two"]);
+  });
+
+  it("keeps the whole latest reply and the whole messages, however long", async () => {
+    const reply = `Start. ${"word ".repeat(2_000)}The decision: ship it.`;
+    const opening = `Opening. ${"more ".repeat(400)}`;
+    const detail = await gatherThread(fakePorts({ threads: [{ id: "thr_l", requests: [opening, "x"], reply }] }), "thr_l");
+    expect(detail?.thread.lastAgent).toBe(reply.trim().replace(/\s+/g, " "));
+    expect(detail?.thread.opening?.length).toBeGreaterThan(LIMITS.messageChars);
+  });
+
+  it("says which sub-threads' replies were not read, and why", async () => {
+    const base = fakePorts({ threads: [{ id: "thr_root" }, { id: "thr_kid", parentThreadId: "thr_root" }] });
+    const ports = { ...base, latestReply: (id: string) => (id === "thr_kid" ? Promise.reject(new Error("timed out")) : Promise.resolve("ok")) };
+    const detail = await gatherThread(ports, "thr_root");
+    expect(detail?.children).toEqual([{ id: "thr_kid", title: "kid", status: "idle", statusLine: null, unread: "failed" }]);
+    expect(detail?.problems).toEqual(["Could not check 1 sub-thread for a blocked status line: timed out"]);
+  });
+
+  it("says when the thread's whole latest reply could not be read", async () => {
+    const base = fakePorts({ threads: [{ id: "thr_x", title: "X", preview: "Short preview." }] });
+    const detail = await gatherThread({ ...base, latestReply: () => Promise.reject(new Error("bb is busy")) }, "thr_x");
+    expect(detail?.thread.lastAgent).toBe("Short preview.");
+    expect(detail?.problems).toEqual(['Could not read the whole latest reply of "X", so only its opening is given: bb is busy']);
   });
 
   it("says when the thread detail cannot list the projects", async () => {

@@ -22,8 +22,8 @@ bb plugin install 'git:github.com/gpambrozio/bb-plugins@>=0.1.0' --plugin briefi
 | Command | What it prints |
 | --- | --- |
 | `bb briefing` | The whole briefing, at most 4,000 characters. |
-| `bb briefing thread <id>` | One thread in depth: its opening message, the user's last three messages, the agent's whole latest reply, every sub-thread with its status line, and, for the first mate's thread, every task. Also at most 4,000 characters. |
-| `--json` on either | The data instead of the text, with nothing left out for size. |
+| `bb briefing thread <id>` | One thread in depth: its opening message, the user's last three messages, the agent's latest reply, every sub-thread with its status line, and, for the first mate's thread, every task. Also at most 4,000 characters: everything when it fits; otherwise the rest is shortened first, the reply gets the room left, and a "Left out to fit" line names each cut, with how much of the reply was given. |
+| `--json` on either | The data instead of the text, for scripts. It has no size limit (a few dozen threads make tens of thousands of characters), so it is not for a voice tool, which would cut it short. The thread detail's JSON keeps messages and the reply whole. |
 
 ### What the briefing holds
 
@@ -32,12 +32,17 @@ bb plugin install 'git:github.com/gpambrozio/bb-plugins@>=0.1.0' --plugin briefi
   project and status (working, idle, failed…), its opening message, the user's latest message, the agent's
   latest reply, and how many sub-threads it has, at any depth, naming any that is waiting for an answer,
   failed, or whose last line is a `blocked:`, `needs-decision:` or `failed:` status line, with its reason.
+  It says "none blocked" only when it read every idle sub-thread's reply; one it could not read is counted
+  as "could not be checked", with the reason under "Problems".
 - **The user's messages** are what the user typed: bb's notices about sub-threads, messages from other
   threads and notes plugins send on someone's behalf are left out.
 - **Projects**: what each project is about, from the opening of its `AGENTS.md`, else its `CLAUDE.md`, else
   its `README.md`, skipping titles, badges and the "This file provides guidance…" line. It is read from the
   project's checkout on whichever machine holds it, so projects on other bb machines work; when that machine
-  is offline, a thread's workspace is tried instead, and the briefing says when neither answered.
+  is offline, a thread's workspace is tried instead, and the briefing says when neither answered. Each file
+  is read only if it really lies inside that folder: one that is a symlink to somewhere else on the machine
+  is passed over for the next file (as is one that cannot be opened or is too large), and the briefing says
+  so when no file was left.
 - **FirstMate's tasks**, when the [FirstMate Crew](../firstmate-crew) plugin is installed and its first mate's
   thread is a root thread: what needs you (held tasks, with the question, and the captain's calls), what is
   blocked (waiting on another task, or a crewmate that is blocked, needs a decision, waits for an answer or
@@ -55,7 +60,7 @@ When everything does not fit, detail goes in this order: messages are cut to one
 latest message is kept only for threads that need you; the threads after the first few keep one line
 each; then the oldest threads go; then project descriptions and the remaining messages. The last line
 before the hint says what was left out ("Left out to fit: …"), and `bb briefing thread <id>` gives any one
-thread in full.
+thread in depth.
 
 ### A sample
 
@@ -108,11 +113,11 @@ threads, read each one, read each project's AGENTS.md and return to the first th
 ```text
 1. Get the whole briefing in one call: run_plugin_command with plugin_id "briefing" and argv []. It does not change the screen and works with any thread in view, or none, so there is no need to note or restore the thread in view. It returns:
    - "FirstMate's tasks": what needs the user (held decisions, with the question in brackets), what is blocked (with why), in flight, queued, done recently, and the first mate's suggested next steps.
-   - "Threads, most urgent first": one entry per root thread, with its project and status ("needs you" when it waits on the user), how many sub-threads it has and which of them are blocked or waiting on a decision, "Asked:" (the user's opening message), "User last:" (the user's latest message) and "Agent last:" (the agent's latest reply). The FirstMate thread is marked "FirstMate thread:".
+   - "Threads, most urgent first": one entry per root thread, with its project and status ("needs you" when it waits on the user), how many sub-threads it has and which of them are blocked or waiting on a decision (or how many "could not be checked", whose state is unknown), "Asked:" (the user's opening message), "User last:" (the user's latest message) and "Agent last:" (the agent's latest reply). The FirstMate thread is marked "FirstMate thread:".
    - "Projects": what each project is about.
    - "Left out to fit:" when the briefing was too long to give everything.
    Sub-threads are already counted under their root; do not brief them on their own.
-2. For more on one thread, when the user asks or the briefing left its details out: run_plugin_command with plugin_id "briefing" and argv ["thread", "<id>"], with the id from the square brackets after its title. It gives the thread's opening message, the user's last few messages, the agent's whole latest reply, every sub-thread with its last status line, and, for the FirstMate thread, every task.
+2. For more on one thread, when the user asks or the briefing left its details out: run_plugin_command with plugin_id "briefing" and argv ["thread", "<id>"], with the id from the square brackets after its title. It gives the thread's opening message, the user's last few messages, the agent's latest reply (whole, unless it is too long for one result; then its "Left out to fit:" line says how much was given), every sub-thread with its last status line, and, for the FirstMate thread, every task. Do not add "--json": its output has no size limit and would be cut short.
 3. Ids are in square brackets only so you can pass them to tools. Never read them aloud.
 ```
 

@@ -6,12 +6,13 @@
 //   cd tools/shots && npm run shots -- briefing --out "$TMPDIR/briefing-live"
 //
 // The seed: two projects (one described by AGENTS.md after the boilerplate line, one whose CLAUDE.md only
-// imports AGENTS.md and whose README describes it), root threads that are finished, failed, waiting on a
+// imports AGENTS.md, whose AGENTS.md is a symlink to a file outside the checkout that must never be read,
+// and whose README describes it), root threads that are finished, failed, waiting on a
 // permission, and archived, twenty more to press on the size budget, and a FirstMate home with a backlog
 // (holds, blocked-by, in flight, queued, done) whose first mate runs two crewmates: one that needs a
 // decision and one that is blocked. firstmate-crew is installed from this repository.
 import { execFileSync } from "node:child_process";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -24,6 +25,8 @@ const API = "Acme API";
 /** Handsfree cuts every tool result here. */
 const HANDSFREE_LIMIT = 4_000;
 const FILLERS = 20;
+/** The text of a file outside a checkout that a description symlink points to. */
+const OUTSIDE_SENTINEL = "Outside-the-checkout private text";
 
 const CREW = [
   {
@@ -102,6 +105,11 @@ export async function seed({ bb, seed }) {
   });
   const api = seed.project(API, { "CLAUDE.md": "@AGENTS.md\n", "README.md": "# Acme API\n\n[![CI](https://ci.example/badge.svg)](https://ci.example)\n\nThe public Acme API, with keys per customer and rate limits per plan.\n" });
   state.web = web;
+  // A description file that points outside the checkout: bb must refuse it, and the README describe the project.
+  const outside = join(bb.cfg.root, "outside");
+  mkdirSync(outside, { recursive: true });
+  writeFileSync(join(outside, "private-notes.md"), `# Notes\n\n${OUTSIDE_SENTINEL} must never be read aloud.\n`);
+  symlinkSync(join(outside, "private-notes.md"), join(api.path, "AGENTS.md"));
 
   const home = join(seed.home, "Voyage");
   const { backlog, suggestions } = records();
@@ -199,6 +207,9 @@ export async function shoot({ bb, shots }) {
   const descriptions = Object.fromEntries(json.projects.map((project) => [project.name, project]));
   expect(descriptions[WEB].description.startsWith("Acme Web is the customer site") && descriptions[WEB].source === "AGENTS.md", "Acme Web's description");
   expect(descriptions[API].description.startsWith("The public Acme API") && descriptions[API].source === "README.md", "Acme API's description");
+  for (const [name, output] of Object.entries({ text, json: JSON.stringify(json), mate, notes })) {
+    expect(!output.includes(OUTSIDE_SENTINEL), `the ${name} output read a file outside a checkout`);
+  }
   expect(descriptions.FirstMate.source === "FirstMate", "the first mate's home is described from its charter");
   expect(mate.includes("FirstMate's tasks:") && mate.includes("Sub-threads (2):"), "the first mate's detail");
   expect(JSON.stringify(eventCounts(bb)) === JSON.stringify(before), "a thread's event log changed during the briefing");

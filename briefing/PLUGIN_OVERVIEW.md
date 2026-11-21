@@ -9,13 +9,13 @@ Hear where every thread stands in one command. `bb briefing` gathers what you wo
 
 ## Made for voice
 
-The text is always under 4,000 characters, the most a voice assistant such as Handsfree reads from one tool. When everything does not fit, detail goes in a fixed order (longer messages first, then the oldest threads) and a closing line says what was left out. `bb briefing thread <id>` gives any one thread in depth: its opening message, your last few messages, the agent's whole latest reply and every sub-thread with its last status line.
+The text is always under 4,000 characters, the most a voice assistant such as Handsfree reads from one tool. When everything does not fit, detail goes in a fixed order (longer messages first, then the oldest threads) and a closing line says what was left out. `bb briefing thread <id>` gives any one thread in depth: its opening message, your last few messages, the agent's latest reply (whole, unless it is too long for one read, and then as much as fits) and every sub-thread with its last status line.
 
 It reads everything without moving your screen, so it gives the same briefing whatever thread is open, or none.
 
 ## For scripts
 
-`--json` on either command prints the data instead, with nothing left out.
+`--json` on either command prints the data instead, for scripts: it has no size limit, so it is not meant for a voice assistant.
 
 ## Privacy and cost
 

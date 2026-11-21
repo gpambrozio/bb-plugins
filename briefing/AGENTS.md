@@ -43,7 +43,8 @@ turn repeats the message), and no `[bb …]` or "Relayed by bb" prefix. The
 opening is the first such event; the latest is found paging back from the end, 100 events a page (bb's
 cap), at most five pages. The agent's latest message is the outline's last assistant preview (bb caps it
 at 200 characters, plenty for a sentence or two); the thread detail reads `threads.output` for the whole
-reply and falls back to the preview when the last turn wrote none.
+reply and falls back to the preview when it cannot. The briefing's data cuts messages to 1,200
+characters; the thread detail's keeps them whole, and only its text renderer cuts.
 
 **FirstMate comes from firstmate-crew, not from its files.** `bb.sdk.plugins.callRpc` on firstmate-crew's
 `fleet.load` returns its board: the parsed backlog joined to the crew, each crewmate's last status line,
@@ -61,16 +62,26 @@ the order; titles are clipped to 160 characters.
 **The first mate's project is described by a fixed sentence.** Its home's `AGENTS.md` is the charter,
 written to the first mate ("You are the first mate…") and followed by paths and rules, so it is not read.
 
-**Descriptions are read on the machine that holds the project.** `files.read` with the project's checkout
-(`projects.list` sources, the default one first), else a root thread's workspace on another machine; at
-most two places, each one trying `AGENTS.md`, `CLAUDE.md`, `README.md` in turn. A machine that does not
-answer within the call timeout is a line in `problems`.
+**Descriptions are read on the machine that holds the project, and only from inside its folder.**
+`files.read` with the project's checkout (`projects.list` sources, the default one first), else a root
+thread's workspace on another machine; at most two places, each one trying `AGENTS.md`, `CLAUDE.md`,
+`README.md` in turn. Every read passes the folder as `rootPath`: without it bb follows a symlinked
+`AGENTS.md` anywhere on the machine, and with it bb resolves the file's real path and answers one outside
+the folder with `invalid_path` ("escapes read root"). bb 0.50's daemon does not resolve the root on
+this route (`followRootSymlink: false`), so a folder whose own path ran through a symlink would have every
+file refused, failing closed with a line in `problems`; the live check's checkouts, under macOS's
+symlinked `/var`, are read, and its symlink out of a checkout is refused. A refused file (outside, `file_too_large`, `EACCES`, a
+directory: `fileRefusal` in `sdk-ports.ts`) is passed over for the next file; any other failure is the
+machine's, and the next place is tried. A machine that does not answer within the call timeout is a line
+in `problems`.
 
 **Sub-threads.** `experimental_listDescendants` gives every non-archived, visible thread below each root
 in one call per 200 roots; the rows come from `threads.list({ threadIds })`. A child is named when it waits
 on an interaction, failed, or, when idle, its latest reply's last line is `blocked:`, `needs-decision:` or
-`failed:`. That reply is read for at most 60 idle children per briefing (20 per thread detail), and the
-briefing says how many it skipped. "Latest reply" is `threads.output`, else (a compaction, a turn stopped
+`failed:`. That reply is read for at most 60 idle children per briefing (20 per thread detail). A child
+whose reply was not read (the read failed or timed out, or the cap was reached) is `uncheckedChildren`,
+said as "could not be checked", with the reason in `problems`: never fold it into "none blocked", which
+is said only when every idle child was read. "Latest reply" is `threads.output`, else (a compaction, a turn stopped
 before its reply: since bb 0.49 `output` is the latest turn's only) the last root `agentMessage` in the
 event log, as firstmate-crew's `ReportCache` reads it.
 
@@ -85,6 +96,12 @@ messages, then the questions behind held tasks, then threads down to none, then 
 three levels. `BUDGET` is
 3,900 so Handsfree's own cut never fires. `leftOut` must name every drop a level makes; the tests check
 the order and the budget with up to 300 threads.
+
+**The thread detail gives everything when it fits**, and otherwise cuts the rest by `DETAIL_LEVELS` and
+gives the latest reply all the room left, moving to the next level only when that room falls under the
+level's `minReply`. Its "Left out to fit" line names each cut, the reply's with how many characters were
+given. `--json` has no budget: it is for scripts, and the docs and the skill must not point a voice tool
+at it.
 
 ## Live check
 

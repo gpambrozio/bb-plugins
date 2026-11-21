@@ -22,6 +22,10 @@ export interface FakeBb {
   projects?: ProjectRow[];
   /** `<hostId>:<absolute path>` → content. */
   files?: Record<string, string>;
+  /** `<hostId>:<absolute path>` → the absolute path that symlink points to, on the same machine. */
+  links?: Record<string, string>;
+  /** `<hostId>:<absolute path>` → an error the machine answers for that one file (EACCES, too large). */
+  fileErrors?: Record<string, string>;
   /** Machines whose reads fail. */
   offline?: string[];
   fleet?: FleetRead | (() => Promise<FleetRead>);
@@ -100,10 +104,18 @@ export function fakePorts(bb: FakeBb): BriefingPorts & { calls: string[] } {
       calls.push(`reply:${threadId}`);
       return find(threadId)?.reply ?? null;
     },
-    async readFile(hostId, path) {
+    async readFile(hostId, root, name) {
+      const folder = root.replace(/\/+$/, "");
+      const path = `${folder}/${name}`;
       calls.push(`read:${hostId}:${path}`);
       if (bb.offline?.includes(hostId)) throw new Error(`host ${hostId} is offline`);
-      return bb.files?.[`${hostId}:${path}`] ?? null;
+      const fileError = bb.fileErrors?.[`${hostId}:${path}`];
+      if (fileError !== undefined) return { kind: "refused", reason: fileError };
+      // As bb does with a `rootPath`: the real path must stay inside the folder.
+      const real = bb.links?.[`${hostId}:${path}`] ?? path;
+      if (!real.startsWith(`${folder}/`)) return { kind: "refused", reason: "it points outside the project's folder" };
+      const text = bb.files?.[`${hostId}:${real}`];
+      return text === undefined ? { kind: "missing" } : { kind: "text", text };
     },
     async fleet() {
       if (bb.fleet === undefined) return { ok: false, reason: "" };
