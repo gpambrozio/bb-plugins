@@ -1,0 +1,54 @@
+{
+  "name": "@gpambrozio/bb-plugin-briefing",
+  "version": "0.1.0",
+  "license": "MIT",
+  "author": "gpambrozio (https://github.com/gpambrozio)",
+  "homepage": "https://github.com/gpambrozio/bb-plugins/tree/main/briefing#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gpambrozio/bb-plugins.git",
+    "directory": "briefing"
+  },
+  "bugs": {
+    "url": "https://github.com/gpambrozio/bb-plugins/issues"
+  },
+  "type": "module",
+  "engines": {
+    "bb": ">=0.49",
+    "bbPluginSdk": ">=0.6.132"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "build": "bb plugin build"
+  },
+  "files": [
+    "server.ts",
+    "server/",
+    "skills/",
+    "dist/",
+    "PLUGIN_OVERVIEW.md",
+    "CHANGELOG.md",
+    "!**/*.test.ts"
+  ],
+  "bb": {
+    "name": "Briefing",
+    "description": "Hear where every thread stands in one command: each root thread's ask, latest messages and project, plus FirstMate's tasks.",
+    "branding": {
+      "icon": "ListTodo"
+    },
+    "server": "./server.ts"
+  },
+  "dependencies": {
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@get-bb/plugin-sdk": "0.6.132",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.3.0",
+    "hono": "^4.13.19",
+    "typescript": "^5.7.0",
+    "vitest": "^5.0.2"
+  }
+}
