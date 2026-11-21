@@ -151,11 +151,15 @@ export async function readProject(
 }
 
 /** Why a sub-thread is worth naming, or null when it is not. Reads its latest reply only when it is idle. */
-async function flagOf(ports: BriefingPorts, row: ThreadRow, budget: { replies: number }): Promise<FlaggedChild | null> {
+async function flagOf(ports: BriefingPorts, row: ThreadRow, budget: { replies: number; skipped: number }): Promise<FlaggedChild | null> {
   const base = { id: row.id, title: titleOf(row) };
   if (row.hasPendingInteraction) return { ...base, state: "waiting for an answer", detail: null };
   if (row.status === "error") return { ...base, state: "failed", detail: null };
-  if (row.status !== "idle" || budget.replies <= 0) return null;
+  if (row.status !== "idle") return null;
+  if (budget.replies <= 0) {
+    budget.skipped++;
+    return null;
+  }
   budget.replies--;
   const line = flaggedStatusLine(await ports.latestReply(row.id).catch(() => null));
   if (line === null) return null;
@@ -196,7 +200,9 @@ async function childRows(ports: BriefingPorts, rootIds: readonly string[]): Prom
 /** The whole briefing: every root thread, its project, its flagged sub-threads, and the first mate's tasks. */
 export async function gatherBriefing(ports: BriefingPorts, now: number = Date.now()): Promise<Briefing> {
   const problems: string[] = [];
-  const roots = (await ports.rootThreads()).filter((row) => row.parentThreadId === null && row.archivedAt === null);
+  const listed = await ports.rootThreads();
+  if (!listed.complete) problems.push(`Only the first ${listed.threads.length} root threads were read.`);
+  const roots = listed.threads.filter((row) => row.parentThreadId === null && row.archivedAt === null);
   const rootIds = roots.map((row) => row.id);
   const [projects, firstMateAll, children] = await Promise.all([
     ports.projects().catch((error: unknown) => {
@@ -212,7 +218,7 @@ export async function gatherBriefing(ports: BriefingPorts, now: number = Date.no
   const projectById = new Map(projects.map((project) => [project.id, project]));
   const firstMate = firstMateAll !== null && rootIds.includes(firstMateAll.threadId) ? firstMateAll : null;
 
-  const budget = { replies: LIMITS.childReplies };
+  const budget = { replies: LIMITS.childReplies, skipped: 0 };
   const threads = await pool(roots, LIMITS.concurrency, async (row): Promise<ThreadBrief> => {
     const title = titleOf(row);
     const below = children.get(row.id) ?? [];
@@ -237,7 +243,9 @@ export async function gatherBriefing(ports: BriefingPorts, now: number = Date.no
     };
   });
   threads.sort(compareThreads);
-  if (budget.replies <= 0) problems.push(`Only the first ${LIMITS.childReplies} idle sub-threads were checked for a blocked status line.`);
+  if (budget.skipped > 0) {
+    problems.push(`Only ${LIMITS.childReplies} idle sub-threads were checked for a blocked status line; ${budget.skipped} were not.`);
+  }
 
   const projectIds = [...new Set(threads.map((thread) => thread.projectId))];
   const mateProjectId = threads.find((thread) => thread.isFirstMate)?.projectId ?? null;
@@ -261,6 +269,9 @@ function firstMateProject(projectId: string, project: ProjectRow | undefined): P
   return { id: projectId, name: project?.name ?? projectId, description: FIRSTMATE_DESCRIPTION, source: "FirstMate" };
 }
 
+/** The user's latest messages the thread detail gives. */
+const DETAIL_USER_MESSAGES = 3;
+
 /** Sub-threads whose latest reply is read for the thread detail. */
 const DETAIL_CHILD_REPLIES = 20;
 
@@ -271,7 +282,10 @@ export async function gatherThread(ports: BriefingPorts, threadId: string): Prom
   const problems: string[] = [];
   const title = titleOf(row);
   const [projects, firstMateAll, children, messages, reply] = await Promise.all([
-    ports.projects().catch(() => [] as ProjectRow[]),
+    ports.projects().catch((error: unknown) => {
+      problems.push(`Could not list the projects: ${reason(error)}`);
+      return [] as ProjectRow[];
+    }),
     readFirstMate(ports, problems),
     childRows(ports, [row.id])
       .then((map) => map.get(row.id) ?? [])
@@ -279,7 +293,8 @@ export async function gatherThread(ports: BriefingPorts, threadId: string): Prom
         problems.push(`Could not read the sub-threads: ${reason(error)}`);
         return [] as ThreadRow[];
       }),
-    readMessages(ports, row.id, 3, problems, title),
+    // One more than shown, since the opening message is not repeated among them.
+    readMessages(ports, row.id, DETAIL_USER_MESSAGES + 1, problems, title),
     ports.latestReply(row.id).catch(() => null),
   ]);
   const project = projects.find((candidate) => candidate.id === row.projectId);
@@ -311,5 +326,5 @@ export async function gatherThread(ports: BriefingPorts, threadId: string): Prom
     childCount: children.length,
     flaggedChildren: [],
   };
-  return { thread, project: projectBrief, recentUserMessages: messages.recentUser, children: childLines, firstMate, problems };
+  return { thread, project: projectBrief, recentUserMessages: messages.recentUser.slice(0, DETAIL_USER_MESSAGES), children: childLines, firstMate, problems };
 }

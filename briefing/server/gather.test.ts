@@ -87,6 +87,26 @@ describe("gatherBriefing", () => {
     ]);
   });
 
+  it("says how many idle sub-threads were not checked, and nothing when all were", async () => {
+    const kids = (count: number) => Array.from({ length: count }, (_, index) => ({ id: `thr_k${index}`, parentThreadId: "thr_root", reply: "done: fine" }));
+    const exactly = await gatherBriefing(fakePorts({ threads: [{ id: "thr_root" }, ...kids(LIMITS.childReplies)] }));
+    expect(exactly.problems).toEqual([]);
+    const over = await gatherBriefing(fakePorts({ threads: [{ id: "thr_root" }, ...kids(LIMITS.childReplies + 1)] }));
+    expect(over.problems).toEqual([`Only ${LIMITS.childReplies} idle sub-threads were checked for a blocked status line; 1 were not.`]);
+  });
+
+  it("says when bb's list of root threads was cut at its cap", async () => {
+    const briefing = await gatherBriefing(fakePorts({ threads: [{ id: "thr_root" }], rootsComplete: false }));
+    expect(briefing.problems).toEqual(["Only the first 1 root threads were read."]);
+  });
+
+  it("does not repeat the opening as the latest message when bb retried the first turn", async () => {
+    const retry = { initiator: "user", systemMessageKind: "unlabeled", retryOfRequestId: "creq_1", input: [{ type: "text", text: "Do it" }] };
+    const briefing = await gatherBriefing(fakePorts({ threads: [{ id: "thr_r", requests: ["Do it", retry] }] }));
+    expect(briefing.threads[0]?.opening).toBe("Do it");
+    expect(briefing.threads[0]?.lastUser).toBeNull();
+  });
+
   it("only reads the latest reply of idle sub-threads", async () => {
     const ports = fakePorts(world());
     await gatherBriefing(ports);
@@ -173,6 +193,19 @@ describe("gatherThread", () => {
     ]);
     expect(detail?.firstMate?.needsOwner).toHaveLength(1);
     expect(detail?.project?.description).toBe(FIRSTMATE_DESCRIPTION);
+  });
+
+  it("gives three recent user messages even when the opening is among the latest", async () => {
+    const detail = await gatherThread(fakePorts({ threads: [{ id: "thr_m", requests: ["one", "two", "three", "four"] }] }), "thr_m");
+    expect(detail?.thread.opening).toBe("one");
+    expect(detail?.recentUserMessages).toEqual(["four", "three", "two"]);
+    const short = await gatherThread(fakePorts({ threads: [{ id: "thr_s", requests: ["one", "two"] }] }), "thr_s");
+    expect(short?.recentUserMessages).toEqual(["two"]);
+  });
+
+  it("says when the thread detail cannot list the projects", async () => {
+    const ports = { ...fakePorts(world()), projects: () => Promise.reject(new Error("bb is busy")) };
+    expect((await gatherThread(ports, "thr_old"))?.problems).toContain("Could not list the projects: bb is busy");
   });
 
   it("is null for a thread bb does not have", async () => {

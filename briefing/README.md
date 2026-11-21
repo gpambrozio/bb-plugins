@@ -31,7 +31,7 @@ bb plugin install 'git:github.com/gpambrozio/bb-plugins@>=0.1.0' --plugin briefi
   ones waiting on the user, then the first mate, then the most recently updated. Each one gets its title,
   project and status (working, idle, failed…), its opening message, the user's latest message, the agent's
   latest reply, and how many sub-threads it has, at any depth, naming any that is waiting for an answer,
-  failed, or whose last line is a `blocked:`, `needs-decision:` or `failed:` status line.
+  failed, or whose last line is a `blocked:`, `needs-decision:` or `failed:` status line, with its reason.
 - **The user's messages** are what the user typed: bb's notices about sub-threads, messages from other
   threads and notes plugins send on someone's behalf are left out.
 - **Projects**: what each project is about, from the opening of its `AGENTS.md`, else its `CLAUDE.md`, else
@@ -41,9 +41,9 @@ bb plugin install 'git:github.com/gpambrozio/bb-plugins@>=0.1.0' --plugin briefi
 - **FirstMate's tasks**, when the [FirstMate Crew](../firstmate-crew) plugin is installed and its first mate's
   thread is a root thread: what needs you (held tasks, with the question, and the captain's calls), what is
   blocked (waiting on another task, or a crewmate that is blocked, needs a decision, waits for an answer or
-  failed), in flight, queued, done recently (newest first), and the first mate's suggested next steps. Each
-  is its title in plain words: no ids, links or notes. The data is FirstMate Crew's own board, so it matches
-  what its board shows.
+  failed), in flight, queued, done recently (newest first, by the date each landed), and the first mate's
+  suggested next steps. Each is its title in plain words: no ids, links or notes. The data is FirstMate
+  Crew's own board, so it matches what its board shows.
 
 Messages and descriptions are cleaned for reading aloud: code blocks, links, URLs and bb ids are taken out,
 and each is cut to its first sentences. Thread ids stay in square brackets after each title, so a voice
@@ -73,30 +73,30 @@ Done recently: Add a captcha to sign-up; Publish the API reference.
 Suggested next: Land the login fix; Pick the analytics store.
 
 Threads, most urgent first:
-- Clean the build folder (Acme Web, working, needs you) [thr_wjaiam3njf]
+- Clean the build folder (Acme Web, working, needs you) [thr_qkbrzd7rmv]
   Asked: Clean the build folder before the next deploy.
   Agent last: Cleaning it now.
-- FirstMate thread: First mate (FirstMate, idle) [thr_adf85d2jwh]
+- FirstMate thread: First mate (FirstMate, idle) [thr_b5kherk27f]
   2 sub-threads: Fix the login redirect needs a decision; Wire the payments sandbox is blocked.
   Asked: ahoy!
   Agent last: Captain, the login fix is green and waits on your word to merge.
-- Filler thread 19 (Acme API, idle) [thr_qcza4emdf9]
+- Filler thread 19 (Acme API, idle) [thr_eg5iy7d4tw]
   Asked: Filler task 19: a long opening message that goes on for a while to press on the briefing's size budget, with more…
   Agent last: Finished this filler task.
 … (fillers 18 to 0 cut here: five more entries with their messages, then one line each)
-- Profile search (Acme API, failed) [thr_6e42tmz7q3]
-- Release notes for 2.4 (Acme API, idle) [thr_y23itcyv4r]
+- Profile search (Acme API, failed) [thr_4333u7bnme]
+- Release notes for 2.4 (Acme API, idle) [thr_nayq54qqav]
 
 Projects:
 - Acme Web: Acme Web is the customer site: sign-up, sign-in and the dashboard.
 - FirstMate: Home of the first mate, who runs a crew of worker threads across all the user's projects and keeps their task list.
 - Acme API: The public Acme API, with keys per customer and rate limits per plan.
 
-Left out to fit: messages cut to their first sentence; the user's latest message except where a thread needs you; messages of every thread after the first 8.
+Left out to fit: messages cut to their first sentence; why sub-threads are blocked; the user's latest message except where a thread needs you; messages of every thread after the first 8.
 More on one thread: bb briefing thread <id>.
 ```
 
-The whole text was 3,569 characters.
+The whole text was 3,598 characters.
 
 ## Using it from Handsfree
 

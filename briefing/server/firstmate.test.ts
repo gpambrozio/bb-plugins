@@ -22,6 +22,12 @@ describe("bucketOf", () => {
     expect(bucketOf(card("D", { crew: crew({ status: "error" }), column: "failed" })).detail).toBe("worker failed");
   });
 
+  it("puts a crewmate back at work in flight, whatever its previous turn's status line said", () => {
+    // firstmate-crew hands back the previous turn's report while a turn runs.
+    const back = card("Answered", { backlog: { section: "in-flight" }, crew: crew({ status: "active" }), column: "working", report: { state: "needs-decision", text: "needs-decision: x?" } });
+    expect(bucketOf(back)).toEqual({ bucket: "inFlight", detail: null });
+  });
+
   it("puts a working or finished-but-not-landed worker in flight, and the rest by section", () => {
     expect(bucketOf(card("W", { backlog: { section: "in-flight" }, crew: crew({ status: "active" }), column: "working" })).bucket).toBe("inFlight");
     expect(bucketOf(card("R", { crew: crew(), report: { state: "done", text: "done: PR" } })).bucket).toBe("inFlight");
@@ -59,6 +65,17 @@ describe("groupFleet", () => {
       ],
       suggestions: ["Review #12"],
     });
+  });
+
+  it("orders done by the date it landed, newest first, undated ones after", () => {
+    const done = (title: string, outcome: string | null) => card(title, { backlog: { section: "done", outcome } });
+    const fleet = { mate: { threadId: "thr_m" }, cards: [done("Old", "merged 2026-11-01"), done("Undated", null), done("New", "done 2026-11-20"), done("Mid", "merged 2026-11-10")], suggestions: [] };
+    expect(groupFleet(fleet)?.done.map((line) => line.title)).toEqual(["New", "Mid", "Old", "Undated"]);
+  });
+
+  it("clips a very long task title", () => {
+    const fleet = { mate: { threadId: "thr_m" }, cards: [card(`Long ${"word ".repeat(100)}`)], suggestions: [] };
+    expect(groupFleet(fleet)?.queued[0]?.title.length).toBeLessThanOrEqual(160);
   });
 
   it("is null without a first mate", () => {

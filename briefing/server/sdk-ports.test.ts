@@ -58,13 +58,13 @@ const ANSWERS: Record<string, (args: Record<string, unknown>) => unknown> = {
 };
 
 /** A fake `bb.sdk` that records the path of every method called and answers from `ANSWERS`. */
-function recordingSdk(calls: { path: string; args: Record<string, unknown> }[]): Sdk {
+function recordingSdk(calls: { path: string; args: Record<string, unknown> }[], overrides: typeof ANSWERS = {}): Sdk {
   const at = (path: string): unknown =>
     new Proxy(() => undefined, {
       get: (_target, key) => at(path === "" ? String(key) : `${path}.${String(key)}`),
       apply: async (_target, _self, [args]) => {
         calls.push({ path, args: (args ?? {}) as Record<string, unknown> });
-        const answer = ANSWERS[path];
+        const answer = overrides[path] ?? ANSWERS[path];
         if (answer === undefined) throw new Error(`unexpected call ${path}`);
         return answer((args ?? {}) as Record<string, unknown>);
       },
@@ -114,6 +114,49 @@ describe("sdkPorts", () => {
       const ports = sdkPorts(new Proxy(sdk, { get: (target, key) => (key === "plugins" ? { list: async () => ({ plugins }) } : Reflect.get(target, key)) }), undefined);
       expect(await ports.fleet()).toEqual({ ok: false, reason: "" });
     }
+  });
+});
+
+describe("sdkPorts reads that need care", () => {
+  const ports = (overrides: typeof ANSWERS, calls: { path: string; args: Record<string, unknown> }[] = []) => sdkPorts(recordingSdk(calls, overrides), undefined);
+
+  it("falls back to the thread's last message of its own when its latest turn wrote none", async () => {
+    const calls: { path: string; args: Record<string, unknown> }[] = [];
+    const reply = await ports(
+      {
+        "threads.output": () => ({ output: null }),
+        "threads.events.list": (args) =>
+          JSON.stringify(args.types) === '["item/completed"]'
+            ? [
+                { seq: 9, data: { item: { type: "commandExecution", command: "ls" } } },
+                { seq: 8, data: { item: { type: "agentMessage", text: "sub-agent", parentToolCallId: "t1" } } },
+                { seq: 7, data: { item: { type: "agentMessage", text: "Did it.\nblocked: needs a key" } } },
+              ]
+            : [],
+      },
+      calls,
+    ).latestReply("thr_kid");
+    expect(reply).toBe("Did it.\nblocked: needs a key");
+    expect(calls.filter((call) => call.path === "threads.events.list").every((call) => call.args.order === "desc" && Number(call.args.limit) <= 100)).toBe(true);
+  });
+
+  it("reads FirstMate's board while firstmate-crew is degraded", async () => {
+    const read = await ports({ "plugins.list": () => ({ plugins: [{ id: "firstmate-crew", enabled: true, status: "degraded" }] }) }).fleet();
+    expect(read.ok).toBe(true);
+    const crashed = await ports({ "plugins.list": () => ({ plugins: [{ id: "firstmate-crew", enabled: true, status: "crashed" }] }) }).fleet();
+    expect(crashed).toEqual({ ok: false, reason: "FirstMate Crew is crashed." });
+  });
+
+  it("keeps each root thread once across pages, and says when the cap cut the list", async () => {
+    const page = (offset: number, size: number) => Array.from({ length: size }, (_, index) => listRow(`thr_${offset + index}`));
+    // A thread that moved between two reads shows up on both pages.
+    const moved = await ports({ "threads.list": (args) => (args.offset === 0 ? page(0, 200) : [listRow("thr_199"), ...page(200, 5)]) }).rootThreads();
+    expect(moved.threads).toHaveLength(205);
+    expect(new Set(moved.threads.map((row) => row.id)).size).toBe(205);
+    expect(moved.complete).toBe(true);
+    const capped = await ports({ "threads.list": (args) => page(Number(args.offset), 200) }).rootThreads();
+    expect(capped.complete).toBe(false);
+    expect(capped.threads).toHaveLength(1_000);
   });
 });
 

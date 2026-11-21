@@ -4,7 +4,8 @@
  * Every message a thread receives is one: what the user typed, bb's notices about sub-threads
  * (`systemMessageKind` `child-completed` and the like), messages other threads send (`initiator`
  * `agent`), and messages plugins send for someone (firstmate-crew's watch notes carry an agent-only
- * part; `bb firstmate-crew tell` opens with a "Relayed by" line). Only the first kind counts.
+ * part; `bb firstmate-crew tell` opens with a "Relayed by" line), and bb's retries of a failed turn
+ * (`retryOfRequestId`), which repeat the user's message. Only the user's own new messages count.
  */
 import { z } from "zod";
 
@@ -20,6 +21,7 @@ const RequestData = z
   .object({
     initiator: z.string().optional(),
     systemMessageKind: z.string().nullable().optional(),
+    retryOfRequestId: z.string().nullable().optional(),
     input: z.array(InputPart).optional(),
   })
   .passthrough();
@@ -33,6 +35,8 @@ export function userText(data: unknown): string | null {
   if (!parsed.success) return null;
   const request = parsed.data;
   if (request.initiator !== "user") return null;
+  // bb's retry of a failed turn repeats the user's message; it is not a new one.
+  if (request.retryOfRequestId != null) return null;
   const kind = request.systemMessageKind ?? "unlabeled";
   if (kind !== "unlabeled") return null;
   const parts = request.input ?? [];
@@ -74,11 +78,11 @@ export function flaggedStatusLine(reply: string | null): { state: "blocked" | "n
     .filter((line) => line !== "")
     .at(-1);
   if (last === undefined) return null;
-  const match = /^[*_`]*(blocked|needs-decision|failed)[*_`]*:\s*(.*)$/i.exec(last);
+  const match = /^[*_`]*(blocked|needs-decision|failed)[*_`]*:[*_`]*\s*(.*)$/i.exec(last);
   if (match === null) return null;
   const word = (match[1] ?? "").toLowerCase();
   const state = word === "needs-decision" ? "needs a decision" : word === "failed" ? "failed" : "blocked";
-  return { state, detail: (match[2] ?? "").replace(/[*_`]+$/, "").trim() };
+  return { state, detail: (match[2] ?? "").replace(/^[*_`]+|[*_`]+$/g, "").trim() };
 }
 
 /** The last non-empty line of a reply, for the thread detail's sub-thread list. */

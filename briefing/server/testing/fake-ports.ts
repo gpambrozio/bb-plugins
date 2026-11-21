@@ -27,6 +27,8 @@ export interface FakeBb {
   fleet?: FleetRead | (() => Promise<FleetRead>);
   /** Threads whose event reads fail. */
   failing?: string[];
+  /** False to answer as if bb's list of root threads was cut at its cap. */
+  rootsComplete?: boolean;
 }
 
 export function userRequest(text: string): Record<string, unknown> {
@@ -60,7 +62,7 @@ export function fakePorts(bb: FakeBb): BriefingPorts & { calls: string[] } {
     calls,
     async rootThreads() {
       calls.push("rootThreads");
-      return rows().filter((thread) => thread.parentThreadId === null && thread.archivedAt === null);
+      return { threads: rows().filter((thread) => thread.parentThreadId === null && thread.archivedAt === null), complete: bb.rootsComplete ?? true };
     },
     async descendants(rootIds) {
       calls.push("descendants");

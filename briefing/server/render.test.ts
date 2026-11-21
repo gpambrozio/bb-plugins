@@ -65,7 +65,7 @@ describe("renderBriefing", () => {
     expect(text).toContain("Asked: Please do task 1.");
     expect(text).toContain("User last: Also handle case 1.");
     expect(text).toContain("Agent last: Done with step 1.");
-    expect(text).toContain("5 sub-threads: Crew task needs a decision.");
+    expect(text).toContain("5 sub-threads: Crew task needs a decision (which?).");
     expect(text).toContain("- Project 1: Project 1 is a thing that does things.");
     expect(text).toContain("More on one thread: bb briefing thread <id>.");
   });
@@ -136,11 +136,22 @@ describe("renderBriefing", () => {
     expect(text).toContain('Problems: Could not read the files of project "Alpha": host offline');
   });
 
-  it("cuts a briefing no level can fit, and still fits", () => {
+  it("cuts a briefing no level can fit, still fits, and keeps its closing lines", () => {
     const fm = firstMate(1);
-    const huge = { ...briefing(1), firstMate: { ...fm, needsOwner: tasks(400, "Held").map((line) => ({ ...line, title: `${line.title} ${"x".repeat(60)}` })) } };
+    const huge = { ...briefing(1), firstMate: { ...fm, needsOwner: tasks(3, "Held").map((line) => ({ ...line, title: `${line.title} ${"word ".repeat(400)}` })) } };
     const text = renderBriefing(huge);
     expect(text.length).toBeLessThanOrEqual(BUDGET);
+    expect(text).toContain("…[briefing cut to fit]");
+    expect(text).toMatch(/Left out to fit: .*\nMore on one thread: bb briefing thread <id>\.$/);
+  });
+
+  it("drops why sub-threads are blocked before the messages, and says so", () => {
+    const data = briefing(12, 10);
+    data.threads[0] = { ...data.threads[0]!, flaggedChildren: [{ id: "thr_c", title: "Crew task", state: "blocked", detail: "no API key" }] };
+    expect(renderAt(data, LEVELS[0]!, 12, 2)).toContain("Crew task is blocked (no API key)");
+    const later = renderAt(data, LEVELS[3]!, 12, 2);
+    expect(later).toContain("Crew task is blocked.");
+    expect(later).toMatch(/Left out to fit: .*why sub-threads are blocked/);
   });
 });
 

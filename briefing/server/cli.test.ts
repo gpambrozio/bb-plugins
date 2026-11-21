@@ -19,7 +19,7 @@ describe("bb briefing", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("Briefing: 1 root thread.");
     expect(result.stdout).toContain("- First thread (Alpha, idle) [thr_one]");
-    expect(result.stdout).toContain("1 sub-thread: kid is blocked.");
+    expect(result.stdout).toContain("1 sub-thread: kid is blocked (no credentials).");
     expect(result.stdout).toContain("Asked: Build the thing.");
   });
 

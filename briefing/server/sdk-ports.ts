@@ -66,21 +66,57 @@ function toRow(row: ListRow): ThreadRow {
   };
 }
 
+/** Plugin statuses whose RPCs answer. */
+const CALLABLE_STATUSES = new Set(["running", "degraded"]);
+/** Pages of completed items read back for a thread's last message of its own. */
+const AGENT_MESSAGE_PAGES = 3;
+const EVENT_PAGE = 100;
+
+/** A completed item's text when it is a message of the thread's own agent, not a subagent's. */
+export function ownAgentMessage(data: unknown): string | null {
+  const item = (data as { item?: { type?: unknown; text?: unknown; parentToolCallId?: unknown } } | null)?.item;
+  if (item?.type !== "agentMessage" || typeof item.text !== "string" || typeof item.parentToolCallId === "string") return null;
+  return item.text.trim() === "" ? null : item.text;
+}
+
 export function sdkPorts(sdk: Sdk, caller: AbortSignal | undefined): BriefingPorts {
   const signal = (): AbortSignal => {
     const timeout = AbortSignal.timeout(CALL_TIMEOUT_MS);
     return caller === undefined ? timeout : AbortSignal.any([caller, timeout]);
   };
 
+  async function lastOwnAgentMessage(threadId: string): Promise<string | null> {
+    let beforeSeq: string | undefined;
+    for (let page = 0; page < AGENT_MESSAGE_PAGES; page++) {
+      const rows = await sdk.threads.events.list({
+        threadId,
+        types: ["item/completed"],
+        order: "desc",
+        limit: String(EVENT_PAGE),
+        ...(beforeSeq === undefined ? {} : { beforeSeq }),
+        signal: signal(),
+      });
+      for (const row of rows) {
+        const text = ownAgentMessage(row.data);
+        if (text !== null) return text;
+      }
+      const last = rows.at(-1);
+      if (rows.length < EVENT_PAGE || last === undefined) return null;
+      beforeSeq = String(last.seq);
+    }
+    return null;
+  }
+
   return {
     async rootThreads() {
-      const rows: ThreadRow[] = [];
+      // Offset pages: a thread that moves between two reads can show up twice, so ids are kept once.
+      const rows = new Map<string, ThreadRow>();
       for (let offset = 0; offset < MAX_ROOTS; offset += LIST_PAGE) {
         const page = await sdk.threads.list({ hasParent: false, archived: false, limit: LIST_PAGE, offset, signal: signal() });
-        rows.push(...page.map(toRow));
-        if (page.length < LIST_PAGE) break;
+        for (const row of page) if (!rows.has(row.id)) rows.set(row.id, toRow(row));
+        if (page.length < LIST_PAGE) return { threads: [...rows.values()], complete: true };
       }
-      return rows;
+      return { threads: [...rows.values()], complete: false };
     },
     async descendants(rootIds) {
       const out = new Map<string, string[]>();
@@ -129,7 +165,10 @@ export function sdkPorts(sdk: Sdk, caller: AbortSignal | undefined): BriefingPor
     },
     async latestReply(threadId) {
       const result = await sdk.threads.output({ threadId, signal: signal() });
-      return result.output;
+      if (result.output !== null && result.output.trim() !== "") return result.output;
+      // Since bb 0.49 this is the latest turn's reply only, and a turn that wrote none (a compaction, a
+      // turn stopped first) has none: the reply before it is the thread's last message of its own.
+      return lastOwnAgentMessage(threadId);
     },
     async readFile(hostId, path) {
       try {
@@ -145,7 +184,8 @@ export function sdkPorts(sdk: Sdk, caller: AbortSignal | undefined): BriefingPor
       const plugin = plugins.find((candidate) => candidate.id === FIRSTMATE_PLUGIN_ID);
       // Not installed or turned off: there is no first mate to brief on, and nothing to report.
       if (plugin === undefined || !plugin.enabled) return { ok: false, reason: "" };
-      if (plugin.status !== "running") return { ok: false, reason: `FirstMate Crew is ${plugin.status}.` };
+      // "degraded" is a background service of its in trouble; its RPCs still answer.
+      if (!CALLABLE_STATUSES.has(plugin.status)) return { ok: false, reason: `FirstMate Crew is ${plugin.status}.` };
       const fleet = await sdk.plugins.callRpc({
         pluginId: FIRSTMATE_PLUGIN_ID,
         method: FLEET_METHOD,

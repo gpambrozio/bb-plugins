@@ -9,7 +9,7 @@
 import { z } from "zod";
 
 import type { FirstMateBrief, TaskLine } from "./model";
-import { brief, cleanTitle } from "./text";
+import { brief, cleanTitle, clip } from "./text";
 
 export const FIRSTMATE_PLUGIN_ID = "firstmate-crew";
 export const FLEET_METHOD = "fleet.load";
@@ -28,6 +28,8 @@ export const FleetSchema = z.object({
           hold: z.string().nullable(),
           blockedBy: z.string().nullable(),
           kind: z.string().nullable(),
+          /** `merged 2026-11-20`, `done 2026-11-20`: when a done task landed. */
+          outcome: z.string().nullable().optional(),
         })
         .nullable(),
       crew: z
@@ -56,16 +58,40 @@ export function bucketOf(card: Card): { bucket: Bucket; detail: string | null } 
   if (item?.blockedBy != null) return { bucket: "blocked", detail: "waits on another task" };
   if (card.crew !== null) {
     if (card.crew.pendingInteractions > 0) return { bucket: "blocked", detail: "worker is waiting for an answer" };
+    if (card.crew.status === "error" || card.column === "failed") return { bucket: "blocked", detail: "worker failed" };
+    // While a turn runs, firstmate-crew still hands back the previous turn's status line; its board files
+    // such a crewmate as working, and so does this.
+    if (card.crew.status !== "idle") return { bucket: "inFlight", detail: null };
     if (card.report?.state === "needs-decision") return { bucket: "blocked", detail: "worker needs a decision" };
     if (card.report?.state === "blocked") return { bucket: "blocked", detail: "worker is blocked" };
-    if (card.column === "failed") return { bucket: "blocked", detail: "worker failed" };
     return { bucket: "inFlight", detail: null };
   }
   if (item?.section === "in-flight") return { bucket: "inFlight", detail: null };
   return { bucket: "queued", detail: null };
 }
 
-/** The board grouped for the briefing. Done keeps the backlog's order, newest first. */
+/** Task titles longer than this are clipped, so no single task can crowd the briefing out. */
+const TITLE_MAX = 160;
+
+/** The date in a done task's outcome (`merged 2026-11-20`), or null when it names none. */
+export function landedOn(outcome: string | null): string | null {
+  return /\b(\d{4}-\d{2}-\d{2})\b/.exec(outcome ?? "")?.[1] ?? null;
+}
+
+/**
+ * Done tasks newest first. The charter keeps Done newest first, but only asks for the latest ten, so the
+ * outcome's date decides where there is one; tasks without a date keep their place in the backlog after
+ * the dated ones.
+ */
+function newestFirst<T extends { date: string | null; index: number }>(entries: T[]): T[] {
+  return [...entries].sort((a, b) => {
+    if (a.date !== null && b.date !== null && a.date !== b.date) return a.date < b.date ? 1 : -1;
+    if ((a.date === null) !== (b.date === null)) return a.date === null ? 1 : -1;
+    return a.index - b.index;
+  });
+}
+
+/** The board grouped for the briefing. Done is newest first. */
 export function groupFleet(fleet: FleetData): FirstMateBrief | null {
   if (fleet.mate === null) return null;
   const out: FirstMateBrief = {
@@ -77,10 +103,13 @@ export function groupFleet(fleet: FleetData): FirstMateBrief | null {
     done: [],
     suggestions: fleet.suggestions.map((suggestion) => cleanTitle(suggestion.label)),
   };
-  for (const card of fleet.cards) {
+  const done: { line: TaskLine; date: string | null; index: number }[] = [];
+  fleet.cards.forEach((card, index) => {
     const { bucket, detail } = bucketOf(card);
-    const line: TaskLine = { title: cleanTitle(card.title), detail };
-    out[bucket].push(line);
-  }
+    const line: TaskLine = { title: clip(cleanTitle(card.title), TITLE_MAX), detail };
+    if (bucket === "done") done.push({ line, date: landedOn(card.backlog?.outcome ?? null), index });
+    else out[bucket].push(line);
+  });
+  out.done = newestFirst(done).map((entry) => entry.line);
   return out;
 }

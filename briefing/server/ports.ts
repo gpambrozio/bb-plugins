@@ -31,8 +31,8 @@ export interface ProjectRow {
 export type FleetRead = { ok: true; fleet: FleetData } | { ok: false; reason: string };
 
 export interface BriefingPorts {
-  /** Every thread with no parent that is not archived or hidden. */
-  rootThreads(): Promise<ThreadRow[]>;
+  /** Every thread with no parent that is not archived or hidden; `complete` is false when a cap cut the list. */
+  rootThreads(): Promise<{ threads: ThreadRow[]; complete: boolean }>;
   /** The ids below each of `rootIds`, at any depth, archived and hidden ones left out. */
   descendants(rootIds: readonly string[]): Promise<Map<string, string[]>>;
   /** These threads' rows (up to any number; the implementation pages). */
@@ -47,7 +47,7 @@ export interface BriefingPorts {
   requests(threadId: string, order: "asc" | "desc", limit: number, beforeSeq?: number): Promise<RequestEvent[]>;
   /** The preview of the thread's latest agent message (bb's conversation outline; at most 200 characters). */
   lastAgentPreview(threadId: string): Promise<string | null>;
-  /** The full text of the thread's latest turn's reply; null when that turn wrote none. */
+  /** The full text of the thread's latest reply: its latest turn's, else its last message of its own. */
   latestReply(threadId: string): Promise<string | null>;
   /** A text file on a machine; null when it is not there. Throws when the machine cannot be read. */
   readFile(hostId: string, path: string): Promise<string | null>;

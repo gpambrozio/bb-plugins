@@ -40,6 +40,10 @@ describe("userText", () => {
     expect(userText(typed("[bb system] something"))).toBeNull();
   });
 
+  it("leaves out bb's retry of a failed turn, which repeats the user's message", () => {
+    expect(userText({ ...typed("Fix the login page"), retryOfRequestId: "creq_1", retryAttempt: 1 })).toBeNull();
+  });
+
   it("is null for data it cannot read", () => {
     expect(userText(null)).toBeNull();
     expect(userText({ initiator: "user", input: "nope" })).toBeNull();
@@ -66,6 +70,7 @@ describe("flaggedStatusLine", () => {
     expect(flaggedStatusLine("Did things.\n\nblocked: tests need a DATABASE_URL\n")).toEqual({ state: "blocked", detail: "tests need a DATABASE_URL" });
     expect(flaggedStatusLine("needs-decision: keep the old API or remove it?")).toEqual({ state: "needs a decision", detail: "keep the old API or remove it?" });
     expect(flaggedStatusLine("**failed**: build broke")).toEqual({ state: "failed", detail: "build broke" });
+    expect(flaggedStatusLine("**blocked:** needs a key")).toEqual({ state: "blocked", detail: "needs a key" });
   });
 
   it("ignores other states and status words that are not on the last line", () => {

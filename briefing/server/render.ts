@@ -29,6 +29,8 @@ export interface Detail {
   lastUser: "all" | "needs-you" | "none";
   /** Threads shown with their messages; the rest get one line each. */
   fullThreads: number;
+  /** The reason after a flagged sub-thread's status word (`blocked: <this>`). */
+  childDetail: boolean;
   /** Flagged sub-threads named per thread. */
   flaggedLimit: number;
 }
@@ -36,14 +38,14 @@ export interface Detail {
 const ALL = Number.POSITIVE_INFINITY;
 
 export const LEVELS: readonly Detail[] = [
-  { sentences: 2, chars: 260, descSentences: 2, descChars: 260, listLimit: 12, doneLimit: 5, holdDetail: true, lastUser: "all", fullThreads: ALL, flaggedLimit: 3 },
-  { sentences: 1, chars: 180, descSentences: 1, descChars: 180, listLimit: 8, doneLimit: 5, holdDetail: true, lastUser: "all", fullThreads: ALL, flaggedLimit: 3 },
-  { sentences: 1, chars: 140, descSentences: 1, descChars: 140, listLimit: 6, doneLimit: 3, holdDetail: true, lastUser: "needs-you", fullThreads: ALL, flaggedLimit: 2 },
-  { sentences: 1, chars: 120, descSentences: 1, descChars: 120, listLimit: 6, doneLimit: 3, holdDetail: true, lastUser: "needs-you", fullThreads: 8, flaggedLimit: 2 },
-  { sentences: 1, chars: 110, descSentences: 1, descChars: 100, listLimit: 5, doneLimit: 3, holdDetail: true, lastUser: "needs-you", fullThreads: 5, flaggedLimit: 1 },
-  { sentences: 1, chars: 100, descSentences: 0, descChars: 0, listLimit: 4, doneLimit: 2, holdDetail: true, lastUser: "needs-you", fullThreads: 3, flaggedLimit: 1 },
-  { sentences: 1, chars: 90, descSentences: 0, descChars: 0, listLimit: 3, doneLimit: 2, holdDetail: true, lastUser: "needs-you", fullThreads: 1, flaggedLimit: 1 },
-  { sentences: 1, chars: 90, descSentences: 0, descChars: 0, listLimit: 3, doneLimit: 1, holdDetail: false, lastUser: "none", fullThreads: 0, flaggedLimit: 0 },
+  { sentences: 2, chars: 260, descSentences: 2, descChars: 260, listLimit: 12, doneLimit: 5, holdDetail: true, lastUser: "all", fullThreads: ALL, childDetail: true, flaggedLimit: 3 },
+  { sentences: 1, chars: 180, descSentences: 1, descChars: 180, listLimit: 8, doneLimit: 5, holdDetail: true, lastUser: "all", fullThreads: ALL, childDetail: true, flaggedLimit: 3 },
+  { sentences: 1, chars: 140, descSentences: 1, descChars: 140, listLimit: 6, doneLimit: 3, holdDetail: true, lastUser: "needs-you", fullThreads: ALL, childDetail: true, flaggedLimit: 2 },
+  { sentences: 1, chars: 120, descSentences: 1, descChars: 120, listLimit: 6, doneLimit: 3, holdDetail: true, lastUser: "needs-you", fullThreads: 8, childDetail: false, flaggedLimit: 2 },
+  { sentences: 1, chars: 110, descSentences: 1, descChars: 100, listLimit: 5, doneLimit: 3, holdDetail: true, lastUser: "needs-you", fullThreads: 5, childDetail: false, flaggedLimit: 1 },
+  { sentences: 1, chars: 100, descSentences: 0, descChars: 0, listLimit: 4, doneLimit: 2, holdDetail: true, lastUser: "needs-you", fullThreads: 3, childDetail: false, flaggedLimit: 1 },
+  { sentences: 1, chars: 90, descSentences: 0, descChars: 0, listLimit: 3, doneLimit: 2, holdDetail: true, lastUser: "needs-you", fullThreads: 1, childDetail: false, flaggedLimit: 1 },
+  { sentences: 1, chars: 90, descSentences: 0, descChars: 0, listLimit: 3, doneLimit: 1, holdDetail: false, lastUser: "none", fullThreads: 0, childDetail: false, flaggedLimit: 0 },
 ];
 
 /** The level after which, rather than dropping more detail, the oldest threads go first, down to `THREAD_FLOOR`. */
@@ -100,6 +102,9 @@ function headline(thread: ThreadBrief): string {
   return `${thread.isFirstMate ? "FirstMate thread: " : ""}${thread.title} (${facts.join(", ")}) [${thread.id}]`;
 }
 
+/** The longest reason shown after a flagged sub-thread. */
+const CHILD_DETAIL_MAX = 100;
+
 const CHILD_STATE: Record<FlaggedChild["state"], string> = {
   "waiting for an answer": "is waiting for an answer",
   failed: "failed",
@@ -107,10 +112,12 @@ const CHILD_STATE: Record<FlaggedChild["state"], string> = {
   "needs a decision": "needs a decision",
 };
 
-function childrenLine(thread: ThreadBrief, limit: number): string | null {
+function childrenLine(thread: ThreadBrief, limit: number, withDetail: boolean): string | null {
   if (thread.childCount === 0) return null;
   const flagged = thread.flaggedChildren;
-  const named = flagged.slice(0, limit).map((child) => `${child.title} ${CHILD_STATE[child.state]}`);
+  const named = flagged
+    .slice(0, limit)
+    .map((child) => `${child.title} ${CHILD_STATE[child.state]}${withDetail && child.detail !== null ? ` (${clip(child.detail, CHILD_DETAIL_MAX)})` : ""}`);
   const more = flagged.length - named.length;
   const tail = flagged.length === 0 ? "none blocked" : `${named.join("; ")}${more > 0 ? `; and ${more} more need attention` : ""}`;
   return `  ${plural(thread.childCount, "sub-thread")}: ${tail}.`;
@@ -118,7 +125,7 @@ function childrenLine(thread: ThreadBrief, limit: number): string | null {
 
 function fullThread(thread: ThreadBrief, detail: Detail): string[] {
   const lines = [`- ${headline(thread)}`];
-  const children = childrenLine(thread, detail.flaggedLimit);
+  const children = childrenLine(thread, detail.flaggedLimit, detail.childDetail);
   if (children !== null) lines.push(children);
   const opening = short(thread.opening, detail);
   if (opening !== null) lines.push(`  Asked: ${opening}`);
@@ -141,6 +148,9 @@ function leftOut(briefing: Briefing, detail: Detail, shownThreads: number): stri
   const top = LEVELS[0] as Detail;
   const notes: string[] = [];
   if (detail.sentences < top.sentences || detail.chars < top.chars) notes.push("messages cut to their first sentence");
+  if (!detail.childDetail && briefing.threads.slice(0, Math.min(detail.fullThreads, shownThreads)).some((thread) => thread.flaggedChildren.some((child) => child.detail !== null))) {
+    notes.push("why sub-threads are blocked");
+  }
   if (detail.lastUser === "needs-you") notes.push("the user's latest message except where a thread needs you");
   if (detail.lastUser === "none") notes.push("the user's latest messages");
   const full = Math.min(detail.fullThreads, shownThreads);
@@ -189,11 +199,17 @@ export function renderAt(briefing: Briefing, detail: Detail, shownThreads: numbe
   return out.join("\n");
 }
 
-/** Hard stop for a text no level could fit (a backlog with hundreds of held tasks). */
+/**
+ * Hard stop for a text no level could fit (a backlog with hundreds of held tasks): the body is cut and
+ * the closing lines, from "Left out to fit" on, are kept.
+ */
 function cut(text: string, budget: number): string {
   if (text.length <= budget) return text;
+  const at = text.lastIndexOf("\nLeft out to fit:");
+  const footer = at === -1 ? "" : text.slice(at);
   const marker = "\n…[briefing cut to fit]";
-  return `${text.slice(0, budget - marker.length).replace(/\s+\S*$/, "")}${marker}`;
+  const room = Math.max(0, budget - marker.length - footer.length);
+  return `${text.slice(0, room).replace(/\s+\S*$/, "")}${marker}${footer}`.slice(0, budget);
 }
 
 /** The most detailed briefing text that fits `budget` characters. */
