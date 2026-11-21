@@ -71,10 +71,10 @@ _The editor checks each change as the menu does and will not save a file with a 
 
 | Field | Required | What it does |
 | --- | --- | --- |
-| `name` | required | What the menu and the terminal's tab say. Unique in the file (ignoring case), up to 80 characters. |
-| `command` | required | What runs, as you would type it in a terminal. It runs in your login shell (`$SHELL -lc`, as bb's own `bb terminal create --command` does), so your `PATH` from your login files and your shell's syntax, such as `&&`, work. |
-| `cwd` | optional | The folder to run in, relative to the repository's root (`packages/ui`). It cannot leave the repository. The root by default. |
-| `description` | optional | A line under the name in the menu, in place of the command. |
+| `name` | required | What the menu and the terminal's tab say. One line, unique in the file (ignoring case), up to 80 characters. |
+| `command` | required | What runs, as you would type it in a terminal. It runs in your login shell (`$SHELL -lc`, as bb's own `bb terminal create --command` does), so your `PATH` from your login files and your shell's syntax, such as `&&`, work. It may span lines, as a short script (`"npm ci\nnpm run build"`). |
+| `cwd` | optional | The folder to run in, relative to the repository's root (`packages/ui`). One line. It cannot leave the repository, through a symlink either. The root by default. |
+| `description` | optional | One line under the name in the menu, in place of the command. |
 
 The file is strict JSON: no comments and no trailing commas, so `jq` and other tools read it too. An
 optional `$schema` key is allowed. Anything else, such as a misspelt field, is refused with where it is,
@@ -90,7 +90,8 @@ the menu, with no reload.
 editor** when the file has a mistake) opens the editor in a tab beside the thread. It edits the thread's
 own copy of `.bb/actions.json`, on the machine that holds the workspace.
 
-- **Form or JSON.** The form lists each action with its name, command, folder and description; add one,
+- **Form or JSON.** The form lists each action with its name, command (several lines if you like: Enter
+  adds one), folder and description; add one,
   move it up or down, or delete it. The JSON view shows the same file as text. A file the form cannot
   hold, such as one with a syntax error, opens as JSON to be fixed there.
 - **Checked as the menu checks it.** Each mistake shows on its field with the menu's own message, and Save

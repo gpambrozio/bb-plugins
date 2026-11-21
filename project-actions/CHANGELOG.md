@@ -21,6 +21,6 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Clear help when the file is missing or wrong**: the menu explains how to add the file, or shows the
   mistake with its line and column.
 - **An editor for the actions**, from the menu: add, change, reorder and delete actions in a form, or edit
-  the file as JSON. It checks every change as the menu does, will not save a file with a mistake, saves
+  the file as JSON. A command can span several lines. It checks every change as the menu does, will not save a file with a mistake, saves
   into the thread's own workspace (creating the file when there is none) without committing it, and will
   not overwrite a file that changed on disk since it was opened.

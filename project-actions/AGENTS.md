@@ -110,7 +110,10 @@ file the next time it opens.
 values trimmed, empty optional fields left out. Since the parser refuses unknown keys, nothing a valid file
 can hold is lost. A hand-formatted file is reformatted on its first save from the form; the JSON view
 saves the text exactly as typed. A file the form cannot hold (a syntax error, say) opens in the JSON view,
-and the Form view stays off until it parses. The parser reports one problem at a time, so the form shows
+and the Form view stays off until it parses. Only a command may span lines: the form's Command is a text area that grows
+with its lines (`[field-sizing:content]`, `rows` as a fallback), and the parser refuses a line break in a
+name, folder or description, so the one-line inputs hold every valid value exactly (an `<input>` strips
+line breaks: editing such a value would silently join them). The parser reports one problem at a time, so the form shows
 one error; a new row shows none until it is touched, and a line says what blocks the save instead.
 
 **The editor is a thread tab** (`edit-actions`, `availability: "action"`), opened with the panel

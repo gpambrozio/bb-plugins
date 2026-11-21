@@ -89,11 +89,17 @@ export function normaliseCwd(raw: string): { ok: true; cwd: string | null } | { 
   return { ok: true, cwd: parts.length === 0 ? null : parts.join("/") };
 }
 
-function requireString(value: unknown, segments: Segment[], limit: number, label: string): string {
+/**
+ * A non-empty string, trimmed. Only a command may span lines (a shell script can); a name, folder or
+ * description with a line break is refused, so the editor's one-line fields hold every valid value
+ * exactly instead of joining its lines.
+ */
+function requireString(value: unknown, segments: Segment[], limit: number, label: string, lines: "one" | "many" = "one"): string {
   if (typeof value !== "string") throw new ValueError(`${label} must be a string`, segments);
   const trimmed = value.trim();
   if (trimmed === "") throw new ValueError(`${label} must not be empty`, segments);
   if (trimmed.length > limit) throw new ValueError(`${label} is longer than ${limit} characters`, segments);
+  if (lines === "one" && /[\r\n]/.test(trimmed)) throw new ValueError(`${label} must be one line`, segments);
   return trimmed;
 }
 
@@ -124,7 +130,7 @@ function validate(value: unknown): { actions: Action[]; schema: string | null } 
     const earlier = seen.get(key);
     if (earlier !== undefined) throw new ValueError(`Two actions are named "${name}" (actions[${earlier}] and actions[${index}])`, [...at, "name"]);
     seen.set(key, index);
-    const command = requireString(action.command, [...at, "command"], LIMITS.command, '"command"');
+    const command = requireString(action.command, [...at, "command"], LIMITS.command, '"command"', "many");
     let cwd: string | null = null;
     if ("cwd" in action) {
       const raw = requireString(action.cwd, [...at, "cwd"], LIMITS.cwd, '"cwd"');

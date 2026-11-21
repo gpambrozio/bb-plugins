@@ -95,16 +95,30 @@ function RowEditor({
                 {FIELD_LABELS[field]}
                 {field === "name" || field === "command" ? "" : " (optional)"}
               </label>
-              <Input
-                id={id}
-                value={row[field]}
-                placeholder={FIELD_HINTS[field]}
-                autoFocus={autoFocus && field === "name"}
-                aria-invalid={error !== null}
-                // Hints read as hints, not values: faint, and never in the code font.
-                className={`placeholder:font-sans placeholder:text-muted-foreground/60${field === "command" || field === "cwd" ? " font-mono" : ""}`}
-                onChange={(event) => onChange(field, event.target.value)}
-              />
+              {field === "command" ? (
+                // A command may span lines (a short script), so it is a text area that grows with them:
+                // Enter adds a line. A one-line input would silently join them.
+                <Textarea
+                  id={id}
+                  value={row.command}
+                  placeholder={FIELD_HINTS.command}
+                  rows={Math.max(1, row.command.split("\n").length)}
+                  aria-invalid={error !== null}
+                  className="min-h-9 resize-none py-1.5 font-mono [field-sizing:content] placeholder:font-sans placeholder:text-muted-foreground/60"
+                  onChange={(event) => onChange(field, event.target.value)}
+                />
+              ) : (
+                <Input
+                  id={id}
+                  value={row[field]}
+                  placeholder={FIELD_HINTS[field]}
+                  autoFocus={autoFocus && field === "name"}
+                  aria-invalid={error !== null}
+                  // Hints read as hints, not values: faint, and never in the code font.
+                  className={`placeholder:font-sans placeholder:text-muted-foreground/60${field === "cwd" ? " font-mono" : ""}`}
+                  onChange={(event) => onChange(field, event.target.value)}
+                />
+              )}
               {error === null ? null : <span className="text-xs text-destructive">{error}</span>}
             </div>
           );

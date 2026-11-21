@@ -24,10 +24,12 @@ can see. Edit the file directly (below) rather than through the plugin's `save` 
 }
 ```
 
-- `name` (required): unique in the file ignoring case, at most 80 characters.
-- `command` (required): run with the user's login shell (`$SHELL -lc`), so shell syntax works.
-- `cwd` (optional): a folder relative to the repository root; no absolute paths, no `..`.
-- `description` (optional): shown under the name instead of the command.
+- `name` (required): one line, unique in the file ignoring case, at most 80 characters.
+- `command` (required): run with the user's login shell (`$SHELL -lc`), so shell syntax works; it may
+  span lines (`\n` in the JSON string), as a short script.
+- `cwd` (optional): one line, a folder relative to the repository root; no absolute paths, no `..`,
+  and a symlink out of the repository is refused when the action starts.
+- `description` (optional): one line, shown under the name instead of the command.
 - At most 100 actions. An optional `$schema` key is allowed; any other key is an error.
 
 Rules: strict JSON (no comments, no trailing commas). Commit the file like any other: each worktree reads

@@ -180,6 +180,24 @@ describe("the Edit actions tab", () => {
     expect(saveButton().disabled).toBe(false);
   });
 
+  it("keeps a command's line breaks through a form edit and save", async () => {
+    const file = '{\n  "actions": [\n    {\n      "name": "Build and serve",\n      "command": "echo first\\necho second"\n    }\n  ]\n}\n';
+    const { saves } = render({ read: async () => ({ state: "ready", text: file, sha256: "sha-1", branch: null }) });
+    const command = field(await screen.findByRole("listitem", { name: "Build and serve" }), /Command/);
+    expect(command.tagName).toBe("TEXTAREA");
+    expect(command.value).toBe("echo first\necho second");
+    fireEvent.change(command, { target: { value: `${command.value} --flag\necho third` } });
+    fireEvent.click(saveButton());
+    await waitFor(() => expect(saves).toHaveLength(1));
+    expect(JSON.parse(saves[0]!.text).actions[0].command).toBe("echo first\necho second --flag\necho third");
+  });
+
+  it("opens a file whose name spans lines as JSON, rather than joining the lines in the form", async () => {
+    render({ read: async () => ({ state: "ready", text: '{ "actions": [{ "name": "Two\\nlines", "command": "true" }] }', sha256: "sha-1", branch: null }) });
+    expect(await screen.findByText('"name" must be one line')).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Form" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it("says why a save failed", async () => {
     render({
       save: async () => {

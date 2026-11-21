@@ -77,6 +77,21 @@ describe("parseActionsFile", () => {
     expect(parseActionsFile(text)).toMatchObject({ ok: false, problem: { message, path } });
   });
 
+  it("keeps a command's line breaks", () => {
+    expect(parseActionsFile(file([{ name: "Build", command: "npm run build\nnpm run serve\n" }]))).toMatchObject({
+      ok: true,
+      actions: [{ command: "npm run build\nnpm run serve" }],
+    });
+  });
+
+  it.each([
+    ["name", { name: "Two\nlines", command: "x" }, '"name" must be one line'],
+    ["cwd", { name: "a", command: "x", cwd: "web\napp" }, '"cwd" must be one line'],
+    ["description", { name: "a", command: "x", description: "one\r\ntwo" }, '"description" must be one line'],
+  ])("refuses a %s that spans lines", (field, entry, message) => {
+    expect(parseActionsFile(file([entry]))).toMatchObject({ ok: false, problem: { message, path: `actions[0].${field}` } });
+  });
+
   it("refuses two actions with one name, whatever their case", () => {
     const parsed = parseActionsFile(file([{ name: "Test", command: "a" }, { name: "test", command: "b" }]));
     expect(parsed).toMatchObject({ ok: false, problem: { message: 'Two actions are named "test" (actions[0] and actions[1])', path: "actions[1].name" } });
