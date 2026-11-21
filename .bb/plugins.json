@@ -15,6 +15,7 @@
     { "name": "learning-exercises", "source": "./learning-exercises" },
     { "name": "codex-realtime", "source": "./codex-realtime" },
     { "name": "phone-rail", "source": "./phone-rail" },
-    { "name": "dream", "source": "./dream" }
+    { "name": "dream", "source": "./dream" },
+    { "name": "project-actions", "source": "./project-actions" }
   ]
 }

@@ -104,6 +104,13 @@ export class Seeder {
     this.bb.cli(["settings", "general", "defaultProviderId", DEMO_PROVIDER]);
     this.bb.cli(["settings", "general", "providerOrder", JSON.stringify([DEMO_PROVIDER])]);
     this.bb.cli(["settings", "general", "telemetryEnabled", "false"]);
+    // bb 0.50's first-run screen has no "Skip setup" (browser.mjs presses it on older bb): it shows
+    // until this setting is set. bb 0.49 has no such setting, and the button is how it is skipped.
+    try {
+      this.bb.cli(["settings", "general", "onboardingCompletedAt", new Date().toISOString()]);
+    } catch {
+      // An older bb: browser.mjs skips the screen.
+    }
   }
 
   /**

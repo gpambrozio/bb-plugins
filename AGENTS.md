@@ -218,6 +218,10 @@ Use `bb.sdk` from handlers and services, not the factory body.
 
 What a port only learns by running it:
 
+- **A dependency can build and still fail to load.** esbuild takes a package's `main`; when that is a
+  UMD build with lazy `require("./…")` calls (jsonc-parser 3), `bb plugin build` succeeds and the server
+  then fails to load with "Cannot find module". `bb plugin list` shows the error; import the package's
+  ESM entry instead (`project-actions/shared/actions-file.ts`).
 - **The server cannot find its own folder.** `bb plugin build` compiles the entry into bb's cache, so
   nothing at run time names the plugin's directory, and a `templates/` or `data/` folder beside
   `server.ts` is unreachable. Ship such data through a generated module (a script writes the files
@@ -256,9 +260,14 @@ What a port only learns by running it:
 - **A shell on any machine is `bb.sdk.terminals`, and drawing it is the plugin's job.** `create` with
   `scope: { kind: "host_path", hostId, cwd: null }` starts a persistent PTY in that machine's home
   folder, run by its host daemon and buffered by bb (it survives the app and the page). The SDK has no
-  terminal view: `useBbNavigate().experimental_openTerminal` shows one only in the App panel beside a
-  page, with bb's own tab strip, and the stream a custom view needs is bb's undocumented
-  `/ws/terminals/<id>` socket (`terminals/app/connection.ts` has its bb 0.48.1 protocol).
+  terminal view: `useBbNavigate().experimental_openTerminal` shows one in bb's own terminal panel — from
+  a plugin page, any terminal in the App panel beside it; from a thread surface (its header included,
+  bb 0.49), only that thread's terminals (`scope: { kind: "thread" }`), in its side panel — and the stream
+  a custom view needs is bb's undocumented `/ws/terminals/<id>` socket (`terminals/app/connection.ts` has
+  its bb 0.48.1 protocol). `start: { mode: "command" }` runs `$SHELL -lc <command>` and the terminal ends
+  with it; `openTerminal` refuses an exited terminal and `terminals.list` leaves exited ones out, so a
+  quick command is gone before it can be shown. `mode: "argv"` with a wrapper that waits keeps it
+  (`project-actions/server/command.ts`).
 - **A `threads.get` row is not a `threads.list` row.** Only list rows carry `queuedWork`,
   `hasPendingInteraction` and the `activity` counts; a get row has `queuedMessageCount` and
   `activeBackgroundAgentCount` instead, and neither says whether an interaction is pending (read

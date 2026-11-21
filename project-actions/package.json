@@ -1,0 +1,79 @@
+{
+  "name": "@gpambrozio/bb-plugin-project-actions",
+  "version": "0.1.0",
+  "license": "MIT",
+  "author": "gpambrozio (https://github.com/gpambrozio)",
+  "homepage": "https://github.com/gpambrozio/bb-plugins/tree/main/project-actions#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gpambrozio/bb-plugins.git",
+    "directory": "project-actions"
+  },
+  "bugs": {
+    "url": "https://github.com/gpambrozio/bb-plugins/issues"
+  },
+  "type": "module",
+  "engines": {
+    "bb": ">=0.49",
+    "bbPluginSdk": ">=0.6.132"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "build": "bb plugin build"
+  },
+  "files": [
+    "server.ts",
+    "server/",
+    "shared/",
+    "skills/",
+    "app.tsx",
+    "app/",
+    "components/",
+    "lib/",
+    "hooks/",
+    "dist/",
+    "PLUGIN_OVERVIEW.md",
+    "CHANGELOG.md",
+    "!**/*.test.ts",
+    "!**/*.test.tsx"
+  ],
+  "bb": {
+    "name": "Project Actions",
+    "description": "Run your project's named commands, such as a dev server or a script, from a menu in each thread's header, in a terminal in that thread's workspace.",
+    "branding": {
+      "icon": "Play"
+    },
+    "server": "./server.ts",
+    "app": "./app.tsx"
+  },
+  "dependencies": {
+    "@radix-ui/react-slot": "^1.5.0",
+    "jsonc-parser": "^3.3.1",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@get-bb/plugin-sdk": "0.6.132",
+    "@radix-ui/react-dropdown-menu": "^2.2.1",
+    "@radix-ui/react-tooltip": "^1.4.1",
+    "@testing-library/dom": "^10.4.2",
+    "@testing-library/react": "^16.3.3",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.20.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "better-sqlite3": "^12.11.1",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "cron-parser": "^5.10.6",
+    "hono": "^4.13.19",
+    "jsdom": "^30.1.3",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "sonner": "^1.7.4",
+    "tailwind-merge": "^3.7.1",
+    "typescript": "^5.9.3",
+    "vaul": "^1.1.2",
+    "vitest": "^5.1.1"
+  }
+}

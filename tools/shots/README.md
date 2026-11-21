@@ -157,7 +157,8 @@ export async function shoot({ shots, VARIANTS }) {
 
 ## What the scout learned about the dev bb
 
-- **The first-run screen** has a *Skip setup* button; `shots.page` presses it.
+- **The first-run screen** has a *Skip setup* button up to bb 0.49; `shots.page` presses it. bb 0.50 has
+  none and shows the screen until the general setting `onboardingCompletedAt` is set, which the seed does.
 - **Provider pickers have no accessible names.** Use bb's own Alt+P (cycle provider) and read the
   model picker (`Provider, model and reasoning`), as `skills/shots/shots.mjs` does.
 - **bb's nav rail has a "Skills" button too.** Match a plugin's control by its full accessible name
@@ -179,6 +180,12 @@ export async function shoot({ shots, VARIANTS }) {
 - **Plugin tabs open from the side panel.** `Show right panel (⌘ J)` opens it; a fixed tab is a
   `Show <name> panel` button, and an action tab is in the launcher behind `Open new tab (⌘ T)` (click its
   title with `.last()`, the composer has one too). At phone width the panel takes the screen.
+- **bb's terminals are a WebGL canvas.** A page has no terminal text to wait on (read it with the dev bb's
+  `bb terminal output <id> --plain`), and headless Chromium captures the canvas blank at 2×: take shots
+  that show a terminal at `deviceScaleFactor: 1`, as `project-actions/shots/shots.mjs` does. Videos are
+  1× already.
+- **An open menu hides the page from roles.** A Radix menu marks everything outside it `aria-hidden`, so
+  `getByRole` no longer finds the button it hangs from; crop around it with an attribute locator.
 - **A plugin's per-browser preferences are `localStorage`.** Set them with `page.evaluate` on the first
   page, then `goto` the page to shoot, as `firstmate-crew` does for its section order and folds.
 - **Panels need a thread.** A thread on `acp-demo` has a real worktree and panel tabs. A thread on any
