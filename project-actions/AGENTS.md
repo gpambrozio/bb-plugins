@@ -25,9 +25,10 @@ specific to `project-actions`.
 | `app/editor.tsx` | The Edit actions tab: form and JSON views, the checks, save, conflict and reload. |
 | `app/editor-model.ts` | The editor's draft without React: rows ↔ file text, moving rows, which field a problem belongs to. |
 | `app/tabs.ts` | The two tab ids the panel controller opens. |
+| `testing/run_in_pty.py` | Runs an action's argv in a real pseudo-terminal for `server/command.test.ts`: Ctrl+C, the finished marker, whether the wrapper still waits for Enter. |
 | `shots/shots.mjs` | README screenshots and the demo GIF (`npm run shots -- project-actions` in `tools/shots`). |
 
-`npm test` runs everything. The wrapper is run for real under `/bin/sh` (`server/command.test.ts`);
+`npm test` runs everything (it needs `python3` for the terminal tests). The wrapper is run for real under `/bin/sh`, and in a pseudo-terminal with each shell installed (`server/command.test.ts`);
 the server runs against the SDK's fake host; the menu and the editor render in jsdom against fake RPCs.
 
 ## Decisions
@@ -50,11 +51,28 @@ the plugin registers one that opens a thread tab listing the same actions (`app/
 <command>` and ends the terminal with the command. A script that finishes quickly is then gone before the
 app opens it (`experimental_openTerminal` refuses an exited terminal), and its output is never seen. So
 the terminal starts in argv mode: `/bin/sh -c <wrapper> bb-project-actions <workspace> <folder> <command>
-<name>`. The wrapper `cd`s (and checks the folder, below), runs the command as bb would (`"$SHELL"
--lc`, so the user's PATH and shell syntax hold), prints `[<name> ended with exit code N. Press Enter to close this terminal.]` and waits for Enter. The
-workspace, folder, command and name are arguments, never spliced into the script, so nothing in the
-file is re-quoted. `trap : INT` keeps the wrapper alive through a Ctrl+C that stops the command (an ignored
+<name>`. The wrapper `cd`s (and checks the folder, below), runs the command in the user's shell (next
+decision), prints `[<name> ended with exit code N. Press Enter to close this terminal.]` and waits for Enter. The
+workspace, folder, command and name are arguments, never spliced into the wrapper, so nothing in the
+file is re-quoted; the command reaches the user's shell as its `-c` script, at most after a fixed prefix.
+`trap : INT` keeps the wrapper alive through a Ctrl+C that stops the command (an ignored
 signal would be inherited by the command; a trapped one is reset for it).
+
+**The command runs in an interactive login shell, with job control off.** The owner's ask: an action
+sees what a terminal they open sees. A login shell alone (`$SHELL -lc`, bb's command mode) reads
+`.zprofile` or `.bash_profile` but not `.zshrc`, nor the `.bashrc` most profiles source behind an
+interactive-only check, so the wrapper runs `$SHELL -i -l -c`. An interactive shell turns job control on,
+moving itself and the command into a process group that owns the terminal, and relies on giving the
+terminal back on exit. zsh `exec`s the command's last program (`npm run dev` alone, or `exec`), so nothing
+gives it back and the wrapper's `read` fails at once: the terminal closes and the output is lost.
+Interactive bash and sh also carry on with the next line after a Ctrl+C, and dash drops into reading
+commands from the terminal. So: zsh gets `+m` among its flags (too late once started: an inner `set +m`
+kills the wrapper); bash turns job control on whatever its flags say, so the `sh` family gets the command
+after `set +m; trap 'exit 130' INT; ` (`;`, not a newline, so line numbers stay the command's); any other
+shell, fish included, gets the command as it is. `server/command.test.ts` runs each shell the machine has
+in a real pseudo-terminal (`testing/run_in_pty.py`, since Node has no pty): rc files, a last program that
+takes the terminal, `exec`, and Ctrl+C in a script. CI's Ubuntu has bash and dash; zsh and fish run where
+they are installed. csh and tcsh were never supported (`-l` must be their only flag).
 
 **Running or finished is read from the terminal.** bb says a terminal is running until the wrapper exits,
 which is after Enter. To tell a finished action from a running one, the wrapper's last line carries an

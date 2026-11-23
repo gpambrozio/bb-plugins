@@ -72,7 +72,7 @@ _The editor checks each change as the menu does and will not save a file with a 
 | Field | Required | What it does |
 | --- | --- | --- |
 | `name` | required | What the menu and the terminal's tab say. One line, unique in the file (ignoring case), up to 80 characters. |
-| `command` | required | What runs, as you would type it in a terminal. It runs in your login shell (`$SHELL -lc`, as bb's own `bb terminal create --command` does), so your `PATH` from your login files and your shell's syntax, such as `&&`, work. It may span lines, as a short script (`"npm ci\nnpm run build"`). |
+| `command` | required | What runs, as you would type it in a terminal. It runs in an interactive login shell of your `$SHELL` (`$SHELL -i -l -c`), as in a terminal you open yourself: your `~/.zshrc` or `~/.bashrc` loads, so your `PATH`, environment variables, aliases and functions from it, and your shell's syntax, such as `&&`, work. It may span lines, as a short script (`"npm ci\nnpm run build"`). |
 | `cwd` | optional | The folder to run in, relative to the repository's root (`packages/ui`). One line. It cannot leave the repository, through a symlink either. The root by default. |
 | `description` | optional | One line under the name in the menu, in place of the command. |
 
@@ -114,8 +114,11 @@ workspace (or its `cwd`), and opens it in bb's terminal panel beside the thread.
 - **Finished?** The terminal stays open with the output and a line saying how it ended, such as
   *[Run tests ended with exit code 0. Press Enter to close this terminal.]*, and the menu says
   *Finished*. Picking it again closes that terminal and starts a fresh run.
-- **Stopping one:** Ctrl+C in its terminal stops the command and shows how it ended; closing the
-  terminal's tab ends it.
+- **Stopping one:** Ctrl+C in its terminal stops the whole command, a script of several lines included,
+  and shows how it ended; closing the terminal's tab ends it.
+- **Your shell's startup files run first**, as in any terminal you open, so anything they print shows
+  above the action's output, and a slow one delays it. One that starts another program in place of the
+  shell (`exec tmux`, say) does that here too, and the action does not run.
 
 Runs are per thread: two threads, in two worktrees, each run their own dev server.
 

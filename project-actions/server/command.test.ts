@@ -1,11 +1,13 @@
 /**
  * The wrapper is run for real under /bin/sh: what it prints, where it runs the command, the exit
- * code it ends with, and the marker the server looks for.
+ * code it ends with, and the marker the server looks for. The user's shell is run for real too, in a
+ * pseudo-terminal (`testing/run_in_pty.py`), with each shell this machine has.
  */
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, realpathSync, symlinkSync } from "node:fs";
+import { chmodSync, mkdtempSync, mkdirSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { FINISHED_MARKER, actionArgv, hasFinished, isWindowsPath, relativeFolder } from "./command";
@@ -20,11 +22,31 @@ function run(argv: string[]) {
 }
 
 describe("actionArgv", () => {
-  it("runs the command through the user's login shell under /bin/sh, the workspace and the name as arguments", () => {
+  it("runs the command through the user's interactive login shell under /bin/sh, the workspace and the name as arguments", () => {
     const argv = actionArgv("/work/repo", action({ command: "npm run dev", cwd: "web", name: "Dev server" }));
     expect(argv.slice(0, 2)).toEqual(["/bin/sh", "-c"]);
     expect(argv.slice(3)).toEqual(["bb-project-actions", "/work/repo", "./web", "npm run dev", "Dev server"]);
-    expect(argv[2]).toContain('"${SHELL:-/bin/sh}" -lc "$3"');
+    expect(argv[2]).toContain("shell=${SHELL:-/bin/sh}");
+    expect(argv[2]).toContain('zsh) "$shell" -i -l +m -c "$3" ;;');
+    expect(argv[2]).toContain(`bash | sh | dash | ash | ksh | ksh93 | mksh | yash) "$shell" -i -l -c "set +m; trap 'exit 130' INT; $3" ;;`);
+    expect(argv[2]).toContain('*) "$shell" -i -l -c "$3" ;;');
+  });
+
+  it("falls back to /bin/sh when SHELL is not set", () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "project-actions-")));
+    const [file, ...args] = actionArgv(root, action({ command: "echo ran", name: "Plain" }));
+    const result = spawnSync(file!, args, { input: "\n", encoding: "utf8", env: { PATH: process.env.PATH } });
+    expect(result.stdout).toContain("ran\n");
+    expect(result.stdout).toContain("[Plain ended with exit code 0.");
+    expect(result.status).toBe(0);
+  });
+
+  // dash, because bash 3.2 (macOS's /bin/sh) miscounts `$LINENO` under `-c` whatever comes first.
+  it.skipIf(which("dash") === null)("keeps the command's line numbers its own after the sh family's prefix", () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "project-actions-")));
+    const [file, ...args] = actionArgv(root, action({ command: 'true\necho "line $LINENO"' }));
+    const result = spawnSync(file!, args, { input: "\n", encoding: "utf8", env: { PATH: process.env.PATH, SHELL: which("dash")! } });
+    expect(result.stdout).toContain("line 2\n");
   });
 
   it("runs in the action's folder and keeps the command's exit code", () => {
@@ -143,4 +165,99 @@ describe("isWindowsPath", () => {
   ])("%s → %s", (path, expected) => {
     expect(isWindowsPath(path)).toBe(expected);
   });
+});
+
+/** Where a shell is installed on this machine, or null. */
+function which(name: string): string | null {
+  const result = spawnSync("/bin/sh", ["-c", 'command -v "$1"', "which", name], { encoding: "utf8" });
+  const path = result.stdout.trim();
+  return result.status === 0 && path.startsWith("/") ? path : null;
+}
+
+const python = which("python3");
+const ptyDriver = fileURLToPath(new URL("../testing/run_in_pty.py", import.meta.url));
+
+interface PtyResult {
+  output: string;
+  finished: boolean;
+  waited_for_enter: boolean;
+  exit_code: number | null;
+}
+
+/** Runs the argv in a pseudo-terminal, as bb's terminal does, Ctrl+C once `interruptAfter` is printed. */
+function runInPty(argv: string[], env: Record<string, string>, interruptAfter: string | null = null): PtyResult {
+  const result = spawnSync(python!, ["-I", ptyDriver, JSON.stringify({ argv, env, interrupt_after: interruptAfter })], { encoding: "utf8", timeout: 30_000 });
+  if (result.status !== 0) throw new Error(`run_in_pty.py failed (${result.status}): ${result.stderr}`);
+  return JSON.parse(result.stdout) as PtyResult;
+}
+
+/**
+ * A home folder whose rc files each set FROM_RC and put `rcbin` (with an `rc-tool` in it) first on the
+ * PATH, but only in an interactive shell, as `.bashrc` files usually do, so a login shell alone sees
+ * neither.
+ */
+function homeWithRcFiles(): string {
+  const home = realpathSync(mkdtempSync(join(tmpdir(), "project-actions-home-")));
+  const interactiveOnly = (name: string) => `case $- in *i*) export FROM_RC=${name}; export PATH="$HOME/rcbin:$PATH" ;; esac\n`;
+  writeFileSync(join(home, ".zshrc"), 'export FROM_RC=zshrc\nexport PATH="$HOME/rcbin:$PATH"\n');
+  writeFileSync(join(home, ".bash_profile"), '. "$HOME/.bashrc"\n');
+  writeFileSync(join(home, ".bashrc"), interactiveOnly("bashrc"));
+  writeFileSync(join(home, ".profile"), 'ENV="$HOME/.shrc"; export ENV\n');
+  writeFileSync(join(home, ".shrc"), interactiveOnly("shrc"));
+  writeFileSync(join(home, ".kshrc"), interactiveOnly("kshrc"));
+  mkdirSync(join(home, ".config", "fish"), { recursive: true });
+  writeFileSync(join(home, ".config", "fish", "config.fish"), "if status is-interactive\n  set -gx FROM_RC fish\n  set -gx PATH $HOME/rcbin $PATH\nend\n");
+  mkdirSync(join(home, "rcbin"));
+  writeFileSync(join(home, "rcbin", "rc-tool"), "#!/bin/sh\necho rc-tool-ran\n");
+  chmodSync(join(home, "rcbin", "rc-tool"), 0o755);
+  return home;
+}
+
+/** Each shell the wrapper knows, with the rc file `homeWithRcFiles` gives it. */
+const shells = [
+  { name: "zsh", rc: "zshrc" },
+  { name: "bash", rc: "bashrc" },
+  { name: "sh", rc: null },
+  { name: "dash", rc: "shrc" },
+  { name: "ksh", rc: null },
+  { name: "fish", rc: "fish" },
+].map((shell) => ({ ...shell, path: which(shell.name) }));
+
+describe.each(shells)("in a terminal, with $name as the user's shell", ({ name, rc, path }) => {
+  const available = python !== null && path !== null;
+  const env = (home: string) => ({ HOME: home, PATH: process.env.PATH ?? "/usr/bin:/bin", SHELL: path!, TERM: "xterm-256color" });
+  const workspace = () => realpathSync(mkdtempSync(join(tmpdir(), "project-actions-")));
+
+  it.skipIf(!available)("loads the shell's interactive startup files, as a terminal the user opens does", () => {
+    const home = homeWithRcFiles();
+    const result = runInPty(actionArgv(workspace(), action({ command: 'echo "rc=$FROM_RC"; rc-tool' })), env(home));
+    // `sh` and `ksh` are other shells' modes on some machines (bash, mksh) and read different files;
+    // what they must do is run, interactively, and finish.
+    if (rc !== null) {
+      expect(result.output).toContain(`rc=${rc}\r\n`);
+      expect(result.output).toContain("rc-tool-ran");
+    }
+    expect(result.finished).toBe(true);
+    expect(result.waited_for_enter).toBe(true);
+  }, 30_000);
+
+  it.skipIf(!available)("still waits for Enter when the shell hands the command's last program the terminal", () => {
+    const home = homeWithRcFiles();
+    for (const command of ["sleep 0.1", "exec sleep 0.1"]) {
+      const result = runInPty(actionArgv(workspace(), action({ command, name: "Last" })), env(home));
+      expect(result.output, command).toContain("[Last ended with exit code 0. Press Enter to close this terminal.]");
+      expect(result.waited_for_enter, command).toBe(true);
+      expect(result.exit_code, command).toBe(0);
+    }
+  }, 30_000);
+
+  it.skipIf(!available)("ends the whole command on Ctrl+C, says so, and waits for Enter", () => {
+    const home = homeWithRcFiles();
+    const result = runInPty(actionArgv(workspace(), action({ command: "echo started\nsleep 30\necho should-not-run", name: "Serve" })), env(home), "started");
+    expect(result.output).not.toContain("should-not-run");
+    expect(result.output).toContain("[Serve ended with exit code 130. Press Enter to close this terminal.]");
+    expect(result.finished).toBe(true);
+    expect(result.waited_for_enter).toBe(true);
+    expect(result.exit_code).toBe(130);
+  }, 30_000);
 });
