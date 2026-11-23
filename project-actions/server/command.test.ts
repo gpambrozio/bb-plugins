@@ -340,6 +340,43 @@ describe.each(shells)("in a terminal, with $name as the user's shell", ({ name, 
     }
   }, 30_000);
 
+  it.skipIf(!available || !["sh", "dash", "ksh"].includes(name))("expands an ENV made of a path and parameters, spaces included", () => {
+    const home = homeWithRcFiles();
+    const folder = join(home, "rc files");
+    mkdirSync(folder);
+    writeFileSync(join(folder, ".shrc"), "export FROM_RC=spaced\n");
+    writeFileSync(join(home, ".profile"), "");
+    const result = runInPty(actionArgv(workspace(), action({ command: 'echo "rc=$FROM_RC"' })), { ...env(home), RC_FOLDER: folder, ENV: "${RC_FOLDER}/.shrc" });
+    expect(result.output).toContain("rc=spaced\r\n");
+  }, 30_000);
+
+  // Only a path and parameters are expanded; anything that could run a program is refused, not evaluated.
+  it.skipIf(!available || !["sh", "dash", "ksh"].includes(name))("never runs a program named in ENV, and says it did not read it", () => {
+    const home = homeWithRcFiles();
+    writeFileSync(join(home, ".profile"), "");
+    const marks = realpathSync(mkdtempSync(join(tmpdir(), "project-actions-marks-")));
+    const values = [
+      // Escaped: the shell itself runs nothing here.
+      `\\$(touch ${marks}/escaped; echo $HOME/.shrc)`,
+      // dash runs no backticks in ENV; sh and ksh would, the wrapper does not.
+      `\`touch ${marks}/backticks\`$HOME/.shrc`,
+      // A command substitution, quoted inside, as sh and ksh would run it.
+      `$(touch ${marks}/substitution; printf "%s" "$HOME/.shrc")`,
+    ];
+    for (const value of values) {
+      const result = runInPty(actionArgv(workspace(), action({ command: "echo action-ran" })), { ...env(home), ENV: value });
+      expect(result.output, value).toContain("action-ran");
+      expect(result.output, value).toContain("was not read for this action");
+      expect(result.waited_for_enter, value).toBe(true);
+    }
+    expect(readdirSync(marks)).toEqual([]);
+    if (name === "dash") {
+      // Native dash runs neither the escaped substitution nor the backticks either.
+      for (const value of values.slice(0, 2)) spawnSync(path!, ["-i", "-l", "-c", "true"], { input: "", env: { ...env(home), ENV: value } });
+      expect(readdirSync(marks)).toEqual([]);
+    }
+  }, 60_000);
+
   it.skipIf(!available)("never runs outside the workspace when a startup file swaps the folder for a link out of it", () => {
     const base = realpathSync(mkdtempSync(join(tmpdir(), "project-actions-")));
     const root = join(base, "repo");

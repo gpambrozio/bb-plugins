@@ -78,8 +78,11 @@ in `server/command.test.ts`:
   as an interactive non-login shell with `--rcfile` and that file reads what a login shell reads, in its
   order (so `shopt login_shell` is off and `.bash_logout` is not read); the `sh` family gets `ENV`, and
   its file reads `/etc/profile`, `.profile` and then the user's own `ENV` (or ksh's `.kshrc`, mksh's
-  `.mkshrc`), expanded as the shell expands it (`ENV='$HOME/.shrc'`), inside double quotes after escaping
-  its `"` and `\`. The files are written to a `mktemp -d` folder, which each file removes as soon as the shell has read it (bb can end the wrapper without letting it clean up; the wrapper removes it too, in case the shell never got that far).
+  `.mkshrc`). The shells expand `ENV` each their own way and read it only once (as our file), so it
+  expands only what they agree on: a path and parameters (`ENV='$HOME/.shrc'`), inside double quotes
+  with its `"` escaped. An `ENV` with `$(`, a backtick or a backslash is not read, and the terminal says
+  so: an earlier `eval` of the whole value ran substitutions the shell itself would not (an escaped
+  `\$(…)`, backticks in dash). The files are written to a `mktemp -d` folder, which each file removes as soon as the shell has read it (bb can end the wrapper without letting it clean up; the wrapper removes it too, in case the shell never got that far).
 - *The folder.* A startup file that `cd`s moved the command out of the folder the wrapper checked. The
   wrapper exports the checked physical path as `BB_PROJECT_ACTION_DIR`, and the prefix before the command
   (`set +m; trap 'exit 130' INT; \command \cd -- "$BB_PROJECT_ACTION_DIR" && [ "$(pwd -P)" = … ] || exit 1;

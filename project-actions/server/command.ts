@@ -54,8 +54,11 @@ export const BASH_STARTUP = [
 /**
  * The `sh` family's `ENV`: what a login shell reads (`/etc/profile`, `.profile`) and the interactive
  * file, the user's own `ENV` (as `.profile` may have set it) or the shell's default (`.kshrc` for ksh,
- * `.mkshrc` for mksh). The shell expands `ENV` before reading the file it names (`ENV='$HOME/.shrc'`),
- * so the file does too: inside double quotes, with the `"` and `\` it holds escaped first.
+ * `.mkshrc` for mksh). The shell expands `ENV` before reading the file it names (`ENV='$HOME/.shrc'`).
+ * Each shell expands it its own way (escapes, backticks, command substitutions differ), and the shell
+ * reads `ENV` only once, as this file, so the file expands only what all of them agree on: a path and
+ * parameters (`$HOME`, `${RC_FOLDER}`), inside double quotes with its `"` escaped. An `ENV` with `$(`,
+ * a backtick or a backslash in it could run a program, so it is not read, and the terminal says so.
  */
 export const SH_STARTUP = [
   ...STARTUP_BEGINS,
@@ -64,7 +67,11 @@ export const SH_STARTUP = [
   "unset BB_PROJECT_ACTIONS_ENV_DEFAULT",
   "if [ -r /etc/profile ]; then . /etc/profile; fi",
   'if [ -r "$HOME/.profile" ]; then . "$HOME/.profile"; fi',
-  'if [ -n "${ENV-}" ]; then eval "BB_PROJECT_ACTIONS_ENV=\\"$(printf \'%s\' "$ENV" | sed \'s/["\\\\]/\\\\&/g\')\\""; fi',
+  'case ${ENV-} in',
+  "  '') ;;",
+  "  *'$('* | *'`'* | *'\\'*) BB_PROJECT_ACTIONS_ENV=; printf '%s\\n' \"[Your ENV, $ENV, was not read for this action: only a path with \\$variables in it is, not \\$(...), backticks or backslashes.]\" >&2 ;;",
+  '  *) eval "BB_PROJECT_ACTIONS_ENV=\\"$(printf \'%s\' "$ENV" | sed \'s/"/\\\\"/g\')\\"" ;;',
+  "esac",
   'if [ -n "$BB_PROJECT_ACTIONS_ENV" ] && [ -r "$BB_PROJECT_ACTIONS_ENV" ]; then . "$BB_PROJECT_ACTIONS_ENV"; fi',
   "unset BB_PROJECT_ACTIONS_ENV",
 ].join("\n");

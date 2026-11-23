@@ -118,7 +118,9 @@ workspace (or its `cwd`), and opens it in bb's terminal panel beside the thread.
   and shows how it ended; closing the terminal's tab ends it.
 - **Your shell's startup files run first**, as in any terminal you open, so anything they print shows
   above the action's output, and a slow one delays it. Ctrl+C while they run stops the action before it
-  starts (with fish, a Ctrl+C at a `read` prompt in `config.fish` cancels only that prompt). One that
+  starts (with fish, a Ctrl+C at a `read` prompt in `config.fish` cancels only that prompt). With sh,
+  dash or ksh, an `ENV` that holds `$(…)`, backticks or backslashes is not read, and the terminal says
+  so; one made of a path and `$variables` is. One that
   changes folder does not move the action: it still runs in its own folder. One that starts another
   program in place of the shell (`exec tmux`, say) does that here too, and the action does not run.
 
