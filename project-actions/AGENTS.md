@@ -25,9 +25,10 @@ specific to `project-actions`.
 | `app/editor.tsx` | The Edit actions tab: form and JSON views, the checks, save, conflict and reload. |
 | `app/editor-model.ts` | The editor's draft without React: rows ↔ file text, moving rows, which field a problem belongs to. |
 | `app/tabs.ts` | The two tab ids the panel controller opens. |
+| `testing/run_in_pty.py` | Runs an action's argv in a real pseudo-terminal for `server/command.test.ts`: Ctrl+C, the finished marker, whether the wrapper still waits for Enter. |
 | `shots/shots.mjs` | README screenshots and the demo GIF (`npm run shots -- project-actions` in `tools/shots`). |
 
-`npm test` runs everything. The wrapper is run for real under `/bin/sh` (`server/command.test.ts`);
+`npm test` runs everything (it needs `python3` for the terminal tests). The wrapper is run for real under `/bin/sh`, and in a pseudo-terminal with each shell installed (`server/command.test.ts`);
 the server runs against the SDK's fake host; the menu and the editor render in jsdom against fake RPCs.
 
 ## Decisions
@@ -50,11 +51,55 @@ the plugin registers one that opens a thread tab listing the same actions (`app/
 <command>` and ends the terminal with the command. A script that finishes quickly is then gone before the
 app opens it (`experimental_openTerminal` refuses an exited terminal), and its output is never seen. So
 the terminal starts in argv mode: `/bin/sh -c <wrapper> bb-project-actions <workspace> <folder> <command>
-<name>`. The wrapper `cd`s (and checks the folder, below), runs the command as bb would (`"$SHELL"
--lc`, so the user's PATH and shell syntax hold), prints `[<name> ended with exit code N. Press Enter to close this terminal.]` and waits for Enter. The
-workspace, folder, command and name are arguments, never spliced into the script, so nothing in the
-file is re-quoted. `trap : INT` keeps the wrapper alive through a Ctrl+C that stops the command (an ignored
-signal would be inherited by the command; a trapped one is reset for it).
+<name>`. The wrapper `cd`s (and checks the folder, below), runs the command in the user's shell (next
+decision), prints `[<name> ended with exit code N. Press Enter to close this terminal.]` and waits for Enter. The
+workspace, folder, command and name are arguments, never spliced into the wrapper, so nothing in the
+file is re-quoted; the command reaches the user's shell as its `-c` script, at most after a fixed prefix.
+`trap : INT` keeps the wrapper alive through a Ctrl+C that reaches it (an ignored signal would be
+inherited by the command; a trapped one is reset for it).
+
+**The command runs in an interactive login shell, guarded around its startup files.** The owner's ask: an
+action sees what a terminal they open sees. A login shell alone (`$SHELL -lc`, bb's command mode) reads
+`.zprofile` or `.bash_profile` but not `.zshrc`, nor the `.bashrc` most profiles source behind an
+interactive-only check. But the startup files are the user's code, run after the wrapper's checks and
+before the command, and a review found three ways they broke the wrapper. Each guard below has a PTY test
+in `server/command.test.ts`:
+
+- *The terminal.* An interactive shell turns job control on: it moves into its own process group, takes the
+  terminal, and gives it back only if it exits normally. zsh `exec`s the command's last program
+  (`npm run dev` alone), and a `.zshrc` may `setopt monitor` again, so the terminal stayed with a dead
+  group and the wrapper's `read` failed or hung. So the wrapper does job control itself (`set -m`) while
+  the shell runs: the shell is its foreground job, and the wrapper takes the terminal back when the job
+  ends, whatever the shell did.
+- *Ctrl+C during startup.* bash, sh and dash abandon their startup files on a Ctrl+C and then run the
+  command anyway (zsh and ksh stop). So a file of the wrapper's, read before the user's, sets `trap 'exit
+  130' INT`: zsh gets it as `.zshenv` through `ZDOTDIR` (it then restores the user's `ZDOTDIR`; zsh looks
+  it up again for each later file); bash, which has no hook before a login shell's `/etc/profile`, starts
+  as an interactive non-login shell with `--rcfile` and that file reads what a login shell reads, in its
+  order (so `shopt login_shell` is off and `.bash_logout` is not read); the `sh` family gets `ENV`, and
+  its file reads `/etc/profile`, `.profile` and then the user's own `ENV` (or ksh's `.kshrc`, mksh's
+  `.mkshrc`). The shells expand `ENV` each their own way and read it only once (as our file), so it
+  expands only what they agree on: a path and parameters (`ENV='$HOME/.shrc'`), inside double quotes
+  with its `"` escaped. An `ENV` with `$(`, a backtick or a backslash is not read, and the terminal says
+  so: an earlier `eval` of the whole value ran substitutions the shell itself would not (an escaped
+  `\$(…)`, backticks in dash). The files are written to a `mktemp -d` folder, which each file removes as soon as the shell has read it (bb can end the wrapper without letting it clean up; the wrapper removes it too, in case the shell never got that far).
+- *The folder.* A startup file that `cd`s moved the command out of the folder the wrapper checked. The
+  wrapper exports the checked physical path as `BB_PROJECT_ACTION_DIR`, and the prefix before the command
+  (`set +m; trap 'exit 130' INT; \command \cd -- "$BB_PROJECT_ACTION_DIR" && [ "$(pwd -P)" = … ] || exit 1;
+  unset …; `) goes back and checks it: `command` skips a `cd` function, the backslashes an alias
+  (`alias cd=jump` in a `.kshrc`). zsh's prefix uses `\builtin cd -q` (`command` means an external
+  program in zsh; `-q` skips `chpwd` hooks). `set +m` and the trap there also make Ctrl+C end the whole
+  command (interactive bash and sh otherwise go on to the next line). The prefix is joined with `;`, so
+  line numbers stay the command's. ksh's `cd` to the folder it is already in does nothing, even when a
+  startup file deleted or moved that folder; it then runs in the folder it checked, never outside.
+
+fish has no file that runs before `config.fish`, and in interactive mode it runs the command after a
+Ctrl+C there, so it runs as a login shell (`fish -l -c`, as in 0.1.0): it reads `config.fish` all the same
+(not its `status is-interactive` blocks) and stops at a Ctrl+C in it, with exit code 0. A Ctrl+C at a `read`
+prompt in `config.fish` only cancels the prompt, as in a terminal. fish gets the folder prefix in its own
+syntax. Any other shell runs as in 0.1.0 (`-l -c`), since the wrapper cannot write its syntax.
+`testing/run_in_pty.py` drives a real pseudo-terminal (Node has none). CI's Ubuntu has bash, dash and
+sh; zsh, ksh and fish run where they are installed. csh and tcsh were never supported.
 
 **Running or finished is read from the terminal.** bb says a terminal is running until the wrapper exits,
 which is after Enter. To tell a finished action from a running one, the wrapper's last line carries an
