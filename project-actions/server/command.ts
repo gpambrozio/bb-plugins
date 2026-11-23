@@ -54,7 +54,8 @@ export const BASH_STARTUP = [
 /**
  * The `sh` family's `ENV`: what a login shell reads (`/etc/profile`, `.profile`) and the interactive
  * file, the user's own `ENV` (as `.profile` may have set it) or the shell's default (`.kshrc` for ksh,
- * `.mkshrc` for mksh).
+ * `.mkshrc` for mksh). The shell expands `ENV` before reading the file it names (`ENV='$HOME/.shrc'`),
+ * so the file does too: inside double quotes, with the `"` and `\` it holds escaped first.
  */
 export const SH_STARTUP = [
   ...STARTUP_BEGINS,
@@ -63,7 +64,7 @@ export const SH_STARTUP = [
   "unset BB_PROJECT_ACTIONS_ENV_DEFAULT",
   "if [ -r /etc/profile ]; then . /etc/profile; fi",
   'if [ -r "$HOME/.profile" ]; then . "$HOME/.profile"; fi',
-  'if [ -n "${ENV-}" ]; then BB_PROJECT_ACTIONS_ENV=$ENV; fi',
+  'if [ -n "${ENV-}" ]; then eval "BB_PROJECT_ACTIONS_ENV=\\"$(printf \'%s\' "$ENV" | sed \'s/["\\\\]/\\\\&/g\')\\""; fi',
   'if [ -n "$BB_PROJECT_ACTIONS_ENV" ] && [ -r "$BB_PROJECT_ACTIONS_ENV" ]; then . "$BB_PROJECT_ACTIONS_ENV"; fi',
   "unset BB_PROJECT_ACTIONS_ENV",
 ].join("\n");
@@ -75,16 +76,17 @@ const LOST_FOLDER = "[The action was not run: its folder could not be entered ag
  * Put before the command, for the `sh` family and bash, once the startup files have run: job control
  * off (the startup files may have turned it on), Ctrl+C ends the whole command, and the shell goes back
  * to the folder the wrapper checked, which a startup file that `cd`s has left. `command cd` skips a `cd`
- * function (rvm and others define one); the folder is a physical path, so `pwd -P` must give it back.
+ * function (rvm and others define one), and the backslashes skip aliases (`alias cd=jump`); the folder
+ * is a physical path, so `pwd -P` must give it back.
  * Joined with `;` on one line, so the command's line numbers stay its own.
  */
 export const SH_BEFORE_COMMAND =
   "set +m; trap 'exit 130' INT; " +
-  `command cd -- "$BB_PROJECT_ACTION_DIR" && [ "$(pwd -P)" = "$BB_PROJECT_ACTION_DIR" ] || { printf '%s\\n' "${LOST_FOLDER}"; exit 1; }; ` +
+  `\\command \\cd -- "$BB_PROJECT_ACTION_DIR" && [ "$(pwd -P)" = "$BB_PROJECT_ACTION_DIR" ] || { printf '%s\\n' "${LOST_FOLDER}"; exit 1; }; ` +
   "unset BB_PROJECT_ACTION_DIR; ";
 
 /** The same for zsh, whose `cd` is `builtin cd -q`: `command` means an external program there, and `-q` skips `chpwd` hooks. */
-export const ZSH_BEFORE_COMMAND = SH_BEFORE_COMMAND.replace("command cd --", "builtin cd -q --");
+export const ZSH_BEFORE_COMMAND = SH_BEFORE_COMMAND.replace("\\command \\cd --", "\\builtin cd -q --");
 
 /** The same for fish, in its own syntax (fish does job control and Ctrl+C by itself). */
 export const FISH_BEFORE_COMMAND =

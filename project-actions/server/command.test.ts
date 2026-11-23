@@ -51,8 +51,8 @@ describe("actionArgv", () => {
     for (const startup of [ZSH_STARTUP, BASH_STARTUP, SH_STARTUP]) {
       expect(startup.split("\n").slice(0, 2)).toEqual(["trap 'exit 130' INT", 'command rm -rf -- "$BB_PROJECT_ACTIONS_STARTUP"']);
     }
-    expect(SH_BEFORE_COMMAND).toMatch(/^set \+m; trap 'exit 130' INT; command cd -- "\$BB_PROJECT_ACTION_DIR" && /);
-    expect(ZSH_BEFORE_COMMAND).toMatch(/^set \+m; trap 'exit 130' INT; builtin cd -q -- "\$BB_PROJECT_ACTION_DIR" && /);
+    expect(SH_BEFORE_COMMAND).toMatch(/^set \+m; trap 'exit 130' INT; \\command \\cd -- "\$BB_PROJECT_ACTION_DIR" && /);
+    expect(ZSH_BEFORE_COMMAND).toMatch(/^set \+m; trap 'exit 130' INT; \\builtin cd -q -- "\$BB_PROJECT_ACTION_DIR" && /);
     expect(FISH_BEFORE_COMMAND).toMatch(/^builtin cd -- \$BB_PROJECT_ACTION_DIR; /);
     for (const prefix of [SH_BEFORE_COMMAND, ZSH_BEFORE_COMMAND, FISH_BEFORE_COMMAND]) expect(prefix).not.toContain("\n");
   });
@@ -317,6 +317,27 @@ describe.each(shells)("in a terminal, with $name as the user's shell", ({ name, 
     expect(result.output).not.toContain(`${home}\r\n`);
     expect(result.output).toContain("[Where ended with exit code 0.");
     expect(result.waited_for_enter).toBe(true);
+  }, 30_000);
+
+  it.skipIf(!available || name === "fish")("goes back to the folder when a startup file aliases cd to a function", () => {
+    const jump = 'jump() { command \\cd "$@"; }; alias cd=jump';
+    const home = homeWithRcFiles({ zsh: jump, sh: jump });
+    const root = workspace();
+    mkdirSync(join(root, "web"));
+    const result = runInPty(actionArgv(root, action({ command: "pwd -P", cwd: "web", name: "Alias" })), env(home));
+    expect(result.output).toContain(`${join(root, "web")}\r\n`);
+    expect(result.output).toContain("[Alias ended with exit code 0.");
+  }, 30_000);
+
+  // The `sh` family expands `ENV` before reading the file it names, set in `.profile` or inherited.
+  it.skipIf(!available || !["sh", "dash", "ksh"].includes(name))("reads the file an ENV with parameters in it names", () => {
+    for (const where of ["profile", "inherited"] as const) {
+      const home = homeWithRcFiles();
+      const unexpanded = "$HOME/.shrc";
+      writeFileSync(join(home, ".profile"), where === "profile" ? `ENV='${unexpanded}'; export ENV\n` : "");
+      const result = runInPty(actionArgv(workspace(), action({ command: 'echo "rc=$FROM_RC"' })), where === "profile" ? env(home) : { ...env(home), ENV: unexpanded });
+      expect(result.output, where).toContain("rc=shrc\r\n");
+    }
   }, 30_000);
 
   it.skipIf(!available)("never runs outside the workspace when a startup file swaps the folder for a link out of it", () => {
