@@ -24,6 +24,8 @@ On the cover screen (466 × 678 points), with the insets the Duo reports simulat
 
 With bb's sidebar drawer open, the rail steps aside: [screenshot](docs/screenshots/cover-drawer-open.png).
 
+![New thread, Back, a recent thread from More, and the rail stepping aside for bb's sidebar](docs/screenshots/duo-rail-demo.gif)
+
 ## What you need
 
 bb 0.49 or later, and an iPhone Duo with bb's iOS app. No account, service or API key.
