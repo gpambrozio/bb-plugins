@@ -55,24 +55,46 @@ the terminal starts in argv mode: `/bin/sh -c <wrapper> bb-project-actions <work
 decision), prints `[<name> ended with exit code N. Press Enter to close this terminal.]` and waits for Enter. The
 workspace, folder, command and name are arguments, never spliced into the wrapper, so nothing in the
 file is re-quoted; the command reaches the user's shell as its `-c` script, at most after a fixed prefix.
-`trap : INT` keeps the wrapper alive through a Ctrl+C that stops the command (an ignored
-signal would be inherited by the command; a trapped one is reset for it).
+`trap : INT` keeps the wrapper alive through a Ctrl+C that reaches it (an ignored signal would be
+inherited by the command; a trapped one is reset for it).
 
-**The command runs in an interactive login shell, with job control off.** The owner's ask: an action
-sees what a terminal they open sees. A login shell alone (`$SHELL -lc`, bb's command mode) reads
+**The command runs in an interactive login shell, guarded around its startup files.** The owner's ask: an
+action sees what a terminal they open sees. A login shell alone (`$SHELL -lc`, bb's command mode) reads
 `.zprofile` or `.bash_profile` but not `.zshrc`, nor the `.bashrc` most profiles source behind an
-interactive-only check, so the wrapper runs `$SHELL -i -l -c`. An interactive shell turns job control on,
-moving itself and the command into a process group that owns the terminal, and relies on giving the
-terminal back on exit. zsh `exec`s the command's last program (`npm run dev` alone, or `exec`), so nothing
-gives it back and the wrapper's `read` fails at once: the terminal closes and the output is lost.
-Interactive bash and sh also carry on with the next line after a Ctrl+C, and dash drops into reading
-commands from the terminal. So: zsh gets `+m` among its flags (too late once started: an inner `set +m`
-kills the wrapper); bash turns job control on whatever its flags say, so the `sh` family gets the command
-after `set +m; trap 'exit 130' INT; ` (`;`, not a newline, so line numbers stay the command's); any other
-shell, fish included, gets the command as it is. `server/command.test.ts` runs each shell the machine has
-in a real pseudo-terminal (`testing/run_in_pty.py`, since Node has no pty): rc files, a last program that
-takes the terminal, `exec`, and Ctrl+C in a script. CI's Ubuntu has bash and dash; zsh and fish run where
-they are installed. csh and tcsh were never supported (`-l` must be their only flag).
+interactive-only check. But the startup files are the user's code, run after the wrapper's checks and
+before the command, and a review found three ways they broke the wrapper. Each guard below has a PTY test
+in `server/command.test.ts`:
+
+- *The terminal.* An interactive shell turns job control on: it moves into its own process group, takes the
+  terminal, and gives it back only if it exits normally. zsh `exec`s the command's last program
+  (`npm run dev` alone), and a `.zshrc` may `setopt monitor` again, so the terminal stayed with a dead
+  group and the wrapper's `read` failed or hung. So the wrapper does job control itself (`set -m`) while
+  the shell runs: the shell is its foreground job, and the wrapper takes the terminal back when the job
+  ends, whatever the shell did.
+- *Ctrl+C during startup.* bash, sh and dash abandon their startup files on a Ctrl+C and then run the
+  command anyway (zsh and ksh stop). So a file of the wrapper's, read before the user's, sets `trap 'exit
+  130' INT`: zsh gets it as `.zshenv` through `ZDOTDIR` (it then restores the user's `ZDOTDIR`; zsh looks
+  it up again for each later file); bash, which has no hook before a login shell's `/etc/profile`, starts
+  as an interactive non-login shell with `--rcfile` and that file reads what a login shell reads, in its
+  order (so `shopt login_shell` is off and `.bash_logout` is not read); the `sh` family gets `ENV`, and
+  its file reads `/etc/profile`, `.profile` and then the user's own `ENV` (or ksh's `.kshrc`, mksh's
+  `.mkshrc`). The files are written to a `mktemp -d` folder, which each file removes as soon as the shell has read it (bb can end the wrapper without letting it clean up; the wrapper removes it too, in case the shell never got that far).
+- *The folder.* A startup file that `cd`s moved the command out of the folder the wrapper checked. The
+  wrapper exports the checked physical path as `BB_PROJECT_ACTION_DIR`, and the prefix before the command
+  (`set +m; trap 'exit 130' INT; command cd -- "$BB_PROJECT_ACTION_DIR" && [ "$(pwd -P)" = … ] || exit 1;
+  unset …; `) goes back and checks it. zsh's prefix uses `builtin cd -q` (`command` means an external
+  program in zsh; `-q` skips `chpwd` hooks). `set +m` and the trap there also make Ctrl+C end the whole
+  command (interactive bash and sh otherwise go on to the next line). The prefix is joined with `;`, so
+  line numbers stay the command's. ksh's `cd` to the folder it is already in does nothing, even when a
+  startup file deleted or moved that folder; it then runs in the folder it checked, never outside.
+
+fish has no file that runs before `config.fish`, and in interactive mode it runs the command after a
+Ctrl+C there, so it runs as a login shell (`fish -l -c`, as in 0.1.0): it reads `config.fish` all the same
+(not its `status is-interactive` blocks) and stops at a Ctrl+C in it, with exit code 0. A Ctrl+C at a `read`
+prompt in `config.fish` only cancels the prompt, as in a terminal. fish gets the folder prefix in its own
+syntax. Any other shell runs as in 0.1.0 (`-l -c`), since the wrapper cannot write its syntax.
+`testing/run_in_pty.py` drives a real pseudo-terminal (Node has none). CI's Ubuntu has bash, dash and
+sh; zsh, ksh and fish run where they are installed. csh and tcsh were never supported.
 
 **Running or finished is read from the terminal.** bb says a terminal is running until the wrapper exits,
 which is after Enter. To tell a finished action from a running one, the wrapper's last line carries an

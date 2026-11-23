@@ -25,9 +25,9 @@ can see. Edit the file directly (below) rather than through the plugin's `save` 
 ```
 
 - `name` (required): one line, unique in the file ignoring case, at most 80 characters.
-- `command` (required): run in an interactive login shell of the user's `$SHELL` (`$SHELL -i -l -c`),
-  as in a terminal they open: their `~/.zshrc` or `~/.bashrc` loads, so their PATH, aliases and
-  functions work, as does shell syntax; it may span lines (`\n` in the JSON string), as a short script.
+- `command` (required): run in the user's `$SHELL` after the startup files a terminal they open reads: their `~/.zshrc` or `~/.bashrc` loads (fish reads `config.fish`), so their PATH, aliases and
+  functions work, as does shell syntax; it always starts in the action's folder, whatever the startup
+  files do; it may span lines (`\n` in the JSON string), as a short script.
 - `cwd` (optional): one line, a folder relative to the repository root; no absolute paths, no `..`,
   and a symlink out of the repository is refused when the action starts.
 - `description` (optional): one line, shown under the name instead of the command.

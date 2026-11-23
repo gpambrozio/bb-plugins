@@ -10,7 +10,7 @@ Edit actions… in the menu opens an editor beside the thread: add, change, reor
 
 ## Running an action
 
-Picking an action starts a terminal titled with its name. The command runs in an interactive login shell, so your shell's startup files, such as ~/.zshrc, load first, and your PATH, aliases and shell syntax work as in a terminal you opened yourself.
+Picking an action starts a terminal titled with its name. The command runs in your shell after its startup files, such as ~/.zshrc, as in a terminal you opened yourself, so your PATH, aliases and shell syntax work there too.
 
 - An action that is still running is marked Running; picking it again shows its terminal instead of starting a second copy.
 - A finished action keeps its output and a line with its exit code until you run it again, which starts a fresh run in its place.

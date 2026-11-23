@@ -13,6 +13,7 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `~/.bashrc`, load before the command, exactly as in a terminal you open yourself, so the programs,
   environment variables, aliases and functions they set up are there. Before, only the login files
   loaded, and a command that relied on something from `~/.zshrc` was not found.
+- **An action always starts in its own folder**, even when your shell's startup files change folder.
 
 ## 0.1.0
 
