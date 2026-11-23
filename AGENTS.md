@@ -497,6 +497,15 @@ selected by `sidebar.navigationProvider`) starts from `plugins/navigation` in `g
 `@/components/ui/*` imports are in the `@bb` registry (`sidebar-row-classes`, `shortcut-pill`, and
 `sidebar-visibility-customize`, bb's own Customize navigation list) (`phone-rail`).
 
+**Safe-area insets can be simulated in a browser.** bb's page has `viewport-fit=cover` and pads itself
+with `env(safe-area-inset-*)`, so Chromium's `Emulation.setSafeAreaInsetsOverride` (a CDP command,
+`page.context().newCDPSession(page)` in Playwright) makes bb lay out as on an iPhone, notch, home
+indicator or the iPhone Duo's side strip included. An overlay that needs the insets reads them the same
+way, through a probe element whose padding is the four `env()` values (`duo-rail/app/insets.ts`). On
+compact screens bb's page is z-index 30 and everything it draws over the page (the sidebar drawer's
+transparent tap-to-close layer, the full-page tool panel, toasts, dialogs and sheets) is 40 or above;
+the drawer slides the page sideways instead of covering it (bb 0.50).
+
 **A window can learn which machine it runs on.** bb's desktop app runs beside a host daemon that answers
 `GET http://127.0.0.1:<port>/status` with `{ hostId, connected, serverUrl }`, on the ports
 `useSdk().system.config().localHelperPorts` lists and with CORS for the server's origin; bb's own app reads
