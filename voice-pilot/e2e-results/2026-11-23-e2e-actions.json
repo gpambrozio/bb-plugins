@@ -1,0 +1,106 @@
+{
+  "startedAt": "2026-11-23T23:51:50.368Z",
+  "connectedMs": 1357,
+  "greetingFirstWordsMs": 1875,
+  "greeting": [
+    "Hi there!\n\n\u201cPick the checkout button colour\u201d in Demo shop is waiting on you with a question or an approval."
+  ],
+  "greetingSpokenMs": 7659,
+  "waiting": [
+    "Let\u2019s take a quick look at what\u2019s awaiting your input.",
+    "It\u2019s asking: which language should the receipts use?\n\nOption 1: English.\nOption 2: Spanish.\n\nYou can pick one or answer in your own words."
+  ],
+  "waitingTools": [
+    "list_waiting",
+    "read_question"
+  ],
+  "resolution": {
+    "id": "pint_7msp5u2vg6",
+    "threadId": "thr_cwynh28dnw",
+    "status": "resolved",
+    "statusReason": null,
+    "createdAt": 1795477905887,
+    "expiresAt": null,
+    "resolvedAt": 1795477944327,
+    "turnId": "dad1a19efc-t5",
+    "providerId": "claude-code",
+    "providerThreadId": "9656a422-0534-47bc-82ea-cfa9d0443957",
+    "providerRequestId": "22784fac-7d5d-47ef-98bd-3906ff5f51fb:interaction-3",
+    "origin": {
+      "kind": "provider",
+      "providerId": "claude-code",
+      "providerThreadId": "9656a422-0534-47bc-82ea-cfa9d0443957",
+      "providerRequestId": "22784fac-7d5d-47ef-98bd-3906ff5f51fb:interaction-3"
+    },
+    "payload": {
+      "kind": "user_question",
+      "questions": [
+        {
+          "id": "toolu_0181yuXgAGsNRBwCFE2U9b9H:question-1",
+          "prompt": "Which language should the receipts use?",
+          "shortLabel": "Language",
+          "multiSelect": false,
+          "options": [
+            {
+              "value": "toolu_0181yuXgAGsNRBwCFE2U9b9H:question-1:option-1",
+              "label": "English",
+              "description": "Print receipts in English."
+            },
+            {
+              "value": "toolu_0181yuXgAGsNRBwCFE2U9b9H:question-1:option-2",
+              "label": "Spanish",
+              "description": "Print receipts in Spanish."
+            }
+          ],
+          "allowFreeText": true,
+          "required": true
+        }
+      ]
+    },
+    "resolution": {
+      "kind": "user_answer",
+      "answers": {
+        "toolu_0181yuXgAGsNRBwCFE2U9b9H:question-1": {
+          "selected": [
+            "toolu_0181yuXgAGsNRBwCFE2U9b9H:question-1:option-2"
+          ]
+        }
+      }
+    }
+  },
+  "saidBack": [
+    "Got it, I\u2019ll pass that choice along now.",
+    "I sent \u201cSpanish\u201d to \u201cPick the checkout button colour\u201d in Demo shop."
+  ],
+  "message": {
+    "result": "{\n  \"ok\": true,\n  \"thread\": \"Add a shipping estimate\",\n  \"sent\": \"Also show the delivery date.\",\n  \"delivery\": \"sent\"\n}",
+    "said": [
+      "Alright, I\u2019ll find that thread and send your instruction over.",
+      "Sent to \u201cAdd a shipping estimate\u201d in Demo shop: \u201cAlso show the delivery date.\u201d"
+    ]
+  },
+  "started": {
+    "threadId": "thr_r3a49fstpa",
+    "said": [
+      "Okay, I\u2019ll look up the project and start that new thread with your request.",
+      "Started a new thread in Demo shop to write a one-line footer for the receipts.",
+      "Add a shipping estimate in Demo shop finished its turn.",
+      "Add a one-line footer to receipts in Demo shop finished its turn."
+    ]
+  },
+  "goodbye": [
+    "Okay, I\u2019ll close things out for you now."
+  ],
+  "endedMs": 89751,
+  "toolCalls": [
+    "list_waiting",
+    "read_question",
+    "answer_question",
+    "find_threads",
+    "send_message",
+    "list_projects",
+    "start_thread",
+    "end_session"
+  ],
+  "note": "Live run in a dev bb (bb 0.50.1), headless Chromium, speech from macOS say clips, ChatGPT subscription through codex-realtime, gpt-realtime-2.1 at low reasoning, after the fix that sends only the request's words beside a message. The message went to a fresh Claude Code thread, which acted on it. No hooks this run (no --desktop-host)."
+}
