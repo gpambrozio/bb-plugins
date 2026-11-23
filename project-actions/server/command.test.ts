@@ -41,12 +41,13 @@ describe("actionArgv", () => {
     expect(result.status).toBe(0);
   });
 
-  // dash, because bash 3.2 (macOS's /bin/sh) miscounts `$LINENO` under `-c` whatever comes first.
+  // dash's error messages name the line; bash 3.2 (macOS's /bin/sh) miscounts under `-c` whatever comes
+  // first, and Ubuntu's dash leaves `$LINENO` empty in an interactive shell.
   it.skipIf(which("dash") === null)("keeps the command's line numbers its own after the sh family's prefix", () => {
     const root = realpathSync(mkdtempSync(join(tmpdir(), "project-actions-")));
-    const [file, ...args] = actionArgv(root, action({ command: 'true\necho "line $LINENO"' }));
+    const [file, ...args] = actionArgv(root, action({ command: "true\nno-such-command-here" }));
     const result = spawnSync(file!, args, { input: "\n", encoding: "utf8", env: { PATH: process.env.PATH, SHELL: which("dash")! } });
-    expect(result.stdout).toContain("line 2\n");
+    expect(result.stderr).toMatch(/: 2: no-such-command-here: not found/);
   });
 
   it("runs in the action's folder and keeps the command's exit code", () => {
