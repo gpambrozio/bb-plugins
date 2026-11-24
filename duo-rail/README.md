@@ -119,6 +119,20 @@ and **unfolded** (default 110). Each is how far below the top of the screen the 
 tell a plugin where the camera and the clock end, so these are measured guesses. Raise one if the first
 button sits under the clock; lower it to move the buttons up.
 
+## Debug numbers
+
+For now, the rail also shows small text above its top button, in the camera gap: which display it
+thinks it is on, the camera gap in use, the four safe-area insets the page reads, the window's size, the
+visual viewport's size and offset, the screen's size and its pixel ratio. They update live, on every
+resize, rotation, scroll of the visual viewport and return to bb, and twice a second besides, because an
+inset can change without any event. They are there to learn whether anything the page can read changes
+with what the Dynamic Island shows, a Live Activity or only the clock. Turn off **Show debug numbers**
+on the plugin's settings page to hide them.
+
+| Folded | Unfolded |
+| --- | --- |
+| ![Debug numbers above the folded rail's top button](docs/screenshots/cover-debug-light.png) | ![Debug numbers above the unfolded rail's top button](docs/screenshots/unfolded-debug-light.png) |
+
 ## When it shows
 
 The rail shows when the page has a safe-area inset of at least 44 points on exactly one side, none on the

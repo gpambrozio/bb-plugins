@@ -16,3 +16,7 @@ export const DEFAULT_CLEARANCES: Record<Display, number> = {
   folded: DEFAULT_CAMERA_CLEARANCE,
   unfolded: DEFAULT_UNFOLDED_CAMERA_CLEARANCE,
 };
+
+/** Whether the rail shows the debug numbers above its top button (app/debug.tsx). On until turned off. */
+export const DEBUG_SETTING = "showDebugNumbers";
+export const DEFAULT_SHOW_DEBUG = true;

@@ -30,9 +30,11 @@ async function start(values: Record<string, unknown> = {}) {
 }
 
 describe("duo-rail server", () => {
-  it("gives bb's settings form only the two camera gaps: the layout is not a setting", async () => {
+  it("gives bb's settings form the two camera gaps and the debug switch: the layout is not a setting", async () => {
     const { harness } = await start();
-    expect(Object.keys(harness.registrations.settingsDescriptors)).toEqual(["cameraClearance", "cameraClearanceUnfolded"]);
+    const descriptors = harness.registrations.settingsDescriptors;
+    expect(Object.keys(descriptors)).toEqual(["cameraClearance", "cameraClearanceUnfolded", "showDebugNumbers"]);
+    expect(descriptors.showDebugNumbers).toMatchObject({ type: "boolean", label: "Show debug numbers", default: true });
   });
 
   it("answers the default layout, saves one, and invalidates every read", async () => {

@@ -30,10 +30,11 @@ import { Icon } from "../components/ui/icon";
 import { cn } from "../lib/utils";
 import { displayFor, NEW_THREAD_ICON, type MenuItem, type RailButton as RailButtonConfig } from "../shared/layout";
 import { railPlacement, type RailPlacement, type RailSide } from "../shared/placement";
-import { CLEARANCE_SETTINGS, DEFAULT_CLEARANCES } from "../shared/settings";
+import { CLEARANCE_SETTINGS, DEBUG_SETTING, DEFAULT_CLEARANCES, DEFAULT_SHOW_DEBUG } from "../shared/settings";
 import { runAction, type ActionDeps } from "./actions";
 import { runBbCommand } from "./bb-command";
 import { useCovered } from "./covered";
+import { DebugReadout } from "./debug";
 import { PROBE_STYLE, useViewport } from "./insets";
 import { openThreadTarget } from "./open-thread";
 import { recentThreads } from "./recent";
@@ -274,9 +275,11 @@ export function DuoRail() {
     buttonCount: buttons.length,
   });
   const covered = useCovered(rail, placement !== null);
+  const showDebug = (settings.values?.[DEBUG_SETTING] ?? DEFAULT_SHOW_DEBUG) === true;
   return (
     <>
       <div ref={probe} aria-hidden style={PROBE_STYLE} data-testid="duo-rail-probe" />
+      {placement !== null && showDebug && <DebugReadout probe={probe} placement={placement} display={display} covered={covered} />}
       {placement !== null && (
         <nav
           ref={rail}

@@ -259,3 +259,39 @@ describe("the rail", () => {
     expect(slot.inspection.navigateCalls).toEqual([expect.objectContaining({ method: "toThread", threadId: "t1" })]);
   });
 });
+
+describe("the debug numbers", () => {
+  const setInnerWidth = (width: number) => Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
+  afterEach(() => setInnerWidth(1024));
+
+  it("show above the top button by default, with the display and the camera gap in use", async () => {
+    await renderRail({ settings: { cameraClearance: 220 } });
+    const readout = screen.getByTestId("duo-rail-debug");
+    expect(readout.style.height).toBe("220px");
+    expect(readout.style.top).toBe("0px");
+    expect(readout.style.right).toBe("0px");
+    expect(readout.style.width).toBe("84px");
+    expect(readout.style.pointerEvents).toBe("none");
+    expect(readout.textContent).toContain("folded");
+    expect(readout.textContent).toContain("gap 220");
+    expect(readout.textContent).toContain(`win ${window.innerWidth}×${window.innerHeight}`);
+  });
+
+  it("follow a change that fires no event, on the half-second timer", async () => {
+    await renderRail();
+    setInnerWidth(466);
+    await vi.waitFor(() => expect(screen.getByTestId("duo-rail-debug").textContent).toContain(`win 466×${window.innerHeight}`), { timeout: 1500 });
+  });
+
+  it("are gone when Show debug numbers is off", async () => {
+    await renderRail({ settings: { showDebugNumbers: false } });
+    expect(screen.getByTestId("duo-rail")).toBeTruthy();
+    expect(screen.queryByTestId("duo-rail-debug")).toBeNull();
+  });
+
+  it("are not drawn where the rail is not", async () => {
+    viewport.current = { insets: { top: 0, right: 0, bottom: 0, left: 0 }, height: 678 };
+    await renderRail();
+    expect(screen.queryByTestId("duo-rail-debug")).toBeNull();
+  });
+});

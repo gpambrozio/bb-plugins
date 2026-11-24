@@ -6,7 +6,7 @@ import { z } from "zod";
 
 import { LAYOUT_TAG, rpcContract } from "./shared/contract";
 import { DEFAULT_CAMERA_CLEARANCE, DEFAULT_UNFOLDED_CAMERA_CLEARANCE, MAX_CAMERA_CLEARANCE } from "./shared/placement";
-import { CAMERA_CLEARANCE_SETTING, UNFOLDED_CAMERA_CLEARANCE_SETTING } from "./shared/settings";
+import { CAMERA_CLEARANCE_SETTING, DEBUG_SETTING, DEFAULT_SHOW_DEBUG, UNFOLDED_CAMERA_CLEARANCE_SETTING } from "./shared/settings";
 import { createLayoutStore, LEGACY_LAYOUT_SETTING } from "./server/layout-store";
 
 const clearance = z.number().int().min(0).max(MAX_CAMERA_CLEARANCE);
@@ -27,6 +27,12 @@ export default async function plugin(bb: BbPluginApi) {
       description: "The same on the unfolded display, where the clock and the status icons take less room.",
       default: DEFAULT_UNFOLDED_CAMERA_CLEARANCE,
       experimental_schema: clearance,
+    },
+    [DEBUG_SETTING]: {
+      type: "boolean",
+      label: "Show debug numbers",
+      description: "Small text above the top button with the screen's safe-area insets and sizes, updated live, to see what changes with the Dynamic Island. A temporary aid.",
+      default: DEFAULT_SHOW_DEBUG,
     },
   });
 

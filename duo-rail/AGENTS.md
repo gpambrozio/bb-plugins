@@ -35,7 +35,7 @@ scout report that proposed this plugin.
   `layout`), behind two RPCs (`shared/contract.ts`): `layout.get` (tagged `layout`) and `layout.set`, which
   invalidates the tag, so every open rail and editor on every device reads it again. bb's settings form
   draws every defined setting, and the owner did not want the layout as raw JSON there, so the settings
-  are only the two camera gaps. `layoutSchema` (zod, no SDK import) is the contract: `layout.set`'s input
+  are only the two camera gaps (and, for now, the debug switch). `layoutSchema` (zod, no SDK import) is the contract: `layout.set`'s input
   schema refuses a layout the rail could not draw, and `layout.get` answers the default with a `problem`
   for a stored row that no longer parses. The contract is a plain object (`satisfies PluginRpcContract`)
   because the app passes it to `experimental_useRpcQuery` as a value. Adding an action kind means a schema
@@ -80,6 +80,13 @@ scout report that proposed this plugin.
 - **The camera gaps are settings** (`cameraClearance` folded, default 175; `cameraClearanceUnfolded`,
   default 110; 0–600) because the SDK gives no occlusion rects. `normalizeClearance` keeps a missing or
   broken value usable, falling back to that display's default.
+- **The debug numbers are temporary** (`app/debug.tsx`, setting `showDebugNumbers`, default on): a
+  readout in the camera gap above the top button of what the page can read (insets from the rail's
+  probe, `innerWidth`/`innerHeight`, `visualViewport`, `screen`, `devicePixelRatio`, the gap in use, the
+  display), to find out whether any of it follows the Dynamic Island. It reads on resize, orientation,
+  `visualViewport` resize and scroll, `visibilitychange`, and every 500 ms, because an inset may change
+  with no event. It never takes taps and changes nothing about the rail. To take it out, delete the file,
+  its line in `rail.tsx`, `DEBUG_SETTING` and its definition in `server.ts`, and the shot list's debug still.
 - **The app never imports the SDK root at run time** (`app/imports.test.ts`). `shared/` imports only zod.
 
 ## Testing without a Duo
@@ -91,7 +98,8 @@ pads itself as it does on the device. `shots/shots.mjs` uses it at 466 × 678 (f
 taps reaching the buttons, hiding on a desktop and an ordinary iPhone, no bb control in the unfolded strip,
 the drawer covering the rail, the buttons' navigation, and a layout saved in the editor: its Pin button pins
 the thread, a command picked from the full list names its button, and its `bb --version` button's result
-comes back as a notice. It also checks the settings page shows no layout JSON.
+comes back as a notice. It also checks the settings page shows no layout JSON, and the debug numbers on both displays
+(off for every other still).
 
 The SDK's app harness fakes `useSdk()` (`sdk`), thread actions (`threadActions`,
 `threadActionRegistrations`), the plugin's RPCs (`rpc` with `experimental_rpcContract`) and settings, so

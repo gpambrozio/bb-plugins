@@ -72,7 +72,11 @@ async function tapReaches(page, name) {
 /** Labels of the rail's buttons, top to bottom. */
 const railLabels = (page) => page.getByTestId("duo-rail").locator("button").evaluateAll((buttons) => buttons.map((button) => button.getAttribute("aria-label")));
 
+/** The debug readout's switch (on by default). Off for the stills, on for the debug ones. */
+const showDebug = (bb, on) => bb.cli(["plugin", "config", "duo-rail", "set", "showDebugNumbers", String(on)]);
+
 export async function shoot({ bb, shots, VARIANTS }) {
+  showDebug(bb, false);
   // Desktop: never.
   {
     const page = await shots.page(VARIANTS.desktopLight, threadPath());
@@ -182,6 +186,31 @@ export async function shoot({ bb, shots, VARIANTS }) {
     await shots.closePage(page);
   }
 
+  // The debug numbers, above the top button on both displays, with what this page reads.
+  showDebug(bb, true);
+  for (const [viewport, insets, display, gap, file] of [
+    [COVER, DUO_RIGHT, "folded", 175, "cover-debug-light.png"],
+    [UNFOLDED, UNFOLDED_RIGHT, "unfolded", 110, "unfolded-debug-light.png"],
+  ]) {
+    const page = await shots.page({ ...(display === "folded" ? VARIANTS.phoneLight : VARIANTS.desktopLight), viewport }, threadPath());
+    await withInsets(page, insets);
+    await page.getByText("rejects addresses without a domain").waitFor();
+    const readout = page.getByTestId("duo-rail-debug");
+    await readout.waitFor();
+    const text = await readout.innerText();
+    for (const part of [display, `gap ${gap}`, `safe t0 r${insets.right}`, `b${insets.bottom} l0`, `win ${viewport.width}×${viewport.height}`, "vv ", "scr ", "dpr "]) {
+      check(text.includes(part), `the ${display} debug numbers show "${part.trim()}"`);
+    }
+    const box = await readout.boundingBox();
+    const top = await page.getByTestId("duo-rail").boundingBox();
+    check(Math.round(box.y + box.height) === Math.round(top.y) && Math.round(box.width) === insets.right, `the ${display} debug numbers sit in the strip right above the top button`);
+    check(await tapReaches(page, "Back"), `with the ${display} debug numbers on, a tap on Back still reaches it`);
+    await page.waitForTimeout(700);
+    await shots.still(page, file);
+    await shots.closePage(page);
+  }
+  showDebug(bb, false);
+
   // Behaviour: bb's drawer covers the rail, and the buttons navigate.
   {
     const page = await shots.page({ ...VARIANTS.phoneLight, viewport: COVER }, threadPath());
@@ -268,7 +297,7 @@ export async function shoot({ bb, shots, VARIANTS }) {
     const editor = page.getByTestId("duo-rail-editor");
     await editor.waitFor();
     check((await editor.getByRole("list", { name: "Buttons" }).getByRole("listitem").count()) >= 3, "the editor lists the default buttons");
-    check((await page.getByText("Button layout (JSON)").count()) === 0 && (await page.getByText("Space for the camera, folded").count()) === 1, "the settings page shows the camera gaps and the editor, and no layout JSON");
+    check((await page.getByText("Button layout (JSON)").count()) === 0 && (await page.getByText("Space for the camera, folded").count()) === 1 && (await page.getByText("Show debug numbers").count()) === 1, "the settings page shows the camera gaps, the debug switch and the editor, and no layout JSON");
     await editor.getByRole("button", { name: "Edit More" }).click();
     await editor.getByRole("button", { name: "Edit More" }).scrollIntoViewIfNeeded();
     await page.waitForTimeout(400);
