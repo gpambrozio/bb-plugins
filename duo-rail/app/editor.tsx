@@ -8,11 +8,12 @@ import {
   useRpc,
   useSdk,
 } from "@get-bb/plugin-sdk/app";
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 
 import { Button } from "../components/ui/button";
 import { Icon } from "../components/ui/icon";
 import { Input } from "../components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "../components/ui/popover";
 import { cn } from "../lib/utils";
 import {
   DISPLAY_LABELS,
@@ -243,6 +244,10 @@ function ActionFields({ action, choices, onChange }: { action: LeafAction; choic
 const ICON_CELL_CLASS =
   "inline-flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-md text-foreground hover:bg-state-hover focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring [&_[data-icon-root]]:size-4 max-md:pointer-coarse:size-11 max-md:pointer-coarse:[&_[data-icon-root]]:size-5";
 
+/** The button beside the Name box that shows the symbol and opens the picker: as tall as the box. */
+const ICON_TRIGGER_CLASS =
+  "inline-flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-md border border-input bg-transparent text-foreground hover:bg-state-hover focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring data-[state=open]:bg-state-active [&_[data-icon-root]]:size-5 max-md:pointer-coarse:size-10";
+
 /** Brings the choice into view inside the grid, and moves nothing else on the page (see the root AGENTS.md). */
 export function revealWithin(grid: HTMLElement, cell: HTMLElement) {
   const top = cell.offsetTop;
@@ -251,11 +256,14 @@ export function revealWithin(grid: HTMLElement, cell: HTMLElement) {
   grid.scrollTop = Math.max(0, top - (grid.clientHeight - cell.offsetHeight) / 2);
 }
 
+/** A symbol's name as the picker says it; a saved name bb does not have is marked as such. */
+const symbolLabel = (icon: string): string => (isKnownIcon(icon) ? iconLabel(icon) : `${icon} (not one of bb's symbols)`);
+
 /**
- * Every symbol bb draws, in a scrollable grid with a search box. The current choice is highlighted and
- * scrolled into the grid's view when the picker opens; a saved symbol bb no longer has still shows.
+ * Every symbol bb draws, in a scrollable grid under a search box. The current choice is highlighted and
+ * scrolled into the grid's view when it opens; a saved symbol bb no longer has still shows.
  */
-function IconPicker({ id, value, onChange }: { id: string; value: string; onChange(icon: string): void }) {
+function SymbolGrid({ value, searchRef, onPick }: { value: string; searchRef: RefObject<HTMLInputElement | null>; onPick(icon: string): void }) {
   const [query, setQuery] = useState("");
   const options = useMemo(() => iconOptions(value), [value]);
   const shown = useMemo(() => matchIcons(options, query), [options, query]);
@@ -264,12 +272,12 @@ function IconPicker({ id, value, onChange }: { id: string; value: string; onChan
     const element = grid.current;
     const selected = element?.querySelector<HTMLElement>('[aria-checked="true"]');
     if (element != null && selected != null) revealWithin(element, selected);
-    // Only when the picker opens: later picks are already in view.
+    // Only when it mounts, which is each time the picker opens (`IconPicker` keys it).
   }, []);
   return (
-    <div className="flex flex-col gap-1.5">
+    <div className="flex flex-col gap-2">
       <Input
-        id={id}
+        ref={searchRef}
         type="search"
         aria-label="Search symbols"
         placeholder={`Search ${ICON_CHOICES.length} symbols`}
@@ -282,11 +290,10 @@ function IconPicker({ id, value, onChange }: { id: string; value: string; onChan
         role="radiogroup"
         aria-label="Symbol"
         data-testid="duo-rail-icon-grid"
-        className="relative flex max-h-56 flex-wrap content-start gap-1 overflow-y-auto rounded-md border border-border p-1"
+        className="relative flex max-h-60 flex-wrap content-start gap-1 overflow-y-auto max-md:max-h-[50vh]"
       >
         {shown.map((icon) => {
-          const known = isKnownIcon(icon);
-          const label = known ? iconLabel(icon) : `${icon} (not one of bb's symbols)`;
+          const label = symbolLabel(icon);
           return (
             <button
               key={icon}
@@ -296,7 +303,7 @@ function IconPicker({ id, value, onChange }: { id: string; value: string; onChan
               aria-label={label}
               title={label}
               className={cn(ICON_CELL_CLASS, value === icon && "bg-state-active ring-1 ring-ring")}
-              onClick={() => onChange(icon)}
+              onClick={() => onPick(icon)}
             >
               <ActionIcon icon={icon} />
             </button>
@@ -304,8 +311,44 @@ function IconPicker({ id, value, onChange }: { id: string; value: string; onChan
         })}
         {shown.length === 0 && <p className="px-1 py-2 text-xs text-muted-foreground">No symbol is called that.</p>}
       </div>
-      <span className="text-xs text-muted-foreground">Chosen: {isKnownIcon(value) ? iconLabel(value) : `${value}, which bb does not have (it shows a bolt)`}</span>
     </div>
+  );
+}
+
+/**
+ * The symbol, as a button beside the Name box; it opens the grid in a popover (bb's sheet on a phone),
+ * which closes on a pick.
+ */
+function IconPicker({ id, value, onChange }: { id: string; value: string; onChange(icon: string): void }) {
+  const [open, setOpen] = useState(false);
+  // bb's sheet keeps its content mounted once shown, so each opening gets a fresh grid: an empty search,
+  // and the choice brought into view again.
+  const [opening, setOpening] = useState(0);
+  const search = useRef<HTMLInputElement | null>(null);
+  const label = symbolLabel(value);
+  return (
+    <Popover
+      open={open}
+      onOpenChange={(next) => {
+        if (next) setOpening((count) => count + 1);
+        setOpen(next);
+      }}
+    >
+      <PopoverTrigger id={id} type="button" className={ICON_TRIGGER_CLASS} aria-label={`Symbol: ${label}`} title={label}>
+        <ActionIcon icon={value} />
+      </PopoverTrigger>
+      <PopoverContent align="end" mobileTitle="Symbol" autoFocusRef={search} className="w-80 p-2 max-md:px-4 max-md:pb-4">
+        <SymbolGrid
+          key={opening}
+          value={value}
+          searchRef={search}
+          onPick={(icon) => {
+            onChange(icon);
+            setOpen(false);
+          }}
+        />
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -328,10 +371,14 @@ function EntryEditor<T extends Entry>({
   const { action } = entry;
   return (
     <div className="flex flex-col gap-3 border-t border-border pt-3">
-      <Field label="Name" hint="Read out by VoiceOver; the button itself shows only its symbol.">
-        {(id) => <Input id={id} autoFocus={focusName} maxLength={MAX_LABEL} value={entry.label} onChange={(event) => onChange({ ...entry, label: event.target.value })} />}
-      </Field>
-      <Field label="Symbol">{(id) => <IconPicker id={id} value={entry.icon} onChange={(icon) => onChange({ ...entry, icon })} />}</Field>
+      <div className="flex items-start gap-2">
+        <div className="min-w-0 flex-1">
+          <Field label="Name" hint="Read out by VoiceOver; the button itself shows only its symbol.">
+            {(id) => <Input id={id} autoFocus={focusName} maxLength={MAX_LABEL} value={entry.label} onChange={(event) => onChange({ ...entry, label: event.target.value })} />}
+          </Field>
+        </div>
+        <Field label="Symbol">{(id) => <IconPicker id={id} value={entry.icon} onChange={(icon) => onChange({ ...entry, icon })} />}</Field>
+      </div>
       <Field label="Action">
         {(id) => (
           <select

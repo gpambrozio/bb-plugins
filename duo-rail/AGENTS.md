@@ -102,12 +102,15 @@ scout report that proposed this plugin.
   names). The file names the bb version it came from; rerun it after a bb update. bb 0.49.0 and 0.50.1
   have the same 180 names. `app/icons.test.ts` checks the list has no duplicates and holds every symbol an
   action or a default button starts with; the shot list checks live that every name draws its own glyph,
-  not the bolt. The picker (`IconPicker` in `app/editor.tsx`) is a search box over a scrollable radio
-  grid: New thread first, a saved name outside the list kept right after it (`iconOptions`), cells 36 pt
-  and 44 pt on a coarse pointer, and the choice scrolled into the grid's view on open by setting the
+  not the bolt. The picker (`IconPicker` in `app/editor.tsx`) is a button right of the Name box showing
+  the symbol (named "Symbol: <name>"); it opens bb's vendored popover (`components/ui/popover.tsx`, bb's
+  bottom sheet on a compact viewport), which closes on a pick, and in it a search box over a scrollable
+  radio grid (`SymbolGrid`): New thread first, a saved name outside the list kept right after it (`iconOptions`), cells 36 pt
+  and 44 pt on a coarse pointer, and the choice scrolled into the grid's view each time it opens by setting the
   grid's own `scrollTop` (`revealWithin`), never `scrollIntoView`. Playwright's `getByLabel` and role
   names match substrings, so with 180 icon labels in the page a shot list's lookups need `exact: true`
-  ("Name" matched `DiffRenamed`, "Pin" `PinOff`).
+  ("Name" matched `DiffRenamed`, "Pin" `PinOff`). The popover is portaled out of the row, so tests and
+  the shot list find the grid and its search box from the page, not from the row.
 - **The app never imports the SDK root at run time** (`app/imports.test.ts`). `shared/` imports only zod.
 
 ## Testing without a Duo

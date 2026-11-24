@@ -81,14 +81,15 @@ the project, the thread-menu action or the command. **Save** stores the layout i
 on the bb server, so every device you use bb on follows it. **Copy the … buttons** copies the other
 display's list; **Back to the default buttons** restores Back, New thread and More.
 
-The symbol is any of the 181 bb draws: bb's New thread glyph and every icon bb's own app has. Type in the
-search box to narrow the grid by name; each symbol says its name on hover and to VoiceOver. When you open a
-button, the grid shows its current symbol, highlighted. A symbol a button already has that bb no longer
-draws stays listed and selected, named as such, until you pick another.
+The symbol shows right of the name. Press it to pick another from the 181 bb draws: bb's New thread
+glyph and every icon bb's own app has, in a small popover (a sheet on a phone). Type in its search box to
+narrow the grid by name; each symbol says its name on hover and to VoiceOver. The grid opens on the
+button's current symbol, highlighted, and closes when you pick one. A symbol a button already has that bb
+no longer draws stays listed and selected, named as such, until you pick another.
 
-| The symbol picker on a phone |
-| --- |
-| ![A search box over a grid of symbols, the chosen one highlighted](docs/screenshots/editor-symbols-light.png) |
+| The symbol picker on a desktop | On a phone |
+| --- | --- |
+| ![The symbol button right of the Name box, and a popover with a search box over a grid of symbols](docs/screenshots/editor-symbol-popover-light.png) | ![A sheet with a search box over a grid of symbols, the chosen one highlighted](docs/screenshots/editor-symbols-light.png) |
 
 A button can:
 

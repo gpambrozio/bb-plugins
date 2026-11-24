@@ -15,8 +15,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   offers Forward and Reload bb. They show only on the Duo, on whichever side its strip is, and nowhere
   else.
 - **Your own buttons**, chosen separately for the folded and the unfolded display, in the plugin's
-  settings: add, remove and reorder them, and give each a symbol and an action. The symbol comes from
-  every one bb draws (181), in a grid you can search by name. A button can go back or
+  settings: add, remove and reorder them, and give each a symbol and an action. The symbol shows beside
+  the button's name; press it to pick from every one bb draws (181), in a small popover you can search
+  by name. A button can go back or
   forward, open a new thread (in a project you pick), a thread, a project, your recent threads or a web
   address, run an action from bb's thread menu (Pin, Archive, …) on the thread you are looking at, run a
   `bb` command and show its result, reload bb, or open a menu of its own. The command list holds every

@@ -145,7 +145,8 @@ describe("the button editor", () => {
     // Picking the project names the button after it.
     expect((within(row).getByLabelText("Name") as HTMLInputElement).value).toBe("Acme Web");
     fireEvent.change(within(row).getByLabelText("Name"), { target: { value: "Acme" } });
-    fireEvent.click(within(row).getByRole("radio", { name: "Star" }));
+    fireEvent.click(within(row).getByRole("button", { name: "Symbol: Folder" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Star" }));
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await vi.waitFor(() => expect(layoutSet).toHaveBeenCalledOnce());
     expect(saved(layoutSet).folded.buttons.at(-1)).toEqual({ id: "newThread", label: "Acme", icon: "Star", action: { kind: "openProject", projectId: "p1" } });
@@ -267,11 +268,32 @@ describe("the symbol picker", () => {
     fireEvent.click(screen.getByRole("button", { name: `Edit ${name}` }));
     return screen.getAllByRole("listitem", { name }).at(0) as HTMLElement;
   };
+  /** Opens the row's symbol popover and returns its grid. */
+  const openPicker = (row: HTMLElement, current: string) => {
+    fireEvent.click(within(row).getByRole("button", { name: `Symbol: ${current}` }));
+    return screen.getByRole("radiogroup", { name: "Symbol" });
+  };
+  const search = (value: string) => fireEvent.change(screen.getByRole("searchbox", { name: "Search symbols" }), { target: { value } });
+
+  it("shows the symbol as a button right of the Name box, and the grid only once it is pressed", async () => {
+    await renderEditor();
+    const row = openRow("Back");
+    const name = within(row).getByLabelText("Name");
+    const trigger = within(row).getByRole("button", { name: "Symbol: ArrowLeft" });
+    expect(trigger.getAttribute("title")).toBe("ArrowLeft");
+    // One row: the box first, then the symbol.
+    const line = trigger.closest(".flex.items-start") as HTMLElement;
+    expect(line.contains(name)).toBe(true);
+    expect(name.compareDocumentPosition(trigger) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByRole("radiogroup", { name: "Symbol" })).toBeNull();
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    openPicker(row, "ArrowLeft");
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+  });
 
   it("offers every symbol bb draws, New thread first, the current one checked and named", async () => {
     await renderEditor();
-    const row = openRow("Back");
-    const grid = within(row).getByRole("radiogroup", { name: "Symbol" });
+    const grid = openPicker(openRow("Back"), "ArrowLeft");
     const radios = within(grid).getAllByRole("radio");
     expect(radios).toHaveLength(ICON_CHOICES.length);
     expect(radios[0]?.getAttribute("aria-label")).toBe("New thread");
@@ -280,28 +302,33 @@ describe("the symbol picker", () => {
     // A tooltip with its name, and the editor's touch size on a phone.
     expect(checked[0]?.getAttribute("title")).toBe("ArrowLeft");
     expect(checked[0]?.className).toContain("max-md:pointer-coarse:size-11");
-    expect(within(row).getByText("Chosen: ArrowLeft")).toBeTruthy();
   });
 
   it("narrows to the names holding what is typed, whatever its case, and says when none does", async () => {
     await renderEditor();
-    const row = openRow("Back");
-    fireEvent.change(within(row).getByRole("searchbox", { name: "Search symbols" }), { target: { value: "gitPULL" } });
-    const names = within(row).getAllByRole("radio").map((radio) => radio.getAttribute("aria-label"));
+    const grid = openPicker(openRow("Back"), "ArrowLeft");
+    search("gitPULL");
+    const names = within(grid).getAllByRole("radio").map((radio) => radio.getAttribute("aria-label"));
     expect(names).toEqual(["GitPullRequest", "GitPullRequestArrow", "GitPullRequestClosed", "GitPullRequestDraft"]);
-    fireEvent.change(within(row).getByRole("searchbox", { name: "Search symbols" }), { target: { value: "no such symbol" } });
-    expect(within(row).queryAllByRole("radio")).toHaveLength(0);
-    expect(within(row).getByText("No symbol is called that.")).toBeTruthy();
+    search("no such symbol");
+    expect(within(grid).queryAllByRole("radio")).toHaveLength(0);
+    expect(within(grid).getByText("No symbol is called that.")).toBeTruthy();
   });
 
-  it("saves a symbol found by search", async () => {
+  it("closes on a pick, shows the pick on the button, and saves it", async () => {
     const { layoutSet } = await renderEditor();
     const row = openRow("Back");
-    fireEvent.change(within(row).getByRole("searchbox", { name: "Search symbols" }), { target: { value: "rocket" } });
-    expect(within(row).queryAllByRole("radio")).toHaveLength(0);
-    fireEvent.change(within(row).getByRole("searchbox", { name: "Search symbols" }), { target: { value: "brain" } });
-    fireEvent.click(within(row).getByRole("radio", { name: "AiBrain01" }));
-    expect(within(row).getByRole("radio", { name: "AiBrain01" }).getAttribute("aria-checked")).toBe("true");
+    const grid = openPicker(row, "ArrowLeft");
+    search("rocket");
+    expect(within(grid).queryAllByRole("radio")).toHaveLength(0);
+    search("brain");
+    fireEvent.click(within(grid).getByRole("radio", { name: "AiBrain01" }));
+    await vi.waitFor(() => expect(screen.queryByRole("radiogroup", { name: "Symbol" })).toBeNull());
+    expect(within(row).getByRole("button", { name: "Symbol: AiBrain01" })).toBeTruthy();
+    // Opened again, the search starts empty and the pick is the one checked.
+    const again = openPicker(row, "AiBrain01");
+    expect((screen.getByRole("searchbox", { name: "Search symbols" }) as HTMLInputElement).value).toBe("");
+    expect(within(again).getByRole("radio", { name: "AiBrain01" }).getAttribute("aria-checked")).toBe("true");
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await vi.waitFor(() => expect(layoutSet).toHaveBeenCalledOnce());
     expect(saved(layoutSet).folded.buttons[0]).toMatchObject({ label: "Back", icon: "AiBrain01" });
@@ -312,10 +339,12 @@ describe("the symbol picker", () => {
     layout.folded.buttons[0] = { ...layout.folded.buttons[0]!, icon: "Rocket" };
     const { layoutSet } = await renderEditor({ layout });
     const row = openRow("Back");
-    const radios = within(row).getAllByRole("radio");
+    const radios = within(openPicker(row, "Rocket (not one of bb's symbols)")).getAllByRole("radio");
     expect(radios[1]?.getAttribute("aria-label")).toBe("Rocket (not one of bb's symbols)");
     expect(radios[1]?.getAttribute("aria-checked")).toBe("true");
     expect(radios).toHaveLength(ICON_CHOICES.length + 1);
+    fireEvent.keyDown(screen.getByRole("searchbox", { name: "Search symbols" }), { key: "Escape" });
+    await vi.waitFor(() => expect(screen.queryByRole("radiogroup", { name: "Symbol" })).toBeNull());
     fireEvent.change(within(row).getByLabelText("Name"), { target: { value: "Go back" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await vi.waitFor(() => expect(layoutSet).toHaveBeenCalledOnce());
@@ -324,8 +353,8 @@ describe("the symbol picker", () => {
 
   it("checks New thread on the New thread button", async () => {
     await renderEditor();
-    const row = openRow("New thread");
-    const checked = within(row).getAllByRole("radio").filter((radio) => radio.getAttribute("aria-checked") === "true");
+    const grid = openPicker(openRow("New thread"), "New thread");
+    const checked = within(grid).getAllByRole("radio").filter((radio) => radio.getAttribute("aria-checked") === "true");
     expect(checked.map((radio) => radio.getAttribute("aria-label"))).toEqual(["New thread"]);
     expect(ICON_CHOICES[0]).toBe(NEW_THREAD_ICON);
   });

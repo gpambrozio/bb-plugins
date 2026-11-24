@@ -321,15 +321,22 @@ export async function shoot({ bb, shots, VARIANTS }) {
     await shots.still(page, `editor-${variant.colorScheme}.png`, { around: [editor.getByRole("tablist"), editor.getByRole("listitem", { name: "More" })] });
     await shots.closePage(page);
   }
-  // The symbol picker, on a phone: every icon bb draws (none of them its bolt fallback), searchable, with
-  // phone-sized targets, and the choice brought into the grid's view when it opens.
+  // The symbol picker, on a phone: a button right of the Name box opens bb's sheet with every icon bb
+  // draws (none of them its bolt fallback), searchable, with phone-sized targets, the choice brought into
+  // the grid's view when it opens, and closing on a pick.
   {
     const page = await shots.page(VARIANTS.phoneLight, "/settings/plugins/duo-rail");
     const editor = page.getByTestId("duo-rail-editor");
     await editor.waitFor();
     await editor.getByRole("button", { name: "Edit Back" }).click();
     const row = editor.getByRole("listitem", { name: "Back" });
-    const grid = row.getByRole("radiogroup", { name: "Symbol" });
+    const trigger = row.getByRole("button", { name: "Symbol: ArrowLeft", exact: true });
+    const [nameBox, symbolBox] = await Promise.all([row.getByLabel("Name", { exact: true }).boundingBox(), trigger.boundingBox()]);
+    check(symbolBox.x >= nameBox.x + nameBox.width && Math.abs(symbolBox.y - nameBox.y) <= 2, "the symbol sits right of the Name box, level with it");
+    check((await page.getByRole("radiogroup", { name: "Symbol", exact: true }).count()) === 0, "the grid stays closed until the symbol is pressed");
+    await trigger.click();
+    const grid = page.getByRole("radiogroup", { name: "Symbol", exact: true });
+    await grid.waitFor();
     const all = await grid.getByRole("radio").count();
     check(all > 180, `the picker offers every symbol bb draws (${all} with New thread)`);
     // bb loads most icons on first use; give them a moment, then compare each drawing with the bolt's.
@@ -342,24 +349,43 @@ export async function shoot({ bb, shots, VARIANTS }) {
     });
     check(bolts.length === 0, `every symbol draws its own glyph, none bb's bolt or nothing (${bolts.join(", ") || "none"})`);
     const coarse = await page.evaluate(() => matchMedia("(pointer: coarse)").matches);
-    const cell = await grid.getByRole("radio", { name: "ArrowLeft" }).boundingBox();
+    const cell = await grid.getByRole("radio", { name: "ArrowLeft", exact: true }).boundingBox();
     check(coarse && cell.width >= 44 && cell.height >= 44, `on a phone each symbol is a 44 pt target (${Math.round(cell.width)} pt)`);
-    check((await grid.getByRole("radio", { name: "ArrowLeft" }).getAttribute("aria-checked")) === "true", "Back's symbol is the one checked");
-    const search = row.getByRole("searchbox", { name: "Search symbols" });
+    check((await grid.getByRole("radio", { name: "ArrowLeft", exact: true }).getAttribute("aria-checked")) === "true", "Back's symbol is the one checked");
+    const search = page.getByRole("searchbox", { name: "Search symbols" });
     await search.fill("zoom");
     check(JSON.stringify(await grid.getByRole("radio").evaluateAll((cells) => cells.map((c) => c.getAttribute("aria-label")))) === JSON.stringify(["ZoomIn", "ZoomOut"]), "searching narrows the grid by name");
-    await grid.getByRole("radio", { name: "ZoomOut" }).click();
-    await search.fill("");
-    // Closed and opened again, the grid shows the choice, far down the list, without scrolling the page.
-    await editor.getByRole("button", { name: "Edit Back" }).click();
-    await editor.getByRole("button", { name: "Edit Back" }).click();
-    const reopened = row.getByRole("radiogroup", { name: "Symbol" });
-    const [view, chosen] = await Promise.all([reopened.boundingBox(), reopened.getByRole("radio", { name: "ZoomOut" }).boundingBox()]);
+    await grid.getByRole("radio", { name: "ZoomOut", exact: true }).click();
+    await grid.waitFor({ state: "detached" });
+    const picked = row.getByRole("button", { name: "Symbol: ZoomOut", exact: true });
+    check((await picked.count()) === 1, "a pick closes the sheet and shows on the symbol button");
+    // Opened again, the grid shows the choice, far down the list, without scrolling the page.
+    await picked.click();
+    await grid.waitFor();
+    await page.waitForTimeout(600);
+    const [view, chosen] = await Promise.all([grid.boundingBox(), grid.getByRole("radio", { name: "ZoomOut", exact: true }).boundingBox()]);
     check(chosen.y >= view.y && chosen.y + chosen.height <= view.y + view.height, "the chosen symbol is in the grid's view when it opens");
-    check((await reopened.evaluate((element) => element.scrollTop)) > 0, "the grid scrolled itself to the choice");
-    await reopened.scrollIntoViewIfNeeded();
-    await page.waitForTimeout(400);
-    await shots.still(page, "editor-symbols-light.png", { around: [search, reopened] });
+    check((await grid.evaluate((element) => element.scrollTop)) > 0, "the grid scrolled itself to the choice");
+    check((await search.inputValue()) === "", "the search box starts empty each time the picker opens");
+    await shots.still(page, "editor-symbols-light.png", { around: [search, grid] });
+    await shots.closePage(page);
+  }
+  // On a desktop, the same picker is a small popover beside the symbol button.
+  {
+    const page = await shots.page(VARIANTS.desktopLight, "/settings/plugins/duo-rail");
+    const editor = page.getByTestId("duo-rail-editor");
+    await editor.waitFor();
+    await editor.getByRole("button", { name: "Edit Back" }).click();
+    const row = editor.getByRole("listitem", { name: "Back" });
+    await row.getByRole("button", { name: "Symbol: ArrowLeft", exact: true }).click();
+    const grid = page.getByRole("radiogroup", { name: "Symbol", exact: true });
+    await grid.waitFor();
+    await page.waitForTimeout(1500);
+    const search = page.getByRole("searchbox", { name: "Search symbols" });
+    check(await search.evaluate((element) => element === document.activeElement), "on a desktop the search box takes the typing when the popover opens");
+    const popover = await grid.evaluate((element) => element.parentElement.parentElement.getBoundingClientRect().width);
+    check(popover <= 330, `the popover is compact (${Math.round(popover)} pt wide)`);
+    await shots.still(page, "editor-symbol-popover-light.png", { around: [search, row.getByLabel("Name", { exact: true }), grid] });
     await shots.closePage(page);
   }
   {
@@ -376,7 +402,9 @@ export async function shoot({ bb, shots, VARIANTS }) {
     check(pinOption !== undefined, "the editor offers bb's own thread-menu actions (Pin among them)");
     await row.getByLabel("Action from bb's thread menu").selectOption({ label: pinOption });
     check((await row.getByLabel("Name", { exact: true }).inputValue()) === pinOption, "picking a thread-menu action names the button after it");
-    await row.getByRole("radio", { name: "Pin", exact: true }).click();
+    await row.getByRole("button", { name: /^Symbol: /, exact: false }).click();
+    await page.getByRole("radiogroup", { name: "Symbol", exact: true }).getByRole("radio", { name: "Pin", exact: true }).click();
+    check((await row.getByRole("button", { name: "Symbol: Pin", exact: true }).count()) === 1, "the new button takes the Pin symbol");
     await buttons.getByRole("button", { name: `Edit ${pinOption}` }).click();
 
     // A command picked from the list: every plugin's commands and subcommands, and bb's own.
