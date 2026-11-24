@@ -81,6 +81,15 @@ the project, the thread-menu action or the command. **Save** stores the layout i
 on the bb server, so every device you use bb on follows it. **Copy the … buttons** copies the other
 display's list; **Back to the default buttons** restores Back, New thread and More.
 
+The symbol is any of the 181 bb draws: bb's New thread glyph and every icon bb's own app has. Type in the
+search box to narrow the grid by name; each symbol says its name on hover and to VoiceOver. When you open a
+button, the grid shows its current symbol, highlighted. A symbol a button already has that bb no longer
+draws stays listed and selected, named as such, until you pick another.
+
+| The symbol picker on a phone |
+| --- |
+| ![A search box over a grid of symbols, the chosen one highlighted](docs/screenshots/editor-symbols-light.png) |
+
 A button can:
 
 | Action | What it does |

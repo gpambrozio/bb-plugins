@@ -8,7 +8,7 @@ import {
   useRpc,
   useSdk,
 } from "@get-bb/plugin-sdk/app";
-import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { Button } from "../components/ui/button";
 import { Icon } from "../components/ui/icon";
@@ -36,6 +36,10 @@ import {
   canAddMenuItem,
   describeAction,
   ICON_CHOICES,
+  iconLabel,
+  iconOptions,
+  isKnownIcon,
+  matchIcons,
   MENU_ITEM_CHOICES,
   moveAt,
   newButton,
@@ -235,24 +239,72 @@ function ActionFields({ action, choices, onChange }: { action: LeafAction; choic
   }
 }
 
-function IconPicker({ value, onChange }: { value: string; onChange(icon: string): void }) {
+/** A symbol's cell: at least 36 pt, and 44 pt on a phone, like the editor's other targets there. */
+const ICON_CELL_CLASS =
+  "inline-flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-md text-foreground hover:bg-state-hover focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring [&_[data-icon-root]]:size-4 max-md:pointer-coarse:size-11 max-md:pointer-coarse:[&_[data-icon-root]]:size-5";
+
+/** Brings the choice into view inside the grid, and moves nothing else on the page (see the root AGENTS.md). */
+export function revealWithin(grid: HTMLElement, cell: HTMLElement) {
+  const top = cell.offsetTop;
+  const bottom = top + cell.offsetHeight;
+  if (top >= grid.scrollTop && bottom <= grid.scrollTop + grid.clientHeight) return;
+  grid.scrollTop = Math.max(0, top - (grid.clientHeight - cell.offsetHeight) / 2);
+}
+
+/**
+ * Every symbol bb draws, in a scrollable grid with a search box. The current choice is highlighted and
+ * scrolled into the grid's view when the picker opens; a saved symbol bb no longer has still shows.
+ */
+function IconPicker({ id, value, onChange }: { id: string; value: string; onChange(icon: string): void }) {
+  const [query, setQuery] = useState("");
+  const options = useMemo(() => iconOptions(value), [value]);
+  const shown = useMemo(() => matchIcons(options, query), [options, query]);
+  const grid = useRef<HTMLDivElement | null>(null);
+  useLayoutEffect(() => {
+    const element = grid.current;
+    const selected = element?.querySelector<HTMLElement>('[aria-checked="true"]');
+    if (element != null && selected != null) revealWithin(element, selected);
+    // Only when the picker opens: later picks are already in view.
+  }, []);
   return (
-    <div role="radiogroup" aria-label="Symbol" className="flex flex-wrap gap-1">
-      {ICON_CHOICES.map((icon) => (
-        <Button
-          key={icon}
-          type="button"
-          variant="ghost"
-          size="icon"
-          role="radio"
-          aria-checked={value === icon}
-          aria-label={icon === ICON_CHOICES[0] ? "New thread" : icon}
-          className={cn("size-9", value === icon && "bg-state-active ring-1 ring-ring")}
-          onClick={() => onChange(icon)}
-        >
-          <ActionIcon icon={icon} />
-        </Button>
-      ))}
+    <div className="flex flex-col gap-1.5">
+      <Input
+        id={id}
+        type="search"
+        aria-label="Search symbols"
+        placeholder={`Search ${ICON_CHOICES.length} symbols`}
+        autoComplete="off"
+        value={query}
+        onChange={(event) => setQuery(event.target.value)}
+      />
+      <div
+        ref={grid}
+        role="radiogroup"
+        aria-label="Symbol"
+        data-testid="duo-rail-icon-grid"
+        className="relative flex max-h-56 flex-wrap content-start gap-1 overflow-y-auto rounded-md border border-border p-1"
+      >
+        {shown.map((icon) => {
+          const known = isKnownIcon(icon);
+          const label = known ? iconLabel(icon) : `${icon} (not one of bb's symbols)`;
+          return (
+            <button
+              key={icon}
+              type="button"
+              role="radio"
+              aria-checked={value === icon}
+              aria-label={label}
+              title={label}
+              className={cn(ICON_CELL_CLASS, value === icon && "bg-state-active ring-1 ring-ring")}
+              onClick={() => onChange(icon)}
+            >
+              <ActionIcon icon={icon} />
+            </button>
+          );
+        })}
+        {shown.length === 0 && <p className="px-1 py-2 text-xs text-muted-foreground">No symbol is called that.</p>}
+      </div>
+      <span className="text-xs text-muted-foreground">Chosen: {isKnownIcon(value) ? iconLabel(value) : `${value}, which bb does not have (it shows a bolt)`}</span>
     </div>
   );
 }
@@ -279,7 +331,7 @@ function EntryEditor<T extends Entry>({
       <Field label="Name" hint="Read out by VoiceOver; the button itself shows only its symbol.">
         {(id) => <Input id={id} autoFocus={focusName} maxLength={MAX_LABEL} value={entry.label} onChange={(event) => onChange({ ...entry, label: event.target.value })} />}
       </Field>
-      <Field label="Symbol">{() => <IconPicker value={entry.icon} onChange={(icon) => onChange({ ...entry, icon })} />}</Field>
+      <Field label="Symbol">{(id) => <IconPicker id={id} value={entry.icon} onChange={(icon) => onChange({ ...entry, icon })} />}</Field>
       <Field label="Action">
         {(id) => (
           <select

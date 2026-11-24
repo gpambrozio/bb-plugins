@@ -570,7 +570,8 @@ unchanged data after a refetch, and never pass a fresh `[]`), or every refresh f
 `Volume2`, `RefreshCw`, `Megaphone`, `Shield` or `Loader2` — and draws its generic bolt for anything else,
 silently. A missing glyph is an SVG declared in `bb.branding.experimental_icons` and named
 `"<pluginId>/<name>"`. `herald/app/testing/bb-icon-names.ts` holds bb 0.44's list and
-`herald/app/icons.test.ts` the check. bb's vendored `Button` takes no `title`; a tooltip is bb's
+`herald/app/icons.test.ts` the check; `duo-rail/scripts/icon-names.mjs` reads the whole current list (180
+names in bb 0.49 and 0.50.1) out of the installed bb's app bundle. bb's vendored `Button` takes no `title`; a tooltip is bb's
 `Tooltip` (`npx shadcn add @bb/tooltip`).
 
 Colour comes from the semantic classes, never a literal — check light and dark. Where a literal is the

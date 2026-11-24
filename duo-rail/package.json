@@ -20,7 +20,8 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "build": "bb plugin build"
+    "build": "bb plugin build",
+    "icon-names": "node scripts/icon-names.mjs"
   },
   "files": [
     "server.ts",

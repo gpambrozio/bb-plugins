@@ -4,7 +4,9 @@ import { cleanup, fireEvent, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { rpcContract } from "../shared/contract";
-import { defaultLayout, type Layout } from "../shared/layout";
+import { defaultLayout, NEW_THREAD_ICON, type Layout } from "../shared/layout";
+import { revealWithin } from "./editor";
+import { ICON_CHOICES } from "./editor-model";
 import { EXIT_MARKER } from "./bb-command";
 import { resetCommandCatalogCache } from "./command-picker";
 
@@ -257,5 +259,97 @@ describe("the button editor", () => {
     await renderEditor({ layout: defaultLayout(), problem: "The saved layout could not be read, so the rail shows the default: bad version" });
     expect(screen.getByRole("alert").textContent).toContain("could not be read");
     expect(labels()).toEqual(["Back", "New thread", "More"]);
+  });
+});
+
+describe("the symbol picker", () => {
+  const openRow = (name: string) => {
+    fireEvent.click(screen.getByRole("button", { name: `Edit ${name}` }));
+    return screen.getAllByRole("listitem", { name }).at(0) as HTMLElement;
+  };
+
+  it("offers every symbol bb draws, New thread first, the current one checked and named", async () => {
+    await renderEditor();
+    const row = openRow("Back");
+    const grid = within(row).getByRole("radiogroup", { name: "Symbol" });
+    const radios = within(grid).getAllByRole("radio");
+    expect(radios).toHaveLength(ICON_CHOICES.length);
+    expect(radios[0]?.getAttribute("aria-label")).toBe("New thread");
+    const checked = radios.filter((radio) => radio.getAttribute("aria-checked") === "true");
+    expect(checked.map((radio) => radio.getAttribute("aria-label"))).toEqual(["ArrowLeft"]);
+    // A tooltip with its name, and the editor's touch size on a phone.
+    expect(checked[0]?.getAttribute("title")).toBe("ArrowLeft");
+    expect(checked[0]?.className).toContain("max-md:pointer-coarse:size-11");
+    expect(within(row).getByText("Chosen: ArrowLeft")).toBeTruthy();
+  });
+
+  it("narrows to the names holding what is typed, whatever its case, and says when none does", async () => {
+    await renderEditor();
+    const row = openRow("Back");
+    fireEvent.change(within(row).getByRole("searchbox", { name: "Search symbols" }), { target: { value: "gitPULL" } });
+    const names = within(row).getAllByRole("radio").map((radio) => radio.getAttribute("aria-label"));
+    expect(names).toEqual(["GitPullRequest", "GitPullRequestArrow", "GitPullRequestClosed", "GitPullRequestDraft"]);
+    fireEvent.change(within(row).getByRole("searchbox", { name: "Search symbols" }), { target: { value: "no such symbol" } });
+    expect(within(row).queryAllByRole("radio")).toHaveLength(0);
+    expect(within(row).getByText("No symbol is called that.")).toBeTruthy();
+  });
+
+  it("saves a symbol found by search", async () => {
+    const { layoutSet } = await renderEditor();
+    const row = openRow("Back");
+    fireEvent.change(within(row).getByRole("searchbox", { name: "Search symbols" }), { target: { value: "rocket" } });
+    expect(within(row).queryAllByRole("radio")).toHaveLength(0);
+    fireEvent.change(within(row).getByRole("searchbox", { name: "Search symbols" }), { target: { value: "brain" } });
+    fireEvent.click(within(row).getByRole("radio", { name: "AiBrain01" }));
+    expect(within(row).getByRole("radio", { name: "AiBrain01" }).getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await vi.waitFor(() => expect(layoutSet).toHaveBeenCalledOnce());
+    expect(saved(layoutSet).folded.buttons[0]).toMatchObject({ label: "Back", icon: "AiBrain01" });
+  });
+
+  it("still shows a saved symbol bb does not have, selected, and keeps it on save", async () => {
+    const layout = defaultLayout();
+    layout.folded.buttons[0] = { ...layout.folded.buttons[0]!, icon: "Rocket" };
+    const { layoutSet } = await renderEditor({ layout });
+    const row = openRow("Back");
+    const radios = within(row).getAllByRole("radio");
+    expect(radios[1]?.getAttribute("aria-label")).toBe("Rocket (not one of bb's symbols)");
+    expect(radios[1]?.getAttribute("aria-checked")).toBe("true");
+    expect(radios).toHaveLength(ICON_CHOICES.length + 1);
+    fireEvent.change(within(row).getByLabelText("Name"), { target: { value: "Go back" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await vi.waitFor(() => expect(layoutSet).toHaveBeenCalledOnce());
+    expect(saved(layoutSet).folded.buttons[0]).toMatchObject({ label: "Go back", icon: "Rocket" });
+  });
+
+  it("checks New thread on the New thread button", async () => {
+    await renderEditor();
+    const row = openRow("New thread");
+    const checked = within(row).getAllByRole("radio").filter((radio) => radio.getAttribute("aria-checked") === "true");
+    expect(checked.map((radio) => radio.getAttribute("aria-label"))).toEqual(["New thread"]);
+    expect(ICON_CHOICES[0]).toBe(NEW_THREAD_ICON);
+  });
+});
+
+describe("revealWithin", () => {
+  const grid = (scrollTop: number) => ({ scrollTop, clientHeight: 200 }) as HTMLElement;
+  const cell = (offsetTop: number) => ({ offsetTop, offsetHeight: 40 }) as HTMLElement;
+
+  it("scrolls only the grid, centring a choice that is out of view", () => {
+    const below = grid(0);
+    revealWithin(below, cell(1000));
+    expect(below.scrollTop).toBe(1000 - 80);
+    const above = grid(900);
+    revealWithin(above, cell(100));
+    expect(above.scrollTop).toBe(20);
+  });
+
+  it("leaves a choice already in view where it is", () => {
+    const view = grid(100);
+    revealWithin(view, cell(150));
+    expect(view.scrollTop).toBe(100);
+    const top = grid(0);
+    revealWithin(top, cell(0));
+    expect(top.scrollTop).toBe(0);
   });
 });

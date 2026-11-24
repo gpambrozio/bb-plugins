@@ -13,6 +13,7 @@ import {
   type RailAction,
   type RailButton,
 } from "../shared/layout";
+import { BB_ICON_NAMES } from "./icon-names";
 
 export interface ActionChoice {
   kind: ActionKind;
@@ -47,55 +48,30 @@ export function choiceFor(kind: ActionKind): ActionChoice {
   return choice;
 }
 
-/** The symbols the icon picker offers: bb's New thread glyph and bb icons that suit a button. */
-export const ICON_CHOICES: readonly string[] = [
-  NEW_THREAD_ICON,
-  "ArrowLeft",
-  "ArrowRight",
-  "ArrowUp",
-  "ArrowDown",
-  "ArrowTurnBackward",
-  "ArrowTurnForward",
-  "ArrowReloadHorizontal",
-  "MoreHorizontal",
-  "Plus",
-  "MessageSquare",
-  "MessageSquarePlus",
-  "MessageQuestion",
-  "Clock",
-  "Folder",
-  "FolderOpen",
-  "Zap",
-  "Star",
-  "Pin",
-  "Archive",
-  "Check",
-  "Bot",
-  "Brain",
-  "Terminal",
-  "Code",
-  "Globe",
-  "ExternalLink",
-  "Github",
-  "GitPullRequest",
-  "GitBranch",
-  "Play",
-  "Pause",
-  "Mic",
-  "Mail",
-  "Calendar",
-  "BellDot",
-  "Eye",
-  "Search",
-  "Settings",
-  "Smartphone",
-  "Laptop",
-  "ListTodo",
-  "Workflow",
-  "Puzzle",
-  "Palette",
-  "Coffee",
-];
+/** The symbols the icon picker offers: bb's New thread glyph first, then every name bb's host Icon draws. */
+export const ICON_CHOICES: readonly string[] = [NEW_THREAD_ICON, ...BB_ICON_NAMES];
+
+/** A symbol's name, as the picker reads it out and shows it on hover. */
+export const iconLabel = (icon: string): string => (icon === NEW_THREAD_ICON ? "New thread" : icon);
+
+/** Whether bb draws this symbol, rather than its generic bolt. */
+export const isKnownIcon = (icon: string): boolean => ICON_CHOICES.includes(icon);
+
+/**
+ * What the picker lists for an entry whose symbol is `current`: every choice, plus, right after New
+ * thread, a saved symbol bb's list lacks, so it still shows and stays selected.
+ */
+export function iconOptions(current: string): readonly string[] {
+  if (isKnownIcon(current)) return ICON_CHOICES;
+  return [NEW_THREAD_ICON, current, ...BB_ICON_NAMES];
+}
+
+/** The options whose name holds the query, ignoring case and the spaces around it, in their order. */
+export function matchIcons(options: readonly string[], query: string): readonly string[] {
+  const needle = query.trim().toLowerCase();
+  if (needle === "") return options;
+  return options.filter((icon) => iconLabel(icon).toLowerCase().includes(needle) || icon.toLowerCase().includes(needle));
+}
 
 /** What a new action of a kind starts as. The ones that name something start with the first on offer. */
 export interface Offers {

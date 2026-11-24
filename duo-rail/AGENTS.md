@@ -95,6 +95,19 @@ scout report that proposed this plugin.
   `visualViewport` resize and scroll, `visibilitychange`, and every 500 ms, because an inset may change
   with no event. Its lines are at most 15 characters at 8 px and wrap rather than clip. It never takes taps and changes nothing about the rail. To take it out, delete the file,
   its line in `rail.tsx`, `DEBUG_SETTING` and its definition in `server.ts`, and the shot list's debug still.
+- **The symbols are bb's own icon names, and only those** (`app/icon-names.ts`). The SDK types a name as
+  a string, has no list and no picker, and draws a bolt for a name it does not know, so the list is read
+  out of bb's app bundle by `scripts/icon-names.mjs` (`npm run icon-names`; it finds `ICON_NAMES`,
+  built there as the eager registry's keys plus a lazily loaded list, by that shape, not by minified
+  names). The file names the bb version it came from; rerun it after a bb update. bb 0.49.0 and 0.50.1
+  have the same 180 names. `app/icons.test.ts` checks the list has no duplicates and holds every symbol an
+  action or a default button starts with; the shot list checks live that every name draws its own glyph,
+  not the bolt. The picker (`IconPicker` in `app/editor.tsx`) is a search box over a scrollable radio
+  grid: New thread first, a saved name outside the list kept right after it (`iconOptions`), cells 36 pt
+  and 44 pt on a coarse pointer, and the choice scrolled into the grid's view on open by setting the
+  grid's own `scrollTop` (`revealWithin`), never `scrollIntoView`. Playwright's `getByLabel` and role
+  names match substrings, so with 180 icon labels in the page a shot list's lookups need `exact: true`
+  ("Name" matched `DiffRenamed`, "Pin" `PinOff`).
 - **The app never imports the SDK root at run time** (`app/imports.test.ts`). `shared/` imports only zod.
 
 ## Testing without a Duo

@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { layoutProblem, MAX_BUTTONS, type MenuItem, type RailButton } from "../shared/layout";
+import { layoutProblem, MAX_BUTTONS, NEW_THREAD_ICON, type MenuItem, type RailButton } from "../shared/layout";
 import {
+  ICON_CHOICES,
+  iconLabel,
+  iconOptions,
+  isKnownIcon,
+  matchIcons,
   ACTION_CHOICES,
   canAddButton,
   commandWords,
@@ -169,5 +174,32 @@ describe("names that follow the pick", () => {
     expect(label).toHaveLength(40);
     expect(label.endsWith("…")).toBe(true);
     expect(suggestedLabel({ kind: "back" }, names)).toBeNull();
+  });
+});
+
+describe("the symbol picker's list", () => {
+  it("offers bb's New thread glyph first, then every bb icon", () => {
+    expect(ICON_CHOICES[0]).toBe(NEW_THREAD_ICON);
+    expect(ICON_CHOICES.length).toBeGreaterThan(180);
+    expect(iconLabel(NEW_THREAD_ICON)).toBe("New thread");
+    expect(iconLabel("Star")).toBe("Star");
+  });
+
+  it("keeps a saved symbol bb lacks, right after New thread, so it shows and stays selected", () => {
+    expect(isKnownIcon("Rocket")).toBe(false);
+    const options = iconOptions("Rocket");
+    expect(options.slice(0, 2)).toEqual([NEW_THREAD_ICON, "Rocket"]);
+    expect(options.length).toBe(ICON_CHOICES.length + 1);
+    expect(iconOptions("Star")).toBe(ICON_CHOICES);
+  });
+
+  it("filters by name, ignoring case and surrounding spaces, keeping the order", () => {
+    expect(matchIcons(ICON_CHOICES, "")).toBe(ICON_CHOICES);
+    expect(matchIcons(ICON_CHOICES, "  ")).toBe(ICON_CHOICES);
+    const git = matchIcons(ICON_CHOICES, " GITPULL ");
+    expect(git).toEqual(["GitPullRequest", "GitPullRequestArrow", "GitPullRequestClosed", "GitPullRequestDraft"]);
+    expect(matchIcons(ICON_CHOICES, "thread")[0]).toBe(NEW_THREAD_ICON);
+    expect(matchIcons(ICON_CHOICES, "zzz")).toEqual([]);
+    expect(matchIcons(iconOptions("Rocket"), "rock")).toEqual(["Rocket"]);
   });
 });
