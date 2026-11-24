@@ -5,6 +5,7 @@ import {
   BUTTON_SIZE,
   DEFAULT_CAMERA_CLEARANCE,
   DEFAULT_UNFOLDED_CAMERA_CLEARANCE,
+  MIN_TOUCH_TARGET,
   normalizeClearance,
   railPlacement,
   stripSide,
@@ -69,11 +70,17 @@ describe("railPlacement", () => {
   });
 
   it("draws nothing when the column would not fit above the bottom inset", () => {
-    // 3 buttons of 48 with two 12 pt gaps is 168 pt; 678 − 34 leaves room from 476 down.
-    expect(railPlacement(at({ cameraClearance: 476 }))).not.toBeNull();
-    expect(railPlacement(at({ cameraClearance: 477 }))).toBeNull();
+    // 3 buttons of 48 with two 6 pt gaps is 156 pt; 678 − 34 leaves room from 488 down.
+    expect(railPlacement(at({ cameraClearance: 488 }))).not.toBeNull();
+    expect(railPlacement(at({ cameraClearance: 489 }))).toBeNull();
     // The keyboard shrinks the page: no clipped rail.
     expect(railPlacement(at({ viewportHeight: 300 }))).toBeNull();
+  });
+
+  it("keeps the column tight, with every button still at least the 44 pt touch target", () => {
+    const placement = railPlacement(DUO);
+    expect(placement?.gap).toBeLessThan(12);
+    expect(placement?.buttonSize).toBeGreaterThanOrEqual(MIN_TOUCH_TARGET);
   });
 
   it("never makes a button wider than the strip", () => {

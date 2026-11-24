@@ -1,9 +1,9 @@
 // The owner's buttons: which ones the rail shows on each display, in what order, and what each does.
 //
-// Stored as one JSON string in the plugin's `layout` setting, so it lives on the bb server and follows
-// the owner to every device, the app reads it live through `useSettings()`, and the host's settings
-// form keeps a plain-text copy anyone can paste between bbs. The server validates every write with
-// `layoutSchema`; the app parses what it reads with `parseLayout`, which never throws.
+// Stored in the plugin's key-value store on the bb server (server/layout-store.ts), so it follows the
+// owner to every device; the app reads and writes it through the plugin's RPCs (contract.ts), which
+// validate it with `layoutSchema`. `parseLayout` reads the text form, as the editor's Import and the old
+// `layout` setting hold it, and never throws.
 //
 // No SDK import: the app imports this at run time (see app/imports.test.ts).
 import { z } from "zod";

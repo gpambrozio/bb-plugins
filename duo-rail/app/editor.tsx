@@ -1,12 +1,12 @@
 // The Buttons section of Duo Rail's settings page: which buttons each display's rail shows, in what
-// order, with what symbol, and what each does. It edits a draft and saves it to the `layout` setting,
-// which lives on the bb server, so the rail on every device follows it.
+// order, with what symbol, and what each does. It edits a draft and saves it through the plugin's
+// `layout.set` RPC into the plugin's storage on the bb server, so the rail on every device follows it.
 import {
-  experimental_usePluginId,
+  experimental_copyToClipboard,
   experimental_useSidebarThreads,
   experimental_useThreadActionRegistrations,
+  useRpc,
   useSdk,
-  useSettings,
 } from "@get-bb/plugin-sdk/app";
 import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
 
@@ -18,20 +18,18 @@ import {
   DISPLAY_LABELS,
   DISPLAYS,
   defaultLayout,
-  joinArgs,
   layoutProblem,
   MAX_LABEL,
   MAX_RECENT_THREADS,
   parseLayout,
   serializeLayout,
-  splitArgs,
   type Display,
   type Layout,
   type LeafAction,
   type MenuItem,
   type RailButton,
 } from "../shared/layout";
-import { LAYOUT_SETTING } from "../shared/settings";
+import type { RpcContract } from "../shared/contract";
 import {
   ACTION_CHOICES,
   canAddButton,
@@ -44,11 +42,14 @@ import {
   newMenuItem,
   removeAt,
   replaceAt,
+  withAction,
   withKind,
   type ActionChoice,
   type Names,
   type Offers,
 } from "./editor-model";
+import { CommandPicker } from "./command-picker";
+import { useStoredLayout } from "./stored-layout";
 import { ActionIcon } from "./rail";
 
 const SELECT_CLASS =
@@ -58,7 +59,8 @@ interface Choices {
   projects: readonly { id: string; name: string }[];
   threads: readonly { id: string; title: string }[];
   threadActions: readonly { key: string; title: string }[];
-  cliCommands: readonly { name: string; summary: string }[];
+  /** The installed plugins' commands; null while they load. */
+  cliCommands: readonly { name: string; summary: string }[] | null;
   offers: Offers;
   names: Names;
 }
@@ -69,7 +71,7 @@ function useChoices(): Choices {
   const { threads: sidebar } = experimental_useSidebarThreads();
   const registrations = experimental_useThreadActionRegistrations();
   const [projects, setProjects] = useState<readonly { id: string; name: string }[]>([]);
-  const [cliCommands, setCliCommands] = useState<readonly { name: string; summary: string }[]>([]);
+  const [cliCommands, setCliCommands] = useState<readonly { name: string; summary: string }[] | null>(null);
   useEffect(() => {
     let live = true;
     sdk.projects
@@ -85,7 +87,10 @@ function useChoices(): Choices {
             result.plugins.flatMap((plugin) => (plugin.enabled && plugin.cliCommand !== null ? [{ name: plugin.cliCommand.name, summary: plugin.cliCommand.summary }] : [])),
           ),
       )
-      .catch((error: unknown) => console.warn("duo-rail: could not list plugin commands", error));
+      .catch((error: unknown) => {
+        console.warn("duo-rail: could not list plugin commands", error);
+        if (live) setCliCommands([]);
+      });
     return () => {
       live = false;
     };
@@ -98,7 +103,7 @@ function useChoices(): Choices {
       threads,
       threadActions,
       cliCommands,
-      offers: { firstThreadId: threads[0]?.id, firstProjectId: projects[0]?.id, firstThreadActionKey: threadActions[0]?.key, firstCliCommand: cliCommands[0]?.name },
+      offers: { firstThreadId: threads[0]?.id, firstProjectId: projects[0]?.id, firstThreadActionKey: threadActions[0]?.key },
       names: {
         thread: (id) => threads.find((thread) => thread.id === id)?.title,
         project: (id) => projects.find((project) => project.id === id)?.name,
@@ -138,39 +143,12 @@ function PickOne({ id, value, options, missing, onChange }: { id: string; value:
 }
 
 function CommandField({ args, cliCommands, onChange }: { args: readonly string[]; cliCommands: Choices["cliCommands"]; onChange(args: string[]): void }) {
-  // The text as typed, so quotes and spaces stay while the owner types; the words are what is saved.
-  const [text, setText] = useState(() => joinArgs(args));
-  const list = useId();
   return (
     <Field
       label="Command, after bb"
-      hint="Runs on the bb server's machine with the bb command-line tool, and its last lines show in a notice. Plugin commands are listed as you type."
+      hint="Pick from every installed plugin's commands and bb's own, or type one with its arguments. It runs on the bb server's machine with bb's command-line tool, and its last lines show in a notice."
     >
-      {(id) => (
-        <>
-          <div className="flex items-center gap-2">
-            <span className="font-mono text-sm text-muted-foreground">bb</span>
-            <Input
-              id={id}
-              className="font-mono"
-              list={list}
-              placeholder="herald say 'Hello'"
-              value={text}
-              onChange={(event) => {
-                setText(event.target.value);
-                onChange(splitArgs(event.target.value));
-              }}
-            />
-          </div>
-          <datalist id={list}>
-            {cliCommands.map((command) => (
-              <option key={command.name} value={command.name}>
-                {command.summary}
-              </option>
-            ))}
-          </datalist>
-        </>
-      )}
+      {(id) => <CommandPicker id={id} args={args} plugins={cliCommands} onChange={onChange} />}
     </Field>
   );
 }
@@ -281,12 +259,25 @@ function IconPicker({ value, onChange }: { value: string; onChange(icon: string)
 
 type Entry = RailButton | MenuItem;
 
-function EntryEditor<T extends Entry>({ entry, kinds, choices, onChange }: { entry: T; kinds: readonly ActionChoice[]; choices: Choices; onChange(entry: T): void }) {
+function EntryEditor<T extends Entry>({
+  entry,
+  kinds,
+  choices,
+  focusName,
+  onChange,
+}: {
+  entry: T;
+  kinds: readonly ActionChoice[];
+  choices: Choices;
+  /** Just added: the owner starts by naming it. */
+  focusName: boolean;
+  onChange(entry: T): void;
+}) {
   const { action } = entry;
   return (
     <div className="flex flex-col gap-3 border-t border-border pt-3">
       <Field label="Name" hint="Read out by VoiceOver; the button itself shows only its symbol.">
-        {(id) => <Input id={id} maxLength={MAX_LABEL} value={entry.label} onChange={(event) => onChange({ ...entry, label: event.target.value })} />}
+        {(id) => <Input id={id} autoFocus={focusName} maxLength={MAX_LABEL} value={entry.label} onChange={(event) => onChange({ ...entry, label: event.target.value })} />}
       </Field>
       <Field label="Symbol">{() => <IconPicker value={entry.icon} onChange={(icon) => onChange({ ...entry, icon })} />}</Field>
       <Field label="Action">
@@ -295,7 +286,7 @@ function EntryEditor<T extends Entry>({ entry, kinds, choices, onChange }: { ent
             id={id}
             className={SELECT_CLASS}
             value={action.kind}
-            onChange={(event) => onChange(withKind(entry, event.target.value as T["action"]["kind"], choices.offers))}
+            onChange={(event) => onChange(withKind(entry, event.target.value as T["action"]["kind"], choices.offers, choices.names))}
           >
             {kinds.map((kind) => (
               <option key={kind.kind} value={kind.kind}>
@@ -313,11 +304,15 @@ function EntryEditor<T extends Entry>({ entry, kinds, choices, onChange }: { ent
           choices={choices}
           canAdd={canAddMenuItem(action.items)}
           onChange={(items) => onChange({ ...entry, action: { ...action, items } })}
-          onAdd={() => onChange({ ...entry, action: { ...action, items: [...action.items, newMenuItem(action.items, "forward", choices.offers)] } })}
+          onAdd={() => {
+            const item = newMenuItem(action.items, "forward", choices.offers);
+            onChange({ ...entry, action: { ...action, items: [...action.items, item] } });
+            return item.id;
+          }}
           canRemoveLast={false}
         />
       ) : (
-        <ActionFields action={action} choices={choices} onChange={(next) => onChange({ ...entry, action: next } as T)} />
+        <ActionFields action={action} choices={choices} onChange={(next) => onChange(withAction(entry, next as T["action"], choices.names))} />
       )}
     </div>
   );
@@ -340,9 +335,11 @@ function EntryList<T extends Entry>({
   canAdd: boolean;
   canRemoveLast: boolean;
   onChange(entries: T[]): void;
-  onAdd(): void;
+  /** Adds an entry and returns its id, which opens for editing. */
+  onAdd(): string;
 }) {
   const [open, setOpen] = useState<string | null>(null);
+  const [added, setAdded] = useState<string | null>(null);
   return (
     <div className="flex flex-col gap-2">
       <ul className="flex flex-col gap-2" aria-label={what === "button" ? "Buttons" : "Menu items"}>
@@ -393,12 +390,24 @@ function EntryList<T extends Entry>({
                 <Icon name="Trash2" />
               </Button>
             </div>
-            {open === entry.id && <EntryEditor entry={entry} kinds={kinds} choices={choices} onChange={(next) => onChange(replaceAt(entries, index, next))} />}
+            {open === entry.id && (
+              <EntryEditor entry={entry} kinds={kinds} choices={choices} focusName={added === entry.id} onChange={(next) => onChange(replaceAt(entries, index, next))} />
+            )}
           </li>
         ))}
       </ul>
       <div>
-        <Button type="button" variant="outline" size="sm" disabled={!canAdd} onClick={onAdd}>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={!canAdd}
+          onClick={() => {
+            const id = onAdd();
+            setOpen(id);
+            setAdded(id);
+          }}
+        >
           <Icon name="Plus" />
           Add {what}
         </Button>
@@ -407,27 +416,94 @@ function EntryList<T extends Entry>({
   );
 }
 
+/** Copy a layout to another bb, or bring one in: the layout as JSON, through the clipboard or pasted. */
+function ExportImport({ current, onImport }: { current: Layout; onImport(layout: Layout): void }) {
+  const [importing, setImporting] = useState(false);
+  const [text, setText] = useState("");
+  const [note, setNote] = useState<string | null>(null);
+  const problem = text.trim() === "" ? null : layoutProblem(text);
+  const id = useId();
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={() =>
+            void experimental_copyToClipboard({ text: JSON.stringify(current, null, 2) }).then((copied) =>
+              setNote(copied ? "Copied both displays' buttons. Paste them into Import on another bb." : "Could not copy to the clipboard."),
+            )
+          }
+        >
+          Export
+        </Button>
+        <Button type="button" variant="ghost" size="sm" aria-expanded={importing} onClick={() => setImporting(!importing)}>
+          Import…
+        </Button>
+        {note !== null && <span className="text-xs text-muted-foreground">{note}</span>}
+      </div>
+      {importing && (
+        <div className="flex flex-col gap-2">
+          <label htmlFor={id} className="text-xs text-muted-foreground">
+            A layout exported from Duo Rail. It replaces both displays' buttons here; Save keeps it.
+          </label>
+          <textarea
+            id={id}
+            className="min-h-24 rounded-md border border-input bg-transparent p-2 font-mono text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            value={text}
+            onChange={(event) => setText(event.target.value)}
+          />
+          {problem !== null && <span className="text-xs text-destructive">{problem}</span>}
+          <div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={text.trim() === "" || problem !== null}
+              onClick={() => {
+                onImport(parseLayout(text).layout);
+                setImporting(false);
+                setText("");
+              }}
+            >
+              Use this layout
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function ButtonsEditor() {
-  const settings = useSettings();
-  const sdk = useSdk();
-  const pluginId = experimental_usePluginId();
+  const rpc = useRpc<RpcContract>();
   const choices = useChoices();
-  const stored = useMemo(() => parseLayout(settings.values?.[LAYOUT_SETTING]), [settings.values]);
-  const storedText = serializeLayout(stored.layout);
+  const stored = useStoredLayout();
+  const storedText = stored.layout === null ? null : serializeLayout(stored.layout);
   const [draft, setDraft] = useState<Layout | null>(null);
   const [display, setDisplay] = useState<Display>("folded");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const current = draft ?? stored.layout;
-  const draftText = serializeLayout(current);
-  const dirty = draft !== null && draftText !== storedText;
-  const problem = dirty ? layoutProblem(draftText) : null;
-  const other: Display = display === "folded" ? "unfolded" : "folded";
 
   // Once saved (or saved elsewhere to the same thing), the draft is the stored layout again.
   useEffect(() => {
     if (draft !== null && serializeLayout(draft) === storedText) setDraft(null);
   }, [draft, storedText]);
+
+  if (stored.layout === null) {
+    return (
+      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+        <Icon name="Spinner" className="animate-spin" /> Loading…
+      </div>
+    );
+  }
+
+  const current = draft ?? stored.layout;
+  const draftText = serializeLayout(current);
+  const dirty = draft !== null && draftText !== storedText;
+  const problem = dirty ? layoutProblem(draftText) : null;
+  const other: Display = display === "folded" ? "unfolded" : "folded";
 
   const setButtons = (buttons: RailButton[]) => {
     setSaveError(null);
@@ -438,21 +514,14 @@ export function ButtonsEditor() {
     setSaving(true);
     setSaveError(null);
     try {
-      await sdk.plugins.updateSettings({ pluginId, values: { [LAYOUT_SETTING]: draftText } });
+      await rpc.call("layout.set", { layout: current });
+      await stored.refetch();
     } catch (error: unknown) {
       setSaveError(error instanceof Error ? error.message : String(error));
     } finally {
       setSaving(false);
     }
   };
-
-  if (settings.isLoading) {
-    return (
-      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-        <Icon name="Spinner" className="animate-spin" /> Loading…
-      </div>
-    );
-  }
 
   const buttons = current[display].buttons;
   return (
@@ -472,7 +541,7 @@ export function ButtonsEditor() {
       </p>
       {stored.problem !== null && draft === null && (
         <p role="alert" className="text-xs text-destructive">
-          The saved layout could not be read, so the rail shows the default: {stored.problem}
+          {stored.problem}
         </p>
       )}
       <EntryList
@@ -483,7 +552,11 @@ export function ButtonsEditor() {
         canAdd={canAddButton(buttons)}
         canRemoveLast
         onChange={setButtons}
-        onAdd={() => setButtons([...buttons, newButton(buttons, "newThread", choices.offers)])}
+        onAdd={() => {
+          const button = newButton(buttons, "newThread", choices.offers);
+          setButtons([...buttons, button]);
+          return button.id;
+        }}
       />
       <div className="flex flex-wrap items-center gap-2">
         <Button type="button" variant="ghost" size="sm" onClick={() => setButtons(structuredClone(current[other].buttons))}>
@@ -508,6 +581,13 @@ export function ButtonsEditor() {
         </Button>
         {!dirty && <span className="text-xs text-muted-foreground">Saved. The rail on every device follows it.</span>}
       </div>
+      <ExportImport
+        current={current}
+        onImport={(layout) => {
+          setSaveError(null);
+          setDraft(layout);
+        }}
+      />
     </div>
   );
 }

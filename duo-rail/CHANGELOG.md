@@ -17,8 +17,10 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   settings: add, remove and reorder them, and give each a symbol and an action. A button can go back or
   forward, open a new thread (in a project you pick), a thread, a project, your recent threads or a web
   address, run an action from bb's thread menu (Pin, Archive, …) on the thread you are looking at, run a
-  `bb` command such as a plugin's and show its result, reload bb, or open a menu of its own. The layout
-  is kept on your bb server, so every device follows it.
+  `bb` command and show its result, reload bb, or open a menu of its own. The command list holds every
+  installed plugin's commands and subcommands and bb's own, and narrows as you type. A button is named
+  after what you pick until you name it yourself. Export and Import copy the buttons between bbs. The
+  layout is kept on your bb server, so every device follows it.
 - **Space for the camera**, one setting for each display, to move the buttons up or down so they clear
   the camera and the clock.
 - The buttons step aside when bb's sidebar drawer, a sheet or a menu opens over them.

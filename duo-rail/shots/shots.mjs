@@ -268,6 +268,7 @@ export async function shoot({ bb, shots, VARIANTS }) {
     const editor = page.getByTestId("duo-rail-editor");
     await editor.waitFor();
     check((await editor.getByRole("list", { name: "Buttons" }).getByRole("listitem").count()) >= 3, "the editor lists the default buttons");
+    check((await page.getByText("Button layout (JSON)").count()) === 0 && (await page.getByText("Space for the camera, folded").count()) === 1, "the settings page shows the camera gaps and the editor, and no layout JSON");
     await editor.getByRole("button", { name: "Edit More" }).click();
     await editor.getByRole("button", { name: "Edit More" }).scrollIntoViewIfNeeded();
     await page.waitForTimeout(400);
@@ -281,22 +282,42 @@ export async function shoot({ bb, shots, VARIANTS }) {
     const buttons = editor.getByRole("list", { name: "Buttons" });
 
     await editor.getByRole("button", { name: "Add button" }).click();
-    await buttons.getByRole("button", { name: "Edit New thread" }).last().click();
     let row = buttons.locator(":scope > li").last();
+    check(await row.getByLabel("Name").evaluate((input) => input === document.activeElement), "a new button opens for editing, its name ready to type");
     await row.getByLabel("Action").selectOption("threadAction");
     const pinOption = (await row.getByLabel("Action from bb's thread menu").locator("option").allTextContents()).find((text) => /^Pin/.test(text));
     check(pinOption !== undefined, "the editor offers bb's own thread-menu actions (Pin among them)");
     await row.getByLabel("Action from bb's thread menu").selectOption({ label: pinOption });
-    await row.getByLabel("Name").fill("Pin");
+    check((await row.getByLabel("Name").inputValue()) === pinOption, "picking a thread-menu action names the button after it");
     await row.getByRole("radio", { name: "Pin" }).click();
-    await buttons.getByRole("button", { name: "Edit Pin" }).click();
+    await buttons.getByRole("button", { name: `Edit ${pinOption}` }).click();
 
+    // A command picked from the list: every plugin's commands and subcommands, and bb's own.
     await editor.getByRole("button", { name: "Add button" }).click();
-    await buttons.getByRole("button", { name: "Edit New thread" }).last().click();
     row = buttons.locator(":scope > li").last();
     await row.getByLabel("Action").selectOption("bbCommand");
-    await row.getByLabel("Command, after bb").fill("--version");
+    const box = row.getByRole("combobox", { name: "Command, after bb" });
+    await box.focus();
+    const list = row.getByRole("listbox", { name: "bb commands" });
+    await list.getByRole("option", { name: /^bb thread list/ }).waitFor({ timeout: 30_000 });
+    const all = await list.getByRole("option").count();
+    check(all > 100, `the command list holds every command, not one (${all})`);
+    check((await list.getByRole("option", { name: /^bb automation list/ }).count()) === 1, "it lists a plugin's subcommands (bb automation list)");
+    await page.waitForTimeout(300);
+    await shots.still(page, "editor-commands-light.png", { around: [row] });
+    await box.fill("keep-awake");
+    const narrowed = await list.getByRole("option").count();
+    check(narrowed > 0 && narrowed < 10, `typing narrows the list (${narrowed} for "keep-awake")`);
+    await list.getByRole("option", { name: /^bb keep-awake status/ }).click();
+    check((await row.getByLabel("Name").inputValue()) === "keep-awake status", "picking a command names the button after it");
+    await buttons.getByRole("button", { name: "Edit keep-awake status" }).click();
+
+    await editor.getByRole("button", { name: "Add button" }).click();
+    row = buttons.locator(":scope > li").last();
+    await row.getByLabel("Action").selectOption("bbCommand");
     await row.getByLabel("Name").fill("bb version");
+    await row.getByRole("combobox", { name: "Command, after bb" }).fill("--version");
+    check((await row.getByLabel("Name").inputValue()) === "bb version", "a name the owner typed stays when the command changes");
     await editor.getByRole("button", { name: "Save" }).click();
     await editor.getByText("Saved.", { exact: false }).waitFor();
     check(true, "the editor saves the folded layout");
@@ -315,7 +336,9 @@ export async function shoot({ bb, shots, VARIANTS }) {
     const rail = page.getByTestId("duo-rail");
     await rail.waitFor();
     const labels = await railLabels(page);
-    check(labels.length === 5 && labels[0] === "Back" && labels[4] === "bb version", `the folded rail follows the saved layout (${labels.join(", ")})`);
+    check(labels.length === 6 && labels[0] === "Back" && labels[4] === "keep-awake status" && labels[5] === "bb version", `the folded rail follows the saved layout (${labels.join(", ")})`);
+    const [first, second] = await Promise.all([0, 1].map((n) => rail.locator("button").nth(n).boundingBox()));
+    check(second.y - (first.y + first.height) < 12 && first.height >= 44, `the column is tighter, its buttons still at least 44 pt (gap ${Math.round(second.y - first.y - first.height)} pt)`);
     await rail.locator("button").nth(3).click();
     await bb.waitFor("the thread to be pinned", () => bb.cliJson(["thread", "show", threadId, "--json"]).thread.pinnedAt != null);
     check(true, "the Pin button pins the open thread");

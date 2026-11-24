@@ -22,6 +22,8 @@
   },
   "include": [
     "server.ts",
+    "server.test.ts",
+    "server",
     "app.tsx",
     "shared",
     "app",

@@ -1,12 +1,11 @@
 // Setting keys, shared by the server (which defines them) and the app (which reads them). No SDK import.
+// The button layout is not a setting: it lives in the plugin's storage (shared/contract.ts).
 import type { Display } from "./layout";
 import { DEFAULT_CAMERA_CLEARANCE, DEFAULT_UNFOLDED_CAMERA_CLEARANCE } from "./placement";
 
 /** The folded display's camera gap. The key predates the unfolded one, so it keeps its name. */
 export const CAMERA_CLEARANCE_SETTING = "cameraClearance";
 export const UNFOLDED_CAMERA_CLEARANCE_SETTING = "cameraClearanceUnfolded";
-/** The button layout, as JSON (shared/layout.ts). */
-export const LAYOUT_SETTING = "layout";
 
 export const CLEARANCE_SETTINGS: Record<Display, string> = {
   folded: CAMERA_CLEARANCE_SETTING,

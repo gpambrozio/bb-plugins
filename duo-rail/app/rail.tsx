@@ -28,15 +28,16 @@ import {
 import { useIsCompactViewport } from "../components/ui/hooks/use-compact-viewport";
 import { Icon } from "../components/ui/icon";
 import { cn } from "../lib/utils";
-import { displayFor, NEW_THREAD_ICON, parseLayout, type MenuItem, type RailButton as RailButtonConfig } from "../shared/layout";
+import { displayFor, NEW_THREAD_ICON, type MenuItem, type RailButton as RailButtonConfig } from "../shared/layout";
 import { railPlacement, type RailPlacement, type RailSide } from "../shared/placement";
-import { CLEARANCE_SETTINGS, DEFAULT_CLEARANCES, LAYOUT_SETTING } from "../shared/settings";
+import { CLEARANCE_SETTINGS, DEFAULT_CLEARANCES } from "../shared/settings";
 import { runAction, type ActionDeps } from "./actions";
 import { runBbCommand } from "./bb-command";
 import { useCovered } from "./covered";
 import { PROBE_STYLE, useViewport } from "./insets";
 import { openThreadTarget } from "./open-thread";
 import { recentThreads } from "./recent";
+import { useStoredLayout } from "./stored-layout";
 
 /**
  * Above bb's page (30 on compact screens) and under every layer bb draws over it: the compact sidebar
@@ -262,8 +263,9 @@ export function DuoRail() {
   const display = displayFor(useIsCompactViewport());
   const settings = useSettings();
   const rail = useRef<HTMLElement | null>(null);
-  const { layout } = useMemo(() => parseLayout(settings.values?.[LAYOUT_SETTING]), [settings.values]);
-  const buttons = layout[display].buttons;
+  // Nothing until the layout is read, so a custom rail does not flash the default buttons first.
+  const { layout } = useStoredLayout();
+  const buttons = layout?.[display].buttons ?? [];
   const placement = railPlacement({
     insets: viewport.insets,
     viewportHeight: viewport.height,

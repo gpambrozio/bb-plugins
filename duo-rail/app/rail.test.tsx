@@ -3,7 +3,8 @@ import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { cleanup, fireEvent, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { DEFAULT_BUTTONS, serializeLayout, type Layout, type RailButton } from "../shared/layout";
+import { rpcContract } from "../shared/contract";
+import { DEFAULT_BUTTONS, defaultLayout, type Layout, type RailButton } from "../shared/layout";
 import type { Insets } from "../shared/placement";
 import type { Viewport } from "./insets";
 
@@ -15,8 +16,7 @@ const DUO: Insets = { top: 0, right: 84, bottom: 34, left: 0 };
 /** The unfolded display: bb's wide layout, 951×669 pt, an 85 pt strip on the right. */
 const UNFOLDED: Insets = { top: 0, right: 85, bottom: 21, left: 0 };
 
-const layout = (folded: RailButton[], unfolded: RailButton[] = [...DEFAULT_BUTTONS]): string =>
-  serializeLayout({ version: 1, folded: { buttons: folded }, unfolded: { buttons: unfolded } } satisfies Layout);
+const layout = (folded: RailButton[], unfolded: RailButton[] = [...DEFAULT_BUTTONS]): Layout => ({ version: 1, folded: { buttons: folded }, unfolded: { buttons: unfolded } });
 
 const PIN_TARGET_THREAD = {
   id: "current",
@@ -45,11 +45,17 @@ function setCompact(compact: boolean) {
   })) as unknown as typeof window.matchMedia;
 }
 
-async function renderRail(options: Parameters<typeof renderSlot>[2] = {}) {
+/** Renders the overlay; `stored` is what the server's `layout.get` answers (the default when omitted). */
+async function renderRail({ stored, ...options }: Parameters<typeof renderSlot>[2] & { stored?: Layout | { layout: Layout; problem: string } } = {}) {
   const app = await loadPluginApp(() => import("../app"));
   const [overlay] = app.appOverlays;
   if (overlay === undefined) throw new Error("no app overlay registered");
-  return renderSlot(overlay, {}, options);
+  const answer = stored === undefined ? { layout: defaultLayout(), problem: null } : "problem" in stored ? stored : { layout: stored, problem: null };
+  const slot = await renderSlot(overlay, {}, { experimental_rpcContract: rpcContract, rpc: { "layout.get": () => answer, "layout.set": (input) => input }, ...options });
+  // The layout arrives from the server after the first render.
+  await screen.findByTestId("duo-rail-probe");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  return slot;
 }
 
 beforeEach(() => {
@@ -92,7 +98,7 @@ describe("the rail", () => {
   it("draws the unfolded buttons in the unfolded display's strip, on bb's wide layout, below its own camera gap", async () => {
     setCompact(false);
     viewport.current = { insets: UNFOLDED, height: 669 };
-    await renderRail({ settings: { cameraClearanceUnfolded: 130, layout: layout([], [{ id: "fwd", label: "Forward", icon: "ArrowRight", action: { kind: "forward" } }]) } });
+    await renderRail({ settings: { cameraClearanceUnfolded: 130 }, stored: layout([], [{ id: "fwd", label: "Forward", icon: "ArrowRight", action: { kind: "forward" } }]) });
     const rail = screen.getByTestId("duo-rail");
     expect(rail.dataset.display).toBe("unfolded");
     expect(rail.style.top).toBe("130px");
@@ -120,37 +126,33 @@ describe("the rail", () => {
 
   it("draws the owner's folded buttons, in their order", async () => {
     await renderRail({
-      settings: {
-        layout: layout([
+      stored: layout([
           { id: "u", label: "Docs", icon: "Globe", action: { kind: "openUrl", url: "https://example.com/docs" } },
           { id: "b", label: "Back", icon: "ArrowLeft", action: { kind: "back" } },
         ]),
-      },
     });
     expect(screen.getAllByRole("button").map((button) => button.getAttribute("aria-label"))).toEqual(["Docs", "Back"]);
   });
 
   it("draws nothing on a display whose layout has no buttons", async () => {
-    await renderRail({ settings: { layout: layout([]) } });
+    await renderRail({ stored: layout([]) });
     expect(screen.queryByTestId("duo-rail")).toBeNull();
   });
 
-  it("falls back to the default buttons when the stored layout is broken", async () => {
-    await renderRail({ settings: { layout: "{ not json" } });
+  it("draws the default buttons when the server could not read the stored layout", async () => {
+    await renderRail({ stored: { layout: defaultLayout(), problem: "The saved layout could not be read" } });
     expect(screen.getAllByRole("button").map((button) => button.getAttribute("aria-label"))).toEqual(["Back", "New thread", "More"]);
   });
 
   it("opens a URL, a thread, a project and a new thread in a chosen project", async () => {
     const slot = await renderRail({
       openUrl: () => true,
-      settings: {
-        layout: layout([
+      stored: layout([
           { id: "u", label: "Docs", icon: "Globe", action: { kind: "openUrl", url: "https://example.com/docs" } },
           { id: "t", label: "Standup", icon: "MessageSquare", action: { kind: "openThread", threadId: "t9" } },
           { id: "p", label: "Acme", icon: "Folder", action: { kind: "openProject", projectId: "p1" } },
           { id: "n", label: "New in Acme", icon: "Plus", action: { kind: "newThread", projectId: "p1" } },
         ]),
-      },
     });
     for (const name of ["Docs", "Standup", "Acme", "New in Acme"]) fireEvent.click(screen.getByRole("button", { name }));
     expect(slot.inspection.navigateCalls).toEqual([
@@ -171,7 +173,7 @@ describe("the rail", () => {
         seen.push(thread.id);
         return [{ key: "bb--core/pin", pluginId: "bb--core", group: "1_state", action: { label: "Pin", icon: "Pin", run } }];
       },
-      settings: { layout: layout([{ id: "pin", label: "Pin", icon: "Pin", action: { kind: "threadAction", key: "bb--core/pin" } }]) },
+      stored: layout([{ id: "pin", label: "Pin", icon: "Pin", action: { kind: "threadAction", key: "bb--core/pin" } }]),
     });
     fireEvent.click(screen.getByRole("button", { name: "Pin" }));
     expect(run).toHaveBeenCalledOnce();
@@ -181,7 +183,7 @@ describe("the rail", () => {
   it("greys out a thread-menu action when no thread is open", async () => {
     await renderRail({
       context: { threadId: null },
-      settings: { layout: layout([{ id: "pin", label: "Pin", icon: "Pin", action: { kind: "threadAction", key: "bb--core/pin" } }]) },
+      stored: layout([{ id: "pin", label: "Pin", icon: "Pin", action: { kind: "threadAction", key: "bb--core/pin" } }]),
     });
     expect(screen.getByRole("button", { name: "Pin" })).toHaveProperty("disabled", true);
   });
@@ -191,7 +193,7 @@ describe("the rail", () => {
       ({ id, displayTitle, isHidden: false, isArchived: false, isUnread: false, hasPendingInteraction: false, latestAttentionAt }) as never;
     const slot = await renderRail({
       sidebarThreads: { threads: [thread("t1", "First", 1), thread("t2", "Second", 2), thread("t3", "Third", 3)] },
-      settings: { layout: layout([{ id: "r", label: "Recent", icon: "Clock", action: { kind: "recentThreads", count: 2 } }]) },
+      stored: layout([{ id: "r", label: "Recent", icon: "Clock", action: { kind: "recentThreads", count: 2 } }]),
     });
     fireEvent.click(screen.getByRole("button", { name: "Recent" }));
     expect(await screen.findByText("Third")).toBeTruthy();
@@ -211,7 +213,7 @@ describe("the rail", () => {
           close: async () => ({}),
         },
       } as never,
-      settings: { layout: layout([{ id: "say", label: "Say", icon: "Mic", action: { kind: "bbCommand", args: ["herald", "say", "hi there"] } }]) },
+      stored: layout([{ id: "say", label: "Say", icon: "Mic", action: { kind: "bbCommand", args: ["herald", "say", "hi there"] } }]),
     });
     fireEvent.click(screen.getByRole("button", { name: "Say" }));
     await vi.waitFor(() => expect(create).toHaveBeenCalledOnce());

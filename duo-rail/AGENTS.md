@@ -2,7 +2,8 @@
 
 An app overlay (`app.slots.experimental_appOverlay`): a column of buttons in the iPhone Duo's side strip,
 below the camera, on the folded cover screen and the unfolded display. And a settings section
-(`app.slots.settingsSection`, "Buttons"), where the owner picks each display's buttons. Read the root
+(`app.slots.settingsSection`, "Buttons"), where the owner picks each display's buttons, saved through the
+server's RPCs into the plugin's storage. Read the root
 `AGENTS.md` first. Background: get-bb/bb#7507 (the strip, its measurements, and Apple's guidance) and the
 scout report that proposed this plugin.
 
@@ -30,15 +31,26 @@ scout report that proposed this plugin.
   the rail also fades out while anything covers a button (`app/covered.ts`). That is a hit test
   (`elementFromPoint` at each button's centre, re-run on DOM mutations, resizes and transition ends) that
   names no bb element. The faded rail keeps its hit area, so the test sees when it is uncovered.
-- **The layout is one JSON string setting, `layout`** (`shared/layout.ts`). Plugin settings hold only
-  strings, numbers and booleans, and a setting lives on the bb server, reaches the app live through
-  `useSettings()`, and is written from the app with `useSdk().plugins.updateSettings` — no RPC, no storage.
-  `layoutSchema` (zod, no SDK import) is the contract: the server's `experimental_schema` refuses a layout
-  that fails it, whoever writes it, and `parseLayout` turns a missing, empty or broken value into the
-  default (today's Back, New thread, More) without throwing. Adding an action kind means a schema entry,
-  `ACTION_CHOICES` / `newLeafAction` / `describeAction` in `app/editor-model.ts`, its fields in
-  `app/editor.tsx`, and how it runs (`app/actions.ts`, or a component in `app/rail.tsx` when it needs
-  hooks). Bump `version` in the layout only for a change an older app could not read.
+- **The layout lives in the plugin's key-value store, not in a setting** (`server/layout-store.ts`, key
+  `layout`), behind two RPCs (`shared/contract.ts`): `layout.get` (tagged `layout`) and `layout.set`, which
+  invalidates the tag, so every open rail and editor on every device reads it again. bb's settings form
+  draws every defined setting, and the owner did not want the layout as raw JSON there, so the settings
+  are only the two camera gaps. `layoutSchema` (zod, no SDK import) is the contract: `layout.set`'s input
+  schema refuses a layout the rail could not draw, and `layout.get` answers the default with a `problem`
+  for a stored row that no longer parses. The contract is a plain object (`satisfies PluginRpcContract`)
+  because the app passes it to `experimental_useRpcQuery` as a value. Adding an action kind means a schema
+  entry, `ACTION_CHOICES` / `newLeafAction` / `describeAction` / `suggestedLabel` in
+  `app/editor-model.ts`, its fields in `app/editor.tsx`, and how it runs (`app/actions.ts`, or a component
+  in `app/rail.tsx` when it needs hooks). Bump `version` in the layout only for a change an older app could
+  not read.
+- **The old `layout` setting is migrated on the first read** of each load: a valid saved layout moves into
+  the store unless the store already has one, and the setting is unset either way
+  (`bb.sdk.plugins.updateSettings` with `null`). A setting that is no longer defined keeps its stored value
+  in `plugins.getSettings().values` (bb 0.50.1), which is how it is read. A failure is retried on the next
+  read; a save never waits on it.
+- **A button's name follows its pick until the owner types one** (`withAction`, `hasOwnLabel`): the name
+  counts as the owner's when it is neither the kind's default nor what the current pick suggests. A new
+  entry opens with its name field focused.
 - **Only SDK routes and web-platform calls.** New thread, a thread and a project are `useBbNavigate()`
   (`toCompose`, `toThread`, `toProject`), a URL is `openUrl`, the recent threads are
   `experimental_useSidebarThreads`, a thread-menu action is `experimental_useThreadActions` on the open
@@ -58,6 +70,13 @@ scout report that proposed this plugin.
   (`terminals.output`, `sinceSeq`), shows its last lines in a toast that replaces the "Running…" one (same
   `id`), and always force-closes the terminal; it gives up after a minute. In the dev bb,
   `bb settings cli-command install` links the launcher into the fake HOME only.
+- **The command picker's list comes from bb's command-line tool** (`app/command-catalog.ts`), because the
+  SDK's plugin list has only each plugin's top-level command: one terminal run of `bb guide commands`
+  (bb's own) and `bb <name> --help` for each plugin (its `Commands:` lines). Use the text form of the
+  guide: the `--json` form is about 65 KB in one burst, and its start was gone from the terminal's buffer
+  before the first read. The listing runs once per page and set of plugins (`command-picker.tsx`); without
+  the CLI, the plugins' top-level commands are still offered. Not a `<datalist>`: browsers list only the
+  entries matching what is already in the box, so a filled box offered one command.
 - **The camera gaps are settings** (`cameraClearance` folded, default 175; `cameraClearanceUnfolded`,
   default 110; 0–600) because the SDK gives no occlusion rects. `normalizeClearance` keeps a missing or
   broken value usable, falling back to that display's default.
@@ -71,13 +90,15 @@ pads itself as it does on the device. `shots/shots.mjs` uses it at 466 × 678 (f
 951 × 669 (unfolded, right 85, bottom 21) for the screenshots, and to check placement, the 44 pt targets,
 taps reaching the buttons, hiding on a desktop and an ordinary iPhone, no bb control in the unfolded strip,
 the drawer covering the rail, the buttons' navigation, and a layout saved in the editor: its Pin button pins
-the thread, and its `bb --version` button's result comes back as a notice.
+the thread, a command picked from the full list names its button, and its `bb --version` button's result
+comes back as a notice. It also checks the settings page shows no layout JSON.
 
 The SDK's app harness fakes `useSdk()` (`sdk`), thread actions (`threadActions`,
-`threadActionRegistrations`) and settings, so `app/rail.test.tsx` and `app/editor.test.tsx` render the
-real slots.
+`threadActionRegistrations`), the plugin's RPCs (`rpc` with `experimental_rpcContract`) and settings, so
+`app/rail.test.tsx` and `app/editor.test.tsx` render the real slots over a fake server store. `server.test.ts`
+runs the server on the SDK's fake host, migration included.
 
 ## Machine
 
-Everything runs in the app; the server only defines the settings. A `bb` command runs on the bb server's
+The rail and the editor run in the app; the server defines the camera-gap settings and keeps the layout. A `bb` command runs on the bb server's
 machine (`primaryHostId`), where bb installs its command-line tool. There is no `bb.host` entry.

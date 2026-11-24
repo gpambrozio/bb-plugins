@@ -4,6 +4,7 @@ import { layoutProblem, MAX_BUTTONS, type MenuItem, type RailButton } from "../s
 import {
   ACTION_CHOICES,
   canAddButton,
+  commandWords,
   describeAction,
   MENU_ITEM_CHOICES,
   moveAt,
@@ -12,7 +13,9 @@ import {
   newMenuItem,
   removeAt,
   replaceAt,
+  suggestedLabel,
   uniqueId,
+  withAction,
   withKind,
   type Names,
 } from "./editor-model";
@@ -44,9 +47,13 @@ describe("the action picker", () => {
   });
 
   it("starts each action as a valid one when there is something to pick", () => {
-    const offers = { firstThreadId: "t1", firstProjectId: "p1", firstThreadActionKey: "bb--core/pin", firstCliCommand: "herald" };
-    const buttons = ACTION_CHOICES.reduce<RailButton[]>((list, choice) => [...list, newButton(list, choice.kind, offers)], []);
+    const offers = { firstThreadId: "t1", firstProjectId: "p1", firstThreadActionKey: "bb--core/pin" };
+    const buttons = ACTION_CHOICES.filter((choice) => choice.kind !== "bbCommand").reduce<RailButton[]>((list, choice) => [...list, newButton(list, choice.kind, offers)], []);
     for (const button of buttons) expect(valid([button])).toBeNull();
+  });
+
+  it("starts a bb command empty, so its picker lists every command (a prefilled one narrowed the list to itself)", () => {
+    expect(newAction("bbCommand")).toEqual({ kind: "bbCommand", args: [] });
   });
 
   it("starts the ones that name something empty when there is nothing to pick, and saving says so", () => {
@@ -116,5 +123,51 @@ describe("describeAction", () => {
     [{ kind: "menu", items: [{ id: "f", label: "Forward", icon: "ArrowRight", action: { kind: "forward" } }] }, "A menu: Forward"],
   ])("describes %j", (action, text) => {
     expect(describeAction(action, names)).toBe(text);
+  });
+});
+
+describe("names that follow the pick", () => {
+  const command = (args: string[]): RailButton => ({ id: "c", label: "bb command", icon: "Terminal", action: { kind: "bbCommand", args } });
+
+  it("names a command button after the command's words, not its arguments", () => {
+    expect(commandWords(["automation", "list", "--project", "p1"])).toBe("automation list");
+    expect(commandWords(["herald", "say", "hi there"])).toBe("herald say");
+    expect(withAction(command([]), { kind: "bbCommand", args: ["agent-graph"] }, names).label).toBe("agent-graph");
+  });
+
+  it("keeps following while the name is still the automatic one", () => {
+    const first = withAction(command([]), { kind: "bbCommand", args: ["herald"] }, names);
+    expect(withAction(first, { kind: "bbCommand", args: ["herald", "mute"] }, names).label).toBe("herald mute");
+    // Cleared, it goes back to the kind's name.
+    expect(withAction(first, { kind: "bbCommand", args: [] }, names).label).toBe("bb command");
+  });
+
+  it("keeps a name the owner typed", () => {
+    const named = { ...command(["herald"]), label: "Hush" };
+    expect(withAction(named, { kind: "bbCommand", args: ["herald", "mute"] }, names).label).toBe("Hush");
+  });
+
+  it.each<[string, RailButton["action"], string]>([
+    ["a thread", { kind: "openThread", threadId: "t1" }, "Fix the upload test"],
+    ["a project", { kind: "openProject", projectId: "p1" }, "Acme Web"],
+    ["a new thread's project", { kind: "newThread", projectId: "p1" }, "New thread in Acme Web"],
+    ["a thread-menu action", { kind: "threadAction", key: "bb--core/pin" }, "Pin"],
+    ["an address", { kind: "openUrl", url: "https://docs.example.com/start" }, "docs.example.com"],
+  ])("names a button after %s", (_, action, label) => {
+    const start = withKind<RailButton>({ id: "b", label: "Back", icon: "ArrowLeft", action: { kind: "back" } }, action.kind, {}, names);
+    expect(withAction(start, action, names).label).toBe(label);
+  });
+
+  it("names a button after the action its new kind starts with", () => {
+    const pin = withKind<RailButton>({ id: "b", label: "Back", icon: "ArrowLeft", action: { kind: "back" } }, "threadAction", { firstThreadActionKey: "bb--core/pin" }, names);
+    expect(pin.label).toBe("Pin");
+  });
+
+  it("fits a long name in the 40 characters a name may have", () => {
+    const long = { thread: () => "A".repeat(60), project: () => undefined, threadAction: () => undefined };
+    const label = withAction<RailButton>({ id: "t", label: "Thread", icon: "MessageSquare", action: { kind: "openThread", threadId: "" } }, { kind: "openThread", threadId: "t1" }, long).label;
+    expect(label).toHaveLength(40);
+    expect(label.endsWith("…")).toBe(true);
+    expect(suggestedLabel({ kind: "back" }, names)).toBeNull();
   });
 });

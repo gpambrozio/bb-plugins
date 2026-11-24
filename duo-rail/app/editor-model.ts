@@ -3,6 +3,7 @@
 import {
   joinArgs,
   MAX_BUTTONS,
+  MAX_LABEL,
   MAX_MENU_ITEMS,
   NEW_THREAD_ICON,
   type ActionKind,
@@ -101,7 +102,6 @@ export interface Offers {
   firstThreadId?: string;
   firstProjectId?: string;
   firstThreadActionKey?: string;
-  firstCliCommand?: string;
 }
 
 export function newLeafAction(kind: LeafKind, offers: Offers = {}): LeafAction {
@@ -121,7 +121,8 @@ export function newLeafAction(kind: LeafKind, offers: Offers = {}): LeafAction {
     case "threadAction":
       return { kind, key: offers.firstThreadActionKey ?? "" };
     case "bbCommand":
-      return { kind, args: offers.firstCliCommand === undefined ? [] : [offers.firstCliCommand] };
+      // Empty, so the command picker starts with every command on offer.
+      return { kind, args: [] };
     case "openUrl":
       return { kind, url: "https://" };
   }
@@ -149,20 +150,74 @@ export function newMenuItem(existing: readonly MenuItem[], kind: LeafKind, offer
   return { id: uniqueId(kind, existing), label: choice.label, icon: choice.icon, action: newLeafAction(kind, offers) };
 }
 
+const fitLabel = (text: string) => (text.length > MAX_LABEL ? `${text.slice(0, MAX_LABEL - 1).trimEnd()}…` : text);
+
+/** The command words of a `bb` command: what comes before its first option or placeholder. */
+export function commandWords(args: readonly string[]): string {
+  const words: string[] = [];
+  for (const arg of args) {
+    if (!/^[A-Za-z0-9][\w.-]*$/.test(arg)) break;
+    words.push(arg);
+  }
+  return words.join(" ");
+}
+
+/** The name an action's pick suggests (the thread's title, the command…), or null when it suggests none. */
+export function suggestedLabel(action: RailAction, names: Names): string | null {
+  switch (action.kind) {
+    case "bbCommand":
+      return commandWords(action.args) || null;
+    case "openThread":
+      return names.thread(action.threadId) ?? null;
+    case "openProject":
+      return names.project(action.projectId) ?? null;
+    case "newThread": {
+      const project = action.projectId === null ? undefined : names.project(action.projectId);
+      return project === undefined ? null : `New thread in ${project}`;
+    }
+    case "threadAction":
+      return names.threadAction(action.key) ?? null;
+    case "openUrl":
+      try {
+        return new URL(action.url).hostname || null;
+      } catch {
+        return null;
+      }
+    default:
+      return null;
+  }
+}
+
+/** The name an action gives a button the owner has not named: its pick's, or its kind's. */
+function automaticLabel(action: RailAction, names: Names): string {
+  return fitLabel(suggestedLabel(action, names) ?? choiceFor(action.kind).label);
+}
+
+/** Whether the owner named the entry: its name is neither its kind's default nor what its pick suggests. */
+export function hasOwnLabel(entry: RailButton | MenuItem, names: Names): boolean {
+  return entry.label !== choiceFor(entry.action.kind).label && entry.label !== automaticLabel(entry.action, names);
+}
+
+/** An entry with a changed action of the same kind. Its name follows the pick unless the owner named it. */
+export function withAction<T extends RailButton | MenuItem>(entry: T, action: T["action"], names: Names): T {
+  return { ...entry, action, label: hasOwnLabel(entry, names) ? entry.label : automaticLabel(action, names) };
+}
+
 /**
- * A button or item given another kind of action. Its label and icon follow the new kind while they
- * are still the old kind's defaults; once the owner changed them, they stay.
+ * A button or item given another kind of action. Its name and symbol follow the new kind while the
+ * owner has not chosen their own; once they have, they stay.
  */
-export function withKind<T extends RailButton | MenuItem>(entry: T, kind: T["action"]["kind"], offers: Offers = {}): T {
+export function withKind<T extends RailButton | MenuItem>(entry: T, kind: T["action"]["kind"], offers: Offers = {}, names: Names = NO_NAMES): T {
   if (entry.action.kind === kind) return entry;
   const before = choiceFor(entry.action.kind);
   const after = choiceFor(kind);
+  // A button's kind may be a menu; an item's never is (the editor offers items no menu).
+  const action = newAction(kind, offers) as T["action"];
   return {
     ...entry,
-    label: entry.label === before.label ? after.label : entry.label,
+    label: hasOwnLabel(entry, names) ? entry.label : automaticLabel(action, names),
     icon: entry.icon === before.icon ? after.icon : entry.icon,
-    // A button's kind may be a menu; an item's never is (the editor offers items no menu).
-    action: newAction(kind, offers) as T["action"],
+    action,
   };
 }
 
@@ -197,6 +252,8 @@ export interface Names {
   project(id: string): string | undefined;
   threadAction(key: string): string | undefined;
 }
+
+const NO_NAMES: Names = { thread: () => undefined, project: () => undefined, threadAction: () => undefined };
 
 /** One line saying what an action does, for the button list. */
 export function describeAction(action: RailAction, names: Names): string {

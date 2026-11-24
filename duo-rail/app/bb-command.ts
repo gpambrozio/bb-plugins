@@ -15,8 +15,15 @@ import { joinArgs } from "../shared/layout";
 
 export const EXIT_MARKER = "\u001b]5253;duo-rail;exit;";
 const BEL = "\u0007";
-/** `sleep`, not `read`: a terminal nobody closes (the page went away) still ends, two minutes later. */
-export const WRAPPER = `"$0" "$@"; status=$?; printf '\\033]5253;duo-rail;exit;%d\\007' "$status"; sleep 120`;
+/**
+ * What runs after the script: its exit status, then a wait. `sleep`, not `read`: a terminal nobody
+ * closes (the page went away) still ends, two minutes later.
+ */
+const AFTER = `status=$?; printf '\\033]5253;duo-rail;exit;%d\\007' "$status"; sleep 120`;
+/** A `sh -c` script with `$0` the `bb` launcher and `$@` its arguments, followed by the exit marker. */
+export const wrap = (script: string) => `${script}; ${AFTER}`;
+/** A button's command: `bb` with the words as they are. */
+export const WRAPPER = wrap(`"$0" "$@"`);
 
 export const TIMEOUT_MS = 60_000;
 const POLL_MS = 250;
@@ -81,7 +88,15 @@ export function summarize(output: string): string {
   return tail.length > SUMMARY_CHARS ? `…${tail.slice(-SUMMARY_CHARS)}` : tail;
 }
 
-export async function runBbCommand(sdk: Sdk, args: readonly string[], options: RunOptions = {}): Promise<BbCommandResult> {
+export function runBbCommand(sdk: Sdk, args: readonly string[], options: RunOptions = {}): Promise<BbCommandResult> {
+  return runBbScript(sdk, `"$0" "$@"`, args, { title: `bb ${joinArgs(args)}`, ...options });
+}
+
+/**
+ * Runs a `sh` script on the server's machine, `$0` being bb's launcher and `$@` the arguments, and
+ * returns everything it printed once it ends.
+ */
+export async function runBbScript(sdk: Sdk, script: string, args: readonly string[], options: RunOptions & { title: string }): Promise<BbCommandResult> {
   const sleep = options.sleep ?? defaultSleep;
   const now = options.now ?? Date.now;
   const cli = await sdk.system.experimental_cliCommand();
@@ -94,9 +109,9 @@ export async function runBbCommand(sdk: Sdk, args: readonly string[], options: R
   const terminal = await sdk.terminals.create({
     cols: 120,
     rows: 40,
-    title: `bb ${joinArgs(args)}`,
+    title: options.title,
     scope: { kind: "host_path", hostId: primaryHostId, cwd: null },
-    start: { mode: "argv", argv: ["/bin/sh", "-c", WRAPPER, cli.installedPath, ...args] },
+    start: { mode: "argv", argv: ["/bin/sh", "-c", wrap(script), cli.installedPath, ...args] },
   });
   const decoder = new TextDecoder();
   let text = "";

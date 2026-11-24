@@ -47,7 +47,8 @@ export interface PlacementInput {
 /** Apple's minimum touch target. A strip narrower than this cannot hold a button. */
 export const MIN_TOUCH_TARGET = 44;
 export const BUTTON_SIZE = 48;
-export const BUTTON_GAP = 12;
+/** Between buttons: the 48 pt targets already have room around their 22 pt symbols, so a small gap reads as one column. */
+export const BUTTON_GAP = 6;
 /** The folded cover screen's camera and vertical status bar end about 170 pt down. */
 export const DEFAULT_CAMERA_CLEARANCE = 175;
 /** On the unfolded display the clock and the status icons end about 100 pt down. */

@@ -5,7 +5,7 @@ The iPhone Duo keeps a strip down one side of each display for the camera, the c
 ## What you get
 
 - **Back, New thread and More** out of the box, on both displays. More lists your five most recent threads (a dot marks one waiting for you), Forward and Reload bb.
-- **Your own buttons**: in the plugin's settings, choose each display's buttons, their order, their symbols and what they do. A button can go back or forward, open a new thread in a project you pick, a thread, a project, your recent threads or a web address, run an action from bb's thread menu (Pin, Archive, another plugin's) on the thread in view, run a `bb` command such as a plugin's and show its result, reload bb, or open a menu of its own.
+- **Your own buttons**: in the plugin's settings, choose each display's buttons, their order, their symbols and what they do. A button can go back or forward, open a new thread in a project you pick, a thread, a project, your recent threads or a web address, run an action from bb's thread menu (Pin, Archive, another plugin's) on the thread in view, run a `bb` command picked from every plugin's commands and bb's own and show its result, reload bb, or open a menu of its own. Export and Import copy them between bbs.
 - **One layout everywhere**: it is kept on your bb server, so every device follows it.
 - **The right side or the left**: a mirrored device puts the strip, and the buttons, on the left.
 - **Out of bb's way**: the buttons sit only in the strip bb leaves empty, take only their own taps, and step aside when bb's sidebar drawer, a sheet or a menu opens over them.

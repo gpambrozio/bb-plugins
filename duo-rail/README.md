@@ -31,9 +31,9 @@ insets the Duo reports simulated in a browser:
 | ![The rail on the right of the cover screen](docs/screenshots/cover-light.png) | ![The More sheet](docs/screenshots/cover-more-light.png) | ![The rail beside bb's wide layout](docs/screenshots/unfolded-light.png) | ![More's menu beside the rail](docs/screenshots/unfolded-more-light.png) |
 | ![The rail in dark mode](docs/screenshots/cover-dark.png) | ![The More sheet in dark mode](docs/screenshots/cover-more-dark.png) | ![The unfolded rail in dark mode](docs/screenshots/unfolded-dark.png) | ![More's menu in dark mode](docs/screenshots/unfolded-more-dark.png) |
 
-| The Buttons editor | Your own buttons |
-| --- | --- |
-| ![Editing the folded buttons](docs/screenshots/editor-light.png) | ![Pin and a bb command added to the folded rail, with the command's result](docs/screenshots/cover-custom-light.png) |
+| The Buttons editor | Picking a command | Your own buttons |
+| --- | --- | --- |
+| ![Editing the folded buttons](docs/screenshots/editor-light.png) | ![Every plugin's commands and bb's own, in a list that narrows as you type](docs/screenshots/editor-commands-light.png) | ![Pin and two bb commands added to the folded rail, with a command's result](docs/screenshots/cover-custom-light.png) |
 
 Dark editor: [screenshot](docs/screenshots/editor-dark.png). On a mirrored device the rail is on the left:
 [screenshot](docs/screenshots/cover-mirrored-dark.png). With bb's sidebar drawer open, the rail steps
@@ -74,9 +74,11 @@ bb plugin install "path:$PWD" --yes
 ## Buttons
 
 Settings → Plugins → Duo Rail → **Buttons**. Pick **Folded** or **Unfolded**, then add, remove and reorder
-buttons, and open one to give it a name (read out by VoiceOver), a symbol and an action. **Save** stores
-the layout on the bb server, so every device you use bb on follows it. **Copy the … buttons** copies the
-other display's list; **Back to the default buttons** restores Back, New thread and More.
+buttons. A new button opens ready to edit; give it a symbol and an action, and a name if you like (read
+out by VoiceOver). Until you type a name of your own, a button is named after what you pick: the thread,
+the project, the thread-menu action or the command. **Save** stores the layout in Duo Rail's own storage
+on the bb server, so every device you use bb on follows it. **Copy the … buttons** copies the other
+display's list; **Back to the default buttons** restores Back, New thread and More.
 
 A button can:
 
@@ -88,13 +90,13 @@ A button can:
 | Open a thread | One thread you pick. |
 | Open a project | One project you pick. |
 | Thread menu action | An action from bb's thread menu, bb's own (Pin, Mark as read, Archive, Copy link, …) or another plugin's, on the thread you are looking at. Greyed out where no thread is open. An action with choices opens them as a menu. |
-| Run a bb command | `bb <words…>` on the bb server's machine: a plugin's command (`herald say …`, the editor lists the installed ones) or one of bb's. Its last lines come back as a notice. It is stopped after a minute. |
+| Run a bb command | `bb <words…>` on the bb server's machine. The editor lists every command there is, each installed plugin's commands and subcommands and bb's own, and narrows the list as you type; add arguments after the one you pick. Its last lines come back as a notice. It is stopped after a minute. |
 | Open a URL | A web address opens in bb's browser, as your bb settings say; an app link asks first. |
 | Reload bb | Reloads the page. |
 | Menu | A menu of its own items, each any of the above. More is one. |
 
-The layout is also a plain-text setting, **Button layout (JSON)**, above the editor: copy it to another bb,
-or paste one in. bb refuses one the rail could not draw, and says why.
+**Export** copies both displays' buttons to the clipboard as text; **Import…** takes such a text from
+another bb (Save keeps it). The server refuses a layout the rail could not draw, and says why.
 
 Up to eight buttons fit on a display. When the column would not fit between the camera gap and the bottom
 of the screen (with the keyboard up, for one), the rail hides rather than draw a cut-off button.

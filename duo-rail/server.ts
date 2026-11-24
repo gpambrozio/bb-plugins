@@ -1,22 +1,15 @@
-// duo-rail — the server entry. It only defines the settings the app reads; the rail itself is the
-// app overlay in app.tsx, and the button editor is a settings section there.
+// duo-rail — the server entry. It defines the two camera-gap settings and keeps the button layout in the
+// plugin's own storage, behind the RPCs the rail and the Buttons editor use (shared/contract.ts). The
+// rail itself is the app overlay in app.tsx, and the editor a settings section there.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
-import { DEFAULT_LAYOUT_JSON, layoutProblem } from "./shared/layout";
+import { LAYOUT_TAG, rpcContract } from "./shared/contract";
 import { DEFAULT_CAMERA_CLEARANCE, DEFAULT_UNFOLDED_CAMERA_CLEARANCE, MAX_CAMERA_CLEARANCE } from "./shared/placement";
-import { CAMERA_CLEARANCE_SETTING, LAYOUT_SETTING, UNFOLDED_CAMERA_CLEARANCE_SETTING } from "./shared/settings";
+import { CAMERA_CLEARANCE_SETTING, UNFOLDED_CAMERA_CLEARANCE_SETTING } from "./shared/settings";
+import { createLayoutStore, LEGACY_LAYOUT_SETTING } from "./server/layout-store";
 
 const clearance = z.number().int().min(0).max(MAX_CAMERA_CLEARANCE);
-
-/**
- * Refuses a layout the app could not draw, with the reason, whoever writes it: the editor or the form.
- * Empty text is the default layout.
- */
-const layout = z.string().superRefine((text, ctx) => {
-  const problem = text.trim() === "" ? null : layoutProblem(text);
-  if (problem !== null) ctx.addIssue({ code: "custom", message: problem });
-});
 
 export default async function plugin(bb: BbPluginApi) {
   bb.settings.define({
@@ -35,14 +28,20 @@ export default async function plugin(bb: BbPluginApi) {
       default: DEFAULT_UNFOLDED_CAMERA_CLEARANCE,
       experimental_schema: clearance,
     },
-    [LAYOUT_SETTING]: {
-      type: "string",
-      label: "Button layout (JSON)",
-      description:
-        "The buttons the Buttons section below edits, as text: copy it to another bb, or paste one here. Clear it to go back to Back, New thread and More.",
-      experimental_multiline: true,
-      default: DEFAULT_LAYOUT_JSON,
-      experimental_schema: layout,
+  });
+
+  const store = createLayoutStore({
+    kv: bb.storage.kv,
+    readLegacy: async () => (await bb.sdk.plugins.getSettings({ pluginId: bb.pluginId })).values[LEGACY_LAYOUT_SETTING],
+    dropLegacy: async () => {
+      await bb.sdk.plugins.updateSettings({ pluginId: bb.pluginId, values: { [LEGACY_LAYOUT_SETTING]: null } });
     },
+    changed: () => void bb.rpc.experimental_invalidate([LAYOUT_TAG]),
+    log: bb.log,
+  });
+
+  bb.rpc.register(rpcContract, {
+    "layout.get": () => store.get(),
+    "layout.set": async ({ layout }) => ({ layout: await store.set(layout) }),
   });
 }
