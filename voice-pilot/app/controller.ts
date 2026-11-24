@@ -29,9 +29,14 @@ export interface VoiceState {
   speaking: SpeakingState;
   /** Why the last session ended, or why Talk failed, for the pill; null when there is nothing to say. */
   note: string | null;
+  /** What the voice last opened in this window, for the session card; null when nothing yet. */
+  opened: { label: string; ok: boolean } | null;
 }
 
-const IDLE: VoiceState = { phase: "idle", muted: false, speaking: { user: false, voice: false }, note: null };
+const IDLE: VoiceState = { phase: "idle", muted: false, speaking: { user: false, voice: false }, note: null, opened: null };
+
+/** Opens a web link from this window: true when bb took it. */
+export type LinkOpener = (url: string) => boolean;
 
 type WakeLock = { release(): Promise<void> };
 
@@ -43,6 +48,8 @@ export class VoiceController {
   private machine: (() => Promise<string | null>) | null = null;
   /** Shows a thread in this window, when the voice asks; handed over by the overlay. */
   private navigate: ((threadId: string) => void) | null = null;
+  /** Opens a link from this window, when the voice asks; handed over by the overlay. */
+  private openLink: LinkOpener | null = null;
   /** The thread on this window's screen, as the overlay last said. */
   private focusedThread: string | null = null;
   private sessionId: string | null = null;
@@ -61,10 +68,11 @@ export class VoiceController {
   };
 
   /** The overlay hands its RPC client over once mounted; commands and buttons use it. */
-  attach(rpc: Rpc, machine?: () => Promise<string | null>, navigate?: (threadId: string) => void): void {
+  attach(rpc: Rpc, machine?: () => Promise<string | null>, navigate?: (threadId: string) => void, openLink?: LinkOpener): void {
     this.rpc = rpc;
     if (machine !== undefined) this.machine = machine;
     if (navigate !== undefined) this.navigate = navigate;
+    if (openLink !== undefined) this.openLink = openLink;
   }
 
   /** The thread on this window's screen changed: the live session hears of it. */
@@ -110,7 +118,7 @@ export class VoiceController {
     const audio = (this.audio ??= new Audio());
     audio.autoplay = true;
     void audio.play().catch(() => undefined);
-    this.set({ phase: "connecting", muted: false, note: null, speaking: { user: false, voice: false } });
+    this.set({ phase: "connecting", muted: false, note: null, opened: null, speaking: { user: false, voice: false } });
     this.attempt += 1;
     void this.connect(rpc, audio, this.attempt);
   }
@@ -213,8 +221,18 @@ export class VoiceController {
   onSignal(signal: SessionSignal): void {
     if (signal.sessionId !== this.sessionId) return;
     if (signal.type === "renew") void this.renew();
-    else if (signal.type === "open") this.navigate?.(signal.threadId);
-    else if (signal.state === "ended") this.teardown(signal.reason === undefined ? "The voice session ended." : `Voice ended: ${signal.reason}.`);
+    else if (signal.type === "open") {
+      this.navigate?.(signal.threadId);
+      if (signal.label !== undefined) this.set({ opened: { label: signal.label, ok: this.navigate !== null } });
+    } else if (signal.type === "open-link") {
+      let ok = false;
+      try {
+        ok = this.openLink?.(signal.url) ?? false;
+      } catch {
+        ok = false;
+      }
+      this.set({ opened: { label: signal.label, ok } });
+    } else if (signal.state === "ended") this.teardown(signal.reason === undefined ? "The voice session ended." : `Voice ended: ${signal.reason}.`);
   }
 
   /**

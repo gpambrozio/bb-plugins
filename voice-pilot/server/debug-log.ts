@@ -35,6 +35,7 @@ export const DEBUG_KINDS = [
   "tool-result",
   "to-thread",
   "question",
+  "link",
   "announce",
   "interrupted",
   "turn",

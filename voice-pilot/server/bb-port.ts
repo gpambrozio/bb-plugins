@@ -36,6 +36,8 @@ export interface BbPort {
   briefing(): Promise<string>;
   /** One thread in depth, or null when there is no such thread. */
   threadDetail(threadId: string): Promise<string | null>;
+  /** The full text of the thread's latest reply (its latest turn's, else its last message), or null for none. */
+  reply(threadId: string): Promise<string | null>;
   /** The running threads, for the greeting. */
   greeting(): Promise<GreetingList>;
   thread(threadId: string): Promise<ThreadInfo | null>;
@@ -93,6 +95,9 @@ export function sdkBb(sdk: Sdk): BbPort {
     async threadDetail(threadId) {
       const detail = await gatherThread(briefingPorts(), threadId);
       return detail === null ? null : renderThread(detail);
+    },
+    async reply(threadId) {
+      return briefingPorts().latestReply(threadId);
     },
     async greeting() {
       const ports = briefingPorts();

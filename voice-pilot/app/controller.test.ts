@@ -189,6 +189,31 @@ describe("the voice controller", () => {
     expect(calls.filter((call) => call.method === "session.end").map((call) => call.input.sessionId)).toEqual(["vp_slow"]);
   });
 
+  it("opens what the voice asks for, from this window, and keeps what it opened for the session card", async () => {
+    const asks = pendingMicrophone();
+    const { rpc } = fakeRpc();
+    const voice = new VoiceController();
+    const threads: string[] = [];
+    const urls: string[] = [];
+    voice.attach(rpc, undefined, (id) => threads.push(id), (url) => (urls.push(url), !url.includes("blocked")));
+    voice.talk();
+    asks[0]?.resolve(fakeStream().stream);
+    await flush();
+    voice.onSignal({ sessionId: "vp_1", type: "open-link", url: "https://github.com/acme/web/pull/20", label: "github.com/acme/web/pull/20" });
+    expect(urls).toEqual(["https://github.com/acme/web/pull/20"]);
+    expect(voice.snapshot.opened).toEqual({ label: "github.com/acme/web/pull/20", ok: true });
+    voice.onSignal({ sessionId: "vp_1", type: "open-link", url: "https://example.com/blocked", label: "example.com/blocked" });
+    expect(voice.snapshot.opened).toEqual({ label: "example.com/blocked", ok: false });
+    voice.onSignal({ sessionId: "vp_1", type: "open", threadId: "thr_a", label: "Fix the login test" });
+    expect(threads).toEqual(["thr_a"]);
+    expect(voice.snapshot.opened).toEqual({ label: "Fix the login test", ok: true });
+    // Another session's signal opens nothing here.
+    voice.onSignal({ sessionId: "vp_other", type: "open-link", url: "https://example.com/x", label: "example.com/x" });
+    expect(urls).toHaveLength(2);
+    await voice.end("ended by you");
+    expect(voice.snapshot.opened).toBeNull();
+  });
+
   it("confirms a renewal only once the new leg connected, then retires the old leg", async () => {
     const asks = pendingMicrophone();
     const { rpc, calls } = fakeRpc();

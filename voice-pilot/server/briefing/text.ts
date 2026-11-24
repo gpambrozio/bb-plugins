@@ -1,15 +1,37 @@
 /**
  * Turning messages and Markdown into short plain text a voice can read: no code, no links, no ids, cut
- * to whole sentences.
+ * to whole sentences. A ```ui block (bb's cards and tables) is kept as its content, flattened (`../rich`).
  */
+import { LinkList, flattenUi } from "../rich";
 
 const URL = /\bhttps?:\/\/[^\s)>\]]+/g;
 /** bb's ids (`thr_abc123`, `proj_…`, `env_…`), alone or inside a `@thread:` mention. */
 const BB_ID = /@?\b(?:thread|project):(?=[a-z]+_)|\b(?:thr|proj|env|host|evt|creq)_[a-z0-9]+(?:#msg=\d+)?\b/gi;
 
-/** Markdown and bb's markup out, whitespace collapsed. Code blocks are dropped whole; inline code keeps its text. */
+/** A ```ui block's content as sentences, its links left out. */
+function uiSentences(body: string): string {
+  const lines = flattenUi(body, new LinkList()).map((line) => {
+    const text = line.replace(/\s*\[link \d+\]/g, "").replace(/^- /, "");
+    if (!line.startsWith("- Row ")) return text.trim();
+    // A cell that held only a link leaves its column's name: drop it.
+    return text
+      .split("; ")
+      .map((part) => part.replace(/\s*[^:;]+:\s*$/, (cut) => (part.trim() === cut.trim() ? "" : ":")).replace(/::$/, ":"))
+      .filter((part) => part.trim() !== "")
+      .join("; ")
+      .replace(/:\s*;\s*/g, ": ")
+      .trim();
+  });
+  return ` ${lines.filter((line) => line !== "").map((line) => (/[.!?:]$/.test(line) ? line : `${line}.`)).join(" ")} `;
+}
+
+/**
+ * Markdown and bb's markup out, whitespace collapsed. A ```ui block gives its content; other code blocks are
+ * dropped whole; inline code keeps its text.
+ */
 export function plain(text: string): string {
   return text
+    .replace(/```ui[^\S\n]*\n([\s\S]*?)(?:```|$)/g, (_all, body: string) => uiSentences(body))
     .replace(/```[\s\S]*?(?:```|$)/g, " ")
     .replace(/<!--[\s\S]*?-->/g, " ")
     .replace(/!\[[^\]]*\]\([^)]*\)/g, " ")

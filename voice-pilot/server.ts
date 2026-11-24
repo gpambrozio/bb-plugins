@@ -180,7 +180,7 @@ export default async function plugin(bb: BbPluginApi) {
   bb.events.on("thread.failed", ({ thread }) => {
     if (!hidden(thread)) sessions.news("failed", thread.id);
   });
-  bb.events.on("thread.idle", ({ thread }) => {
-    if (!hidden(thread)) sessions.news("finished", thread.id);
+  bb.events.on("thread.idle", ({ thread, lastAssistantText }) => {
+    if (!hidden(thread)) sessions.news("finished", thread.id, undefined, lastAssistantText);
   });
 }

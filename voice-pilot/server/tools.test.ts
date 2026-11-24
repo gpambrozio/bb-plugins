@@ -11,6 +11,7 @@ function setup() {
   const utterances = new UtteranceLog(clock);
   const debug = new DebugLog("vp_1", clock.now(), () => clock.now());
   const opened: string[] = [];
+  const links: { url: string; label: string }[] = [];
   const sent: string[] = [];
   let ended = 0;
   let focused: string | null = null;
@@ -20,6 +21,7 @@ function setup() {
     debug,
     words: (from, to) => utterances.between(from, to),
     open: (id) => opened.push(id),
+    openLink: (url, label) => links.push({ url, label }),
     focused: () => focused,
     end: () => (ended += 1),
     sent: (id) => sent.push(id),
@@ -37,7 +39,7 @@ function setup() {
     await clock.advance(200);
     return tools.run(name, args, clock.now());
   };
-  return { clock, bb, debug, tools, opened, sent, say, run, ended: () => ended, focus: (id: string | null) => (focused = id) };
+  return { clock, bb, debug, tools, opened, links, sent, say, run, ended: () => ended, focus: (id: string | null) => (focused = id) };
 }
 
 describe("the tool list", () => {
@@ -75,6 +77,107 @@ describe("reads", () => {
   });
 });
 
+const REPLY = [
+  "Two pull requests are ready.",
+  "",
+  "```ui",
+  'Card("Ready to merge", [',
+  '  Table(["PR", "What", "Next"], [',
+  '    ["https://github.com/acme/web/pull/20", "Login: remember the device", "You: merge"],',
+  '    ["https://github.com/acme/api/pull/7", "Rate limits per key", "The reviewer"]',
+  "  ])",
+  "])",
+  "```",
+].join("\n");
+
+describe("read_reply", () => {
+  it("gives everything in the latest reply, its table row by row, with the links numbered", async () => {
+    const { run, bb } = setup();
+    bb.replies.set("thr_a", REPLY);
+    expect(await run("read_reply", { thread_id: "thr_a" })).toEqual({
+      ok: true,
+      thread: "Fix the login test",
+      reply: [
+        "Two pull requests are ready.",
+        "",
+        "Ready to merge:",
+        "- Row 1: PR: [link 1]; What: Login: remember the device; Next: You: merge",
+        "- Row 2: PR: [link 2]; What: Rate limits per key; Next: The reviewer",
+      ].join("\n"),
+      links: [
+        { link: 1, url: "https://github.com/acme/web/pull/20" },
+        { link: 2, url: "https://github.com/acme/api/pull/7" },
+      ],
+      note: expect.stringMatching(/never read URLs/u),
+    });
+  });
+
+  it("gives a long reply in parts, each with its own links", async () => {
+    const { run, bb } = setup();
+    const lines = Array.from({ length: 120 }, (_, i) => `Line ${i + 1} of the report, about https://example.com/item/${i + 1} and nothing else.`);
+    bb.replies.set("thr_a", lines.join("\n"));
+    const first = await run("read_reply", { thread_id: "thr_a" });
+    expect(first).toMatchObject({ ok: true, part: 1, parts: expect.any(Number) });
+    expect(JSON.stringify(first).length).toBeLessThan(4_000);
+    const second = (await run("read_reply", { thread_id: "thr_a", part: 2 })) as { reply: string; links: { link: number }[] };
+    expect(second.reply).not.toContain("Line 1 ");
+    expect(second.links.length).toBeGreaterThan(0);
+    expect(second.links.every((link) => second.reply.includes(`[link ${link.link}]`))).toBe(true);
+  });
+
+  it("says when there is no reply, and refuses a thread that is not there", async () => {
+    const { run } = setup();
+    expect(await run("read_reply", { thread_id: "thr_a" })).toEqual({ ok: true, thread: "Fix the login test", note: "Its agent has not replied yet." });
+    expect(await run("read_reply", { thread_id: "thr_nope" })).toMatchObject({ ok: false });
+  });
+});
+
+describe("open_link", () => {
+  it("opens a link read in this session by its number, and says what it opened", async () => {
+    const { run, bb, links } = setup();
+    bb.replies.set("thr_a", REPLY);
+    await run("read_reply", { thread_id: "thr_a" });
+    expect(await run("open_link", { link: 2 })).toMatchObject({ ok: true, opened: "github.com/acme/api/pull/7" });
+    expect(await run("open_link", { url: "https://github.com/acme/web/pull/20/" })).toMatchObject({ ok: true });
+    expect(links).toEqual([
+      { url: "https://github.com/acme/api/pull/7", label: "github.com/acme/api/pull/7" },
+      { url: "https://github.com/acme/web/pull/20", label: "github.com/acme/web/pull/20" },
+    ]);
+  });
+
+  it("opens a URL the model wrote only after the user says yes to its read-back", async () => {
+    const { run, say, links } = setup();
+    const url = "https://github.com/acme/web/pulls";
+    expect(await run("open_link", { url })).toMatchObject({ ok: false, read_back: "Open github.com/acme/web/pulls? It is not a link from anything read in this session." });
+    expect(links).toEqual([]);
+    await say("hmm, not sure");
+    expect(await run("open_link", { url })).toMatchObject({ ok: false, read_back: expect.any(String) });
+    expect(links).toEqual([]);
+    await say("yes, open it");
+    expect(await run("open_link", { url })).toMatchObject({ ok: true, opened: "github.com/acme/web/pulls" });
+    expect(links).toEqual([{ url, label: "github.com/acme/web/pulls" }]);
+  });
+
+  it("refuses an unknown link number, a link that is not http(s), and one with a password in it", async () => {
+    const { run, links } = setup();
+    expect(await run("open_link", { link: 9 })).toMatchObject({ ok: false, error: expect.stringMatching(/no such link/u) });
+    expect(await run("open_link", { url: "file:///etc/passwd" })).toMatchObject({ ok: false, error: expect.stringMatching(/http or https/u) });
+    expect(await run("open_link", { url: "javascript:alert(1)" })).toMatchObject({ ok: false });
+    expect(await run("open_link", { url: "https://user:secret@example.com/" })).toMatchObject({ ok: false, error: expect.stringMatching(/password/u) });
+    expect(await run("open_link", {})).toMatchObject({ ok: false });
+    expect(links).toEqual([]);
+  });
+
+  it("shows a thread link in bb, in the window holding the call", async () => {
+    const { run, bb, opened, links } = setup();
+    bb.replies.set("thr_a", "See [the worker's report](@thread:thr_a#msg=4).");
+    expect(await run("read_reply", { thread_id: "thr_a" })).toMatchObject({ reply: "See the worker's report [link 1].", links: [{ link: 1, url: "bb:thread/thr_a#msg=4" }] });
+    expect(await run("open_link", { link: 1 })).toEqual({ ok: true, opened: "the thread Fix the login test" });
+    expect(opened).toEqual(["thr_a"]);
+    expect(links).toEqual([]);
+  });
+});
+
 describe("sends", () => {
   it("send the model's message with the user's own words beside it, for the agent only, and say what went", async () => {
     const { run, say, bb, sent } = setup();
@@ -84,6 +187,9 @@ describe("sends", () => {
     expect(bb.sends).toHaveLength(1);
     expect(bb.sends[0]?.message).toBe("Also add tests for the error path.");
     expect(bb.sends[0]?.note).toContain('"Tell the login one to also add tests for the error path."');
+    // The thread is told that it is the one the words name, not some other thread to message.
+    expect(bb.sends[0]?.note).toContain('The user sent the message above to this thread ("Fix the login test") by voice');
+    expect(bb.sends[0]?.note).toContain("where their words name a thread, they mean this one");
     expect(sent).toEqual(["thr_a"]);
   });
 

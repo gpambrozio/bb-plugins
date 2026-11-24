@@ -14,6 +14,7 @@ import type { rpcContract } from "../server";
 import type { SessionSignal } from "../server/session";
 import { SESSION_CHANNEL } from "../shared/channel";
 import { voice, type VoiceState } from "./controller";
+import { bbThreadLink } from "./links";
 import { DEBUG_OPEN_WAIT_MS, debugOpen } from "./debug-view";
 import { createLocalHostLookup } from "./machine";
 
@@ -48,7 +49,13 @@ export function voiceToast(state: VoiceState): VoiceToast | null {
   const title = `Voice Pilot · ${statusText(state)}`;
   if (state.phase === "connecting") return { title, description: undefined, action: null, cancel: "end" };
   if (state.phase === "ending") return { title, description: undefined, action: null, cancel: null };
-  return { title, description: undefined, action: state.muted ? "unmute" : "mute", cancel: "end" };
+  return { title, description: openedText(state), action: state.muted ? "unmute" : "mute", cancel: "end" };
+}
+
+/** What the voice last opened, as the session card says it. */
+export function openedText(state: VoiceState): string | undefined {
+  if (state.opened === null) return undefined;
+  return state.opened.ok ? `Opened ${state.opened.label}` : `Could not open ${state.opened.label}`;
 }
 
 const ACTION_LABELS: Record<ActionKind, string> = { mute: "Mute", unmute: "Unmute", talk: "Talk" };
@@ -170,7 +177,22 @@ export function VoicePill() {
   const state = useVoiceState();
   const machine = useMemo(() => createLocalHostLookup(async () => (await sdk.system.config()).localHelperPorts ?? []), [sdk]);
 
-  useEffect(() => voice.attach(rpc, machine, (id) => navigate.toThread(id)), [rpc, machine, navigate]);
+  useEffect(
+    () =>
+      voice.attach(
+        rpc,
+        machine,
+        (id) => navigate.toThread(id),
+        (url) => {
+          // A link to this bb's own thread is shown with bb's navigation; anything else is bb's to open.
+          const threadId = bbThreadLink(url, window.location.origin);
+          if (threadId === null) return navigate.openUrl(url);
+          navigate.toThread(threadId);
+          return true;
+        },
+      ),
+    [rpc, machine, navigate],
+  );
   useEffect(() => voice.focus(threadId), [threadId]);
   useRealtime(SESSION_CHANNEL, (payload) => voice.onSignal(payload as SessionSignal));
   useDebugRouting();

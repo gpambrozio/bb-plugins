@@ -46,6 +46,7 @@ export const KIND_LABELS: Record<DebugKind, string> = {
   "tool-result": "Tool answer",
   "to-thread": "To a thread",
   "question": "Question",
+  link: "Link",
   announce: "Announce",
   interrupted: "Interrupted",
   turn: "Turn",
@@ -62,6 +63,7 @@ export function kindTone(kind: DebugKind): string {
       return "border-warning text-warning-text";
     case "heard":
     case "to-thread":
+    case "link":
       return "border-success text-success";
     case "said":
     case "question":

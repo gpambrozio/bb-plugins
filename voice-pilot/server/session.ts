@@ -17,14 +17,15 @@
  * - **The voice hooks** (`hooks.ts`) run the owner's hook file on their machine as listening, the voice's
  *   speech and your talking start and stop, from the same sideband events; nothing here waits for them.
  */
-import { Announcer, newsAnnouncement, type ThreadNews } from "./announce";
-import type { BbPort } from "./bb-port";
+import { Announcer, finishedAnnouncement, newsAnnouncement, newsItem, type ThreadNews } from "./announce";
+import type { BbPort, ThreadInfo } from "./bb-port";
 import { DebugLog, EMPTY_DEBUG_PAGE, type DebugPage } from "./debug-log";
 import { greetingItem } from "./greeting";
 import type { HookRunner, HookTarget, SessionHooks } from "./hooks";
 import { GREETING_NOW, RENEWAL_NOTE, standingInstructions } from "./instructions";
 import { UtteranceLog } from "./policy";
 import { errorText, type Clock, type Log, type RealtimeEvent, type RealtimePort, type Sideband } from "./ports";
+import { LinkList, parts, readableReply } from "./rich";
 import { VoiceTools, realtimeTools } from "./tools";
 
 export const RENEW_AFTER_MS = 57 * 60_000;
@@ -42,6 +43,8 @@ const SIDEBAND_RETRIES = 2;
 /** How long a response this side asked for may take to start before announcements stop waiting for it. */
 const STUCK_RESPONSE_MS = 20_000;
 export const TOOL_OUTPUT_MAX = 4_000;
+/** The most of a finished turn's reply put in the conversation; read_reply has the rest. */
+export const FINISHED_REPLY_CHARS = 4_000;
 const RECAP_ITEMS = 10;
 
 export type Eagerness = "low" | "medium" | "high" | "auto";
@@ -81,7 +84,8 @@ export function callSession(config: SessionConfig): Record<string, unknown> {
 export type SessionSignal =
   | { sessionId: string; type: "state"; state: "live" | "ended"; reason?: string }
   | { sessionId: string; type: "renew" }
-  | { sessionId: string; type: "open"; threadId: string };
+  | { sessionId: string; type: "open"; threadId: string; label?: string }
+  | { sessionId: string; type: "open-link"; url: string; label: string };
 
 export interface SessionDeps {
   realtime: RealtimePort;
@@ -214,6 +218,8 @@ export class VoiceSession {
   private readonly touched = new Set<string>();
   /** Interactions already announced, so each is said once. */
   private readonly announcedWaits = new Set<string>();
+  /** Every link read in this session, numbered: replies read with read_reply and finished turns' replies. */
+  private readonly links = new LinkList();
 
   constructor(
     readonly id: string,
@@ -237,10 +243,12 @@ export class VoiceSession {
       clock: deps.clock,
       debug: this.debug,
       words: (from, to) => this.utterances.between(from, to),
-      open: (threadId) => {
+      open: (threadId, label) => {
         this.debug.add("session", `Showing a thread in the window holding the call: ${threadId}`);
-        this.deps.publish({ sessionId: this.id, type: "open", threadId });
+        this.deps.publish({ sessionId: this.id, type: "open", threadId, ...(label === undefined ? {} : { label }) });
       },
+      openLink: (url, label) => this.deps.publish({ sessionId: this.id, type: "open-link", url, label }),
+      links: this.links,
       focused: () => this.focusedThread,
       end: () => this.later(GOODBYE_MS, () => void this.end("ended by voice")),
     });
@@ -313,9 +321,10 @@ export class VoiceSession {
   /**
    * Something happened to a thread: said at the next gap when the Announce setting covers it. A thread
    * waiting on you is said once per interaction; a finished turn only for root threads (`all`) or threads
-   * this session sent to or started (`talked-to`).
+   * this session sent to or started (`talked-to`), told from the turn's reply (`reply`, else read from bb),
+   * which goes in the conversation in full first.
    */
-  async news(news: ThreadNews, threadId: string, interactionId?: string): Promise<void> {
+  async news(news: ThreadNews, threadId: string, interactionId?: string, reply?: string | null): Promise<void> {
     if (this.ended || this.config.announce === "off") return;
     if (news === "waiting") {
       const key = `${threadId}/${interactionId ?? ""}`;
@@ -331,10 +340,39 @@ export class VoiceSession {
     }
     if (thread === null || this.ended) return;
     if (news === "finished" && !this.touched.has(threadId) && !(this.config.announce === "all" && thread.isRoot)) return;
+    if (news === "finished") return this.finished(thread, reply);
     const call = this.call;
     if (call === null) return;
     const id = call.announcer.enqueue(newsAnnouncement(news, thread.title, thread.project));
     this.debug.add("announce", `Queued announcement ${id}: "${thread.title}" ${news}`);
+  }
+
+  /**
+   * A finished turn: its reply in the conversation, in full up to `FINISHED_REPLY_CHARS`, then the
+   * announcement. `given` is the idle event's reply: null when the turn wrote none (a compaction, a turn
+   * stopped first), which is not then filled in from an earlier turn; read from bb only when not given.
+   */
+  private async finished(thread: ThreadInfo, given: string | null | undefined): Promise<void> {
+    let reply = given ?? null;
+    if (given === undefined) {
+      try {
+        reply = await this.deps.bb.reply(thread.id);
+      } catch (error) {
+        this.debug.add("error", `Could not read the finished turn's reply of "${thread.title}"`, errorText(error));
+        reply = null;
+      }
+    }
+    const call = this.call;
+    if (call === null || this.ended) return;
+    const text = reply === null ? "" : readableReply(reply, this.links).text;
+    const withReply = text !== "";
+    if (withReply) {
+      const [head = "", ...rest] = parts(text, FINISHED_REPLY_CHARS);
+      call.addItem(newsItem(thread.title, thread.project, head, rest.length > 0));
+    }
+    const turn = { title: thread.title, project: thread.project, withReply };
+    const id = call.announcer.enqueue(finishedAnnouncement([turn]), turn);
+    this.debug.add("announce", `Queued announcement ${id}: "${thread.title}" finished${withReply ? ", with its reply" : ", no reply to tell"}`);
   }
 
   async end(reason: string): Promise<void> {
@@ -749,8 +787,8 @@ export class VoiceSessions {
   }
 
   /** Thread news for the live session, if any. */
-  news(news: ThreadNews, threadId: string, interactionId?: string): void {
-    void this.live?.news(news, threadId, interactionId);
+  news(news: ThreadNews, threadId: string, interactionId?: string, reply?: string | null): void {
+    void this.live?.news(news, threadId, interactionId, reply);
   }
 
   /** The debug log's entries after `afterSeq`: the current session's, or the last one's. */

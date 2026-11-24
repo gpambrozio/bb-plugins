@@ -11,7 +11,11 @@
   to a read-back of exactly what will be sent.
 - Send a message to a thread, start a thread in a project, stop a thread or show one on screen, by voice.
   Nothing is merged, archived, deleted or published by voice.
-- Hears about threads that start waiting on you, fail, or finish after you messaged them by voice.
+- Reads everything in a thread's reply, tables, cards and lists included, and opens a link you ask for (a
+  web page in a new tab, a thread in bb); the session's card says what it opened. A web address that was not
+  in anything it read is read back to you first.
+- Hears about threads that start waiting on you, fail, or finish after you messaged them by voice. A finished
+  turn is told from the agent's reply: what it did, any pull request, anything it waits on you for.
 - Runs on an OpenAI API key or on your ChatGPT subscription through the codex-realtime plugin.
 - Voice hooks: a script on each machine, run as listening starts and stops, as the voice speaks and as you
   talk.

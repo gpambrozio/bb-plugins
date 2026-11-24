@@ -31,7 +31,7 @@ vi.mock("sonner", () => ({
 /** The window's voice controller, reduced to a state the test sets and the calls the toast's buttons make. */
 const fake = vi.hoisted(() => {
   const listeners = new Set<() => void>();
-  const idle = { phase: "idle", muted: false, speaking: { user: false, voice: false }, note: null };
+  const idle = { phase: "idle", muted: false, speaking: { user: false, voice: false }, note: null, opened: null };
   const voice = {
     snapshot: idle as VoiceState,
     subscribe: (listener: () => void) => {
@@ -237,6 +237,13 @@ describe("the voice toast", () => {
     vi.mocked(toast.dismiss).mockClear();
     view.unmount();
     expect(toast.dismiss).toHaveBeenCalledWith(id);
+  });
+
+  it("says on the live card what the voice last opened", () => {
+    const live = { ...fake.idle, phase: "live" as const };
+    expect(voiceToast({ ...live, opened: { label: "github.com/acme/web/pull/20", ok: true } })?.description).toBe("Opened github.com/acme/web/pull/20");
+    expect(voiceToast({ ...live, opened: { label: "example.com/x", ok: false } })?.description).toBe("Could not open example.com/x");
+    expect(voiceToast(live)?.description).toBeUndefined();
   });
 
   it("says what Talk could not do, the same way", () => {

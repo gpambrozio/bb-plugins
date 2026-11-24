@@ -16,6 +16,8 @@ subscription.
 - **Catches you up in one call:** "what's going on?" reads the whole briefing (every root thread's opening
   and latest messages, the agent's latest reply, sub-threads that need someone, project descriptions and
   FirstMate's tasks), and "what did the login one say?" reads one thread in depth.
+- **Reads everything in a reply,** not only its prose: the rows of a table, a card's figures, a list of
+  steps, the links. Ask "which pull requests does it list?" and it answers from the table, in a sentence.
 - **Answers bb's questions.** "What's waiting on me?" finds every thread with a question or an approval
   for you and reads it out with its options, numbered. Say your choice ("the second one", "Green", or your
   own words where the question allows them) and it answers in bb, then tells you what it sent. It never
@@ -29,9 +31,14 @@ subscription.
   cutting in), starts a thread in a project with that project's defaults, stops a thread, shows a thread on
   screen, finds a thread by topic. Messages go in the voice's wording, with your own words beside them for
   the agent, and the voice says back what it sent.
+- **Opens links** when you ask ("open the first one", "open the login PR"): a web page in a new tab, a bb
+  thread in bb, on the device you are talking on. The session's card says what it opened. It opens links
+  from what it read in this session (a reply, a finished turn); a web address it came up with itself is
+  read back to you first and opened only after you say yes. Only web (http and https) and bb links.
 - **Tells you what changed while you talk:** a thread that starts waiting on you, a thread that failed, and
-  a thread you messaged by voice finishing its turn (the **Announce** setting can add every root thread, or
-  turn this off).
+  a thread you messaged by voice finishing its turn, told from its reply: what the agent did, any pull
+  request, anything it waits on you for, in a sentence or two (turns that finish together get a line each).
+  The **Announce** setting can add every root thread, or turn this off.
 - **Never merges, archives, deletes or publishes, and never changes settings,** by voice. There is no tool
   for any of it; ask and it says to do it in bb.
 
@@ -63,7 +70,7 @@ bb plugin install 'git:github.com/gpambrozio/bb-plugins@>=0.1.0' --plugin voice-
 
   ![Talk in a thread's header](docs/screenshots/thread-header-light.png)
 - While a session is up, a card in bb's notifications says whether it is connecting, listening, hearing you
-  or speaking, with **Mute** (or **Unmute**) and **End**; the Voice page says the same with its own buttons,
+  or speaking, and what the voice last opened, with **Mute** (or **Unmute**) and **End**; the Voice page says the same with its own buttons,
   and its sidebar entry shows *Live*. Saying "goodbye" ends it too. When a session ends, the card says why,
   with **Talk** to start again.
 - A session ends by itself after ten quiet minutes, and is renewed without a break at OpenAI's one-hour
@@ -81,6 +88,7 @@ bb plugin install 'git:github.com/gpambrozio/bb-plugins@>=0.1.0' --plugin voice-
 Things to say:
 
 - "What's going on?" · "What's running?" · "What did the payments thread say?"
+- "Which pull requests does the release thread list?" → "Open the second one."
 - "What's waiting on me?" → it reads the question → "The second one." / "Green." / your own words
 - "Approve it." → it reads back what it will send → "Yes."
 - "Tell the login thread to also add a test for the error path."
@@ -176,7 +184,9 @@ Delete the file, or make it not executable, and no hook runs there. There is non
 
 Audio goes from your device straight to OpenAI. Thread titles, project names, what you and the agents last
 said (cut short, with links and ids removed), project descriptions and the questions you answer go to
-OpenAI under the connection you chose. No code, diffs or files. What you say is kept in memory for the
+OpenAI under the connection you chose. A reply you ask it to read, and the reply of a finished turn it
+tells you about, go in full: its tables, its links, and the start of any code block in it. No diffs or
+files. What you say is kept in memory for the
 session, and is never written to a log or a file. The session's log holds it, with everything else, in the
 bb server's memory until you next tap Talk (or the plugin reloads); only bb's app and bb's command line on
 your own bb can read it (no other plugin), and anything shaped like a credential is removed from it.
@@ -187,6 +197,9 @@ your own bb can read it (no other plugin), and anything shaped like a credential
 - Questions from bb's own *Ask User Question* plugin and from a provider (Claude Code's own) can be
   answered; another plugin's form can only be named, and you answer it in bb.
 - One session at a time across your windows: a new Talk takes over.
+- In a browser tab, the browser may block a link the voice opens, as it blocks pop-ups that no tap started;
+  the card then still says it opened it. A headless check opened them; bb's desktop app and mobile app have
+  not been checked yet.
 - Checked live on the desktop (headless Chromium in a dev bb). The phone path is the same WebRTC code as
   firstmate-voice's, checked in Safari; the bb mobile app's own web view has not been.
 

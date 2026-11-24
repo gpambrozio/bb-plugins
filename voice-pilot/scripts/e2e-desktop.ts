@@ -12,6 +12,10 @@
 // --desktop-host the page's `session.start` request is rewritten in flight to name that machine as a desktop
 // client: the voice hooks then run there. It spends a minute or two of the connection's voice time, and
 // saves screenshots beside the report.
+//
+// With --rich <thread id> (a thread whose latest reply has a ```ui table of pull requests), it asks what the
+// table lists (read_reply), opens the first one by voice (open_link; the card says what was opened), then
+// messages the thread and waits for its finished turn to be told from the reply. --question may be left out.
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -36,12 +40,15 @@ const { values } = parseArgs({
     project: { type: "string" },
     /** What to say for the message, naming the thread by its topic. */
     tell: { type: "string", default: "Find the thread about the cart tax and tell it to also mention the tax rate." },
+    /** A thread whose latest reply has a ```ui table of pull requests with links. */
+    rich: { type: "string" },
   },
 });
 const base = new URL(values.url);
 if (base.port === "38886" || base.port === "38887") throw new Error("That is the owner's bb. Use a dev bb.");
-if (values.question === undefined || values.bb === undefined) throw new Error("--question and --bb are required.");
-const questionThread = values.question;
+if (values.bb === undefined) throw new Error("--bb is required.");
+if (values.question === undefined && values.rich === undefined) throw new Error("--question or --rich is required.");
+const questionThread = values.question ?? "";
 const devBb = values.bb;
 mkdirSync(values.out, { recursive: true });
 
@@ -68,14 +75,19 @@ function threadIds(projectId: string): string[] {
   return (Array.isArray(parsed) ? parsed : parsed.threads).map((thread) => thread.id);
 }
 
-/** A tool's answer as the session's debug log has it, the newest after `since`, through the dev bb's CLI. */
-function lastToolResult(_page: Page, since: number, tool: string): string | null {
+/** The session's debug log, through the dev bb's CLI. */
+function debugEntries(): { at: number; kind: string; title: string; text?: string }[] {
   const input = join(values.out, "debug-in.json");
   writeFileSync(input, JSON.stringify({ afterSeq: 0 }));
   const raw = execFileSync(devBb, ["plugin", "rpc", "call", "voice-pilot", "debug.log", "--input-file", input], { encoding: "utf8" });
-  const parsed = JSON.parse(raw) as { result?: { entries: { at: number; title: string; text?: string }[] }; entries?: { at: number; title: string; text?: string }[] };
-  const entries = parsed.result?.entries ?? parsed.entries ?? [];
-  return entries.filter((entry) => entry.at > since && entry.title === `Tool answer: ${tool}`).at(-1)?.text ?? null;
+  type Entry = { at: number; kind: string; title: string; text?: string };
+  const parsed = JSON.parse(raw) as { result?: { entries: Entry[] }; entries?: Entry[] };
+  return parsed.result?.entries ?? parsed.entries ?? [];
+}
+
+/** A tool's answer as the session's debug log has it, the newest after `since`. */
+function lastToolResult(_page: Page, since: number, tool: string): string | null {
+  return debugEntries().filter((entry) => entry.at > since && entry.title === `Tool answer: ${tool}`).at(-1)?.text ?? null;
 }
 
 async function until<T>(what: string, ms: number, check: () => T | null | undefined | false | Promise<T | null | undefined | false>): Promise<T> {
@@ -164,7 +176,7 @@ try {
       return channel;
     };
   });
-  const questionId = pendingIds()[0];
+  const questionId = values.question === undefined ? "" : pendingIds()[0];
   if (questionId === undefined) throw new Error(`${questionThread} has no pending question.`);
   const page = await context.newPage();
   pageRef = page;
@@ -213,6 +225,7 @@ try {
   report.greetingSpokenMs = greetingEnd - t0;
   console.log("greeting:", report.greeting, `(${firstWords.length} characters first)`);
 
+  if (values.question !== undefined) {
   // 2. What waits on me: the question and its options, read aloud.
   const askedAt = await speak(page, "What's waiting on me?");
   await until("the question read aloud", 45_000, async () => (await voiceSaid(page, askedAt)).join(" ").toLowerCase().includes(values.answer.toLowerCase()));
@@ -232,6 +245,43 @@ try {
   report.saidBack = await voiceSaid(page, answeredAt);
   console.log("answered:", JSON.stringify(resolved.resolution), "| voice said back:", report.saidBack);
   await page.screenshot({ path: join(values.out, "page-answered.png") });
+  }
+
+  // 3a. A reply's table and links, and a finished turn told from its reply (--rich).
+  if (values.rich !== undefined) {
+    const richThread = values.rich;
+    const tableAt = await speak(page, "Which pull requests are listed in the release review thread?");
+    const read = await until("the reply read in full", 60_000, () => lastToolResult(page, tableAt, "read_reply"));
+    await quiet(page);
+    report.table = { result: read, said: await voiceSaid(page, tableAt) };
+    console.log("table:", (report.table as { said: string[] }).said);
+
+    const popups: string[] = [];
+    page.context().on("page", (opened) => popups.push(opened.url()));
+    const openAt = await speak(page, "Open the first one.");
+    const opened = await until("a link opened", 45_000, () => lastToolResult(page, openAt, "open_link"));
+    await quiet(page);
+    const card = await page.getByText(/Opened |Could not open /u).first().textContent({ timeout: 10_000 }).catch(() => null);
+    await page.screenshot({ path: join(values.out, "page-opened.png") });
+    await new Promise((resolve) => setTimeout(resolve, 1_500));
+    report.opened = { result: opened, card, popups: [...popups], said: await voiceSaid(page, openAt) };
+    console.log("opened:", opened, "| card:", card, "| new tabs:", popups);
+
+    const tellAt = await speak(page, "Tell the release review thread to add a third row for the docs fix, pull request twenty-two, which waits on me.");
+    const told = await until("the message sent", 60_000, () => lastToolResult(page, tellAt, "send_message"));
+    await quiet(page);
+    console.log("told:", told);
+    const queued = await until("the finished turn announced", 180_000, () =>
+      debugEntries().find((entry) => entry.at > tellAt && entry.kind === "announce" && /finished/u.test(entry.title)),
+    );
+    const announcedAt = queued.at;
+    await until("the voice to tell it", 60_000, async () => (await voiceSaid(page, announcedAt)).length > 0);
+    await quiet(page);
+    const news = debugEntries().filter((entry) => entry.at > tellAt && entry.kind === "context").map((entry) => entry.text ?? "");
+    report.finished = { thread: richThread, queued: queued.title, item: news.at(-1) ?? null, said: await voiceSaid(page, announcedAt) };
+    console.log("finished turn:", queued.title, "| voice said:", (report.finished as { said: string[] }).said);
+    await page.screenshot({ path: join(values.out, "page-finished.png") });
+  }
 
   // 3b. Doing things in bb: find a thread by topic and message it (--tell), then start a thread in the project.
   if (values.actions) {

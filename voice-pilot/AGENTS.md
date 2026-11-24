@@ -17,7 +17,8 @@ the voice.
 | --- | --- |
 | `server.ts` | Wiring: settings, the app's RPCs (behind `server/rpc.ts`'s client-only gate), thread events → announcements, `onDispose`. |
 | `server/session.ts` | One live session (`VoiceSessions`): the call, the sideband, the greeting at start, event dispatch, tools, announcements, renewal at the hour's cap, the idle end, the app's heartbeat and the thread on its screen. |
-| `server/tools.ts` | The tool list and `VoiceTools`, which runs each call: reads, sends, questions, approvals (two steps), `end_session`. |
+| `server/tools.ts` | The tool list and `VoiceTools`, which runs each call: reads, sends, questions, approvals (two steps), links, `end_session`. |
+| `server/rich.ts`, `server/links.ts`, `app/links.ts` | A reply in full for the voice: bb's ```ui blocks parsed and flattened, links numbered for the session; what `open_link` may open; a link to this bb's own thread. |
 | `server/questions.ts` | bb's pending interactions as the voice reads and answers them: parse, read aloud, build answers. |
 | `server/policy.ts` | Your words from the transcript (`UtteranceLog`), `saidYes`, rate limits, one send at a time. |
 | `server/bb-port.ts` | `BbPort`, everything the tools do in bb, and its implementation over `bb.sdk`. |
@@ -63,6 +64,18 @@ the voice.
 - **Hooks:** firstmate-voice's model and guarantees, unchanged (its `AGENTS.md`, "A hook never holds the
   call up", and the hook's `BB_SERVER_URL`). No RPC, setting or host call names a hook command or path
   (`rpc.test.ts`).
+- **A link opens only from what the session read, or on the user's yes.** `open_link` takes a link number
+  from `read_reply` or a finished turn's reply (the session's `LinkList`), or a URL that is one of those. Any
+  other URL is one the model wrote: it answers a read-back ("Open github.com/…? It is not a link from
+  anything read in this session.") and opens only when the user's transcript after it is a plain yes
+  (`saidYes`), within two minutes. Only http(s) without a user name or password, and `@thread:` mentions,
+  which open as threads. The window opens it (`useBbNavigate().openUrl`, or `toThread` for a link to its own
+  bb's thread) and the card says what it opened.
+- **A finished turn is told from its reply.** The reply (the idle event's `lastAssistantText`, else bb's
+  latest reply) goes in the conversation in full, flattened, as a `[voice-pilot-news]` item marked as
+  information, then the model says in a sentence what the agent did. Finished turns queued together are
+  merged into one response, a line each (`Announcer.pump`). Waiting and failed threads are still scripts
+  said word for word.
 - **The window holding the call is the one the voice drives.** `open_thread` publishes an `open` signal with
   the session id; only the controller holding that session navigates. The window reports the thread on its
   screen at Talk, on every heartbeat and when it changes, for `current_thread`.
@@ -119,6 +132,12 @@ choice and says it back, and ends on "goodbye"; it spends about a minute of voic
   (a new worktree, from `environment: { type: "project-default" }`); announcements of both threads finishing
   their turns. One earlier run answered a question with `use_spoken_words` though the user named an option;
   the rules now say to pass the option.
-- **Not checked live:** an approval by voice (unit-tested; needs a provider that asks), the API-key
-  connection, a real microphone and speaker, bb's desktop app (the hooks were driven by the rewrite above)
-  and the phone.
+- `e2e-results/2026-11-24-e2e-rich.json` (`--rich <thread>`): a Claude Code thread whose reply held a ```ui
+  table of two pull requests; the voice named both from `read_reply`, opened the first by voice (a new tab in
+  headless Chromium; the card said "Opened example.com/acme/web/pull/20"), messaged the thread and told its
+  finished turn from the reply. The run before it found the receiving agent reading "tell the release review
+  thread to…" in the request's note as a request to message another thread; the note now names the thread.
+- **Not checked live:** several turns finishing together (unit-tested), a bb link opened from the voice
+  (unit-tested), a link in a real browser tab or bb's mobile app, an approval by voice (unit-tested; needs
+  a provider that asks), the API-key connection, a real microphone and speaker, bb's desktop app (the hooks
+  were driven by the rewrite above) and the phone.

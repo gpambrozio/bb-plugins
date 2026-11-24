@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { VoiceState } from "./controller";
 import { pageNote } from "./page";
 
-const idle: VoiceState = { phase: "idle", muted: false, speaking: { user: false, voice: false }, note: null };
+const idle: VoiceState = { phase: "idle", muted: false, speaking: { user: false, voice: false }, note: null, opened: null };
 
 describe("the Voice page", () => {
   it("says what Talk does, why the last session ended, and what to ask while live", () => {

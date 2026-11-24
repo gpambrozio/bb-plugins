@@ -56,3 +56,10 @@ describe("brief and cleanTitle", () => {
     expect(cleanTitle("Fix `herald` (#12)")).toBe("Fix herald (#12)");
   });
 });
+
+describe("plain and ui blocks", () => {
+  it("keeps a ui block's table rows and metrics as sentences, without their links", () => {
+    const text = 'Here.\n\n```ui\nCard("PRs", [Metric("Open", "2"), Table(["PR", "What"], [["https://github.com/acme/web/pull/20", "Login fix"]])])\n```\n\nDone.';
+    expect(plain(text)).toBe("Here. PRs: Open: 2. Row 1: What: Login fix. Done.");
+  });
+});

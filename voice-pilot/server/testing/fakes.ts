@@ -204,6 +204,10 @@ export class FakeBb implements BbPort {
   async briefing() {
     return this.briefingText;
   }
+  replies = new Map<string, string>();
+  async reply(threadId: string) {
+    return this.replies.get(threadId) ?? null;
+  }
   async threadDetail(threadId: string) {
     const found = this.threads.get(threadId);
     return found === undefined ? null : `${found.title}: the agent said it is done.`;
