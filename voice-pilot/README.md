@@ -147,7 +147,10 @@ Delete the file, or make it not executable, and no hook runs there. There is non
   | `talking-stopped` | You stop. |
 
   Each stopped runs after its started has finished, and a session that ends runs the stopped of every open
-  pair before `listening-stopped`. A new session's hooks wait for the last one's to finish. Whether the file
+  pair before `listening-stopped`. The speaking and talking hooks wait for `listening-started` to finish,
+  and the greeting starts about a second after OpenAI takes the call, so a slow `listening-started` makes
+  the greeting's `speaking-started` late: keep it quick, or do there what the greeting must not miss (such
+  as pausing music). A new session's hooks wait for the last one's to finish. Whether the file
   is there is checked when a session starts; a file made during a session runs from the next one.
 - **Only you set it.** No setting, RPC or command in bb sets a hook, reads the file or shows what is in it:
   bb's command line can do anything bb's app can, so a hook kept in bb could be changed by any agent with
