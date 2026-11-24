@@ -574,6 +574,12 @@ silently. A missing glyph is an SVG declared in `bb.branding.experimental_icons`
 names in bb 0.49 and 0.50.1) out of the installed bb's app bundle. bb's vendored `Button` takes no `title`; a tooltip is bb's
 `Tooltip` (`npx shadcn add @bb/tooltip`).
 
+**bb's vendored `Popover` is a bottom sheet on a compact viewport, and the sheet keeps its content
+mounted after it closes** (`npx shadcn add @bb/popover`, bb 0.49 registry): state inside it (a search
+box's text) survives a close, and a mount effect runs only on the first opening. Key the content by an
+opening counter to start fresh each time (`duo-rail/app/editor.tsx`, `IconPicker`). On a wide viewport it
+is Radix's popover, unmounted on close, so a desktop-only check misses this.
+
 Colour comes from the semantic classes, never a literal — check light and dark. Where a literal is the
 point (`model-pricing`'s provider palette), pick it by `experimental_useCodeTheme().mode`, which follows
 bb's own light/dark choice: Tailwind's `dark:` variant compiles to `prefers-color-scheme`, the

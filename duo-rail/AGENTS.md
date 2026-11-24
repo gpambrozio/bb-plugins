@@ -109,7 +109,9 @@ scout report that proposed this plugin.
   and 44 pt on a coarse pointer, and the choice scrolled into the grid's view each time it opens by setting the
   grid's own `scrollTop` (`revealWithin`), never `scrollIntoView`. Playwright's `getByLabel` and role
   names match substrings, so with 180 icon labels in the page a shot list's lookups need `exact: true`
-  ("Name" matched `DiffRenamed`, "Pin" `PinOff`). The popover is portaled out of the row, so tests and
+  ("Name" matched `DiffRenamed`, "Pin" `PinOff`). bb's sheet keeps its content mounted after it closes, so `IconPicker` keys
+  the grid by an opening counter: each opening starts with an empty search and reveals the choice again
+  (the shot list checks it on a phone). The popover is portaled out of the row, so tests and
   the shot list find the grid and its search box from the page, not from the row.
 - **The app never imports the SDK root at run time** (`app/imports.test.ts`). `shared/` imports only zod.
 
