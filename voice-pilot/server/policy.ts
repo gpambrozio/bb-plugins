@@ -116,6 +116,23 @@ export class UtteranceLog {
   }
 }
 
+/** Sounds a transcriber writes for a breath, a cough or a noise rather than words. */
+const FILLER = /^(?:u+h+|u+m+|h+m+|m+|m+-?h+m+|a+h+|o+h+|e+r+|h+u+h+|shh+|tsk)$/iu;
+
+/**
+ * Whether a transcript is only noise: nothing, punctuation, or filler sounds ("um", "hmm"), so the turn it
+ * ended is not answered. Any real word counts as speech.
+ */
+export function isNoise(text: string | null): boolean {
+  if (text === null) return true;
+  const words = text
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}'-]+/u)
+    .map((word) => word.replace(/^['-]+|['-]+$/gu, ""))
+    .filter((word) => word !== "");
+  return words.every((word) => FILLER.test(word));
+}
+
 const YES = /\b(yes|yeah|yep|yup|approve|approved|allow|allowed|confirm|confirmed|go ahead|do it|send it|sure|ok|okay|correct|affirmative)\b/iu;
 const NO = /\b(no|nope|not|don't|dont|do not|cancel|stop|wait|hold on|deny|denied|never|negative)\b/iu;
 

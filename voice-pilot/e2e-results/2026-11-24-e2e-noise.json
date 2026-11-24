@@ -1,0 +1,44 @@
+{
+  "note": "Dev bb 0.50.1 on its own ports, ChatGPT subscription through codex-realtime, headless Chromium. Played into the microphone after the greeting: 1.5 s of white noise, 1.4 s of clap-like bursts, and a mumbled 'Hmm.' (say), 4-6 s apart; then a real question. 'fixed' is this change (the server creates no response on its own; a turn is answered once its transcript has words); 'before' is the same run with create_response: true, as before the change.",
+  "fixed": {
+    "noise": {
+      "speechDetected": 1,
+      "responses": 0,
+      "voiceSaid": [],
+      "ignored": [
+        "Hm."
+      ],
+      "heard": []
+    },
+    "realQuestion": {
+      "stoppedToResponseMs": 280,
+      "said": [
+        "Let me pull together a quick snapshot of your workspace.",
+        "Nothing’s active at the moment. There are no root threads running, and there’s nothing waiting on you. You’re all clear."
+      ]
+    },
+    "error": null
+  },
+  "before": {
+    "noise": {
+      "speechDetected": 1,
+      "responses": 1,
+      "voiceSaid": [
+        "Sounds like you’re thinking. If you want, I can catch you up on what’s going on, open a specific thread, or start new work in a project. Just say what you’d like to do."
+      ],
+      "ignored": [
+        "Hm."
+      ],
+      "heard": []
+    },
+    "realQuestion": {
+      "stoppedToResponseMs": 6,
+      "said": [
+        "Sure, I’ll pull a quick snapshot of your workspace so we can get oriented.",
+        "It’s still working on the snapshot. If nothing shows up in a moment, you can ask again and I’ll report whatever comes back.",
+        "You’re all clear: there are no root threads right now, so nothing is running and nothing is waiting on you."
+      ]
+    },
+    "error": null
+  }
+}

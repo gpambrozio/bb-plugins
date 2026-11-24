@@ -23,7 +23,7 @@ import { DebugLog, EMPTY_DEBUG_PAGE, type DebugPage } from "./debug-log";
 import { greetingItem } from "./greeting";
 import type { HookRunner, HookTarget, SessionHooks } from "./hooks";
 import { GREETING_NOW, RENEWAL_NOTE, standingInstructions } from "./instructions";
-import { UtteranceLog } from "./policy";
+import { UtteranceLog, isNoise } from "./policy";
 import { errorText, type Clock, type Log, type RealtimeEvent, type RealtimePort, type Sideband } from "./ports";
 import { LinkList, parts, readableReply } from "./rich";
 import { VoiceTools, realtimeTools } from "./tools";
@@ -46,6 +46,8 @@ export const TOOL_OUTPUT_MAX = 4_000;
 /** The most of a finished turn's reply put in the conversation; read_reply has the rest. */
 export const FINISHED_REPLY_CHARS = 4_000;
 const RECAP_ITEMS = 10;
+/** How long a turn's transcript is waited for before announcements stop waiting. */
+export const WORDS_WAIT_MS = 6_000;
 
 export type Eagerness = "low" | "medium" | "high" | "auto";
 /** Which thread news is said while a session is live. */
@@ -73,7 +75,9 @@ export function callSession(config: SessionConfig): Record<string, unknown> {
         transcription: { model: "gpt-4o-mini-transcribe" },
         // Laptop and phone speakers are the usual case; echo cancellation in the browser does the rest.
         noise_reduction: { type: "far_field" },
-        turn_detection: { type: "semantic_vad", eagerness: config.eagerness, create_response: true, interrupt_response: true },
+        // The server does not answer a turn by itself: background noise can pass for speech, and a turn whose
+        // transcript has no words is not answered (`VoiceSession.heard`).
+        turn_detection: { type: "semantic_vad", eagerness: config.eagerness, create_response: false, interrupt_response: true },
       },
       output: { voice: config.voice },
     },
@@ -156,6 +160,13 @@ class Call {
   pendingCreate = false;
   /** When this side last asked for a response that has not started yet; null when none is outstanding. */
   askedAt: number | null = null;
+  /** The user is talking, by the server's speech detection. */
+  userTalking = false;
+  /** Turns that ended and whose transcript has not come yet, oldest first: announcements wait for them. */
+  awaitingWords: number[] = [];
+  turnCount = 0;
+  /** Words heard while the user went on talking: answered at the end of their next turn. */
+  wordsPending = false;
   counter = 0;
 
   constructor(
@@ -189,12 +200,21 @@ class Call {
 
   /** Asks for the response that reads a tool's output, now or once the one under way has finished. */
   respondToTool(): void {
+    this.respond("vp_tool_");
+  }
+
+  /** Asks for the response to what the user said, now or once the one under way has finished. */
+  respondToUser(): void {
+    this.respond("vp_turn_");
+  }
+
+  private respond(prefix: string): void {
     if (this.activeResponses > 0) {
       this.pendingCreate = true;
       return;
     }
     this.announcer.responseStarted();
-    this.send({ type: "response.create", event_id: `vp_tool_${++this.counter}` });
+    this.send({ type: "response.create", event_id: `${prefix}${++this.counter}` });
   }
 }
 
@@ -502,10 +522,22 @@ export class VoiceSession {
     switch (event.type) {
       case "input_audio_buffer.speech_started":
         this.touch();
+        call.userTalking = true;
         call.announcer.userSpeaking(true);
         break;
       case "input_audio_buffer.speech_stopped":
-        call.announcer.userSpeaking(false);
+        // Announcements stay held until the turn's transcript says whether anything was said.
+        call.userTalking = false;
+        {
+          const turn = ++call.turnCount;
+          call.awaitingWords.push(turn);
+          this.later(WORDS_WAIT_MS, () => {
+            // Its transcript never came: stop holding announcements for it.
+            if (!call.awaitingWords.includes(turn)) return;
+            call.awaitingWords = call.awaitingWords.filter((waiting) => waiting !== turn);
+            this.heard(call, null, "late");
+          });
+        }
         break;
       case "input_audio_buffer.committed":
         if (typeof event.item_id === "string") this.utterances.committed(event.item_id);
@@ -514,12 +546,17 @@ export class VoiceSession {
         if (typeof event.item_id === "string") {
           const text = typeof event.transcript === "string" ? event.transcript : "";
           this.utterances.transcribed(event.item_id, text);
-          this.remember("user", text);
-          this.touch();
+          if (!isNoise(text)) {
+            this.remember("user", text);
+            this.touch();
+          }
+          this.heard(call, event.item_id, isNoise(text) ? "noise" : "words");
         }
         break;
       case "conversation.item.input_audio_transcription.failed":
         if (typeof event.item_id === "string") this.utterances.failed(event.item_id);
+        // Words may have been said: answer from the audio, as the server would have.
+        this.heard(call, typeof event.item_id === "string" ? event.item_id : null, "words");
         break;
       case "response.created": {
         this.touch();
@@ -576,7 +613,7 @@ export class VoiceSession {
         if (eventId.startsWith("vp_")) {
           call.askedAt = null;
           // A tool's response waits for the one under way; anything else of ours did not start after all.
-          if (error?.code === "conversation_already_has_active_response" && eventId.startsWith("vp_tool_")) call.pendingCreate = true;
+          if (error?.code === "conversation_already_has_active_response" && (eventId.startsWith("vp_tool_") || eventId.startsWith("vp_turn_"))) call.pendingCreate = true;
           else call.announcer.refused();
         }
         break;
@@ -585,6 +622,25 @@ export class VoiceSession {
         break;
     }
     this.hooks?.event(event, call.activeResponses > 0);
+  }
+
+  /**
+   * A turn's transcript came (`words` or `noise`), or never did (`late`, after `WORDS_WAIT_MS`). Words are
+   * answered, unless the user is talking again: then their next turn's end answers both. Noise is not
+   * answered, and its item leaves the conversation, so the model never hears it as a turn. Either way the
+   * announcements held for the transcript may go.
+   */
+  private heard(call: Call, itemId: string | null, what: "words" | "noise" | "late"): void {
+    if (this.call !== call || this.ended) return;
+    if (what !== "late") call.awaitingWords.shift();
+    if (what === "noise" && itemId !== null) call.send({ type: "conversation.item.delete", item_id: itemId });
+    if (what === "words") call.wordsPending = true;
+    const settled = !call.userTalking && call.awaitingWords.length === 0;
+    if (call.wordsPending && settled) {
+      call.wordsPending = false;
+      call.respondToUser();
+    }
+    if (settled) call.announcer.userSpeaking(false);
   }
 
   /** A call event, for the debug log: what was heard and said, turns, interruptions, tool calls and errors. */
@@ -601,7 +657,8 @@ export class VoiceSession {
         break;
       case "conversation.item.input_audio_transcription.completed": {
         const text = typeof event.transcript === "string" ? event.transcript : "";
-        debug.add("heard", "You said", text.trim() === "" ? "(an empty transcript)" : text);
+        if (isNoise(text)) debug.add("turn", "Ignored: only noise was heard, no words, so no answer", text.trim() === "" ? undefined : text);
+        else debug.add("heard", "You said", text);
         break;
       }
       case "conversation.item.input_audio_transcription.failed":

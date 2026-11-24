@@ -16,6 +16,8 @@
   in anything it read is read back to you first.
 - Hears about threads that start waiting on you, fail, or finish after you messaged them by voice. A finished
   turn is told from the agent's reply: what it did, any pull request, anything it waits on you for.
+- Background noise, a cough or an "um" no longer gets an answer: the voice answers only once it has heard
+  real words.
 - Runs on an OpenAI API key or on your ChatGPT subscription through the codex-realtime plugin.
 - Voice hooks: a script on each machine, run as listening starts and stops, as the voice speaks and as you
   talk.

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { RULES } from "./instructions";
-import { ALIVE_TIMEOUT_MS, GOODBYE_MS, IDLE_CHECK_MS, VoiceSessions, type AnnounceLevel, type SessionSignal } from "./session";
+import { ALIVE_TIMEOUT_MS, GOODBYE_MS, IDLE_CHECK_MS, VoiceSessions, WORDS_WAIT_MS, type AnnounceLevel, type SessionSignal } from "./session";
 import { FakeBb, FakeClock, FakeRealtime, quietLog, settle, thread, type FakeSideband } from "./testing/fakes";
 
 async function setup(options: { announce?: AnnounceLevel; instructions?: string } = {}) {
@@ -179,6 +179,10 @@ describe("announcements", () => {
     expect(announcements(sideband)).toHaveLength(0);
     sideband.emit({ type: "input_audio_buffer.speech_stopped" });
     await settle();
+    // Held until the turn's transcript says whether anything was said: only noise, here.
+    expect(announcements(sideband)).toHaveLength(0);
+    sideband.emit({ type: "conversation.item.input_audio_transcription.completed", item_id: "item_noise", transcript: "" });
+    await settle();
     expect(announcements(sideband)).toHaveLength(1);
     expect((announcements(sideband)[0]?.response as { instructions: string }).instructions).toContain('"Fix the login test in web is waiting on you."');
     sessions.news("waiting", "thr_a", "int_1");
@@ -253,6 +257,7 @@ describe("announcements", () => {
     sessions.news("finished", "thr_c", undefined, null);
     await settle();
     sideband.emit({ type: "input_audio_buffer.speech_stopped" });
+    sideband.emit({ type: "conversation.item.input_audio_transcription.completed", item_id: "item_noise", transcript: "hmm" });
     await settle();
     const said = announcements(sideband);
     expect(said).toHaveLength(1);
@@ -267,6 +272,90 @@ describe("announcements", () => {
     sessions.news("waiting", "thr_a", "int_1");
     await settle();
     expect(announcements(sideband)).toHaveLength(0);
+  });
+});
+
+describe("turns", () => {
+  async function quiet() {
+    const harness = await started();
+    await respond(harness.sideband);
+    return harness;
+  }
+  const userResponses = (sideband: FakeSideband) => sideband.ofType("response.create").filter((event) => String(event.event_id).startsWith("vp_turn_"));
+  const turn = (sideband: FakeSideband, itemId: string, transcript: string) => {
+    sideband.emit({ type: "input_audio_buffer.speech_started" });
+    sideband.emit({ type: "input_audio_buffer.speech_stopped" });
+    sideband.emit({ type: "input_audio_buffer.committed", item_id: itemId });
+    sideband.emit({ type: "conversation.item.input_audio_transcription.completed", item_id: itemId, transcript });
+  };
+
+  it("are not answered by the server on its own: speech detection creates no response", async () => {
+    const { realtime } = await started();
+    expect(realtime.calls[0]?.session).toMatchObject({ audio: { input: { turn_detection: { type: "semantic_vad", create_response: false, interrupt_response: true } } } });
+  });
+
+  it("are answered once their transcript has words", async () => {
+    const { sideband, sessions, sessionId } = await quiet();
+    sideband.emit({ type: "input_audio_buffer.speech_started" });
+    sideband.emit({ type: "input_audio_buffer.speech_stopped" });
+    sideband.emit({ type: "input_audio_buffer.committed", item_id: "item_1" });
+    await settle();
+    expect(userResponses(sideband)).toHaveLength(0);
+    sideband.emit({ type: "conversation.item.input_audio_transcription.completed", item_id: "item_1", transcript: "What's going on?" });
+    await settle();
+    expect(userResponses(sideband)).toHaveLength(1);
+    expect(sessions.debugPage(0).entries.filter((entry) => entry.kind === "heard").map((entry) => entry.text)).toEqual(["What's going on?"]);
+    expect(sessionId).toBeTruthy();
+  });
+
+  it("with only noise are not answered, leave the conversation and are logged as ignored, not as words", async () => {
+    const { sideband, sessions } = await quiet();
+    turn(sideband, "item_1", "");
+    turn(sideband, "item_2", " Hmm. ");
+    turn(sideband, "item_3", "...");
+    await settle();
+    expect(userResponses(sideband)).toHaveLength(0);
+    expect(sideband.ofType("conversation.item.delete").map((event) => event.item_id)).toEqual(["item_1", "item_2", "item_3"]);
+    const entries = sessions.debugPage(0).entries;
+    expect(entries.filter((entry) => entry.kind === "heard")).toEqual([]);
+    expect(entries.filter((entry) => entry.title.startsWith("Ignored: only noise"))).toHaveLength(3);
+  });
+
+  it("go unanswered while the user is still talking, and are answered with the next turn's end", async () => {
+    const { sideband } = await quiet();
+    sideband.emit({ type: "input_audio_buffer.speech_started" });
+    sideband.emit({ type: "input_audio_buffer.speech_stopped" });
+    sideband.emit({ type: "input_audio_buffer.speech_started" });
+    sideband.emit({ type: "conversation.item.input_audio_transcription.completed", item_id: "item_1", transcript: "Tell the login thread" });
+    await settle();
+    expect(userResponses(sideband)).toHaveLength(0);
+    sideband.emit({ type: "input_audio_buffer.speech_stopped" });
+    sideband.emit({ type: "conversation.item.input_audio_transcription.completed", item_id: "item_2", transcript: "" });
+    await settle();
+    expect(userResponses(sideband)).toHaveLength(1);
+  });
+
+  it("whose transcription failed are answered from the audio", async () => {
+    const { sideband } = await quiet();
+    sideband.emit({ type: "input_audio_buffer.speech_started" });
+    sideband.emit({ type: "input_audio_buffer.speech_stopped" });
+    sideband.emit({ type: "conversation.item.input_audio_transcription.failed", item_id: "item_1", error: { message: "timeout" } });
+    await settle();
+    expect(userResponses(sideband)).toHaveLength(1);
+  });
+
+  it("whose transcript never comes stop holding announcements back", async () => {
+    const { sideband, sessions, clock } = await quiet();
+    sessions.news("failed", "thr_a");
+    sideband.emit({ type: "input_audio_buffer.speech_started" });
+    sideband.emit({ type: "input_audio_buffer.speech_stopped" });
+    await settle();
+    const announced = () => sideband.ofType("response.create").filter((event) => (event.response as { metadata?: unknown } | undefined)?.metadata !== undefined);
+    expect(announced()).toHaveLength(0);
+    await clock.advance(WORDS_WAIT_MS + 10);
+    await settle();
+    expect(announced()).toHaveLength(1);
+    expect(userResponses(sideband)).toHaveLength(0);
   });
 });
 

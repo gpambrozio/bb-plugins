@@ -75,6 +75,9 @@ bb plugin install 'git:github.com/gpambrozio/bb-plugins@>=0.1.0' --plugin voice-
   with **Talk** to start again.
 - A session ends by itself after ten quiet minutes, and is renewed without a break at OpenAI's one-hour
   limit.
+- **Background noise is not answered.** The voice answers once what you said has been written down and holds
+  real words; a turn that was only noise, a cough or an "um" is dropped, and the log marks it *Ignored*. That
+  check makes an answer start about a third of a second later than it otherwise would.
 - **The session's log** is the lower half of the Voice page, and a **Voice debug** tab in any thread's side
   panel (**Voice Pilot: debug log** in the palette, or **Voice debug log** in a thread's header menu):
   everything since you last tapped Talk, each with its time, marked *Debug*. The instructions and session
@@ -106,6 +109,8 @@ Things to say:
 - **Reasoning:** how much it thinks before speaking. Default *low*.
 - **Voice:** default *marin*.
 - **Turn taking:** how soon it answers once you stop. *High* answers sooner and may cut in on a pause.
+  Background noise loud enough to sound like speech still stops the voice mid-sentence (so that you can
+  talk over it), but it is never answered.
 - **Announce:** what it tells you while you talk (above).
 - **Instructions:** how the voice behaves, its greeting included. Change the greeting here: what it says,
   how many threads it names, whether it asks you something. Clear the field to go back to the default. Rules

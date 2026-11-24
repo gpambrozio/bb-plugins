@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { MAX_WORDS_CHARS, RateLimit, SendGate, TRANSCRIPT_WAIT_MS, UtteranceLog, saidYes } from "./policy";
+import { MAX_WORDS_CHARS, isNoise, RateLimit, SendGate, TRANSCRIPT_WAIT_MS, UtteranceLog, saidYes } from "./policy";
 import { FakeClock, settle } from "./testing/fakes";
 
 describe("saidYes", () => {
@@ -89,5 +89,15 @@ describe("limits", () => {
     expect(await gate.run(async () => "second")).toEqual({ ok: false });
     release();
     expect(await first).toEqual({ ok: true, value: "done" });
+  });
+});
+
+describe("isNoise", () => {
+  it("is nothing, punctuation or filler sounds", () => {
+    for (const text of [null, "", "  ", "...", " Hmm. ", "Um, uh.", "Mm-hmm", "uhh", "Shh"]) expect(isNoise(text)).toBe(true);
+  });
+
+  it("is not any real word, short ones included", () => {
+    for (const text of ["Yes.", "No", "Hi", "Stop", "OK", "2", "um, the second one", "Olá"]) expect(isNoise(text)).toBe(false);
   });
 });

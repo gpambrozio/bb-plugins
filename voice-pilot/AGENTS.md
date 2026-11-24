@@ -76,6 +76,14 @@ the voice.
   information, then the model says in a sentence what the agent did. Finished turns queued together are
   merged into one response, a line each (`Announcer.pump`). Waiting and failed threads are still scripts
   said word for word.
+- **Only words are answered.** The call's turn detection (semantic VAD, far-field noise reduction) has
+  `create_response: false`: the server answers no turn by itself. `VoiceSession.heard` creates the response
+  once the turn's transcript has a real word (`isNoise`: not empty, punctuation or filler such as "hmm"),
+  deletes a noise turn's item from the conversation and logs it as ignored, answers a failed transcription
+  from the audio, and holds announcements until the transcript (or `WORDS_WAIT_MS`). With the server's own
+  `create_response: true`, a mumbled "hmm" was answered ("Sounds like you're thinking…") in a live run; with
+  this, it is not, and a real answer starts about 280 ms after you stop instead of at once
+  (`e2e-results/2026-11-24-e2e-noise.json`). `interrupt_response` stays on, so noise can still cut the voice.
 - **The window holding the call is the one the voice drives.** `open_thread` publishes an `open` signal with
   the session id; only the controller holding that session navigates. The window reports the thread on its
   screen at Talk, on every heartbeat and when it changes, for `current_thread`.

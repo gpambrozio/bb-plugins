@@ -16,6 +16,10 @@
 // With --rich <thread id> (a thread whose latest reply has a ```ui table of pull requests), it asks what the
 // table lists (read_reply), opens the first one by voice (open_link; the card says what was opened), then
 // messages the thread and waits for its finished turn to be told from the reply. --question may be left out.
+//
+// With --noise, it first plays background noise into the microphone (a burst of white noise, a clap-like
+// burst and a mumbled "hmm") and checks that none of it is answered, then asks a real question and times the
+// answer from the end of the speech.
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -42,12 +46,13 @@ const { values } = parseArgs({
     tell: { type: "string", default: "Find the thread about the cart tax and tell it to also mention the tax rate." },
     /** A thread whose latest reply has a ```ui table of pull requests with links. */
     rich: { type: "string" },
+    noise: { type: "boolean", default: false },
   },
 });
 const base = new URL(values.url);
 if (base.port === "38886" || base.port === "38887") throw new Error("That is the owner's bb. Use a dev bb.");
 if (values.bb === undefined) throw new Error("--bb is required.");
-if (values.question === undefined && values.rich === undefined) throw new Error("--question or --rich is required.");
+if (values.question === undefined && values.rich === undefined && !values.noise) throw new Error("--question, --rich or --noise is required.");
 const questionThread = values.question ?? "";
 const devBb = values.bb;
 mkdirSync(values.out, { recursive: true });
@@ -117,6 +122,22 @@ async function quiet(page: Page, ms = 60_000): Promise<void> {
     const last = [...list].reverse().find((event) => event.type.startsWith("output_audio_buffer.") || event.type === "response.created");
     return last === undefined || ((last.type === "output_audio_buffer.stopped" || last.type === "output_audio_buffer.cleared") && Date.now() - last.t > 1_500);
   });
+}
+
+/** A noise clip as a 24 kHz WAV, from ffmpeg's `anoisesrc` and `aevalsrc` filters. */
+function noiseClip(kind: "white" | "clap"): string {
+  const path = join(values.out, `noise-${kind}.wav`);
+  const source = kind === "white" ? "anoisesrc=d=1.5:c=white:a=0.25:r=24000" : "aevalsrc='0.8*random(0)*exp(-30*mod(t\\,0.35))':d=1.4:s=24000";
+  execFileSync("ffmpeg", ["-y", "-loglevel", "error", "-f", "lavfi", "-i", source, "-ac", "1", "-ar", "24000", "-c:a", "pcm_s16le", path]);
+  return readFileSync(path).toString("base64");
+}
+
+async function play(page: Page, b64: string, label: string): Promise<number> {
+  const at = Date.now();
+  const seconds = await page.evaluate((audio) => (window as unknown as { __speak(b64: string): Promise<number> }).__speak(audio), b64);
+  await new Promise((resolve) => setTimeout(resolve, seconds * 1000 + 300));
+  console.log(`played: ${label}`);
+  return at;
 }
 
 async function speak(page: Page, text: string): Promise<number> {
@@ -224,6 +245,38 @@ try {
   report.greeting = await voiceSaid(page, t0);
   report.greetingSpokenMs = greetingEnd - t0;
   console.log("greeting:", report.greeting, `(${firstWords.length} characters first)`);
+
+  // 1b. Background noise is not answered; a real question still is (--noise).
+  if (values.noise) {
+    const noiseAt = Date.now();
+    await play(page, noiseClip("white"), "white noise");
+    await new Promise((resolve) => setTimeout(resolve, 4_000));
+    await play(page, noiseClip("clap"), "claps");
+    await new Promise((resolve) => setTimeout(resolve, 4_000));
+    await play(page, clip("Hmm."), "a mumbled hmm");
+    await new Promise((resolve) => setTimeout(resolve, 6_000));
+    const all = await events(page);
+    const after = all.filter((event) => event.t > noiseAt);
+    const entries = debugEntries().filter((entry) => entry.at > noiseAt);
+    report.noise = {
+      speechDetected: after.filter((event) => event.type === "input_audio_buffer.speech_started").length,
+      responses: after.filter((event) => event.type === "response.created").length,
+      voiceSaid: await voiceSaid(page, noiseAt),
+      ignored: entries.filter((entry) => entry.title.startsWith("Ignored: only noise")).map((entry) => entry.text ?? ""),
+      heard: entries.filter((entry) => entry.kind === "heard").map((entry) => entry.text ?? ""),
+    };
+    console.log("noise:", JSON.stringify(report.noise));
+    const askAt = await speak(page, "What's going on?");
+    const answer = await until("an answer to a real question", 30_000, async () => {
+      const list = await events(page);
+      const stopped = list.find((event) => event.t > askAt && event.type === "input_audio_buffer.speech_stopped");
+      const created = list.find((event) => event.t > askAt && event.type === "response.created");
+      return stopped !== undefined && created !== undefined ? { stoppedToResponseMs: created.t - stopped.t } : null;
+    });
+    await quiet(page);
+    report.realQuestion = { ...answer, said: await voiceSaid(page, askAt) };
+    console.log("real question:", JSON.stringify(report.realQuestion));
+  }
 
   if (values.question !== undefined) {
   // 2. What waits on me: the question and its options, read aloud.
