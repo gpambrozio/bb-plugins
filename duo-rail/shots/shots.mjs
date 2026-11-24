@@ -69,10 +69,13 @@ async function tapReaches(page, name) {
   );
 }
 
+/** Clear space the rail leaves above the bottom inset (BOTTOM_MARGIN in shared/placement.ts). */
+const BOTTOM_MARGIN = 8;
+
 /** Labels of the rail's buttons, top to bottom. */
 const railLabels = (page) => page.getByTestId("duo-rail").locator("button").evaluateAll((buttons) => buttons.map((button) => button.getAttribute("aria-label")));
 
-/** The debug readout's switch (on by default). Off for the stills, on for the debug ones. */
+/** The debug readout's switch (off by default). Set off for the stills, on for the debug ones. */
 const showDebug = (bb, on) => bb.cli(["plugin", "config", "duo-rail", "set", "showDebugNumbers", String(on)]);
 
 export async function shoot({ bb, shots, VARIANTS }) {
@@ -87,7 +90,7 @@ export async function shoot({ bb, shots, VARIANTS }) {
     await shots.closePage(narrow);
   }
 
-  // The unfolded display: bb's wide layout, the rail in the strip beside it, below its own camera gap.
+  // The unfolded display: bb's wide layout, the rail standing on the bottom of the strip beside it.
   for (const [variant, file, menuFile] of [
     [VARIANTS.desktopLight, "unfolded-light.png", "unfolded-more-light.png"],
     [VARIANTS.desktopDark, "unfolded-dark.png", "unfolded-more-dark.png"],
@@ -101,7 +104,8 @@ export async function shoot({ bb, shots, VARIANTS }) {
     const box = await rail.boundingBox();
     const stripLeft = UNFOLDED.width - UNFOLDED_RIGHT.right;
     check(Math.round(box.x) === stripLeft && Math.round(box.width) === UNFOLDED_RIGHT.right, "the rail fills exactly the 85 pt unfolded strip");
-    check(Math.round(box.y) === 110, "the first button starts 110 pt down, the unfolded camera gap");
+    check(Math.round(box.y + box.height) === UNFOLDED.height - UNFOLDED_RIGHT.bottom - BOTTOM_MARGIN, "the last button ends 8 pt above the unfolded bottom inset");
+    check(box.y >= 110, "the column stays under the unfolded camera gap (110 pt)");
     const intruders = await page.evaluate((left) => {
       const controls = document.querySelectorAll("button, a[href], input, textarea, select, [role=button], [role=tab]");
       return [...controls]
@@ -125,7 +129,7 @@ export async function shoot({ bb, shots, VARIANTS }) {
     await reload.waitFor();
     const menu = await page.getByRole("menu").boundingBox();
     const more = await rail.locator(`[aria-label="More"]`).boundingBox(); // aria-hidden while its menu is open
-    check(menu.x + menu.width <= more.x && menu.y >= more.y - 1, "More opens as a menu beside its button, into the page, on the wide layout");
+    check(menu.x + menu.width <= more.x && menu.y >= 0 && menu.y + menu.height <= UNFOLDED.height, "More opens as a menu beside its button, into the page and on screen, on the wide layout");
     await page.waitForTimeout(600);
     await shots.still(page, menuFile);
     await page.keyboard.press("Escape");
@@ -154,7 +158,8 @@ export async function shoot({ bb, shots, VARIANTS }) {
     check((await rail.getAttribute("data-side")) === "right", "the rail sits in the right strip");
     const box = await rail.boundingBox();
     check(Math.round(box.x) === COVER.width - 84 && Math.round(box.width) === 84, "the rail fills exactly the 84 pt strip");
-    check(Math.round(box.y) === 175, "the first button starts 175 pt down, below the camera");
+    check(Math.round(box.y + box.height) === COVER.height - DUO_RIGHT.bottom - BOTTOM_MARGIN, "the last button ends 8 pt above the home indicator's inset");
+    check(box.y >= 175, "the column stays under the folded camera gap (175 pt)");
     for (const name of ["Back", "New thread", "More"]) {
       const button = rail.getByRole("button", { name });
       const b = await button.boundingBox();
@@ -186,8 +191,8 @@ export async function shoot({ bb, shots, VARIANTS }) {
     await shots.closePage(page);
   }
 
-  // The debug numbers, under the last button on both displays, with what this page reads. With the
-  // largest camera gaps the owner has used (235 folded, 195 unfolded), so they fit below even then.
+  // The debug numbers, above the top button on both displays, with what this page reads. With the
+  // owner's camera gaps (235 folded, 195 unfolded), so they stay under the gap even then.
   showDebug(bb, true);
   bb.cli(["plugin", "config", "duo-rail", "set", "cameraClearance", "235"]);
   bb.cli(["plugin", "config", "duo-rail", "set", "cameraClearanceUnfolded", "195"]);
@@ -205,11 +210,13 @@ export async function shoot({ bb, shots, VARIANTS }) {
       check(text.includes(part), `the ${display} debug numbers show "${part.trim()}"`);
     }
     const box = await readout.boundingBox();
-    const more = await page.getByTestId("duo-rail").locator('[aria-label="More"]').boundingBox();
+    const rail = await page.getByTestId("duo-rail").boundingBox();
+    const back = await page.getByTestId("duo-rail").locator('[aria-label="Back"]').boundingBox();
     const stripLeft = viewport.width - insets.right;
-    check(box.y >= more.y + more.height, `the ${display} debug numbers sit under the last button`);
+    check(box.y + box.height <= back.y, `the ${display} debug numbers sit above the top button`);
+    check(box.y >= gap, `the ${display} debug numbers stay under the ${gap} pt camera gap`);
+    check(Math.round(rail.y + rail.height) === viewport.height - insets.bottom - BOTTOM_MARGIN, `with the ${display} debug numbers on, the buttons stay where they were`);
     check(box.x >= stripLeft - 0.5 && box.x + box.width <= viewport.width + 0.5, `the ${display} debug numbers stay inside the strip`);
-    check(box.y + box.height <= viewport.height, `the ${display} debug numbers end above the bottom of the screen`);
     const clipped = await readout.evaluate((element) => [...element.children].filter((line) => line.scrollWidth > line.clientWidth + 0.5).map((line) => line.textContent));
     check(clipped.length === 0, `no ${display} debug line is cut off (${clipped.join(", ") || "none"})`);
     check(await tapReaches(page, "Back"), `with the ${display} debug numbers on, a tap on Back still reaches it`);

@@ -501,7 +501,10 @@ selected by `sidebar.navigationProvider`) starts from `plugins/navigation` in `g
 with `env(safe-area-inset-*)`, so Chromium's `Emulation.setSafeAreaInsetsOverride` (a CDP command,
 `page.context().newCDPSession(page)` in Playwright) makes bb lay out as on an iPhone, notch, home
 indicator or the iPhone Duo's side strip included. An overlay that needs the insets reads them the same
-way, through a probe element whose padding is the four `env()` values (`duo-rail/app/insets.ts`). On
+way, through a probe element whose padding is the four `env()` values (`duo-rail/app/insets.ts`). The
+insets do not follow the Dynamic Island: on the Duo, with a Live Activity or only the clock, the insets,
+the window, the visual viewport and the screen read the same (iOS 27.1, bb 0.50), so nothing on the page
+can tell how far down the strip the island reaches. On
 compact screens bb's page is z-index 30 and everything it draws over the page (the sidebar drawer's
 transparent tap-to-close layer, the full-page tool panel, toasts, dialogs and sheets) is 40 or above;
 the drawer slides the page sideways instead of covering it (bb 0.50).

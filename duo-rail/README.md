@@ -1,12 +1,13 @@
 # Duo Rail (duo-rail)
 
-Put bb's controls, your choice of them, in the empty strip below the camera on both of the iPhone Duo's
-displays.
+Put bb's controls, your choice of them, at the bottom of the empty strip beside the screen on both of the
+iPhone Duo's displays.
 
 The iPhone Duo keeps a strip down one side of each display for the camera, the clock and the status
 icons: 84 points wide on the folded cover screen, about 85 on the unfolded display. Those take the
-strip's top; the rest is blank, and bb leaves it blank. Duo Rail puts a column of symbol-only buttons
-there, the way Apple places a Duo app's own controls: primary navigation first.
+strip's top, and the Dynamic Island grows down it when a Live Activity runs; the rest is blank, and bb
+leaves it blank. Duo Rail stands a column of symbol-only buttons on the bottom of the strip, just above
+the home indicator, stacking upward, so the island has room to grow over the empty part.
 
 Out of the box, both displays get the same three:
 
@@ -98,8 +99,8 @@ A button can:
 **Export** copies both displays' buttons to the clipboard as text; **Import…** takes such a text from
 another bb (Save keeps it). The server refuses a layout the rail could not draw, and says why.
 
-Up to eight buttons fit on a display. When the column would not fit between the camera gap and the bottom
-of the screen (with the keyboard up, for one), the rail hides rather than draw a cut-off button.
+Up to eight buttons fit on a display. When the column would reach above the camera gap (too many buttons
+for the gap you set, or the keyboard up), the rail hides rather than draw a cut-off button.
 
 ### Not offered
 
@@ -115,23 +116,25 @@ bb adds those routes, bb's sidebar button stays in its corner and **More** lists
 ## Space for the camera
 
 Two settings, one per display, in the same place: **Space for the camera, folded** (default 175 points)
-and **unfolded** (default 110). Each is how far below the top of the screen the first button sits. bb cannot
-tell a plugin where the camera and the clock end, so these are measured guesses. Raise one if the first
-button sits under the clock; lower it to move the buttons up.
+and **unfolded** (default 110). The buttons stand at the bottom of the strip whatever these say; each is
+how far below the top of the screen the column may reach, and the rail hides when its buttons would reach
+higher. bb cannot tell a plugin where the camera and the clock end, or how far the Dynamic Island grows
+(nothing a page can read changes with it), so these are measured guesses. Raise one to keep the buttons
+clear of a taller island; lower it to make room for more buttons.
 
 ## Debug numbers
 
-For now, the rail also shows small text under its last button: which display it
+For now, the rail can also show small text above its top button: which display it
 thinks it is on, the camera gap in use, the four safe-area insets the page reads, the window's size, the
 visual viewport's size and offset, the screen's size and its pixel ratio. They update live, on every
 resize, rotation, scroll of the visual viewport and return to bb, and twice a second besides, because an
-inset can change without any event. They are there to learn whether anything the page can read changes
-with what the Dynamic Island shows, a Live Activity or only the clock. Turn off **Show debug numbers**
-on the plugin's settings page to hide them.
+inset can change without any event. They showed that nothing the page can read changes with what the
+Dynamic Island shows, a Live Activity or only the clock. They are off; turn on **Show debug numbers** on
+the plugin's settings page to see them.
 
 | Folded | Unfolded |
 | --- | --- |
-| ![Debug numbers under the folded rail's last button](docs/screenshots/cover-debug-light.png) | ![Debug numbers under the unfolded rail's last button](docs/screenshots/unfolded-debug-light.png) |
+| ![Debug numbers above the folded rail's top button](docs/screenshots/cover-debug-light.png) | ![Debug numbers above the unfolded rail's top button](docs/screenshots/unfolded-debug-light.png) |
 
 ## When it shows
 

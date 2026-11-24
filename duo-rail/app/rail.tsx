@@ -1,7 +1,7 @@
-// The rail: a column of symbol-only buttons in the iPhone Duo's empty side strip, below the camera, on
-// the folded and the unfolded display alike. Mounted once per window as an app overlay; it draws
-// nothing unless the page has the Duo's insets (see ../shared/placement.ts). Which buttons it draws,
-// and what they do, is the owner's layout for the display it is on (../shared/layout.ts).
+// The rail: a column of symbol-only buttons standing on the bottom of the iPhone Duo's empty side strip,
+// under the camera gap, on the folded and the unfolded display alike. Mounted once per window as an app
+// overlay; it draws nothing unless the page has the Duo's insets (see ../shared/placement.ts). Which
+// buttons it draws, and what they do, is the owner's layout for the display it is on (../shared/layout.ts).
 import {
   experimental_SidebarNavigationIcon as SidebarNavigationIcon,
   experimental_useSidebarThreads,
@@ -50,7 +50,7 @@ const RAIL_Z_INDEX = 39;
 export function railStyle(placement: RailPlacement, covered: boolean): CSSProperties {
   return {
     position: "fixed",
-    top: placement.top,
+    bottom: placement.bottom,
     [placement.side]: 0,
     width: placement.width,
     zIndex: RAIL_Z_INDEX,
@@ -208,7 +208,10 @@ function MenuRows({ items }: { items: readonly MenuItem[] }) {
   );
 }
 
-/** The side a menu opens to on the wide layout: into the page, away from the strip. Compact makes it a sheet. */
+/**
+ * The side a menu opens to on the wide layout: into the page, away from the strip, its bottom level with
+ * its button's, since the rail stands on the bottom of the screen. Compact makes it a sheet.
+ */
 const menuSide = (side: RailSide) => (side === "right" ? "left" : "right");
 
 function MenuButton({ label, icon, items, size, side }: { label: string; icon: string; items: readonly MenuItem[]; size: number; side: RailSide }) {
@@ -219,7 +222,7 @@ function MenuButton({ label, icon, items, size, side }: { label: string; icon: s
           <ActionIcon icon={icon} />
         </RailButton>
       </DropdownMenuTrigger>
-      <DropdownMenuContent side={menuSide(side)} align="start" mobileTitle={label}>
+      <DropdownMenuContent side={menuSide(side)} align="end" mobileTitle={label}>
         <MenuRows items={items} />
       </DropdownMenuContent>
     </DropdownMenu>
@@ -293,7 +296,7 @@ export function DuoRail() {
           {buttons.map((button) => (
             <RailItem key={button.id} button={button} size={placement.buttonSize} side={placement.side} />
           ))}
-          {showDebug && <DebugReadout probe={probe} display={display} gap={placement.top} />}
+          {showDebug && <DebugReadout probe={probe} display={display} gap={placement.cameraGap} />}
         </nav>
       )}
     </>

@@ -34,7 +34,7 @@ describe("duo-rail server", () => {
     const { harness } = await start();
     const descriptors = harness.registrations.settingsDescriptors;
     expect(Object.keys(descriptors)).toEqual(["cameraClearance", "cameraClearanceUnfolded", "showDebugNumbers"]);
-    expect(descriptors.showDebugNumbers).toMatchObject({ type: "boolean", label: "Show debug numbers", default: true });
+    expect(descriptors.showDebugNumbers).toMatchObject({ type: "boolean", label: "Show debug numbers", default: false });
   });
 
   it("answers the default layout, saves one, and invalidates every read", async () => {

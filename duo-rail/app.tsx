@@ -1,7 +1,7 @@
 // duo-rail — the app entry.
 //
-// An app overlay: the owner's buttons in the iPhone Duo's empty side strip, below the camera, folded or
-// unfolded. It draws nothing anywhere else. And a settings section, where the owner picks the buttons.
+// An app overlay: the owner's buttons standing on the bottom of the iPhone Duo's empty side strip, folded
+// or unfolded. It draws nothing anywhere else. And a settings section, where the owner picks the buttons.
 // See AGENTS.md.
 import { definePluginApp } from "@get-bb/plugin-sdk/app";
 

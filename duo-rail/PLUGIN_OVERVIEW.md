@@ -1,6 +1,6 @@
-Put bb's controls, your choice of them, in the empty strip below the camera on both of the iPhone Duo's displays.
+Put bb's controls, your choice of them, at the bottom of the empty strip beside the screen on both of the iPhone Duo's displays.
 
-The iPhone Duo keeps a strip down one side of each display for the camera, the clock and the status icons: 84 points on the folded cover screen, about 85 unfolded. Those take its top, and bb leaves the rest blank. Duo Rail puts a column of symbol-only buttons there, the way Apple places a Duo app's own controls.
+The iPhone Duo keeps a strip down one side of each display for the camera, the clock and the status icons: 84 points on the folded cover screen, about 85 unfolded. Those take its top, and the Dynamic Island grows down it during a Live Activity; bb leaves the rest blank. Duo Rail stands a column of symbol-only buttons on the bottom of the strip, just above the home indicator, stacking upward.
 
 ## What you get
 
@@ -16,7 +16,7 @@ Only on the Duo: a side inset on exactly one side and no top inset. The folded c
 
 ## Settings
 
-Space for the camera, folded (default 175 points) and unfolded (default 110): how far down the first button sits. Raise one if the first button sits under the clock. The buttons themselves are edited in the Buttons section. Show debug numbers (on at first) puts small text under the last button with the screen's insets and sizes, updated live; turn it off once you no longer need it.
+Space for the camera, folded (default 175 points) and unfolded (default 110): how far down from the top the buttons may reach; the rail hides when they would reach higher. Raise one to keep the buttons clear of a taller island. The buttons themselves are edited in the Buttons section. Show debug numbers (off) puts small text above the top button with the screen's insets and sizes, updated live.
 
 ## Not included
 

@@ -1,10 +1,11 @@
-// Debug numbers, drawn in the rail under its last button: everything the page can read
-// about the screen, live, to learn whether any of it changes with what the Dynamic Island shows (a Live
-// Activity runs well down the strip; with none, only the clock and Wi-Fi do). Behind the "Show debug
-// numbers" setting (DEBUG_SETTING). To take it out: delete this file, its line in rail.tsx and the setting.
+// Debug numbers, drawn in the strip just above the rail's top button: everything the page can read
+// about the screen, live. They showed that nothing the page reads changes with what the Dynamic Island
+// shows (a Live Activity or only the clock), which is why the rail now stands on the bottom of the
+// strip. Behind the "Show debug numbers" setting (DEBUG_SETTING), off by default. To take it out:
+// delete this file, its line in rail.tsx and the setting.
 //
-// Not in the camera gap above the buttons: on the device the island and the status icons cover that,
-// and the text showed only a letter or two beside them.
+// Laid out of the column's flow, so turning them on moves no button. Not at the very top of the strip:
+// the island and the status icons cover that, and the text showed only a letter or two beside them.
 import { useEffect, useState, type CSSProperties, type RefObject } from "react";
 
 import type { Display } from "../shared/layout";
@@ -86,12 +87,15 @@ export function useDebugNumbers(probe: RefObject<HTMLElement | null>): DebugNumb
 }
 
 /**
- * In the rail's column, under its last button, as wide as the strip. A line that would still not fit
- * wraps instead of being cut, so every value stays whole.
+ * Above the rail's top button, as wide as the strip, out of the column's flow. A line that would still
+ * not fit wraps instead of being cut, so every value stays whole.
  */
 const READOUT_STYLE: CSSProperties = {
-  alignSelf: "stretch",
-  marginTop: 4,
+  position: "absolute",
+  bottom: "100%",
+  left: 0,
+  right: 0,
+  marginBottom: 4,
   padding: "0 2px",
   fontSize: 8,
   lineHeight: "10px",

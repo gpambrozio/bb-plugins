@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  BOTTOM_MARGIN,
   BUTTON_GAP,
   BUTTON_SIZE,
   DEFAULT_CAMERA_CLEARANCE,
@@ -33,17 +34,34 @@ const UNFOLDED: PlacementInput = {
 const at = (change: Partial<PlacementInput>): PlacementInput => ({ ...DUO, ...change });
 
 describe("railPlacement", () => {
-  it("shows the rail in the right strip of the folded Duo, below the camera", () => {
-    expect(railPlacement(DUO)).toEqual({ side: "right", width: 84, top: 175, buttonSize: BUTTON_SIZE, gap: BUTTON_GAP });
+  it("stands the rail on the bottom of the folded Duo's right strip, clear of the home indicator", () => {
+    expect(railPlacement(DUO)).toEqual({ side: "right", width: 84, bottom: 34 + BOTTOM_MARGIN, cameraGap: 175, buttonSize: BUTTON_SIZE, gap: BUTTON_GAP });
+  });
+
+  it("keeps the column at the bottom whatever the camera gap, which only limits how high it may reach", () => {
+    expect(railPlacement(at({ cameraClearance: 0 }))?.bottom).toBe(34 + BOTTOM_MARGIN);
+    expect(railPlacement(at({ cameraClearance: 235 }))?.bottom).toBe(34 + BOTTOM_MARGIN);
+  });
+
+  it("follows the bottom inset, and leaves the margin even with none", () => {
+    expect(railPlacement(at({ insets: { top: 0, right: 84, bottom: 0, left: 0 } }))?.bottom).toBe(BOTTOM_MARGIN);
+    expect(BOTTOM_MARGIN).toBeGreaterThan(0);
   });
 
   it("mirrors to the left strip on a mirrored device", () => {
     expect(railPlacement(at({ insets: { top: 0, right: 0, bottom: 34, left: 84 } }))).toMatchObject({ side: "left", width: 84 });
   });
 
-  it("shows the rail in the unfolded display's strip, whatever layout bb picked, below its own camera gap", () => {
-    expect(railPlacement(UNFOLDED)).toEqual({ side: "right", width: 85, top: DEFAULT_UNFOLDED_CAMERA_CLEARANCE, buttonSize: BUTTON_SIZE, gap: BUTTON_GAP });
-    expect(railPlacement({ ...UNFOLDED, cameraClearance: 130 })?.top).toBe(130);
+  it("shows the rail at the bottom of the unfolded display's strip, whatever layout bb picked, under its own camera gap", () => {
+    expect(railPlacement(UNFOLDED)).toEqual({
+      side: "right",
+      width: 85,
+      bottom: 21 + BOTTOM_MARGIN,
+      cameraGap: DEFAULT_UNFOLDED_CAMERA_CLEARANCE,
+      buttonSize: BUTTON_SIZE,
+      gap: BUTTON_GAP,
+    });
+    expect(railPlacement({ ...UNFOLDED, cameraClearance: 130 })?.cameraGap).toBe(130);
   });
 
   it.each<[string, Partial<PlacementInput>]>([
@@ -60,19 +78,17 @@ describe("railPlacement", () => {
   });
 
   it("falls back to the display's default gap when the setting is missing or broken", () => {
-    expect(railPlacement(at({ cameraClearance: undefined, defaultClearance: 140 }))?.top).toBe(140);
-    expect(railPlacement(at({ cameraClearance: "x", defaultClearance: 140 }))?.top).toBe(140);
+    expect(railPlacement(at({ cameraClearance: undefined, defaultClearance: 140 }))?.cameraGap).toBe(140);
+    expect(railPlacement(at({ cameraClearance: "x", defaultClearance: 140 }))?.cameraGap).toBe(140);
   });
 
-  it("starts the column at the camera clearance setting", () => {
-    expect(railPlacement(at({ cameraClearance: 220 }))?.top).toBe(220);
-    expect(railPlacement(at({ cameraClearance: 0 }))?.top).toBe(0);
-  });
-
-  it("draws nothing when the column would not fit above the bottom inset", () => {
-    // 3 buttons of 48 with two 6 pt gaps is 156 pt; 678 − 34 leaves room from 488 down.
-    expect(railPlacement(at({ cameraClearance: 488 }))).not.toBeNull();
-    expect(railPlacement(at({ cameraClearance: 489 }))).toBeNull();
+  it("draws nothing when the column would reach above the camera gap", () => {
+    // 3 buttons of 48 with two 6 pt gaps is 156 pt, standing 34 + 8 pt up: its top is 678 − 42 − 156 = 480.
+    expect(railPlacement(at({ cameraClearance: 480 }))).not.toBeNull();
+    expect(railPlacement(at({ cameraClearance: 481 }))).toBeNull();
+    // Eight buttons (426 pt) under the owner's 235 pt gap: 678 − 42 − 426 = 210, too high.
+    expect(railPlacement(at({ cameraClearance: 235, buttonCount: 8 }))).toBeNull();
+    expect(railPlacement(at({ cameraClearance: 210, buttonCount: 8 }))).not.toBeNull();
     // The keyboard shrinks the page: no clipped rail.
     expect(railPlacement(at({ viewportHeight: 300 }))).toBeNull();
   });

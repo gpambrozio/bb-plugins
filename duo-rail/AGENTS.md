@@ -1,7 +1,7 @@
 # AGENTS.md — duo-rail
 
-An app overlay (`app.slots.experimental_appOverlay`): a column of buttons in the iPhone Duo's side strip,
-below the camera, on the folded cover screen and the unfolded display. And a settings section
+An app overlay (`app.slots.experimental_appOverlay`): a column of buttons standing on the bottom of the
+iPhone Duo's side strip, on the folded cover screen and the unfolded display. And a settings section
 (`app.slots.settingsSection`, "Buttons"), where the owner picks each display's buttons, saved through the
 server's RPCs into the plugin's storage. Read the root
 `AGENTS.md` first. Background: get-bb/bb#7507 (the strip, its measurements, and Apple's guidance) and the
@@ -77,12 +77,19 @@ scout report that proposed this plugin.
   before the first read. The listing runs once per page and set of plugins (`command-picker.tsx`); without
   the CLI, the plugins' top-level commands are still offered. Not a `<datalist>`: browsers list only the
   entries matching what is already in the box, so a filled box offered one command.
+- **The column stands on the bottom of the strip** (`bottom` = the bottom inset + `BOTTOM_MARGIN`, 8 pt)
+  and stacks upward; the camera gap is only its upper limit, and `railPlacement` hides the rail when the
+  column would reach above it. The owner chose this after the debug numbers showed that nothing a page
+  can read (insets, window, visual viewport, screen) changes when the Dynamic Island grows with a Live
+  Activity, so the buttons keep as far from it as they can. Menus open with `align="end"`, level with
+  their button's bottom.
 - **The camera gaps are settings** (`cameraClearance` folded, default 175; `cameraClearanceUnfolded`,
   default 110; 0–600) because the SDK gives no occlusion rects. `normalizeClearance` keeps a missing or
   broken value usable, falling back to that display's default.
-- **The debug numbers are temporary** (`app/debug.tsx`, setting `showDebugNumbers`, default on): a
-  readout in the rail's column under its last button (not in the camera gap: on the device the island
-  and the status icons cover it, and only a letter or two showed) of what the page can read (insets from the rail's
+- **The debug numbers are temporary** (`app/debug.tsx`, setting `showDebugNumbers`, default off): a
+  readout in the strip just above the rail's top button, positioned out of the column's flow so turning
+  it on moves no button (not at the top of the strip: on the device the island and the status icons
+  cover it, and only a letter or two showed), of what the page can read (insets from the rail's
   probe, `innerWidth`/`innerHeight`, `visualViewport`, `screen`, `devicePixelRatio`, the gap in use, the
   display), to find out whether any of it follows the Dynamic Island. It reads on resize, orientation,
   `visualViewport` resize and scroll, `visibilitychange`, and every 500 ms, because an inset may change
@@ -100,7 +107,7 @@ taps reaching the buttons, hiding on a desktop and an ordinary iPhone, no bb con
 the drawer covering the rail, the buttons' navigation, and a layout saved in the editor: its Pin button pins
 the thread, a command picked from the full list names its button, and its `bb --version` button's result
 comes back as a notice. It also checks the settings page shows no layout JSON, and the debug numbers on both displays
-(off for every other still).
+(above the top button and under the owner's 235/195 gaps; off for every other still).
 
 The SDK's app harness fakes `useSdk()` (`sdk`), thread actions (`threadActions`,
 `threadActionRegistrations`), the plugin's RPCs (`rpc` with `experimental_rpcContract`) and settings, so

@@ -17,7 +17,7 @@ export default async function plugin(bb: BbPluginApi) {
       type: "number",
       label: "Space for the camera, folded (points)",
       description:
-        "On the folded cover screen: how far below the top of the screen the buttons start, so they clear the camera and the clock. Raise it if the first button sits under the clock; lower it to move the buttons up.",
+        "On the folded cover screen: how far below the top of the screen the buttons may reach, so they stay clear of the camera and the clock. The buttons stand at the bottom of the strip; when they would reach higher than this, the rail is hidden.",
       default: DEFAULT_CAMERA_CLEARANCE,
       experimental_schema: clearance,
     },
@@ -31,7 +31,7 @@ export default async function plugin(bb: BbPluginApi) {
     [DEBUG_SETTING]: {
       type: "boolean",
       label: "Show debug numbers",
-      description: "Small text under the last button with the screen's safe-area insets and sizes, updated live, to see what changes with the Dynamic Island. A temporary aid.",
+      description: "Small text above the top button with the screen's safe-area insets and sizes, updated live. A temporary aid.",
       default: DEFAULT_SHOW_DEBUG,
     },
   });

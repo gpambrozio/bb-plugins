@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { rpcContract } from "../shared/contract";
 import { DEFAULT_BUTTONS, defaultLayout, type Layout, type RailButton } from "../shared/layout";
-import type { Insets } from "../shared/placement";
+import { BOTTOM_MARGIN, type Insets } from "../shared/placement";
 import type { Viewport } from "./insets";
 
 // jsdom resolves no env(), so the viewport is what each test says it is.
@@ -66,11 +66,12 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("the rail", () => {
-  it("draws Back, New thread and More in the folded Duo's strip, below the camera", async () => {
+  it("stands Back, New thread and More on the bottom of the folded Duo's strip, clear of the home indicator", async () => {
     await renderRail();
     const rail = screen.getByTestId("duo-rail");
     expect(rail.dataset.side).toBe("right");
-    expect(rail.style.top).toBe("175px");
+    expect(rail.style.bottom).toBe(`${34 + BOTTOM_MARGIN}px`);
+    expect(rail.style.top).toBe("");
     expect(rail.style.right).toBe("0px");
     expect(rail.style.width).toBe("84px");
     expect(screen.getAllByRole("button").map((button) => button.getAttribute("aria-label"))).toEqual(["Back", "New thread", "More"]);
@@ -82,9 +83,13 @@ describe("the rail", () => {
     for (const button of screen.getAllByRole("button")) expect(button.className).toContain("pointer-events-auto");
   });
 
-  it("starts at the camera clearance setting", async () => {
-    await renderRail({ settings: { cameraClearance: 220 } });
-    expect(screen.getByTestId("duo-rail").style.top).toBe("220px");
+  it("stays at the bottom whatever the camera gap, and is hidden when the column would reach above it", async () => {
+    await renderRail({ settings: { cameraClearance: 235 } });
+    expect(screen.getByTestId("duo-rail").style.bottom).toBe(`${34 + BOTTOM_MARGIN}px`);
+    cleanup();
+    // Three buttons stand from 678 − 42 − 156 = 480 pt down: a gap of 481 leaves them no room.
+    await renderRail({ settings: { cameraClearance: 481 } });
+    expect(screen.queryByTestId("duo-rail")).toBeNull();
   });
 
   it("mirrors to the left strip", async () => {
@@ -95,22 +100,27 @@ describe("the rail", () => {
     expect(rail.style.left).toBe("0px");
   });
 
-  it("draws the unfolded buttons in the unfolded display's strip, on bb's wide layout, below its own camera gap", async () => {
+  it("stands the unfolded buttons on the bottom of the unfolded display's strip, on bb's wide layout", async () => {
     setCompact(false);
     viewport.current = { insets: UNFOLDED, height: 669 };
     await renderRail({ settings: { cameraClearanceUnfolded: 130 }, stored: layout([], [{ id: "fwd", label: "Forward", icon: "ArrowRight", action: { kind: "forward" } }]) });
     const rail = screen.getByTestId("duo-rail");
     expect(rail.dataset.display).toBe("unfolded");
-    expect(rail.style.top).toBe("130px");
+    expect(rail.style.bottom).toBe(`${21 + BOTTOM_MARGIN}px`);
     expect(rail.style.width).toBe("85px");
     expect(screen.getAllByRole("button").map((button) => button.getAttribute("aria-label"))).toEqual(["Forward"]);
   });
 
-  it("starts the unfolded column at the unfolded default, not the folded one", async () => {
+  it("limits the unfolded column by the unfolded gap, not the folded one", async () => {
     setCompact(false);
     viewport.current = { insets: UNFOLDED, height: 669 };
-    await renderRail({ settings: { cameraClearance: 300 } });
-    expect(screen.getByTestId("duo-rail").style.top).toBe("110px");
+    const one = layout([], [{ id: "fwd", label: "Forward", icon: "ArrowRight", action: { kind: "forward" } }]);
+    // One button stands from 669 − 29 − 48 = 592 pt down.
+    await renderRail({ settings: { cameraClearance: 600, cameraClearanceUnfolded: 592 }, stored: one });
+    expect(screen.getByTestId("duo-rail")).toBeTruthy();
+    cleanup();
+    await renderRail({ settings: { cameraClearance: 0, cameraClearanceUnfolded: 593 }, stored: one });
+    expect(screen.queryByTestId("duo-rail")).toBeNull();
   });
 
   it("draws nothing on a desktop window, wide or narrow", async () => {
@@ -264,15 +274,23 @@ describe("the debug numbers", () => {
   const setInnerWidth = (width: number) => Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
   afterEach(() => setInnerWidth(1024));
 
-  it("show in the rail under its last button by default, with the display and the camera gap in use", async () => {
-    await renderRail({ settings: { cameraClearance: 220 } });
+  it("are off by default", async () => {
+    await renderRail();
+    expect(screen.getByTestId("duo-rail")).toBeTruthy();
+    expect(screen.queryByTestId("duo-rail-debug")).toBeNull();
+  });
+
+  it("show above the rail's top button when turned on, with the display and the camera gap in use", async () => {
+    await renderRail({ settings: { cameraClearance: 220, showDebugNumbers: true } });
     const readout = screen.getByTestId("duo-rail-debug");
     const rail = screen.getByTestId("duo-rail");
-    // Inside the strip-wide column, after every button: not in the gap the island covers.
+    // In the strip-wide rail, above its column and out of its flow, so no button moves.
     expect(readout.parentElement).toBe(rail);
-    expect(rail.lastElementChild).toBe(readout);
     expect(rail.style.width).toBe("84px");
-    expect(readout.style.alignSelf).toBe("stretch");
+    expect(readout.style.position).toBe("absolute");
+    expect(readout.style.bottom).toBe("100%");
+    expect(readout.style.left).toBe("0px");
+    expect(readout.style.right).toBe("0px");
     // Wraps rather than cuts a value.
     expect(readout.style.whiteSpace).toBe("normal");
     expect(readout.style.overflowWrap).toBe("anywhere");
@@ -283,7 +301,7 @@ describe("the debug numbers", () => {
   });
 
   it("follow a change that fires no event, on the half-second timer", async () => {
-    await renderRail();
+    await renderRail({ settings: { showDebugNumbers: true } });
     setInnerWidth(466);
     await vi.waitFor(() => expect(screen.getByTestId("duo-rail-debug").textContent).toContain(`win 466×${window.innerHeight}`), { timeout: 1500 });
   });
@@ -296,7 +314,7 @@ describe("the debug numbers", () => {
 
   it("are not drawn where the rail is not", async () => {
     viewport.current = { insets: { top: 0, right: 0, bottom: 0, left: 0 }, height: 678 };
-    await renderRail();
+    await renderRail({ settings: { showDebugNumbers: true } });
     expect(screen.queryByTestId("duo-rail-debug")).toBeNull();
   });
 });

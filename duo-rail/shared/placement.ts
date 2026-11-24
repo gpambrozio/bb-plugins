@@ -12,6 +12,11 @@
 //
 // So the rule is the strip's own signature, whatever layout bb picked. bb pads its page by the same
 // insets, so the strip is outside bb's UI on either layout and the rail covers nothing of bb's.
+//
+// The column stands on the bottom of the strip, just above the home indicator, and stacks upward. The
+// island at the top grows and shrinks (a Live Activity runs well down the strip, the clock alone does
+// not) and the page cannot see it: no inset or size changes with it. So the buttons stay as far from it
+// as they can, and the camera gap setting is only their upper limit.
 
 export interface Insets {
   top: number;
@@ -26,8 +31,10 @@ export interface RailPlacement {
   side: RailSide;
   /** The strip's width: the rail draws inside it and nowhere else. */
   width: number;
-  /** Distance of the first button from the top of the page. */
-  top: number;
+  /** Distance of the last button's bottom edge from the bottom of the page: the column stacks up from there. */
+  bottom: number;
+  /** The camera gap in use: the column never reaches higher than this, from the top of the page. */
+  cameraGap: number;
   /** Width and height of each button. */
   buttonSize: number;
   gap: number;
@@ -54,6 +61,8 @@ export const DEFAULT_CAMERA_CLEARANCE = 175;
 /** On the unfolded display the clock and the status icons end about 100 pt down. */
 export const DEFAULT_UNFOLDED_CAMERA_CLEARANCE = 110;
 export const MAX_CAMERA_CLEARANCE = 600;
+/** Clear space between the last button and the bottom inset (the home indicator's band). */
+export const BOTTOM_MARGIN = 8;
 
 /** Insets come from computed CSS lengths, so anything under half a point is zero. */
 const ZERO = 0.5;
@@ -81,9 +90,10 @@ export function railPlacement(input: PlacementInput): RailPlacement | null {
   if (side === null) return null;
   const width = input.insets[side];
   const buttonSize = Math.min(BUTTON_SIZE, width);
-  const top = normalizeClearance(input.cameraClearance, input.defaultClearance);
+  const cameraGap = normalizeClearance(input.cameraClearance, input.defaultClearance);
+  const bottom = input.insets.bottom + BOTTOM_MARGIN;
   const column = input.buttonCount * buttonSize + Math.max(0, input.buttonCount - 1) * BUTTON_GAP;
-  // Below the camera and above the home indicator, or not at all: a cut-off button is worse than none.
-  if (top + column > input.viewportHeight - input.insets.bottom) return null;
-  return { side, width, top, buttonSize, gap: BUTTON_GAP };
+  // Between the camera gap and the home indicator, or not at all: a cut-off button is worse than none.
+  if (input.viewportHeight - bottom - column < cameraGap) return null;
+  return { side, width, bottom, cameraGap, buttonSize, gap: BUTTON_GAP };
 }

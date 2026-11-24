@@ -9,8 +9,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- **Buttons in the empty strip below the camera on the iPhone Duo**, on the folded cover screen and on
-  the unfolded display. Out of the box: Back, New thread, and More, which lists your recent threads and
+- **Buttons at the bottom of the empty strip beside the screen on the iPhone Duo**, on the folded cover
+  screen and on the unfolded display, stacked upward from just above the home indicator, clear of the
+  camera, the clock and the Dynamic Island. Out of the box: Back, New thread, and More, which lists your recent threads and
   offers Forward and Reload bb. They show only on the Duo, on whichever side its strip is, and nowhere
   else.
 - **Your own buttons**, chosen separately for the folded and the unfolded display, in the plugin's
@@ -21,9 +22,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   installed plugin's commands and subcommands and bb's own, and narrows as you type. A button is named
   after what you pick until you name it yourself. Export and Import copy the buttons between bbs. The
   layout is kept on your bb server, so every device follows it.
-- **Space for the camera**, one setting for each display, to move the buttons up or down so they clear
-  the camera and the clock.
+- **Space for the camera**, one setting for each display: how high the buttons may reach, so they stay
+  clear of the camera, the clock and the Dynamic Island.
 - The buttons step aside when bb's sidebar drawer, a sheet or a menu opens over them.
-- **Debug numbers** under the last button, on until you turn off *Show debug numbers*: what the screen
-  reports about its edges and sizes, updated live, to learn whether any of it changes with what the
-  Dynamic Island shows. A temporary aid.
+- **Debug numbers** above the top button, off until you turn on *Show debug numbers*: what the screen
+  reports about its edges and sizes, updated live. A temporary aid.
