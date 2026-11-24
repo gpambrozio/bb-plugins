@@ -506,6 +506,20 @@ compact screens bb's page is z-index 30 and everything it draws over the page (t
 transparent tap-to-close layer, the full-page tool panel, toasts, dialogs and sheets) is 40 or above;
 the drawer slides the page sideways instead of covering it (bb 0.50).
 
+**A list the user edits can be one JSON setting.** Settings hold only strings, numbers and booleans, but a
+`string` setting with `experimental_multiline` and an `experimental_schema` that parses the JSON keeps a
+structured value on the server, refused whole when invalid; the app reads it live through `useSettings()`
+and writes it with `useSdk().plugins.updateSettings({ pluginId: experimental_usePluginId(), values })`, so
+a `settingsSection` editor needs no RPC or storage. The host form also shows the raw text, above the
+section (`duo-rail/shared/layout.ts`).
+
+**A plugin's app can run `bb` itself.** No SDK call runs a command-line command, but
+`useSdk().system.experimental_cliCommand().installedPath` is bb's launcher on the server's machine, and a
+`host_path` terminal on `system.config().primaryHostId` in argv mode runs it with the words unquoted. Have
+the command print its exit status in an OSC sequence and then wait, read `terminals.output`, and close the
+terminal (`duo-rail/app/bb-command.ts`). In a dev bb, `bb settings cli-command install` links the launcher
+into its fake HOME only.
+
 **A window can learn which machine it runs on.** bb's desktop app runs beside a host daemon that answers
 `GET http://127.0.0.1:<port>/status` with `{ hostId, connected, serverUrl }`, on the ports
 `useSdk().system.config().localHelperPorts` lists and with CORS for the server's origin; bb's own app reads

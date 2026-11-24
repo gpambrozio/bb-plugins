@@ -9,9 +9,16 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- **Buttons in the empty strip below the camera on the iPhone Duo's folded cover screen**: Back, New
-  thread, and More, which lists your recent threads and offers Forward and Reload bb. They show only
-  on the folded Duo, on whichever side its strip is, and nowhere else.
-- **Space for the camera**, a setting that moves the buttons up or down to clear the camera and the
-  clock.
+- **Buttons in the empty strip below the camera on the iPhone Duo**, on the folded cover screen and on
+  the unfolded display. Out of the box: Back, New thread, and More, which lists your recent threads and
+  offers Forward and Reload bb. They show only on the Duo, on whichever side its strip is, and nowhere
+  else.
+- **Your own buttons**, chosen separately for the folded and the unfolded display, in the plugin's
+  settings: add, remove and reorder them, and give each a symbol and an action. A button can go back or
+  forward, open a new thread (in a project you pick), a thread, a project, your recent threads or a web
+  address, run an action from bb's thread menu (Pin, Archive, …) on the thread you are looking at, run a
+  `bb` command such as a plugin's and show its result, reload bb, or open a menu of its own. The layout
+  is kept on your bb server, so every device follows it.
+- **Space for the camera**, one setting for each display, to move the buttons up or down so they clear
+  the camera and the clock.
 - The buttons step aside when bb's sidebar drawer, a sheet or a menu opens over them.

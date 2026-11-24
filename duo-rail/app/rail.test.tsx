@@ -3,6 +3,7 @@ import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { cleanup, fireEvent, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { DEFAULT_BUTTONS, serializeLayout, type Layout, type RailButton } from "../shared/layout";
 import type { Insets } from "../shared/placement";
 import type { Viewport } from "./insets";
 
@@ -11,6 +12,29 @@ const viewport = vi.hoisted(() => ({ current: { insets: { top: 0, right: 0, bott
 vi.mock("./insets", async (original) => ({ ...(await original<typeof import("./insets")>()), useViewport: () => viewport.current }));
 
 const DUO: Insets = { top: 0, right: 84, bottom: 34, left: 0 };
+/** The unfolded display: bb's wide layout, 951×669 pt, an 85 pt strip on the right. */
+const UNFOLDED: Insets = { top: 0, right: 85, bottom: 21, left: 0 };
+
+const layout = (folded: RailButton[], unfolded: RailButton[] = [...DEFAULT_BUTTONS]): string =>
+  serializeLayout({ version: 1, folded: { buttons: folded }, unfolded: { buttons: unfolded } } satisfies Layout);
+
+const PIN_TARGET_THREAD = {
+  id: "current",
+  projectId: "p1",
+  displayTitle: "On screen",
+  parentThreadId: null,
+  parentNotifications: "all",
+  archivedAt: null,
+  pinnedAt: null,
+  sectionId: null,
+  isUnread: false,
+  isHidden: false,
+  isArchived: false,
+  hasPendingInteraction: false,
+  latestAttentionAt: 1,
+  status: "idle",
+  environment: { id: "env1", path: "/work/acme" },
+} as never;
 
 function setCompact(compact: boolean) {
   window.matchMedia = ((query: string) => ({
@@ -65,10 +89,139 @@ describe("the rail", () => {
     expect(rail.style.left).toBe("0px");
   });
 
-  it("draws nothing on a wide layout", async () => {
+  it("draws the unfolded buttons in the unfolded display's strip, on bb's wide layout, below its own camera gap", async () => {
+    setCompact(false);
+    viewport.current = { insets: UNFOLDED, height: 669 };
+    await renderRail({ settings: { cameraClearanceUnfolded: 130, layout: layout([], [{ id: "fwd", label: "Forward", icon: "ArrowRight", action: { kind: "forward" } }]) } });
+    const rail = screen.getByTestId("duo-rail");
+    expect(rail.dataset.display).toBe("unfolded");
+    expect(rail.style.top).toBe("130px");
+    expect(rail.style.width).toBe("85px");
+    expect(screen.getAllByRole("button").map((button) => button.getAttribute("aria-label"))).toEqual(["Forward"]);
+  });
+
+  it("starts the unfolded column at the unfolded default, not the folded one", async () => {
+    setCompact(false);
+    viewport.current = { insets: UNFOLDED, height: 669 };
+    await renderRail({ settings: { cameraClearance: 300 } });
+    expect(screen.getByTestId("duo-rail").style.top).toBe("110px");
+  });
+
+  it("draws nothing on a desktop window, wide or narrow", async () => {
+    viewport.current = { insets: { top: 0, right: 0, bottom: 0, left: 0 }, height: 800 };
     setCompact(false);
     await renderRail();
     expect(screen.queryByTestId("duo-rail")).toBeNull();
+    cleanup();
+    setCompact(true);
+    await renderRail();
+    expect(screen.queryByTestId("duo-rail")).toBeNull();
+  });
+
+  it("draws the owner's folded buttons, in their order", async () => {
+    await renderRail({
+      settings: {
+        layout: layout([
+          { id: "u", label: "Docs", icon: "Globe", action: { kind: "openUrl", url: "https://example.com/docs" } },
+          { id: "b", label: "Back", icon: "ArrowLeft", action: { kind: "back" } },
+        ]),
+      },
+    });
+    expect(screen.getAllByRole("button").map((button) => button.getAttribute("aria-label"))).toEqual(["Docs", "Back"]);
+  });
+
+  it("draws nothing on a display whose layout has no buttons", async () => {
+    await renderRail({ settings: { layout: layout([]) } });
+    expect(screen.queryByTestId("duo-rail")).toBeNull();
+  });
+
+  it("falls back to the default buttons when the stored layout is broken", async () => {
+    await renderRail({ settings: { layout: "{ not json" } });
+    expect(screen.getAllByRole("button").map((button) => button.getAttribute("aria-label"))).toEqual(["Back", "New thread", "More"]);
+  });
+
+  it("opens a URL, a thread, a project and a new thread in a chosen project", async () => {
+    const slot = await renderRail({
+      openUrl: () => true,
+      settings: {
+        layout: layout([
+          { id: "u", label: "Docs", icon: "Globe", action: { kind: "openUrl", url: "https://example.com/docs" } },
+          { id: "t", label: "Standup", icon: "MessageSquare", action: { kind: "openThread", threadId: "t9" } },
+          { id: "p", label: "Acme", icon: "Folder", action: { kind: "openProject", projectId: "p1" } },
+          { id: "n", label: "New in Acme", icon: "Plus", action: { kind: "newThread", projectId: "p1" } },
+        ]),
+      },
+    });
+    for (const name of ["Docs", "Standup", "Acme", "New in Acme"]) fireEvent.click(screen.getByRole("button", { name }));
+    expect(slot.inspection.navigateCalls).toEqual([
+      expect.objectContaining({ method: "openUrl", url: "https://example.com/docs" }),
+      expect.objectContaining({ method: "toThread", threadId: "t9" }),
+      expect.objectContaining({ method: "toProject", projectId: "p1" }),
+      expect.objectContaining({ method: "toCompose", options: { projectId: "p1" } }),
+    ]);
+  });
+
+  it("runs a thread-menu action on the open thread", async () => {
+    const run = vi.fn(async () => {});
+    const seen: string[] = [];
+    await renderRail({
+      context: { threadId: "current" },
+      sidebarThreads: { threads: [PIN_TARGET_THREAD] },
+      threadActions: (thread) => {
+        seen.push(thread.id);
+        return [{ key: "bb--core/pin", pluginId: "bb--core", group: "1_state", action: { label: "Pin", icon: "Pin", run } }];
+      },
+      settings: { layout: layout([{ id: "pin", label: "Pin", icon: "Pin", action: { kind: "threadAction", key: "bb--core/pin" } }]) },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Pin" }));
+    expect(run).toHaveBeenCalledOnce();
+    expect(seen).toContain("current");
+  });
+
+  it("greys out a thread-menu action when no thread is open", async () => {
+    await renderRail({
+      context: { threadId: null },
+      settings: { layout: layout([{ id: "pin", label: "Pin", icon: "Pin", action: { kind: "threadAction", key: "bb--core/pin" } }]) },
+    });
+    expect(screen.getByRole("button", { name: "Pin" })).toHaveProperty("disabled", true);
+  });
+
+  it("opens the recent threads from a button of their own", async () => {
+    const thread = (id: string, displayTitle: string, latestAttentionAt: number) =>
+      ({ id, displayTitle, isHidden: false, isArchived: false, isUnread: false, hasPendingInteraction: false, latestAttentionAt }) as never;
+    const slot = await renderRail({
+      sidebarThreads: { threads: [thread("t1", "First", 1), thread("t2", "Second", 2), thread("t3", "Third", 3)] },
+      settings: { layout: layout([{ id: "r", label: "Recent", icon: "Clock", action: { kind: "recentThreads", count: 2 } }]) },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Recent" }));
+    expect(await screen.findByText("Third")).toBeTruthy();
+    expect(screen.queryByText("First")).toBeNull();
+    fireEvent.click(screen.getByText("Second"));
+    expect(slot.inspection.navigateCalls).toEqual([expect.objectContaining({ method: "toThread", threadId: "t2" })]);
+  });
+
+  it("runs a bb command in a terminal on the server's machine", async () => {
+    const create = vi.fn(async () => ({ id: "term1" }));
+    const slot = await renderRail({
+      sdk: {
+        system: { experimental_cliCommand: async () => ({ installedPath: "/usr/local/bin/bb", onPath: true, shadowedBy: null, supported: true }), config: async () => ({ primaryHostId: "host1" }) },
+        terminals: {
+          create,
+          output: async () => ({ chunks: [{ seq: 1, dataBase64: btoa("said it\n\u001b]5253;duo-rail;exit;0\u0007") }], nextSeq: 2, status: "running", exitCode: null, closeReason: null, truncated: false }),
+          close: async () => ({}),
+        },
+      } as never,
+      settings: { layout: layout([{ id: "say", label: "Say", icon: "Mic", action: { kind: "bbCommand", args: ["herald", "say", "hi there"] } }]) },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Say" }));
+    await vi.waitFor(() => expect(create).toHaveBeenCalledOnce());
+    expect(create.mock.calls[0]).toEqual([
+      expect.objectContaining({
+        scope: { kind: "host_path", hostId: "host1", cwd: null },
+        start: { mode: "argv", argv: ["/bin/sh", "-c", expect.any(String), "/usr/local/bin/bb", "herald", "say", "hi there"] },
+      }),
+    ]);
+    await vi.waitFor(() => expect(slot.inspection.sdkCalls.map((call) => call.method)).toContain("terminals.close"));
   });
 
   it("draws nothing on an ordinary iPhone", async () => {

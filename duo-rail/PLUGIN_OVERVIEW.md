@@ -1,27 +1,27 @@
-Put bb's controls in the empty strip below the camera on the iPhone Duo's folded cover screen.
+Put bb's controls, your choice of them, in the empty strip below the camera on both of the iPhone Duo's displays.
 
-Folded, the iPhone Duo keeps an 84-point strip down one side of its cover screen for the camera and a vertical status bar. Those take its top 175 points or so, and bb leaves the rest blank. Duo Rail puts a column of symbol-only buttons there, the way Apple places a Duo app's own controls.
+The iPhone Duo keeps a strip down one side of each display for the camera, the clock and the status icons: 84 points on the folded cover screen, about 85 unfolded. Those take its top, and bb leaves the rest blank. Duo Rail puts a column of symbol-only buttons there, the way Apple places a Duo app's own controls.
 
 ## What you get
 
-- **Back**, to the screen you were on before.
-- **New thread**, which opens the new thread screen.
-- **More**, a sheet with your five most recent threads (a dot marks one waiting for you), Forward and Reload bb.
+- **Back, New thread and More** out of the box, on both displays. More lists your five most recent threads (a dot marks one waiting for you), Forward and Reload bb.
+- **Your own buttons**: in the plugin's settings, choose each display's buttons, their order, their symbols and what they do. A button can go back or forward, open a new thread in a project you pick, a thread, a project, your recent threads or a web address, run an action from bb's thread menu (Pin, Archive, another plugin's) on the thread in view, run a `bb` command such as a plugin's and show its result, reload bb, or open a menu of its own.
+- **One layout everywhere**: it is kept on your bb server, so every device follows it.
 - **The right side or the left**: a mirrored device puts the strip, and the buttons, on the left.
 - **Out of bb's way**: the buttons sit only in the strip bb leaves empty, take only their own taps, and step aside when bb's sidebar drawer, a sheet or a menu opens over them.
 
 ## When it shows
 
-Only on the folded Duo: bb's phone layout, a side inset on exactly one side, and no top inset. A desktop, an ordinary iPhone, the Duo unfolded and Split View show nothing.
+Only on the Duo: a side inset on exactly one side and no top inset. The folded cover screen gets bb's phone layout and its own buttons; the unfolded display gets bb's wide layout and its own. A desktop, an ordinary iPhone, an iPad and Split View show nothing.
 
-## Setting
+## Settings
 
-Space for the camera, default 175 points: how far down the first button sits. Raise it if the first button sits under the clock.
+Space for the camera, folded (default 175 points) and unfolded (default 110): how far down the first button sits. Raise one if the first button sits under the clock. The buttons themselves are edited in the Buttons section.
 
 ## Not included
 
-Search and opening the sidebar: bb gives plugins no way to reach either from outside the sidebar yet.
+Search, opening the sidebar, bb's own pages, other plugins' pages and bb's command palette: bb gives plugins no way to reach them from the rail yet.
 
 ## Requirements
 
-bb 0.49 or later and an iPhone Duo with bb's iOS app. No account, service or API key.
+bb 0.49 or later and an iPhone Duo with bb's iOS app. No account, service or API key. A button that runs a `bb` command needs bb's command-line tool on the bb server's machine (bb's Settings → General → Command line).
