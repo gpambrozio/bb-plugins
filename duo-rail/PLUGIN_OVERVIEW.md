@@ -16,7 +16,7 @@ Only on the Duo: a side inset on exactly one side and no top inset. The folded c
 
 ## Settings
 
-Space for the camera, folded (default 175 points) and unfolded (default 110): how far down the first button sits. Raise one if the first button sits under the clock. The buttons themselves are edited in the Buttons section. Show debug numbers (on at first) puts small text above the top button with the screen's insets and sizes, updated live; turn it off once you no longer need it.
+Space for the camera, folded (default 175 points) and unfolded (default 110): how far down the first button sits. Raise one if the first button sits under the clock. The buttons themselves are edited in the Buttons section. Show debug numbers (on at first) puts small text under the last button with the screen's insets and sizes, updated live; turn it off once you no longer need it.
 
 ## Not included
 

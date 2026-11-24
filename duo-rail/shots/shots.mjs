@@ -186,11 +186,14 @@ export async function shoot({ bb, shots, VARIANTS }) {
     await shots.closePage(page);
   }
 
-  // The debug numbers, above the top button on both displays, with what this page reads.
+  // The debug numbers, under the last button on both displays, with what this page reads. With the
+  // largest camera gaps the owner has used (235 folded, 195 unfolded), so they fit below even then.
   showDebug(bb, true);
+  bb.cli(["plugin", "config", "duo-rail", "set", "cameraClearance", "235"]);
+  bb.cli(["plugin", "config", "duo-rail", "set", "cameraClearanceUnfolded", "195"]);
   for (const [viewport, insets, display, gap, file] of [
-    [COVER, DUO_RIGHT, "folded", 175, "cover-debug-light.png"],
-    [UNFOLDED, UNFOLDED_RIGHT, "unfolded", 110, "unfolded-debug-light.png"],
+    [COVER, DUO_RIGHT, "folded", 235, "cover-debug-light.png"],
+    [UNFOLDED, UNFOLDED_RIGHT, "unfolded", 195, "unfolded-debug-light.png"],
   ]) {
     const page = await shots.page({ ...(display === "folded" ? VARIANTS.phoneLight : VARIANTS.desktopLight), viewport }, threadPath());
     await withInsets(page, insets);
@@ -198,17 +201,24 @@ export async function shoot({ bb, shots, VARIANTS }) {
     const readout = page.getByTestId("duo-rail-debug");
     await readout.waitFor();
     const text = await readout.innerText();
-    for (const part of [display, `gap ${gap}`, `safe t0 r${insets.right}`, `b${insets.bottom} l0`, `win ${viewport.width}×${viewport.height}`, "vv ", "scr ", "dpr "]) {
+    for (const part of [display, `gap ${gap}`, `inset t0 r${insets.right}`, `inset b${insets.bottom} l0`, `win ${viewport.width}×${viewport.height}`, "vv ", "scr ", "dpr "]) {
       check(text.includes(part), `the ${display} debug numbers show "${part.trim()}"`);
     }
     const box = await readout.boundingBox();
-    const top = await page.getByTestId("duo-rail").boundingBox();
-    check(Math.round(box.y + box.height) === Math.round(top.y) && Math.round(box.width) === insets.right, `the ${display} debug numbers sit in the strip right above the top button`);
+    const more = await page.getByTestId("duo-rail").locator('[aria-label="More"]').boundingBox();
+    const stripLeft = viewport.width - insets.right;
+    check(box.y >= more.y + more.height, `the ${display} debug numbers sit under the last button`);
+    check(box.x >= stripLeft - 0.5 && box.x + box.width <= viewport.width + 0.5, `the ${display} debug numbers stay inside the strip`);
+    check(box.y + box.height <= viewport.height, `the ${display} debug numbers end above the bottom of the screen`);
+    const clipped = await readout.evaluate((element) => [...element.children].filter((line) => line.scrollWidth > line.clientWidth + 0.5).map((line) => line.textContent));
+    check(clipped.length === 0, `no ${display} debug line is cut off (${clipped.join(", ") || "none"})`);
     check(await tapReaches(page, "Back"), `with the ${display} debug numbers on, a tap on Back still reaches it`);
     await page.waitForTimeout(700);
     await shots.still(page, file);
     await shots.closePage(page);
   }
+  bb.cli(["plugin", "config", "duo-rail", "unset", "cameraClearance"]);
+  bb.cli(["plugin", "config", "duo-rail", "unset", "cameraClearanceUnfolded"]);
   showDebug(bb, false);
 
   // Behaviour: bb's drawer covers the rail, and the buttons navigate.

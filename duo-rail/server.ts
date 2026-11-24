@@ -31,7 +31,7 @@ export default async function plugin(bb: BbPluginApi) {
     [DEBUG_SETTING]: {
       type: "boolean",
       label: "Show debug numbers",
-      description: "Small text above the top button with the screen's safe-area insets and sizes, updated live, to see what changes with the Dynamic Island. A temporary aid.",
+      description: "Small text under the last button with the screen's safe-area insets and sizes, updated live, to see what changes with the Dynamic Island. A temporary aid.",
       default: DEFAULT_SHOW_DEBUG,
     },
   });

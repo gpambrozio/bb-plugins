@@ -279,7 +279,6 @@ export function DuoRail() {
   return (
     <>
       <div ref={probe} aria-hidden style={PROBE_STYLE} data-testid="duo-rail-probe" />
-      {placement !== null && showDebug && <DebugReadout probe={probe} placement={placement} display={display} covered={covered} />}
       {placement !== null && (
         <nav
           ref={rail}
@@ -294,6 +293,7 @@ export function DuoRail() {
           {buttons.map((button) => (
             <RailItem key={button.id} button={button} size={placement.buttonSize} side={placement.side} />
           ))}
+          {showDebug && <DebugReadout probe={probe} display={display} gap={placement.top} />}
         </nav>
       )}
     </>

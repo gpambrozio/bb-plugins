@@ -121,7 +121,7 @@ button sits under the clock; lower it to move the buttons up.
 
 ## Debug numbers
 
-For now, the rail also shows small text above its top button, in the camera gap: which display it
+For now, the rail also shows small text under its last button: which display it
 thinks it is on, the camera gap in use, the four safe-area insets the page reads, the window's size, the
 visual viewport's size and offset, the screen's size and its pixel ratio. They update live, on every
 resize, rotation, scroll of the visual viewport and return to bb, and twice a second besides, because an
@@ -131,7 +131,7 @@ on the plugin's settings page to hide them.
 
 | Folded | Unfolded |
 | --- | --- |
-| ![Debug numbers above the folded rail's top button](docs/screenshots/cover-debug-light.png) | ![Debug numbers above the unfolded rail's top button](docs/screenshots/unfolded-debug-light.png) |
+| ![Debug numbers under the folded rail's last button](docs/screenshots/cover-debug-light.png) | ![Debug numbers under the unfolded rail's last button](docs/screenshots/unfolded-debug-light.png) |
 
 ## When it shows
 

@@ -24,6 +24,6 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Space for the camera**, one setting for each display, to move the buttons up or down so they clear
   the camera and the clock.
 - The buttons step aside when bb's sidebar drawer, a sheet or a menu opens over them.
-- **Debug numbers** above the top button, on until you turn off *Show debug numbers*: what the screen
+- **Debug numbers** under the last button, on until you turn off *Show debug numbers*: what the screen
   reports about its edges and sizes, updated live, to learn whether any of it changes with what the
   Dynamic Island shows. A temporary aid.

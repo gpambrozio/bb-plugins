@@ -264,13 +264,18 @@ describe("the debug numbers", () => {
   const setInnerWidth = (width: number) => Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
   afterEach(() => setInnerWidth(1024));
 
-  it("show above the top button by default, with the display and the camera gap in use", async () => {
+  it("show in the rail under its last button by default, with the display and the camera gap in use", async () => {
     await renderRail({ settings: { cameraClearance: 220 } });
     const readout = screen.getByTestId("duo-rail-debug");
-    expect(readout.style.height).toBe("220px");
-    expect(readout.style.top).toBe("0px");
-    expect(readout.style.right).toBe("0px");
-    expect(readout.style.width).toBe("84px");
+    const rail = screen.getByTestId("duo-rail");
+    // Inside the strip-wide column, after every button: not in the gap the island covers.
+    expect(readout.parentElement).toBe(rail);
+    expect(rail.lastElementChild).toBe(readout);
+    expect(rail.style.width).toBe("84px");
+    expect(readout.style.alignSelf).toBe("stretch");
+    // Wraps rather than cuts a value.
+    expect(readout.style.whiteSpace).toBe("normal");
+    expect(readout.style.overflowWrap).toBe("anywhere");
     expect(readout.style.pointerEvents).toBe("none");
     expect(readout.textContent).toContain("folded");
     expect(readout.textContent).toContain("gap 220");

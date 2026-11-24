@@ -15,8 +15,8 @@ describe("debugLines", () => {
     expect(debugLines(folded, { display: "folded", gap: 175 })).toEqual([
       "folded",
       "gap 175",
-      "safe t0 r84",
-      "     b34 l0",
+      "inset t0 r84",
+      "inset b34 l0",
       "win 466×678",
       "vv 466×678",
       "vv@ t0 l0",
@@ -27,8 +27,8 @@ describe("debugLines", () => {
 
   it("keeps one decimal of a fractional value", () => {
     const lines = debugLines({ ...folded, insets: { top: 0, right: 84.333, bottom: 20.66, left: 0 }, devicePixelRatio: 2.625 }, { display: "unfolded", gap: 110 });
-    expect(lines).toContain("safe t0 r84.3");
-    expect(lines).toContain("     b20.7 l0");
+    expect(lines).toContain("inset t0 r84.3");
+    expect(lines).toContain("inset b20.7 l0");
     expect(lines).toContain("dpr 2.6");
   });
 
@@ -38,7 +38,7 @@ describe("debugLines", () => {
     expect(lines.some((line) => line.startsWith("vv@"))).toBe(false);
   });
 
-  it("keeps every line within the strip: 15 characters at 9 px in 80 pt", () => {
+  it("keeps every line within the strip: 15 characters at 8 px in 80 pt", () => {
     const wide: DebugNumbers = {
       insets: { top: 0, right: 85.33, bottom: 21.33, left: 0 },
       inner: { width: 951.5, height: 669.5 },

@@ -81,11 +81,12 @@ scout report that proposed this plugin.
   default 110; 0–600) because the SDK gives no occlusion rects. `normalizeClearance` keeps a missing or
   broken value usable, falling back to that display's default.
 - **The debug numbers are temporary** (`app/debug.tsx`, setting `showDebugNumbers`, default on): a
-  readout in the camera gap above the top button of what the page can read (insets from the rail's
+  readout in the rail's column under its last button (not in the camera gap: on the device the island
+  and the status icons cover it, and only a letter or two showed) of what the page can read (insets from the rail's
   probe, `innerWidth`/`innerHeight`, `visualViewport`, `screen`, `devicePixelRatio`, the gap in use, the
   display), to find out whether any of it follows the Dynamic Island. It reads on resize, orientation,
   `visualViewport` resize and scroll, `visibilitychange`, and every 500 ms, because an inset may change
-  with no event. It never takes taps and changes nothing about the rail. To take it out, delete the file,
+  with no event. Its lines are at most 15 characters at 8 px and wrap rather than clip. It never takes taps and changes nothing about the rail. To take it out, delete the file,
   its line in `rail.tsx`, `DEBUG_SETTING` and its definition in `server.ts`, and the shot list's debug still.
 - **The app never imports the SDK root at run time** (`app/imports.test.ts`). `shared/` imports only zod.
 
