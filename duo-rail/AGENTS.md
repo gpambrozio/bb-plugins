@@ -117,6 +117,11 @@ scout report that proposed this plugin.
   shows in the first column too. The popover is 368 pt wide, eight symbols across, capped at the room Radix
   reports (`--radix-popover-content-available-width`, with `collisionPadding` 8) so it stays inside the
   window; the shot list measures all three.
+- **Every dropdown is `Select`** (`app/editor.tsx`): a native select with the browser's chevron hidden
+  (`appearance-none`) and bb's `ChevronDown` drawn over it, its glyph 13 pt from the right border as the
+  text is from the left (bb's 16 pt icon leaves 4 pt around the glyph, so the box sits 9 pt in), and 32 pt
+  of right padding so long text stops before it. The owner asked for this; the browser's own chevron sat
+  a few points from the border. The shot list measures the drawn glyph, not the icon's box.
 - **The app never imports the SDK root at run time** (`app/imports.test.ts`). `shared/` imports only zod.
 
 ## Testing without a Duo

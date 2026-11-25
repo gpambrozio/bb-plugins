@@ -152,6 +152,26 @@ describe("the button editor", () => {
     expect(saved(layoutSet).folded.buttons.at(-1)).toEqual({ id: "newThread", label: "Acme", icon: "Star", action: { kind: "openProject", projectId: "p1" } });
   });
 
+  it("draws every dropdown's chevron as far from the right border as its text is from the left, clear of long text", async () => {
+    await renderEditor();
+    fireEvent.click(screen.getByRole("button", { name: "Edit Back" }));
+    const row = screen.getAllByRole("listitem", { name: "Back" }).at(0) as HTMLElement;
+    fireEvent.change(within(row).getByLabelText("Action"), { target: { value: "openProject" } });
+    const selects = Array.from(row.querySelectorAll("select"));
+    expect(selects.length).toBe(2);
+    for (const select of selects) {
+      // No browser chevron; text inset 12 pt (pl-3); 32 pt kept on the right (pr-8) for bb's chevron, its box 9 pt in.
+      expect(select.className).toMatch(/(^| )appearance-none( |$)/);
+      expect(select.className).toMatch(/(^| )pl-3( |$)/);
+      expect(select.className).toMatch(/(^| )pr-8( |$)/);
+      const chevron = select.nextElementSibling as HTMLElement;
+      expect(chevron.getAttribute("data-testid")).toBe("duo-rail-select-chevron");
+      expect(chevron.getAttribute("aria-hidden")).toBe("true");
+      expect(chevron.className).toContain("right-[9px]");
+      expect(chevron.className).toContain("pointer-events-none");
+    }
+  });
+
   it("edits a menu's items", async () => {
     const { layoutSet } = await renderEditor();
     fireEvent.click(screen.getByRole("button", { name: "Edit More" }));

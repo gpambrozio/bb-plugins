@@ -424,6 +424,26 @@ export async function shoot({ bb, shots, VARIANTS }) {
     check(pinOption !== undefined, "the editor offers bb's own thread-menu actions (Pin among them)");
     await row.getByLabel("Action from bb's thread menu").selectOption({ label: pinOption });
     check((await row.getByLabel("Name", { exact: true }).inputValue()) === pinOption, "picking a thread-menu action names the button after it");
+    // Every dropdown's chevron is bb's, as far from the right border as the text is from the left, and the
+    // text stops before it.
+    const chevrons = await row.locator("select").evaluateAll((selects) =>
+      selects.map((select) => {
+        const box = select.getBoundingClientRect();
+        const style = getComputedStyle(select);
+        // The drawn glyph, not the icon's box: bb's icons leave space around their strokes.
+        const marks = [...(select.nextElementSibling?.querySelectorAll("svg path, svg polyline, svg line") ?? [])].map((mark) => mark.getBoundingClientRect());
+        if (marks.length === 0) return { ok: false, detail: "no chevron" };
+        const chevron = { left: Math.min(...marks.map((m) => m.left)), right: Math.max(...marks.map((m) => m.right)) };
+        const textInset = parseFloat(style.paddingLeft) + parseFloat(style.borderLeftWidth);
+        const rightGap = box.right - chevron.right;
+        const textEnd = box.right - parseFloat(style.paddingRight) - parseFloat(style.borderRightWidth);
+        return {
+          ok: style.appearance === "none" && Math.abs(rightGap - textInset) <= 1.5 && textEnd <= chevron.left - 4,
+          detail: `text ${textInset} pt from the left, chevron ${rightGap.toFixed(1)} pt from the right, text ends ${Math.round(chevron.left - textEnd)} pt before it`,
+        };
+      }),
+    );
+    check(chevrons.length >= 2 && chevrons.every((c) => c.ok), `every dropdown's chevron is inset like its text and clear of it (${chevrons.map((c) => c.detail).join("; ")})`);
     await row.getByRole("button", { name: /^Symbol: /, exact: false }).click();
     await page.getByRole("radiogroup", { name: "Symbol", exact: true }).getByRole("radio", { name: "Pin", exact: true }).click();
     check((await row.getByRole("button", { name: "Symbol: Pin", exact: true }).count()) === 1, "the new button takes the Pin symbol");

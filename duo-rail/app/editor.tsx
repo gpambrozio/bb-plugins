@@ -8,7 +8,7 @@ import {
   useRpc,
   useSdk,
 } from "@get-bb/plugin-sdk/app";
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode, type RefObject } from "react";
 
 import { Button } from "../components/ui/button";
 import { Icon } from "../components/ui/icon";
@@ -57,8 +57,35 @@ import { CommandPicker } from "./command-picker";
 import { useStoredLayout } from "./stored-layout";
 import { ActionIcon } from "./rail";
 
+/**
+ * A dropdown's box. The browser's own chevron sits a few points from the right border, closer than the text
+ * is to the left one, so it is hidden (`appearance-none`) and `Select` draws bb's: its glyph 13 pt from the
+ * right border, as the text is from the left (border and 12 pt padding), with the right padding (32 pt)
+ * keeping long text clear of it.
+ */
 const SELECT_CLASS =
-  "h-9 w-full rounded-md border border-input bg-transparent px-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
+  "h-9 w-full appearance-none truncate rounded-md border border-input bg-transparent pl-3 pr-8 text-sm text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
+
+/**
+ * A native select with bb's chevron, inset from the right border as far as its text is from the left. bb's
+ * 16 pt icon draws its chevron with 4 pt to spare on each side, so the box sits 9 pt in.
+ */
+function Select({ className, children, ...props }: ComponentProps<"select">) {
+  return (
+    <div className="relative">
+      <select {...props} className={cn(SELECT_CLASS, className)}>
+        {children}
+      </select>
+      <span
+        aria-hidden="true"
+        data-testid="duo-rail-select-chevron"
+        className="pointer-events-none absolute inset-y-0 right-[9px] flex items-center text-muted-foreground [&_[data-icon-root]]:size-4"
+      >
+        <Icon name="ChevronDown" />
+      </span>
+    </div>
+  );
+}
 
 interface Choices {
   projects: readonly { id: string; name: string }[];
@@ -135,7 +162,7 @@ function Field({ label, children, hint }: { label: string; children: (id: string
 function PickOne({ id, value, options, missing, onChange }: { id: string; value: string; options: readonly { value: string; label: string }[]; missing: string; onChange(value: string): void }) {
   const known = value === "" || options.some((option) => option.value === value);
   return (
-    <select id={id} className={SELECT_CLASS} value={value} onChange={(event) => onChange(event.target.value)}>
+    <Select id={id} value={value} onChange={(event) => onChange(event.target.value)}>
       {value === "" && <option value="">Pick one…</option>}
       {!known && <option value={value}>{missing}</option>}
       {options.map((option) => (
@@ -143,7 +170,7 @@ function PickOne({ id, value, options, missing, onChange }: { id: string; value:
           {option.label}
         </option>
       ))}
-    </select>
+    </Select>
   );
 }
 
@@ -387,9 +414,8 @@ function EntryEditor<T extends Entry>({
       </div>
       <Field label="Action">
         {(id) => (
-          <select
+          <Select
             id={id}
-            className={SELECT_CLASS}
             value={action.kind}
             onChange={(event) => onChange(withKind(entry, event.target.value as T["action"]["kind"], choices.offers, choices.names))}
           >
@@ -398,7 +424,7 @@ function EntryEditor<T extends Entry>({
                 {kind.title}
               </option>
             ))}
-          </select>
+          </Select>
         )}
       </Field>
       {action.kind === "menu" ? (
