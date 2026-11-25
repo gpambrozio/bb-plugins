@@ -68,8 +68,20 @@ scout report that proposed this plugin.
   never re-quoted, the exit status is printed inside an OSC sequence, and the wrapper then waits (`sleep
   120`) so the output can be read before bb drops the exited terminal. The app reads the output
   (`terminals.output`, `sinceSeq`), shows its last lines in a toast that replaces the "Running…" one (same
-  `id`), and always force-closes the terminal; it gives up after a minute. In the dev bb,
+  `id`), and always force-closes the terminal. In the dev bb,
   `bb settings cli-command install` links the launcher into the fake HOME only.
+- **The minute is kept on the server's machine, not by the page** (`wrap`). The terminal outlives the
+  page, so a command that never ends (`bb plugin logs … -f`) would otherwise run on after the page
+  closed. The wrapper turns on job control (`set -m`, which the terminal's pty allows) to start the
+  command, stdin from `/dev/null`, as a process group of its own, and a watchdog in another group; it
+  turns job control off again so bash prints no "Terminated" notices into the output. At the deadline the
+  watchdog prints `TIMEOUT_MARKER` and kills the command's whole group (TERM, then KILL 3 s later), its
+  children included; a hang-up or TERM to the wrapper (the terminal closed) kills the group at once, and
+  the watchdog still fires if the wrapper was killed outright. The page bounds each output request
+  (`OUTPUT_WAIT_MS`), stops waiting `CLIENT_GRACE_MS` past the deadline, and stops every run it has going
+  on `pagehide` or when the overlay unmounts (`cancelBbRuns`). `app/bb-command.test.ts` runs the real
+  wrapper under a pseudo-terminal (`app/testing/pty-run.py`, `forkpty`; `pty.spawn` hangs on macOS once
+  the child exits) and checks each of those cases by process id.
 - **The command picker's list comes from bb's command-line tool** (`app/command-catalog.ts`), because the
   SDK's plugin list has only each plugin's top-level command: one terminal run of `bb guide commands`
   (bb's own) and `bb <name> --help` for each plugin (its `Commands:` lines). Use the text form of the
@@ -117,6 +129,15 @@ scout report that proposed this plugin.
   shows in the first column too. The popover is 368 pt wide, eight symbols across, capped at the room Radix
   reports (`--radix-popover-content-available-width`, with `collisionPadding` 8) so it stays inside the
   window; the shot list measures all three.
+- **A greyed-out rail button stays hit-testable** (`disabled:pointer-events-auto` on `RailButton`). The
+  rail is `pointer-events: none` with only its buttons taking taps, and bb's `Button` drops pointer events
+  when disabled, so `elementFromPoint` at a disabled Pin (no thread open) found the page under it and
+  `useCovered` hid the whole rail. A disabled native button gets no clicks anyway.
+- **A command field follows the command it is given** (`CommandPicker`): it keeps the text as typed
+  (quotes and spaces) while its words match the command, and shows the new command when they no longer
+  do (Discard, Import, the other display's button with the same id).
+- **New thread's Project offers "bb's choice" always** (`PickOne` with `none`): it is a real choice (a
+  null `projectId`), not the "Pick one…" a required pick starts from, so a picked project can go back.
 - **Every dropdown is `Select`** (`app/editor.tsx`): a native select with the browser's chevron hidden
   (`appearance-none`) and bb's `ChevronDown` drawn over it, its glyph 13 pt from the right border as the
   text is from the left (bb's 16 pt icon leaves 4 pt around the glyph, so the box sits 9 pt in), and 32 pt

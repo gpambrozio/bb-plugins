@@ -506,6 +506,13 @@ export async function shoot({ bb, shots, VARIANTS }) {
     check((await page.locator("[data-sonner-toast]").filter({ hasText: "Running" }).count()) === 0, "the result takes the place of the running notice");
     await page.waitForTimeout(500);
     await shots.still(page, "cover-custom-light.png");
+    // With no thread open, Pin is greyed out, and the rest of the rail still shows and takes taps: a disabled
+    // button must not read as something covering the rail.
+    await page.goto(new URL("/", page.url()).href);
+    await rail.waitFor();
+    await page.waitForTimeout(1000);
+    check(await rail.locator("button").nth(3).isDisabled(), "with no thread open, the Pin button is greyed out");
+    check((await page.locator('[data-testid="duo-rail"][data-covered]').count()) === 0 && (await tapReaches(page, "Back")), "a greyed-out button leaves the rail showing and taking taps");
     await shots.closePage(page);
   }
 }

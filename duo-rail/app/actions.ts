@@ -36,6 +36,9 @@ export function reportBbCommand(notify: ActionDeps["notify"], args: readonly str
     case "timed-out":
       notify.error(`${title} was still running after a minute, so it was stopped`, { id, description: output || undefined });
       return;
+    case "cancelled":
+      notify.message(`${title} was stopped`, { id, description: "The page closed or Duo Rail reloaded before it finished." });
+      return;
     case "finished":
       if (result.exitCode === 0) notify.success(title, { id, description: output || "Done." });
       else notify.error(`${title} failed (exit status ${result.exitCode})`, { id, description: output || undefined });

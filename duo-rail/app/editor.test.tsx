@@ -257,6 +257,74 @@ describe("the button editor", () => {
     expect(labels()).toEqual(["Back", "New thread", "More"]);
   });
 
+  it("shows the saved command again after Discard, not what was typed", async () => {
+    const layout = defaultLayout();
+    layout.folded.buttons = [{ id: "cmd", label: "bb version", icon: "ComputerTerminal01", action: { kind: "bbCommand", args: ["--version"] } }];
+    await renderEditor({ layout });
+    fireEvent.click(screen.getByRole("button", { name: "Edit bb version" }));
+    const box = () => screen.getByRole("combobox", { name: "Command, after bb" }) as HTMLInputElement;
+    fireEvent.change(box(), { target: { value: "plugin list" } });
+    expect(box().value).toBe("plugin list");
+    fireEvent.click(screen.getByRole("button", { name: "Discard changes" }));
+    expect(box().value).toBe("--version");
+    expect(screen.getByRole("button", { name: "Save" })).toHaveProperty("disabled", true);
+  });
+
+  it("keeps quotes and spaces as they are typed", async () => {
+    const layout = defaultLayout();
+    layout.folded.buttons = [{ id: "cmd", label: "say", icon: "ComputerTerminal01", action: { kind: "bbCommand", args: ["herald"] } }];
+    await renderEditor({ layout });
+    fireEvent.click(screen.getByRole("button", { name: "Edit say" }));
+    const box = screen.getByRole("combobox", { name: "Command, after bb" }) as HTMLInputElement;
+    for (const typed of [`herald say "hel`, `herald say "hello `, `herald say "hello there"`]) {
+      fireEvent.change(box, { target: { value: typed } });
+      expect(box.value).toBe(typed);
+    }
+  });
+
+  it("shows each display's own command for buttons with the same id", async () => {
+    const { layoutSet } = await renderEditor({
+      layout: {
+        version: 1,
+        folded: { buttons: [{ id: "cmd", label: "bb command", icon: "ComputerTerminal01", action: { kind: "bbCommand", args: ["--version"] } }] },
+        unfolded: { buttons: [{ id: "cmd", label: "bb command", icon: "ComputerTerminal01", action: { kind: "bbCommand", args: ["thread", "list"] } }] },
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Edit bb command" }));
+    const box = () => screen.getByRole("combobox", { name: "Command, after bb" }) as HTMLInputElement;
+    fireEvent.change(box(), { target: { value: "plugin list" } });
+    fireEvent.click(screen.getByRole("tab", { name: "Unfolded" }));
+    expect(box().value).toBe("thread list");
+    // Typing there changes the unfolded command from what it shows, not from the folded text.
+    fireEvent.change(box(), { target: { value: "thread list --json" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await vi.waitFor(() => expect(layoutSet).toHaveBeenCalledOnce());
+    expect(saved(layoutSet).folded.buttons[0]?.action).toEqual({ kind: "bbCommand", args: ["plugin", "list"] });
+    expect(saved(layoutSet).unfolded.buttons[0]?.action).toEqual({ kind: "bbCommand", args: ["thread", "list", "--json"] });
+  });
+
+  it("lets a New thread button go back to bb's own project choice after picking one", async () => {
+    const { layoutSet } = await renderEditor();
+    fireEvent.click(screen.getByRole("button", { name: "Edit New thread" }));
+    const row = screen.getAllByRole("listitem", { name: "New thread" }).at(0) as HTMLElement;
+    const project = () => within(row).getByLabelText("Project") as HTMLSelectElement;
+    const options = () => Array.from(project().options).map((option) => [option.value, option.text]);
+    expect(options()).toEqual([["", "bb's choice (the project bb would pick)"], ["p1", "Acme Web"]]);
+    fireEvent.change(project(), { target: { value: "p1" } });
+    expect(options()).toEqual([["", "bb's choice (the project bb would pick)"], ["p1", "Acme Web"]]);
+    fireEvent.change(project(), { target: { value: "" } });
+    expect(project().value).toBe("");
+    fireEvent.change(project(), { target: { value: "p1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await vi.waitFor(() => expect(layoutSet).toHaveBeenCalledOnce());
+    expect(saved(layoutSet).folded.buttons[1]?.action).toEqual({ kind: "newThread", projectId: "p1" });
+    // A saved project, opened again, can still go back.
+    fireEvent.change(project(), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await vi.waitFor(() => expect(layoutSet).toHaveBeenCalledTimes(2));
+    expect(saved(layoutSet).folded.buttons[1]?.action).toEqual({ kind: "newThread", projectId: null });
+  });
+
   it("exports the layout to the clipboard, and imports one to save", async () => {
     const { slot, layoutSet } = await renderEditor();
     fireEvent.click(screen.getByRole("button", { name: "Export" }));

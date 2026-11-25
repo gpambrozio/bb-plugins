@@ -13,7 +13,7 @@ import {
   type PluginBoundThreadAction,
   type PluginThreadActionTarget,
 } from "@get-bb/plugin-sdk/app";
-import { Fragment, forwardRef, useMemo, useRef, type ComponentPropsWithoutRef, type CSSProperties, type ReactNode } from "react";
+import { Fragment, forwardRef, useEffect, useMemo, useRef, type ComponentPropsWithoutRef, type CSSProperties, type ReactNode } from "react";
 import { toast } from "sonner";
 
 import { Button } from "../components/ui/button";
@@ -32,7 +32,7 @@ import { displayFor, NEW_THREAD_ICON, type MenuItem, type RailButton as RailButt
 import { railPlacement, type RailPlacement, type RailSide } from "../shared/placement";
 import { CLEARANCE_SETTINGS, DEBUG_SETTING, DEFAULT_CLEARANCES, DEFAULT_SHOW_DEBUG } from "../shared/settings";
 import { runAction, type ActionDeps } from "./actions";
-import { runBbCommand } from "./bb-command";
+import { cancelBbRuns, runBbCommand } from "./bb-command";
 import { useCovered } from "./covered";
 import { DebugReadout } from "./debug";
 import { PROBE_STYLE, useViewport } from "./insets";
@@ -77,8 +77,10 @@ const RailButton = forwardRef<HTMLButtonElement, RailButtonProps>(function RailB
       variant="ghost"
       aria-label={label}
       {...props}
-      // A menu trigger passes its own class and style; merged, so the button keeps taking taps.
-      className={cn("pointer-events-auto rounded-full p-0 text-foreground/80 active:bg-state-active [&_[data-icon-root]]:size-[22px] [&_svg]:size-[22px]", className)}
+      // A menu trigger passes its own class and style; merged, so the button keeps taking taps. A disabled
+      // button (a thread action with no thread open) stays hit-testable: the browser sends it no clicks, and
+      // `useCovered` must find the rail at its centre, not the page under it, or it hides the whole rail.
+      className={cn("pointer-events-auto disabled:pointer-events-auto disabled:cursor-default rounded-full p-0 text-foreground/80 active:bg-state-active [&_[data-icon-root]]:size-[22px] [&_svg]:size-[22px]", className)}
       style={{ ...style, width: size, height: size }}
     >
       {children}
@@ -278,6 +280,15 @@ export function DuoRail() {
     buttonCount: buttons.length,
   });
   const covered = useCovered(rail, placement !== null);
+  // A command still running when the page goes (or this copy of Duo Rail is unloaded) is stopped and its
+  // terminal closed; the watchdog on the server stops it anyway if the close does not get out.
+  useEffect(() => {
+    window.addEventListener("pagehide", cancelBbRuns);
+    return () => {
+      window.removeEventListener("pagehide", cancelBbRuns);
+      cancelBbRuns();
+    };
+  }, []);
   const showDebug = (settings.values?.[DEBUG_SETTING] ?? DEFAULT_SHOW_DEBUG) === true;
   return (
     <>

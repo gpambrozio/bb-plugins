@@ -1,6 +1,12 @@
-import { describe, expect, it, vi } from "vitest";
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-import { EXIT_MARKER, exitStatus, plainText, runBbCommand, summarize, TIMEOUT_MS, WRAPPER } from "./bb-command";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { cancelBbRuns, EXIT_MARKER, exitStatus, plainText, runBbCommand, summarize, TIMEOUT_MARKER, wrap, WRAPPER } from "./bb-command";
 
 const BEL = "\u0007";
 const b64 = (text: string) => btoa(text);
@@ -61,12 +67,43 @@ describe("runBbCommand", () => {
     await expect(runBbCommand(sdk, ["slow"], instant)).resolves.toMatchObject({ outcome: "finished", exitCode: 137 });
   });
 
-  it("gives up after a minute and closes the terminal", async () => {
+  it("gives up a little after the minute when the server never reports, and closes the terminal", async () => {
     const { sdk, calls } = fakeSdk([{ text: "still going" }]);
     let clock = 0;
     const result = await runBbCommand(sdk, ["watch"], { sleep: async () => void (clock += 1000), now: () => clock });
-    expect(result).toEqual({ outcome: "timed-out", output: "still going".repeat(TIMEOUT_MS / 1000 + 1) });
+    expect(result).toMatchObject({ outcome: "timed-out" });
+    expect(result.outcome === "timed-out" && result.output.startsWith("still goingstill going")).toBe(true);
     expect(calls.at(-1)?.method).toBe("close");
+  });
+
+  it("reports the server's watchdog stopping the command as a timeout", async () => {
+    const { sdk } = fakeSdk([{ text: `tail of the log\r\n${TIMEOUT_MARKER}${EXIT_MARKER}143${BEL}` }]);
+    await expect(runBbCommand(sdk, ["plugin", "logs", "herald", "-f"], instant)).resolves.toEqual({ outcome: "timed-out", output: "tail of the log\n" });
+  });
+
+  it("does not wait forever on a read that never answers", async () => {
+    const { sdk, calls } = fakeSdk([]);
+    let reads = 0;
+    (sdk as { terminals: { output: () => Promise<never> } }).terminals.output = () => {
+      reads += 1;
+      return new Promise(() => {});
+    };
+    let clock = 0;
+    const result = await runBbCommand(sdk, ["x"], { sleep: async (ms) => void (clock += ms), now: () => clock });
+    expect(result).toEqual({ outcome: "timed-out", output: "" });
+    expect(reads).toBeGreaterThan(1);
+    expect(calls.at(-1)).toEqual({ method: "close", args: { terminalId: "term1", mode: "force" } });
+  });
+
+  it("stops and closes every run when the page goes away", async () => {
+    const { sdk, calls } = fakeSdk([{ text: "following" }]);
+    const tick = { sleep: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, Math.min(ms, 5))) };
+    const runs = [runBbCommand(sdk, ["plugin", "logs", "-f"], tick), runBbCommand(sdk, ["thread", "watch"], tick)];
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    cancelBbRuns();
+    const results = await Promise.all(runs);
+    expect(results.map((result) => result.outcome)).toEqual(["cancelled", "cancelled"]);
+    expect(calls.filter((call) => call.method === "close")).toHaveLength(2);
   });
 
   it("runs nothing without bb's command-line tool", async () => {
@@ -99,4 +136,93 @@ describe("output", () => {
   it("keeps the last lines for the notice", () => {
     expect(summarize(Array.from({ length: 10 }, (_, n) => `line ${n}`).join("\n") + "\n\n")).toBe(["line 4", "line 5", "line 6", "line 7", "line 8", "line 9"].join("\n"));
   });
+});
+
+// The wrapper itself, run by a real `sh` under a pseudo-terminal as bb's terminal runs it. The command
+// (`$0` is `sh` here) starts a child and writes both process ids, so the test can see them stop.
+const PTY_RUN = fileURLToPath(new URL("./testing/pty-run.py", import.meta.url));
+const hasPython = spawnSync("python3", ["--version"]).status === 0;
+const COMMAND = 'sleep 30 & echo $! > "$1"; echo $$ > "$2"; wait';
+const started: { pid: () => number; harness: ReturnType<typeof spawn> }[] = [];
+
+function startWrapper(deadlineSeconds: number, command = COMMAND) {
+  const dir = mkdtempSync(join(tmpdir(), "duo-rail-wrapper-"));
+  const files = { child: join(dir, "child"), self: join(dir, "self") };
+  const harness = spawn("python3", [PTY_RUN, "/bin/sh", "-c", wrap(`"$0" "$@"`, deadlineSeconds), "/bin/sh", "-c", command, "x", files.child, files.self]);
+  let output = "";
+  let errors = "";
+  harness.stdout.on("data", (data: Buffer) => (output += data.toString()));
+  harness.stderr.on("data", (data: Buffer) => (errors += data.toString()));
+  const shell = () => Number(errors.split("\n")[0]);
+  started.push({ pid: shell, harness });
+  const pidIn = (file: string) => (existsSync(file) && readFileSync(file, "utf8").trim() !== "" ? Number(readFileSync(file, "utf8")) : null);
+  return { harness, output: () => output, shell, child: () => pidIn(files.child), self: () => pidIn(files.self) };
+}
+
+const alive = (pid: number | null) => {
+  if (pid === null || !Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+async function until(test: () => boolean, ms: number): Promise<boolean> {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    if (test()) return true;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return test();
+}
+
+describe.skipIf(!hasPython)("the wrapper on the server's machine", () => {
+  afterEach(() => {
+    // Only what these tests started: the wrapper shell and its harness (closing the harness's terminal
+    // hangs up on whatever is left in it).
+    for (const { pid, harness } of started.splice(0)) {
+      if (alive(pid())) process.kill(pid(), "SIGKILL");
+      harness.kill("SIGKILL");
+    }
+  });
+
+  it("stops the command and its children at the deadline, even with the wrapper and its terminal gone", async () => {
+    const run = startWrapper(1);
+    expect(await until(() => alive(run.child()) && alive(run.self()) && alive(run.shell()), 5000)).toBe(true);
+    const [child, self] = [run.child(), run.self()];
+    // The page closed and the terminal with it, the wrapper killed outright: nothing is left to clean up.
+    process.kill(run.shell(), "SIGKILL");
+    run.harness.kill("SIGKILL");
+    expect(alive(child)).toBe(true);
+    expect(await until(() => !alive(child) && !alive(self), 6000)).toBe(true);
+  }, 15_000);
+
+  it("stops the command and its children at once on a hang-up (the terminal closed)", async () => {
+    const run = startWrapper(30);
+    expect(await until(() => alive(run.child()) && alive(run.self()) && alive(run.shell()), 5000)).toBe(true);
+    const [child, self] = [run.child(), run.self()];
+    process.kill(run.shell(), "SIGHUP");
+    expect(await until(() => !alive(child) && !alive(self), 3000)).toBe(true);
+  }, 15_000);
+
+  it("with the page gone and the terminal left open, stops the command at the deadline and says so, with no job notices", async () => {
+    const run = startWrapper(1);
+    expect(await until(() => run.output().includes(EXIT_MARKER) && run.output().includes("\u0007", run.output().indexOf(EXIT_MARKER)), 8000)).toBe(true);
+    expect(run.output()).toContain(TIMEOUT_MARKER);
+    expect(exitStatus(run.output())).toBe(143);
+    expect(run.output()).not.toMatch(/Terminated|Killed|Done/);
+    expect(alive(run.child()) || alive(run.self())).toBe(false);
+  }, 15_000);
+
+  it("reports a command that ends in time, and its watchdog is gone with it", async () => {
+    const run = startWrapper(1, "echo finished; exit 3");
+    expect(await until(() => exitStatus(run.output()) !== null, 5000)).toBe(true);
+    expect(exitStatus(run.output())).toBe(3);
+    expect(plainText(run.output())).toContain("finished");
+    // Past the deadline, the watchdog has not fired.
+    await new Promise((resolve) => setTimeout(resolve, 1800));
+    expect(run.output()).not.toContain(TIMEOUT_MARKER);
+  }, 15_000);
 });

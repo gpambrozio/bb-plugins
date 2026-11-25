@@ -158,12 +158,30 @@ function Field({ label, children, hint }: { label: string; children: (id: string
   );
 }
 
-/** A select that keeps a value it no longer offers, named as such, so opening the editor changes nothing. */
-function PickOne({ id, value, options, missing, onChange }: { id: string; value: string; options: readonly { value: string; label: string }[]; missing: string; onChange(value: string): void }) {
+/**
+ * A select that keeps a value it no longer offers, named as such, so opening the editor changes nothing.
+ * With `none`, the empty value is a real choice, always offered under that name (New thread's "bb's
+ * choice"); without, it is only the "Pick one…" a required pick starts from.
+ */
+function PickOne({
+  id,
+  value,
+  options,
+  missing,
+  none,
+  onChange,
+}: {
+  id: string;
+  value: string;
+  options: readonly { value: string; label: string }[];
+  missing: string;
+  none?: string;
+  onChange(value: string): void;
+}) {
   const known = value === "" || options.some((option) => option.value === value);
   return (
     <Select id={id} value={value} onChange={(event) => onChange(event.target.value)}>
-      {value === "" && <option value="">Pick one…</option>}
+      {none !== undefined ? <option value="">{none}</option> : value === "" && <option value="">Pick one…</option>}
       {!known && <option value={value}>{missing}</option>}
       {options.map((option) => (
         <option key={option.value} value={option.value}>
@@ -201,6 +219,7 @@ function ActionFields({ action, choices, onChange }: { action: LeafAction; choic
               value={action.projectId ?? ""}
               options={projectOptions}
               missing="A project that is no longer listed"
+              none="bb's choice (the project bb would pick)"
               onChange={(value) => onChange({ ...action, projectId: value === "" ? null : value })}
             />
           )}

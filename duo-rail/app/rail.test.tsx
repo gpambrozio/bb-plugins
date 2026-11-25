@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
-import { cleanup, fireEvent, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { rpcContract } from "../shared/contract";
@@ -63,7 +63,10 @@ beforeEach(() => {
   setCompact(true);
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 describe("the rail", () => {
   it("stands Back, New thread and More on the bottom of the folded Duo's strip, clear of the home indicator", async () => {
@@ -190,6 +193,58 @@ describe("the rail", () => {
     expect(seen).toContain("current");
   });
 
+  it("keeps the rail showing when a greyed-out thread action is in it, and hides it under a drawer", async () => {
+    // The browser's hit test, modelled: an element takes the pointer unless the nearest pointer-events rule
+    // (inline, a class, or a `disabled:` class on a disabled button) says none. Each rail button gets a box.
+    const takesPointer = (element: Element): boolean => {
+      for (let node: Element | null = element; node !== null; node = node.parentElement) {
+        const tokens = (node.getAttribute("class") ?? "").split(/\s+/);
+        const disabled = node instanceof HTMLButtonElement && node.disabled;
+        const variant = disabled ? tokens.find((token) => token === "disabled:pointer-events-none" || token === "disabled:pointer-events-auto") : undefined;
+        const value = variant?.slice("disabled:".length) ?? (node as HTMLElement).style.pointerEvents ?? "";
+        const resolved = value !== "" ? value : tokens.find((token) => token === "pointer-events-none" || token === "pointer-events-auto");
+        if (resolved !== undefined) return !resolved.endsWith("none");
+      }
+      return true;
+    };
+    let drawer: Element | null = null;
+    const boxes = new Map<Element, DOMRect>();
+    const frames: FrameRequestCallback[] = [];
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => frames.push(callback));
+    document.elementFromPoint = (x: number, y: number) => {
+      if (drawer !== null) return drawer;
+      for (const [button, box] of boxes) if (x >= box.left && x <= box.right && y >= box.top && y <= box.bottom) return takesPointer(button) ? button : document.body;
+      return document.body;
+    };
+    await renderRail({
+      context: { threadId: null },
+      stored: layout([...DEFAULT_BUTTONS.slice(0, 1), { id: "pin", label: "Pin", icon: "Pin", action: { kind: "threadAction", key: "bb--core/pin" } }]),
+    });
+    const rail = screen.getByTestId("duo-rail");
+    rail.querySelectorAll("button").forEach((button, index) => {
+      const box = { left: 400, top: 500 + index * 60, width: 48, height: 48, right: 448, bottom: 548 + index * 60, x: 400, y: 500 + index * 60, toJSON: () => ({}) } as DOMRect;
+      boxes.set(button, box);
+      button.getBoundingClientRect = () => box;
+    });
+    const settle = async () => {
+      fireEvent(window, new Event("resize"));
+      await act(async () => {
+        while (frames.length > 0) frames.shift()?.(0);
+      });
+    };
+    await settle();
+    expect(screen.getByRole("button", { name: "Pin" })).toHaveProperty("disabled", true);
+    expect(rail.getAttribute("data-covered")).toBeNull();
+    expect(rail.style.opacity).toBe("1");
+    expect(screen.getByRole("button", { name: "Back" })).toBeTruthy();
+    // A real layer over the rail still hides it.
+    drawer = document.createElement("div");
+    document.body.appendChild(drawer);
+    await settle();
+    expect(rail.getAttribute("data-covered")).toBe("true");
+    expect(rail.style.opacity).toBe("0");
+  });
+
   it("greys out a thread-menu action when no thread is open", async () => {
     await renderRail({
       context: { threadId: null },
@@ -234,6 +289,27 @@ describe("the rail", () => {
       }),
     ]);
     await vi.waitFor(() => expect(slot.inspection.sdkCalls.map((call) => call.method)).toContain("terminals.close"));
+  });
+
+  it("stops a running command and closes its terminal when the page goes away", async () => {
+    const close = vi.fn(async () => ({}));
+    await renderRail({
+      sdk: {
+        system: { experimental_cliCommand: async () => ({ installedPath: "/usr/local/bin/bb", onPath: true, shadowedBy: null, supported: true }), config: async () => ({ primaryHostId: "host1" }) },
+        terminals: {
+          create: async () => ({ id: "term1" }),
+          // `bb plugin logs … -f`: it never ends, and a read may not answer either.
+          output: () => new Promise(() => {}),
+          close,
+        },
+      } as never,
+      stored: layout([{ id: "logs", label: "Logs", icon: "Mic", action: { kind: "bbCommand", args: ["plugin", "logs", "herald", "-f"] } }]),
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Logs" }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(close).not.toHaveBeenCalled();
+    fireEvent(window, new Event("pagehide"));
+    await vi.waitFor(() => expect(close).toHaveBeenCalledWith({ terminalId: "term1", mode: "force" }));
   });
 
   it("draws nothing on an ordinary iPhone", async () => {

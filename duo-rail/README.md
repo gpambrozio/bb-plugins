@@ -101,7 +101,7 @@ A button can:
 | Open a thread | One thread you pick. |
 | Open a project | One project you pick. |
 | Thread menu action | An action from bb's thread menu, bb's own (Pin, Mark as read, Archive, Copy link, …) or another plugin's, on the thread you are looking at. Greyed out where no thread is open. An action with choices opens them as a menu. |
-| Run a bb command | `bb <words…>` on the bb server's machine. The editor lists every command there is, each installed plugin's commands and subcommands and bb's own, and narrows the list as you type; add arguments after the one you pick. Its last lines come back as a notice. It is stopped after a minute. |
+| Run a bb command | `bb <words…>` on the bb server's machine. The editor lists every command there is, each installed plugin's commands and subcommands and bb's own, and narrows the list as you type; add arguments after the one you pick. Its last lines come back as a notice. It is stopped after a minute, on the bb server's machine, even if the page closes first. |
 | Open a URL | A web address opens in bb's browser, as your bb settings say; an app link asks first. |
 | Reload bb | Reloads the page. |
 | Menu | A menu of its own items, each any of the above. More is one. |

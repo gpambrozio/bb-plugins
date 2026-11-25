@@ -40,6 +40,8 @@ function useCommandCatalog(plugins: readonly PluginCommand[] | null): CommandCat
   return loaded !== null && loaded.key === key ? loaded.catalog : null;
 }
 
+const sameWords = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((word, index) => word === b[index]);
+
 export function CommandPicker({
   id,
   args,
@@ -54,6 +56,11 @@ export function CommandPicker({
 }) {
   // The text as typed, so quotes and spaces stay while the owner types; the words are what is saved.
   const [text, setText] = useState(() => joinArgs(args));
+  // When the words no longer match, the command was replaced from outside (Discard, Import, the other
+  // display's button with the same id): show the new one. What this box sends always splits back to the
+  // same words, so typing is left alone. (Compared with the command's own text too, so a command whose text
+  // does not split back exactly cannot set it again on every render.)
+  if (!sameWords(splitArgs(text), args) && text !== joinArgs(args)) setText(joinArgs(args));
   // What narrows the list: empty when the box gains focus, so every command shows; then what is typed.
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);

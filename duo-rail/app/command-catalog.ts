@@ -140,6 +140,7 @@ export async function loadCommandCatalog(sdk: Sdk, plugins: readonly PluginComma
   }
   if (result.outcome === "unavailable") return { commands: topLevel, problem: result.reason };
   if (result.outcome === "timed-out") return { commands: topLevel, problem: "Listing bb's commands took over a minute, so only the plugins' commands are listed." };
+  if (result.outcome === "cancelled") return { commands: topLevel, problem: "Listing bb's commands was stopped, so only the plugins' commands are listed." };
   const { core, subcommands } = parseCatalogOutput(result.output, plugins);
   return {
     commands: mergeCatalog(plugins, subcommands, core),
