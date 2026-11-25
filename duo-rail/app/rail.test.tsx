@@ -193,7 +193,7 @@ describe("the rail", () => {
     expect(seen).toContain("current");
   });
 
-  it("keeps the rail showing when a greyed-out thread action is in it, and hides it under a drawer", async () => {
+  it("keeps the rail showing over the page, a greyed-out thread action and the tool panel, and hides it under the drawer", async () => {
     // The browser's hit test, modelled: an element takes the pointer unless the nearest pointer-events rule
     // (inline, a class, or a `disabled:` class on a disabled button) says none. Each rail button gets a box.
     const takesPointer = (element: Element): boolean => {
@@ -207,14 +207,25 @@ describe("the rail", () => {
       }
       return true;
     };
-    let drawer: Element | null = null;
+    // A full-screen layer of bb's: the page and the tool panel pad themselves out of the strip, the
+    // drawer's tap-to-close layer does not.
+    const fullScreen = (paddingRight: string) => {
+      const element = document.createElement("div");
+      element.style.paddingRight = paddingRight;
+      element.getBoundingClientRect = () => ({ left: 0, top: 0, width: 466, height: 678, right: 466, bottom: 678, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect;
+      document.body.appendChild(element);
+      return element;
+    };
+    const page = fullScreen("84px");
+    const layers: Element[] = [];
     const boxes = new Map<Element, DOMRect>();
     const frames: FrameRequestCallback[] = [];
     vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => frames.push(callback));
-    document.elementFromPoint = (x: number, y: number) => {
-      if (drawer !== null) return drawer;
-      for (const [button, box] of boxes) if (x >= box.left && x <= box.right && y >= box.top && y <= box.bottom) return takesPointer(button) ? button : document.body;
-      return document.body;
+    // Topmost first: the rail's button (stacked over bb's layers) unless it is inert or takes no pointer, then the layers.
+    document.elementsFromPoint = (x: number, y: number) => {
+      const hit = [...boxes].find(([, box]) => x >= box.left && x <= box.right && y >= box.top && y <= box.bottom)?.[0];
+      const onRail = hit !== undefined && takesPointer(hit) && hit.closest("[inert]") === null ? [hit] : [];
+      return [...onRail, ...layers, page, document.body];
     };
     await renderRail({
       context: { threadId: null },
@@ -237,12 +248,26 @@ describe("the rail", () => {
     expect(rail.getAttribute("data-covered")).toBeNull();
     expect(rail.style.opacity).toBe("1");
     expect(screen.getByRole("button", { name: "Back" })).toBeTruthy();
-    // A real layer over the rail still hides it.
-    drawer = document.createElement("div");
-    document.body.appendChild(drawer);
+    // A thread's right pane on the folded screen: bb's full-page tool panel, under the rail (the owner's bug).
+    const panel = fullScreen("84px");
+    layers.unshift(panel);
+    await settle();
+    expect(rail.getAttribute("data-covered")).toBeNull();
+    expect(rail.style.opacity).toBe("1");
+    expect(rail.hasAttribute("inert")).toBe(false);
+    layers.splice(0);
+    // The drawer's tap-to-close layer, under the rail too, hides it, and taps then go through to the layer.
+    const drawer = fullScreen("");
+    layers.unshift(drawer);
     await settle();
     expect(rail.getAttribute("data-covered")).toBe("true");
     expect(rail.style.opacity).toBe("0");
+    expect(rail.hasAttribute("inert")).toBe(true);
+    expect(document.elementsFromPoint(424, 524)[0]).toBe(drawer);
+    layers.splice(0);
+    await settle();
+    expect(rail.getAttribute("data-covered")).toBeNull();
+    expect(rail.hasAttribute("inert")).toBe(false);
   });
 
   it("greys out a thread-menu action when no thread is open", async () => {

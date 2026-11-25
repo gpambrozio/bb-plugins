@@ -6,8 +6,9 @@
 //
 // Besides the stills, it checks what a screenshot cannot show: the rail is absent on a desktop window
 // and on an ordinary iPhone, no bb control sits in the unfolded strip, bb's sidebar drawer covers the
-// rail, its buttons navigate, and a layout saved in the Buttons editor reaches the rail, with a
-// thread-menu action and a `bb` command that run.
+// rail, a thread's right pane leaves it showing (folded and unfolded), its buttons navigate, and a
+// layout saved in the Buttons editor reaches the rail, with a thread-menu action and a `bb` command
+// that run.
 
 /** The folded Duo's cover screen, in CSS px (= pt in bb's web view). */
 const COVER = { width: 466, height: 678 };
@@ -69,6 +70,32 @@ async function tapReaches(page, name) {
   );
 }
 
+/** bb's controls that reach into the strip, which starts at `left`, by label. */
+const intrudersInStrip = (page, left) =>
+  page.evaluate((left) => {
+    const controls = document.querySelectorAll("button, a[href], input, textarea, select, [role=button], [role=tab]");
+    return [...controls]
+      .filter((el) => !el.closest('[data-testid="duo-rail"]'))
+      .filter((el) => {
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0 && r.right > left + 0.5;
+      })
+      .map((el) => el.getAttribute("aria-label") ?? el.textContent?.trim().slice(0, 40));
+  }, left);
+
+/** The outermost positioned layer under the rail at a button's centre: what bb draws in the strip there. */
+async function underRail(page, name) {
+  const box = await page.getByTestId("duo-rail").locator(`[aria-label="${name}"]`).boundingBox();
+  return page.evaluate(({ x, y }) => {
+    const rail = document.querySelector('[data-testid="duo-rail"]');
+    const under = document.elementsFromPoint(x, y).find((element) => !rail.contains(element));
+    let layer = under;
+    for (let node = under; node !== null; node = node.parentElement) if (getComputedStyle(node).position === "fixed") layer = node;
+    const style = getComputedStyle(layer);
+    return { fixed: style.position === "fixed", width: Math.round(layer.getBoundingClientRect().width), opaque: !/rgba\(.*, 0\)$|transparent/.test(style.backgroundColor) };
+  }, { x: box.x + box.width / 2, y: box.y + box.height / 2 });
+}
+
 /** Clear space the rail leaves above the bottom inset (BOTTOM_MARGIN in shared/placement.ts). */
 const BOTTOM_MARGIN = 8;
 
@@ -106,16 +133,7 @@ export async function shoot({ bb, shots, VARIANTS }) {
     check(Math.round(box.x) === stripLeft && Math.round(box.width) === UNFOLDED_RIGHT.right, "the rail fills exactly the 85 pt unfolded strip");
     check(Math.round(box.y + box.height) === UNFOLDED.height - UNFOLDED_RIGHT.bottom - BOTTOM_MARGIN, "the last button ends 8 pt above the unfolded bottom inset");
     check(box.y >= 110, "the column stays under the unfolded camera gap (110 pt)");
-    const intruders = await page.evaluate((left) => {
-      const controls = document.querySelectorAll("button, a[href], input, textarea, select, [role=button], [role=tab]");
-      return [...controls]
-        .filter((el) => !el.closest('[data-testid="duo-rail"]'))
-        .filter((el) => {
-          const r = el.getBoundingClientRect();
-          return r.width > 0 && r.height > 0 && r.right > left + 0.5;
-        })
-        .map((el) => el.getAttribute("aria-label") ?? el.textContent?.trim().slice(0, 40));
-    }, stripLeft);
+    const intruders = await intrudersInStrip(page, stripLeft);
     check(intruders.length === 0, `no bb control reaches into the strip (found: ${intruders.join(", ") || "none"})`);
     for (const name of ["Back", "New thread", "More"]) {
       const b = await rail.getByRole("button", { name }).boundingBox();
@@ -130,6 +148,7 @@ export async function shoot({ bb, shots, VARIANTS }) {
     const menu = await page.getByRole("menu").boundingBox();
     const more = await rail.locator(`[aria-label="More"]`).boundingBox(); // aria-hidden while its menu is open
     check(menu.x + menu.width <= more.x && menu.y >= 0 && menu.y + menu.height <= UNFOLDED.height, "More opens as a menu beside its button, into the page and on screen, on the wide layout");
+    check((await rail.getAttribute("data-covered")) === null, "the rail stays showing beside its own open More menu on the wide layout");
     await page.waitForTimeout(600);
     await shots.still(page, menuFile);
     await page.keyboard.press("Escape");
@@ -254,6 +273,54 @@ export async function shoot({ bb, shots, VARIANTS }) {
     await page.getByRole("menuitem", { name: "Fix the flaky upload test" }).click();
     await page.getByText("waits for the request to finish").waitFor();
     check(true, "a recent thread in More opens that thread");
+    await shots.closePage(page);
+  }
+
+  // A thread's right pane. On the folded screen bb opens it as a full-page tool panel over the page, an
+  // opaque layer that pads itself out of the strip as the page does; the rail stays over it (it was
+  // stacked under it and hid there). On the unfolded display it is a pane beside the thread, and maximized.
+  {
+    const page = await shots.page({ ...VARIANTS.phoneDark, viewport: COVER }, threadPath());
+    await withInsets(page, DUO_RIGHT);
+    await page.getByText("rejects addresses without a domain").waitFor();
+    const rail = page.getByTestId("duo-rail");
+    await rail.waitFor();
+    const before = await rail.boundingBox();
+    await page.getByRole("button", { name: /^Show right panel/ }).click();
+    await page.getByRole("button", { name: "Show thread info panel" }).waitFor();
+    await page.waitForTimeout(600);
+    const panel = await underRail(page, "Back");
+    check(panel.fixed && panel.width === COVER.width && panel.opaque, `the right pane opens as a full-page layer over the strip on the folded screen (${JSON.stringify(panel)})`);
+    check((await rail.getAttribute("data-covered")) === null, "the rail still shows over the folded right pane");
+    const after = await rail.boundingBox();
+    check(JSON.stringify(after) === JSON.stringify(before), "the rail stays where it was");
+    for (const name of ["Back", "New thread", "More"]) check(await tapReaches(page, name), `a tap on ${name} reaches it over the folded right pane`);
+    await shots.still(page, "cover-right-pane-dark.png");
+    await rail.getByRole("button", { name: "New thread" }).click();
+    await page.waitForFunction((path) => location.pathname !== path, threadPath());
+    check(!page.url().includes(`/threads/${threadId}`), "New thread works from the folded right pane");
+    await shots.closePage(page);
+  }
+  {
+    const page = await shots.page({ ...VARIANTS.desktopDark, viewport: UNFOLDED }, threadPath());
+    await withInsets(page, UNFOLDED_RIGHT);
+    await page.getByText("rejects addresses without a domain").waitFor();
+    const rail = page.getByTestId("duo-rail");
+    await rail.waitFor();
+    await page.getByRole("button", { name: /^Show right panel/ }).click();
+    await page.getByRole("button", { name: "Show thread info panel" }).waitFor();
+    await page.waitForTimeout(600);
+    for (const [view, file] of [["beside the thread", "unfolded-right-pane-dark.png"], ["maximized", null]]) {
+      if (file === null) {
+        await page.getByRole("button", { name: "Maximize pane" }).click();
+        await page.waitForTimeout(600);
+      }
+      check((await rail.getAttribute("data-covered")) === null, `the rail still shows with the unfolded right pane ${view}`);
+      const intruders = await intrudersInStrip(page, UNFOLDED.width - UNFOLDED_RIGHT.right);
+      check(intruders.length === 0, `no bb control reaches into the strip with the right pane ${view} (found: ${intruders.join(", ") || "none"})`);
+      for (const name of ["Back", "New thread", "More"]) check(await tapReaches(page, name), `a tap on unfolded ${name} reaches it with the right pane ${view}`);
+      if (file !== null) await shots.still(page, file);
+    }
     await shots.closePage(page);
   }
 

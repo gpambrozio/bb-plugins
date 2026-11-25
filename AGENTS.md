@@ -506,8 +506,10 @@ insets do not follow the Dynamic Island: on the Duo, with a Live Activity or onl
 the window, the visual viewport and the screen read the same (iOS 27.1, bb 0.50), so nothing on the page
 can tell how far down the strip the island reaches. On
 compact screens bb's page is z-index 30 and everything it draws over the page (the sidebar drawer's
-transparent tap-to-close layer, the full-page tool panel, toasts, dialogs and sheets) is 40 or above;
-the drawer slides the page sideways instead of covering it (bb 0.50).
+transparent tap-to-close layer 40, the full-page tool panel 45, toasts 49, dialogs and sheets 50);
+the drawer slides the page sideways instead of covering it (bb 0.50). The tool panel is what a thread's
+right pane opens as there: opaque, over the whole page, and padded out of the strip like the page, so
+something meant to show in the strip on every page stacks above 45 (`duo-rail/app/covered.ts`).
 
 **Keep structured state out of settings.** bb's settings form draws every setting a plugin defines, so a
 list kept as a JSON string setting shows up there as raw text, which the owner did not want. Keep it in

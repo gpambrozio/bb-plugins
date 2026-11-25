@@ -26,6 +26,7 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   layout is kept on your bb server, so every device follows it.
 - **Space for the camera**, one setting for each display: how high the buttons may reach, so they stay
   clear of the camera, the clock and the Dynamic Island.
-- The buttons step aside when bb's sidebar drawer, a sheet or a menu opens over them.
+- The buttons stay showing over a thread's side pane, which on the folded cover screen fills the screen,
+  and step aside when bb's sidebar drawer, a sheet or a menu opens over them.
 - **Debug numbers** above the top button, off until you turn on *Show debug numbers*: what the screen
   reports about its edges and sizes, updated live. A temporary aid.

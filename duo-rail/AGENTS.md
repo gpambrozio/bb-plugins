@@ -25,12 +25,19 @@ scout report that proposed this plugin.
   taps. A menu trigger passes its own `className`; `RailButton` merges it, otherwise `pointer-events-auto`
   is lost and taps on a menu button fall through (a regression test covers it). On the wide layout a menu
   opens beside its button, into the page (`side` away from the strip); on compact it is bb's sheet.
-- **Stacking: z-index 39.** bb's compact page is z 30, and every layer bb draws over it is 40 or higher:
-  the sidebar drawer's transparent tap-to-close layer 40, the full-page tool panel 45, toasts 49, and
-  dialogs, sheets and menus 50. bb's compact drawer slides the page sideways rather than covering it, so
-  the rail also fades out while anything covers a button (`app/covered.ts`). That is a hit test
-  (`elementFromPoint` at each button's centre, re-run on DOM mutations, resizes and transition ends) that
-  names no bb element. The faded rail keeps its hit area, so the test sees when it is uncovered.
+- **Stacking: z-index 46.** bb's compact page is z 30, the sidebar drawer's transparent tap-to-close
+  layer 40, the full-page tool panel 45, toasts 49, and dialogs, sheets and menus 50. The tool panel is
+  what a thread's right pane opens as on the folded screen: an opaque layer over the whole page that pads
+  itself out of the strip as the page does, so the rail must stand over it. At 39 it was stacked under it
+  and hid on every right-pane tab (the owner's report). Over the drawer's layer, the rail must instead step
+  aside, since the drawer slides the page sideways into the strip. So `app/covered.ts` asks, at each
+  button's centre, whether the topmost thing that is not the rail (`elementsFromPoint`) lies in padding on
+  the strip's side at least as wide as the strip, on itself or an ancestor: space bb left empty. The page
+  and the tool panel do; the drawer's layer, a menu, a sheet's backdrop and a toast do not. Only the
+  document itself under a button counts as empty too: a modal menu (the rail's own More, on the wide
+  layout) sets the page's `pointer-events: none`, and the page then drops out of the hit test. The test
+  re-runs on DOM mutations, resizes and transition ends, and names no bb element. A hidden rail fades out
+  and is `inert`, so taps go through to what is under it (the drawer's layer closes the drawer).
 - **The layout lives in the plugin's key-value store, not in a setting** (`server/layout-store.ts`, key
   `layout`), behind two RPCs (`shared/contract.ts`): `layout.get` (tagged `layout`) and `layout.set`, which
   invalidates the tag, so every open rail and editor on every device reads it again. bb's settings form
@@ -134,10 +141,11 @@ scout report that proposed this plugin.
   shows in the first column too. The popover is 368 pt wide, eight symbols across, capped at the room Radix
   reports (`--radix-popover-content-available-width`, with `collisionPadding` 8) so it stays inside the
   window; the shot list measures all three.
-- **A greyed-out rail button stays hit-testable** (`disabled:pointer-events-auto` on `RailButton`). The
-  rail is `pointer-events: none` with only its buttons taking taps, and bb's `Button` drops pointer events
-  when disabled, so `elementFromPoint` at a disabled Pin (no thread open) found the page under it and
-  `useCovered` hid the whole rail. A disabled native button gets no clicks anyway.
+- **A greyed-out rail button still takes the pointer** (`disabled:pointer-events-auto` on `RailButton`).
+  The rail is `pointer-events: none` with only its buttons taking taps, and bb's `Button` drops pointer
+  events when disabled, so a tap on a disabled Pin (no thread open) would fall through to the page. A
+  disabled native button gets no clicks anyway. (When `useCovered` read only the topmost element, the page
+  found there hid the whole rail; it now skips the rail and reads what is under it.)
 - **A command field follows the command it is given** (`CommandPicker`): it keeps the text as typed
   (quotes and spaces) while its words match the command, and shows the new command when they no longer
   do (Discard, Import, the other display's button with the same id).
@@ -157,7 +165,9 @@ Chromium's `Emulation.setSafeAreaInsetsOverride` (a CDP command, reached through
 pads itself as it does on the device. `shots/shots.mjs` uses it at 466 × 678 (folded, right 84) and
 951 × 669 (unfolded, right 85, bottom 21) for the screenshots, and to check placement, the 44 pt targets,
 taps reaching the buttons, hiding on a desktop and an ordinary iPhone, no bb control in the unfolded strip,
-the drawer covering the rail, the buttons' navigation, and a layout saved in the editor: its Pin button pins
+the drawer covering the rail, the rail staying over a thread's right pane (folded, where it is the
+full-page tool panel; unfolded, beside the thread and maximized) and beside its own More menu, the
+buttons' navigation, and a layout saved in the editor: its Pin button pins
 the thread, a command picked from the full list names its button, and its `bb --version` button's result
 comes back as a notice. It also checks the settings page shows no layout JSON, and the debug numbers on both displays
 (above the top button and under the owner's 235/195 gaps; off for every other still).

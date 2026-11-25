@@ -38,7 +38,9 @@ insets the Duo reports simulated in a browser:
 
 Dark editor: [screenshot](docs/screenshots/editor-dark.png). On a mirrored device the rail is on the left:
 [screenshot](docs/screenshots/cover-mirrored-dark.png). With bb's sidebar drawer open, the rail steps
-aside: [screenshot](docs/screenshots/cover-drawer-open.png).
+aside: [screenshot](docs/screenshots/cover-drawer-open.png). With a thread's side pane open, it stays:
+[folded](docs/screenshots/cover-right-pane-dark.png), where the pane fills the screen, and
+[unfolded](docs/screenshots/unfolded-right-pane-dark.png).
 
 ![New thread, Back, a recent thread from More, and the rail stepping aside for bb's sidebar](docs/screenshots/duo-rail-demo.gif)
 
@@ -157,9 +159,11 @@ display gets, means the unfolded ones. The rail reads the insets the way bb's ow
 `env(safe-area-inset-*)`.
 
 It also stays out of bb's way. bb keeps its page out of the strip on both layouts, so the rail covers none
-of bb's interface and moves none of it, and only its buttons take taps. bb's drawers, sheets, dialogs,
-menus and toasts all sit above it. When one of them covers a button, as bb's sidebar drawer does when it
-slides the page sideways, the rail fades out until it is gone.
+of bb's interface and moves none of it, and only its buttons take taps. A thread's side pane, which on
+the cover screen fills the screen, keeps out of the strip too, and the rail stays over it. bb's sheets,
+dialogs, menus and toasts sit above the rail, and it fades out while one of them covers a button. It also
+fades out while bb's sidebar drawer is open, which slides the page sideways into the strip, so taps there
+close the drawer.
 
 ## Only a real Duo can confirm
 

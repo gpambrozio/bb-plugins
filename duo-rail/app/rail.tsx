@@ -41,11 +41,12 @@ import { recentThreads } from "./recent";
 import { useStoredLayout } from "./stored-layout";
 
 /**
- * Above bb's page (30 on compact screens) and under every layer bb draws over it: the compact sidebar
- * drawer's tap-to-close layer (40), the full-page tool panel (45), toasts (49), and dialogs, sheets
- * and menus (50). So the rail never takes a tap meant for them, and `useCovered` sees them.
+ * Above bb's page (30 on compact screens), the compact sidebar drawer's tap-to-close layer (40) and the
+ * full-page tool panel a thread's right pane opens as on a compact screen (45), which pads itself out of
+ * the strip as the page does; under toasts (49) and dialogs, sheets and menus (50). `useCovered` hides
+ * the rail under those, and over the drawer's layer.
  */
-const RAIL_Z_INDEX = 39;
+const RAIL_Z_INDEX = 46;
 
 export function railStyle(placement: RailPlacement, covered: boolean): CSSProperties {
   return {
@@ -60,7 +61,7 @@ export function railStyle(placement: RailPlacement, covered: boolean): CSSProper
     gap: placement.gap,
     // The column's gaps let taps through; only the buttons take them.
     pointerEvents: "none",
-    // Covered, it fades out but stays in place, so the hit test can tell when it is uncovered.
+    // Covered, it fades out in place (and is inert: taps go to what is under it).
     opacity: covered ? 0 : 1,
     transition: "opacity 150ms ease-out",
   };
@@ -78,8 +79,8 @@ const RailButton = forwardRef<HTMLButtonElement, RailButtonProps>(function RailB
       aria-label={label}
       {...props}
       // A menu trigger passes its own class and style; merged, so the button keeps taking taps. A disabled
-      // button (a thread action with no thread open) stays hit-testable: the browser sends it no clicks, and
-      // `useCovered` must find the rail at its centre, not the page under it, or it hides the whole rail.
+      // button (a thread action with no thread open) still takes the pointer, so a tap on it does nothing
+      // rather than fall through to the page under the rail.
       className={cn("pointer-events-auto disabled:pointer-events-auto disabled:cursor-default rounded-full p-0 text-foreground/80 active:bg-state-active [&_[data-icon-root]]:size-[22px] [&_svg]:size-[22px]", className)}
       style={{ ...style, width: size, height: size }}
     >
@@ -279,7 +280,7 @@ export function DuoRail() {
     defaultClearance: DEFAULT_CLEARANCES[display],
     buttonCount: buttons.length,
   });
-  const covered = useCovered(rail, placement !== null);
+  const covered = useCovered(rail, placement);
   // A command still running when the page goes (or this copy of Duo Rail is unloaded) is stopped and its
   // terminal closed; the watchdog on the server stops it anyway if the close does not get out.
   useEffect(() => {
@@ -298,6 +299,7 @@ export function DuoRail() {
           ref={rail}
           aria-label="Duo rail"
           aria-hidden={covered || undefined}
+          inert={covered || undefined}
           data-testid="duo-rail"
           data-side={placement.side}
           data-display={display}
