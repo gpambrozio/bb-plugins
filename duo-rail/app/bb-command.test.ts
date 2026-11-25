@@ -145,18 +145,21 @@ const hasPython = spawnSync("python3", ["--version"]).status === 0;
 const COMMAND = 'sleep 30 & echo $! > "$1"; echo $$ > "$2"; wait';
 const started: { pid: () => number; harness: ReturnType<typeof spawn> }[] = [];
 
-function startWrapper(deadlineSeconds: number, command = COMMAND) {
+/** Every shell `/bin/sh` may be: bash on macOS, dash on Debian and Ubuntu (CI). */
+const SHELLS = ["/bin/sh", "/bin/dash", "/bin/bash"].filter((shell) => existsSync(shell));
+
+function startWrapper(shell: string, deadlineSeconds: number, command = COMMAND) {
   const dir = mkdtempSync(join(tmpdir(), "duo-rail-wrapper-"));
   const files = { child: join(dir, "child"), self: join(dir, "self") };
-  const harness = spawn("python3", [PTY_RUN, "/bin/sh", "-c", wrap(`"$0" "$@"`, deadlineSeconds), "/bin/sh", "-c", command, "x", files.child, files.self]);
+  const harness = spawn("python3", [PTY_RUN, shell, "-c", wrap(`"$0" "$@"`, deadlineSeconds), shell, "-c", command, "x", files.child, files.self]);
   let output = "";
   let errors = "";
   harness.stdout.on("data", (data: Buffer) => (output += data.toString()));
   harness.stderr.on("data", (data: Buffer) => (errors += data.toString()));
-  const shell = () => Number(errors.split("\n")[0]);
-  started.push({ pid: shell, harness });
+  const shellPid = () => Number(errors.split("\n")[0]);
+  started.push({ pid: shellPid, harness });
   const pidIn = (file: string) => (existsSync(file) && readFileSync(file, "utf8").trim() !== "" ? Number(readFileSync(file, "utf8")) : null);
-  return { harness, output: () => output, shell, child: () => pidIn(files.child), self: () => pidIn(files.self) };
+  return { harness, output: () => output, shellPid, child: () => pidIn(files.child), self: () => pidIn(files.self) };
 }
 
 const alive = (pid: number | null) => {
@@ -178,7 +181,7 @@ async function until(test: () => boolean, ms: number): Promise<boolean> {
   return test();
 }
 
-describe.skipIf(!hasPython)("the wrapper on the server's machine", () => {
+describe.skipIf(!hasPython).each(SHELLS)("the wrapper on the server's machine, in %s", (shell) => {
   afterEach(() => {
     // Only what these tests started: the wrapper shell and its harness (closing the harness's terminal
     // hangs up on whatever is left in it).
@@ -189,26 +192,26 @@ describe.skipIf(!hasPython)("the wrapper on the server's machine", () => {
   });
 
   it("stops the command and its children at the deadline, even with the wrapper and its terminal gone", async () => {
-    const run = startWrapper(1);
-    expect(await until(() => alive(run.child()) && alive(run.self()) && alive(run.shell()), 5000)).toBe(true);
+    const run = startWrapper(shell, 1);
+    expect(await until(() => alive(run.child()) && alive(run.self()) && alive(run.shellPid()), 5000)).toBe(true);
     const [child, self] = [run.child(), run.self()];
     // The page closed and the terminal with it, the wrapper killed outright: nothing is left to clean up.
-    process.kill(run.shell(), "SIGKILL");
+    process.kill(run.shellPid(), "SIGKILL");
     run.harness.kill("SIGKILL");
     expect(alive(child)).toBe(true);
     expect(await until(() => !alive(child) && !alive(self), 6000)).toBe(true);
   }, 15_000);
 
   it("stops the command and its children at once on a hang-up (the terminal closed)", async () => {
-    const run = startWrapper(30);
-    expect(await until(() => alive(run.child()) && alive(run.self()) && alive(run.shell()), 5000)).toBe(true);
+    const run = startWrapper(shell, 30);
+    expect(await until(() => alive(run.child()) && alive(run.self()) && alive(run.shellPid()), 5000)).toBe(true);
     const [child, self] = [run.child(), run.self()];
-    process.kill(run.shell(), "SIGHUP");
+    process.kill(run.shellPid(), "SIGHUP");
     expect(await until(() => !alive(child) && !alive(self), 3000)).toBe(true);
   }, 15_000);
 
   it("with the page gone and the terminal left open, stops the command at the deadline and says so, with no job notices", async () => {
-    const run = startWrapper(1);
+    const run = startWrapper(shell, 1);
     expect(await until(() => run.output().includes(EXIT_MARKER) && run.output().includes("\u0007", run.output().indexOf(EXIT_MARKER)), 8000)).toBe(true);
     expect(run.output()).toContain(TIMEOUT_MARKER);
     expect(exitStatus(run.output())).toBe(143);
@@ -217,10 +220,12 @@ describe.skipIf(!hasPython)("the wrapper on the server's machine", () => {
   }, 15_000);
 
   it("reports a command that ends in time, and its watchdog is gone with it", async () => {
-    const run = startWrapper(1, "echo finished; exit 3");
+    const run = startWrapper(shell, 1, "echo finished; echo complaint >&2; exit 3");
     expect(await until(() => exitStatus(run.output()) !== null, 5000)).toBe(true);
     expect(exitStatus(run.output())).toBe(3);
     expect(plainText(run.output())).toContain("finished");
+    // The command's own errors still show.
+    expect(plainText(run.output())).toContain("complaint");
     // Past the deadline, the watchdog has not fired.
     await new Promise((resolve) => setTimeout(resolve, 1800));
     expect(run.output()).not.toContain(TIMEOUT_MARKER);

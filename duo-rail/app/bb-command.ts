@@ -50,7 +50,9 @@ export function wrap(script: string, deadlineSeconds = TIMEOUT_MS / 1000): strin
     "dog=$!",
     "set +m",
     `trap 'kill -TERM -"$job" 2>/dev/null; kill -TERM -"$dog" 2>/dev/null; sleep 1; kill -KILL -"$job" 2>/dev/null; exit 129' HUP INT TERM`,
-    'wait "$job"',
+    // dash reports a job killed by a signal ("Terminated") on the shell's stderr; the command's own
+    // stderr is untouched.
+    'wait "$job" 2>/dev/null',
     "status=$?",
     'kill -TERM -"$dog" 2>/dev/null',
     `printf '\\033]5253;duo-rail;exit;%d\\007' "$status"`,

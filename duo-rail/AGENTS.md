@@ -74,14 +74,16 @@ scout report that proposed this plugin.
   page, so a command that never ends (`bb plugin logs … -f`) would otherwise run on after the page
   closed. The wrapper turns on job control (`set -m`, which the terminal's pty allows) to start the
   command, stdin from `/dev/null`, as a process group of its own, and a watchdog in another group; it
-  turns job control off again so bash prints no "Terminated" notices into the output. At the deadline the
+  turns job control off again so bash prints no "Terminated" notices into the output, and sends the
+  outer `wait`'s stderr to `/dev/null`, where dash (Linux's `/bin/sh`) reports the killed job. At the deadline the
   watchdog prints `TIMEOUT_MARKER` and kills the command's whole group (TERM, then KILL 3 s later), its
   children included; a hang-up or TERM to the wrapper (the terminal closed) kills the group at once, and
   the watchdog still fires if the wrapper was killed outright. The page bounds each output request
   (`OUTPUT_WAIT_MS`), stops waiting `CLIENT_GRACE_MS` past the deadline, and stops every run it has going
   on `pagehide` or when the overlay unmounts (`cancelBbRuns`). `app/bb-command.test.ts` runs the real
   wrapper under a pseudo-terminal (`app/testing/pty-run.py`, `forkpty`; `pty.spawn` hangs on macOS once
-  the child exits) and checks each of those cases by process id.
+  the child exits) and checks each of those cases by process id, in every shell present (`/bin/sh`, `/bin/dash`,
+  `/bin/bash`: macOS ships dash too, so the Linux case runs locally).
 - **The command picker's list comes from bb's command-line tool** (`app/command-catalog.ts`), because the
   SDK's plugin list has only each plugin's top-level command: one terminal run of `bb guide commands`
   (bb's own) and `bb <name> --help` for each plugin (its `Commands:` lines). Use the text form of the
