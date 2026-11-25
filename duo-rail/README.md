@@ -54,16 +54,8 @@ runs a `bb` command also needs bb's command-line tool on the bb server's machine
 
 ## Install
 
-From the pull request's branch, to try it before it is released:
-
 ```bash
-bb plugin install 'git:github.com/gpambrozio/bb-plugins@fm/duo-rail-plugin' --plugin duo-rail
-```
-
-Once released:
-
-```bash
-bb plugin install 'git:github.com/gpambrozio/bb-plugins@^0.1.0' --plugin duo-rail --tag-prefix duo-rail/
+bb plugin install 'git:github.com/gpambrozio/bb-plugins@>=0.1.0' --plugin duo-rail --tag-prefix duo-rail/
 ```
 
 From a clone:
