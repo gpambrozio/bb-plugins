@@ -16,6 +16,7 @@
     { "name": "codex-realtime", "source": "./codex-realtime" },
     { "name": "phone-rail", "source": "./phone-rail" },
     { "name": "dream", "source": "./dream" },
-    { "name": "project-actions", "source": "./project-actions" }
+    { "name": "project-actions", "source": "./project-actions" },
+    { "name": "duo-rail", "source": "./duo-rail" }
   ]
 }

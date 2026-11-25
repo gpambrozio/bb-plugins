@@ -497,6 +497,37 @@ selected by `sidebar.navigationProvider`) starts from `plugins/navigation` in `g
 `@/components/ui/*` imports are in the `@bb` registry (`sidebar-row-classes`, `shortcut-pill`, and
 `sidebar-visibility-customize`, bb's own Customize navigation list) (`phone-rail`).
 
+**Safe-area insets can be simulated in a browser.** bb's page has `viewport-fit=cover` and pads itself
+with `env(safe-area-inset-*)`, so Chromium's `Emulation.setSafeAreaInsetsOverride` (a CDP command,
+`page.context().newCDPSession(page)` in Playwright) makes bb lay out as on an iPhone, notch, home
+indicator or the iPhone Duo's side strip included. An overlay that needs the insets reads them the same
+way, through a probe element whose padding is the four `env()` values (`duo-rail/app/insets.ts`). The
+insets do not follow the Dynamic Island: on the Duo, with a Live Activity or only the clock, the insets,
+the window, the visual viewport and the screen read the same (iOS 27.1, bb 0.50), so nothing on the page
+can tell how far down the strip the island reaches. On
+compact screens bb's page is z-index 30 and everything it draws over the page (the sidebar drawer's
+transparent tap-to-close layer 40, the full-page tool panel 45, toasts 49, dialogs and sheets 50);
+the drawer slides the page sideways instead of covering it (bb 0.50). The tool panel is what a thread's
+right pane opens as there: opaque, over the whole page, and padded out of the strip like the page, so
+something meant to show in the strip on every page stacks above 45 (`duo-rail/app/covered.ts`).
+
+**Keep structured state out of settings.** bb's settings form draws every setting a plugin defines, so a
+list kept as a JSON string setting shows up there as raw text, which the owner did not want. Keep it in
+`bb.storage.kv` behind a tagged read RPC that the write invalidates (`bb.rpc.experimental_invalidate`): the
+app reads it with `experimental_useRpcQuery`, and every device refreshes (`duo-rail/server/layout-store.ts`).
+A setting dropped from `bb.settings.define` keeps its stored value: `bb.sdk.plugins.getSettings` still
+returns it in `values`, and `updateSettings` with `null` unsets it, which is how a migration moves it out
+(bb 0.50.1).
+
+**A plugin's app can run `bb` itself.** No SDK call runs a command-line command, but
+`useSdk().system.experimental_cliCommand().installedPath` is bb's launcher on the server's machine, and a
+`host_path` terminal on `system.config().primaryHostId` in argv mode runs it with the words unquoted. Have
+the command print its exit status in an OSC sequence and then wait, read `terminals.output`, and close the
+terminal (`duo-rail/app/bb-command.ts`). Output printed in one large burst can lose its start from the
+terminal's buffer before the first read: `bb guide commands --json` (65 KB) did, the text form (21 KB) did not.
+`bb guide commands` lists bb's own commands; plugin subcommands are in each `bb <name> --help`. In a dev bb, `bb settings cli-command install` links the launcher
+into its fake HOME only.
+
 **A window can learn which machine it runs on.** bb's desktop app runs beside a host daemon that answers
 `GET http://127.0.0.1:<port>/status` with `{ hostId, connected, serverUrl }`, on the ports
 `useSdk().system.config().localHelperPorts` lists and with CORS for the server's origin; bb's own app reads
@@ -541,8 +572,15 @@ unchanged data after a refetch, and never pass a fresh `[]`), or every refresh f
 `Volume2`, `RefreshCw`, `Megaphone`, `Shield` or `Loader2` — and draws its generic bolt for anything else,
 silently. A missing glyph is an SVG declared in `bb.branding.experimental_icons` and named
 `"<pluginId>/<name>"`. `herald/app/testing/bb-icon-names.ts` holds bb 0.44's list and
-`herald/app/icons.test.ts` the check. bb's vendored `Button` takes no `title`; a tooltip is bb's
+`herald/app/icons.test.ts` the check; `duo-rail/scripts/icon-names.mjs` reads the whole current list (180
+names in bb 0.49 and 0.50.1) out of the installed bb's app bundle. bb's vendored `Button` takes no `title`; a tooltip is bb's
 `Tooltip` (`npx shadcn add @bb/tooltip`).
+
+**bb's vendored `Popover` is a bottom sheet on a compact viewport, and the sheet keeps its content
+mounted after it closes** (`npx shadcn add @bb/popover`, bb 0.49 registry): state inside it (a search
+box's text) survives a close, and a mount effect runs only on the first opening. Key the content by an
+opening counter to start fresh each time (`duo-rail/app/editor.tsx`, `IconPicker`). On a wide viewport it
+is Radix's popover, unmounted on close, so a desktop-only check misses this.
 
 Colour comes from the semantic classes, never a literal — check light and dark. Where a literal is the
 point (`model-pricing`'s provider palette), pick it by `experimental_useCodeTheme().mode`, which follows
