@@ -76,9 +76,12 @@ scout report that proposed this plugin.
   command, stdin from `/dev/null`, as a process group of its own, and a watchdog in another group; it
   turns job control off again so bash prints no "Terminated" notices into the output, and sends the
   outer `wait`'s stderr to `/dev/null`, where dash (Linux's `/bin/sh`) reports the killed job. At the deadline the
-  watchdog prints `TIMEOUT_MARKER` and kills the command's whole group (TERM, then KILL 3 s later), its
-  children included; a hang-up or TERM to the wrapper (the terminal closed) kills the group at once, and
-  the watchdog still fires if the wrapper was killed outright. The page bounds each output request
+  watchdog prints `TIMEOUT_MARKER` and reaps the command's whole group (`reap`: TERM, then from
+  `KILL_AFTER_SECONDS` on KILL every second until `kill -0 -<group>` finds nobody), children included;
+  a hang-up or TERM to the wrapper (the terminal closed) reaps it at once, and the watchdog still fires if
+  the wrapper was killed outright. When the command ends by itself, whatever it left in its group is
+  reaped too, and only then is the exit status printed. Never stop the watchdog because the group's
+  leader exited: a child that ignores TERM outlives it (review pass 2 found exactly that). The page bounds each output request
   (`OUTPUT_WAIT_MS`), stops waiting `CLIENT_GRACE_MS` past the deadline, and stops every run it has going
   on `pagehide` or when the overlay unmounts (`cancelBbRuns`). `app/bb-command.test.ts` runs the real
   wrapper under a pseudo-terminal (`app/testing/pty-run.py`, `forkpty`; `pty.spawn` hangs on macOS once

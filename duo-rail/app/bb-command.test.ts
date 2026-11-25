@@ -143,7 +143,11 @@ describe("output", () => {
 const PTY_RUN = fileURLToPath(new URL("./testing/pty-run.py", import.meta.url));
 const hasPython = spawnSync("python3", ["--version"]).status === 0;
 const COMMAND = 'sleep 30 & echo $! > "$1"; echo $$ > "$2"; wait';
-const started: { pid: () => number; harness: ReturnType<typeof spawn> }[] = [];
+/** A command whose child ignores TERM, as one shutting down slowly would. */
+const STUBBORN = '( trap "" TERM; exec sleep 30 ) & echo $! > "$1"; echo $$ > "$2"; wait';
+/** A command that ends at once and leaves such a child behind. */
+const LEAVES_CHILD = '( trap "" TERM; exec sleep 30 ) & echo $! > "$1"; echo $$ > "$2"; exit 0';
+const started: { pids: () => (number | null)[]; harness: ReturnType<typeof spawn> }[] = [];
 
 /** Every shell `/bin/sh` may be: bash on macOS, dash on Debian and Ubuntu (CI). */
 const SHELLS = ["/bin/sh", "/bin/dash", "/bin/bash"].filter((shell) => existsSync(shell));
@@ -157,8 +161,8 @@ function startWrapper(shell: string, deadlineSeconds: number, command = COMMAND)
   harness.stdout.on("data", (data: Buffer) => (output += data.toString()));
   harness.stderr.on("data", (data: Buffer) => (errors += data.toString()));
   const shellPid = () => Number(errors.split("\n")[0]);
-  started.push({ pid: shellPid, harness });
   const pidIn = (file: string) => (existsSync(file) && readFileSync(file, "utf8").trim() !== "" ? Number(readFileSync(file, "utf8")) : null);
+  started.push({ pids: () => [shellPid(), pidIn(files.child), pidIn(files.self)], harness });
   return { harness, output: () => output, shellPid, child: () => pidIn(files.child), self: () => pidIn(files.self) };
 }
 
@@ -185,8 +189,8 @@ describe.skipIf(!hasPython).each(SHELLS)("the wrapper on the server's machine, i
   afterEach(() => {
     // Only what these tests started: the wrapper shell and its harness (closing the harness's terminal
     // hangs up on whatever is left in it).
-    for (const { pid, harness } of started.splice(0)) {
-      if (alive(pid())) process.kill(pid(), "SIGKILL");
+    for (const { pids, harness } of started.splice(0)) {
+      for (const pid of pids()) if (pid !== null && alive(pid)) process.kill(pid, "SIGKILL");
       harness.kill("SIGKILL");
     }
   });
@@ -218,6 +222,37 @@ describe.skipIf(!hasPython).each(SHELLS)("the wrapper on the server's machine, i
     expect(run.output()).not.toMatch(/Terminated|Killed|Done/);
     expect(alive(run.child()) || alive(run.self())).toBe(false);
   }, 15_000);
+
+  it("with the page gone and the wrapper alive, kills a child that ignores TERM at the deadline, and reports the end only once it is gone", async () => {
+    const run = startWrapper(shell, 1, STUBBORN);
+    expect(await until(() => alive(run.child()) && alive(run.self()), 5000)).toBe(true);
+    const child = run.child();
+    // Nobody reads or closes the terminal; the wrapper runs on.
+    expect(await until(() => exitStatus(run.output()) !== null, 12_000)).toBe(true);
+    expect(run.output()).toContain(TIMEOUT_MARKER);
+    // Reported only after the cleanup: the child is already gone (allowing its reaping by init).
+    expect(await until(() => !alive(child), 500)).toBe(true);
+    expect(alive(run.shellPid())).toBe(true);
+  }, 20_000);
+
+  it("kills a child that ignores TERM even when the wrapper itself was killed outright", async () => {
+    const run = startWrapper(shell, 1, STUBBORN);
+    expect(await until(() => alive(run.child()) && alive(run.self()) && alive(run.shellPid()), 5000)).toBe(true);
+    const child = run.child();
+    process.kill(run.shellPid(), "SIGKILL");
+    run.harness.kill("SIGKILL");
+    expect(await until(() => !alive(child), 10_000)).toBe(true);
+  }, 20_000);
+
+  it("kills what a command that ended left in its group before reporting its status", async () => {
+    const run = startWrapper(shell, 30, LEAVES_CHILD);
+    expect(await until(() => alive(run.child()), 5000)).toBe(true);
+    const child = run.child();
+    expect(await until(() => exitStatus(run.output()) !== null, 10_000)).toBe(true);
+    expect(exitStatus(run.output())).toBe(0);
+    expect(run.output()).not.toContain(TIMEOUT_MARKER);
+    expect(await until(() => !alive(child), 500)).toBe(true);
+  }, 20_000);
 
   it("reports a command that ends in time, and its watchdog is gone with it", async () => {
     const run = startWrapper(shell, 1, "echo finished; echo complaint >&2; exit 3");

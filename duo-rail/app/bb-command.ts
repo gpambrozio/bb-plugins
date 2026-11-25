@@ -33,27 +33,38 @@ export const CLIENT_GRACE_MS = 10_000;
 /** The longest one output request may take before the page asks again (or gives up at its deadline). */
 export const OUTPUT_WAIT_MS = 5_000;
 const POLL_MS = 250;
+/** How long a command's group has to end after TERM before it is sent KILL. */
+export const KILL_AFTER_SECONDS = 3;
 
 /**
  * A `sh -c` script with `$0` the `bb` launcher and `$@` its arguments, run under a deadline, followed by
  * the exit marker and a wait. `set -m` gives the command and the watchdog process groups of their own
- * (killed whole with `kill -- -<group>`); turning it off again keeps bash from printing job notices into
- * the output. `sleep`, not `read`, at the end: a terminal nobody closes (the page went away) still ends,
- * two minutes later.
+ * (signalled whole with `kill -<signal> -<group>`); turning it off again keeps bash from printing job
+ * notices into the output.
+ *
+ * `reap <grace>` ends the command's whole group: TERM, then, from `<grace>` seconds on, KILL every second
+ * until nothing in the group is left, so a child that ignores TERM or outlives its parent goes too. The
+ * watchdog reaps at the deadline; a hang-up or TERM to the wrapper (the terminal closed) reaps at once;
+ * and when the command itself ends, whatever it left in its group is reaped before the exit status is
+ * printed. The watchdog is stopped only once the group is gone, never merely because the group's leader
+ * exited. `sleep`, not `read`, at the end: a terminal nobody closes (the page went away) still ends, two
+ * minutes later.
  */
 export function wrap(script: string, deadlineSeconds = TIMEOUT_MS / 1000): string {
   return [
+    `reap() { kill -TERM -"$job" 2>/dev/null; n=0; while kill -0 -"$job" 2>/dev/null; do [ "$n" -ge "$1" ] && kill -KILL -"$job" 2>/dev/null; sleep 1; n=$((n + 1)); done; }`,
     "set -m",
     `( ${script} ) </dev/null &`,
     "job=$!",
-    `( sleep ${deadlineSeconds}; printf '\\033]5253;duo-rail;timeout\\007'; kill -TERM -"$job" 2>/dev/null; sleep 3; kill -KILL -"$job" 2>/dev/null ) </dev/null &`,
+    `( sleep ${deadlineSeconds}; printf '\\033]5253;duo-rail;timeout\\007'; reap ${KILL_AFTER_SECONDS} ) </dev/null &`,
     "dog=$!",
     "set +m",
-    `trap 'kill -TERM -"$job" 2>/dev/null; kill -TERM -"$dog" 2>/dev/null; sleep 1; kill -KILL -"$job" 2>/dev/null; exit 129' HUP INT TERM`,
+    `trap 'reap 1; kill -TERM -"$dog" 2>/dev/null; exit 129' HUP INT TERM`,
     // dash reports a job killed by a signal ("Terminated") on the shell's stderr; the command's own
     // stderr is untouched.
     'wait "$job" 2>/dev/null',
     "status=$?",
+    `reap ${KILL_AFTER_SECONDS}`,
     'kill -TERM -"$dog" 2>/dev/null',
     `printf '\\033]5253;duo-rail;exit;%d\\007' "$status"`,
     "sleep 120",
