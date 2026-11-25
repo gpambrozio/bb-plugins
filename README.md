@@ -3,7 +3,7 @@
 Plugins for [bb](https://getbb.app). One folder per plugin, each self-contained.
 
 Most are ports of the plugins in [`gpambrozio/paseo-plugins`](https://github.com/gpambrozio/paseo-plugins),
-each tracked by its own issue; `screen-sharing`, `diff-review`, `terminals`, `learning-exercises`, `codex-realtime`, `phone-rail`, `dream` and `project-actions` are new here.
+each tracked by its own issue; `screen-sharing`, `diff-review`, `terminals`, `learning-exercises`, `codex-realtime`, `phone-rail`, `dream`, `project-actions` and `duo-rail` are new here.
 
 | Plugin | What it does | Status |
 | --- | --- | --- |
@@ -19,6 +19,7 @@ each tracked by its own issue; `screen-sharing`, `diff-review`, `terminals`, `le
 | [`learning-exercises`](learning-exercises) | Offers a short exercise on work you just did, and runs it in a side thread with an answer card. Adapted from Dr. Cat Hicks's Learning Opportunities (CC BY 4.0). | New — 0.1.0 |
 | [`codex-realtime`](codex-realtime) | Runs Voice Mode on your ChatGPT subscription, from the sign-in `codex login` keeps; read-only, undocumented, could stop working. | New — 0.1.0 |
 | [`phone-rail`](phone-rail) | bb's icon rail with its own, smaller set of icons on phone-sized screens. | New — 0.1.0 |
+| [`duo-rail`](duo-rail) | A column of your chosen bb buttons at the bottom of the empty strip beside the screen, on both of the iPhone Duo's displays. | New — 0.1.0 |
 | [`dream`](dream) | Consolidates each Claude Code project's memory overnight, as Claude Code's auto-dream does, in a hidden thread that can write only that memory. Schedule off until you turn it on. | New — 0.1.0 |
 | [`project-actions`](project-actions) | A menu of the project's named commands (dev server, tests, scripts) in each thread's header; each runs in a terminal of that thread, in its worktree. An editor for the list beside the thread. | New — 0.1.0 |
 
