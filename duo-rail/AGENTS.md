@@ -37,7 +37,10 @@ scout report that proposed this plugin.
   document itself under a button counts as empty too: a modal menu (the rail's own More, on the wide
   layout) sets the page's `pointer-events: none`, and the page then drops out of the hit test. The test
   re-runs on DOM mutations, resizes and transition ends, and names no bb element. A hidden rail fades out
-  and is `inert`, so taps go through to what is under it (the drawer's layer closes the drawer).
+  and is `inert`, so taps go through to what is under it (the drawer's layer closes the drawer). The rule
+  hides the rail when the drawer puts the page or its layer in the strip, not whenever the drawer is open:
+  on a mirrored left strip, the drawer itself is padded out of the strip and the page slides away from
+  it, so the rail stays showing in that empty padding over the open drawer (no bb control is there).
 - **The layout lives in the plugin's key-value store, not in a setting** (`server/layout-store.ts`, key
   `layout`), behind two RPCs (`shared/contract.ts`): `layout.get` (tagged `layout`) and `layout.set`, which
   invalidates the tag, so every open rail and editor on every device reads it again. bb's settings form

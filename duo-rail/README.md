@@ -162,8 +162,10 @@ It also stays out of bb's way. bb keeps its page out of the strip on both layout
 of bb's interface and moves none of it, and only its buttons take taps. A thread's side pane, which on
 the cover screen fills the screen, keeps out of the strip too, and the rail stays over it. bb's sheets,
 dialogs, menus and toasts sit above the rail, and it fades out while one of them covers a button. It also
-fades out while bb's sidebar drawer is open, which slides the page sideways into the strip, so taps there
-close the drawer.
+fades out while bb's sidebar drawer puts bb's page or its tap-to-close layer in the strip, so taps there
+close the drawer: with the strip on the right, the drawer slides the page sideways into it. On a mirrored
+device, with the strip on the left, the drawer's own padding keeps the strip empty, and the rail may stay
+showing there over the open drawer.
 
 ## Only a real Duo can confirm
 
