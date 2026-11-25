@@ -112,7 +112,11 @@ scout report that proposed this plugin.
   ("Name" matched `DiffRenamed`, "Pin" `PinOff`). bb's sheet keeps its content mounted after it closes, so `IconPicker` keys
   the grid by an opening counter: each opening starts with an empty search and reveals the choice again
   (the shot list checks it on a phone). The popover is portaled out of the row, so tests and
-  the shot list find the grid and its search box from the page, not from the row.
+  the shot list find the grid and its search box from the page, not from the row. The grid scrolls, so it clips whatever its
+  cells draw outside themselves: it keeps 4 pt of padding so the chosen cell's ring (1 pt outside the cell)
+  shows in the first column too. The popover is 368 pt wide, eight symbols across, capped at the room Radix
+  reports (`--radix-popover-content-available-width`, with `collisionPadding` 8) so it stays inside the
+  window; the shot list measures all three.
 - **The app never imports the SDK root at run time** (`app/imports.test.ts`). `shared/` imports only zod.
 
 ## Testing without a Duo

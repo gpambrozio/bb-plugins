@@ -383,8 +383,30 @@ export async function shoot({ bb, shots, VARIANTS }) {
     await page.waitForTimeout(1500);
     const search = page.getByRole("searchbox", { name: "Search symbols" });
     check(await search.evaluate((element) => element === document.activeElement), "on a desktop the search box takes the typing when the popover opens");
-    const popover = await grid.evaluate((element) => element.parentElement.parentElement.getBoundingClientRect().width);
-    check(popover <= 330, `the popover is compact (${Math.round(popover)} pt wide)`);
+    // Nothing in the popover is clipped at its left: the search box's border and every cell's highlight ring
+    // (1 pt outside the cell) are inside what the grid and the popover show. The popover stays in the window.
+    const fit = await grid.evaluate((element) => {
+      const content = element.parentElement.parentElement;
+      const box = content.getBoundingClientRect();
+      const view = element.getBoundingClientRect();
+      const inner = { left: view.left + element.clientLeft, right: view.left + element.clientLeft + element.clientWidth };
+      const cells = [...element.querySelectorAll('[role="radio"]')].map((cell) => cell.getBoundingClientRect());
+      const input = content.querySelector('input[type="search"]').getBoundingClientRect();
+      const hit = document.elementFromPoint(input.left + 0.5, input.top + input.height / 2);
+      return {
+        width: box.width,
+        inWindow: box.left >= 0 && box.right <= innerWidth,
+        columns: new Set(cells.map((cell) => Math.round(cell.left))).size,
+        ringsInside: cells.every((cell) => cell.left - 1 >= inner.left && cell.right + 1 <= inner.right),
+        searchEdge: hit?.matches?.('input[type="search"]') === true && input.left >= box.left + 1,
+        detail: `content ${Math.round(box.left)}–${Math.round(box.right)}, grid ${Math.round(inner.left)}–${Math.round(inner.right)}, first cell ${Math.round(Math.min(...cells.map((c) => c.left)))}, search ${Math.round(input.left)}`,
+      };
+    });
+    console.log(`  popover: ${fit.detail}`);
+    check(fit.searchEdge, "the search box's left border shows");
+    check(fit.ringsInside, "every cell's highlight ring shows in full, the first column's too");
+    check(fit.inWindow, "the popover stays inside the window");
+    check(fit.columns >= 8 && fit.width <= 380, `the popover is compact, ${fit.columns} symbols across (${Math.round(fit.width)} pt wide)`);
     await shots.still(page, "editor-symbol-popover-light.png", { around: [search, row.getByLabel("Name", { exact: true }), grid] });
     await shots.closePage(page);
   }

@@ -290,7 +290,7 @@ function SymbolGrid({ value, searchRef, onPick }: { value: string; searchRef: Re
         role="radiogroup"
         aria-label="Symbol"
         data-testid="duo-rail-icon-grid"
-        className="relative flex max-h-60 flex-wrap content-start gap-1 overflow-y-auto max-md:max-h-[50vh]"
+        className="relative flex max-h-60 flex-wrap content-start gap-1 overflow-y-auto p-1 max-md:max-h-[50vh]"
       >
         {shown.map((icon) => {
           const label = symbolLabel(icon);
@@ -337,7 +337,13 @@ function IconPicker({ id, value, onChange }: { id: string; value: string; onChan
       <PopoverTrigger id={id} type="button" className={ICON_TRIGGER_CLASS} aria-label={`Symbol: ${label}`} title={label}>
         <ActionIcon icon={value} />
       </PopoverTrigger>
-      <PopoverContent align="end" mobileTitle="Symbol" autoFocusRef={search} className="w-80 p-2 max-md:px-4 max-md:pb-4">
+      <PopoverContent
+        align="end"
+        collisionPadding={8}
+        mobileTitle="Symbol"
+        autoFocusRef={search}
+        className="w-[23rem] max-w-[var(--radix-popover-content-available-width)] p-2 max-md:px-4 max-md:pb-4"
+      >
         <SymbolGrid
           key={opening}
           value={value}
