@@ -1,0 +1,80 @@
+{
+  "name": "@gpambrozio/bb-plugin-code-mode",
+  "version": "0.1.0",
+  "license": "MIT",
+  "author": "gpambrozio (https://github.com/gpambrozio)",
+  "homepage": "https://github.com/gpambrozio/bb-plugins/tree/main/code-mode#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gpambrozio/bb-plugins.git",
+    "directory": "code-mode"
+  },
+  "bugs": {
+    "url": "https://github.com/gpambrozio/bb-plugins/issues"
+  },
+  "type": "module",
+  "engines": {
+    "bb": ">=0.50",
+    "bbPluginSdk": ">=0.6.157"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "build": "bb plugin build",
+    "gen:wrapper": "node scripts/gen-wrapper.mjs"
+  },
+  "files": [
+    "server.ts",
+    "server/",
+    "host.ts",
+    "host/",
+    "shared/",
+    "app.tsx",
+    "app/",
+    "components/",
+    "lib/",
+    "wrapper/",
+    "dist/",
+    "PLUGIN_OVERVIEW.md",
+    "CHANGELOG.md",
+    "!**/*.test.ts",
+    "!**/*.test.tsx"
+  ],
+  "bb": {
+    "name": "Code Mode",
+    "description": "Run chosen Claude Code threads in Claude Code's experimental Code Mode, per thread, with no bb restart.",
+    "branding": {
+      "icon": "Code"
+    },
+    "server": "./server.ts",
+    "host": "./host.ts",
+    "app": "./app.tsx"
+  },
+  "dependencies": {
+    "@radix-ui/react-checkbox": "^1.4.1",
+    "@radix-ui/react-slot": "^1.5.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@get-bb/plugin-sdk": "0.6.157",
+    "@testing-library/dom": "^10.4.2",
+    "@testing-library/react": "^16.3.3",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.20.7",
+    "@types/react": "^19.3.3",
+    "@types/react-dom": "^19.3.0",
+    "better-sqlite3": "^12.11.1",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "cron-parser": "^5.10.7",
+    "hono": "^4.13.22",
+    "jsdom": "^30.1.3",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "sonner": "^1.7.4",
+    "tailwind-merge": "^3.7.1",
+    "typescript": "^5.9.3",
+    "vaul": "^1.1.2",
+    "vitest": "^5.1.2"
+  }
+}
