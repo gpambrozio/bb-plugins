@@ -9,7 +9,7 @@ import type { FinishedCommand } from "../shared/shell-marks";
 
 type Listener = () => void;
 
-/** What a tab's new-thread composer starts with: the prompt, and a draft key so a new ask starts a new draft. */
+/** What a tab's new-thread composer starts with: the prompt, and a draft key so each ask starts a new draft. */
 export interface AgentSeed {
   prompt: string;
   draftKey: string;
@@ -27,17 +27,12 @@ export interface AgentPanelState {
   typed: ReadonlyMap<string, AgentTypedNote>;
 }
 
-/** A short, stable hash of a prompt, for its draft key. */
-function hash(text: string): string {
-  let value = 5381;
-  for (let index = 0; index < text.length; index += 1) value = ((value * 33) ^ text.charCodeAt(index)) >>> 0;
-  return value.toString(36);
-}
-
 export function createAgentPanelStore() {
   let state: AgentPanelState = { open: false, seeds: new Map(), typed: new Map() };
   const listeners = new Set<Listener>();
   const dismissed = new WeakSet<FinishedCommand>();
+  /** Counts the asks, so each one starts a draft of its own (the time keeps keys apart across reloads). */
+  let asks = 0;
   const set = (next: AgentPanelState) => {
     state = next;
     for (const listener of listeners) listener();
@@ -48,10 +43,10 @@ export function createAgentPanelStore() {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
-    /** Opens the panel; with a prompt, the tab's composer starts on it (a new draft for a new prompt). */
+    /** Opens the panel; with a prompt, the tab's composer starts a new draft on it. */
     open(terminalId: string, prompt: string | null) {
       const seeds = new Map(state.seeds);
-      if (prompt !== null) seeds.set(terminalId, { prompt, draftKey: `terminals-agent:${terminalId}:${hash(prompt)}` });
+      if (prompt !== null) seeds.set(terminalId, { prompt, draftKey: `terminals-agent:${terminalId}:${Date.now().toString(36)}-${++asks}` });
       set({ ...state, open: true, seeds });
     },
     close() {

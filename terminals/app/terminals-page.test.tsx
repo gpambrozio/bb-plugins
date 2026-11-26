@@ -33,8 +33,6 @@ const terminals = vi.hoisted(() => {
     phase: ShellPhase;
     shellListeners: Set<() => void>;
     inputListeners: Set<() => void>;
-    /** What the terminal shows, as `recentText` gives it. */
-    text: string;
   }
   const entries = new Map<string, Entry>();
   function entry(terminalId: string) {
@@ -52,7 +50,6 @@ const terminals = vi.hoisted(() => {
         phase: "unknown",
         shellListeners: new Set(),
         inputListeners: new Set(),
-        text: "",
       };
       entries.set(terminalId, found);
     }
@@ -152,7 +149,6 @@ vi.mock("./live-terminals", () => ({
         found.inputListeners.add(listener);
         return () => found.inputListeners.delete(listener);
       },
-      recentText: () => found.text,
     };
   },
   releaseClosedTerminals: (open: ReadonlySet<string>) => {
@@ -1195,16 +1191,15 @@ describe("asking an agent", () => {
     for (const id of windowAgentPanel.get().typed.keys()) windowAgentPanel.clearTyped(id);
   });
 
-  it("offers an agent when a command fails, and starts one in the project the shell is in", async () => {
+  it("offers an agent when a command fails, and starts one in the project the shell is in, on a short ask", async () => {
     const { started } = await shown();
     expect(screen.queryByRole("button", { name: /Ask an agent$/ })).toBeNull();
     act(() => terminals.finish("term_1", failure()));
     fireEvent.click(await screen.findByRole("button", { name: /Ask an agent$/ }));
     const composer = await screen.findByTestId("bb-new-thread-composer");
+    // Not the terminal's output: the agent reads that itself.
     const prompt = (screen.getByTestId("bb-new-thread-composer-input") as HTMLTextAreaElement).value;
-    expect(prompt).toContain('A command failed in my terminal "Mac mini" in /Users/me/code/app:');
-    expect(prompt).toContain("$ npm test\nError: 2 tests failed");
-    expect(prompt).toContain("It exited with code 1.");
+    expect(prompt).toBe("The last command I ran returned an error. Help me debug.");
     expect(composer.dataset.defaultProjectId).toBe("proj_app");
     expect(JSON.parse(composer.dataset.defaultEnvironment ?? "null")).toEqual({
       type: "host",
@@ -1218,7 +1213,7 @@ describe("asking an agent", () => {
     await waitFor(() => expect(started).toHaveLength(1));
     expect(started[0]?.terminalId).toBe("term_1");
     expect(started[0]?.request.projectId).toBe("proj_app");
-    expect(JSON.stringify(started[0]?.request.input)).toContain("npm test");
+    expect(JSON.stringify(started[0]?.request.input)).toContain("returned an error");
     // The panel now shows the thread's chat.
     expect(await screen.findByText(/ThreadChat stub/)).toBeTruthy();
   });
@@ -1228,7 +1223,7 @@ describe("asking an agent", () => {
     act(() => terminals.finish("term_1", failure()));
     fireEvent.click(await screen.findByRole("button", { name: /Ask an agent$/ }));
     await waitFor(() => expect(asked).toHaveLength(1));
-    expect(asked[0]?.text).toContain("$ npm test");
+    expect(asked[0]?.text).toBe("The last command I ran returned an error. Help me debug.");
     expect(await screen.findByText(/ThreadChat stub/)).toBeTruthy();
     expect(screen.queryByTestId("bb-new-thread-composer")).toBeNull();
   });
@@ -1256,23 +1251,28 @@ describe("asking an agent", () => {
     await waitFor(() => expect(screen.queryByRole("button", { name: /Ask an agent$/ })).toBeNull());
   });
 
-  it("opens the agent on what the terminal shows from the toolbar, and lets go of a chat for a new one", async () => {
+  it("opens the agent from the toolbar, empty unless the last command failed, and lets go of a chat for a new one", async () => {
     const { state } = await shown("thr_agent");
     const toolbar = screen.getByRole("toolbar", { name: "Terminals" });
-    fireEvent.click(within(toolbar).getByRole("button", { name: "Ask an agent about this terminal" }));
+    const askButton = () => within(toolbar).getByRole("button", { name: "Ask an agent about this terminal" });
+    fireEvent.click(askButton());
     expect(await screen.findByText(/ThreadChat stub/)).toBeTruthy();
 
-    terminals.entry("term_1").text = "$ make\nmake: *** No rule to make target";
     fireEvent.click(screen.getByRole("button", { name: "New agent chat" }));
     await waitFor(() => expect(state.tabs[0]?.agentThreadId).toBeNull());
     expect(await screen.findByTestId("bb-new-thread-composer")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Close the agent panel" }));
     expect(screen.queryByTestId("bb-new-thread-composer")).toBeNull();
-    fireEvent.click(within(toolbar).getByRole("button", { name: "Ask an agent about this terminal" }));
-    const prompt = (await screen.findByTestId<HTMLTextAreaElement>("bb-new-thread-composer-input")).value;
-    expect(prompt).toContain('This is my terminal "Mac mini" (in /Users/me/code/app):');
-    expect(prompt).toContain("make: *** No rule to make target");
+    fireEvent.click(askButton());
+    expect((await screen.findByTestId<HTMLTextAreaElement>("bb-new-thread-composer-input")).value).toBe("");
+
+    fireEvent.click(screen.getByRole("button", { name: "Close the agent panel" }));
+    act(() => terminals.finish("term_1", failure()));
+    fireEvent.click(askButton());
+    expect((await screen.findByTestId<HTMLTextAreaElement>("bb-new-thread-composer-input")).value).toBe(
+      "The last command I ran returned an error. Help me debug.",
+    );
   });
 
   it("says what the agent typed until the user types", async () => {

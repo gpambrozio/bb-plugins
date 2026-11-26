@@ -19,7 +19,7 @@ import {
   type PluginNavPanelProps,
 } from "@get-bb/plugin-sdk/app";
 
-import { AGENT_TYPED, AgentTypedSchema, failurePrompt, isAskableFailure, screenPrompt } from "../shared/agent";
+import { AGENT_TYPED, AgentTypedSchema, FAILURE_PROMPT, isAskableFailure } from "../shared/agent";
 import type { RpcContract } from "../shared/contract";
 import { plusAction } from "../shared/host-choice";
 import type { FinishedCommand, ShellPhase } from "../shared/shell-marks";
@@ -214,9 +214,6 @@ function useShellState(terminal: LiveTerminal | null): { last: FinishedCommand |
   return state;
 }
 
-/** The lines of a terminal an agent is shown when asked with no failed command. */
-const SCREEN_PROMPT_LINES = 60;
-
 /** How often the page reads the list again while a tab's shell is still opening. */
 const OPENING_POLL_MS = 2_000;
 
@@ -377,12 +374,13 @@ export function TerminalsPage(_props: PluginNavPanelProps) {
   );
 
   /**
-   * "Ask an agent" about a failed command: sent straight to the tab's chat
-   * when it has one, else the panel's new-thread composer starts on it.
+   * "Ask an agent" about a failed command: a short ask, sent straight to the
+   * tab's chat when it has one, else the panel's new-thread composer starts on
+   * it. The agent reads the command and its output from the terminal itself.
    */
   const ask = useCallback(
-    async (tab: ListedTab, label: string, command: FinishedCommand) => {
-      const prompt = failurePrompt(command, { tabLabel: label, hostName: tab.hostName });
+    async (tab: ListedTab, command: FinishedCommand) => {
+      const prompt = FAILURE_PROMPT;
       windowAgentPanel.dismiss(command);
       if (tab.agentThreadId === null) {
         windowAgentPanel.open(tab.terminalId, prompt);
@@ -407,16 +405,11 @@ export function TerminalsPage(_props: PluginNavPanelProps) {
       return;
     }
     if (shownTab === null) return;
-    const terminal = liveTerminal(shownTab.terminalId, backend);
-    const prompt =
-      shownTab.agentThreadId !== null || agentPanel.seeds.has(shownTab.terminalId)
-        ? null
-        : screenPrompt(terminal.recentText(SCREEN_PROMPT_LINES), terminal.cwd(), {
-            tabLabel: labels.get(shownTab.terminalId) ?? shownTab.hostName,
-            hostName: shownTab.hostName,
-          });
+    // A new chat starts on the short ask when the last command failed, and empty otherwise.
+    const failed = isAskableFailure(liveTerminal(shownTab.terminalId, backend).lastCommand());
+    const prompt = shownTab.agentThreadId !== null || agentPanel.seeds.has(shownTab.terminalId) || !failed ? null : FAILURE_PROMPT;
     windowAgentPanel.open(shownTab.terminalId, prompt);
-  }, [agentPanel, shownTab, backend, labels]);
+  }, [agentPanel, shownTab, backend]);
 
   const statuses = useConnectionStatuses(tabs);
   const stopRenaming = useCallback(
@@ -558,7 +551,7 @@ export function TerminalsPage(_props: PluginNavPanelProps) {
               copyOnSelect={copyOnSelect}
               onClose={() => void close(shown)}
               agentTyped={agentPanel.typed.get(shown) ?? null}
-              onAsk={shownTab === null ? null : (command) => void ask(shownTab, labels.get(shown) ?? shownTab.hostName, command)}
+              onAsk={shownTab === null ? null : (command) => void ask(shownTab, command)}
             />
           ) : tabs === null ? null : (
             <EmptyState opening={opening} onOpen={() => void plus()} />

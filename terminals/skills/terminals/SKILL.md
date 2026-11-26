@@ -46,8 +46,9 @@ them rather than `bb terminal send`, read before you run, and ask before anythin
 or interactive. `terminal_run` refuses while a command runs, a full-screen program is open, or the
 user has typed something at the prompt; say so and wait for the user rather than working around it.
 
-A failed command reaches that chat as a message starting "A command failed in my terminal", with the
-command, its output and exit code: the user pressed **Ask an agent** for it. Exit codes and the end of a
+A failed command reaches that chat as "The last command I ran returned an error. Help me debug.": the
+user pressed **Ask an agent** for it. The message does not quote the terminal, so call `terminal_read`
+first; it shows the command, its output and how it ended. Exit codes and the end of a
 command are known only when the shell sends OSC 133 marks (fish 4, nushell, or the zsh and bash lines
 in the plugin's README); without them `terminal_run` returns the output once it goes quiet.
 

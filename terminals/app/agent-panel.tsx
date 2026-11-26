@@ -214,7 +214,7 @@ function StartAgent({
       </p>
       <div className="min-h-0 flex-1">
         <NewThreadComposer
-          key={seed?.draftKey ?? "screen"}
+          key={seed?.draftKey ?? "empty"}
           draftKey={seed?.draftKey ?? `terminals-agent:${tab.terminalId}`}
           initialPrompt={seed?.prompt ?? ""}
           placeholder="Ask the agent about this terminal"

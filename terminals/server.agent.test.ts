@@ -110,7 +110,10 @@ describe("a tab's agent", () => {
     );
     expect(own.tools.map((tool) => tool.name)).toEqual(["terminal_read", "terminal_run"]);
     expect(own.skills).toEqual(["terminals"]);
-    expect(own.instructions).toContain('"Mac mini"');
+    // The thread is told where the user is and what its tools reach, since its first message does not quote the terminal.
+    expect(own.instructions).toContain("The user is working in a terminal and wants your help with it.");
+    expect(own.instructions).toContain('the terminal tab "Mac mini" on the machine "Mac mini"');
+    expect(own.instructions).toMatch(/`terminal_read` reads what it shows now.*`terminal_run` types one command into it/s);
 
     // A fork, or any thread that writes the tab's id into its own metadata, gets nothing.
     const other = await harness.resolveAgentConfiguration(

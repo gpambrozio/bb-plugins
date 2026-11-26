@@ -60,12 +60,13 @@ The colours and font follow bb's theme, as bb's own terminal does.
   goes away when you type in the terminal, press its **×**, or the next command runs. Stopping a
   command with Ctrl-C (exit code 130) is not offered.
 - **Ask an agent** opens a panel beside the terminal (over it on a phone) with bb's new-thread box,
-  filled in with the command, the last lines it printed, its exit code and the directory it ran in.
-  You can edit it, pick the agent and model, and send it. The project starts on the one whose
+  filled in with "The last command I ran returned an error. Help me debug." The terminal's output is
+  not pasted in: the agent is told which tab you are working in and reads the command, its output and
+  exit code from the terminal itself. You can edit the message, pick the agent and model, and send it. The project starts on the one whose
   checkout holds the shell's directory, working in that checkout on the terminal's machine, else as
   for **Add to chat**. The provider and model start on bb's defaults for that project.
 - **The bot button** at the right end of the tab strip opens and closes the panel at any time, with
-  no failed command needed: a new chat starts on the terminal's last lines.
+  no failed command needed: a new chat starts empty, or on the same line when the last command failed.
 - **One chat per tab.** Once the tab has a chat, the panel shows it (bb's own chat, the same one the
   sidebar lists), and asking about another failure sends it to that chat straight away. The chat's
   **new chat** button lets go of it and starts over; **open in bb** shows it as a normal thread.

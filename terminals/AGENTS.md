@@ -32,12 +32,12 @@ specific to `terminals`.
 | `app/chat-delivery.tsx` | The block on its way to a composer, and the overlay that writes it once that composer is on screen. |
 | `shared/shell-marks.ts` | Shell integration on any xterm (the page's, the server's headless one): OSC 133/633 prompt and command marks and OSC 7, the phase the shell is in, each finished command's line, output and exit code read from the terminal's own buffer, what is typed and not run. |
 | `shared/osc7.ts` | The directory an OSC 7 sequence names. |
-| `shared/agent.ts` | What the page tells a tab's agent (the failure and screen prompts, the standing instructions), which failures to offer help for, the tool names and the `agent-typed` channel. No SDK import. |
+| `shared/agent.ts` | What the page tells a tab's agent (the one-line failure prompt, the standing instructions), which failures to offer help for, the tool names and the `agent-typed` channel. No SDK import. |
 | `server/agent-links.ts` | Which thread helps with which tab: one per tab, stored before the thread exists so `configure` recognises it, bound once `spawn` answers. |
 | `server/agent.ts` | `terminal_read` and `terminal_run`, `configure` (the tools for a tab's own thread, the skill for all), and starting, messaging and letting go of a tab's thread. |
 | `server/terminal-agent.ts` | The tools' work: bb's kept output replayed into `@xterm/headless`, the state checks before typing, typing and waiting for the command's end (or quiet output without marks). |
 | `app/agent-state.ts` | This window's agent panel: open or not, each tab's composer seed, failures waved away, the agent's last typed command per tab. Module scope, like the terminals. |
-| `app/agent-panel.tsx` | The panel: bb's `ThreadChat` for the tab's thread, or bb's `experimental_NewThreadComposer` seeded with the prompt, project and checkout. |
+| `app/agent-panel.tsx` | The panel: bb's `ThreadChat` for the tab's thread, or bb's `experimental_NewThreadComposer` seeded with the prompt (if any), project and checkout. |
 
 `npm test` runs everything. Nothing in it opens a shell or a socket: the connection runs against a
 scripted socket and a manual clock, the server against the SDK's fake host with stubbed terminals,
@@ -192,8 +192,15 @@ open a tab of its own in. The composer submits a `NewThreadRequest`; the server 
 user's choices are taken from it, never metadata, parent or visibility) with the tab's id in plugin
 metadata. A tab has at most one thread; asking about a later failure `threads.send`s it there, and the
 panel's "new chat" lets go of it. The composer's seeds are computed once, when the checkouts are known,
-because changing one re-seeds every pick; its draft key carries a hash of the prompt, so a new failure
+because changing one re-seeds every pick; each ask gets a draft key of its own, so a new failure
 starts a new draft.
+
+**The prompt is one line; the context is the thread's instructions.** The owner asked that the message
+box not quote the terminal: it starts with "The last command I ran returned an error. Help me debug."
+when the tab's last command failed (`FAILURE_PROMPT`), and empty otherwise. What the agent must know
+(the user is in a terminal, which tab on which machine, what the two tools do, read before running) is
+`agentInstructions`, which `configure` returns for that thread only, so it is there from the first
+turn; the agent reads the command and its output with `terminal_read`.
 
 **The tools belong to one thread and one tab.** `configure` gives `terminal_read` and `terminal_run`
 only to a thread whose metadata names a tab *and* that the link store says is that tab's thread (or the

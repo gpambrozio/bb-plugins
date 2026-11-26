@@ -15,7 +15,7 @@ import "@xterm/xterm/css/xterm.css";
 import { forwardLateImeInput } from "./bb-late-ime/terminal-late-ime-input";
 import { TerminalConnection, terminalSocketUrl, type ConnectionStatus, type SocketLike } from "./connection";
 import { TerminalSizing } from "./sizing";
-import { lastLines, ShellTracker, type FinishedCommand, type ShellPhase } from "../shared/shell-marks";
+import { ShellTracker, type FinishedCommand, type ShellPhase } from "../shared/shell-marks";
 import { currentFontFamily, currentTheme } from "./theme";
 import { rememberViewport, restoreViewport, type ViewportPlace } from "./viewport";
 
@@ -56,8 +56,6 @@ export interface LiveTerminal {
   onShellChange(listener: () => void): () => void;
   /** Calls `listener` on each keystroke the user sends from this window; returns the unsubscribe. */
   onUserInput(listener: () => void): () => void;
-  /** The last `count` lines the terminal shows, scrollback included, as text. */
-  recentText(count: number): string;
 }
 
 /**
@@ -221,7 +219,6 @@ function create(terminalId: string, backend: TerminalsBackend): LiveTerminal & {
       userInputListeners.add(listener);
       return () => userInputListeners.delete(listener);
     },
-    recentText: (count) => lastLines(term, count).text,
     dispose() {
       shown = false;
       listeners.clear();

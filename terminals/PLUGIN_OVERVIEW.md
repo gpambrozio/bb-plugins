@@ -21,8 +21,8 @@ terminal app does.
 - Select text and an Add to chat button appears, as in bb's own terminal. Pick an open thread, or a
   new thread in a project (the one the shell is in, when it says), and the selection lands in that
   chat's message box as terminal output naming its tab and machine, for you to send yourself.
-- When a command fails, an Ask an agent card opens a chat beside the terminal, already holding the
-  command, its output, exit code and folder. That chat can read the terminal and run commands in it,
+- When a command fails, an Ask an agent card opens a chat beside the terminal, ready to ask for help
+  debugging it. The agent knows which terminal you are in and can read it and run commands in it,
   at your prompt where you see them, and no other chat can. Seeing failures needs a shell that marks
   its prompts (fish 4, nushell; the README has lines to add for zsh and bash). The agent runs on your
   own agent provider, like any bb thread.
