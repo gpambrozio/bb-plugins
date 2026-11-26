@@ -2,7 +2,9 @@
  * This window's state for the agent panel, kept in module scope so it
  * outlives the page as the terminals do (app/live-terminals.ts): whether the
  * panel is open, what its new-thread composer starts with for each tab, the
- * failed commands the user waved away, and the commands the agent typed.
+ * failed commands the user waved away, and a count per tab of the commands
+ * the agent typed there, which tells the tab to read its list again (the
+ * list itself is the server's: it outlives the page and is shared by windows).
  * No React and no SDK.
  */
 import type { FinishedCommand } from "../shared/shell-marks";
@@ -15,22 +17,17 @@ export interface AgentSeed {
   draftKey: string;
 }
 
-/** A command the agent typed into a tab. A tab keeps those since the user last typed there. */
+/** A command the tab's agent chat typed into the tab. */
 export interface AgentTypedNote {
   command: string;
   at: number;
-  /** The prompt it was typed at, when the server said (see `typingAtOwnPrompt`). */
-  prompt?: string | null;
 }
-
-/** The most commands a tab's note keeps; older ones are dropped. */
-export const MAX_TYPED_NOTES = 100;
 
 export interface AgentPanelState {
   open: boolean;
   seeds: ReadonlyMap<string, AgentSeed>;
-  /** Per tab, the commands the agent typed there since the user last typed, oldest first. */
-  typed: ReadonlyMap<string, readonly AgentTypedNote[]>;
+  /** Per tab, how many times the agent has typed there while this window listened: a change means read the list again. */
+  typed: ReadonlyMap<string, number>;
 }
 
 export function createAgentPanelStore() {
@@ -65,16 +62,10 @@ export function createAgentPanelStore() {
       seeds.delete(terminalId);
       set({ ...state, seeds });
     },
-    noteTyped(terminalId: string, command: string, at: number, prompt: string | null = null) {
+    /** The agent typed into the tab: its list has changed on the server. */
+    noteTyped(terminalId: string) {
       const typed = new Map(state.typed);
-      const note: AgentTypedNote = prompt === null ? { command, at } : { command, at, prompt };
-      typed.set(terminalId, [...(state.typed.get(terminalId) ?? []), note].slice(-MAX_TYPED_NOTES));
-      set({ ...state, typed });
-    },
-    clearTyped(terminalId: string) {
-      if (!state.typed.has(terminalId)) return;
-      const typed = new Map(state.typed);
-      typed.delete(terminalId);
+      typed.set(terminalId, (state.typed.get(terminalId) ?? 0) + 1);
       set({ ...state, typed });
     },
     /** The user waved the offer for this failed command away. */

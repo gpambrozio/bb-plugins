@@ -56,6 +56,14 @@ export const rpcContract = defineRpcContract({
    * hidden), before the app opens it as a normal thread. Fails when the tab has none.
    */
   showAgentChat: { input: z.object({ terminalId: z.string().min(1) }), output: z.object({ threadId: z.string() }) },
+  /**
+   * The commands the tab's agent chat typed into it, oldest first, and that
+   * chat's id (null when the tab has none). Kept until the chat ends for the tab.
+   */
+  agentCommands: {
+    input: z.object({ terminalId: z.string().min(1) }),
+    output: z.object({ threadId: z.string().nullable(), commands: z.array(z.object({ command: z.string(), at: z.number() })) }),
+  },
   /** The owner's instructions text for a tab's agent; null means the built-in one. */
   agentInstructions: { input: Empty, output: z.object({ text: z.string().nullable() }) },
   /**

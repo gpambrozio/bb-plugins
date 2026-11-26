@@ -14,6 +14,7 @@ import { z } from "zod";
 
 import { READ_TOOL, RUN_TOOL, agentInstructions } from "../shared/agent";
 import { tabLabels, type Tab } from "../shared/tabs";
+import type { AgentCommands } from "./agent-commands";
 import { PENDING_MS, type AgentLinks } from "./agent-links";
 import {
   MAX_READ_LINES,
@@ -65,6 +66,8 @@ export function spawnArgs(request: Record<string, unknown>, terminalId: string):
 
 export interface AgentDeps {
   links: AgentLinks;
+  /** The commands each tab's chat typed into it. */
+  commands: AgentCommands;
   /** The stored tabs. */
   tabs(): Promise<Tab[]>;
   /** The tabs as last read, for `configure`, which cannot wait. */
@@ -210,6 +213,8 @@ export function registerAgent(bb: BbPluginApi, deps: AgentDeps) {
         throw error;
       }
       await links.bind(terminalId, threadId);
+      // A new chat for the tab: the last one's commands go with it.
+      await deps.commands.clear(terminalId).catch(() => undefined);
       return { threadId };
     },
 
@@ -221,7 +226,23 @@ export function registerAgent(bb: BbPluginApi, deps: AgentDeps) {
       return { threadId };
     },
 
-    forgetAgent: (terminalId: string) => links.drop(terminalId),
+    /** The owner lets go of the tab's chat (a new chat, or the tab closed): its link and its commands go. */
+    async forgetAgent(terminalId: string): Promise<void> {
+      await links.drop(terminalId);
+      await deps.commands.clear(terminalId);
+    },
+
+    /** The commands the tab's chat typed into it, oldest first, and that chat's id. */
+    async agentCommands(terminalId: string): Promise<{ threadId: string | null; commands: { command: string; at: number }[] }> {
+      const threadId = links.threadFor(terminalId);
+      return { threadId, commands: await deps.commands.list(terminalId, threadId) };
+    },
+
+    /** Records a command the tab's chat typed, before the page is told. */
+    async noteTyped(terminalId: string, command: string, at: number): Promise<void> {
+      const threadId = links.threadFor(terminalId);
+      if (threadId !== null) await deps.commands.append(terminalId, threadId, command, at);
+    },
 
     /** Makes the tab's chat show in bb's sidebar from now on, for "open in bb"; returns its id. */
     async showAgentChat(terminalId: string): Promise<{ threadId: string }> {
@@ -239,6 +260,7 @@ export function registerAgent(bb: BbPluginApi, deps: AgentDeps) {
         else if (link.threadId !== null) await liveThread(link.terminalId);
         else if (Date.now() - link.createdAt >= PENDING_MS) await links.drop(link.terminalId);
       }
+      await deps.commands.retain((terminalId, threadId) => links.threadFor(terminalId) === threadId);
     },
   };
 }

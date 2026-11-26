@@ -15,10 +15,11 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   ran returned an error. Help me debug." Edit it if you like, pick the agent, and send. The agent is
   told which terminal you are working in, and reads the command and what it printed from there itself.
 - **The agent can look and try things itself.** That chat can read what the terminal shows and run
-  commands in it, at your prompt, where you see them, and gets back their output and exit code. A note
-  in the terminal's corner, in bb's accent colour, lists the last three commands it ran there, with a
-  button to show them all, until you type at your own prompt there again: a password or an answer typed
-  into a command the agent started does not clear it. It never types while a command runs, into an editor or
+  commands in it, at your prompt, where you see them, and gets back their output and exit code. A card
+  in the terminal's corner, in bb's accent colour, lists every command the chat ran there: the last
+  three, with a button to show them all. It stays for the whole chat, across reloads and windows, until
+  you start a new chat or close the tab, and folds down to a small pill when you want the terminal
+  clear. It never types while a command runs, into an editor or
   other full-screen program, or over something you typed and have not run. Ask it to run something
   and it runs it there, in your terminal, without asking you to confirm first.
 - **One chat per tab.** The bot button at the end of the tabs opens the panel at any time, with an empty

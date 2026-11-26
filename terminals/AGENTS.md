@@ -41,7 +41,8 @@ specific to `terminals`.
 | `app/open-settings.ts` | Opens the plugin's settings page from the Terminals page (the gear at the end of the tab strip, and the agent panel's), through the router's history. |
 | `app/agent-width.ts`, `app/agent-resize-handle.tsx` | The agent panel's width beside the terminal (bounds, localStorage) and the edge that sets it by pointer or keys. Not on a compact viewport, where the panel covers the terminal. The terminal refits through its view's ResizeObserver, and the shell's resizes are coalesced by `app/sizing.ts`. |
 | `server/chat-visibility.ts` | Whether the agent chats show in bb's sidebar: all shown (the owner's setting), or the ones from before hidden once. |
-| `app/agent-ran-note.tsx` | The note over a terminal listing what the agent typed there since the user last typed: three folded, all expanded (a quarter of the terminal's height, then scrolling), in bb's `timeline-accent`. |
+| `app/agent-ran-note.tsx`, `app/agent-note-fold.ts` | The card over a terminal listing every command the tab's chat typed there: three folded, all expanded (a quarter of the terminal's height, then scrolling), in bb's `timeline-accent`; or a pill, per tab in localStorage. |
+| `server/agent-commands.ts` | Those commands, per tab in kv, tied to the chat's thread id, capped at 1000 and 150 000 characters. |
 | `app/agent-panel.tsx` | The panel: bb's `ThreadChat` for the tab's thread, or bb's `experimental_NewThreadComposer` seeded with the prompt (if any), project and checkout. |
 
 `npm test` runs everything. Nothing in it opens a shell or a socket: the connection runs against a
@@ -247,15 +248,19 @@ on the alternate screen, while a command runs, or when text sits between the pro
 (text right of the cursor, such as zsh's RPROMPT or an autosuggestion, does not count), then sends one
 line plus Enter through `terminals.input` and polls `terminals.output` from the next sequence until the
 shell's `D` mark (or `QUIET_MS` of no output without marks, or the timeout, when the command is left
-running). Each command it types is published on `agent-typed`; the page lists those since the user last typed
-(`app/agent-ran-note.tsx`, at most 100 kept per tab) and turns the tab's icon into the bot until the
-user types at their own prompt (`typingAtOwnPrompt`). A keystroke into a command the agent started (a
-`sudo` password, a y/n answer) must not clear it: the owner lost the first two of six commands that way.
-With marks the phase decides ("running" keeps the list). Without them the tool has already returned on
-quiet output at `Password:`, so `agent-typed` carries the cursor's line before the command (the prompt)
-and a keystroke clears only when the cursor's line starts with it again; with no prompt known (an older
-server) any keystroke clears, as before. The note is an opaque card with bb's `timeline-accent` border and icon (in bb's theme
-since 0.48.1, both modes), since a quiet one blended into terminal text. Exit 130 (Ctrl-C) is not offered as a
+running). Each command it types is stored with the tab (`server/agent-commands.ts`) and then published on
+`agent-typed`, on which the shown tab reads its list again (`agentCommands`).
+
+**The "agent ran" list belongs to the chat, not to the page.** The owner wants every command the tab's
+chat ran for as long as the chat lasts. An earlier version kept the list in the page and cleared it when
+the user typed, which lost commands when the owner typed a `sudo` password into one (and the list was
+per window and gone on a reload). Now the server keeps it per tab in kv, under the chat's thread id: a
+command from another chat starts it over, `startAgent` and `forgetAgent` (a new chat, a closed tab)
+clear it, and the load-time prune drops records whose chat is no longer the tab's. Typing, reloads,
+other windows and closing the panel keep it. It folds to a pill per tab (localStorage), since it no longer
+goes away on its own, and the tab's icon is the bot while the tab has a chat. The card is opaque with
+bb's `timeline-accent` border and icon (in bb's theme since 0.48.1, both modes), since a quiet one
+blended into terminal text. Exit 130 (Ctrl-C) is not offered as a
 failure. The offer for a failure also goes away when the user types: a reload replays bb's buffer, and
 with it the last failure.
 

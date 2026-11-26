@@ -19,7 +19,7 @@ import {
   type PluginNavPanelProps,
 } from "@get-bb/plugin-sdk/app";
 
-import { AGENT_TYPED, AgentTypedSchema, FAILURE_PROMPT, isAskableFailure, typingAtOwnPrompt } from "../shared/agent";
+import { AGENT_TYPED, AgentTypedSchema, FAILURE_PROMPT, isAskableFailure } from "../shared/agent";
 import type { RpcContract } from "../shared/contract";
 import { plusAction } from "../shared/host-choice";
 import type { FinishedCommand, ShellPhase } from "../shared/shell-marks";
@@ -43,6 +43,7 @@ import { cn } from "@/lib/utils";
 
 import { AddToChatDialog, type AddToChatRequest } from "./add-to-chat-dialog";
 import { AgentPanel } from "./agent-panel";
+import { isNoteFolded, setNoteFolded } from "./agent-note-fold";
 import { AgentRanNote } from "./agent-ran-note";
 import { AgentResizeHandle } from "./agent-resize-handle";
 import { readAgentWidth } from "./agent-width";
@@ -218,8 +219,37 @@ function useShellState(terminal: LiveTerminal | null): { last: FinishedCommand |
   return state;
 }
 
-/** A tab the agent has typed nothing into since the user typed there. */
+/** A tab whose chat has typed nothing into it. */
 const NO_COMMANDS: readonly AgentTypedNote[] = [];
+
+/**
+ * The commands the tab's agent chat typed into it, from the server, which
+ * keeps them for the whole chat: read when the tab shows, when its chat
+ * changes, and each time the agent types here (`typedCount`).
+ */
+function useAgentCommands(terminalId: string, threadId: string | null, typedCount: number): readonly AgentTypedNote[] {
+  const rpc = useRpc<RpcContract>();
+  const [commands, setCommands] = useState<readonly AgentTypedNote[]>(NO_COMMANDS);
+  useEffect(() => {
+    if (threadId === null) {
+      setCommands(NO_COMMANDS);
+      return;
+    }
+    let live = true;
+    rpc
+      .call("agentCommands", { terminalId })
+      .then((result) => {
+        if (live) setCommands(result.threadId === threadId ? result.commands : NO_COMMANDS);
+      })
+      .catch(() => {
+        // Keep what is shown; the next command or a return to the tab reads it again.
+      });
+    return () => {
+      live = false;
+    };
+  }, [rpc, terminalId, threadId, typedCount]);
+  return commands;
+}
 
 /** How often the page reads the list again while a tab's shell is still opening. */
 const OPENING_POLL_MS = 2_000;
@@ -238,7 +268,7 @@ export function TerminalsPage(_props: PluginNavPanelProps) {
   const agentRow = useRef<HTMLDivElement | null>(null);
   useRealtime(AGENT_TYPED, (payload: unknown) => {
     const parsed = AgentTypedSchema.safeParse(payload);
-    if (parsed.success) windowAgentPanel.noteTyped(parsed.data.terminalId, parsed.data.command, Date.now(), parsed.data.prompt ?? null);
+    if (parsed.success) windowAgentPanel.noteTyped(parsed.data.terminalId);
   });
 
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -447,12 +477,13 @@ export function TerminalsPage(_props: PluginNavPanelProps) {
         const pending = isPending(tab.status);
         const statusLabel = pending ? null : status.state === "ended" ? "ended" : status.state === "offline" ? "offline" : null;
         const where = tab.name === null ? label : `${label} — ${tab.hostName}`;
-        const agentTyped = agentPanel.typed.has(tab.terminalId);
+        // A tab whose agent chat is still its own shows the bot.
+        const hasAgent = tab.agentThreadId !== null;
         return {
           id: tab.terminalId,
           label,
           leadingVisual: (
-            <Icon name={pending ? "Spinner" : agentTyped ? "Bot" : "Terminal"} className={COARSE_POINTER_COMPACT_ICON_SIZE_CLASS} aria-hidden />
+            <Icon name={pending ? "Spinner" : hasAgent ? "Bot" : "Terminal"} className={COARSE_POINTER_COMPACT_ICON_SIZE_CLASS} aria-hidden />
           ),
           statusLabel,
           title: statusLabel === null ? where : `${where} (${statusLabel})`,
@@ -465,7 +496,7 @@ export function TerminalsPage(_props: PluginNavPanelProps) {
             ) : null,
         };
       }),
-    [tabs, labels, statuses, renaming, select, close, stopRenaming, agentPanel.typed],
+    [tabs, labels, statuses, renaming, select, close, stopRenaming],
   );
 
   return (
@@ -575,7 +606,8 @@ export function TerminalsPage(_props: PluginNavPanelProps) {
               label={labels.get(shown) ?? shownTab?.hostName ?? ""}
               copyOnSelect={copyOnSelect}
               onClose={() => void close(shown)}
-              agentTyped={agentPanel.typed.get(shown) ?? NO_COMMANDS}
+              agentThreadId={shownTab?.agentThreadId ?? null}
+              agentTypedCount={agentPanel.typed.get(shown) ?? 0}
               onAsk={shownTab === null ? null : (command) => void ask(shownTab, command)}
             />
           ) : tabs === null ? null : (
@@ -666,7 +698,8 @@ function TerminalView({
   label,
   copyOnSelect,
   onClose,
-  agentTyped,
+  agentThreadId,
+  agentTypedCount,
   onAsk,
 }: {
   terminalId: string;
@@ -676,8 +709,10 @@ function TerminalView({
   label: string;
   copyOnSelect: CopyOnSelectSetting;
   onClose: () => void;
-  /** The commands the agent typed here since the user last typed, oldest first. */
-  agentTyped: readonly AgentTypedNote[];
+  /** The tab's agent chat, whose commands the card lists; null when it has none. */
+  agentThreadId: string | null;
+  /** Changes each time the agent types here while this window listens: the list is read again. */
+  agentTypedCount: number;
   /** Asks an agent about a failed command; null while the tab cannot. */
   onAsk: ((command: FinishedCommand) => void) | null;
 }) {
@@ -695,14 +730,21 @@ function TerminalView({
   const failed =
     onAsk !== null && isAskableFailure(shell.last) && shell.phase !== "running" && !windowAgentPanel.isDismissed(shell.last) ? shell.last : null;
 
-  // The note that the agent typed here lasts until the user types at their own prompt: not a password
-  // or an answer typed into a command the agent started (`typingAtOwnPrompt`). The offer for a failed
-  // command lasts until the user types at all: they have moved on (an offer replayed after a reload included).
+  const agentCommands = useAgentCommands(terminalId, agentThreadId, agentTypedCount);
+  const [noteFolded, setNoteFoldedState] = useState(() => isNoteFolded(terminalId));
+  const foldNote = useCallback(
+    (folded: boolean) => {
+      setNoteFolded(terminalId, folded);
+      setNoteFoldedState(folded);
+    },
+    [terminalId],
+  );
+
+  // The offer for a failed command lasts until the user types here: they have moved on (an offer
+  // replayed after a reload included). The list of the agent's commands stays for the whole chat.
   useEffect(() => {
     if (terminal === null) return;
     return terminal.onUserInput(() => {
-      const prompt = windowAgentPanel.get().typed.get(terminalId)?.at(-1)?.prompt ?? null;
-      if (typingAtOwnPrompt({ phase: terminal.phase(), line: terminal.lineBeforeCursor(), prompt })) windowAgentPanel.clearTyped(terminalId);
       const last = terminal.lastCommand();
       if (isAskableFailure(last) && !windowAgentPanel.isDismissed(last)) windowAgentPanel.dismiss(last);
     });
@@ -772,7 +814,7 @@ function TerminalView({
         </div>
       ) : null}
       <div ref={container} data-terminal-view="" className="min-h-0 flex-1 overflow-hidden p-1" onPointerDown={onPointerDown} />
-      <AgentRanNote key={terminalId} commands={agentTyped} />
+      <AgentRanNote key={terminalId} commands={agentCommands} folded={noteFolded} onFold={foldNote} />
       {failed === null || onAsk === null ? null : (
         <div
           role="status"

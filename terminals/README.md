@@ -86,13 +86,14 @@ The colours and font follow bb's theme, as bb's own terminal does.
 - **The agent can read the terminal and run commands in it.** That chat gets two tools for that tab
   only: one reads what the terminal shows now, the other types one command at your prompt, waits for
   it to finish and reads back its output and exit code. You see the command typed in your shell, and
-  a note in the terminal's top right corner, set off in bb's accent colour, lists what the agent ran
-  there since you last typed: the last three commands, newest last, with **Show all** to list every one
-  (up to a quarter of the terminal's height, scrolling beyond that) and **Show fewer** to fold it back.
-  It goes away when you type at your own prompt in that terminal, and the tab's icon is the bot until
-  then. Typing a password or an answer into a command the agent started (`sudo`, a y/n question) keeps
-  it. On a shell without the marks below, "your own prompt" is a line that starts like the prompt the
-  agent typed at. It never types while a command is running, into a full-screen
+  a card in the terminal's top right corner, set off in bb's accent colour, lists every command the
+  tab's agent chat ran there: the last three, newest last, with **Show all** to list every one (up to a
+  quarter of the terminal's height, scrolling beyond that) and **Show fewer** to fold it back. The list
+  lasts as long as the chat does: typing in the terminal, a reload, another window or closing the panel
+  keep it, and it is cleared when you start a new chat from the panel or close the tab. Its fold button
+  turns the card into a small pill with the count, so it does not sit over the terminal; tap the pill to
+  open it again. Each tab remembers that in this browser. While the tab has an agent chat, its icon is
+  the bot. The agent never types while a command is running, into a full-screen
   program (an editor, a pager), or over something you have typed and not run yet. A command still
   running after its wait (30 seconds unless the agent asks for longer) is left running.
 - **Ask it to run something and it runs it in that terminal**, not in a shell of its own, without

@@ -13,6 +13,7 @@ import { selectableHosts } from "./shared/host-choice";
 import { ClosingSchema, TABS_CHANGED, TabSchema, type Closing, type Tab } from "./shared/tabs";
 import { registerAgent } from "./server/agent";
 import { setAllChats, settleChats, type ChatVisibilityPorts } from "./server/chat-visibility";
+import { createAgentCommands } from "./server/agent-commands";
 import { AgentLinkSchema, createAgentLinks } from "./server/agent-links";
 import { createTerminalsService } from "./server/service";
 import type { AgentTerminalPorts } from "./server/terminal-agent";
@@ -141,9 +142,13 @@ export default async function plugin(bb: BbPluginApi) {
     input: async (terminalId, data) => {
       await bb.sdk.terminals.input({ terminalId, dataBase64: Buffer.from(data, "utf8").toString("base64") });
     },
-    announce: (terminalId, command, prompt) => {
-      const payload: AgentTyped = { terminalId, command, prompt };
-      bb.realtime.publish(AGENT_TYPED, payload);
+    announce: (terminalId, command) => {
+      // Stored first, so a window that reads the list on this signal finds the command.
+      const payload: AgentTyped = { terminalId, command };
+      void agent
+        .noteTyped(terminalId, command, Date.now())
+        .catch((error: unknown) => bb.log.warn(`could not keep the command the agent ran: ${String(error)}`))
+        .finally(() => bb.realtime.publish(AGENT_TYPED, payload));
     },
     sleep,
     now: () => Date.now(),
@@ -179,7 +184,14 @@ export default async function plugin(bb: BbPluginApi) {
   };
   await loadInstructions().catch((error: unknown) => bb.log.warn(`could not read the agent instructions: ${String(error)}`));
 
+  const agentCommands = createAgentCommands({
+    get: (key) => bb.storage.kv.get<unknown>(key),
+    set: (key, value) => bb.storage.kv.set(key, value),
+    delete: (key) => bb.storage.kv.delete(key),
+    list: (prefix) => bb.storage.kv.list(prefix),
+  });
   const agent = registerAgent(bb, {
+    commands: agentCommands,
     cachedInstructions: () => cachedInstructions,
     loadInstructions,
     newChatVisibility: async () => ((await settings.get()).alwaysShowAgentChats ? "visible" : "hidden"),
@@ -222,6 +234,7 @@ export default async function plugin(bb: BbPluginApi) {
       return {};
     },
     showAgentChat: ({ terminalId }) => agent.showAgentChat(terminalId),
+    agentCommands: ({ terminalId }) => agent.agentCommands(terminalId),
     agentInstructions: async () => ({ text: await loadInstructions() }),
     setAgentInstructions: async ({ text }) => {
       const next = normalizeInstructions(text);

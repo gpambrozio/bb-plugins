@@ -33,8 +33,6 @@ const terminals = vi.hoisted(() => {
     phase: ShellPhase;
     shellListeners: Set<() => void>;
     inputListeners: Set<() => void>;
-    /** The cursor's line up to the cursor, as `lineBeforeCursor` gives it. */
-    line: string;
   }
   const entries = new Map<string, Entry>();
   function entry(terminalId: string) {
@@ -52,7 +50,6 @@ const terminals = vi.hoisted(() => {
         phase: "unknown",
         shellListeners: new Set(),
         inputListeners: new Set(),
-        line: "",
       };
       entries.set(terminalId, found);
     }
@@ -152,7 +149,6 @@ vi.mock("./live-terminals", () => ({
         found.inputListeners.add(listener);
         return () => found.inputListeners.delete(listener);
       },
-      lineBeforeCursor: () => found.line,
     };
   },
   releaseClosedTerminals: (open: ReadonlySet<string>) => {
@@ -1169,7 +1165,11 @@ describe("asking an agent", () => {
     const started: { terminalId: string; request: Record<string, unknown> }[] = [];
     const shownChats: string[] = [];
     let failShow = false;
+    /** What the server keeps: the commands the tab's chat ran, cleared when the chat ends. */
+    let ran: { command: string; at: number }[] = [];
+    const threadOf = () => state.tabs.find((entry) => entry.terminalId === "term_1")?.agentThreadId ?? null;
     Object.assign(rpc, {
+      agentCommands: () => ({ threadId: threadOf(), commands: ran }),
       startAgent: ({ terminalId, request }: { terminalId: string; request: Record<string, unknown> }) => {
         started.push({ terminalId, request });
         state.tabs = state.tabs.map((entry) => (entry.terminalId === terminalId ? { ...entry, agentThreadId: "thr_agent" } : entry));
@@ -1185,6 +1185,7 @@ describe("asking an agent", () => {
         return { threadId: "thr_agent" };
       },
       forgetAgent: ({ terminalId }: { terminalId: string }) => {
+        ran = [];
         state.tabs = state.tabs.map((entry) => (entry.terminalId === terminalId ? { ...entry, agentThreadId: null } : entry));
         return {};
       },
@@ -1193,13 +1194,18 @@ describe("asking an agent", () => {
     const view = render(rpc, { projects, sidebarThreads: sidebar });
     await screen.findByRole("button", { name: "Mac mini" });
     await waitFor(() => expect(document.querySelector("[data-terminal-view]")).not.toBeNull());
-    return { view, state, asked, started, shownChats, failShowing: () => void (failShow = true) };
+    /** The agent runs `command` in the tab: the server keeps it, then tells the windows. */
+    const agentRan = async (command: string) => {
+      ran = [...ran, { command, at: ran.length }];
+      await view.emitRealtime("agent-typed", { terminalId: "term_1", command });
+    };
+    return { view, state, asked, started, shownChats, failShowing: () => void (failShow = true), agentRan, keep: (commands: string[]) => void (ran = commands.map((command, at) => ({ command, at }))) };
   }
 
   afterEach(async () => {
     const { windowAgentPanel } = await import("./agent-state");
     windowAgentPanel.close();
-    for (const id of windowAgentPanel.get().typed.keys()) windowAgentPanel.clearTyped(id);
+    window.localStorage.removeItem("terminals.agentNoteFolded");
   });
 
   it("offers an agent when a command fails, and starts one in the project the shell is in, on a short ask", async () => {
@@ -1368,62 +1374,30 @@ describe("asking an agent", () => {
     expect(view.navigateCalls.filter((call) => call.method === "toThread")).toHaveLength(2);
   });
 
-  it("says what the agent typed until the user types", async () => {
-    const { view } = await shown("thr_agent");
-    await view.emitRealtime("agent-typed", { terminalId: "term_1", command: "git status" });
+  it("lists every command the tab's chat ran, and typing in the terminal (a sudo password included) keeps it", async () => {
+    const { agentRan } = await shown("thr_agent");
+    await agentRan("git status");
     expect(await screen.findByText("The agent ran")).toBeTruthy();
     expect(screen.getByText("git status")).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Show all/ })).toBeNull();
-    act(() => terminals.type("term_1"));
-    await waitFor(() => expect(screen.queryByText(/The agent ran/)).toBeNull());
-  });
 
-  it("keeps the list while the user answers a command the agent started (a sudo password), on a shell without marks", async () => {
-    // The owner's sequence: their zsh sends no OSC 133, so the tool returned at sudo's quiet "Password:".
-    const { view } = await shown("thr_agent");
-    const typed = (command: string) => view.emitRealtime("agent-typed", { terminalId: "term_1", command, prompt: "╰─$ " });
-    await typed("lsof -nP -iTCP -sTCP:LISTEN");
-    await typed("sudo lsof -nP -iTCP -sTCP:LISTEN");
-    const entry = terminals.entry("term_1");
-    entry.line = "Password:";
+    // The owner's sequence: they type sudo's password, and later at their own prompt. Nothing is lost.
+    await agentRan("sudo lsof -nP -iTCP -sTCP:LISTEN");
     act(() => terminals.type("term_1"));
-    act(() => terminals.type("term_1"));
-    expect(await screen.findByText("The agent ran 2 commands")).toBeTruthy();
-
-    entry.line = "╰─$ ";
     for (const command of ["ps -o pid,command -ww -p 1946,79402", "grep -l ftp-proxy x.plist", "plutil -p x.plist", "launchctl print-disabled system"]) {
-      await typed(command);
+      await agentRan(command);
     }
-    const note = screen.getByRole("status", { name: "Commands the agent ran" });
-    expect(within(note).getByText("The agent ran 6 commands")).toBeTruthy();
-    fireEvent.click(within(note).getByRole("button", { name: "Show all 6" }));
-    expect(within(note).getAllByRole("listitem")[1]?.textContent).toContain("sudo lsof -nP -iTCP -sTCP:LISTEN");
-
-    // Typing at their own prompt afterwards is moving on: the list goes.
     act(() => terminals.type("term_1"));
-    await waitFor(() => expect(screen.queryByRole("status", { name: "Commands the agent ran" })).toBeNull());
+    expect(await screen.findByText("The agent ran 6 commands")).toBeTruthy();
   });
 
-  it("keeps the list while a command the agent started runs, on a shell with marks, and clears it at the prompt", async () => {
-    const { view } = await shown("thr_agent");
-    await view.emitRealtime("agent-typed", { terminalId: "term_1", command: "sudo make install", prompt: "~ % " });
-    act(() => terminals.setPhase("term_1", "running"));
-    terminals.entry("term_1").line = "Password:";
-    act(() => terminals.type("term_1"));
-    expect(await screen.findByText("The agent ran")).toBeTruthy();
-    act(() => terminals.setPhase("term_1", "prompt"));
-    terminals.entry("term_1").line = "~ % ";
-    act(() => terminals.type("term_1"));
-    await waitFor(() => expect(screen.queryByText("The agent ran")).toBeNull());
-  });
-
-  it("lists the agent's last three commands, newest last, and all of them on request, until the user types", async () => {
-    const { view } = await shown("thr_agent");
+  it("shows the last three, newest last, and all of them on request", async () => {
+    const { agentRan } = await shown("thr_agent");
     const commands = ["ls", "cat build.sh", "mv site.config site.conf", "./build.sh", "git status"];
-    for (const command of commands) await view.emitRealtime("agent-typed", { terminalId: "term_1", command });
+    for (const command of commands) await agentRan(command);
     const note = await screen.findByRole("status", { name: "Commands the agent ran" });
     const listed = () => within(note).getAllByRole("listitem").map((item) => item.textContent?.replace(/^\$/, ""));
-    expect(within(note).getByText("The agent ran 5 commands")).toBeTruthy();
+    await waitFor(() => expect(within(note).getByText("The agent ran 5 commands")).toBeTruthy());
     expect(listed()).toEqual(["mv site.config site.conf", "./build.sh", "git status"]);
 
     const toggle = within(note).getByRole("button", { name: "Show all 5" });
@@ -1435,12 +1409,47 @@ describe("asking an agent", () => {
     expect(within(note).getByRole("list").className).toContain("overflow-y-auto");
     fireEvent.click(within(note).getByRole("button", { name: "Show fewer" }));
     expect(listed()).toEqual(["mv site.config site.conf", "./build.sh", "git status"]);
+  });
 
-    // The user typing starts the list over.
-    act(() => terminals.type("term_1"));
+  it("reads the chat's commands from the server, so a reload or another window shows them, and drops them with the chat", async () => {
+    const { keep } = await shown("thr_agent");
+    // Kept on the server before this window opened (a reload, or another window's session).
+    keep(["ls", "pwd"]);
+    cleanup();
+    const again = await shown("thr_agent");
+    again.keep(["ls", "pwd"]);
+    await again.agentRan("whoami");
+    expect(await screen.findByText("The agent ran 3 commands")).toBeTruthy();
+
+    // Closing and reopening the panel on the same chat keeps them.
+    const toolbar = screen.getByRole("toolbar", { name: "Terminals" });
+    fireEvent.click(within(toolbar).getByRole("button", { name: "Ask an agent about this terminal" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Close the agent panel" }));
+    expect(screen.getByText("The agent ran 3 commands")).toBeTruthy();
+
+    // A new chat from the panel ends this one for the tab: the list goes.
+    fireEvent.click(within(toolbar).getByRole("button", { name: "Ask an agent about this terminal" }));
+    fireEvent.click(await screen.findByRole("button", { name: "New agent chat" }));
     await waitFor(() => expect(screen.queryByRole("status", { name: "Commands the agent ran" })).toBeNull());
-    await view.emitRealtime("agent-typed", { terminalId: "term_1", command: "pwd" });
-    expect(await screen.findByText("The agent ran")).toBeTruthy();
-    expect(within(screen.getByRole("status", { name: "Commands the agent ran" })).getAllByRole("listitem")).toHaveLength(1);
+  });
+
+  it("folds the list to a small button and back, remembered for the tab", async () => {
+    const { agentRan } = await shown("thr_agent");
+    for (const command of ["ls", "pwd", "whoami", "date"]) await agentRan(command);
+    await screen.findByText("The agent ran 4 commands");
+    fireEvent.click(screen.getByRole("button", { name: "Fold the list to a small button" }));
+    const pill = await screen.findByRole("button", { name: "Show the commands the agent ran (4)" });
+    expect(screen.queryByRole("status", { name: "Commands the agent ran" })).toBeNull();
+    await agentRan("uname -m");
+    expect(await screen.findByRole("button", { name: "Show the commands the agent ran (5)" })).toBeTruthy();
+    expect(pill.isConnected).toBe(true);
+
+    // Remembered: the tab shows folded again after the page comes back.
+    cleanup();
+    const again = await shown("thr_agent");
+    again.keep(["ls", "pwd", "whoami", "date", "uname -m"]);
+    await again.agentRan("id");
+    fireEvent.click(await screen.findByRole("button", { name: "Show the commands the agent ran (6)" }));
+    expect(await screen.findByText("The agent ran 6 commands")).toBeTruthy();
   });
 });

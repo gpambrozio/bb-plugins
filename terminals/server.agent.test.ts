@@ -187,9 +187,14 @@ describe("a tab's agent", () => {
     expect(text(ran)).toContain("succeeded (exit code 0)");
     expect(text(ran)).toContain("On branch main");
     expect(typed).toEqual(["git status\r"]);
-    expect(harness.realtimeSignals).toContainEqual(
-      expect.objectContaining({ channel: "agent-typed", payload: { terminalId: tab.terminalId, command: "git status", prompt: "~ % " } }),
-    );
+    // Kept with the tab first, then the windows are told.
+    await expect
+      .poll(() => harness.realtimeSignals)
+      .toContainEqual(expect.objectContaining({ channel: "agent-typed", payload: { terminalId: tab.terminalId, command: "git status" } }));
+    expect(await harness.callRpc("agentCommands", { terminalId: tab.terminalId })).toEqual({
+      threadId: "thr_1",
+      commands: [{ command: "git status", at: expect.any(Number) }],
+    });
   });
 
   it("gives the tab's thread the owner's instructions after the fixed line, and the built-in ones again once restored", async () => {
@@ -224,6 +229,38 @@ describe("a tab's agent", () => {
       makePluginAgentConfigurationContext({ thread: { id: "thr_1" }, pluginMetadata: { terminalId: tab.terminalId } }),
     );
     expect(resolved.instructions).toContain("Saved by the other copy.");
+  });
+
+  it("keeps the chat's commands across a reload, and drops them when the chat ends for the tab", async () => {
+    const { harness, tab } = await start();
+    await harness.callRpc("startAgent", { terminalId: tab.terminalId, request });
+    await harness.callAgentTool("terminal_run", { command: "ls" }, { threadId: "thr_1" });
+    await harness.callAgentTool("terminal_run", { command: "pwd" }, { threadId: "thr_1" });
+    const listed = async (host: { callRpc(method: string, input: unknown): Promise<unknown> }) =>
+      ((await host.callRpc("agentCommands", { terminalId: tab.terminalId })) as { commands: { command: string }[] }).commands.map(
+        (entry) => entry.command,
+      );
+    await expect.poll(() => listed(harness)).toEqual(["ls", "pwd"]);
+
+    const reloaded = await harness.reload(plugin);
+    expect(await listed(reloaded.harness)).toEqual(["ls", "pwd"]);
+
+    // A new chat from the panel lets go of this one: its commands go.
+    await reloaded.harness.callRpc("forgetAgent", { terminalId: tab.terminalId });
+    expect(await listed(reloaded.harness)).toEqual([]);
+  });
+
+  it("starts a new chat's list empty, and forgets the list when the tab closes", async () => {
+    const { bb, harness, tab } = await start();
+    await harness.callRpc("startAgent", { terminalId: tab.terminalId, request });
+    await harness.callAgentTool("terminal_run", { command: "ls" }, { threadId: "thr_1" });
+    await expect.poll(async () => bb.storage.kv.list("agent-commands:")).toHaveLength(1);
+    await harness.callRpc("startAgent", { terminalId: tab.terminalId, request });
+    expect(await harness.callRpc("agentCommands", { terminalId: tab.terminalId })).toEqual({ threadId: "thr_2", commands: [] });
+    await harness.callAgentTool("terminal_run", { command: "pwd" }, { threadId: "thr_2" });
+    await expect.poll(async () => bb.storage.kv.get("agent-commands:" + tab.terminalId)).toMatchObject({ threadId: "thr_2" });
+    await harness.callRpc("close", { terminalId: tab.terminalId });
+    expect(await bb.storage.kv.list("agent-commands:")).toEqual([]);
   });
 
   it("refuses the tools to any other thread, and after the user lets go of the chat", async () => {
