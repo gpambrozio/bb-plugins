@@ -41,6 +41,7 @@ specific to `terminals`.
 | `app/open-settings.ts` | Opens the plugin's settings page from the Terminals page (the gear at the end of the tab strip, and the agent panel's), through the router's history. |
 | `app/agent-width.ts`, `app/agent-resize-handle.tsx` | The agent panel's width beside the terminal (bounds, localStorage) and the edge that sets it by pointer or keys. Not on a compact viewport, where the panel covers the terminal. The terminal refits through its view's ResizeObserver, and the shell's resizes are coalesced by `app/sizing.ts`. |
 | `server/chat-visibility.ts` | Whether the agent chats show in bb's sidebar: all shown (the owner's setting), or the ones from before hidden once. |
+| `app/agent-ran-note.tsx` | The note over a terminal listing what the agent typed there since the user last typed: three folded, all expanded (a quarter of the terminal's height, then scrolling), in bb's `timeline-accent`. |
 | `app/agent-panel.tsx` | The panel: bb's `ThreadChat` for the tab's thread, or bb's `experimental_NewThreadComposer` seeded with the prompt (if any), project and checkout. |
 
 `npm test` runs everything. Nothing in it opens a shell or a socket: the connection runs against a
@@ -246,8 +247,10 @@ on the alternate screen, while a command runs, or when text sits between the pro
 (text right of the cursor, such as zsh's RPROMPT or an autosuggestion, does not count), then sends one
 line plus Enter through `terminals.input` and polls `terminals.output` from the next sequence until the
 shell's `D` mark (or `QUIET_MS` of no output without marks, or the timeout, when the command is left
-running). Each command it types is published on `agent-typed`; the page shows it above the terminal and
-turns the tab's icon into the bot until the user types there. Exit 130 (Ctrl-C) is not offered as a
+running). Each command it types is published on `agent-typed`; the page lists those since the user last typed
+(`app/agent-ran-note.tsx`, at most 100 kept per tab) and turns the tab's icon into the bot until the
+user types there. The note is an opaque card with bb's `timeline-accent` border and icon (in bb's theme
+since 0.48.1, both modes), since a quiet one blended into terminal text. Exit 130 (Ctrl-C) is not offered as a
 failure. The offer for a failure also goes away when the user types: a reload replays bb's buffer, and
 with it the last failure.
 

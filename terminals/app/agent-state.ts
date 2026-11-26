@@ -15,16 +15,20 @@ export interface AgentSeed {
   draftKey: string;
 }
 
-/** The last command the agent typed into a tab, until the user types there. */
+/** A command the agent typed into a tab. A tab keeps those since the user last typed there. */
 export interface AgentTypedNote {
   command: string;
   at: number;
 }
 
+/** The most commands a tab's note keeps; older ones are dropped. */
+export const MAX_TYPED_NOTES = 100;
+
 export interface AgentPanelState {
   open: boolean;
   seeds: ReadonlyMap<string, AgentSeed>;
-  typed: ReadonlyMap<string, AgentTypedNote>;
+  /** Per tab, the commands the agent typed there since the user last typed, oldest first. */
+  typed: ReadonlyMap<string, readonly AgentTypedNote[]>;
 }
 
 export function createAgentPanelStore() {
@@ -61,7 +65,7 @@ export function createAgentPanelStore() {
     },
     noteTyped(terminalId: string, command: string, at: number) {
       const typed = new Map(state.typed);
-      typed.set(terminalId, { command, at });
+      typed.set(terminalId, [...(state.typed.get(terminalId) ?? []), { command, at }].slice(-MAX_TYPED_NOTES));
       set({ ...state, typed });
     },
     clearTyped(terminalId: string) {

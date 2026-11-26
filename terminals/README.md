@@ -85,9 +85,11 @@ The colours and font follow bb's theme, as bb's own terminal does.
   version are hidden once, when it first loads.
 - **The agent can read the terminal and run commands in it.** That chat gets two tools for that tab
   only: one reads what the terminal shows now, the other types one command at your prompt, waits for
-  it to finish and reads back its output and exit code. You see the command typed in your shell, a
-  note at the top of the terminal says "The agent ran …" until you type there yourself, and the tab's
-  icon turns into the bot meanwhile. It never types while a command is running, into a full-screen
+  it to finish and reads back its output and exit code. You see the command typed in your shell, and
+  a note in the terminal's top right corner, set off in bb's accent colour, lists what the agent ran
+  there since you last typed: the last three commands, newest last, with **Show all** to list every one
+  (up to a quarter of the terminal's height, scrolling beyond that) and **Show fewer** to fold it back.
+  It goes away when you type in that terminal, and the tab's icon is the bot until then. It never types while a command is running, into a full-screen
   program (an editor, a pager), or over something you have typed and not run yet. A command still
   running after its wait (30 seconds unless the agent asks for longer) is left running.
 - **Ask it to run something and it runs it in that terminal**, not in a shell of its own, without

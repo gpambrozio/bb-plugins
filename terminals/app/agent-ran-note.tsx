@@ -1,0 +1,72 @@
+/**
+ * The note over a terminal saying what the agent typed there since the user
+ * last typed: the last three commands, newest last, and a control to show
+ * them all. Expanded, it grows up to a quarter of the terminal's height and
+ * scrolls beyond that. Set apart from the terminal's text by bb's accent
+ * (`timeline-accent`, in both themes) and an opaque card.
+ */
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+
+import { Button } from "@/components/ui/button";
+import { Icon } from "@/components/ui/icon";
+
+import type { AgentTypedNote } from "./agent-state";
+
+/** How many commands the note shows folded. */
+export const FOLDED_COMMANDS = 3;
+
+export function AgentRanNote({ commands }: { commands: readonly AgentTypedNote[] }) {
+  const [expanded, setExpanded] = useState(false);
+  const list = useRef<HTMLOListElement>(null);
+  const more = commands.length > FOLDED_COMMANDS;
+  // Folds again when the list goes down to three or fewer (the user typed, and the agent started again).
+  useEffect(() => {
+    if (!more) setExpanded(false);
+  }, [more]);
+  const shown = expanded ? commands : commands.slice(-FOLDED_COMMANDS);
+  // The newest is last: keep it in view when the expanded list scrolls.
+  useLayoutEffect(() => {
+    const element = list.current;
+    if (element !== null) element.scrollTop = element.scrollHeight;
+  }, [expanded, commands.length]);
+  if (commands.length === 0) return null;
+  return (
+    <div
+      role="status"
+      aria-label="Commands the agent ran"
+      data-agent-ran=""
+      className="absolute right-3 top-2 z-10 flex max-h-[25%] w-max min-w-0 max-w-[min(40rem,calc(100%-1.5rem))] flex-col overflow-hidden rounded-md border border-timeline-accent/50 border-l-4 border-l-timeline-accent bg-background text-xs text-foreground shadow-md"
+    >
+      <div className="flex shrink-0 items-center gap-1.5 px-2 pt-1.5">
+        <Icon name="Bot" className="shrink-0 text-timeline-accent" aria-hidden />
+        <span className="min-w-0 flex-1 font-medium">
+          {commands.length === 1 ? "The agent ran" : `The agent ran ${commands.length} commands`}
+        </span>
+        {more ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="-my-0.5 h-5 shrink-0 px-1.5 text-xs text-muted-foreground hover:text-foreground"
+            aria-expanded={expanded}
+            onClick={() => setExpanded((value) => !value)}
+          >
+            {expanded ? "Show fewer" : `Show all ${commands.length}`}
+          </Button>
+        ) : null}
+      </div>
+      <ol ref={list} className="min-h-0 overflow-y-auto px-2 pb-1.5 pt-1" aria-label="Commands, oldest first">
+        {shown.map((note, index) => (
+          <li key={`${note.at}-${index}`} className="flex min-w-0 items-baseline gap-1.5 py-px">
+            <span className="shrink-0 text-timeline-accent" aria-hidden>
+              $
+            </span>
+            <code className="min-w-0 truncate font-mono" title={note.command}>
+              {note.command}
+            </code>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}

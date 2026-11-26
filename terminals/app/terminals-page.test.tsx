@@ -1367,9 +1367,37 @@ describe("asking an agent", () => {
   it("says what the agent typed until the user types", async () => {
     const { view } = await shown("thr_agent");
     await view.emitRealtime("agent-typed", { terminalId: "term_1", command: "git status" });
-    expect(await screen.findByText(/The agent ran/)).toBeTruthy();
+    expect(await screen.findByText("The agent ran")).toBeTruthy();
     expect(screen.getByText("git status")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Show all/ })).toBeNull();
     act(() => terminals.type("term_1"));
     await waitFor(() => expect(screen.queryByText(/The agent ran/)).toBeNull());
+  });
+
+  it("lists the agent's last three commands, newest last, and all of them on request, until the user types", async () => {
+    const { view } = await shown("thr_agent");
+    const commands = ["ls", "cat build.sh", "mv site.config site.conf", "./build.sh", "git status"];
+    for (const command of commands) await view.emitRealtime("agent-typed", { terminalId: "term_1", command });
+    const note = await screen.findByRole("status", { name: "Commands the agent ran" });
+    const listed = () => within(note).getAllByRole("listitem").map((item) => item.textContent?.replace(/^\$/, ""));
+    expect(within(note).getByText("The agent ran 5 commands")).toBeTruthy();
+    expect(listed()).toEqual(["mv site.config site.conf", "./build.sh", "git status"]);
+
+    const toggle = within(note).getByRole("button", { name: "Show all 5" });
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(toggle);
+    expect(listed()).toEqual(commands);
+    // Expanded, it is held to a quarter of the terminal and its list scrolls.
+    expect(note.className).toContain("max-h-[25%]");
+    expect(within(note).getByRole("list").className).toContain("overflow-y-auto");
+    fireEvent.click(within(note).getByRole("button", { name: "Show fewer" }));
+    expect(listed()).toEqual(["mv site.config site.conf", "./build.sh", "git status"]);
+
+    // The user typing starts the list over.
+    act(() => terminals.type("term_1"));
+    await waitFor(() => expect(screen.queryByRole("status", { name: "Commands the agent ran" })).toBeNull());
+    await view.emitRealtime("agent-typed", { terminalId: "term_1", command: "pwd" });
+    expect(await screen.findByText("The agent ran")).toBeTruthy();
+    expect(within(screen.getByRole("status", { name: "Commands the agent ran" })).getAllByRole("listitem")).toHaveLength(1);
   });
 });

@@ -43,6 +43,7 @@ import { cn } from "@/lib/utils";
 
 import { AddToChatDialog, type AddToChatRequest } from "./add-to-chat-dialog";
 import { AgentPanel } from "./agent-panel";
+import { AgentRanNote } from "./agent-ran-note";
 import { AgentResizeHandle } from "./agent-resize-handle";
 import { readAgentWidth } from "./agent-width";
 import { windowAgentPanel, type AgentPanelState, type AgentTypedNote } from "./agent-state";
@@ -216,6 +217,9 @@ function useShellState(terminal: LiveTerminal | null): { last: FinishedCommand |
   }, [terminal]);
   return state;
 }
+
+/** A tab the agent has typed nothing into since the user typed there. */
+const NO_COMMANDS: readonly AgentTypedNote[] = [];
 
 /** How often the page reads the list again while a tab's shell is still opening. */
 const OPENING_POLL_MS = 2_000;
@@ -571,7 +575,7 @@ export function TerminalsPage(_props: PluginNavPanelProps) {
               label={labels.get(shown) ?? shownTab?.hostName ?? ""}
               copyOnSelect={copyOnSelect}
               onClose={() => void close(shown)}
-              agentTyped={agentPanel.typed.get(shown) ?? null}
+              agentTyped={agentPanel.typed.get(shown) ?? NO_COMMANDS}
               onAsk={shownTab === null ? null : (command) => void ask(shownTab, command)}
             />
           ) : tabs === null ? null : (
@@ -672,8 +676,8 @@ function TerminalView({
   label: string;
   copyOnSelect: CopyOnSelectSetting;
   onClose: () => void;
-  /** The last command the agent typed here, until the user types. */
-  agentTyped: AgentTypedNote | null;
+  /** The commands the agent typed here since the user last typed, oldest first. */
+  agentTyped: readonly AgentTypedNote[];
   /** Asks an agent about a failed command; null while the tab cannot. */
   onAsk: ((command: FinishedCommand) => void) | null;
 }) {
@@ -766,17 +770,7 @@ function TerminalView({
         </div>
       ) : null}
       <div ref={container} data-terminal-view="" className="min-h-0 flex-1 overflow-hidden p-1" onPointerDown={onPointerDown} />
-      {agentTyped === null ? null : (
-        <div
-          role="status"
-          className="pointer-events-none absolute right-3 top-2 z-10 flex max-w-[calc(100%-1.5rem)] items-center gap-1.5 rounded-md border border-border bg-card px-2 py-1 text-xs text-muted-foreground shadow-sm"
-        >
-          <Icon name="Bot" className="shrink-0" aria-hidden />
-          <span className="min-w-0 truncate">
-            The agent ran <code className="font-mono text-foreground">{agentTyped.command}</code>
-          </span>
-        </div>
-      )}
+      <AgentRanNote key={terminalId} commands={agentTyped} />
       {failed === null || onAsk === null ? null : (
         <div
           role="status"
