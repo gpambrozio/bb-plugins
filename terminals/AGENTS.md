@@ -243,14 +243,26 @@ session before `spawn` answers). Metadata alone grants nothing; every call is ch
 calling thread's id, which bb supplies. A tool call that arrives before `spawn` answered waits up to
 15 s for the link. Letting go, a newer chat, or closing the tab ends the access at once, also for a
 `terminal_run` already under way: it checks the link (thread and token) and its stop signal before it
-types and again before Enter, and erases its text if either changed in between.
+types and again before Enter, and takes its text back if either changed in between (see the echo check
+below for when it erases).
 
 **A spawn binds only the link it began.** `begin` gives each pending link a token, `bind` takes it, and
 binds nothing when the link was dropped (the user let go, the tab closed) or replaced (another window
 started a chat for the tab) while bb created the thread. `startAgent` then stops and archives the new
-thread and says why; a failed spawn drops only its own pending link. A copy of the plugin that was
-unloaded while its spawn ran discards the thread the same way, since the new copy holds the links.
-Before tokens, the last spawn to answer won (an older one over a newer), and a forgotten chat came back.
+thread and says why; a failed spawn drops only its own pending link. Before tokens, the last spawn to
+answer won (an older one over a newer), and a forgotten chat came back.
+
+**A reload hands the links over; the old copy writes nothing after it.** The new copy loads before the
+old one is unloaded, and bb refuses an unloaded copy's calls ("stale API handle", the fake host too), so
+the old copy can neither save links nor archive a thread. Every link change therefore reads the stored
+list first (the old copy's whole-list save once wiped the new copy's bound chat), `close()` on dispose
+refuses further writes and binds, and `startAgent` checks `disposed` again after its awaits. As it loads
+(`agent.start()`), the new copy drops every link still waiting for a thread, since the copy that began
+it can no longer bind, and keeps those tokens in kv (`revokedAgentSpawns`, a day). Each spawn carries
+its token in the thread's plugin metadata (`agentSpawn`), so the new copy archives a revoked spawn's
+thread when `thread.created` reports it, and the load-time prune sweeps the plugin's open threads for
+any it missed. A reload while a chat starts therefore cancels that chat; the page shows the error and
+the user starts again. Tool calls re-read the links (`refresh`) before saying a chat has no tab.
 
 **The agent types at the user's prompt, visibly, and only on positive evidence that the shell waits at
 an empty prompt** (`shared/prompt-ready.ts`). `terminal_run` replays bb's last 256 KB of the terminal's
@@ -263,15 +275,28 @@ prompt (redis-cli, irb, python -q) adds its own after the shell's, and so does t
 like a prompt. Unknown means refuse, with a message that says how to fix it (shell integration, or a
 prompt of that shape). This replaced "type unless the marks say otherwise", which typed into a `sudo`
 password prompt or a running build in a shell without marks, and after an output long enough to push
-its `C` mark out of the replayed tail. In both cases anything to the right of the cursor that is not a
-right-hand prompt (set apart by two blanks and ending at the right edge), or any text below it, is
-typing: Ctrl-A or a recalled line put the owner's text there. zsh's autosuggestions draw only after
-text is typed, so an empty prompt has none. Then it sends the command without Enter, waits up to
-`ECHO_TIMEOUT_MS` for exactly that text between where it started and the cursor (backslash escapes
-aside: oh-my-zsh turns on url-quote-magic, which types `curl http://x/\?a=1` for `?`), and only then sends
-Enter; anything else (the owner typed at the same moment, a program that does not echo) gets one DEL
-per character and a refusal. Runs are serialized per tab (`TerminalLocks`), so a parallel call checks
-the shell again after the first one's command. The owner's keystrokes reach bb's socket without
+its `C` mark out of the replayed tail. In both cases anything to the right of the cursor, or any text
+below it, is typing (Ctrl-A or a recalled line put the owner's text there), except a right-hand prompt
+told by how zsh draws it: zsh clears the line and jumps the cursor right (`CSI n C`) before RPROMPT, so
+the cells before it were never written (xterm's `getChars()` is ""), while typed text, spaces included,
+writes every cell. Spacing alone was not enough: indented input reaching the right edge passed for one.
+Recorded from zsh 5.9 (`terminal-agent.test.ts` replays the bytes). zsh's autosuggestions draw only
+after text is typed, so an empty prompt has none.
+
+Then it sends the command without Enter and waits up to `ECHO_TIMEOUT_MS` for the whole line to show
+exactly that text from where it started to the cursor (backslash escapes aside: oh-my-zsh turns on
+url-quote-magic, which types `curl http://x/\?a=1` for `?`), nothing after the cursor but a right-hand
+prompt or a suggestion, and no mark or OSC 7 since the readiness check (`eventCount`). A suggestion
+(zsh-autosuggestions) is text after the cursor in one colour that is not the default and not one of the
+echoed command's; the owner's own text after it, recalled or typed before the agent's keys landed, has
+the command's colours and refuses. Only then does it send Enter. When it does not (the line differs, the
+call stopped, the chat lost the tab), it takes the text back only from a line that holds exactly the
+agent's text, re-read first: one DEL per character. Any other line (the owner typed into it, the cursor
+moved, nothing echoed) is left as it is and the refusal tells the agent to have the owner clear it,
+since blind DELs erased the owner's characters and could leave the agent's command for their next Enter.
+Runs are serialized per tab (`TerminalLocks`): a waiter that is cancelled keeps its place in the chain,
+so a later call still waits for the run before it (deleting the chain on cancel let a third call in), and
+a parallel call checks the shell again after the first one's command. The owner's keystrokes reach bb's socket without
 passing through the plugin, so nothing can hold them off: the remaining gap is between reading the echo
 and the Enter arriving. After Enter it polls `terminals.output` from the next sequence until the shell's
 `D` mark (or `QUIET_MS` of no output without marks, or the timeout, when the command is left running).

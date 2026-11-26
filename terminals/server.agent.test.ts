@@ -3,7 +3,7 @@
  * host: starting its thread, which thread gets the tab's tools, what those
  * tools read and type, sending it a failure, and letting go of it.
  */
-import { createFakePluginHost, makePluginAgentConfigurationContext, makeHostResponse } from "@get-bb/plugin-sdk/testing";
+import { createFakePluginHost, makePluginAgentConfigurationContext, makeHostResponse, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { describe, expect, it } from "vitest";
 
 import plugin from "./server";
@@ -26,7 +26,7 @@ async function start(
   const output: { seq: number; dataBase64: string }[] = [];
   const print = (text: string) => output.push({ seq: output.length, dataBase64: Buffer.from(text).toString("base64") });
   const typed: string[] = [];
-  const threads = new Map<string, { archivedAt: number | null; deletedAt: number | null; visibility: string }>();
+  const threads = new Map<string, { archivedAt: number | null; deletedAt: number | null; visibility: string; metadata?: Record<string, unknown> }>();
   for (const thread of options.existing ?? []) threads.set(thread.id, { archivedAt: null, deletedAt: null, visibility: thread.visibility });
   let spawned = 0;
   const { bb, harness } = createFakePluginHost({
@@ -66,7 +66,12 @@ async function start(
           if (options.holdSpawns) {
             await new Promise<void>((release, fail) => held.push({ release, fail }));
           }
-          threads.set(id, { archivedAt: null, deletedAt: null, visibility: (args as { visibility?: string }).visibility ?? "visible" });
+          threads.set(id, {
+            archivedAt: null,
+            deletedAt: null,
+            visibility: (args as { visibility?: string }).visibility ?? "visible",
+            metadata: (args as { pluginMetadata?: Record<string, unknown> }).pluginMetadata ?? {},
+          });
           return { id } as never;
         },
         list: async ({ offset = 0, limit = 100 } = {}) =>
@@ -84,6 +89,9 @@ async function start(
         },
         send: async () => ({}) as never,
         stop: async () => ({}) as never,
+        getPluginMetadata: async ({ threadId }) => (threads.get(threadId)?.metadata ?? {}) as never,
+        experimental_listPluginMetadata: async ({ threadIds }) =>
+          ({ threads: threadIds.map((threadId) => ({ threadId, metadata: threads.get(threadId)?.metadata ?? {} })) }) as never,
         archive: async ({ threadId }) => {
           threads.get(threadId)!.archivedAt = 1;
           return {} as never;
@@ -351,6 +359,61 @@ describe("a tab's agent", () => {
     await expect(opening).rejects.toThrow(/tab closed/);
     expect(closed.harness.sdk.callsTo("threads.archive")).toEqual([[{ threadId: "thr_1" }]]);
     expect(await closed.bb.storage.kv.get("agents")).toEqual([]);
+  });
+
+  it("keeps the newer copy's chat when a spawn from before a reload answers after it", async () => {
+    const { harness, tab, threads, answerSpawn } = await start({ holdSpawns: true });
+    const before = harness.callRpc("startAgent", { terminalId: tab.terminalId, request });
+    await expect.poll(() => harness.sdk.callsTo("threads.spawn").length).toBe(1);
+    const reloaded = await harness.reload(plugin);
+    const after = reloaded.harness.callRpc("startAgent", { terminalId: tab.terminalId, request });
+    await answerSpawn(1);
+    expect(await after).toEqual({ threadId: "thr_2" });
+
+    // The old copy's spawn answers last: it binds nothing, the stored links keep the newer chat, and the
+    // newer copy archives the old copy's thread when bb reports it (the old copy's calls are refused).
+    await answerSpawn(0);
+    await expect(before).rejects.toThrow(/reloaded while this chat was starting/);
+    await reloaded.harness.emitThreadEvent("thread.created", { thread: makeThreadResponse({ id: "thr_1", originPluginId: "terminals" }) });
+    await expect.poll(() => threads.get("thr_1")?.archivedAt).not.toBeNull();
+    // Its own chat is left alone.
+    await reloaded.harness.emitThreadEvent("thread.created", { thread: makeThreadResponse({ id: "thr_2", originPluginId: "terminals" }) });
+    expect(threads.get("thr_2")?.archivedAt).toBeNull();
+    expect(await reloaded.bb.storage.kv.get("agents")).toMatchObject([{ terminalId: tab.terminalId, threadId: "thr_2" }]);
+    expect(await listed(reloaded.harness)).toMatchObject([{ agentThreadId: "thr_2" }]);
+    const resolved = await reloaded.harness.resolveAgentConfiguration(
+      makePluginAgentConfigurationContext({ thread: { id: "thr_2" }, pluginMetadata: { terminalId: tab.terminalId } }),
+    );
+    expect(resolved.tools.map((tool) => tool.name)).toEqual(["terminal_read", "terminal_run"]);
+  });
+
+  it("binds nothing when the plugin is reloaded while a new chat's tab is being checked", async () => {
+    const { harness, tab, threads, answerSpawn, bb } = await start({ holdSpawns: true });
+    const starting = harness.callRpc("startAgent", { terminalId: tab.terminalId, request });
+    await expect.poll(() => harness.sdk.callsTo("threads.spawn").length).toBe(1);
+    // Hold the old copy's read of the tabs that follows the spawn.
+    let releaseRead = () => {};
+    let reading = false;
+    const get = bb.storage.kv.get.bind(bb.storage.kv);
+    bb.storage.kv.get = (async (key: string) => {
+      if (key === "tabs") {
+        reading = true;
+        await new Promise<void>((resolve) => (releaseRead = resolve));
+      }
+      return get(key);
+    }) as typeof bb.storage.kv.get;
+    await answerSpawn(0);
+    await expect.poll(() => reading).toBe(true);
+    const reloaded = await harness.reload(plugin);
+    releaseRead();
+    await expect(starting).rejects.toThrow(/reloaded while this chat was starting/);
+    expect(await listed(reloaded.harness)).toMatchObject([{ agentThreadId: null }]);
+    // The thread existed when the newer copy loaded: the sweep as it starts archives it.
+    const service = reloaded.harness.runService("prune-ended-tabs");
+    await expect.poll(() => threads.get("thr_1")?.archivedAt).not.toBeNull();
+    service.controller.abort();
+    await service.done;
+    expect(await reloaded.bb.storage.kv.get("agents")).toEqual([]);
   });
 
   it("keeps a newer chat's link when an older spawn fails after it", async () => {

@@ -63,12 +63,24 @@ export interface MarkerLike {
   dispose(): void;
 }
 
-/** The parts of an xterm.js buffer line this file uses. */
+/** The parts of an xterm.js buffer cell this package uses. */
+export interface CellLike {
+  /** The cell's text; "" for a cell nothing was written to (or that was erased), and for the right half of a wide character. */
+  getChars(): string;
+  /** 0 for the right half of a wide character. */
+  getWidth(): number;
+  isFgDefault(): boolean;
+  getFgColorMode(): number;
+  getFgColor(): number;
+}
+
+/** The parts of an xterm.js buffer line this package uses. */
 export interface BufferLineLike {
   readonly isWrapped: boolean;
   /** The terminal's width in cells. */
   readonly length: number;
   translateToString(trimRight?: boolean, startColumn?: number, endColumn?: number): string;
+  getCell(x: number): CellLike | undefined;
 }
 
 /** The parts of an xterm.js terminal (`@xterm/xterm` or `@xterm/headless`) this file uses. */
@@ -177,6 +189,8 @@ export class ShellTracker {
    */
   private commandRunning = false;
   private marksSeen = false;
+  /** How many marks and directory reports the shell has sent: any of them means it moved on. */
+  private events = 0;
   /**
    * A shell drew a prompt (it reported its directory, OSC 7) while the marks
    * said a command was running, and no mark has come since: the shell that
@@ -202,6 +216,7 @@ export class ShellTracker {
         const directory = directoryFromOsc7(data);
         // A report that names no directory says nothing about the shell.
         if (directory === null) return false;
+        this.events += 1;
         this.directory = directory;
         this.directoryReport?.marker.dispose();
         this.directoryReport = this.here();
@@ -252,6 +267,15 @@ export class ShellTracker {
     return this.terminal.buffer.active.type === "alternate";
   }
 
+  /**
+   * A count of the marks and directory reports the shell sent. It changing
+   * means the shell moved on (a command started, a new prompt), so a check
+   * made before it changed no longer holds.
+   */
+  eventCount(): number {
+    return this.events;
+  }
+
   /** Where the prompt ends and typing starts, while the shell is at a prompt with an end mark (`B`); else null. */
   promptEndAt(): { line: number; column: number } | null {
     if (this.phaseNow !== "prompt" || this.promptEnd === null || this.promptEnd.marker.isDisposed) return null;
@@ -297,6 +321,7 @@ export class ShellTracker {
   }
 
   private apply(mark: ShellMark): void {
+    this.events += 1;
     this.marksSeen = true;
     this.marksStopped = false;
     switch (mark.kind) {

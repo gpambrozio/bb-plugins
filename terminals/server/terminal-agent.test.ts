@@ -221,8 +221,31 @@ describe("runCommand", () => {
 
   it("still types at a prompt with a right-hand prompt (zsh's RPROMPT) beside the cursor", async () => {
     const terminal = shell({ respond: integrated({ pwd: { output: "/Users/me/app\r\n", code: 0 } }) });
-    terminal.print(prompt() + "\u001b7\u001b[78G1 ↵\u001b8");
+    // As zsh draws it: clear the line, jump the cursor right, the right prompt, jump back.
+    terminal.print(prompt() + "\u001b[K\u001b[68C1 ↵\u001b[71D");
     expect(await runCommand(terminal.ports, TAB, { command: "pwd" }, context())).toContain("it succeeded (exit code 0)");
+  });
+
+  it("runs at the owner's oh-my-zsh prompt with its right-hand exit code, as zsh drew it", async () => {
+    // Recorded from zsh 5.9 with PROMPT's two lines and RPROMPT='1 ↵', in 60 columns.
+    const drawn = `${osc("7;file://mac/Users/me/app")}\r\n╭─me@mac ~/app ‹main›\r\n╰─$ \u001b[K\u001b[52C1 ↵\u001b[55D\u001b[?2004h \b`;
+    const terminal = shell({ session: { cols: 60 }, respond: plain({ pwd: "/Users/me/app\r\n" }) });
+    terminal.print(drawn);
+    expect(await runCommand(terminal.ports, TAB, { command: "pwd" }, context())).toContain("/Users/me/app");
+    expect(terminal.typed).toEqual(["pwd", "\r"]);
+
+    // The same prompt with the user's text, indented, the cursor back at its start (Ctrl-A).
+    const typing = shell({ session: { cols: 60 } });
+    typing.print(`${drawn}  echo OWNER\u001b[12D`);
+    await expect(runCommand(typing.ports, TAB, { command: "pwd" }, context())).rejects.toThrow(/has typed something.*"echo OWNER"/);
+    expect(typing.typed).toEqual([]);
+  });
+
+  it("does not take the user's text reaching the right edge for a right-hand prompt", async () => {
+    const terminal = shell();
+    terminal.print(`${osc("133;A")}$ ${osc("133;B")}  ${"x".repeat(75)}\u001b[77D`);
+    await expect(runCommand(terminal.ports, TAB, { command: "pwd" }, context())).rejects.toThrow(/has typed something/);
+    expect(terminal.typed).toEqual([]);
   });
 
   describe("in a shell without marks", () => {
@@ -298,6 +321,29 @@ describe("runCommand", () => {
   });
 
   describe("racing the user and other calls", () => {
+    it("keeps a cancelled waiter's place: a later call does not enter while the first still runs", async () => {
+      const locks = new TerminalLocks();
+      const events: string[] = [];
+      let releaseA = () => {};
+      const a = locks.run("term_1", never, async () => {
+        events.push("A entered");
+        await new Promise<void>((resolve) => (releaseA = resolve));
+        events.push("A left");
+      });
+      const cancelB = new AbortController();
+      const b = locks.run("term_1", cancelB.signal, async () => void events.push("B entered"));
+      await Promise.resolve();
+      cancelB.abort();
+      await expect(b).rejects.toThrow(/Stopped/);
+      events.push("B cancelled");
+      const c = locks.run("term_1", never, async () => void events.push("C entered"));
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(events).toEqual(["A entered", "B cancelled"]);
+      releaseA();
+      await Promise.all([a, c]);
+      expect(events).toEqual(["A entered", "B cancelled", "A left", "C entered"]);
+    });
+
     it("runs one command per tab at a time: a second call waits, then checks the shell again", async () => {
       const terminal = shell({
         respond: integrated({ "sudo -k id": { output: "uid=0(root)\r\n", code: 0, after: 1_000 }, pwd: { output: "/Users/me/app\r\n", code: 0 } }),
@@ -327,19 +373,69 @@ describe("runCommand", () => {
       expect(terminal.typed).toEqual(["sleep 100", "\r"]);
     });
 
-    it("erases what it typed and presses no Enter when the user typed at the same moment", async () => {
-      let owner = true;
-      const terminal = shell({
-        respond: integrated({}),
-        onInput: () => {
-          // The user's key reaches the shell just before the agent's text.
-          if (owner) terminal.print("x");
-          owner = false;
-        },
-      });
+    it("leaves the line alone and presses no Enter when the user typed at the same moment", async () => {
+      // Before the agent's text, and after it: erasing would take the user's "x" with it.
+      for (const [before, after] of [
+        ["x", ""],
+        ["", "x"],
+      ]) {
+        const terminal = shell({ echo: false });
+        terminal.ports.input = ((input) => async (terminalId: string, data: string) => {
+          if (data === "pwd") terminal.print(`${before}pwd${after}`);
+          await input(terminalId, data);
+        })(terminal.ports.input);
+        terminal.print(prompt());
+        const refusal = runCommand(terminal.ports, TAB, { command: "pwd" }, context());
+        await expect(refusal).rejects.toThrow(/did not show exactly that command/);
+        await expect(refusal).rejects.toThrow(/nothing was erased either: ask the user to look at the prompt/);
+        expect(terminal.typed).toEqual(["pwd"]);
+      }
+    });
+
+    it("presses no Enter when the user put text after the agent's before the echo came (Ctrl-A after the check)", async () => {
+      const terminal = shell({ echo: false });
+      terminal.ports.input = ((input) => async (terminalId: string, data: string) => {
+        // The user typed "echo OWNER" and went back to its start; zsh inserts the agent's text there.
+        if (data === "pwd") terminal.print("echo OWNER\u001b[10Dpwdecho OWNER\u001b[10D");
+        await input(terminalId, data);
+      })(terminal.ports.input);
       terminal.print(prompt());
-      await expect(runCommand(terminal.ports, TAB, { command: "pwd" }, context())).rejects.toThrow(/did not show exactly that command.*"xpwd"/);
-      expect(terminal.typed).toEqual(["pwd", DEL.repeat(3)]);
+      await expect(runCommand(terminal.ports, TAB, { command: "pwd" }, context())).rejects.toThrow(/"pwdecho OWNER"/);
+      expect(terminal.typed).toEqual(["pwd"]);
+    });
+
+    it("leaves the line alone when the cursor was moved after the agent's text was echoed", async () => {
+      const terminal = shell();
+      terminal.ports.input = ((input) => async (terminalId: string, data: string) => {
+        await input(terminalId, data);
+        if (data === "pwd") terminal.print("\u001b[2D");
+      })(terminal.ports.input);
+      terminal.print(prompt());
+      await expect(runCommand(terminal.ports, TAB, { command: "pwd" }, context())).rejects.toThrow(/nothing was erased either/);
+      expect(terminal.typed).toEqual(["pwd"]);
+    });
+
+    it("runs the command when the line editor suggests a longer one after it (zsh-autosuggestions)", async () => {
+      const terminal = shell({ respond: integrated({ pwd: { output: "/Users/me/app\r\n", code: 0 } }) });
+      terminal.ports.input = ((input) => async (terminalId: string, data: string) => {
+        await input(terminalId, data);
+        // The rest of a remembered command, in grey, with the cursor back after the typed text.
+        if (data === "pwd") terminal.print("\u001b[90m -P\u001b[39m\u001b[3D");
+      })(terminal.ports.input);
+      terminal.print(prompt());
+      expect(await runCommand(terminal.ports, TAB, { command: "pwd" }, context())).toContain("it succeeded (exit code 0)");
+      expect(terminal.typed).toEqual(["pwd", "\r"]);
+    });
+
+    it("presses no Enter when text after the agent's is in the same colours as what it typed", async () => {
+      const terminal = shell();
+      terminal.ports.input = ((input) => async (terminalId: string, data: string) => {
+        await input(terminalId, data);
+        if (data === "pwd") terminal.print(" OWNER\u001b[6D");
+      })(terminal.ports.input);
+      terminal.print(prompt());
+      await expect(runCommand(terminal.ports, TAB, { command: "pwd" }, context())).rejects.toThrow(/"pwd OWNER"/);
+      expect(terminal.typed).toEqual(["pwd"]);
     });
 
     it("runs a command the line editor escaped as it was typed (oh-my-zsh's url-quote-magic)", async () => {
@@ -354,11 +450,11 @@ describe("runCommand", () => {
       expect(terminal.typed).toEqual([url, "\r"]);
     });
 
-    it("erases what it typed and presses no Enter when nothing echoes it (a program reading a password)", async () => {
+    it("presses no Enter and erases nothing when nothing echoes it (a program reading a password)", async () => {
       const terminal = shell({ echo: false });
       terminal.print(ownerPrompt);
       await expect(runCommand(terminal.ports, TAB, { command: "pwd" }, context())).rejects.toThrow(/did not show exactly that command/);
-      expect(terminal.typed).toEqual(["pwd", DEL.repeat(3)]);
+      expect(terminal.typed).toEqual(["pwd"]);
       expect(terminal.elapsed()).toBeGreaterThanOrEqual(ECHO_TIMEOUT_MS);
     });
   });
@@ -398,6 +494,34 @@ describe("runCommand", () => {
       };
       await expect(runCommand(terminal.ports, TAB, { command: "pwd" }, context({ checkAccess }))).rejects.toThrow(/not connected/);
       expect(terminal.typed).toEqual([]);
+    });
+
+    it("erases the agent's text, once echoed, when the call is stopped before Enter", async () => {
+      const controller = new AbortController();
+      const terminal = shell({ respond: integrated({}), onInput: (data) => void (data === "pwd" && controller.abort()) });
+      terminal.print(prompt());
+      await expect(runCommand(terminal.ports, TAB, { command: "pwd" }, context({ signal: controller.signal }))).rejects.toThrow(
+        /Stopped before the command was run\. What was typed was erased\./,
+      );
+      expect(terminal.typed).toEqual(["pwd", DEL.repeat(3)]);
+    });
+
+    it("erases nothing when another writer added to the line while the chat was letting go", async () => {
+      let attached = true;
+      const terminal = shell({ respond: integrated({}) });
+      terminal.ports.input = ((input) => async (terminalId: string, data: string) => {
+        await input(terminalId, data);
+        if (data === "pwd") attached = false;
+      })(terminal.ports.input);
+      const checkAccess = () => {
+        if (attached) return;
+        // The replacement chat (or the user) types before the rollback reads the line.
+        terminal.print(" ls");
+        throw new TerminalToolError("This chat is not connected to a terminal any more.");
+      };
+      terminal.print(prompt());
+      await expect(runCommand(terminal.ports, TAB, { command: "pwd" }, context({ checkAccess }))).rejects.toThrow(/nothing was erased either/);
+      expect(terminal.typed).toEqual(["pwd"]);
     });
 
     it("erases the typed command and presses no Enter when the chat lets go while it is being echoed", async () => {

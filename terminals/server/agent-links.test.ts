@@ -2,17 +2,31 @@ import { describe, expect, it } from "vitest";
 
 import { AgentLinkSchema, PENDING_MS, createAgentLinks, type AgentLink } from "./agent-links";
 
-function links(stored: AgentLink[] = []) {
+/** Plugin storage the stores share, as two copies of the plugin do across a reload. */
+function storage(initial: AgentLink[] = []) {
+  let stored = initial;
+  const saved: AgentLink[][] = [];
+  return {
+    load: async () => stored,
+    save: async (list: AgentLink[]) => {
+      saved.push(list);
+      stored = list;
+    },
+    saved,
+    read: () => stored,
+  };
+}
+
+function links(stored: AgentLink[] = [], shared = storage(stored)) {
   let clock = 1_000;
   let tokens = 0;
-  const saved: AgentLink[][] = [];
   const store = createAgentLinks({
-    load: async () => stored,
-    save: async (list) => void saved.push(list),
+    load: shared.load,
+    save: shared.save,
     now: () => clock,
-    newToken: () => `tok_${++tokens}`,
+    newToken: () => `tok_${++tokens}_${Math.random()}`,
   });
-  return { store, saved, advance: (ms: number) => (clock += ms) };
+  return { store, saved: shared.saved, shared, advance: (ms: number) => (clock += ms) };
 }
 
 describe("agent links", () => {
@@ -49,8 +63,56 @@ describe("agent links", () => {
   it("applies changes in order, each on the one before", async () => {
     const { store } = links();
     await store.load();
-    await Promise.all([store.begin("term_1"), store.begin("term_2"), store.bind("term_1", "tok_1", "thr_a"), store.drop("term_2")]);
-    expect(store.all()).toEqual([{ terminalId: "term_1", threadId: "thr_a", createdAt: 1_000, token: "tok_1" }]);
+    const first = store.begin("term_1");
+    await Promise.all([first, store.begin("term_2"), first.then((token) => store.bind("term_1", token, "thr_a")), store.drop("term_2")]);
+    expect(store.all()).toEqual([{ terminalId: "term_1", threadId: "thr_a", createdAt: 1_000, token: await first }]);
+  });
+
+  it("works on the stored list, so an old copy's late change does not undo the new copy's links", async () => {
+    // A reload: the new copy loads while the old one still has a spawn under way.
+    const shared = storage();
+    const old = links([], shared);
+    await old.store.load();
+    const oldToken = await old.store.begin("term_1");
+    const fresh = links([], shared);
+    await fresh.store.load();
+    const newToken = await fresh.store.begin("term_1");
+    expect(await fresh.store.bind("term_1", newToken, "thr_new")).toBe(true);
+    await fresh.store.begin("term_2");
+
+    // The old copy's spawn answers: its token is not the stored one, and it rewrites nothing.
+    expect(await old.store.bind("term_1", oldToken, "thr_old")).toBe(false);
+    await old.store.dropPending("term_1", oldToken);
+    expect(shared.read().map((link) => [link.terminalId, link.threadId])).toEqual([
+      ["term_1", "thr_new"],
+      ["term_2", null],
+    ]);
+  });
+
+  it("writes nothing once closed, and binds nothing", async () => {
+    const shared = storage();
+    const { store } = links([], shared);
+    await store.load();
+    const token = await store.begin("term_1");
+    const before = shared.saved.length;
+    store.close();
+    expect(await store.bind("term_1", token, "thr_a")).toBe(false);
+    await expect(store.dropPending("term_1", token)).rejects.toThrow(/being unloaded/);
+    await expect(store.drop("term_1")).rejects.toThrow(/being unloaded/);
+    expect(shared.saved).toHaveLength(before);
+  });
+
+  it("sees what another copy saved after a refresh", async () => {
+    const shared = storage();
+    const mine = links([], shared);
+    await mine.store.load();
+    const other = links([], shared);
+    await other.store.load();
+    const token = await other.store.begin("term_1");
+    await other.store.bind("term_1", token, "thr_a");
+    expect(mine.store.terminalFor("thr_a")).toBeNull();
+    await mine.store.refresh();
+    expect(mine.store.terminalFor("thr_a")).toBe("term_1");
   });
 
   it("binds a spawn only to the link it began: not after the link was dropped, nor over a newer one", async () => {

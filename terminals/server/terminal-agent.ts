@@ -20,7 +20,7 @@
  */
 import { Terminal } from "@xterm/headless";
 
-import { promptReadiness, PROMPT_SIGNS, type Readiness } from "../shared/prompt-ready";
+import { afterCursor, coloursBetween, onlySuggestion, promptReadiness, PROMPT_SIGNS, type Readiness } from "../shared/prompt-ready";
 import { lastLines, ShellTracker, textBetween, type FinishedCommand, type MarkableTerminal } from "../shared/shell-marks";
 
 /** The parts of a bb terminal session this file reads. */
@@ -102,7 +102,7 @@ class Replay {
 
   constructor(
     private readonly ports: AgentTerminalPorts,
-    private readonly terminalId: string,
+    readonly terminalId: string,
     session: SessionFacts,
     makeScreen: (cols: number, rows: number) => Screen,
   ) {
@@ -222,7 +222,12 @@ export function checkCommand(command: string): string {
   return trimmed;
 }
 
-/** Runs one task per terminal at a time, in the order they ask. */
+/**
+ * Runs one task per terminal at a time, in the order they ask. A waiter
+ * that is cancelled leaves the queue at once, but its place in the chain
+ * still waits for the task before it, so a later caller never overtakes a
+ * task that is still running.
+ */
 export class TerminalLocks {
   private readonly tails = new Map<string, Promise<void>>();
 
@@ -232,12 +237,15 @@ export class TerminalLocks {
     const mine = new Promise<void>((resolve) => (release = resolve));
     const tail = before.then(() => mine);
     this.tails.set(terminalId, tail);
+    // Forget the chain once everything in it is done, unless someone joined after.
+    void tail.then(() => {
+      if (this.tails.get(terminalId) === tail) this.tails.delete(terminalId);
+    });
     try {
       await waitFor(before, signal);
       return await task();
     } finally {
       release();
-      if (this.tails.get(terminalId) === tail) this.tails.delete(terminalId);
     }
   }
 }
@@ -342,27 +350,21 @@ async function typeAndWait(ports: AgentTerminalPorts, tab: TabFacts, command: st
     });
     const buffer = terminal.buffer.active;
     try {
+      const echo = new EchoWatch(ports, replay, startMarker, startColumn, command, tracker.eventCount());
       await ports.input(tab.terminalId, command);
-      const echo = await awaitEcho(ports, replay, startMarker, startColumn, command, signal);
-      let refusal: TerminalToolError | null = null;
-      if (echo !== "ok") {
-        refusal =
-          echo === "stopped"
-            ? new TerminalToolError("Stopped before the command was run; what was typed was erased.")
-            : new TerminalToolError(
-                `Nothing was run in ${where}: after typing \`${command}\` the line did not show exactly that command (it showed "${echo.shown}"), so Enter was not pressed and what was typed was erased. The user may have typed at the same moment, or the program there does not echo like a shell. Read the terminal before trying again.`,
-              );
+      const seen = await echo.settle(ECHO_TIMEOUT_MS, signal);
+      let refusal: string | null = null;
+      if (seen === "stopped") refusal = "Stopped before the command was run.";
+      else if (seen.kind !== "ok") {
+        refusal = `Nothing was run in ${where}: after typing \`${command}\` the line did not show exactly that command (it showed "${seen.shown}"), so Enter was not pressed. The user may have typed at the same moment, or the program there does not echo like a shell.`;
       } else {
         try {
-          checkStillWanted(context, "before the command was run; what was typed was erased");
+          checkStillWanted(context, "before the command was run");
         } catch (error) {
-          refusal = error as TerminalToolError;
+          refusal = (error as Error).message;
         }
       }
-      if (refusal !== null) {
-        await ports.input(tab.terminalId, ERASE.repeat(command.length));
-        throw refusal;
-      }
+      if (refusal !== null) throw await echo.rollBack(refusal, seen === "stopped");
       await ports.input(tab.terminalId, "\r");
       ports.announce(tab.terminalId, command);
       const started = ports.now();
@@ -414,35 +416,79 @@ function unescaped(line: string): string {
 }
 
 /**
- * Waits for the shell to echo `command` where typing started: "ok" once the
- * text from there to the cursor is the command (backslash escapes the line
- * editor added aside), "stopped" when the
- * call is cancelled, or what the line showed instead once it differs or
- * `ECHO_TIMEOUT_MS` passes.
+ * What the line shows after the command was typed: "ok" when it is exactly
+ * the command (backslash escapes the line editor added aside), the cursor
+ * right after it, nothing but the line editor's suggestion or a right-hand
+ * prompt after it, and the shell has sent no mark or directory report since
+ * the readiness check; "pending" while it shows only the start of it; else
+ * "differs". `shown` is the line from where typing started.
  */
-async function awaitEcho(
-  ports: AgentTerminalPorts,
-  replay: Replay,
-  startMarker: { line: number; isDisposed: boolean } | undefined,
-  startColumn: number,
-  command: string,
-  signal: AbortSignal,
-): Promise<"ok" | "stopped" | { shown: string }> {
-  const terminal = replay.screen.terminal;
-  const deadline = ports.now() + ECHO_TIMEOUT_MS;
-  for (;;) {
-    if (signal.aborted) return "stopped";
-    await replay.catchUp();
-    if (startMarker === undefined || startMarker.isDisposed) return { shown: "" };
+type Echo = { kind: "ok" | "pending" | "differs"; shown: string };
+
+/** Watches the echo of a typed command, and takes it back when it may be. */
+class EchoWatch {
+  constructor(
+    private readonly ports: AgentTerminalPorts,
+    private readonly replay: Replay,
+    private readonly startMarker: { line: number; isDisposed: boolean } | undefined,
+    private readonly startColumn: number,
+    private readonly command: string,
+    private readonly events: number,
+  ) {}
+
+  private observe(): Echo {
+    const { tracker } = this.replay;
+    const terminal = this.replay.screen.terminal;
+    if (this.startMarker === undefined || this.startMarker.isDisposed) return { kind: "differs", shown: "" };
     const buffer = terminal.buffer.active;
-    const shown = textBetween(terminal, { line: startMarker.line, column: startColumn }, { line: buffer.baseY + buffer.cursorY, column: buffer.cursorX })
-      .text.trim();
-    if (unescaped(shown) === unescaped(command)) return "ok";
-    if (!unescaped(command).startsWith(unescaped(shown)) || ports.now() >= deadline) return { shown };
-    try {
-      await ports.sleep(ECHO_POLL_MS, signal);
-    } catch {
-      return "stopped";
+    const start = { line: this.startMarker.line, column: this.startColumn };
+    const cursor = { line: buffer.baseY + buffer.cursorY, column: buffer.cursorX };
+    const before = cursor.line > start.line || (cursor.line === start.line && cursor.column >= start.column);
+    const typed = before ? textBetween(terminal, start, cursor).text.trim() : "";
+    const after = afterCursor(terminal);
+    const shown = `${typed}${after.text}`.trim();
+    if (!before || tracker.eventCount() !== this.events || tracker.fullScreen()) return { kind: "differs", shown };
+    if (!onlySuggestion(after, coloursBetween(terminal, start, cursor))) return { kind: "differs", shown };
+    if (unescaped(typed) === unescaped(this.command)) return { kind: "ok", shown: typed };
+    return unescaped(this.command).startsWith(unescaped(typed)) ? { kind: "pending", shown } : { kind: "differs", shown };
+  }
+
+  /**
+   * Reads the terminal until the echo is "ok" or "differs", or `timeoutMs`
+   * passes (when it is what it was then). "stopped" when `signal` aborts.
+   */
+  async settle(timeoutMs: number, signal: AbortSignal | null): Promise<Echo | "stopped"> {
+    const deadline = this.ports.now() + timeoutMs;
+    for (;;) {
+      if (signal?.aborted) return "stopped";
+      await this.replay.catchUp();
+      const seen = this.observe();
+      if (seen.kind !== "pending" || this.ports.now() >= deadline) return seen;
+      try {
+        await this.ports.sleep(ECHO_POLL_MS, signal ?? new AbortController().signal);
+      } catch {
+        return "stopped";
+      }
     }
+  }
+
+  /**
+   * Takes the typed command back, without Enter, and returns the refusal to
+   * report. It erases only a line that holds exactly the agent's text and
+   * nothing after it; anything else (the user typed into it, moved the
+   * cursor, or nothing echoed) is left as it is, since erasing would take
+   * the user's text with it, and the refusal says so.
+   */
+  async rollBack(reason: string, stopped: boolean): Promise<TerminalToolError> {
+    // A stop can come before the echo did: give the echo its time, without the stop.
+    const seen = await this.settle(stopped ? ECHO_TIMEOUT_MS : 0, null);
+    if (seen !== "stopped" && seen.kind === "ok") {
+      await this.ports.input(this.replay.terminalId, ERASE.repeat([...seen.shown].length));
+      return new TerminalToolError(`${reason} What was typed was erased.`);
+    }
+    const reads = seen === "stopped" || seen.shown === "" ? "" : ` (it reads "${seen.shown}")`;
+    return new TerminalToolError(
+      `${reason} The line does not hold just the agent's text${reads}, so nothing was erased either: ask the user to look at the prompt and clear what is there before running anything.`,
+    );
   }
 }

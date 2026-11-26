@@ -22,7 +22,7 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   clear. It types only at an empty prompt it can see: never while a command runs, at a password or
   other question, into an editor or other program, or over something you typed, wherever the cursor
   is. It runs one command at a time, and presses Enter only once your shell shows exactly that
-  command; if you type at the same moment, it erases its text and runs nothing. Ask it to run something
+  command; if you type at the same moment, it runs nothing, and leaves your text alone. Ask it to run something
   and it runs it there, in your terminal, without asking you to confirm first. If your prompt does not
   plainly show that it is waiting (see the README), it asks you to run the command yourself.
 - **One chat per tab.** The bot button at the end of the tabs opens the panel at any time, with an empty

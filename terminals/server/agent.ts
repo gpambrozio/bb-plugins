@@ -29,6 +29,13 @@ import {
 
 /** The metadata key naming the tab a helper thread was started for. */
 export const TERMINAL_METADATA_KEY = "terminalId";
+/** The metadata key holding the token of the link a thread's spawn began (server/agent-links.ts). */
+export const SPAWN_METADATA_KEY = "agentSpawn";
+/** Storage key: the tokens of spawns a copy of the plugin revoked, whose threads are archived on sight. */
+const REVOKED_KEY = "revokedAgentSpawns";
+/** How long a revoked token is kept: a spawn answers well within it. */
+const REVOKED_KEEP_MS = 24 * 60 * 60 * 1000;
+const RevokedSchema = z.array(z.object({ token: z.string(), at: z.number() }));
 
 /** The skill every thread gets, as the manifest names it (`skills/terminals/SKILL.md`). */
 const SKILL = "terminals";
@@ -55,13 +62,13 @@ const REQUEST_FIELDS = [
 ] as const;
 
 /** The spawn arguments for a composer's request, or a description of what is missing. */
-export function spawnArgs(request: Record<string, unknown>, terminalId: string): Record<string, unknown> {
+export function spawnArgs(request: Record<string, unknown>, terminalId: string, token: string): Record<string, unknown> {
   if (typeof request.projectId !== "string" || request.projectId === "") throw new Error("The request names no project.");
   if (!Array.isArray(request.input) || request.input.length === 0) throw new Error("The request has no message.");
   if (typeof request.environment !== "object" || request.environment === null) throw new Error("The request names no environment.");
   const args: Record<string, unknown> = {};
   for (const field of REQUEST_FIELDS) if (request[field] !== undefined) args[field] = request[field];
-  args.pluginMetadata = { [TERMINAL_METADATA_KEY]: terminalId };
+  args.pluginMetadata = { [TERMINAL_METADATA_KEY]: terminalId, [SPAWN_METADATA_KEY]: token };
   return args;
 }
 
@@ -108,6 +115,8 @@ export function registerAgent(bb: BbPluginApi, deps: AgentDeps) {
   let disposed = false;
   bb.onDispose(() => {
     disposed = true;
+    // The newer copy, loaded before this one is unloaded, keeps the links from now on.
+    links.close();
   });
 
   /**
@@ -128,10 +137,16 @@ export function registerAgent(bb: BbPluginApi, deps: AgentDeps) {
   async function tabForThread(threadId: string, signal: AbortSignal): Promise<TabFacts> {
     const deadline = Date.now() + BIND_WAIT_MS;
     let terminalId = links.terminalFor(threadId);
+    if (terminalId === null) {
+      // Another copy of the plugin (the one before a reload) may have bound it since this one read the links.
+      await links.refresh();
+      terminalId = links.terminalFor(threadId);
+    }
     while (terminalId === null && Date.now() < deadline && !signal.aborted) {
       const pending = links.all().some((link) => link.threadId === null);
       if (!pending) break;
       await deps.sleep(200);
+      await links.refresh();
       terminalId = links.terminalFor(threadId);
     }
     if (terminalId === null) throw new TerminalToolError(DETACHED);
@@ -215,8 +230,60 @@ export function registerAgent(bb: BbPluginApi, deps: AgentDeps) {
     return null;
   }
 
+  /**
+   * Spawns the copy of the plugin before this one began and can no longer
+   * bind (it is unloaded, and bb refuses its calls, so it cannot archive
+   * their threads itself). Their threads are archived when bb reports them
+   * created, and by the sweep in `prune`.
+   */
+  let revoked = new Map<string, number>();
+
+  async function saveRevoked(): Promise<void> {
+    const now = Date.now();
+    for (const [token, at] of revoked) if (now - at >= REVOKED_KEEP_MS) revoked.delete(token);
+    await bb.storage.kv.set(REVOKED_KEY, [...revoked].map(([token, at]) => ({ token, at })));
+  }
+
+  async function spawnToken(threadId: string): Promise<string | null> {
+    const metadata = await bb.sdk.threads.getPluginMetadata({ threadId });
+    const token = metadata[SPAWN_METADATA_KEY];
+    return typeof token === "string" ? token : null;
+  }
+
+  bb.events.on("thread.created", async ({ thread }) => {
+    if (thread.originPluginId !== bb.pluginId || revoked.size === 0) return;
+    try {
+      const token = await spawnToken(thread.id);
+      if (token !== null && revoked.has(token)) await discardThread(thread.id);
+    } catch (error) {
+      bb.log.warn(`could not check a new agent chat ${thread.id}: ${errorText(error)}`);
+    }
+  });
+
+  /** Archives the threads of revoked spawns that are still open. */
+  async function sweepRevoked(): Promise<void> {
+    if (revoked.size === 0) return;
+    const ids: string[] = [];
+    for (let offset = 0; ; offset += 100) {
+      const page = await bb.sdk.threads.list({ originPluginId: bb.pluginId, includeHidden: true, archived: false, offset, limit: 100 });
+      ids.push(...page.map((thread) => thread.id));
+      if (page.length < 100) break;
+    }
+    for (let index = 0; index < ids.length; index += 200) {
+      const { threads } = await bb.sdk.threads.experimental_listPluginMetadata({ threadIds: ids.slice(index, index + 200) });
+      for (const { threadId, metadata } of threads) {
+        const token = metadata[SPAWN_METADATA_KEY];
+        if (typeof token === "string" && revoked.has(token) && links.threadFor(String(metadata[TERMINAL_METADATA_KEY])) !== threadId) {
+          await discardThread(threadId);
+        }
+      }
+    }
+  }
+
   /** Stops and archives a chat no tab will use; a failure is logged, not thrown. */
   async function discardThread(threadId: string): Promise<void> {
+    // bb refuses an unloaded copy's calls; the newer copy archives the thread (see `revoked`).
+    if (disposed) return;
     try {
       await bb.sdk.threads.stop({ threadId });
     } catch (error) {
@@ -234,12 +301,27 @@ export function registerAgent(bb: BbPluginApi, deps: AgentDeps) {
   }
 
   return {
+    /**
+     * Run once as this copy loads: revokes the links the copy before it left
+     * waiting for a thread, and reads the tokens revoked before.
+     */
+    async start(): Promise<void> {
+      const parsed = RevokedSchema.safeParse((await bb.storage.kv.get<unknown>(REVOKED_KEY)) ?? []);
+      revoked = new Map(parsed.success ? parsed.data.map((entry) => [entry.token, entry.at]) : []);
+      const dropped = await links.dropAllPending();
+      for (const token of dropped) revoked.set(token, Date.now());
+      if (dropped.length > 0 || !parsed.success) await saveRevoked();
+    },
+
     async startAgent(terminalId: string, request: Record<string, unknown>): Promise<{ threadId: string }> {
       await requireTab(terminalId);
-      const args = { ...spawnArgs(request, terminalId), visibility: await deps.newChatVisibility() };
+      // Checks the request before a link is begun for it.
+      spawnArgs(request, terminalId, "");
+      const visibility = await deps.newChatVisibility();
       // Another copy of the plugin (a reload) may have saved them: the new thread's first session reads them.
       await deps.loadInstructions().catch(() => undefined);
       const token = await links.begin(terminalId);
+      const args = { ...spawnArgs(request, terminalId, token), visibility };
       let threadId: string;
       try {
         const spawned = await bb.sdk.threads.spawn(args as unknown as Parameters<typeof bb.sdk.threads.spawn>[0]);
@@ -251,12 +333,15 @@ export function registerAgent(bb: BbPluginApi, deps: AgentDeps) {
       // While bb created the thread, the tab may have closed, the user let go of the chat,
       // another window started a newer one, or this copy of the plugin was unloaded.
       const tabOpen = !disposed && (await deps.tabs().then((tabs) => tabs.some((tab) => tab.terminalId === terminalId)).catch(() => false));
-      const bound = tabOpen && (await links.bind(terminalId, token, threadId));
+      // Unloaded while the tabs were read: the links are the newer copy's now, and this one writes none.
+      const bound = tabOpen && !disposed && (await links.bind(terminalId, token, threadId));
       if (!bound) {
-        if (!tabOpen) await links.dropPending(terminalId, token).catch(() => undefined);
+        if (!disposed && !tabOpen) await links.dropPending(terminalId, token).catch(() => undefined);
         await discardThread(threadId);
         throw new Error(
-          tabOpen
+          disposed
+            ? "The Terminals plugin was reloaded while this chat was starting; the chat was stopped and archived. Start it again."
+            : tabOpen
             ? "While this chat was starting, another one was started for this terminal or its chat was let go of; this one was stopped and archived."
             : "The terminal tab closed while its chat was starting; the chat was stopped and archived.",
         );
@@ -302,6 +387,8 @@ export function registerAgent(bb: BbPluginApi, deps: AgentDeps) {
 
     /** Drops the links of closed tabs, and of threads that were archived or deleted. */
     async prune(): Promise<void> {
+      await links.refresh();
+      await sweepRevoked().catch((error: unknown) => bb.log.warn(`could not archive the agent chats a reload left behind: ${errorText(error)}`));
       const open = new Set((await deps.tabs()).map((tab) => tab.terminalId));
       for (const link of [...links.all()]) {
         if (!open.has(link.terminalId)) await links.drop(link.terminalId);

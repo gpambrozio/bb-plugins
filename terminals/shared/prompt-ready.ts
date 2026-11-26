@@ -14,9 +14,12 @@
  *   the shell's own prompt line before its own), and nothing follows the
  *   cursor. The report alone proves nothing: any program can print OSC 7.
  *
+ * "Nothing follows the cursor" allows a right-hand prompt only when it shows
+ * how zsh draws one: past an unwritten cell (see `rightPromptStart`).
+ *
  * No SDK import, so the app may use it.
  */
-import type { MarkableTerminal, ShellTracker } from "./shell-marks";
+import type { BufferLineLike, CellLike, MarkableTerminal, ShellTracker } from "./shell-marks";
 import { textBetween } from "./shell-marks";
 
 /** The signs a prompt may end in (followed by one space) for a shell without marks. */
@@ -38,29 +41,108 @@ function signAndSpace(signs: readonly string[]): RegExp {
 const ENDING = new RegExp(`${signAndSpace(PROMPT_SIGNS).source}$`, "u");
 const COUNTED = signAndSpace(COUNTED_SIGNS);
 
+/** A cell nothing was written to, or that was erased: zsh moves the cursor over the gap before its right-hand prompt. */
+function unwritten(cell: CellLike | undefined): boolean {
+  return cell !== undefined && cell.getChars() === "" && cell.getWidth() !== 0;
+}
+
+function blank(cell: CellLike | undefined): boolean {
+  if (cell === undefined) return true;
+  const chars = cell.getChars();
+  return chars === "" || chars.trim() === "";
+}
+
+/** How a cell's text is coloured, as a key: "default", or the colour mode and value. */
+function fgKey(cell: CellLike): string {
+  return cell.isFgDefault() ? "default" : `${cell.getFgColorMode()}:${cell.getFgColor()}`;
+}
+
 /**
- * What follows the cursor that is not the shell's decoration: text to its
- * right on its line, unless it is a right-hand prompt (zsh's RPROMPT: set
- * apart by a gap and ending at the line's right edge), and any text on the
- * rows below. Empty when nothing is there; a part that does not touch the
- * cursor starts with a space.
+ * Where a right-hand prompt starts on `line` (zsh's RPROMPT), or the line's
+ * length when there is none past `from`. It is a block of written cells
+ * ending at most two cells before the right edge, with an unwritten cell just
+ * before it: zsh jumps the cursor there (`CSI n C`) rather than printing
+ * spaces, so text the user typed, spaces included, never has one.
  */
-export function textAfterCursor(terminal: MarkableTerminal): string {
+function rightPromptStart(line: BufferLineLike, from: number): number {
+  let x = line.length - 1;
+  for (let trailing = 0; trailing < 2 && x >= from && blank(line.getCell(x)); trailing += 1) x -= 1;
+  if (x < from || blank(line.getCell(x))) return line.length;
+  while (x >= from && !unwritten(line.getCell(x))) x -= 1;
+  return x < from ? line.length : x + 1;
+}
+
+/** What follows the cursor that is not the shell's right-hand prompt: its text and the colours of its text. */
+export interface AfterCursor {
+  /** The text, wrapped rows below included; a part that does not touch the cursor starts with a space. "" when nothing is there. */
+  text: string;
+  /** The colour keys of its non-blank cells. */
+  colours: Set<string>;
+}
+
+/** What follows the cursor on its row (not a right-hand prompt) and on the rows below. */
+export function afterCursor(terminal: MarkableTerminal): AfterCursor {
   const buffer = terminal.buffer.active;
   const row = buffer.baseY + buffer.cursorY;
-  const line = buffer.getLine(row);
+  const colours = new Set<string>();
   const parts: string[] = [];
+  const collect = (line: BufferLineLike, from: number, to: number) => {
+    for (let x = from; x < to; x += 1) {
+      const cell = line.getCell(x);
+      if (cell !== undefined && !blank(cell)) colours.add(fgKey(cell));
+    }
+  };
+  const line = buffer.getLine(row);
   if (line !== undefined) {
-    const right = line.translateToString(false, buffer.cursorX);
-    const rightPrompt = /^\s{2,}\S(?:.*\S)?\s{0,2}$/.test(right) && line.translateToString(true).length >= line.length - 2;
+    const end = rightPromptStart(line, buffer.cursorX);
+    const right = line.translateToString(false, buffer.cursorX, end);
     // Text that starts at the cursor continues what is left of it, so it keeps no gap.
-    if (right.trim() !== "" && !rightPrompt) parts.push(right.trimEnd().replace(/^\s+/, " "));
+    if (right.trim() !== "") parts.push(right.trimEnd().replace(/^\s+/, " "));
+    collect(line, buffer.cursorX, end);
   }
   for (let y = row + 1; y < buffer.length; y += 1) {
-    const text = buffer.getLine(y)?.translateToString(true).trim() ?? "";
+    const below = buffer.getLine(y);
+    if (below === undefined) continue;
+    const text = below.translateToString(true).trim();
     if (text !== "") parts.push(` ${text}`);
+    collect(below, 0, below.length);
   }
-  return parts.join("");
+  return { text: parts.join(""), colours };
+}
+
+/** What follows the cursor that is not the shell's decoration, as text ("" when nothing). */
+export function textAfterCursor(terminal: MarkableTerminal): string {
+  return afterCursor(terminal).text;
+}
+
+/** The colour keys of the non-blank cells between two places. */
+export function coloursBetween(terminal: MarkableTerminal, from: { line: number; column: number }, to: { line: number; column: number }): Set<string> {
+  const buffer = terminal.buffer.active;
+  const colours = new Set<string>();
+  for (let y = Math.max(0, from.line); y <= to.line && y < buffer.length; y += 1) {
+    const line = buffer.getLine(y);
+    if (line === undefined) continue;
+    const end = y === to.line ? to.column : line.length;
+    for (let x = y === from.line ? from.column : 0; x < end; x += 1) {
+      const cell = line.getCell(x);
+      if (cell !== undefined && !blank(cell)) colours.add(fgKey(cell));
+    }
+  }
+  return colours;
+}
+
+/**
+ * Whether what follows the cursor is only the line editor's suggestion
+ * (zsh-autosuggestions draws the rest of a remembered command after the
+ * cursor, in a colour of its own, and Enter does not take it): nothing, or
+ * text all in one colour that is not the default and not one of the typed
+ * text's. The user's own text is in the typed text's colours.
+ */
+export function onlySuggestion(after: AfterCursor, typedColours: ReadonlySet<string>): boolean {
+  if (after.text.trim() === "") return true;
+  if (after.colours.size !== 1) return false;
+  const [colour] = after.colours;
+  return colour !== "default" && !typedColours.has(colour!);
 }
 
 /** Whether the shell waits at an empty prompt, and where typing would start. */

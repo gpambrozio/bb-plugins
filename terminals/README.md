@@ -102,8 +102,9 @@ The colours and font follow bb's theme, as bb's own terminal does.
   (`╰─$`) work as they are. Anything else (a command running, a password or other question, a REPL, an
   editor, text you typed, the cursor moved back into it) and the agent types nothing and says so. It
   runs one command per tab at a time, and presses Enter only once your shell has echoed exactly that
-  command: if the line shows anything else (you typed at the same moment), it erases what it typed and
-  runs nothing. If your prompt has another shape, or your shell does not report its directory, the
+  command, with nothing of yours after it: if the line shows anything else (you typed at the same
+  moment), it runs nothing, and takes its text back only when the line holds nothing but its text;
+  otherwise it leaves the line as it is and tells you to clear it. If your prompt has another shape, or your shell does not report its directory, the
   agent can still read the terminal but asks you to run commands; adding the lines below fixes it.
 - **Ask it to run something and it runs it in that terminal**, not in a shell of its own, without
   asking you to confirm first. Commands it decides to run by itself stay to looking around; it asks

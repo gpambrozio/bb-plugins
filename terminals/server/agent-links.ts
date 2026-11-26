@@ -14,7 +14,12 @@
  * discards its thread.
  *
  * The list is in plugin storage; a copy in memory answers `configure`, which
- * bb calls synchronously. Every change is serialized. No SDK import.
+ * bb calls synchronously. Every change is serialized, and works on the list
+ * as stored, read again first: on a reload the new copy of the plugin loads
+ * before the old one is unloaded, so either may have written since the other
+ * last read. Once `close` is called (the copy is being unloaded) nothing is
+ * written any more: a change is refused, and `bind` binds nothing. No SDK
+ * import.
  */
 import { z } from "zod";
 
@@ -41,26 +46,55 @@ export interface AgentLinkPorts {
   newToken(): string;
 }
 
+/** The refusal of a change asked of a closed store. */
+export class LinksClosedError extends Error {
+  constructor() {
+    super("This copy of the plugin is being unloaded; the newer copy keeps the agent chats.");
+  }
+}
+
 export function createAgentLinks(ports: AgentLinkPorts) {
   let links: AgentLink[] = [];
   let queue: Promise<unknown> = Promise.resolve();
+  let closed = false;
 
-  /** Runs `change` on the list after every change before it, and saves what it returns. */
+  /** Runs after every change before it. */
+  function queued<T>(work: () => Promise<T>): Promise<T> {
+    const next = queue.then(work);
+    queue = next.catch(() => undefined);
+    return next;
+  }
+
+  /** Runs `change` on the stored list, read again, after every change before it, and saves what it returns. */
   function update(change: (current: AgentLink[]) => AgentLink[]): Promise<void> {
-    const next = queue.then(async () => {
-      const changed = change(links);
-      if (changed === links) return;
+    return queued(async () => {
+      if (closed) throw new LinksClosedError();
+      const current = await ports.load();
+      links = current;
+      if (closed) throw new LinksClosedError();
+      const changed = change(current);
+      if (changed === current) return;
       await ports.save(changed);
       links = changed;
     });
-    queue = next.catch(() => undefined);
-    return next;
   }
 
   return {
     /** Reads the stored list; call once before the rest. */
     async load(): Promise<void> {
       links = await ports.load();
+    },
+
+    /** Reads the stored list again, after the changes queued before it: what another copy of the plugin saved shows. */
+    refresh(): Promise<void> {
+      return queued(async () => {
+        if (!closed) links = await ports.load();
+      });
+    },
+
+    /** Stops every write from this copy; the reads keep answering from memory. */
+    close(): void {
+      closed = true;
     },
 
     /** The tab's bound thread, or null. */
@@ -104,17 +138,39 @@ export function createAgentLinks(ports: AgentLinkPorts) {
 
     /**
      * Names the thread of the tab's waiting link that `begin` made with
-     * `token`. False, binding nothing, when that link is gone or was replaced.
+     * `token`. False, binding nothing, when that link is gone or was replaced
+     * (in storage, by this copy or another), or this copy was closed.
      */
     async bind(terminalId: string, token: string, threadId: string): Promise<boolean> {
       let bound = false;
-      await update((current) => {
-        const link = current.find((entry) => entry.terminalId === terminalId);
-        if (link === undefined || link.token !== token || link.threadId !== null) return current;
-        bound = true;
-        return current.map((entry) => (entry === link ? { ...entry, threadId } : entry));
-      });
+      try {
+        await update((current) => {
+          const link = current.find((entry) => entry.terminalId === terminalId);
+          if (link === undefined || link.token !== token || link.threadId !== null) return current;
+          bound = true;
+          return current.map((entry) => (entry === link ? { ...entry, threadId } : entry));
+        });
+      } catch (error) {
+        if (error instanceof LinksClosedError) return false;
+        throw error;
+      }
       return bound;
+    },
+
+    /**
+     * Forgets every link still waiting for its thread, and returns their
+     * tokens. A new copy of the plugin calls it as it loads: those links were
+     * begun by the copy before it, whose spawns can no longer bind (it is
+     * being unloaded), so their threads are the new copy's to archive.
+     */
+    async dropAllPending(): Promise<string[]> {
+      const tokens: string[] = [];
+      await update((current) => {
+        const kept = current.filter((link) => link.threadId !== null);
+        for (const link of current) if (link.threadId === null) tokens.push(link.token);
+        return kept.length === current.length ? current : kept;
+      });
+      return tokens;
     },
 
     /** Forgets the tab's link if `begin` made it with `token` (a spawn that failed); a newer link stays. */

@@ -204,6 +204,7 @@ export default async function plugin(bb: BbPluginApi) {
     ports: terminalPorts,
     sleep: (ms) => sleep(ms),
   });
+  await agent.start().catch((error: unknown) => bb.log.warn(`could not take over the agent chats: ${String(error)}`));
 
   bb.rpc.register(rpcContract, {
     hosts: async () => ({ hosts: await hosts() }),
