@@ -671,10 +671,15 @@ function TerminalView({
   const failed =
     onAsk !== null && isAskableFailure(shell.last) && shell.phase !== "running" && !windowAgentPanel.isDismissed(shell.last) ? shell.last : null;
 
-  // The note that the agent typed here lasts until the user types here.
+  // The note that the agent typed here, and the offer for a failed command, last until the user types
+  // here: they have moved on (an offer replayed after a reload included).
   useEffect(() => {
     if (terminal === null) return;
-    return terminal.onUserInput(() => windowAgentPanel.clearTyped(terminalId));
+    return terminal.onUserInput(() => {
+      windowAgentPanel.clearTyped(terminalId);
+      const last = terminal.lastCommand();
+      if (isAskableFailure(last) && !windowAgentPanel.isDismissed(last)) windowAgentPanel.dismiss(last);
+    });
   }, [terminal, terminalId]);
 
   useLayoutEffect(() => {

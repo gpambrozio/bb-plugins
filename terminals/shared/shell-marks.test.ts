@@ -82,6 +82,20 @@ describe("ShellTracker", () => {
     expect(finished[0]?.output).toBe("abcdefghijKLMNO");
   });
 
+  it("leaves a right-hand prompt out of the command line and of what is typed", async () => {
+    const { terminal, tracker, finished, write } = setUp(40);
+    // zsh draws RPROMPT at the right edge, then puts the cursor back after the left prompt.
+    const rprompt = (text: string) => `\u001b7\u001b[${40 - text.length + 1}G${text}\u001b8`;
+    await write(prompt() + rprompt("1 ↵"));
+    expect(tracker.pendingInput()).toBe("");
+    await write("ls nope");
+    expect(tracker.pendingInput()).toBe("ls nope");
+    await write(run(""));
+    await write("ls: nope: No such file or directory\r\n" + done(1));
+    expect(finished[0]?.command).toBe("ls nope");
+    expect(terminal.buffer.active.getLine(0)?.translateToString(true)).toContain("1 ↵");
+  });
+
   it("ignores an end mark with no command (Enter on an empty prompt)", async () => {
     const { tracker, finished, write } = setUp();
     await write(prompt() + "\r\n" + done(0) + prompt());
@@ -105,6 +119,18 @@ describe("ShellTracker", () => {
     expect(tracker.pendingInput()).toBe("git sta");
     await write(run(""));
     expect(tracker.pendingInput()).toBeNull();
+  });
+
+  it("reads what the README's bash lines send, an empty line and another PROMPT_COMMAND included", async () => {
+    const { finished, write } = setUp();
+    // Recorded from macOS's bash 3.2 with the README's lines and PROMPT_COMMAND='echo -n [pc]'.
+    const bashPrompt = `[pc]${osc("133;A")}${osc("7;file://mini/tmp")}b$ ${osc("133;B")}`;
+    await write(bashPrompt + "ls nope\r\n" + osc("133;C") + "ls: nope: No such file or directory\r\n" + osc("133;D;1"));
+    await write(bashPrompt + "\r\n" + bashPrompt + "echo ok\r\n" + osc("133;C") + "ok\r\n" + osc("133;D;0") + bashPrompt);
+    expect(finished.map(({ command, exitCode, cwd }) => ({ command, exitCode, cwd }))).toEqual([
+      { command: "ls nope", exitCode: 1, cwd: "/tmp" },
+      { command: "echo ok", exitCode: 0, cwd: "/tmp" },
+    ]);
   });
 
   it("knows nothing of a shell that sends no marks", async () => {

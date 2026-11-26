@@ -30,6 +30,14 @@ specific to `terminals`.
 | `app/chat-text.ts` | The fenced block "Add to chat" writes, and adding it to a draft. |
 | `app/project-match.ts` | The shell's directory from OSC 7, the project whose checkout holds it (Windows paths compared without case, either slash), and the default project. |
 | `app/chat-delivery.tsx` | The block on its way to a composer, and the overlay that writes it once that composer is on screen. |
+| `shared/shell-marks.ts` | Shell integration on any xterm (the page's, the server's headless one): OSC 133/633 prompt and command marks and OSC 7, the phase the shell is in, each finished command's line, output and exit code read from the terminal's own buffer, what is typed and not run. |
+| `shared/osc7.ts` | The directory an OSC 7 sequence names. |
+| `shared/agent.ts` | What the page tells a tab's agent (the failure and screen prompts, the standing instructions), which failures to offer help for, the tool names and the `agent-typed` channel. No SDK import. |
+| `server/agent-links.ts` | Which thread helps with which tab: one per tab, stored before the thread exists so `configure` recognises it, bound once `spawn` answers. |
+| `server/agent.ts` | `terminal_read` and `terminal_run`, `configure` (the tools for a tab's own thread, the skill for all), and starting, messaging and letting go of a tab's thread. |
+| `server/terminal-agent.ts` | The tools' work: bb's kept output replayed into `@xterm/headless`, the state checks before typing, typing and waiting for the command's end (or quiet output without marks). |
+| `app/agent-state.ts` | This window's agent panel: open or not, each tab's composer seed, failures waved away, the agent's last typed command per tab. Module scope, like the terminals. |
+| `app/agent-panel.tsx` | The panel: bb's `ThreadChat` for the tab's thread, or bb's `experimental_NewThreadComposer` seeded with the prompt, project and checkout. |
 
 `npm test` runs everything. Nothing in it opens a shell or a socket: the connection runs against a
 scripted socket and a manual clock, the server against the SDK's fake host with stubbed terminals,
@@ -139,7 +147,8 @@ bounds what a stuck "+" can start.
 
 **Security.** A shell is the user's own account on that machine, so nothing here widens access: the
 RPCs and the socket are bb's authenticated ones, `open` takes only a connected machine's id, no port
-is opened, and storage and the log hold tab metadata only — never output, keystrokes or credentials. A
+is opened, and storage and the log hold tab metadata and which thread helps which tab only — never
+output, keystrokes or credentials. A
 selection sent with "Add to chat" stays in the window's memory until the chat's composer takes it; it
 is never stored or sent for the user.
 
@@ -176,9 +185,47 @@ checkout (`projects.list` sources) or thread worktree (sidebar threads' environm
 the tab's machine wins; else the project last picked here (localStorage), else the most recent
 thread's.
 
+**An agent beside the terminal is bb's own chat, in the page.** `ThreadChat` and
+`experimental_NewThreadComposer` render in a nav panel, so the panel is part of the Terminals page
+(beside the terminal; over it on a compact viewport), not bb's side panel, which a nav page cannot
+open a tab of its own in. The composer submits a `NewThreadRequest`; the server spawns it (only the
+user's choices are taken from it, never metadata, parent or visibility) with the tab's id in plugin
+metadata. A tab has at most one thread; asking about a later failure `threads.send`s it there, and the
+panel's "new chat" lets go of it. The composer's seeds are computed once, when the checkouts are known,
+because changing one re-seeds every pick; its draft key carries a hash of the prompt, so a new failure
+starts a new draft.
+
+**The tools belong to one thread and one tab.** `configure` gives `terminal_read` and `terminal_run`
+only to a thread whose metadata names a tab *and* that the link store says is that tab's thread (or the
+tab is still waiting, under `PENDING_MS`, for the thread `spawn` is creating: bb resolves the first
+session before `spawn` answers). Metadata alone grants nothing; every call is checked again by the
+calling thread's id, which bb supplies. A tool call that arrives before `spawn` answered waits up to
+15 s for the link. Letting go, a newer chat, or closing the tab ends the access at once.
+
+**The agent types at the user's prompt, visibly, and only when the shell is ready.** `terminal_run`
+replays bb's last 256 KB of the terminal's output into a headless xterm sized like the session, refuses
+on the alternate screen, while a command runs, or when text sits between the prompt's end and the cursor
+(text right of the cursor, such as zsh's RPROMPT or an autosuggestion, does not count), then sends one
+line plus Enter through `terminals.input` and polls `terminals.output` from the next sequence until the
+shell's `D` mark (or `QUIET_MS` of no output without marks, or the timeout, when the command is left
+running). Each command it types is published on `agent-typed`; the page shows it above the terminal and
+turns the tab's icon into the bot until the user types there. Exit 130 (Ctrl-C) is not offered as a
+failure. The offer for a failure also goes away when the user types: a reload replays bb's buffer, and
+with it the last failure.
+
+**Failures are seen only with shell integration.** The plugin never edits a shell's settings and does
+not inject integration into the shells it opens. fish 4+ and nushell send OSC 133 themselves; the README
+has zsh and bash lines (both checked live, bash on macOS's 3.2 with another `PROMPT_COMMAND`). Without
+marks everything but the card works.
+
 ## Checking it by hand
 
 The tests cannot reach bb's socket. Against a running bb, one local shell is enough: create it with
 `bb terminal create --machine <server machine>` and drive `app/connection.ts` from Node at
 `ws://127.0.0.1:<port>/ws/terminals/<id>` (a Node socket sends no `Origin`, which bb accepts), then
 close it. Never open sessions on someone else's machines to test.
+
+The agent was checked the same way, in a dev bb (never the owner's): open a tab through the `open` RPC,
+`source` the README's zsh or bash lines into that one shell with `bb terminal send` (no settings file is
+touched), and start a Claude Code thread with the `startAgent` RPC asking it to call both tools. The
+page itself was driven with `playwright-core` from `tools/shots`.

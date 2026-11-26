@@ -21,6 +21,11 @@ terminal app does.
 - Select text and an Add to chat button appears, as in bb's own terminal. Pick an open thread, or a
   new thread in a project (the one the shell is in, when it says), and the selection lands in that
   chat's message box as terminal output naming its tab and machine, for you to send yourself.
+- When a command fails, an Ask an agent card opens a chat beside the terminal, already holding the
+  command, its output, exit code and folder. That chat can read the terminal and run commands in it,
+  at your prompt where you see them, and no other chat can. Seeing failures needs a shell that marks
+  its prompts (fish 4, nushell; the README has lines to add for zsh and bash). The agent runs on your
+  own agent provider, like any bb thread.
 - Copy on select follows bb's own setting: a finished selection is copied with a "Selection copied"
   notice, and nothing is copied when the setting is off.
 - Colours and font follow bb's theme.
@@ -29,8 +34,8 @@ terminal app does.
 
 Each tab is one of bb's own terminal sessions, run by the chosen machine's bb host daemon, so a shell
 does not depend on the page or the app being open. The page draws it with xterm.js and streams it over
-bb's own terminal connection. No port is opened, and the plugin stores only the list of tabs: never
-output, keystrokes or credentials.
+bb's own terminal connection. No port is opened, and the plugin stores only the list of tabs and which
+chat helps with which tab: never output, keystrokes or credentials.
 
 ## What it needs
 

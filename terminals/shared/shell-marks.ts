@@ -66,6 +66,8 @@ export interface MarkerLike {
 /** The parts of an xterm.js buffer line this file uses. */
 export interface BufferLineLike {
   readonly isWrapped: boolean;
+  /** The terminal's width in cells. */
+  readonly length: number;
   translateToString(trimRight?: boolean, startColumn?: number, endColumn?: number): string;
 }
 
@@ -214,15 +216,16 @@ export class ShellTracker {
   }
 
   /**
-   * What is typed at the prompt and not yet run: the text after the prompt's
-   * end, while the shell is at its prompt. Null when the marks do not say
-   * (no integration, or not at a prompt).
+   * What is typed at the prompt and not yet run: the text from the prompt's
+   * end to the cursor, while the shell is at its prompt — not what the shell
+   * draws to the right of the cursor (a right-hand prompt, a suggestion).
+   * Null when the marks do not say (no integration, or not at a prompt).
    */
   pendingInput(): string | null {
     if (this.phaseNow !== "prompt" || this.promptEnd === null || this.promptEnd.marker.isDisposed) return null;
     const buffer = this.terminal.buffer.active;
-    const end = { line: buffer.length - 1, column: Number.MAX_SAFE_INTEGER };
-    return textBetween(this.terminal, { line: this.promptEnd.marker.line, column: this.promptEnd.column }, end).text.trim();
+    const cursor = { line: buffer.baseY + buffer.cursorY, column: buffer.cursorX };
+    return textBetween(this.terminal, { line: this.promptEnd.marker.line, column: this.promptEnd.column }, cursor).text.trim();
   }
 
   /** Calls `listener` each time a command finishes; returns the unsubscribe. */
@@ -286,6 +289,28 @@ export class ShellTracker {
     }
   }
 
+  /**
+   * The command line as drawn between the prompt's end and the start of the
+   * output, without a right-hand prompt (zsh's RPROMPT, which stays on the
+   * line): text set apart by a gap and ending at the line's right edge.
+   */
+  private drawnCommand(prompt: Place, start: Place): string {
+    const buffer = this.terminal.buffer.active;
+    const rows: string[] = [];
+    for (let y = prompt.marker.line; y <= start.marker.line && y < buffer.length; y += 1) {
+      const line = buffer.getLine(y);
+      if (line === undefined) continue;
+      const from = y === prompt.marker.line ? prompt.column : 0;
+      const to = y === start.marker.line ? start.column : line.length;
+      let text = line.translateToString(false, from, to);
+      const full = line.translateToString(false);
+      const right = /\s{2,}(\S(?:.*\S)?)\s{0,2}$/.exec(text);
+      if (right !== null && full.trimEnd().length >= line.length - 2) text = text.slice(0, right.index);
+      rows.push(text.trim());
+    }
+    return rows.filter((row) => row !== "").join(" ");
+  }
+
   private dropCommand(): void {
     this.commandStart?.marker.dispose();
     this.commandStart = null;
@@ -306,12 +331,7 @@ export class ShellTracker {
     let command = this.commandLine;
     if (command === null) {
       const prompt = this.promptEnd;
-      command =
-        prompt === null || prompt.marker.isDisposed
-          ? ""
-          : textBetween(this.terminal, { line: prompt.marker.line, column: prompt.column }, { line: start.marker.line, column: start.column })
-              .text.replace(/\n/g, " ")
-              .trim();
+      command = prompt === null || prompt.marker.isDisposed ? "" : this.drawnCommand(prompt, start);
     }
     const finished: FinishedCommand = { command, output: output.text, truncated: output.truncated, exitCode, cwd: this.directory };
     this.lastFinished = finished;

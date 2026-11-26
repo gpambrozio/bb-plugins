@@ -5,6 +5,24 @@ Notable changes to `terminals`. The other plugins in this repository version sep
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.5.0
+
+### Added
+
+- **Ask an agent when a command fails.** When the shell reports it, a failed command shows an
+  **Ask an agent** card at the bottom of the terminal. It opens a panel beside the terminal with bb's
+  new-chat box, already holding the command, what it printed, its exit code and its folder, in the
+  project that folder belongs to. Edit it if you like, pick the agent, and send.
+- **The agent can look and try things itself.** That chat can read what the terminal shows and run
+  commands in it, at your prompt, where you see them, and gets back their output and exit code. A note
+  at the top of the terminal says what it ran. It never types while a command runs, into an editor or
+  other full-screen program, or over something you typed and have not run.
+- **One chat per tab.** The bot button at the end of the tabs opens the panel at any time. A tab keeps
+  its chat, so the next failure goes to the same one; start a new chat from the panel whenever you
+  like. No other chat can use that terminal.
+- **Seeing failed commands** needs a shell that marks its prompts: fish 4 and later and nushell do; for
+  zsh and bash, the README has lines to add to your shell's settings file.
+
 ## 0.4.0
 
 ### Fixed

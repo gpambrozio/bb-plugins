@@ -53,7 +53,101 @@ machine running the bb server is listed first.
 
 The colours and font follow bb's theme, as bb's own terminal does.
 
+## Ask an agent
+
+- **A command fails** and, when the shell reports it (see *Seeing failed commands* below), an
+  **Ask an agent** card shows at the bottom of the terminal with the command and its exit code. It
+  goes away when you type in the terminal, press its **×**, or the next command runs. Stopping a
+  command with Ctrl-C (exit code 130) is not offered.
+- **Ask an agent** opens a panel beside the terminal (over it on a phone) with bb's new-thread box,
+  filled in with the command, the last lines it printed, its exit code and the directory it ran in.
+  You can edit it, pick the agent and model, and send it. The project starts on the one whose
+  checkout holds the shell's directory, working in that checkout on the terminal's machine, else as
+  for **Add to chat**. The provider and model start on bb's defaults for that project.
+- **The bot button** at the right end of the tab strip opens and closes the panel at any time, with
+  no failed command needed: a new chat starts on the terminal's last lines.
+- **One chat per tab.** Once the tab has a chat, the panel shows it (bb's own chat, the same one the
+  sidebar lists), and asking about another failure sends it to that chat straight away. The chat's
+  **new chat** button lets go of it and starts over; **open in bb** shows it as a normal thread.
+- **The agent can read the terminal and run commands in it.** That chat gets two tools for that tab
+  only: one reads what the terminal shows now, the other types one command at your prompt, waits for
+  it to finish and reads back its output and exit code. You see the command typed in your shell, a
+  note at the top of the terminal says "The agent ran …" until you type there yourself, and the tab's
+  icon turns into the bot meanwhile. It never types while a command is running, into a full-screen
+  program (an editor, a pager), or over something you have typed and not run yet. A command still
+  running after its wait (30 seconds unless the agent asks for longer) is left running.
+- No other thread gets those tools. Letting go of the chat, or closing the tab, takes them away.
+
+The agent runs on your own agent provider, so a chat costs what any other bb thread costs.
+
+### Seeing failed commands
+
+The page knows a command failed only when the shell marks its prompts and each command's exit status
+with the OSC 133 sequences many terminals use. Without them, everything else works, including the bot
+button and both tools, but no card offers help, and the agent is told it cannot see exit codes: a
+command it runs is read back once its output goes quiet.
+
+- **Out of the box:** fish 4 and later, and nushell. A prompt framework or shell-integration script
+  you already load may send them too.
+- **zsh** (macOS's default) and **bash** do not. To add them, put the matching lines at the end of
+  your `~/.zshrc` or `~/.bashrc` and open a new tab. The plugin never edits these files for you.
+
+zsh:
+
+```zsh
+# bb Terminals: mark the prompt and each command's end and exit status (OSC 133),
+# and say the directory (OSC 7), so the Terminals page sees failed commands.
+_bb_term_precmd() {
+  local code=$?
+  if [[ -n $_bb_term_running ]]; then printf '\e]133;D;%s\a' "$code"; fi
+  _bb_term_running=
+  printf '\e]133;A\a\e]7;file://%s%s\a' "$HOST" "$PWD"
+}
+_bb_term_prompt_end() { [[ $PS1 == *$'\e]133;B'* ]] || PS1+=$'%{\e]133;B\a%}'; }
+_bb_term_preexec() { _bb_term_running=1; printf '\e]133;C\a'; }
+precmd_functions=(_bb_term_precmd $precmd_functions _bb_term_prompt_end)
+preexec_functions+=(_bb_term_preexec)
+```
+
+bash (3.2, as macOS ships it, and later):
+
+```bash
+# bb Terminals: mark the prompt and each command's end and exit status (OSC 133),
+# and say the directory (OSC 7), so the Terminals page sees failed commands.
+_bb_term_prompt_start() {
+  local code=$?
+  _bb_term_ready=
+  if [[ -n $_bb_term_running ]]; then printf '\e]133;D;%s\a' "$code"; fi
+  _bb_term_running=
+  return $code
+}
+_bb_term_prompt_end() {
+  printf '\e]133;A\a\e]7;file://%s%s\a' "$HOSTNAME" "$PWD"
+  _bb_term_ready=1
+}
+_bb_term_preexec() {
+  [[ -n $_bb_term_ready && $BASH_COMMAND != _bb_term_prompt_start* ]] || return 0
+  _bb_term_ready=
+  _bb_term_running=1
+  printf '\e]133;C\a'
+}
+PROMPT_COMMAND="_bb_term_prompt_start${PROMPT_COMMAND:+; $PROMPT_COMMAND}; _bb_term_prompt_end"
+PS1="$PS1"'\[\e]133;B\a\]'
+trap '_bb_term_preexec' DEBUG
+```
+
+The bash lines take over the `DEBUG` trap; if you already set one (bash-preexec does), add the
+`_bb_term_preexec` call to it instead. Other shells (PowerShell, sh) need an equivalent of their own.
+
 ## Screenshots
+
+![A failed command in a terminal tab, with an Ask an agent card at the bottom of the terminal](docs/screenshots/terminals-failed-command.png)
+
+_A command fails: the card offers to ask an agent._
+
+![The agent panel beside a terminal, with the agent's chat explaining and fixing the failure](docs/screenshots/terminals-agent-panel.png)
+
+_The agent panel: the tab's own chat, beside the shell it reads and runs commands in._
 
 ![The Terminals page with tabs for several shells and a log streaming in one of them](docs/screenshots/terminals-log.png)
 
@@ -95,8 +189,13 @@ remembers which sessions are tabs, in which order. The page draws each one with
 terminal connection — the one bb's terminal panel uses — on the page's own origin. No port is opened
 and nothing new listens anywhere.
 
-Nothing is stored but the list of tabs (machine, session id and the name you gave it). No output, keystroke or
-credential is written to the plugin's storage or its log.
+Nothing is stored but the list of tabs (machine, session id and the name you gave it) and which chat
+helps with which tab. No output, keystroke or credential is written to the plugin's storage or its
+log. What you send an agent, and what its tools read, is in that chat, like any other bb thread.
+
+The agent's tools reach the shell the same way: they read bb's kept output for that one terminal and
+type into it through bb's terminal API. The plugin's server checks on every call that the calling
+thread is the tab's chat.
 
 ## What happens when
 

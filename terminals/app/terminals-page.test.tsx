@@ -1248,6 +1248,14 @@ describe("asking an agent", () => {
     expect(screen.queryByRole("button", { name: /Ask an agent$/ })).toBeNull();
   });
 
+  it("takes the offer away once the user types in the terminal", async () => {
+    await shown();
+    act(() => terminals.finish("term_1", failure()));
+    expect(await screen.findByRole("button", { name: /Ask an agent$/ })).toBeTruthy();
+    act(() => terminals.type("term_1"));
+    await waitFor(() => expect(screen.queryByRole("button", { name: /Ask an agent$/ })).toBeNull());
+  });
+
   it("opens the agent on what the terminal shows from the toolbar, and lets go of a chat for a new one", async () => {
     const { state } = await shown("thr_agent");
     const toolbar = screen.getByRole("toolbar", { name: "Terminals" });
