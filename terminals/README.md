@@ -55,6 +55,8 @@ The colours and font follow bb's theme, as bb's own terminal does.
 
 ## Ask an agent
 
+![A failing ./build.sh shows an Ask an agent card; the agent panel opens with the failure pre-filled; after sending, a real Claude Code agent reads the terminal, runs ls and cat in it (listed in The agent ran), proposes renaming the settings file, and on the reply renames it and runs the build again, which passes](docs/screenshots/terminals-ask-agent.gif)
+
 - **A command fails** and, when the shell reports it (see *Seeing failed commands* below), an
   **Ask an agent** card shows at the bottom of the terminal with the command and its exit code. It
   goes away when you type in the terminal, press its **×**, or the next command runs. Stopping a
