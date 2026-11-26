@@ -19,21 +19,41 @@ import {
   type PluginNavPanelProps,
 } from "@get-bb/plugin-sdk/app";
 
+import { AGENT_TYPED, AgentTypedSchema, FAILURE_PROMPT, isAskableFailure } from "../shared/agent";
 import type { RpcContract } from "../shared/contract";
 import { plusAction } from "../shared/host-choice";
-import { MAX_TAB_NAME, TABS_CHANGED, isPending, moveTab, normalizeTabName, tabLabels, type HostChoice, type TabView } from "../shared/tabs";
+import type { FinishedCommand, ShellPhase } from "../shared/shell-marks";
+import {
+  MAX_TAB_NAME,
+  TABS_CHANGED,
+  isPending,
+  moveTab,
+  normalizeTabName,
+  tabLabels,
+  type HostChoice,
+  type ListedTab,
+  type TabView,
+} from "../shared/tabs";
 import { Button } from "@/components/ui/button";
 import { COARSE_POINTER_COMPACT_ICON_BUTTON_CLASS, COARSE_POINTER_COMPACT_ICON_SIZE_CLASS } from "@/components/ui/coarse-pointer-sizing";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { useIsCompactViewport } from "@/components/ui/hooks/use-compact-viewport";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
 
 import { AddToChatDialog, type AddToChatRequest } from "./add-to-chat-dialog";
+import { AgentPanel } from "./agent-panel";
+import { isNoteFolded, setNoteFolded } from "./agent-note-fold";
+import { AgentRanNote } from "./agent-ran-note";
+import { AgentResizeHandle } from "./agent-resize-handle";
+import { readAgentWidth } from "./agent-width";
+import { windowAgentPanel, type AgentPanelState, type AgentTypedNote } from "./agent-state";
 import { TabStrip, type StripTab, type TabReorderRequest } from "./bb-tab-strip/tab-strip";
 import { DELIVERY_TIMEOUT_MS, windowDeliveries, type DeliveryTarget } from "./chat-delivery";
 import { terminalBlock } from "./chat-text";
 import type { ConnectionStatus } from "./connection";
 import { CopyOnSelectSetting } from "./copy-on-select";
+import { SETTINGS_PLACE, openPluginSettings } from "./open-settings";
 import { applyThemeToAll, liveTerminal, releaseClosedTerminals, type LiveTerminal, type TerminalsBackend } from "./live-terminals";
 import { resolveSelection, selectionAfterClose, windowSelection } from "./selection";
 import { SelectionMenu, useTerminalSelection } from "./terminal-selection";
@@ -55,7 +75,7 @@ function message(error: unknown): string {
  */
 function useTabs() {
   const rpc = useRpc<RpcContract>();
-  const [tabs, setTabs] = useState<TabView[] | null>(null);
+  const [tabs, setTabs] = useState<ListedTab[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const generation = useRef(0);
   const invalidate = useCallback(() => {
@@ -182,6 +202,55 @@ function useCopyOnSelect(): CopyOnSelectSetting {
   return setting;
 }
 
+/** This window's agent panel state (app/agent-state.ts). */
+function useAgentPanel(): AgentPanelState {
+  return useSyncExternalStore(windowAgentPanel.subscribe, windowAgentPanel.get, windowAgentPanel.get);
+}
+
+/** The terminal's last finished command and where its shell is, kept current. */
+function useShellState(terminal: LiveTerminal | null): { last: FinishedCommand | null; phase: ShellPhase } {
+  const [state, setState] = useState<{ last: FinishedCommand | null; phase: ShellPhase }>({ last: null, phase: "unknown" });
+  useEffect(() => {
+    if (terminal === null) return;
+    const read = () => setState({ last: terminal.lastCommand(), phase: terminal.phase() });
+    read();
+    return terminal.onShellChange(read);
+  }, [terminal]);
+  return state;
+}
+
+/** A tab whose chat has typed nothing into it. */
+const NO_COMMANDS: readonly AgentTypedNote[] = [];
+
+/**
+ * The commands the tab's agent chat typed into it, from the server, which
+ * keeps them for the whole chat: read when the tab shows, when its chat
+ * changes, and each time the agent types here (`typedCount`).
+ */
+function useAgentCommands(terminalId: string, threadId: string | null, typedCount: number): readonly AgentTypedNote[] {
+  const rpc = useRpc<RpcContract>();
+  const [commands, setCommands] = useState<readonly AgentTypedNote[]>(NO_COMMANDS);
+  useEffect(() => {
+    if (threadId === null) {
+      setCommands(NO_COMMANDS);
+      return;
+    }
+    let live = true;
+    rpc
+      .call("agentCommands", { terminalId })
+      .then((result) => {
+        if (live) setCommands(result.threadId === threadId ? result.commands : NO_COMMANDS);
+      })
+      .catch(() => {
+        // Keep what is shown; the next command or a return to the tab reads it again.
+      });
+    return () => {
+      live = false;
+    };
+  }, [rpc, terminalId, threadId, typedCount]);
+  return commands;
+}
+
 /** How often the page reads the list again while a tab's shell is still opening. */
 const OPENING_POLL_MS = 2_000;
 
@@ -192,6 +261,15 @@ export function TerminalsPage(_props: PluginNavPanelProps) {
   const [hostMenu, setHostMenu] = useState<HostChoice[] | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const copyOnSelect = useCopyOnSelect();
+  const agentPanel = useAgentPanel();
+  const compact = useIsCompactViewport();
+  /** The agent panel's width beside the terminal (not on a phone, where it covers it). */
+  const [agentWidth, setAgentWidth] = useState(readAgentWidth);
+  const agentRow = useRef<HTMLDivElement | null>(null);
+  useRealtime(AGENT_TYPED, (payload: unknown) => {
+    const parsed = AgentTypedSchema.safeParse(payload);
+    if (parsed.success) windowAgentPanel.noteTyped(parsed.data.terminalId);
+  });
 
   const [renaming, setRenaming] = useState<string | null>(null);
   const tabIds = useMemo(() => (tabs ?? []).map((tab) => tab.terminalId), [tabs]);
@@ -238,7 +316,9 @@ export function TerminalsPage(_props: PluginNavPanelProps) {
       setNotice(null);
       try {
         const tab = await rpc.call("open", { hostId, ...INITIAL_SIZE });
-        setTabs((current) => (current?.some((entry) => entry.terminalId === tab.terminalId) ? current : [...(current ?? []), tab]));
+        setTabs((current) =>
+          current?.some((entry) => entry.terminalId === tab.terminalId) ? current : [...(current ?? []), { ...tab, agentThreadId: null }],
+        );
         select(tab.terminalId);
         // Any read that started before the tab was stored would drop it again.
         refetch();
@@ -323,6 +403,54 @@ export function TerminalsPage(_props: PluginNavPanelProps) {
     [rpc, select, setTabs, refetch],
   );
 
+  /** The tab's helper thread changed here: shown at once, then read again from the server. */
+  const linked = useCallback(
+    (terminalId: string, threadId: string | null) => {
+      invalidate();
+      setTabs((list) => list?.map((tab) => (tab.terminalId === terminalId ? { ...tab, agentThreadId: threadId } : tab)) ?? list);
+      refetch();
+    },
+    [invalidate, setTabs, refetch],
+  );
+
+  /**
+   * "Ask an agent" about a failed command: a short ask, sent straight to the
+   * tab's chat when it has one, else the panel's new-thread composer starts on
+   * it. The agent reads the command and its output from the terminal itself.
+   */
+  const ask = useCallback(
+    async (tab: ListedTab, command: FinishedCommand) => {
+      const prompt = FAILURE_PROMPT;
+      windowAgentPanel.dismiss(command);
+      if (tab.agentThreadId === null) {
+        windowAgentPanel.open(tab.terminalId, prompt);
+        return;
+      }
+      windowAgentPanel.open(tab.terminalId, null);
+      try {
+        await rpc.call("askAgent", { terminalId: tab.terminalId, text: prompt });
+      } catch (cause) {
+        // Its chat was archived or deleted: start a new one, on the same failure.
+        windowAgentPanel.open(tab.terminalId, prompt);
+        setNotice(`Could not send it to the agent's chat: ${message(cause)}`);
+        refetch();
+      }
+    },
+    [rpc, refetch],
+  );
+
+  const toggleAgent = useCallback(() => {
+    if (agentPanel.open) {
+      windowAgentPanel.close();
+      return;
+    }
+    if (shownTab === null) return;
+    // A new chat starts on the short ask when the last command failed, and empty otherwise.
+    const failed = isAskableFailure(liveTerminal(shownTab.terminalId, backend).lastCommand());
+    const prompt = shownTab.agentThreadId !== null || agentPanel.seeds.has(shownTab.terminalId) || !failed ? null : FAILURE_PROMPT;
+    windowAgentPanel.open(shownTab.terminalId, prompt);
+  }, [agentPanel, shownTab, backend]);
+
   const statuses = useConnectionStatuses(tabs);
   const stopRenaming = useCallback(
     (tab: TabView, label: string, typed: string | null) => {
@@ -349,10 +477,14 @@ export function TerminalsPage(_props: PluginNavPanelProps) {
         const pending = isPending(tab.status);
         const statusLabel = pending ? null : status.state === "ended" ? "ended" : status.state === "offline" ? "offline" : null;
         const where = tab.name === null ? label : `${label} — ${tab.hostName}`;
+        // A tab whose agent chat is still its own shows the bot.
+        const hasAgent = tab.agentThreadId !== null;
         return {
           id: tab.terminalId,
           label,
-          leadingVisual: <Icon name={pending ? "Spinner" : "Terminal"} className={COARSE_POINTER_COMPACT_ICON_SIZE_CLASS} aria-hidden />,
+          leadingVisual: (
+            <Icon name={pending ? "Spinner" : hasAgent ? "Bot" : "Terminal"} className={COARSE_POINTER_COMPACT_ICON_SIZE_CLASS} aria-hidden />
+          ),
           statusLabel,
           title: statusLabel === null ? where : `${where} (${statusLabel})`,
           onSelect: () => select(tab.terminalId),
@@ -368,7 +500,7 @@ export function TerminalsPage(_props: PluginNavPanelProps) {
   );
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className="relative flex h-full min-h-0 flex-col">
       <div
         role="toolbar"
         aria-label="Terminals"
@@ -408,6 +540,36 @@ export function TerminalsPage(_props: PluginNavPanelProps) {
             ))}
           </DropdownMenuContent>
         </DropdownMenu>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className={cn(
+            COARSE_POINTER_COMPACT_ICON_BUTTON_CLASS,
+            "ml-auto shrink-0 text-muted-foreground/70 hover:text-foreground focus:ring-1 focus:ring-ring",
+          )}
+          aria-label="Ask an agent about this terminal"
+          aria-pressed={agentPanel.open}
+          disabled={!agentPanel.open && (shownTab === null || isPending(shownTab.status))}
+          onClick={toggleAgent}
+        >
+          <Icon name="Bot" />
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className={cn(
+            COARSE_POINTER_COMPACT_ICON_BUTTON_CLASS,
+            "shrink-0 text-muted-foreground/70 hover:text-foreground focus:ring-1 focus:ring-ring",
+          )}
+          aria-label="Terminals settings"
+          onClick={() => {
+            if (!openPluginSettings()) setNotice(`Could not open the settings: they are in ${SETTINGS_PLACE}.`);
+          }}
+        >
+          <Icon name="Settings" />
+        </Button>
       </div>
       {notice !== null || error !== null ? (
         <div role="alert" className="flex items-center gap-2 border-b border-border px-3 py-2 text-xs text-destructive">
@@ -428,25 +590,52 @@ export function TerminalsPage(_props: PluginNavPanelProps) {
           </Button>
         </div>
       ) : null}
-      <div className="relative min-h-0 flex-1 bg-sidebar">
-        {shown !== null && isPending(shownTab?.status ?? "running") ? (
-          <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground">
-            <Icon name="Spinner" />
-            Starting the shell…
+      <div ref={agentRow} className="flex min-h-0 flex-1">
+        <div className="relative min-h-0 min-w-0 flex-1 bg-sidebar">
+          {shown !== null && isPending(shownTab?.status ?? "running") ? (
+            <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground">
+              <Icon name="Spinner" />
+              Starting the shell…
+            </div>
+          ) : shown !== null ? (
+            <TerminalView
+              key={shown}
+              terminalId={shown}
+              hostId={shownTab?.hostId ?? ""}
+              hostName={shownTab?.hostName ?? ""}
+              label={labels.get(shown) ?? shownTab?.hostName ?? ""}
+              copyOnSelect={copyOnSelect}
+              onClose={() => void close(shown)}
+              agentThreadId={shownTab?.agentThreadId ?? null}
+              agentTypedCount={agentPanel.typed.get(shown) ?? 0}
+              onAsk={shownTab === null ? null : (command) => void ask(shownTab, command)}
+            />
+          ) : tabs === null ? null : (
+            <EmptyState opening={opening} onOpen={() => void plus()} />
+          )}
+        </div>
+        {agentPanel.open && shownTab !== null && !isPending(shownTab.status) && !compact ? (
+          <AgentResizeHandle width={agentWidth} row={agentRow} onWidth={setAgentWidth} />
+        ) : null}
+        {agentPanel.open && shownTab !== null && !isPending(shownTab.status) ? (
+          <div
+            className={cn(
+              "min-h-0 border-border bg-background",
+              // The terminal keeps 15rem when the window narrows below the remembered width.
+              compact ? "absolute inset-x-0 bottom-0 top-10 z-20" : "max-w-[calc(100%-15rem)] shrink-0",
+            )}
+            style={compact ? undefined : { width: agentWidth }}
+            data-agent-pane=""
+          >
+            <AgentPanel
+              tab={shownTab}
+              label={labels.get(shownTab.terminalId) ?? shownTab.hostName}
+              cwd={liveTerminal(shownTab.terminalId, backend).cwd()}
+              onClose={() => windowAgentPanel.close()}
+              onLinked={(threadId) => linked(shownTab.terminalId, threadId)}
+            />
           </div>
-        ) : shown !== null ? (
-          <TerminalView
-            key={shown}
-            terminalId={shown}
-            hostId={shownTab?.hostId ?? ""}
-            hostName={shownTab?.hostName ?? ""}
-            label={labels.get(shown) ?? shownTab?.hostName ?? ""}
-            copyOnSelect={copyOnSelect}
-            onClose={() => void close(shown)}
-          />
-        ) : tabs === null ? null : (
-          <EmptyState opening={opening} onOpen={() => void plus()} />
-        )}
+        ) : null}
       </div>
     </div>
   );
@@ -509,6 +698,9 @@ function TerminalView({
   label,
   copyOnSelect,
   onClose,
+  agentThreadId,
+  agentTypedCount,
+  onAsk,
 }: {
   terminalId: string;
   hostId: string;
@@ -517,6 +709,12 @@ function TerminalView({
   label: string;
   copyOnSelect: CopyOnSelectSetting;
   onClose: () => void;
+  /** The tab's agent chat, whose commands the card lists; null when it has none. */
+  agentThreadId: string | null;
+  /** Changes each time the agent types here while this window listens: the list is read again. */
+  agentTypedCount: number;
+  /** Asks an agent about a failed command; null while the tab cannot. */
+  onAsk: ((command: FinishedCommand) => void) | null;
 }) {
   const view = useRef<HTMLDivElement>(null);
   const container = useRef<HTMLDivElement>(null);
@@ -526,6 +724,31 @@ function TerminalView({
   const [terminal, setTerminal] = useState<LiveTerminal | null>(null);
   const { selection, dismiss, onPointerDown } = useTerminalSelection(terminal, view, copyOnSelect);
   const [request, setRequest] = useState<AddToChatRequest | null>(null);
+  const shell = useShellState(terminal);
+  // Re-read when the user waves an offer away (app/agent-state.ts keeps which).
+  useAgentPanel();
+  const failed =
+    onAsk !== null && isAskableFailure(shell.last) && shell.phase !== "running" && !windowAgentPanel.isDismissed(shell.last) ? shell.last : null;
+
+  const agentCommands = useAgentCommands(terminalId, agentThreadId, agentTypedCount);
+  const [noteFolded, setNoteFoldedState] = useState(() => isNoteFolded(terminalId));
+  const foldNote = useCallback(
+    (folded: boolean) => {
+      setNoteFolded(terminalId, folded);
+      setNoteFoldedState(folded);
+    },
+    [terminalId],
+  );
+
+  // The offer for a failed command lasts until the user types here: they have moved on (an offer
+  // replayed after a reload included). The list of the agent's commands stays for the whole chat.
+  useEffect(() => {
+    if (terminal === null) return;
+    return terminal.onUserInput(() => {
+      const last = terminal.lastCommand();
+      if (isAskableFailure(last) && !windowAgentPanel.isDismissed(last)) windowAgentPanel.dismiss(last);
+    });
+  }, [terminal, terminalId]);
 
   useLayoutEffect(() => {
     const parent = container.current;
@@ -591,6 +814,35 @@ function TerminalView({
         </div>
       ) : null}
       <div ref={container} data-terminal-view="" className="min-h-0 flex-1 overflow-hidden p-1" onPointerDown={onPointerDown} />
+      <AgentRanNote key={terminalId} commands={agentCommands} folded={noteFolded} onFold={foldNote} />
+      {failed === null || onAsk === null ? null : (
+        <div
+          role="status"
+          className="absolute bottom-3 right-3 z-10 flex max-w-[calc(100%-1.5rem)] items-center gap-2 rounded-md border border-border bg-card px-2 py-1.5 text-xs shadow-md"
+        >
+          <Icon name="CircleX" className="shrink-0 text-destructive" aria-hidden />
+          <span className="min-w-0 flex-1 truncate">
+            {failed.command === "" ? "The command" : <code className="font-mono">{failed.command}</code>} failed with exit code {failed.exitCode}
+          </span>
+          <Button type="button" variant="outline" size="sm" className="h-6 shrink-0 px-2" onClick={() => onAsk(failed)}>
+            <Icon name="Bot" />
+            Ask an agent
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-6 w-6 shrink-0 p-0"
+            aria-label="Dismiss"
+            onClick={() => {
+              windowAgentPanel.dismiss(failed);
+              terminal?.focus();
+            }}
+          >
+            <Icon name="X" />
+          </Button>
+        </div>
+      )}
       {selection === null ? null : <SelectionMenu anchor={selection.anchor} onAddToChat={addToChat} />}
       <AddToChatDialog
         request={request}

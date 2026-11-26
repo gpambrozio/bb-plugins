@@ -5,6 +5,46 @@ Notable changes to `terminals`. The other plugins in this repository version sep
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the version numbers
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.5.0
+
+### Added
+
+- **Ask an agent when a command fails.** When the shell reports it, a failed command shows an
+  **Ask an agent** card at the bottom of the terminal. It opens a panel beside the terminal with bb's
+  new-chat box, in the project the terminal's folder belongs to, already saying "The last command I
+  ran returned an error. Help me debug." Edit it if you like, pick the agent, and send. The agent is
+  told which terminal you are working in, and reads the command and what it printed from there itself.
+- **The agent can look and try things itself.** That chat can read what the terminal shows and run
+  commands in it, at your prompt, where you see them, and gets back their output and exit code. A card
+  in the terminal's corner, in bb's accent colour, lists every command the chat ran there: the last
+  three, with a button to show them all. It stays for the whole chat, across reloads and windows, until
+  you start a new chat or close the tab, and folds down to a small pill when you want the terminal
+  clear. It types only at an empty prompt it can see: never while a command runs, at a password or
+  other question, into an editor or other program, or over something you typed, wherever the cursor
+  is. It runs one command at a time, and presses Enter only once your shell shows exactly that
+  command; if you type at the same moment, it runs nothing, and leaves your text alone. Ask it to run something
+  and it runs it there, in your terminal, without asking you to confirm first. If your prompt does not
+  plainly show that it is waiting (see the README), it asks you to run the command yourself.
+- **One chat per tab.** The bot button at the end of the tabs opens the panel at any time, with an empty
+  message unless the last command failed. A tab keeps
+  its chat, so the next failure goes to the same one; start a new chat from the panel whenever you
+  like. No other chat can use that terminal.
+- **Agent chats stay out of the sidebar.** A terminal's agent chat lives in its panel and is hidden
+  from bb's thread list; **Open in bb** in the panel's header shows it there from then on. bb sends no
+  push notifications for a hidden chat, so a setting, **Always show agent chats in the sidebar**, puts
+  them all back in the sidebar with notifications.
+- **A resizable agent panel.** Drag the edge between the terminal and the panel (or use the arrow keys
+  on it) to make the panel wider or narrower; the terminal refits, and this browser remembers the width.
+- **Your own instructions for the agent.** The gear at the end of the tabs opens the plugin's settings,
+  where you can read what the agent is told, edit it or add to it, and restore the built-in text. The
+  terminal's name and machine are always given to the agent, whatever you write.
+- **After an ssh session ends,** the agent no longer finds the terminal stuck "running" a command when
+  the remote shell reported its prompts and your own shell does not: your prompt coming back is enough.
+- **Long outputs keep their result.** A command that prints more than the terminal keeps still reports
+  how it ended, so the agent and the failure card see it.
+- **Seeing failed commands** needs a shell that marks its prompts: fish 4 and later and nushell do; for
+  zsh and bash, the README has lines to add to your shell's settings file.
+
 ## 0.4.0
 
 ### Fixed

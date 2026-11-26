@@ -13,7 +13,8 @@ import { TouchSensor } from "@dnd-kit/core";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { RpcContract } from "../shared/contract";
-import type { HostChoice, TabView } from "../shared/tabs";
+import type { FinishedCommand, ShellPhase } from "../shared/shell-marks";
+import type { HostChoice, ListedTab } from "../shared/tabs";
 import type { ConnectionStatus } from "./connection";
 
 const terminals = vi.hoisted(() => {
@@ -27,6 +28,11 @@ const terminals = vi.hoisted(() => {
     selectionListeners: Set<() => void>;
     scrollListeners: Set<() => void>;
     cwd: string | null;
+    /** What the shell's integration marks said last (shared/shell-marks.ts). */
+    last: FinishedCommand | null;
+    phase: ShellPhase;
+    shellListeners: Set<() => void>;
+    inputListeners: Set<() => void>;
   }
   const entries = new Map<string, Entry>();
   function entry(terminalId: string) {
@@ -40,6 +46,10 @@ const terminals = vi.hoisted(() => {
         selectionListeners: new Set(),
         scrollListeners: new Set(),
         cwd: null,
+        last: null,
+        phase: "unknown",
+        shellListeners: new Set(),
+        inputListeners: new Set(),
       };
       entries.set(terminalId, found);
     }
@@ -61,6 +71,22 @@ const terminals = vi.hoisted(() => {
     },
     scroll(terminalId: string) {
       for (const listener of entry(terminalId).scrollListeners) listener();
+    },
+    /** The shell says a command finished, and shows its next prompt. */
+    finish(terminalId: string, command: FinishedCommand) {
+      const found = entry(terminalId);
+      found.last = command;
+      found.phase = "prompt";
+      for (const listener of found.shellListeners) listener();
+    },
+    setPhase(terminalId: string, phase: ShellPhase) {
+      const found = entry(terminalId);
+      found.phase = phase;
+      for (const listener of found.shellListeners) listener();
+    },
+    /** The user types in the terminal in this window. */
+    type(terminalId: string) {
+      for (const listener of entry(terminalId).inputListeners) listener();
     },
   };
 });
@@ -113,6 +139,16 @@ vi.mock("./live-terminals", () => ({
         return () => found.scrollListeners.delete(listener);
       },
       cwd: () => found.cwd,
+      lastCommand: () => found.last,
+      phase: () => found.phase,
+      onShellChange: (listener: () => void) => {
+        found.shellListeners.add(listener);
+        return () => found.shellListeners.delete(listener);
+      },
+      onUserInput: (listener: () => void) => {
+        found.inputListeners.add(listener);
+        return () => found.inputListeners.delete(listener);
+      },
     };
   },
   releaseClosedTerminals: (open: ReadonlySet<string>) => {
@@ -158,12 +194,12 @@ beforeEach(() => {
 
 afterEach(() => cleanup());
 
-function tab(terminalId: string, hostId: string, hostName: string): TabView {
-  return { terminalId, hostId, hostName, createdAt: 0, name: null, status: "running", exitCode: null };
+function tab(terminalId: string, hostId: string, hostName: string): ListedTab {
+  return { terminalId, hostId, hostName, createdAt: 0, name: null, status: "running", exitCode: null, agentThreadId: null };
 }
 
 /** A fake server holding a tab list, with the given machines connected. */
-function server(hosts: HostChoice[], initial: TabView[] = []) {
+function server(hosts: HostChoice[], initial: ListedTab[] = []) {
   const state = {
     tabs: [...initial],
     opened: [] as string[],
@@ -1099,5 +1135,310 @@ describe("the Terminals page", () => {
       expect(await screen.findByRole("button", { name: "Project: Personal" })).toBeTruthy();
       window.localStorage.removeItem("bb-plugin-terminals:last-new-thread-project");
     });
+  });
+});
+
+describe("asking an agent", () => {
+  const sidebar = {
+    status: "ready" as const,
+    projects: [
+      { id: "proj_personal", name: "Personal", isPersonal: true, href: "", settingsHref: "" },
+      { id: "proj_app", name: "app", isPersonal: false, href: "", settingsHref: "" },
+    ],
+    threads: [],
+  } as unknown as Host["sidebarThreads"];
+  const projects = [{ id: "proj_app", sources: [{ hostId: "mini", path: "/Users/me/code/app" }] }];
+  /** A new one each time: the page remembers which failures were waved away, by identity. */
+  const failure = (extra: Partial<FinishedCommand> = {}): FinishedCommand => ({
+    command: "npm test",
+    output: "Error: 2 tests failed",
+    truncated: false,
+    exitCode: 1,
+    cwd: "/Users/me/code/app",
+    ...extra,
+  });
+
+  /** One tab on "Mac mini", shown, with a server that starts and remembers its helper thread. */
+  async function shown(agentThreadId: string | null = null) {
+    const { state, rpc } = server([{ id: "mini", name: "Mac mini" }], [{ ...tab("term_1", "mini", "Mac mini"), agentThreadId }]);
+    const asked: { terminalId: string; text: string }[] = [];
+    const started: { terminalId: string; request: Record<string, unknown> }[] = [];
+    const shownChats: string[] = [];
+    let failShow = false;
+    /** What the server keeps: the commands the tab's chat ran, cleared when the chat ends. */
+    let ran: { command: string; at: number }[] = [];
+    const threadOf = () => state.tabs.find((entry) => entry.terminalId === "term_1")?.agentThreadId ?? null;
+    Object.assign(rpc, {
+      agentCommands: () => ({ threadId: threadOf(), commands: ran }),
+      startAgent: ({ terminalId, request }: { terminalId: string; request: Record<string, unknown> }) => {
+        started.push({ terminalId, request });
+        state.tabs = state.tabs.map((entry) => (entry.terminalId === terminalId ? { ...entry, agentThreadId: "thr_agent" } : entry));
+        return { threadId: "thr_agent" };
+      },
+      askAgent: ({ terminalId, text }: { terminalId: string; text: string }) => {
+        asked.push({ terminalId, text });
+        return { threadId: agentThreadId };
+      },
+      showAgentChat: ({ terminalId }: { terminalId: string }) => {
+        shownChats.push(terminalId);
+        if (failShow) throw new Error("bb is busy");
+        return { threadId: "thr_agent" };
+      },
+      forgetAgent: ({ terminalId }: { terminalId: string }) => {
+        ran = [];
+        state.tabs = state.tabs.map((entry) => (entry.terminalId === terminalId ? { ...entry, agentThreadId: null } : entry));
+        return {};
+      },
+    });
+    terminals.entry("term_1").cwd = "/Users/me/code/app";
+    const view = render(rpc, { projects, sidebarThreads: sidebar });
+    await screen.findByRole("button", { name: "Mac mini" });
+    await waitFor(() => expect(document.querySelector("[data-terminal-view]")).not.toBeNull());
+    /** The agent runs `command` in the tab: the server keeps it, then tells the windows. */
+    const agentRan = async (command: string) => {
+      ran = [...ran, { command, at: ran.length }];
+      await view.emitRealtime("agent-typed", { terminalId: "term_1", command });
+    };
+    return { view, state, asked, started, shownChats, failShowing: () => void (failShow = true), agentRan, keep: (commands: string[]) => void (ran = commands.map((command, at) => ({ command, at }))) };
+  }
+
+  afterEach(async () => {
+    const { windowAgentPanel } = await import("./agent-state");
+    windowAgentPanel.close();
+    window.localStorage.removeItem("terminals.agentNoteFolded");
+  });
+
+  it("offers an agent when a command fails, and starts one in the project the shell is in, on a short ask", async () => {
+    const { started } = await shown();
+    expect(screen.queryByRole("button", { name: /Ask an agent$/ })).toBeNull();
+    act(() => terminals.finish("term_1", failure()));
+    fireEvent.click(await screen.findByRole("button", { name: /Ask an agent$/ }));
+    const composer = await screen.findByTestId("bb-new-thread-composer");
+    // Not the terminal's output: the agent reads that itself.
+    const prompt = (screen.getByTestId("bb-new-thread-composer-input") as HTMLTextAreaElement).value;
+    expect(prompt).toBe("The last command I ran returned an error. Help me debug.");
+    expect(composer.dataset.defaultProjectId).toBe("proj_app");
+    expect(JSON.parse(composer.dataset.defaultEnvironment ?? "null")).toEqual({
+      type: "host",
+      hostId: "mini",
+      workspace: { type: "unmanaged", path: null },
+    });
+    // Asked once: the offer goes away.
+    expect(screen.queryByRole("button", { name: /Ask an agent$/ })).toBeNull();
+
+    fireEvent.click(screen.getByTestId("bb-new-thread-composer-submit"));
+    await waitFor(() => expect(started).toHaveLength(1));
+    expect(started[0]?.terminalId).toBe("term_1");
+    expect(started[0]?.request.projectId).toBe("proj_app");
+    expect(JSON.stringify(started[0]?.request.input)).toContain("returned an error");
+    // The panel now shows the thread's chat.
+    expect(await screen.findByText(/ThreadChat stub/)).toBeTruthy();
+  });
+
+  it("sends a failure straight to the tab's chat when it has one", async () => {
+    const { asked } = await shown("thr_agent");
+    act(() => terminals.finish("term_1", failure()));
+    fireEvent.click(await screen.findByRole("button", { name: /Ask an agent$/ }));
+    await waitFor(() => expect(asked).toHaveLength(1));
+    expect(asked[0]?.text).toBe("The last command I ran returned an error. Help me debug.");
+    expect(await screen.findByText(/ThreadChat stub/)).toBeTruthy();
+    expect(screen.queryByTestId("bb-new-thread-composer")).toBeNull();
+  });
+
+  it("offers nothing for a success, a Ctrl-C, a command running, or one waved away", async () => {
+    await shown();
+    act(() => terminals.finish("term_1", failure({ exitCode: 0 })));
+    act(() => terminals.finish("term_1", failure({ exitCode: 130 })));
+    expect(screen.queryByRole("button", { name: /Ask an agent$/ })).toBeNull();
+
+    act(() => terminals.finish("term_1", failure()));
+    expect(await screen.findByRole("button", { name: /Ask an agent$/ })).toBeTruthy();
+    act(() => terminals.setPhase("term_1", "running"));
+    expect(screen.queryByRole("button", { name: /Ask an agent$/ })).toBeNull();
+    act(() => terminals.setPhase("term_1", "prompt"));
+    fireEvent.click(await screen.findByRole("button", { name: "Dismiss" }));
+    expect(screen.queryByRole("button", { name: /Ask an agent$/ })).toBeNull();
+  });
+
+  it("takes the offer away once the user types in the terminal", async () => {
+    await shown();
+    act(() => terminals.finish("term_1", failure()));
+    expect(await screen.findByRole("button", { name: /Ask an agent$/ })).toBeTruthy();
+    act(() => terminals.type("term_1"));
+    await waitFor(() => expect(screen.queryByRole("button", { name: /Ask an agent$/ })).toBeNull());
+  });
+
+  it("opens the agent from the toolbar, empty unless the last command failed, and lets go of a chat for a new one", async () => {
+    const { state } = await shown("thr_agent");
+    const toolbar = screen.getByRole("toolbar", { name: "Terminals" });
+    const askButton = () => within(toolbar).getByRole("button", { name: "Ask an agent about this terminal" });
+    fireEvent.click(askButton());
+    expect(await screen.findByText(/ThreadChat stub/)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "New agent chat" }));
+    await waitFor(() => expect(state.tabs[0]?.agentThreadId).toBeNull());
+    expect(await screen.findByTestId("bb-new-thread-composer")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Close the agent panel" }));
+    expect(screen.queryByTestId("bb-new-thread-composer")).toBeNull();
+    fireEvent.click(askButton());
+    expect((await screen.findByTestId<HTMLTextAreaElement>("bb-new-thread-composer-input")).value).toBe("");
+
+    fireEvent.click(screen.getByRole("button", { name: "Close the agent panel" }));
+    act(() => terminals.finish("term_1", failure()));
+    fireEvent.click(askButton());
+    expect((await screen.findByTestId<HTMLTextAreaElement>("bb-new-thread-composer-input")).value).toBe(
+      "The last command I ran returned an error. Help me debug.",
+    );
+  });
+
+  it("opens the plugin's settings from the gear at the end of the tabs, and says where they are when it cannot", async () => {
+    await shown();
+    const pushed: string[] = [];
+    const push = vi.spyOn(window.history, "pushState").mockImplementation((_state, _unused, url) => void pushed.push(String(url)));
+    const toolbar = screen.getByRole("toolbar", { name: "Terminals" });
+    fireEvent.click(within(toolbar).getByRole("button", { name: "Terminals settings" }));
+    expect(pushed).toEqual(["/settings/plugins/terminals"]);
+
+    push.mockImplementation(() => {
+      throw new Error("SecurityError");
+    });
+    fireEvent.click(within(toolbar).getByRole("button", { name: "Terminals settings" }));
+    expect(await screen.findByText("Could not open the settings: they are in Settings → Plugins → Terminals.")).toBeTruthy();
+    push.mockRestore();
+  });
+
+  it("resizes the agent panel from the edge beside the terminal, and remembers the width in this browser", async () => {
+    window.localStorage.removeItem("terminals.agentPanelWidth");
+    await shown();
+    const toolbar = screen.getByRole("toolbar", { name: "Terminals" });
+    fireEvent.click(within(toolbar).getByRole("button", { name: "Ask an agent about this terminal" }));
+    const handle = await screen.findByRole("separator", { name: "Resize the agent panel" });
+    const pane = () => document.querySelector<HTMLElement>("[data-agent-pane]")!;
+    expect(pane().style.width).toBe("448px");
+
+    // Dragging the edge left widens the panel; the width is kept once the drag ends.
+    fireEvent.pointerDown(handle, { button: 0, pointerId: 1, clientX: 800 });
+    fireEvent.pointerMove(handle, { pointerId: 1, clientX: 700 });
+    expect(pane().style.width).toBe("548px");
+    expect(window.localStorage.getItem("terminals.agentPanelWidth")).toBeNull();
+    fireEvent.pointerUp(handle, { pointerId: 1, clientX: 700 });
+    expect(window.localStorage.getItem("terminals.agentPanelWidth")).toBe("548");
+
+    // The keys move it too, never below the minimum; a double click goes back to the default.
+    fireEvent.keyDown(handle, { key: "ArrowRight" });
+    expect(pane().style.width).toBe("532px");
+    fireEvent.keyDown(handle, { key: "Home" });
+    expect(pane().style.width).toBe("300px");
+    fireEvent.pointerDown(handle, { button: 0, pointerId: 2, clientX: 800 });
+    fireEvent.pointerMove(handle, { pointerId: 2, clientX: 900 });
+    expect(pane().style.width).toBe("300px");
+    fireEvent.pointerUp(handle, { pointerId: 2 });
+    fireEvent.doubleClick(handle);
+    expect(pane().style.width).toBe("448px");
+    expect(window.localStorage.getItem("terminals.agentPanelWidth")).toBe("448");
+  });
+
+  it("lays the agent panel over the terminal on a phone, with no edge to drag", async () => {
+    viewport.compact = true;
+    window.localStorage.setItem("terminals.agentPanelWidth", "600");
+    await shown();
+    fireEvent.click(within(screen.getByRole("toolbar", { name: "Terminals" })).getByRole("button", { name: "Ask an agent about this terminal" }));
+    await waitFor(() => expect(document.querySelector("[data-agent-pane]")).not.toBeNull());
+    expect(screen.queryByRole("separator", { name: "Resize the agent panel" })).toBeNull();
+    expect(document.querySelector<HTMLElement>("[data-agent-pane]")!.style.width).toBe("");
+    window.localStorage.removeItem("terminals.agentPanelWidth");
+  });
+
+  it("shows the chat in bb's sidebar before opening it as a normal thread, and opens it even when that fails", async () => {
+    const { view, shownChats, failShowing } = await shown("thr_agent");
+    fireEvent.click(within(screen.getByRole("toolbar", { name: "Terminals" })).getByRole("button", { name: "Ask an agent about this terminal" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open the chat in bb" }));
+    await waitFor(() => expect(view.navigateCalls).toContainEqual({ method: "toThread", threadId: "thr_agent" }));
+    expect(shownChats).toEqual(["term_1"]);
+
+    failShowing();
+    fireEvent.click(screen.getByRole("button", { name: "Open the chat in bb" }));
+    expect(await screen.findByText(/Could not show the chat in the sidebar: .*bb is busy/)).toBeTruthy();
+    expect(view.navigateCalls.filter((call) => call.method === "toThread")).toHaveLength(2);
+  });
+
+  it("lists every command the tab's chat ran, and typing in the terminal (a sudo password included) keeps it", async () => {
+    const { agentRan } = await shown("thr_agent");
+    await agentRan("git status");
+    expect(await screen.findByText("The agent ran")).toBeTruthy();
+    expect(screen.getByText("git status")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Show all/ })).toBeNull();
+
+    // The owner's sequence: they type sudo's password, and later at their own prompt. Nothing is lost.
+    await agentRan("sudo lsof -nP -iTCP -sTCP:LISTEN");
+    act(() => terminals.type("term_1"));
+    for (const command of ["ps -o pid,command -ww -p 1946,79402", "grep -l ftp-proxy x.plist", "plutil -p x.plist", "launchctl print-disabled system"]) {
+      await agentRan(command);
+    }
+    act(() => terminals.type("term_1"));
+    expect(await screen.findByText("The agent ran 6 commands")).toBeTruthy();
+  });
+
+  it("shows the last three, newest last, and all of them on request", async () => {
+    const { agentRan } = await shown("thr_agent");
+    const commands = ["ls", "cat build.sh", "mv site.config site.conf", "./build.sh", "git status"];
+    for (const command of commands) await agentRan(command);
+    const note = await screen.findByRole("status", { name: "Commands the agent ran" });
+    const listed = () => within(note).getAllByRole("listitem").map((item) => item.textContent?.replace(/^\$/, ""));
+    await waitFor(() => expect(within(note).getByText("The agent ran 5 commands")).toBeTruthy());
+    expect(listed()).toEqual(["mv site.config site.conf", "./build.sh", "git status"]);
+
+    const toggle = within(note).getByRole("button", { name: "Show all 5" });
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(toggle);
+    expect(listed()).toEqual(commands);
+    // Expanded, it is held to a quarter of the terminal and its list scrolls.
+    expect(note.className).toContain("max-h-[25%]");
+    expect(within(note).getByRole("list").className).toContain("overflow-y-auto");
+    fireEvent.click(within(note).getByRole("button", { name: "Show fewer" }));
+    expect(listed()).toEqual(["mv site.config site.conf", "./build.sh", "git status"]);
+  });
+
+  it("reads the chat's commands from the server, so a reload or another window shows them, and drops them with the chat", async () => {
+    const { keep } = await shown("thr_agent");
+    // Kept on the server before this window opened (a reload, or another window's session).
+    keep(["ls", "pwd"]);
+    cleanup();
+    const again = await shown("thr_agent");
+    again.keep(["ls", "pwd"]);
+    await again.agentRan("whoami");
+    expect(await screen.findByText("The agent ran 3 commands")).toBeTruthy();
+
+    // Closing and reopening the panel on the same chat keeps them.
+    const toolbar = screen.getByRole("toolbar", { name: "Terminals" });
+    fireEvent.click(within(toolbar).getByRole("button", { name: "Ask an agent about this terminal" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Close the agent panel" }));
+    expect(screen.getByText("The agent ran 3 commands")).toBeTruthy();
+
+    // A new chat from the panel ends this one for the tab: the list goes.
+    fireEvent.click(within(toolbar).getByRole("button", { name: "Ask an agent about this terminal" }));
+    fireEvent.click(await screen.findByRole("button", { name: "New agent chat" }));
+    await waitFor(() => expect(screen.queryByRole("status", { name: "Commands the agent ran" })).toBeNull());
+  });
+
+  it("folds the list to a small button and back, remembered for the tab", async () => {
+    const { agentRan } = await shown("thr_agent");
+    for (const command of ["ls", "pwd", "whoami", "date"]) await agentRan(command);
+    await screen.findByText("The agent ran 4 commands");
+    fireEvent.click(screen.getByRole("button", { name: "Fold the list to a small button" }));
+    const pill = await screen.findByRole("button", { name: "Show the commands the agent ran (4)" });
+    expect(screen.queryByRole("status", { name: "Commands the agent ran" })).toBeNull();
+    await agentRan("uname -m");
+    expect(await screen.findByRole("button", { name: "Show the commands the agent ran (5)" })).toBeTruthy();
+    expect(pill.isConnected).toBe(true);
+
+    // Remembered: the tab shows folded again after the page comes back.
+    cleanup();
+    const again = await shown("thr_agent");
+    again.keep(["ls", "pwd", "whoami", "date", "uname -m"]);
+    await again.agentRan("id");
+    fireEvent.click(await screen.findByRole("button", { name: "Show the commands the agent ran (6)" }));
+    expect(await screen.findByText("The agent ran 6 commands")).toBeTruthy();
   });
 });

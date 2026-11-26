@@ -30,6 +30,21 @@ specific to `terminals`.
 | `app/chat-text.ts` | The fenced block "Add to chat" writes, and adding it to a draft. |
 | `app/project-match.ts` | The shell's directory from OSC 7, the project whose checkout holds it (Windows paths compared without case, either slash), and the default project. |
 | `app/chat-delivery.tsx` | The block on its way to a composer, and the overlay that writes it once that composer is on screen. |
+| `shared/shell-marks.ts` | Shell integration on any xterm (the page's, the server's headless one): OSC 133/633 prompt and command marks and OSC 7 (and where each was), the phase the shell is in, each finished command's line, output and exit code read from the terminal's own buffer. |
+| `shared/prompt-ready.ts` | Whether the terminal plainly shows the shell waiting at an empty prompt, from marks or, without them, from a directory report and the prompt's shape; and what is typed on either side of the cursor. |
+| `shared/osc7.ts` | The directory an OSC 7 sequence names. |
+| `shared/agent.ts` | What the page tells a tab's agent (the one-line failure prompt, the fixed line and the built-in instructions text, filling `{{tab}}` and `{{machine}}`), which failures to offer help for, the tool names and the `agent-typed` channel. No SDK import. |
+| `server/agent-links.ts` | Which thread helps with which tab: one per tab, stored before the thread exists so `configure` recognises it, bound once `spawn` answers, if the link is still the one that spawn began (its token). |
+| `server/agent.ts` | `terminal_read` and `terminal_run`, `configure` (the tools for a tab's own thread, the skill for all), and starting, messaging and letting go of a tab's thread. |
+| `server/terminal-agent.ts` | The tools' work: bb's kept output replayed into `@xterm/headless`, one run per tab at a time, typing, the echo check before Enter, and waiting for the command's end (or quiet output without marks). |
+| `app/agent-state.ts` | This window's agent panel: open or not, each tab's composer seed, failures waved away, the agent's last typed command per tab. Module scope, like the terminals. |
+| `app/agent-instructions-section.tsx` | The settings section where the owner edits the agent's instructions text, or restores the built-in one. |
+| `app/open-settings.ts` | Opens the plugin's settings page from the Terminals page (the gear at the end of the tab strip), through the router's history. |
+| `app/agent-width.ts`, `app/agent-resize-handle.tsx` | The agent panel's width beside the terminal (bounds, localStorage) and the edge that sets it by pointer or keys. Not on a compact viewport, where the panel covers the terminal. The terminal refits through its view's ResizeObserver, and the shell's resizes are coalesced by `app/sizing.ts`. |
+| `server/chat-visibility.ts` | Whether the agent chats show in bb's sidebar: all shown (the owner's setting), or the ones from before hidden once. |
+| `app/agent-ran-note.tsx`, `app/agent-note-fold.ts` | The card over a terminal listing every command the tab's chat typed there: three folded, all expanded (a quarter of the terminal's height, then scrolling), in bb's `timeline-accent`; or a pill, per tab in localStorage. |
+| `server/agent-commands.ts` | Those commands, per tab in kv, tied to the chat's thread id, capped at 1000 and 150 000 characters. |
+| `app/agent-panel.tsx` | The panel: bb's `ThreadChat` for the tab's thread, or bb's `experimental_NewThreadComposer` seeded with the prompt (if any), project and checkout. |
 
 `npm test` runs everything. Nothing in it opens a shell or a socket: the connection runs against a
 scripted socket and a manual clock, the server against the SDK's fake host with stubbed terminals,
@@ -139,7 +154,8 @@ bounds what a stuck "+" can start.
 
 **Security.** A shell is the user's own account on that machine, so nothing here widens access: the
 RPCs and the socket are bb's authenticated ones, `open` takes only a connected machine's id, no port
-is opened, and storage and the log hold tab metadata only — never output, keystrokes or credentials. A
+is opened, and storage and the log hold tab metadata, which thread helps which tab and the owner's agent instructions only — never
+output, keystrokes or credentials. A
 selection sent with "Add to chat" stays in the window's memory until the chat's composer takes it; it
 is never stored or sent for the user.
 
@@ -176,9 +192,166 @@ checkout (`projects.list` sources) or thread worktree (sidebar threads' environm
 the tab's machine wins; else the project last picked here (localStorage), else the most recent
 thread's.
 
+**An agent beside the terminal is bb's own chat, in the page.** `ThreadChat` and
+`experimental_NewThreadComposer` render in a nav panel, so the panel is part of the Terminals page
+(beside the terminal; over it on a compact viewport), not bb's side panel, which a nav page cannot
+open a tab of its own in. The composer submits a `NewThreadRequest`; the server spawns it (only the
+user's choices are taken from it, never metadata, parent or visibility) with the tab's id in plugin
+metadata. A tab has at most one thread; asking about a later failure `threads.send`s it there, and the
+panel's "new chat" lets go of it. The composer's seeds are computed once, when the checkouts are known,
+because changing one re-seeds every pick; each ask gets a draft key of its own, so a new failure
+starts a new draft.
+
+**The prompt is one line; the context is the thread's instructions.** The owner asked that the message
+box not quote the terminal: it starts with "The last command I ran returned an error. Help me debug."
+when the tab's last command failed (`FAILURE_PROMPT`), and empty otherwise. What the agent must know
+(the user is in a terminal, which tab on which machine, what the two tools do, read before running, and
+that anything the user asks it to run goes to that terminal through `terminal_run`, not its own shell,
+with no confirmation asked first) is
+`agentInstructions`, which `configure` returns for that thread only, so it is there from the first
+turn; the agent reads the command and its output with `terminal_read`.
+
+**The owner can rewrite the instructions, not the line that names the tab.** The settings section
+(`app/agent-instructions-section.tsx`, in plugin storage under `agentInstructions`, not bb's settings
+form: that form has no way back to one field's default) edits the text after one fixed line
+(`FIXED_INSTRUCTIONS`), which names the tab and machine and says the tools act on it, so no text the
+owner writes leaves the agent without its terminal. `{{tab}}` and `{{machine}}` are filled anywhere,
+JSON-quoted since they are the user's own names; other `{{…}}` stay as written. A blank text or the
+built-in text itself is stored as nothing, so a later change to the built-in text reaches an owner who
+never edited it. `configure` is synchronous, so the server caches the text and reads it again before
+each spawn (another copy of the plugin, mid-reload, may have saved it). The page reaches the settings (a gear
+always shown at the end of the tab strip) with `app/open-settings.ts`, the router-history push firstmate-crew and herald use, since the page SDK
+has no call for it.
+
+**Agent chats are hidden threads until the owner opens one.** The owner did not want them in the
+sidebar, so `startAgent` spawns with `visibility: "hidden"` (bb's own side chat does the same), unless
+the setting `alwaysShowAgentChats` (bb's settings form; off by default) is on. "Open in bb" calls
+`showAgentChat`, which `threads.update`s the chat to `visible` before the app opens it, so it stays in
+the sidebar; a failed update still opens it. Turning the setting on shows every hidden chat
+(`settings.onChange`); turning it off changes none. The chats from before this were hidden once, on the
+first load (`agentChatsHidden` in kv), found by `threads.list({ originPluginId, includeHidden })`,
+since bb stamps the plugin's id on every thread it spawns. The cost, from bb's source at 0.50: its
+push-notifications plugin notifies only visible threads (a finished turn, an interaction, an error),
+and the app leaves hidden threads out of @-mention suggestions, project thread lists and the phone's
+recents. Checked live in a dev bb (0.50.1): a hidden chat renders in the panel's `ThreadChat`, opens at
+`/threads/<id>` without a sidebar row, and the button gives it one.
+
+**The tools belong to one thread and one tab.** `configure` gives `terminal_read` and `terminal_run`
+only to a thread whose metadata names a tab *and* that the link store says is that tab's thread (or the
+tab is still waiting, under `PENDING_MS`, for the thread `spawn` is creating: bb resolves the first
+session before `spawn` answers). Metadata alone grants nothing; every call is checked again by the
+calling thread's id, which bb supplies. A tool call that arrives before `spawn` answered waits up to
+15 s for the link. Letting go, a newer chat, or closing the tab ends the access at once, also for a
+`terminal_run` already under way: it checks the link (thread and token) and its stop signal before it
+types and again before Enter, and takes its text back if either changed in between (see the echo check
+below for when it erases).
+
+**A spawn binds only the link it began.** `begin` gives each pending link a token, `bind` takes it, and
+binds nothing when the link was dropped (the user let go, the tab closed) or replaced (another window
+started a chat for the tab) while bb created the thread. `startAgent` then stops and archives the new
+thread and says why; a failed spawn drops only its own pending link. Before tokens, the last spawn to
+answer won (an older one over a newer), and a forgotten chat came back.
+
+**A reload hands the links over; the old copy writes nothing after it.** The new copy loads before the
+old one is unloaded, and bb refuses an unloaded copy's calls ("stale API handle", the fake host too), so
+the old copy can neither save links nor archive a thread. Every link change therefore reads the stored
+list first (the old copy's whole-list save once wiped the new copy's bound chat), `close()` on dispose
+refuses further writes and binds, and `startAgent` checks `disposed` again after its awaits. A save the
+old copy sent before it was closed can still land after the new copy's changes (kv has no
+compare-and-set), so ordering is not relied on: revocation wins. Every link a change removes or
+replaces (a forgotten or replaced bound chat as well as a pending spawn) has its token revoked first, in kv
+of its own (`revokedAgentLinks`, read at load), because a late whole-list save carries every link of
+the old copy's snapshot, not only the one it changed. A revocation expires after a day, but only once no stored link has its
+token: `load` applies every stored revocation, however old, saves the list without their links, and only
+then expires them, and a change expires only those absent from the list it read (a late save may sit in
+storage untouched for longer than a day, and an expired revocation once handed its chat the tools back). Links with a revoked token are ignored on every read and written out by the next change (`purgeRevoked` in the load-time prune), and
+the sweep archives a revoked spawn's thread even when such a late save linked it. As it loads
+(`agent.start()`), the new copy drops every link still waiting for a thread, since the copy that began
+it can no longer bind, and keeps those tokens in kv (`revokedAgentSpawns`, a day). Each spawn carries
+its token in the thread's plugin metadata (`agentSpawn`), so the new copy archives a revoked spawn's
+thread when `thread.created` reports it, and the load-time prune sweeps the plugin's open threads for
+any it missed. A reload while a chat starts therefore cancels that chat; the page shows the error and
+the user starts again. Tool calls re-read the links (`refresh`) before saying a chat has no tab.
+
+**The agent types at the user's prompt, visibly, and only on positive evidence that the shell waits at
+an empty prompt** (`shared/prompt-ready.ts`). `terminal_run` replays bb's last 256 KB of the terminal's
+output into a headless xterm sized like the session. With marks, the evidence is a prompt whose end
+(`B`) is marked, with nothing typed after it. Without them (the owner's zsh sends none) it is a valid
+OSC 7 (shells send it just before drawing a prompt; oh-my-zsh does in precmd), at most
+`MAX_PROMPT_ROWS` rows drawn since, the cursor's row ending in a prompt sign (`$ % # > ❯`) and a space,
+and exactly one prompt sign-and-space in what was drawn since the report: a program started from the
+prompt (redis-cli, irb, python -q) adds its own after the shell's, and so does typed-ahead text ending
+like a prompt. Unknown means refuse, with a message that says how to fix it (shell integration, or a
+prompt of that shape). This replaced "type unless the marks say otherwise", which typed into a `sudo`
+password prompt or a running build in a shell without marks, and after an output long enough to push
+its `C` mark out of the replayed tail. In both cases anything to the right of the cursor, or any text
+below it, is typing (Ctrl-A or a recalled line put the owner's text there), except a right-hand prompt
+told by how zsh draws it: zsh clears the line and jumps the cursor right (`CSI n C`) before RPROMPT, so
+the cells before it were never written (xterm's `getChars()` is ""), while typed text, spaces included,
+writes every cell. Spacing alone was not enough: indented input reaching the right edge passed for one.
+Recorded from zsh 5.9 (`terminal-agent.test.ts` replays the bytes). zsh's autosuggestions draw only
+after text is typed, so an empty prompt has none.
+
+Then it sends the command without Enter and waits up to `ECHO_TIMEOUT_MS` for the whole line to show
+exactly that text from where it started to the cursor (backslash escapes aside: oh-my-zsh turns on
+url-quote-magic, which types `curl http://x/\?a=1` for `?`), nothing after the cursor but a right-hand
+prompt or a suggestion, and no mark or OSC 7 since the readiness check (`eventCount`). A suggestion is
+only text in zsh-autosuggestions' default style (`fg=8`, palette colour 8, or faint) after a command
+with nothing in that style; any other colour is the owner's text (zsh-syntax-highlighting draws a quoted
+argument yellow, which an "any other colour" rule once took for a suggestion) and refuses. A custom
+`ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE` therefore refuses whenever a suggestion shows; that is the safe side. Only then does it send Enter. When it does not (the line differs, the
+call stopped, the chat lost the tab), it takes the text back only from a line that holds exactly the
+agent's text, re-read first: one DEL per character. Any other line (the owner typed into it, the cursor
+moved, nothing echoed) is left as it is and the refusal tells the agent to have the owner clear it,
+since blind DELs erased the owner's characters and could leave the agent's command for their next Enter.
+Runs are serialized per tab (`TerminalLocks`): a waiter that is cancelled keeps its place in the chain,
+so a later call still waits for the run before it (deleting the chain on cancel let a third call in), and
+a parallel call checks the shell again after the first one's command. The owner's keystrokes reach bb's socket without
+passing through the plugin, so nothing can hold them off: the remaining gap is between reading the echo
+and the Enter arriving. After Enter it polls `terminals.output` from the next sequence until the shell's
+`D` mark (or `QUIET_MS` of no output without marks, or the timeout, when the command is left running).
+A command whose `C` marker scrolled out of the scrollback still finishes at its `D`, with what the buffer
+kept of its output. Each command it types is stored with the tab (`server/agent-commands.ts`) and then published on
+`agent-typed`, on which the shown tab reads its list again (`agentCommands`).
+
+**The "agent ran" list belongs to the chat, not to the page.** The owner wants every command the tab's
+chat ran for as long as the chat lasts. An earlier version kept the list in the page and cleared it when
+the user typed, which lost commands when the owner typed a `sudo` password into one (and the list was
+per window and gone on a reload). Now the server keeps it per tab in kv, under the chat's thread id: a
+command from another chat starts it over, `startAgent` and `forgetAgent` (a new chat, a closed tab)
+clear it, and the load-time prune drops records whose chat is no longer the tab's. Typing, reloads,
+other windows and closing the panel keep it. It folds to a pill per tab (localStorage), since it no longer
+goes away on its own, and the tab's icon is the bot while the tab has a chat. The card is opaque with
+bb's `timeline-accent` border and icon (in bb's theme since 0.48.1, both modes), since a quiet one
+blended into terminal text. Exit 130 (Ctrl-C) is not offered as a
+failure. The offer for a failure also goes away when the user types: a reload replays bb's buffer, and
+with it the last failure.
+
+**Failures are seen only with shell integration.** The plugin never edits a shell's settings and does
+not inject integration into the shells it opens. fish 4+ and nushell send OSC 133 themselves; the README
+has zsh and bash lines (both checked live, bash on macOS's 3.2 with another `PROMPT_COMMAND`). Without
+marks everything but the card works.
+
+**Marks can stop mid-command; a prompt that reports its directory ends "running".** A remote shell over
+ssh may send OSC 133 when the local one does not. Its `exit` sends `C`, the connection closes before
+any `D`, and the local prompt that follows sends no mark, so the tracker stayed "running" for good and
+`terminal_run` refused every command (seen live: an Instax server tab after an ssh session to a NAS).
+Shells report OSC 7 as they draw a prompt, so a valid OSC 7 while "running" sets the phase to "unknown"
+and `hasIntegration()` to false (`stoppedMarks()`), until the next mark: the tools then treat the shell as
+one without marks, which types only at a prompt that shows (above). Any program can print OSC 7, so it is
+a hint that ends "running", never proof of a prompt; one that names no directory is ignored. The command's start is kept, so a shell that reports its directory before its `D`
+still finishes it. A shell that sends neither marks nor OSC 7 after such a session would still be stuck.
+The tools replay history at the tab's size now: a program that drew for another width (that remote
+zsh, at 172 columns in a 144-column tab) can read back with mangled command lines.
+
 ## Checking it by hand
 
 The tests cannot reach bb's socket. Against a running bb, one local shell is enough: create it with
 `bb terminal create --machine <server machine>` and drive `app/connection.ts` from Node at
 `ws://127.0.0.1:<port>/ws/terminals/<id>` (a Node socket sends no `Origin`, which bb accepts), then
 close it. Never open sessions on someone else's machines to test.
+
+The agent was checked the same way, in a dev bb (never the owner's): open a tab through the `open` RPC,
+`source` the README's zsh or bash lines into that one shell with `bb terminal send` (no settings file is
+touched), and start a Claude Code thread with the `startAgent` RPC asking it to call both tools. The
+page itself was driven with `playwright-core` from `tools/shots`.

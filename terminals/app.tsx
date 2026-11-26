@@ -8,6 +8,7 @@
 import { useEffect } from "react";
 import { definePluginApp } from "@get-bb/plugin-sdk/app";
 
+import { AgentInstructionsSection } from "./app/agent-instructions-section";
 import { ChatDelivery } from "./app/chat-delivery";
 import { releaseAllTerminals } from "./app/live-terminals";
 import { PANEL_PATH, TerminalsPage } from "./app/terminals-page";
@@ -29,6 +30,13 @@ export default definePluginApp((app) => {
     icon: "Terminal",
     path: PANEL_PATH,
     component: TerminalsPage,
+  });
+
+  app.slots.settingsSection({
+    id: "agent-instructions",
+    title: "Agent instructions",
+    description: "What a terminal tab's agent chat is told: edit it, add to it, or go back to the built-in text.",
+    component: AgentInstructionsSection,
   });
 
   app.slots.experimental_appOverlay({ id: "lifetime", component: TerminalsLifetime });

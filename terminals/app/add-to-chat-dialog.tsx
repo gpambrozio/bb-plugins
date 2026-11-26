@@ -54,10 +54,17 @@ export function matchThreads(
   });
 }
 
-/** The directories bb knows for each project: its checkouts, and the worktrees its threads run in. */
-function usePlaces(open: boolean, threads: readonly PluginSidebarThread[]): ProjectPlace[] {
+/**
+ * The directories bb knows for each project: its checkouts (`checkouts`, from
+ * `projects.list`), and those with the worktrees its threads run in
+ * (`places`). `loaded` once the checkouts have been read (or could not be).
+ */
+export function useProjectPlaces(
+  open: boolean,
+  threads: readonly PluginSidebarThread[],
+): { places: ProjectPlace[]; checkouts: ProjectPlace[]; loaded: boolean } {
   const sdk = useSdk();
-  const [sources, setSources] = useState<ProjectPlace[]>([]);
+  const [sources, setSources] = useState<ProjectPlace[] | null>(null);
   useEffect(() => {
     if (!open) return;
     let current = true;
@@ -70,7 +77,10 @@ function usePlaces(open: boolean, threads: readonly PluginSidebarThread[]): Proj
           ),
         );
       },
-      (cause: unknown) => console.warn("terminals: could not list the projects' checkouts", cause),
+      (cause: unknown) => {
+        console.warn("terminals: could not list the projects' checkouts", cause);
+        if (current) setSources((known) => known ?? []);
+      },
     );
     return () => {
       current = false;
@@ -83,7 +93,8 @@ function usePlaces(open: boolean, threads: readonly PluginSidebarThread[]): Proj
       const hostId = thread.host?.id ?? null;
       if (path !== null && hostId !== null) worktrees.push({ projectId: thread.projectId, hostId, path });
     }
-    return [...sources, ...worktrees];
+    const checkouts = sources ?? [];
+    return { places: [...checkouts, ...worktrees], checkouts, loaded: sources !== null };
   }, [sources, threads]);
 }
 
@@ -101,7 +112,7 @@ export function AddToChatDialog({
   const sidebar = experimental_useSidebarThreads();
   const threads = useMemo(() => listedThreads(sidebar.threads), [sidebar.threads]);
   const projectNames = useMemo(() => new Map(sidebar.projects.map((project) => [project.id, project.name])), [sidebar.projects]);
-  const places = usePlaces(open, sidebar.threads);
+  const { places } = useProjectPlaces(open, sidebar.threads);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const [projectId, setProjectId] = useState<string | null>(null);

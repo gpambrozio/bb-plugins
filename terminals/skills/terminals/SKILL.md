@@ -34,6 +34,31 @@ to use depends on the bb version (`bb --version`), since the plugin also runs on
 - **bb 0.48:** `--plain` and `bb terminal run` do not exist there. Read a tab with
   `bb terminal output <id>`, and create a terminal (`bb terminal create`) for your commands.
 
+## The agent panel
+
+A tab can have one agent chat of its own, started by the user from the tab's **Ask an agent** card (a
+command failed) or the bot button at the end of the tabs, and shown in a panel beside the terminal.
+That chat, and only that one, has two tools for that tab: `terminal_read` (what the terminal shows,
+the shell's directory, whether a command is running, how the last one ended) and `terminal_run` (type
+one command at the user's prompt, wait for it, get its output and exit code). If you have those tools,
+you are that chat: the user asked you to help with that terminal and to run commands in it, so use
+them rather than `bb terminal send`, and read before you run. When the user asks you to run something,
+run it there with `terminal_run`, not in your own shell, and without asking them to confirm first; for
+commands you choose to run yourself, ask before anything destructive, slow or interactive. `terminal_run` types only at an empty prompt it can see: it refuses while a command runs, a
+full-screen program or another program's prompt (a password, a REPL) has the terminal, the user has
+typed something at the prompt, or (in a shell without OSC 133 marks) the prompt does not plainly show
+that the shell waits. It presses Enter only once the shell echoed the command, and runs one command per
+tab at a time. When it refuses, tell the user what its message says, including how to fix it, and wait
+for them rather than working around it.
+
+A failed command reaches that chat as "The last command I ran returned an error. Help me debug.": the
+user pressed **Ask an agent** for it. The message does not quote the terminal, so call `terminal_read`
+first; it shows the command, its output and how it ended. Exit codes and the end of a
+command are known only when the shell sends OSC 133 marks (fish 4, nushell, or the zsh and bash lines
+in the plugin's README); without them `terminal_run` returns the output once it goes quiet.
+
+Any other thread still follows the rule above: these are the user's shells.
+
 ## Selections
 
 Selecting text in a tab copies it ("Selection copied") when bb's own Settings → General → Terminals →

@@ -87,6 +87,11 @@ export const TabViewSchema = TabSchema.extend({
 
 export type TabView = z.infer<typeof TabViewSchema>;
 
+/** A tab as the list gives it: with the thread helping with it (its agent panel's), or null when none is. */
+export const ListedTabSchema = TabViewSchema.extend({ agentThreadId: z.string().nullable() });
+
+export type ListedTab = z.infer<typeof ListedTabSchema>;
+
 export const HostChoiceSchema = z.object({ id: z.string(), name: z.string() });
 
 export type HostChoice = z.infer<typeof HostChoiceSchema>;
