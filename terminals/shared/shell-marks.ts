@@ -69,9 +69,10 @@ export interface CellLike {
   getChars(): string;
   /** 0 for the right half of a wide character. */
   getWidth(): number;
-  isFgDefault(): boolean;
-  getFgColorMode(): number;
+  isFgPalette(): boolean;
   getFgColor(): number;
+  /** Non-zero when the cell is faint (SGR 2). */
+  isDim(): number;
 }
 
 /** The parts of an xterm.js buffer line this package uses. */

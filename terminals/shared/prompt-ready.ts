@@ -52,9 +52,20 @@ function blank(cell: CellLike | undefined): boolean {
   return chars === "" || chars.trim() === "";
 }
 
-/** How a cell's text is coloured, as a key: "default", or the colour mode and value. */
+/**
+ * Whether a cell is drawn in zsh-autosuggestions' default style
+ * (`ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE=fg=8`: palette colour 8, bright black)
+ * or faint, the only styles taken for a suggestion. Syntax highlighting
+ * colours real input (a green command, a yellow quoted argument), so any
+ * other colour counts as typed text.
+ */
+function suggestionStyled(cell: CellLike): boolean {
+  return (cell.isFgPalette() && cell.getFgColor() === 8) || cell.isDim() !== 0;
+}
+
+/** A cell's style as this file sorts it: "suggestion" (see `suggestionStyled`) or "plain". */
 function fgKey(cell: CellLike): string {
-  return cell.isFgDefault() ? "default" : `${cell.getFgColorMode()}:${cell.getFgColor()}`;
+  return suggestionStyled(cell) ? "suggestion" : "plain";
 }
 
 /**
@@ -76,7 +87,7 @@ function rightPromptStart(line: BufferLineLike, from: number): number {
 export interface AfterCursor {
   /** The text, wrapped rows below included; a part that does not touch the cursor starts with a space. "" when nothing is there. */
   text: string;
-  /** The colour keys of its non-blank cells. */
+  /** The styles of its non-blank cells ("suggestion" or "plain", see `suggestionStyled`). */
   colours: Set<string>;
 }
 
@@ -134,15 +145,13 @@ export function coloursBetween(terminal: MarkableTerminal, from: { line: number;
 /**
  * Whether what follows the cursor is only the line editor's suggestion
  * (zsh-autosuggestions draws the rest of a remembered command after the
- * cursor, in a colour of its own, and Enter does not take it): nothing, or
- * text all in one colour that is not the default and not one of the typed
- * text's. The user's own text is in the typed text's colours.
+ * cursor, and Enter does not take it): nothing, or text all in the
+ * suggestion style (`suggestionStyled`) after a typed command with nothing in
+ * that style. Anything else is the user's text, however it is coloured.
  */
-export function onlySuggestion(after: AfterCursor, typedColours: ReadonlySet<string>): boolean {
+export function onlySuggestion(after: AfterCursor, typedStyles: ReadonlySet<string>): boolean {
   if (after.text.trim() === "") return true;
-  if (after.colours.size !== 1) return false;
-  const [colour] = after.colours;
-  return colour !== "default" && !typedColours.has(colour!);
+  return after.colours.size === 1 && after.colours.has("suggestion") && !typedStyles.has("suggestion");
 }
 
 /** Whether the shell waits at an empty prompt, and where typing would start. */

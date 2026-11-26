@@ -415,16 +415,58 @@ describe("runCommand", () => {
       expect(terminal.typed).toEqual(["pwd"]);
     });
 
-    it("runs the command when the line editor suggests a longer one after it (zsh-autosuggestions)", async () => {
-      const terminal = shell({ respond: integrated({ pwd: { output: "/Users/me/app\r\n", code: 0 } }) });
-      terminal.ports.input = ((input) => async (terminalId: string, data: string) => {
+    it("runs the command when the line editor suggests a longer one after it (zsh-autosuggestions, grey or faint)", async () => {
+      // The rest of a remembered command, with the cursor back after the typed text: fg=8 as SGR 90 or 38;5;8, or faint.
+      for (const style of ["\u001b[90m", "\u001b[38;5;8m", "\u001b[2m"]) {
+        const terminal = shell({ respond: integrated({ pwd: { output: "/Users/me/app\r\n", code: 0 } }) });
+        terminal.ports.input = ((input) => async (terminalId: string, data: string) => {
+          await input(terminalId, data);
+          if (data === "pwd") terminal.print(`${style} -P\u001b[0m\u001b[3D`);
+        })(terminal.ports.input);
+        terminal.print(prompt());
+        expect(await runCommand(terminal.ports, TAB, { command: "pwd" }, context())).toContain("it succeeded (exit code 0)");
+        expect(terminal.typed).toEqual(["pwd", "\r"]);
+      }
+    });
+
+    it("presses no Enter, and erases nothing, when syntax highlighting colours the user's argument after the agent's text", async () => {
+      // zsh-syntax-highlighting: the command green, the user's quoted argument yellow, the cursor after "pwd".
+      const highlighted = "\u001b[32mpwd\u001b[39m \u001b[33m'OWNER'\u001b[39m\u001b[8D";
+      const run = shell({ echo: false });
+      run.ports.input = ((input) => async (terminalId: string, data: string) => {
+        if (data === "pwd") run.print(highlighted);
         await input(terminalId, data);
-        // The rest of a remembered command, in grey, with the cursor back after the typed text.
-        if (data === "pwd") terminal.print("\u001b[90m -P\u001b[39m\u001b[3D");
+      })(run.ports.input);
+      run.print(prompt());
+      await expect(runCommand(run.ports, TAB, { command: "pwd" }, context())).rejects.toThrow(/"pwd 'OWNER'"/);
+      expect(run.typed).toEqual(["pwd"]);
+
+      // The same line when the call is stopped: the rollback reads it the same way and leaves it.
+      const controller = new AbortController();
+      const stopped = shell({ echo: false });
+      stopped.ports.input = ((input) => async (terminalId: string, data: string) => {
+        if (data === "pwd") {
+          stopped.print(highlighted);
+          controller.abort();
+        }
+        await input(terminalId, data);
+      })(stopped.ports.input);
+      stopped.print(prompt());
+      await expect(runCommand(stopped.ports, TAB, { command: "pwd" }, context({ signal: controller.signal }))).rejects.toThrow(
+        /nothing was erased either/,
+      );
+      expect(stopped.typed).toEqual(["pwd"]);
+    });
+
+    it("takes no grey text for a suggestion when the typed command is grey too", async () => {
+      const terminal = shell({ echo: false });
+      terminal.ports.input = ((input) => async (terminalId: string, data: string) => {
+        if (data === "pwd") terminal.print("\u001b[90mpwd -P\u001b[39m\u001b[3D");
+        await input(terminalId, data);
       })(terminal.ports.input);
       terminal.print(prompt());
-      expect(await runCommand(terminal.ports, TAB, { command: "pwd" }, context())).toContain("it succeeded (exit code 0)");
-      expect(terminal.typed).toEqual(["pwd", "\r"]);
+      await expect(runCommand(terminal.ports, TAB, { command: "pwd" }, context())).rejects.toThrow(/did not show exactly/);
+      expect(terminal.typed).toEqual(["pwd"]);
     });
 
     it("presses no Enter when text after the agent's is in the same colours as what it typed", async () => {

@@ -273,9 +273,8 @@ export function registerAgent(bb: BbPluginApi, deps: AgentDeps) {
       const { threads } = await bb.sdk.threads.experimental_listPluginMetadata({ threadIds: ids.slice(index, index + 200) });
       for (const { threadId, metadata } of threads) {
         const token = metadata[SPAWN_METADATA_KEY];
-        if (typeof token === "string" && revoked.has(token) && links.threadFor(String(metadata[TERMINAL_METADATA_KEY])) !== threadId) {
-          await discardThread(threadId);
-        }
+        // Even when a late save of the copy before linked it: `links.revoke` ignores that link.
+        if (typeof token === "string" && revoked.has(token)) await discardThread(threadId);
       }
     }
   }
@@ -308,8 +307,11 @@ export function registerAgent(bb: BbPluginApi, deps: AgentDeps) {
     async start(): Promise<void> {
       const parsed = RevokedSchema.safeParse((await bb.storage.kv.get<unknown>(REVOKED_KEY)) ?? []);
       revoked = new Map(parsed.success ? parsed.data.map((entry) => [entry.token, entry.at]) : []);
-      const dropped = await links.dropAllPending();
+      links.revoke(revoked.keys());
+      const dropped = (await links.dropAllPending()).filter((token) => token !== "");
       for (const token of dropped) revoked.set(token, Date.now());
+      // The copy before may be saving a bind of one of them right now; it is ignored whenever it lands.
+      links.revoke(dropped);
       if (dropped.length > 0 || !parsed.success) await saveRevoked();
     },
 
@@ -389,6 +391,7 @@ export function registerAgent(bb: BbPluginApi, deps: AgentDeps) {
     async prune(): Promise<void> {
       await links.refresh();
       await sweepRevoked().catch((error: unknown) => bb.log.warn(`could not archive the agent chats a reload left behind: ${errorText(error)}`));
+      await links.purgeRevoked();
       const open = new Set((await deps.tabs()).map((tab) => tab.terminalId));
       for (const link of [...links.all()]) {
         if (!open.has(link.terminalId)) await links.drop(link.terminalId);

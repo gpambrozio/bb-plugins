@@ -256,7 +256,11 @@ answer won (an older one over a newer), and a forgotten chat came back.
 old one is unloaded, and bb refuses an unloaded copy's calls ("stale API handle", the fake host too), so
 the old copy can neither save links nor archive a thread. Every link change therefore reads the stored
 list first (the old copy's whole-list save once wiped the new copy's bound chat), `close()` on dispose
-refuses further writes and binds, and `startAgent` checks `disposed` again after its awaits. As it loads
+refuses further writes and binds, and `startAgent` checks `disposed` again after its awaits. A save the
+old copy sent before it was closed can still land after the new copy's changes (kv has no
+compare-and-set), so ordering is not relied on: the new copy's `revoke` wins. Links with a revoked token
+are ignored on every read and written out by the next change (`purgeRevoked` in the load-time prune), and
+the sweep archives a revoked spawn's thread even when such a late save linked it. As it loads
 (`agent.start()`), the new copy drops every link still waiting for a thread, since the copy that began
 it can no longer bind, and keeps those tokens in kv (`revokedAgentSpawns`, a day). Each spawn carries
 its token in the thread's plugin metadata (`agentSpawn`), so the new copy archives a revoked spawn's
@@ -286,10 +290,11 @@ after text is typed, so an empty prompt has none.
 Then it sends the command without Enter and waits up to `ECHO_TIMEOUT_MS` for the whole line to show
 exactly that text from where it started to the cursor (backslash escapes aside: oh-my-zsh turns on
 url-quote-magic, which types `curl http://x/\?a=1` for `?`), nothing after the cursor but a right-hand
-prompt or a suggestion, and no mark or OSC 7 since the readiness check (`eventCount`). A suggestion
-(zsh-autosuggestions) is text after the cursor in one colour that is not the default and not one of the
-echoed command's; the owner's own text after it, recalled or typed before the agent's keys landed, has
-the command's colours and refuses. Only then does it send Enter. When it does not (the line differs, the
+prompt or a suggestion, and no mark or OSC 7 since the readiness check (`eventCount`). A suggestion is
+only text in zsh-autosuggestions' default style (`fg=8`, palette colour 8, or faint) after a command
+with nothing in that style; any other colour is the owner's text (zsh-syntax-highlighting draws a quoted
+argument yellow, which an "any other colour" rule once took for a suggestion) and refuses. A custom
+`ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE` therefore refuses whenever a suggestion shows; that is the safe side. Only then does it send Enter. When it does not (the line differs, the
 call stopped, the chat lost the tab), it takes the text back only from a line that holds exactly the
 agent's text, re-read first: one DEL per character. Any other line (the owner typed into it, the cursor
 moved, nothing echoed) is left as it is and the refusal tells the agent to have the owner clear it,

@@ -416,6 +416,43 @@ describe("a tab's agent", () => {
     expect(await reloaded.bb.storage.kv.get("agents")).toEqual([]);
   });
 
+  it("archives the old copy's chat when its bind, already being saved, lands after the reload revoked it", async () => {
+    const { harness, tab, threads, answerSpawn, bb } = await start({ holdSpawns: true });
+    const starting = harness.callRpc("startAgent", { terminalId: tab.terminalId, request });
+    await expect.poll(() => harness.sdk.callsTo("threads.spawn").length).toBe(1);
+    // Hold the old copy's save of the bind. It was sent before the reload, so it lands in the shared
+    // storage after it (the fake host refuses the old handle by then, so the test writes it there).
+    let held: unknown = null;
+    let saving = false;
+    const set = bb.storage.kv.set.bind(bb.storage.kv);
+    bb.storage.kv.set = (async (key: string, value: unknown) => {
+      if (key === "agents" && (value as { threadId: string | null }[]).some((link) => link.threadId === "thr_1")) {
+        saving = true;
+        held = value;
+        return;
+      }
+      return set(key, value);
+    }) as typeof bb.storage.kv.set;
+    await answerSpawn(0);
+    await expect.poll(() => saving).toBe(true);
+
+    // The newer copy loads, revoking the pending spawn; then the old save lands, putting the link back.
+    const reloaded = await harness.reload(plugin);
+    await reloaded.bb.storage.kv.set("agents", held);
+    await starting.catch(() => undefined);
+    expect(await reloaded.bb.storage.kv.get("agents")).toMatchObject([{ threadId: "thr_1" }]);
+
+    // The newer copy ignores it: no chat for the tab, no tools for that thread, and its sweep archives it.
+    expect(await listed(reloaded.harness)).toMatchObject([{ agentThreadId: null }]);
+    const stale = await reloaded.harness.callAgentTool("terminal_read", {}, { threadId: "thr_1" });
+    expect(stale).toMatchObject({ isError: true });
+    const service = reloaded.harness.runService("prune-ended-tabs");
+    await expect.poll(() => threads.get("thr_1")?.archivedAt).not.toBeNull();
+    service.controller.abort();
+    await service.done;
+    expect(await reloaded.bb.storage.kv.get("agents")).toEqual([]);
+  });
+
   it("keeps a newer chat's link when an older spawn fails after it", async () => {
     const { harness, tab, answerSpawn } = await start({ holdSpawns: true });
     const older = harness.callRpc("startAgent", { terminalId: tab.terminalId, request });

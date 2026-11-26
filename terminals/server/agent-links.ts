@@ -18,8 +18,10 @@
  * as stored, read again first: on a reload the new copy of the plugin loads
  * before the old one is unloaded, so either may have written since the other
  * last read. Once `close` is called (the copy is being unloaded) nothing is
- * written any more: a change is refused, and `bind` binds nothing. No SDK
- * import.
+ * written any more: a change is refused, and `bind` binds nothing. A save the
+ * old copy had already sent can still land after the new copy changed the
+ * list, so the new copy's `revoke` wins over it rather than relying on the
+ * order of writes. No SDK import.
  */
 import { z } from "zod";
 
@@ -57,6 +59,9 @@ export function createAgentLinks(ports: AgentLinkPorts) {
   let links: AgentLink[] = [];
   let queue: Promise<unknown> = Promise.resolve();
   let closed = false;
+  /** Tokens revoked by `revoke`: a link with one is ignored and left out of every save. */
+  const revoked = new Set<string>();
+  const live = (list: AgentLink[]) => list.filter((link) => !revoked.has(link.token));
 
   /** Runs after every change before it. */
   function queued<T>(work: () => Promise<T>): Promise<T> {
@@ -69,11 +74,13 @@ export function createAgentLinks(ports: AgentLinkPorts) {
   function update(change: (current: AgentLink[]) => AgentLink[]): Promise<void> {
     return queued(async () => {
       if (closed) throw new LinksClosedError();
-      const current = await ports.load();
+      const stored = await ports.load();
+      const current = live(stored);
       links = current;
       if (closed) throw new LinksClosedError();
       const changed = change(current);
-      if (changed === current) return;
+      // A revoked link another copy's late save put back is written out with this change.
+      if (changed === current && current.length === stored.length) return;
       await ports.save(changed);
       links = changed;
     });
@@ -82,13 +89,25 @@ export function createAgentLinks(ports: AgentLinkPorts) {
   return {
     /** Reads the stored list; call once before the rest. */
     async load(): Promise<void> {
-      links = await ports.load();
+      links = live(await ports.load());
+    },
+
+    /**
+     * Revokes `tokens` for good in this copy: their links are ignored from
+     * now on, even when another copy's save that was already under way (the
+     * copy before a reload, binding as it was unloaded) writes one back, and
+     * the next change saves the list without them. Links with no token (from
+     * before tokens) cannot be revoked.
+     */
+    revoke(tokens: Iterable<string>): void {
+      for (const token of tokens) if (token !== "") revoked.add(token);
+      links = live(links);
     },
 
     /** Reads the stored list again, after the changes queued before it: what another copy of the plugin saved shows. */
     refresh(): Promise<void> {
       return queued(async () => {
-        if (!closed) links = await ports.load();
+        if (!closed) links = live(await ports.load());
       });
     },
 
@@ -187,6 +206,11 @@ export function createAgentLinks(ports: AgentLinkPorts) {
         const kept = current.filter((link) => link.terminalId !== terminalId);
         return kept.length === current.length ? current : kept;
       });
+    },
+
+    /** Saves the list without the revoked links a late save of another copy put back. */
+    purgeRevoked(): Promise<void> {
+      return update((current) => current);
     },
 
     /** Forgets every link `keep` says no to. */

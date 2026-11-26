@@ -89,6 +89,46 @@ describe("agent links", () => {
     ]);
   });
 
+  it("keeps a revoked spawn out when the old copy's bind, already being saved, lands after the revocation", async () => {
+    const shared = storage();
+    // The old copy's saves can be held, as a slow storage write.
+    let hold: Promise<void> | null = null;
+    const old = createAgentLinks({
+      load: shared.load,
+      save: async (list) => {
+        if (hold !== null) await hold;
+        await shared.save(list);
+      },
+      now: () => 1_000,
+      newToken: () => "old-token",
+    });
+    await old.load();
+    await old.begin("term_1");
+    let release = () => {};
+    hold = new Promise<void>((resolve) => (release = resolve));
+    // The old copy has read the pending link and is saving its bind.
+    const binding = old.bind("term_1", "old-token", "old-chat");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // The new copy loads and revokes the pending spawn meanwhile.
+    const fresh = links([], shared);
+    await fresh.store.load();
+    const dropped = await fresh.store.dropAllPending();
+    expect(dropped).toEqual(["old-token"]);
+    fresh.store.revoke(dropped);
+
+    release();
+    await binding;
+    expect(shared.read()).toMatchObject([{ threadId: "old-chat", token: "old-token" }]);
+    // The late save is ignored: no thread for the tab, no tools for the old chat, and the next change writes it out.
+    await fresh.store.refresh();
+    expect(fresh.store.threadFor("term_1")).toBeNull();
+    expect(fresh.store.terminalFor("old-chat")).toBeNull();
+    expect(fresh.store.mayUse("term_1", "old-chat")).toBe(false);
+    await fresh.store.begin("term_2");
+    expect(shared.read().map((link) => link.terminalId)).toEqual(["term_2"]);
+  });
+
   it("writes nothing once closed, and binds nothing", async () => {
     const shared = storage();
     const { store } = links([], shared);
