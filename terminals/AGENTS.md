@@ -38,7 +38,7 @@ specific to `terminals`.
 | `server/terminal-agent.ts` | The tools' work: bb's kept output replayed into `@xterm/headless`, the state checks before typing, typing and waiting for the command's end (or quiet output without marks). |
 | `app/agent-state.ts` | This window's agent panel: open or not, each tab's composer seed, failures waved away, the agent's last typed command per tab. Module scope, like the terminals. |
 | `app/agent-instructions-section.tsx` | The settings section where the owner edits the agent's instructions text, or restores the built-in one. |
-| `app/open-settings.ts` | Opens the plugin's settings page from the Terminals page (the agent panel's gear), through the router's history. |
+| `app/open-settings.ts` | Opens the plugin's settings page from the Terminals page (the gear at the end of the tab strip, and the agent panel's), through the router's history. |
 | `app/agent-panel.tsx` | The panel: bb's `ThreadChat` for the tab's thread, or bb's `experimental_NewThreadComposer` seeded with the prompt (if any), project and checkout. |
 
 `npm test` runs everything. Nothing in it opens a shell or a socket: the connection runs against a
@@ -214,8 +214,8 @@ owner writes leaves the agent without its terminal. `{{tab}}` and `{{machine}}` 
 JSON-quoted since they are the user's own names; other `{{…}}` stay as written. A blank text or the
 built-in text itself is stored as nothing, so a later change to the built-in text reaches an owner who
 never edited it. `configure` is synchronous, so the server caches the text and reads it again before
-each spawn (another copy of the plugin, mid-reload, may have saved it). The page reaches the settings
-with `app/open-settings.ts`, the router-history push firstmate-crew and herald use, since the page SDK
+each spawn (another copy of the plugin, mid-reload, may have saved it). The page reaches the settings (a gear
+always shown at the end of the tab strip, and one in the agent panel) with `app/open-settings.ts`, the router-history push firstmate-crew and herald use, since the page SDK
 has no call for it.
 
 **The tools belong to one thread and one tab.** `configure` gives `terminal_read` and `terminal_run`

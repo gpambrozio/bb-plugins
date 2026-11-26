@@ -49,6 +49,7 @@ import { DELIVERY_TIMEOUT_MS, windowDeliveries, type DeliveryTarget } from "./ch
 import { terminalBlock } from "./chat-text";
 import type { ConnectionStatus } from "./connection";
 import { CopyOnSelectSetting } from "./copy-on-select";
+import { SETTINGS_PLACE, openPluginSettings } from "./open-settings";
 import { applyThemeToAll, liveTerminal, releaseClosedTerminals, type LiveTerminal, type TerminalsBackend } from "./live-terminals";
 import { resolveSelection, selectionAfterClose, windowSelection } from "./selection";
 import { SelectionMenu, useTerminalSelection } from "./terminal-selection";
@@ -513,6 +514,21 @@ export function TerminalsPage(_props: PluginNavPanelProps) {
           onClick={toggleAgent}
         >
           <Icon name="Bot" />
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className={cn(
+            COARSE_POINTER_COMPACT_ICON_BUTTON_CLASS,
+            "shrink-0 text-muted-foreground/70 hover:text-foreground focus:ring-1 focus:ring-ring",
+          )}
+          aria-label="Terminals settings"
+          onClick={() => {
+            if (!openPluginSettings()) setNotice(`Could not open the settings: they are in ${SETTINGS_PLACE}.`);
+          }}
+        >
+          <Icon name="Settings" />
         </Button>
       </div>
       {notice !== null || error !== null ? (

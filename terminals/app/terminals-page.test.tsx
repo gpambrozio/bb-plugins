@@ -1286,6 +1286,22 @@ describe("asking an agent", () => {
     push.mockRestore();
   });
 
+  it("opens the plugin's settings from the gear at the end of the tabs, and says where they are when it cannot", async () => {
+    await shown();
+    const pushed: string[] = [];
+    const push = vi.spyOn(window.history, "pushState").mockImplementation((_state, _unused, url) => void pushed.push(String(url)));
+    const toolbar = screen.getByRole("toolbar", { name: "Terminals" });
+    fireEvent.click(within(toolbar).getByRole("button", { name: "Terminals settings" }));
+    expect(pushed).toEqual(["/settings/plugins/terminals"]);
+
+    push.mockImplementation(() => {
+      throw new Error("SecurityError");
+    });
+    fireEvent.click(within(toolbar).getByRole("button", { name: "Terminals settings" }));
+    expect(await screen.findByText("Could not open the settings: they are in Settings → Plugins → Terminals.")).toBeTruthy();
+    push.mockRestore();
+  });
+
   it("says what the agent typed until the user types", async () => {
     const { view } = await shown("thr_agent");
     await view.emitRealtime("agent-typed", { terminalId: "term_1", command: "git status" });
