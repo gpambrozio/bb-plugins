@@ -43,6 +43,8 @@ import { cn } from "@/lib/utils";
 
 import { AddToChatDialog, type AddToChatRequest } from "./add-to-chat-dialog";
 import { AgentPanel } from "./agent-panel";
+import { AgentResizeHandle } from "./agent-resize-handle";
+import { readAgentWidth } from "./agent-width";
 import { windowAgentPanel, type AgentPanelState, type AgentTypedNote } from "./agent-state";
 import { TabStrip, type StripTab, type TabReorderRequest } from "./bb-tab-strip/tab-strip";
 import { DELIVERY_TIMEOUT_MS, windowDeliveries, type DeliveryTarget } from "./chat-delivery";
@@ -227,6 +229,9 @@ export function TerminalsPage(_props: PluginNavPanelProps) {
   const copyOnSelect = useCopyOnSelect();
   const agentPanel = useAgentPanel();
   const compact = useIsCompactViewport();
+  /** The agent panel's width beside the terminal (not on a phone, where it covers it). */
+  const [agentWidth, setAgentWidth] = useState(readAgentWidth);
+  const agentRow = useRef<HTMLDivElement | null>(null);
   useRealtime(AGENT_TYPED, (payload: unknown) => {
     const parsed = AgentTypedSchema.safeParse(payload);
     if (parsed.success) windowAgentPanel.noteTyped(parsed.data.terminalId, parsed.data.command, Date.now());
@@ -550,7 +555,7 @@ export function TerminalsPage(_props: PluginNavPanelProps) {
           </Button>
         </div>
       ) : null}
-      <div className="flex min-h-0 flex-1">
+      <div ref={agentRow} className="flex min-h-0 flex-1">
         <div className="relative min-h-0 min-w-0 flex-1 bg-sidebar">
           {shown !== null && isPending(shownTab?.status ?? "running") ? (
             <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground">
@@ -573,12 +578,18 @@ export function TerminalsPage(_props: PluginNavPanelProps) {
             <EmptyState opening={opening} onOpen={() => void plus()} />
           )}
         </div>
+        {agentPanel.open && shownTab !== null && !isPending(shownTab.status) && !compact ? (
+          <AgentResizeHandle width={agentWidth} row={agentRow} onWidth={setAgentWidth} />
+        ) : null}
         {agentPanel.open && shownTab !== null && !isPending(shownTab.status) ? (
           <div
             className={cn(
               "min-h-0 border-border bg-background",
-              compact ? "absolute inset-x-0 bottom-0 top-10 z-20" : "w-[28rem] max-w-[50%] shrink-0 border-l",
+              // The terminal keeps 15rem when the window narrows below the remembered width.
+              compact ? "absolute inset-x-0 bottom-0 top-10 z-20" : "max-w-[calc(100%-15rem)] shrink-0",
             )}
+            style={compact ? undefined : { width: agentWidth }}
+            data-agent-pane=""
           >
             <AgentPanel
               tab={shownTab}

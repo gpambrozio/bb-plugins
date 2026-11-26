@@ -23,6 +23,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   message unless the last command failed. A tab keeps
   its chat, so the next failure goes to the same one; start a new chat from the panel whenever you
   like. No other chat can use that terminal.
+- **A resizable agent panel.** Drag the edge between the terminal and the panel (or use the arrow keys
+  on it) to make the panel wider or narrower; the terminal refits, and this browser remembers the width.
 - **Your own instructions for the agent.** A gear at the end of the tabs, and another in the agent
   panel, open the plugin's settings, where you can read what the agent is told, edit it or add to it,
   and restore the built-in text. The terminal's name and machine are always given to the agent,

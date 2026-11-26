@@ -39,6 +39,7 @@ specific to `terminals`.
 | `app/agent-state.ts` | This window's agent panel: open or not, each tab's composer seed, failures waved away, the agent's last typed command per tab. Module scope, like the terminals. |
 | `app/agent-instructions-section.tsx` | The settings section where the owner edits the agent's instructions text, or restores the built-in one. |
 | `app/open-settings.ts` | Opens the plugin's settings page from the Terminals page (the gear at the end of the tab strip, and the agent panel's), through the router's history. |
+| `app/agent-width.ts`, `app/agent-resize-handle.tsx` | The agent panel's width beside the terminal (bounds, localStorage) and the edge that sets it by pointer or keys. Not on a compact viewport, where the panel covers the terminal. The terminal refits through its view's ResizeObserver, and the shell's resizes are coalesced by `app/sizing.ts`. |
 | `app/agent-panel.tsx` | The panel: bb's `ThreadChat` for the tab's thread, or bb's `experimental_NewThreadComposer` seeded with the prompt (if any), project and checkout. |
 
 `npm test` runs everything. Nothing in it opens a shell or a socket: the connection runs against a

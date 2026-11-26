@@ -65,6 +65,11 @@ The colours and font follow bb's theme, as bb's own terminal does.
   exit code from the terminal itself. You can edit the message, pick the agent and model, and send it. The project starts on the one whose
   checkout holds the shell's directory, working in that checkout on the terminal's machine, else as
   for **Add to chat**. The provider and model start on bb's defaults for that project.
+- **Resize the panel** by dragging the edge between it and the terminal, or by focusing that edge and
+  using the arrow keys (Shift for bigger steps; Home and End for the narrowest and widest). Double-click
+  it to go back to the default. The terminal refits as you go, and this browser remembers the width. The
+  panel stays between 300 pixels and three quarters of the page, and the terminal keeps at least 240
+  pixels. On a phone the panel covers the terminal, as before.
 - **The bot button** at the right end of the tab strip opens and closes the panel at any time, with
   no failed command needed: a new chat starts empty, or on the same line when the last command failed.
 - **One chat per tab.** Once the tab has a chat, the panel shows it (bb's own chat, the same one the

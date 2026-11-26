@@ -1302,6 +1302,48 @@ describe("asking an agent", () => {
     push.mockRestore();
   });
 
+  it("resizes the agent panel from the edge beside the terminal, and remembers the width in this browser", async () => {
+    window.localStorage.removeItem("terminals.agentPanelWidth");
+    await shown();
+    const toolbar = screen.getByRole("toolbar", { name: "Terminals" });
+    fireEvent.click(within(toolbar).getByRole("button", { name: "Ask an agent about this terminal" }));
+    const handle = await screen.findByRole("separator", { name: "Resize the agent panel" });
+    const pane = () => document.querySelector<HTMLElement>("[data-agent-pane]")!;
+    expect(pane().style.width).toBe("448px");
+
+    // Dragging the edge left widens the panel; the width is kept once the drag ends.
+    fireEvent.pointerDown(handle, { button: 0, pointerId: 1, clientX: 800 });
+    fireEvent.pointerMove(handle, { pointerId: 1, clientX: 700 });
+    expect(pane().style.width).toBe("548px");
+    expect(window.localStorage.getItem("terminals.agentPanelWidth")).toBeNull();
+    fireEvent.pointerUp(handle, { pointerId: 1, clientX: 700 });
+    expect(window.localStorage.getItem("terminals.agentPanelWidth")).toBe("548");
+
+    // The keys move it too, never below the minimum; a double click goes back to the default.
+    fireEvent.keyDown(handle, { key: "ArrowRight" });
+    expect(pane().style.width).toBe("532px");
+    fireEvent.keyDown(handle, { key: "Home" });
+    expect(pane().style.width).toBe("300px");
+    fireEvent.pointerDown(handle, { button: 0, pointerId: 2, clientX: 800 });
+    fireEvent.pointerMove(handle, { pointerId: 2, clientX: 900 });
+    expect(pane().style.width).toBe("300px");
+    fireEvent.pointerUp(handle, { pointerId: 2 });
+    fireEvent.doubleClick(handle);
+    expect(pane().style.width).toBe("448px");
+    expect(window.localStorage.getItem("terminals.agentPanelWidth")).toBe("448");
+  });
+
+  it("lays the agent panel over the terminal on a phone, with no edge to drag", async () => {
+    viewport.compact = true;
+    window.localStorage.setItem("terminals.agentPanelWidth", "600");
+    await shown();
+    fireEvent.click(within(screen.getByRole("toolbar", { name: "Terminals" })).getByRole("button", { name: "Ask an agent about this terminal" }));
+    await waitFor(() => expect(document.querySelector("[data-agent-pane]")).not.toBeNull());
+    expect(screen.queryByRole("separator", { name: "Resize the agent panel" })).toBeNull();
+    expect(document.querySelector<HTMLElement>("[data-agent-pane]")!.style.width).toBe("");
+    window.localStorage.removeItem("terminals.agentPanelWidth");
+  });
+
   it("says what the agent typed until the user types", async () => {
     const { view } = await shown("thr_agent");
     await view.emitRealtime("agent-typed", { terminalId: "term_1", command: "git status" });
