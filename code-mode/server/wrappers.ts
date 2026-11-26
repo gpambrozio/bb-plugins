@@ -13,6 +13,8 @@ export interface WrappersDeps {
   install(hostId: string): Promise<InstallResult>;
   kv: { get<T>(key: string): Promise<T | undefined>; set(key: string, value: unknown): Promise<void> };
   log: { info(message: string): void; warn(message: string): void };
+  /** A machine's check came back different from before: tell the app. */
+  changed?(): void;
   timeoutMs?: number;
 }
 
@@ -20,6 +22,8 @@ export function createWrappers(deps: WrappersDeps) {
   /** Confirmed on this load. */
   const confirmed = new Map<string, string>();
   const checking = new Map<string, Promise<InstallResult>>();
+  /** Each machine's last check on this load, for the app's Send-menu row. */
+  const last = new Map<string, InstallResult>();
   let stored: Promise<Record<string, string>> | null = null;
 
   function storedPaths(): Promise<Record<string, string>> {
@@ -41,6 +45,9 @@ export function createWrappers(deps: WrappersDeps) {
       } catch (error) {
         result = { ok: false, reason: error instanceof Error ? error.message : String(error) };
       }
+      const before = last.get(hostId);
+      last.set(hostId, result);
+      if (before?.ok !== result.ok || (!result.ok && !before?.ok && before?.reason !== result.reason)) deps.changed?.();
       if (result.ok) {
         confirmed.set(hostId, result.path);
         const paths = await storedPaths();
@@ -78,7 +85,19 @@ export function createWrappers(deps: WrappersDeps) {
     }
   }
 
-  return { check, pathFor };
+  /** Each machine checked on this load: whether its wrapper is ready, and why not. */
+  function statuses(): Record<string, { ok: boolean; message: string }> {
+    return Object.fromEntries([...last].map(([hostId, result]) => [hostId, result.ok ? { ok: true, message: "Wrapper ready" } : { ok: false, message: result.reason }]));
+  }
+
+  /** Whether a thread decided now on that machine could get the wrapper, and why not. */
+  async function readiness(hostId: string): Promise<{ ok: true } | { ok: false; reason: string }> {
+    if ((await pathFor(hostId)) !== null) return { ok: true };
+    const result = last.get(hostId);
+    return { ok: false, reason: result && !result.ok ? result.reason : "the wrapper could not be checked there in time" };
+  }
+
+  return { check, pathFor, statuses, readiness };
 }
 
 export type Wrappers = ReturnType<typeof createWrappers>;

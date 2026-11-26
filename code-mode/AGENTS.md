@@ -50,6 +50,15 @@ no restart. Read the repository's `AGENTS.md` first.
   moves it to the other name's switch.
 - **Select all on Machines turns on only machines whose wrapper check passes** (`app/select-all.ts`), so
   it never quietly turns on one where Code Mode can't start; the rest stay off with their reason shown.
+- **A thread is recorded as Code Mode only where the wrapper is ready** (`requireWrapper` in
+  `server/decide.ts`): an explicit send is refused with the machine's name and the reason, a default
+  leaves the thread off. A record without the wrapper would start with the ordinary tools.
+- **The Send-menu rows read a module store** (`app/composer-facts.tsx`): bb asks a row's `disabled`
+  synchronously with only the composer, and fixes its label and description at registration, so a
+  `ComposerFacts` composer contribution that draws nothing keeps the switches, the machines' wrapper
+  statuses (`hosts.status`, tag `hosts`) and the names there. A row can be greyed out, never hidden, and
+  its reason can't be shown in the menu (SDK 0.6.157). The composer's `selection.environment` names the
+  machine (`host` or `provider` environments; checked live, "Project checkout" included).
 - **The machine switch gates new decisions only.** A Code Mode thread keeps getting the wrapper after its
   machine is turned off; the wrapper is written on demand.
 - **The dispatch hook runs under bb's server-wide dispatch lock**: no slow work there. Config is cached in

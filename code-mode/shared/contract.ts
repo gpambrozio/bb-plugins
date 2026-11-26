@@ -8,6 +8,7 @@ import { z } from "zod";
 import { configSchema } from "./config";
 
 export const CONFIG_TAG = "config";
+export const HOSTS_TAG = "hosts";
 /** At most this many threads per read; the server reads bb's metadata 200 at a time. */
 export const THREADS_BATCH_MAX = 2000;
 export const METADATA_BATCH = 200;
@@ -36,6 +37,8 @@ export const rpcContract = {
   "config.setProjectNames": { input: z.object({ names: z.array(z.string().min(1)).max(THREADS_BATCH_MAX), on: z.boolean() }), output: configSchema },
   /** Many machines in one write. The app turns on only machines whose wrapper is ready (app/select-all.ts). */
   "config.setHosts": { input: z.object({ hostIds: z.array(z.string().min(1)).max(THREADS_BATCH_MAX), on: z.boolean() }), output: configSchema },
+  /** Each machine checked since the plugin loaded: whether its wrapper is ready, and why not. */
+  "hosts.status": { input: z.object({}), output: z.record(z.string(), hostCheckSchema), tags: () => [HOSTS_TAG] },
   /** Writes the wrapper on that machine and says whether it worked. */
   "hosts.check": { input: z.object({ hostId: z.string().min(1) }), output: hostCheckSchema },
 } satisfies PluginRpcContract;

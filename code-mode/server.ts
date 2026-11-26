@@ -5,7 +5,7 @@
 // shared/contract.ts.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 
-import { CONFIG_TAG, rpcContract, threadTag } from "./shared/contract";
+import { CONFIG_TAG, HOSTS_TAG, rpcContract, threadTag } from "./shared/contract";
 import { hostContract } from "./shared/host-contract";
 import { SPAWNED_LABELS, SPAWNED_OPTIONS, SPAWNED_SETTING, spawnedRule, type SpawnedRule } from "./shared/settings";
 import { createConfigStore } from "./server/config-store";
@@ -70,6 +70,7 @@ export default async function plugin(bb: BbPluginApi) {
     install: (hostId) => host.call("install", {}, { hostId, timeoutMs: 15_000 }),
     kv: bb.storage.kv,
     log: bb.log,
+    changed: () => bb.rpc.experimental_invalidate([HOSTS_TAG]),
   });
 
   const policy = createPolicy({
@@ -121,6 +122,7 @@ export default async function plugin(bb: BbPluginApi) {
       if (on) for (const hostId of hostIds) void wrappers.check(hostId);
       return updated;
     },
+    "hosts.status": () => wrappers.statuses(),
     "hosts.check": async ({ hostId }) => {
       const result = await wrappers.check(hostId);
       return result.ok ? { ok: true, message: `Ready: ${result.path}` } : { ok: false, message: result.reason };

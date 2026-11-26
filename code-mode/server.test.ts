@@ -132,12 +132,33 @@ describe("Send in Code Mode", () => {
     expect(await t.resolve("thr_plain")).toEqual([]);
   });
 
-  it("refuses on a machine that is not turned on, and records nothing", async () => {
+  it("refuses on a machine that is not turned on, naming it, and records nothing", async () => {
     const t = await setup();
     t.thread("thr_x");
-    const decision = await t.send("thr_x", t.codeModeSend);
+    const decision = await t.send("thr_x", { ...t.codeModeSend, host: { id: OTHER_HOST, name: "Gustavo DoxBook Pro" } });
     expect(decision).toMatchObject({ action: "reject" });
+    expect(decision.action === "reject" && decision.message).toContain("Code Mode is off on Gustavo DoxBook Pro");
     expect(t.metadata.has("thr_x")).toBe(false);
+    expect(await t.resolve("thr_x", OTHER_HOST)).toEqual([]);
+  });
+
+  it("refuses where the machine is on but the wrapper can't be written, and records nothing", async () => {
+    const t = await setup({ hostReady: false });
+    await t.turnOnHost();
+    t.thread("thr_x");
+    const decision = await t.send("thr_x", { ...t.codeModeSend, host: { id: HOST, name: "MacMini" } });
+    expect(decision.action === "reject" && decision.message).toContain("Code Mode's wrapper isn't ready on MacMini: Windows");
+    expect(t.metadata.has("thr_x")).toBe(false);
+  });
+
+  it("records Send without Code Mode in a project that starts in Code Mode", async () => {
+    const t = await setup();
+    await t.turnOnHost();
+    await t.harness.behavior.callRpc("config.setProjectName", { name: PROJECT_NAME, on: true });
+    t.thread("thr_out");
+    expect(await t.send("thr_out", { experimental_submission: { pluginId: PLUGIN_ID, data: { codeMode: false } } })).toEqual({ action: "proceed" });
+    expect(t.metadata.get("thr_out")?.codeMode).toMatchObject({ codeMode: "off", reason: "sent without Code Mode" });
+    expect(await t.resolve("thr_out")).toEqual([]);
   });
 
   it("only counts this plugin's own submission data", async () => {
@@ -227,13 +248,22 @@ describe("project defaults and machines", () => {
     expect(await t.resolve("thr_cm")).toEqual(WRAPPER_ENTRY);
   });
 
-  it("gives nothing, and says why, when the wrapper can't be written on that machine", async () => {
+  it("leaves a default-on thread off where the wrapper can't be written, and says why", async () => {
     const t = await setup({ hostReady: false });
     await t.turnOnHost();
+    await t.harness.behavior.callRpc("config.setProjectName", { name: PROJECT_NAME, on: true });
     t.thread("thr_cm");
-    await t.send("thr_cm", t.codeModeSend);
+    expect(await t.send("thr_cm")).toEqual({ action: "proceed" });
+    expect(t.metadata.get("thr_cm")?.codeMode).toMatchObject({ codeMode: "off", reason: expect.stringContaining("wrapper isn't ready") });
     expect(await t.resolve("thr_cm")).toEqual([]);
     expect(t.harness.inspection.logEntries.some((entry) => entry.message.includes("wrapper is not ready"))).toBe(true);
+  });
+
+  it("tell the app each checked machine's wrapper status", async () => {
+    const t = await setup({ hostReady: false });
+    await t.harness.behavior.callRpc("hosts.check", { hostId: HOST });
+    expect(await t.harness.behavior.callRpc("hosts.status", {})).toEqual({ [HOST]: { ok: false, message: "Windows" } });
+    expect(t.harness.inspection.experimental_rpcInvalidations).toContainEqual(["hosts"]);
   });
 });
 

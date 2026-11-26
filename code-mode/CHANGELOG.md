@@ -19,6 +19,9 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Machines that may run Code Mode**, all off until you turn them on, each showing whether it is ready.
 - **Select all and Select none** for both lists. Select all on machines turns on only the machines
   that are ready, and shows why the others stay off.
+- **Send without Code Mode**, offered when a new thread would start in Code Mode by its project's default.
+- **Send in Code Mode follows the chosen machine**: it is greyed out where Code Mode is off or not ready,
+  and a send there is refused with the machine's name, so a thread is never left half in Code Mode.
 - **A Code badge** on a Code Mode thread's row, and a **Code Mode: on** line in its thread menu.
 - **A model guard**: a message that would move a Code Mode thread to a model that can't run Code Mode is
   refused, with the reason, instead of leaving the thread unable to resume.

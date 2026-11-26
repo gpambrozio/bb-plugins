@@ -17,7 +17,7 @@ import { hostAllowed, projectDefault } from "../shared/config";
 import type { CodeModeRecord } from "../shared/record";
 import type { SpawnedRule } from "../shared/settings";
 import type { ConfigStore } from "./config-store";
-import { decide, modelGuard, type DecisionFacts } from "./decide";
+import { decide, modelGuard, requireWrapper, type DecisionFacts } from "./decide";
 import type { Records } from "./records";
 import type { Wrappers } from "./wrappers";
 
@@ -77,6 +77,7 @@ export function createPolicy(deps: PolicyDeps) {
     starter: string | null;
     spawned: boolean;
     hostId: string | null;
+    hostName: string | null;
     model: string | null;
   }): Promise<DecisionFacts> {
     const source = forkSource(args.thread);
@@ -92,6 +93,7 @@ export function createPolicy(deps: PolicyDeps) {
       parentRecord,
       projectDefault: projectDefault(config, args.projectName),
       hostAllowed: hostAllowed(config, args.hostId),
+      hostName: args.hostName,
       model: args.model,
     };
   }
@@ -111,17 +113,19 @@ export function createPolicy(deps: PolicyDeps) {
     const sender = typeof ctx.senderThreadId === "string" && ctx.senderThreadId !== "mixed" ? ctx.senderThreadId : null;
     const starter = ctx.parentThreadId ?? ctx.thread.parentThreadId ?? sender;
     const spawned = starter !== null || ctx.senderThreadId === "mixed" || ctx.thread.originPluginId !== null || ctx.initiator === "agent";
-    const decision = decide(
-      await facts({
-        thread: ctx.thread,
-        projectName: ctx.project.name,
-        explicit: submissionChoice(ctx.experimental_submission, deps.pluginId),
-        starter,
-        spawned,
-        hostId: ctx.host?.id ?? null,
-        model,
-      }),
-    );
+    const hostId = ctx.host?.id ?? null;
+    const known = await facts({
+      thread: ctx.thread,
+      projectName: ctx.project.name,
+      explicit: submissionChoice(ctx.experimental_submission, deps.pluginId),
+      starter,
+      spawned,
+      hostId,
+      hostName: ctx.host?.name ?? null,
+      model,
+    });
+    // decide() turns Code Mode on only for a machine that is on, so hostId is set when it is asked.
+    const decision = await requireWrapper(decide(known), known, () => deps.wrappers.readiness(hostId ?? ""));
     if (decision.kind === "reject") return { action: "reject", message: decision.message };
     const record = await records.decideOnce(ctx.thread.id, async () => ({ record: records.make(decision.codeMode, decision.reason), store: true }));
     deps.log.info(`Thread ${ctx.thread.id}: Code Mode ${record?.codeMode ?? "untouched"} (${record?.reason ?? "no record"}).`);
@@ -139,17 +143,17 @@ export function createPolicy(deps: PolicyDeps) {
         return { record: null };
       }
       const starter = thread.parentThreadId;
-      const decision = decide(
-        await facts({
-          thread,
-          projectName: await deps.projectName(projectId ?? thread.projectId),
-          explicit: null,
-          starter,
-          spawned: starter !== null || thread.originPluginId !== null,
-          hostId,
-          model: null,
-        }),
-      );
+      const known = await facts({
+        thread,
+        projectName: await deps.projectName(projectId ?? thread.projectId),
+        explicit: null,
+        starter,
+        spawned: starter !== null || thread.originPluginId !== null,
+        hostId,
+        hostName: null,
+        model: null,
+      });
+      const decision = await requireWrapper(decide(known), known, () => deps.wrappers.readiness(hostId));
       // With no explicit choice, decide() never refuses.
       if (decision.kind === "reject") return { record: null };
       deps.log.info(`Thread ${threadId} started without a dispatch decision: Code Mode ${decision.codeMode} (${decision.reason}).`);

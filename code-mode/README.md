@@ -15,10 +15,19 @@ the real `claude`.
 ## Using it
 
 - **Send in Code Mode.** In a new thread, the menu beside the Send button has **Send in Code Mode**. It
-  sends the first message and starts the thread in Code Mode. It is greyed out for agents other than
-  Claude Code and for models that can't run Code Mode.
+  sends the first message and starts the thread in Code Mode, whatever the project's default. It follows
+  the composer's pickers, and is greyed out for agents other than Claude Code, for models that can't run
+  Code Mode, and on a machine where Code Mode is off or its wrapper isn't ready. If it is used there
+  anyway (a machine the picker doesn't name, say), the send is refused with the reason, for example
+  "Code Mode is off on Gustavo DoxBook Pro", and nothing is recorded.
+- **Send without Code Mode.** When a new thread would start in Code Mode by default (its project and its
+  machine are on, see *Defaults*), the same menu offers **Send without Code Mode**, which starts it with
+  the ordinary tools instead. It is greyed out otherwise. bb can grey a Send-menu row out but not hide
+  it, and can't show why in the menu, so both rows are always listed.
 - **The choice is fixed.** A thread decides on its first message and keeps that for good: a session
-  started in Code Mode can only resume in Code Mode, and one started without it only without.
+  started in Code Mode can only resume in Code Mode, and one started without it only without. A thread is
+  recorded as Code Mode only where the wrapper is ready; on a machine where it isn't, a default leaves
+  the thread off.
 - **Defaults.** On the plugin's settings page, turn on **Projects that start in Code Mode**. A new Claude
   Code thread starts in Code Mode without the menu when its project is on there and its machine is on
   under **Machines**. Projects are listed once per name: bb projects with the same name (one per machine,

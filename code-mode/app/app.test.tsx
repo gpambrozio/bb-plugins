@@ -2,7 +2,7 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import { sendDisabled, sendInCodeMode, SEND_DATA } from "./send-menu";
+import { sendInCodeMode, SEND_DATA } from "./send-menu";
 import { menuLine, rowBadge } from "./thread-ui";
 
 vi.mock("@get-bb/plugin-sdk/app", () => ({
@@ -23,13 +23,6 @@ describe("Send in Code Mode", () => {
     await expect(sendInCodeMode.run({ composer: { submit } as never })).resolves.toBeUndefined();
   });
 
-  it("is greyed out for another agent and for a model without Code Mode", () => {
-    expect(sendDisabled({ providerId: "codex" })).toBe(true);
-    expect(sendDisabled({ providerId: "claude-code", model: "claude-opus-5" })).toBe(true);
-    expect(sendDisabled({ providerId: "claude-code", model: "claude-opus-5-5" })).toBe(false);
-    expect(sendDisabled({ providerId: "claude-code" })).toBe(false);
-    expect(sendDisabled(null)).toBe(false);
-  });
 });
 
 describe("a Code Mode thread", () => {

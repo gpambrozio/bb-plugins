@@ -8,6 +8,7 @@
 //    or a plugin started, the spawned-threads setting (the project's switch, never, or the same as the
 //    thread that started it). A default that would put a thread in Code Mode on a machine that is not
 //    turned on, or on a model that can't run it, leaves it off.
+import { notReadyOnMachine, offOnMachine } from "../shared/messages";
 import { codeModeSupport, SUPPORTED_MODELS_TEXT } from "../shared/model";
 import type { CodeModeRecord } from "../shared/record";
 import type { SpawnedRule } from "../shared/settings";
@@ -24,6 +25,8 @@ export interface DecisionFacts {
   parentRecord: CodeModeRecord | null;
   projectDefault: boolean;
   hostAllowed: boolean;
+  /** The machine's name, for the refusal; null when bb did not say. */
+  hostName: string | null;
   /** The model the first turn asks for; null when bb has not resolved one. */
   model: string | null;
 }
@@ -47,7 +50,7 @@ export function decide(facts: DecisionFacts): Decision {
     if (!facts.hostAllowed) {
       return {
         kind: "reject",
-        message: "Code Mode is not turned on for this machine. Turn it on in Code Mode's settings (Settings → Plugins → Code Mode), or send the message normally.",
+        message: `${offOnMachine(facts.hostName)}. Turn it on under Machines in Code Mode's settings (Settings → Plugins → Code Mode), or send the message normally.`,
       };
     }
     if (unsupportedModel) {
@@ -76,6 +79,26 @@ export function decide(facts: DecisionFacts): Decision {
   if (!facts.hostAllowed) return off("Code Mode is not turned on for this machine");
   if (unsupportedModel) return off(`the model ${facts.model} can't run Code Mode`);
   return on(why);
+}
+
+/**
+ * A thread may be recorded as Code Mode only where the wrapper is ready: one recorded without it would
+ * start with the ordinary tools and could never be what its record says. `ready` is asked only for a
+ * decision that would turn Code Mode on; a fork keeps its source's choice, since its session must.
+ */
+export async function requireWrapper(
+  decision: Decision,
+  facts: Pick<DecisionFacts, "fork" | "explicit" | "hostName">,
+  ready: () => Promise<{ ok: true } | { ok: false; reason: string }>,
+): Promise<Decision> {
+  if (decision.kind !== "record" || decision.codeMode !== "on" || facts.fork) return decision;
+  const readiness = await ready();
+  if (readiness.ok) return decision;
+  const why = notReadyOnMachine(facts.hostName, readiness.reason);
+  if (facts.explicit === true) {
+    return { kind: "reject", message: `${why}. Check it under Machines in Code Mode's settings, or send the message normally.` };
+  }
+  return off(why);
 }
 
 /** The model guard: a Code Mode thread may not move to a model that can't resume its session. */

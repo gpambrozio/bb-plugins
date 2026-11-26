@@ -2,7 +2,7 @@ Code Mode lets you run the Claude Code threads you choose in Claude Code's exper
 
 ## How you use it
 
-- **Send in Code Mode** sits in the menu beside the Send button of a new thread. It sends the first message and starts the thread in Code Mode.
+- **Send in Code Mode** sits in the menu beside the Send button of a new thread. It sends the first message and starts the thread in Code Mode. Where a project starts new threads in Code Mode, **Send without Code Mode** starts one with the ordinary tools instead.
 - **Projects that start in Code Mode**, on the plugin's settings page, make every new Claude Code thread in a project start that way, on the machines you turn on. Projects are listed once per name, so the same repository on two machines is one switch, and Select all and Select none set a whole list at once.
 - **Threads that agents and plugins start** follow the project's default, never use Code Mode, or do what the thread that started them does, as you choose. Forks keep the choice of the thread they came from.
 - A Code Mode thread shows a **Code** badge on its row and a **Code Mode: on** line in its thread menu.
