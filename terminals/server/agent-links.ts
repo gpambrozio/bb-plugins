@@ -20,8 +20,10 @@
  * last read. Once `close` is called (the copy is being unloaded) nothing is
  * written any more: a change is refused, and `bind` binds nothing. A save the
  * old copy had already sent can still land after the new copy changed the
- * list, so the new copy's `revoke` wins over it rather than relying on the
- * order of writes. No SDK import.
+ * list, so revocation wins over it rather than relying on the order of
+ * writes: every link a change of this copy removes or replaces has its token
+ * revoked, kept in storage of its own for `REVOKED_KEEP_MS`, and a revoked
+ * link is ignored on every read, whoever wrote it back. No SDK import.
  */
 import { z } from "zod";
 
@@ -37,12 +39,22 @@ export const AgentLinkSchema = z.object({
 
 export type AgentLink = z.infer<typeof AgentLinkSchema>;
 
+/** A token whose link was removed, and when. */
+export const RevokedLinkSchema = z.object({ token: z.string().min(1), at: z.number() });
+export type RevokedLink = z.infer<typeof RevokedLinkSchema>;
+
+/** How long a removed link's token stays revoked: a save under way lands well within it. */
+export const REVOKED_KEEP_MS = 24 * 60 * 60 * 1000;
+
 /** How long a link may wait for the thread bb is creating for it. */
 export const PENDING_MS = 60_000;
 
 export interface AgentLinkPorts {
   load(): Promise<AgentLink[]>;
   save(links: AgentLink[]): Promise<void>;
+  /** The revoked tokens, kept apart from the list so a save of the list cannot undo them. */
+  loadRevoked(): Promise<RevokedLink[]>;
+  saveRevoked(revoked: RevokedLink[]): Promise<void>;
   now(): number;
   /** A token no other link has had. */
   newToken(): string;
@@ -59,9 +71,18 @@ export function createAgentLinks(ports: AgentLinkPorts) {
   let links: AgentLink[] = [];
   let queue: Promise<unknown> = Promise.resolve();
   let closed = false;
-  /** Tokens revoked by `revoke`: a link with one is ignored and left out of every save. */
-  const revoked = new Set<string>();
+  /** Revoked tokens and when: a link with one is ignored and left out of every save. */
+  const revoked = new Map<string, number>();
   const live = (list: AgentLink[]) => list.filter((link) => !revoked.has(link.token));
+
+  /** Adds what another copy revoked, then revokes `tokens` and saves them all, before the list is saved. */
+  async function revokeDurably(tokens: string[]): Promise<void> {
+    const now = ports.now();
+    for (const entry of await ports.loadRevoked()) if (!revoked.has(entry.token)) revoked.set(entry.token, entry.at);
+    for (const token of tokens) revoked.set(token, now);
+    for (const [token, at] of revoked) if (now - at >= REVOKED_KEEP_MS) revoked.delete(token);
+    await ports.saveRevoked([...revoked].map(([token, at]) => ({ token, at })));
+  }
 
   /** Runs after every change before it. */
   function queued<T>(work: () => Promise<T>): Promise<T> {
@@ -81,6 +102,12 @@ export function createAgentLinks(ports: AgentLinkPorts) {
       const changed = change(current);
       // A revoked link another copy's late save put back is written out with this change.
       if (changed === current && current.length === stored.length) return;
+      // A link this change removes or replaces stays gone, even when a save of another copy
+      // that was already under way (the copy before a reload) writes it back.
+      const kept = new Set(changed.map((link) => link.token));
+      const removed = current.map((link) => link.token).filter((token) => token !== "" && !kept.has(token));
+      if (removed.length > 0) await revokeDurably(removed);
+      if (closed) throw new LinksClosedError();
       await ports.save(changed);
       links = changed;
     });
@@ -89,6 +116,8 @@ export function createAgentLinks(ports: AgentLinkPorts) {
   return {
     /** Reads the stored list; call once before the rest. */
     async load(): Promise<void> {
+      const now = ports.now();
+      for (const entry of await ports.loadRevoked()) if (now - entry.at < REVOKED_KEEP_MS) revoked.set(entry.token, entry.at);
       links = live(await ports.load());
     },
 
@@ -100,7 +129,8 @@ export function createAgentLinks(ports: AgentLinkPorts) {
      * before tokens) cannot be revoked.
      */
     revoke(tokens: Iterable<string>): void {
-      for (const token of tokens) if (token !== "") revoked.add(token);
+      const now = ports.now();
+      for (const token of tokens) if (token !== "" && !revoked.has(token)) revoked.set(token, now);
       links = live(links);
     },
 

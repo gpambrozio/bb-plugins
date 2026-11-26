@@ -16,7 +16,7 @@ import { ClosingSchema, TABS_CHANGED, TabSchema, type Closing, type Tab } from "
 import { registerAgent } from "./server/agent";
 import { setAllChats, settleChats, type ChatVisibilityPorts } from "./server/chat-visibility";
 import { createAgentCommands } from "./server/agent-commands";
-import { AgentLinkSchema, createAgentLinks } from "./server/agent-links";
+import { AgentLinkSchema, RevokedLinkSchema, createAgentLinks } from "./server/agent-links";
 import { createTerminalsService } from "./server/service";
 import type { AgentTerminalPorts } from "./server/terminal-agent";
 import { newTerminalId } from "./server/terminal-id";
@@ -26,6 +26,8 @@ export type { RpcContract } from "./shared/contract";
 const TABS_KEY = "tabs";
 const CLOSING_KEY = "closing";
 const AGENTS_KEY = "agents";
+/** Storage key: the tokens of agent links this plugin removed, which no late save may bring back (server/agent-links.ts). */
+const REVOKED_LINKS_KEY = "revokedAgentLinks";
 /** Set once the agent chats started before chats were hidden have been hidden. */
 const HIDDEN_MIGRATION_KEY = "agentChatsHidden";
 /** The owner's instructions text for a tab's agent; absent means the built-in one. */
@@ -126,6 +128,11 @@ export default async function plugin(bb: BbPluginApi) {
       return parsed.data;
     },
     save: (list) => bb.storage.kv.set(AGENTS_KEY, list),
+    loadRevoked: async () => {
+      const parsed = RevokedLinkSchema.array().safeParse((await bb.storage.kv.get<unknown>(REVOKED_LINKS_KEY)) ?? []);
+      return parsed.success ? parsed.data : [];
+    },
+    saveRevoked: (revoked) => bb.storage.kv.set(REVOKED_LINKS_KEY, revoked),
     now: () => Date.now(),
     newToken: () => randomUUID(),
   });

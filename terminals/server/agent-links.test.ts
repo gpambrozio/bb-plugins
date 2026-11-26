@@ -1,16 +1,21 @@
 import { describe, expect, it } from "vitest";
 
-import { AgentLinkSchema, PENDING_MS, createAgentLinks, type AgentLink } from "./agent-links";
+import { AgentLinkSchema, PENDING_MS, createAgentLinks, type AgentLink, type RevokedLink } from "./agent-links";
 
 /** Plugin storage the stores share, as two copies of the plugin do across a reload. */
 function storage(initial: AgentLink[] = []) {
   let stored = initial;
+  let revoked: RevokedLink[] = [];
   const saved: AgentLink[][] = [];
   return {
     load: async () => stored,
     save: async (list: AgentLink[]) => {
       saved.push(list);
       stored = list;
+    },
+    loadRevoked: async () => revoked,
+    saveRevoked: async (list: RevokedLink[]) => {
+      revoked = list;
     },
     saved,
     read: () => stored,
@@ -23,6 +28,8 @@ function links(stored: AgentLink[] = [], shared = storage(stored)) {
   const store = createAgentLinks({
     load: shared.load,
     save: shared.save,
+    loadRevoked: shared.loadRevoked,
+    saveRevoked: shared.saveRevoked,
     now: () => clock,
     newToken: () => `tok_${++tokens}_${Math.random()}`,
   });
@@ -99,6 +106,8 @@ describe("agent links", () => {
         if (hold !== null) await hold;
         await shared.save(list);
       },
+      loadRevoked: shared.loadRevoked,
+      saveRevoked: shared.saveRevoked,
       now: () => 1_000,
       newToken: () => "old-token",
     });
@@ -127,6 +136,69 @@ describe("agent links", () => {
     expect(fresh.store.mayUse("term_1", "old-chat")).toBe(false);
     await fresh.store.begin("term_2");
     expect(shared.read().map((link) => link.terminalId)).toEqual(["term_2"]);
+  });
+
+  it("keeps another tab's forgotten chat out when the old copy's whole-list save, already under way, lands after the reload", async () => {
+    const shared = storage();
+    let hold: Promise<void> | null = null;
+    let tokens = 0;
+    const old = createAgentLinks({
+      load: shared.load,
+      save: async (list) => {
+        if (hold !== null) await hold;
+        await shared.save(list);
+      },
+      loadRevoked: shared.loadRevoked,
+      saveRevoked: shared.saveRevoked,
+      now: () => 1_000,
+      newToken: () => `old-${++tokens}`,
+    });
+    await old.load();
+    // Tab A has a bound chat; tab B is starting one.
+    const tokenA = await old.begin("tab-A");
+    expect(await old.bind("tab-A", tokenA, "chat-A")).toBe(true);
+    const tokenB = await old.begin("tab-B");
+    let release = () => {};
+    hold = new Promise<void>((resolve) => (release = resolve));
+    // The old copy has read both links and is saving B's bind: its snapshot holds A's chat too.
+    const binding = old.bind("tab-B", tokenB, "chat-B");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // The new copy loads, revokes B's spawn, takes over, and the owner starts a new chat for A.
+    const fresh = links([], shared);
+    await fresh.store.load();
+    fresh.store.revoke(await fresh.store.dropAllPending());
+    old.close();
+    await fresh.store.drop("tab-A");
+    expect(shared.read()).toEqual([]);
+
+    release();
+    await binding;
+    expect(shared.read().map((link) => link.threadId)).toEqual(["chat-A", "chat-B"]);
+    // Neither chat comes back, in this copy or the next one.
+    for (const copy of [fresh.store, links([], shared).store]) {
+      if (copy !== fresh.store) await copy.load();
+      await copy.refresh();
+      expect(copy.threadFor("tab-A")).toBeNull();
+      expect(copy.mayUse("tab-A", "chat-A")).toBe(false);
+      expect(copy.terminalFor("chat-A")).toBeNull();
+      expect(copy.mayUse("tab-B", "chat-B")).toBe(false);
+    }
+    await fresh.store.purgeRevoked();
+    expect(shared.read()).toEqual([]);
+  });
+
+  it("revokes a bound chat's token when a new chat replaces it", async () => {
+    const shared = storage();
+    const { store } = links([], shared);
+    await store.load();
+    const first = await store.begin("term_1");
+    await store.bind("term_1", first, "thr_first");
+    await store.begin("term_1");
+    // A late save of another copy writes the first chat back.
+    await shared.save([...shared.read(), { terminalId: "term_9", threadId: "thr_first", createdAt: 1_000, token: first }]);
+    await store.refresh();
+    expect(store.terminalFor("thr_first")).toBeNull();
   });
 
   it("writes nothing once closed, and binds nothing", async () => {
