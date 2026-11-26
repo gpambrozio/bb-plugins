@@ -43,7 +43,12 @@ export type AgentLink = z.infer<typeof AgentLinkSchema>;
 export const RevokedLinkSchema = z.object({ token: z.string().min(1), at: z.number() });
 export type RevokedLink = z.infer<typeof RevokedLinkSchema>;
 
-/** How long a removed link's token stays revoked: a save under way lands well within it. */
+/**
+ * How long a removed link's token stays revoked: a save under way lands well
+ * within it. Expiring happens only with the stored list just saved without
+ * the revoked links (`load`, and a change), so a stale record a late save
+ * left behind never outlives its revocation.
+ */
 export const REVOKED_KEEP_MS = 24 * 60 * 60 * 1000;
 
 /** How long a link may wait for the thread bb is creating for it. */
@@ -75,12 +80,17 @@ export function createAgentLinks(ports: AgentLinkPorts) {
   const revoked = new Map<string, number>();
   const live = (list: AgentLink[]) => list.filter((link) => !revoked.has(link.token));
 
-  /** Adds what another copy revoked, then revokes `tokens` and saves them all, before the list is saved. */
-  async function revokeDurably(tokens: string[]): Promise<void> {
+  /**
+   * Adds what another copy revoked, then revokes `tokens` and saves them all,
+   * before the list is saved. An old revocation expires only when no link in
+   * `stored` (the list as read for this change) has its token.
+   */
+  async function revokeDurably(tokens: string[], stored: AgentLink[]): Promise<void> {
     const now = ports.now();
     for (const entry of await ports.loadRevoked()) if (!revoked.has(entry.token)) revoked.set(entry.token, entry.at);
     for (const token of tokens) revoked.set(token, now);
-    for (const [token, at] of revoked) if (now - at >= REVOKED_KEEP_MS) revoked.delete(token);
+    const inStore = new Set(stored.map((link) => link.token));
+    for (const [token, at] of revoked) if (now - at >= REVOKED_KEEP_MS && !inStore.has(token)) revoked.delete(token);
     await ports.saveRevoked([...revoked].map(([token, at]) => ({ token, at })));
   }
 
@@ -106,7 +116,7 @@ export function createAgentLinks(ports: AgentLinkPorts) {
       // that was already under way (the copy before a reload) writes it back.
       const kept = new Set(changed.map((link) => link.token));
       const removed = current.map((link) => link.token).filter((token) => token !== "" && !kept.has(token));
-      if (removed.length > 0) await revokeDurably(removed);
+      if (removed.length > 0) await revokeDurably(removed, stored);
       if (closed) throw new LinksClosedError();
       await ports.save(changed);
       links = changed;
@@ -114,11 +124,21 @@ export function createAgentLinks(ports: AgentLinkPorts) {
   }
 
   return {
-    /** Reads the stored list; call once before the rest. */
+    /**
+     * Reads the stored list; call once before the rest. Every stored
+     * revocation applies, however old: the revoked links a late save left in
+     * the list are saved out of it first, and only then do revocations older
+     * than `REVOKED_KEEP_MS` expire, so none expires while its link is stored.
+     */
     async load(): Promise<void> {
+      const entries = await ports.loadRevoked();
+      for (const entry of entries) revoked.set(entry.token, entry.at);
+      const stored = await ports.load();
+      links = live(stored);
+      if (links.length !== stored.length) await ports.save(links);
       const now = ports.now();
-      for (const entry of await ports.loadRevoked()) if (now - entry.at < REVOKED_KEEP_MS) revoked.set(entry.token, entry.at);
-      links = live(await ports.load());
+      for (const [token, at] of revoked) if (now - at >= REVOKED_KEEP_MS) revoked.delete(token);
+      if (revoked.size !== entries.length) await ports.saveRevoked([...revoked].map(([token, at]) => ({ token, at })));
     },
 
     /**

@@ -4,7 +4,7 @@
  * tools read and type, sending it a failure, and letting go of it.
  */
 import { createFakePluginHost, makePluginAgentConfigurationContext, makeHostResponse, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import plugin from "./server";
 import type { ListedTab, TabView } from "./shared/tabs";
@@ -451,6 +451,41 @@ describe("a tab's agent", () => {
     service.controller.abort();
     await service.done;
     expect(await reloaded.bb.storage.kv.get("agents")).toEqual([]);
+  });
+
+  it("never gives a forgotten chat its tools back when a late save left its link and a day passed before the next load", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const { harness, tab, bb } = await start();
+      await harness.callRpc("startAgent", { terminalId: tab.terminalId, request });
+      const snapshot = await bb.storage.kv.get("agents");
+      await harness.callRpc("forgetAgent", { terminalId: tab.terminalId });
+      // A save of an earlier copy of the plugin, under way before the chat was let go of, lands after it.
+      await bb.storage.kv.set("agents", snapshot);
+      expect(await bb.storage.kv.get("agents")).toMatchObject([{ threadId: "thr_1" }]);
+
+      // Longer than a revocation is kept, then two reloads, each through its load-time prune.
+      vi.setSystemTime(Date.now() + 24 * 60 * 60 * 1000 + 1);
+      let copy = { harness, bb };
+      for (let reload = 0; reload < 2; reload += 1) {
+        copy = await copy.harness.reload(plugin);
+        const service = copy.harness.runService("prune-ended-tabs");
+        await expect.poll(async () => copy.bb.storage.kv.get("agents")).toEqual([]);
+        service.controller.abort();
+        await service.done;
+        const config = await copy.harness.resolveAgentConfiguration(
+          makePluginAgentConfigurationContext({ thread: { id: "thr_1" }, pluginMetadata: { terminalId: tab.terminalId } }),
+        );
+        expect(config.tools).toEqual([]);
+        for (const tool of ["terminal_read", "terminal_run"]) {
+          const result = await copy.harness.callAgentTool(tool, tool === "terminal_run" ? { command: "pwd" } : {}, { threadId: "thr_1" });
+          expect(result).toMatchObject({ isError: true });
+        }
+        expect(await listed(copy.harness)).toMatchObject([{ agentThreadId: null }]);
+      }
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("keeps a newer chat's link when an older spawn fails after it", async () => {

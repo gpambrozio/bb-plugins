@@ -260,8 +260,11 @@ refuses further writes and binds, and `startAgent` checks `disposed` again after
 old copy sent before it was closed can still land after the new copy's changes (kv has no
 compare-and-set), so ordering is not relied on: revocation wins. Every link a change removes or
 replaces (a forgotten or replaced bound chat as well as a pending spawn) has its token revoked first, in kv
-of its own (`revokedAgentLinks`, a day, read at load), because a late whole-list save carries every link of
-the old copy's snapshot, not only the one it changed. Links with a revoked token are ignored on every read and written out by the next change (`purgeRevoked` in the load-time prune), and
+of its own (`revokedAgentLinks`, read at load), because a late whole-list save carries every link of
+the old copy's snapshot, not only the one it changed. A revocation expires after a day, but only once no stored link has its
+token: `load` applies every stored revocation, however old, saves the list without their links, and only
+then expires them, and a change expires only those absent from the list it read (a late save may sit in
+storage untouched for longer than a day, and an expired revocation once handed its chat the tools back). Links with a revoked token are ignored on every read and written out by the next change (`purgeRevoked` in the load-time prune), and
 the sweep archives a revoked spawn's thread even when such a late save linked it. As it loads
 (`agent.start()`), the new copy drops every link still waiting for a thread, since the copy that began
 it can no longer bind, and keeps those tokens in kv (`revokedAgentSpawns`, a day). Each spawn carries

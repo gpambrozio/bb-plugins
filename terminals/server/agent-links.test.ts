@@ -1,15 +1,17 @@
 import { describe, expect, it } from "vitest";
 
-import { AgentLinkSchema, PENDING_MS, createAgentLinks, type AgentLink, type RevokedLink } from "./agent-links";
+import { AgentLinkSchema, PENDING_MS, REVOKED_KEEP_MS, createAgentLinks, type AgentLink, type RevokedLink } from "./agent-links";
 
 /** Plugin storage the stores share, as two copies of the plugin do across a reload. */
 function storage(initial: AgentLink[] = []) {
   let stored = initial;
   let revoked: RevokedLink[] = [];
+  let failing = false;
   const saved: AgentLink[][] = [];
   return {
     load: async () => stored,
     save: async (list: AgentLink[]) => {
+      if (failing) throw new Error("storage unavailable");
       saved.push(list);
       stored = list;
     },
@@ -19,6 +21,8 @@ function storage(initial: AgentLink[] = []) {
     },
     saved,
     read: () => stored,
+    /** Makes saves of the list fail, or work again. */
+    fail: (on: boolean) => (failing = on),
   };
 }
 
@@ -186,6 +190,30 @@ describe("agent links", () => {
     }
     await fresh.store.purgeRevoked();
     expect(shared.read()).toEqual([]);
+  });
+
+  it("keeps an old revocation while its link is still stored, even when the change that would write it out fails", async () => {
+    const shared = storage();
+    const { store, advance } = links([], shared);
+    await store.load();
+    const stale = await store.begin("term_1");
+    await store.bind("term_1", stale, "thr_stale");
+    const other = await store.begin("term_2");
+    await store.bind("term_2", other, "thr_other");
+    const snapshot = shared.read();
+    await store.drop("term_1");
+    // A late save of another copy writes the dropped chat back, and a day passes.
+    await shared.save(snapshot);
+    advance(REVOKED_KEEP_MS + 1);
+    // A change that would have saved the list without it revokes another link, then fails to save.
+    shared.fail(true);
+    await expect(store.drop("term_2")).rejects.toThrow(/storage unavailable/);
+    shared.fail(false);
+
+    const next = links([], shared);
+    await next.store.load();
+    expect(next.store.threadFor("term_1")).toBeNull();
+    expect(next.store.mayUse("term_1", "thr_stale")).toBe(false);
   });
 
   it("revokes a bound chat's token when a new chat replaces it", async () => {
