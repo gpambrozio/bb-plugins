@@ -198,7 +198,9 @@ starts a new draft.
 **The prompt is one line; the context is the thread's instructions.** The owner asked that the message
 box not quote the terminal: it starts with "The last command I ran returned an error. Help me debug."
 when the tab's last command failed (`FAILURE_PROMPT`), and empty otherwise. What the agent must know
-(the user is in a terminal, which tab on which machine, what the two tools do, read before running) is
+(the user is in a terminal, which tab on which machine, what the two tools do, read before running, and
+that anything the user asks it to run goes to that terminal through `terminal_run`, not its own shell,
+with no confirmation asked first) is
 `agentInstructions`, which `configure` returns for that thread only, so it is there from the first
 turn; the agent reads the command and its output with `terminal_read`.
 

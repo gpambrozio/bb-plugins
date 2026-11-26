@@ -17,7 +17,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **The agent can look and try things itself.** That chat can read what the terminal shows and run
   commands in it, at your prompt, where you see them, and gets back their output and exit code. A note
   at the top of the terminal says what it ran. It never types while a command runs, into an editor or
-  other full-screen program, or over something you typed and have not run.
+  other full-screen program, or over something you typed and have not run. Ask it to run something
+  and it runs it there, in your terminal, without asking you to confirm first.
 - **One chat per tab.** The bot button at the end of the tabs opens the panel at any time, with an empty
   message unless the last command failed. A tab keeps
   its chat, so the next failure goes to the same one; start a new chat from the panel whenever you

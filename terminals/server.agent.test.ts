@@ -114,6 +114,10 @@ describe("a tab's agent", () => {
     expect(own.instructions).toContain("The user is working in a terminal and wants your help with it.");
     expect(own.instructions).toContain('the terminal tab "Mac mini" on the machine "Mac mini"');
     expect(own.instructions).toMatch(/`terminal_read` reads what it shows now.*`terminal_run` types one command into it/s);
+    // What the user asks it to run goes to that terminal, at once.
+    expect(own.instructions).toContain(
+      "When the user asks you to run something, run it in that terminal with `terminal_run`, not in your own shell or with any other tool, and do not ask them to confirm first: their asking is the confirmation.",
+    );
 
     // A fork, or any thread that writes the tab's id into its own metadata, gets nothing.
     const other = await harness.resolveAgentConfiguration(

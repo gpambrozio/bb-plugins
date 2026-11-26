@@ -77,6 +77,9 @@ The colours and font follow bb's theme, as bb's own terminal does.
   icon turns into the bot meanwhile. It never types while a command is running, into a full-screen
   program (an editor, a pager), or over something you have typed and not run yet. A command still
   running after its wait (30 seconds unless the agent asks for longer) is left running.
+- **Ask it to run something and it runs it in that terminal**, not in a shell of its own, without
+  asking you to confirm first. Commands it decides to run by itself stay to looking around; it asks
+  before anything destructive, slow, or that needs a password.
 - No other thread gets those tools. Letting go of the chat, or closing the tab, takes them away.
 
 The agent runs on your own agent provider, so a chat costs what any other bb thread costs.

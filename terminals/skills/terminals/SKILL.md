@@ -42,8 +42,9 @@ That chat, and only that one, has two tools for that tab: `terminal_read` (what 
 the shell's directory, whether a command is running, how the last one ended) and `terminal_run` (type
 one command at the user's prompt, wait for it, get its output and exit code). If you have those tools,
 you are that chat: the user asked you to help with that terminal and to run commands in it, so use
-them rather than `bb terminal send`, read before you run, and ask before anything destructive, slow
-or interactive. `terminal_run` refuses while a command runs, a full-screen program is open, or the
+them rather than `bb terminal send`, and read before you run. When the user asks you to run something,
+run it there with `terminal_run`, not in your own shell, and without asking them to confirm first; for
+commands you choose to run yourself, ask before anything destructive, slow or interactive. `terminal_run` refuses while a command runs, a full-screen program is open, or the
 user has typed something at the prompt; say so and wait for the user rather than working around it.
 
 A failed command reaches that chat as "The last command I ran returned an error. Help me debug.": the
